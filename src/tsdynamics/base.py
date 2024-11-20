@@ -15,6 +15,7 @@ class BaseDyn(ABC):
     ) -> None:
         self.n_dim = n_dim if n_dim is not None else getattr(self, "n_dim", None)
         self.params = params if params is not None else getattr(self, "params", None)
+        self.initial_conds = None
 
         # Make the parameters available as attributes
         if self.params:
@@ -98,6 +99,7 @@ class DynSys(BaseDyn):
             if self.n_dim is None:
                 raise ValueError("Initial conditions must be provided, else n_dim must be set")
             initial_conds = np.random.rand(self.n_dim)
+            self.initial_conds = initial_conds
 
 
         t_eval = self.generate_timesteps(dt=dt, steps=steps, final_t=final_time)
@@ -114,7 +116,7 @@ class DynSys(BaseDyn):
             **kwargs
         )
 
-        return sol
+        return sol.y.T
 
 class DynMap(BaseDyn):
     """Class for discrete maps."""
@@ -131,20 +133,33 @@ class DynMap(BaseDyn):
     def iterate(
         self,
         y0=None,
-        n_steps=1000
+        steps=1000,
+        max_retries=10
     ):
         """Iterate the map for n_steps starting from y0."""
-        if y0 is None:
-            if self.n_dim is None:
-                raise ValueError("Initial conditions must be provided, else n_dim must be set")
-            y0 = np.random.rand(self.n_dim) if self.n_dim > 1 else np.random.rand()
+        retries = 0
 
-        y = np.array(y0)
-        trajectory = np.empty((n_steps, self.n_dim))
-        for i in range(n_steps):
-            y = self.rhs(y)
-            trajectory[i] = y
-        return trajectory
+        while retries < max_retries:
+            if y0 is None:
+                if self.n_dim is None:
+                    raise ValueError("Initial conditions must be provided, else n_dim must be set")
+                y0 = np.random.rand(self.n_dim) if self.n_dim > 1 else np.random.rand()
+
+            y = np.array(y0)
+            trajectory = np.empty((steps, self.n_dim))
+            try:
+                for i in range(steps):
+                    y = self.rhs(y)
+                    if np.any(np.isnan(y)) or np.any(np.isinf(y)):
+                        raise ValueError(f"The trajectory diverged at step {i}: y = {y}")
+                    trajectory[i] = y
+                return trajectory
+            except ValueError as e:
+                print(f"Warning: {e}. Retrying with a new random initial condition.")
+                y0 = None
+                retries += 1
+
+        raise ValueError(f"Failed to iterate the map after {max_retries} retries")
 
 class DynSysDelay(BaseDyn):
     """Class for dynamical systems with time delay."""
@@ -178,8 +193,8 @@ class DynSysDelay(BaseDyn):
 
     def integrate(self,
                   dt=0.02,
-                  steps=1000,
-                  final_time=None,
+                  steps=None,
+                  final_time=100,
                   initial_conds=None, # Can be a callable function or an array
                 ):
         """Integrate the delay differential equation."""
