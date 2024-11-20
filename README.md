@@ -26,6 +26,33 @@ TSDynamics is designed to simplify the numerical study of dynamical systems and 
    - Numerical solvers optimized for dynamical systems.
    - Support for flexible time steps and adaptive methods.
 
+### Example Usage:
+
+```python
+import tsdynamics as tsd
+
+# Define a model (See already defined systems)
+model = tsd.systems.continuous.Lorenz()
+
+sol = model.integrate(dt=0.01, final_time=100.0)
+
+# Alternatively, we can set the number of steps, if both are passed, physical time takes precedence
+sol = model.integrate(dt=0.01, steps=10000)
+
+# Access the time series data
+time = sol.t
+x, y, z = sol.y # unpack the state variables, this case x, y, z
+
+# Plot the results
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.plot(x, y, z)
+plt.show()
+```
+
 ### Planned Features:
 
 1. Advanced tools for analyzing time series:
