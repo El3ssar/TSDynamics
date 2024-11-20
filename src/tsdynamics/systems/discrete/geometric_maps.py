@@ -42,6 +42,7 @@ class Circle(DynMap):
     @staticjit
     def _rhs(theta, k, omega):
         thetap = theta + omega + (k / (2 * np.pi)) * np.sin(2 * np.pi * theta)
+        thetap = thetap % 1
         return thetap
 
 
