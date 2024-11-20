@@ -1,6 +1,6 @@
 **TSDynamics**: A Python package for defining, simulating, and analyzing dynamical systems and time series with a user-friendly interface.
 
-### Description:
+## Description:
 
 TSDynamics is designed to simplify the numerical study of dynamical systems and time series analysis, offering a seamless interface for researchers and practitioners. The package provides tools for defining, simulating, and exploring various types of systems and their behavior over time, including:
 
@@ -8,7 +8,7 @@ TSDynamics is designed to simplify the numerical study of dynamical systems and 
 - **Time-Delay Systems**: Include delays in the system dynamics effortlessly by specifying delayed terms in the RHS.
 - **Discrete Maps**: Define iterative systems and discrete-time dynamics with minimal setup.
 
-### Key Features (Current):
+## Key Features (Current):
 
 1. **Straightforward System Definition**:
    - Users can specify the RHS of their systems as Python functions or callable objects.
@@ -26,7 +26,51 @@ TSDynamics is designed to simplify the numerical study of dynamical systems and 
    - Numerical solvers optimized for dynamical systems.
    - Support for flexible time steps and adaptive methods.
 
-### Example Usage:
+## Prerequisites:
+
+### For those that use Anaconda
+
+Create a conda environment with the `environment.yml` file provided in the repository.
+
+```bash
+conda env create -f environment.yml
+```
+
+After creating the environment, you should activate it.
+
+```bash
+conda activate tsd
+```
+
+### For those that use virtualenv
+
+Create a virtual environment with the `requirements.txt` file provided in the repository.
+
+```bash
+virtualenv tsd
+source tsd/bin/activate
+```
+
+### For those who prefer to live on the edge
+
+Skip the environment creation and install the dependencies manually. Let Troy be with you.
+
+
+## Installing the package
+
+Then you can install the package using the `setup.py` file.
+
+```bash
+python setup.py install
+```
+
+Alternatively, you can install the package using pip.
+
+```bash
+pip install .
+```
+
+## Example Usage:
 
 ```python
 import tsdynamics as tsd
@@ -53,7 +97,7 @@ ax.plot(x, y, z)
 plt.show()
 ```
 
-### Planned Features:
+## Planned Features:
 
 1. Advanced tools for analyzing time series:
    - Lyapunov exponents.
@@ -67,7 +111,7 @@ plt.show()
 
 4. Robust handling of high-dimensional systems and parallel simulations.
 
-### Use Cases:
+## Use Cases:
 
 - Exploring the behavior of dynamical systems (e.g., chaos, bifurcations).
 - Simulating delay differential equations.
@@ -76,7 +120,7 @@ plt.show()
 
 TSDynamics aims to be a versatile and extensible toolkit for numerical dynamics, bridging the gap between ease of use and advanced functionality.
 
-#### Note:
+### Note:
 
 Inspired by the project https://github.com/williamgilpin/dysts
 
