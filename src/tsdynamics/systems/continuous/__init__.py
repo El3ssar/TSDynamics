@@ -143,6 +143,8 @@ from .oscillatory_systems import (
     Aizawa,
     StickSlipOscillator,
     Torus,
+    Lissajous3D,
+    Lissajous2D
 )
 
 
@@ -320,7 +322,9 @@ __all__ += [
             "AnishchenkoAstakhov",
             "Aizawa",
             "StickSlipOscillator",
-            "Torus"
+            "Torus",
+            "Lissajous3D",
+            "Lissajous2D"
         ]
 
 

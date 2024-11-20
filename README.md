@@ -26,7 +26,7 @@ TSDynamics is designed to simplify the numerical study of dynamical systems and 
    - Numerical solvers optimized for dynamical systems.
    - Support for flexible time steps and adaptive methods.
 
-### Planned Features (Inspired by TiSEAN):
+### Planned Features:
 
 1. Advanced tools for analyzing time series:
    - Lyapunov exponents.
@@ -48,3 +48,9 @@ TSDynamics is designed to simplify the numerical study of dynamical systems and 
 - Time series analysis for scientific, engineering, and data-driven applications.
 
 TSDynamics aims to be a versatile and extensible toolkit for numerical dynamics, bridging the gap between ease of use and advanced functionality.
+
+#### Note:
+
+Inspired by the project https://github.com/williamgilpin/dysts
+
+This package is currently under development and will be released soon on PyPI. Stay tuned for updates and new features!

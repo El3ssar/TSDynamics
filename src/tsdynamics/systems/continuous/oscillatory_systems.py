@@ -167,3 +167,59 @@ class Torus(DynSys):
         zdot = a * n * np.cos(n * t)
         return xdot, ydot, zdot
 
+
+class Lissajous3D(DynSys):
+    params = {"A": 1, "B": 1, "C": 1, "a": 3, "b": 2, "c": 5, "delta_y": np.pi / 2, "delta_z": np.pi / 4}
+    n_dim = 3
+
+    @staticmethod
+    def _rhs(X, t, A, B, C, a, b, c, delta_y, delta_z):
+        """
+        RHS of the 3D Lissajous system.
+        Parameters:
+            X : ndarray
+                Current state [x, y, z].
+            t : float
+                Current time.
+            A, B, C : float
+                Amplitudes along x, y, z axes.
+            a, b, c : float
+                Frequencies along x, y, z axes.
+            delta_y, delta_z : float
+                Phase shifts along y and z axes.
+        Returns:
+            Derivatives [dx/dt, dy/dt, dz/dt].
+        """
+        x, y, z = X
+        dxdt = A * (-a * np.sin(a * t))
+        dydt = B * (-b * np.sin(b * t + delta_y))
+        dzdt = C * (-c * np.sin(c * t + delta_z))
+        return dxdt, dydt, dzdt
+
+
+class Lissajous2D(DynSys):
+    params = {"A": 1, "B": 1, "a": 3, "b": 2, "delta": np.pi / 2}
+    n_dim = 2
+
+    @staticmethod
+    def _rhs(X, t, A, B, a, b, delta):
+        """
+        RHS of the 2D Lissajous system.
+        Parameters:
+            X : ndarray
+                Current state [x, y].
+            t : float
+                Current time.
+            A, B : float
+                Amplitudes along x and y axes.
+            a, b : float
+                Frequencies along x and y axes.
+            delta : float
+                Phase shift along y axis.
+        Returns:
+            Derivatives [dx/dt, dy/dt].
+        """
+        x, y = X
+        dxdt = A * (-a * np.sin(a * t))
+        dydt = B * (-b * np.sin(b * t + delta))
+        return dxdt, dydt
