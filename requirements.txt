@@ -1,0 +1,6 @@
+ddeint==0.3.0
+numpy==1.26.4
+numba==0.60.0
+pandas==2.2.3
+scipy==1.14.1
+
