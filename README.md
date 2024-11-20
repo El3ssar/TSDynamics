@@ -61,14 +61,26 @@ Skip the environment creation and install the dependencies manually. Let Troy be
 Then you can install the package using the `setup.py` file.
 
 ```bash
-python setup.py install
+python setup.py develop # Note bellow *
 ```
 
 Alternatively, you can install the package using pip.
 
 ```bash
+pip install -e . # Note bellow *
+```
+
+#### Note:
+When using the `develop` or `-e` flag, the package is installed in development mode. This means that you can update the repo while the project is under development and the changes will be reflected in the package. Otherwise, you would have to reinstall the package every time you make a change and use:
+
+```bash
+python setup.py install
+```
+Or
+```bash
 pip install .
 ```
+
 
 ## Example Usage:
 
