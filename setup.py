@@ -15,6 +15,7 @@ setup(
         "numba==0.60.0",
         "pandas==2.2.3",
         "scipy==1.14.1",
+        "matplotlib==3.9.2"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
