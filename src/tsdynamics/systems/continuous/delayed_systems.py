@@ -13,7 +13,8 @@ class MackeyGlass(DynSysDelay):
     n_dim = 1  # One-dimensional system
 
     @staticjit
-    def _rhs(X_current, X_delayed, t, beta, gamma, tau, n):
+    def _rhs(X_current, X_delayed, t, params):
+        beta, gamma, tau, n = params
         x = X_current
         xt = X_delayed[0]
         xdot = beta * xt / (1 + xt ** n) - gamma * x
@@ -31,7 +32,8 @@ class IkedaDelay(DynSysDelay):
     n_dim = 1
     
     @staticjit
-    def _rhs(X_current, X_delayed, t, c, mu, tau, x0):
+    def _rhs(X_current, X_delayed, t, params):
+        c, mu, tau, x0 = params
         x = X_current
         xt = X_delayed[0]
         xdot = mu * np.sin(xt - x0) - c * x
@@ -45,7 +47,8 @@ class SprottDelay(DynSysDelay):
     delays = [params["tau"]]
     n_dim = 1
     @staticjit
-    def _rhs(X_current, X_delayed, t, tau):
+    def _rhs(X_current, X_delayed, t, params):
+        tau = params[0]  # noqa: F841
         xt = X_delayed[0]
         return np.sin(xt)
 
@@ -58,7 +61,8 @@ class VossDelay(DynSysDelay):
     delays = [params["tau"]]
     n_dim = 1
     @staticjit
-    def _rhs(X_current, X_delayed, t, alpha, tau):
+    def _rhs(X_current, X_delayed, t, params):
+        alpha, tau = params
         x = X_current
         xt = X_delayed[0]
         f = -10.44 * xt**3 - 13.95 * xt**2 - 3.63 * xt + 0.85
@@ -75,7 +79,8 @@ class ScrollDelay(DynSysDelay):
     delays = [params["tau"]]
     n_dim = 1
     @staticjit
-    def _rhs(X_current, X_delayed, t, alpha, beta, tau):
+    def _rhs(X_current, X_delayed, t, params):
+        alpha, beta, tau = params
         xt = X_delayed[0]
         f = np.tanh(10 * xt)
         xdot = -alpha * xt + beta * f
@@ -93,7 +98,8 @@ class PiecewiseCircuit(DynSysDelay):
     n_dim = 1
 
     @staticjit
-    def _rhs(X_current, X_delayed, t, alpha, beta, c, tau):
+    def _rhs(X_current, X_delayed, t, params):
+        alpha, beta, c, tau = params
         xt = X_delayed[0]
         f = -((xt / c) ** 3) + 3 * xt / c
         xdot = -alpha * xt + beta * f
@@ -110,7 +116,8 @@ class ENSODelay(DynSysDelay):
     delays = [params["tau"]]
     n_dim = 1
     @staticjit
-    def _rhs(X_current, X_delayed, t, alpha, beta, gamma, tau):
+    def _rhs(X_current, X_delayed, t, params):
+        alpha, beta, gamma, tau = params
         x = X_current
         xt = X_delayed[0]
         xdot = -alpha * x - beta * xt + gamma
