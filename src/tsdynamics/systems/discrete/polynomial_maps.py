@@ -10,7 +10,8 @@ class Gauss(DynMap):
         }
     n_dim = 1
     @staticjit
-    def _rhs(x, a, b):
+    def _rhs(X, a, b):
+        x = X
         return np.exp(-a * x**2) + b
 
 
@@ -23,7 +24,8 @@ class DeJong(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b, c, d):
+    def _rhs(X, a, b, c, d):
+        x, y = X
         xp = np.sin(a * y) - np.cos(b * x)
         yp = np.sin(c * x) - np.cos(d * y)
         return xp, yp
@@ -35,7 +37,8 @@ class KaplanYorke(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, alpha):
+    def _rhs(X, alpha):
+        x, y = X
         xp = (2 * x) % 0.99999995
         yp = alpha * y + np.cos(4 * np.pi * x)
         return xp, yp

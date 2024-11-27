@@ -11,7 +11,8 @@ class Bogdanov(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, eps, k, mu):
+    def _rhs(X, eps, k, mu):
+        x, y = X
         yp = (1 + eps) * y + k * x * (x - 1) + mu * x * y
         xp = x + yp
         return xp, yp
@@ -26,7 +27,8 @@ class Svensson(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b, c, d):
+    def _rhs(X, a, b, c, d):
+        x, y = X
         xp = d * np.sin(a * x) - np.sin(b * y)
         yp = c * np.cos(a * x) + np.cos(b * y)
         return xp, yp
@@ -39,7 +41,8 @@ class Bedhead(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b):
+    def _rhs(X, a, b):
+        x, y = X
         xp = np.sin(x * y / b) * y + np.cos(a * x - y)
         yp = x + np.sin(y) / b
         return xp, yp
@@ -52,7 +55,8 @@ class ZeraouliaSprott(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b):
+    def _rhs(X, a, b):
+        x, y = X
         xp = - a * x / (1 + y**2)
         yp = x + b * y
         return xp, yp
@@ -65,7 +69,8 @@ class GumowskiMira(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b):
+    def _rhs(X, a, b):
+        x, y = X
         fx = a * x + 2 * (1 - a) * x**2 / (1 + x**2)
         xp = b * y + fx
         fx1 = a * xp + 2 * (1 - a) * xp**2 / (1 + xp**2)
@@ -81,7 +86,8 @@ class Hopalong(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b, c):
+    def _rhs(X, a, b, c):
+        x, y = X
         xp = y - 1 - np.sqrt(np.abs(b * x - 1 - c)) * np.sign(x - 1)
         yp = a - x - 1
         return xp, yp
@@ -96,11 +102,9 @@ class Pickover(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b, c, d):
+    def _rhs(X, a, b, c, d):
+        x, y = X
         xp = np.sin(a * y) + c * np.cos(a * x)
         yp = np.sin(b * x) + d * np.cos(b * y)
         return xp, yp
 
-
-class BlinkingVortexMap(DynMap):
-    pass

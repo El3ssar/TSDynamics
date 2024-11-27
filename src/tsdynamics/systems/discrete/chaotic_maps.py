@@ -10,23 +10,52 @@ class Henon(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b):
+    def _rhs(X, a, b):
+        x, y = X
         xp = 1 - a * x**2 + y
         yp = b * x
         return xp, yp
 
+    @staticjit
+    def _jac(X, a, b):
+        x, y = X
+        row1 = [-2 * a * x, 1]
+        row2 = [b, 0]
+        return row1, row2
+
 
 class Ikeda(DynMap):
     params = {
+            "a": 0.4,
+            "b": 6.0,
             "u": 0.9
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, u):
-        t = 0.4 - 6 / (1 + x**2 + y**2)
+    def _rhs(X, a, b, u):
+        x, y = X
+        t = a - b / (1 + x**2 + y**2)
         xp = 1 + u * (x * np.cos(t) - y * np.sin(t))
         yp = u * (x * np.sin(t) + y * np.cos(t))
         return xp, yp
+
+    @staticjit
+    def _jac(X, a, b, u):
+        x, y = X
+        t = a - b / (1 + x**2 + y**2)
+        dtdx = -12 * x / (1 + x**2 + y**2)**2
+        dtdy = -12 * y / (1 + x**2 + y**2)**2
+
+        dxpdx = u * np.cos(t) - u * x * np.sin(t) * dtdx - u * y * np.cos(t) * dtdx
+        dxpdy = -u * x * np.sin(t) * dtdy - u * y * np.cos(t) * dtdy - u * np.sin(t)
+
+        dypdx = u * np.sin(t) + u * x * np.cos(t) * dtdx - u * y * np.sin(t) * dtdx
+        dypdy = u * x * np.cos(t) * dtdy + u * np.cos(t) - u * y * np.sin(t) * dtdy
+
+        row1 = [dxpdx, dxpdy]
+        row2 = [dypdx, dypdy]
+
+        return row1, row2
 
 
 class Tinkerbell(DynMap):
@@ -38,7 +67,8 @@ class Tinkerbell(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b, c, d):
+    def _rhs(X, a, b, c, d):
+        x, y = X
         xp = x**2 - y**2 + a * x + b * y
         yp = 2 * x * y + c * x + d * y
         return xp, yp
@@ -48,7 +78,8 @@ class Gingerbreadman(DynMap):
     params = {}
     n_dim = 2
     @staticjit
-    def _rhs(x, y):
+    def _rhs(X):
+        x, y = X
         xp = 1 - y + np.abs(x)
         yp = x
         return xp, yp
@@ -62,7 +93,8 @@ class Zaslavskii(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, eps, nu, r):
+    def _rhs(X, eps, nu, r):
+        x, y = X
         mu = (1 - np.exp(-r)) / r
         xp = x + nu * (1 + mu * y) + eps * nu * mu * np.cos(2 * np.pi * x)
         xp = xp % 0.99999995
@@ -76,14 +108,9 @@ class Chirikov(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(p, x, k):
+    def _rhs(X, k):
+        p, x = X
         pp = p + k * np.sin(x)
         xp = x + pp
         return pp, xp
-
-    @staticjit
-    def _rhs_inv(pp, xp, k):
-        x = xp - pp
-        p = pp - k * np.sin(xp - pp)
-        return p, x
 

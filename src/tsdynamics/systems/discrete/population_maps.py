@@ -9,16 +9,24 @@ class Logistic(DynMap):
         }
     n_dim = 1
     @staticjit
-    def _rhs(x, r):
+    def _rhs(X, r):
+        x = X
         return r * x * (1 - x)
+    
+    @staticjit
+    def _jac(X, r):
+        x = X
+        return r - 2 * r * x
 
 
 class Ricker(DynMap):
     params = {
         "a": 3.3
         }
+    n_dim = 1
     @staticjit
-    def _rhs(x, a):
+    def _rhs(X, a):
+        x = X
         return x * np.exp(a - x)
 
 
@@ -29,7 +37,8 @@ class MaynardSmith(DynMap):
         }
     n_dim = 2
     @staticjit
-    def _rhs(x, y, a, b):
+    def _rhs(X, a, b):
+        x, y = X
         xp = y
         yp = a * y + b - x**2
         return xp, yp

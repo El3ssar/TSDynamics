@@ -16,7 +16,6 @@ from .exotic_maps import (
     GumowskiMira,
     Hopalong,
     Pickover,
-    BlinkingVortexMap,
 )
 
 
@@ -64,7 +63,6 @@ __all__ += [
     "GumowskiMira",
     "Hopalong",
     "Pickover",
-    "BlinkingVortexMap",
 ]
 
 
