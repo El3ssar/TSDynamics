@@ -16,6 +16,13 @@ class Bogdanov(DynMap):
         yp = (1 + eps) * y + k * x * (x - 1) + mu * x * y
         xp = x + yp
         return xp, yp
+    
+    @staticjit
+    def _jac(X, eps, k, mu):
+        x, y = X
+        row1 = [1, 1 + eps + mu * x]
+        row2 = [2 * k * x - k * x + mu * y, 1 + eps + mu * x]
+        return row1, row2
 
 
 class Svensson(DynMap):
@@ -33,6 +40,12 @@ class Svensson(DynMap):
         yp = c * np.cos(a * x) + np.cos(b * y)
         return xp, yp
 
+    @staticjit
+    def _jac(X, a, b, c, d):
+        x, y = X
+        row1 = [a * d * np.cos(a * x), -b * np.cos(b * y)]
+        row2 = [-a * c * np.sin(a * x), -b * np.sin(b * y)]
+        return row1, row2
 
 class Bedhead(DynMap):
     params = {
@@ -47,6 +60,12 @@ class Bedhead(DynMap):
         yp = x + np.sin(y) / b
         return xp, yp
 
+    @staticjit
+    def _jac(X, a, b):
+        x, y = X
+        row1 = [y * np.cos(x * y / b) / b - a * np.sin(a * x - y), np.sin(x * y / b) + y * np.cos(a * x - y) + np.sin(a * x - y)]
+        row2 = [1, np.cos(y) / b]
+        return row1, row2
 
 class ZeraouliaSprott(DynMap):
     params = {
@@ -60,6 +79,13 @@ class ZeraouliaSprott(DynMap):
         xp = - a * x / (1 + y**2)
         yp = x + b * y
         return xp, yp
+    
+    @staticjit
+    def _jac(X, a, b):
+        x, y = X
+        row1 = [-a / (1 + y**2), 2 * a * x * y / (1 + y**2)**2]
+        row2 = [1, b]
+        return row1, row2
 
 
 class GumowskiMira(DynMap):
@@ -77,6 +103,9 @@ class GumowskiMira(DynMap):
         yp = fx1 - x
         return xp, yp
 
+    @staticjit
+    def _jac(X, a, b):
+        pass
 
 class Hopalong(DynMap):
     params = {
@@ -91,7 +120,10 @@ class Hopalong(DynMap):
         xp = y - 1 - np.sqrt(np.abs(b * x - 1 - c)) * np.sign(x - 1)
         yp = a - x - 1
         return xp, yp
-
+    
+    @staticjit
+    def _jac(X, a, b, c):
+        pass
 
 class Pickover(DynMap):
     params = {
@@ -107,4 +139,11 @@ class Pickover(DynMap):
         xp = np.sin(a * y) + c * np.cos(a * x)
         yp = np.sin(b * x) + d * np.cos(b * y)
         return xp, yp
+    
+    @staticjit
+    def _jac(X, a, b, c, d):
+        x, y = X
+        row1 = [-a * c * np.sin(a * x), a * np.cos(a * y)]
+        row2 = [b * np.cos(b * x), -b * d * np.sin(b * y)]
+        return row1, row2
 

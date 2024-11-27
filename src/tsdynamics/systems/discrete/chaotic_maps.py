@@ -73,6 +73,13 @@ class Tinkerbell(DynMap):
         yp = 2 * x * y + c * x + d * y
         return xp, yp
 
+    @staticjit
+    def _jac(X, a, b, c, d):
+        x, y = X
+        row1 = [2 * x + a, -2 * y + b]
+        row2 = [2 * y + c, 2 * x + d]
+        return row1, row2
+
 
 class Gingerbreadman(DynMap):
     params = {}
@@ -83,6 +90,13 @@ class Gingerbreadman(DynMap):
         xp = 1 - y + np.abs(x)
         yp = x
         return xp, yp
+
+    @staticjit
+    def _jac(X):
+        x, y = X
+        row1 = [np.sign(x), -1]
+        row2 = [1, 0]
+        return row1, row2
 
 
 class Zaslavskii(DynMap):
@@ -101,6 +115,21 @@ class Zaslavskii(DynMap):
         yp = np.exp(-r) * (y + eps * np.cos(2 * np.pi * x))
         return xp, yp
 
+    @staticjit
+    def _jac(X, eps, nu, r):
+        x, y = X
+        mu = (1 - np.exp(-r)) / r
+
+        dxpdx = nu * (1 + mu * y) - 2 * np.pi * eps * nu * mu * np.sin(2 * np.pi * x)
+        dxpdy = nu * mu
+
+        dypdx = -2 * np.pi * eps * np.exp(-r) * np.sin(2 * np.pi * x)
+        dypdy = np.exp(-r)
+
+        row1 = [dxpdx, dxpdy]
+        row2 = [dypdx, dypdy]
+        return row1, row2
+
 
 class Chirikov(DynMap):
     params = {
@@ -114,3 +143,9 @@ class Chirikov(DynMap):
         xp = x + pp
         return pp, xp
 
+    @staticjit
+    def _jac(X, k):
+        p, x = X
+        row1 = [1, k * np.cos(x)]
+        row2 = [1, 1]
+        return row1, row2
