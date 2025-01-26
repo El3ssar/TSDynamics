@@ -318,11 +318,18 @@ class RabinovichFabrikant(DynSys):
     @staticjit
     def _rhs(X, t, a, g):
         x, y, z = X
-        xdot = y * z - y + y * x**2 + g * x
-        ydot = 3 * x * z + x - x**3 + g * y
-        zdot = -2 * a * z - 2 * x * y * z
+        xdot = y * (z - 1 + x**2) + g * x
+        ydot = x * (3 * z + 1 - x**2) + g * y
+        zdot = -2 * z * (a + x * y)
         return (xdot, ydot, zdot)
 
+    @staticjit
+    def _jac(X, t, a, g):
+        x, y, z = X
+        row1 = [2 * x * y + g, z - 1 + x**2, y]
+        row2 = [3 * z + 1 - x**2, g, 3 * x]
+        row3 = [-2 * y * z, -2 * x * z, -2 * (a + x * y)]
+        return row1, row2, row3
 
 class Dadras(DynSys):
     params = {
@@ -341,6 +348,13 @@ class Dadras(DynSys):
         zdot = c * x * y - e * z
         return xdot, ydot, zdot
 
+    @staticjit
+    def _jac(X, t, c, e, o, p, r):
+        x, y, z = X
+        row1 = [-p, 1 + o * z, o * y]
+        row2 = [-z, r, -x]
+        row3 = [c * y, c * x, -e]
+        return row1, row2, row3
 
 class PehlivanWei(DynSys):
     params = {}
@@ -362,7 +376,7 @@ class PehlivanWei(DynSys):
         return row1, row2, row3
 
 
-#region Sprott Attractors
+# region Sprott Attractors
 
 class SprottTorus(DynSys):
     params = {}
@@ -805,7 +819,7 @@ class SprottJerk(DynSys):
         row3 = [-1, 2 * y, -mu]
         return row1, row2, row3
 
-#endregion
+# endregion
 
 
 class Arneodo(DynSys):
@@ -872,6 +886,14 @@ class HyperRossler(DynSys):
         zdot = b + x * z
         wdot = -c * z + d * w
         return xdot, ydot, zdot, wdot
+    @staticjit
+    def _jac(X, t, a, b, c, d):
+        x, y, z, w = X
+        row1 = [0, -1, -1, 0]
+        row2 = [1, a, 0, 1]
+        row3 = [z, 0, x, 0]
+        row4 = [0, 0, -c, d]
+        return row1, row2, row3, row4
 
 
 class HyperLorenz(DynSys):
@@ -953,7 +975,8 @@ class HenonHeiles(DynSys):
     }
     n_dim = 4
     @staticjit
-    def _rhs(x, y, px, py, t, lam):
+    def _rhs(X, t, lam):
+        x, y, px, py = X
         xdot = px
         ydot = py
         pxdot = -x - 2 * lam * x * y
@@ -961,7 +984,8 @@ class HenonHeiles(DynSys):
         return xdot, ydot, pxdot, pydot
 
     @staticjit
-    def _jac(x, y, px, py, t, lam):
+    def _jac(X, t, lam):
+        x, y, px, py = X
         row1 = [0, 0, 1, 0]
         row2 = [0, 0, 0, 1]
         row3 = [-1 - 2 * lam * y, -2 * lam * x, 0, 0]
@@ -1004,5 +1028,3 @@ class RikitakeDynamo(DynSys):
         row2 = [-a + z, -mu, x]
         row3 = [-y, -x, 0]
         return row1, row2, row3
-
-
