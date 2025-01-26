@@ -16,7 +16,7 @@ class Bogdanov(DynMap):
         yp = (1 + eps) * y + k * x * (x - 1) + mu * x * y
         xp = x + yp
         return xp, yp
-    
+
     @staticjit
     def _jac(X, eps, k, mu):
         x, y = X
@@ -27,9 +27,9 @@ class Bogdanov(DynMap):
 
 class Svensson(DynMap):
     params = {
-            "a": 1.5, 
-            "b": -1.8, 
-            "c": 1.6, 
+            "a": 1.5,
+            "b": -1.8,
+            "c": 1.6,
             "d": 0.9
         }
     n_dim = 2
@@ -79,7 +79,7 @@ class ZeraouliaSprott(DynMap):
         xp = - a * x / (1 + y**2)
         yp = x + b * y
         return xp, yp
-    
+
     @staticjit
     def _jac(X, a, b):
         x, y = X
@@ -105,7 +105,23 @@ class GumowskiMira(DynMap):
 
     @staticjit
     def _jac(X, a, b):
-        pass
+        x, y = X
+
+        fx = a * x + 2 * (1 - a) * x**2 / (1 + x**2)
+        xp = b * y + fx
+
+        dxdx = a + (4 * (1 - a) * x)/(1 + x**2) - (4 * (1 - a) * x**3)/(1 + x**2)**2
+
+        dxdy = b
+
+        dydx = dxdx * (a + (4 * (1 - a) * xp)/(1 + xp**2) - (4 * (1 - a) * xp**3)/(1 + xp**2)**2 - 1)
+
+        dydy = b * (a + (4 * (1 - a) * xp)/(1 + xp**2) - (4 * (1 - a) * xp**3)/(1 + xp**2)**2)
+
+        row1 = [dxdx, dxdy]
+        row2 = [dydx, dydy]
+
+        return row1, row2
 
 class Hopalong(DynMap):
     params = {
@@ -120,7 +136,7 @@ class Hopalong(DynMap):
         xp = y - 1 - np.sqrt(np.abs(b * x - 1 - c)) * np.sign(x - 1)
         yp = a - x - 1
         return xp, yp
-    
+
     @staticjit
     def _jac(X, a, b, c):
         pass
@@ -139,7 +155,7 @@ class Pickover(DynMap):
         xp = np.sin(a * y) + c * np.cos(a * x)
         yp = np.sin(b * x) + d * np.cos(b * y)
         return xp, yp
-    
+
     @staticjit
     def _jac(X, a, b, c, d):
         x, y = X

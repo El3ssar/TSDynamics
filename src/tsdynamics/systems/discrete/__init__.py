@@ -5,6 +5,8 @@ from .chaotic_maps import (
     Gingerbreadman,
     Zaslavskii,
     Chirikov,
+    FoldedTowel,
+    GeneralizedHenon
 )
 
 
@@ -51,6 +53,8 @@ __all__ += [
     "Gingerbreadman",
     "Zaslavskii",
     "Chirikov",
+    "FoldedTowel",
+    "GeneralizedHenon",
 ]
 
 
