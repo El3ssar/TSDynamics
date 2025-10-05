@@ -52,7 +52,7 @@ def calculate_typical_scale(data, sample_size=1000):
 def jax_solve_ivp(fun, t_eval, y0, method="Tsit5", rtol=1e-3, atol=1e-3):
     """
     Solves an initial value problem using JAX. This function is to mimic the functionality of the `solve_ivp` function in `scipy.integrate`.
-    
+
     Args:
         - fun (callable): The right-hand side of the system of equations.
         - t_eval (np.ndarray): The time points to evaluate the solution.
@@ -60,9 +60,9 @@ def jax_solve_ivp(fun, t_eval, y0, method="Tsit5", rtol=1e-3, atol=1e-3):
         - method (str): The method to use for solving the ODE.
         - rtol (float): Relative tolerance.
         - atol (float): Absolute tolerance.
-    
+
     """
-    
+
     if method in dfx.__dict__:
         solver = dfx.__dict__[method]()
     y0 = jnp.array(y0)

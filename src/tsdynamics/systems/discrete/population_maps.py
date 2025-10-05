@@ -12,7 +12,7 @@ class Logistic(DynMap):
     def _rhs(X, r):
         x = X
         return r * x * (1 - x)
-    
+
     @staticjit
     def _jac(X, r):
         x = X
@@ -28,7 +28,7 @@ class Ricker(DynMap):
     def _rhs(X, a):
         x = X
         return x * np.exp(a - x)
-    
+
     @staticjit
     def _jac(X, a):
         x = X
@@ -47,7 +47,7 @@ class MaynardSmith(DynMap):
         xp = y
         yp = a * y + b - x**2
         return xp, yp
-    
+
     @staticjit
     def _jac(X, a, b):
         x, y = X
