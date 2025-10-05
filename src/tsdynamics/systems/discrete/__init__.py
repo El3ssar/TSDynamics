@@ -1,45 +1,38 @@
 from .chaotic_maps import (
+    Chirikov,
+    FoldedTowel,
+    GeneralizedHenon,
+    Gingerbreadman,
     Henon,
     Ikeda,
     Tinkerbell,
-    Gingerbreadman,
+    Ulam,
     Zaslavskii,
-    Chirikov,
-    FoldedTowel,
-    GeneralizedHenon
 )
-
-
 from .exotic_maps import (
-    Bogdanov,
-    Svensson,
     Bedhead,
-    ZeraouliaSprott,
+    Bogdanov,
     GumowskiMira,
     Hopalong,
     Pickover,
+    Svensson,
+    ZeraouliaSprott,
 )
-
-
 from .geometric_maps import (
-    Tent,
     Baker,
-    Circle,
     Chebyshev,
+    Circle,
+    Tent,
 )
-
-
 from .polynomial_maps import (
-    Gauss,
     DeJong,
+    Gauss,
     KaplanYorke,
 )
-
-
 from .population_maps import (
     Logistic,
-    Ricker,
     MaynardSmith,
+    Ricker,
 )
 
 __all__ = []
@@ -47,42 +40,43 @@ __all__ = []
 
 # chaotic_maps
 __all__ += [
-    "Henon",
-    "Ikeda",
-    "Tinkerbell",
-    "Gingerbreadman",
-    "Zaslavskii",
     "Chirikov",
     "FoldedTowel",
     "GeneralizedHenon",
+    "Gingerbreadman",
+    "Henon",
+    "Ikeda",
+    "Tinkerbell",
+    "Ulam",
+    "Zaslavskii",
 ]
 
 
 # exotic_maps
 __all__ += [
     "Bogdanov",
-    "Svensson",
     "Bedhead",
-    "ZeraouliaSprott",
+    "Svensson",
     "GumowskiMira",
     "Hopalong",
     "Pickover",
+    "ZeraouliaSprott",
 ]
 
 
 # geometric_maps
 __all__ += [
-    "Tent",
     "Baker",
-    "Circle",
     "Chebyshev",
+    "Circle",
+    "Tent",
 ]
 
 
 # polynomial_maps
 __all__ += [
-    "Gauss",
     "DeJong",
+    "Gauss",
     "KaplanYorke",
 ]
 
@@ -90,6 +84,6 @@ __all__ += [
 # population_maps
 __all__ += [
     "Logistic",
-    "Ricker",
     "MaynardSmith",
+    "Ricker",
 ]

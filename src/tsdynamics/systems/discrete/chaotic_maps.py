@@ -24,6 +24,22 @@ class Henon(DynMap):
         return row1, row2
 
 
+class Ulam(DynMap):
+    params = {
+        "a": 1.0,
+        "b": 2.0
+    }
+    n_dim = 1
+    @staticjit
+    def _rhs(X, a, b):
+        x = X
+        return a - b * x**2
+
+    @staticjit
+    def _jac(X, a, b):
+        x = X
+        return [-2 * b * x]
+
 class Ikeda(DynMap):
     params = {
             "a": 0.4,
@@ -72,7 +88,7 @@ class Tinkerbell(DynMap):
     #         "d": 0.27
     #     }
 
-    
+
     n_dim = 2
     @staticjit
     def _rhs(X, a, b, c, d):
@@ -182,24 +198,24 @@ class FoldedTowel(DynMap):
     def _jac(X, a, b, c, d, e, f, g):
         x, y, z = X
         row1 = [
-                a * (1 - 2 * x), 
-                -b * (1 - 2 * z), 
+                a * (1 - 2 * x),
+                -b * (1 - 2 * z),
                 2 * b * (y - c)
                 ]
-        
+
         row2 = [
-                -d * e * ((y - c) * (1 + 2 * z) - 1), 
-                d * (1 + 2 * z) * (1 - e * x), 
+                -d * e * ((y - c) * (1 + 2 * z) - 1),
+                d * (1 + 2 * z) * (1 - e * x),
                 2 * d * (y - c) * (1 - e * x)
                 ]
-        
-        row3 = [0, 
-                g, 
+
+        row3 = [0,
+                g,
                 f * (1 - 2 * z)
                 ]
 
         return row1, row2, row3
-    
+
 class GeneralizedHenon(DynMap):
     params = {
             "a": 1.9,
@@ -220,5 +236,5 @@ class GeneralizedHenon(DynMap):
         row1 = [0, -2 * y, b]
         row2 = [1, 0, 0]
         row3 = [0, 1, 0]
-        
+
         return row1, row2, row3
