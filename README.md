@@ -1,139 +1,251 @@
-**TSDynamics**: A Python package for defining, simulating, and analyzing dynamical systems and time series with a user-friendly interface.
 
-## Description:
+# tsdynamics
 
-TSDynamics is designed to simplify the numerical study of dynamical systems and time series analysis, offering a seamless interface for researchers and practitioners. The package provides tools for defining, simulating, and exploring various types of systems and their behavior over time, including:
+Adaptive, compiled integration for **ODEs** (JiTCODE) and **DDEs** (JiTCDDE) with a small, clean API. You write the math; we handle compilation, tolerances, trajectories, and Lyapunov spectra.
 
-- **Continuous Dynamical Systems**: Easily define systems by providing the right-hand side (RHS) of differential equations.
-- **Time-Delay Systems**: Include delays in the system dynamics effortlessly by specifying delayed terms in the RHS.
-- **Discrete Maps**: Define iterative systems and discrete-time dynamics with minimal setup.
+* ODE base: `DynSys` → **JiTCODE** (`jitcode`)
+* DDE base: `DynSysDelay` → **JiTCDDE** (`jitcdde`)
+* Lyapunov spectra: `jitcode_lyap` / `jitcdde_lyap`
+* Parameters are simple dicts exposed as attributes
+* Deterministic output grids via `generate_timesteps`
 
-## Key Features (Current):
 
-1. **Straightforward System Definition**:
-   - Users can specify the RHS of their systems as Python functions or callable objects.
-   - Flexible support for both continuous and discrete systems.
+## Contents
 
-2. **Support for Time Delays**:
-   - Define delay differential equations (DDEs) without cumbersome setup.
-   - Seamless integration of delayed variables in the RHS definition.
+* [Install](#install)
+* [Quickstart](#quickstart)
+* [Define your own system](#define-your-own-system)
+* [Lyapunov spectra](#lyapunov-spectra)
+* [Notes & tips](#notes--tips)
+* [Contributing](#contributing)
+* [License](#license)
 
-3. **Discrete Maps**:
-   - Analyze iterative systems by defining discrete updates.
-   - Ideal for studying chaotic maps, fixed points, and bifurcations.
+---
 
-4. **Simulation Tools**:
-   - Numerical solvers optimized for dynamical systems.
-   - Support for flexible time steps and adaptive methods.
+## Install
 
-## Prerequisites:
+You’ll need a C/C++ toolchain for JiTCODE/JiTCDDE.
 
-### For those that use Anaconda
+* **Linux:** `sudo apt-get install build-essential python3-dev` (Debian/Ubuntu)
+* **macOS:** `xcode-select --install`
+* **Windows:** Install “Microsoft C++ Build Tools” (VS Build Tools)
 
-Create a conda environment with the `environment.yml` file provided in the repository.
+### Option A — uv (recommended)
 
 ```bash
-conda env create -f environment.yml
+# create & activate venv
+uv venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# library only
+uv pip install .
+
+# or editable + dev tools (tests, lint, etc.)
+uv pip install -e ".[dev]"
+# docs extras:
+uv pip install -e ".[docs]"
 ```
 
-After creating the environment, you should activate it.
+### Option B — pip (plain)
 
 ```bash
-conda activate tsd
-```
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-### For those that use virtualenv
-
-Create a virtual environment with the `requirements.txt` file provided in the repository.
-
-```bash
-virtualenv tsd
-source tsd/bin/activate
-```
-
-### For those who prefer to live on the edge
-
-Skip the environment creation and install the dependencies manually. Let Troy be with you.
-
-
-## Installing the package
-
-Then you can install the package using the `setup.py` file.
-
-```bash
-python setup.py develop # Note bellow *
-```
-
-Alternatively, you can install the package using pip.
-
-```bash
-pip install -e . # Note bellow *
-```
-
-#### Note:
-When using the `develop` or `-e` flag, the package is installed in development mode. This means that you can update the repo while the project is under development and the changes will be reflected in the package. Otherwise, you would have to reinstall the package every time you make a change and use:
-
-```bash
-python setup.py install
-```
-Or
-```bash
 pip install .
+# or
+pip install -e ".[dev]" ".[docs]"
 ```
 
+### Option C — conda (env + pip for the package)
 
-## Example Usage:
+```bash
+conda create -n tsdynamics python=3.12 -y
+conda activate tsdynamics
+
+pip install .
+# or
+pip install -e ".[dev]" ".[docs]"
+```
+
+> Dependencies (from `pyproject.toml`):
+> `numpy>=2,<3`, 
+> `scipy>=1.14,<2`, 
+> `matplotlib>=3.10.6`,
+> `numba==0.62.1`, 
+> `jitcdde==1.8.3`, 
+> `jitcode==1.7.3`,
+> `symengine==0.14.1`, `sympy==1.14.0`.
+
+---
+
+## Quickstart
+
+### ODE — Lorenz
 
 ```python
-import tsdynamics as tsd
+import numpy as np
+from tsdynamics.base.ode_base import DynSys
 
-# Define a model (See already defined systems)
-model = tsd.systems.continuous.Lorenz()
+class Lorenz(DynSys):
+    params = {"sigma": 10.0, "rho": 28.0, "beta": 8.0/3.0}
+    n_dim = 3
 
-sol = model.integrate(dt=0.01, final_time=100.0)
+    @staticmethod
+    def _rhs(y, t, beta, rho, sigma):
+        x, yv, z = y(0), y(1), y(2)
+        return (sigma*(yv - x), rho*x - x*z - yv, x*yv - beta*z)
 
-# Alternatively, we can set the number of steps, if both are passed, physical time takes precedence
-sol = model.integrate(dt=0.01, steps=10000)
-
-# Access the time series data
-time = sol.t
-x, y, z = sol.y # unpack the state variables, this case x, y, z
-
-# Plot the results
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot(x, y, z)
-plt.show()
+lor = Lorenz()
+t, X = lor.integrate(dt=0.01, final_time=50.0, method="dop853", rtol=1e-8, atol=1e-10)
+exps = lor.lyapunov_spectrum(dt=0.1, burn_in=50.0, final_time=300.0,
+                             method="dop853", rtol=1e-8, atol=1e-10)
+print(exps)  # ~[0.91, ~0, -14.57]
 ```
 
-## Planned Features:
+### DDE — Mackey–Glass
 
-1. Advanced tools for analyzing time series:
-   - Lyapunov exponents.
-   - Recurrence plots.
-   - Surrogate data testing.
-   - Dimension estimation and embedding.
+```python
+import numpy as np
+from tsdynamics.base.dde_base import DynSysDelay
 
-2. Phase-space visualization tools for qualitative analysis.
+class MackeyGlass(DynSysDelay):
+    params = {"beta": 0.2, "gamma": 0.1, "tau": 17.0, "n": 10}
+    n_dim = 1
 
-3. Extensions for stochastic dynamics and noise-driven systems.
+    @staticmethod
+    def _rhs(y, t, beta, gamma, tau, n):
+        y_tau = y(0, t - tau)
+        y_now = y(0, t)
+        return [beta * y_tau / (1 + y_tau**n) - gamma * y_now]
 
-4. Robust handling of high-dimensional systems and parallel simulations.
+mg = MackeyGlass()
+history = lambda s: [1.0 + 0.1*np.sin(0.2*s)]  # avoid trivial equilibrium history
 
-## Use Cases:
+t, y = mg.integrate(dt=0.05, final_time=200.0, history=history, rtol=1e-8, atol=1e-10)
+exps = mg.lyapunov_spectrum(n_lyap=1, dt=0.2, burn_in=100.0, final_time=600.0,
+                            history=history, rtol=1e-8, atol=1e-10)
+print(exps)  # small positive (~1e-3)
+```
 
-- Exploring the behavior of dynamical systems (e.g., chaos, bifurcations).
-- Simulating delay differential equations.
-- Investigating discrete maps and iterative systems.
-- Time series analysis for scientific, engineering, and data-driven applications.
+### ODE — Lorenz–96 (periodic)
 
-TSDynamics aims to be a versatile and extensible toolkit for numerical dynamics, bridging the gap between ease of use and advanced functionality.
+```python
+class Lorenz96(DynSys):
+    params = {"f": 8.0, "N": 20}
+    n_dim = 20
 
-### Note:
+    @staticmethod
+    def _rhs(y, t, f, N):
+        return [ (y((i+1)%N) - y((i-2)%N)) * y((i-1)%N) - y(i) + f
+                 for i in range(N) ]
 
-Inspired by the project https://github.com/williamgilpin/dysts
+l96 = Lorenz96()
+t, X = l96.integrate(dt=0.05, final_time=50.0, method="dop853", rtol=1e-8, atol=1e-10)
+```
 
-This package is currently under development and will be released soon on PyPI. Stay tuned for updates and new features!
+### ODE — Kuramoto–Sivashinsky (FD, periodic)
+
+```python
+class KuramotoSivashinsky(DynSys):
+    def __init__(self, N, L, initial_conds=None):
+        if N < 5: raise ValueError("N >= 5 required")
+        super().__init__(n_dim=N, params={"N": int(N), "L": float(L)}, initial_conds=initial_conds)
+
+    @staticmethod
+    def _rhs(y, t, N, L):
+        dx = L / N
+        inv_dx, inv_dx2, inv_dx4 = 1.0/dx, 1.0/dx**2, 1.0/dx**4
+        rhs = []
+        for j in range(N):
+            jm2, jm1, jp1, jp2 = (j-2)%N, (j-1)%N, (j+1)%N, (j+2)%N
+            u = y(j)
+            nonlinear = - (y(jp1)**2 - y(jm1)**2) * (0.25*inv_dx)   # -0.5*(u^2)_x
+            uxx      = (y(jp1) - 2*u + y(jm1)) * inv_dx2
+            uxxxx    = (y(jm2) - 4*y(jm1) + 6*u - 4*y(jp1) + y(jp2)) * inv_dx4
+            rhs.append(nonlinear - uxx - uxxxx)
+        return rhs
+
+ks = KuramotoSivashinsky(N=64, L=32.0, initial_conds=1e-2*np.random.randn(64))
+t, U = ks.integrate(dt=0.1, final_time=300.0, method="dop853", rtol=1e-8, atol=1e-10)
+```
+
+---
+
+## Define your own system
+
+### ODE (`DynSys`)
+
+* Set `params` (dict) and `n_dim` (int).
+* Implement **static** `_rhs(y, t, **params)`; return `n_dim` expressions. Use `y(i)` to access state components.
+
+```python
+class MyODE(DynSys):
+    params = {"a": 2.0, "b": 0.5}
+    n_dim = 2
+    @staticmethod
+    def _rhs(y, t, a, b):
+        x, z = y(0), y(1)
+        return (a*x - b*z, x + z - x*z)
+```
+
+### DDE (`DynSysDelay`)
+
+* Same pattern but delayed access is `y(i, t - tau)`.
+
+```python
+class MyDDE(DynSysDelay):
+    params = {"tau": 1.5, "k": 2.0}
+    n_dim = 1
+    @staticmethod
+    def _rhs(y, t, tau, k):
+        x_tau = y(0, t - tau)
+        x_now = y(0, t)
+        return [k * x_tau - x_now]
+```
+
+### Map (`DynMap`)
+
+* Same pattern but `iterate` is used instead of `integrate`.
+
+```python
+class MyMap(DynMap):
+    params = {"a": 2.0, "b": 0.5}
+    n_dim = 2
+    @staticmethod
+    def _rhs(y, a, b):
+        x, z = y(0), y(1)
+        return (a*x - b*z, x + z - x*z)
+```
+---
+
+## Lyapunov spectra
+
+```python
+# ODE
+exps = obj.lyapunov_spectrum(
+    dt=0.1, burn_in=50.0, final_time=300.0,
+    n_lyap=None, method="dop853", rtol=1e-8, atol=1e-10
+)
+
+# DDE
+exps = obj.lyapunov_spectrum(
+    n_lyap=2, dt=0.2, burn_in=100.0, final_time=600.0,
+    history=history, rtol=1e-8, atol=1e-10
+)
+```
+
+* ODE: time-weight the local LEs; constant `dt` ≈ simple mean.
+* DDE: **use the weight returned by `jitcdde_lyap`** at each step.
+
+---
+
+## Contributing
+
+We welcome sharp, clean contributions. See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup (uv/pip/conda), style, tests, and PR workflow.
+
+---
+
+## License
+
+MIT.
