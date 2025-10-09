@@ -162,3 +162,9 @@ cython_debug/
 #.idea/
 
 .vscode
+
+
+# Additional ignores
+*.ipynb
+.python-version
+data/
