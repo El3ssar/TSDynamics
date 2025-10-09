@@ -184,6 +184,55 @@ class Thomas(DynSys):
         return row1, row2, row3
 
 
+class KuramotoSivashinsky(DynSys):
+    """
+    1D Kuramoto–Sivashinsky on a periodic domain of length L, discretized with N points.
+
+    PDE (common sign convention):
+        u_t = - u u_x - u_xx - u_xxxx
+
+    Discretization (periodic, 2nd-order centered):
+        (u^2)_x   ≈ (u_{j+1}^2 - u_{j-1}^2) / (2 Δx)
+        u_xx      ≈ (u_{j+1} - 2 u_j + u_{j-1}) / Δx^2
+        u_xxxx    ≈ (u_{j-2} - 4 u_{j-1} + 6 u_j - 4 u_{j+1} + u_{j+2}) / Δx^4
+
+    Notes
+    -----
+    - Conservative nonlinearity: -u u_x = -0.5*(u^2)_x  → stable long-time stats.
+    - Requires N >= 5 (uses j±2 stencil).
+    - KS is stiff (u_xxxx term). Prefer "dop853" or a stiff integrator ("vode"/"lsoda").
+    """
+
+    def __init__(self, N: int, L: float, initial_conds=None):
+        if N < 5:
+            raise ValueError("KuramotoSivashinsky requires N >= 5.")
+        super().__init__(n_dim=int(N), params={"N": int(N), "L": float(L)}, initial_conds=initial_conds)
+
+    @staticmethod
+    def _rhs(Y, t, N, L):
+        dx = L / N
+        inv_dx  = 1.0 / dx
+        inv_dx2 = inv_dx * inv_dx
+        inv_dx4 = inv_dx2 * inv_dx2
+
+        rhs = []
+        for j in range(N):
+            jm2 = (j - 2) % N
+            jm1 = (j - 1) % N
+            jp1 = (j + 1) % N
+            jp2 = (j + 2) % N
+
+            u   = Y(j)
+            # Conservative nonlinear term: -0.5 * (u^2)_x
+            nonlinear = - (Y(jp1)**2 - Y(jm1)**2) * (0.25 * inv_dx)
+
+            uxx    = (Y(jp1) - 2.0*u + Y(jm1)) * inv_dx2
+            uxxxx  = (Y(jm2) - 4.0*Y(jm1) + 6.0*u - 4.0*Y(jp1) + Y(jp2)) * inv_dx4
+
+            rhs.append(nonlinear - uxx - uxxxx)
+        return rhs
+
+
 class Halvorsen(DynSys):
     params = {
       "a": 1.4,
