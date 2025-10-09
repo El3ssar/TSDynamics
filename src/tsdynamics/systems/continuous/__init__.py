@@ -62,7 +62,6 @@ from .chem_bio_systems import (
     ForcedFitzHughNagumo,
     TurchinHanski,
     HastingsPowell,
-    MacArthur,
     ItikBanksTumor,
 )
 
@@ -103,7 +102,6 @@ from .delayed_systems import (
     MackeyGlass,
     IkedaDelay,
     SprottDelay,
-    VossDelay,
     ScrollDelay,
     PiecewiseCircuit,
     ENSODelay
@@ -236,7 +234,6 @@ __all__ += [
             "ForcedFitzHughNagumo",
             "TurchinHanski",
             "HastingsPowell",
-            "MacArthur",
             "ItikBanksTumor",
         ]
 
@@ -280,7 +277,6 @@ __all__ += [
             "MackeyGlass",
             "IkedaDelay",
             "SprottDelay",
-            "VossDelay",
             "ScrollDelay",
             "PiecewiseCircuit",
             "ENSODelay"

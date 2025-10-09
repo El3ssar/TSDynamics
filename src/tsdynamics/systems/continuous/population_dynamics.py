@@ -1,6 +1,4 @@
 from tsdynamics.base import DynSys
-from tsdynamics.utils import staticjit
-
 
 class CoevolvingPredatorPrey(DynSys):
     params = {
@@ -18,9 +16,9 @@ class CoevolvingPredatorPrey(DynSys):
       "vv": 0.33333
     }
     n_dim = 3
-    @staticjit
-    def _rhs(X, t, a1, a2, a3, b1, b2, d1, d2, delta, k1, k2, k4, vv):
-        x, y, alpha = X
+    @staticmethod
+    def _rhs(Y, t, a1, a2, a3, b1, b2, d1, d2, delta, k1, k2, k4, vv):
+        x, y, alpha = Y(0), Y(1), Y(2)
         xdot = x * (
             -((a3 * y) / (1 + b2 * x))
             + (a1 * alpha * (1 - k1 * x * (-alpha + alpha * delta))) / (1 + b1 * alpha)
@@ -47,17 +45,17 @@ class KawczynskiStrizhak(DynSys):
       "mu": 2.1
     }
     n_dim = 3
-    @staticjit
-    def _rhs(X, t, beta, gamma, kappa, mu):
-        x, y, z = X
+    @staticmethod
+    def _rhs(Y, t, beta, gamma, kappa, mu):
+        x, y, z = Y(0), Y(1), Y(2)
         xdot = gamma * y - gamma * x**3 + 3 * mu * gamma * x
         ydot = -2 * mu * x - y - z + beta
         zdot = kappa * x - kappa * z
         return xdot, ydot, zdot
 
-    @staticjit
-    def _jac(X, t, beta, gamma, kappa, mu):
-        x, y, z = X
+    @staticmethod
+    def _jac(Y, t, beta, gamma, kappa, mu):
+        x, y, z = Y(0), Y(1), Y(2)
         row1 = [-3 * gamma * x**2 + 3 * mu * gamma, gamma, 0]
         row2 = [-2 * mu, -1, -1]
         row3 = [kappa, 0, -kappa]
@@ -71,17 +69,17 @@ class Finance(DynSys):
       "c": 1.1
     }
     n_dim = 3
-    @staticjit
-    def _rhs(X, t, a, b, c):
-        x, y, z = X
+    @staticmethod
+    def _rhs(Y, t, a, b, c):
+        x, y, z = Y(0), Y(1), Y(2)
         xdot = (1 / b - a) * x + z + x * y
         ydot = -b * y - x**2
         zdot = -x - c * z
         return xdot, ydot, zdot
 
-    @staticjit
-    def _jac(X, t, a, b, c):
-        x, y, z = X
+    @staticmethod
+    def _jac(Y, t, a, b, c):
+        x, y, z = Y(0), Y(1), Y(2)
         row1 = [(1 / b - a) + y, x, 1]
         row2 = [-2 * x, -b, 0]
         row3 = [-1, 0, -c]
