@@ -94,27 +94,13 @@ class LorenzCoupled(DynSys):
 
 
 class Lorenz96(DynSys):
-    """
-    Lorenz-96 system:
-        dX_i/dt = (X_{i+1} - X_{i-2}) * X_{i-1} - X_i + F
-    with cyclic boundary conditions.
-    """
-    params = {"f": 8.0}
-    n_dim = 5  # or any number of dimensions N
+    params = {"f": 8.0, "N": 20}
+    n_dim = params["N"]
 
     @staticmethod
-    def _rhs(Y, t, f):
-        N = 5  # you can read this from class if you prefer (Lorenz96.n_dim)
-        rhs = []
-        for i in range(N):
-            # cyclic indices
-            ip1 = (i + 1) % N
-            im1 = (i - 1) % N
-            im2 = (i - 2) % N
-
-            rhs_i = (Y(ip1) - Y(im2)) * Y(im1) - Y(i) + f
-            rhs.append(rhs_i)
-        return rhs
+    def _rhs(y_sym, t_sym, f, N):
+        return [ (y_sym((i+1)%N) - y_sym((i-2)%N)) * y_sym((i-1)%N) - y_sym(i) + f
+                 for i in range(N) ]
 
 
 class Lorenz84(DynSys):
