@@ -29,20 +29,23 @@ class DynMap(BaseDyn):
 
     def iterate(
         self,
-        y0=None,
+        initial_conds=None,
         steps=1000,
         max_retries=10
     ):
-        """Iterate the map for n_steps starting from y0."""
+        """Iterate the map for n_steps starting from initial_conds."""
         retries = 0
 
-        while retries < max_retries:
-            if y0 is None:
-                if self.n_dim is None:
-                    raise ValueError("Initial conditions must be provided, else n_dim must be set")
-                y0 = np.random.rand(self.n_dim) if self.n_dim > 1 else np.random.rand()
+        if initial_conds is None:
+            if self.initial_conds is not None:
+                initial_conds = self.initial_conds
+            else:
+                initial_conds = np.random.rand(self.n_dim)
+                initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+                self.initial_conds = initial_conds
 
-            y = np.atleast_1d(y0)
+        while retries < max_retries:
+            y = np.atleast_1d(initial_conds)
             trajectory = np.empty((steps, y.size))
             try:
                 for i in range(steps):
@@ -53,7 +56,7 @@ class DynMap(BaseDyn):
                 return trajectory
             except ValueError as e:
                 print(f"Warning: {e}. Retrying with a new random initial condition.")
-                y0 = None
+                initial_conds = None
                 retries += 1
 
         raise ValueError(f"Failed to iterate the map after {max_retries} retries")

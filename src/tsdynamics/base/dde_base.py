@@ -56,7 +56,6 @@ class DynSysDelay(BaseDyn, ABC):
         steps: Optional[int] = None,
         final_time: float = 100.0,
         initial_conds: Optional[Sequence[float]] = None,
-        method: Optional[str] = "auto",
         rtol: float = 1e-3,
         atol: float = 1e-3,
         history: Optional[Callable[[float], Sequence[float]]] = None,
@@ -100,8 +99,12 @@ class DynSysDelay(BaseDyn, ABC):
             raise ValueError("n_dim must be set on the system.")
 
         if initial_conds is None:
-            initial_conds = np.random.rand(self.n_dim)
-        initial_conds = np.asarray(initial_conds, dtype=float).reshape(self.n_dim)
+            if self.initial_conds is not None:
+                initial_conds = self.initial_conds
+            else:
+                initial_conds = np.random.rand(self.n_dim)
+                initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+                self.initial_conds = initial_conds
 
         # Output grid
         t_eval = self.generate_timesteps(dt=dt, steps=steps, final_time=final_time)
@@ -144,7 +147,6 @@ class DynSysDelay(BaseDyn, ABC):
             tk = float(t_eval[k])
             y_out[k] = dde.integrate(tk)
 
-        self.initial_conds = np.array(initial_conds, copy=True)
         return t_eval, y_out
 
     def lyapunov_spectrum(

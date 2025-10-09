@@ -73,7 +73,8 @@ class DynSys(BaseDyn, ABC):
                 initial_conds = self.initial_conds
             else:
                 initial_conds = np.random.rand(self.n_dim)
-        initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+                initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+                self.initial_conds = initial_conds
 
         # Output grid
         t_eval = self.generate_timesteps(dt=dt, steps=steps, final_time=final_time)
