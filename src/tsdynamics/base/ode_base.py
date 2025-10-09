@@ -1,214 +1,257 @@
-from abc import abstractmethod
+from abc import ABC, abstractmethod
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
-from scipy.integrate import solve_ivp
-
+from jitcode import jitcode, jitcode_lyap, y, t   # pip install jitcode
 from .base import BaseDyn
 
 
-class DynSys(BaseDyn):
-    """Class for continuous dynamical systems."""
+# Map SciPy-style names to JiTCODE integrators
+_INTEGRATOR_MAP = {
+    None:        "dopri5",
+    "auto":      "dopri5",
+    "dopri5":    "dopri5",
+    "RK45":      "dopri5",
+    "dop853":    "dop853",
+    "DOP853":    "dop853",
+    "lsoda":     "lsoda",
+    "LSODA":     "lsoda",
+    "vode":      "vode",
+    "VODE":      "vode",
+}
 
-    def rhs(self, X, t):
-        """
-        Right-hand side function wrapper to pass the parameters to the right-hand side function.
+class DynSys(BaseDyn, ABC):
+    """Class for continuous dynamical systems (ODEs) using JiTCODE."""
 
-        Args:
-            X (array): State vector.
-            t (float): Time.
+    # --------- Symbolic interface (mirrors DynSysDelay) ---------
+    def rhs(self, y_sym, t_sym):
+        """Wrapper to pass params into subclass equations (static)."""
+        return self._rhs(y_sym, t_sym, **self.params)
 
-        Returns:
-            array: Right-hand side of the dynamical system.
-        """
-        return self._rhs(X=X, t=t, **self.params)
-
-    def jac(self, X, t):
-        """
-        Jacobian function wrapper to pass the parameters to the Jacobian function.
-
-        Args:
-            X (array): State vector.
-            t (float): Time.
-
-        Returns:
-            array: Jacobian of the dynamical system.
-        """
-        return self._jac(X=X, t=t, **self.params)
-
-    @abstractmethod
-    def _rhs(self, X, t, **params) -> None:
-        """Right-hand side function to be implemented by subclasses."""
-        raise NotImplementedError
+    def jac(self, y_sym, t_sym):
+        """Optional symbolic Jacobian if subclass provides it; else None."""
+        if hasattr(self, "_jac"):
+            return self._jac(y_sym, t_sym, **self.params)  # may be NotImplemented
+        return None
 
     @abstractmethod
-    def _jac(self, X, t, **params) -> None:
-        """Jacobian function to be implemented by subclasses."""
+    def _rhs(y_sym, t_sym, **params):
+        """
+        Return a sequence (len n_dim) with JiTCODE expressions.
+        Use y_sym(i) for state components and t_sym for time.
+        """
         raise NotImplementedError
 
+    # Optional; subclasses may omit
+    @staticmethod
+    def _jac(y_sym, t_sym, **params):
+        """Return Jacobian expressions or NotImplemented to skip."""
+        return NotImplemented
+
+    # --------- Integration ---------
     def integrate(
         self,
-        dt=0.02,
-        steps=None,
-        final_time=100,
-        initial_conds=None,
-        method="RK45",
-        rtol=1e-3,
-        atol=1e-3,
-        **kwargs
-    ):
-        """Integrate the ODE system using scipy's solve_ivp."""
+        dt: float = 0.02,
+        steps: Optional[int] = None,
+        final_time: float = 100.0,
+        initial_conds: Optional[Sequence[float]] = None,
+        method: Optional[str] = "RK45",
+        rtol: float = 1e-6,
+        atol: float = 1e-9,
+        **kwargs,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Integrate the ODE with JiTCODE. Returns (t_eval, y_eval) where
+        y_eval has shape (len(t_eval), n_dim).
+        """
+        if self.n_dim is None:
+            raise ValueError("n_dim must be set.")
 
-        if self.initial_conds is not None:
-            initial_conds = self.initial_conds
-        elif initial_conds is None:
-            if self.n_dim is None:
-                raise ValueError("Initial conditions must be provided, else n_dim must be set")
-            initial_conds = np.random.rand(self.n_dim)
-            self.initial_conds = initial_conds
+        # Initial conditions
+        if initial_conds is None:
+            if self.initial_conds is not None:
+                initial_conds = self.initial_conds
+            else:
+                initial_conds = np.random.rand(self.n_dim)
+        initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
 
-
+        # Output grid
         t_eval = self.generate_timesteps(dt=dt, steps=steps, final_time=final_time)
-        t_span = (t_eval[0], t_eval[-1])
+        if t_eval[0] < 0.0:
+            raise ValueError("t_eval must be nonnegative.")
 
-        # Integrate the system
-        sol = solve_ivp(
-            fun=lambda t, y: self.rhs(X=y, t=t),
-            t_span=t_span,
-            y0=initial_conds,
-            t_eval=t_eval,
-            method=method,
-            rtol=rtol,
-            atol=atol,
-            **kwargs
-        )
+        ode = jitcode(self.rhs(y, t))
 
-        if not sol.success:
-            raise RuntimeError(f"Integration failed: {sol.message}")
+        # Compile the RHS (and Jacobian if set)
+        ode.generate_f_C()          # generate & compile C code for f
+        ode.generate_jac_C()    # compile Jacobian if provided
+
+        # Set integrator (maps to SciPy’s ODE integrators)
+        integ_name = _INTEGRATOR_MAP.get(method, method)
+        if integ_name is None:
+            integ_name = "dopri5"
+        ode.set_integrator(integ_name, rtol=rtol, atol=atol, **kwargs)
+
+        # Initial state at t=0
+        ode.set_initial_value(initial_conds, 0.0)
+
+        # March over t_eval. If a requested tk is <= current ode.t, evaluate from spline.
+        y_out = np.empty((t_eval.size, self.n_dim), float)
+
+        # Fill t=0 directly from initial conditions (no integrate at 0)
+        i0 = 0
+        if t_eval[0] == 0.0:
+            y_out[0] = initial_conds
+            i0 = 1
+
+        # Helper: evaluate CHS spline when target not ahead
+        def _eval_spline(tk: float) -> np.ndarray:
+            spline = ode.get_state()                         # CubicHermiteSpline
+            return np.asarray(spline.get_state([tk]))[0]     # shape (n_dim,)
+
+        for k in range(i0, t_eval.size):
+            tk = float(t_eval[k])
+            t_curr = float(ode.t)
+            if tk <= t_curr:
+                y_out[k] = _eval_spline(tk)
+            else:
+                y_out[k] = ode.integrate(tk)
 
         self.initial_conds = np.array(initial_conds, copy=True)
-        return sol.t, sol.y.T
+        return t_eval, y_out
 
     def lyapunov_spectrum(
         self,
-        dt=0.01,
-        final_time=1000.0,
-        initial_conds=None,
-        num_exponents=None,
-        perturbation_scale=1e-8,
-        reorthonormalize_interval=1,
-    ):
-        # Ensure initial conditions are set
+        dt: float = 0.1,
+        final_time: float = 200.0,
+        initial_conds: Optional[Sequence[float]] = None,
+        n_lyap: Optional[int] = None,
+        burn_in: float = 50.0,
+        method: Optional[str] = "dopri5",
+        rtol: float = 1e-6,
+        atol: float = 1e-9,
+        **integrator_kwargs,
+    ) -> np.ndarray:
+        """
+        Estimate the Lyapunov spectrum of an ODE using :func:`jitcode.jitcode_lyap`.
+
+        This integrates the system together with `n_lyap` orthonormal tangent
+        vectors and accumulates the per-step *local* Lyapunov exponents returned by
+        JiTCODE. The reported spectrum is a time-weighted average of those local values
+        after an optional burn-in period.
+
+        Parameters
+        ----------
+        dt : float, optional
+            Sampling interval (in integration time units) at which local exponents are
+            recorded and averaged. This does **not** constrain the adaptive internal
+            stepper; it only sets the spacing of requests to ``integrate``. Default is
+            ``0.1``.
+        final_time : float, optional
+            Length of the averaging window *after* burn-in. Default is ``200.0``.
+        initial_conds : sequence of float, optional
+            Initial state at ``t=0``. If omitted, uses ``self.initial_conds`` if
+            available, else random ``U[0,1)`` of length ``n_dim``.
+        n_lyap : int, optional
+            Number of Lyapunov exponents to estimate. Defaults to ``self.n_dim``.
+        burn_in : float, optional
+            Time to discard at the beginning (aligns tangent vectors before averaging).
+            Default is ``50.0``.
+        method : {"dopri5","dop853","vode","lsoda",None,"auto"}, optional
+            JiTCODE integrator to use. ``None`` or ``"auto"`` map to ``"dopri5"``.
+            For explicit RK methods (``dopri5``, ``dop853``) no Jacobian is used.
+        rtol : float, optional
+            Relative tolerance for the integrator. Default ``1e-6``.
+        atol : float, optional
+            Absolute tolerance for the integrator. Default ``1e-9``.
+        **integrator_kwargs
+            Additional keyword args forwarded to :meth:`jitcode.jitcode.set_integrator`
+            (e.g., ``max_step``, ``first_step``).
+
+        Returns
+        -------
+        exponents : (n_lyap,) ndarray of float
+            Estimated (time-weighted) Lyapunov exponents ordered from largest to
+            smallest as produced by JiTCODE.
+
+        Raises
+        ------
+        ValueError
+            If ``n_dim`` is not set, or the subclass ``_rhs`` returns the wrong length.
+
+        Notes
+        -----
+        - JiTCODE’s ``jitcode_lyap.integrate(T)`` returns a tuple whose second element
+        is the vector of local Lyapunov exponents at time ``T``; some versions also
+        return the Lyapunov vectors as a third element. This method extracts and
+        averages only the local exponents.
+        - Averaging uses time weights equal to the elapsed time between successive
+        sampling calls. If ``dt`` is constant, this is equivalent to a simple mean.
+        - Convergence depends on burn-in, history of the trajectory, and tolerances.
+        Increase ``final_time`` and tighten ``rtol/atol`` to verify stability of the
+        reported spectrum.
+
+        Examples
+        --------
+        >>> lor = Lorenz()  # sigma=10, rho=28, beta=8/3 by default
+        >>> exps = lor.lyapunov_spectrum(dt=0.1, burn_in=50.0, final_time=300.0,
+        ...                              initial_conds=[1.0, 1.0, 1.0],
+        ...                              method="dop853", rtol=1e-8, atol=1e-10)
+        >>> exps  # doctest: +SKIP
+        array([ 0.91...,  0.00..., -14.57... ])
+        """
+        if self.n_dim is None:
+            raise ValueError("n_dim must be set.")
         if initial_conds is None:
-            if self.n_dim is None:
-                raise ValueError("Initial conditions must be provided or n_dim must be set")
-            initial_conds = np.random.rand(self.n_dim)
-        else:
-            initial_conds = np.asarray(initial_conds)
-        self.initial_conds = initial_conds
+            initial_conds = self.initial_conds if self.initial_conds is not None else np.random.rand(self.n_dim)
+        initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+        if n_lyap is None:
+            n_lyap = self.n_dim
 
-        if num_exponents is None:
-            num_exponents = self.n_dim
+        # Symbolic vector field
+        f = tuple(self.rhs(y, t))
+        if len(f) != self.n_dim:
+            raise ValueError(f"_rhs must return length {self.n_dim}, got {len(f)}")
 
-        n_dim = self.n_dim
+        ode = jitcode_lyap(f, n_lyap=n_lyap)
+        integ = _INTEGRATOR_MAP.get(method, method or "dopri5")
+        ode.set_integrator(integ, rtol=rtol, atol=atol, **integrator_kwargs)
+        ode.set_initial_value(initial_conds, 0.0)
 
-        # Initialize augmented state vector
-        total_dim = n_dim + n_dim * num_exponents
-        y0_aug = np.zeros(total_dim)
-        y0_aug[:n_dim] = initial_conds
+        # Burn-in
+        T = 0.0
+        while T < burn_in:
+            Tn = min(burn_in, T + dt)
+            _ = ode.integrate(Tn)          # may return (state, lyaps) or (state, lyaps, lyap_vectors)
+            T = Tn
 
-        # Initialize perturbation vectors (scaled identity matrix)
-        perturbations = np.identity(n_dim) * perturbation_scale
-        y0_aug[n_dim:] = perturbations[:num_exponents].flatten()
+        # Production: time-weighted average of local exponents
+        T_end = float(ode.t) + final_time
+        weights = []
+        ly_steps = []
+        T = float(ode.t)
+        while T < T_end:
+            Tn = min(T_end, T + dt)
+            ret = ode.integrate(Tn)
 
-        # Time settings
-        t_span = (0.0, final_time)
+            # Robust extraction of local LEs across JiTCODE versions
+            if isinstance(ret, tuple):
+                if len(ret) >= 2:
+                    local_lyaps = ret[1]   # (state, lyaps, [lyap_vectors])
+                else:
+                    local_lyaps = ret
+            else:
+                local_lyaps = ret
 
-        # Lyapunov sums
-        lyapunov_sums = np.zeros(num_exponents)
-        total_intervals = 0
+            v = np.asarray(local_lyaps, float).reshape(-1)
+            if v.size != n_lyap:
+                raise ValueError(f"Expected {n_lyap} local LEs, got shape {v.shape}")
 
-        def augmented_rhs(t, y_aug):
-            n_dim = self.n_dim
+            ly_steps.append(v)
+            weights.append(Tn - T)
+            T = Tn
 
-            # Original state variables
-            X = y_aug[:n_dim]
-
-            # Compute the RHS of the original system
-            dXdt = np.asarray(self._rhs(X, t, **self.params))
-
-            # Compute the Jacobian at the current state
-            J = np.asarray(self._jac(X, t, **self.params))
-
-            # Perturbation vectors
-            Q = y_aug[n_dim:].reshape(num_exponents, n_dim)
-
-            # Variational equations
-            dQdt = np.dot(Q, J.T)
-
-            # Flatten dQdt
-            dQdt_flat = dQdt.flatten()
-
-            # Concatenate the derivatives
-            dydt_aug = np.concatenate((dXdt, dQdt_flat))
-
-            return dydt_aug
-
-        # Integration loop with event handling for reorthonormalization
-        def reorthonormalize(t, y_aug):
-            nonlocal lyapunov_sums, total_intervals
-
-            n_dim = self.n_dim
-
-            # Extract perturbation vectors
-            Q = y_aug[n_dim:].reshape(num_exponents, n_dim)
-
-            # QR decomposition
-            Q, R = np.linalg.qr(Q.T)
-            Q = Q.T  # Transpose back to original shape
-
-            # Update the augmented state vector
-            y_aug[n_dim:] = Q.flatten()
-
-            # Accumulate the logarithms of the diagonal elements of R
-            lyapunov_sums += np.log(np.abs(np.diag(R)))
-            total_intervals += 1
-
-            return y_aug
-
-        # Integrate using solve_ivp with a custom step function
-        y_aug = y0_aug.copy()
-        t_current = t_span[0]
-
-        while t_current < t_span[1]:
-            t_next = t_current + dt * reorthonormalize_interval
-
-            if t_next > t_span[1]:
-                t_next = t_span[1]
-
-            sol = solve_ivp(
-                augmented_rhs,
-                (t_current, t_next),
-                y_aug,
-                method='RK45',
-                t_eval=None,
-                vectorized=False,
-                rtol=1e-9,
-                atol=1e-9,
-            )
-
-            if not sol.success:
-                raise RuntimeError("Integration failed.")
-
-            # Update current time and state
-            t_current = sol.t[-1]
-            y_aug = sol.y[:, -1]
-
-            # Reorthonormalization
-            y_aug = reorthonormalize(t_current, y_aug)
-
-        # Compute Lyapunov exponents
-        total_time = total_intervals * dt * reorthonormalize_interval
-        exponents = lyapunov_sums / total_time
-
+        W = np.asarray(weights, float)
+        L = np.vstack(ly_steps) if ly_steps else np.empty((0, n_lyap), float)
+        exponents = (W[:, None] * L).sum(axis=0) / W.sum() if L.size else np.zeros(n_lyap)
         return exponents
-

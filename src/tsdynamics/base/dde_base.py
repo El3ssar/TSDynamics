@@ -1,6 +1,11 @@
 import warnings
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import Callable, Optional, Sequence, Tuple
+
+import numpy as np
+from jitcdde import jitcdde, jitcdde_lyap, t, y
+
+from .base import BaseDyn
 
 warnings.filterwarnings(
     "ignore",
@@ -8,14 +13,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-
-import numpy as np
-from jitcdde import jitcdde, t, y
-
-from .base import BaseDyn
-
-
-class DynSysDelay(BaseDyn):
+class DynSysDelay(BaseDyn, ABC):
     """
     Base class for delay differential systems (DDEs) using jitcdde.
 
@@ -146,37 +144,155 @@ class DynSysDelay(BaseDyn):
             tk = float(t_eval[k])
             y_out[k] = dde.integrate(tk)
 
-
-        # for k in range(i0, t_eval.size):
-        #     tk = float(t_eval[k])
-        #     if tk <= 0.0:
-        #         y_out[k] = hist0
-        #         continue
-
-        #     t_curr = float(dde.t)
-        #     if tk <= t_curr:
-        #         # Evaluate from the spline, not by integrating “backwards”
-        #         spline = dde.get_state()  # CHSPy CubicHermiteSpline
-        #         # get_state accepts an array; returns shape (m, n_dim)
-        #         y_out[k] = np.asarray(spline.get_state([tk]))[0]
-        #     else:
-        #         # Advance strictly forward
-        #         y_out[k] = dde.integrate(tk)
-
-        # spline = dde.get_state()   # CHSPy cubic Hermite spline view
-
-        # for k in range(i0, t_eval.size):
-        #     tk = float(t_eval[k])
-        #     if tk <= 0.0:
-        #         y_out[k] = hist0
-        #         continue
-
-        #     # if target already covered by integrator, evaluate directly from spline
-        #     if tk <= dde.t:
-        #         y_out[k] = np.asarray(spline.get_state([tk]))[0]
-        #     else:
-        #         y_out[k] = dde.integrate(tk)
-        #         spline = dde.get_state()  # refresh after each advance
-
         self.initial_conds = np.array(initial_conds, copy=True)
         return t_eval, y_out
+
+    def lyapunov_spectrum(
+        self,
+        dt: float = 0.1,
+        final_time: float = 200.0,
+        initial_conds: Optional[Sequence[float]] = None,
+        n_lyap: int = 1,  # user chooses how many (DDEs have infinitely many)
+        history: Optional[Callable[[float], Sequence[float]]] = None,
+        burn_in: float = 50.0,
+        rtol: float = 1e-6,
+        atol: float = 1e-9,
+        **integration_kwargs,
+    ) -> np.ndarray:
+        """
+        Estimate the first ``n_lyap`` Lyapunov exponents of a DDE using
+        :func:`jitcdde.jitcdde_lyap`.
+
+        This integrates the delay system together with ``n_lyap`` separation functions.
+        At each sampling time, JiTCDDE returns *local* exponents and a **weight**
+        (the effective integration time they represent). The reported spectrum is the
+        weight-averaged mean of those local values after an optional burn-in.
+
+        Parameters
+        ----------
+        dt : float, optional
+            Sampling interval (in integration time units) at which local exponents are
+            requested. This does **not** constrain the adaptive internal stepper.
+            Default is ``0.1``.
+        final_time : float, optional
+            Length of the averaging window *after* burn-in. Default is ``200.0``.
+        initial_conds : sequence of float, optional
+            Used to define a constant past if ``history`` is not provided. Shape
+            ``(n_dim,)`` at time ``t=0``. If omitted, uses ``self.initial_conds`` if
+            available, else random ``U[0,1)``.
+        n_lyap : int, optional
+            Number of leading Lyapunov exponents to estimate (DDEs have infinitely many).
+            Default is ``1``.
+        history : callable, optional
+            Function ``h(s) -> sequence`` defining the past for ``s <= 0``. If omitted,
+            a constant past equal to ``initial_conds`` is used.
+        burn_in : float, optional
+            Time to discard before averaging (aligns separation functions). Default
+            ``50.0``.
+        rtol : float, optional
+            Relative tolerance for JiTCDDE. Default ``1e-6``.
+        atol : float, optional
+            Absolute tolerance for JiTCDDE. Default ``1e-9``.
+        **integration_kwargs
+            Additional keyword args forwarded to
+            :meth:`jitcdde.jitcdde.set_integration_parameters` (e.g., ``max_step``,
+            ``first_step``).
+
+        Returns
+        -------
+        exponents : (n_lyap,) ndarray of float
+            Estimated weight-averaged Lyapunov exponents (largest first, as produced
+            by JiTCDDE).
+
+        Raises
+        ------
+        ValueError
+            If ``n_dim`` is not set, or the subclass ``_rhs`` returns the wrong length.
+
+        Notes
+        -----
+        - This method sets the past (constant or from ``history``), calls
+        :meth:`jitcdde.jitcdde_lyap.step_on_discontinuities`, and then starts
+        sampling from ``dde.t`` as recommended in the JiTCDDE docs.
+        - Each call to ``jitcdde_lyap.integrate(T)`` returns a tuple
+        ``(state, local_lyaps, weight)``. **You must use** the returned ``weight``
+        when averaging local exponents; it may be zero if no real integration
+        occurred between two sampling times.
+        - Avoid histories that place the system exactly at an equilibrium (they can
+        yield exponents near zero). For Mackey–Glass, for example, a strictly
+        constant past at the fixed point produces trivial dynamics.
+
+        Examples
+        --------
+        >>> mg = MackeyGlass()  # beta=0.2, gamma=0.1, tau=17, n=10 by default
+        >>> # Provide a nontrivial past (constant 1.0 is an equilibrium here):
+        >>> hist = lambda s: [1.0 + 0.1*np.sin(0.2*s)]
+        >>> exps = mg.lyapunov_spectrum(n_lyap=2, dt=0.2, burn_in=100.0, final_time=300.0,
+        ...                             history=hist, rtol=1e-8, atol=1e-10)
+        >>> exps  # doctest: +SKIP
+        array([ 2.8e-03, -... ])
+        """
+        if self.n_dim is None:
+            raise ValueError("n_dim must be set.")
+
+        # Past / ICs
+        if initial_conds is None:
+            initial_conds = self.initial_conds if self.initial_conds is not None else np.random.rand(self.n_dim)
+        initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+
+        # Build symbolic field
+        f = tuple(self.rhs(y, t))
+        if len(f) != self.n_dim:
+            raise ValueError(f"_rhs must return length {self.n_dim}, got {len(f)}")
+
+        dde = jitcdde_lyap(f, n_lyap=n_lyap)
+        dde.set_integration_parameters(rtol=rtol, atol=atol, **integration_kwargs)
+
+        if history is None:
+            dde.constant_past(initial_conds)
+        else:
+            dde.past_from_function(lambda s: np.asarray(history(s), float).reshape(self.n_dim))
+
+        # Handle initial discontinuities; start sampling from dde.t afterwards
+        dde.step_on_discontinuities()
+
+        # Burn-in: align separation functions (discard output)
+        T_end_burn = float(dde.t) + max(0.0, burn_in)
+        while dde.t < T_end_burn:
+            Tn = min(T_end_burn, dde.t + dt)
+            _ = dde.integrate(Tn)  # returns (state, local_lyaps, weight)
+
+        # Production: weight-average the local LEs using the returned weights
+        T_end = float(dde.t) + final_time
+        weights = []
+        ly_steps = []
+        prev_time = float(dde.t)
+
+        while dde.t < T_end:
+            Tn = min(T_end, dde.t + dt)
+            ret = dde.integrate(Tn)  # expected: (state, local_lyaps, weight)
+            if not isinstance(ret, tuple):
+                raise RuntimeError("jitcdde_lyap.integrate did not return a tuple")
+            if len(ret) >= 3:
+                _, local_lyaps, w = ret
+                weight = float(w)
+            else:
+                # Fallback (shouldn't happen): use elapsed time as weight
+                _, local_lyaps = ret
+                weight = Tn - prev_time
+
+            v = np.asarray(local_lyaps, float).reshape(-1)
+            if v.size != n_lyap:
+                raise ValueError(f"Expected {n_lyap} local LEs, got {v.shape}")
+
+            ly_steps.append(v)
+            weights.append(weight)
+            prev_time = float(dde.t)
+
+        W = np.asarray(weights, float)
+        mask = W > 0.0
+        if not np.any(mask):
+            return np.zeros(n_lyap)
+        L = np.vstack([ly_steps[i] for i, m in enumerate(mask) if m])
+        exponents = (W[mask, None] * L).sum(axis=0) / W[mask].sum()
+        return exponents
