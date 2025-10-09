@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Callable
 
 try:
@@ -11,7 +13,3 @@ except ImportError:
 def staticjit(func: Callable) -> Callable:
     """Decorator to apply numba's njit decorator to a static method"""
     return staticmethod(njit(func))
-
-
-
-__all__ = ["staticjit"]
