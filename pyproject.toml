@@ -1,4 +1,71 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = [
+  "hatchling>=1.27.0",
+  "hatch-vcs>=0.5.0",
+] # hatch-vcs optional but recommended
+build-backend = "hatchling.build"
 
+[project]
+name = "tsdynamics"
+version = "0.1.0"                                                                                        # or make dynamic via hatch-vcs (below)
+description = "A package for training and using Echo State Networks and Reservoir Computing in general."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Daniel Estevez", email = "kemossabee@gmail.com" }]
+urls = { Homepage = "https://github.com/El3ssar/TSDynamics" }
+
+
+dependencies = [
+  "numpy>=2.0,<3.0",
+  "scipy>=1.14,<2.0",
+  "matplotlib>=3.10.6",
+  "numba>=0.62.1",
+  "jitcdde>=1.8.3",
+  "jitcode>=1.7.3",
+  "symengine>=0.14.1",
+  "sympy>=1.14.0",
+]
+
+# ---- uv-specific groups (dev tooling) ----
+[dependency-groups]
+dev = [
+  "pytest>=8.2",
+  "pytest-cov>=7.0.0",
+  "ruff>=0.13.3",
+  "black>=25.9.0",
+  "mypy>=1.11",
+  "pydocstyle>=6.3",
+]
+docs = [
+  "sphinx>=8.2.3",
+  "myst-parser>=4.0.1",
+  "sphinx-autodoc-typehints>=3.2.0",
+  "furo>=2025.9.25",
+]
+
+# ---------------- Hatch config ----------------
+[tool.hatch.build]
+include = ["src/tsdynamics/**", "README.md", "LICENSE*"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tsdynamics"]
+only-include = ["src/tsdynamics"]
+
+# Derive version from Git tags
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/tsdynamics/_version.py"
+
+# ---------------- Linters / style ----------------
+[tool.pydocstyle]
+convention = "numpy"
+add-ignore = ["D105", "D107"]
+match = '.*\\.py'
+match-dir = '^src/'
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
