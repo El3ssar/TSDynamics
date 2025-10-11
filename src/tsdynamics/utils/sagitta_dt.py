@@ -2,7 +2,6 @@ from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass
 from typing import Tuple
-from scipy.spatial.distance import cdist
 
 __all__ = ["SagittaDt", "estimate_dt_from_sagitta"]
 
