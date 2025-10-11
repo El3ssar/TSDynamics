@@ -8,20 +8,18 @@ class Henon(DynMap):
             "a": 1.4,
             "b": 0.3
         }
-    n_dim = 2
+    n_dim = 1
     @staticjit
     def _rhs(X, a, b):
-        x, y = X
-        xp = 1 - a * x**2 + y
-        yp = b * x
-        return xp, yp
+        x = X
+        xp = 1 - a * x**2 + b * x
+        return xp
 
     @staticjit
     def _jac(X, a, b):
-        x, y = X
-        row1 = [-2 * a * x, 1]
-        row2 = [b, 0]
-        return row1, row2
+        x = X
+        row1 = [-2 * a * x + b]
+        return row1
 
 
 class Ulam(DynMap):
