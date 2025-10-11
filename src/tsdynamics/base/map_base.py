@@ -54,7 +54,8 @@ class DynMap(BaseDyn):
                     if np.any(np.isnan(y)) or np.any(np.isinf(y)):
                         raise ValueError(f"The trajectory diverged at step {i}: y = {y}")
                     trajectory[i] = np.atleast_1d(y)
-                return trajectory
+                time = np.arange(steps)
+                return time, trajectory
 
             except ValueError as e:
                 print(f"Warning: {e}. Retrying with a new random initial condition.")
