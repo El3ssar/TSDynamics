@@ -69,12 +69,11 @@ class DynSys(BaseDyn, ABC):
 
         # Initial conditions
         if initial_conds is None:
-            if self.initial_conds is not None:
-                initial_conds = self.initial_conds
-            else:
+            if self.initial_conds is None:
                 initial_conds = np.random.rand(self.n_dim)
                 initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
-                self.initial_conds = initial_conds
+                self.initial_conds = np.array(initial_conds, copy=True)
+
 
         # Output grid
         t_eval = self.generate_timesteps(dt=dt, steps=steps, final_time=final_time)
@@ -94,7 +93,7 @@ class DynSys(BaseDyn, ABC):
         ode.set_integrator(integ_name, rtol=rtol, atol=atol, **kwargs)
 
         # Initial state at t=0
-        ode.set_initial_value(initial_conds, 0.0)
+        ode.set_initial_value(self.initial_conds, 0.0)
 
         # March over t_eval. If a requested tk is <= current ode.t, evaluate from spline.
         y_out = np.empty((t_eval.size, self.n_dim), float)
@@ -102,7 +101,7 @@ class DynSys(BaseDyn, ABC):
         # Fill t=0 directly from initial conditions (no integrate at 0)
         i0 = 0
         if t_eval[0] == 0.0:
-            y_out[0] = initial_conds
+            y_out[0] = self.initial_conds
             i0 = 1
 
         # Helper: evaluate CHS spline when target not ahead
@@ -118,7 +117,6 @@ class DynSys(BaseDyn, ABC):
             else:
                 y_out[k] = ode.integrate(tk)
 
-        self.initial_conds = np.array(initial_conds, copy=True)
         return t_eval, y_out
 
     def lyapunov_spectrum(
@@ -201,11 +199,12 @@ class DynSys(BaseDyn, ABC):
         >>> exps  # doctest: +SKIP
         array([ 0.91...,  0.00..., -14.57... ])
         """
-        if self.n_dim is None:
-            raise ValueError("n_dim must be set.")
         if initial_conds is None:
-            initial_conds = self.initial_conds if self.initial_conds is not None else np.random.rand(self.n_dim)
-        initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+            if self.initial_conds is None:
+                initial_conds = np.random.rand(self.n_dim)
+                initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+                self.initial_conds = np.array(initial_conds, copy=True)
+
         if n_lyap is None:
             n_lyap = self.n_dim
 

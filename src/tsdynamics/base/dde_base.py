@@ -95,16 +95,11 @@ class DynSysDelay(BaseDyn, ABC):
             If shapes/params are inconsistent.
         """
         # Determine dimensions and initial conditions / past
-        if self.n_dim is None:
-            raise ValueError("n_dim must be set on the system.")
-
         if initial_conds is None:
-            if self.initial_conds is not None:
-                initial_conds = self.initial_conds
-            else:
+            if self.initial_conds is None:
                 initial_conds = np.random.rand(self.n_dim)
                 initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
-                self.initial_conds = initial_conds
+                self.initial_conds = np.array(initial_conds, copy=True)
 
         # Output grid
         t_eval = self.generate_timesteps(dt=dt, steps=steps, final_time=final_time)
@@ -120,8 +115,8 @@ class DynSysDelay(BaseDyn, ABC):
 
         # Past / history
         if history is None:
-            dde.constant_past(initial_conds)
-            hist0 = initial_conds
+            dde.constant_past(self.initial_conds)
+            hist0 = self.initial_conds
         else:
             # history(s) must return a sequence of length n_dim for any s ≤ 0
             def _hist(s: float) -> np.ndarray:
@@ -239,8 +234,10 @@ class DynSysDelay(BaseDyn, ABC):
 
         # Past / ICs
         if initial_conds is None:
-            initial_conds = self.initial_conds if self.initial_conds is not None else np.random.rand(self.n_dim)
-        initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+            if self.initial_conds is None:
+                initial_conds = np.random.rand(self.n_dim)
+                initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+                self.initial_conds = np.array(initial_conds, copy=True)
 
         # Build symbolic field
         f = tuple(self.rhs(y, t))

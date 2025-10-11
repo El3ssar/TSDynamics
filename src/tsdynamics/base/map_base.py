@@ -36,17 +36,18 @@ class DynMap(BaseDyn):
         """Iterate the map for n_steps starting from initial_conds."""
         retries = 0
 
-        if initial_conds is None:
-            if self.initial_conds is not None:
-                initial_conds = self.initial_conds
-            else:
-                initial_conds = np.random.rand(self.n_dim)
-                initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
-                self.initial_conds = initial_conds
-
         while retries < max_retries:
-            y = np.atleast_1d(initial_conds)
+
+            if initial_conds is None:
+                if self.initial_conds is None:
+                    initial_conds = np.random.rand(self.n_dim)
+                    initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
+                    self.initial_conds = np.array(initial_conds, copy=True)
+
+            y = np.atleast_1d(self.initial_conds)
+
             trajectory = np.empty((steps, y.size))
+
             try:
                 for i in range(steps):
                     y = self.rhs(y)
@@ -54,9 +55,11 @@ class DynMap(BaseDyn):
                         raise ValueError(f"The trajectory diverged at step {i}: y = {y}")
                     trajectory[i] = np.atleast_1d(y)
                 return trajectory
+
             except ValueError as e:
                 print(f"Warning: {e}. Retrying with a new random initial condition.")
                 initial_conds = None
+                self.initial_conds = None
                 retries += 1
 
         raise ValueError(f"Failed to iterate the map after {max_retries} retries")
