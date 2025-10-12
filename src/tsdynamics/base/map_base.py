@@ -9,9 +9,17 @@ class DynMap(BaseDyn):
     """Class for discrete maps."""
 
     def rhs(self, X):
-        X = np.atleast_1d(X)
-        out = self._rhs(X=X, **self.params)
-        return np.atleast_1d(out)
+        X = np.asarray(X, dtype=np.float64)
+        params = tuple(float(v) for v in self.params.values())
+        # Call with positional args only
+        out = self._rhs(X, *params)
+        return np.asarray(out, dtype=np.float64)
+
+    def jac(self, X):
+        X = np.asarray(X, dtype=np.float64)
+        params = tuple(float(v) for v in self.params.values())
+        out = self._jac(X, *params)
+        return np.asarray(out, dtype=np.float64)
 
     @abstractmethod
     def _rhs(self, X, **params):
@@ -22,10 +30,6 @@ class DynMap(BaseDyn):
     def _jac(self, X, **params):
         """Jacobian function to be implemented by subclasses."""
         raise NotImplementedError
-
-    def jac(self, X):
-        X = np.atleast_1d(X)
-        return self._jac(X=X, **self.params)
 
     def iterate(
         self,
@@ -107,7 +111,7 @@ class DynMap(BaseDyn):
         lyapunov_sums = np.zeros(num_exponents)
         total_intervals = 0
 
-        states = self.iterate(state, steps) # Compute the trajectory with integrate to avoid the nans or infs
+        _, states = self.iterate(state, steps) # Compute the trajectory with integrate to avoid the nans or infs
 
         for step in range(steps):
             # Map the state
