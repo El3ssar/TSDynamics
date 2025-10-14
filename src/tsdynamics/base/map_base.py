@@ -47,6 +47,8 @@ class DynMap(BaseDyn):
                     initial_conds = np.random.rand(self.n_dim)
                     initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
                     self.initial_conds = np.array(initial_conds, copy=True)
+            else:
+                self.initial_conds = np.array(initial_conds, copy=True)
 
             y = np.atleast_1d(self.initial_conds)
 
