@@ -177,7 +177,7 @@ class KuramotoSivashinsky(DynSys):
     PDE (common sign convention):
         u_t = - u u_x - u_xx - u_xxxx
 
-    Discretization (periodic, 2nd-order centered):
+    Discretization (periodic, 6th-order central, 7-point):
         (u^2)_x   ≈ (u_{j+1}^2 - u_{j-1}^2) / (2 Δx)
         u_xx      ≈ (u_{j+1} - 2 u_j + u_{j-1}) / Δx^2
         u_xxxx    ≈ (u_{j-2} - 4 u_{j-1} + 6 u_j - 4 u_{j+1} + u_{j+2}) / Δx^4
@@ -190,12 +190,21 @@ class KuramotoSivashinsky(DynSys):
     """
 
     def __init__(self, N: int, L: float, initial_conds=None):
-        if N < 5:
-            raise ValueError("KuramotoSivashinsky requires N >= 5.")
+        if N < 7:
+            raise ValueError("KuramotoSivashinsky requires N >= 7 (uses ±3 stencil).")
         super().__init__(n_dim=int(N), params={"N": int(N), "L": float(L)}, initial_conds=initial_conds)
 
     @staticmethod
     def _rhs(Y, t, N, L):
+        # 7-point central weights (Trefethen-style) for periodic, equispaced grid.
+        # First derivative (6th-order): D1 * f / dx
+        w1 = (-1.0/60.0,  3.0/20.0, -3.0/4.0, 0.0,  3.0/4.0, -3.0/20.0,  1.0/60.0)
+        # Second derivative (6th-order): D2 * f / dx^2
+        w2 = ( 1.0/90.0, -3.0/20.0,  3.0/2.0, -49.0/18.0,  3.0/2.0, -3.0/20.0, 1.0/90.0)
+        # Fourth derivative (7-point central): D4 * f / dx^4
+        w4 = (-1.0/6.0,   2.0,      -6.5,      28.0/3.0,  -6.5,       2.0,     -1.0/6.0)
+        offsets = (-3, -2, -1, 0, 1, 2, 3)
+
         dx = L / N
         inv_dx  = 1.0 / dx
         inv_dx2 = inv_dx * inv_dx
@@ -203,17 +212,26 @@ class KuramotoSivashinsky(DynSys):
 
         rhs = []
         for j in range(N):
-            jm2 = (j - 2) % N
-            jm1 = (j - 1) % N
-            jp1 = (j + 1) % N
-            jp2 = (j + 2) % N
+            # Conservative nonlinear term: -0.5 * (u^2)_x, 6th-order central
+            nl = 0.0
+            for r, c in zip(offsets, w1):
+                idx = (j + r) % N
+                nl += c * (Y(idx) ** 2)
+            nonlinear = -0.5 * inv_dx * nl
 
-            u   = Y(j)
-            # Conservative nonlinear term: -0.5 * (u^2)_x
-            nonlinear = - (Y(jp1)**2 - Y(jm1)**2) * (0.25 * inv_dx)
+            # u_xx: 6th-order central
+            uxx = 0.0
+            for r, c in zip(offsets, w2):
+                idx = (j + r) % N
+                uxx += c * Y(idx)
+            uxx *= inv_dx2
 
-            uxx    = (Y(jp1) - 2.0*u + Y(jm1)) * inv_dx2
-            uxxxx  = (Y(jm2) - 4.0*Y(jm1) + 6.0*u - 4.0*Y(jp1) + Y(jp2)) * inv_dx4
+            # u_xxxx: 7-point central
+            uxxxx = 0.0
+            for r, c in zip(offsets, w4):
+                idx = (j + r) % N
+                uxxxx += c * Y(idx)
+            uxxxx *= inv_dx4
 
             rhs.append(nonlinear - uxx - uxxxx)
         return rhs
