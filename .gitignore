@@ -168,3 +168,5 @@ cython_debug/
 *.ipynb
 .python-version
 data/
+
+Tinkering
