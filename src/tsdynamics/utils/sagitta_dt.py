@@ -21,9 +21,12 @@ def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: fl
     """
     Compute p-th percentile of sagitta over triples (i-span, i, i+span) on 'samples' (shape: (n_samples, n_features)).
     """
-    A = samples[:-2 * span, :]             # y_{i-span}
-    B = samples[span:-span, :]             # y_i
-    C = samples[2 * span:, :]              # y_{i+span}
+    n = samples.shape[0]
+    centers = np.arange(span, n - span, span)  # i = q * span
+
+    A = samples[centers - span, :]  # y_{i-span}
+    B = samples[centers, :]         # y_i
+    C = samples[centers + span, :]  # y_{i+span}
 
     AC = C - A
     chord_length = np.linalg.norm(AC, axis=1)
@@ -184,9 +187,12 @@ def _compute_sagitta_stats(samples: np.ndarray, span: int, percentile_p: float) 
     """
     Return (sagitta_percentile, chord_median) for triples at a given span.
     """
-    A = samples[:-2 * span, :]
-    B = samples[span:-span, :]
-    C = samples[2 * span:, :]
+    n = samples.shape[0]
+    centers = np.arange(span, n - span, span)
+
+    A = samples[centers - span, :]
+    B = samples[centers, :]
+    C = samples[centers + span, :]
 
     AC = C - A
     chord_length = np.linalg.norm(AC, axis=1)
