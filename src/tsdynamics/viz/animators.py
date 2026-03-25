@@ -46,6 +46,8 @@ def animate_trajectory3d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int,
     """Animate a 3D trajectory with a trailing path."""
     XYZ = tf.take_columns(Y, dims)
     fig, ax = new_fig_ax(cfg=cfg, projection="3d")
+    # blit=False when custom facecolor: blit=True skips redrawing the background
+    use_blit = cfg is None or cfg.facecolor is None
     line, = ax.plot([], [], [], lw=1.0)
     head, = ax.plot([], [], [], "o", ms=4)
     ax.set_xlabel(f"x[{dims[0]}]")
@@ -55,6 +57,15 @@ def animate_trajectory3d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int,
     ax.set_xlim(np.min(XYZ[:, 0]), np.max(XYZ[:, 0]))
     ax.set_ylim(np.min(XYZ[:, 1]), np.max(XYZ[:, 1]))
     ax.set_zlim(np.min(XYZ[:, 2]), np.max(XYZ[:, 2]))
+
+    if cfg is not None and cfg.facecolor is not None:
+        ax.grid(False)
+        ax.xaxis.pane.fill = False
+        ax.yaxis.pane.fill = False
+        ax.zaxis.pane.fill = False
+        ax.xaxis.pane.set_edgecolor("#999")
+        ax.yaxis.pane.set_edgecolor("#999")
+        ax.zaxis.pane.set_edgecolor("#999")
 
     def init():
         line.set_data([], [])
@@ -73,7 +84,7 @@ def animate_trajectory3d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int,
         return line, head
 
     anim = FuncAnimation(fig, update, frames=len(times), init_func=init,
-                         interval=interval_ms, blit=True)
+                         interval=interval_ms, blit=use_blit)
     return anim
 
 
