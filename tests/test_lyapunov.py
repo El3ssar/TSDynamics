@@ -40,19 +40,19 @@ class TestLorenzLyapunov:
         assert lorenz_spectrum.shape == (3,)
 
     def test_largest_is_positive(self, lorenz_spectrum):
-        assert lorenz_spectrum[0] > 0.0, (
-            f"Lorenz LE1 should be positive, got {lorenz_spectrum[0]:.4f}"
-        )
+        assert (
+            lorenz_spectrum[0] > 0.0
+        ), f"Lorenz LE1 should be positive, got {lorenz_spectrum[0]:.4f}"
 
     def test_smallest_is_negative(self, lorenz_spectrum):
-        assert lorenz_spectrum[-1] < 0.0, (
-            f"Lorenz LE3 should be strongly negative, got {lorenz_spectrum[-1]:.4f}"
-        )
+        assert (
+            lorenz_spectrum[-1] < 0.0
+        ), f"Lorenz LE3 should be strongly negative, got {lorenz_spectrum[-1]:.4f}"
 
     def test_sorted_descending(self, lorenz_spectrum):
-        assert lorenz_spectrum[0] >= lorenz_spectrum[1] >= lorenz_spectrum[2], (
-            f"LEs must be in descending order: {lorenz_spectrum}"
-        )
+        assert (
+            lorenz_spectrum[0] >= lorenz_spectrum[1] >= lorenz_spectrum[2]
+        ), f"LEs must be in descending order: {lorenz_spectrum}"
 
     def test_sum_is_negative(self, lorenz_spectrum):
         """Lorenz is dissipative: LE1+LE2+LE3 = -(sigma+1+beta) ≈ -13.67."""
@@ -142,10 +142,14 @@ class TestHenonLyapunov:
         assert henon_spectrum.shape == (2,)
 
     def test_largest_positive(self, henon_spectrum):
-        assert henon_spectrum[0] > 0.0, f"Henon LE1 should be positive, got {henon_spectrum[0]:.4f}"
+        assert (
+            henon_spectrum[0] > 0.0
+        ), f"Henon LE1 should be positive, got {henon_spectrum[0]:.4f}"
 
     def test_smallest_negative(self, henon_spectrum):
-        assert henon_spectrum[1] < 0.0, f"Henon LE2 should be negative, got {henon_spectrum[1]:.4f}"
+        assert (
+            henon_spectrum[1] < 0.0
+        ), f"Henon LE2 should be negative, got {henon_spectrum[1]:.4f}"
 
     def test_sorted_descending(self, henon_spectrum):
         assert henon_spectrum[0] > henon_spectrum[1]
@@ -208,7 +212,7 @@ def test_mackeyglass_lyapunov_positive():
     history = lambda s: [1.5 + 0.05 * np.sin(0.1 * s)]  # noqa: E731
     exps = mg.lyapunov_spectrum(
         n_lyap=1,
-        dt=0.2,
+        dt=0.01,
         burn_in=100.0,
         final_time=1000.0,
         history=history,
