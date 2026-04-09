@@ -256,7 +256,7 @@ class CellCycle(DynSys):
     n_dim = 6
 
     @staticmethod
-    def rhs(Y, t, K, Kc, Kd1, Kim, V2, V4, Vm1, Vm3, kd1, vd, vi):
+    def _rhs(Y, t, K, Kc, Kd1, Kim, V2, V4, Vm1, Vm3, kd1, vd, vi):
         c1, m1, x1, c2, m2, x2 = Y(0), Y(1), Y(2), Y(3), Y(4), Y(5)
         Vm1, Um1 = 2 * [Vm1]
         vi1, vi2 = 2 * [vi]

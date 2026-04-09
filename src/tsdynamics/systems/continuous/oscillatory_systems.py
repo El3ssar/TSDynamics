@@ -82,11 +82,11 @@ class AnishchenkoAstakhov(DynSys):
     }
     n_dim = 3
     @staticmethod
-    def rhs(Y, t, mu, eta):
+    def _rhs(Y, t, eta, mu):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = mu * x + y - x * z
         ydot = -x
-        zdot = -eta * z + eta * np.heaviside(x, 0) * x**2
+        zdot = -eta * z + eta * (1 + sign(x)) / 2 * x**2
         return xdot, ydot, zdot
 
 

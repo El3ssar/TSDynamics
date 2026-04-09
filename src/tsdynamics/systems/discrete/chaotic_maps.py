@@ -81,15 +81,8 @@ class Tinkerbell(DynMap):
             "c": 2.0,
             "d": 0.5
         }
-    # params = {
-    #         "a": 0.3,
-    #         "b": 0.6,
-    #         "c": 2.0,
-    #         "d": 0.27
-    #     }
-
-
     n_dim = 2
+    initial_conds = np.array([-0.72, -0.64])  # random [0,1)^2 ICs always escape the basin
     @staticjit
     def _rhs(X, a, b, c, d):
         x, y = X

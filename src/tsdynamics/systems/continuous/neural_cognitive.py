@@ -5,31 +5,33 @@ import numpy as np
 
 class Hopfield(DynSys):
     params = {
-        "n_neurons": 3, 
-        "tau": 1.0, 
-        "beta": 1.0
-        }
+        "n_neurons": 3,
+        "tau": 1.0,
+        "beta": 1.0,
+    }
     n_dim = params["n_neurons"]
 
+    def __init__(self, *args, seed=0, **kwargs):
+        super().__init__(*args, **kwargs)
+        n = int(self.n_neurons)
+        rng = np.random.default_rng(seed)
+        W = rng.standard_normal((n, n))
+        W = 0.5 * (W + W.T)   # symmetrize
+        np.fill_diagonal(W, 0)
+        self._W = W
+
     @staticmethod
-    def _rhs(Y, t, tau, beta, n_neurons):
-        """
-        Right-hand side of the Hopfield model.
+    def _rhs(Y, t, **params):
+        # Hopfield overrides rhs() directly (needs stored weight matrix).
+        raise NotImplementedError("Hopfield overrides rhs() directly.")
 
-        X: State vector [neuron activities]
-        t: Time (not explicitly used in autonomous systems)
-        tau: Timescale of neuron dynamics
-        beta: Scaling factor for weights
-        n_neurons: Number of neurons in the network
-        """
-        # Generate symmetric weight matrix (W) inside _rhs
-        W = np.random.randn(n_neurons, n_neurons)
-        W = 0.5 * (W + W.T)  # Symmetrize weights
-        np.fill_diagonal(W, 0)  # Zero diagonal
-
-        # Hopfield dynamics
-        dXdt = (-Y(0) + tanh(beta * W @ Y(0))) / tau
-        return dXdt
+    def rhs(self, Y, t):
+        n = int(self.n_neurons)
+        result = []
+        for i in range(n):
+            wx_i = sum(float(self._W[i, j]) * Y(j) for j in range(n))
+            result.append((-Y(i) + tanh(float(self.beta) * wx_i)) / float(self.tau))
+        return result
 
 
 class CellularNeuralNetwork(DynSys):
@@ -55,24 +57,30 @@ class CellularNeuralNetwork(DynSys):
 
 class BeerRNN(DynSys):
     params = {
-        "alpha": 1.0, 
-        "beta": 0.1, 
-        "gamma": 0.01, 
-        "tau": 10.0, 
-        "n_neurons": 100
-        }
-    n_dim = params["n_neurons"]  # Number of neurons in the RNN
-    @staticmethod
-    def _rhs(Y, t, alpha, beta, gamma, tau, n_neurons):
-        """
-        Right-hand side of the BeerRNN model.
+        "alpha": 1.0,
+        "beta": 0.1,
+        "gamma": 0.01,
+        "tau": 10.0,
+        "n_neurons": 100,
+    }
+    n_dim = params["n_neurons"]
 
-        X: State vector [neuron activities]
-        t: Time (not explicitly used in autonomous systems)
-        alpha, beta, gamma, tau: Model parameters
-        n_neurons: Number of neurons in the network
-        """
-        W = np.random.randn(n_neurons, n_neurons) * beta  # Recurrent weights
-        I = sin(2 * pi * t / tau) * gamma  # External input (periodic forcing)  # noqa: E741
-        dXdt = -alpha * Y(0) + tanh(W @ Y(0) + I)
-        return dXdt
+    def __init__(self, *args, seed=0, **kwargs):
+        super().__init__(*args, **kwargs)
+        n = int(self.n_neurons)
+        rng = np.random.default_rng(seed)
+        self._W = rng.standard_normal((n, n)) * float(self.beta)
+
+    @staticmethod
+    def _rhs(Y, t, **params):
+        # BeerRNN overrides rhs() directly (needs stored weight matrix).
+        raise NotImplementedError("BeerRNN overrides rhs() directly.")
+
+    def rhs(self, Y, t):
+        n = int(self.n_neurons)
+        I = sin(2 * pi * t / float(self.tau)) * float(self.gamma)  # noqa: E741
+        result = []
+        for i in range(n):
+            wx_i = sum(float(self._W[i, j]) * Y(j) for j in range(n))
+            result.append(-float(self.alpha) * Y(i) + tanh(wx_i + I))
+        return result

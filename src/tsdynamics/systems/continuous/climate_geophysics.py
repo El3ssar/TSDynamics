@@ -114,6 +114,12 @@ class BlinkingRotlet(DynSys):
     def _protocol(t, tau, stiffness=20):
         return 0.5 + 0.5 * tanh(tau * stiffness * sin(2 * pi * t / tau))
 
+    @staticmethod
+    def _rhs(Y, t, **params):
+        # BlinkingRotlet overrides rhs() directly because it needs instance
+        # attributes (self.a, self.b, ...) to build symbolic expressions.
+        raise NotImplementedError("BlinkingRotlet overrides rhs() directly.")
+
     def rhs(self, Y, t):
         r, theta, tt = Y(0), Y(1), Y(2)
         weight = self._protocol(tt, self.tau)
