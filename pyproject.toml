@@ -1,8 +1,5 @@
 [build-system]
-requires = [
-  "hatchling>=1.27.0",
-  "hatch-vcs>=0.5.0",
-]
+requires = ["hatchling>=1.27.0", "hatch-vcs>=0.5.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -53,11 +50,11 @@ Issues = "https://github.com/El3ssar/TSDynamics/issues"
 # ---- uv-specific groups (dev tooling) ----
 [dependency-groups]
 dev = [
-  "pytest>=8.2",
+  "pytest>=8.4.2",
   "pytest-cov>=6.0",
-  "ruff>=0.9.0",
-  "black>=25.0.0",
-  "mypy>=1.11",
+  "ruff>=0.14.1",
+  "black>=25.9.0",
+  "mypy>=1.18.2",
   "pydocstyle>=6.3",
 ]
 docs = [
@@ -102,20 +99,20 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long simulations (deselect with: pytest -m 'not slow')",
+  "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long simulations (deselect with: pytest -m 'not slow')",
 ]
 filterwarnings = [
-    # JiTCODE/JiTCDDE fall back to Python lambdas when C compilation fails (e.g. missing
-    # build tools in CI). The lambda backend is correct; the long traceback is just noise.
-    "ignore:.*Generating compiled integrator failed.*:UserWarning",
-    "ignore:.*READ ME FIRST.*:UserWarning",
-    # DDE integrator re-uses the Hermite spline for tiny back-steps; this is expected.
-    "ignore:.*target time is smaller than the current time.*:UserWarning",
-    # setuptools PEP 639 note that appears when jitcode/jitcdde call setup() internally.
-    "ignore:.*License classifiers have been superseded.*:UserWarning",
-    # Occasional dopri5/dop853 advisory about step-size budget (non-fatal).
-    "ignore:.*larger nsteps is needed.*:UserWarning",
-    "ignore:.*step size becomes too small.*:UserWarning",
-    # chspy rel_dist helper hits 0/0 when two anchors have identical state values.
-    "ignore:.*divide by zero encountered in divide.*:RuntimeWarning",
+  # JiTCODE/JiTCDDE fall back to Python lambdas when C compilation fails (e.g. missing
+  # build tools in CI). The lambda backend is correct; the long traceback is just noise.
+  "ignore:.*Generating compiled integrator failed.*:UserWarning",
+  "ignore:.*READ ME FIRST.*:UserWarning",
+  # DDE integrator re-uses the Hermite spline for tiny back-steps; this is expected.
+  "ignore:.*target time is smaller than the current time.*:UserWarning",
+  # setuptools PEP 639 note that appears when jitcode/jitcdde call setup() internally.
+  "ignore:.*License classifiers have been superseded.*:UserWarning",
+  # Occasional dopri5/dop853 advisory about step-size budget (non-fatal).
+  "ignore:.*larger nsteps is needed.*:UserWarning",
+  "ignore:.*step size becomes too small.*:UserWarning",
+  # chspy rel_dist helper hits 0/0 when two anchors have identical state values.
+  "ignore:.*divide by zero encountered in divide.*:RuntimeWarning",
 ]
