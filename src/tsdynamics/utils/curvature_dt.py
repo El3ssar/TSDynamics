@@ -61,9 +61,7 @@ def estimate_curvature_timestep(
         )
     T, d = y.shape
     if T < 3:
-        raise ValueError(
-            f"Need at least T >= 3 to form central differences; got T={T}."
-        )
+        raise ValueError(f"Need at least T >= 3 to form central differences; got T={T}.")
     if not np.isfinite(dt0) or dt0 <= 0:
         raise ValueError("dt0 must be a finite positive float.")
     if not np.isfinite(epsilon) or epsilon <= 0:

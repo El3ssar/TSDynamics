@@ -49,9 +49,7 @@ def trajectory3d(
 # ------------------------- Phase portraits & density -------------------------
 
 
-def phase_portrait(
-    Y: np.ndarray, dims: Tuple[int, int] = (0, 1), cfg: Optional[PlotConfig] = None
-):
+def phase_portrait(Y: np.ndarray, dims: Tuple[int, int] = (0, 1), cfg: Optional[PlotConfig] = None):
     """Scatter phase portrait (thin)."""
     XY = tf.take_columns(Y, dims)
     fig, ax = new_fig_ax(cfg=cfg)
@@ -72,9 +70,7 @@ def phase_density(
     XY = tf.take_columns(Y, dims)
     H, xe, ye = tf.phase_space_density(XY, bins=bins)
     fig, ax = new_fig_ax(cfg=cfg)
-    im = ax.imshow(
-        H, origin="lower", aspect="auto", extent=[xe[0], xe[-1], ye[0], ye[-1]]
-    )
+    im = ax.imshow(H, origin="lower", aspect="auto", extent=[xe[0], xe[-1], ye[0], ye[-1]])
     ax.set_xlabel(f"x[{dims[0]}]")
     ax.set_ylabel(f"x[{dims[1]}]")
     ax.set_title("Phase-space density")
@@ -216,9 +212,7 @@ def wavelet_scalogram(
     """Wavelet scalogram (requires PyWavelets)."""
     t, scales, A = tf.wavelet_scalogram(x, fs=fs, wavelet=wavelet, widths=widths)
     fig, ax = new_fig_ax(cfg=cfg)
-    im = ax.imshow(
-        A, extent=[t[0], t[-1], scales[-1], scales[0]], aspect="auto", cmap="viridis"
-    )
+    im = ax.imshow(A, extent=[t[0], t[-1], scales[-1], scales[0]], aspect="auto", cmap="viridis")
     ax.set_xlabel("Time")
     ax.set_ylabel("Scale")
     ax.set_title("Wavelet scalogram")
@@ -251,9 +245,7 @@ def embedding_plot(x: np.ndarray, m: int, tau: int, cfg: Optional[PlotConfig] = 
         raise ValueError("m must be >= 2 for a meaningful embedding plot.")
 
 
-def pca_projection_plot(
-    Y: np.ndarray, n_components: int = 2, cfg: Optional[PlotConfig] = None
-):
+def pca_projection_plot(Y: np.ndarray, n_components: int = 2, cfg: Optional[PlotConfig] = None):
     """Project trajectory onto first principal components."""
     comps, var, mu = tf.pca_project(Y, n_components=n_components)
     Z = tf.project_with_components(Y, comps, mu)
@@ -279,9 +271,7 @@ def pca_projection_plot(
 # ------------------------- Distance maps & bifurcations -------------------------
 
 
-def distance_heatmap(
-    X: np.ndarray, metric: str = "euclidean", cfg: Optional[PlotConfig] = None
-):
+def distance_heatmap(X: np.ndarray, metric: str = "euclidean", cfg: Optional[PlotConfig] = None):
     """Pairwise distance heatmap."""
     D = tf.distance_matrix(X, metric=metric)
     fig, ax = new_fig_ax(cfg=cfg)
@@ -317,9 +307,7 @@ def bifurcation_diagram(
     for p, vals in zip(params, points):
         if vals is None or len(vals) == 0:
             continue
-        ax.scatter(
-            np.full_like(vals, p, dtype=float), vals, s=s, alpha=alpha, edgecolor="none"
-        )
+        ax.scatter(np.full_like(vals, p, dtype=float), vals, s=s, alpha=alpha, edgecolor="none")
     ax.set_xlabel("parameter")
     ax.set_ylabel("observable")
     ax.set_title("Bifurcation diagram")
@@ -366,9 +354,7 @@ def kymograph(
             raise ValueError("For 1D kymograph, nx must equal N.")
         # time (rows) vs space (cols)
         fig, ax = new_fig_ax(cfg=cfg)
-        im = ax.imshow(
-            Y, aspect="auto", origin="lower", extent=[0, nx, times[0], times[-1]]
-        )
+        im = ax.imshow(Y, aspect="auto", origin="lower", extent=[0, nx, times[0], times[-1]])
         ax.set_xlabel("space index")
         ax.set_ylabel("time")
         ax.set_title("Kymograph (1D)")

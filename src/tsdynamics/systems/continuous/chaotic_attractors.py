@@ -92,9 +92,7 @@ class Lorenz96(DynSys):
     @staticmethod
     def _rhs(y_sym, t_sym, f, N):
         return [
-            (y_sym((i + 1) % N) - y_sym((i - 2) % N)) * y_sym((i - 1) % N)
-            - y_sym(i)
-            + f
+            (y_sym((i + 1) % N) - y_sym((i - 2) % N)) * y_sym((i - 1) % N) - y_sym(i) + f
             for i in range(N)
         ]
 

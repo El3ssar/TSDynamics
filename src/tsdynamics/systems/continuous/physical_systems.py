@@ -16,16 +16,8 @@ class DoublePendulum(DynSys):
         denom = 16 - 9 * cos(th1 - th2) ** 2
         th1_dot = pre * (2 * p1 - 3 * cos(th1 - th2) * p2) / denom
         th2_dot = pre * (8 * p2 - 3 * cos(th1 - th2) * p1) / denom
-        p1_dot = (
-            -0.5
-            * (m * d**2)
-            * (th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th1))
-        )
-        p2_dot = (
-            -0.5
-            * (m * d**2)
-            * (-th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th2))
-        )
+        p1_dot = -0.5 * (m * d**2) * (th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th1))
+        p2_dot = -0.5 * (m * d**2) * (-th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th2))
         return th1_dot, th2_dot, p1_dot, p2_dot
 
     @staticmethod
@@ -189,9 +181,7 @@ class InteriorSquirmer(DynSys):
         j12 = np.sum(j12)
 
         j21 = 2 * rnvals * (2 * nvals + 1) * (-np.copy(trigskew))
-        j21 += (n * (1 - r**2) * rnvals * (nvals - 1) / r**2) * np.copy(
-            g * sinvals + a * cosvals
-        )
+        j21 += (n * (1 - r**2) * rnvals * (nvals - 1) / r**2) * np.copy(g * sinvals + a * cosvals)
         j21 = -np.sum(j21)
 
         j22 = np.copy(trigsum)

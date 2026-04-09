@@ -13,11 +13,7 @@ class NuclearQuadrupole(DynSys):
         q1dot = a * p1
         q2dot = a * p2
         p1dot = (
-            -a * q1
-            + 3 / sqrt(2) * b * q1**2
-            - 3 / sqrt(2) * b * q2**2
-            - d * q1**3
-            - d * q1 * q2**2
+            -a * q1 + 3 / sqrt(2) * b * q1**2 - 3 / sqrt(2) * b * q2**2 - d * q1**3 - d * q1 * q2**2
         )
         p2dot = -a * q2 - 3 * sqrt(2) * b * q1 * q2 - d * q2 * q1**2 - d * q2**3
         return q1dot, q2dot, p1dot, p2dot

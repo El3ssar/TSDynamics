@@ -88,16 +88,7 @@ class Aizawa(DynSys):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = x * z - b * x - d * y
         ydot = d * x + y * z - b * y
-        zdot = (
-            c
-            + a * z
-            - (z**3) / 3
-            - x**2
-            - y**2
-            - e * z * x**2
-            - e * z * y**2
-            + f * z * x**3
-        )
+        zdot = c + a * z - (z**3) / 3 - x**2 - y**2 - e * z * x**2 - e * z * y**2 + f * z * x**3
         return xdot, ydot, zdot
 
 

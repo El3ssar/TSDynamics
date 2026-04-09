@@ -193,11 +193,7 @@ class CaTwoPlus(DynSys):
         z, y, a = Y(0), Y(1), Y(2)
         Vin = V0 + V1 * beta
         V2 = Vm2 * (z**2) / (K2**2 + z**2)
-        V3 = (
-            (Vm3 * (z**m) / (Kz**m + z**m))
-            * (y**2 / (Ky**2 + y**2))
-            * (a**4 / (Ka**4 + a**4))
-        )
+        V3 = (Vm3 * (z**m) / (Kz**m + z**m)) * (y**2 / (Ky**2 + y**2)) * (a**4 / (Ka**4 + a**4))
         V5 = Vm5 * (a**p / (K5**p + a**p)) * (z**n / (Kd**n + z**n))
         zdot = Vin - V2 + V3 + kf * y - k * z
         ydot = V2 - V3 - kf * y
@@ -374,10 +370,7 @@ class TurchinHanski(DynSys):
     def _rhs(Y, t, a, d, e, g, h, r, s):
         n, p, z = Y(0), Y(1), Y(2)
         ndot = (
-            r * (1 - e * sin(z)) * n
-            - r * (n**2)
-            - g * (n**2) / (n**2 + h**2)
-            - a * n * p / (n + d)
+            r * (1 - e * sin(z)) * n - r * (n**2) - g * (n**2) / (n**2 + h**2) - a * n * p / (n + d)
         )
         pdot = s * (1 - e * sin(z)) * p - s * (p**2) / n
         zdot = 2 * pi
