@@ -26,13 +26,9 @@ class Lorenz(DynSys):
 
 
 class LorenzBounded(DynSys):
-    params = {
-      "beta": 2.667,
-      "r": 64,
-      "rho": 28,
-      "sigma": 10
-    }
+    params = {"beta": 2.667, "r": 64, "rho": 28, "sigma": 10}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, beta, r, rho, sigma):
         x, y, z = Y(0), Y(1), Y(2)
@@ -74,13 +70,9 @@ class LorenzBounded(DynSys):
 
 
 class LorenzCoupled(DynSys):
-    params = {
-      "beta": 8/3,
-      "kappa": 2.85,
-      "rho": 28,
-      "sigma": 10
-    }
+    params = {"beta": 8 / 3, "kappa": 2.85, "rho": 28, "sigma": 10}
     n_dim = 6
+
     @staticmethod
     def _rhs(Y, t, beta, kappa, rho, sigma):
         x1, y1, z1, x2, y2, z2 = Y(0), Y(1), Y(2), Y(3), Y(4), Y(5)
@@ -99,17 +91,14 @@ class Lorenz96(DynSys):
 
     @staticmethod
     def _rhs(y_sym, t_sym, f, N):
-        return [ (y_sym((i+1)%N) - y_sym((i-2)%N)) * y_sym((i-1)%N) - y_sym(i) + f
-                 for i in range(N) ]
+        return [
+            (y_sym((i + 1) % N) - y_sym((i - 2) % N)) * y_sym((i - 1) % N) - y_sym(i) + f
+            for i in range(N)
+        ]
 
 
 class Lorenz84(DynSys):
-    params = {
-      "a": 1.32,
-      "b": 7.91,
-      "f": 4.83,
-      "g": 4.194
-    }
+    params = {"a": 1.32, "b": 7.91, "f": 4.83, "g": 4.194}
     n_dim = 3
 
     @staticmethod
@@ -153,6 +142,7 @@ class Rossler(DynSys):
 class Thomas(DynSys):
     params = {"a": 1.85, "b": 10}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b):
         x, y, z = Y(0), Y(1), Y(2)
@@ -192,21 +182,23 @@ class KuramotoSivashinsky(DynSys):
     def __init__(self, N: int, L: float, initial_conds=None):
         if N < 7:
             raise ValueError("KuramotoSivashinsky requires N >= 7 (uses ±3 stencil).")
-        super().__init__(n_dim=int(N), params={"N": int(N), "L": float(L)}, initial_conds=initial_conds)
+        super().__init__(
+            n_dim=int(N), params={"N": int(N), "L": float(L)}, initial_conds=initial_conds
+        )
 
     @staticmethod
     def _rhs(Y, t, N, L):
         # 7-point central weights (Trefethen-style) for periodic, equispaced grid.
         # First derivative (6th-order): D1 * f / dx
-        w1 = (-1.0/60.0,  3.0/20.0, -3.0/4.0, 0.0,  3.0/4.0, -3.0/20.0,  1.0/60.0)
+        w1 = (-1.0 / 60.0, 3.0 / 20.0, -3.0 / 4.0, 0.0, 3.0 / 4.0, -3.0 / 20.0, 1.0 / 60.0)
         # Second derivative (6th-order): D2 * f / dx^2
-        w2 = ( 1.0/90.0, -3.0/20.0,  3.0/2.0, -49.0/18.0,  3.0/2.0, -3.0/20.0, 1.0/90.0)
+        w2 = (1.0 / 90.0, -3.0 / 20.0, 3.0 / 2.0, -49.0 / 18.0, 3.0 / 2.0, -3.0 / 20.0, 1.0 / 90.0)
         # Fourth derivative (7-point central): D4 * f / dx^4
-        w4 = (-1.0/6.0,   2.0,      -6.5,      28.0/3.0,  -6.5,       2.0,     -1.0/6.0)
+        w4 = (-1.0 / 6.0, 2.0, -6.5, 28.0 / 3.0, -6.5, 2.0, -1.0 / 6.0)
         offsets = (-3, -2, -1, 0, 1, 2, 3)
 
         dx = L / N
-        inv_dx  = 1.0 / dx
+        inv_dx = 1.0 / dx
         inv_dx2 = inv_dx * inv_dx
         inv_dx4 = inv_dx2 * inv_dx2
 
@@ -238,11 +230,9 @@ class KuramotoSivashinsky(DynSys):
 
 
 class Halvorsen(DynSys):
-    params = {
-      "a": 1.4,
-      "b": 4
-    }
+    params = {"a": 1.4, "b": 4}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b):
         x, y, z = Y(0), Y(1), Y(2)
@@ -261,13 +251,9 @@ class Halvorsen(DynSys):
 
 
 class Chua(DynSys):
-    params = {
-      "alpha": 15.6,
-      "beta": 28.0,
-      "m0": -1.142857,
-      "m1": -0.71429
-    }
+    params = {"alpha": 15.6, "beta": 28.0, "m0": -1.142857, "m1": -0.71429}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, alpha, beta, m0, m1):
         x, y, z = Y(0), Y(1), Y(2)
@@ -294,7 +280,7 @@ class MultiChua(DynSys):
         "m0": -1.143,
         "m1": -0.714,
         "kappa": 0.1,  # Coupling strength
-        "n_circuits": 3  # Number of coupled Chua circuits
+        "n_circuits": 3,  # Number of coupled Chua circuits
     }
     n_dim = 3 * params["n_circuits"]  # 3 variables per circuit
 
@@ -345,13 +331,7 @@ class MultiChua(DynSys):
 
 
 class Duffing(DynSys):
-    params = {
-      "alpha": 1.0,
-      "beta": -1.0,
-      "delta": 0.1,
-      "gamma": 0.35,
-      "omega": 1.4
-    }
+    params = {"alpha": 1.0, "beta": -1.0, "delta": 0.1, "gamma": 0.35, "omega": 1.4}
     n_dim = 3
 
     @staticmethod
@@ -376,11 +356,9 @@ class Duffing(DynSys):
 
 
 class RabinovichFabrikant(DynSys):
-    params = {
-      "a": 1.1,
-      "g": 0.87
-    }
+    params = {"a": 1.1, "g": 0.87}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, g):
         x, y, z = Y(0), Y(1), Y(2)
@@ -397,15 +375,11 @@ class RabinovichFabrikant(DynSys):
         row3 = [-2 * y * z, -2 * x * z, -2 * (a + x * y)]
         return row1, row2, row3
 
+
 class Dadras(DynSys):
-    params = {
-      "c": 2.0,
-      "e": 9.0,
-      "o": 2.7,
-      "p": 3.0,
-      "r": 1.7
-    }
+    params = {"c": 2.0, "e": 9.0, "o": 2.7, "p": 3.0, "r": 1.7}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, c, e, o, p, r):
         x, y, z = Y(0), Y(1), Y(2)
@@ -422,9 +396,11 @@ class Dadras(DynSys):
         row3 = [c * y, c * x, -e]
         return row1, row2, row3
 
+
 class PehlivanWei(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -444,9 +420,11 @@ class PehlivanWei(DynSys):
 
 # region Sprott Attractors
 
+
 class SprottTorus(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -467,6 +445,7 @@ class SprottTorus(DynSys):
 class SprottA(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -487,6 +466,7 @@ class SprottA(DynSys):
 class SprottB(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -507,6 +487,7 @@ class SprottB(DynSys):
 class SprottC(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -527,6 +508,7 @@ class SprottC(DynSys):
 class SprottD(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -547,6 +529,7 @@ class SprottD(DynSys):
 class SprottE(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -567,6 +550,7 @@ class SprottE(DynSys):
 class SprottF(DynSys):
     params = {"a": 0.5}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -587,6 +571,7 @@ class SprottF(DynSys):
 class SprottG(DynSys):
     params = {"a": 0.4}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -607,6 +592,7 @@ class SprottG(DynSys):
 class SprottH(DynSys):
     params = {"a": 0.5}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -627,6 +613,7 @@ class SprottH(DynSys):
 class SprottI(DynSys):
     params = {"a": 0.2}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -647,6 +634,7 @@ class SprottI(DynSys):
 class SprottJ(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -667,6 +655,7 @@ class SprottJ(DynSys):
 class SprottK(DynSys):
     params = {"a": 0.3}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -687,6 +676,7 @@ class SprottK(DynSys):
 class SprottL(DynSys):
     params = {"a": 0.9, "b": 3.9}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b):
         x, y, z = Y(0), Y(1), Y(2)
@@ -707,6 +697,7 @@ class SprottL(DynSys):
 class SprottM(DynSys):
     params = {"a": 1.7}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -727,6 +718,7 @@ class SprottM(DynSys):
 class SprottN(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -747,6 +739,7 @@ class SprottN(DynSys):
 class SprottO(DynSys):
     params = {"a": 2.7}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -767,6 +760,7 @@ class SprottO(DynSys):
 class SprottP(DynSys):
     params = {"a": 2.7}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -787,6 +781,7 @@ class SprottP(DynSys):
 class SprottQ(DynSys):
     params = {"a": 3.1, "b": 0.5}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b):
         x, y, z = Y(0), Y(1), Y(2)
@@ -807,6 +802,7 @@ class SprottQ(DynSys):
 class SprottR(DynSys):
     params = {"a": 0.9, "b": 0.4}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b):
         x, y, z = Y(0), Y(1), Y(2)
@@ -827,6 +823,7 @@ class SprottR(DynSys):
 class SprottS(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -847,6 +844,7 @@ class SprottS(DynSys):
 class SprottMore(DynSys):
     params = {}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t):
         x, y, z = Y(0), Y(1), Y(2)
@@ -860,15 +858,14 @@ class SprottMore(DynSys):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [0, 1, 0]
         row2 = [-1, -sign(z), 0]
-        row3 = [-2 * x * exp(-x ** 2), 2 * y, 0]
+        row3 = [-2 * x * exp(-(x**2)), 2 * y, 0]
         return row1, row2, row3
 
 
 class SprottJerk(DynSys):
-    params = {
-      "mu": 2.017
-    }
+    params = {"mu": 2.017}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, mu):
         x, y, z = Y(0), Y(1), Y(2)
@@ -885,17 +882,14 @@ class SprottJerk(DynSys):
         row3 = [-1, 2 * y, -mu]
         return row1, row2, row3
 
+
 # endregion
 
 
 class Arneodo(DynSys):
-    params = {
-      "a": -5.5,
-      "b": 4.5,
-      "c": 1.0,
-      "d": -1.0
-    }
+    params = {"a": -5.5, "b": 4.5, "c": 1.0, "d": -1.0}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
@@ -914,11 +908,9 @@ class Arneodo(DynSys):
 
 
 class Rucklidge(DynSys):
-    params = {
-      "a": 2.0,
-      "b": 6.7
-    }
+    params = {"a": 2.0, "b": 6.7}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b):
         x, y, z = Y(0), Y(1), Y(2)
@@ -937,13 +929,9 @@ class Rucklidge(DynSys):
 
 
 class HyperRossler(DynSys):
-    params = {
-      "a": 0.25,
-      "b": 3.0,
-      "c": 0.5,
-      "d": 0.05
-    }
+    params = {"a": 0.25, "b": 3.0, "c": 0.5, "d": 0.05}
     n_dim = 4
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
@@ -952,6 +940,7 @@ class HyperRossler(DynSys):
         zdot = b + x * z
         wdot = -c * z + d * w
         return xdot, ydot, zdot, wdot
+
     @staticmethod
     def _jac(Y, t, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
@@ -963,13 +952,9 @@ class HyperRossler(DynSys):
 
 
 class HyperLorenz(DynSys):
-    params = {
-      "a": 10,
-      "b": 2.667,
-      "c": 28,
-      "d": 1.1
-    }
+    params = {"a": 10, "b": 2.667, "c": 28, "d": 1.1}
     n_dim = 4
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
@@ -981,13 +966,9 @@ class HyperLorenz(DynSys):
 
 
 class HyperYangChen(DynSys):
-    params = {
-      "a": 30,
-      "b": 3,
-      "c": 35,
-      "d": 8
-    }
+    params = {"a": 30, "b": 3, "c": 35, "d": 8}
     n_dim = 4
+
     @staticmethod
     def _rhs(Y, t, a=30, b=3, c=35, d=8):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
@@ -999,13 +980,9 @@ class HyperYangChen(DynSys):
 
 
 class HyperYan(DynSys):
-    params = {
-      "a": 37,
-      "b": 3,
-      "c": 26,
-      "d": 38
-    }
+    params = {"a": 37, "b": 3, "c": 26, "d": 38}
     n_dim = 4
+
     @staticmethod
     def _rhs(Y, t, a=37, b=3, c=26, d=38):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
@@ -1017,15 +994,9 @@ class HyperYan(DynSys):
 
 
 class GuckenheimerHolmes(DynSys):
-    params = {
-      "a": 0.4,
-      "b": 20.25,
-      "c": 3,
-      "d": 1.6,
-      "e": 1.7,
-      "f": 0.44
-    }
+    params = {"a": 0.4, "b": 20.25, "c": 3, "d": 1.6, "e": 1.7, "f": 0.44}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d, e, f):
         x, y, z = Y(0), Y(1), Y(2)
@@ -1036,10 +1007,9 @@ class GuckenheimerHolmes(DynSys):
 
 
 class HenonHeiles(DynSys):
-    params = {
-      "lam": 1
-    }
+    params = {"lam": 1}
     n_dim = 4
+
     @staticmethod
     def _rhs(Y, t, lam):
         x, y, px, py = Y(0), Y(1), Y(2), Y(3)
@@ -1060,10 +1030,9 @@ class HenonHeiles(DynSys):
 
 
 class NoseHoover(DynSys):
-    params = {
-      "a": 1.5
-    }
+    params = {"a": 1.5}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -1074,11 +1043,9 @@ class NoseHoover(DynSys):
 
 
 class RikitakeDynamo(DynSys):
-    params = {
-      "a": 1.0,
-      "mu": 1.0
-    }
+    params = {"a": 1.0, "mu": 1.0}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, mu):
         x, y, z = Y(0), Y(1), Y(2)

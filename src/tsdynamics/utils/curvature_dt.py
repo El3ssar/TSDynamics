@@ -26,6 +26,7 @@ class TimeStepEstimate:
     kappa_series : Optional[np.ndarray]
         Per-sample curvature series κ_i for interior points (shape (T-2,)).
     """
+
     delta_t: float
     stride: int
     kappa_percentile: float
@@ -41,7 +42,7 @@ def estimate_curvature_timestep(
     epsilon: float,
     *,
     percentile: float = 95.0,
-    nu: float = 1.0,               # safety factor in (0,1]
+    nu: float = 1.0,  # safety factor in (0,1]
     return_details: bool = True,
 ) -> TimeStepEstimate:
     """
@@ -55,7 +56,9 @@ def estimate_curvature_timestep(
     """
     # ----------- validation -----------
     if not isinstance(y, np.ndarray) or y.ndim != 2:
-        raise ValueError(f"y must be 2D (T, n_dim); got {type(y)} with shape {getattr(y, 'shape', None)}.")
+        raise ValueError(
+            f"y must be 2D (T, n_dim); got {type(y)} with shape {getattr(y, 'shape', None)}."
+        )
     T, d = y.shape
     if T < 3:
         raise ValueError(f"Need at least T >= 3 to form central differences; got T={T}.")
@@ -79,10 +82,10 @@ def estimate_curvature_timestep(
 
     # ----------- central differences on interior points -----------
     y_next = y_scaled[2:]
-    y_mid  = y_scaled[1:-1]
+    y_mid = y_scaled[1:-1]
     y_prev = y_scaled[:-2]
 
-    v = (y_next - y_prev) / (2.0 * dt0)           # velocity
+    v = (y_next - y_prev) / (2.0 * dt0)  # velocity
     a = (y_next - 2.0 * y_mid + y_prev) / (dt0**2)  # acceleration
 
     v2 = np.einsum("ij,ij->i", v, v)
@@ -113,10 +116,12 @@ def estimate_curvature_timestep(
         stride = max(1, T - 1)
         predicted_error = 0.0
     else:
-        delta_t_hat = nu * np.sqrt(2.0 * epsilon / kappa_p)   # <-- CONTINUOUS bound for *integration*
+        delta_t_hat = nu * np.sqrt(
+            2.0 * epsilon / kappa_p
+        )  # <-- CONTINUOUS bound for *integration*
         # Optional: stride only for subsampling current data
         stride = max(1, int(np.floor(delta_t_hat / dt0)))
-        predicted_error = 0.5 * kappa_p * (delta_t_hat ** 2)  # = ν^2 * ε
+        predicted_error = 0.5 * kappa_p * (delta_t_hat**2)  # = ν^2 * ε
 
     # ----------- subsample indices for the current series -----------
     idx = np.arange(0, T, stride, dtype=int)
@@ -129,17 +134,14 @@ def estimate_curvature_timestep(
         kappa_series = kappa
 
     return TimeStepEstimate(
-        delta_t=float(delta_t_hat),         # <-- integration step to USE going forward
-        stride=int(stride),                 # optional decimation of the existing data
+        delta_t=float(delta_t_hat),  # <-- integration step to USE going forward
+        stride=int(stride),  # optional decimation of the existing data
         kappa_percentile=float(kappa_p),
         predicted_error=float(predicted_error),  # ~ ν^2 * ε at the bound
         indices=idx,
         t_mid=t_mid,
         kappa_series=kappa_series,
     )
-
-
-
 
 
 __all__ = ["TimeStepEstimate", "estimate_curvature_timestep"]

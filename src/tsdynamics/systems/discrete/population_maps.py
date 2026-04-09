@@ -4,10 +4,9 @@ import numpy as np
 
 
 class Logistic(DynMap):
-    params = {
-        "r": 3.9
-        }
+    params = {"r": 3.9}
     n_dim = 1
+
     @staticjit
     def _rhs(X, r):
         x = X
@@ -20,10 +19,9 @@ class Logistic(DynMap):
 
 
 class Ricker(DynMap):
-    params = {
-        "a": 3.3
-        }
+    params = {"a": 3.3}
     n_dim = 1
+
     @staticjit
     def _rhs(X, a):
         x = X
@@ -36,11 +34,9 @@ class Ricker(DynMap):
 
 
 class MaynardSmith(DynMap):
-    params = {
-            "a": 0.87,
-            "b": 0.75
-        }
+    params = {"a": 0.87, "b": 0.75}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b):
         x, y = X
@@ -54,4 +50,3 @@ class MaynardSmith(DynMap):
         row1 = [0, 1]
         row2 = [-2 * x, a]
         return row1, row2
-

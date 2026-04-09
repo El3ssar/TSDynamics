@@ -4,11 +4,9 @@ import numpy as np
 
 
 class Henon(DynMap):
-    params = {
-            "a": 1.4,
-            "b": 0.3
-        }
+    params = {"a": 1.4, "b": 0.3}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b):
         x, y = X
@@ -25,11 +23,9 @@ class Henon(DynMap):
 
 
 class Ulam(DynMap):
-    params = {
-        "a": 1.0,
-        "b": 2.0
-    }
+    params = {"a": 1.0, "b": 2.0}
     n_dim = 1
+
     @staticjit
     def _rhs(X, a, b):
         x = X
@@ -40,13 +36,11 @@ class Ulam(DynMap):
         x = X
         return [-2 * b * x]
 
+
 class Ikeda(DynMap):
-    params = {
-            "a": 0.4,
-            "b": 6.0,
-            "u": 0.9
-        }
+    params = {"a": 0.4, "b": 6.0, "u": 0.9}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b, u):
         x, y = X
@@ -59,8 +53,8 @@ class Ikeda(DynMap):
     def _jac(X, a, b, u):
         x, y = X
         t = a - b / (1 + x**2 + y**2)
-        dtdx = -12 * x / (1 + x**2 + y**2)**2
-        dtdy = -12 * y / (1 + x**2 + y**2)**2
+        dtdx = -12 * x / (1 + x**2 + y**2) ** 2
+        dtdy = -12 * y / (1 + x**2 + y**2) ** 2
 
         dxpdx = u * np.cos(t) - u * x * np.sin(t) * dtdx - u * y * np.cos(t) * dtdx
         dxpdy = -u * x * np.sin(t) * dtdy - u * y * np.cos(t) * dtdy - u * np.sin(t)
@@ -75,14 +69,10 @@ class Ikeda(DynMap):
 
 
 class Tinkerbell(DynMap):
-    params = {
-            "a": 0.9,
-            "b": -0.6013,
-            "c": 2.0,
-            "d": 0.5
-        }
+    params = {"a": 0.9, "b": -0.6013, "c": 2.0, "d": 0.5}
     n_dim = 2
     initial_conds = np.array([-0.72, -0.64])  # random [0,1)^2 ICs always escape the basin
+
     @staticjit
     def _rhs(X, a, b, c, d):
         x, y = X
@@ -101,6 +91,7 @@ class Tinkerbell(DynMap):
 class Gingerbreadman(DynMap):
     params = {}
     n_dim = 2
+
     @staticjit
     def _rhs(X):
         x, y = X
@@ -117,12 +108,9 @@ class Gingerbreadman(DynMap):
 
 
 class Zaslavskii(DynMap):
-    params = {
-            "eps": 5.0,
-            "nu": 0.2,
-            "r": 2.0
-        }
+    params = {"eps": 5.0, "nu": 0.2, "r": 2.0}
     n_dim = 2
+
     @staticjit
     def _rhs(X, eps, nu, r):
         x, y = X
@@ -149,10 +137,9 @@ class Zaslavskii(DynMap):
 
 
 class Chirikov(DynMap):
-    params = {
-            "k": 0.971635
-        }
+    params = {"k": 0.971635}
     n_dim = 2
+
     @staticjit
     def _rhs(X, k):
         p, x = X
@@ -167,18 +154,12 @@ class Chirikov(DynMap):
         row2 = [1, 1]
         return row1, row2
 
+
 # Hyperchaotic maps
 class FoldedTowel(DynMap):
-    params = {
-            "a": 3.8,
-            "b": 0.05,
-            "c": 0.35,
-            "d": 0.1,
-            "e": 1.9,
-            "f": 3.78,
-            "g": 0.2
-        }
+    params = {"a": 3.8, "b": 0.05, "c": 0.35, "d": 0.1, "e": 1.9, "f": 3.78, "g": 0.2}
     n_dim = 3
+
     @staticjit
     def _rhs(X, a, b, c, d, e, f, g):
         x, y, z = X
@@ -190,31 +171,26 @@ class FoldedTowel(DynMap):
     @staticjit
     def _jac(X, a, b, c, d, e, f, g):
         x, y, z = X
-        row1 = [
-                a * (1 - 2 * x),
-                -b * (1 - 2 * z),
-                2 * b * (y - c)
-                ]
+        row1 = [a * (1 - 2 * x), -b * (1 - 2 * z), 2 * b * (y - c)]
 
         row2 = [
-                -d * e * ((y - c) * (1 + 2 * z) - 1),
-                d * (1 + 2 * z) * (1 - e * x),
-                2 * d * (y - c) * (1 - e * x)
-                ]
+            -d * e * ((y - c) * (1 + 2 * z) - 1),
+            d * (1 + 2 * z) * (1 - e * x),
+            2 * d * (y - c) * (1 - e * x),
+        ]
 
-        row3 = [0,
-                g,
-                f * (1 - 2 * z)
-                ]
+        row3 = [0, g, f * (1 - 2 * z)]
 
         return row1, row2, row3
 
+
 class GeneralizedHenon(DynMap):
     params = {
-            "a": 1.9,
-            "b": 0.03,
-        }
+        "a": 1.9,
+        "b": 0.03,
+    }
     n_dim = 3
+
     @staticjit
     def _rhs(X, a, b):
         x, y, z = X

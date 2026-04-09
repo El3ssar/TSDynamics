@@ -1,22 +1,23 @@
 from tsdynamics.base import DynSys
+
 # import numpy as np
 from symengine import sin, cos, exp, pi
 
 
-
 class GlycolyticOscillation(DynSys):
     params = {
-      "d": 0.0,
-      "k": 4.422,
-      "l1": 500000000.0,
-      "l2": 100,
-      "nu": 1.0,
-      "q1": 50,
-      "q2": 0.02,
-      "s1": 22.2222,
-      "s2": 22.2222
+        "d": 0.0,
+        "k": 4.422,
+        "l1": 500000000.0,
+        "l2": 100,
+        "nu": 1.0,
+        "q1": 50,
+        "q2": 0.02,
+        "s1": 22.2222,
+        "s2": 22.2222,
     }
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, d, k, l1, l2, nu, q1, q2, s1, s2):
         a, b, c = Y(0), Y(1), Y(2)
@@ -58,13 +59,9 @@ class Oregonator(DynSys):
 
 
 class IsothermalChemical(DynSys):
-    params = {
-      "delta": 1.0,
-      "kappa": 2.5,
-      "mu": 0.29786,
-      "sigma": 0.013
-    }
+    params = {"delta": 1.0, "kappa": 2.5, "mu": 0.29786, "sigma": 0.013}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, delta, kappa, mu, sigma):
         alpha, beta, gamma = Y(0), Y(1), Y(2)
@@ -75,13 +72,9 @@ class IsothermalChemical(DynSys):
 
 
 class ForcedBrusselator(DynSys):
-    params = {
-      "a": 0.4,
-      "b": 1.2,
-      "f": 0.05,
-      "w": 0.81
-    }
+    params = {"a": 0.4, "b": 1.2, "f": 0.05, "w": 0.81}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, f, w):
         x, y, z = Y(0), Y(1), Y(2)
@@ -97,23 +90,24 @@ class ForcedBrusselator(DynSys):
 
 class CircadianRhythm(DynSys):
     params = {
-      "Ki": 1,
-      "k": 0.5,
-      "k1": 0.3,
-      "k2": 0.15,
-      "kd": 1.4,
-      "kdn": 0.4,
-      "km": 0.4,
-      "ks": 1,
-      "n": 4,
-      "vd": 6,
-      "vdn": 1.5,
-      "vm": 0.7,
-      "vmax": 4.7,
-      "vmin": 1.0,
-      "vs": 6
+        "Ki": 1,
+        "k": 0.5,
+        "k1": 0.3,
+        "k2": 0.15,
+        "kd": 1.4,
+        "kdn": 0.4,
+        "km": 0.4,
+        "ks": 1,
+        "n": 4,
+        "vd": 6,
+        "vdn": 1.5,
+        "vm": 0.7,
+        "vmax": 4.7,
+        "vmin": 1.0,
+        "vs": 6,
     }
     n_dim = 5
+
     @staticmethod
     def _rhs(
         Y,
@@ -150,25 +144,25 @@ class CircadianRhythm(DynSys):
 
 class CaTwoPlus(DynSys):
     params = {
-      "K2": 0.1,
-      "K5": 0.3194,
-      "Ka": 0.1,
-      "Kd": 1,
-      "Ky": 0.3,
-      "Kz": 0.6,
-      "V0": 2,
-      "V1": 2,
-      "V4": 3,
-      "Vm2": 6,
-      "Vm3": 30,
-      "Vm5": 50,
-      "beta": 0.65,
-      "eps": 13,
-      "k": 10,
-      "kf": 1,
-      "m": 2,
-      "n": 4,
-      "p": 1
+        "K2": 0.1,
+        "K5": 0.3194,
+        "Ka": 0.1,
+        "Kd": 1,
+        "Ky": 0.3,
+        "Kz": 0.6,
+        "V0": 2,
+        "V1": 2,
+        "V4": 3,
+        "Vm2": 6,
+        "Vm3": 30,
+        "Vm5": 50,
+        "beta": 0.65,
+        "eps": 13,
+        "k": 10,
+        "kf": 1,
+        "m": 2,
+        "n": 4,
+        "p": 1,
     }
     n_dim = 3
 
@@ -177,16 +171,8 @@ class CaTwoPlus(DynSys):
         z, y, a = Y(0), Y(1), Y(2)
         Vin = V0 + V1 * beta
         V2 = Vm2 * (z**2) / (K2**2 + z**2)
-        V3 = (
-            (Vm3 * (z**m) / (Kz**m + z**m))
-            * (y**2 / (Ky**2 + y**2))
-            * (a**4 / (Ka**4 + a**4))
-        )
-        V5 = (
-            Vm5
-            * (a**p / (K5**p + a**p))
-            * (z**n / (Kd**n + z**n))
-        )
+        V3 = (Vm3 * (z**m) / (Kz**m + z**m)) * (y**2 / (Ky**2 + y**2)) * (a**4 / (Ka**4 + a**4))
+        V5 = Vm5 * (a**p / (K5**p + a**p)) * (z**n / (Kd**n + z**n))
         zdot = Vin - V2 + V3 + kf * y - k * z
         ydot = V2 - V3 - kf * y
         adot = beta * V4 - V5 - eps * a
@@ -195,20 +181,21 @@ class CaTwoPlus(DynSys):
 
 class ExcitableCell(DynSys):
     params = {
-      "gi": 1800,
-      "gkc": 11,
-      "gkv": 1700,
-      "gl": 7,
-      "kc": 0.183333,
-      "rho": 0.27,
-      "vc": 100,
-      "vi": 100,
-      "vk": -75,
-      "vl": -40,
-      "vm": -50,
-      "vn": -30
+        "gi": 1800,
+        "gkc": 11,
+        "gkv": 1700,
+        "gl": 7,
+        "kc": 0.183333,
+        "rho": 0.27,
+        "vc": 100,
+        "vi": 100,
+        "vk": -75,
+        "vl": -40,
+        "vm": -50,
+        "vn": -30,
     }
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, gi, gkc, gkv, gl, kc, rho, vc, vi, vk, vl, vm, vn):
         v, n, c = Y(0), Y(1), Y(2)
@@ -241,17 +228,17 @@ class ExcitableCell(DynSys):
 
 class CellCycle(DynSys):
     params = {
-      "K": 0.01,
-      "Kc": 0.5,
-      "Kd1": 0.02,
-      "Kim": 0.65,
-      "V2": 0.15,
-      "V4": 0.05,
-      "Vm1": 0.3,
-      "Vm3": 0.1,
-      "kd1": 0.001,
-      "vd": 0.025,
-      "vi": 0.05
+        "K": 0.01,
+        "Kc": 0.5,
+        "Kd1": 0.02,
+        "Kim": 0.65,
+        "V2": 0.15,
+        "V4": 0.05,
+        "Vm1": 0.3,
+        "Vm3": 0.1,
+        "kd1": 0.001,
+        "vd": 0.025,
+        "vi": 0.05,
     }
     n_dim = 6
 
@@ -284,16 +271,9 @@ class CellCycle(DynSys):
 
 
 class HindmarshRose(DynSys):
-    params = {
-      "a": 0.49,
-      "b": 1.0,
-      "c": 0.0322,
-      "d": 1.0,
-      "s": 1.0,
-      "tx": 0.03,
-      "tz": 0.8
-    }
+    params = {"a": 0.49, "b": 1.0, "c": 0.0322, "d": 1.0, "s": 1.0, "tx": 0.03, "tz": 0.8}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d, s, tx, tz):
         x, y, z = Y(0), Y(1), Y(2)
@@ -305,19 +285,16 @@ class HindmarshRose(DynSys):
     @staticmethod
     def _jac(Y, t, a, b, c, d, s, tx, tz):
         x, y, z = Y(0), Y(1), Y(2)
-        row1 = [-1 / tx - 3 * a / tx * x ** 2 + 2 * b / tx * x, 1 / tx, 1 / tx]
-        row2 = [-3 * a * x ** 2 - 2 * (d - b) * x, 0, 1]
+        row1 = [-1 / tx - 3 * a / tx * x**2 + 2 * b / tx * x, 1 / tx, 1 / tx]
+        row2 = [-3 * a * x**2 - 2 * (d - b) * x, 0, 1]
         row3 = [-s / tz, 0, -1 / tz - c / tz]
         return row1, row2, row3
 
 
 class ForcedVanDerPol(DynSys):
-    params = {
-      "a": 1.2,
-      "mu": 8.53,
-      "w": 0.63
-    }
+    params = {"a": 1.2, "mu": 8.53, "w": 0.63}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, mu, w):
         x, y, z = Y(0), Y(1), Y(2)
@@ -333,14 +310,15 @@ class ForcedVanDerPol(DynSys):
 
 class ForcedFitzHughNagumo(DynSys):
     params = {
-      "a": 0.7,
-      "b": 0.8,
-      "curr": 0.965,
-      "f": 0.4008225,
-      "gamma": 0.08,
-      "omega": 0.043650793650793655
+        "a": 0.7,
+        "b": 0.8,
+        "curr": 0.965,
+        "f": 0.4008225,
+        "gamma": 0.08,
+        "omega": 0.043650793650793655,
     }
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, curr, f, gamma, omega):
         v, w, z = Y(0), Y(1), Y(2)
@@ -355,24 +333,14 @@ class ForcedFitzHughNagumo(DynSys):
 
 
 class TurchinHanski(DynSys):
-    params = {
-      "a": 8,
-      "d": 0.04,
-      "e": 0.5,
-      "g": 0.1,
-      "h": 0.8,
-      "r": 8.12,
-      "s": 1.25
-    }
+    params = {"a": 8, "d": 0.04, "e": 0.5, "g": 0.1, "h": 0.8, "r": 8.12, "s": 1.25}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, d, e, g, h, r, s):
         n, p, z = Y(0), Y(1), Y(2)
         ndot = (
-            r * (1 - e * sin(z)) * n
-            - r * (n**2)
-            - g * (n**2) / (n**2 + h**2)
-            - a * n * p / (n + d)
+            r * (1 - e * sin(z)) * n - r * (n**2) - g * (n**2) / (n**2 + h**2) - a * n * p / (n + d)
         )
         pdot = s * (1 - e * sin(z)) * p - s * (p**2) / n
         zdot = 2 * pi
@@ -384,15 +352,9 @@ class TurchinHanski(DynSys):
 
 
 class HastingsPowell(DynSys):
-    params = {
-      "a1": 5.0,
-      "a2": 0.1,
-      "b1": 3.0,
-      "b2": 2.0,
-      "d1": 0.4,
-      "d2": 0.01
-    }
+    params = {"a1": 5.0, "a2": 0.1, "b1": 3.0, "b2": 2.0, "d1": 0.4, "d2": 0.01}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a1, a2, b1, b2, d1, d2):
         x, y, z = Y(0), Y(1), Y(2)
@@ -404,16 +366,17 @@ class HastingsPowell(DynSys):
 
 class ItikBanksTumor(DynSys):
     params = {
-      "a12": 1,
-      "a13": 2.5,
-      "a21": 1.5,
-      "a31": 0.2,
-      "d3": 0.5,
-      "k3": 1,
-      "r2": 0.6,
-      "r3": 4.5
+        "a12": 1,
+        "a13": 2.5,
+        "a21": 1.5,
+        "a31": 0.2,
+        "d3": 0.5,
+        "k3": 1,
+        "r2": 0.6,
+        "r3": 4.5,
     }
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a12, a13, a21, a31, d3, k3, r2, r3):
         x, y, z = Y(0), Y(1), Y(2)
@@ -421,4 +384,3 @@ class ItikBanksTumor(DynSys):
         ydot = r2 * y * (1 - y) - a21 * x * y
         zdot = r3 * x * z / (x + k3) - a31 * x * z - d3 * z
         return xdot, ydot, zdot
-

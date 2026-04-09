@@ -2,23 +2,24 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
-from jitcode import jitcode, jitcode_lyap, y, t   # pip install jitcode
+from jitcode import jitcode, jitcode_lyap, y, t  # pip install jitcode
 from .base import BaseDyn
 
 
 # Map SciPy-style names to JiTCODE integrators
 _INTEGRATOR_MAP = {
-    None:        "dopri5",
-    "auto":      "dopri5",
-    "dopri5":    "dopri5",
-    "RK45":      "dopri5",
-    "dop853":    "dop853",
-    "DOP853":    "dop853",
-    "lsoda":     "lsoda",
-    "LSODA":     "lsoda",
-    "vode":      "vode",
-    "VODE":      "vode",
+    None: "dopri5",
+    "auto": "dopri5",
+    "dopri5": "dopri5",
+    "RK45": "dopri5",
+    "dop853": "dop853",
+    "DOP853": "dop853",
+    "lsoda": "lsoda",
+    "LSODA": "lsoda",
+    "vode": "vode",
+    "VODE": "vode",
 }
+
 
 class DynSys(BaseDyn, ABC):
     """Class for continuous dynamical systems (ODEs) using JiTCODE."""
@@ -76,7 +77,6 @@ class DynSys(BaseDyn, ABC):
         else:
             self.initial_conds = np.array(initial_conds, copy=True)
 
-
         # Output grid
         t_eval = self.generate_timesteps(dt=dt, steps=steps, final_time=final_time)
         if t_eval[0] < 0.0:
@@ -85,8 +85,8 @@ class DynSys(BaseDyn, ABC):
         ode = jitcode(self.rhs(y, t))
 
         # Compile the RHS (and Jacobian if set)
-        ode.generate_f_C()          # generate & compile C code for f
-        ode.generate_jac_C()    # compile Jacobian if provided
+        ode.generate_f_C()  # generate & compile C code for f
+        ode.generate_jac_C()  # compile Jacobian if provided
 
         # Set integrator (maps to SciPy’s ODE integrators)
         integ_name = _INTEGRATOR_MAP.get(method, method)
@@ -108,8 +108,8 @@ class DynSys(BaseDyn, ABC):
 
         # Helper: evaluate CHS spline when target not ahead
         def _eval_spline(tk: float) -> np.ndarray:
-            spline = ode.get_state()                         # CubicHermiteSpline
-            return np.asarray(spline.get_state([tk]))[0]     # shape (n_dim,)
+            spline = ode.get_state()  # CubicHermiteSpline
+            return np.asarray(spline.get_state([tk]))[0]  # shape (n_dim,)
 
         for k in range(i0, t_eval.size):
             tk = float(t_eval[k])
@@ -226,7 +226,7 @@ class DynSys(BaseDyn, ABC):
         T = 0.0
         while T < burn_in:
             Tn = min(burn_in, T + dt)
-            _ = ode.integrate(Tn)          # may return (state, lyaps) or (state, lyaps, lyap_vectors)
+            _ = ode.integrate(Tn)  # may return (state, lyaps) or (state, lyaps, lyap_vectors)
             T = Tn
 
         # Production: time-weighted average of local exponents
@@ -241,7 +241,7 @@ class DynSys(BaseDyn, ABC):
             # Robust extraction of local LEs across JiTCODE versions
             if isinstance(ret, tuple):
                 if len(ret) >= 2:
-                    local_lyaps = ret[1]   # (state, lyaps, [lyap_vectors])
+                    local_lyaps = ret[1]  # (state, lyaps, [lyap_vectors])
                 else:
                     local_lyaps = ret
             else:

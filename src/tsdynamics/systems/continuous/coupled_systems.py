@@ -3,17 +3,9 @@ from symengine import exp, cosh, sinh, tanh, sign
 
 
 class Sakarya(DynSys):
-    params = {
-      "a": -1.0,
-      "b": 1.0,
-      "c": 1.0,
-      "h": 1.0,
-      "p": 1.0,
-      "q": 0.4,
-      "r": 0.3,
-      "s": 1.0
-    }
+    params = {"a": -1.0, "b": 1.0, "c": 1.0, "h": 1.0, "p": 1.0, "q": 0.4, "r": 0.3, "s": 1.0}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, h, p, q, r, s):
         x, y, z = Y(0), Y(1), Y(2)
@@ -32,16 +24,9 @@ class Sakarya(DynSys):
 
 
 class Bouali2(DynSys):
-    params = {
-      "a": 1.0,
-      "b": -0.3,
-      "bb": 1.0,
-      "c": 0.05,
-      "g": 1.0,
-      "m": 1,
-      "y0": 4.0
-    }
+    params = {"a": 1.0, "b": -0.3, "bb": 1.0, "c": 0.05, "g": 1.0, "m": 1, "y0": 4.0}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, bb, c, g, m, y0):
         x, y, z = Y(0), Y(1), Y(2)
@@ -54,18 +39,15 @@ class Bouali2(DynSys):
     def _jac(Y, t, a, b, bb, c, g, m, y0):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [a * y0 - a * y, -a * x, -b]
-        row2 = [2 * g * y * x, g * x ** 2 - g, 0]
-        row3 = [-1.5 * m + m * bb * z, 0, m * bb * x - c ]
+        row2 = [2 * g * y * x, g * x**2 - g, 0]
+        row3 = [-1.5 * m + m * bb * z, 0, m * bb * x - c]
         return row1, row2, row3
 
 
 class LuChenCheng(DynSys):
-    params = {
-      "a": -10,
-      "b": -4,
-      "c": 18.1
-    }
+    params = {"a": -10, "b": -4, "c": 18.1}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
@@ -84,12 +66,9 @@ class LuChenCheng(DynSys):
 
 
 class LuChen(DynSys):
-    params = {
-      "a": 36,
-      "b": 3,
-      "c": 18
-    }
+    params = {"a": 36, "b": 3, "c": 18}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
@@ -108,12 +87,9 @@ class LuChen(DynSys):
 
 
 class QiChen(DynSys):
-    params = {
-      "a": 38,
-      "b": 2.666,
-      "c": 80
-    }
+    params = {"a": 38, "b": 2.666, "c": 80}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
@@ -132,14 +108,9 @@ class QiChen(DynSys):
 
 
 class ZhouChen(DynSys):
-    params = {
-      "a": 2.97,
-      "b": 0.15,
-      "c": -3.0,
-      "d": 1,
-      "e": -8.78
-    }
+    params = {"a": 2.97, "b": 0.15, "c": -3.0, "d": 1, "e": -8.78}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d, e):
         x, y, z = Y(0), Y(1), Y(2)
@@ -158,11 +129,9 @@ class ZhouChen(DynSys):
 
 
 class BurkeShaw(DynSys):
-    params = {
-      "e": 13,
-      "n": 10
-    }
+    params = {"e": 13, "n": 10}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, e, n):
         x, y, z = Y(0), Y(1), Y(2)
@@ -181,12 +150,9 @@ class BurkeShaw(DynSys):
 
 
 class Chen(DynSys):
-    params = {
-      "a": 35,
-      "b": 3,
-      "c": 28
-    }
+    params = {"a": 35, "b": 3, "c": 28}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
@@ -205,12 +171,9 @@ class Chen(DynSys):
 
 
 class ChenLee(DynSys):
-    params = {
-      "a": 5,
-      "b": -10,
-      "c": -0.38
-    }
+    params = {"a": 5, "b": -10, "c": -0.38}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
@@ -229,15 +192,9 @@ class ChenLee(DynSys):
 
 
 class WangSun(DynSys):
-    params = {
-      "a": 0.2,
-      "b": -0.01,
-      "d": -0.4,
-      "e": -1.0,
-      "f": -1.0,
-      "q": 1.0
-    }
+    params = {"a": 0.2, "b": -0.01, "d": -0.4, "e": -1.0, "f": -1.0, "q": 1.0}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, d, e, f, q):
         x, y, z = Y(0), Y(1), Y(2)
@@ -256,13 +213,9 @@ class WangSun(DynSys):
 
 
 class YuWang(DynSys):
-    params = {
-      "a": 10,
-      "b": 40,
-      "c": 2,
-      "d": 2.5
-    }
+    params = {"a": 10, "b": 40, "c": 2, "d": 2.5}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
@@ -281,13 +234,9 @@ class YuWang(DynSys):
 
 
 class YuWang2(DynSys):
-    params = {
-      "a": 10,
-      "b": 30,
-      "c": 2,
-      "d": 2.5
-    }
+    params = {"a": 10, "b": 30, "c": 2, "d": 2.5}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
@@ -306,10 +255,9 @@ class YuWang2(DynSys):
 
 
 class SanUmSrisuchinwong(DynSys):
-    params = {
-      "a": 2
-    }
+    params = {"a": 2}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
@@ -328,15 +276,9 @@ class SanUmSrisuchinwong(DynSys):
 
 
 class DequanLi(DynSys):
-    params = {
-      "a": 40,
-      "c": 1.833,
-      "d": 0.16,
-      "eps": 0.65,
-      "f": 20,
-      "k": 55
-    }
+    params = {"a": 40, "c": 1.833, "d": 0.16, "eps": 0.65, "f": 20, "k": 55}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, c, d, eps, f, k):
         x, y, z = Y(0), Y(1), Y(2)
@@ -352,4 +294,3 @@ class DequanLi(DynSys):
         row2 = [k - z, f, -x]
         row3 = [y - 2 * eps * x, x, c]
         return row1, row2, row3
-

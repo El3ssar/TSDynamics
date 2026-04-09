@@ -5,16 +5,17 @@ from typing import Tuple
 
 __all__ = ["SagittaDt", "estimate_dt_from_sagitta"]
 
+
 @dataclass(frozen=True)
 class SagittaDt:
-    delta_t: float                 # Δt* = stride * base_dt
-    stride: int                    # stride m*
-    percentile_value: float        # achieved S_p(m*) at the chosen stride
-    indices: np.ndarray            # decimation indices for current data (include last)
-    p: float                       # percentile used (kept for backward-compat)
-    epsilon: float                 # tolerance used (kept for backward-compat)
-    searched_ms: np.ndarray        # candidate strides evaluated
-    notes: str = ""                # info / warnings
+    delta_t: float  # Δt* = stride * base_dt
+    stride: int  # stride m*
+    percentile_value: float  # achieved S_p(m*) at the chosen stride
+    indices: np.ndarray  # decimation indices for current data (include last)
+    p: float  # percentile used (kept for backward-compat)
+    epsilon: float  # tolerance used (kept for backward-compat)
+    searched_ms: np.ndarray  # candidate strides evaluated
+    notes: str = ""  # info / warnings
 
 
 def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: float) -> float:
@@ -25,7 +26,7 @@ def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: fl
     centers = np.arange(span, n - span, span)  # i = q * span
 
     A = samples[centers - span, :]  # y_{i-span}
-    B = samples[centers, :]         # y_i
+    B = samples[centers, :]  # y_i
     C = samples[centers + span, :]  # y_{i+span}
 
     AC = C - A
@@ -117,8 +118,8 @@ def _estimate_embedding_dim_fnn(
             break
 
         # build embeddings (contiguous views)
-        Xm = np.column_stack([x[i * lag: i * lag + Tm] for i in range(m)])
-        Xm1 = np.column_stack([x[i * lag: i * lag + Tm1] for i in range(m + 1)])
+        Xm = np.column_stack([x[i * lag : i * lag + Tm] for i in range(m)])
+        Xm1 = np.column_stack([x[i * lag : i * lag + Tm1] for i in range(m + 1)])
 
         # pool + test indices (uniform subsampling)
         pool_size = min(POOL_SIZE, Tm)
@@ -132,6 +133,7 @@ def _estimate_embedding_dim_fnn(
 
         # distances in m-dim between test and pool
         from scipy.spatial.distance import cdist
+
         Dm = cdist(Xm[test_idx], Xm[pool_idx], metric="euclidean")
 
         # apply Theiler window per row (mask temporal neighbors)
@@ -183,7 +185,9 @@ def _estimate_embedding_dim_fnn(
     return int(max(2, chosen_m))
 
 
-def _compute_sagitta_stats(samples: np.ndarray, span: int, percentile_p: float) -> tuple[float, float]:
+def _compute_sagitta_stats(
+    samples: np.ndarray, span: int, percentile_p: float
+) -> tuple[float, float]:
     """
     Return (sagitta_percentile, chord_median) for triples at a given span.
     """
@@ -235,7 +239,9 @@ def _takens_embedding(y: np.ndarray, lag: int, embed_dim: int) -> np.ndarray:
     n_embedded = n_samples - (embed_dim - 1) * lag
 
     if n_embedded <= 0:
-        raise ValueError(f"Not enough samples for embedding: need > {(embed_dim - 1) * lag}, got {n_samples}")
+        raise ValueError(
+            f"Not enough samples for embedding: need > {(embed_dim - 1) * lag}, got {n_samples}"
+        )
 
     embedded = np.zeros((n_embedded, embed_dim))
     for i in range(embed_dim):
@@ -314,7 +320,9 @@ def estimate_dt_from_sagitta(
     embedding_notes = ""
     if needs_embedding:
         if n_samples_original < 50:
-            raise ValueError(f"Need at least 50 samples for 1D embedding, got {n_samples_original}.")
+            raise ValueError(
+                f"Need at least 50 samples for 1D embedding, got {n_samples_original}."
+            )
 
         print("Need to apply Takens embedding")
 
@@ -352,7 +360,9 @@ def estimate_dt_from_sagitta(
     # -------- per-feature σ-normalization (scale invariance) --------
     y = np.asarray(y, dtype=float)
     feature_std = y.std(axis=0, ddof=1)
-    feature_std[~np.isfinite(feature_std) | (feature_std == 0.0)] = 1.0 # when not finite or zero, set to 1
+    feature_std[~np.isfinite(feature_std) | (feature_std == 0.0)] = (
+        1.0  # when not finite or zero, set to 1
+    )
     normalized_values = y / feature_std  # shape (n_samples, n_dim)
 
     samples_for_sagitta = normalized_values
@@ -377,7 +387,7 @@ def estimate_dt_from_sagitta(
             p=float(percentile),
             epsilon=float(epsilon),
             searched_ms=searched_spans,
-            notes=notes + " Too few samples; returning Δt0."
+            notes=notes + " Too few samples; returning Δt0.",
         )
 
     use_relative = needs_embedding  # relative sagitta only for 1D (embedded); d>1 unchanged
@@ -390,11 +400,10 @@ def estimate_dt_from_sagitta(
             s_p, chord_med = _compute_sagitta_stats(samples_for_sagitta, span, percentile)
             denom = chord_med if (chord_med > 1e-12 and np.isfinite(chord_med)) else 1.0
             rel = s_p / denom
-            return (rel <= epsilon), rel   # interpret epsilon as RELATIVE tolerance in 1D case
+            return (rel <= epsilon), rel  # interpret epsilon as RELATIVE tolerance in 1D case
         else:
             val = _compute_sagitta_percentile(samples_for_sagitta, span, percentile)
-            return (val <= epsilon), val   # keep absolute criterion for d>1 (backward-compatible)
-
+            return (val <= epsilon), val  # keep absolute criterion for d>1 (backward-compatible)
 
     # -------- coarse search (exponential growth) --------
     evaluated = []
@@ -420,7 +429,7 @@ def estimate_dt_from_sagitta(
             p=float(percentile),
             epsilon=float(epsilon),
             searched_ms=searched_spans,
-            notes=notes + " span=1 exceeds ε; coarsen_only=True so Δt*=Δt0."
+            notes=notes + " span=1 exceeds ε; coarsen_only=True so Δt*=Δt0.",
         )
 
     # grow span until it fails or we hit max_span
@@ -466,7 +475,9 @@ def estimate_dt_from_sagitta(
     # -------- finalize single return --------
     delta_t_star = chosen_stride * dt0
     evaluated_sorted = np.array(sorted(evaluated, key=lambda x: x[0]), dtype=float)
-    searched_spans = evaluated_sorted[:, 0].astype(int) if evaluated_sorted.size else np.array([1], dtype=int)
+    searched_spans = (
+        evaluated_sorted[:, 0].astype(int) if evaluated_sorted.size else np.array([1], dtype=int)
+    )
 
     return SagittaDt(
         delta_t=float(delta_t_star),
@@ -476,5 +487,5 @@ def estimate_dt_from_sagitta(
         p=float(percentile),
         epsilon=float(epsilon),
         searched_ms=searched_spans,
-        notes=notes
+        notes=notes,
     )

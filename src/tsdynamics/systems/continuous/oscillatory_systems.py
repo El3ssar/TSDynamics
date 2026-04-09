@@ -3,13 +3,10 @@ import numpy as np
 from symengine import pi, sin, cos, sign
 
 
-
 class ShimizuMorioka(DynSys):
-    params = {
-      "a": 0.85,
-      "b": 0.5
-    }
+    params = {"a": 0.85, "b": 0.5}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b):
         x, y, z = Y(0), Y(1), Y(2)
@@ -28,12 +25,9 @@ class ShimizuMorioka(DynSys):
 
 
 class GenesioTesi(DynSys):
-    params = {
-      "a": 0.44,
-      "b": 1.1,
-      "c": 1
-    }
+    params = {"a": 0.44, "b": 1.1, "c": 1}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
@@ -52,12 +46,9 @@ class GenesioTesi(DynSys):
 
 
 class MooreSpiegel(DynSys):
-    params = {
-      "a": 10,
-      "b": 4,
-      "eps": 9
-    }
+    params = {"a": 10, "b": 4, "eps": 9}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, eps):
         x, y, z = Y(0), Y(1), Y(2)
@@ -76,11 +67,9 @@ class MooreSpiegel(DynSys):
 
 
 class AnishchenkoAstakhov(DynSys):
-    params = {
-      "eta": 0.5,
-      "mu": 1.2
-    }
+    params = {"eta": 0.5, "mu": 1.2}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, eta, mu):
         x, y, z = Y(0), Y(1), Y(2)
@@ -91,46 +80,32 @@ class AnishchenkoAstakhov(DynSys):
 
 
 class Aizawa(DynSys):
-    params = {
-      "a": 0.95,
-      "b": 0.7,
-      "c": 0.6,
-      "d": 3.5,
-      "e": 0.25,
-      "f": 0.1
-    }
+    params = {"a": 0.95, "b": 0.7, "c": 0.6, "d": 3.5, "e": 0.25, "f": 0.1}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d, e, f):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = x * z - b * x - d * y
         ydot = d * x + y * z - b * y
-        zdot = (
-            c
-            + a * z
-            - (z**3) / 3
-            - x**2
-            - y**2
-            - e * z * x**2
-            - e * z * y**2
-            + f * z * x**3
-        )
+        zdot = c + a * z - (z**3) / 3 - x**2 - y**2 - e * z * x**2 - e * z * y**2 + f * z * x**3
         return xdot, ydot, zdot
 
 
 class StickSlipOscillator(DynSys):
     params = {
-      "a": 1,
-      "alpha": 0.3,
-      "b": 1,
-      "beta": 0.3,
-      "eps": 0.05,
-      "gamma": 1.0,
-      "t0": 0.3,
-      "vs": 0.4,
-      "w": 2
+        "a": 1,
+        "alpha": 0.3,
+        "b": 1,
+        "beta": 0.3,
+        "eps": 0.05,
+        "gamma": 1.0,
+        "t0": 0.3,
+        "vs": 0.4,
+        "w": 2,
     }
     n_dim = 3
+
     def _t(self, v):
         return self.t0 * sign(v) - self.alpha * v + self.beta * v**3
 
@@ -149,21 +124,14 @@ class StickSlipOscillator(DynSys):
 
 
 class Torus(DynSys):
-    params = {
-      "a": 0.5,
-      "n": 15.3,
-      "r": 1
-    }
+    params = {"a": 0.5, "n": 15.3, "r": 1}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, n, r):
         x, y, z = Y(0), Y(1), Y(2)
-        xdot = (-a * n * sin(n * t)) * cos(t) - (r + a * cos(n * t)) * sin(
-            t
-        )
-        ydot = (-a * n * sin(n * t)) * sin(t) + (r + a * cos(n * t)) * cos(
-            t
-        )
+        xdot = (-a * n * sin(n * t)) * cos(t) - (r + a * cos(n * t)) * sin(t)
+        ydot = (-a * n * sin(n * t)) * sin(t) + (r + a * cos(n * t)) * cos(t)
         zdot = a * n * cos(n * t)
         return xdot, ydot, zdot
 

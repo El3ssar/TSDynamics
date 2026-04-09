@@ -4,12 +4,9 @@ import numpy as np
 
 
 class Bogdanov(DynMap):
-    params = {
-            "eps": 0.0,
-            "k": 1.2,
-            "mu": 0.0
-        }
+    params = {"eps": 0.0, "k": 1.2, "mu": 0.0}
     n_dim = 2
+
     @staticjit
     def _rhs(X, eps, k, mu):
         x, y = X
@@ -26,13 +23,9 @@ class Bogdanov(DynMap):
 
 
 class Svensson(DynMap):
-    params = {
-            "a": 1.5,
-            "b": -1.8,
-            "c": 1.6,
-            "d": 0.9
-        }
+    params = {"a": 1.5, "b": -1.8, "c": 1.6, "d": 0.9}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b, c, d):
         x, y = X
@@ -47,12 +40,11 @@ class Svensson(DynMap):
         row2 = [-a * c * np.sin(a * x), -b * np.sin(b * y)]
         return row1, row2
 
+
 class Bedhead(DynMap):
-    params = {
-            "a": -0.67,
-            "b":  0.83
-        }
+    params = {"a": -0.67, "b": 0.83}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b):
         x, y = X
@@ -63,37 +55,37 @@ class Bedhead(DynMap):
     @staticjit
     def _jac(X, a, b):
         x, y = X
-        row1 = [y * np.cos(x * y / b) / b - a * np.sin(a * x - y), np.sin(x * y / b) + y * np.cos(a * x - y) + np.sin(a * x - y)]
+        row1 = [
+            y * np.cos(x * y / b) / b - a * np.sin(a * x - y),
+            np.sin(x * y / b) + y * np.cos(a * x - y) + np.sin(a * x - y),
+        ]
         row2 = [1, np.cos(y) / b]
         return row1, row2
 
+
 class ZeraouliaSprott(DynMap):
-    params = {
-            "a": 1.641,
-            "b": 1.902
-        }
+    params = {"a": 1.641, "b": 1.902}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b):
         x, y = X
-        xp = - a * x / (1 + y**2)
+        xp = -a * x / (1 + y**2)
         yp = x + b * y
         return xp, yp
 
     @staticjit
     def _jac(X, a, b):
         x, y = X
-        row1 = [-a / (1 + y**2), 2 * a * x * y / (1 + y**2)**2]
+        row1 = [-a / (1 + y**2), 2 * a * x * y / (1 + y**2) ** 2]
         row2 = [1, b]
         return row1, row2
 
 
 class GumowskiMira(DynMap):
-    params = {
-            "a": -1.1,
-            "b": -0.2
-        }
+    params = {"a": -1.1, "b": -0.2}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b):
         x, y = X
@@ -110,26 +102,26 @@ class GumowskiMira(DynMap):
         fx = a * x + 2 * (1 - a) * x**2 / (1 + x**2)
         xp = b * y + fx
 
-        dxdx = a + (4 * (1 - a) * x)/(1 + x**2) - (4 * (1 - a) * x**3)/(1 + x**2)**2
+        dxdx = a + (4 * (1 - a) * x) / (1 + x**2) - (4 * (1 - a) * x**3) / (1 + x**2) ** 2
 
         dxdy = b
 
-        dydx = dxdx * (a + (4 * (1 - a) * xp)/(1 + xp**2) - (4 * (1 - a) * xp**3)/(1 + xp**2)**2 - 1)
+        dydx = dxdx * (
+            a + (4 * (1 - a) * xp) / (1 + xp**2) - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2 - 1
+        )
 
-        dydy = b * (a + (4 * (1 - a) * xp)/(1 + xp**2) - (4 * (1 - a) * xp**3)/(1 + xp**2)**2)
+        dydy = b * (a + (4 * (1 - a) * xp) / (1 + xp**2) - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2)
 
         row1 = [dxdx, dxdy]
         row2 = [dydx, dydy]
 
         return row1, row2
 
+
 class Hopalong(DynMap):
-    params = {
-            "a": 3.1,
-            "b": 2.5,
-            "c": 4.2
-        }
+    params = {"a": 3.1, "b": 2.5, "c": 4.2}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b, c):
         x, y = X
@@ -141,14 +133,11 @@ class Hopalong(DynMap):
     def _jac(X, a, b, c):
         pass
 
+
 class Pickover(DynMap):
-    params = {
-            "a": -1.4,
-            "b": 1.6,
-            "c": 1.0,
-            "d": 0.7
-        }
+    params = {"a": -1.4, "b": 1.6, "c": 1.0, "d": 0.7}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b, c, d):
         x, y = X
@@ -162,4 +151,3 @@ class Pickover(DynMap):
         row1 = [-a * c * np.sin(a * x), a * np.cos(a * y)]
         row2 = [b * np.cos(b * x), -b * d * np.sin(b * y)]
         return row1, row2
-

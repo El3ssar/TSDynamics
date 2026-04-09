@@ -4,11 +4,9 @@ from symengine import cos, sin, exp, tanh, pi
 
 
 class DoublePendulum(DynSys):
-    params = {
-      "d": 1.0,
-      "m": 1.0
-    }
+    params = {"d": 1.0, "m": 1.0}
     n_dim = 4
+
     @staticmethod
     def _rhs(Y, t, d, m):
         th1, th2, p1, p2 = Y(0), Y(1), Y(2), Y(3)
@@ -17,16 +15,8 @@ class DoublePendulum(DynSys):
         denom = 16 - 9 * cos(th1 - th2) ** 2
         th1_dot = pre * (2 * p1 - 3 * cos(th1 - th2) * p2) / denom
         th2_dot = pre * (8 * p2 - 3 * cos(th1 - th2) * p1) / denom
-        p1_dot = (
-            -0.5
-            * (m * d**2)
-            * (th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th1))
-        )
-        p2_dot = (
-            -0.5
-            * (m * d**2)
-            * (-th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th2))
-        )
+        p1_dot = -0.5 * (m * d**2) * (th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th1))
+        p2_dot = -0.5 * (m * d**2) * (-th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th2))
         return th1_dot, th2_dot, p1_dot, p2_dot
 
     @staticmethod
@@ -35,11 +25,9 @@ class DoublePendulum(DynSys):
 
 
 class SwingingAtwood(DynSys):
-    params = {
-      "m1": 1.0,
-      "m2": 4.5
-    }
+    params = {"m1": 1.0, "m2": 4.5}
     n_dim = 4
+
     @staticmethod
     def _rhs(Y, t, m1, m2):
         r, th, pr, pth = Y(0), Y(1), Y(2), Y(3)
@@ -56,13 +44,7 @@ class SwingingAtwood(DynSys):
 
 
 class Colpitts(DynSys):
-    params = {
-      "a": 30,
-      "b": 0.8,
-      "c": 20,
-      "d": 0.08,
-      "e": 10
-    }
+    params = {"a": 30, "b": 0.8, "c": 20, "d": 0.08, "e": 10}
     n_dim = 3
 
     @staticmethod
@@ -77,15 +59,9 @@ class Colpitts(DynSys):
 
 
 class Laser(DynSys):
-    params = {
-      "a": 10.0,
-      "b": 1.0,
-      "c": 5.0,
-      "d": -1.0,
-      "h": -5.0,
-      "k": -6.0
-    }
+    params = {"a": 10.0, "b": 1.0, "c": 5.0, "d": -1.0, "h": -5.0, "k": -6.0}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d, h, k):
         x, y, z = Y(0), Y(1), Y(2)
@@ -104,17 +80,9 @@ class Laser(DynSys):
 
 
 class Blasius(DynSys):
-    params = {
-      "a": 1,
-      "alpha1": 0.2,
-      "alpha2": 1,
-      "b": 1,
-      "c": 10,
-      "k1": 0.05,
-      "k2": 0,
-      "zs": 0.006
-    }
+    params = {"a": 1, "alpha1": 0.2, "alpha2": 1, "b": 1, "c": 10, "k1": 0.05, "k2": 0, "zs": 0.006}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, alpha1, alpha2, b, c, k1, k2, zs):
         x, y, z = Y(0), Y(1), Y(2)
@@ -125,12 +93,9 @@ class Blasius(DynSys):
 
 
 class FluidTrampoline(DynSys):
-    params = {
-      "gamma": 1.82,
-      "psi": 0.01019,
-      "w": 1.21
-    }
+    params = {"gamma": 1.82, "psi": 0.01019, "w": 1.21}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, gamma, psi, w):
         x, y, th = Y(0), Y(1), Y(2)
@@ -145,11 +110,9 @@ class FluidTrampoline(DynSys):
 
 
 class JerkCircuit(DynSys):
-    params = {
-      "eps": 1e-9,
-      "y0": 0.026
-    }
+    params = {"eps": 1e-9, "y0": 0.026}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, eps, y0):
         x, y, z = Y(0), Y(1), Y(2)
@@ -168,13 +131,9 @@ class JerkCircuit(DynSys):
 
 
 class InteriorSquirmer(DynSys):
-    params = {
-      "a": [0.5, 0.5, 0.5, 0.5, 0.5],
-      "g": [0.5, 0.5, 0.5, 0.5, 0.5],
-      "n": 5,
-      "tau": 3
-    }
+    params = {"a": [0.5, 0.5, 0.5, 0.5, 0.5], "g": [0.5, 0.5, 0.5, 0.5, 0.5], "n": 5, "tau": 3}
     n_dim = 2
+
     @staticmethod
     def _rhs_static(r, th, t, a, g, n):
         nvals = np.arange(1, n + 1)
@@ -207,9 +166,7 @@ class InteriorSquirmer(DynSys):
         j12 = np.sum(j12)
 
         j21 = 2 * rnvals * (2 * nvals + 1) * (-np.copy(trigskew))
-        j21 += (n * (1 - r**2) * rnvals * (nvals - 1) / r**2) * np.copy(
-            g * sinvals + a * cosvals
-        )
+        j21 += (n * (1 - r**2) * rnvals * (nvals - 1) / r**2) * np.copy(g * sinvals + a * cosvals)
         j21 = -np.sum(j21)
 
         j22 = np.copy(trigsum)
@@ -231,28 +188,19 @@ class InteriorSquirmer(DynSys):
     def _protocol(t, tau, stiffness=20):
         return 0.5 + 0.5 * tanh(tau * stiffness * sin(2 * pi * t / tau))
 
-
     @staticmethod
     def _rhs(Y, t, a, g, n, tau):
         r, th, tt = Y(0), Y(1), Y(2)
         phase = InteriorSquirmer._protocol(tt, tau)
         dtt = 1
-        dr, dth = InteriorSquirmer._rhs_static(
-            r, th, t, a * phase, g * (1 - phase), n
-        )
+        dr, dth = InteriorSquirmer._rhs_static(r, th, t, a * phase, g * (1 - phase), n)
         return dr, dth, dtt
 
 
 class WindmiReduced(DynSys):
-    params = {
-      "a1": 0.247,
-      "b1": 10.8,
-      "b2": 0.0752,
-      "b3": 1.06,
-      "d1": 2200,
-      "vsw": 5
-    }
+    params = {"a1": 0.247, "b1": 10.8, "b2": 0.0752, "b3": 1.06, "d1": 2200, "vsw": 5}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a1, b1, b2, b3, d1, vsw):
         i, v, p = Y(0), Y(1), Y(2)

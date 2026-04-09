@@ -4,16 +4,14 @@ import numpy as np
 
 
 class Gauss(DynMap):
-    params = {
-            "a": 4.9,
-            "b": -0.5
-        }
+    params = {"a": 4.9, "b": -0.5}
     n_dim = 1
+
     @staticjit
     def _rhs(X, a, b):
         x = X
         return np.exp(-a * x**2) + b
-    
+
     @staticjit
     def _jac(X, a, b):
         x = X
@@ -21,20 +19,16 @@ class Gauss(DynMap):
 
 
 class DeJong(DynMap):
-    params = {
-            "a": 1.641,
-            "b": 1.902, 
-            "c": 0.316, 
-            "d": 1.525
-        }
+    params = {"a": 1.641, "b": 1.902, "c": 0.316, "d": 1.525}
     n_dim = 2
+
     @staticjit
     def _rhs(X, a, b, c, d):
         x, y = X
         xp = np.sin(a * y) - np.cos(b * x)
         yp = np.sin(c * x) - np.cos(d * y)
         return xp, yp
-    
+
     @staticjit
     def _jac(X, a, b, c, d):
         x, y = X
@@ -44,10 +38,9 @@ class DeJong(DynMap):
 
 
 class KaplanYorke(DynMap):
-    params = {
-            "alpha": 0.2
-        }
+    params = {"alpha": 0.2}
     n_dim = 2
+
     @staticjit
     def _rhs(X, alpha):
         x, y = X

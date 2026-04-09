@@ -16,7 +16,7 @@ class Hopfield(DynSys):
         n = int(self.n_neurons)
         rng = np.random.default_rng(seed)
         W = rng.standard_normal((n, n))
-        W = 0.5 * (W + W.T)   # symmetrize
+        W = 0.5 * (W + W.T)  # symmetrize
         np.fill_diagonal(W, 0)
         self._W = W
 
@@ -35,13 +35,9 @@ class Hopfield(DynSys):
 
 
 class CellularNeuralNetwork(DynSys):
-    params = {
-      "a": 4.4,
-      "b": 3.21,
-      "c": 1.1,
-      "d": 1.24
-    }
+    params = {"a": 4.4, "b": 3.21, "c": 1.1, "d": 1.24}
     n_dim = 3
+
     @staticmethod
     def _rhs(Y, t, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)

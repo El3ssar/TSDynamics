@@ -18,11 +18,7 @@ class VallisElNino(DynSys):
 
 
 class RayleighBenard(DynSys):
-    params = {
-      "a": 30,
-      "b": 5,
-      "r": 18
-    }
+    params = {"a": 30, "b": 5, "r": 18}
     n_dim = 3
 
     @staticmethod
@@ -64,11 +60,7 @@ class Hadley(DynSys):
 
 
 class DoubleGyre(DynSys):
-    params = {
-      "alpha": 0.1,
-      "eps": 0.1,
-      "omega": 0.62832
-    }
+    params = {"alpha": 0.1, "eps": 0.1, "omega": 0.62832}
     n_dim = 3
 
     @staticmethod
@@ -84,13 +76,7 @@ class DoubleGyre(DynSys):
 
 
 class BlinkingRotlet(DynSys):
-    params = {
-      "a": 1.0,
-      "b": 0.5298833894399929,
-      "bc": 1,
-      "sigma": -1.0,
-      "tau": 3
-    }
+    params = {"a": 1.0, "b": 0.5298833894399929, "bc": 1, "sigma": -1.0, "tau": 3}
     n_dim = 3
 
     @staticmethod
@@ -132,12 +118,7 @@ class BlinkingRotlet(DynSys):
 
 
 class OscillatingFlow(DynSys):
-    params = {
-      "b": 0.48,
-      "k": 1.0,
-      "omega": 0.49,
-      "u": 0.72
-    }
+    params = {"b": 0.48, "k": 1.0, "omega": 0.49, "u": 0.72}
     n_dim = 3
 
     @staticmethod
@@ -152,12 +133,12 @@ class OscillatingFlow(DynSys):
 
 class BickleyJet(DynSys):
     params = {
-      "ell": 1.77,
-      "eps": [0.0075, 0.15, 0.3],
-      "k": [0.313922, 0.627845, 0.941767],
-      "omega": 1,
-      "sigma": [9.05854e-6, 1.28453e-5, 2.88863e-5],
-      "u": 6.266e-5
+        "ell": 1.77,
+        "eps": [0.0075, 0.15, 0.3],
+        "k": [0.313922, 0.627845, 0.941767],
+        "omega": 1,
+        "sigma": [9.05854e-6, 1.28453e-5, 2.88863e-5],
+        "u": 6.266e-5,
     }
     n_dim = 3
 
@@ -174,11 +155,7 @@ class BickleyJet(DynSys):
 
 
 class ArnoldBeltramiChildress(DynSys):
-    params = {
-      "a": 1.73205,
-      "b": 1.41421,
-      "c": 1
-    }
+    params = {"a": 1.73205, "b": 1.41421, "c": 1}
     n_dim = 3
 
     @staticmethod
@@ -191,14 +168,7 @@ class ArnoldBeltramiChildress(DynSys):
 
 
 class AtmosphericRegime(DynSys):
-    params = {
-      "alpha": -2.0,
-      "beta": -5.0,
-      "mu1": 0.05,
-      "mu2": -0.01,
-      "omega": 3.0,
-      "sigma": 1.1
-    }
+    params = {"alpha": -2.0, "beta": -5.0, "mu1": 0.05, "mu2": -0.01, "omega": 3.0, "sigma": 1.1}
     n_dim = 3
 
     @staticmethod
@@ -211,16 +181,7 @@ class AtmosphericRegime(DynSys):
 
 
 class SaltonSea(DynSys):
-    params = {
-      "a": 15,
-      "d": 8.3,
-      "k": 400,
-      "lam": 0.06,
-      "m": 15.5,
-      "mu": 3.4,
-      "r": 22,
-      "th": 10.0
-    }
+    params = {"a": 15, "d": 8.3, "k": 400, "lam": 0.06, "m": 15.5, "mu": 3.4, "r": 22, "th": 10.0}
     n_dim = 3
 
     @staticmethod
@@ -230,4 +191,3 @@ class SaltonSea(DynSys):
         ydot = lam * x * y - m * y * z / (y + a) - mu * y
         zdot = th * y * z / (y + a) - d * z
         return xdot, ydot, zdot
-

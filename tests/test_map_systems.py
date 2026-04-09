@@ -14,48 +14,47 @@ import pytest
 # Complete list of all map systems: (module_path, class_name, expected_n_dim)
 # ---------------------------------------------------------------------------
 
-_CHAOTIC   = "tsdynamics.systems.discrete.chaotic_maps"
-_EXOTIC    = "tsdynamics.systems.discrete.exotic_maps"
+_CHAOTIC = "tsdynamics.systems.discrete.chaotic_maps"
+_EXOTIC = "tsdynamics.systems.discrete.exotic_maps"
 _GEOMETRIC = "tsdynamics.systems.discrete.geometric_maps"
-_POLY      = "tsdynamics.systems.discrete.polynomial_maps"
-_POPN      = "tsdynamics.systems.discrete.population_maps"
+_POLY = "tsdynamics.systems.discrete.polynomial_maps"
+_POPN = "tsdynamics.systems.discrete.population_maps"
 
 ALL_MAPS = [
     # ── Chaotic maps ─────────────────────────────────────────────────────
-    (_CHAOTIC,   "Henon",            2),
-    (_CHAOTIC,   "Ulam",             1),
-    (_CHAOTIC,   "Ikeda",            2),
-    (_CHAOTIC,   "Tinkerbell",       2),
-    (_CHAOTIC,   "Gingerbreadman",   2),
-    (_CHAOTIC,   "Zaslavskii",       2),
-    (_CHAOTIC,   "Chirikov",         2),
-    (_CHAOTIC,   "FoldedTowel",      3),
-    (_CHAOTIC,   "GeneralizedHenon", 3),
+    (_CHAOTIC, "Henon", 2),
+    (_CHAOTIC, "Ulam", 1),
+    (_CHAOTIC, "Ikeda", 2),
+    (_CHAOTIC, "Tinkerbell", 2),
+    (_CHAOTIC, "Gingerbreadman", 2),
+    (_CHAOTIC, "Zaslavskii", 2),
+    (_CHAOTIC, "Chirikov", 2),
+    (_CHAOTIC, "FoldedTowel", 3),
+    (_CHAOTIC, "GeneralizedHenon", 3),
     # ── Exotic maps ──────────────────────────────────────────────────────
-    (_EXOTIC,    "Bogdanov",         2),
-    (_EXOTIC,    "Svensson",         2),
-    (_EXOTIC,    "Bedhead",          2),
-    (_EXOTIC,    "ZeraouliaSprott",  2),
-    (_EXOTIC,    "GumowskiMira",     2),
-    (_EXOTIC,    "Hopalong",         2),
-    (_EXOTIC,    "Pickover",         2),
+    (_EXOTIC, "Bogdanov", 2),
+    (_EXOTIC, "Svensson", 2),
+    (_EXOTIC, "Bedhead", 2),
+    (_EXOTIC, "ZeraouliaSprott", 2),
+    (_EXOTIC, "GumowskiMira", 2),
+    (_EXOTIC, "Hopalong", 2),
+    (_EXOTIC, "Pickover", 2),
     # ── Geometric maps ───────────────────────────────────────────────────
-    (_GEOMETRIC, "Tent",             1),
-    (_GEOMETRIC, "Baker",            2),
-    (_GEOMETRIC, "Circle",           1),
-    (_GEOMETRIC, "Chebyshev",        1),
+    (_GEOMETRIC, "Tent", 1),
+    (_GEOMETRIC, "Baker", 2),
+    (_GEOMETRIC, "Circle", 1),
+    (_GEOMETRIC, "Chebyshev", 1),
     # ── Polynomial maps ──────────────────────────────────────────────────
-    (_POLY,      "Gauss",            1),
-    (_POLY,      "DeJong",           2),
-    (_POLY,      "KaplanYorke",      2),
+    (_POLY, "Gauss", 1),
+    (_POLY, "DeJong", 2),
+    (_POLY, "KaplanYorke", 2),
     # ── Population maps ──────────────────────────────────────────────────
-    (_POPN,      "Logistic",         1),
-    (_POPN,      "Ricker",           1),
-    (_POPN,      "MaynardSmith",     2),
+    (_POPN, "Logistic", 1),
+    (_POPN, "Ricker", 1),
+    (_POPN, "MaynardSmith", 2),
 ]
 
 _IDS = [name for _, name, _ in ALL_MAPS]
-
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +103,7 @@ def test_map_iterate_shape(module_path, class_name, expected_n_dim):
 
     t_idx, traj = m.iterate(initial_conds=ic, steps=_STEPS)
 
-    assert t_idx.shape == (_STEPS,), (
-        f"{class_name}: time index shape {t_idx.shape} != ({_STEPS},)"
-    )
+    assert t_idx.shape == (_STEPS,), f"{class_name}: time index shape {t_idx.shape} != ({_STEPS},)"
     assert traj.shape == (_STEPS, expected_n_dim), (
         f"{class_name}: trajectory shape {traj.shape} != ({_STEPS}, {expected_n_dim})"
     )
@@ -122,9 +119,7 @@ def test_map_iterate_finite(module_path, class_name, expected_n_dim):
     ic = None  # maps now carry correct default ICs at class level
 
     t_idx, traj = m.iterate(initial_conds=ic, steps=_STEPS, max_retries=15)
-    assert np.all(np.isfinite(traj)), (
-        f"{class_name}: trajectory contains non-finite values"
-    )
+    assert np.all(np.isfinite(traj)), f"{class_name}: trajectory contains non-finite values"
 
 
 @pytest.mark.slow
@@ -144,9 +139,11 @@ def test_map_iterate_time_index_is_arange(module_path, class_name, expected_n_di
 # Custom initial conditions
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 def test_map_custom_initial_conds_1d():
     from tsdynamics.systems.discrete.population_maps import Logistic
+
     m = Logistic()
     ic = np.array([0.5])
     _, traj = m.iterate(initial_conds=ic, steps=50)
@@ -156,6 +153,7 @@ def test_map_custom_initial_conds_1d():
 @pytest.mark.slow
 def test_map_custom_initial_conds_2d():
     from tsdynamics.systems.discrete.chaotic_maps import Henon
+
     m = Henon()
     ic = np.array([0.1, 0.1])
     _, traj = m.iterate(initial_conds=ic, steps=100)
@@ -166,6 +164,7 @@ def test_map_custom_initial_conds_2d():
 @pytest.mark.slow
 def test_map_initial_conds_stored_after_iterate():
     from tsdynamics.systems.discrete.chaotic_maps import Henon
+
     m = Henon()
     assert m.initial_conds is None
     ic = np.array([0.2, 0.3])
@@ -177,9 +176,11 @@ def test_map_initial_conds_stored_after_iterate():
 # Jacobian shape check
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 def test_map_jacobian_shape():
     from tsdynamics.systems.discrete.chaotic_maps import Henon
+
     m = Henon()
     J = m.jac(np.array([0.1, 0.1]))
     assert J.shape == (2, 2)
@@ -188,6 +189,7 @@ def test_map_jacobian_shape():
 @pytest.mark.slow
 def test_map_jacobian_shape_3d():
     from tsdynamics.systems.discrete.chaotic_maps import FoldedTowel
+
     m = FoldedTowel()
     J = m.jac(np.array([0.1, 0.1, 0.1]))
     assert J.shape == (3, 3)

@@ -4,10 +4,9 @@ import numpy as np
 
 
 class Tent(DynMap):
-    params = {
-            "mu": 0.95
-        }
+    params = {"mu": 0.95}
     n_dim = 1
+
     @staticjit
     def _rhs(X, mu):
         x = X
@@ -21,9 +20,11 @@ class Tent(DynMap):
         else:
             return [2 * mu]
 
+
 class Baker(DynMap):
     params = {"alpha": 0.5}
     n_dim = 2
+
     @staticjit
     def _rhs(X, alpha):
         """
@@ -40,7 +41,7 @@ class Baker(DynMap):
             xp = (2 * x - 1) % 1  # Shift after stretch
             yp = (y - alpha) / (1 - alpha)  # Fold in y
         return xp, yp
-    
+
     @staticjit
     def _jac(X, alpha):
         x, y = X
@@ -54,11 +55,9 @@ class Baker(DynMap):
 
 
 class Circle(DynMap):
-    params = {
-            "omega": 0.333,
-            "k": 5.7
-        }
+    params = {"omega": 0.333, "k": 5.7}
     n_dim = 1
+
     @staticjit
     def _rhs(X, k, omega):
         theta = X
@@ -71,18 +70,17 @@ class Circle(DynMap):
         theta = X
         return [1 + k * np.cos(2 * np.pi * theta)]
 
+
 class Chebyshev(DynMap):
-    params = {
-            "a": 6.0
-        }
+    params = {"a": 6.0}
     n_dim = 1
+
     @staticjit
     def _rhs(X, a):
         x = X
         return np.cos(a * np.arccos(x))
-    
+
     @staticjit
     def _jac(X, a):
         x = X
         return [-a * np.sin(a * np.arccos(x)) / np.sqrt(1 - x**2)]
-

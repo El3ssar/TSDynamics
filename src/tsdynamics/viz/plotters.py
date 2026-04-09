@@ -11,8 +11,13 @@ from . import transforms as tf
 
 # ------------------------- Trajectories -------------------------
 
-def trajectory2d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int] = (0, 1),
-                 cfg: Optional[PlotConfig] = None):
+
+def trajectory2d(
+    times: np.ndarray,
+    Y: np.ndarray,
+    dims: Tuple[int, int] = (0, 1),
+    cfg: Optional[PlotConfig] = None,
+):
     """2D trajectory plot."""
     XY = tf.take_columns(Y, dims)
     fig, ax = new_fig_ax(cfg=cfg)
@@ -23,8 +28,12 @@ def trajectory2d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int] = (0, 1
     return fig, ax
 
 
-def trajectory3d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int, int] = (0, 1, 2),
-                 cfg: Optional[PlotConfig] = None):
+def trajectory3d(
+    times: np.ndarray,
+    Y: np.ndarray,
+    dims: Tuple[int, int, int] = (0, 1, 2),
+    cfg: Optional[PlotConfig] = None,
+):
     """3D trajectory plot."""
     XYZ = tf.take_columns(Y, dims)
     fig, ax = new_fig_ax(cfg=cfg, projection="3d")
@@ -38,8 +47,8 @@ def trajectory3d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int, int] = 
 
 # ------------------------- Phase portraits & density -------------------------
 
-def phase_portrait(Y: np.ndarray, dims: Tuple[int, int] = (0, 1),
-                   cfg: Optional[PlotConfig] = None):
+
+def phase_portrait(Y: np.ndarray, dims: Tuple[int, int] = (0, 1), cfg: Optional[PlotConfig] = None):
     """Scatter phase portrait (thin)."""
     XY = tf.take_columns(Y, dims)
     fig, ax = new_fig_ax(cfg=cfg)
@@ -50,15 +59,17 @@ def phase_portrait(Y: np.ndarray, dims: Tuple[int, int] = (0, 1),
     return fig, ax
 
 
-def phase_density(Y: np.ndarray, dims: Tuple[int, int] = (0, 1),
-                  bins: int | Tuple[int, int] = 200,
-                  cfg: Optional[PlotConfig] = None):
+def phase_density(
+    Y: np.ndarray,
+    dims: Tuple[int, int] = (0, 1),
+    bins: int | Tuple[int, int] = 200,
+    cfg: Optional[PlotConfig] = None,
+):
     """2D density map (hist2d) of phase space."""
     XY = tf.take_columns(Y, dims)
     H, xe, ye = tf.phase_space_density(XY, bins=bins)
     fig, ax = new_fig_ax(cfg=cfg)
-    im = ax.imshow(H, origin="lower", aspect="auto",
-                   extent=[xe[0], xe[-1], ye[0], ye[-1]])
+    im = ax.imshow(H, origin="lower", aspect="auto", extent=[xe[0], xe[-1], ye[0], ye[-1]])
     ax.set_xlabel(f"x[{dims[0]}]")
     ax.set_ylabel(f"x[{dims[1]}]")
     ax.set_title("Phase-space density")
@@ -68,16 +79,26 @@ def phase_density(Y: np.ndarray, dims: Tuple[int, int] = (0, 1),
 
 # ------------------------- Poincaré & return maps -------------------------
 
-def poincare_scatter(times: np.ndarray, Y: np.ndarray, *,
-                     section_dim: int = 0, section_value: float = 0.0,
-                     direction: str = "positive",
-                     extract_dims: Tuple[int, int] | Tuple[int, int, int] = (1, 2),
-                     cfg: Optional[PlotConfig] = None):
+
+def poincare_scatter(
+    times: np.ndarray,
+    Y: np.ndarray,
+    *,
+    section_dim: int = 0,
+    section_value: float = 0.0,
+    direction: str = "positive",
+    extract_dims: Tuple[int, int] | Tuple[int, int, int] = (1, 2),
+    cfg: Optional[PlotConfig] = None,
+):
     """Plot Poincaré section intersections."""
-    t_hits, pts = tf.poincare_section(times, Y, section_dim=section_dim,
-                                      section_value=section_value,
-                                      direction=direction,
-                                      extract_dims=extract_dims)
+    t_hits, pts = tf.poincare_section(
+        times,
+        Y,
+        section_dim=section_dim,
+        section_value=section_value,
+        direction=direction,
+        extract_dims=extract_dims,
+    )
     fig, ax = new_fig_ax(cfg=cfg, projection="3d" if len(extract_dims) == 3 else None)
     if pts.size == 0:
         ax.set_title("No intersections found")
@@ -108,8 +129,14 @@ def return_map(x: np.ndarray, lag: int = 1, cfg: Optional[PlotConfig] = None):
 
 # ------------------------- Recurrence plots -------------------------
 
-def recurrence_plot(X: np.ndarray, eps: Optional[float] = None, percent: Optional[float] = 10.0,
-                    metric: str = "euclidean", cfg: Optional[PlotConfig] = None):
+
+def recurrence_plot(
+    X: np.ndarray,
+    eps: Optional[float] = None,
+    percent: Optional[float] = 10.0,
+    metric: str = "euclidean",
+    cfg: Optional[PlotConfig] = None,
+):
     """Binary recurrence plot."""
     R = tf.recurrence_matrix(X, eps=eps, percent=percent, metric=metric)
     fig, ax = new_fig_ax(cfg=cfg)
@@ -121,8 +148,14 @@ def recurrence_plot(X: np.ndarray, eps: Optional[float] = None, percent: Optiona
     return fig, ax
 
 
-def cross_recurrence_plot(X: np.ndarray, Y: np.ndarray, eps: Optional[float] = None, percent: Optional[float] = 10.0,
-                          metric: str = "euclidean", cfg: Optional[PlotConfig] = None):
+def cross_recurrence_plot(
+    X: np.ndarray,
+    Y: np.ndarray,
+    eps: Optional[float] = None,
+    percent: Optional[float] = 10.0,
+    metric: str = "euclidean",
+    cfg: Optional[PlotConfig] = None,
+):
     """Cross-recurrence plot."""
     R = tf.cross_recurrence_matrix(X, Y, eps=eps, percent=percent, metric=metric)
     fig, ax = new_fig_ax(cfg=cfg)
@@ -146,8 +179,10 @@ def joint_recurrence_plot(*Rs: np.ndarray, cfg: Optional[PlotConfig] = None):
 
 # ------------------------- Spectral & wavelet -------------------------
 
-def power_spectrum(x: np.ndarray, fs: float = 1.0, method: str = "welch",
-                   cfg: Optional[PlotConfig] = None):
+
+def power_spectrum(
+    x: np.ndarray, fs: float = 1.0, method: str = "welch", cfg: Optional[PlotConfig] = None
+):
     """Power spectrum via FFT or Welch."""
     if method == "welch":
         f, Pxx = tf.power_spectrum_welch(x, fs=fs)
@@ -163,14 +198,17 @@ def power_spectrum(x: np.ndarray, fs: float = 1.0, method: str = "welch",
     return fig, ax
 
 
-def wavelet_scalogram(x: np.ndarray, fs: float, wavelet: str = "morl",
-                      widths: Optional[np.ndarray] = None,
-                      cfg: Optional[PlotConfig] = None):
+def wavelet_scalogram(
+    x: np.ndarray,
+    fs: float,
+    wavelet: str = "morl",
+    widths: Optional[np.ndarray] = None,
+    cfg: Optional[PlotConfig] = None,
+):
     """Wavelet scalogram (requires PyWavelets)."""
     t, scales, A = tf.wavelet_scalogram(x, fs=fs, wavelet=wavelet, widths=widths)
     fig, ax = new_fig_ax(cfg=cfg)
-    im = ax.imshow(A, extent=[t[0], t[-1], scales[-1], scales[0]],
-                   aspect="auto", cmap="viridis")
+    im = ax.imshow(A, extent=[t[0], t[-1], scales[-1], scales[0]], aspect="auto", cmap="viridis")
     ax.set_xlabel("Time")
     ax.set_ylabel("Scale")
     ax.set_title("Wavelet scalogram")
@@ -179,6 +217,7 @@ def wavelet_scalogram(x: np.ndarray, fs: float, wavelet: str = "morl",
 
 
 # ------------------------- Embeddings & projections -------------------------
+
 
 def embedding_plot(x: np.ndarray, m: int, tau: int, cfg: Optional[PlotConfig] = None):
     """Plot 2D/3D delay embedding of a scalar series."""
@@ -195,7 +234,7 @@ def embedding_plot(x: np.ndarray, m: int, tau: int, cfg: Optional[PlotConfig] = 
         ax.plot(E[:, 0], E[:, 1], E[:, 2], ",", alpha=0.6)
         ax.set_xlabel("x(t)")
         ax.set_ylabel(f"x(t+{tau})")
-        ax.set_zlabel(f"x(t+{2*tau})")
+        ax.set_zlabel(f"x(t+{2 * tau})")
         ax.set_title("Delay embedding (3D)")
         return fig, ax
     else:
@@ -227,6 +266,7 @@ def pca_projection_plot(Y: np.ndarray, n_components: int = 2, cfg: Optional[Plot
 
 # ------------------------- Distance maps & bifurcations -------------------------
 
+
 def distance_heatmap(X: np.ndarray, metric: str = "euclidean", cfg: Optional[PlotConfig] = None):
     """Pairwise distance heatmap."""
     D = tf.distance_matrix(X, metric=metric)
@@ -237,9 +277,14 @@ def distance_heatmap(X: np.ndarray, metric: str = "euclidean", cfg: Optional[Plo
     return fig, ax
 
 
-def bifurcation_diagram(params: np.ndarray, points: Sequence[np.ndarray], *,
-                        cfg: Optional[PlotConfig] = None,
-                        s: float = 2.0, alpha: float = 0.5):
+def bifurcation_diagram(
+    params: np.ndarray,
+    points: Sequence[np.ndarray],
+    *,
+    cfg: Optional[PlotConfig] = None,
+    s: float = 2.0,
+    alpha: float = 0.5,
+):
     """
     Generic bifurcation diagram.
 
@@ -267,6 +312,7 @@ def bifurcation_diagram(params: np.ndarray, points: Sequence[np.ndarray], *,
 
 # ------------------------- Lyapunov spectrum -------------------------
 
+
 def lyapunov_spectrum(exponents: np.ndarray, cfg: Optional[PlotConfig] = None):
     """Bar plot of Lyapunov exponents."""
     exponents = np.asarray(exponents, float).reshape(-1)
@@ -280,9 +326,15 @@ def lyapunov_spectrum(exponents: np.ndarray, cfg: Optional[PlotConfig] = None):
 
 # ------------------------- Space–time diagrams -------------------------
 
-def kymograph(times: np.ndarray, Y: np.ndarray, *,
-              nx: Optional[int] = None, ny: Optional[int] = None,
-              cfg: Optional[PlotConfig] = None):
+
+def kymograph(
+    times: np.ndarray,
+    Y: np.ndarray,
+    *,
+    nx: Optional[int] = None,
+    ny: Optional[int] = None,
+    cfg: Optional[PlotConfig] = None,
+):
     """
     Space–time diagram (kymograph).
 

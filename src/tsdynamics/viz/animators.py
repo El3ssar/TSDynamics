@@ -9,14 +9,19 @@ from .base import new_fig_ax, PlotConfig
 from . import transforms as tf
 
 
-def animate_trajectory2d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int] = (0, 1),
-                         interval_ms: int = 30, trail: int = 300,
-                         cfg: Optional[PlotConfig] = None):
+def animate_trajectory2d(
+    times: np.ndarray,
+    Y: np.ndarray,
+    dims: Tuple[int, int] = (0, 1),
+    interval_ms: int = 30,
+    trail: int = 300,
+    cfg: Optional[PlotConfig] = None,
+):
     """Animate a 2D trajectory with a trailing path."""
     XY = tf.take_columns(Y, dims)
     fig, ax = new_fig_ax(cfg=cfg)
-    line, = ax.plot([], [], lw=1.0)
-    head, = ax.plot([], [], "o", ms=4)
+    (line,) = ax.plot([], [], lw=1.0)
+    (head,) = ax.plot([], [], "o", ms=4)
     ax.set_xlabel(f"x[{dims[0]}]")
     ax.set_ylabel(f"x[{dims[1]}]")
     ax.set_title("Animated trajectory (2D)")
@@ -30,26 +35,32 @@ def animate_trajectory2d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int]
 
     def update(i):
         j0 = max(0, i - trail)
-        xs, ys = XY[j0:i+1, 0], XY[j0:i+1, 1]
+        xs, ys = XY[j0 : i + 1, 0], XY[j0 : i + 1, 1]
         line.set_data(xs, ys)
         head.set_data([XY[i, 0]], [XY[i, 1]])
         return line, head
 
-    anim = FuncAnimation(fig, update, frames=len(times), init_func=init,
-                         interval=interval_ms, blit=True)
+    anim = FuncAnimation(
+        fig, update, frames=len(times), init_func=init, interval=interval_ms, blit=True
+    )
     return anim
 
 
-def animate_trajectory3d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int, int] = (0, 1, 2),
-                         interval_ms: int = 30, trail: int = 300,
-                         cfg: Optional[PlotConfig] = None):
+def animate_trajectory3d(
+    times: np.ndarray,
+    Y: np.ndarray,
+    dims: Tuple[int, int, int] = (0, 1, 2),
+    interval_ms: int = 30,
+    trail: int = 300,
+    cfg: Optional[PlotConfig] = None,
+):
     """Animate a 3D trajectory with a trailing path."""
     XYZ = tf.take_columns(Y, dims)
     fig, ax = new_fig_ax(cfg=cfg, projection="3d")
     # blit=False when custom facecolor: blit=True skips redrawing the background
     use_blit = cfg is None or cfg.facecolor is None
-    line, = ax.plot([], [], [], lw=1.0)
-    head, = ax.plot([], [], [], "o", ms=4)
+    (line,) = ax.plot([], [], [], lw=1.0)
+    (head,) = ax.plot([], [], [], "o", ms=4)
     ax.set_xlabel(f"x[{dims[0]}]")
     ax.set_ylabel(f"x[{dims[1]}]")
     ax.set_zlabel(f"x[{dims[2]}]")
@@ -76,21 +87,22 @@ def animate_trajectory3d(times: np.ndarray, Y: np.ndarray, dims: Tuple[int, int,
 
     def update(i):
         j0 = max(0, i - trail)
-        xs, ys, zs = XYZ[j0:i+1, 0], XYZ[j0:i+1, 1], XYZ[j0:i+1, 2]
+        xs, ys, zs = XYZ[j0 : i + 1, 0], XYZ[j0 : i + 1, 1], XYZ[j0 : i + 1, 2]
         line.set_data(xs, ys)
         line.set_3d_properties(zs)
         head.set_data([XYZ[i, 0]], [XYZ[i, 1]])
         head.set_3d_properties([XYZ[i, 2]])
         return line, head
 
-    anim = FuncAnimation(fig, update, frames=len(times), init_func=init,
-                         interval=interval_ms, blit=use_blit)
+    anim = FuncAnimation(
+        fig, update, frames=len(times), init_func=init, interval=interval_ms, blit=use_blit
+    )
     return anim
 
 
-def animate_space_time(times: np.ndarray, Y: np.ndarray, *,
-                       interval_ms: int = 30,
-                       cfg: Optional[PlotConfig] = None):
+def animate_space_time(
+    times: np.ndarray, Y: np.ndarray, *, interval_ms: int = 30, cfg: Optional[PlotConfig] = None
+):
     """
     Animate a 1D field y(x,t) given as Y shape (T, N): show y vs x over time.
     """

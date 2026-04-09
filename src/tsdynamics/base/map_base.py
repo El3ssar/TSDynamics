@@ -31,17 +31,11 @@ class DynMap(BaseDyn):
         """Jacobian function to be implemented by subclasses."""
         raise NotImplementedError
 
-    def iterate(
-        self,
-        initial_conds=None,
-        steps=1000,
-        max_retries=10
-    ):
+    def iterate(self, initial_conds=None, steps=1000, max_retries=10):
         """Iterate the map for n_steps starting from initial_conds."""
         retries = 0
 
         while retries < max_retries:
-
             if initial_conds is None:
                 if self.initial_conds is None:
                     initial_conds = np.random.rand(self.n_dim)
@@ -96,7 +90,7 @@ class DynMap(BaseDyn):
         if y0 is None:
             if self.n_dim is None:
                 raise ValueError("Initial conditions must be provided, else n_dim must be set")
-            y0 = np.random.rand(self.n_dim) #if self.n_dim > 1 else np.random.rand()
+            y0 = np.random.rand(self.n_dim)  # if self.n_dim > 1 else np.random.rand()
         else:
             y0 = np.asarray(y0)
 
@@ -113,7 +107,9 @@ class DynMap(BaseDyn):
         lyapunov_sums = np.zeros(num_exponents)
         total_intervals = 0
 
-        _, states = self.iterate(state, steps) # Compute the trajectory with integrate to avoid the nans or infs
+        _, states = self.iterate(
+            state, steps
+        )  # Compute the trajectory with integrate to avoid the nans or infs
 
         for step in range(steps):
             # Map the state
@@ -141,4 +137,3 @@ class DynMap(BaseDyn):
         exponents = lyapunov_sums / (total_intervals * reorthonormalize_interval)
 
         return exponents
-

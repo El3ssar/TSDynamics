@@ -13,6 +13,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+
 class DynSysDelay(BaseDyn, ABC):
     """
     Base class for delay differential systems (DDEs) using jitcdde.
@@ -123,6 +124,7 @@ class DynSysDelay(BaseDyn, ABC):
             # history(s) must return a sequence of length n_dim for any s ≤ 0
             def _hist(s: float) -> np.ndarray:
                 return np.asarray(history(s), dtype=float).reshape(self.n_dim)
+
             dde.past_from_function(_hist)
             hist0 = _hist(0.0)
 
@@ -260,6 +262,7 @@ class DynSysDelay(BaseDyn, ABC):
             # new object loses .happy, causing AttributeError inside from_function.
             # Fix: patch prepare_anchor to forward .happy through the reconstruction.
             from jitcdde.past import Past as _Past
+
             _orig_prepare = _Past.prepare_anchor
 
             def _prepare_preserving_happy(self_past, x):
@@ -270,9 +273,7 @@ class DynSysDelay(BaseDyn, ABC):
 
             _Past.prepare_anchor = _prepare_preserving_happy
             try:
-                dde.past_from_function(
-                    lambda s: np.asarray(history(s), float).reshape(self.n_dim)
-                )
+                dde.past_from_function(lambda s: np.asarray(history(s), float).reshape(self.n_dim))
             finally:
                 _Past.prepare_anchor = _orig_prepare
 

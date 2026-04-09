@@ -5,25 +5,28 @@ import numpy as np
 
 __all__ = ["DtFromSpectrum", "estimate_dt_from_spectrum"]
 
+
 @dataclass(frozen=True)
 class DtFromSpectrum:
     """
     Result for frequency-based Δt selection.
     """
-    delta_t: float                 # Δt* = safety / (2 f_h)
-    f_hz: float                    # highest significant frequency f_h
-    f_quantile_hz: float           # energy-quantile cutoff
-    f_snr_hz: float                # SNR-based cutoff
-    safety: float                  # c
-    q_power: float                 # power quantile used
-    snr_db: float                  # SNR threshold used
-    freqs_hz: np.ndarray           # Welch frequency grid (one-sided)
-    psd_total: np.ndarray          # Welch total PSD (sum over dims, after σ-normalization)
-    converged: bool                # True unless degenerate/flat spectrum
-    notes: str = ""                # info / warnings
+
+    delta_t: float  # Δt* = safety / (2 f_h)
+    f_hz: float  # highest significant frequency f_h
+    f_quantile_hz: float  # energy-quantile cutoff
+    f_snr_hz: float  # SNR-based cutoff
+    safety: float  # c
+    q_power: float  # power quantile used
+    snr_db: float  # SNR threshold used
+    freqs_hz: np.ndarray  # Welch frequency grid (one-sided)
+    psd_total: np.ndarray  # Welch total PSD (sum over dims, after σ-normalization)
+    converged: bool  # True unless degenerate/flat spectrum
+    notes: str = ""  # info / warnings
 
 
 # ------------------------ Welch (multivariate) ------------------------
+
 
 def _welch_multivar(
     y: np.ndarray,
@@ -90,7 +93,7 @@ def _welch_multivar(
             seg = seg - seg.mean()
             xw = seg * w
             X = np.fft.rfft(xw, n=nfft)
-            S = (np.abs(X) ** 2) / (w_norm)   # power per bin (discrete-time)
+            S = (np.abs(X) ** 2) / (w_norm)  # power per bin (discrete-time)
             Ssum += S
         psd_total += Ssum
 
@@ -113,17 +116,18 @@ def _smooth_moving(y: np.ndarray, m: int = 8) -> np.ndarray:
 
 # -------------------- robust f_h selection (idempotent) --------------------
 
+
 def estimate_dt_from_spectrum(
     y: np.ndarray,
     dt0: float,
     *,
-    q_power: float = 0.99,          # energy quantile (e.g., 99% power below f_q)
-    snr_db: float = 8.0,            # SNR threshold above noise floor in dB
-    smooth_bins: int = 8,           # frequency smoothing bins for PSD
-    safety: float = 0.9,            # c in Δt* = c / (2 f_h)
-    guard_frac: float = 0.9,        # only trust PSD below 0.9*Nyquist (stability)
-    min_bins: int = 64,             # minimum number of frequency bins for reliability
-    enforce_coarsening: bool = True # never suggest Δt* < dt0
+    q_power: float = 0.99,  # energy quantile (e.g., 99% power below f_q)
+    snr_db: float = 8.0,  # SNR threshold above noise floor in dB
+    smooth_bins: int = 8,  # frequency smoothing bins for PSD
+    safety: float = 0.9,  # c in Δt* = c / (2 f_h)
+    guard_frac: float = 0.9,  # only trust PSD below 0.9*Nyquist (stability)
+    min_bins: int = 64,  # minimum number of frequency bins for reliability
+    enforce_coarsening: bool = True,  # never suggest Δt* < dt0
 ) -> DtFromSpectrum:
     """
     Frequency-based Δt selection with practical idempotence.
@@ -157,7 +161,7 @@ def estimate_dt_from_spectrum(
     freqs, psd = _welch_multivar(y, dt0)
     if freqs.size < min_bins:
         # enlarge segment to get more bins
-        freqs, psd = _welch_multivar(y, dt0, nperseg=max(256, min_bins*2))
+        freqs, psd = _welch_multivar(y, dt0, nperseg=max(256, min_bins * 2))
 
     # Smooth and guard
     psd_s = _smooth_moving(psd, smooth_bins)
@@ -180,7 +184,7 @@ def estimate_dt_from_spectrum(
             freqs_hz=freqs,
             psd_total=psd,
             converged=False,
-            notes="Degenerate/zero spectrum."
+            notes="Degenerate/zero spectrum.",
         )
 
     # Energy-quantile cutoff (integral via trapezoid)
@@ -196,7 +200,7 @@ def estimate_dt_from_spectrum(
 
     # SNR cutoff relative to tail noise floor (robust)
     tail_mask = f >= (0.8 * f_guard)
-    floor = np.median(S[tail_mask]) if tail_mask.any() else np.median(S[-max(8, S.size//10):])
+    floor = np.median(S[tail_mask]) if tail_mask.any() else np.median(S[-max(8, S.size // 10) :])
     thr = floor * (10.0 ** (snr_db / 10.0))
     above = np.where(S >= thr)[0]
     f_snr = float(f[above[-1]]) if above.size else 0.0

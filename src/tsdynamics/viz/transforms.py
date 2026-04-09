@@ -10,6 +10,7 @@ from scipy.spatial.distance import cdist
 
 # ------------------------- Basic helpers -------------------------
 
+
 def take_columns(Y: ArrayLike, cols: Iterable[int]) -> np.ndarray:
     """Return selected columns from trajectory Y (T, N)."""
     Y = np.asarray(Y, float)
@@ -21,7 +22,7 @@ def autocorrelation(x: ArrayLike, max_lag: int) -> np.ndarray:
     """Unbiased autocorrelation up to max_lag."""
     x = np.asarray(x, float) - np.mean(x)
     n = x.size
-    r = np.asarray([np.dot(x[:n - k], x[k:]) / (n - k) for k in range(max_lag + 1)])
+    r = np.asarray([np.dot(x[: n - k], x[k:]) / (n - k) for k in range(max_lag + 1)])
     return r / r[0]
 
 
@@ -36,7 +37,7 @@ def delay_embedding(x: ArrayLike, m: int, tau: int) -> np.ndarray:
     T = x.size - (m - 1) * tau
     if T <= 0:
         raise ValueError("Time series too short for the requested embedding.")
-    return np.column_stack([x[i:i + T] for i in range(0, m * tau, tau)])
+    return np.column_stack([x[i : i + T] for i in range(0, m * tau, tau)])
 
 
 def return_map(x: ArrayLike, lag: int = 1) -> Tuple[np.ndarray, np.ndarray]:
@@ -49,6 +50,7 @@ def return_map(x: ArrayLike, lag: int = 1) -> Tuple[np.ndarray, np.ndarray]:
 
 # ------------------------- Spectral analysis -------------------------
 
+
 def power_spectrum_fft(x: ArrayLike, fs: float = 1.0) -> Tuple[np.ndarray, np.ndarray]:
     """Single-sided FFT power spectrum."""
     x = np.asarray(x, float)
@@ -59,14 +61,18 @@ def power_spectrum_fft(x: ArrayLike, fs: float = 1.0) -> Tuple[np.ndarray, np.nd
     return freqs, psd
 
 
-def power_spectrum_welch(x: ArrayLike, fs: float = 1.0, nperseg: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray]:
+def power_spectrum_welch(
+    x: ArrayLike, fs: float = 1.0, nperseg: Optional[int] = None
+) -> Tuple[np.ndarray, np.ndarray]:
     """Welch PSD."""
     x = np.asarray(x, float)
-    f, Pxx = welch(x, fs=fs, nperseg=nperseg or max(256, len(x)//8))
+    f, Pxx = welch(x, fs=fs, nperseg=nperseg or max(256, len(x) // 8))
     return f, Pxx
 
 
-def wavelet_scalogram(x: ArrayLike, fs: float, wavelet: str = "morl", widths: Optional[np.ndarray] = None):
+def wavelet_scalogram(
+    x: ArrayLike, fs: float, wavelet: str = "morl", widths: Optional[np.ndarray] = None
+):
     """
     Continuous wavelet scalogram using PyWavelets (optional dependency).
     Returns (t, scales, |CWT|).
@@ -79,16 +85,22 @@ def wavelet_scalogram(x: ArrayLike, fs: float, wavelet: str = "morl", widths: Op
     x = np.asarray(x, float)
     if widths is None:
         # default logarithmic widths
-        widths = np.geomspace(1, max(8, len(x)//8), 64)
-    cwtmatr, scales = pywt.cwt(x, widths, wavelet, sampling_period=1.0/fs)
+        widths = np.geomspace(1, max(8, len(x) // 8), 64)
+    cwtmatr, scales = pywt.cwt(x, widths, wavelet, sampling_period=1.0 / fs)
     t = np.arange(x.size) / fs
     return t, scales, np.abs(cwtmatr)
 
 
 # ------------------------- Recurrence analysis -------------------------
 
-def recurrence_matrix(X: ArrayLike, eps: Optional[float] = None, percent: Optional[float] = 10.0,
-                      metric: str = "euclidean", normalize: bool = True) -> np.ndarray:
+
+def recurrence_matrix(
+    X: ArrayLike,
+    eps: Optional[float] = None,
+    percent: Optional[float] = 10.0,
+    metric: str = "euclidean",
+    normalize: bool = True,
+) -> np.ndarray:
     """
     Binary recurrence matrix R[i,j] (1 if distance <= threshold).
     If eps is None, choose threshold so that `percent`% of entries are 1.
@@ -98,7 +110,7 @@ def recurrence_matrix(X: ArrayLike, eps: Optional[float] = None, percent: Option
         X = X[:, None]
     D = cdist(X, X, metric=metric)
     if normalize:
-        D /= (np.nanmax(D) + 1e-12)
+        D /= np.nanmax(D) + 1e-12
     if eps is None:
         if percent is None:
             raise ValueError("Either eps or percent must be given.")
@@ -107,19 +119,24 @@ def recurrence_matrix(X: ArrayLike, eps: Optional[float] = None, percent: Option
     return (D <= eps).astype(np.uint8)
 
 
-def cross_recurrence_matrix(X: ArrayLike, Y: ArrayLike, eps: Optional[float] = None,
-                            percent: Optional[float] = 10.0, metric: str = "euclidean",
-                            normalize: bool = True) -> np.ndarray:
+def cross_recurrence_matrix(
+    X: ArrayLike,
+    Y: ArrayLike,
+    eps: Optional[float] = None,
+    percent: Optional[float] = 10.0,
+    metric: str = "euclidean",
+    normalize: bool = True,
+) -> np.ndarray:
     """Binary cross-recurrence of two sequences."""
     X = np.asarray(X, float)
     Y = np.asarray(Y, float)
-    if X.ndim == 1: 
+    if X.ndim == 1:
         X = X[:, None]
-    if Y.ndim == 1: 
+    if Y.ndim == 1:
         Y = Y[:, None]
     D = cdist(X, Y, metric=metric)
     if normalize:
-        D /= (np.nanmax(D) + 1e-12)
+        D /= np.nanmax(D) + 1e-12
     if eps is None:
         if percent is None:
             raise ValueError("Either eps or percent must be given.")
@@ -140,11 +157,16 @@ def joint_recurrence_matrix(*Rs: np.ndarray) -> np.ndarray:
 
 # ------------------------- Poincaré & events -------------------------
 
-def poincare_section(times: ArrayLike, X: ArrayLike, *,
-                     section_dim: int = 0,
-                     section_value: float = 0.0,
-                     direction: str = "positive",
-                     extract_dims: Tuple[int, int] | Tuple[int, int, int] = (1, 2)) -> Tuple[np.ndarray, np.ndarray]:
+
+def poincare_section(
+    times: ArrayLike,
+    X: ArrayLike,
+    *,
+    section_dim: int = 0,
+    section_value: float = 0.0,
+    direction: str = "positive",
+    extract_dims: Tuple[int, int] | Tuple[int, int, int] = (1, 2),
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Extract Poincaré section hits from trajectory X(t).
     Linear interpolation between samples is used for crossings.
@@ -162,25 +184,27 @@ def poincare_section(times: ArrayLike, X: ArrayLike, *,
     elif direction == "negative":
         mask = (s[:-1] > 0) & (s[1:] <= 0)
     else:
-        mask = (s[:-1] * s[1:] <= 0)
+        mask = s[:-1] * s[1:] <= 0
 
     idx = np.where(mask)[0]
     t_hits = []
     pts = []
     for i in idx:
-        a, b = s[i], s[i+1]
+        a, b = s[i], s[i + 1]
         if np.isclose(a, b):
             tau = 0.0
         else:
             tau = -a / (b - a)  # in [0,1]
-        thit = t[i] + tau * (t[i+1] - t[i])
-        xhit = X[i] + tau * (X[i+1] - X[i])
+        thit = t[i] + tau * (t[i + 1] - t[i])
+        xhit = X[i] + tau * (X[i + 1] - X[i])
         t_hits.append(thit)
         pts.append(xhit[list(extract_dims)])
     return np.asarray(t_hits), np.asarray(pts)
 
 
-def peaks(x: ArrayLike, height: Optional[float] = None, distance: Optional[int] = None) -> np.ndarray:
+def peaks(
+    x: ArrayLike, height: Optional[float] = None, distance: Optional[int] = None
+) -> np.ndarray:
     """Indices of local maxima using scipy.signal.find_peaks."""
     x = np.asarray(x, float)
     idx, _ = find_peaks(x, height=height, distance=distance)
@@ -189,10 +213,10 @@ def peaks(x: ArrayLike, height: Optional[float] = None, distance: Optional[int] 
 
 # ------------------------- Bifurcation helpers -------------------------
 
-def asymptotic_samples(x: ArrayLike, *,
-                       tail: float = 0.2,
-                       via_peaks: bool = True,
-                       max_points: int = 400) -> np.ndarray:
+
+def asymptotic_samples(
+    x: ArrayLike, *, tail: float = 0.2, via_peaks: bool = True, max_points: int = 400
+) -> np.ndarray:
     """
     Extract points for a bifurcation diagram from a scalar series x(t).
     Either take peaks on the tail, or raw tail samples.
@@ -213,6 +237,7 @@ def asymptotic_samples(x: ArrayLike, *,
 
 
 # ------------------------- Projections & embeddings -------------------------
+
 
 def pca_project(X: ArrayLike, n_components: int = 2) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -238,6 +263,7 @@ def project_with_components(X: ArrayLike, components: np.ndarray, mean: np.ndarr
 
 # ------------------------- Distance matrices & density -------------------------
 
+
 def distance_matrix(X: ArrayLike, metric: str = "euclidean") -> np.ndarray:
     """Pairwise distances for rows of X."""
     X = np.asarray(X, float)
@@ -246,7 +272,9 @@ def distance_matrix(X: ArrayLike, metric: str = "euclidean") -> np.ndarray:
     return cdist(X, X, metric=metric)
 
 
-def phase_space_density(X: ArrayLike, bins: int | Tuple[int, int] = 100, range=None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def phase_space_density(
+    X: ArrayLike, bins: int | Tuple[int, int] = 100, range=None
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     2D histogram density for (x,y) columns of X.
     Returns (H, xedges, yedges).

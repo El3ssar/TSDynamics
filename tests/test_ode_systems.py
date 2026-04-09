@@ -166,6 +166,7 @@ _IDS = [name for _, name in ALL_ODE_SYSTEMS]
 # Instantiation tests — fast, no JiT compilation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("module_path,class_name", ALL_ODE_SYSTEMS, ids=_IDS)
 def test_ode_instantiation(module_path, class_name):
     """Every ODE system must instantiate with default arguments."""
@@ -193,15 +194,17 @@ def test_ode_params_as_attributes(module_path, class_name):
 # KuramotoSivashinsky — special constructor
 # ---------------------------------------------------------------------------
 
+
 def test_kuramoto_sivashinsky_instantiation():
     from tsdynamics.systems.continuous.chaotic_attractors import KuramotoSivashinsky
+
     ks = KuramotoSivashinsky(N=8, L=8.0)
     assert ks.n_dim == 8
 
 
-
 def test_kuramoto_sivashinsky_raises_small_n():
     from tsdynamics.systems.continuous.chaotic_attractors import KuramotoSivashinsky
+
     with pytest.raises(ValueError):
         KuramotoSivashinsky(N=4, L=8.0)
 
@@ -231,7 +234,9 @@ _INTEG_IDS = [name for _, name, _ in _INTEGRATION_SAMPLE]
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("module_path,class_name,expected_n_dim", _INTEGRATION_SAMPLE, ids=_INTEG_IDS)
+@pytest.mark.parametrize(
+    "module_path,class_name,expected_n_dim", _INTEGRATION_SAMPLE, ids=_INTEG_IDS
+)
 def test_ode_integration_shape_and_finiteness(module_path, class_name, expected_n_dim):
     """Integration returns correct shapes and finite values."""
     mod = importlib.import_module(module_path)
@@ -252,6 +257,7 @@ def test_ode_integration_shape_and_finiteness(module_path, class_name, expected_
 @pytest.mark.slow
 def test_ode_time_starts_at_zero():
     from tsdynamics.systems.continuous.chaotic_attractors import Lorenz
+
     t, X = Lorenz().integrate(dt=0.1, final_time=1.0)
     assert t[0] == pytest.approx(0.0)
 
@@ -260,6 +266,7 @@ def test_ode_time_starts_at_zero():
 def test_ode_steps_overrides_final_time():
     """steps= takes precedence over final_time=."""
     from tsdynamics.systems.continuous.chaotic_attractors import Lorenz
+
     t1, X1 = Lorenz().integrate(dt=0.1, steps=10)
     t2, X2 = Lorenz().integrate(dt=0.1, steps=10, final_time=9999.0)
     assert X1.shape[0] == X2.shape[0]
@@ -269,6 +276,7 @@ def test_ode_steps_overrides_final_time():
 def test_ode_custom_initial_conditions_stored():
     """Initial conditions passed to integrate() are stored on the object."""
     from tsdynamics.systems.continuous.chaotic_attractors import Lorenz
+
     ic = [1.0, 1.0, 1.0]
     lor = Lorenz()
     lor.integrate(dt=0.1, final_time=1.0, initial_conds=ic)
@@ -279,6 +287,7 @@ def test_ode_custom_initial_conditions_stored():
 def test_ode_integration_method_dop853():
     """dop853 integrator produces finite output."""
     from tsdynamics.systems.continuous.chaotic_attractors import Lorenz
+
     t, X = Lorenz().integrate(dt=0.1, final_time=2.0, method="dop853")
     assert np.all(np.isfinite(X))
 
@@ -287,6 +296,7 @@ def test_ode_integration_method_dop853():
 def test_ode_initial_conds_set_if_none():
     """When no IC is provided, random IC is generated and stored."""
     from tsdynamics.systems.continuous.chaotic_attractors import Rossler
+
     r = Rossler()
     assert r.initial_conds is None
     r.integrate(dt=0.1, final_time=0.5)
@@ -298,6 +308,7 @@ def test_ode_initial_conds_set_if_none():
 def test_hopfield_integration():
     """Hopfield integrates with pre-computed symbolic weight matrix."""
     from tsdynamics.systems.continuous.neural_cognitive import Hopfield
+
     h = Hopfield()
     t, X = h.integrate(dt=0.1, final_time=1.0)
     assert X.shape == (t.shape[0], 3)
@@ -308,6 +319,7 @@ def test_hopfield_integration():
 def test_kuramoto_sivashinsky_integrates():
     """KuramotoSivashinsky integrates without error."""
     from tsdynamics.systems.continuous.chaotic_attractors import KuramotoSivashinsky
+
     ic = 1e-2 * np.random.default_rng(0).standard_normal(8)
     ks = KuramotoSivashinsky(N=8, L=8.0, initial_conds=ic)
     t, X = ks.integrate(dt=0.1, final_time=2.0)

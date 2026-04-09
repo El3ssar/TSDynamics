@@ -6,16 +6,10 @@ import numpy as np
 class BaseDyn:
     """Abstract base class for all dynamical systems."""
 
-    def __init__(
-        self,
-        n_dim=None,
-        params=None,
-        initial_conds=None
-    ) -> None:
+    def __init__(self, n_dim=None, params=None, initial_conds=None) -> None:
         self.n_dim = n_dim if n_dim is not None else getattr(self, "n_dim", None)
         self.params = (
-            dict(params) if params is not None
-            else dict(getattr(self, "params", {}) or {})
+            dict(params) if params is not None else dict(getattr(self, "params", {}) or {})
         )
         if initial_conds is not None:
             self.initial_conds = initial_conds
@@ -27,11 +21,7 @@ class BaseDyn:
             for key, value in self.params.items():
                 setattr(self, key, value)
 
-    def __setattr__(
-        self,
-        name: str,
-        value: Any
-    ) -> None:
+    def __setattr__(self, name: str, value: Any) -> None:
         """Set an attribute and add it to the parameters dictionary."""
         params = self.__dict__.get("params")
         if isinstance(params, dict) and name in params:
@@ -39,10 +29,7 @@ class BaseDyn:
         object.__setattr__(self, name, value)
 
     def generate_timesteps(
-        self,
-        dt: float = 0.02,
-        steps: Optional[int] = None,
-        final_time: Optional[float] = 1.0
+        self, dt: float = 0.02, steps: Optional[int] = None, final_time: Optional[float] = 1.0
     ) -> np.ndarray:
         """
         Generate a sequence of time steps for a given simulation or time series.
@@ -95,4 +82,3 @@ class BaseDyn:
             ts = np.arange(0.0, steps * dt, dt)
             ts = np.append(ts, steps * dt)
         return ts
-
