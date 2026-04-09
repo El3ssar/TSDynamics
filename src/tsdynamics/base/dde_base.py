@@ -254,7 +254,27 @@ class DynSysDelay(BaseDyn, ABC):
         if history is None:
             dde.constant_past(initial_conds)
         else:
-            dde.past_from_function(lambda s: np.asarray(history(s), float).reshape(self.n_dim))
+            # past_from_function is broken with jitcdde_lyap: chspy.from_function sets
+            # .happy attributes on Anchor objects, but jitcdde.Past.prepare_anchor
+            # recreates every Anchor (to expand tangent-vector dimensions) and the
+            # new object loses .happy, causing AttributeError inside from_function.
+            # Fix: patch prepare_anchor to forward .happy through the reconstruction.
+            from jitcdde.past import Past as _Past
+            _orig_prepare = _Past.prepare_anchor
+
+            def _prepare_preserving_happy(self_past, x):
+                result = _orig_prepare(self_past, x)
+                if hasattr(x, "happy"):
+                    result.happy = x.happy
+                return result
+
+            _Past.prepare_anchor = _prepare_preserving_happy
+            try:
+                dde.past_from_function(
+                    lambda s: np.asarray(history(s), float).reshape(self.n_dim)
+                )
+            finally:
+                _Past.prepare_anchor = _orig_prepare
 
         # Handle initial discontinuities; start sampling from dde.t afterwards
         dde.step_on_discontinuities()

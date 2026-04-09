@@ -131,7 +131,10 @@ class DynMap(BaseDyn):
                 perturbations = Q.T
 
                 # Accumulate the logarithms of the absolute values of the diagonal elements of R
-                lyapunov_sums += np.log(np.abs(np.diag(R)))
+                # Guard against exact zeros on the diagonal (e.g. stable fixed-point trajectories)
+                diag_abs = np.abs(np.diag(R))
+                diag_abs = np.where(diag_abs == 0.0, np.finfo(float).tiny, diag_abs)
+                lyapunov_sums += np.log(diag_abs)
                 total_intervals += 1
 
         # Compute the Lyapunov exponents
