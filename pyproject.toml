@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Daniel Estevez", email = "kemossabee@gmail.com" }]
+
 keywords = [
   "dynamical systems",
   "ODE",
@@ -19,10 +20,10 @@ keywords = [
   "nonlinear dynamics",
   "reservoir computing",
 ]
+
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
-  "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Mathematics",
@@ -33,13 +34,13 @@ classifiers = [
 dependencies = [
   "numpy>=2.0,<3.0",
   "scipy>=1.14,<2.0",
-  "matplotlib>=3.9.0",
-  "numba>=0.61.0",
-  "jitcdde>=1.8.3",
-  "jitcode>=1.7.3",
-  "symengine>=0.11.0",
-  "sympy>=1.12.0",
-  "pywavelets>=1.7.0",
+  "matplotlib>=3.9,<4.0",
+  "numba>=0.61,<0.62",
+  "jitcdde>=1.8.3,<2.0",
+  "jitcode>=1.7.3,<2.0",
+  "symengine>=0.11,<1.0",
+  "sympy>=1.12,<2.0",
+  "pywavelets>=1.7,<2.0",
 ]
 
 [project.urls]
@@ -47,23 +48,23 @@ Homepage = "https://github.com/El3ssar/TSDynamics"
 Repository = "https://github.com/El3ssar/TSDynamics"
 Issues = "https://github.com/El3ssar/TSDynamics/issues"
 
-# ---- uv-specific groups (dev tooling) ----
+# ---------------- Dependency groups ----------------
 [dependency-groups]
 dev = [
-  "pytest>=8.4.2",
-  "pytest-cov>=6.0",
-  "ruff>=0.14.1",
-  "mypy>=1.18.2",
-  "pydocstyle>=6.3",
+  "pytest>=8.4,<9.0",
+  "pytest-cov>=6.0,<7.0",
+  "ruff==0.14.1",
+  "mypy>=1.18,<2.0",
+  "pydocstyle>=6.3,<7.0",
 ]
 docs = [
-  "sphinx>=8.0.0",
-  "myst-parser>=4.0.0",
-  "sphinx-autodoc-typehints>=2.0.0",
-  "furo>=2024.1.29",
+  "sphinx>=8.0,<9.0",
+  "myst-parser>=4.0,<5.0",
+  "sphinx-autodoc-typehints>=2.0,<3.0",
+  "furo>=2024.1.29,<2025.0",
 ]
 
-# ---------------- Hatch config ----------------
+# ---------------- Hatch ----------------
 [tool.hatch.build]
 include = ["src/tsdynamics/**", "README.md", "LICENSE*"]
 
@@ -73,46 +74,43 @@ packages = ["src/tsdynamics"]
 [tool.hatch.build.targets.sdist]
 include = ["src/tsdynamics/**", "README.md", "LICENSE*", "tests/**"]
 
-# Derive version from Git tags (e.g. v0.1.1 → 0.1.1)
 [tool.hatch.version]
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
 version-file = "src/tsdynamics/_version.py"
 
-# ---------------- Linters / style ----------------
-[tool.pydocstyle]
-convention = "numpy"
-add-ignore = ["D105", "D107"]
-match = '.*\.py'
-match-dir = '^src/'
-
+# ---------------- Ruff ----------------
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 extend-exclude = ["src/tsdynamics/_version.py"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
-ignore = ["E501"]
+select = ["E", "F", "I"]
+ignore = ["E501", "ARG001", "F841"]
 
+# ---------------- Pydocstyle ----------------
+[tool.pydocstyle]
+convention = "numpy"
+add-ignore = ["D105", "D107"]
+match = '.*\.py'
+match-dir = '^src/'
+
+# ---------------- Pytest ----------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-q --tb=short"
 markers = [
   "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long simulations (deselect with: pytest -m 'not slow')",
 ]
+
 filterwarnings = [
-  # JiTCODE/JiTCDDE fall back to Python lambdas when C compilation fails (e.g. missing
-  # build tools in CI). The lambda backend is correct; the long traceback is just noise.
   "ignore:.*Generating compiled integrator failed.*:UserWarning",
   "ignore:.*READ ME FIRST.*:UserWarning",
-  # DDE integrator re-uses the Hermite spline for tiny back-steps; this is expected.
   "ignore:.*target time is smaller than the current time.*:UserWarning",
-  # setuptools PEP 639 note that appears when jitcode/jitcdde call setup() internally.
   "ignore:.*License classifiers have been superseded.*:UserWarning",
-  # Occasional dopri5/dop853 advisory about step-size budget (non-fatal).
   "ignore:.*larger nsteps is needed.*:UserWarning",
   "ignore:.*step size becomes too small.*:UserWarning",
-  # chspy rel_dist helper hits 0/0 when two anchors have identical state values.
   "ignore:.*divide by zero encountered in divide.*:RuntimeWarning",
 ]

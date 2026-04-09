@@ -39,7 +39,10 @@ jobs:
       - name: Install project + dev dependencies
         run: uv sync --group dev
 
-      - name: Format (ruff)
+      - name: Lint (Ruff)
+        run: uv run ruff check src/
+
+      - name: Format (Ruff)
         run: uv run ruff format --check src/
 
       - name: Run fast tests (no slow marker)
