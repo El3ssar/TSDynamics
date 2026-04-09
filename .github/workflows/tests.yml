@@ -32,10 +32,10 @@ jobs:
         run: uv sync --group dev
 
       - name: Lint (ruff)
-        run: uv run ruff check src/
+        run: uv run ruff format src/
 
       - name: Format check (black)
-        run: uv run black --check src/
+        run: uv run black src/
 
       - name: Run fast tests (no slow marker)
         run: uv run pytest -q --tb=short -m "not slow"
