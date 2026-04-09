@@ -1447,7 +1447,6 @@ wheels = [
 
 [[package]]
 name = "tsdynamics"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "jitcdde" },
@@ -1481,29 +1480,29 @@ docs = [
 requires-dist = [
     { name = "jitcdde", specifier = ">=1.8.3" },
     { name = "jitcode", specifier = ">=1.7.3" },
-    { name = "matplotlib", specifier = ">=3.10.6" },
-    { name = "numba", specifier = ">=0.62.1" },
+    { name = "matplotlib", specifier = ">=3.9.0" },
+    { name = "numba", specifier = ">=0.61.0" },
     { name = "numpy", specifier = ">=2.0,<3.0" },
-    { name = "pywavelets", specifier = ">=1.9.0" },
+    { name = "pywavelets", specifier = ">=1.7.0" },
     { name = "scipy", specifier = ">=1.14,<2.0" },
-    { name = "symengine", specifier = ">=0.14.1" },
-    { name = "sympy", specifier = ">=1.14.0" },
+    { name = "symengine", specifier = ">=0.11.0" },
+    { name = "sympy", specifier = ">=1.12.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "black", specifier = ">=25.9.0" },
+    { name = "black", specifier = ">=25.0.0" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pydocstyle", specifier = ">=6.3" },
     { name = "pytest", specifier = ">=8.2" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "ruff", specifier = ">=0.13.3" },
+    { name = "pytest-cov", specifier = ">=6.0" },
+    { name = "ruff", specifier = ">=0.9.0" },
 ]
 docs = [
-    { name = "furo", specifier = ">=2025.9.25" },
-    { name = "myst-parser", specifier = ">=4.0.1" },
-    { name = "sphinx", specifier = ">=8.2.3" },
-    { name = "sphinx-autodoc-typehints", specifier = ">=3.2.0" },
+    { name = "furo", specifier = ">=2024.1.29" },
+    { name = "myst-parser", specifier = ">=4.0.0" },
+    { name = "sphinx", specifier = ">=8.0.0" },
+    { name = "sphinx-autodoc-typehints", specifier = ">=2.0.0" },
 ]
 
 [[package]]
