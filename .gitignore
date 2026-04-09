@@ -170,3 +170,4 @@ cython_debug/
 data/
 
 Tinkering
+src/tsdynamics/_version.py
