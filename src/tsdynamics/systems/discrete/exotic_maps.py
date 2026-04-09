@@ -1,6 +1,7 @@
+import numpy as np
+
 from tsdynamics.base import DynMap
 from tsdynamics.utils import staticjit
-import numpy as np
 
 
 class Bogdanov(DynMap):
@@ -102,15 +103,24 @@ class GumowskiMira(DynMap):
         fx = a * x + 2 * (1 - a) * x**2 / (1 + x**2)
         xp = b * y + fx
 
-        dxdx = a + (4 * (1 - a) * x) / (1 + x**2) - (4 * (1 - a) * x**3) / (1 + x**2) ** 2
+        dxdx = (
+            a + (4 * (1 - a) * x) / (1 + x**2) - (4 * (1 - a) * x**3) / (1 + x**2) ** 2
+        )
 
         dxdy = b
 
         dydx = dxdx * (
-            a + (4 * (1 - a) * xp) / (1 + xp**2) - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2 - 1
+            a
+            + (4 * (1 - a) * xp) / (1 + xp**2)
+            - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2
+            - 1
         )
 
-        dydy = b * (a + (4 * (1 - a) * xp) / (1 + xp**2) - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2)
+        dydy = b * (
+            a
+            + (4 * (1 - a) * xp) / (1 + xp**2)
+            - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2
+        )
 
         row1 = [dxdx, dxdy]
         row2 = [dydx, dydy]

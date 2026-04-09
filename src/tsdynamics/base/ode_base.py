@@ -2,9 +2,9 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
-from jitcode import jitcode, jitcode_lyap, y, t  # pip install jitcode
-from .base import BaseDyn
+from jitcode import jitcode, jitcode_lyap, t, y  # pip install jitcode
 
+from .base import BaseDyn
 
 # Map SciPy-style names to JiTCODE integrators
 _INTEGRATOR_MAP = {
@@ -226,7 +226,9 @@ class DynSys(BaseDyn, ABC):
         T = 0.0
         while T < burn_in:
             Tn = min(burn_in, T + dt)
-            _ = ode.integrate(Tn)  # may return (state, lyaps) or (state, lyaps, lyap_vectors)
+            _ = ode.integrate(
+                Tn
+            )  # may return (state, lyaps) or (state, lyaps, lyap_vectors)
             T = Tn
 
         # Production: time-weighted average of local exponents
@@ -257,5 +259,7 @@ class DynSys(BaseDyn, ABC):
 
         W = np.asarray(weights, float)
         L = np.vstack(ly_steps) if ly_steps else np.empty((0, n_lyap), float)
-        exponents = (W[:, None] * L).sum(axis=0) / W.sum() if L.size else np.zeros(n_lyap)
+        exponents = (
+            (W[:, None] * L).sum(axis=0) / W.sum() if L.size else np.zeros(n_lyap)
+        )
         return exponents

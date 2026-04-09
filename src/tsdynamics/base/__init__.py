@@ -1,6 +1,6 @@
 from .base import BaseDyn
-from .ode_base import DynSys
-from .map_base import DynMap
 from .dde_base import DynSysDelay
+from .map_base import DynMap
+from .ode_base import DynSys
 
 __all__ = ["BaseDyn", "DynSys", "DynMap", "DynSysDelay"]

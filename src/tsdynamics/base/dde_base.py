@@ -107,7 +107,9 @@ class DynSysDelay(BaseDyn, ABC):
         # Output grid
         t_eval = self.generate_timesteps(dt=dt, steps=steps, final_time=final_time)
         if t_eval[0] < 0.0:
-            raise ValueError("DDE integration requires nonnegative output times (t >= 0).")
+            raise ValueError(
+                "DDE integration requires nonnegative output times (t >= 0)."
+            )
 
         # Build jitcdde system
         rhs = tuple(self.rhs(y, t))
@@ -273,7 +275,9 @@ class DynSysDelay(BaseDyn, ABC):
 
             _Past.prepare_anchor = _prepare_preserving_happy
             try:
-                dde.past_from_function(lambda s: np.asarray(history(s), float).reshape(self.n_dim))
+                dde.past_from_function(
+                    lambda s: np.asarray(history(s), float).reshape(self.n_dim)
+                )
             finally:
                 _Past.prepare_anchor = _orig_prepare
 

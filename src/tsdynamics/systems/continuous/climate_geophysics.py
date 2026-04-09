@@ -168,7 +168,14 @@ class ArnoldBeltramiChildress(DynSys):
 
 
 class AtmosphericRegime(DynSys):
-    params = {"alpha": -2.0, "beta": -5.0, "mu1": 0.05, "mu2": -0.01, "omega": 3.0, "sigma": 1.1}
+    params = {
+        "alpha": -2.0,
+        "beta": -5.0,
+        "mu1": 0.05,
+        "mu2": -0.01,
+        "omega": 3.0,
+        "sigma": 1.1,
+    }
     n_dim = 3
 
     @staticmethod
@@ -181,7 +188,16 @@ class AtmosphericRegime(DynSys):
 
 
 class SaltonSea(DynSys):
-    params = {"a": 15, "d": 8.3, "k": 400, "lam": 0.06, "m": 15.5, "mu": 3.4, "r": 22, "th": 10.0}
+    params = {
+        "a": 15,
+        "d": 8.3,
+        "k": 400,
+        "lam": 0.06,
+        "m": 15.5,
+        "mu": 3.4,
+        "r": 22,
+        "th": 10.0,
+    }
     n_dim = 3
 
     @staticmethod

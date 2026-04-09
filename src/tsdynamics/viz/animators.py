@@ -1,12 +1,14 @@
 """Matplotlib animations (trajectories and space–time)."""
 
 from __future__ import annotations
-from typing import Tuple, Optional
+
+from typing import Optional, Tuple
+
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from .base import new_fig_ax, PlotConfig
 from . import transforms as tf
+from .base import PlotConfig, new_fig_ax
 
 
 def animate_trajectory2d(
@@ -95,13 +97,22 @@ def animate_trajectory3d(
         return line, head
 
     anim = FuncAnimation(
-        fig, update, frames=len(times), init_func=init, interval=interval_ms, blit=use_blit
+        fig,
+        update,
+        frames=len(times),
+        init_func=init,
+        interval=interval_ms,
+        blit=use_blit,
     )
     return anim
 
 
 def animate_space_time(
-    times: np.ndarray, Y: np.ndarray, *, interval_ms: int = 30, cfg: Optional[PlotConfig] = None
+    times: np.ndarray,
+    Y: np.ndarray,
+    *,
+    interval_ms: int = 30,
+    cfg: Optional[PlotConfig] = None,
 ):
     """
     Animate a 1D field y(x,t) given as Y shape (T, N): show y vs x over time.

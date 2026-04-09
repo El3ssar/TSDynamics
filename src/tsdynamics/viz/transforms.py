@@ -1,12 +1,13 @@
 """Numerical transforms for visualization (no plotting here)."""
 
 from __future__ import annotations
+
 from typing import Iterable, Optional, Tuple
+
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.signal import welch, find_peaks
+from scipy.signal import find_peaks, welch
 from scipy.spatial.distance import cdist
-
 
 # ------------------------- Basic helpers -------------------------
 
@@ -239,7 +240,9 @@ def asymptotic_samples(
 # ------------------------- Projections & embeddings -------------------------
 
 
-def pca_project(X: ArrayLike, n_components: int = 2) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def pca_project(
+    X: ArrayLike, n_components: int = 2
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     PCA using SVD. Return (components, explained_variance, mean).
     - components: (n_components, N)
@@ -255,7 +258,9 @@ def pca_project(X: ArrayLike, n_components: int = 2) -> Tuple[np.ndarray, np.nda
     return comps, var, mu
 
 
-def project_with_components(X: ArrayLike, components: np.ndarray, mean: np.ndarray) -> np.ndarray:
+def project_with_components(
+    X: ArrayLike, components: np.ndarray, mean: np.ndarray
+) -> np.ndarray:
     """Project rows of X using precomputed PCA components and mean."""
     X = np.asarray(X, float)
     return (X - mean) @ components.T
@@ -282,5 +287,7 @@ def phase_space_density(
     X = np.asarray(X, float)
     if X.ndim != 2 or X.shape[1] < 2:
         raise ValueError("X must be (T, >=2) for density.")
-    H, xedges, yedges = np.histogram2d(X[:, 0], X[:, 1], bins=bins, range=range, density=True)
+    H, xedges, yedges = np.histogram2d(
+        X[:, 0], X[:, 1], bins=bins, range=range, density=True
+    )
     return H.T, xedges, yedges

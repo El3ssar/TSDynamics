@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Optional, Tuple
+
 import numpy as np
 
 __all__ = ["DtFromSpectrum", "estimate_dt_from_spectrum"]
@@ -200,7 +202,11 @@ def estimate_dt_from_spectrum(
 
     # SNR cutoff relative to tail noise floor (robust)
     tail_mask = f >= (0.8 * f_guard)
-    floor = np.median(S[tail_mask]) if tail_mask.any() else np.median(S[-max(8, S.size // 10) :])
+    floor = (
+        np.median(S[tail_mask])
+        if tail_mask.any()
+        else np.median(S[-max(8, S.size // 10) :])
+    )
     thr = floor * (10.0 ** (snr_db / 10.0))
     above = np.where(S >= thr)[0]
     f_snr = float(f[above[-1]]) if above.size else 0.0

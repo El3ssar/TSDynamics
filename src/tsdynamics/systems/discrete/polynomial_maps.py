@@ -1,6 +1,7 @@
+import numpy as np
+
 from tsdynamics.base import DynMap
 from tsdynamics.utils import staticjit
-import numpy as np
 
 
 class Gauss(DynMap):

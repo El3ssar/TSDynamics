@@ -92,7 +92,9 @@ class Lorenz96(DynSys):
     @staticmethod
     def _rhs(y_sym, t_sym, f, N):
         return [
-            (y_sym((i + 1) % N) - y_sym((i - 2) % N)) * y_sym((i - 1) % N) - y_sym(i) + f
+            (y_sym((i + 1) % N) - y_sym((i - 2) % N)) * y_sym((i - 1) % N)
+            - y_sym(i)
+            + f
             for i in range(N)
         ]
 
@@ -183,16 +185,34 @@ class KuramotoSivashinsky(DynSys):
         if N < 7:
             raise ValueError("KuramotoSivashinsky requires N >= 7 (uses ±3 stencil).")
         super().__init__(
-            n_dim=int(N), params={"N": int(N), "L": float(L)}, initial_conds=initial_conds
+            n_dim=int(N),
+            params={"N": int(N), "L": float(L)},
+            initial_conds=initial_conds,
         )
 
     @staticmethod
     def _rhs(Y, t, N, L):
         # 7-point central weights (Trefethen-style) for periodic, equispaced grid.
         # First derivative (6th-order): D1 * f / dx
-        w1 = (-1.0 / 60.0, 3.0 / 20.0, -3.0 / 4.0, 0.0, 3.0 / 4.0, -3.0 / 20.0, 1.0 / 60.0)
+        w1 = (
+            -1.0 / 60.0,
+            3.0 / 20.0,
+            -3.0 / 4.0,
+            0.0,
+            3.0 / 4.0,
+            -3.0 / 20.0,
+            1.0 / 60.0,
+        )
         # Second derivative (6th-order): D2 * f / dx^2
-        w2 = (1.0 / 90.0, -3.0 / 20.0, 3.0 / 2.0, -49.0 / 18.0, 3.0 / 2.0, -3.0 / 20.0, 1.0 / 90.0)
+        w2 = (
+            1.0 / 90.0,
+            -3.0 / 20.0,
+            3.0 / 2.0,
+            -49.0 / 18.0,
+            3.0 / 2.0,
+            -3.0 / 20.0,
+            1.0 / 90.0,
+        )
         # Fourth derivative (7-point central): D4 * f / dx^4
         w4 = (-1.0 / 6.0, 2.0, -6.5, 28.0 / 3.0, -6.5, 2.0, -1.0 / 6.0)
         offsets = (-3, -2, -1, 0, 1, 2, 3)

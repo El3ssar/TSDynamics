@@ -52,7 +52,9 @@ class DynMap(BaseDyn):
                 for i in range(steps):
                     y = self.rhs(y)
                     if np.any(np.isnan(y)) or np.any(np.isinf(y)):
-                        raise ValueError(f"The trajectory diverged at step {i}: y = {y}")
+                        raise ValueError(
+                            f"The trajectory diverged at step {i}: y = {y}"
+                        )
                     trajectory[i] = np.atleast_1d(y)
                 time = np.arange(steps)
                 return time, trajectory
@@ -89,7 +91,9 @@ class DynMap(BaseDyn):
         """
         if y0 is None:
             if self.n_dim is None:
-                raise ValueError("Initial conditions must be provided, else n_dim must be set")
+                raise ValueError(
+                    "Initial conditions must be provided, else n_dim must be set"
+                )
             y0 = np.random.rand(self.n_dim)  # if self.n_dim > 1 else np.random.rand()
         else:
             y0 = np.asarray(y0)

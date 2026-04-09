@@ -1,6 +1,3 @@
-from . import base
-from . import utils
-from . import systems
-from . import viz
+from . import base, systems, utils, viz
 
 __all__ = ["base", "utils", "systems", "viz"]

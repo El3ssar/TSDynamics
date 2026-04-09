@@ -1,6 +1,7 @@
+import numpy as np
+
 from tsdynamics.base import DynMap
 from tsdynamics.utils import staticjit
-import numpy as np
 
 
 class Henon(DynMap):
@@ -71,7 +72,9 @@ class Ikeda(DynMap):
 class Tinkerbell(DynMap):
     params = {"a": 0.9, "b": -0.6013, "c": 2.0, "d": 0.5}
     n_dim = 2
-    initial_conds = np.array([-0.72, -0.64])  # random [0,1)^2 ICs always escape the basin
+    initial_conds = np.array(
+        [-0.72, -0.64]
+    )  # random [0,1)^2 ICs always escape the basin
 
     @staticjit
     def _rhs(X, a, b, c, d):

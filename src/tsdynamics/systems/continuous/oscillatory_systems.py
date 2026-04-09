@@ -1,6 +1,6 @@
+from symengine import cos, pi, sign, sin
+
 from tsdynamics.base import DynSys
-import numpy as np
-from symengine import pi, sin, cos, sign
 
 
 class ShimizuMorioka(DynSys):
@@ -88,7 +88,16 @@ class Aizawa(DynSys):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = x * z - b * x - d * y
         ydot = d * x + y * z - b * y
-        zdot = c + a * z - (z**3) / 3 - x**2 - y**2 - e * z * x**2 - e * z * y**2 + f * z * x**3
+        zdot = (
+            c
+            + a * z
+            - (z**3) / 3
+            - x**2
+            - y**2
+            - e * z * x**2
+            - e * z * y**2
+            + f * z * x**3
+        )
         return xdot, ydot, zdot
 
 
@@ -137,7 +146,16 @@ class Torus(DynSys):
 
 
 class Lissajous3D(DynSys):
-    params = {"A": 1, "B": 1, "C": 1, "a": 3, "b": 2, "c": 5, "delta_y": pi / 2, "delta_z": pi / 4}
+    params = {
+        "A": 1,
+        "B": 1,
+        "C": 1,
+        "a": 3,
+        "b": 2,
+        "c": 5,
+        "delta_y": pi / 2,
+        "delta_z": pi / 4,
+    }
     n_dim = 3
 
     @staticmethod

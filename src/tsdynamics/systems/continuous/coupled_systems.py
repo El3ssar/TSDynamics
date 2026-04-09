@@ -1,9 +1,19 @@
+from symengine import cosh, exp, sign, sinh, tanh
+
 from tsdynamics.base import DynSys
-from symengine import exp, cosh, sinh, tanh, sign
 
 
 class Sakarya(DynSys):
-    params = {"a": -1.0, "b": 1.0, "c": 1.0, "h": 1.0, "p": 1.0, "q": 0.4, "r": 0.3, "s": 1.0}
+    params = {
+        "a": -1.0,
+        "b": 1.0,
+        "c": 1.0,
+        "h": 1.0,
+        "p": 1.0,
+        "q": 0.4,
+        "r": 0.3,
+        "s": 1.0,
+    }
     n_dim = 3
 
     @staticmethod

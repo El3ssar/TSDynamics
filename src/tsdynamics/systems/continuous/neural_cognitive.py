@@ -1,6 +1,7 @@
-from tsdynamics.base import DynSys
-from symengine import tanh, pi, sin
 import numpy as np
+from symengine import pi, sin, tanh
+
+from tsdynamics.base import DynSys
 
 
 class Hopfield(DynSys):

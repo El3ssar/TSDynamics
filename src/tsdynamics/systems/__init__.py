@@ -1,5 +1,3 @@
-from . import continuous
-from . import discrete
-
+from . import continuous, discrete
 
 __all__ = ["continuous", "discrete"]

@@ -9,7 +9,9 @@ class BaseDyn:
     def __init__(self, n_dim=None, params=None, initial_conds=None) -> None:
         self.n_dim = n_dim if n_dim is not None else getattr(self, "n_dim", None)
         self.params = (
-            dict(params) if params is not None else dict(getattr(self, "params", {}) or {})
+            dict(params)
+            if params is not None
+            else dict(getattr(self, "params", {}) or {})
         )
         if initial_conds is not None:
             self.initial_conds = initial_conds
@@ -29,7 +31,10 @@ class BaseDyn:
         object.__setattr__(self, name, value)
 
     def generate_timesteps(
-        self, dt: float = 0.02, steps: Optional[int] = None, final_time: Optional[float] = 1.0
+        self,
+        dt: float = 0.02,
+        steps: Optional[int] = None,
+        final_time: Optional[float] = 1.0,
     ) -> np.ndarray:
         """
         Generate a sequence of time steps for a given simulation or time series.

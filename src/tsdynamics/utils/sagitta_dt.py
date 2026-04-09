@@ -1,7 +1,9 @@
 from __future__ import annotations
-import numpy as np
+
 from dataclasses import dataclass
 from typing import Tuple
+
+import numpy as np
 
 __all__ = ["SagittaDt", "estimate_dt_from_sagitta"]
 
@@ -18,7 +20,9 @@ class SagittaDt:
     notes: str = ""  # info / warnings
 
 
-def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: float) -> float:
+def _compute_sagitta_percentile(
+    samples: np.ndarray, span: int, percentile_p: float
+) -> float:
     """
     Compute p-th percentile of sagitta over triples (i-span, i, i+span) on 'samples' (shape: (n_samples, n_features)).
     """
@@ -45,7 +49,9 @@ def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: fl
     return float(np.nanpercentile(sagitta, percentile_p))
 
 
-def _estimate_lag_ami(y: np.ndarray, max_lag: int | None = None, n_bins: int = 16) -> int:
+def _estimate_lag_ami(
+    y: np.ndarray, max_lag: int | None = None, n_bins: int = 16
+) -> int:
     """
     Estimate optimal time lag via first local minimum of AMI.
     Fast cap: max_lag <= 2000 to avoid O(n * max_lag) blowups on long series.
@@ -338,7 +344,9 @@ def estimate_dt_from_sagitta(
         y = _takens_embedding(y_original, embedding_lag, embedding_dim)
         n_samples, n_dim = y.shape
 
-        embedding_notes = f"Applied Takens embedding: lag={embedding_lag}, dim={embedding_dim}. "
+        embedding_notes = (
+            f"Applied Takens embedding: lag={embedding_lag}, dim={embedding_dim}. "
+        )
     else:
         # Already 2D with n_dim > 1
         n_samples, n_dim = y.shape
@@ -390,20 +398,28 @@ def estimate_dt_from_sagitta(
             notes=notes + " Too few samples; returning Δt0.",
         )
 
-    use_relative = needs_embedding  # relative sagitta only for 1D (embedded); d>1 unchanged
+    use_relative = (
+        needs_embedding  # relative sagitta only for 1D (embedded); d>1 unchanged
+    )
 
     # -------- helper to test a span --------
     def span_is_ok(span: int) -> Tuple[bool, float]:
         if (n_samples - 2 * span) < min_points_per_segment:
             return False, np.nan
         if use_relative:
-            s_p, chord_med = _compute_sagitta_stats(samples_for_sagitta, span, percentile)
+            s_p, chord_med = _compute_sagitta_stats(
+                samples_for_sagitta, span, percentile
+            )
             denom = chord_med if (chord_med > 1e-12 and np.isfinite(chord_med)) else 1.0
             rel = s_p / denom
-            return (rel <= epsilon), rel  # interpret epsilon as RELATIVE tolerance in 1D case
+            return (
+                rel <= epsilon
+            ), rel  # interpret epsilon as RELATIVE tolerance in 1D case
         else:
             val = _compute_sagitta_percentile(samples_for_sagitta, span, percentile)
-            return (val <= epsilon), val  # keep absolute criterion for d>1 (backward-compatible)
+            return (
+                val <= epsilon
+            ), val  # keep absolute criterion for d>1 (backward-compatible)
 
     # -------- coarse search (exponential growth) --------
     evaluated = []
@@ -476,7 +492,9 @@ def estimate_dt_from_sagitta(
     delta_t_star = chosen_stride * dt0
     evaluated_sorted = np.array(sorted(evaluated, key=lambda x: x[0]), dtype=float)
     searched_spans = (
-        evaluated_sorted[:, 0].astype(int) if evaluated_sorted.size else np.array([1], dtype=int)
+        evaluated_sorted[:, 0].astype(int)
+        if evaluated_sorted.size
+        else np.array([1], dtype=int)
     )
 
     return SagittaDt(
