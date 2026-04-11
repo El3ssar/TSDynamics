@@ -153,7 +153,9 @@ class Lissajous3D(DynSys):
     def _rhs(Y, t, A, B, C, a, b, c, delta_y, delta_z):
         """
         RHS of the 3D Lissajous system.
-        Parameters:
+
+        Parameters
+        ----------
             X : ndarray
                 Current state [x, y, z].
             t : float
@@ -164,7 +166,9 @@ class Lissajous3D(DynSys):
                 Frequencies along x, y, z axes.
             delta_y, delta_z : float
                 Phase shifts along y and z axes.
-        Returns:
+
+        Returns
+        -------
             Derivatives [dx/dt, dy/dt, dz/dt].
         """
         x, y, z = Y(0), Y(1), Y(2)
@@ -182,7 +186,9 @@ class Lissajous2D(DynSys):
     def _rhs(Y, t, A, B, a, b, delta):
         """
         RHS of the 2D Lissajous system.
-        Parameters:
+
+        Parameters
+        ----------
             X : ndarray
                 Current state [x, y].
             t : float
@@ -193,7 +199,9 @@ class Lissajous2D(DynSys):
                 Frequencies along x and y axes.
             delta : float
                 Phase shift along y axis.
-        Returns:
+
+        Returns
+        -------
             Derivatives [dx/dt, dy/dt].
         """
         x, y = Y(0), Y(1)
