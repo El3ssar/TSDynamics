@@ -9,6 +9,7 @@ class DynMap(BaseDyn):
     """Class for discrete maps."""
 
     def rhs(self, X):
+        """Evaluate the map at state X, passing params positionally."""
         X = np.asarray(X, dtype=np.float64)
         params = tuple(float(v) for v in self.params.values())
         # Call with positional args only
@@ -16,6 +17,7 @@ class DynMap(BaseDyn):
         return np.asarray(out, dtype=np.float64)
 
     def jac(self, X):
+        """Evaluate the Jacobian at state X, passing params positionally."""
         X = np.asarray(X, dtype=np.float64)
         params = tuple(float(v) for v in self.params.values())
         out = self._jac(X, *params)
@@ -33,19 +35,21 @@ class DynMap(BaseDyn):
 
     def iterate(self, initial_conds=None, steps=1000, max_retries=10):
         """Iterate the map for n_steps starting from initial_conds."""
-        retries = 0
+        # Resolve the starting IC once; on retry always try a new random IC.
+        if initial_conds is not None:
+            ic = np.asarray(initial_conds, float).reshape(self.n_dim)
+            self.initial_conds = np.array(ic, copy=True)
+        elif self.initial_conds is not None:
+            ic = np.atleast_1d(np.asarray(self.initial_conds, float))
+        else:
+            ic = None  # will be generated randomly below
 
-        while retries < max_retries:
-            if initial_conds is None:
-                if self.initial_conds is None:
-                    initial_conds = np.random.rand(self.n_dim)
-                    initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
-                    self.initial_conds = np.array(initial_conds, copy=True)
-            else:
-                self.initial_conds = np.array(initial_conds, copy=True)
+        for _attempt in range(max_retries):
+            if ic is None:
+                ic = np.random.rand(self.n_dim).reshape(self.n_dim).astype(float)
+                self.initial_conds = np.array(ic, copy=True)
 
-            y = np.atleast_1d(self.initial_conds)
-
+            y = np.atleast_1d(ic)
             trajectory = np.empty((steps, y.size))
 
             try:
@@ -54,14 +58,11 @@ class DynMap(BaseDyn):
                     if np.any(np.isnan(y)) or np.any(np.isinf(y)):
                         raise ValueError(f"The trajectory diverged at step {i}: y = {y}")
                     trajectory[i] = np.atleast_1d(y)
-                time = np.arange(steps)
-                return time, trajectory
+                return np.arange(steps), trajectory
 
             except ValueError as e:
                 print(f"Warning: {e}. Retrying with a new random initial condition.")
-                initial_conds = None
-                self.initial_conds = None
-                retries += 1
+                ic = None  # next iteration generates a fresh random IC
 
         raise ValueError(f"Failed to iterate the map after {max_retries} retries")
 
@@ -89,9 +90,12 @@ class DynMap(BaseDyn):
             exponents (array): Array of Lyapunov exponents.
         """
         if y0 is None:
-            if self.n_dim is None:
+            if self.initial_conds is not None:
+                y0 = np.atleast_1d(np.asarray(self.initial_conds, float))
+            elif self.n_dim is not None:
+                y0 = np.random.rand(self.n_dim)
+            else:
                 raise ValueError("Initial conditions must be provided, else n_dim must be set")
-            y0 = np.random.rand(self.n_dim)  # if self.n_dim > 1 else np.random.rand()
         else:
             y0 = np.asarray(y0)
 
@@ -117,7 +121,7 @@ class DynMap(BaseDyn):
             state = states[step]
 
             # Compute the Jacobian at the current state
-            J = np.array(self.jac(state))
+            J = np.atleast_2d(np.array(self.jac(state), dtype=float))
 
             # Update perturbations
             perturbations = np.dot(J, perturbations.T).T
