@@ -24,10 +24,7 @@ class DynSysDelay(BaseDyn, ABC):
 
     # --------- Interface similar to DynSys ---------
     def rhs(self, y_sym, t_sym):
-        """
-        Wrapper to pass parameters into subclass rhs.
-        Returns a tuple/list of expressions of length n_dim.
-        """
+        """Pass self.params into the subclass _rhs and return its symbolic result."""
         return self._rhs(y_sym, t_sym, **self.params)
 
     @abstractmethod
@@ -161,9 +158,9 @@ class DynSysDelay(BaseDyn, ABC):
         **integration_kwargs,
     ) -> np.ndarray:
         """
-        Estimate the first ``n_lyap`` Lyapunov exponents of a DDE using
-        :func:`jitcdde.jitcdde_lyap`.
+        Estimate the first ``n_lyap`` Lyapunov exponents of a DDE.
 
+        Uses :func:`jitcdde.jitcdde_lyap` internally.
         This integrates the delay system together with ``n_lyap`` separation functions.
         At each sampling time, JiTCDDE returns *local* exponents and a **weight**
         (the effective integration time they represent). The reported spectrum is the

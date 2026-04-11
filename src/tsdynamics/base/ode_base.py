@@ -30,20 +30,22 @@ class DynSys(BaseDyn, ABC):
 
     # --------- Symbolic interface (mirrors DynSysDelay) ---------
     def rhs(self, y_sym, t_sym):
-        """Wrapper to pass params into subclass equations (static)."""
+        """Pass self.params into the subclass _rhs and return its symbolic result."""
         return self._rhs(y_sym, t_sym, **self.params)
 
     def jac(self, y_sym, t_sym):
-        """Optional symbolic Jacobian if subclass provides it; else None."""
+        """Return the symbolic Jacobian from the subclass, or None if not defined."""
         if hasattr(self, "_jac"):
             return self._jac(y_sym, t_sym, **self.params)  # may be NotImplemented
         return None
 
+    @staticmethod
     @abstractmethod
     def _rhs(y_sym, t_sym, **params):
         """
-        Return a sequence (len n_dim) with JiTCODE expressions.
-        Use y_sym(i) for state components and t_sym for time.
+        Return a sequence of length n_dim containing JiTCODE symbolic expressions.
+
+        Use ``y_sym(i)`` for state component *i* and ``t_sym`` for the time symbol.
         """
         raise NotImplementedError
 
@@ -66,8 +68,9 @@ class DynSys(BaseDyn, ABC):
         **kwargs,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Integrate the ODE with JiTCODE. Returns (t_eval, y_eval) where
-        y_eval has shape (len(t_eval), n_dim).
+        Integrate the ODE with JiTCODE.
+
+        Returns ``(t_eval, y_eval)`` where ``y_eval`` has shape ``(len(t_eval), n_dim)``.
         """
         if self.n_dim is None:
             raise ValueError("n_dim must be set.")
@@ -256,13 +259,7 @@ class DynSys(BaseDyn, ABC):
             ret = ode.integrate(Tn)
 
             # Robust extraction of local LEs across JiTCODE versions
-            if isinstance(ret, tuple):
-                if len(ret) >= 2:
-                    local_lyaps = ret[1]  # (state, lyaps, [lyap_vectors])
-                else:
-                    local_lyaps = ret
-            else:
-                local_lyaps = ret
+            local_lyaps = (ret[1] if len(ret) >= 2 else ret) if isinstance(ret, tuple) else ret
 
             v = np.asarray(local_lyaps, float).reshape(-1)
             if v.size != n_lyap:
