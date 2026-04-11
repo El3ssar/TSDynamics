@@ -14,7 +14,8 @@ class Hopfield(DynSys):
 
     def __init__(self, *args, seed=0, **kwargs):
         super().__init__(*args, **kwargs)
-        n = int(self.n_neurons)
+        self.n_dim = int(self.n_neurons)
+        n = self.n_dim
         rng = np.random.default_rng(seed)
         W = rng.standard_normal((n, n))
         W = 0.5 * (W + W.T)  # symmetrize
@@ -64,7 +65,8 @@ class BeerRNN(DynSys):
 
     def __init__(self, *args, seed=0, **kwargs):
         super().__init__(*args, **kwargs)
-        n = int(self.n_neurons)
+        self.n_dim = int(self.n_neurons)
+        n = self.n_dim
         rng = np.random.default_rng(seed)
         self._W = rng.standard_normal((n, n)) * float(self.beta)
 
