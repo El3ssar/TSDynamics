@@ -45,9 +45,10 @@ def estimate_curvature_timestep(
     return_details: bool = True,
 ) -> TimeStepEstimate:
     """
-    Compute the curvature-based *continuous* Δt bound for integration, and a suggested
-    integer stride for subsampling the *current* data. `delta_t` in the result is the
-    continuous Δt_hat; `stride` is optional for decimating the given series.
+    Compute the curvature-based Δt bound and an integer subsampling stride.
+
+    ``delta_t`` in the result is the continuous Δt_hat; ``stride`` is optional for
+    decimating the given series.
 
     Implements:
         κ_i = || a_i - proj_{v_i}(a_i) ||  (central differences),

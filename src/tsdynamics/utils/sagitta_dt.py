@@ -9,6 +9,8 @@ __all__ = ["SagittaDt", "estimate_dt_from_sagitta"]
 
 @dataclass(frozen=True)
 class SagittaDt:
+    """Result container for sagitta-based Δt selection."""
+
     delta_t: float  # Δt* = stride * base_dt
     stride: int  # stride m*
     percentile_value: float  # achieved S_p(m*) at the chosen stride
@@ -20,9 +22,7 @@ class SagittaDt:
 
 
 def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: float) -> float:
-    """
-    Compute p-th percentile of sagitta over triples (i-span, i, i+span) on 'samples' (shape: (n_samples, n_features)).
-    """
+    """Compute p-th percentile of sagitta over triples (i-span, i, i+span)."""
     n = samples.shape[0]
     centers = np.arange(span, n - span, span)  # i = q * span
 
@@ -49,16 +49,14 @@ def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: fl
 def _estimate_lag_ami(y: np.ndarray, max_lag: int | None = None, n_bins: int = 16) -> int:
     """
     Estimate optimal time lag via first local minimum of AMI.
-    Fast cap: max_lag <= 2000 to avoid O(n * max_lag) blowups on long series.
+
+    Fast cap: ``max_lag <= 2000`` to avoid O(n × max_lag) blowups on long series.
     """
     y = np.asarray(y, float).ravel()
     n = y.size
     if n < 10:
         return 1
-    if max_lag is None:
-        max_lag = max(2, min(n // 10, 2000))
-    else:
-        max_lag = min(max_lag, n // 2)
+    max_lag = max(2, min(n // 10, 2000)) if max_lag is None else min(max_lag, n // 2)
 
     y_min, y_max = np.min(y), np.max(y)
     if not np.isfinite(y_min) or not np.isfinite(y_max) or (y_max - y_min) < 1e-12:
@@ -94,8 +92,10 @@ def _estimate_embedding_dim_fnn(
     fnn_threshold: float = 0.01,
 ) -> int:
     """
-    Fast Kennel FNN with subset neighbor pool + Theiler window + early stop.
-    Internal constants (kept simple): pool_size=5000, n_test=500, theiler=2*lag.
+    Estimate embedding dimension via False Nearest Neighbours (Kennel algorithm).
+
+    Uses a subset neighbor pool + Theiler window + early stop.
+    Internal constants: pool_size=5000, n_test=500, theiler=2*lag.
     """
     x = np.asarray(y, float).ravel()
     n = x.size
@@ -189,9 +189,7 @@ def _estimate_embedding_dim_fnn(
 def _compute_sagitta_stats(
     samples: np.ndarray, span: int, percentile_p: float
 ) -> tuple[float, float]:
-    """
-    Return (sagitta_percentile, chord_median) for triples at a given span.
-    """
+    """Return (sagitta_percentile, chord_median) for triples at a given span."""
     n = samples.shape[0]
     centers = np.arange(span, n - span, span)
 

@@ -9,9 +9,7 @@ __all__ = ["DtFromSpectrum", "estimate_dt_from_spectrum"]
 
 @dataclass(frozen=True)
 class DtFromSpectrum:
-    """
-    Result for frequency-based Δt selection.
-    """
+    """Result container for frequency-based Δt selection."""
 
     delta_t: float  # Δt* = safety / (2 f_h)
     f_hz: float  # highest significant frequency f_h
@@ -37,7 +35,9 @@ def _welch_multivar(
     window: str = "hann",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Multivariate Welch PSD. Features are σ-normalized per column; PSDs are summed.
+    Compute multivariate Welch PSD.
+
+    Features are σ-normalized per column; PSDs are summed.
     Returns frequencies (Hz) and total PSD (units of normalized^2/Hz).
     """
     y = np.asarray(y, float)
@@ -105,7 +105,7 @@ def _welch_multivar(
 
 
 def _smooth_moving(y: np.ndarray, m: int = 8) -> np.ndarray:
-    """Simple centered moving-average smoothing with reflective edges."""
+    """Apply centered moving-average smoothing with reflective edge padding."""
     if m <= 1:
         return y
     pad = m // 2
