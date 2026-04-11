@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -31,8 +31,8 @@ class BaseDyn:
     def generate_timesteps(
         self,
         dt: float = 0.02,
-        steps: Optional[int] = None,
-        final_time: Optional[float] = 1.0,
+        steps: int | None = None,
+        final_time: float | None = 1.0,
     ) -> np.ndarray:
         """
         Generate a sequence of time steps for a given simulation or time series.

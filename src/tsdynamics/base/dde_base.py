@@ -1,6 +1,6 @@
 import warnings
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from jitcdde import jitcdde, jitcdde_lyap, t, y
@@ -54,14 +54,14 @@ class DynSysDelay(BaseDyn, ABC):
     def integrate(
         self,
         dt: float = 0.02,
-        steps: Optional[int] = None,
+        steps: int | None = None,
         final_time: float = 100.0,
-        initial_conds: Optional[Sequence[float]] = None,
+        initial_conds: Sequence[float] | None = None,
         rtol: float = 1e-3,
         atol: float = 1e-3,
-        history: Optional[Callable[[float], Sequence[float]]] = None,
+        history: Callable[[float], Sequence[float]] | None = None,
         **kwargs,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Integrate the DDE system with adaptive control via jitcdde.
 
@@ -152,9 +152,9 @@ class DynSysDelay(BaseDyn, ABC):
         self,
         dt: float = 0.1,
         final_time: float = 200.0,
-        initial_conds: Optional[Sequence[float]] = None,
+        initial_conds: Sequence[float] | None = None,
         n_lyap: int = 1,  # user chooses how many (DDEs have infinitely many)
-        history: Optional[Callable[[float], Sequence[float]]] = None,
+        history: Callable[[float], Sequence[float]] | None = None,
         burn_in: float = 50.0,
         rtol: float = 1e-6,
         atol: float = 1e-9,

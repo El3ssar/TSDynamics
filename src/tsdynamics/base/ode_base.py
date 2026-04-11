@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 from jitcode import jitcode, jitcode_lyap, t, y  # pip install jitcode
@@ -19,6 +19,10 @@ _INTEGRATOR_MAP = {
     "vode": "vode",
     "VODE": "vode",
 }
+
+# Explicit (non-stiff) integrators: never need a Jacobian.
+# Implicit integrators (vode, lsoda) can use one if provided.
+_EXPLICIT_METHODS = {"dopri5", "dop853"}
 
 
 class DynSys(BaseDyn, ABC):
@@ -53,20 +57,24 @@ class DynSys(BaseDyn, ABC):
     def integrate(
         self,
         dt: float = 0.02,
-        steps: Optional[int] = None,
+        steps: int | None = None,
         final_time: float = 100.0,
-        initial_conds: Optional[Sequence[float]] = None,
-        method: Optional[str] = "RK45",
+        initial_conds: Sequence[float] | None = None,
+        method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
         **kwargs,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Integrate the ODE with JiTCODE. Returns (t_eval, y_eval) where
         y_eval has shape (len(t_eval), n_dim).
         """
         if self.n_dim is None:
             raise ValueError("n_dim must be set.")
+
+        # Resolve integrator: explicit method arg > system default > "RK45"
+        if method is None or method == "auto":
+            method = getattr(self, "_default_method", "RK45")
 
         # Initial conditions
         if initial_conds is None:
@@ -82,16 +90,21 @@ class DynSys(BaseDyn, ABC):
         if t_eval[0] < 0.0:
             raise ValueError("t_eval must be nonnegative.")
 
-        ode = jitcode(self.rhs(y, t))
+        # Resolve integrator name
+        integ_name = _INTEGRATOR_MAP.get(method, method) or "dopri5"
 
-        # Compile the RHS (and Jacobian if set)
-        ode.generate_f_C()  # generate & compile C code for f
-        ode.generate_jac_C()  # compile Jacobian if provided
+        f_sym = list(self.rhs(y, t))
+        ode = jitcode(f_sym, n=self.n_dim)
+        ode.generate_f_C()
 
-        # Set integrator (maps to SciPy’s ODE integrators)
-        integ_name = _INTEGRATOR_MAP.get(method, method)
-        if integ_name is None:
-            integ_name = "dopri5"
+        # Only generate the Jacobian for implicit integrators AND when the subclass
+        # provides an explicit one. Never auto-differentiate: non-smooth terms like
+        # sign() produce DiracDelta expressions that generate invalid C code.
+        if integ_name not in _EXPLICIT_METHODS:
+            jac_sym = self.jac(y, t)
+            if jac_sym is not NotImplemented and jac_sym is not None:
+                ode.generate_jac_C()
+
         ode.set_integrator(integ_name, rtol=rtol, atol=atol, **kwargs)
 
         # Initial state at t=0
@@ -125,10 +138,10 @@ class DynSys(BaseDyn, ABC):
         self,
         dt: float = 0.1,
         final_time: float = 200.0,
-        initial_conds: Optional[Sequence[float]] = None,
-        n_lyap: Optional[int] = None,
+        initial_conds: Sequence[float] | None = None,
+        n_lyap: int | None = None,
         burn_in: float = 50.0,
-        method: Optional[str] = "dopri5",
+        method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
         **integrator_kwargs,
@@ -201,6 +214,10 @@ class DynSys(BaseDyn, ABC):
         >>> exps  # doctest: +SKIP
         array([ 0.91...,  0.00..., -14.57... ])
         """
+        # Resolve integrator: explicit method arg > system default > "dopri5"
+        if method is None or method == "auto":
+            method = getattr(self, "_default_method", "dopri5")
+
         if initial_conds is None:
             if self.initial_conds is None:
                 initial_conds = np.random.rand(self.n_dim)
@@ -218,13 +235,13 @@ class DynSys(BaseDyn, ABC):
             raise ValueError(f"_rhs must return length {self.n_dim}, got {len(f)}")
 
         ode = jitcode_lyap(f, n_lyap=n_lyap)
-        integ = _INTEGRATOR_MAP.get(method, method or "dopri5")
+        integ = _INTEGRATOR_MAP.get(method, method) or "dopri5"
         ode.set_integrator(integ, rtol=rtol, atol=atol, **integrator_kwargs)
         ode.set_initial_value(initial_conds, 0.0)
 
         # Burn-in
         T = 0.0
-        while T < burn_in:
+        while burn_in > T:
             Tn = min(burn_in, T + dt)
             _ = ode.integrate(Tn)  # may return (state, lyaps) or (state, lyaps, lyap_vectors)
             T = Tn
@@ -234,7 +251,7 @@ class DynSys(BaseDyn, ABC):
         weights = []
         ly_steps = []
         T = float(ode.t)
-        while T < T_end:
+        while T_end > T:
             Tn = min(T_end, T + dt)
             ret = ode.integrate(Tn)
 

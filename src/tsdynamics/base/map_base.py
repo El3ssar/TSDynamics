@@ -84,7 +84,8 @@ class DynMap(BaseDyn):
             reorthonormalize_interval (int): Steps between reorthonormalizations.
             max_retries (int): Maximum number of retries with new initial conditions in case of divergence.
 
-        Returns:
+        Returns
+        -------
             exponents (array): Array of Lyapunov exponents.
         """
         if y0 is None:
