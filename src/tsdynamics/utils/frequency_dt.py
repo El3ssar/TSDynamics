@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -33,10 +32,10 @@ class DtFromSpectrum:
 def _welch_multivar(
     y: np.ndarray,
     dt: float,
-    nperseg: Optional[int] = None,
-    noverlap: Optional[int] = None,
+    nperseg: int | None = None,
+    noverlap: int | None = None,
     window: str = "hann",
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Multivariate Welch PSD. Features are σ-normalized per column; PSDs are summed.
     Returns frequencies (Hz) and total PSD (units of normalized^2/Hz).
@@ -155,7 +154,7 @@ def estimate_dt_from_spectrum(
     if y.ndim != 2:
         raise ValueError("y must be (T, n_dim).")
     T, d = y.shape
-    if T < 4 * min_bins:
+    if 4 * min_bins > T:
         # PSD will be noisy; still proceed but warn
         pass
 
@@ -204,7 +203,7 @@ def estimate_dt_from_spectrum(
     tail_mask = f >= (0.8 * f_guard)
     floor = np.median(S[tail_mask]) if tail_mask.any() else np.median(S[-max(8, S.size // 10) :])
     thr = floor * (10.0 ** (snr_db / 10.0))
-    above = np.where(S >= thr)[0]
+    above = np.where(thr <= S)[0]
     f_snr = float(f[above[-1]]) if above.size else 0.0
 
     # Highest significant frequency

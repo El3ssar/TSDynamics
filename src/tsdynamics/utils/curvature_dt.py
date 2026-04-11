@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -32,8 +31,8 @@ class TimeStepEstimate:
     kappa_percentile: float
     predicted_error: float
     indices: np.ndarray
-    t_mid: Optional[np.ndarray] = None
-    kappa_series: Optional[np.ndarray] = None
+    t_mid: np.ndarray | None = None
+    kappa_series: np.ndarray | None = None
 
 
 def estimate_curvature_timestep(

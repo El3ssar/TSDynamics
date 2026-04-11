@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
 
 import numpy as np
 
@@ -395,7 +394,7 @@ def estimate_dt_from_sagitta(
     use_relative = needs_embedding  # relative sagitta only for 1D (embedded); d>1 unchanged
 
     # -------- helper to test a span --------
-    def span_is_ok(span: int) -> Tuple[bool, float]:
+    def span_is_ok(span: int) -> tuple[bool, float]:
         if (n_samples - 2 * span) < min_points_per_segment:
             return False, np.nan
         if use_relative:
