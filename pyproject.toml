@@ -117,10 +117,22 @@ ignore = [
   "D105",    # missing docstring in magic method
   "D107",    # missing docstring in __init__
   "B008",    # do not perform function calls in default args
+  # ── Math-notation conventions (intentional) ─────────────────────────────
+  "N803",    # argument name should be lowercase — Y, N, L are standard math notation
+  "N805",    # first argument should be 'self' — false positive on @staticmethod/@staticjit
+  "N806",    # variable in function should be lowercase — X, Y, N, L are math convention
+  # ── Module/package docstrings (optional for math-system collections) ────
+  "D100",    # missing docstring in public module
+  "D104",    # missing docstring in public package
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "S101"]   # no docstrings required in tests; allow assert
+# ── Systems: math classes are self-documenting by name; intentional readability patterns ──
+"src/tsdynamics/systems/**" = [
+  "D101",    # missing docstring in public class — class names are the documentation
+  "F841",    # local variable assigned but never used — intentional in _jac methods for visual symmetry
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["tsdynamics"]
@@ -172,4 +184,6 @@ filterwarnings = [
   "ignore:.*larger nsteps is needed.*:UserWarning",
   "ignore:.*step size becomes too small.*:UserWarning",
   "ignore:.*divide by zero encountered in divide.*:RuntimeWarning",
+  # JiTCODE/JiTCDDE leave TemporaryDirectory objects to GC cleanup; harmless on Python 3.14+
+  "ignore:.*Implicitly cleaning up.*TemporaryDirectory.*:ResourceWarning",
 ]
