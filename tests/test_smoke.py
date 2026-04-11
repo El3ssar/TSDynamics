@@ -45,7 +45,6 @@ def test_systems_subpackages_importable():
 
 def test_viz_submodules_importable():
     for module in [
-        "tsdynamics.viz.base",
         "tsdynamics.viz.plotters",
         "tsdynamics.viz.animators",
         "tsdynamics.viz.transforms",

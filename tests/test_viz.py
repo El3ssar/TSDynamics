@@ -5,179 +5,194 @@ All tests use synthetic trajectories (conftest fixtures) — no ODE compilation.
 Matplotlib is set to Agg backend in conftest.py.
 """
 
+import matplotlib.animation
 import matplotlib.axes
 import matplotlib.figure
 import numpy as np
 import pytest
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _is_fig_ax(result):
-    """Check that result is a (Figure, Axes) 2-tuple."""
-    assert isinstance(result, tuple) and len(result) == 2
-    fig, ax = result
-    assert isinstance(fig, matplotlib.figure.Figure)
-    assert isinstance(ax, matplotlib.axes.Axes)
-
 
 # ---------------------------------------------------------------------------
-# PlotConfig
+# ax=None injection contract
 # ---------------------------------------------------------------------------
 
 
-class TestPlotConfig:
-    def test_defaults(self):
-        from tsdynamics.viz.base import PlotConfig
+class TestAxInjection:
+    """Verify the ax=None / ax=existing axes contract for every plotter."""
 
-        cfg = PlotConfig()
-        assert cfg.figsize == (6.0, 4.0)
-        assert cfg.dpi == 120
-        assert cfg.tight_layout is True
-        assert cfg.facecolor is None
+    def test_creates_axes_when_ax_is_none(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.plotters import trajectory_plot
 
-    def test_custom_values(self):
-        from tsdynamics.viz.base import PlotConfig
+        t, X = synthetic_3d_trajectory
+        ax = trajectory_plot(t, X)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
-        cfg = PlotConfig(figsize=(10, 8), dpi=200, tight_layout=False, facecolor="black")
-        assert cfg.figsize == (10, 8)
-        assert cfg.dpi == 200
-        assert cfg.facecolor == "black"
+    def test_returns_provided_ax_unchanged(self, synthetic_3d_trajectory):
+        import matplotlib.pyplot as plt
 
-    def test_new_fig_ax_returns_fig_ax(self):
-        from tsdynamics.viz.base import PlotConfig, new_fig_ax
+        from tsdynamics.viz.plotters import trajectory_plot
 
-        cfg = PlotConfig(figsize=(4, 3))
-        result = new_fig_ax(cfg=cfg)
-        assert isinstance(result[0], matplotlib.figure.Figure)
+        t, X = synthetic_3d_trajectory
+        fig, existing_ax = plt.subplots()
+        returned = trajectory_plot(t, X, ax=existing_ax)
+        assert returned is existing_ax
 
-    def test_new_fig_ax_3d_projection(self):
-        from tsdynamics.viz.base import new_fig_ax
+    def test_figure_accessible_via_ax_figure(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.plotters import trajectory_plot
 
-        fig, ax = new_fig_ax(projection="3d")
+        t, X = synthetic_3d_trajectory
+        ax = trajectory_plot(t, X)
+        assert isinstance(ax.figure, matplotlib.figure.Figure)
+
+    def test_subplot_grid_injection(self, synthetic_3d_trajectory):
+        import matplotlib.pyplot as plt
+
+        from tsdynamics.viz.plotters import trajectory_plot
+
+        t, X = synthetic_3d_trajectory
+        fig, axes = plt.subplots(1, 2)
+        trajectory_plot(t, X, dims=(0, 1), ax=axes[0])
+        trajectory_plot(t, X, dims=(1, 2), ax=axes[1])
+        assert len(axes[0].lines) > 0
+        assert len(axes[1].lines) > 0
+
+    def test_3d_creates_axes3d_when_ax_is_none(self, synthetic_3d_trajectory):
         from mpl_toolkits.mplot3d import Axes3D
 
+        from tsdynamics.viz.plotters import trajectory_plot_3d
+
+        t, X = synthetic_3d_trajectory
+        ax = trajectory_plot_3d(t, X)
         assert isinstance(ax, Axes3D)
+
+    def test_kwargs_forwarded_to_plot(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.plotters import trajectory_plot
+
+        t, X = synthetic_3d_trajectory
+        ax = trajectory_plot(t, X, color="red")
+        assert ax.lines[0].get_color() == "red"
 
 
 # ---------------------------------------------------------------------------
-# Static plotters (all must return (fig, ax))
+# Static plotters (all must return matplotlib.axes.Axes)
 # ---------------------------------------------------------------------------
 
 
 class TestStaticPlotters:
-    def test_trajectory2d(self, synthetic_3d_trajectory):
-        from tsdynamics.viz.plotters import trajectory2d
+    def test_trajectory_plot(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.plotters import trajectory_plot
 
         t, X = synthetic_3d_trajectory
-        _is_fig_ax(trajectory2d(t, X, dims=(0, 1)))
+        ax = trajectory_plot(t, X, dims=(0, 1))
+        assert isinstance(ax, matplotlib.axes.Axes)
 
-    def test_trajectory2d_with_config(self, synthetic_3d_trajectory):
-        from tsdynamics.viz.base import PlotConfig
-        from tsdynamics.viz.plotters import trajectory2d
-
-        t, X = synthetic_3d_trajectory
-        _is_fig_ax(trajectory2d(t, X, dims=(1, 2), cfg=PlotConfig()))
-
-    def test_trajectory3d(self, synthetic_3d_trajectory):
-        from tsdynamics.viz.plotters import trajectory3d
+    def test_trajectory_plot_3d(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.plotters import trajectory_plot_3d
 
         t, X = synthetic_3d_trajectory
-        _is_fig_ax(trajectory3d(t, X, dims=(0, 1, 2)))
+        ax = trajectory_plot_3d(t, X, dims=(0, 1, 2))
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_phase_portrait(self, synthetic_3d_trajectory):
         from tsdynamics.viz.plotters import phase_portrait
 
         _, X = synthetic_3d_trajectory
-        _is_fig_ax(phase_portrait(X, dims=(0, 1)))
+        ax = phase_portrait(X, dims=(0, 1))
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_phase_density(self, synthetic_3d_trajectory):
         from tsdynamics.viz.plotters import phase_density
 
         _, X = synthetic_3d_trajectory
-        _is_fig_ax(phase_density(X, dims=(0, 1), bins=50))
+        ax = phase_density(X, dims=(0, 1), bins=50)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_poincare_scatter_2d(self, synthetic_3d_trajectory):
         from tsdynamics.viz.plotters import poincare_scatter
 
         t, X = synthetic_3d_trajectory
-        _is_fig_ax(poincare_scatter(t, X, section_dim=0, section_value=0.0, extract_dims=(1, 2)))
+        ax = poincare_scatter(t, X, section_dim=0, section_value=0.0, extract_dims=(1, 2))
+        assert isinstance(ax, matplotlib.axes.Axes)
 
-    def test_return_map(self, scalar_series):
-        from tsdynamics.viz.plotters import return_map
-
-        _, x = scalar_series
-        _is_fig_ax(return_map(x, lag=1))
-
-    def test_return_map_lag2(self, scalar_series):
-        from tsdynamics.viz.plotters import return_map
+    def test_return_map_plot(self, scalar_series):
+        from tsdynamics.viz.plotters import return_map_plot
 
         _, x = scalar_series
-        _is_fig_ax(return_map(x, lag=2))
+        ax = return_map_plot(x, lag=1)
+        assert isinstance(ax, matplotlib.axes.Axes)
+
+    def test_return_map_plot_lag2(self, scalar_series):
+        from tsdynamics.viz.plotters import return_map_plot
+
+        _, x = scalar_series
+        ax = return_map_plot(x, lag=2)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_recurrence_plot(self, synthetic_3d_trajectory):
         from tsdynamics.viz.plotters import recurrence_plot
 
         _, X = synthetic_3d_trajectory
-        _is_fig_ax(recurrence_plot(X[:100], percent=10.0))
+        ax = recurrence_plot(X[:100], percent=10.0)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_cross_recurrence_plot(self, synthetic_3d_trajectory):
         from tsdynamics.viz.plotters import cross_recurrence_plot
 
         _, X = synthetic_3d_trajectory
-        _is_fig_ax(cross_recurrence_plot(X[:80], X[:80], percent=10.0))
+        ax = cross_recurrence_plot(X[:80], X[:80], percent=10.0)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_joint_recurrence_plot(self, synthetic_3d_trajectory):
-        from tsdynamics.viz import transforms as tf
+        from tsdynamics.viz import recurrence_matrix
         from tsdynamics.viz.plotters import joint_recurrence_plot
 
         _, X = synthetic_3d_trajectory
-        R1 = tf.recurrence_matrix(X[:80], percent=10.0)
-        R2 = tf.recurrence_matrix(X[:80], percent=10.0)
-        _is_fig_ax(joint_recurrence_plot(R1, R2))
+        R1 = recurrence_matrix(X[:80], percent=10.0)
+        R2 = recurrence_matrix(X[:80], percent=10.0)
+        ax = joint_recurrence_plot(R1, R2)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
-    def test_power_spectrum_welch(self, scalar_series):
-        from tsdynamics.viz.plotters import power_spectrum
-
-        t, x = scalar_series
-        dt = t[1] - t[0]
-        fs = 1.0 / dt
-        _is_fig_ax(power_spectrum(x, fs=fs, method="welch"))
-
-    def test_power_spectrum_fft(self, scalar_series):
-        from tsdynamics.viz.plotters import power_spectrum
+    def test_power_spectrum_plot_welch(self, scalar_series):
+        from tsdynamics.viz.plotters import power_spectrum_plot
 
         t, x = scalar_series
-        dt = t[1] - t[0]
-        _is_fig_ax(power_spectrum(x, fs=1.0 / dt, method="fft"))
+        ax = power_spectrum_plot(x, fs=1.0 / (t[1] - t[0]), method="welch")
+        assert isinstance(ax, matplotlib.axes.Axes)
 
-    def test_power_spectrum_invalid_method(self, scalar_series):
-        from tsdynamics.viz.plotters import power_spectrum
+    def test_power_spectrum_plot_fft(self, scalar_series):
+        from tsdynamics.viz.plotters import power_spectrum_plot
+
+        t, x = scalar_series
+        ax = power_spectrum_plot(x, fs=1.0 / (t[1] - t[0]), method="fft")
+        assert isinstance(ax, matplotlib.axes.Axes)
+
+    def test_power_spectrum_plot_invalid_method(self, scalar_series):
+        from tsdynamics.viz.plotters import power_spectrum_plot
 
         _, x = scalar_series
         with pytest.raises(ValueError):
-            power_spectrum(x, fs=1.0, method="invalid")
+            power_spectrum_plot(x, fs=1.0, method="invalid")
 
-    def test_wavelet_scalogram(self, scalar_series):
-        from tsdynamics.viz.plotters import wavelet_scalogram
+    def test_wavelet_scalogram_plot(self, scalar_series):
+        from tsdynamics.viz.plotters import wavelet_scalogram_plot
 
         t, x = scalar_series
-        dt = t[1] - t[0]
-        _is_fig_ax(wavelet_scalogram(x, fs=1.0 / dt))
+        ax = wavelet_scalogram_plot(x, fs=1.0 / (t[1] - t[0]))
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_embedding_plot_2d(self, scalar_series):
         from tsdynamics.viz.plotters import embedding_plot
 
         _, x = scalar_series
-        _is_fig_ax(embedding_plot(x, m=2, tau=5))
+        ax = embedding_plot(x, m=2, tau=5)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_embedding_plot_3d(self, scalar_series):
         from tsdynamics.viz.plotters import embedding_plot
 
         _, x = scalar_series
-        _is_fig_ax(embedding_plot(x, m=3, tau=5))
+        ax = embedding_plot(x, m=3, tau=5)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_embedding_plot_m1_raises(self, scalar_series):
         from tsdynamics.viz.plotters import embedding_plot
@@ -190,19 +205,22 @@ class TestStaticPlotters:
         from tsdynamics.viz.plotters import pca_projection_plot
 
         _, X = synthetic_3d_trajectory
-        _is_fig_ax(pca_projection_plot(X, n_components=2))
+        ax = pca_projection_plot(X, n_components=2)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_pca_projection_3d(self, synthetic_3d_trajectory):
         from tsdynamics.viz.plotters import pca_projection_plot
 
         _, X = synthetic_3d_trajectory
-        _is_fig_ax(pca_projection_plot(X, n_components=3))
+        ax = pca_projection_plot(X, n_components=3)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_distance_heatmap(self, synthetic_3d_trajectory):
         from tsdynamics.viz.plotters import distance_heatmap
 
         _, X = synthetic_3d_trajectory
-        _is_fig_ax(distance_heatmap(X[:50]))
+        ax = distance_heatmap(X[:50])
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_bifurcation_diagram(self):
         from tsdynamics.viz.plotters import bifurcation_diagram
@@ -210,21 +228,45 @@ class TestStaticPlotters:
         rng = np.random.default_rng(0)
         params = np.linspace(3.5, 4.0, 20)
         points = [rng.uniform(0.2, 0.9, size=30) for _ in params]
-        _is_fig_ax(bifurcation_diagram(params, points))
+        ax = bifurcation_diagram(params, points)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
     def test_lyapunov_spectrum_plot(self):
-        from tsdynamics.viz.plotters import lyapunov_spectrum
+        from tsdynamics.viz.plotters import lyapunov_spectrum_plot
 
         exps = np.array([0.91, 0.0, -14.57])
-        _is_fig_ax(lyapunov_spectrum(exps))
+        ax = lyapunov_spectrum_plot(exps)
+        assert isinstance(ax, matplotlib.axes.Axes)
 
-    def test_kymograph_1d(self, rng):
-        from tsdynamics.viz.plotters import kymograph
+    def test_lyapunov_spectrum_plot_dky_in_title(self):
+        from tsdynamics.viz.plotters import lyapunov_spectrum_plot
 
-        T, N = 100, 20
-        t = np.linspace(0, 10, T)
-        Y = rng.standard_normal((T, N))
-        _is_fig_ax(kymograph(t, Y, nx=N))
+        # Lorenz canonical exponents: D_KY ≈ 2 + 0.91/14.57 ≈ 2.062
+        exps = np.array([0.91, 0.0, -14.57])
+        ax = lyapunov_spectrum_plot(exps)
+        assert "D" in ax.get_title()
+
+    def test_lyapunov_spectrum_plot_all_negative(self):
+        from tsdynamics.viz.plotters import lyapunov_spectrum_plot
+
+        exps = np.array([-1.0, -2.0, -3.0])
+        ax = lyapunov_spectrum_plot(exps)
+        # D_KY = 0 when all exponents are negative
+        assert "0.000" in ax.get_title()
+
+    def test_spacetime_plot_1d(self, synthetic_ks_trajectory):
+        from tsdynamics.viz.plotters import spacetime_plot
+
+        t, X = synthetic_ks_trajectory
+        ax = spacetime_plot(t, X)
+        assert isinstance(ax, matplotlib.axes.Axes)
+
+    def test_spacetime_plot_nx_mismatch_raises(self, synthetic_ks_trajectory):
+        from tsdynamics.viz.plotters import spacetime_plot
+
+        t, X = synthetic_ks_trajectory
+        with pytest.raises(ValueError):
+            spacetime_plot(t, X, nx=99)  # wrong nx
 
 
 # ---------------------------------------------------------------------------
@@ -233,12 +275,48 @@ class TestStaticPlotters:
 
 
 class TestTransforms:
-    def test_take_columns(self, synthetic_3d_trajectory):
-        from tsdynamics.viz.transforms import take_columns
+    # --- strip_transient ---
 
-        _, X = synthetic_3d_trajectory
-        out = take_columns(X, (0, 2))
-        assert out.shape == (X.shape[0], 2)
+    def test_strip_transient_by_frac(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.transforms import strip_transient
+
+        t, X = synthetic_3d_trajectory
+        t2, X2 = strip_transient(t, X, frac=0.1)
+        assert len(t2) == pytest.approx(len(t) * 0.9, abs=2)
+        assert X2.shape[0] == len(t2)
+
+    def test_strip_transient_by_n(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.transforms import strip_transient
+
+        t, X = synthetic_3d_trajectory
+        t2, X2 = strip_transient(t, X, n=100)
+        assert len(t2) == len(t) - 100
+        assert X2.shape == (len(t) - 100, X.shape[1])
+
+    def test_strip_transient_raises_both_given(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.transforms import strip_transient
+
+        t, X = synthetic_3d_trajectory
+        with pytest.raises(ValueError):
+            strip_transient(t, X, n=10, frac=0.1)
+
+    def test_strip_transient_default_frac(self, synthetic_3d_trajectory):
+        """Calling with no n/frac args applies the default frac=0.1."""
+        from tsdynamics.viz.transforms import strip_transient
+
+        t, X = synthetic_3d_trajectory
+        t2, X2 = strip_transient(t, X)
+        assert len(t2) == pytest.approx(len(t) * 0.9, abs=2)
+
+    def test_strip_transient_frac_zero_returns_all(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.transforms import strip_transient
+
+        t, X = synthetic_3d_trajectory
+        t2, X2 = strip_transient(t, X, frac=0.0)
+        np.testing.assert_array_equal(t2, t)
+        np.testing.assert_array_equal(X2, X)
+
+    # --- autocorrelation ---
 
     def test_autocorrelation_shape(self, scalar_series):
         from tsdynamics.viz.transforms import autocorrelation
@@ -253,6 +331,8 @@ class TestTransforms:
         _, x = scalar_series
         acf = autocorrelation(x, max_lag=10)
         assert acf[0] == pytest.approx(1.0)
+
+    # --- delay_embedding ---
 
     def test_delay_embedding_shape(self, scalar_series):
         from tsdynamics.viz.transforms import delay_embedding
@@ -276,6 +356,8 @@ class TestTransforms:
         with pytest.raises(ValueError):
             delay_embedding(x, m=0, tau=1)
 
+    # --- return_map ---
+
     def test_return_map_shapes(self, scalar_series):
         from tsdynamics.viz.transforms import return_map
 
@@ -290,6 +372,8 @@ class TestTransforms:
         _, x = scalar_series
         x0, x1 = return_map(x, lag=3)
         assert len(x0) == len(x) - 3
+
+    # --- power spectrum ---
 
     def test_power_spectrum_fft_shape(self, scalar_series):
         from tsdynamics.viz.transforms import power_spectrum_fft
@@ -308,6 +392,8 @@ class TestTransforms:
         assert freqs.shape == psd.shape
         assert np.all(psd >= 0)
 
+    # --- wavelet ---
+
     def test_wavelet_scalogram_shapes(self, scalar_series):
         from tsdynamics.viz.transforms import wavelet_scalogram
 
@@ -317,6 +403,8 @@ class TestTransforms:
         assert A.shape[1] == len(x)
         assert np.all(A >= 0)
 
+    # --- recurrence matrices ---
+
     def test_recurrence_matrix_binary(self, synthetic_3d_trajectory):
         from tsdynamics.viz.transforms import recurrence_matrix
 
@@ -324,7 +412,6 @@ class TestTransforms:
         R = recurrence_matrix(X[:100], percent=10.0)
         assert R.dtype == np.uint8
         assert set(np.unique(R)).issubset({0, 1})
-        # Diagonal must be all ones (self-recurrence)
         assert np.all(np.diag(R) == 1)
 
     def test_recurrence_matrix_eps_param(self, synthetic_3d_trajectory):
@@ -349,7 +436,6 @@ class TestTransforms:
         R2 = recurrence_matrix(X[:80], percent=15.0)
         RJ = joint_recurrence_matrix(R1, R2)
         assert RJ.shape == (80, 80)
-        # joint must be <= each individual
         assert np.all(RJ <= R1)
         assert np.all(RJ <= R2)
 
@@ -367,6 +453,8 @@ class TestTransforms:
         with pytest.raises(ValueError):
             joint_recurrence_matrix()
 
+    # --- poincare_section ---
+
     def test_poincare_section_returns_arrays(self, synthetic_3d_trajectory):
         from tsdynamics.viz.transforms import poincare_section
 
@@ -376,6 +464,15 @@ class TestTransforms:
         if pts.size > 0:
             assert pts.shape[1] == 2
 
+    def test_poincare_section_t_hits_nonempty(self, synthetic_3d_trajectory):
+        """Spiral trajectory must have several crossings of x0=0."""
+        from tsdynamics.viz.transforms import poincare_section
+
+        t, X = synthetic_3d_trajectory
+        t_hits, pts = poincare_section(t, X, section_dim=0, section_value=0.0, extract_dims=(1, 2))
+        assert len(t_hits) > 0
+        assert pts.shape == (len(t_hits), 2)
+
     def test_poincare_section_negative_direction(self, synthetic_3d_trajectory):
         from tsdynamics.viz.transforms import poincare_section
 
@@ -383,13 +480,31 @@ class TestTransforms:
         t_hits, pts = poincare_section(t, X, direction="negative", extract_dims=(1, 2))
         assert t_hits.ndim == 1
 
+    def test_poincare_section_invalid_direction_raises(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.transforms import poincare_section
+
+        t, X = synthetic_3d_trajectory
+        with pytest.raises(ValueError):
+            poincare_section(t, X, direction="sideways")
+
+    def test_poincare_section_no_crossings_returns_empty(self):
+        """A strictly positive trajectory has no crossings of x0=0."""
+        from tsdynamics.viz.transforms import poincare_section
+
+        t = np.linspace(0, 10, 200)
+        X = np.column_stack([np.ones(200) * 5, np.sin(t), t])
+        t_hits, pts = poincare_section(t, X, section_dim=0, section_value=0.0)
+        assert len(t_hits) == 0
+        assert pts.shape == (0, 2)
+
+    # --- peaks & asymptotic_samples ---
+
     def test_peaks_returns_indices(self, scalar_series):
         from tsdynamics.viz.transforms import peaks
 
         _, x = scalar_series
         idx = peaks(x)
         assert idx.ndim == 1
-        # All peaks must be within bounds
         assert np.all(idx >= 0) and np.all(idx < len(x))
 
     def test_asymptotic_samples_via_peaks(self, scalar_series):
@@ -407,6 +522,8 @@ class TestTransforms:
         assert vals.ndim == 1
         assert len(vals) <= 100
 
+    # --- PCA ---
+
     def test_pca_project_shapes(self, synthetic_3d_trajectory):
         from tsdynamics.viz.transforms import pca_project
 
@@ -423,13 +540,15 @@ class TestTransforms:
         _, var, _ = pca_project(X, n_components=2)
         assert np.all(var >= 0)
 
-    def test_project_with_components(self, synthetic_3d_trajectory):
-        from tsdynamics.viz.transforms import pca_project, project_with_components
+    def test_project_onto_pca_shape(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.transforms import pca_project, project_onto_pca
 
         _, X = synthetic_3d_trajectory
         comps, _, mu = pca_project(X, n_components=2)
-        Z = project_with_components(X, comps, mu)
+        Z = project_onto_pca(X, comps, mu)
         assert Z.shape == (X.shape[0], 2)
+
+    # --- distance matrix ---
 
     def test_distance_matrix_shape(self, synthetic_3d_trajectory):
         from tsdynamics.viz.transforms import distance_matrix
@@ -459,6 +578,8 @@ class TestTransforms:
         D = distance_matrix(x[:30])
         assert D.shape == (30, 30)
 
+    # --- phase_space_density ---
+
     def test_phase_space_density_shape(self, synthetic_3d_trajectory):
         from tsdynamics.viz.transforms import phase_space_density
 
@@ -473,12 +594,20 @@ class TestTransforms:
         H, _, _ = phase_space_density(X[:, :2], bins=20)
         assert np.all(H >= 0)
 
+    def test_phase_space_density_raises_wrong_cols(self, synthetic_3d_trajectory):
+        """phase_space_density requires exactly 2 columns; 3 should raise."""
+        from tsdynamics.viz.transforms import phase_space_density
+
+        _, X = synthetic_3d_trajectory
+        with pytest.raises(ValueError):
+            phase_space_density(X)  # shape (800, 3)
+
     def test_phase_space_density_raises_1d(self, scalar_series):
         from tsdynamics.viz.transforms import phase_space_density
 
         _, x = scalar_series
         with pytest.raises(ValueError):
-            phase_space_density(x[:, None])  # (T, 1) → should raise
+            phase_space_density(x[:, None])  # shape (800, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -487,31 +616,32 @@ class TestTransforms:
 
 
 class TestAnimators:
-    def test_animate_trajectory2d_returns_animation(self, synthetic_3d_trajectory):
-        import matplotlib.animation as animation
-
-        from tsdynamics.viz.animators import animate_trajectory2d
+    def test_animate_trajectory_returns_animation(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.animators import animate_trajectory
 
         t, X = synthetic_3d_trajectory
-        anim = animate_trajectory2d(t[:100], X[:100], dims=(0, 1), interval_ms=30, trail=20)
-        assert isinstance(anim, animation.FuncAnimation)
+        anim = animate_trajectory(t[:100], X[:100], dims=(0, 1), interval_ms=30, trail=20)
+        assert isinstance(anim, matplotlib.animation.FuncAnimation)
 
-    def test_animate_trajectory3d_returns_animation(self, synthetic_3d_trajectory):
-        import matplotlib.animation as animation
-
-        from tsdynamics.viz.animators import animate_trajectory3d
+    def test_animate_trajectory_3d_returns_animation(self, synthetic_3d_trajectory):
+        from tsdynamics.viz.animators import animate_trajectory_3d
 
         t, X = synthetic_3d_trajectory
-        anim = animate_trajectory3d(t[:100], X[:100], dims=(0, 1, 2), interval_ms=30, trail=20)
-        assert isinstance(anim, animation.FuncAnimation)
+        anim = animate_trajectory_3d(t[:100], X[:100], dims=(0, 1, 2), interval_ms=30, trail=20)
+        assert isinstance(anim, matplotlib.animation.FuncAnimation)
 
-    def test_animate_space_time_returns_animation(self, rng):
-        import matplotlib.animation as animation
-
-        from tsdynamics.viz.animators import animate_space_time
+    def test_animate_spacetime_returns_animation(self, rng):
+        from tsdynamics.viz.animators import animate_spacetime
 
         T, N = 80, 10
         t = np.linspace(0, 5, T)
         Y = rng.standard_normal((T, N))
-        anim = animate_space_time(t, Y, interval_ms=30)
-        assert isinstance(anim, animation.FuncAnimation)
+        anim = animate_spacetime(t, Y, interval_ms=30)
+        assert isinstance(anim, matplotlib.animation.FuncAnimation)
+
+    def test_animate_spacetime_high_dim(self, synthetic_ks_trajectory):
+        from tsdynamics.viz.animators import animate_spacetime
+
+        t, X = synthetic_ks_trajectory
+        anim = animate_spacetime(t, X, interval_ms=50)
+        assert isinstance(anim, matplotlib.animation.FuncAnimation)

@@ -66,3 +66,15 @@ def scalar_series(rng):
     t = np.linspace(0, 20, 800)
     x = np.sin(2 * np.pi * 0.5 * t) + 0.3 * rng.standard_normal(800)
     return t, x
+
+
+@pytest.fixture
+def synthetic_ks_trajectory(rng):
+    """
+    KS-like high-dimensional trajectory shaped (T, N_spatial).
+    Mimics the output of KuramotoSivashinsky.integrate() with N=32 spatial points.
+    """
+    T, N = 200, 32
+    t = np.linspace(0, 10, T)
+    X = rng.standard_normal((T, N))
+    return t, X
