@@ -1,5 +1,5 @@
 import numpy as np
-from symengine import cos, exp, sign, sin, zeros
+from symengine import cos, exp, sign, sin
 
 from tsdynamics.base import DynSys
 
@@ -168,22 +168,37 @@ class Thomas(DynSys):
 
 class KuramotoSivashinsky(DynSys):
     """
-    1D Kuramoto–Sivashinsky on a periodic domain of length L, discretized with N points.
+    1D Kuramoto–Sivashinsky PDE on a periodic domain, discretized with N grid points.
 
     PDE (common sign convention):
+
+    .. code-block:: text
+
         u_t = - u u_x - u_xx - u_xxxx
 
-    Discretization (periodic, 6th-order central, 7-point):
-        (u^2)_x   ≈ (u_{j+1}^2 - u_{j-1}^2) / (2 Δx)
-        u_xx      ≈ (u_{j+1} - 2 u_j + u_{j-1}) / Δx^2
-        u_xxxx    ≈ (u_{j-2} - 4 u_{j-1} + 6 u_j - 4 u_{j+1} + u_{j+2}) / Δx^4
+    The ``-u_xx`` term is linearly *destabilising* (long-wavelength growth), the
+    ``-u_xxxx`` term is dissipative (short-wavelength damping), and the nonlinear
+    term ``-u u_x = -0.5*(u^2)_x`` provides saturation.  For ``L ≈ 22`` the
+    attractor is spatio-temporally chaotic with ~2–3 positive Lyapunov exponents.
+
+    Spatial discretisation uses 6th-order central finite differences on a uniform
+    periodic grid (7-point stencil, Fornberg weights):
+
+    .. code-block:: text
+
+        (u^2)_x  ≈ (1/dx) Σ w1_k u_{j+k}^2    (6th-order, k = ±1,±2,±3)
+        u_xx     ≈ (1/dx²) Σ w2_k u_{j+k}       (6th-order, k = 0,±1,±2,±3)
+        u_xxxx   ≈ (1/dx⁴) Σ w4_k u_{j+k}       (6th-order, k = 0,±1,±2,±3)
 
     Notes
     -----
-    - Conservative nonlinearity: -u u_x = -0.5*(u^2)_x  → stable long-time stats.
-    - Requires N >= 7 (uses ±3 stencil).
-    - KS is stiff (u_xxxx dominates; explicit RK is unconditionally unstable for fine
-      grids). The default integrator is "lsoda"; override with method= if needed.
+    - The spatial mean of u is conserved by all three terms; initial conditions
+      should therefore be zero-mean to obtain the canonical chaotic attractor.
+      The default IC is a small sinusoidal perturbation with zero mean.
+    - Requires N >= 7 (minimum span needed by the ±3 stencil).
+    - KS is stiff: the ``u_xxxx`` term gives eigenvalues ∝ (π/dx)^4.  Explicit
+      RK methods require dt ≪ (dx/π)^4 and are impractical for fine grids.
+      The default integrator is ``"lsoda"``; override with ``method=`` if needed.
     """
 
     # The u_xxxx term makes KS stiff — explicit RK will blow up for any useful grid.
@@ -192,6 +207,10 @@ class KuramotoSivashinsky(DynSys):
     def __init__(self, N: int = 32, L: float = 22.0, initial_conds=None):
         if N < 7:
             raise ValueError("KuramotoSivashinsky requires N >= 7 (uses ±3 stencil).")
+        if initial_conds is None:
+            # Small-amplitude, zero-mean sinusoidal IC so the attractor mean stays at 0.
+            x_grid = np.linspace(0.0, float(L), int(N), endpoint=False)
+            initial_conds = 0.01 * np.cos(2.0 * np.pi * x_grid / float(L))
         super().__init__(
             n_dim=int(N),
             params={"N": int(N), "L": float(L)},
@@ -232,23 +251,25 @@ class KuramotoSivashinsky(DynSys):
 
         rhs = []
         for j in range(N):
-            # Conservative nonlinear term: -0.5 * (u^2)_x, 6th-order central
-            nl = 0.0
-            for r, c in zip(offsets, w1):
+            # Nonlinear term: -u * u_x (structure-preserving)
+            ux = 0.0
+            for r, c in zip(offsets, w1, strict=True):
                 idx = (j + r) % N
-                nl += c * (Y(idx) ** 2)
-            nonlinear = -0.5 * inv_dx * nl
+                ux += c * Y(idx)
+            ux *= inv_dx
+
+            nonlinear = -Y(j) * ux
 
             # u_xx: 6th-order central
             uxx = 0.0
-            for r, c in zip(offsets, w2):
+            for r, c in zip(offsets, w2, strict=True):
                 idx = (j + r) % N
                 uxx += c * Y(idx)
             uxx *= inv_dx2
 
             # u_xxxx: 7-point central
             uxxxx = 0.0
-            for r, c in zip(offsets, w4):
+            for r, c in zip(offsets, w4, strict=True):
                 idx = (j + r) % N
                 uxxxx += c * Y(idx)
             uxxxx *= inv_dx4
@@ -325,7 +346,7 @@ class MultiChua(DynSys):
         X: State vector [x1, y1, z1, x2, y2, z2, ..., xn, yn, zn]
         """
         n_dim = 3 * n_circuits
-        dXdt = zeros(n_dim)
+        dXdt = [None] * n_dim
 
         for i in range(n_circuits):
             # Extract indices for the current circuit
@@ -339,11 +360,11 @@ class MultiChua(DynSys):
             z = Y(z_idx)
 
             # Coupled neighbor indices (periodic boundary conditions)
-            x_prev = Y[(x_idx - 3) % n_dim]  # Previous x (cyclic indexing)
-            x_next = Y[(x_idx + 3) % n_dim]  # Next x (cyclic indexing)
+            x_prev = Y((x_idx - 3) % n_dim)  # Previous x (cyclic indexing)
+            x_next = Y((x_idx + 3) % n_dim)  # Next x (cyclic indexing)
 
             # Nonlinear Chua diode function
-            ramp_x = m1 * x + 0.5 * (m0 - m1) * (np.abs(x + 1) - np.abs(x - 1))
+            ramp_x = m1 * x + 0.5 * (m0 - m1) * (abs(x + 1) - abs(x - 1))
 
             # Chua equations with coupling
             xdot = alpha * (y - x - ramp_x) + kappa * (x_next - x_prev)

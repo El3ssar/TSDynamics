@@ -1,5 +1,5 @@
 import numpy as np
-from symengine import cos, exp, pi, sin, tanh
+from symengine import cos, exp, pi, sign, sin, tanh
 
 from tsdynamics.base import DynSys
 
@@ -52,7 +52,7 @@ class Colpitts(DynSys):
     def _rhs(Y, t, a, b, c, d, e):
         x, y, z = Y(0), Y(1), Y(2)
         u = z - (e - 1)
-        fz = -u * (1 - np.heaviside(u, 0))
+        fz = -u * (1 - sign(u)) / 2
         xdot = y - a * fz
         ydot = c - x - b * y - z
         zdot = y - d * z
@@ -110,7 +110,7 @@ class FluidTrampoline(DynSys):
     def _rhs(Y, t, gamma, psi, w):
         x, y, th = Y(0), Y(1), Y(2)
         xdot = y
-        ydot = -1 - np.heaviside(-x, 0) * (x + psi * y * abs(y)) + gamma * cos(th)
+        ydot = -1 - (1 - sign(x)) / 2 * (x + psi * y * abs(y)) + gamma * cos(th)
         thdot = w
         return (xdot, ydot, thdot)
 

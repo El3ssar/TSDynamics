@@ -1,4 +1,3 @@
-import numpy as np
 from symengine import cos, cosh, pi, sin, tanh
 
 from tsdynamics.base import DynSys
@@ -81,7 +80,7 @@ class BlinkingRotlet(DynSys):
 
     @staticmethod
     def _rotlet(r, theta, a, b, bc):
-        """A rotlet velocity field"""
+        """Compute rotlet velocity components (vr, vtheta) for one vortex."""
         kappa = a**2 + (b**2 * r**2) / a**2 - 2 * b * r * cos(theta)
         gamma = (1 - r**2 / a**2) * (a**2 - (b**2 * r**2) / a**2)
         iota = (b**2 * r) / a**2 - b * cos(theta)
@@ -107,6 +106,7 @@ class BlinkingRotlet(DynSys):
         raise NotImplementedError("BlinkingRotlet overrides rhs() directly.")
 
     def rhs(self, Y, t):
+        """Build symbolic RHS for the blinking rotlet using current parameter values."""
         r, theta, tt = Y(0), Y(1), Y(2)
         weight = self._protocol(tt, self.tau)
         dr1, dth1 = self._rotlet(r, theta, self.a, self.b, self.bc)
@@ -146,10 +146,13 @@ class BickleyJet(DynSys):
     def _rhs(Y, t, ell, eps, k, omega, sigma, u):
         x, y, z = Y(0), Y(1), Y(2)
         sechy = 1 / cosh(y / ell)
-        inds = np.arange(3)
-        un = k[inds] * (x - z * sigma[inds])
-        dx = u * sechy**2 * (-1 - 2 * np.dot(cos(un), eps) * tanh(y / ell))
-        dy = ell * u * sechy**2 * np.dot(eps * k, sin(un))
+        un0 = k[0] * (x - z * sigma[0])
+        un1 = k[1] * (x - z * sigma[1])
+        un2 = k[2] * (x - z * sigma[2])
+        cos_sum = eps[0] * cos(un0) + eps[1] * cos(un1) + eps[2] * cos(un2)
+        sin_sum = eps[0] * k[0] * sin(un0) + eps[1] * k[1] * sin(un1) + eps[2] * k[2] * sin(un2)
+        dx = u * sechy**2 * (-1 - 2 * cos_sum * tanh(y / ell))
+        dy = ell * u * sechy**2 * sin_sum
         dz = omega
         return dx, dy, dz
 

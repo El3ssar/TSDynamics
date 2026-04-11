@@ -132,7 +132,13 @@ class Hopalong(DynMap):
 
     @staticjit
     def _jac(X, a, b, c):
-        pass
+        x, y = X
+        eps = 1e-30
+        denom = np.sqrt(np.abs(b * x - 1 - c) + eps)
+        j00 = -0.5 * b * np.sign(x - 1) * np.sign(b * x - 1 - c) / denom
+        row1 = [j00, 1.0]
+        row2 = [-1.0, 0.0]
+        return row1, row2
 
 
 class Pickover(DynMap):

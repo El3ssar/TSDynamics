@@ -126,7 +126,7 @@ class CircadianRhythm(DynSys):
         vm,
         vmax,
         vmin,
-        v,
+        vs,
     ):
         m, fc, fs, fn, th = Y(0), Y(1), Y(2), Y(3), Y(4)
         vs = 2.5 * ((0.5 + 0.5 * cos(th)) + vmin) * (vmax - vmin)

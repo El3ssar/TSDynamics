@@ -28,6 +28,7 @@ class Hopfield(DynSys):
         raise NotImplementedError("Hopfield overrides rhs() directly.")
 
     def rhs(self, Y, t):
+        """Build symbolic Hopfield RHS using the stored weight matrix."""
         n = int(self.n_neurons)
         result = []
         for i in range(n):
@@ -76,6 +77,7 @@ class BeerRNN(DynSys):
         raise NotImplementedError("BeerRNN overrides rhs() directly.")
 
     def rhs(self, Y, t):
+        """Build symbolic BeerRNN RHS using the stored weight matrix."""
         n = int(self.n_neurons)
         I = sin(2 * pi * t / float(self.tau)) * float(self.gamma)  # noqa: E741
         result = []

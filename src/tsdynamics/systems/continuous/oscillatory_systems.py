@@ -129,7 +129,7 @@ class Torus(DynSys):
 
     @staticmethod
     def _rhs(Y, t, a, n, r):
-        x, y, z = Y(0), Y(1), Y(2)
+        # Parametric torus: derivatives are purely time-driven, independent of state.
         xdot = (-a * n * sin(n * t)) * cos(t) - (r + a * cos(n * t)) * sin(t)
         ydot = (-a * n * sin(n * t)) * sin(t) + (r + a * cos(n * t)) * cos(t)
         zdot = a * n * cos(n * t)
@@ -156,22 +156,23 @@ class Lissajous3D(DynSys):
 
         Parameters
         ----------
-            X : ndarray
-                Current state [x, y, z].
-            t : float
-                Current time.
-            A, B, C : float
-                Amplitudes along x, y, z axes.
-            a, b, c : float
-                Frequencies along x, y, z axes.
-            delta_y, delta_z : float
-                Phase shifts along y and z axes.
+        Y : callable
+            JiTCODE state accessor (unused — Lissajous is purely parametric).
+        t : symbol
+            JiTCODE time symbol.
+        A, B, C : float
+            Amplitudes along x, y, z axes.
+        a, b, c : float
+            Frequencies along x, y, z axes.
+        delta_y, delta_z : float
+            Phase shifts along y and z axes.
 
         Returns
         -------
+        tuple
             Derivatives [dx/dt, dy/dt, dz/dt].
         """
-        x, y, z = Y(0), Y(1), Y(2)
+        # Parametric Lissajous: derivatives are purely time-driven, independent of state.
         dxdt = A * (-a * sin(a * t))
         dydt = B * (-b * sin(b * t + delta_y))
         dzdt = C * (-c * sin(c * t + delta_z))
@@ -189,22 +190,23 @@ class Lissajous2D(DynSys):
 
         Parameters
         ----------
-            X : ndarray
-                Current state [x, y].
-            t : float
-                Current time.
-            A, B : float
-                Amplitudes along x and y axes.
-            a, b : float
-                Frequencies along x and y axes.
-            delta : float
-                Phase shift along y axis.
+        Y : callable
+            JiTCODE state accessor (unused — Lissajous is purely parametric).
+        t : symbol
+            JiTCODE time symbol.
+        A, B : float
+            Amplitudes along x and y axes.
+        a, b : float
+            Frequencies along x and y axes.
+        delta : float
+            Phase shift along y axis.
 
         Returns
         -------
+        tuple
             Derivatives [dx/dt, dy/dt].
         """
-        x, y = Y(0), Y(1)
+        # Parametric Lissajous: derivatives are purely time-driven, independent of state.
         dxdt = A * (-a * sin(a * t))
         dydt = B * (-b * sin(b * t + delta))
         return dxdt, dydt
