@@ -200,6 +200,11 @@ def test_kuramoto_sivashinsky_instantiation():
 
     ks = KuramotoSivashinsky(N=8, L=8.0)
     assert ks.n_dim == 8
+    # Default IC is a zero-mean sinusoidal perturbation (not None).
+    assert ks.initial_conds is not None
+    assert ks.initial_conds.shape == (8,)
+    import numpy as np
+    assert abs(ks.initial_conds.mean()) < 1e-10  # zero mean
 
 
 def test_kuramoto_sivashinsky_raises_small_n():
@@ -214,21 +219,46 @@ def test_kuramoto_sivashinsky_raises_small_n():
 # ---------------------------------------------------------------------------
 
 # Systems to integration-test: (module_path, class_name, expected_n_dim)
+# Hopfield / BeerRNN omitted: _rhs uses pre-computed weight matrices, not pure symbolic.
+# InteriorSquirmer omitted: list param × symbolic phase multiplication is incompatible.
+# Oregonator omitted: stiff — requires vode/lsoda and very tight tolerances; slow to converge.
 _INTEGRATION_SAMPLE = [
+    # ── Chaotic attractors ──────────────────────────────────────────────────
     (_CHAOTIC_ATTRACTORS, "Lorenz", 3),
     (_CHAOTIC_ATTRACTORS, "Rossler", 3),
     (_CHAOTIC_ATTRACTORS, "Halvorsen", 3),
     (_CHAOTIC_ATTRACTORS, "HyperRossler", 4),
     (_CHAOTIC_ATTRACTORS, "Lorenz96", 20),
     (_CHAOTIC_ATTRACTORS, "SprottA", 3),
+    (_CHAOTIC_ATTRACTORS, "MultiChua", 9),
+    # ── Chemical / biological ───────────────────────────────────────────────
     (_CHEM_BIO, "HindmarshRose", 3),
+    (_CHEM_BIO, "CircadianRhythm", 5),
+    (_CHEM_BIO, "ForcedVanDerPol", 3),
+    # ── Climate / geophysics ────────────────────────────────────────────────
     (_CLIMATE, "RayleighBenard", 3),
+    (_CLIMATE, "BickleyJet", 3),
+    (_CLIMATE, "ArnoldBeltramiChildress", 3),
+    # ── Coupled systems ─────────────────────────────────────────────────────
     (_COUPLED, "Chen", 3),
+    (_COUPLED, "LuChen", 3),
+    # ── Exotic ──────────────────────────────────────────────────────────────
     (_EXOTIC, "HyperCai", 4),
-    # Hopfield omitted: _rhs uses np.random.randn() + matmul on JiTCODE symbols — uncompilable
+    (_EXOTIC, "HyperBao", 4),
+    # ── Oscillatory ─────────────────────────────────────────────────────────
     (_OSCILLATORY, "ShimizuMorioka", 3),
+    (_OSCILLATORY, "Aizawa", 3),
+    (_OSCILLATORY, "Torus", 3),
+    (_OSCILLATORY, "Lissajous3D", 3),
+    (_OSCILLATORY, "Lissajous2D", 2),
+    # ── Physical ────────────────────────────────────────────────────────────
     (_PHYSICAL, "DoublePendulum", 4),
+    (_PHYSICAL, "Colpitts", 3),
+    (_PHYSICAL, "FluidTrampoline", 3),
+    (_PHYSICAL, "Laser", 3),
+    # ── Population dynamics ─────────────────────────────────────────────────
     (_POPULATION, "Finance", 3),
+    (_POPULATION, "CoevolvingPredatorPrey", 3),
 ]
 _INTEG_IDS = [name for _, name, _ in _INTEGRATION_SAMPLE]
 

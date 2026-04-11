@@ -193,3 +193,66 @@ def test_map_jacobian_shape_3d():
     m = FoldedTowel()
     J = m.jac(np.array([0.1, 0.1, 0.1]))
     assert J.shape == (3, 3)
+
+
+# ---------------------------------------------------------------------------
+# Lyapunov spectrum — all maps that have a working Jacobian
+# ---------------------------------------------------------------------------
+
+# Maps whose _jac is known to produce valid 2D output for lyapunov_spectrum.
+# Excluded: Bogdanov (singular at origin), Gingerbreadman (trivial/no _jac).
+_LYAP_MAPS = [
+    (_CHAOTIC, "Henon", 2),
+    (_CHAOTIC, "Ikeda", 2),
+    (_CHAOTIC, "Tinkerbell", 2),
+    (_CHAOTIC, "Zaslavskii", 2),
+    (_CHAOTIC, "Chirikov", 2),
+    (_CHAOTIC, "FoldedTowel", 3),
+    (_CHAOTIC, "GeneralizedHenon", 3),
+    (_EXOTIC, "Svensson", 2),
+    (_EXOTIC, "Bedhead", 2),
+    (_EXOTIC, "ZeraouliaSprott", 2),
+    (_EXOTIC, "GumowskiMira", 2),
+    (_EXOTIC, "Hopalong", 2),
+    (_EXOTIC, "Pickover", 2),
+    (_GEOMETRIC, "Tent", 1),
+    (_GEOMETRIC, "Baker", 2),
+    (_GEOMETRIC, "Circle", 1),
+    (_GEOMETRIC, "Chebyshev", 1),
+    (_POLY, "Gauss", 1),
+    (_POLY, "DeJong", 2),
+    (_POLY, "KaplanYorke", 2),
+    (_POPN, "Logistic", 1),
+    (_POPN, "Ricker", 1),
+    (_POPN, "MaynardSmith", 2),
+]
+_LYAP_IDS = [name for _, name, _ in _LYAP_MAPS]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("module_path,class_name,expected_n_dim", _LYAP_MAPS, ids=_LYAP_IDS)
+def test_map_lyapunov_shape(module_path, class_name, expected_n_dim):
+    """lyapunov_spectrum(steps=200) returns shape (n_dim,) with finite values."""
+    mod = importlib.import_module(module_path)
+    cls = getattr(mod, class_name)
+    m = cls()
+
+    exps = m.lyapunov_spectrum(steps=200, num_exponents=expected_n_dim)
+
+    assert exps.shape == (expected_n_dim,), (
+        f"{class_name}: lyapunov_spectrum shape {exps.shape} != ({expected_n_dim},)"
+    )
+    assert np.all(np.isfinite(exps)), f"{class_name}: lyapunov exponents not all finite: {exps}"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("module_path,class_name,expected_n_dim", _LYAP_MAPS, ids=_LYAP_IDS)
+def test_map_lyapunov_partial_spectrum(module_path, class_name, expected_n_dim):
+    """Requesting num_exponents=1 always returns a 1-element array."""
+    mod = importlib.import_module(module_path)
+    cls = getattr(mod, class_name)
+    m = cls()
+
+    exps = m.lyapunov_spectrum(steps=200, num_exponents=1)
+    assert exps.shape == (1,)
+    assert np.isfinite(exps[0]), f"{class_name}: LE is not finite: {exps[0]}"
