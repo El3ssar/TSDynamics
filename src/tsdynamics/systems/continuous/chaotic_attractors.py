@@ -87,7 +87,13 @@ class LorenzCoupled(DynSys):
 
 class Lorenz96(DynSys):
     params = {"f": 8.0, "N": 20}
-    n_dim = params["N"]
+
+    def __init__(self, N: int = 20, f: float = 8.0, initial_conds=None):
+        super().__init__(
+            n_dim=int(N),
+            params={"f": float(f), "N": int(N)},
+            initial_conds=initial_conds,
+        )
 
     @staticmethod
     def _rhs(y_sym, t_sym, f, N):
@@ -175,11 +181,15 @@ class KuramotoSivashinsky(DynSys):
     Notes
     -----
     - Conservative nonlinearity: -u u_x = -0.5*(u^2)_x  → stable long-time stats.
-    - Requires N >= 5 (uses j±2 stencil).
-    - KS is stiff (u_xxxx term). Prefer "dop853" or a stiff integrator ("vode"/"lsoda").
+    - Requires N >= 7 (uses ±3 stencil).
+    - KS is stiff (u_xxxx dominates; explicit RK is unconditionally unstable for fine
+      grids). The default integrator is "lsoda"; override with method= if needed.
     """
 
-    def __init__(self, N: int, L: float, initial_conds=None):
+    # The u_xxxx term makes KS stiff — explicit RK will blow up for any useful grid.
+    _default_method = "lsoda"
+
+    def __init__(self, N: int = 32, L: float = 22.0, initial_conds=None):
         if N < 7:
             raise ValueError("KuramotoSivashinsky requires N >= 7 (uses ±3 stencil).")
         super().__init__(
