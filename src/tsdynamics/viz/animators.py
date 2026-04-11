@@ -1,34 +1,70 @@
-"""Matplotlib animations (trajectories and space–time)."""
+"""
+Matplotlib animation wrappers for TSDynamics trajectories.
+
+Every function follows the ``ax=None`` contract (see ``plotters.py``) and
+returns a ``matplotlib.animation.FuncAnimation`` rather than ``ax``.
+Never calls ``plt.show()`` — the caller decides when to display or save.
+"""
 
 from __future__ import annotations
-
-from typing import Optional, Tuple
 
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from . import transforms as tf
-from .base import PlotConfig, new_fig_ax
+from ._utils import _resolve_ax
 
 
-def animate_trajectory2d(
-    times: np.ndarray,
-    Y: np.ndarray,
-    dims: Tuple[int, int] = (0, 1),
+def animate_trajectory(
+    t: np.ndarray,
+    X: np.ndarray,
+    dims: tuple[int, int] = (0, 1),
     interval_ms: int = 30,
     trail: int = 300,
-    cfg: Optional[PlotConfig] = None,
-):
-    """Animate a 2D trajectory with a trailing path."""
-    XY = tf.take_columns(Y, dims)
-    fig, ax = new_fig_ax(cfg=cfg)
-    (line,) = ax.plot([], [], lw=1.0)
-    (head,) = ax.plot([], [], "o", ms=4)
-    ax.set_xlabel(f"x[{dims[0]}]")
-    ax.set_ylabel(f"x[{dims[1]}]")
-    ax.set_title("Animated trajectory (2D)")
-    ax.set_xlim(np.min(XY[:, 0]), np.max(XY[:, 0]))
-    ax.set_ylim(np.min(XY[:, 1]), np.max(XY[:, 1]))
+    ax=None,
+    **kwargs,
+) -> FuncAnimation:
+    """
+    Animate a 2-D trajectory with a trailing path.
+
+    Parameters
+    ----------
+    t : ndarray, shape (m,)
+    X : ndarray, shape (m, n_dim)
+    dims : (int, int)
+        Column indices to use.
+    interval_ms : int
+        Delay between frames in milliseconds.
+    trail : int
+        Number of past points to keep visible.
+    ax : matplotlib.axes.Axes, optional
+        Created internally if *None*.
+    **kwargs
+        Forwarded to the trail ``ax.plot`` call.
+
+    Returns
+    -------
+    anim : FuncAnimation
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0, 4 * np.pi, 200)
+    >>> X = np.column_stack([np.sin(t), np.cos(t), t])
+    >>> anim = animate_trajectory(t, X)
+    >>> type(anim).__name__
+    'FuncAnimation'
+    """
+    X = np.asarray(X, float)
+    ax = _resolve_ax(ax)
+    XY = X[:, list(dims)]
+
+    kwargs.setdefault("lw", 1.0)
+    (line,) = ax.plot([], [], **kwargs)
+    (head,) = ax.plot([], [], "o", ms=4, color=line.get_color())
+    ax.set_xlabel(f"$x_{{{dims[0]}}}$")
+    ax.set_ylabel(f"$x_{{{dims[1]}}}$")
+    ax.set_xlim(float(XY[:, 0].min()), float(XY[:, 0].max()))
+    ax.set_ylim(float(XY[:, 1].min()), float(XY[:, 1].max()))
 
     def init():
         line.set_data([], [])
@@ -37,48 +73,66 @@ def animate_trajectory2d(
 
     def update(i):
         j0 = max(0, i - trail)
-        xs, ys = XY[j0 : i + 1, 0], XY[j0 : i + 1, 1]
-        line.set_data(xs, ys)
+        line.set_data(XY[j0 : i + 1, 0], XY[j0 : i + 1, 1])
         head.set_data([XY[i, 0]], [XY[i, 1]])
         return line, head
 
-    anim = FuncAnimation(
-        fig, update, frames=len(times), init_func=init, interval=interval_ms, blit=True
+    return FuncAnimation(
+        ax.figure, update, frames=len(t), init_func=init, interval=interval_ms, blit=True
     )
-    return anim
 
 
-def animate_trajectory3d(
-    times: np.ndarray,
-    Y: np.ndarray,
-    dims: Tuple[int, int, int] = (0, 1, 2),
+def animate_trajectory_3d(
+    t: np.ndarray,
+    X: np.ndarray,
+    dims: tuple[int, int, int] = (0, 1, 2),
     interval_ms: int = 30,
     trail: int = 300,
-    cfg: Optional[PlotConfig] = None,
-):
-    """Animate a 3D trajectory with a trailing path."""
-    XYZ = tf.take_columns(Y, dims)
-    fig, ax = new_fig_ax(cfg=cfg, projection="3d")
-    # blit=False when custom facecolor: blit=True skips redrawing the background
-    use_blit = cfg is None or cfg.facecolor is None
-    (line,) = ax.plot([], [], [], lw=1.0)
-    (head,) = ax.plot([], [], [], "o", ms=4)
-    ax.set_xlabel(f"x[{dims[0]}]")
-    ax.set_ylabel(f"x[{dims[1]}]")
-    ax.set_zlabel(f"x[{dims[2]}]")
-    ax.set_title("Animated trajectory (3D)")
-    ax.set_xlim(np.min(XYZ[:, 0]), np.max(XYZ[:, 0]))
-    ax.set_ylim(np.min(XYZ[:, 1]), np.max(XYZ[:, 1]))
-    ax.set_zlim(np.min(XYZ[:, 2]), np.max(XYZ[:, 2]))
+    ax=None,
+    **kwargs,
+) -> FuncAnimation:
+    """
+    Animate a 3-D trajectory with a trailing path.
 
-    if cfg is not None and cfg.facecolor is not None:
-        ax.grid(False)
-        ax.xaxis.pane.fill = False
-        ax.yaxis.pane.fill = False
-        ax.zaxis.pane.fill = False
-        ax.xaxis.pane.set_edgecolor("#999")
-        ax.yaxis.pane.set_edgecolor("#999")
-        ax.zaxis.pane.set_edgecolor("#999")
+    Parameters
+    ----------
+    t : ndarray, shape (m,)
+    X : ndarray, shape (m, n_dim), n_dim >= 3
+    dims : (int, int, int)
+    interval_ms : int
+    trail : int
+    ax : mpl_toolkits.mplot3d.Axes3D, optional
+        A 3D axes. Created internally if *None*.
+    **kwargs
+        Forwarded to the trail ``ax.plot`` call.
+
+    Returns
+    -------
+    anim : FuncAnimation
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0, 4 * np.pi, 200)
+    >>> X = np.column_stack([np.sin(t), np.cos(t), t / (4 * np.pi)])
+    >>> anim = animate_trajectory_3d(t, X)
+    >>> type(anim).__name__
+    'FuncAnimation'
+    """
+    X = np.asarray(X, float)
+    ax = _resolve_ax(ax, projection="3d")
+    XYZ = X[:, list(dims)]
+
+    kwargs.setdefault("lw", 1.0)
+    (line,) = ax.plot([], [], [], **kwargs)
+    (head,) = ax.plot([], [], [], "o", ms=4, color=line.get_color())
+    ax.set_xlabel(f"$x_{{{dims[0]}}}$")
+    ax.set_ylabel(f"$x_{{{dims[1]}}}$")
+    if hasattr(ax, "set_zlabel"):
+        ax.set_zlabel(f"$x_{{{dims[2]}}}$")
+    ax.set_xlim(float(XYZ[:, 0].min()), float(XYZ[:, 0].max()))
+    ax.set_ylim(float(XYZ[:, 1].min()), float(XYZ[:, 1].max()))
+    ax.set_zlim(float(XYZ[:, 2].min()), float(XYZ[:, 2].max()))
 
     def init():
         line.set_data([], [])
@@ -96,42 +150,63 @@ def animate_trajectory3d(
         head.set_3d_properties([XYZ[i, 2]])
         return line, head
 
-    anim = FuncAnimation(
-        fig,
-        update,
-        frames=len(times),
-        init_func=init,
-        interval=interval_ms,
-        blit=use_blit,
+    return FuncAnimation(
+        ax.figure, update, frames=len(t), init_func=init, interval=interval_ms, blit=True
     )
-    return anim
 
 
-def animate_space_time(
-    times: np.ndarray,
-    Y: np.ndarray,
+def animate_spacetime(
+    t: np.ndarray,
+    X: np.ndarray,
     *,
     interval_ms: int = 30,
-    cfg: Optional[PlotConfig] = None,
-):
+    ax: object | None = None,
+    **kwargs,
+) -> FuncAnimation:
     """
-    Animate a 1D field y(x,t) given as Y shape (T, N): show y vs x over time.
+    Animate a 1-D spatial field y(x, t) as a line evolving over time.
+
+    Each frame shows the field profile at one time step.
+
+    Parameters
+    ----------
+    t : ndarray, shape (T,)
+    X : ndarray, shape (T, N)
+        Each row is the field at one time step; N is the spatial dimension.
+    interval_ms : int
+    ax : matplotlib.axes.Axes, optional
+    **kwargs
+        Forwarded to the initial ``ax.plot`` call.
+
+    Returns
+    -------
+    anim : FuncAnimation
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0, 5, 100)
+    >>> X = np.random.default_rng(0).standard_normal((100, 32))
+    >>> anim = animate_spacetime(t, X)
+    >>> type(anim).__name__
+    'FuncAnimation'
     """
-    T, N = Y.shape
-    x = np.arange(N)
-    fig, ax = new_fig_ax(cfg=cfg)
-    (line,) = ax.plot(x, Y[0], lw=1.0)
+    X = np.asarray(X, float)
+    T, N = X.shape
+    x_idx = np.arange(N)
+    ax = _resolve_ax(ax)
+
+    kwargs.setdefault("lw", 1.0)
+    (line,) = ax.plot(x_idx, X[0], **kwargs)
     ax.set_xlim(0, N - 1)
-    ymin, ymax = np.min(Y), np.max(Y)
+    ymin, ymax = float(np.min(X)), float(np.max(X))
     if np.isfinite(ymin) and np.isfinite(ymax) and ymin != ymax:
         ax.set_ylim(ymin, ymax)
-    ax.set_xlabel("space index")
+    ax.set_xlabel("spatial index")
     ax.set_ylabel("value")
-    ax.set_title("Space–time curve evolution")
 
     def update(i):
-        line.set_ydata(Y[i])
+        line.set_ydata(X[i])
         return (line,)
 
-    anim = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
-    return anim
+    return FuncAnimation(ax.figure, update, frames=T, interval=interval_ms, blit=True)
