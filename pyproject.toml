@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27.0", "hatch-vcs>=0.5.0"]
+requires = ["hatchling>=1.29.0", "hatch-vcs>=0.5.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,8 +7,9 @@ name = "tsdynamics"
 dynamic = ["version"]
 description = "Compiled ODE/DDE integration and Lyapunov analysis for dynamical systems."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<4.0"
 license = "MIT"
+license-files = ["LICENSE*"]
 authors = [{ name = "Daniel Estevez", email = "kemossabee@gmail.com" }]
 
 keywords = [
@@ -24,6 +25,7 @@ keywords = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Mathematics",
@@ -32,40 +34,42 @@ classifiers = [
 ]
 
 dependencies = [
-  "numpy>=2.0,<3.0",
-  "scipy>=1.14,<2.0",
-  "matplotlib>=3.9,<4.0",
-  "numba>=0.61,<0.62",
-  "jitcdde>=1.8.3,<2.0",
-  "jitcode>=1.7.3,<2.0",
-  "symengine>=0.11,<1.0",
-  "sympy>=1.12,<2.0",
-  "pywavelets>=1.7,<2.0",
+  "numpy>=2.4,<3.0",
+  "scipy>=1.17,<2.0",
+  "numba>=0.65,<1.0",
+  "jitcdde>=1.8,<2.0",
+  "jitcode>=1.7,<2.0",
+  "symengine>=0.14,<1.0",
+  "sympy>=1.14,<2.0",
+  "matplotlib>=3.10,<4.0",
+  "pywavelets>=1.9,<2.0"
 ]
 
 [project.urls]
-Homepage = "https://github.com/El3ssar/TSDynamics"
-Repository = "https://github.com/El3ssar/TSDynamics"
+Source = "https://github.com/El3ssar/TSDynamics"
+Documentation = "https://github.com/El3ssar/TSDynamics#readme"
 Issues = "https://github.com/El3ssar/TSDynamics/issues"
+Changelog = "https://github.com/El3ssar/TSDynamics/blob/main/CHANGELOG.md"
 
-# ---------------- Dependency groups ----------------
+# ── Dependency groups ──────────────────────────────────────────────────────────
+
 [dependency-groups]
 dev = [
-  "pytest>=8.4,<9.0",
-  "pytest-cov>=6.0,<7.0",
-  "ruff==0.14.1",
-  "mypy>=1.18,<2.0",
-  "pydocstyle>=6.3,<7.0",
+  "pytest>=9.0,<10.0",
+  "pytest-cov>=7.0,<8.0",
+  "ruff>=0.15,<1.0",
+  "mypy>=1.20,<2.0",
   "commitizen>=4.0,<5.0",
 ]
 docs = [
-  "sphinx>=8.0,<9.0",
-  "myst-parser>=4.0,<5.0",
-  "sphinx-autodoc-typehints>=2.0,<3.0",
-  "furo>=2024.1.29,<2025.0",
+  "sphinx>=9.0,<10.0",
+  "myst-parser>=5.0,<6.0",
+  "sphinx-autodoc-typehints>=3.0,<4.0",
+  "furo>=2025.1,<2026.0",
 ]
 
-# ---------------- Hatch ----------------
+# ── Hatch ──────────────────────────────────────────────────────────────────────
+
 [tool.hatch.build]
 include = ["src/tsdynamics/**", "README.md", "LICENSE*"]
 
@@ -81,7 +85,8 @@ source = "vcs"
 [tool.hatch.build.hooks.vcs]
 version-file = "src/tsdynamics/_version.py"
 
-# ---------------- Commitizen ----------------
+# ── Commitizen ─────────────────────────────────────────────────────────────────
+
 [tool.commitizen]
 tag_format = "v$version"
 version_scheme = "semver2"
@@ -89,32 +94,77 @@ version_provider = "scm"
 update_changelog_on_bump = true
 changelog_incremental = true
 
-# ---------------- Ruff ----------------
+[tool.commitizen.change_type_map]
+feat     = "Features"
+fix      = "Bug Fixes"
+perf     = "Performance"
+refactor = "Refactoring"
+docs     = "Documentation"
+test     = "Tests"
+ci       = "CI"
+
+# ── Ruff ───────────────────────────────────────────────────────────────────────
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 extend-exclude = ["src/tsdynamics/_version.py"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
-ignore = ["E501", "ARG001", "F841"]
-
-# ---------------- Pydocstyle ----------------
-[tool.pydocstyle]
-convention = "numpy"
-add-ignore = ["D105", "D107"]
-match = '.*\.py'
-match-dir = '^src/'
-
-# ---------------- Pytest ----------------
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q --tb=short"
-markers = [
-  "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long simulations (deselect with: pytest -m 'not slow')",
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "D"]
+ignore = [
+  "E501",    # line length — handled by formatter
+  "D105",    # missing docstring in magic method
+  "D107",    # missing docstring in __init__
+  "B008",    # do not perform function calls in default args
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "S101"]   # no docstrings required in tests; allow assert
+
+[tool.ruff.lint.isort]
+known-first-party = ["tsdynamics"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.format]
+quote-style   = "double"
+indent-style  = "space"
+line-ending   = "auto"
+
+# ── Mypy ───────────────────────────────────────────────────────────────────────
+
+[tool.mypy]
+python_version        = "3.12"
+strict                = true
+ignore_missing_imports = true
+exclude               = ["src/tsdynamics/_version.py"]
+
+[[tool.mypy.overrides]]
+module = ["numba.*", "jitcode.*", "jitcdde.*", "symengine.*", "pywt.*"]
+ignore_missing_imports = true
+
+# ── Coverage ───────────────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source = ["src/tsdynamics"]
+omit   = ["src/tsdynamics/_version.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under   = 70
+
+# ── Pytest ─────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-q --tb=short --strict-markers --cov=src/tsdynamics --cov-report=term-missing"
+markers   = [
+  "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long simulations (deselect with: pytest -m 'not slow')",
+]
 filterwarnings = [
+  "error",
   "ignore:.*Generating compiled integrator failed.*:UserWarning",
   "ignore:.*READ ME FIRST.*:UserWarning",
   "ignore:.*target time is smaller than the current time.*:UserWarning",
