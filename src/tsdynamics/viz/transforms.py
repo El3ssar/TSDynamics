@@ -545,7 +545,7 @@ def peaks(
     distance: int | None = None,
 ) -> np.ndarray:
     """
-    Indices of local maxima in a scalar series.
+    Find indices of local maxima in a scalar series.
 
     Parameters
     ----------

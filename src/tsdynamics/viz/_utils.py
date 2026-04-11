@@ -74,10 +74,9 @@ def _label_dims(
     """
     ax.set_xlabel(f"${prefix}_{{{dims[0]}}}$")
     ax.set_ylabel(f"${prefix}_{{{dims[1]}}}$")
-    if len(dims) >= 3:
+    if len(dims) >= 3 and hasattr(ax, "set_zlabel"):
         # Axes3D has set_zlabel; guard for safety
-        if hasattr(ax, "set_zlabel"):
-            ax.set_zlabel(f"${prefix}_{{{dims[2]}}}$")
+        ax.set_zlabel(f"${prefix}_{{{dims[2]}}}$")
 
 
 # ---------------------------------------------------------------------------

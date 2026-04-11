@@ -751,7 +751,7 @@ def bifurcation_diagram(
     **kwargs,
 ):
     """
-    Generic bifurcation diagram (caller-driven parameter sweep).
+    Plot a generic bifurcation diagram from a caller-driven parameter sweep.
 
     For each parameter value in *params*, plot the corresponding asymptotic
     samples from *points* (output of :func:`transforms.asymptotic_samples`).
@@ -792,7 +792,7 @@ def bifurcation_diagram(
     if len(points) != params.size:
         raise ValueError("len(points) must equal len(params).")
     ax = _resolve_ax(ax)
-    for p, vals in zip(params, points):
+    for p, vals in zip(params, points, strict=True):
         if vals is None or len(vals) == 0:
             continue
         ax.scatter(
