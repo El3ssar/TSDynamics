@@ -1,20 +1,20 @@
 import numpy as np
 
-from tsdynamics.base import DynMap
+from tsdynamics.base import DiscreteMap
 from tsdynamics.utils import staticjit
 
 
-class Tent(DynMap):
+class Tent(DiscreteMap):
     params = {"mu": 0.95}
-    n_dim = 1
+    dim = 1
 
     @staticjit
-    def _rhs(X, mu):
+    def _step(X, mu):
         x = X
         return mu * (1 - 2 * np.abs(x - 0.5))
 
     @staticjit
-    def _jac(X, mu):
+    def _jacobian(X, mu):
         x = X
         if x < 0.5:
             return [-2 * mu]
@@ -22,12 +22,12 @@ class Tent(DynMap):
             return [2 * mu]
 
 
-class Baker(DynMap):
+class Baker(DiscreteMap):
     params = {"alpha": 0.5}
-    n_dim = 2
+    dim = 2
 
     @staticjit
-    def _rhs(X, alpha):
+    def _step(X, alpha):
         """
         Right-hand side of the Baker map.
 
@@ -44,7 +44,7 @@ class Baker(DynMap):
         return xp, yp
 
     @staticjit
-    def _jac(X, alpha):
+    def _jacobian(X, alpha):
         x, y = X
         if 0 <= y < alpha:
             row1 = [2, 0]
@@ -55,33 +55,33 @@ class Baker(DynMap):
         return row1, row2
 
 
-class Circle(DynMap):
+class Circle(DiscreteMap):
     params = {"omega": 0.333, "k": 5.7}
-    n_dim = 1
+    dim = 1
 
     @staticjit
-    def _rhs(X, k, omega):
+    def _step(X, k, omega):
         theta = X
         thetap = theta + omega + (k / (2 * np.pi)) * np.sin(2 * np.pi * theta)
         thetap = thetap % 1
         return thetap
 
     @staticjit
-    def _jac(X, k, omega):
+    def _jacobian(X, k, omega):
         theta = X
         return [1 + k * np.cos(2 * np.pi * theta)]
 
 
-class Chebyshev(DynMap):
+class Chebyshev(DiscreteMap):
     params = {"a": 6.0}
-    n_dim = 1
+    dim = 1
 
     @staticjit
-    def _rhs(X, a):
+    def _step(X, a):
         x = X
         return np.cos(a * np.arccos(x))
 
     @staticjit
-    def _jac(X, a):
+    def _jacobian(X, a):
         x = X
         return [-a * np.sin(a * np.arccos(x)) / np.sqrt(1 - x**2)]
