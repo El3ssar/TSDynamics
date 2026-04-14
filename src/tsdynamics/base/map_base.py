@@ -1,144 +1,285 @@
+"""DiscreteMap — base class for discrete dynamical maps."""
+
+from __future__ import annotations
+
 from abc import abstractmethod
+from typing import Any, ClassVar
 
 import numpy as np
 
-from .base import BaseDyn
+from .base import SystemBase, Trajectory
+
+try:
+    from numba import njit as _njit
+    _NUMBA = True
+except ImportError:
+    def _njit(fn):
+        return fn
+    _NUMBA = False
 
 
-class DynMap(BaseDyn):
-    """Class for discrete maps."""
+# ---------------------------------------------------------------------------
+# DiscreteMap
+# ---------------------------------------------------------------------------
 
-    def rhs(self, X):
-        """Evaluate the map at state X, passing params positionally."""
-        X = np.asarray(X, dtype=np.float64)
-        params = tuple(float(v) for v in self.params.values())
-        # Call with positional args only
-        out = self._rhs(X, *params)
-        return np.asarray(out, dtype=np.float64)
+class DiscreteMap(SystemBase):
+    """
+    Base class for discrete maps with Numba-accelerated iteration.
 
-    def jac(self, X):
-        """Evaluate the Jacobian at state X, passing params positionally."""
-        X = np.asarray(X, dtype=np.float64)
-        params = tuple(float(v) for v in self.params.values())
-        out = self._jac(X, *params)
-        return np.asarray(out, dtype=np.float64)
+    Subclass contract
+    -----------------
+    1. Declare ``params = {...}`` and ``dim = N``.
+    2. Implement ``_step`` and ``_jacobian`` as ``@staticjit`` static methods.
+       Parameters arrive as **positional arguments** in the order they appear
+       in the class-level ``params`` dict.
 
+    Compilation
+    -----------
+    On the first call to ``iterate``, a Numba-compiled loop is built that
+    inlines ``_step`` with the current parameter values baked in.  This
+    eliminates per-step Python overhead.  The compiled loop is cached in
+    ``_iter_cache`` per ``(class, params_hash)``; changing a parameter
+    triggers a fresh compile on the next call.
+
+    Lyapunov spectrum
+    -----------------
+    Computed in a single forward pass via QR decomposition of the Jacobian
+    product — no redundant second iteration over the trajectory.
+
+    Examples
+    --------
+    >>> h = Henon()
+    >>> traj = h.iterate(steps=10_000)
+    >>> t_idx, X = traj          # tuple-unpack
+    >>> exps = h.lyapunov_spectrum(steps=5_000)
+    >>> h_variant = h.with_params(a=1.2)
+    >>> traj2 = h_variant.iterate(steps=10_000)
+    """
+
+    # Class-level cache: (class_name, params_hash) → compiled iterate fn
+    _iter_cache: ClassVar[dict[tuple, Any]] = {}
+
+    # ------------------------------------------------------------------ #
+    # Subclass interface
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
     @abstractmethod
-    def _rhs(self, X, **params):
-        """Right-hand side function to be implemented by subclasses."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def _jac(self, X, **params):
-        """Jacobian function to be implemented by subclasses."""
-        raise NotImplementedError
-
-    def iterate(self, initial_conds=None, steps=1000, max_retries=10):
-        """Iterate the map for n_steps starting from initial_conds."""
-        # Resolve the starting IC once; on retry always try a new random IC.
-        if initial_conds is not None:
-            ic = np.asarray(initial_conds, float).reshape(self.n_dim)
-            self.initial_conds = np.array(ic, copy=True)
-        elif self.initial_conds is not None:
-            ic = np.atleast_1d(np.asarray(self.initial_conds, float))
-        else:
-            ic = None  # will be generated randomly below
-
-        for _attempt in range(max_retries):
-            if ic is None:
-                ic = np.random.rand(self.n_dim).reshape(self.n_dim).astype(float)
-                self.initial_conds = np.array(ic, copy=True)
-
-            y = np.atleast_1d(ic)
-            trajectory = np.empty((steps, y.size))
-
-            try:
-                for i in range(steps):
-                    y = self.rhs(y)
-                    if np.any(np.isnan(y)) or np.any(np.isinf(y)):
-                        raise ValueError(f"The trajectory diverged at step {i}: y = {y}")
-                    trajectory[i] = np.atleast_1d(y)
-                return np.arange(steps), trajectory
-
-            except ValueError as e:
-                print(f"Warning: {e}. Retrying with a new random initial condition.")
-                ic = None  # next iteration generates a fresh random IC
-
-        raise ValueError(f"Failed to iterate the map after {max_retries} retries")
-
-    def lyapunov_spectrum(
-        self,
-        y0=None,
-        steps=1000,
-        num_exponents=None,
-        perturbation_scale=1e-8,
-        reorthonormalize_interval=1,
-    ):
+    def _step(X: np.ndarray, *params) -> Any:
         """
-        Compute the Lyapunov exponents of the map.
+        Evaluate the map at state ``X``.
 
-        Args:
-            y0 (array): Initial condition for the state variables.
-            steps (int): Number of iterations.
-            num_exponents (int): Number of Lyapunov exponents to compute.
-            perturbation_scale (float): Initial scale of perturbation vectors.
-            reorthonormalize_interval (int): Steps between reorthonormalizations.
-            max_retries (int): Maximum number of retries with new initial conditions in case of divergence.
+        Decorate with ``@staticjit``.  Parameters arrive positionally in
+        the order they appear in the class-level ``params`` dict.
+
+        Parameters
+        ----------
+        X : ndarray, shape (dim,)
+            Current state.
+        *params
+            Parameter values in declaration order.
 
         Returns
         -------
-            exponents (array): Array of Lyapunov exponents.
+        array-like of shape (dim,).
         """
-        if y0 is None:
-            if self.initial_conds is not None:
-                y0 = np.atleast_1d(np.asarray(self.initial_conds, float))
-            elif self.n_dim is not None:
-                y0 = np.random.rand(self.n_dim)
-            else:
-                raise ValueError("Initial conditions must be provided, else n_dim must be set")
-        else:
-            y0 = np.asarray(y0)
+        ...
 
-        if num_exponents is None:
-            num_exponents = self.n_dim
+    @staticmethod
+    @abstractmethod
+    def _jacobian(X: np.ndarray, *params) -> Any:
+        """
+        Return the (dim × dim) Jacobian at state ``X``.
 
-        n_dim = self.n_dim
+        Decorate with ``@staticjit``.  Parameters positional, same order as
+        the class-level ``params`` dict.
 
-        # Initialize the state and perturbation vectors
-        state = y0.copy()
-        perturbations = np.eye(n_dim)[:num_exponents] * perturbation_scale
+        Returns
+        -------
+        array-like of shape (dim, dim).
+        """
+        ...
 
-        # Accumulate logarithms of stretching factors
-        lyapunov_sums = np.zeros(num_exponents)
-        total_intervals = 0
+    # ------------------------------------------------------------------ #
+    # Compiled iterate loop
+    # ------------------------------------------------------------------ #
 
-        _, states = self.iterate(
-            state, steps
-        )  # Compute the trajectory with integrate to avoid the nans or infs
+    def _get_iterate_fn(self):
+        """
+        Return a Numba-compiled iterate function for the current params.
 
-        for step in range(steps):
-            # Map the state
-            state = states[step]
+        The function signature is ``iterate(ic, steps) → (steps, dim) array``.
 
-            # Compute the Jacobian at the current state
-            J = np.atleast_2d(np.array(self.jac(state), dtype=float))
+        When Numba is unavailable, returns ``None`` and the caller falls back
+        to a pure-Python loop.  The compiled function is cached per
+        ``(class_name, params_hash)`` — a param change triggers one re-JIT.
+        """
+        if not _NUMBA:
+            return None
 
-            # Update perturbations
-            perturbations = np.dot(J, perturbations.T).T
+        cache_key = (type(self).__name__, self.params.param_hash())
+        cache = type(self)._iter_cache
 
-            # Reorthonormalization
-            if (step + 1) % reorthonormalize_interval == 0:
-                Q, R = np.linalg.qr(perturbations.T)
-                perturbations = Q.T
+        if cache_key in cache:
+            return cache[cache_key]
 
-                # Accumulate the logarithms of the absolute values of the diagonal elements of R
-                # Guard against exact zeros on the diagonal (e.g. stable fixed-point trajectories)
-                diag_abs = np.abs(np.diag(R))
-                diag_abs = np.where(diag_abs == 0.0, np.finfo(float).tiny, diag_abs)
-                lyapunov_sums += np.log(diag_abs)
-                total_intervals += 1
+        step_fn      = type(self)._step      # @njit-compiled static method
+        params_tuple = self.params.as_tuple()
+        dim          = self.dim
 
-        # Compute the Lyapunov exponents
-        exponents = lyapunov_sums / (total_intervals * reorthonormalize_interval)
+        @_njit
+        def _iterate(ic: np.ndarray, steps: int) -> np.ndarray:
+            out = np.empty((steps, dim))
+            x   = ic.copy()
+            for i in range(steps):
+                nxt = step_fn(x, *params_tuple)
+                for j in range(dim):
+                    out[i, j] = nxt[j]
+                    x[j]      = nxt[j]
+            return out
 
-        return exponents
+        cache[cache_key] = _iterate
+        return _iterate
+
+    # ------------------------------------------------------------------ #
+    # Iteration
+    # ------------------------------------------------------------------ #
+
+    def iterate(
+        self,
+        steps: int = 1000,
+        ic: Any | None = None,
+        max_retries: int = 10,
+    ) -> Trajectory:
+        """
+        Iterate the map for ``steps`` steps.
+
+        Uses a Numba-compiled loop when available (significant speedup for
+        large ``steps`` or high-dim maps).  Falls back to a Python loop
+        when Numba is not installed.
+
+        Parameters
+        ----------
+        steps : int
+            Number of iterations. Default 1000.
+        ic : array-like, optional
+            Initial state. Falls back to ``self.ic``, then random.
+        max_retries : int
+            Retry with a new random IC if divergence is detected.
+
+        Returns
+        -------
+        Trajectory
+            ``t`` is ``arange(steps)`` (integer step indices, not float times).
+        """
+        ic_arr     = self.resolve_ic(ic)
+        iterate_fn = self._get_iterate_fn()
+
+        for attempt in range(max_retries):
+            try:
+                if iterate_fn is not None:
+                    out = iterate_fn(ic_arr.copy(), steps)
+                else:
+                    out = self._iterate_python(ic_arr.copy(), steps)
+
+                if not np.all(np.isfinite(out)):
+                    bad = np.argmax(~np.isfinite(out).all(axis=1))
+                    raise ValueError(f"Divergence detected at step {bad}")
+
+                return Trajectory(t=np.arange(steps), y=out, system=self)
+
+            except ValueError as exc:
+                if attempt == max_retries - 1:
+                    raise
+                print(f"Warning: {exc}. Retrying with a new random IC.")
+                ic_arr = np.random.rand(self.dim)
+                object.__setattr__(self, "ic", ic_arr.copy())
+
+    def _iterate_python(self, ic: np.ndarray, steps: int) -> np.ndarray:
+        """Pure-Python fallback (used when Numba is unavailable)."""
+        params = self.params.as_tuple()
+        out    = np.empty((steps, self.dim))
+        x      = ic
+        for i in range(steps):
+            x       = np.asarray(type(self)._step(x, *params), dtype=float)
+            out[i]  = x
+        return out
+
+    # ------------------------------------------------------------------ #
+    # Lyapunov spectrum
+    # ------------------------------------------------------------------ #
+
+    def lyapunov_spectrum(
+        self,
+        steps: int = 5000,
+        ic: Any | None = None,
+        n_exp: int | None = None,
+        reortho_interval: int = 1,
+    ) -> np.ndarray:
+        """
+        QR-based Lyapunov spectrum.
+
+        Computes the spectrum in a **single forward pass** — the Jacobian is
+        evaluated at each step alongside the trajectory, avoiding the
+        redundant double iteration of the previous implementation.
+
+        Results are stored in ``self.meta['lyapunov_spectrum']``.
+
+        Parameters
+        ----------
+        steps : int
+            Number of iterations. Default 5000.
+        ic : array-like, optional
+            Initial state. Falls back to ``self.ic``, then random.
+        n_exp : int, optional
+            Number of exponents. Defaults to ``dim``.
+        reortho_interval : int
+            Reorthonormalise every this many steps. Default 1.
+
+        Returns
+        -------
+        ndarray, shape (n_exp,)
+        """
+        n_exp  = n_exp or self.dim
+        params = self.params.as_tuple()
+        step   = type(self)._step
+        jac    = type(self)._jacobian
+        max_retries = 10
+
+        for attempt in range(max_retries):
+            x         = self.resolve_ic(ic if attempt == 0 else None)
+            Q         = np.eye(self.dim)[:n_exp]
+            lyap_sums = np.zeros(n_exp)
+            intervals = 0
+            failed    = False
+
+            for i in range(steps):
+                x = np.asarray(step(x, *params), dtype=float)
+                if not np.all(np.isfinite(x)):
+                    failed = True
+                    break
+
+                J = np.atleast_2d(np.asarray(jac(x, *params), dtype=float))
+                Q = (J @ Q.T).T
+
+                if (i + 1) % reortho_interval == 0:
+                    Q_new, R  = np.linalg.qr(Q.T)
+                    Q         = Q_new.T
+                    diag      = np.abs(np.diag(R))
+                    diag      = np.where(diag == 0.0, np.finfo(float).tiny, diag)
+                    lyap_sums += np.log(diag)
+                    intervals += 1
+
+            if not failed:
+                exponents = lyap_sums / (intervals * reortho_interval)
+                self.meta["lyapunov_spectrum"] = exponents
+                return exponents
+
+            if attempt < max_retries - 1:
+                print(f"Warning: divergence in lyapunov_spectrum attempt {attempt + 1}, retrying.")
+                # Clear stored IC so resolve_ic generates a new random one
+                object.__setattr__(self, "ic", None)
+
+        raise ValueError(
+            f"lyapunov_spectrum failed after {max_retries} retries due to divergence"
+        )

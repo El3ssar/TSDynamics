@@ -1,6 +1,14 @@
-from .base import BaseDyn
-from .dde_base import DynSysDelay
-from .map_base import DynMap
-from .ode_base import DynSys
+from .base import ParamSet, SystemBase, Trajectory
+from .dde_base import DelaySystem
+from .map_base import DiscreteMap
+from .ode_base import ContinuousSystem
 
-__all__ = ["BaseDyn", "DynSys", "DynMap", "DynSysDelay"]
+__all__ = [
+    # New names
+    "SystemBase",
+    "ContinuousSystem",
+    "DelaySystem",
+    "DiscreteMap",
+    "ParamSet",
+    "Trajectory",
+]
