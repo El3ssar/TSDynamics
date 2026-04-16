@@ -11,16 +11,20 @@ from .base import SystemBase, Trajectory
 
 try:
     from numba import njit as _njit
+
     _NUMBA = True
 except ImportError:
+
     def _njit(fn):
         return fn
+
     _NUMBA = False
 
 
 # ---------------------------------------------------------------------------
 # DiscreteMap
 # ---------------------------------------------------------------------------
+
 
 class DiscreteMap(SystemBase):
     """
@@ -123,19 +127,19 @@ class DiscreteMap(SystemBase):
         if cache_key in cache:
             return cache[cache_key]
 
-        step_fn      = type(self)._step      # @njit-compiled static method
+        step_fn = type(self)._step  # @njit-compiled static method
         params_tuple = self.params.as_tuple()
-        dim          = self.dim
+        dim = self.dim
 
         @_njit
         def _iterate(ic: np.ndarray, steps: int) -> np.ndarray:
             out = np.empty((steps, dim))
-            x   = ic.copy()
+            x = ic.copy()
             for i in range(steps):
                 nxt = step_fn(x, *params_tuple)
                 for j in range(dim):
                     out[i, j] = nxt[j]
-                    x[j]      = nxt[j]
+                    x[j] = nxt[j]
             return out
 
         cache[cache_key] = _iterate
@@ -172,7 +176,7 @@ class DiscreteMap(SystemBase):
         Trajectory
             ``t`` is ``arange(steps)`` (integer step indices, not float times).
         """
-        ic_arr     = self.resolve_ic(ic)
+        ic_arr = self.resolve_ic(ic)
         iterate_fn = self._get_iterate_fn()
 
         for attempt in range(max_retries):
@@ -198,11 +202,11 @@ class DiscreteMap(SystemBase):
     def _iterate_python(self, ic: np.ndarray, steps: int) -> np.ndarray:
         """Pure-Python fallback (used when Numba is unavailable)."""
         params = self.params.as_tuple()
-        out    = np.empty((steps, self.dim))
-        x      = ic
+        out = np.empty((steps, self.dim))
+        x = ic
         for i in range(steps):
-            x       = np.asarray(type(self)._step(x, *params), dtype=float)
-            out[i]  = x
+            x = np.asarray(type(self)._step(x, *params), dtype=float)
+            out[i] = x
         return out
 
     # ------------------------------------------------------------------ #
@@ -240,18 +244,18 @@ class DiscreteMap(SystemBase):
         -------
         ndarray, shape (n_exp,)
         """
-        n_exp  = n_exp or self.dim
+        n_exp = n_exp or self.dim
         params = self.params.as_tuple()
-        step   = type(self)._step
-        jac    = type(self)._jacobian
+        step = type(self)._step
+        jac = type(self)._jacobian
         max_retries = 10
 
         for attempt in range(max_retries):
-            x         = self.resolve_ic(ic if attempt == 0 else None)
-            Q         = np.eye(self.dim)[:n_exp]
+            x = self.resolve_ic(ic if attempt == 0 else None)
+            Q = np.eye(self.dim)[:n_exp]
             lyap_sums = np.zeros(n_exp)
             intervals = 0
-            failed    = False
+            failed = False
 
             for i in range(steps):
                 x = np.asarray(step(x, *params), dtype=float)
@@ -263,10 +267,10 @@ class DiscreteMap(SystemBase):
                 Q = (J @ Q.T).T
 
                 if (i + 1) % reortho_interval == 0:
-                    Q_new, R  = np.linalg.qr(Q.T)
-                    Q         = Q_new.T
-                    diag      = np.abs(np.diag(R))
-                    diag      = np.where(diag == 0.0, np.finfo(float).tiny, diag)
+                    Q_new, R = np.linalg.qr(Q.T)
+                    Q = Q_new.T
+                    diag = np.abs(np.diag(R))
+                    diag = np.where(diag == 0.0, np.finfo(float).tiny, diag)
                     lyap_sums += np.log(diag)
                     intervals += 1
 
@@ -280,6 +284,4 @@ class DiscreteMap(SystemBase):
                 # Clear stored IC so resolve_ic generates a new random one
                 object.__setattr__(self, "ic", None)
 
-        raise ValueError(
-            f"lyapunov_spectrum failed after {max_retries} retries due to divergence"
-        )
+        raise ValueError(f"lyapunov_spectrum failed after {max_retries} retries due to divergence")

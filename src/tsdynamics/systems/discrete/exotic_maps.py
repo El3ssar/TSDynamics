@@ -80,7 +80,7 @@ class ZeraouliaSprott(DiscreteMap):
         x, y = X
         # Partial derivatives for the rational map
         df1_dx = -a / (1 + y**2)
-        df1_dy = (2 * a * x * y) / (1 + y**2)**2
+        df1_dy = (2 * a * x * y) / (1 + y**2) ** 2
         df2_dx = 1.0
         df2_dy = b
         row1 = [df1_dx, df1_dy]

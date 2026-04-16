@@ -67,4 +67,3 @@ class PiecewiseCircuit(DelaySystem):
         xt = Y(0, t - tau)
         f = -((xt / c) ** 3) + 3 * xt / c
         return [-alpha * xt + beta * f]
-

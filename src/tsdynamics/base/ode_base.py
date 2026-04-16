@@ -31,14 +31,14 @@ _CACHE_DIR = pathlib.Path(
 # ---------------------------------------------------------------------------
 
 _INTEGRATOR_MAP: dict[str, str] = {
-    "RK45":   "dopri5",
+    "RK45": "dopri5",
     "dopri5": "dopri5",
     "DOP853": "dop853",
     "dop853": "dop853",
-    "LSODA":  "lsoda",
-    "lsoda":  "lsoda",
-    "VODE":   "vode",
-    "vode":   "vode",
+    "LSODA": "lsoda",
+    "lsoda": "lsoda",
+    "VODE": "vode",
+    "vode": "vode",
 }
 _EXPLICIT_METHODS = frozenset({"dopri5", "dop853"})
 
@@ -54,6 +54,7 @@ def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # ContinuousSystem
 # ---------------------------------------------------------------------------
+
 
 class ContinuousSystem(SystemBase, ABC):
     """
@@ -200,8 +201,8 @@ class ContinuousSystem(SystemBase, ABC):
            so the session keeps working without a kernel restart.
         4. Fresh compilation.
         """
-        import sys
         import shutil
+        import sys
 
         import symengine
         from jitcode import jitcode as _jitcode
@@ -210,25 +211,31 @@ class ContinuousSystem(SystemBase, ABC):
         from jitcode import y
         from jitcxde_common.modules import modulename_from_path
 
-        cls_jitc    = _jitcode_lyap if for_lyap else _jitcode
+        cls_jitc = _jitcode_lyap if for_lyap else _jitcode
         lyap_kwargs = {"n_lyap": n_lyap} if for_lyap else {}
 
-        so_suffix  = f"_lyap{n_lyap}" if for_lyap else ""
+        so_suffix = f"_lyap{n_lyap}" if for_lyap else ""
         saved_path = pathlib.Path(str(self._module_path()) + so_suffix)
-        cache_key  = str(saved_path)
+        cache_key = str(saved_path)
 
-        control_syms    = {k: symengine.Symbol(k) for k in self._control_params()}
+        control_syms = {k: symengine.Symbol(k) for k in self._control_params()}
         control_par_list = list(control_syms.values())
 
         def _load(path: str | pathlib.Path) -> Any:
             return cls_jitc(
-                module_location=str(path), n=self.dim,
-                control_pars=control_par_list, verbose=False, **lyap_kwargs,
+                module_location=str(path),
+                n=self.dim,
+                control_pars=control_par_list,
+                verbose=False,
+                **lyap_kwargs,
             )
 
         def _find_so(base: pathlib.Path) -> pathlib.Path | None:
-            hits = [f for f in _CACHE_DIR.glob(f"{base.name}.*")
-                    if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0]
+            hits = [
+                f
+                for f in _CACHE_DIR.glob(f"{base.name}.*")
+                if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0
+            ]
             return hits[0] if hits else None
 
         # 1. In-process cache
@@ -286,12 +293,11 @@ class ContinuousSystem(SystemBase, ABC):
         struct_vals = self._structural_vals()
         f_sym = list(type(self)._equations(y, t_sym, **{**struct_vals, **control_syms}))
         if len(f_sym) != self.dim:
-            raise ValueError(
-                f"_equations must return {self.dim} expressions, got {len(f_sym)}"
-            )
+            raise ValueError(f"_equations must return {self.dim} expressions, got {len(f_sym)}")
 
-        ode = cls_jitc(f_sym, n=self.dim, control_pars=control_par_list,
-                       verbose=False, **lyap_kwargs)
+        ode = cls_jitc(
+            f_sym, n=self.dim, control_pars=control_par_list, verbose=False, **lyap_kwargs
+        )
         ode.generate_f_C()
         so = pathlib.Path(ode.save_compiled(destination=str(dest), overwrite=True))
 
@@ -345,10 +351,10 @@ class ContinuousSystem(SystemBase, ABC):
         Trajectory
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
-        method     = method or self._default_method
+        method = method or self._default_method
         integ_name = _INTEGRATOR_MAP.get(method, method)
-        ic_arr     = self.resolve_ic(ic)
-        t_eval     = _make_t_eval(t0, final_time, dt)
+        ic_arr = self.resolve_ic(ic)
+        t_eval = _make_t_eval(t0, final_time, dt)
 
         ode = self._ensure_compiled(for_lyap=False)
         ode.set_integrator(integ_name, rtol=rtol, atol=atol, **integrator_kwargs)
@@ -431,13 +437,13 @@ class ContinuousSystem(SystemBase, ABC):
             T = Tn
 
         # Production: time-weighted average of local exponents
-        T_end    = float(ode.t) + final_time
-        weights  = []
+        T_end = float(ode.t) + final_time
+        weights = []
         ly_steps = []
         T = float(ode.t)
 
         while T_end > T:
-            Tn  = min(T_end, T + dt)
+            Tn = min(T_end, T + dt)
             ret = ode.integrate(float(Tn))
 
             # jitcode_lyap.integrate returns (state, lyapunov_exponents).
@@ -459,9 +465,7 @@ class ContinuousSystem(SystemBase, ABC):
 
         W = np.asarray(weights, float)
         L = np.vstack(ly_steps) if ly_steps else np.empty((0, n_exp), float)
-        exponents = (
-            (W[:, None] * L).sum(axis=0) / W.sum() if L.size else np.zeros(n_exp)
-        )
+        exponents = (W[:, None] * L).sum(axis=0) / W.sum() if L.size else np.zeros(n_exp)
 
         self.meta["lyapunov_spectrum"] = exponents
         return exponents

@@ -133,6 +133,7 @@ class CircadianRhythm(ContinuousSystem):
         thdot = 2 * pi / 24
         return mdot, fcdot, fsdot, fndot, thdot
 
+
 class CaTwoPlus(ContinuousSystem):
     params = {
         "K2": 0.1,
@@ -344,6 +345,7 @@ class ForcedFitzHughNagumo(ContinuousSystem):
         zdot = omega
         return vdot, wdot, zdot
 
+
 class TurchinHanski(ContinuousSystem):
     params = {"a": 8, "d": 0.04, "e": 0.5, "g": 0.1, "h": 0.8, "r": 8.12, "s": 1.25}
     dim = 3
@@ -392,4 +394,3 @@ class ItikBanksTumor(ContinuousSystem):
         ydot = r2 * y * (1 - y) - a21 * x * y
         zdot = r3 * x * z / (x + k3) - a31 * x * z - d3 * z
         return xdot, ydot, zdot
-

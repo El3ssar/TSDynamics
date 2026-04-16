@@ -50,6 +50,7 @@ def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
 # DelaySystem
 # ---------------------------------------------------------------------------
 
+
 class DelaySystem(SystemBase, ABC):
     """
     Base class for delay differential systems (DDEs), compiled via JiTCDDE.
@@ -157,16 +158,19 @@ class DelaySystem(SystemBase, ABC):
         from jitcdde import y
         from jitcxde_common.modules import modulename_from_path
 
-        cls_jitc  = _jitcdde_lyap if for_lyap else _jitcdde
-        lyap_kw   = {"n_lyap": n_lyap} if for_lyap else {}
-        cache     = type(self)._compiled_lyap if for_lyap else type(self)._compiled_ddes
+        cls_jitc = _jitcdde_lyap if for_lyap else _jitcdde
+        lyap_kw = {"n_lyap": n_lyap} if for_lyap else {}
+        cache = type(self)._compiled_lyap if for_lyap else type(self)._compiled_ddes
         so_suffix = f"_lyap{n_lyap}" if for_lyap else ""
         dest_path = pathlib.Path(str(self._module_path()) + so_suffix)
         cache_key = str(dest_path)
 
         def _find_so(base: pathlib.Path) -> pathlib.Path | None:
-            hits = [f for f in _CACHE_DIR.glob(f"{base.name}.*")
-                    if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0]
+            hits = [
+                f
+                for f in _CACHE_DIR.glob(f"{base.name}.*")
+                if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0
+            ]
             return hits[0] if hits else None
 
         # 1. In-process path cache
@@ -206,9 +210,7 @@ class DelaySystem(SystemBase, ABC):
         # 4. Fresh compilation
         rhs = list(type(self)._equations(y, t_sym, **self.params.as_dict()))
         if len(rhs) != self.dim:
-            raise ValueError(
-                f"_equations must return {self.dim} expressions, got {len(rhs)}"
-            )
+            raise ValueError(f"_equations must return {self.dim} expressions, got {len(rhs)}")
 
         dde = cls_jitc(rhs, verbose=False, **lyap_kw)
         dde.compile_C()
@@ -226,9 +228,7 @@ class DelaySystem(SystemBase, ABC):
         symbolically by evaluating ``_equations`` — slower but always correct.
         """
         delays = [
-            float(self.params[k])
-            for k in self.params
-            if "tau" in k.lower() or "delay" in k.lower()
+            float(self.params[k]) for k in self.params if "tau" in k.lower() or "delay" in k.lower()
         ]
         if delays:
             return delays
@@ -238,6 +238,7 @@ class DelaySystem(SystemBase, ABC):
         from jitcdde import t as t_sym
         from jitcdde import y
         from jitcdde._jitcdde import _get_delays as _jitc_get_delays
+
         rhs = list(type(self)._equations(y, t_sym, **self.params.as_dict()))
         raw = _jitc_get_delays(lambda: iter(rhs), ())
         return [float(symengine.sympify(d).n(real=True)) for d in raw]
@@ -299,9 +300,9 @@ class DelaySystem(SystemBase, ABC):
         rtol = rtol if rtol is not None else self._default_rtol
         atol = atol if atol is not None else self._default_atol
 
-        ic_arr    = self.resolve_ic(ic)
-        t_eval    = _make_t_eval(0.0, final_time, dt)
-        so_path   = self._ensure_compiled(for_lyap=False)
+        ic_arr = self.resolve_ic(ic)
+        t_eval = _make_t_eval(0.0, final_time, dt)
+        so_path = self._ensure_compiled(for_lyap=False)
         max_delay = self._get_max_delay()
 
         # Fresh jitcdde instance each call (DDE objects are stateful —
@@ -319,15 +320,17 @@ class DelaySystem(SystemBase, ABC):
             dde.constant_past(ic_arr)
             y0 = ic_arr.copy()
         else:
+
             def hist_fn(s):
                 return np.asarray(history(s), dtype=float).reshape(self.dim)
+
             dde.past_from_function(hist_fn)
             y0 = hist_fn(0.0)
 
         dde.set_integration_parameters(rtol=rtol, atol=atol, **kwargs)
         dde.initial_discontinuities_handled = True
 
-        y_out    = np.empty((t_eval.size, self.dim), dtype=float)
+        y_out = np.empty((t_eval.size, self.dim), dtype=float)
         y_out[0] = y0
         for k in range(1, t_eval.size):
             y_out[k] = dde.integrate(float(t_eval[k]))
@@ -394,8 +397,8 @@ class DelaySystem(SystemBase, ABC):
         rtol = rtol if rtol is not None else self._default_rtol
         atol = atol if atol is not None else self._default_atol
 
-        ic_arr    = self.resolve_ic(ic)
-        so_path   = self._ensure_compiled(for_lyap=True, n_lyap=n_exp)
+        ic_arr = self.resolve_ic(ic)
+        so_path = self._ensure_compiled(for_lyap=True, n_lyap=n_exp)
         max_delay = self._get_max_delay()
 
         dde = _jitcdde_lyap(
@@ -416,7 +419,7 @@ class DelaySystem(SystemBase, ABC):
             dde.integrate(min(T_burn, dde.t + dt))
 
         # Production: weight-averaged local LEs
-        T_end   = float(dde.t) + final_time
+        T_end = float(dde.t) + final_time
         weights = []
         ly_steps = []
 
@@ -431,12 +434,12 @@ class DelaySystem(SystemBase, ABC):
             weights.append(float(w))
             ly_steps.append(v)
 
-        W    = np.asarray(weights, float)
+        W = np.asarray(weights, float)
         mask = W > 0.0
         if not mask.any():
             return np.zeros(n_exp)
 
-        L         = np.vstack([ly_steps[i] for i, m in enumerate(mask) if m])
+        L = np.vstack([ly_steps[i] for i, m in enumerate(mask) if m])
         exponents = (W[mask, None] * L).sum(0) / W[mask].sum()
 
         self.meta["lyapunov_spectrum"] = exponents

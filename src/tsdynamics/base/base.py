@@ -11,6 +11,7 @@ import numpy as np
 # ParamSet
 # ---------------------------------------------------------------------------
 
+
 class ParamSet(MutableMapping):
     """
     Ordered, fixed-key parameter container.
@@ -46,18 +47,14 @@ class ParamSet(MutableMapping):
         d = object.__getattribute__(self, "_data")
         if key in d:
             return d[key]
-        raise AttributeError(
-            f"Unknown parameter {key!r}. Declared params: {list(d)}"
-        )
+        raise AttributeError(f"Unknown parameter {key!r}. Declared params: {list(d)}")
 
     def __setattr__(self, key: str, value: Any) -> None:
         d = object.__getattribute__(self, "_data")
         if key in d:
             d[key] = value
         else:
-            raise AttributeError(
-                f"Unknown parameter {key!r}. Declared params: {list(d)}"
-            )
+            raise AttributeError(f"Unknown parameter {key!r}. Declared params: {list(d)}")
 
     # --- MutableMapping protocol ---
 
@@ -66,9 +63,7 @@ class ParamSet(MutableMapping):
 
     def __setitem__(self, key: str, value: Any) -> None:
         if key not in self._data:
-            raise KeyError(
-                f"Unknown parameter {key!r}. Declared params: {list(self._data)}"
-            )
+            raise KeyError(f"Unknown parameter {key!r}. Declared params: {list(self._data)}")
         self._data[key] = value
 
     def __delitem__(self, key: str) -> None:
@@ -111,6 +106,7 @@ class ParamSet(MutableMapping):
 # ---------------------------------------------------------------------------
 # Trajectory
 # ---------------------------------------------------------------------------
+
 
 class Trajectory:
     """
@@ -208,6 +204,7 @@ class Trajectory:
 # SystemBase
 # ---------------------------------------------------------------------------
 
+
 class SystemBase:
     """
     Abstract base class for all dynamical systems.
@@ -283,9 +280,7 @@ class SystemBase:
             params = object.__getattribute__(self, "params")
             return params[name]
         except (AttributeError, KeyError) as err:
-            raise AttributeError(
-                f"{type(self).__name__!r} has no attribute {name!r}"
-            ) from err
+            raise AttributeError(f"{type(self).__name__!r} has no attribute {name!r}") from err
 
     def __setattr__(self, name: str, value: Any) -> None:
         try:

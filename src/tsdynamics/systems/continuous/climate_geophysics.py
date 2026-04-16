@@ -88,9 +88,9 @@ class BlinkingRotlet(ContinuousSystem):
     def _rotlet(r, theta, a, b, bc):
         kappa = a**2 + (b**2 * r**2) / a**2 - 2 * b * r * cos(theta)
         gamma = (1 - r**2 / a**2) * (a**2 - (b**2 * r**2) / a**2)
-        iota  = (b**2 * r) / a**2 - b * cos(theta)
-        zeta  = b**2 + r**2 - 2 * b * r * cos(theta)
-        nu    = a**2 + b**2 - (2 * b**2 * r**2) / a**2
+        iota = (b**2 * r) / a**2 - b * cos(theta)
+        zeta = b**2 + r**2 - 2 * b * r * cos(theta)
+        nu = a**2 + b**2 - (2 * b**2 * r**2) / a**2
 
         vr = b * sin(theta) * (-bc * (gamma / kappa**2) - 1 / kappa + 1 / zeta)
 
@@ -108,16 +108,16 @@ class BlinkingRotlet(ContinuousSystem):
 
     @staticmethod
     def _equations(y, t, a, b, bc, sigma, tau):
-        r     = y(0)
+        r = y(0)
         theta = y(1)
-        tt    = y(2)
+        tt = y(2)
 
         weight = BlinkingRotlet._protocol(tt, tau)
 
-        dr1, dth1 = BlinkingRotlet._rotlet(r, theta, a,  b, bc)
+        dr1, dth1 = BlinkingRotlet._rotlet(r, theta, a, b, bc)
         dr2, dth2 = BlinkingRotlet._rotlet(r, theta, a, -b, bc)
 
-        dr  = weight * dr1 + (1 - weight) * dr2
+        dr = weight * dr1 + (1 - weight) * dr2
         dth = (weight * dth1 + (1 - weight) * dth2) / r
         dtt = 1
 
