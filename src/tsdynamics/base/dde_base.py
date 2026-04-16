@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import sysconfig
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
@@ -28,6 +29,8 @@ warnings.filterwarnings(
 _CACHE_DIR = pathlib.Path(
     os.environ.get("TSDYNAMICS_CACHE", pathlib.Path.home() / ".cache" / "tsdynamics")
 )
+
+_EXT_SUFFIX: str = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
 
 # ---------------------------------------------------------------------------
 # Type alias for history functions
@@ -90,9 +93,9 @@ class DelaySystem(SystemBase, ABC):
     _default_rtol: ClassVar[float] = 1e-3
     _default_atol: ClassVar[float] = 1e-3
 
-    # In-process cache: cache_key (str) → (jitcdde object, bool has_lyap)
-    _compiled_ddes:  ClassVar[dict[str, Any]] = {}
-    _compiled_lyap:  ClassVar[dict[str, Any]] = {}
+    # In-process path caches: cache_key (str) → absolute path of compiled .so.
+    _compiled_ddes: ClassVar[dict[str, str]] = {}
+    _compiled_lyap: ClassVar[dict[str, str]] = {}
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -134,73 +137,121 @@ class DelaySystem(SystemBase, ABC):
         """
         Ensure the compiled JiTCDDE module exists on disk and return its path.
 
-        Compiles from scratch on first call; subsequent calls return the
-        cached path immediately.  We do NOT cache the jitcdde objects
-        themselves because every integration needs a fresh instance with its
-        own past-buffer.
+        DDE objects are never cached in-process — every integration call needs a
+        fresh instance with its own past-buffer.  Only the ``.so`` path is cached.
 
-        Parameters
-        ----------
-        for_lyap : bool
-            If True, compile a ``jitcdde_lyap`` extended system.
-        n_lyap : int
-            Number of Lyapunov perturbation vectors (only when for_lyap).
-
-        Returns
-        -------
-        pathlib.Path
-            Path to the ``.so`` file that was saved.
+        Lookup order
+        ------------
+        1. In-process path cache.
+        2. Disk cache (``_CACHE_DIR``).
+        3. Check ``sys.modules`` for name collision from an interrupted prior
+           compilation, recovering from the temp dir or using a unique name.
+        4. Fresh compilation.
         """
+        import shutil
+        import sys
+
         from jitcdde import jitcdde as _jitcdde
         from jitcdde import jitcdde_lyap as _jitcdde_lyap
         from jitcdde import t as t_sym
         from jitcdde import y
+        from jitcxde_common.modules import modulename_from_path
 
-        cache = type(self)._compiled_lyap if for_lyap else type(self)._compiled_ddes
-        cache_key = self._cache_key() + (f"_lyap{n_lyap}" if for_lyap else "")
+        cls_jitc  = _jitcdde_lyap if for_lyap else _jitcdde
+        lyap_kw   = {"n_lyap": n_lyap} if for_lyap else {}
+        cache     = type(self)._compiled_lyap if for_lyap else type(self)._compiled_ddes
+        so_suffix = f"_lyap{n_lyap}" if for_lyap else ""
+        dest_path = pathlib.Path(str(self._module_path()) + so_suffix)
+        cache_key = str(dest_path)
 
-        if cache_key in cache:
-            return cache[cache_key]  # path (str) already stored
+        def _find_so(base: pathlib.Path) -> pathlib.Path | None:
+            hits = [f for f in _CACHE_DIR.glob(f"{base.name}.*")
+                    if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0]
+            return hits[0] if hits else None
 
+        # 1. In-process path cache
+        cached = cache.get(cache_key)
+        if cached and pathlib.Path(cached).exists():
+            return pathlib.Path(cached)
+        if cached:
+            del cache[cache_key]  # stale — clear it
+
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 2. Disk cache
+        so = _find_so(dest_path)
+        if so:
+            cache[cache_key] = str(so)
+            return so
+
+        # 3. Check for name collision from a prior interrupted compilation.
+        #    JiTCDDE's save_compiled calls compile_C internally, which registers
+        #    the module name in sys.modules before the .so reaches disk.
+        #    Recover from the temp dir if it's still alive, or redirect to a
+        #    unique per-process name to avoid NameError.
+        dest = dest_path
+        mname = modulename_from_path(str(dest_path))
+        if mname in sys.modules:
+            live_so = getattr(sys.modules[mname], "__file__", None)
+            if live_so and pathlib.Path(live_so).exists():
+                so = pathlib.Path(str(dest_path) + _EXT_SUFFIX)
+                try:
+                    shutil.copy(live_so, so)
+                except OSError:
+                    so = pathlib.Path(live_so)
+                cache[cache_key] = str(so)
+                return so
+            dest = pathlib.Path(f"{dest_path}_{os.getpid()}")
+
+        # 4. Fresh compilation
         rhs = list(type(self)._equations(y, t_sym, **self.params.as_dict()))
         if len(rhs) != self.dim:
             raise ValueError(
                 f"_equations must return {self.dim} expressions, got {len(rhs)}"
             )
 
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        so_suffix = f"_lyap{n_lyap}" if for_lyap else ""
-        dest_path = pathlib.Path(str(self._module_path()) + so_suffix)
-        existing  = list(_CACHE_DIR.glob(f"{dest_path.name}.*"))
-
-        if existing:
-            cache[cache_key] = existing[0]
-            return existing[0]
-
-        cls_jitc = _jitcdde_lyap if for_lyap else _jitcdde
-        lyap_kw  = {"n_lyap": n_lyap} if for_lyap else {}
         dde = cls_jitc(rhs, verbose=False, **lyap_kw)
         dde.compile_C()
-        saved = dde.save_compiled(destination=str(dest_path), overwrite=True)
-        saved_path = pathlib.Path(saved)
-        cache[cache_key] = saved_path
-        return saved_path
+        so = pathlib.Path(dde.save_compiled(destination=str(dest), overwrite=True))
+        cache[cache_key] = str(so)
+        return so
+
+    def _get_delays(self) -> list[float]:
+        """
+        Return the list of delay values used by this system.
+
+        Subclasses with non-trivial delay structures should override this.
+        Default: collects all params whose name contains ``"tau"`` or
+        ``"delay"`` (case-insensitive).  If none are found, extracts delays
+        symbolically by evaluating ``_equations`` — slower but always correct.
+        """
+        delays = [
+            float(self.params[k])
+            for k in self.params
+            if "tau" in k.lower() or "delay" in k.lower()
+        ]
+        if delays:
+            return delays
+        # Fallback: extract from the symbolic RHS.
+        # _get_delays expects a no-arg callable that iterates over expressions.
+        import symengine
+        from jitcdde import t as t_sym
+        from jitcdde import y
+        from jitcdde._jitcdde import _get_delays as _jitc_get_delays
+        rhs = list(type(self)._equations(y, t_sym, **self.params.as_dict()))
+        raw = _jitc_get_delays(lambda: iter(rhs), ())
+        return [float(symengine.sympify(d).n(real=True)) for d in raw]
 
     def _get_max_delay(self) -> float:
         """
-        Return the maximum delay value for this system.
+        Return the maximum delay value (with a small safety margin).
 
         Subclasses with non-trivial delay structures should override this.
-        Default: looks for a param named ``"tau"`` and returns it * 1.1,
-        otherwise returns 100.0 as a conservative fallback.
+        Default: 1.1 × the largest non-zero value from ``_get_delays()``,
+        or 100.0 as a conservative fallback if no delays are found.
         """
-        if "tau" in self.params:
-            return float(self.params["tau"]) * 1.1
-        # Try to find any delay-like param
-        for key in self.params:
-            if "tau" in key.lower() or "delay" in key.lower():
-                return float(self.params[key]) * 1.1
-        return 100.0
+        delays = [d for d in self._get_delays() if d > 0]
+        return max(delays) * 1.1 if delays else 100.0
 
     # ------------------------------------------------------------------ #
     # Integration
@@ -258,6 +309,7 @@ class DelaySystem(SystemBase, ABC):
         dde = _jitcdde(
             module_location=str(so_path),
             n=self.dim,
+            delays=self._get_delays(),
             max_delay=max_delay,
             verbose=False,
         )
@@ -349,6 +401,7 @@ class DelaySystem(SystemBase, ABC):
         dde = _jitcdde_lyap(
             module_location=str(so_path),
             n=self.dim,
+            delays=self._get_delays(),
             max_delay=max_delay,
             n_lyap=n_exp,
             verbose=False,
