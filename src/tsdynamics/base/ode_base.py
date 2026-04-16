@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import sysconfig
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, ClassVar
@@ -11,6 +12,11 @@ from typing import Any, ClassVar
 import numpy as np
 
 from .base import SystemBase, Trajectory
+
+# Platform-specific compiled extension suffix (e.g. ".cpython-312-x86_64-linux-gnu.so").
+# Used to filter glob results to actual shared libraries only.
+_EXT_SUFFIX: str = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+
 
 # ---------------------------------------------------------------------------
 # Cache directory
@@ -99,10 +105,15 @@ class ContinuousSystem(SystemBase, ABC):
     #: (e.g. integer loop bounds). These are baked in at compile time.
     _structural_params: ClassVar[frozenset[str]] = frozenset()
 
-    # Per-class in-process cache: module_path (str) → jitcode object.
-    # Keyed by a path string derived from (class, dim, structural-param hash).
+    # Per-class in-process caches.
+    # _compiled_odes  : cache_key (str) → jitcode object (stateless between
+    #                   set_initial_value calls; safe to reuse).
+    # _compiled_lyap  : lyap_cache_key (str) → absolute path of the saved .so.
+    #                   jitcode_lyap objects are NOT cached (they carry tangent-
+    #                   vector state); we cache the path so each call can create
+    #                   a fresh wrapper without recompiling.
     _compiled_odes: ClassVar[dict[str, Any]] = {}
-    _compiled_lyap:  ClassVar[dict[str, Any]] = {}
+    _compiled_lyap: ClassVar[dict[str, str]] = {}
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -172,94 +183,122 @@ class ContinuousSystem(SystemBase, ABC):
         """
         Return a compiled JiTCODE object, compiling (and caching) if needed.
 
-        For regular integration uses ``jitcode``; for Lyapunov uses
-        ``jitcode_lyap``. The compiled shared library is saved to
-        ``_CACHE_DIR`` so subsequent runs load from disk without recompiling.
+        ``jitcode`` objects (regular integration) are cached in-process because
+        they are stateless between ``set_initial_value`` calls.
+        ``jitcode_lyap`` objects are **not** cached — they carry tangent-vector
+        state that must start fresh each call.  Instead, the compiled ``.so``
+        path is cached so each call can construct a new wrapper without
+        recompiling.
 
-        Parameters
-        ----------
-        for_lyap : bool
-            If True, return a ``jitcode_lyap`` instance.
-        n_lyap : int
-            Number of Lyapunov exponents (only used when ``for_lyap=True``).
-
-        Returns
-        -------
-        jitcode or jitcode_lyap
-
-        Notes
-        -----
-        ``jitcode_lyap`` objects are **not** cached in-process.  After
-        integration the object carries internal state (tangent vectors); if
-        the same object is then handed back to a second ``lyapunov_spectrum``
-        call, ``jitcode.set_integrator`` tries to restore that stale state by
-        calling ``jitcode_lyap.set_initial_value`` with the full augmented
-        vector, which appends extra random Lyapunov directions and produces a
-        dimension mismatch.  Creating a fresh wrapper each call is negligible
-        cost; the disk cache already prevents C recompilation.
+        Lookup order
+        ------------
+        1. In-process object cache (regular) / path cache (lyap).
+        2. Disk cache (``_CACHE_DIR``).
+        3. Check ``sys.modules``: if a prior interrupted compilation registered
+           the module name but never saved the ``.so`` to disk, recover from the
+           still-live temp dir or fall back to a unique per-process module name
+           so the session keeps working without a kernel restart.
+        4. Fresh compilation.
         """
+        import sys
+        import shutil
+
         import symengine
         from jitcode import jitcode as _jitcode
         from jitcode import jitcode_lyap as _jitcode_lyap
         from jitcode import t as t_sym
         from jitcode import y
+        from jitcxde_common.modules import modulename_from_path
 
-        module_path = self._module_path()
+        cls_jitc    = _jitcode_lyap if for_lyap else _jitcode
+        lyap_kwargs = {"n_lyap": n_lyap} if for_lyap else {}
 
-        # Regular integration: safe to cache in-process (jitcode objects are
-        # stateless between set_initial_value calls once the .so is loaded).
-        # Lyapunov: always create a fresh wrapper — see docstring.
-        if not for_lyap:
-            cache = type(self)._compiled_odes
-            cache_key = str(module_path)
-            if cache_key in cache:
-                return cache[cache_key]
+        so_suffix  = f"_lyap{n_lyap}" if for_lyap else ""
+        saved_path = pathlib.Path(str(self._module_path()) + so_suffix)
+        cache_key  = str(saved_path)
 
-        control_keys = list(self._control_params())
-        control_syms = {k: symengine.Symbol(k) for k in control_keys}
+        control_syms    = {k: symengine.Symbol(k) for k in self._control_params()}
         control_par_list = list(control_syms.values())
+
+        def _load(path: str | pathlib.Path) -> Any:
+            return cls_jitc(
+                module_location=str(path), n=self.dim,
+                control_pars=control_par_list, verbose=False, **lyap_kwargs,
+            )
+
+        def _find_so(base: pathlib.Path) -> pathlib.Path | None:
+            hits = [f for f in _CACHE_DIR.glob(f"{base.name}.*")
+                    if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0]
+            return hits[0] if hits else None
+
+        # 1. In-process cache
+        if not for_lyap and cache_key in type(self)._compiled_odes:
+            return type(self)._compiled_odes[cache_key]
+        if for_lyap:
+            cached = type(self)._compiled_lyap.get(cache_key)
+            if cached and pathlib.Path(cached).exists():
+                return _load(cached)
+            if cached:
+                del type(self)._compiled_lyap[cache_key]  # stale — clear it
 
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Check disk cache
-        so_suffix = f"_lyap{n_lyap}" if for_lyap else ""
-        saved_path = pathlib.Path(str(module_path) + so_suffix)
-        # JiTCODE appends a platform-specific extension; check for any match
-        existing = list(_CACHE_DIR.glob(f"{saved_path.name}.*"))
+        # 2. Disk cache
+        so = _find_so(saved_path)
+        if so:
+            ode = _load(so)
+            if for_lyap:
+                type(self)._compiled_lyap[cache_key] = str(so)
+            else:
+                type(self)._compiled_odes[cache_key] = ode
+            return ode
 
-        cls_jitc   = _jitcode_lyap if for_lyap else _jitcode
-        lyap_kwargs = {"n_lyap": n_lyap} if for_lyap else {}
+        # 3. Determine compile destination.
+        # JiTCODE registers the module name in sys.modules inside compile_C,
+        # *before* save_compiled copies the .so to its permanent location.
+        # If a prior call was interrupted in that window, the name is already
+        # in sys.modules and a fresh compile_C would raise NameError.
+        # Check upfront and either recover from the still-live temp dir or
+        # redirect to a unique per-process name.
+        dest = saved_path
+        mname = modulename_from_path(str(saved_path))
+        if mname in sys.modules:
+            live_so = getattr(sys.modules[mname], "__file__", None)
+            if live_so and pathlib.Path(live_so).exists():
+                # The interrupted call's temp dir is still alive — copy the
+                # .so to the permanent location and load from there.
+                so = pathlib.Path(str(saved_path) + _EXT_SUFFIX)
+                try:
+                    shutil.copy(live_so, so)
+                except OSError:
+                    so = pathlib.Path(live_so)
+                ode = _load(so)
+                if for_lyap:
+                    type(self)._compiled_lyap[cache_key] = str(so)
+                else:
+                    type(self)._compiled_odes[cache_key] = ode
+                return ode
+            # Temp dir already cleaned — compile under a unique name so the
+            # session works without a restart.
+            dest = pathlib.Path(f"{saved_path}_{os.getpid()}")
 
-        if existing:
-            # Load from disk — no recompilation needed
-            ode = cls_jitc(
-                module_location=str(existing[0]),
-                n=self.dim,
-                control_pars=control_par_list,
-                verbose=False,
-                **lyap_kwargs,
+        # 4. Fresh compilation
+        struct_vals = self._structural_vals()
+        f_sym = list(type(self)._equations(y, t_sym, **{**struct_vals, **control_syms}))
+        if len(f_sym) != self.dim:
+            raise ValueError(
+                f"_equations must return {self.dim} expressions, got {len(f_sym)}"
             )
+
+        ode = cls_jitc(f_sym, n=self.dim, control_pars=control_par_list,
+                       verbose=False, **lyap_kwargs)
+        ode.generate_f_C()
+        so = pathlib.Path(ode.save_compiled(destination=str(dest), overwrite=True))
+
+        if for_lyap:
+            type(self)._compiled_lyap[cache_key] = str(so)
         else:
-            # Build symbolic RHS and compile fresh
-            struct_vals = self._structural_vals()
-            all_params  = {**struct_vals, **control_syms}
-            f_sym = list(type(self)._equations(y, t_sym, **all_params))
-            if len(f_sym) != self.dim:
-                raise ValueError(
-                    f"_equations must return {self.dim} expressions, got {len(f_sym)}"
-                )
-            ode = cls_jitc(
-                f_sym,
-                n=self.dim,
-                control_pars=control_par_list,
-                verbose=False,
-                **lyap_kwargs,
-            )
-            ode.generate_f_C()
-            ode.save_compiled(destination=str(saved_path), overwrite=True)
-
-        if not for_lyap:
-            cache[cache_key] = ode
+            type(self)._compiled_odes[cache_key] = ode
         return ode
 
     # ------------------------------------------------------------------ #
@@ -318,7 +357,13 @@ class ContinuousSystem(SystemBase, ABC):
 
         y_out = np.empty((t_eval.size, self.dim), dtype=float)
         for k, tk in enumerate(t_eval):
-            y_out[k] = ode.integrate(float(tk))
+            state = ode.integrate(float(tk))
+            if not np.isfinite(state).all():
+                raise RuntimeError(
+                    f"{type(self).__name__}: ODE diverged at t={tk:.6g} — "
+                    f"state contains non-finite values: {state}"
+                )
+            y_out[k] = state
 
         return Trajectory(t=t_eval, y=y_out, system=self)
 
@@ -366,7 +411,9 @@ class ContinuousSystem(SystemBase, ABC):
         ndarray, shape (n_exp,)
             Lyapunov exponents ordered from largest to smallest.
         """
-        n_exp  = n_exp or self.dim
+        if n_exp is not None and n_exp <= 0:
+            raise ValueError(f"n_exp must be a positive integer, got {n_exp!r}")
+        n_exp = n_exp if n_exp is not None else self.dim
         method = method or self._default_method
         integ_name = _INTEGRATOR_MAP.get(method, method)
         ic_arr = self.resolve_ic(ic)
@@ -376,24 +423,32 @@ class ContinuousSystem(SystemBase, ABC):
         ode.set_parameters(*self._control_params().values())
         ode.set_initial_value(ic_arr, 0.0)
 
-        # Burn-in
+        # Burn-in (discard transient; no exponent accumulation)
         T = 0.0
         while burn_in > T:
             Tn = min(burn_in, T + dt)
-            ode.integrate(Tn)
+            ode.integrate(float(Tn))
             T = Tn
 
         # Production: time-weighted average of local exponents
-        T_end   = float(ode.t) + final_time
-        weights = []
+        T_end    = float(ode.t) + final_time
+        weights  = []
         ly_steps = []
         T = float(ode.t)
 
         while T_end > T:
             Tn  = min(T_end, T + dt)
-            ret = ode.integrate(Tn)
+            ret = ode.integrate(float(Tn))
 
-            local_lyaps = ret[1] if isinstance(ret, tuple) and len(ret) >= 2 else ret
+            # jitcode_lyap.integrate returns (state, lyapunov_exponents).
+            # The fallback "else ret" would silently use the state vector as
+            # exponents — always enforce the tuple contract instead.
+            if not (isinstance(ret, tuple) and len(ret) >= 2):
+                raise RuntimeError(
+                    f"{type(self).__name__}: jitcode_lyap.integrate returned "
+                    f"unexpected type {type(ret)!r}; expected (state, lyap_exps) tuple."
+                )
+            local_lyaps = ret[1]
             v = np.asarray(local_lyaps, float).ravel()
             if v.size != n_exp:
                 raise ValueError(f"Expected {n_exp} local LEs, got shape {v.shape}")
