@@ -623,8 +623,10 @@ exps = lor.lyapunov_spectrum(dt=0.1, burn_in=50.0, final_time=300.0)
 # DDE
 mg = MackeyGlass()
 hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
-t, y = mg.integrate(dt=0.05, final_time=500.0, history=hist, rtol=1e-6, atol=1e-9)
-exps = mg.lyapunov_spectrum(n_lyap=1, dt=0.2, burn_in=100.0, final_time=600.0, history=hist)
+traj = mg.integrate(dt=0.05, final_time=500.0, history=hist)
+# Pass end-state as ic so Lyapunov starts on the attractor; omit rtol/atol to
+# use DDE-safe defaults (1e-3/1e-3) — tight ODE tolerances cause divergence.
+exps = mg.lyapunov_spectrum(n_exp=1, dt=0.2, burn_in=100.0, final_time=600.0, ic=traj.y[-1])
 
 # Map
 h = Henon()
