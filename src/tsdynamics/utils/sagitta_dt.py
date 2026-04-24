@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.spatial.distance import cdist  # fix #3: module-level import
 
 __all__ = ["SagittaDt", "estimate_dt_from_sagitta"]
 
@@ -21,14 +22,17 @@ class SagittaDt:
     notes: str = ""  # info / warnings
 
 
-def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: float) -> float:
-    """Compute p-th percentile of sagitta over triples (i-span, i, i+span)."""
+def _compute_sagitta_stats(
+    samples: np.ndarray, span: int, percentile_p: float
+) -> tuple[float, float]:
+    """Return (sagitta_percentile, chord_median) for triples at a given span."""
+    # fix #5: removed _compute_sagitta_percentile duplicate; all callers use this
     n = samples.shape[0]
-    centers = np.arange(span, n - span, span)  # i = q * span
+    centers = np.arange(span, n - span, span)
 
-    A = samples[centers - span, :]  # y_{i-span}
-    B = samples[centers, :]  # y_i
-    C = samples[centers + span, :]  # y_{i+span}
+    A = samples[centers - span, :]
+    B = samples[centers, :]
+    C = samples[centers + span, :]
 
     AC = C - A
     chord_length = np.linalg.norm(AC, axis=1)
@@ -38,12 +42,14 @@ def _compute_sagitta_percentile(samples: np.ndarray, span: int, percentile_p: fl
         unit_chord[valid] = (AC[valid].T / chord_length[valid]).T
 
     BA = B - A
-    proj_len = np.einsum("ij,ij->i", BA, unit_chord)  # scalar projection of BA onto AC
+    proj_len = np.einsum("ij,ij->i", BA, unit_chord)
     proj_vec = (proj_len[:, None]) * unit_chord
     perp_vec = BA - proj_vec
     sagitta = np.linalg.norm(perp_vec, axis=1)
 
-    return float(np.nanpercentile(sagitta, percentile_p))
+    s_p = float(np.nanpercentile(sagitta, percentile_p))
+    chord_med = float(np.nanmedian(chord_length[valid])) if np.any(valid) else 0.0
+    return s_p, chord_med
 
 
 def _estimate_lag_ami(y: np.ndarray, max_lag: int | None = None, n_bins: int = 16) -> int:
@@ -109,20 +115,17 @@ def _estimate_embedding_dim_fnn(
     sigma_x = x.std(ddof=1) if x.std(ddof=1) > 0 else 1.0
 
     chosen_m = 2
-    below_twice = 0  # early stop once we’re below threshold twice in a row
+    below_twice = 0
 
     for m in range(2, max_dim + 1):
-        # embedding lengths
         Tm = n - (m - 1) * lag
         Tm1 = n - m * lag
         if Tm1 < 10:
             break
 
-        # build embeddings (contiguous views)
         Xm = np.column_stack([x[i * lag : i * lag + Tm] for i in range(m)])
         Xm1 = np.column_stack([x[i * lag : i * lag + Tm1] for i in range(m + 1)])
 
-        # pool + test indices (uniform subsampling)
         pool_size = min(POOL_SIZE, Tm)
         pool_idx = np.linspace(0, Tm - 1, pool_size, dtype=int)
         if pool_size <= 2:
@@ -132,29 +135,22 @@ def _estimate_embedding_dim_fnn(
         if test_idx.size == 0:
             break
 
-        # distances in m-dim between test and pool
-        from scipy.spatial.distance import cdist
+        Dm = cdist(Xm[test_idx], Xm[pool_idx], metric="euclidean")  # fix #3: no local import
 
-        Dm = cdist(Xm[test_idx], Xm[pool_idx], metric="euclidean")
-
-        # apply Theiler window per row (mask temporal neighbors)
         for r, ti in enumerate(test_idx):
             mask_bad = np.abs(pool_idx - ti) <= theiler
             Dm[r, mask_bad] = np.inf
 
-        # nearest neighbor indices in the pool
         nn_col = np.argmin(Dm, axis=1)
         nn_dist_m = Dm[np.arange(nn_col.size), nn_col]
         valid_nn = np.isfinite(nn_dist_m)
         if not np.any(valid_nn):
             continue
 
-        # map to absolute indices
         nn_idx = pool_idx[nn_col[valid_nn]]
         ti_valid = test_idx[valid_nn]
         Rm = nn_dist_m[valid_nn]
 
-        # Only pairs where both indices < Tm1 can be used for E1/E2
         mask_range = (ti_valid < Tm1) & (nn_idx < Tm1) & (Rm > 0)
         if not np.any(mask_range):
             continue
@@ -163,11 +159,9 @@ def _estimate_embedding_dim_fnn(
         nj2 = nn_idx[mask_range]
         Rm2 = Rm[mask_range]
 
-        # E1: unfolding along the new axis
         num = np.abs(x[ti2 + m * lag] - x[nj2 + m * lag])
         E1 = (num / Rm2) > rtol
 
-        # E2: absolute growth in (m+1)-dim
         diff_m1 = Xm1[ti2] - Xm1[nj2]
         Rm1 = np.linalg.norm(diff_m1, axis=1)
         E2 = (Rm1 / sigma_x) > atol
@@ -184,36 +178,6 @@ def _estimate_embedding_dim_fnn(
             chosen_m = m
 
     return int(max(2, chosen_m))
-
-
-def _compute_sagitta_stats(
-    samples: np.ndarray, span: int, percentile_p: float
-) -> tuple[float, float]:
-    """Return (sagitta_percentile, chord_median) for triples at a given span."""
-    n = samples.shape[0]
-    centers = np.arange(span, n - span, span)
-
-    A = samples[centers - span, :]
-    B = samples[centers, :]
-    C = samples[centers + span, :]
-
-    AC = C - A
-    chord_length = np.linalg.norm(AC, axis=1)
-    unit_chord = np.zeros_like(AC)
-    valid = chord_length > 0
-    if np.any(valid):
-        unit_chord[valid] = (AC[valid].T / chord_length[valid]).T
-
-    BA = B - A
-    proj_len = np.einsum("ij,ij->i", BA, unit_chord)
-    proj_vec = (proj_len[:, None]) * unit_chord
-    perp_vec = BA - proj_vec
-    sagitta = np.linalg.norm(perp_vec, axis=1)
-
-    s_p = float(np.nanpercentile(sagitta, percentile_p))
-    # robust chord scale
-    chord_med = float(np.nanmedian(chord_length[valid])) if np.any(valid) else 0.0
-    return s_p, chord_med
 
 
 def _takens_embedding(y: np.ndarray, lag: int, embed_dim: int) -> np.ndarray:
@@ -256,6 +220,7 @@ def estimate_dt_from_sagitta(
     epsilon: float,
     percentile: float = 95.0,
     coarsen_only: bool = True,
+    use_relative: bool | None = None,
     min_points_per_segment: int = 3,
     search_growth: float = 1.5,
 ) -> SagittaDt:
@@ -274,11 +239,20 @@ def estimate_dt_from_sagitta(
     dt0 : float
         Base sampling step Δt0 > 0.
     epsilon : float
-        Geometric tolerance (in σ-normalized units).
+        Geometric tolerance. Absolute (σ-normalized units) when use_relative=False,
+        relative (sagitta / chord_median) when use_relative=True.
     percentile : float
         Robust percentile p (e.g., 95.0).
     coarsen_only : bool
-        If True, never suggest Δt* < Δt0 (i.e., m >= 1).
+        If True, never suggest Δt* < Δt0 (i.e., m >= 1). Does not affect behaviour
+        when span=1 already exceeds ε — that case is flagged via 'notes' and
+        stride=1 is returned regardless.
+    use_relative : bool or None
+        Whether to use relative sagitta criterion (sagitta / chord_median <= ε).
+        If None (default), automatically set to True for 1D input (post-embedding)
+        and False for multivariate input. Pass explicitly to override.
+        NOTE: relative criterion is not strictly monotone in stride; binary search
+        is approximate for that case.
     min_points_per_segment : int
         Require at least this many triples (i-span, i, i+span) to evaluate a candidate span.
     search_growth : float
@@ -294,28 +268,21 @@ def estimate_dt_from_sagitta(
     if not isinstance(y, np.ndarray):
         raise ValueError("y must be a numpy array.")
 
-    # Convert to 2D if needed and detect if we need embedding
     needs_embedding = False
-    embedding_lag = None
-    embedding_dim = None
 
     if y.ndim == 1:
-        # 1D time series - will need Takens embedding
         needs_embedding = True
         y_original = y.copy()
         n_samples_original = len(y)
     elif y.ndim == 2:
-        n_samples, n_dim = y.shape
+        n_samples_original_unused, n_dim = y.shape
         if n_dim == 1:
-            # Shape is (n, 1) - treat as 1D
             needs_embedding = True
             y_original = y.squeeze()
             n_samples_original = len(y_original)
-        # else: n_dim > 1, proceed normally
     else:
         raise ValueError("y must be 1D or 2D array.")
 
-    # Apply Takens embedding if needed
     embedding_notes = ""
     if needs_embedding:
         if n_samples_original < 50:
@@ -323,26 +290,19 @@ def estimate_dt_from_sagitta(
                 f"Need at least 50 samples for 1D embedding, got {n_samples_original}."
             )
 
-        print("Need to apply Takens embedding")
-
-        # Estimate optimal lag using AMI
         print("Estimating lag...")
         embedding_lag = _estimate_lag_ami(y_original)
 
-        # Estimate optimal embedding dimension using FNN
         print("Estimating embedding dimension...")
         embedding_dim = _estimate_embedding_dim_fnn(y_original, embedding_lag)
 
-        # Apply Takens embedding
         y = _takens_embedding(y_original, embedding_lag, embedding_dim)
         n_samples, n_dim = y.shape
 
         embedding_notes = f"Applied Takens embedding: lag={embedding_lag}, dim={embedding_dim}. "
     else:
-        # Already 2D with n_dim > 1
         n_samples, n_dim = y.shape
 
-    # Standard validation
     if n_samples < 5:
         raise ValueError("Need at least n_samples >= 5 after embedding.")
     if not (dt0 > 0):
@@ -356,83 +316,76 @@ def estimate_dt_from_sagitta(
     if min_points_per_segment < 1:
         raise ValueError("min_points_per_segment must be >= 1.")
 
+    # fix #2: use_relative is now an explicit parameter, not silently tied to needs_embedding
+    if use_relative is None:
+        use_relative = needs_embedding
+
     # -------- per-feature σ-normalization (scale invariance) --------
     y = np.asarray(y, dtype=float)
     feature_std = y.std(axis=0, ddof=1)
-    feature_std[~np.isfinite(feature_std) | (feature_std == 0.0)] = (
-        1.0  # when not finite or zero, set to 1
-    )
-    normalized_values = y / feature_std  # shape (n_samples, n_dim)
+    feature_std[~np.isfinite(feature_std) | (feature_std == 0.0)] = 1.0
+    samples_for_sagitta = y / feature_std
 
-    samples_for_sagitta = normalized_values
-    notes = embedding_notes + "Used state-space sagitta."
+    criterion_note = "relative sagitta" if use_relative else "absolute sagitta"
+    notes = embedding_notes + f"Used state-space {criterion_note}."
+    if use_relative:
+        notes += " NOTE: relative criterion is not strictly monotone; binary search is approximate."
 
     # -------- determine max span with enough triples --------
     max_span = (n_samples - 1) // 2
     while max_span > 1 and (n_samples - 2 * max_span) < min_points_per_segment:
         max_span -= 1
-    if max_span < 1:
-        # Not enough data to evaluate any span > 0; fall back to Δt0
-        chosen_stride = 1
-        achieved_percentile = 0.0
-        searched_spans = np.array([1], dtype=int)
-        indices = np.arange(n_samples, dtype=int)
-        delta_t_star = chosen_stride * dt0
+
+    def _make_result(stride: int, achieved: float, searched: list, extra_note: str) -> SagittaDt:
+        idx = np.arange(0, n_samples, stride, dtype=int)
+        if idx[-1] != (n_samples - 1):
+            idx = np.concatenate([idx, np.array([n_samples - 1], dtype=int)])
+        evs = np.array(sorted(searched, key=lambda x: x[0]), dtype=float)
+        spans = evs[:, 0].astype(int) if evs.size else np.array([1], dtype=int)
         return SagittaDt(
-            delta_t=float(delta_t_star),
-            stride=int(chosen_stride),
-            percentile_value=float(achieved_percentile),
-            indices=indices,
+            delta_t=float(stride * dt0),
+            stride=int(stride),
+            percentile_value=float(achieved),
+            indices=idx,
             p=float(percentile),
             epsilon=float(epsilon),
-            searched_ms=searched_spans,
-            notes=notes + " Too few samples; returning Δt0.",
+            searched_ms=spans,
+            notes=notes + extra_note,
         )
 
-    use_relative = needs_embedding  # relative sagitta only for 1D (embedded); d>1 unchanged
+    if max_span < 1:
+        return _make_result(1, 0.0, [(1, 0.0)], " Too few samples; returning Δt0.")
 
     # -------- helper to test a span --------
     def span_is_ok(span: int) -> tuple[bool, float]:
         if (n_samples - 2 * span) < min_points_per_segment:
             return False, np.nan
+        s_p, chord_med = _compute_sagitta_stats(samples_for_sagitta, span, percentile)
         if use_relative:
-            s_p, chord_med = _compute_sagitta_stats(samples_for_sagitta, span, percentile)
             denom = chord_med if (chord_med > 1e-12 and np.isfinite(chord_med)) else 1.0
-            rel = s_p / denom
-            return (rel <= epsilon), rel  # interpret epsilon as RELATIVE tolerance in 1D case
+            val = s_p / denom
         else:
-            val = _compute_sagitta_percentile(samples_for_sagitta, span, percentile)
-            return (val <= epsilon), val  # keep absolute criterion for d>1 (backward-compatible)
+            val = s_p
+        return (val <= epsilon), val
 
     # -------- coarse search (exponential growth) --------
-    evaluated = []
+    evaluated: list[tuple[int, float]] = []
+
+    ok_1, val_1 = span_is_ok(1)
+    evaluated.append((1, val_1))
+
+    if not ok_1:
+        # fix #1: this is not a coarsen_only decision — span=1 failing means the data
+        # is already under-sampled relative to ε. Return stride=1 with a clear note.
+        # coarsen_only is irrelevant here since we cannot go finer.
+        return _make_result(1, val_1, evaluated, " span=1 exceeds ε; data may be under-sampled at dt0.")
+
+    # fix #4: chosen_stride always valid from here; no sentinel 0 needed
+    chosen_stride = 1
+    achieved_percentile = val_1
     current_span = 1
-    ok, best_val = span_is_ok(1)
-    evaluated.append((1, best_val))
-
-    chosen_stride = 1 if ok else 0
-    achieved_percentile = best_val
-
-    # If even span=1 violates epsilon and coarsen_only, clamp to Δt0
-    if (not ok) and coarsen_only:
-        chosen_stride = 1
-        achieved_percentile = best_val
-        searched_spans = np.array([1], dtype=int)
-        indices = np.arange(n_samples, dtype=int)
-        delta_t_star = chosen_stride * dt0
-        return SagittaDt(
-            delta_t=float(delta_t_star),
-            stride=int(chosen_stride),
-            percentile_value=float(achieved_percentile),
-            indices=indices,
-            p=float(percentile),
-            epsilon=float(epsilon),
-            searched_ms=searched_spans,
-            notes=notes + " span=1 exceeds ε; coarsen_only=True so Δt*=Δt0.",
-        )
-
-    # grow span until it fails or we hit max_span
     first_fail_span = None
+
     while True:
         next_span = int(np.floor(current_span * search_growth))
         if next_span <= current_span:
@@ -450,7 +403,8 @@ def estimate_dt_from_sagitta(
             break
 
     # -------- binary search between last ok and first fail (if any) --------
-    low_ok = max(1, chosen_stride if chosen_stride else 1)
+    # fix #6: low_ok is now always a confirmed-ok stride (no sentinel ambiguity)
+    low_ok = chosen_stride
     high_fail = first_fail_span if first_fail_span is not None else (max_span + 1)
 
     while high_fail - low_ok > 1:
@@ -464,27 +418,4 @@ def estimate_dt_from_sagitta(
         else:
             high_fail = mid
 
-    # -------- build decimation indices for chosen stride --------
-    if chosen_stride < 1:
-        chosen_stride = 1
-    indices = np.arange(0, n_samples, chosen_stride, dtype=int)
-    if indices[-1] != (n_samples - 1):
-        indices = np.concatenate([indices, np.array([n_samples - 1], dtype=int)])
-
-    # -------- finalize single return --------
-    delta_t_star = chosen_stride * dt0
-    evaluated_sorted = np.array(sorted(evaluated, key=lambda x: x[0]), dtype=float)
-    searched_spans = (
-        evaluated_sorted[:, 0].astype(int) if evaluated_sorted.size else np.array([1], dtype=int)
-    )
-
-    return SagittaDt(
-        delta_t=float(delta_t_star),
-        stride=int(chosen_stride),
-        percentile_value=float(achieved_percentile),
-        indices=indices,
-        p=float(percentile),
-        epsilon=float(epsilon),
-        searched_ms=searched_spans,
-        notes=notes,
-    )
+    return _make_result(chosen_stride, achieved_percentile, evaluated, "")
