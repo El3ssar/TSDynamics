@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR/branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: ruff check
+        run: uv run --with "ruff>=0.15" ruff check src/ tests/
+
+      - name: ruff format --check
+        run: uv run --with "ruff>=0.15" ruff format --check src/ tests/
+
+  test:
+    name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # hatch-vcs needs full history to derive the version string.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install build deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Sync project + dev deps
+        run: uv sync --group dev
+
+      - name: Run fast tests
+        run: uv run pytest -m "not slow" --no-cov -q
+
+      - name: Run full test suite
+        run: uv run pytest --cov=src/tsdynamics --cov-report=xml
+
+      - name: Upload coverage (Linux + Python 3.12 only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+        continue-on-error: true

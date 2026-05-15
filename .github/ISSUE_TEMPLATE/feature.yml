@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a new system, utility, or API change.
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like to add or change?
+      placeholder: "Add the FitzHugh–Nagumo system to systems/continuous/chem_bio_systems.py."
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why?
+      placeholder: "I'm reproducing a paper that uses it."
+
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference (paper, equation, parameter values)
+      description: For new systems, include the equation set and canonical parameter values.

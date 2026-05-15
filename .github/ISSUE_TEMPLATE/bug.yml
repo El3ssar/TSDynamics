@@ -1,0 +1,53 @@
+name: Bug report
+description: Something is wrong with TSDynamics.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Expected vs observed. Include a minimal Python repro if possible.
+      placeholder: |
+        ```python
+        import tsdynamics as ts
+        lor = ts.Lorenz()
+        ...
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Full traceback / output
+      render: text
+
+  - type: input
+    id: tsd-version
+    attributes:
+      label: TSDynamics version
+      description: "Output of `python -c 'import tsdynamics; print(tsdynamics.__version__)'`"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: "Output of `python --version`"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / architecture
+      placeholder: "Ubuntu 24.04 x86_64 / macOS 14 arm64 / Windows 11"
+
+  - type: textarea
+    id: deps
+    attributes:
+      label: Relevant dependency versions
+      description: "`uv pip list | grep -iE 'jitcode|jitcdde|symengine|numba|numpy|scipy'`"
+      render: text
