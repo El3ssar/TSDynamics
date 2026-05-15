@@ -47,6 +47,16 @@ class Ulam(DiscreteMap):
 
 
 class Ikeda(DiscreteMap):
+    r"""
+    Ikeda (1979) map — laser ring cavity model.
+
+    .. math::
+
+        t   &= a - b / (1 + x^2 + y^2) \\
+        x'  &= 1 + u \, (x \cos t - y \sin t) \\
+        y'  &= u \, (x \sin t + y \cos t)
+    """
+
     params = {"a": 0.4, "b": 6.0, "u": 0.9}
     dim = 2
 
@@ -61,26 +71,36 @@ class Ikeda(DiscreteMap):
     @staticjit
     def _jacobian(X, a, b, u):
         x, y = X
-        t = a - b / (1 + x**2 + y**2)
-        dtdx = -12 * x / (1 + x**2 + y**2) ** 2
-        dtdy = -12 * y / (1 + x**2 + y**2) ** 2
+        denom = 1.0 + x**2 + y**2
+        t = a - b / denom
+        # ∂t/∂x = 2bx / (1+x²+y²)²    (positive sign — earlier code had this wrong)
+        dt_dx = 2.0 * b * x / denom**2
+        dt_dy = 2.0 * b * y / denom**2
 
-        dxpdx = u * np.cos(t) - u * x * np.sin(t) * dtdx - u * y * np.cos(t) * dtdx
-        dxpdy = -u * x * np.sin(t) * dtdy - u * y * np.cos(t) * dtdy - u * np.sin(t)
+        cos_t, sin_t = np.cos(t), np.sin(t)
+        # P = x cos t - y sin t  ;  Q = x sin t + y cos t
+        Q = x * sin_t + y * cos_t
+        P = x * cos_t - y * sin_t
 
-        dypdx = u * np.sin(t) + u * x * np.cos(t) * dtdx - u * y * np.sin(t) * dtdx
-        dypdy = u * x * np.cos(t) * dtdy + u * np.cos(t) - u * y * np.sin(t) * dtdy
+        dxp_dx = u * cos_t - u * Q * dt_dx
+        dxp_dy = -u * sin_t - u * Q * dt_dy
+        dyp_dx = u * sin_t + u * P * dt_dx
+        dyp_dy = u * cos_t + u * P * dt_dy
 
-        row1 = [dxpdx, dxpdy]
-        row2 = [dypdx, dypdy]
-
-        return row1, row2
+        return [[dxp_dx, dxp_dy], [dyp_dx, dyp_dy]]
 
 
 class Tinkerbell(DiscreteMap):
+    """
+    Tinkerbell map.
+
+    Random ``U[0, 1)^2`` ICs almost always escape the basin, so a known-good
+    attractor point is set as ``default_ic``.
+    """
+
     params = {"a": 0.9, "b": -0.6013, "c": 2.0, "d": 0.5}
     dim = 2
-    initial_conds = np.array([-0.72, -0.64])  # random [0,1)^2 ICs always escape the basin
+    default_ic = np.array([-0.72, -0.64])
 
     @staticjit
     def _step(X, a, b, c, d):

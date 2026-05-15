@@ -250,6 +250,10 @@ class DiscreteMap(SystemBase):
         jac = type(self)._jacobian
         max_retries = 10
 
+        # The QR loop can encounter overflow on transient huge iterates before
+        # the divergence check triggers; silence the float warnings locally so
+        # they don't elevate to errors under strict filterwarnings policies.
+        # We track non-finiteness explicitly and treat it as a soft failure.
         for attempt in range(max_retries):
             x = self.resolve_ic(ic if attempt == 0 else None)
             Q = np.eye(self.dim)[:n_exp]
@@ -257,31 +261,49 @@ class DiscreteMap(SystemBase):
             intervals = 0
             failed = False
 
-            for i in range(steps):
-                x = np.asarray(step(x, *params), dtype=float)
-                if not np.all(np.isfinite(x)):
-                    failed = True
-                    break
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                for i in range(steps):
+                    x = np.asarray(step(x, *params), dtype=float)
+                    if not np.all(np.isfinite(x)):
+                        failed = True
+                        break
 
-                J = np.atleast_2d(np.asarray(jac(x, *params), dtype=float))
-                Q = (J @ Q.T).T
+                    J = np.atleast_2d(np.asarray(jac(x, *params), dtype=float))
+                    if not np.all(np.isfinite(J)):
+                        failed = True
+                        break
 
-                if (i + 1) % reortho_interval == 0:
-                    Q_new, R = np.linalg.qr(Q.T)
-                    Q = Q_new.T
-                    diag = np.abs(np.diag(R))
-                    diag = np.where(diag == 0.0, np.finfo(float).tiny, diag)
-                    lyap_sums += np.log(diag)
-                    intervals += 1
+                    Q = (J @ Q.T).T
+                    if not np.all(np.isfinite(Q)):
+                        failed = True
+                        break
 
-            if not failed:
+                    if (i + 1) % reortho_interval == 0:
+                        Q_new, R = np.linalg.qr(Q.T)
+                        if not np.all(np.isfinite(Q_new)):
+                            failed = True
+                            break
+                        Q = Q_new.T
+                        diag = np.abs(np.diag(R))
+                        diag = np.where(
+                            diag < np.finfo(float).tiny,
+                            np.finfo(float).tiny,
+                            diag,
+                        )
+                        lyap_sums += np.log(diag)
+                        intervals += 1
+
+            if not failed and intervals > 0:
                 exponents = lyap_sums / (intervals * reortho_interval)
                 self.meta["lyapunov_spectrum"] = exponents
                 return exponents
 
             if attempt < max_retries - 1:
-                print(f"Warning: divergence in lyapunov_spectrum attempt {attempt + 1}, retrying.")
-                # Clear stored IC so resolve_ic generates a new random one
+                # Clear stored IC so resolve_ic generates a fresh random one.
                 object.__setattr__(self, "ic", None)
 
-        raise ValueError(f"lyapunov_spectrum failed after {max_retries} retries due to divergence")
+        raise ValueError(
+            f"{type(self).__name__}.lyapunov_spectrum: failed after "
+            f"{max_retries} retries — iterates diverge from every tried IC. "
+            f"Try a larger `steps` budget or pass an `ic` from a known basin point."
+        )

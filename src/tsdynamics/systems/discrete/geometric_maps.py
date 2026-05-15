@@ -56,18 +56,25 @@ class Baker(DiscreteMap):
 
 
 class Circle(DiscreteMap):
+    """
+    Arnold's circle map.
+
+    Parameter order matches ``params`` insertion order (``omega`` then ``k``);
+    the previous implementation had the two swapped in the function signature,
+    silently using ``omega`` as ``k`` and vice versa.
+    """
+
     params = {"omega": 0.333, "k": 5.7}
     dim = 1
 
     @staticjit
-    def _step(X, k, omega):
+    def _step(X, omega, k):
         theta = X
         thetap = theta + omega + (k / (2 * np.pi)) * np.sin(2 * np.pi * theta)
-        thetap = thetap % 1
-        return thetap
+        return thetap % 1
 
     @staticjit
-    def _jacobian(X, k, omega):
+    def _jacobian(X, omega, k):
         theta = X
         return [1 + k * np.cos(2 * np.pi * theta)]
 
