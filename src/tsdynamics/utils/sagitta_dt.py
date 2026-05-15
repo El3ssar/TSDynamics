@@ -378,7 +378,9 @@ def estimate_dt_from_sagitta(
         # fix #1: this is not a coarsen_only decision — span=1 failing means the data
         # is already under-sampled relative to ε. Return stride=1 with a clear note.
         # coarsen_only is irrelevant here since we cannot go finer.
-        return _make_result(1, val_1, evaluated, " span=1 exceeds ε; data may be under-sampled at dt0.")
+        return _make_result(
+            1, val_1, evaluated, " span=1 exceeds ε; data may be under-sampled at dt0."
+        )
 
     # fix #4: chosen_stride always valid from here; no sentinel 0 needed
     chosen_stride = 1
