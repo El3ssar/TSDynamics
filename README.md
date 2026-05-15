@@ -2,9 +2,9 @@
 # tsdynamics
 
 ![Python](https://img.shields.io/badge/python-3.12+-blue?style=for-the-badge)
-[![CI](https://img.shields.io/github/actions/workflow/status/USER/tsdynamics/ci.yml?label=CI&style=for-the-badge)](https://github.com/USER/tsdynamics/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/github/actions/workflow/status/USER/tsdynamics/tests.yml?label=Tests&style=for-the-badge)](https://github.com/USER/tsdynamics/actions/workflows/tests.yml)
-[![Release](https://img.shields.io/github/v/release/USER/tsdynamics?style=for-the-badge)](https://github.com/USER/tsdynamics/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/El3ssar/tsdynamics/ci.yml?label=CI&style=for-the-badge)](https://github.com/El3ssar/tsdynamics/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/El3ssar/tsdynamics/tests.yml?label=Tests&style=for-the-badge)](https://github.com/El3ssar/tsdynamics/actions/workflows/tests.yml)
+[![Release](https://img.shields.io/github/v/release/El3ssar/tsdynamics?style=for-the-badge)](https://github.com/El3ssar/tsdynamics/releases)
 
 
 Adaptive, compiled integration for **ODEs** (JiTCODE) and **DDEs** (JiTCDDE) with a small, clean API. You write the math; we handle compilation, tolerances, trajectories, and Lyapunov spectra.
