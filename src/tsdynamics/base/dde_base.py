@@ -139,7 +139,7 @@ class DelaySystem(SystemBase, ABC):
 
     def _cache_key(self) -> str:
         """Return unique key for this (class, params) combination."""
-        return f"{type(self).__name__}_{self.params.param_hash():08x}"
+        return f"{type(self).__name__}_{self.params.param_hash():016x}"
 
     def _module_path(self) -> pathlib.Path:
         return _CACHE_DIR / f"tsdyn_dde_{self._cache_key()}"

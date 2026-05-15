@@ -172,9 +172,11 @@ class ContinuousSystem(SystemBase, ABC):
 
         struct_vals = self._structural_vals()
         if struct_vals:
+            # 64-bit slice of the MD5 digest matches ParamSet.param_hash so all
+            # cache keys in the project share a single collision budget.
             h = hashlib.md5(
                 json.dumps(sorted(struct_vals.items()), default=str).encode()
-            ).hexdigest()[:8]
+            ).hexdigest()[:16]
             name = f"tsdyn_{type(self).__name__}_{self.dim}_{h}"
         else:
             name = f"tsdyn_{type(self).__name__}_{self.dim}"

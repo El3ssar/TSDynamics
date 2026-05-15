@@ -87,16 +87,25 @@ class ParamSet(MutableMapping):
 
     def param_hash(self) -> int:
         """
-        Return a process-stable integer hash of the current parameter values.
+        Return a process-stable 64-bit integer hash of the current parameter values.
 
         Uses MD5 over a JSON-serialised representation so the result is
         reproducible across Python process restarts (unlike ``hash()``).
+
+        The hash backs cache keys for compiled JiTCODE / JiTCDDE modules
+        and the Numba-iterate cache.  At 64 bits the birthday-paradox
+        collision probability reaches 50 % only around ``2^32 ≈ 4·10⁹``
+        distinct parameter sets, which is well beyond any realistic
+        parameter sweep.  The previous 32-bit width hit the same threshold
+        at only ``2^16 ≈ 65 000`` sets, which a sufficiently large sweep
+        could plausibly reach — and a collision there would silently
+        return a compiled artifact built for a different parameter set.
         """
         import hashlib
         import json
 
         s = json.dumps(list(self._data.items()), default=str)
-        return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)
+        return int(hashlib.md5(s.encode()).hexdigest()[:16], 16)
 
     def __repr__(self) -> str:
         items = ", ".join(f"{k}={v!r}" for k, v in self._data.items())
