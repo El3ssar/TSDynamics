@@ -243,6 +243,12 @@ class SystemBase:
     #: override in ``__init__`` for variable-dim systems (e.g. Lorenz96).
     dim: ClassVar[int | None] = None
 
+    #: Optional class-level default initial conditions.  Used when no ``ic``
+    #: argument is supplied to the constructor or to ``resolve_ic``.  Useful
+    #: for systems whose attractor basin is small (e.g. Tinkerbell) so random
+    #: ICs in ``U[0, 1)^dim`` always diverge.
+    default_ic: ClassVar[Any | None] = None
+
     def __init__(
         self,
         params: dict | None = None,
@@ -333,8 +339,15 @@ class SystemBase:
         """
         Resolve initial conditions consistently.
 
-        Priority: argument > ``self.ic`` > random ``U[0, 1)^dim``.
-        Stores the resolved IC in ``self.ic``.
+        Priority:
+
+        1. ``ic`` argument (if provided)
+        2. ``self.ic`` (set by a previous integration / iteration)
+        3. ``type(self).default_ic`` (class-level default, if declared)
+        4. Random ``U[0, 1)^dim``
+
+        The resolved IC is stored in ``self.ic`` so subsequent calls without
+        an explicit ``ic`` reproduce the same initial state.
 
         Parameters
         ----------
@@ -346,11 +359,12 @@ class SystemBase:
         """
         if ic is not None:
             arr = np.asarray(ic, dtype=float).reshape(self.dim)
-            object.__setattr__(self, "ic", arr.copy())
-            return arr
-        if self.ic is not None:
-            return self.ic.copy()
-        arr = np.random.rand(self.dim)
+        elif self.ic is not None:
+            arr = np.asarray(self.ic, dtype=float).reshape(self.dim)
+        elif type(self).default_ic is not None:
+            arr = np.asarray(type(self).default_ic, dtype=float).reshape(self.dim)
+        else:
+            arr = np.random.rand(self.dim)
         object.__setattr__(self, "ic", arr.copy())
         return arr
 
