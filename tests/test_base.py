@@ -1,155 +1,200 @@
-"""Tests for BaseDyn: generate_timesteps, parameter management, initial conditions."""
+"""Tests for ``tsdynamics.base``: ParamSet, Trajectory, SystemBase."""
+
+from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from tsdynamics.base.base import BaseDyn
+from tsdynamics.base import ParamSet, SystemBase, Trajectory
 
 # ---------------------------------------------------------------------------
-# Concrete stub for testing BaseDyn directly
+# A minimal SystemBase subclass for direct testing
 # ---------------------------------------------------------------------------
 
 
-class _Stub(BaseDyn):
-    """Minimal concrete subclass — no abstract methods needed in BaseDyn."""
-
+class _Stub(SystemBase):
     params = {"a": 1.0, "b": 2.0}
-    n_dim = 3
+    dim = 3
 
 
-class _StubNoParams(BaseDyn):
-    n_dim = 2
+class _StubNoParams(SystemBase):
+    dim = 2
 
 
-# ---------------------------------------------------------------------------
-# generate_timesteps
-# ---------------------------------------------------------------------------
-
-
-class TestGenerateTimesteps:
-    def setup_method(self):
-        self.stub = _Stub()
-
-    def test_starts_at_zero(self):
-        ts = self.stub.generate_timesteps(dt=0.1, final_time=1.0)
-        assert ts[0] == pytest.approx(0.0)
-
-    def test_includes_endpoint_final_time(self):
-        ts = self.stub.generate_timesteps(dt=0.1, final_time=0.5)
-        assert ts[-1] == pytest.approx(0.5)
-
-    def test_final_time_step_count(self):
-        ts = self.stub.generate_timesteps(dt=0.1, final_time=0.5)
-        # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5 → 6 points
-        assert ts.shape == (6,)
-
-    def test_steps_overrides_final_time(self, capsys):
-        ts = self.stub.generate_timesteps(dt=0.1, steps=5, final_time=99.0)
-        captured = capsys.readouterr()
-        assert "steps" in captured.out.lower() or ts.shape[0] == 6  # warning printed
-        # Steps=5 with dt=0.1 → 0, 0.1, 0.2, 0.3, 0.4, 0.5 (6 points)
-        assert ts.shape == (6,)
-        assert ts[-1] == pytest.approx(0.5)
-
-    def test_steps_only(self):
-        ts = self.stub.generate_timesteps(dt=0.2, steps=4)
-        # 0, 0.2, 0.4, 0.6, 0.8 → 5 points
-        assert ts.shape == (5,)
-        assert ts[-1] == pytest.approx(0.8)
-
-    def test_raises_without_steps_or_final_time(self):
-        with pytest.raises(ValueError, match="Either"):
-            self.stub.generate_timesteps(dt=0.1, steps=None, final_time=None)
-
-    def test_returns_float64(self):
-        ts = self.stub.generate_timesteps(dt=0.1, final_time=1.0)
-        assert ts.dtype == np.float64
-
-    def test_monotonically_increasing(self):
-        ts = self.stub.generate_timesteps(dt=0.05, final_time=1.0)
-        assert np.all(np.diff(ts) > 0)
-
-    def test_step_spacing(self):
-        ts = self.stub.generate_timesteps(dt=0.1, final_time=1.0)
-        diffs = np.diff(ts[:-1])  # exclude the potential fractional final step
-        assert np.allclose(diffs, 0.1, atol=1e-12)
-
-    def test_very_small_dt(self):
-        ts = self.stub.generate_timesteps(dt=0.001, final_time=0.01)
-        assert ts[0] == pytest.approx(0.0)
-        assert ts[-1] == pytest.approx(0.01)
+class _StubWithDefaultIC(SystemBase):
+    params = {"a": 1.0}
+    dim = 2
+    default_ic = np.array([0.5, -0.25])
 
 
 # ---------------------------------------------------------------------------
-# Parameter management
+# ParamSet
 # ---------------------------------------------------------------------------
 
 
-class TestParameterManagement:
-    def test_class_params_accessible_as_attributes(self):
-        stub = _Stub()
-        assert stub.a == pytest.approx(1.0)
-        assert stub.b == pytest.approx(2.0)
+class TestParamSet:
+    def test_attribute_access(self) -> None:
+        p = ParamSet({"sigma": 10.0, "rho": 28.0})
+        assert p.sigma == 10.0
+        assert p.rho == 28.0
 
-    def test_params_dict_populated_from_class_defaults(self):
-        stub = _Stub()
-        assert stub.params == {"a": 1.0, "b": 2.0}
+    def test_attribute_write_updates_dict(self) -> None:
+        p = ParamSet({"sigma": 10.0})
+        p.sigma = 15.0
+        assert p["sigma"] == 15.0
 
-    def test_attribute_write_syncs_to_params_dict(self):
-        stub = _Stub()
-        stub.a = 99.0
-        assert stub.params["a"] == pytest.approx(99.0)
+    def test_unknown_key_attribute_raises(self) -> None:
+        p = ParamSet({"sigma": 10.0})
+        with pytest.raises(AttributeError, match="Unknown parameter"):
+            p.unknown_key = 5.0
 
-    def test_params_dict_write_is_independent_of_attribute(self):
-        """Writing directly to params dict does NOT auto-sync the attribute."""
-        stub = _Stub()
-        stub.params["b"] = 99.0
-        # After direct dict write, params["b"] is updated but attribute may lag
-        assert stub.params["b"] == pytest.approx(99.0)
+    def test_unknown_key_item_raises(self) -> None:
+        p = ParamSet({"sigma": 10.0})
+        with pytest.raises(KeyError, match="Unknown parameter"):
+            p["nope"] = 5.0
 
-    def test_constructor_params_override_replaces_class_defaults(self):
-        """Passing params= at construction replaces class-level defaults entirely."""
-        stub = _Stub(params={"a": 5.0, "b": 10.0})
-        assert stub.params["a"] == pytest.approx(5.0)
-        assert stub.params["b"] == pytest.approx(10.0)
+    def test_delete_forbidden(self) -> None:
+        p = ParamSet({"sigma": 10.0})
+        with pytest.raises(TypeError):
+            del p["sigma"]
 
-    def test_no_params_class_gives_empty_dict(self):
-        stub = _StubNoParams()
-        assert stub.params == {}
+    def test_iter_preserves_insertion_order(self) -> None:
+        p = ParamSet({"a": 1, "b": 2, "c": 3})
+        assert list(p) == ["a", "b", "c"]
 
-    def test_n_dim_from_class_attribute(self):
-        stub = _Stub()
-        assert stub.n_dim == 3
+    def test_as_tuple_and_as_dict(self) -> None:
+        p = ParamSet({"a": 1.0, "b": 2.0})
+        assert p.as_tuple() == (1.0, 2.0)
+        assert p.as_dict() == {"a": 1.0, "b": 2.0}
 
-    def test_n_dim_override_at_construction(self):
-        stub = _Stub(n_dim=7)
-        assert stub.n_dim == 7
+    def test_param_hash_stable_across_instances(self) -> None:
+        p1 = ParamSet({"a": 1.0, "b": 2.0})
+        p2 = ParamSet({"a": 1.0, "b": 2.0})
+        assert p1.param_hash() == p2.param_hash()
+
+    def test_param_hash_changes_with_values(self) -> None:
+        p = ParamSet({"a": 1.0, "b": 2.0})
+        h0 = p.param_hash()
+        p.a = 99.0
+        assert p.param_hash() != h0
 
 
 # ---------------------------------------------------------------------------
-# Initial conditions
+# Trajectory
 # ---------------------------------------------------------------------------
 
 
-class TestInitialConditions:
-    def test_default_initial_conds_is_none(self):
-        stub = _Stub()
-        assert stub.initial_conds is None
+class TestTrajectory:
+    def test_tuple_unpacking(self) -> None:
+        t = np.linspace(0, 1, 5)
+        y = np.zeros((5, 3))
+        traj = Trajectory(t, y, system=None)
+        t_, y_ = traj
+        np.testing.assert_array_equal(t_, t)
+        np.testing.assert_array_equal(y_, y)
 
-    def test_constructor_stores_initial_conds(self):
-        ic = np.array([1.0, 2.0, 3.0])
-        stub = _Stub(initial_conds=ic)
-        np.testing.assert_array_equal(stub.initial_conds, ic)
+    def test_dim_and_n_steps(self) -> None:
+        traj = Trajectory(np.zeros(10), np.zeros((10, 4)), system=None)
+        assert traj.dim == 4
+        assert traj.n_steps == 10
 
-    def test_initial_conds_stores_reference(self):
-        """BaseDyn stores the initial_conds reference as-is (no copy at construction)."""
-        ic = np.array([1.0, 2.0, 3.0])
-        stub = _Stub(initial_conds=ic)
-        # The object stores the reference — mutating ic mutates stub.initial_conds
-        assert stub.initial_conds is ic
+    def test_slicing_returns_trajectory(self) -> None:
+        traj = Trajectory(np.arange(10), np.arange(30).reshape(10, 3), system="sys")
+        sl = traj[2:7]
+        assert isinstance(sl, Trajectory)
+        assert sl.n_steps == 5
+        assert sl.system == "sys"
 
-    def test_initial_conds_accepts_list(self):
-        """BaseDyn accepts any sequence for initial_conds and stores it as-is."""
-        stub = _Stub(initial_conds=[0.1, 0.2, 0.3])
-        # BaseDyn does not convert to np.ndarray at construction time
-        assert stub.initial_conds[0] == pytest.approx(0.1)
+    def test_component_extraction(self) -> None:
+        y = np.arange(30).reshape(10, 3)
+        traj = Trajectory(np.arange(10), y, system=None)
+        np.testing.assert_array_equal(traj.component(1), y[:, 1])
+
+    def test_after_drops_transient(self) -> None:
+        t = np.linspace(0, 10, 11)
+        y = np.zeros((11, 2))
+        traj = Trajectory(t, y, system=None)
+        sl = traj.after(5.0)
+        assert sl.t[0] == 5.0
+        assert sl.n_steps == 6
+
+
+# ---------------------------------------------------------------------------
+# SystemBase — params / dim / ic resolution
+# ---------------------------------------------------------------------------
+
+
+class TestSystemBase:
+    def test_class_params_accessible_as_attributes(self) -> None:
+        s = _Stub()
+        assert s.a == 1.0
+        assert s.b == 2.0
+
+    def test_attribute_write_syncs_params(self) -> None:
+        s = _Stub()
+        s.a = 99.0
+        assert s.params["a"] == 99.0
+
+    def test_constructor_override_merges_with_defaults(self) -> None:
+        s = _Stub(params={"a": 5.0})
+        assert s.params["a"] == 5.0
+        assert s.params["b"] == 2.0  # default preserved
+
+    def test_unknown_constructor_param_raises(self) -> None:
+        with pytest.raises(ValueError, match="unknown parameter"):
+            _Stub(params={"zzz": 1.0})
+
+    def test_no_params_class_has_empty_paramset(self) -> None:
+        s = _StubNoParams()
+        assert len(s.params) == 0
+
+    def test_dim_from_class(self) -> None:
+        assert _Stub().dim == 3
+
+    def test_dim_override_via_constructor(self) -> None:
+        assert _Stub(dim=7).dim == 7
+
+    # IC resolution priority: kwarg > self.ic > default_ic > random
+    def test_ic_none_falls_back_to_random(self, rng: np.random.Generator) -> None:
+        # We re-seed numpy directly because resolve_ic uses np.random
+        np.random.seed(123)
+        s = _Stub()
+        ic = s.resolve_ic()
+        assert ic.shape == (3,)
+        assert np.all((ic >= 0.0) & (ic < 1.0))
+
+    def test_ic_kwarg_takes_priority(self) -> None:
+        s = _Stub()
+        s.resolve_ic([7.0, 8.0, 9.0])
+        np.testing.assert_array_equal(s.ic, [7.0, 8.0, 9.0])
+
+    def test_default_ic_used_when_no_kwarg(self) -> None:
+        s = _StubWithDefaultIC()
+        ic = s.resolve_ic()
+        np.testing.assert_array_equal(ic, [0.5, -0.25])
+
+    def test_default_ic_overridden_by_kwarg(self) -> None:
+        s = _StubWithDefaultIC()
+        ic = s.resolve_ic([1.0, 2.0])
+        np.testing.assert_array_equal(ic, [1.0, 2.0])
+
+    # Copy / with_params
+    def test_copy_is_independent(self) -> None:
+        s = _Stub(params={"a": 9.0})
+        c = s.copy()
+        c.a = 17.0
+        assert s.a == 9.0
+        assert c.a == 17.0
+
+    def test_with_params_returns_new_instance(self) -> None:
+        s = _Stub()
+        new = s.with_params(a=42.0)
+        assert new is not s
+        assert new.a == 42.0
+        assert s.a == 1.0  # original untouched
+
+    def test_meta_dict_is_per_instance(self) -> None:
+        s1 = _Stub()
+        s2 = _Stub()
+        s1.meta["foo"] = 1
+        assert s2.meta == {}

@@ -48,8 +48,16 @@ def test_top_level_reexports() -> None:
     """Built-in systems are accessible directly from the top-level namespace."""
     import tsdynamics as ts
 
-    for name in ("Lorenz", "Rossler", "Lorenz96", "KuramotoSivashinsky",
-                 "MackeyGlass", "IkedaDelay", "Henon", "Logistic"):
+    for name in (
+        "Lorenz",
+        "Rossler",
+        "Lorenz96",
+        "KuramotoSivashinsky",
+        "MackeyGlass",
+        "IkedaDelay",
+        "Henon",
+        "Logistic",
+    ):
         assert hasattr(ts, name), f"{name} missing from tsdynamics top-level"
 
 
