@@ -14,6 +14,8 @@ import numpy as np
 
 from .base import SystemBase, Trajectory
 
+__all__ = ["DelaySystem"]
+
 # Suppress the expected "target time is smaller than current time" warning
 # that JiTCDDE emits during spline evaluation — it is harmless.
 warnings.filterwarnings(
@@ -93,6 +95,14 @@ class DelaySystem(SystemBase, ABC):
 
     _default_rtol: ClassVar[float] = 1e-3
     _default_atol: ClassVar[float] = 1e-3
+
+    #: Names of parameters that hold delay values (must be positive floats).
+    #: Subclasses with custom delay-naming conventions should override this.
+    #: The default ``("tau",)`` matches the convention used throughout the
+    #: built-in DDE systems.  Override with ``("tau1", "tau2")`` etc. for
+    #: multi-delay systems, or override ``_delays()`` for delays computed
+    #: from other parameters.
+    _delay_params: ClassVar[tuple[str, ...]] = ("tau",)
 
     # In-process path caches: cache_key (str) → absolute path of compiled .so.
     _compiled_ddes: ClassVar[dict[str, str]] = {}
@@ -218,41 +228,52 @@ class DelaySystem(SystemBase, ABC):
         cache[cache_key] = str(so)
         return so
 
-    def _get_delays(self) -> list[float]:
+    def _delays(self) -> list[float]:
         """
         Return the list of delay values used by this system.
 
-        Subclasses with non-trivial delay structures should override this.
-        Default: collects all params whose name contains ``"tau"`` or
-        ``"delay"`` (case-insensitive).  If none are found, extracts delays
-        symbolically by evaluating ``_equations`` — slower but always correct.
-        """
-        delays = [
-            float(self.params[k]) for k in self.params if "tau" in k.lower() or "delay" in k.lower()
-        ]
-        if delays:
-            return delays
-        # Fallback: extract from the symbolic RHS.
-        # _get_delays expects a no-arg callable that iterates over expressions.
-        import symengine
-        from jitcdde import t as t_sym
-        from jitcdde import y
-        from jitcdde._jitcdde import _get_delays as _jitc_get_delays
+        Default implementation reads each parameter name listed in
+        ``_delay_params`` and returns them as floats.  Subclasses with
+        delays computed from other parameters (e.g. ``tau = pi / omega``)
+        should override this method.
 
-        rhs = list(type(self)._equations(y, t_sym, **self.params.as_dict()))
-        raw = _jitc_get_delays(lambda: iter(rhs), ())
-        return [float(symengine.sympify(d).n(real=True)) for d in raw]
+        Returns
+        -------
+        list[float]
+            One positive value per delay channel in the RHS.
 
-    def _get_max_delay(self) -> float:
+        Raises
+        ------
+        ValueError
+            If a declared delay parameter is missing, non-numeric, or
+            non-positive.
         """
-        Return the maximum delay value (with a small safety margin).
+        try:
+            delays = [float(self.params[k]) for k in type(self)._delay_params]
+        except KeyError as err:
+            missing = err.args[0]
+            raise ValueError(
+                f"{type(self).__name__}: delay parameter {missing!r} listed in "
+                f"_delay_params but not found in self.params. Declared params: "
+                f"{list(self.params)}"
+            ) from err
+        for k, d in zip(type(self)._delay_params, delays, strict=True):
+            if not (d > 0.0):
+                raise ValueError(
+                    f"{type(self).__name__}: delay parameter {k!r} = {d!r} must be "
+                    f"strictly positive."
+                )
+        return delays
 
-        Subclasses with non-trivial delay structures should override this.
-        Default: 1.1 × the largest non-zero value from ``_get_delays()``,
-        or 100.0 as a conservative fallback if no delays are found.
+    def _max_delay(self) -> float:
         """
-        delays = [d for d in self._get_delays() if d > 0]
-        return max(delays) * 1.1 if delays else 100.0
+        Return the maximum delay value with a small safety margin.
+
+        JiTCDDE requires ``max_delay >= max(delays)``; we add a 1% margin to
+        avoid edge effects in the history evaluation.
+        """
+        delays = self._delays()
+        return max(delays) * 1.01 if delays else 1.0
 
     # ------------------------------------------------------------------ #
     # Integration
@@ -303,14 +324,14 @@ class DelaySystem(SystemBase, ABC):
         ic_arr = self.resolve_ic(ic)
         t_eval = _make_t_eval(0.0, final_time, dt)
         so_path = self._ensure_compiled(for_lyap=False)
-        max_delay = self._get_max_delay()
+        max_delay = self._max_delay()
 
         # Fresh jitcdde instance each call (DDE objects are stateful —
         # they own a past-buffer that must start clean every integration).
         dde = _jitcdde(
             module_location=str(so_path),
             n=self.dim,
-            delays=self._get_delays(),
+            delays=self._delays(),
             max_delay=max_delay,
             verbose=False,
         )
@@ -399,12 +420,12 @@ class DelaySystem(SystemBase, ABC):
 
         ic_arr = self.resolve_ic(ic)
         so_path = self._ensure_compiled(for_lyap=True, n_lyap=n_exp)
-        max_delay = self._get_max_delay()
+        max_delay = self._max_delay()
 
         dde = _jitcdde_lyap(
             module_location=str(so_path),
             n=self.dim,
-            delays=self._get_delays(),
+            delays=self._delays(),
             max_delay=max_delay,
             n_lyap=n_exp,
             verbose=False,
@@ -437,6 +458,15 @@ class DelaySystem(SystemBase, ABC):
         W = np.asarray(weights, float)
         mask = W > 0.0
         if not mask.any():
+            warnings.warn(
+                f"{type(self).__name__}.lyapunov_spectrum: every integration "
+                f"step returned zero weight from jitcdde_lyap. This means the "
+                f"sampling step `dt={dt}` is smaller than the internal step "
+                f"size, so no Lyapunov estimates were accumulated. Increase "
+                f"`dt` (typical: 0.1–1.0 for DDEs) and rerun.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             return np.zeros(n_exp)
 
         L = np.vstack([ly_steps[i] for i, m in enumerate(mask) if m])
