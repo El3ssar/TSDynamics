@@ -1,3 +1,27 @@
+## v1.0.0 (2026-05-15)
+
+### Bug Fixes
+
+- **base**: widen ParamSet.param_hash from 32 to 64 bits
+- **dde**: explicit _delay_params with validation; LE zero-weight warning
+- **maps**: Jacobian correctness, parameter order, and robust LE loop
+- **ode**: variable-dim systems compile cleanly; KS large-L is non-trivial
+
+### Features
+
+- **base**: support class-level default_ic in SystemBase.resolve_ic
+- **utils**: Drop deprecated implementation of other approaches to find proper integration dt
+
+### Refactoring
+
+- **systems**: make every ODE/DDE _equations keyword-only
+- remove viz submodule and tidy public surface
+- **ode_base**: Introduce platform-specific extension handling for compiled ODE objects, enhance caching logic, and improve docstring clarity for better understanding of integration and Lyapunov processes
+- **dde_base**: Enhance caching mechanism for compiled DDE objects, improve path handling, and update docstrings for clarity
+- **discrete**: Replace DynMap with DiscreteMap in multiple classes, update method names for consistency, and enhance docstring clarity for improved maintainability
+- **continous**: Replace DynSys with ContinuousSystem in multiple classes, update method names for consistency, and remove unused imports to enhance code clarity and maintainability
+- **base**: Introduce new core classes (ParamSet, Trajectory, SystemBase) and enhance existing classes for improved structure and clarity
+
 ## v0.2.0 (2026-04-11)
 
 ### Features
