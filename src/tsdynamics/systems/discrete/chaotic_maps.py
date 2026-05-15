@@ -1,49 +1,67 @@
 import numpy as np
 
-from tsdynamics.base import DynMap
+from tsdynamics.base import DiscreteMap
 from tsdynamics.utils import staticjit
 
 
-class Henon(DynMap):
+class Henon(DiscreteMap):
+    """
+    Hénon (1976) map.
+
+    A 2D dissipative map with a strange attractor for the default parameters.
+    Lyapunov exponents at default params ≈ [0.42, −1.62].
+
+    Parameters
+    ----------
+    a, b : float
+        Map parameters.  ``a=1.4, b=0.3`` gives the classical attractor.
+    """
+
     params = {"a": 1.4, "b": 0.3}
-    n_dim = 2
+    dim = 2
 
     @staticjit
-    def _rhs(X, a, b):
-        x, y = X
-        xp = 1 - a * x**2 + y
-        yp = b * x
-        return xp, yp
+    def _step(X, a, b):
+        x, y = X[0], X[1]
+        return (1.0 - a * x**2 + y, b * x)
 
     @staticjit
-    def _jac(X, a, b):
-        x, y = X
-        row1 = [-2 * a * x, 1]
-        row2 = [b, 0]
-        return row1, row2
+    def _jacobian(X, a, b):
+        x, y = X[0], X[1]
+        return ((-2.0 * a * x, 1.0), (b, 0.0))
 
 
-class Ulam(DynMap):
+class Ulam(DiscreteMap):
     params = {"a": 1.0, "b": 2.0}
-    n_dim = 1
+    dim = 1
 
     @staticjit
-    def _rhs(X, a, b):
+    def _step(X, a, b):
         x = X
         return a - b * x**2
 
     @staticjit
-    def _jac(X, a, b):
+    def _jacobian(X, a, b):
         x = X
         return [-2 * b * x]
 
 
-class Ikeda(DynMap):
+class Ikeda(DiscreteMap):
+    r"""
+    Ikeda (1979) map — laser ring cavity model.
+
+    .. math::
+
+        t   &= a - b / (1 + x^2 + y^2) \\
+        x'  &= 1 + u \, (x \cos t - y \sin t) \\
+        y'  &= u \, (x \sin t + y \cos t)
+    """
+
     params = {"a": 0.4, "b": 6.0, "u": 0.9}
-    n_dim = 2
+    dim = 2
 
     @staticjit
-    def _rhs(X, a, b, u):
+    def _step(X, a, b, u):
         x, y = X
         t = a - b / (1 + x**2 + y**2)
         xp = 1 + u * (x * np.cos(t) - y * np.sin(t))
@@ -51,69 +69,79 @@ class Ikeda(DynMap):
         return xp, yp
 
     @staticjit
-    def _jac(X, a, b, u):
+    def _jacobian(X, a, b, u):
         x, y = X
-        t = a - b / (1 + x**2 + y**2)
-        dtdx = -12 * x / (1 + x**2 + y**2) ** 2
-        dtdy = -12 * y / (1 + x**2 + y**2) ** 2
+        denom = 1.0 + x**2 + y**2
+        t = a - b / denom
+        # ∂t/∂x = 2bx / (1+x²+y²)²    (positive sign — earlier code had this wrong)
+        dt_dx = 2.0 * b * x / denom**2
+        dt_dy = 2.0 * b * y / denom**2
 
-        dxpdx = u * np.cos(t) - u * x * np.sin(t) * dtdx - u * y * np.cos(t) * dtdx
-        dxpdy = -u * x * np.sin(t) * dtdy - u * y * np.cos(t) * dtdy - u * np.sin(t)
+        cos_t, sin_t = np.cos(t), np.sin(t)
+        # P = x cos t - y sin t  ;  Q = x sin t + y cos t
+        Q = x * sin_t + y * cos_t
+        P = x * cos_t - y * sin_t
 
-        dypdx = u * np.sin(t) + u * x * np.cos(t) * dtdx - u * y * np.sin(t) * dtdx
-        dypdy = u * x * np.cos(t) * dtdy + u * np.cos(t) - u * y * np.sin(t) * dtdy
+        dxp_dx = u * cos_t - u * Q * dt_dx
+        dxp_dy = -u * sin_t - u * Q * dt_dy
+        dyp_dx = u * sin_t + u * P * dt_dx
+        dyp_dy = u * cos_t + u * P * dt_dy
 
-        row1 = [dxpdx, dxpdy]
-        row2 = [dypdx, dypdy]
-
-        return row1, row2
+        return [[dxp_dx, dxp_dy], [dyp_dx, dyp_dy]]
 
 
-class Tinkerbell(DynMap):
+class Tinkerbell(DiscreteMap):
+    """
+    Tinkerbell map.
+
+    Random ``U[0, 1)^2`` ICs almost always escape the basin, so a known-good
+    attractor point is set as ``default_ic``.
+    """
+
     params = {"a": 0.9, "b": -0.6013, "c": 2.0, "d": 0.5}
-    n_dim = 2
-    initial_conds = np.array([-0.72, -0.64])  # random [0,1)^2 ICs always escape the basin
+    dim = 2
+    default_ic = np.array([-0.72, -0.64])
 
     @staticjit
-    def _rhs(X, a, b, c, d):
+    def _step(X, a, b, c, d):
         x, y = X
         xp = x**2 - y**2 + a * x + b * y
         yp = 2 * x * y + c * x + d * y
         return xp, yp
 
     @staticjit
-    def _jac(X, a, b, c, d):
+    def _jacobian(X, a, b, c, d):
         x, y = X
         row1 = [2 * x + a, -2 * y + b]
         row2 = [2 * y + c, 2 * x + d]
         return row1, row2
 
 
-class Gingerbreadman(DynMap):
+class Gingerbreadman(DiscreteMap):
     params = {}
-    n_dim = 2
+    dim = 2
 
     @staticjit
-    def _rhs(X):
+    def _step(X):
         x, y = X
         xp = 1 - y + np.abs(x)
         yp = x
         return xp, yp
 
     @staticjit
-    def _jac(X):
+    def _jacobian(X):
         x, y = X
         row1 = [np.sign(x), -1]
         row2 = [1, 0]
         return row1, row2
 
 
-class Zaslavskii(DynMap):
+class Zaslavskii(DiscreteMap):
     params = {"eps": 5.0, "nu": 0.2, "r": 2.0}
-    n_dim = 2
+    dim = 2
 
     @staticjit
-    def _rhs(X, eps, nu, r):
+    def _step(X, eps, nu, r):
         x, y = X
         mu = (1 - np.exp(-r)) / r
         xp = x + nu * (1 + mu * y) + eps * nu * mu * np.cos(2 * np.pi * x)
@@ -122,7 +150,7 @@ class Zaslavskii(DynMap):
         return xp, yp
 
     @staticjit
-    def _jac(X, eps, nu, r):
+    def _jacobian(X, eps, nu, r):
         x, y = X
         mu = (1 - np.exp(-r)) / r
 
@@ -137,19 +165,19 @@ class Zaslavskii(DynMap):
         return row1, row2
 
 
-class Chirikov(DynMap):
+class Chirikov(DiscreteMap):
     params = {"k": 0.971635}
-    n_dim = 2
+    dim = 2
 
     @staticjit
-    def _rhs(X, k):
+    def _step(X, k):
         p, x = X
         pp = p + k * np.sin(x)
         xp = x + pp
         return pp, xp
 
     @staticjit
-    def _jac(X, k):
+    def _jacobian(X, k):
         p, x = X
         row1 = [1, k * np.cos(x)]
         row2 = [1, 1]
@@ -157,12 +185,12 @@ class Chirikov(DynMap):
 
 
 # Hyperchaotic maps
-class FoldedTowel(DynMap):
+class FoldedTowel(DiscreteMap):
     params = {"a": 3.8, "b": 0.05, "c": 0.35, "d": 0.1, "e": 1.9, "f": 3.78, "g": 0.2}
-    n_dim = 3
+    dim = 3
 
     @staticjit
-    def _rhs(X, a, b, c, d, e, f, g):
+    def _step(X, a, b, c, d, e, f, g):
         x, y, z = X
         xp = a * x * (1 - x) - b * (y + c) * (1 - 2 * z)
         yp = d * ((y + c) * (1 + 2 * z) - 1) * (1 - e * x)
@@ -170,7 +198,7 @@ class FoldedTowel(DynMap):
         return xp, yp, zp
 
     @staticjit
-    def _jac(X, a, b, c, d, e, f, g):
+    def _jacobian(X, a, b, c, d, e, f, g):
         x, y, z = X
         row1 = [a * (1 - 2 * x), -b * (1 - 2 * z), 2 * b * (y - c)]
 
@@ -185,15 +213,15 @@ class FoldedTowel(DynMap):
         return row1, row2, row3
 
 
-class GeneralizedHenon(DynMap):
+class GeneralizedHenon(DiscreteMap):
     params = {
         "a": 1.9,
         "b": 0.03,
     }
-    n_dim = 3
+    dim = 3
 
     @staticjit
-    def _rhs(X, a, b):
+    def _step(X, a, b):
         x, y, z = X
         xp = a - y**2 - b * z
         yp = x
@@ -201,7 +229,7 @@ class GeneralizedHenon(DynMap):
         return xp, yp, zp
 
     @staticjit
-    def _jac(X, a, b):
+    def _jacobian(X, a, b):
         x, y, z = X
         row1 = [0, -2 * y, b]
         row2 = [1, 0, 0]

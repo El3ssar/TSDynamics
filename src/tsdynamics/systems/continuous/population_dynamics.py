@@ -1,7 +1,7 @@
-from tsdynamics.base import DynSys
+from tsdynamics.base import ContinuousSystem
 
 
-class CoevolvingPredatorPrey(DynSys):
+class CoevolvingPredatorPrey(ContinuousSystem):
     params = {
         "a1": 2.5,
         "a2": 0.05,
@@ -16,10 +16,10 @@ class CoevolvingPredatorPrey(DynSys):
         "k4": 9.0,
         "vv": 0.33333,
     }
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a1, a2, a3, b1, b2, d1, d2, delta, k1, k2, k4, vv):
+    def _equations(Y, t, *, a1, a2, a3, b1, b2, d1, d2, delta, k1, k2, k4, vv):
         x, y, alpha = Y(0), Y(1), Y(2)
         xdot = x * (
             -((a3 * y) / (1 + b2 * x))
@@ -39,12 +39,12 @@ class CoevolvingPredatorPrey(DynSys):
         return xdot, ydot, alphadot
 
 
-class KawczynskiStrizhak(DynSys):
+class KawczynskiStrizhak(ContinuousSystem):
     params = {"beta": -0.4, "gamma": 0.49, "kappa": 0.2, "mu": 2.1}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, beta, gamma, kappa, mu):
+    def _equations(Y, t, *, beta, gamma, kappa, mu):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = gamma * y - gamma * x**3 + 3 * mu * gamma * x
         ydot = -2 * mu * x - y - z + beta
@@ -52,7 +52,7 @@ class KawczynskiStrizhak(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, beta, gamma, kappa, mu):
+    def _jacobian(Y, t, beta, gamma, kappa, mu):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-3 * gamma * x**2 + 3 * mu * gamma, gamma, 0]
         row2 = [-2 * mu, -1, -1]
@@ -60,12 +60,12 @@ class KawczynskiStrizhak(DynSys):
         return row1, row2, row3
 
 
-class Finance(DynSys):
+class Finance(ContinuousSystem):
     params = {"a": 0.001, "b": 0.2, "c": 1.1}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = (1 / b - a) * x + z + x * y
         ydot = -b * y - x**2
@@ -73,7 +73,7 @@ class Finance(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c):
+    def _jacobian(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [(1 / b - a) + y, x, 1]
         row2 = [-2 * x, -b, 0]

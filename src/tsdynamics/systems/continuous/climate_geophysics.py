@@ -1,14 +1,14 @@
-from symengine import cos, cosh, pi, sin, tanh
+from symengine import cos, pi, sin, tanh
 
-from tsdynamics.base import DynSys
+from tsdynamics.base import ContinuousSystem
 
 
-class VallisElNino(DynSys):
+class VallisElNino(ContinuousSystem):
     params = {"b": 102.0, "c": 3.0, "p": 0.0}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, b, c, p):
+    def _equations(Y, t, *, b, c, p):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = b * y - c * x - c * p
         ydot = -y + x * z
@@ -16,12 +16,12 @@ class VallisElNino(DynSys):
         return xdot, ydot, zdot
 
 
-class RayleighBenard(DynSys):
+class RayleighBenard(ContinuousSystem):
     params = {"a": 30, "b": 5, "r": 18}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, r):
+    def _equations(Y, t, *, a, b, r):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x
         ydot = r * y - x * z
@@ -29,7 +29,7 @@ class RayleighBenard(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, r):
+    def _jacobian(Y, t, a, b, r):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-a, a, 0]
         row2 = [-z, r, -x]
@@ -37,12 +37,12 @@ class RayleighBenard(DynSys):
         return row1, row2, row3
 
 
-class Hadley(DynSys):
+class Hadley(ContinuousSystem):
     params = {"a": 0.2, "b": 4.0, "f": 9.0, "g": 1.0}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, f, g):
+    def _equations(Y, t, *, a, b, f, g):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -(y**2) - z**2 - a * x + a * f
         ydot = x * y - b * x * z - y + g
@@ -50,7 +50,7 @@ class Hadley(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, f, g):
+    def _jacobian(Y, t, a, b, f, g):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-a, -2 * y, -2 * z]
         row2 = [y - b * z, x - 1, -b * x]
@@ -58,12 +58,12 @@ class Hadley(DynSys):
         return row1, row2, row3
 
 
-class DoubleGyre(DynSys):
+class DoubleGyre(ContinuousSystem):
     params = {"alpha": 0.1, "eps": 0.1, "omega": 0.62832}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, alpha, eps, omega):
+    def _equations(Y, t, *, alpha, eps, omega):
         x, y, z = Y(0), Y(1), Y(2)
         a = eps * sin(z)
         b = 1 - 2 * eps * sin(z)
@@ -74,19 +74,26 @@ class DoubleGyre(DynSys):
         return dx, dy, dz
 
 
-class BlinkingRotlet(DynSys):
-    params = {"a": 1.0, "b": 0.5298833894399929, "bc": 1, "sigma": -1.0, "tau": 3}
-    n_dim = 3
+class BlinkingRotlet(ContinuousSystem):
+    params = {
+        "a": 1.0,
+        "b": 0.5298833894399929,
+        "bc": 1.0,
+        "sigma": -1.0,
+        "tau": 3.0,
+    }
+    dim = 3
 
     @staticmethod
     def _rotlet(r, theta, a, b, bc):
-        """Compute rotlet velocity components (vr, vtheta) for one vortex."""
         kappa = a**2 + (b**2 * r**2) / a**2 - 2 * b * r * cos(theta)
         gamma = (1 - r**2 / a**2) * (a**2 - (b**2 * r**2) / a**2)
         iota = (b**2 * r) / a**2 - b * cos(theta)
         zeta = b**2 + r**2 - 2 * b * r * cos(theta)
         nu = a**2 + b**2 - (2 * b**2 * r**2) / a**2
+
         vr = b * sin(theta) * (-bc * (gamma / kappa**2) - 1 / kappa + 1 / zeta)
+
         vth = (
             bc * (gamma * iota) / kappa**2
             + bc * r * nu / (a**2 * kappa)
@@ -100,29 +107,33 @@ class BlinkingRotlet(DynSys):
         return 0.5 + 0.5 * tanh(tau * stiffness * sin(2 * pi * t / tau))
 
     @staticmethod
-    def _rhs(Y, t, **params):
-        # BlinkingRotlet overrides rhs() directly because it needs instance
-        # attributes (self.a, self.b, ...) to build symbolic expressions.
-        raise NotImplementedError("BlinkingRotlet overrides rhs() directly.")
+    def _equations(y, t, *, a, b, bc, sigma, tau):
+        r = y(0)
+        theta = y(1)
+        tt = y(2)
 
-    def rhs(self, Y, t):
-        """Build symbolic RHS for the blinking rotlet using current parameter values."""
-        r, theta, tt = Y(0), Y(1), Y(2)
-        weight = self._protocol(tt, self.tau)
-        dr1, dth1 = self._rotlet(r, theta, self.a, self.b, self.bc)
-        dr2, dth2 = self._rotlet(r, theta, self.a, -self.b, self.bc)
+        weight = BlinkingRotlet._protocol(tt, tau)
+
+        dr1, dth1 = BlinkingRotlet._rotlet(r, theta, a, b, bc)
+        dr2, dth2 = BlinkingRotlet._rotlet(r, theta, a, -b, bc)
+
         dr = weight * dr1 + (1 - weight) * dr2
         dth = (weight * dth1 + (1 - weight) * dth2) / r
         dtt = 1
-        return self.sigma * dr, self.sigma * dth, dtt
+
+        return (
+            sigma * dr,
+            sigma * dth,
+            dtt,
+        )
 
 
-class OscillatingFlow(DynSys):
+class OscillatingFlow(ContinuousSystem):
     params = {"b": 0.48, "k": 1.0, "omega": 0.49, "u": 0.72}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, b, k, omega, u):
+    def _equations(Y, t, *, b, k, omega, u):
         x, y, z = Y(0), Y(1), Y(2)
         f = x + b * sin(z)
         dx = u * cos(k * y) * sin(k * f)
@@ -131,38 +142,12 @@ class OscillatingFlow(DynSys):
         return dx, dy, dz
 
 
-class BickleyJet(DynSys):
-    params = {
-        "ell": 1.77,
-        "eps": [0.0075, 0.15, 0.3],
-        "k": [0.313922, 0.627845, 0.941767],
-        "omega": 1,
-        "sigma": [9.05854e-6, 1.28453e-5, 2.88863e-5],
-        "u": 6.266e-5,
-    }
-    n_dim = 3
-
-    @staticmethod
-    def _rhs(Y, t, ell, eps, k, omega, sigma, u):
-        x, y, z = Y(0), Y(1), Y(2)
-        sechy = 1 / cosh(y / ell)
-        un0 = k[0] * (x - z * sigma[0])
-        un1 = k[1] * (x - z * sigma[1])
-        un2 = k[2] * (x - z * sigma[2])
-        cos_sum = eps[0] * cos(un0) + eps[1] * cos(un1) + eps[2] * cos(un2)
-        sin_sum = eps[0] * k[0] * sin(un0) + eps[1] * k[1] * sin(un1) + eps[2] * k[2] * sin(un2)
-        dx = u * sechy**2 * (-1 - 2 * cos_sum * tanh(y / ell))
-        dy = ell * u * sechy**2 * sin_sum
-        dz = omega
-        return dx, dy, dz
-
-
-class ArnoldBeltramiChildress(DynSys):
+class ArnoldBeltramiChildress(ContinuousSystem):
     params = {"a": 1.73205, "b": 1.41421, "c": 1}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         dx = a * sin(z) + c * cos(y)
         dy = b * sin(x) + a * cos(z)
@@ -170,7 +155,7 @@ class ArnoldBeltramiChildress(DynSys):
         return dx, dy, dz
 
 
-class AtmosphericRegime(DynSys):
+class AtmosphericRegime(ContinuousSystem):
     params = {
         "alpha": -2.0,
         "beta": -5.0,
@@ -179,10 +164,10 @@ class AtmosphericRegime(DynSys):
         "omega": 3.0,
         "sigma": 1.1,
     }
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, alpha, beta, mu1, mu2, omega, sigma):
+    def _equations(Y, t, *, alpha, beta, mu1, mu2, omega, sigma):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = mu1 * x + sigma * x * y
         ydot = mu2 * y + omega * z + alpha * y * z + beta * z**2 - sigma * x**2
@@ -190,7 +175,7 @@ class AtmosphericRegime(DynSys):
         return xdot, ydot, zdot
 
 
-class SaltonSea(DynSys):
+class SaltonSea(ContinuousSystem):
     params = {
         "a": 15,
         "d": 8.3,
@@ -201,10 +186,10 @@ class SaltonSea(DynSys):
         "r": 22,
         "th": 10.0,
     }
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, d, k, lam, m, mu, r, th):
+    def _equations(Y, t, *, a, d, k, lam, m, mu, r, th):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = r * x * (1 - (x + y) / k) - lam * x * y
         ydot = lam * x * y - m * y * z / (y + a) - mu * y

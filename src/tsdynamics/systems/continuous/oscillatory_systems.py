@@ -1,14 +1,14 @@
 from symengine import cos, pi, sign, sin
 
-from tsdynamics.base import DynSys
+from tsdynamics.base import ContinuousSystem
 
 
-class ShimizuMorioka(DynSys):
+class ShimizuMorioka(ContinuousSystem):
     params = {"a": 0.85, "b": 0.5}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = x - a * y - x * z
@@ -16,7 +16,7 @@ class ShimizuMorioka(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b):
+    def _jacobian(Y, t, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [0, 1, 0]
         row2 = [1 - z, -a, -x]
@@ -24,33 +24,12 @@ class ShimizuMorioka(DynSys):
         return row1, row2, row3
 
 
-class GenesioTesi(DynSys):
-    params = {"a": 0.44, "b": 1.1, "c": 1}
-    n_dim = 3
-
-    @staticmethod
-    def _rhs(Y, t, a, b, c):
-        x, y, z = Y(0), Y(1), Y(2)
-        xdot = y
-        ydot = z
-        zdot = -c * x - b * y - a * z + x**2
-        return xdot, ydot, zdot
-
-    @staticmethod
-    def _jac(Y, t, a, b, c):
-        x, y, z = Y(0), Y(1), Y(2)
-        row1 = [0, 1, 0]
-        row2 = [0, 0, 1]
-        row3 = [-c + 2 * x, -b, -a]
-        return row1, row2, row3
-
-
-class MooreSpiegel(DynSys):
+class MooreSpiegel(ContinuousSystem):
     params = {"a": 10, "b": 4, "eps": 9}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, eps):
+    def _equations(Y, t, *, a, b, eps):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = a * z
@@ -58,7 +37,7 @@ class MooreSpiegel(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, eps):
+    def _jacobian(Y, t, a, b, eps):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [0, 1, 0]
         row2 = [0, 0, a]
@@ -66,12 +45,12 @@ class MooreSpiegel(DynSys):
         return row1, row2, row3
 
 
-class AnishchenkoAstakhov(DynSys):
+class AnishchenkoAstakhov(ContinuousSystem):
     params = {"eta": 0.5, "mu": 1.2}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, eta, mu):
+    def _equations(Y, t, *, eta, mu):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = mu * x + y - x * z
         ydot = -x
@@ -79,12 +58,12 @@ class AnishchenkoAstakhov(DynSys):
         return xdot, ydot, zdot
 
 
-class Aizawa(DynSys):
+class Aizawa(ContinuousSystem):
     params = {"a": 0.95, "b": 0.7, "c": 0.6, "d": 3.5, "e": 0.25, "f": 0.1}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c, d, e, f):
+    def _equations(Y, t, *, a, b, c, d, e, f):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = x * z - b * x - d * y
         ydot = d * x + y * z - b * y
@@ -92,7 +71,7 @@ class Aizawa(DynSys):
         return xdot, ydot, zdot
 
 
-class StickSlipOscillator(DynSys):
+class StickSlipOscillator(ContinuousSystem):
     params = {
         "a": 1,
         "alpha": 0.3,
@@ -104,13 +83,13 @@ class StickSlipOscillator(DynSys):
         "vs": 0.4,
         "w": 2,
     }
-    n_dim = 3
+    dim = 3
 
     def _t(self, v):
         return self.t0 * sign(v) - self.alpha * v + self.beta * v**3
 
     @staticmethod
-    def _rhs(Y, t, a, alpha, b, beta, eps, gamma, t0, vs, w):
+    def _equations(Y, t, *, a, alpha, b, beta, eps, gamma, t0, vs, w):
         x, v, th = Y(0), Y(1), Y(2)
         tq = t0 * sign(v - vs) - alpha * v + beta * (v - vs) ** 3
         xdot = v
@@ -118,17 +97,13 @@ class StickSlipOscillator(DynSys):
         thdot = w
         return xdot, vdot, thdot
 
-    @staticmethod
-    def _postprocessing(x, v, th):
-        return x, v, cos(th)
 
-
-class Torus(DynSys):
+class Torus(ContinuousSystem):
     params = {"a": 0.5, "n": 15.3, "r": 1}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, n, r):
+    def _equations(Y, t, *, a, n, r):
         # Parametric torus: derivatives are purely time-driven, independent of state.
         xdot = (-a * n * sin(n * t)) * cos(t) - (r + a * cos(n * t)) * sin(t)
         ydot = (-a * n * sin(n * t)) * sin(t) + (r + a * cos(n * t)) * cos(t)
@@ -136,7 +111,7 @@ class Torus(DynSys):
         return xdot, ydot, zdot
 
 
-class Lissajous3D(DynSys):
+class Lissajous3D(ContinuousSystem):
     params = {
         "A": 1,
         "B": 1,
@@ -147,10 +122,10 @@ class Lissajous3D(DynSys):
         "delta_y": pi / 2,
         "delta_z": pi / 4,
     }
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, A, B, C, a, b, c, delta_y, delta_z):
+    def _equations(Y, t, *, A, B, C, a, b, c, delta_y, delta_z):
         """
         RHS of the 3D Lissajous system.
 
@@ -179,12 +154,12 @@ class Lissajous3D(DynSys):
         return dxdt, dydt, dzdt
 
 
-class Lissajous2D(DynSys):
+class Lissajous2D(ContinuousSystem):
     params = {"A": 1, "B": 1, "a": 3, "b": 2, "delta": pi / 2}
-    n_dim = 2
+    dim = 2
 
     @staticmethod
-    def _rhs(Y, t, A, B, a, b, delta):
+    def _equations(Y, t, *, A, B, a, b, delta):
         """
         RHS of the 2D Lissajous system.
 

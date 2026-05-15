@@ -1,319 +1,476 @@
+"""DelaySystem — DDE base class via JiTCDDE."""
+
+from __future__ import annotations
+
+import os
+import pathlib
+import sysconfig
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
+from typing import Any, ClassVar
 
 import numpy as np
-from jitcdde import jitcdde, jitcdde_lyap, t, y
 
-from .base import BaseDyn
+from .base import SystemBase, Trajectory
 
+__all__ = ["DelaySystem"]
+
+# Suppress the expected "target time is smaller than current time" warning
+# that JiTCDDE emits during spline evaluation — it is harmless.
 warnings.filterwarnings(
     "ignore",
     message=".*target time is smaller than the current time.*",
     category=UserWarning,
 )
 
+# ---------------------------------------------------------------------------
+# Cache directory (shared with ODE module)
+# ---------------------------------------------------------------------------
 
-class DynSysDelay(BaseDyn, ABC):
+_CACHE_DIR = pathlib.Path(
+    os.environ.get("TSDYNAMICS_CACHE", pathlib.Path.home() / ".cache" / "tsdynamics")
+)
+
+_EXT_SUFFIX: str = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+
+# ---------------------------------------------------------------------------
+# Type alias for history functions
+# ---------------------------------------------------------------------------
+
+History = Callable[[float], Sequence[float]] | None
+
+
+def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
+    t_arr = np.arange(t0, tf, dt)
+    if t_arr.size == 0 or t_arr[-1] < tf - 1e-12:
+        t_arr = np.append(t_arr, tf)
+    return t_arr
+
+
+# ---------------------------------------------------------------------------
+# DelaySystem
+# ---------------------------------------------------------------------------
+
+
+class DelaySystem(SystemBase, ABC):
     """
-    Base class for delay differential systems (DDEs) using jitcdde.
+    Base class for delay differential systems (DDEs), compiled via JiTCDDE.
 
-    Subclasses implement `_rhs(y, t, **params)` and return a list/tuple
-    of length `n_dim` with expressions built from jitcdde's `y(i, time)` and `t`.
+    Subclass contract
+    -----------------
+    1. Declare ``params = {...}`` and ``dim = N``.
+    2. Implement ``_equations`` as a ``@staticmethod`` returning a
+       length-``dim`` sequence of JiTCDDE symbolic expressions.
+       Use ``y(i, t - tau)`` for delayed state access.
+
+    Compilation & caching
+    ---------------------
+    DDE systems cache compiled modules per ``(class, params_hash)``.  Unlike
+    ODEs, delay values directly affect the history-buffer structure and cannot
+    easily be treated as runtime control parameters.  The compiled ``.so`` is
+    saved to disk so subsequent runs with the same parameters reload instantly.
+
+    DDEs typically need looser tolerances than ODEs (start with ``rtol=atol=1e-3``).
+
+    History
+    -------
+    Pass a ``history`` callable ``h(s) → sequence`` defining the past for
+    ``s ≤ 0``.  If omitted, a constant past equal to ``ic`` is used.
+
+    .. note::
+        Provide a non-equilibrium history to avoid trivial Lyapunov exponents.
+        For ``lyapunov_spectrum``, ``past_from_function`` is incompatible with
+        ``jitcdde_lyap``; the workaround is to run ``integrate`` first with the
+        desired history, then pass the end-state as ``ic`` to
+        ``lyapunov_spectrum`` which uses ``constant_past`` internally.
+
+    Examples
+    --------
+    >>> mg = MackeyGlass()
+    >>> hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
+    >>> traj = mg.integrate(final_time=500, history=hist)
+    >>> exps = mg.lyapunov_spectrum(n_exp=2, ic=traj.y[-1])
     """
 
-    # --------- Interface similar to DynSys ---------
-    def rhs(self, y_sym, t_sym):
-        """Pass self.params into the subclass _rhs and return its symbolic result."""
-        return self._rhs(y_sym, t_sym, **self.params)
+    _default_rtol: ClassVar[float] = 1e-3
+    _default_atol: ClassVar[float] = 1e-3
 
+    #: Names of parameters that hold delay values (must be positive floats).
+    #: Subclasses with custom delay-naming conventions should override this.
+    #: The default ``("tau",)`` matches the convention used throughout the
+    #: built-in DDE systems.  Override with ``("tau1", "tau2")`` etc. for
+    #: multi-delay systems, or override ``_delays()`` for delays computed
+    #: from other parameters.
+    _delay_params: ClassVar[tuple[str, ...]] = ("tau",)
+
+    # In-process path caches: cache_key (str) → absolute path of compiled .so.
+    _compiled_ddes: ClassVar[dict[str, str]] = {}
+    _compiled_lyap: ClassVar[dict[str, str]] = {}
+
+    # ------------------------------------------------------------------ #
+    # Subclass interface
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
     @abstractmethod
-    def _rhs(self, y_sym, t_sym, **params):
+    def _equations(y, t, **params) -> Sequence:
         """
-        Provide the DDE right-hand side as jitcdde expressions.
+        Build the symbolic DDE RHS.
 
         Parameters
         ----------
-        y_sym : callable
-            jitcdde symbol: y(index, time)
-        t_sym : symbol
-            jitcdde symbol for time t
-        **params : dict
-            Parameters made available as attributes and kwargs.
+        y : JiTCDDE ``y``-accessor.
+            ``y(i)`` for current state component ``i``;
+            ``y(i, t - tau)`` for delayed access.
+        t : JiTCDDE time symbol.
+        **params
+            Current parameter values as Python floats.
 
         Returns
         -------
-        Sequence of length n_dim with expressions referencing y_sym(., t_sym) and delays.
+        list of ``dim`` SymEngine expressions.
         """
-        raise NotImplementedError
+        ...
 
-    # --------- DDE integration (jitcdde) ---------
-    def integrate(
-        self,
-        dt: float = 0.02,
-        steps: int | None = None,
-        final_time: float = 100.0,
-        initial_conds: Sequence[float] | None = None,
-        rtol: float = 1e-3,
-        atol: float = 1e-3,
-        history: Callable[[float], Sequence[float]] | None = None,
-        **kwargs,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    # ------------------------------------------------------------------ #
+    # Internal helpers
+    # ------------------------------------------------------------------ #
+
+    def _cache_key(self) -> str:
+        """Return unique key for this (class, params) combination."""
+        return f"{type(self).__name__}_{self.params.param_hash():016x}"
+
+    def _module_path(self) -> pathlib.Path:
+        return _CACHE_DIR / f"tsdyn_dde_{self._cache_key()}"
+
+    def _ensure_compiled(self, for_lyap: bool = False, n_lyap: int = 0) -> pathlib.Path:
         """
-        Integrate the DDE system with adaptive control via jitcdde.
+        Ensure the compiled JiTCDDE module exists on disk and return its path.
 
-        Parameters
-        ----------
-        dt : float
-            Output sampling step for returned trajectory (not the internal stepper step).
-        steps : int, optional
-            Number of output points; if given, overrides final_time.
-        final_time : float
-            Final simulation time if `steps` is not provided.
-        initial_conds : sequence of float, optional
-            Used to set a constant past if `history` is None.
-        rtol, atol : float
-            Relative and absolute tolerances passed to jitcdde.
-        history : callable, optional
-            Function h(s) -> sequence at time s (s ≤ 0) to define the past.
-            If None, a constant past is used from `initial_conds`.
-        **kwargs :
-            Passed to `set_integration_parameters` (e.g., max_step, first_step, min_step).
+        DDE objects are never cached in-process — every integration call needs a
+        fresh instance with its own past-buffer.  Only the ``.so`` path is cached.
+
+        Lookup order
+        ------------
+        1. In-process path cache.
+        2. Disk cache (``_CACHE_DIR``).
+        3. Check ``sys.modules`` for name collision from an interrupted prior
+           compilation, recovering from the temp dir or using a unique name.
+        4. Fresh compilation.
+        """
+        import shutil
+        import sys
+
+        from jitcdde import jitcdde as _jitcdde
+        from jitcdde import jitcdde_lyap as _jitcdde_lyap
+        from jitcdde import t as t_sym
+        from jitcdde import y
+        from jitcxde_common.modules import modulename_from_path
+
+        cls_jitc = _jitcdde_lyap if for_lyap else _jitcdde
+        lyap_kw = {"n_lyap": n_lyap} if for_lyap else {}
+        cache = type(self)._compiled_lyap if for_lyap else type(self)._compiled_ddes
+        so_suffix = f"_lyap{n_lyap}" if for_lyap else ""
+        dest_path = pathlib.Path(str(self._module_path()) + so_suffix)
+        cache_key = str(dest_path)
+
+        def _find_so(base: pathlib.Path) -> pathlib.Path | None:
+            hits = [
+                f
+                for f in _CACHE_DIR.glob(f"{base.name}.*")
+                if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0
+            ]
+            return hits[0] if hits else None
+
+        # 1. In-process path cache
+        cached = cache.get(cache_key)
+        if cached and pathlib.Path(cached).exists():
+            return pathlib.Path(cached)
+        if cached:
+            del cache[cache_key]  # stale — clear it
+
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 2. Disk cache
+        so = _find_so(dest_path)
+        if so:
+            cache[cache_key] = str(so)
+            return so
+
+        # 3. Check for name collision from a prior interrupted compilation.
+        #    JiTCDDE's save_compiled calls compile_C internally, which registers
+        #    the module name in sys.modules before the .so reaches disk.
+        #    Recover from the temp dir if it's still alive, or redirect to a
+        #    unique per-process name to avoid NameError.
+        dest = dest_path
+        mname = modulename_from_path(str(dest_path))
+        if mname in sys.modules:
+            live_so = getattr(sys.modules[mname], "__file__", None)
+            if live_so and pathlib.Path(live_so).exists():
+                so = pathlib.Path(str(dest_path) + _EXT_SUFFIX)
+                try:
+                    shutil.copy(live_so, so)
+                except OSError:
+                    so = pathlib.Path(live_so)
+                cache[cache_key] = str(so)
+                return so
+            dest = pathlib.Path(f"{dest_path}_{os.getpid()}")
+
+        # 4. Fresh compilation
+        rhs = list(type(self)._equations(y, t_sym, **self.params.as_dict()))
+        if len(rhs) != self.dim:
+            raise ValueError(f"_equations must return {self.dim} expressions, got {len(rhs)}")
+
+        dde = cls_jitc(rhs, verbose=False, **lyap_kw)
+        dde.compile_C()
+        so = pathlib.Path(dde.save_compiled(destination=str(dest), overwrite=True))
+        cache[cache_key] = str(so)
+        return so
+
+    def _delays(self) -> list[float]:
+        """
+        Return the list of delay values used by this system.
+
+        Default implementation reads each parameter name listed in
+        ``_delay_params`` and returns them as floats.  Subclasses with
+        delays computed from other parameters (e.g. ``tau = pi / omega``)
+        should override this method.
 
         Returns
         -------
-        t_eval : ndarray, shape (m,)
-            Output times.
-        y_eval : ndarray, shape (m, n_dim)
-            Solution values at `t_eval`.
+        list[float]
+            One positive value per delay channel in the RHS.
 
         Raises
         ------
         ValueError
-            If shapes/params are inconsistent.
+            If a declared delay parameter is missing, non-numeric, or
+            non-positive.
         """
-        # Determine dimensions and initial conditions / past
-        if initial_conds is None:
-            if self.initial_conds is None:
-                initial_conds = np.random.rand(self.n_dim)
-                initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
-                self.initial_conds = np.array(initial_conds, copy=True)
-        else:
-            self.initial_conds = np.array(initial_conds, copy=True)
+        try:
+            delays = [float(self.params[k]) for k in type(self)._delay_params]
+        except KeyError as err:
+            missing = err.args[0]
+            raise ValueError(
+                f"{type(self).__name__}: delay parameter {missing!r} listed in "
+                f"_delay_params but not found in self.params. Declared params: "
+                f"{list(self.params)}"
+            ) from err
+        for k, d in zip(type(self)._delay_params, delays, strict=True):
+            if not (d > 0.0):
+                raise ValueError(
+                    f"{type(self).__name__}: delay parameter {k!r} = {d!r} must be "
+                    f"strictly positive."
+                )
+        return delays
 
-        # Output grid
-        t_eval = self.generate_timesteps(dt=dt, steps=steps, final_time=final_time)
-        if t_eval[0] < 0.0:
-            raise ValueError("DDE integration requires nonnegative output times (t >= 0).")
+    def _max_delay(self) -> float:
+        """
+        Return the maximum delay value with a small safety margin.
 
-        # Build jitcdde system
-        rhs = tuple(self.rhs(y, t))
-        if len(rhs) != self.n_dim:
-            raise ValueError(f"_rhs must return length {self.n_dim}, got {len(rhs)}")
+        JiTCDDE requires ``max_delay >= max(delays)``; we add a 1% margin to
+        avoid edge effects in the history evaluation.
+        """
+        delays = self._delays()
+        return max(delays) * 1.01 if delays else 1.0
 
-        dde = jitcdde(rhs)
+    # ------------------------------------------------------------------ #
+    # Integration
+    # ------------------------------------------------------------------ #
 
-        # Past / history
+    def integrate(
+        self,
+        final_time: float = 100.0,
+        dt: float = 0.02,
+        *,
+        ic: Any | None = None,
+        history: History = None,
+        rtol: float | None = None,
+        atol: float | None = None,
+        **kwargs,
+    ) -> Trajectory:
+        """
+        Integrate the DDE and return a :class:`~tsdynamics.base.Trajectory`.
+
+        Parameters
+        ----------
+        final_time : float
+            Integration end time. Default 100.0.
+        dt : float
+            Output sampling interval.
+        ic : array-like, optional
+            Used for constant past when ``history`` is ``None``.
+            Falls back to ``self.ic``, then random.
+        history : callable, optional
+            ``h(s) → sequence`` of length ``dim`` for ``s ≤ 0``.
+            If ``None``, a constant past equal to ``ic`` is used.
+        rtol, atol : float
+            Integration tolerances.  DDEs typically need 1e-3; very tight
+            tolerances can stall the solver.
+        **kwargs
+            Forwarded to ``jitcdde.set_integration_parameters``
+            (e.g. ``max_step``, ``first_step``).
+
+        Returns
+        -------
+        Trajectory
+        """
+        from jitcdde import jitcdde as _jitcdde
+
+        rtol = rtol if rtol is not None else self._default_rtol
+        atol = atol if atol is not None else self._default_atol
+
+        ic_arr = self.resolve_ic(ic)
+        t_eval = _make_t_eval(0.0, final_time, dt)
+        so_path = self._ensure_compiled(for_lyap=False)
+        max_delay = self._max_delay()
+
+        # Fresh jitcdde instance each call (DDE objects are stateful —
+        # they own a past-buffer that must start clean every integration).
+        dde = _jitcdde(
+            module_location=str(so_path),
+            n=self.dim,
+            delays=self._delays(),
+            max_delay=max_delay,
+            verbose=False,
+        )
+
+        # Set past
         if history is None:
-            dde.constant_past(self.initial_conds)
-            hist0 = self.initial_conds
+            dde.constant_past(ic_arr)
+            y0 = ic_arr.copy()
         else:
-            # history(s) must return a sequence of length n_dim for any s ≤ 0
-            def _hist(s: float) -> np.ndarray:
-                return np.asarray(history(s), dtype=float).reshape(self.n_dim)
 
-            dde.past_from_function(_hist)
-            hist0 = _hist(0.0)
+            def hist_fn(s):
+                return np.asarray(history(s), dtype=float).reshape(self.dim)
 
-        # Tolerances and optional steps
+            dde.past_from_function(hist_fn)
+            y0 = hist_fn(0.0)
+
         dde.set_integration_parameters(rtol=rtol, atol=atol, **kwargs)
-
-        # If you are confident your history is compatible and want silence:
         dde.initial_discontinuities_handled = True
 
-        # Integrate to requested times
-        y_out = np.empty((t_eval.size, self.n_dim), dtype=float)
+        y_out = np.empty((t_eval.size, self.dim), dtype=float)
+        y_out[0] = y0
+        for k in range(1, t_eval.size):
+            y_out[k] = dde.integrate(float(t_eval[k]))
 
-        # t=0 value: use the history at 0
-        y_out[0] = hist0
-        i0 = 1
+        return Trajectory(t=t_eval, y=y_out, system=self)
 
-        # march forward
-        for k in range(i0, t_eval.size):
-            tk = float(t_eval[k])
-            y_out[k] = dde.integrate(tk)
-
-        return t_eval, y_out
+    # ------------------------------------------------------------------ #
+    # Lyapunov spectrum
+    # ------------------------------------------------------------------ #
 
     def lyapunov_spectrum(
         self,
-        dt: float = 0.1,
         final_time: float = 200.0,
-        initial_conds: Sequence[float] | None = None,
-        n_lyap: int = 1,  # user chooses how many (DDEs have infinitely many)
-        history: Callable[[float], Sequence[float]] | None = None,
+        dt: float = 0.1,
+        *,
+        ic: Any | None = None,
+        n_exp: int = 1,
         burn_in: float = 50.0,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
-        **integration_kwargs,
+        rtol: float | None = None,
+        atol: float | None = None,
+        **kwargs,
     ) -> np.ndarray:
         """
-        Estimate the first ``n_lyap`` Lyapunov exponents of a DDE.
+        Estimate the ``n_exp`` leading Lyapunov exponents via :class:`jitcdde.jitcdde_lyap`.
 
-        Uses :func:`jitcdde.jitcdde_lyap` internally.
-        This integrates the delay system together with ``n_lyap`` separation functions.
-        At each sampling time, JiTCDDE returns *local* exponents and a **weight**
-        (the effective integration time they represent). The reported spectrum is the
-        weight-averaged mean of those local values after an optional burn-in.
+        Results are stored in ``self.meta['lyapunov_spectrum']``.
 
         Parameters
         ----------
-        dt : float, optional
-            Sampling interval (in integration time units) at which local exponents are
-            requested. This does **not** constrain the adaptive internal stepper.
-            Default is ``0.1``.
-        final_time : float, optional
-            Length of the averaging window *after* burn-in. Default is ``200.0``.
-        initial_conds : sequence of float, optional
-            Used to define a constant past if ``history`` is not provided. Shape
-            ``(n_dim,)`` at time ``t=0``. If omitted, uses ``self.initial_conds`` if
-            available, else random ``U[0,1)``.
-        n_lyap : int, optional
-            Number of leading Lyapunov exponents to estimate (DDEs have infinitely many).
-            Default is ``1``.
-        history : callable, optional
-            Function ``h(s) -> sequence`` defining the past for ``s <= 0``. If omitted,
-            a constant past equal to ``initial_conds`` is used.
-        burn_in : float, optional
-            Time to discard before averaging (aligns separation functions). Default
-            ``50.0``.
-        rtol : float, optional
-            Relative tolerance for JiTCDDE. Default ``1e-6``.
-        atol : float, optional
-            Absolute tolerance for JiTCDDE. Default ``1e-9``.
-        **integration_kwargs
-            Additional keyword args forwarded to
-            :meth:`jitcdde.jitcdde.set_integration_parameters` (e.g., ``max_step``,
-            ``first_step``).
-
-        Returns
-        -------
-        exponents : (n_lyap,) ndarray of float
-            Estimated weight-averaged Lyapunov exponents (largest first, as produced
-            by JiTCDDE).
-
-        Raises
-        ------
-        ValueError
-            If ``n_dim`` is not set, or the subclass ``_rhs`` returns the wrong length.
+        final_time : float
+            Averaging window after burn-in. Default 200.0.
+        dt : float
+            Sampling interval. Default 0.1.
+        ic : array-like, optional
+            Initial state. Provide the end-state of a prior ``integrate``
+            call so the trajectory starts on the attractor (recommended).
+        n_exp : int
+            Number of leading exponents to estimate. DDEs have infinitely
+            many; choose consciously. Default 1.
+        burn_in : float
+            Discard interval. Default 50.0.
+        rtol, atol : float, optional
+            Integration tolerances.  Defaults to ``_default_rtol`` /
+            ``_default_atol`` (both ``1e-3``).  Do **not** use ODE-style
+            tight values (e.g. ``1e-6``/``1e-9``) — DDE solvers are stiff and
+            tight tolerances cause the variational equations to accumulate
+            floating-point garbage before the first Lyapunov renormalisation,
+            producing ``Inf`` / ``NaN`` exponents.
 
         Notes
         -----
-        - This method sets the past (constant or from ``history``), calls
-        :meth:`jitcdde.jitcdde_lyap.step_on_discontinuities`, and then starts
-        sampling from ``dde.t`` as recommended in the JiTCDDE docs.
-        - Each call to ``jitcdde_lyap.integrate(T)`` returns a tuple
-        ``(state, local_lyaps, weight)``. **You must use** the returned ``weight``
-        when averaging local exponents; it may be zero if no real integration
-        occurred between two sampling times.
-        - Avoid histories that place the system exactly at an equilibrium (they can
-        yield exponents near zero). For Mackey–Glass, for example, a strictly
-        constant past at the fixed point produces trivial dynamics.
+        ``past_from_function`` is NOT used here because it is incompatible
+        with ``jitcdde_lyap`` internally.  A constant past from ``ic`` is
+        used instead.  For best results, pass ``ic=traj.y[-1]`` from a
+        prior ``integrate`` run — this places the trajectory on the
+        attractor and avoids trivial exponents from equilibrium pasts.
 
-        Examples
-        --------
-        >>> mg = MackeyGlass()  # beta=0.2, gamma=0.1, tau=17, n=10 by default
-        >>> # Provide a nontrivial past (constant 1.0 is an equilibrium here):
-        >>> hist = lambda s: [1.0 + 0.1*np.sin(0.2*s)]
-        >>> exps = mg.lyapunov_spectrum(n_lyap=2, dt=0.2, burn_in=100.0, final_time=300.0,
-        ...                             history=hist, rtol=1e-8, atol=1e-10)
-        >>> exps  # doctest: +SKIP
-        array([ 2.8e-03, -... ])
+        Returns
+        -------
+        ndarray, shape (n_exp,)
         """
-        if self.n_dim is None:
-            raise ValueError("n_dim must be set.")
+        from jitcdde import jitcdde_lyap as _jitcdde_lyap
 
-        # Past / ICs
-        if initial_conds is None:
-            if self.initial_conds is None:
-                initial_conds = np.random.rand(self.n_dim)
-                initial_conds = np.asarray(initial_conds, float).reshape(self.n_dim)
-                self.initial_conds = np.array(initial_conds, copy=True)
-            else:
-                initial_conds = self.initial_conds
+        rtol = rtol if rtol is not None else self._default_rtol
+        atol = atol if atol is not None else self._default_atol
 
-        # Build symbolic field
-        f = tuple(self.rhs(y, t))
-        if len(f) != self.n_dim:
-            raise ValueError(f"_rhs must return length {self.n_dim}, got {len(f)}")
+        ic_arr = self.resolve_ic(ic)
+        so_path = self._ensure_compiled(for_lyap=True, n_lyap=n_exp)
+        max_delay = self._max_delay()
 
-        dde = jitcdde_lyap(f, n_lyap=n_lyap)
-        dde.set_integration_parameters(rtol=rtol, atol=atol, **integration_kwargs)
-
-        if history is None:
-            dde.constant_past(initial_conds)
-        else:
-            # past_from_function is broken with jitcdde_lyap: chspy.from_function sets
-            # .happy attributes on Anchor objects, but jitcdde.Past.prepare_anchor
-            # recreates every Anchor (to expand tangent-vector dimensions) and the
-            # new object loses .happy, causing AttributeError inside from_function.
-            # Fix: patch prepare_anchor to forward .happy through the reconstruction.
-            from jitcdde.past import Past as _Past
-
-            _orig_prepare = _Past.prepare_anchor
-
-            def _prepare_preserving_happy(self_past, x):
-                result = _orig_prepare(self_past, x)
-                if hasattr(x, "happy"):
-                    result.happy = x.happy
-                return result
-
-            _Past.prepare_anchor = _prepare_preserving_happy
-            try:
-                dde.past_from_function(lambda s: np.asarray(history(s), float).reshape(self.n_dim))
-            finally:
-                _Past.prepare_anchor = _orig_prepare
-
-        # Handle initial discontinuities; start sampling from dde.t afterwards
+        dde = _jitcdde_lyap(
+            module_location=str(so_path),
+            n=self.dim,
+            delays=self._delays(),
+            max_delay=max_delay,
+            n_lyap=n_exp,
+            verbose=False,
+        )
+        dde.set_integration_parameters(rtol=rtol, atol=atol, **kwargs)
+        dde.constant_past(ic_arr)
         dde.step_on_discontinuities()
 
-        # Burn-in: align separation functions (discard output)
-        T_end_burn = float(dde.t) + max(0.0, burn_in)
-        while dde.t < T_end_burn:
-            Tn = min(T_end_burn, dde.t + dt)
-            _ = dde.integrate(Tn)  # returns (state, local_lyaps, weight)
+        # Burn-in
+        T_burn = float(dde.t) + max(0.0, burn_in)
+        while dde.t < T_burn:
+            dde.integrate(min(T_burn, dde.t + dt))
 
-        # Production: weight-average the local LEs using the returned weights
+        # Production: weight-averaged local LEs
         T_end = float(dde.t) + final_time
         weights = []
         ly_steps = []
-        prev_time = float(dde.t)
 
         while dde.t < T_end:
-            Tn = min(T_end, dde.t + dt)
-            ret = dde.integrate(Tn)  # expected: (state, local_lyaps, weight)
+            ret = dde.integrate(min(T_end, dde.t + dt))
             if not isinstance(ret, tuple):
                 raise RuntimeError("jitcdde_lyap.integrate did not return a tuple")
-            if len(ret) >= 3:
-                _, local_lyaps, w = ret
-                weight = float(w)
-            else:
-                # Fallback (shouldn't happen): use elapsed time as weight
-                _, local_lyaps = ret
-                weight = Tn - prev_time
-
-            v = np.asarray(local_lyaps, float).reshape(-1)
-            if v.size != n_lyap:
-                raise ValueError(f"Expected {n_lyap} local LEs, got {v.shape}")
-
+            _, local_lyaps, w = ret
+            v = np.asarray(local_lyaps, float).ravel()
+            if v.size != n_exp:
+                raise ValueError(f"Expected {n_exp} local LEs, got {v.shape}")
+            weights.append(float(w))
             ly_steps.append(v)
-            weights.append(weight)
-            prev_time = float(dde.t)
 
         W = np.asarray(weights, float)
         mask = W > 0.0
-        if not np.any(mask):
-            return np.zeros(n_lyap)
+        if not mask.any():
+            warnings.warn(
+                f"{type(self).__name__}.lyapunov_spectrum: every integration "
+                f"step returned zero weight from jitcdde_lyap. This means the "
+                f"sampling step `dt={dt}` is smaller than the internal step "
+                f"size, so no Lyapunov estimates were accumulated. Increase "
+                f"`dt` (typical: 0.1–1.0 for DDEs) and rerun.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return np.zeros(n_exp)
+
         L = np.vstack([ly_steps[i] for i, m in enumerate(mask) if m])
-        exponents = (W[mask, None] * L).sum(axis=0) / W[mask].sum()
+        exponents = (W[mask, None] * L).sum(0) / W[mask].sum()
+
+        self.meta["lyapunov_spectrum"] = exponents
         return exponents

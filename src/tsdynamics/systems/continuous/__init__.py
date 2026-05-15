@@ -66,7 +66,6 @@ from .chem_bio_systems import (
 from .climate_geophysics import (
     ArnoldBeltramiChildress,
     AtmosphericRegime,
-    BickleyJet,
     BlinkingRotlet,
     DoubleGyre,
     Hadley,
@@ -92,7 +91,6 @@ from .coupled_systems import (
     ZhouChen,
 )
 from .delayed_systems import (
-    ENSODelay,
     IkedaDelay,
     MackeyGlass,
     PiecewiseCircuit,
@@ -101,6 +99,7 @@ from .delayed_systems import (
 )
 from .exotic_systems import (
     ArnoldWeb,
+    CellularNeuralNetwork,
     HyperBao,
     HyperCai,
     HyperJha,
@@ -115,11 +114,9 @@ from .exotic_systems import (
     Qi,
     Robinson,
 )
-from .neural_cognitive import BeerRNN, CellularNeuralNetwork, Hopfield
 from .oscillatory_systems import (
     Aizawa,
     AnishchenkoAstakhov,
-    GenesioTesi,
     Lissajous2D,
     Lissajous3D,
     MooreSpiegel,
@@ -132,7 +129,6 @@ from .physical_systems import (
     Colpitts,
     DoublePendulum,
     FluidTrampoline,
-    InteriorSquirmer,
     JerkCircuit,
     Laser,
     SwingingAtwood,
@@ -221,7 +217,6 @@ __all__ += [
     "DoubleGyre",
     "BlinkingRotlet",
     "OscillatingFlow",
-    "BickleyJet",
     "ArnoldBeltramiChildress",
     "AtmosphericRegime",
     "SaltonSea",
@@ -254,7 +249,6 @@ __all__ += [
     "SprottDelay",
     "ScrollDelay",
     "PiecewiseCircuit",
-    "ENSODelay",
 ]
 
 
@@ -272,19 +266,15 @@ __all__ += [
     "LorenzStenflo",
     "Qi",
     "ArnoldWeb",
+    "CellularNeuralNetwork",
     "NewtonLiepnik",
     "Robinson",
 ]
 
 
-# neural_cognitive
-__all__ += ["Hopfield", "CellularNeuralNetwork", "BeerRNN"]
-
-
 # oscillatory_systems
 __all__ += [
     "ShimizuMorioka",
-    "GenesioTesi",
     "MooreSpiegel",
     "AnishchenkoAstakhov",
     "Aizawa",
@@ -304,7 +294,6 @@ __all__ += [
     "Blasius",
     "FluidTrampoline",
     "JerkCircuit",
-    "InteriorSquirmer",
     "WindmiReduced",
 ]
 

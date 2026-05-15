@@ -1,52 +1,52 @@
 import numpy as np
 
-from tsdynamics.base import DynMap
+from tsdynamics.base import DiscreteMap
 from tsdynamics.utils import staticjit
 
 
-class Logistic(DynMap):
+class Logistic(DiscreteMap):
     params = {"r": 3.9}
-    n_dim = 1
+    dim = 1
 
     @staticjit
-    def _rhs(X, r):
+    def _step(X, r):
         x = X
         return r * x * (1 - x)
 
     @staticjit
-    def _jac(X, r):
+    def _jacobian(X, r):
         x = X
         return [r - 2 * r * x]
 
 
-class Ricker(DynMap):
+class Ricker(DiscreteMap):
     params = {"a": 3.3}
-    n_dim = 1
+    dim = 1
 
     @staticjit
-    def _rhs(X, a):
+    def _step(X, a):
         x = X
         return x * np.exp(a - x)
 
     @staticjit
-    def _jac(X, a):
+    def _jacobian(X, a):
         x = X
         return [np.exp(a - x) - x * np.exp(a - x)]
 
 
-class MaynardSmith(DynMap):
+class MaynardSmith(DiscreteMap):
     params = {"a": 0.87, "b": 0.75}
-    n_dim = 2
+    dim = 2
 
     @staticjit
-    def _rhs(X, a, b):
+    def _step(X, a, b):
         x, y = X
         xp = y
         yp = a * y + b - x**2
         return xp, yp
 
     @staticjit
-    def _jac(X, a, b):
+    def _jacobian(X, a, b):
         x, y = X
         row1 = [0, 1]
         row2 = [-2 * x, a]

@@ -1,9 +1,9 @@
 from symengine import cosh, exp, sign, sinh, tanh
 
-from tsdynamics.base import DynSys
+from tsdynamics.base import ContinuousSystem
 
 
-class Sakarya(DynSys):
+class Sakarya(ContinuousSystem):
     params = {
         "a": -1.0,
         "b": 1.0,
@@ -14,10 +14,10 @@ class Sakarya(DynSys):
         "r": 0.3,
         "s": 1.0,
     }
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c, h, p, q, r, s):
+    def _equations(Y, t, *, a, b, c, h, p, q, r, s):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x + h * y + s * y * z
         ydot = -b * y - p * x + q * x * z
@@ -25,7 +25,7 @@ class Sakarya(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c, h, p, q, r, s):
+    def _jacobian(Y, t, a, b, c, h, p, q, r, s):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [a, h + s * z, s * y]
         row2 = [-p + q * z, -b, q * x]
@@ -33,12 +33,12 @@ class Sakarya(DynSys):
         return row1, row2, row3
 
 
-class Bouali2(DynSys):
+class Bouali2(ContinuousSystem):
     params = {"a": 1.0, "b": -0.3, "bb": 1.0, "c": 0.05, "g": 1.0, "m": 1, "y0": 4.0}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, bb, c, g, m, y0):
+    def _equations(Y, t, *, a, b, bb, c, g, m, y0):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y0 * x - a * x * y - b * z
         ydot = -g * y + g * y * x**2
@@ -46,7 +46,7 @@ class Bouali2(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, bb, c, g, m, y0):
+    def _jacobian(Y, t, a, b, bb, c, g, m, y0):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [a * y0 - a * y, -a * x, -b]
         row2 = [2 * g * y * x, g * x**2 - g, 0]
@@ -54,12 +54,12 @@ class Bouali2(DynSys):
         return row1, row2, row3
 
 
-class LuChenCheng(DynSys):
+class LuChenCheng(ContinuousSystem):
     params = {"a": -10, "b": -4, "c": 18.1}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -(a * b) / (a + b) * x - y * z + c
         ydot = a * y + x * z
@@ -67,7 +67,7 @@ class LuChenCheng(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c):
+    def _jacobian(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-(a * b) / (a + b), -z, -y]
         row2 = [z, a, x]
@@ -75,12 +75,12 @@ class LuChenCheng(DynSys):
         return row1, row2, row3
 
 
-class LuChen(DynSys):
+class LuChen(ContinuousSystem):
     params = {"a": 36, "b": 3, "c": 18}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x
         ydot = -x * z + c * y
@@ -88,7 +88,7 @@ class LuChen(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c):
+    def _jacobian(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-a, a, 0]
         row2 = [-z, c, -x]
@@ -96,12 +96,12 @@ class LuChen(DynSys):
         return row1, row2, row3
 
 
-class QiChen(DynSys):
+class QiChen(ContinuousSystem):
     params = {"a": 38, "b": 2.666, "c": 80}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x + y * z
         ydot = c * x + y - x * z
@@ -109,7 +109,7 @@ class QiChen(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c):
+    def _jacobian(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-a, a + z, y]
         row2 = [c - z, 1, -x]
@@ -117,12 +117,12 @@ class QiChen(DynSys):
         return row1, row2, row3
 
 
-class ZhouChen(DynSys):
+class ZhouChen(ContinuousSystem):
     params = {"a": 2.97, "b": 0.15, "c": -3.0, "d": 1, "e": -8.78}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c, d, e):
+    def _equations(Y, t, *, a, b, c, d, e):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x + b * y + y * z
         ydot = c * y - x * z + d * y * z
@@ -130,7 +130,7 @@ class ZhouChen(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c, d, e):
+    def _jacobian(Y, t, a, b, c, d, e):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [a, b + z, y]
         row2 = [-z, c + d * z, -x + d * y]
@@ -138,12 +138,12 @@ class ZhouChen(DynSys):
         return row1, row2, row3
 
 
-class BurkeShaw(DynSys):
+class BurkeShaw(ContinuousSystem):
     params = {"e": 13, "n": 10}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, e, n):
+    def _equations(Y, t, *, e, n):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -n * x - n * y
         ydot = y - n * x * z
@@ -151,7 +151,7 @@ class BurkeShaw(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, e, n):
+    def _jacobian(Y, t, e, n):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-n, -n, 0]
         row2 = [-n * z, 1, -n * x]
@@ -159,12 +159,12 @@ class BurkeShaw(DynSys):
         return row1, row2, row3
 
 
-class Chen(DynSys):
+class Chen(ContinuousSystem):
     params = {"a": 35, "b": 3, "c": 28}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x
         ydot = (c - a) * x - x * z + c * y
@@ -172,7 +172,7 @@ class Chen(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c):
+    def _jacobian(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-a, a, 0]
         row2 = [c - a - z, c, -x]
@@ -180,12 +180,12 @@ class Chen(DynSys):
         return row1, row2, row3
 
 
-class ChenLee(DynSys):
+class ChenLee(ContinuousSystem):
     params = {"a": 5, "b": -10, "c": -0.38}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x - y * z
         ydot = b * y + x * z
@@ -193,7 +193,7 @@ class ChenLee(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c):
+    def _jacobian(Y, t, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [a, -z, -y]
         row2 = [z, b, x]
@@ -201,12 +201,12 @@ class ChenLee(DynSys):
         return row1, row2, row3
 
 
-class WangSun(DynSys):
+class WangSun(ContinuousSystem):
     params = {"a": 0.2, "b": -0.01, "d": -0.4, "e": -1.0, "f": -1.0, "q": 1.0}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, d, e, f, q):
+    def _equations(Y, t, *, a, b, d, e, f, q):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x + q * y * z
         ydot = b * x + d * y - x * z
@@ -214,7 +214,7 @@ class WangSun(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, d, e, f, q):
+    def _jacobian(Y, t, a, b, d, e, f, q):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [a, q * z, q * y]
         row2 = [b - z, d, -x]
@@ -222,12 +222,12 @@ class WangSun(DynSys):
         return row1, row2, row3
 
 
-class YuWang(DynSys):
+class YuWang(ContinuousSystem):
     params = {"a": 10, "b": 40, "c": 2, "d": 2.5}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * (y - x)
         ydot = b * x - c * x * z
@@ -235,7 +235,7 @@ class YuWang(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c, d):
+    def _jacobian(Y, t, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-a, a, 0]
         row2 = [b - c * z, 0, -c * x]
@@ -243,12 +243,12 @@ class YuWang(DynSys):
         return row1, row2, row3
 
 
-class YuWang2(DynSys):
+class YuWang2(ContinuousSystem):
     params = {"a": 10, "b": 30, "c": 2, "d": 2.5}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * (y - x)
         ydot = b * x - c * x * z
@@ -256,7 +256,7 @@ class YuWang2(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, b, c, d):
+    def _jacobian(Y, t, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-a, a, 0]
         row2 = [b - c * z, 0, -c * x]
@@ -264,12 +264,12 @@ class YuWang2(DynSys):
         return row1, row2, row3
 
 
-class SanUmSrisuchinwong(DynSys):
+class SanUmSrisuchinwong(ContinuousSystem):
     params = {"a": 2}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y - x
         ydot = -z * tanh(x)
@@ -277,7 +277,7 @@ class SanUmSrisuchinwong(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a):
+    def _jacobian(Y, t, a):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-1, 1, 0]
         row2 = [-z * (1 - tanh(x) ** 2), 0, -tanh(x)]
@@ -285,12 +285,12 @@ class SanUmSrisuchinwong(DynSys):
         return row1, row2, row3
 
 
-class DequanLi(DynSys):
+class DequanLi(ContinuousSystem):
     params = {"a": 40, "c": 1.833, "d": 0.16, "eps": 0.65, "f": 20, "k": 55}
-    n_dim = 3
+    dim = 3
 
     @staticmethod
-    def _rhs(Y, t, a, c, d, eps, f, k):
+    def _equations(Y, t, *, a, c, d, eps, f, k):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x + d * x * z
         ydot = k * x + f * y - x * z
@@ -298,7 +298,7 @@ class DequanLi(DynSys):
         return xdot, ydot, zdot
 
     @staticmethod
-    def _jac(Y, t, a, c, d, eps, f, k):
+    def _jacobian(Y, t, a, c, d, eps, f, k):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-a + d * z, a, d * x]
         row2 = [k - z, f, -x]
