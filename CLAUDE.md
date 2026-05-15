@@ -6,6 +6,22 @@ update this doc in the same PR.
 
 ---
 
+## Working on this project? Start here.
+
+This repo runs a planning protocol under [`.planning/`](.planning/) so each
+chat can pick up cleanly from the last. **Before doing any work** read:
+
+1. [`.planning/STATUS.md`](.planning/STATUS.md) — current milestone, next action.
+2. The milestone file it points to under [`.planning/milestones/`](.planning/milestones/).
+
+Then read this file for codebase conventions (ruff, base-class contract, etc.).
+For the full mission and roadmap see [`.planning/ROADMAP.md`](.planning/ROADMAP.md)
+and the design docs under [`.planning/design/`](.planning/design/).
+
+For the protocol summary, see [`CLAUDE-PLANNING.md`](CLAUDE-PLANNING.md).
+
+---
+
 ## Project overview
 
 **TSDynamics** is a Python library for studying dynamical systems. It provides:
