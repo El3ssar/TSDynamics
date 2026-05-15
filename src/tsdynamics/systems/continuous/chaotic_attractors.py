@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import numpy as np
 from symengine import cos, exp, sign, sin
 
@@ -89,14 +91,45 @@ class LorenzCoupled(ContinuousSystem):
 
 
 class Lorenz96(ContinuousSystem):
-    params = {"f": 8.0, "N": 20}
+    """
+    Lorenz-96 model on a 1D ring of ``N`` weakly coupled scalar variables.
 
-    def __init__(self, N: int = 20, f: float = 8.0, initial_conds=None):
-        super().__init__(
-            dim=int(N),
-            params={"f": float(f), "N": int(N)},
-            initial_conds=initial_conds,
-        )
+    Forced by a single scalar ``f``; chaotic for ``f >= 8`` and ``N``
+    large enough (the canonical attractor sets in around ``N = 5``).
+
+    Parameters
+    ----------
+    N : int
+        Number of sites on the ring. Structural — changing it recompiles.
+    f : float
+        Forcing strength. Runtime-tunable (no recompile).
+    """
+
+    params = {"f": 8.0, "N": 20}
+    # N affects the symbolic structure (loop length), so it must be baked in.
+    _structural_params = frozenset({"N"})
+
+    def __init__(
+        self,
+        N: int | None = None,
+        f: float | None = None,
+        *,
+        params: dict | None = None,
+        ic=None,
+    ):
+        p = dict(type(self).params)
+        if params:
+            unknown = set(params) - set(p)
+            if unknown:
+                raise ValueError(
+                    f"Lorenz96: unknown parameter(s) {sorted(unknown)}. Declared: {sorted(p)}"
+                )
+            p.update(params)
+        if N is not None:
+            p["N"] = int(N)
+        if f is not None:
+            p["f"] = float(f)
+        super().__init__(dim=int(p["N"]), params=p, ic=ic)
 
     @staticmethod
     def _equations(y_sym, t_sym, f, N):
@@ -206,19 +239,96 @@ class KuramotoSivashinsky(ContinuousSystem):
 
     # The u_xxxx term makes KS stiff — explicit RK will blow up for any useful grid.
     _default_method = "lsoda"
+    # N drives the symbolic loop length, so it must be baked in at compile time.
+    # L is kept as a runtime control parameter (changing it does not change the
+    # number of equations, only the coefficients).
+    _structural_params = frozenset({"N"})
 
-    def __init__(self, N: int = 32, L: float = 22.0, initial_conds=None):
-        if N < 7:
+    params = {"N": 32, "L": 22.0}
+
+    #: Seed for the deterministic broadband IC builder.  Override per-instance
+    #: by passing a custom ``ic=`` array, or globally by subclassing.
+    _ic_seed: ClassVar[int] = 0
+
+    def __init__(
+        self,
+        N: int | None = None,
+        L: float | None = None,
+        *,
+        params: dict | None = None,
+        ic=None,
+    ):
+        p = dict(type(self).params)
+        if params:
+            unknown = set(params) - set(p)
+            if unknown:
+                raise ValueError(
+                    f"KuramotoSivashinsky: unknown parameter(s) {sorted(unknown)}. "
+                    f"Declared: {sorted(p)}"
+                )
+            p.update(params)
+        if N is not None:
+            p["N"] = int(N)
+        if L is not None:
+            p["L"] = float(L)
+        N_val, L_val = int(p["N"]), float(p["L"])
+        if N_val < 7:
             raise ValueError("KuramotoSivashinsky requires N >= 7 (uses ±3 stencil).")
-        if initial_conds is None:
-            # Small-amplitude, zero-mean sinusoidal IC so the attractor mean stays at 0.
-            x_grid = np.linspace(0.0, float(L), int(N), endpoint=False)
-            initial_conds = 0.01 * np.cos(2.0 * np.pi * x_grid / float(L))
-        super().__init__(
-            dim=int(N),
-            params={"N": int(N), "L": float(L)},
-            initial_conds=initial_conds,
-        )
+        if ic is None:
+            ic = self._broadband_ic(N_val, L_val, seed=type(self)._ic_seed)
+        super().__init__(dim=N_val, params=p, ic=ic)
+
+    @staticmethod
+    def _broadband_ic(N: int, L: float, *, seed: int = 0, amplitude: float = 0.5) -> np.ndarray:
+        """
+        Build a zero-mean broadband initial condition for KS.
+
+        The previous default ``0.01·cos(2π x/L)`` excites only the lowest
+        wavenumber ``k = 2π/L``, which lies in a marginally unstable band for
+        ``L ≳ 30`` and grows so slowly that the trajectory stays near the
+        zero solution for the integration window — visible as horizontal
+        stripes in a space-time plot.
+
+        Instead we excite every linearly unstable Fourier mode
+        (``|k_j| < 1``, i.e. wavenumber indices ``j < L / (2π)``) with
+        seeded random amplitudes and phases, normalised to a target RMS so
+        the trajectory enters the nonlinear regime in O(10) time units
+        across the full L range.
+
+        Parameters
+        ----------
+        N : int
+            Number of grid points.
+        L : float
+            Domain length.
+        seed : int, optional
+            Seed for ``numpy.random.default_rng``.  Default 0 — keep this
+            fixed to get reproducible trajectories.
+        amplitude : float, optional
+            Target RMS amplitude of the IC.  Default 0.5.
+
+        Returns
+        -------
+        ic : ndarray, shape (N,)
+            Zero-mean initial condition.
+        """
+        rng = np.random.default_rng(seed)
+        x = np.linspace(0.0, L, N, endpoint=False)
+        # Highest wavenumber index in the linearly unstable band ``|k_j| < 1``.
+        # Always include at least mode 1 so even small-L domains evolve.
+        k_max = max(2, int(L / (2.0 * np.pi)) + 1)
+        # Cap at Nyquist so we never alias on small grids.
+        k_max = min(k_max, N // 2)
+        ic = np.zeros(N, dtype=float)
+        for k in range(1, k_max + 1):
+            a = rng.standard_normal()
+            b = rng.standard_normal()
+            ic += a * np.cos(2.0 * np.pi * k * x / L) + b * np.sin(2.0 * np.pi * k * x / L)
+        ic -= ic.mean()
+        rms = float(np.sqrt(np.mean(ic**2)))
+        if rms > 0.0:
+            ic *= amplitude / rms
+        return ic
 
     @staticmethod
     def _equations(Y, t, N, L):
@@ -309,7 +419,7 @@ class Chua(ContinuousSystem):
     @staticmethod
     def _equations(Y, t, alpha, beta, m0, m1):
         x, y, z = Y(0), Y(1), Y(2)
-        ramp_x = m1 * x + 0.5 * (m0 - m1) * (np.abs(x + 1) - np.abs(x - 1))
+        ramp_x = m1 * x + 0.5 * (m0 - m1) * (abs(x + 1) - abs(x - 1))
         xdot = alpha * (y - x - ramp_x)
         ydot = x - y + z
         zdot = -beta * y
@@ -326,20 +436,47 @@ class Chua(ContinuousSystem):
 
 
 class MultiChua(ContinuousSystem):
+    """
+    Ring of ``n_circuits`` Chua circuits coupled through their x-variables.
+
+    The state is laid out as ``[x1, y1, z1, x2, y2, z2, ...]`` and the
+    dimension is therefore ``3 * n_circuits``.
+
+    Parameters
+    ----------
+    n_circuits : int
+        Number of circuits in the ring. Structural — changing it recompiles.
+    """
+
     params = {
         "alpha": 15.6,
         "beta": 28.0,
         "m0": -1.143,
         "m1": -0.714,
-        "kappa": 0.1,  # Coupling strength
-        "n_circuits": 3,  # Number of coupled Chua circuits
+        "kappa": 0.1,
+        "n_circuits": 3,
     }
-    dim = 3 * params["n_circuits"]  # 3 variables per circuit
+    # n_circuits drives the loop length in _equations, so bake it in.
+    _structural_params = frozenset({"n_circuits"})
 
-    def __init__(self, dim=None, params=None):
-        super().__init__(dim=dim, params=params)
-        n_circuits = self.params["n_circuits"]
-        self.dim = 3 * n_circuits
+    def __init__(
+        self,
+        n_circuits: int | None = None,
+        *,
+        params: dict | None = None,
+        ic=None,
+    ):
+        p = dict(type(self).params)
+        if params:
+            unknown = set(params) - set(p)
+            if unknown:
+                raise ValueError(
+                    f"MultiChua: unknown parameter(s) {sorted(unknown)}. Declared: {sorted(p)}"
+                )
+            p.update(params)
+        if n_circuits is not None:
+            p["n_circuits"] = int(n_circuits)
+        super().__init__(dim=3 * int(p["n_circuits"]), params=p, ic=ic)
 
     @staticmethod
     def _equations(Y, t, alpha, beta, m0, m1, kappa, n_circuits):
