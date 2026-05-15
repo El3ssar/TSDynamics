@@ -8,7 +8,7 @@ class ShimizuMorioka(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = x - a * y - x * z
@@ -29,7 +29,7 @@ class MooreSpiegel(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, eps):
+    def _equations(Y, t, *, a, b, eps):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = a * z
@@ -50,7 +50,7 @@ class AnishchenkoAstakhov(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, eta, mu):
+    def _equations(Y, t, *, eta, mu):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = mu * x + y - x * z
         ydot = -x
@@ -63,7 +63,7 @@ class Aizawa(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, e, f):
+    def _equations(Y, t, *, a, b, c, d, e, f):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = x * z - b * x - d * y
         ydot = d * x + y * z - b * y
@@ -89,7 +89,7 @@ class StickSlipOscillator(ContinuousSystem):
         return self.t0 * sign(v) - self.alpha * v + self.beta * v**3
 
     @staticmethod
-    def _equations(Y, t, a, alpha, b, beta, eps, gamma, t0, vs, w):
+    def _equations(Y, t, *, a, alpha, b, beta, eps, gamma, t0, vs, w):
         x, v, th = Y(0), Y(1), Y(2)
         tq = t0 * sign(v - vs) - alpha * v + beta * (v - vs) ** 3
         xdot = v
@@ -103,7 +103,7 @@ class Torus(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, n, r):
+    def _equations(Y, t, *, a, n, r):
         # Parametric torus: derivatives are purely time-driven, independent of state.
         xdot = (-a * n * sin(n * t)) * cos(t) - (r + a * cos(n * t)) * sin(t)
         ydot = (-a * n * sin(n * t)) * sin(t) + (r + a * cos(n * t)) * cos(t)
@@ -125,7 +125,7 @@ class Lissajous3D(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, A, B, C, a, b, c, delta_y, delta_z):
+    def _equations(Y, t, *, A, B, C, a, b, c, delta_y, delta_z):
         """
         RHS of the 3D Lissajous system.
 
@@ -159,7 +159,7 @@ class Lissajous2D(ContinuousSystem):
     dim = 2
 
     @staticmethod
-    def _equations(Y, t, A, B, a, b, delta):
+    def _equations(Y, t, *, A, B, a, b, delta):
         """
         RHS of the 2D Lissajous system.
 

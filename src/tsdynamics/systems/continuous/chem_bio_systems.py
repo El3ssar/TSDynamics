@@ -19,7 +19,7 @@ class GlycolyticOscillation(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, d, k, l1, l2, nu, q1, q2, s1, s2):
+    def _equations(Y, t, *, d, k, l1, l2, nu, q1, q2, s1, s2):
         a, b, c = Y(0), Y(1), Y(2)
         phi = (a * (1 + a) * (1 + b) ** 2) / (l1 + (1 + a) ** 2 * (1 + b) ** 2)
         eta = b * (1 + d * b) * (1 + c) ** 2 / (l2 + (1 + d * b) ** 2 * (1 + c) ** 2)
@@ -39,7 +39,7 @@ class Oregonator(ContinuousSystem):
     dim = 3  # Three variables: X, Y, Z (reduced forms of the chemical species)
 
     @staticmethod
-    def _equations(Y, t, q, f, mu, epsilon):
+    def _equations(Y, t, *, q, f, mu, epsilon):
         """
         Right-hand side of the Belousov-Zhabotinsky (Oregonator) model.
 
@@ -63,7 +63,7 @@ class IsothermalChemical(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, delta, kappa, mu, sigma):
+    def _equations(Y, t, *, delta, kappa, mu, sigma):
         alpha, beta, gamma = Y(0), Y(1), Y(2)
         alphadot = mu * (kappa + gamma) - alpha * beta**2 - alpha
         betadot = (alpha * beta**2 + alpha - beta) / sigma
@@ -76,7 +76,7 @@ class ForcedBrusselator(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, f, w):
+    def _equations(Y, t, *, a, b, f, w):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a + x**2 * y - (b + 1) * x + f * cos(z)
         ydot = b * x - x**2 * y
@@ -108,6 +108,7 @@ class CircadianRhythm(ContinuousSystem):
     def _equations(
         Y,
         t,
+        *,
         Ki,
         k,
         k1,
@@ -162,6 +163,7 @@ class CaTwoPlus(ContinuousSystem):
     def _equations(
         Y,
         t,
+        *,
         K2,
         K5,
         Ka,
@@ -211,7 +213,7 @@ class ExcitableCell(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, gi, gkc, gkv, gl, kc, rho, vc, vi, vk, vl, vm, vn):
+    def _equations(Y, t, *, gi, gkc, gkv, gl, kc, rho, vc, vi, vk, vl, vm, vn):
         v, n, c = Y(0), Y(1), Y(2)
 
         alpham = 0.1 * (25 + v) / (1 - exp(-0.1 * v - 2.5))
@@ -257,7 +259,7 @@ class CellCycle(ContinuousSystem):
     dim = 6
 
     @staticmethod
-    def _equations(Y, t, K, Kc, Kd1, Kim, V2, V4, Vm1, Vm3, kd1, vd, vi):
+    def _equations(Y, t, *, K, Kc, Kd1, Kim, V2, V4, Vm1, Vm3, kd1, vd, vi):
         c1, m1, x1, c2, m2, x2 = Y(0), Y(1), Y(2), Y(3), Y(4), Y(5)
         Vm1, Um1 = 2 * [Vm1]
         vi1, vi2 = 2 * [vi]
@@ -297,7 +299,7 @@ class HindmarshRose(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, s, tx, tz):
+    def _equations(Y, t, *, a, b, c, d, s, tx, tz):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -x + 1 / tx * y - a / tx * x**3 + b / tx * x**2 + 1 / tx * z
         ydot = -a * x**3 - (d - b) * x**2 + z
@@ -318,7 +320,7 @@ class ForcedVanDerPol(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, mu, w):
+    def _equations(Y, t, *, a, mu, w):
         x, y, z = Y(0), Y(1), Y(2)
         ydot = mu * (1 - x**2) * y - x + a * sin(z)
         xdot = y
@@ -338,7 +340,7 @@ class ForcedFitzHughNagumo(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, curr, f, gamma, omega):
+    def _equations(Y, t, *, a, b, curr, f, gamma, omega):
         v, w, z = Y(0), Y(1), Y(2)
         vdot = v - v**3 / 3 - w + curr + f * sin(z)
         wdot = gamma * (v + a - b * w)
@@ -351,7 +353,7 @@ class TurchinHanski(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, d, e, g, h, r, s):
+    def _equations(Y, t, *, a, d, e, g, h, r, s):
         n, p, z = Y(0), Y(1), Y(2)
         ndot = (
             r * (1 - e * sin(z)) * n - r * (n**2) - g * (n**2) / (n**2 + h**2) - a * n * p / (n + d)
@@ -366,7 +368,7 @@ class HastingsPowell(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a1, a2, b1, b2, d1, d2):
+    def _equations(Y, t, *, a1, a2, b1, b2, d1, d2):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = x * (1 - x) - y * a1 * x / (1 + b1 * x)
         ydot = y * a1 * x / (1 + b1 * x) - z * a2 * y / (1 + b2 * y) - d1 * y
@@ -388,7 +390,7 @@ class ItikBanksTumor(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a12, a13, a21, a31, d3, k3, r2, r3):
+    def _equations(Y, t, *, a12, a13, a21, a31, d3, k3, r2, r3):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = x * (1 - x) - a12 * x * y - a13 * x * z
         ydot = r2 * y * (1 - y) - a21 * x * y

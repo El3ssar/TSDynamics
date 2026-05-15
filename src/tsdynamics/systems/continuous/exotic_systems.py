@@ -8,7 +8,7 @@ class NuclearQuadrupole(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, d):
+    def _equations(Y, t, *, a, b, d):
         q1, q2, p1, p2 = Y(0), Y(1), Y(2), Y(3)
         q1dot = a * p1
         q2dot = a * p2
@@ -24,7 +24,7 @@ class HyperCai(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, e):
+    def _equations(Y, t, *, a, b, c, d, e):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = b * x + c * y - x * z + w
@@ -38,7 +38,7 @@ class HyperBao(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, e):
+    def _equations(Y, t, *, a, b, c, d, e):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + w
         ydot = c * y - x * z
@@ -52,7 +52,7 @@ class HyperJha(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + w
         ydot = -x * z + b * x - y
@@ -66,7 +66,7 @@ class HyperQi(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, e, f):
+    def _equations(Y, t, *, a, b, c, d, e, f):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + y * z
         ydot = b * x + b * y - x * z
@@ -80,7 +80,7 @@ class HyperXu(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a=10, b=40, c=2.5, d=2, e=16):
+    def _equations(Y, t, *, a=10, b=40, c=2.5, d=2, e=16):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + w
         ydot = b * x + e * x * z
@@ -94,7 +94,7 @@ class HyperWang(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a=10, b=40, c=2.5, d=10.6, e=4):
+    def _equations(Y, t, *, a=10, b=40, c=2.5, d=10.6, e=4):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = -x * z + b * x + w
@@ -108,7 +108,7 @@ class HyperPang(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a=36, b=3, c=20, d=2):
+    def _equations(Y, t, *, a=36, b=3, c=20, d=2):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = -x * z + c * y + w
@@ -122,7 +122,7 @@ class HyperLu(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a=36, b=3, c=20, d=1.3):
+    def _equations(Y, t, *, a=36, b=3, c=20, d=1.3):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + w
         ydot = -x * z + c * y
@@ -136,7 +136,7 @@ class LorenzStenflo(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + d * w
         ydot = c * x - x * z - y
@@ -150,7 +150,7 @@ class Qi(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + y * z * w
         ydot = b * x + b * y - x * z * w
@@ -164,7 +164,7 @@ class ArnoldWeb(ContinuousSystem):
     dim = 5
 
     @staticmethod
-    def _equations(Y, t, mu, w):
+    def _equations(Y, t, *, mu, w):
         p1, p2, x1, x2, z = Y(0), Y(1), Y(2), Y(3), Y(4)
         denom = 4 + cos(z) + cos(x1) + cos(x2)
         p1dot = -mu * sin(x1) / denom**2
@@ -180,7 +180,7 @@ class NewtonLiepnik(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -a * x + y + 10 * y * z
         ydot = -x - 0.4 * y + 5 * x * z
@@ -196,7 +196,7 @@ class Robinson(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, v):
+    def _equations(Y, t, *, a, b, c, d, v):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = x - 2 * x**3 - a * y + b * x**2 * y - v * y * z
@@ -209,7 +209,7 @@ class CellularNeuralNetwork(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
 
         def f(x):

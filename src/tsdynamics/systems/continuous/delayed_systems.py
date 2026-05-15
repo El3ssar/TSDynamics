@@ -34,7 +34,7 @@ class IkedaDelay(DelaySystem):
     dim = 1
 
     @staticmethod
-    def _equations(Y, t, c, mu, tau, x0):
+    def _equations(Y, t, *, c, mu, tau, x0):
         return [mu * sin(Y(0, t - tau) - x0) - c * Y(0, t)]
 
 
@@ -43,7 +43,7 @@ class SprottDelay(DelaySystem):
     dim = 1
 
     @staticmethod
-    def _equations(Y, t, tau):
+    def _equations(Y, t, *, tau):
         return [sin(Y(0, t - tau))]
 
 
@@ -52,7 +52,7 @@ class ScrollDelay(DelaySystem):
     dim = 1
 
     @staticmethod
-    def _equations(Y, t, alpha, beta, tau):
+    def _equations(Y, t, *, alpha, beta, tau):
         xt = Y(0, t - tau)
         f = tanh(10 * xt)
         return [-alpha * xt + beta * f]
@@ -63,7 +63,7 @@ class PiecewiseCircuit(DelaySystem):
     dim = 1
 
     @staticmethod
-    def _equations(Y, t, alpha, beta, c, tau):
+    def _equations(Y, t, *, alpha, beta, c, tau):
         xt = Y(0, t - tau)
         f = -((xt / c) ** 3) + 3 * xt / c
         return [-alpha * xt + beta * f]

@@ -35,7 +35,7 @@ class LorenzBounded(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, beta, r, rho, sigma):
+    def _equations(Y, t, *, beta, r, rho, sigma):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = (
             sigma * y
@@ -79,7 +79,7 @@ class LorenzCoupled(ContinuousSystem):
     dim = 6
 
     @staticmethod
-    def _equations(Y, t, beta, kappa, rho, sigma):
+    def _equations(Y, t, *, beta, kappa, rho, sigma):
         x1, y1, z1, x2, y2, z2 = Y(0), Y(1), Y(2), Y(3), Y(4), Y(5)
         x1dot = sigma * (y1 - x1) + kappa * (x2 - x1)
         y1dot = rho * x1 - x1 * z1 - y1
@@ -132,7 +132,7 @@ class Lorenz96(ContinuousSystem):
         super().__init__(dim=int(p["N"]), params=p, ic=ic)
 
     @staticmethod
-    def _equations(y_sym, t_sym, f, N):
+    def _equations(y_sym, t_sym, *, f, N):
         return [
             (y_sym((i + 1) % N) - y_sym((i - 2) % N)) * y_sym((i - 1) % N) - y_sym(i) + f
             for i in range(N)
@@ -144,7 +144,7 @@ class Lorenz84(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, f, g):
+    def _equations(Y, t, *, a, b, f, g):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -a * x - y**2 - z**2 + a * f
         ydot = -y + x * y - b * x * z + g
@@ -165,7 +165,7 @@ class Rossler(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -y - z
         ydot = x + a * y
@@ -186,7 +186,7 @@ class Thomas(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -a * x + b * sin(y)
         ydot = -a * y + b * sin(z)
@@ -331,7 +331,7 @@ class KuramotoSivashinsky(ContinuousSystem):
         return ic
 
     @staticmethod
-    def _equations(Y, t, N, L):
+    def _equations(Y, t, *, N, L):
         # 7-point central weights (Trefethen-style) for periodic, equispaced grid.
         # First derivative (6th-order): D1 * f / dx
         w1 = (
@@ -396,7 +396,7 @@ class Halvorsen(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -a * x - b * y - b * z - y**2
         ydot = -a * y - b * z - b * x - z**2
@@ -417,7 +417,7 @@ class Chua(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, alpha, beta, m0, m1):
+    def _equations(Y, t, *, alpha, beta, m0, m1):
         x, y, z = Y(0), Y(1), Y(2)
         ramp_x = m1 * x + 0.5 * (m0 - m1) * (abs(x + 1) - abs(x - 1))
         xdot = alpha * (y - x - ramp_x)
@@ -479,7 +479,7 @@ class MultiChua(ContinuousSystem):
         super().__init__(dim=3 * int(p["n_circuits"]), params=p, ic=ic)
 
     @staticmethod
-    def _equations(Y, t, alpha, beta, m0, m1, kappa, n_circuits):
+    def _equations(Y, t, *, alpha, beta, m0, m1, kappa, n_circuits):
         """
         Right-hand side of the MultiChua model.
 
@@ -524,7 +524,7 @@ class Duffing(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, alpha, beta, delta, gamma, omega):
+    def _equations(Y, t, *, alpha, beta, delta, gamma, omega):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = -delta * y - alpha * x - beta * x**3 + gamma * cos(z)
@@ -566,7 +566,7 @@ class Dadras(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, c, e, o, p, r):
+    def _equations(Y, t, *, c, e, o, p, r):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y - p * x + o * y * z
         ydot = r * y - x * z + z
@@ -737,7 +737,7 @@ class SprottF(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y + z
         ydot = -x + a * y
@@ -758,7 +758,7 @@ class SprottG(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x + z
         ydot = x * z - y
@@ -779,7 +779,7 @@ class SprottH(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -y + z**2
         ydot = x + a * y
@@ -800,7 +800,7 @@ class SprottI(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -a * y
         ydot = x + z
@@ -842,7 +842,7 @@ class SprottK(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = x * y - z
         ydot = x - y
@@ -863,7 +863,7 @@ class SprottL(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y + b * z
         ydot = a * x**2 - y
@@ -884,7 +884,7 @@ class SprottM(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -z
         ydot = -(x**2) - y
@@ -926,7 +926,7 @@ class SprottO(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = x - z
@@ -947,7 +947,7 @@ class SprottP(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y + z
         ydot = -x + y**2
@@ -968,7 +968,7 @@ class SprottQ(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -z
         ydot = x - y
@@ -989,7 +989,7 @@ class SprottR(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a - y
         ydot = b + z
@@ -1052,7 +1052,7 @@ class SprottJerk(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, mu):
+    def _equations(Y, t, *, mu):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = z
@@ -1076,7 +1076,7 @@ class Arneodo(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = z
@@ -1097,7 +1097,7 @@ class Rucklidge(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b):
+    def _equations(Y, t, *, a, b):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -a * x + b * y - y * z
         ydot = x
@@ -1118,7 +1118,7 @@ class HyperRossler(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = -y - z
         ydot = x + a * y + w
@@ -1141,7 +1141,7 @@ class HyperLorenz(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + w
         ydot = -x * z + c * x - y
@@ -1155,7 +1155,7 @@ class HyperYangChen(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a=30, b=3, c=35, d=8):
+    def _equations(Y, t, *, a=30, b=3, c=35, d=8):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = c * x - x * z + w
@@ -1169,7 +1169,7 @@ class HyperYan(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, a=37, b=3, c=26, d=38):
+    def _equations(Y, t, *, a=37, b=3, c=26, d=38):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = (c - a) * x - x * z + c * y
@@ -1183,7 +1183,7 @@ class GuckenheimerHolmes(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, e, f):
+    def _equations(Y, t, *, a, b, c, d, e, f):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x - b * y + c * z * x + d * z * x**2 + d * z * y**2
         ydot = a * y + b * x + c * z * y
@@ -1196,7 +1196,7 @@ class HenonHeiles(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, lam):
+    def _equations(Y, t, *, lam):
         x, y, px, py = Y(0), Y(1), Y(2), Y(3)
         xdot = px
         ydot = py
@@ -1219,7 +1219,7 @@ class NoseHoover(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = -x + y * z
@@ -1232,7 +1232,7 @@ class RikitakeDynamo(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, mu):
+    def _equations(Y, t, *, a, mu):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -mu * x + y * z
         ydot = -mu * y - a * x + x * z

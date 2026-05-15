@@ -8,7 +8,7 @@ class VallisElNino(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, b, c, p):
+    def _equations(Y, t, *, b, c, p):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = b * y - c * x - c * p
         ydot = -y + x * z
@@ -21,7 +21,7 @@ class RayleighBenard(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, r):
+    def _equations(Y, t, *, a, b, r):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x
         ydot = r * y - x * z
@@ -42,7 +42,7 @@ class Hadley(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, f, g):
+    def _equations(Y, t, *, a, b, f, g):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -(y**2) - z**2 - a * x + a * f
         ydot = x * y - b * x * z - y + g
@@ -63,7 +63,7 @@ class DoubleGyre(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, alpha, eps, omega):
+    def _equations(Y, t, *, alpha, eps, omega):
         x, y, z = Y(0), Y(1), Y(2)
         a = eps * sin(z)
         b = 1 - 2 * eps * sin(z)
@@ -107,7 +107,7 @@ class BlinkingRotlet(ContinuousSystem):
         return 0.5 + 0.5 * tanh(tau * stiffness * sin(2 * pi * t / tau))
 
     @staticmethod
-    def _equations(y, t, a, b, bc, sigma, tau):
+    def _equations(y, t, *, a, b, bc, sigma, tau):
         r = y(0)
         theta = y(1)
         tt = y(2)
@@ -133,7 +133,7 @@ class OscillatingFlow(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, b, k, omega, u):
+    def _equations(Y, t, *, b, k, omega, u):
         x, y, z = Y(0), Y(1), Y(2)
         f = x + b * sin(z)
         dx = u * cos(k * y) * sin(k * f)
@@ -147,7 +147,7 @@ class ArnoldBeltramiChildress(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         dx = a * sin(z) + c * cos(y)
         dy = b * sin(x) + a * cos(z)
@@ -167,7 +167,7 @@ class AtmosphericRegime(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, alpha, beta, mu1, mu2, omega, sigma):
+    def _equations(Y, t, *, alpha, beta, mu1, mu2, omega, sigma):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = mu1 * x + sigma * x * y
         ydot = mu2 * y + omega * z + alpha * y * z + beta * z**2 - sigma * x**2
@@ -189,7 +189,7 @@ class SaltonSea(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, d, k, lam, m, mu, r, th):
+    def _equations(Y, t, *, a, d, k, lam, m, mu, r, th):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = r * x * (1 - (x + y) / k) - lam * x * y
         ydot = lam * x * y - m * y * z / (y + a) - mu * y

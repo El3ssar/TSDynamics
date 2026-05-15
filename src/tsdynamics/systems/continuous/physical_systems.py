@@ -8,7 +8,7 @@ class DoublePendulum(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, d, m):
+    def _equations(Y, t, *, d, m):
         th1, th2, p1, p2 = Y(0), Y(1), Y(2), Y(3)
         g = 9.82
         pre = 6 / (m * d**2)
@@ -25,7 +25,7 @@ class SwingingAtwood(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, m1, m2):
+    def _equations(Y, t, *, m1, m2):
         r, th, pr, pth = Y(0), Y(1), Y(2), Y(3)
         g = 9.82
         rdot = pr / (m1 + m2)
@@ -40,7 +40,7 @@ class Colpitts(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, e):
+    def _equations(Y, t, *, a, b, c, d, e):
         x, y, z = Y(0), Y(1), Y(2)
         u = z - (e - 1)
         fz = -u * (1 - sign(u)) / 2
@@ -55,7 +55,7 @@ class Laser(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, h, k):
+    def _equations(Y, t, *, a, b, c, d, h, k):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x + b * y * z**2
         ydot = c * x + d * x * z**2
@@ -85,7 +85,7 @@ class Blasius(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, alpha1, alpha2, b, c, k1, k2, zs):
+    def _equations(Y, t, *, a, alpha1, alpha2, b, c, k1, k2, zs):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x - alpha1 * x * y / (1 + k1 * x)
         ydot = -b * y + alpha1 * x * y / (1 + k1 * x) - alpha2 * y * z / (1 + k2 * y)
@@ -98,7 +98,7 @@ class FluidTrampoline(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, gamma, psi, w):
+    def _equations(Y, t, *, gamma, psi, w):
         x, y, th = Y(0), Y(1), Y(2)
         xdot = y
         ydot = -1 - (1 - sign(x)) / 2 * (x + psi * y * abs(y)) + gamma * cos(th)
@@ -111,7 +111,7 @@ class JerkCircuit(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, eps, y0):
+    def _equations(Y, t, *, eps, y0):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
         ydot = z
@@ -132,7 +132,7 @@ class WindmiReduced(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a1, b1, b2, b3, d1, vsw):
+    def _equations(Y, t, *, a1, b1, b2, b3, d1, vsw):
         i, v, p = Y(0), Y(1), Y(2)
         idot = a1 * (vsw - v)
         vdot = b1 * i - b2 * p**1 / 2 - b3 * v

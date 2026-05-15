@@ -19,7 +19,7 @@ class CoevolvingPredatorPrey(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a1, a2, a3, b1, b2, d1, d2, delta, k1, k2, k4, vv):
+    def _equations(Y, t, *, a1, a2, a3, b1, b2, d1, d2, delta, k1, k2, k4, vv):
         x, y, alpha = Y(0), Y(1), Y(2)
         xdot = x * (
             -((a3 * y) / (1 + b2 * x))
@@ -44,7 +44,7 @@ class KawczynskiStrizhak(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, beta, gamma, kappa, mu):
+    def _equations(Y, t, *, beta, gamma, kappa, mu):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = gamma * y - gamma * x**3 + 3 * mu * gamma * x
         ydot = -2 * mu * x - y - z + beta
@@ -65,7 +65,7 @@ class Finance(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = (1 / b - a) * x + z + x * y
         ydot = -b * y - x**2

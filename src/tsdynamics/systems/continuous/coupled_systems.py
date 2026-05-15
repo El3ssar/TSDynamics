@@ -17,7 +17,7 @@ class Sakarya(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, h, p, q, r, s):
+    def _equations(Y, t, *, a, b, c, h, p, q, r, s):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x + h * y + s * y * z
         ydot = -b * y - p * x + q * x * z
@@ -38,7 +38,7 @@ class Bouali2(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, bb, c, g, m, y0):
+    def _equations(Y, t, *, a, b, bb, c, g, m, y0):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y0 * x - a * x * y - b * z
         ydot = -g * y + g * y * x**2
@@ -59,7 +59,7 @@ class LuChenCheng(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -(a * b) / (a + b) * x - y * z + c
         ydot = a * y + x * z
@@ -80,7 +80,7 @@ class LuChen(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x
         ydot = -x * z + c * y
@@ -101,7 +101,7 @@ class QiChen(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x + y * z
         ydot = c * x + y - x * z
@@ -122,7 +122,7 @@ class ZhouChen(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d, e):
+    def _equations(Y, t, *, a, b, c, d, e):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x + b * y + y * z
         ydot = c * y - x * z + d * y * z
@@ -143,7 +143,7 @@ class BurkeShaw(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, e, n):
+    def _equations(Y, t, *, e, n):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = -n * x - n * y
         ydot = y - n * x * z
@@ -164,7 +164,7 @@ class Chen(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x
         ydot = (c - a) * x - x * z + c * y
@@ -185,7 +185,7 @@ class ChenLee(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c):
+    def _equations(Y, t, *, a, b, c):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x - y * z
         ydot = b * y + x * z
@@ -206,7 +206,7 @@ class WangSun(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, d, e, f, q):
+    def _equations(Y, t, *, a, b, d, e, f, q):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * x + q * y * z
         ydot = b * x + d * y - x * z
@@ -227,7 +227,7 @@ class YuWang(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * (y - x)
         ydot = b * x - c * x * z
@@ -248,7 +248,7 @@ class YuWang2(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, b, c, d):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * (y - x)
         ydot = b * x - c * x * z
@@ -269,7 +269,7 @@ class SanUmSrisuchinwong(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a):
+    def _equations(Y, t, *, a):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y - x
         ydot = -z * tanh(x)
@@ -290,7 +290,7 @@ class DequanLi(ContinuousSystem):
     dim = 3
 
     @staticmethod
-    def _equations(Y, t, a, c, d, eps, f, k):
+    def _equations(Y, t, *, a, c, d, eps, f, k):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = a * y - a * x + d * x * z
         ydot = k * x + f * y - x * z
