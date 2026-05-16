@@ -55,8 +55,14 @@ src/tsdynamics/
 │   ├── dde_base.py           # DelaySystem (JiTCDDE)
 │   └── map_base.py           # DiscreteMap (Numba)
 ├── analysis/
-│   ├── __init__.py           # Re-exports trajectory_ops public API
-│   └── trajectory_ops.py     # Pure (t, y) ops behind Trajectory enrichment (M1)
+│   ├── __init__.py           # Re-exports every @trajectory_op as a free function
+│   ├── _registry.py          # trajectory_op decorator + install_methods (the design hub)
+│   ├── _trajectory_ops.py    # M1 ops: decimate/resample/project/window/derivative/norm/
+│   │                         # local_maxima/local_minima/return_times/to_dataspec
+│   ├── events.py             # EventCondition protocol + Plane / LinearPlane / Threshold /
+│   │                         # LocalExtremum / Custom + EventResult + detect_events (M2)
+│   ├── sections.py           # poincare_section (M2)
+│   └── return_map.py         # ReturnMap container + return_map() (M2)
 ├── systems/
 │   ├── continuous/
 │   │   ├── chaotic_attractors.py
@@ -371,9 +377,85 @@ r       = traj.norm()                              # ndarray (T,)
 tp, yp  = traj.local_maxima(component=2, prominence=1.0)
 isi     = traj.return_times(component=2, prominence=1.0)
 spec    = traj.to_dataspec(kind="phase_portrait_3d", dims=(0, 1, 2))
+
+# Event & section detection (M2) — Poincaré, return maps, threshold crossings.
+# Condition classes live in tsdynamics.analysis (always imported from there).
+from tsdynamics.analysis import Plane, LinearPlane, Threshold, LocalExtremum, Custom
+
+events  = traj.detect_events(Threshold(component=0, value=10.0, direction="up"))
+sec     = traj.poincare_section(Plane(axis=2, value=27.0))   # direction="up" by default
+rmap    = traj.return_map(Plane(axis=2, value=27.0), observable=0)
+spec    = rmap.to_dataspec(kind="return_map")
 ```
 
-The same operations are available as pure functions in
-`tsdynamics.analysis.trajectory_ops` (each takes `t, y` and returns the
-transformed arrays).  The `Trajectory` methods are thin wrappers — keep
-new algorithms in `analysis/` so they stay independently unit-testable.
+### Two call forms, one implementation — the `@trajectory_op` registry
+
+There is **exactly one definition** of each analysis primitive.  It's a
+free function
+
+```python
+def decimate(t, y, every): ...                         # in _trajectory_ops.py
+```
+
+decorated with `@trajectory_op(returns=...)` from
+`tsdynamics.analysis._registry`.  The decorator does two things at
+import time:
+
+1. Wraps the function so callers can pass a `Trajectory`, a `(t, y)`
+   tuple, or bare `t, y` arrays as the leading argument(s).
+2. Records the function in an internal registry.
+
+When `Trajectory` is defined, the very last line of
+`src/tsdynamics/base/base.py` calls
+`install_methods(Trajectory)` which drains the registry and attaches one
+method per entry on the class.  The method strips `self.t, self.y` from
+its arguments and forwards to the function.
+
+The net effect — **every primitive is callable both ways without any
+hand-written wrapper anywhere**:
+
+```python
+traj.decimate(every=5)                        # method form
+decimate(traj, every=5)                       # free function with Trajectory
+decimate((t, y), every=5)                     # free function with tuple
+decimate(t, y, every=5)                       # free function with raw arrays
+
+traj.detect_events(Plane(axis=2, value=27))   # method form
+detect_events(traj, Plane(axis=2, value=27))  # free function form
+```
+
+`returns=` controls the wrapping:
+
+| `returns=`        | What the fn returns                  | Wrapped to                              |
+|-------------------|--------------------------------------|-----------------------------------------|
+| `"trajectory"`     | `(t_new, y_new)` tuple               | `Trajectory(t_new, y_new, system)`      |
+| `"ndarray_keep_t"` | ndarray with same time axis as input | `Trajectory(self.t.copy(), arr, system)`|
+| `"passthrough"`    | anything else (EventResult, ReturnMap, peak tuple, dict, …) | returned as-is |
+
+`Trajectory.system` is inherited from the input when the input is a
+`Trajectory`, and is `None` when the caller supplied raw arrays / a
+`(t, y)` tuple.  `Trajectory` is tuple-unpackable so call sites that
+prefer `t, y = decimate(...)` still work transparently.
+
+### Adding a new analysis primitive
+
+Drop the function next to its peers in
+`src/tsdynamics/analysis/_trajectory_ops.py` (or `events.py` /
+`sections.py` / `return_map.py` if it's section-shaped), give it a
+`(t, y, *args)` signature, decorate with `@trajectory_op(returns=...)`,
+re-export it from `analysis/__init__.py`.  That's it.  No class to
+touch, no docstring to duplicate, no wrapper method to keep in sync.
+
+```python
+@trajectory_op(returns="trajectory")
+def smooth(t, y, window: int = 5):
+    """Single docstring lives here — surfaces in both forms."""
+    kernel = np.ones(window) / window
+    y_new = np.apply_along_axis(
+        lambda col: np.convolve(col, kernel, mode="same"), axis=0, arr=y,
+    )
+    return t.copy(), y_new
+```
+
+After re-exporting, both `traj.smooth(window=5)` and
+`smooth(traj, window=5)` work, with the right return type, automatically.

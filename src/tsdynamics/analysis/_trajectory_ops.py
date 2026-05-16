@@ -1,13 +1,15 @@
 """
-Pure (t, y) operations behind ``Trajectory`` enrichment methods.
+M1 trajectory-enrichment primitives.
 
-Each function here takes the trajectory's ``t`` (shape ``(T,)``) and ``y``
-(shape ``(T, dim)``) arrays plus operation-specific arguments, and returns
-new ndarrays (or auxiliary scalars).  No reference to :class:`Trajectory` is
-needed, which keeps the algorithms independently unit-testable and reusable
-from later analysis primitives that don't carry a system back-reference.
+Every function here takes ``(t, y, *args, **kwargs)`` and returns a
+shape declared by its :func:`trajectory_op` decoration.  The decorator
+turns each one into a polymorphic free function (accepts a
+:class:`Trajectory`, a ``(t, y)`` tuple, *or* bare arrays) and queues
+it for installation as a method on :class:`Trajectory`.
 
-All functions are pure — they never mutate their inputs.
+There is no hand-written wrapper anywhere else: the function below is
+the single source of truth for both ``decimate(traj, every=5)`` and
+``traj.decimate(every=5)``.
 """
 
 from __future__ import annotations
@@ -18,11 +20,14 @@ import numpy as np
 from scipy.interpolate import make_interp_spline
 from scipy.signal import find_peaks
 
+from ._registry import trajectory_op
+
 # ---------------------------------------------------------------------------
 # Resampling / windowing
 # ---------------------------------------------------------------------------
 
 
+@trajectory_op(returns="trajectory")
 def decimate(
     t: np.ndarray,
     y: np.ndarray,
@@ -33,30 +38,25 @@ def decimate(
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-    y : ndarray, shape (T, dim)
     every : int
         Stride.  Must be ``>= 1``.
 
     Returns
     -------
-    (t_new, y_new) : tuple of ndarrays
-        Both views are copies (not slices) so downstream mutation cannot
-        leak back into the source arrays.
+    Trajectory (method form) or (t_new, y_new) tuple (free-function form
+    with bare arrays / ``(t, y)`` tuple input).
 
     Examples
     --------
-    >>> t = np.arange(10.0)
-    >>> y = np.arange(20.0).reshape(10, 2)
-    >>> tn, yn = decimate(t, y, every=3)
-    >>> tn
-    array([0., 3., 6., 9.])
+    >>> traj.decimate(every=10)            # 10x fewer samples
+    >>> decimate(traj, every=10)           # equivalent free-function form
     """
     if not isinstance(every, int | np.integer) or every < 1:
         raise ValueError(f"decimate: 'every' must be a positive integer, got {every!r}")
     return t[::every].copy(), y[::every].copy()
 
 
+@trajectory_op(returns="trajectory")
 def resample(
     t: np.ndarray,
     y: np.ndarray,
@@ -71,31 +71,15 @@ def resample(
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-        Must be strictly increasing.
-    y : ndarray, shape (T, dim)
     dt_new : float
         New step.  Must be positive.
     kind : {"linear", "cubic"}, default "cubic"
-        Interpolation kind.
-
-    Returns
-    -------
-    (t_new, y_new) : tuple of ndarrays
-
-    Raises
-    ------
-    ValueError
-        If ``t`` is not strictly increasing, ``dt_new`` is non-positive,
-        or ``kind`` is unrecognised.
+        Interpolation kind, implemented via
+        :func:`scipy.interpolate.make_interp_spline`.
 
     Examples
     --------
-    >>> t = np.linspace(0.0, 1.0, 11)
-    >>> y = np.sin(2 * np.pi * t)[:, None]
-    >>> tn, yn = resample(t, y, dt_new=0.05, kind="cubic")
-    >>> tn.shape, yn.shape
-    ((20,), (20, 1))
+    >>> traj.resample(dt_new=0.01, kind="cubic")
     """
     if dt_new <= 0:
         raise ValueError(f"resample: 'dt_new' must be positive, got {dt_new}")
@@ -117,47 +101,26 @@ def resample(
     t_new = np.arange(t[0], t[-1], dt_new)
     spline = make_interp_spline(t, y, k=k, axis=0)
     y_new = spline(t_new)
-    # make_interp_spline with k=1 returns float arrays but may return a 1-D shape
-    # if y was 1-D; we always operate on (T, dim), so y_new is (T_new, dim).
     return t_new, np.asarray(y_new)
 
 
+@trajectory_op(returns="trajectory")
 def project(
     t: np.ndarray,
     y: np.ndarray,
     dims: tuple[int, ...] | list[int] | np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Select a subset of components.
+    Select a subset of state components.
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-    y : ndarray, shape (T, dim)
     dims : iterable of int
         Component indices to keep.  Order is preserved; repeats are allowed.
 
-    Returns
-    -------
-    (t_new, y_new) : tuple of ndarrays
-        ``y_new`` has shape ``(T, len(dims))``.
-
-    Raises
-    ------
-    IndexError
-        If any element of ``dims`` is out of range for ``y``.
-    ValueError
-        If ``dims`` is empty.
-
     Examples
     --------
-    >>> t = np.arange(3.0)
-    >>> y = np.arange(9.0).reshape(3, 3)
-    >>> _, yp = project(t, y, dims=(0, 2))
-    >>> yp
-    array([[0., 2.],
-           [3., 5.],
-           [6., 8.]])
+    >>> traj.project(dims=(0, 2))          # only x and z
     """
     dims = list(dims)
     if not dims:
@@ -171,6 +134,7 @@ def project(
     return t.copy(), y[:, dims].copy()
 
 
+@trajectory_op(returns="trajectory")
 def window(
     t: np.ndarray,
     y: np.ndarray,
@@ -178,33 +142,18 @@ def window(
     t1: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Restrict to the time interval ``[t0, t1]`` (inclusive on both ends).
+    Restrict to ``[t0, t1]`` (inclusive on both ends).
 
-    Either bound may be ``None`` to leave that side open.  Bounds that fall
-    outside the available time range are clipped silently.
+    Either bound may be ``None`` to leave that side open.  Bounds outside
+    the available time range are clipped silently.
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-    y : ndarray, shape (T, dim)
     t0, t1 : float or None
-
-    Returns
-    -------
-    (t_new, y_new) : tuple of ndarrays
-
-    Raises
-    ------
-    ValueError
-        If both bounds are provided and ``t0 > t1``.
 
     Examples
     --------
-    >>> t = np.linspace(0.0, 10.0, 11)
-    >>> y = t[:, None]
-    >>> tw, _ = window(t, y, t0=2.5, t1=7.5)
-    >>> tw
-    array([3., 4., 5., 6., 7.])
+    >>> traj.window(t0=50.0, t1=100.0)
     """
     if t0 is not None and t1 is not None and t0 > t1:
         raise ValueError(f"window: t0={t0} > t1={t1}")
@@ -221,6 +170,7 @@ def window(
 # ---------------------------------------------------------------------------
 
 
+@trajectory_op(returns="ndarray_keep_t")
 def derivative(
     t: np.ndarray,
     y: np.ndarray,
@@ -229,29 +179,18 @@ def derivative(
     """
     Numerical derivative along time, via repeated central differences.
 
-    Uses :func:`numpy.gradient`, which applies second-order accurate central
-    differences in the interior and first-order at the edges.  For higher
-    orders the operation is applied recursively, so accuracy degrades at the
-    boundaries with each application.
+    Uses :func:`numpy.gradient` (second-order accurate central differences
+    in the interior, first-order at the edges); higher orders recurse so
+    edge accuracy degrades with each application.
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-    y : ndarray, shape (T, dim)
     order : int, default 1
         Differentiation order.  Must be ``>= 1``.
 
-    Returns
-    -------
-    ndarray, shape (T, dim)
-
     Examples
     --------
-    >>> t = np.linspace(0.0, 2 * np.pi, 200)
-    >>> y = np.sin(t)[:, None]
-    >>> dy = derivative(t, y, order=1)
-    >>> bool(np.allclose(dy[1:-1, 0], np.cos(t[1:-1]), atol=1e-3))
-    True
+    >>> dtraj = traj.derivative(order=1)   # ẏ(t)
     """
     if not isinstance(order, int | np.integer) or order < 1:
         raise ValueError(f"derivative: 'order' must be a positive integer, got {order!r}")
@@ -261,28 +200,27 @@ def derivative(
     return out
 
 
-def norm(y: np.ndarray, axis: int = 1) -> np.ndarray:
+@trajectory_op(returns="passthrough")
+def norm(t: np.ndarray, y: np.ndarray, axis: int = 1) -> np.ndarray:
     """
-    Euclidean norm of ``y`` along ``axis``.
+    Euclidean norm of the state at each time, ``||y(t)||``.
+
+    The ``t`` argument is unused but kept to satisfy the universal
+    ``(t, y, ...)`` calling convention.
 
     Parameters
     ----------
-    y : ndarray
     axis : int, default 1
-        Axis to reduce.  ``axis=1`` collapses the state-space dimension,
-        producing a 1-D array of length ``T``.
 
     Returns
     -------
-    ndarray
-        Same shape as ``y`` with ``axis`` removed.
+    ndarray, shape ``(T,)``
 
     Examples
     --------
-    >>> y = np.array([[3.0, 4.0], [6.0, 8.0]])
-    >>> norm(y)
-    array([ 5., 10.])
+    >>> r = traj.norm()
     """
+    del t  # universal-signature placeholder
     return np.linalg.norm(y, axis=axis)
 
 
@@ -301,6 +239,7 @@ def _extract_component(y: np.ndarray, component: int) -> np.ndarray:
     return y[:, component]
 
 
+@trajectory_op(returns="passthrough")
 def local_maxima(
     t: np.ndarray,
     y: np.ndarray,
@@ -311,13 +250,13 @@ def local_maxima(
     Locate local maxima of one state component.
 
     Thin wrapper around :func:`scipy.signal.find_peaks`; any additional
-    keyword arguments (``prominence``, ``distance``, ``height``, ``width``,
-    …) are forwarded directly.
+    keyword arguments (``prominence``, ``distance``, ``height``, …) are
+    forwarded directly.  For sub-sample-accurate extrema, use
+    :class:`tsdynamics.analysis.LocalExtremum` with
+    :func:`detect_events` instead — that uses cubic-Hermite refinement.
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-    y : ndarray, shape (T, dim)
     component : int, default 0
     **find_peaks_kwargs
         Forwarded to :func:`scipy.signal.find_peaks`.
@@ -325,21 +264,17 @@ def local_maxima(
     Returns
     -------
     (t_peaks, y_peaks) : tuple of ndarrays
-        Times and values of the located maxima.
 
     Examples
     --------
-    >>> t = np.linspace(0.0, 4 * np.pi, 4000)
-    >>> y = np.sin(t)[:, None]
-    >>> tp, _ = local_maxima(t, y, component=0)
-    >>> tp.size
-    2
+    >>> tp, yp = traj.local_maxima(component=2, prominence=1.0)
     """
     sig = _extract_component(y, component)
     idx, _ = find_peaks(sig, **find_peaks_kwargs)
     return t[idx].copy(), sig[idx].copy()
 
 
+@trajectory_op(returns="passthrough")
 def local_minima(
     t: np.ndarray,
     y: np.ndarray,
@@ -350,13 +285,10 @@ def local_minima(
     Locate local minima of one state component.
 
     Implemented as :func:`local_maxima` applied to ``-y[:, component]`` so
-    every kwarg accepted by ``find_peaks`` (e.g. ``prominence``) works the
-    same way for troughs.
+    every kwarg accepted by ``find_peaks`` works the same way for troughs.
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-    y : ndarray, shape (T, dim)
     component : int, default 0
     **find_peaks_kwargs
         Forwarded to :func:`scipy.signal.find_peaks`.
@@ -370,6 +302,7 @@ def local_minima(
     return t[idx].copy(), sig[idx].copy()
 
 
+@trajectory_op(returns="passthrough")
 def return_times(
     t: np.ndarray,
     y: np.ndarray,
@@ -380,34 +313,24 @@ def return_times(
     Inter-peak intervals on one state component — the "poor man's period".
 
     For a clean ``sin(ω t)`` the result is a vector whose entries are all
-    close to ``2π / ω``.  This is the rough analogue of a period estimate
-    by zero-crossing; the proper spectral version lands in M7.
+    close to ``2π / ω``.  The proper spectral version lands in M7.
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-    y : ndarray, shape (T, dim)
     component : int, default 0
     **find_peaks_kwargs
         Forwarded to :func:`scipy.signal.find_peaks`.
 
     Returns
     -------
-    ndarray, shape (n_peaks - 1,)
+    ndarray, shape ``(n_peaks - 1,)``
         Empty if fewer than two peaks were found.
-
-    Examples
-    --------
-    >>> t = np.linspace(0.0, 10.0, 10000)
-    >>> y = np.sin(2 * np.pi * t)[:, None]
-    >>> isi = return_times(t, y)
-    >>> bool(np.allclose(isi.mean(), 1.0, atol=1e-3))
-    True
     """
-    tp, _ = local_maxima(t, y, component=component, **find_peaks_kwargs)
-    if tp.size < 2:
+    sig = _extract_component(y, component)
+    idx, _ = find_peaks(sig, **find_peaks_kwargs)
+    if idx.size < 2:
         return np.empty(0, dtype=float)
-    return np.diff(tp)
+    return np.diff(t[idx])
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +349,7 @@ _DATASPEC_REQUIRED_DIMS: dict[str, int] = {
 }
 
 
+@trajectory_op(returns="passthrough")
 def to_dataspec(
     t: np.ndarray,
     y: np.ndarray,
@@ -433,30 +357,18 @@ def to_dataspec(
     **kwargs: Any,
 ) -> dict[str, Any]:
     """
-    Build a plain dict describing a trajectory view, the V1 ``DataSpec`` shim.
+    Build a plain dict describing a trajectory view — V1 ``DataSpec`` shim.
 
-    The schema is intentionally simple — V1 will swap in a real ``DataSpec``
-    class without breaking the call sites because the keys here mirror what
-    that class will store.
+    The schema is intentionally simple — V1 will swap in a real
+    ``DataSpec`` class without breaking call sites because the keys here
+    mirror what that class will store.
 
     Parameters
     ----------
-    t : ndarray, shape (T,)
-    y : ndarray, shape (T, dim)
     kind : {"timeseries", "phase_portrait_2d", "phase_portrait_3d"}
     dims : iterable of int, optional
-        Component indices.  Required for the phase-portrait kinds; defaults
-        to all components for ``timeseries``.
-
-    Returns
-    -------
-    dict
-        ``{"kind": ..., "t": ..., "y": ..., "dims": (..., ...)}``.
-
-    Raises
-    ------
-    ValueError
-        If ``kind`` is unknown or ``dims`` has the wrong cardinality.
+        Component indices.  Required for the phase-portrait kinds;
+        defaults to all components for ``timeseries``.
     """
     if kind not in _DATASPEC_SCHEMAS:
         raise ValueError(
@@ -481,3 +393,17 @@ def to_dataspec(
             raise IndexError(f"to_dataspec: dim {d} out of range for state dim {y.shape[1]}")
 
     return {"kind": kind, "t": t, "y": y, "dims": dims, **kwargs}
+
+
+__all__ = [
+    "decimate",
+    "derivative",
+    "local_maxima",
+    "local_minima",
+    "norm",
+    "project",
+    "resample",
+    "return_times",
+    "to_dataspec",
+    "window",
+]

@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tsdynamics.analysis import trajectory_ops as ops
+from tsdynamics.analysis import _trajectory_ops as ops
 from tsdynamics.base import Trajectory
 
 # ---------------------------------------------------------------------------
@@ -333,14 +333,79 @@ class TestImmutability:
 
 class TestAnalysisModule:
     def test_functional_and_method_agree(self, ramp_traj: Trajectory) -> None:
+        # The functional layer is internal but still the implementation
+        # behind every Trajectory method — verify they agree numerically.
         tn1, yn1 = ops.decimate(ramp_traj.t, ramp_traj.y, every=5)
         out2 = ramp_traj.decimate(every=5)
         np.testing.assert_array_equal(tn1, out2.t)
         np.testing.assert_array_equal(yn1, out2.y)
 
-    def test_submodule_reexported_at_top_level(self) -> None:
+    def test_every_op_is_both_function_and_method(self) -> None:
+        # The registry contract: every analysis primitive lives in exactly
+        # one place — a decorated free function — and is exposed in *both*
+        # forms (free function on tsdynamics.analysis, method on Trajectory).
         import tsdynamics as ts
 
         assert hasattr(ts, "analysis")
-        assert hasattr(ts.analysis, "decimate")
         assert "analysis" in ts.__all__
+
+        expected = [
+            # M1
+            "decimate",
+            "resample",
+            "project",
+            "window",
+            "derivative",
+            "norm",
+            "local_maxima",
+            "local_minima",
+            "return_times",
+            "to_dataspec",
+            # M2
+            "detect_events",
+            "poincare_section",
+            "return_map",
+        ]
+        for name in expected:
+            assert hasattr(ts.analysis, name), f"missing free function {name!r}"
+            assert hasattr(Trajectory, name), f"missing Trajectory method {name!r}"
+
+    def test_polymorphic_free_function_accepts_trajectory(self, ramp_traj: Trajectory) -> None:
+        # The free function can be called with a Trajectory; it returns a
+        # Trajectory back (system preserved).
+        import tsdynamics as ts
+
+        out = ts.analysis.decimate(ramp_traj, every=5)
+        assert isinstance(out, Trajectory)
+        np.testing.assert_array_equal(out.t, ramp_traj.t[::5])
+        assert out.system is ramp_traj.system
+
+    def test_polymorphic_free_function_accepts_tuple(self, ramp_traj: Trajectory) -> None:
+        # A bare (t, y) tuple is accepted and re-wrapped as a Trajectory
+        # (system=None since the raw arrays carry no back-reference).
+        # The result still supports tuple-unpacking via Trajectory.__iter__.
+        import tsdynamics as ts
+
+        out = ts.analysis.decimate((ramp_traj.t, ramp_traj.y), every=5)
+        assert isinstance(out, Trajectory)
+        assert out.system is None
+        tn, yn = out  # Trajectory unpacks like (t, y)
+        np.testing.assert_array_equal(tn, ramp_traj.t[::5])
+
+    def test_polymorphic_free_function_accepts_bare_arrays(self, ramp_traj: Trajectory) -> None:
+        # Two raw ndarray positional args also yield a Trajectory.
+        import tsdynamics as ts
+
+        out = ts.analysis.decimate(ramp_traj.t, ramp_traj.y, every=5)
+        assert isinstance(out, Trajectory)
+        assert out.system is None
+        np.testing.assert_array_equal(out.t, ramp_traj.t[::5])
+
+    def test_method_form_matches_free_function(self, ramp_traj: Trajectory) -> None:
+        # The two forms must produce identical results.
+        import tsdynamics as ts
+
+        m = ramp_traj.decimate(every=5)
+        f = ts.analysis.decimate(ramp_traj, every=5)
+        np.testing.assert_array_equal(m.t, f.t)
+        np.testing.assert_array_equal(m.y, f.y)

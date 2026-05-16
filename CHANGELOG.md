@@ -20,6 +20,24 @@
   enrichment operations as pure `(t, y) → (t', y')` functions in
   `analysis.trajectory_ops`. The `Trajectory` methods are thin wrappers
   so the algorithms stay independently unit-testable.
+- **events**: `tsdynamics.analysis` now ships event & section detection
+  (M2): `EventCondition` protocol + `Plane`, `LinearPlane`, `Threshold`,
+  `LocalExtremum`, `Custom` condition classes, `EventResult` container,
+  and `detect_events(traj, condition, *, rtol=1e-8)`. Detection uses
+  sign-change brackets refined by `scipy.optimize.brentq` on a cubic
+  Hermite interpolant built from central-difference slopes;
+  `LocalExtremum` instead refines via the Hermite derivative (a closed-
+  form quadratic in the local parameter).
+- **sections**: `poincare_section(traj, plane, *, direction="up")` returns a
+  refined-crossings `Trajectory` carrying the full state at each crossing
+  (no axis collapse; the user can `.project()` if they want a
+  `(dim - 1)`-dim view).
+- **return-map**: `return_map(traj, plane, observable=0, *, step=1)` returns
+  a `ReturnMap(x, y, t, step, observable_meta)`; supports both an integer
+  component and a callable `fn(t, y) -> float` for the scalar observable,
+  with `step >= 1` for N-step return maps. `.to_dataspec(kind="return_map")`
+  matches the M1 placeholder dict shape so V2 can swap in `DataSpec`
+  without breaking call sites.
 
 ### Refactoring
 

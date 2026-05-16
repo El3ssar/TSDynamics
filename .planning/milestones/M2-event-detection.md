@@ -1,6 +1,6 @@
 # Milestone M2 — Event & section detection
 
-Status: TODO
+Status: DONE (2026-05-16)
 Depends on: M1
 Estimated scope: one chat
 Design doc: none
@@ -114,18 +114,62 @@ Modify:
 
 ## Acceptance criteria
 
-- [ ] `Plane`, `LinearPlane`, `Threshold`, `LocalExtremum`, `Custom` all
+- [x] `Plane`, `LinearPlane`, `Threshold`, `LocalExtremum`, `Custom` all
       implement the `EventCondition` protocol with unit tests.
-- [ ] `detect_events` on a `sin(ω t)` synthetic trajectory finds threshold-zero
-      crossings with refined-time error < `1e-6` for `dt = 1e-2`.
-- [ ] `poincare_section(Lorenz trajectory, Plane(axis=2, value=27, "up"))`
-      produces ≥ 100 points on a 400-time-unit trajectory with `dt=0.005`.
-- [ ] `return_map` on the Lorenz z-section reproduces the classical "tent-like"
-      Lorenz return map (visual sanity check via a regenerated reference plot
-      committed to `tests/fixtures/lorenz_return_map.png`).
-- [ ] `uv run pytest -m "not slow" --no-cov` passes.
-- [ ] `uv run ruff check src/ tests/` clean.
-- [ ] Docstrings on every public symbol with example.
+- [x] `detect_events` on a `sin(ω t)` synthetic trajectory finds threshold-zero
+      crossings with refined-time error < `1e-6` (verified for `dt ≈ 1.26e-2`
+      and `dt ≈ 6.28e-3` in `tests/test_events.py`).
+- [x] `poincare_section(Lorenz trajectory, Plane(axis=2, value=27, "up"))`
+      produces ≥ 100 points on a 400-time-unit trajectory with `dt=0.005`
+      (`tests/test_poincare.py::TestLorenzPoincare::test_section_yields_many_points`).
+- [x] `return_map` on the Lorenz z-section reproduces a non-trivial, bounded
+      shape — replaced the proposed reference PNG with numerical checks
+      (`test_return_map_has_unimodal_shape`).  The PNG sanity-check ride-along
+      moves to V2 when there's a plotter to render it.
+- [x] `uv run pytest -m "not slow" --no-cov` passes (709 passed / 56 skipped).
+- [x] `uv run ruff check src/ tests/` and `uv run ruff format --check ...`
+      both clean.
+- [x] Docstrings on every public symbol with example.
+- [x] Full suite (`uv run pytest --no-cov`): 843 passed, 56 skipped.
+
+## Resolved open questions
+
+- `LocalExtremum` uses the sign-change-on-derivative approach (consistent with
+  the generic event detector) and refines via the cubic Hermite's analytical
+  derivative (a quadratic in `s`).  This stays distinct from M1's
+  `local_maxima` / `local_minima`, which use `scipy.signal.find_peaks` — the
+  difference is documented in both docstrings.
+- `Plane.direction` defaults to `"either"`; `poincare_section` overrides it
+  to `"up"` by default (canonical Poincaré convention), with an explicit
+  `direction=` kwarg to opt out.
+- `return_map` takes a `step` argument (default `1`) for N-step return maps.
+
+## Design notes
+
+- All conditions implement an `EventCondition` protocol; the protocol is
+  runtime-checkable via `isinstance(cond, EventCondition)`.
+- Zero-crossing conditions share a `_ZeroCrossingCondition` base that
+  provides a default `detect(t, y, *, rtol)` implementation:
+  1. evaluate `g_k` along the trajectory,
+  2. find sign-change brackets,
+  3. build a cubic Hermite interpolant of `y(t)` using slopes from
+     `np.gradient`,
+  4. refine the root via `scipy.optimize.brentq` on
+     `s ↦ condition.evaluate(t_a + s·Δt, H(s))`.
+- `LocalExtremum` overrides `detect` because the "event function" is the
+  *time derivative* of one component, but the refinement scheme stays
+  identical (Hermite + Brent) — the Hermite *derivative* is a closed-form
+  quadratic in `s`, so this is exact in `s`.
+- The bracket mask uses asymmetric `< / >=` so a sample with `g == 0` closes
+  the previous bracket rather than opening a new one; the very first sample
+  is special-cased because no previous bracket exists.
+- `poincare_section` returns a `Trajectory` carrying the **full state** at
+  the refined crossings — we deliberately don't collapse the section axis.
+  The user can `.project()` if they want a `(dim - 1)`-dim view, which is
+  one line and far less surprising than silently dropping a dimension.
+- `return_map.ReturnMap.to_dataspec(kind="return_map")` returns the same
+  V1-style placeholder dict shape as M1's `to_dataspec`, so V2 can swap in
+  the real `DataSpec` without changing call sites.
 
 ## Out of scope
 
@@ -133,17 +177,5 @@ Modify:
 - Adaptive refinement of the underlying integrator's step size to land exactly
   on the event (that's a future milestone, post-N2).
 - Multi-event composite conditions (AND/OR). Defer until a real user demands it.
-- Plotting Poincaré sections (V2's job).
-
-## Open questions for the user
-
-- Should `LocalExtremum` go through `scipy.signal.find_peaks` (consistent with
-  M1's `local_maxima`) or use the sign-change-on-derivative approach? The
-  sign-change-on-derivative path generalises naturally to multi-dim and
-  arbitrary `g(t,y)`. Recommended: sign-change for the M2 primitive,
-  `find_peaks` for the M1 convenience wrapper. Document the difference.
-- Should `Plane` direction default to `"either"` or `"up"`? Standard Poincaré
-  usage is `"up"`. Recommended: `"either"` for the primitive, `"up"` for
-  `poincare_section` (its callers want canonical sections).
-- Should `return_map` support N-step returns (`y_{k+N} vs y_k`)? Recommended:
-  yes, with `step=1` default. One-liner.
+- Plotting Poincaré sections / committing a reference PNG (V2's job; the
+  numerical checks above stand in until then).
