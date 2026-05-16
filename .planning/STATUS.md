@@ -1,10 +1,22 @@
-# Status — updated 2026-05-16 (M2 + analysis-layer registry refactor)
+# Status — updated 2026-05-16 (M2 + registry refactor; Track E re-scoped)
 
 Current milestone: **none — M2 closed. Pick the next from ROADMAP.md.**
+**Track E (Rust solver migration) was re-scoped on 2026-05-16** —
+read [`design/native-solver-migration.md`](design/native-solver-migration.md)
+and [`milestones/N2-rust-ode-stepper.md`](milestones/N2-rust-ode-stepper.md)
+before starting any N-milestone.  Short version: the original N2 plan
+("Rust stepper wrapping a JiTCODE-compiled RHS") was scrapped.  The new
+N2 reuses N1's IR machinery to evaluate the RHS in Rust *and* implements
+the steppers in Rust, multi-method like DynamicalSystems.jl
+(DP5/DP8/Tsit5/Vern6-9/Rosenbrock).  Existing Rust crates
+(`ode_solvers`, `nalgebra`) carry the explicit-RK weight; we
+implement only what the ecosystem doesn't have.  N3/N5 milestone specs
+also written.
+
 Phase: pick. Track A (M4 — but it needs R2 + M3 first; M5 / M6 / M7 / M10 /
 M11 are independent), Track B (V1), Track C (R2), and Track E (N2) are all
 unblocked and can run in parallel chats.
-Last-touched files:
+Last-touched files (M2 + registry):
 `src/tsdynamics/analysis/_registry.py` (new — the @trajectory_op decorator
 + install_methods),
 `src/tsdynamics/analysis/__init__.py`,
@@ -17,6 +29,14 @@ replaced by a single `install_methods(Trajectory)` call),
 `tests/test_events.py`, `tests/test_poincare.py`,
 `tests/test_trajectory_enrichment.py`,
 `.planning/**`, `CHANGELOG.md`, `CLAUDE.md`.
+
+Last-touched files (Track E re-scope):
+`.planning/ROADMAP.md` (N2/N4/N5 entries rewritten),
+`.planning/design/native-solver-migration.md` (N2-N5 sections rewritten,
+new risk register, new open questions),
+`.planning/milestones/N2-rust-ode-stepper.md` (new — comprehensive),
+`.planning/milestones/N3-rust-variational-lyapunov.md` (new),
+`.planning/milestones/N5-rust-dde-suite.md` (new).
 
 ## What's done
 
@@ -110,22 +130,28 @@ registry**:
 
 Pick one of:
 
+- **N2** (Pure-Rust ODE stepper suite): re-specced 2026-05-16.  Open
+  [`milestones/N2-rust-ode-stepper.md`](milestones/N2-rust-ode-stepper.md)
+  and follow it.  This is now the most strategically important Track E
+  milestone — it unlocks N3 (Lyapunov in Rust) and N5 (DDE in Rust)
+  and represents the actual "supersede DynamicalSystems.jl" payload.
+  Multi-chat; suggested split into N2.a/b/c/d inside the milestone
+  file.  Strong reading list at the top of the milestone — **ask the
+  six open questions before writing any code**.
 - **R2** (Rust parameter-sweep kernel): rayon-backed. Unlocks M3, which
   unlocks M4 (bifurcation diagrams).  Track A → C handoff.
 - **V1** (Viz skeleton): DataSpec/Transform/Plotter live here.  M2 left
   three `to_dataspec`-style placeholder dicts (`timeseries`,
   `phase_portrait_*`, `return_map`); V1 should preserve those keys.
-- **N2** (Rust ODE stepper): biggest single Track E milestone but the N1
-  IR is in place, so this is now multi-chat but tractable.
 - **M5** (Equilibria & local stability): independent of M2 outputs.
 - **M6** (Embedding utilities): independent.
 - **M7** (Spectral toolkit): independent.
 
-Default recommendation: **V1**, since M2 stacked up *three* placeholder
-dataspec shapes (`timeseries`, `phase_portrait_*`, `return_map`) and the
-sooner V1 turns those into a real `DataSpec` class the less churn there is
-later.  R2 is the runner-up because it directly unblocks the bifurcation
-track.
+Default recommendation: **N2** — Track E was the original strategic
+priority and the re-scope finally aligns it with the mission.  Runner-up:
+**V1**, since M2 stacked up three placeholder dataspec shapes and the
+sooner V1 turns those into a real `DataSpec` class the less churn there
+is later.
 
 ## R1 follow-ups (still parked)
 

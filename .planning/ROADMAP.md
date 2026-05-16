@@ -49,8 +49,8 @@ The roadmap runs four tracks in parallel:
 | M5 | Equilibria & local stability | TODO | A | Newton/Krylov + eigenvalue classification. |
 | M6 | Embedding utilities (promote internals) | TODO | A | AMI, FNN, Takens — currently hidden. |
 | M7 | Spectral toolkit | TODO | A | FFT, Welch PSD, spectrogram, CWT. |
-| N2 | Rust ODE stepper (RHS via JiTCODE-cffi) | TODO | E | Multi-chat. DP5/DP8/V9/Rosenbrock. |
-| N3 | Variational ODE Lyapunov in Rust | TODO | E | Drops `jitcode_lyap`. |
+| N2 | Pure-Rust ODE stepper suite (RHS via IR) | TODO | E | Multi-chat. Extends N1's IR to full ODE vocab. Multi-method (DP5/DP8/Tsit5/Vern6-9/Rosenbrock). Lean on existing crates (`ode_solvers`, `nalgebra`). End state: ODE integration is end-to-end Rust, JiTCODE only used for symbolic→IR lowering. |
+| N3 | Variational ODE Lyapunov in Rust | TODO | E | Builds on N2's stepper + IR. Drops `jitcode_lyap`. |
 | R3 | correlation_sum + boxcount kernels | TODO | C | Feeds M8. |
 | M8 | Fractal dimensions | TODO | A | On R3. Includes Kaplan-Yorke. |
 | R4 | recurrence kernel | TODO | C | Matrix + line histograms. |
@@ -61,12 +61,12 @@ The roadmap runs four tracks in parallel:
 | R5 | Rust basin kernel | TODO | C | IC sweep + attractor labelling. |
 | M12 | Basins of attraction | TODO | A | On R5. |
 | V4 | Color/alpha transforms | TODO | B | Color-by-Lyapunov, alpha-by-density. |
-| N4 | Symbolic → cranelift JIT | TODO | E | Multi-chat. Drops JiTCODE. |
+| N4 | Cranelift JIT for the IR | TODO | E | Multi-chat. Replaces the IR interpreter from N1+N2 with cranelift-codegen'd native code. Drops JiTCODE entirely (the C-compile path stops being used even for symbolic→IR — SymEngine alone is enough). Performance milestone, not a correctness one. |
 | M13 | Periodic orbit detection | TODO | A | Multi-chat. Shooting + Floquet. |
 | R6 | Rust continuation kernel | TODO | C | Predictor/corrector. |
 | M14 | Continuation | TODO | A | Multi-chat. On R6. |
 | V5 | Plotly backend | TODO | B | Proves the abstraction. |
-| N5 | Rust DDE solver suite | TODO | E | Multi-chat. Hardest. Drops JiTCDDE. |
+| N5 | Pure-Rust DDE solver suite | TODO | E | Multi-chat. Hardest. Layered on N2's stepper + a Rust-side history buffer with Hermite continuous extension. Multi-method like N2. Drops JiTCDDE. |
 | M15 | Manifolds (local stable/unstable) | TODO | A | Multi-chat. |
 | M16 | Codim-2 bifurcation curves | TODO | A | Multi-chat. |
 | N6 | Compatibility validation & default flip | TODO | E | Regression suite green; flip default. |
