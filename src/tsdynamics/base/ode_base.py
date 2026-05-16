@@ -11,6 +11,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from ._ir import NotLowerableError
+from ._ode_lowering import lower_ode_to_ir
 from .base import SystemBase, Trajectory
 
 # Platform-specific compiled extension suffix (e.g. ".cpython-312-x86_64-linux-gnu.so").
@@ -41,6 +43,24 @@ _INTEGRATOR_MAP: dict[str, str] = {
     "vode": "vode",
 }
 _EXPLICIT_METHODS = frozenset({"dopri5", "dop853"})
+
+# N2.b — methods implemented by the Rust ERK driver (others use JiTCODE until ported).
+_RUST_NATIVE_METHODS = frozenset({"DP5", "DP8", "TSIT5", "BS3", "RK4"})
+
+
+def _rust_integrator_name(method: str | None, default: str) -> str:
+    m = (method or default).upper()
+    if m in ("RK45", "DOPRI5"):
+        return "DP5"
+    if m in ("DOP853",):
+        return "DP8"
+    return m
+
+
+def _ode_ir_cache_key(inst: Any) -> tuple[type, int, int]:
+    sv = inst._structural_vals()
+    hsh = hash(tuple(sorted(sv.items()))) if sv else 0
+    return (type(inst), inst.dim, hsh)
 
 
 def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
@@ -115,6 +135,8 @@ class ContinuousSystem(SystemBase, ABC):
     #                   a fresh wrapper without recompiling.
     _compiled_odes: ClassVar[dict[str, Any]] = {}
     _compiled_lyap: ClassVar[dict[str, str]] = {}
+    #: SymEngine → IR bytecode for the Rust stepper (N2.b); keyed like JiTCODE.
+    _compiled_ir_bytes: ClassVar[dict[tuple[type, int, int], bytes]] = {}
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -354,9 +376,45 @@ class ContinuousSystem(SystemBase, ABC):
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
         method = method or self._default_method
-        integ_name = _INTEGRATOR_MAP.get(method, method)
         ic_arr = self.resolve_ic(ic)
         t_eval = _make_t_eval(t0, final_time, dt)
+
+        rust_m = _rust_integrator_name(method, self._default_method)
+        if rust_m in _RUST_NATIVE_METHODS:
+            try:
+                key = _ode_ir_cache_key(self)
+                cache = type(self)._compiled_ir_bytes
+                if key not in cache:
+                    co = lower_ode_to_ir(
+                        type(self),
+                        dim=self.dim,
+                        params=dict(self.params),
+                        structural_params=type(self)._structural_params,
+                    )
+                    cache[key] = co.bytecode
+                bc = cache[key]
+            except NotLowerableError:
+                pass
+            else:
+                from .._native import integrate_ode as _rust_integrate_ode
+
+                nonstruct = [k for k in self.params if k not in type(self)._structural_params]
+                params_np = np.asarray([self.params[k] for k in nonstruct], dtype=float)
+                t_out, y_out = _rust_integrate_ode(
+                    bc,
+                    float(t0),
+                    float(final_time),
+                    ic_arr,
+                    params_np,
+                    rust_m,
+                    float(dt),
+                    float(rtol),
+                    float(atol),
+                )
+                y_stack = np.asarray(y_out, dtype=float).reshape(t_out.shape[0], self.dim)
+                return Trajectory(t=t_out.copy(), y=y_stack, system=self)
+
+        integ_name = _INTEGRATOR_MAP.get(method, method)
 
         ode = self._ensure_compiled(for_lyap=False)
         ode.set_integrator(integ_name, rtol=rtol, atol=atol, **integrator_kwargs)

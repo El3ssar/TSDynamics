@@ -19,6 +19,7 @@ from ._core import (
     add_one,
     eval_ode_rhs,
     eval_ode_rhs_batch,
+    integrate_ode,
     iterate_map,
     lyapunov_spectrum_map,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "add_one",
     "eval_ode_rhs",
     "eval_ode_rhs_batch",
+    "integrate_ode",
     "iterate_map",
     "lyapunov_spectrum_map",
 ]
