@@ -1,6 +1,6 @@
-"""N2.a regression tests for the ODE IR lowering + Rust RHS evaluator.
+"""N2 regression tests for ODE IR lowering + Rust RHS + Rust DP8 goldens.
 
-Three layers of guarantee:
+Four guarantees:
 
 1. :func:`test_lower_ode_succeeds` — every built-in ``ContinuousSystem``
    lowers via :func:`tsdynamics.base._ode_lowering.lower_ode_to_ir`
@@ -10,16 +10,16 @@ Three layers of guarantee:
    compare against the SymEngine-traced RHS (``Lambdify``).  This is
    the strongest functional guarantee available *without* a stepper —
    it catches every opcode-level lowering bug.
-3. :func:`test_golden_ode_loadable` — the JiTCODE-generated golden
-   trajectories under ``tests/native/regression/ode/`` are present,
-   loadable, and non-trivial.  N2.b will compare a Rust stepper
-   against them; today we just guard against accidental deletion or
-   data corruption.
+3. :func:`test_golden_ode_loadable` — golden trajectories under
+   ``tests/native/regression/ode/`` are present, loadable, and non-trivial.
+4. :func:`test_golden_trajectory_matches_rust_dp8` — each golden was produced
+   by ``ContinuousSystem.integrate(..., method="dop853")``, which maps to the
+   Rust **DP8** driver; recomputing with ``method="DP8"`` must recover the
+   stored ``(t, y)`` on the uniform grid.
 
-Five systems have no golden file by design — ``Duffing``, ``SprottD``,
-``SprottI`` (explicit-RK collapses on random ICs) and ``ExcitableCell``,
-``BlinkingRotlet`` (stiff / hangs).  They still go through the
-lower-and-compare RHS checks; only the golden-file check skips.
+Three systems have no golden file — ``Duffing``, ``SprottD``, ``SprottI``
+(random IC blows up under the golden tolerances).  They still run the
+lower-and-compare RHS checks; golden-file checks skip them.
 
 The RHS comparison uses SymEngine's ``Lambdify`` rather than the
 JiTCODE-compiled ``.so`` because the latter does not expose its
@@ -63,7 +63,12 @@ GOLDEN_DIR = Path(__file__).parent / "native" / "regression" / "ode"
 # Systems with no integrator-friendly random IC; goldens are skipped by
 # ``scripts/generate_ode_goldens.py`` for these.  The lowering + RHS
 # checks still run because they don't integrate.
-GOLDEN_SKIP = frozenset({"Duffing", "SprottD", "SprottI", "ExcitableCell", "BlinkingRotlet"})
+GOLDEN_SKIP = frozenset({"Duffing", "SprottD", "SprottI"})
+
+# Rust DP8 replay of committed goldens — comfortably inside FP noise after a
+# full regenerate on the machine that committed the `.npz` files.
+GOLDEN_TRAJ_RTOL = 1e-9
+GOLDEN_TRAJ_ATOL = 1e-11
 
 # Tight comparison tolerance for IR vs SymEngine.  Both pipelines walk
 # the same expression tree; the only sources of disagreement are
@@ -246,9 +251,7 @@ def test_ode_rhs_matches_symengine(module_path: str, class_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Golden-file presence + sanity.  Doesn't yet validate against a Rust
-# stepper (that's N2.b); just makes sure the files exist, are
-# non-trivial, and carry the metadata downstream code will rely on.
+# Golden-file presence + sanity, then trajectory replay vs Rust DP8.
 # ---------------------------------------------------------------------------
 
 
@@ -292,3 +295,31 @@ def test_golden_ode_loadable(module_path: str, class_name: str) -> None:
     assert saved_nonstructural == expected_names, (
         f"{class_name}: param order drift (saved={saved_nonstructural}, expected={expected_names})"
     )
+
+
+@pytest.mark.parametrize(("module_path", "class_name"), ALL_ODE_SYSTEMS, ids=_IDS)
+def test_golden_trajectory_matches_rust_dp8(module_path: str, class_name: str) -> None:
+    """Replay each golden with Rust DP8 and match stored trajectory."""
+    if class_name in GOLDEN_SKIP:
+        pytest.skip(f"{class_name}: no golden — random IC unstable (see GOLDEN_SKIP)")
+
+    path = GOLDEN_DIR / f"{class_name}.npz"
+    if not path.exists():
+        pytest.skip(f"golden file missing: {path}")
+
+    g = np.load(path, allow_pickle=True)
+    inst = _instantiate(module_path, class_name)
+    for name, val in zip(g["param_names"], g["params"], strict=True):
+        inst.params[str(name)] = float(val)
+
+    ic = np.asarray(g["ic"], dtype=float)
+    traj = inst.integrate(
+        final_time=float(g["final_time"]),
+        dt=float(g["dt"]),
+        ic=ic,
+        method="DP8",
+        rtol=float(g["rtol"]),
+        atol=float(g["atol"]),
+    )
+    np.testing.assert_allclose(traj.t, g["t"], rtol=0.0, atol=1e-14)
+    np.testing.assert_allclose(traj.y, g["y"], rtol=GOLDEN_TRAJ_RTOL, atol=GOLDEN_TRAJ_ATOL)

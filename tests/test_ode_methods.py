@@ -1,0 +1,50 @@
+"""Rust ERK methods agree on Lorenz dense output (reference: DP8)."""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+import tsdynamics as ts
+
+
+@pytest.mark.parametrize("method", ["DP5", "TSIT5", "BS3"])
+def test_lorenz_dense_output_matches_dp8(method: str) -> None:
+    lor = ts.Lorenz()
+    ic = np.array([1.0, 1.0, 1.0], dtype=float)
+    ref = lor.integrate(
+        final_time=10.0,
+        dt=0.05,
+        ic=ic,
+        method="DP8",
+        rtol=1e-10,
+        atol=1e-12,
+    )
+    tr = lor.integrate(
+        final_time=10.0,
+        dt=0.05,
+        ic=ic,
+        method=method,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(tr.t, ref.t, rtol=0, atol=1e-14)
+    np.testing.assert_allclose(tr.y, ref.y, rtol=5e-7, atol=1e-9)
+
+
+def test_rk4_dense_integration_is_repeatable() -> None:
+    """RK4 steps uniformly at ``dt`` — trajectory must be bitwise repeatable."""
+    lor = ts.Lorenz()
+    ic = np.array([1.0, 1.0, 1.0], dtype=float)
+    a = lor.integrate(final_time=10.0, dt=0.05, ic=ic, method="RK4")
+    b = lor.integrate(final_time=10.0, dt=0.05, ic=ic, method="RK4")
+    np.testing.assert_allclose(a.t, b.t, rtol=0.0, atol=1e-14)
+    np.testing.assert_allclose(a.y, b.y, rtol=0.0, atol=1e-15)
+
+
+def test_dop853_alias_runs_rust_dp8() -> None:
+    lor = ts.Lorenz()
+    ic = np.array([1.0, 1.0, 1.0], dtype=float)
+    a = lor.integrate(final_time=5.0, dt=0.1, ic=ic, method="DP8")
+    b = lor.integrate(final_time=5.0, dt=0.1, ic=ic, method="DOP853")
+    np.testing.assert_allclose(a.y, b.y, rtol=1e-14, atol=1e-14)
