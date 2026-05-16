@@ -6,6 +6,7 @@
 use pyo3::prelude::*;
 
 mod maps;
+mod ode;
 mod smoke;
 
 #[pymodule]
@@ -16,5 +17,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // N1 map kernels.
     m.add_function(wrap_pyfunction!(maps::iterate_map, m)?)?;
     m.add_function(wrap_pyfunction!(maps::lyapunov_spectrum_map, m)?)?;
+
+    // N2.a ODE IR evaluator (no stepper yet — N2.b).
+    m.add_function(wrap_pyfunction!(ode::eval_ode_rhs, m)?)?;
+    m.add_function(wrap_pyfunction!(ode::eval_ode_rhs_batch, m)?)?;
     Ok(())
 }

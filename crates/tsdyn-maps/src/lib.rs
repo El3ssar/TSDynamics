@@ -33,8 +33,11 @@ fn eval_step(
     out: &mut [f64],
     scratch: &mut Vec<f64>,
 ) {
+    // Maps don't carry a time component; pass t = 0.0 so the shared
+    // evaluator signature (introduced for ODE Time-op support in N2)
+    // stays uniform.
     for (i, prog) in map.step.iter().enumerate() {
-        out[i] = CompiledMap::eval(prog, state, params, scratch);
+        out[i] = CompiledMap::eval(prog, 0.0, state, params, scratch);
     }
 }
 
@@ -47,7 +50,7 @@ fn eval_jacobian(
 ) {
     for i in 0..map.dim {
         for j in 0..map.dim {
-            out[(i, j)] = CompiledMap::eval(&map.jacobian[i][j], state, params, scratch);
+            out[(i, j)] = CompiledMap::eval(&map.jacobian[i][j], 0.0, state, params, scratch);
         }
     }
 }

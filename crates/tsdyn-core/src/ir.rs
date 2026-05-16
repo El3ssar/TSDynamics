@@ -23,6 +23,9 @@ pub enum Expr {
     Const(f64),
     Var(u32),
     Param(u32),
+    /// N2: push the per-call simulation time `t`. Maps evaluate with
+    /// `t = 0.0`; ODE RHS evaluation passes the real time.
+    Time,
     Add,
     Sub,
     Mul,
@@ -30,6 +33,12 @@ pub enum Expr {
     Neg,
     Pow(i32),
     Mod,
+    /// N2: general two-operand power. Pops `exp` then `base`, pushes
+    /// `base.powf(exp)`. Used when the exponent is itself an
+    /// expression (e.g. CircadianRhythm's `x ** n`, YuWang's
+    /// `x ** (y * z)`). Integer-exponent powers continue to use
+    /// `Pow(i32)` for the cheaper `powi` codegen.
+    Pow2,
     Sin,
     Cos,
     Exp,
@@ -38,6 +47,14 @@ pub enum Expr {
     Sqrt,
     Arccos,
     Sign,
+    /// N2: hyperbolic tangent — used by coupled / climate / physical systems.
+    Tanh,
+    /// N2: hyperbolic sine.
+    Sinh,
+    /// N2: hyperbolic cosine.
+    Cosh,
+    /// N2: fractional / non-integer power, evaluated as `base.powf(exp)`.
+    PowF(f64),
     Where,
     Lt,
     Le,
@@ -82,6 +99,7 @@ mod opcodes {
     pub const CONST: u8 = 0x00;
     pub const VAR: u8 = 0x01;
     pub const PARAM: u8 = 0x02;
+    pub const TIME: u8 = 0x03;
     pub const ADD: u8 = 0x10;
     pub const SUB: u8 = 0x11;
     pub const MUL: u8 = 0x12;
@@ -89,6 +107,7 @@ mod opcodes {
     pub const NEG: u8 = 0x14;
     pub const POW: u8 = 0x15;
     pub const MOD: u8 = 0x16;
+    pub const POW2: u8 = 0x17;
     pub const SIN: u8 = 0x20;
     pub const COS: u8 = 0x21;
     pub const EXP: u8 = 0x22;
@@ -97,12 +116,16 @@ mod opcodes {
     pub const SQRT: u8 = 0x25;
     pub const ARCCOS: u8 = 0x26;
     pub const SIGN: u8 = 0x27;
+    pub const TANH: u8 = 0x28;
+    pub const SINH: u8 = 0x29;
+    pub const COSH: u8 = 0x2A;
     pub const WHERE: u8 = 0x30;
     pub const LT: u8 = 0x31;
     pub const LE: u8 = 0x32;
     pub const GT: u8 = 0x33;
     pub const GE: u8 = 0x34;
     pub const AND: u8 = 0x35;
+    pub const POWF: u8 = 0x40;
 }
 
 struct Reader<'a> {
@@ -157,6 +180,7 @@ fn decode_program(reader: &mut Reader<'_>) -> Result<Vec<Expr>, DecodeError> {
             CONST => Expr::Const(reader.read_f64()?),
             VAR => Expr::Var(reader.read_u32()?),
             PARAM => Expr::Param(reader.read_u32()?),
+            TIME => Expr::Time,
             ADD => Expr::Add,
             SUB => Expr::Sub,
             MUL => Expr::Mul,
@@ -164,6 +188,7 @@ fn decode_program(reader: &mut Reader<'_>) -> Result<Vec<Expr>, DecodeError> {
             NEG => Expr::Neg,
             POW => Expr::Pow(reader.read_i32()?),
             MOD => Expr::Mod,
+            POW2 => Expr::Pow2,
             SIN => Expr::Sin,
             COS => Expr::Cos,
             EXP => Expr::Exp,
@@ -172,6 +197,10 @@ fn decode_program(reader: &mut Reader<'_>) -> Result<Vec<Expr>, DecodeError> {
             SQRT => Expr::Sqrt,
             ARCCOS => Expr::Arccos,
             SIGN => Expr::Sign,
+            TANH => Expr::Tanh,
+            SINH => Expr::Sinh,
+            COSH => Expr::Cosh,
+            POWF => Expr::PowF(reader.read_f64()?),
             WHERE => Expr::Where,
             LT => Expr::Lt,
             LE => Expr::Le,
@@ -235,12 +264,15 @@ impl CompiledMap {
         Ok(Self { dim, n_params, step, jacobian })
     }
 
-    /// Evaluate one postfix program against (`state`, `params`).
+    /// Evaluate one postfix program against (`t`, `state`, `params`).
     ///
     /// `scratch` is the stack; it's caller-owned so the iterate / Lyapunov
     /// loops can amortise allocation. The scratch is truncated on entry.
+    /// `t` is only consulted by ODE programs that contain the `Time`
+    /// opcode — discrete-map callers pass `0.0`.
     pub fn eval(
         program: &[Expr],
+        t: f64,
         state: &[f64],
         params: &[f64],
         scratch: &mut Vec<f64>,
@@ -251,6 +283,7 @@ impl CompiledMap {
                 Expr::Const(c) => scratch.push(*c),
                 Expr::Var(i) => scratch.push(state[*i as usize]),
                 Expr::Param(i) => scratch.push(params[*i as usize]),
+                Expr::Time => scratch.push(t),
                 Expr::Add => {
                     let b = scratch.pop().unwrap();
                     let a = scratch.pop().unwrap();
@@ -284,6 +317,11 @@ impl CompiledMap {
                     let a = scratch.pop().unwrap();
                     // Match Python's % (floor-modulo), not fmod.
                     scratch.push(a - (a / b).floor() * b);
+                }
+                Expr::Pow2 => {
+                    let b = scratch.pop().unwrap();
+                    let a = scratch.pop().unwrap();
+                    scratch.push(a.powf(b));
                 }
                 Expr::Sin => {
                     let a = scratch.pop().unwrap();
@@ -323,6 +361,22 @@ impl CompiledMap {
                         0.0
                     });
                 }
+                Expr::Tanh => {
+                    let a = scratch.pop().unwrap();
+                    scratch.push(a.tanh());
+                }
+                Expr::Sinh => {
+                    let a = scratch.pop().unwrap();
+                    scratch.push(a.sinh());
+                }
+                Expr::Cosh => {
+                    let a = scratch.pop().unwrap();
+                    scratch.push(a.cosh());
+                }
+                Expr::PowF(k) => {
+                    let a = scratch.pop().unwrap();
+                    scratch.push(a.powf(*k));
+                }
                 Expr::Where => {
                     let f = scratch.pop().unwrap();
                     let t = scratch.pop().unwrap();
@@ -360,6 +414,107 @@ impl CompiledMap {
     }
 }
 
+/// One compiled ODE: the RHS (`dim` postfix programs) plus an optional
+/// Jacobian (`dim × dim` postfix programs). N2.a ships RHS evaluation
+/// only — stiff methods that consume the Jacobian arrive in N2.c.
+///
+/// Six built-in systems (MultiChua, AnishchenkoAstakhov, StickSlipOscillator,
+/// CellularNeuralNetwork, Colpitts, FluidTrampoline) use `Abs` / `sign`
+/// without an explicit `_jacobian`, and SymEngine returns unevaluated
+/// `Derivative` nodes for those — for them the Python lowerer sets
+/// `has_jacobian = false` so we never see a malformed Jacobian here.
+#[derive(Debug, Clone)]
+pub struct CompiledOde {
+    pub dim: usize,
+    pub n_params: usize,
+    pub rhs: Vec<Vec<Expr>>,
+    pub jacobian: Option<Vec<Vec<Vec<Expr>>>>,
+}
+
+impl CompiledOde {
+    /// Decode the wire format produced by `tsdynamics.base._ir.serialize_ode`.
+    ///
+    /// Layout (all little-endian):
+    /// ```text
+    /// u32 dim
+    /// u32 n_params
+    /// u32 n_rhs  (== dim)
+    /// for each rhs expr: u32 n_ops + ops
+    /// u8  has_jacobian  (0 or 1)
+    /// if has_jacobian:
+    ///     u32 n_jac_rows  (== dim)
+    ///     for each row: u32 n_cols (== dim)
+    ///         for each cell: u32 n_ops + ops
+    /// ```
+    pub fn from_bytes(buf: &[u8]) -> Result<Self, DecodeError> {
+        let mut r = Reader::new(buf);
+        let dim = r.read_u32()? as usize;
+        let n_params = r.read_u32()? as usize;
+
+        let n_rhs = r.read_u32()? as usize;
+        if n_rhs != dim {
+            return Err(DecodeError::BadShape);
+        }
+        let mut rhs = Vec::with_capacity(dim);
+        for _ in 0..dim {
+            rhs.push(decode_program(&mut r)?);
+        }
+
+        let has_jac = r.read_u8()? != 0;
+        let jacobian = if has_jac {
+            let n_jac_rows = r.read_u32()? as usize;
+            if n_jac_rows != dim {
+                return Err(DecodeError::BadShape);
+            }
+            let mut jac = Vec::with_capacity(dim);
+            for _ in 0..dim {
+                let n_cols = r.read_u32()? as usize;
+                if n_cols != dim {
+                    return Err(DecodeError::BadShape);
+                }
+                let mut row = Vec::with_capacity(dim);
+                for _ in 0..dim {
+                    row.push(decode_program(&mut r)?);
+                }
+                jac.push(row);
+            }
+            Some(jac)
+        } else {
+            None
+        };
+
+        if !r.done() {
+            return Err(DecodeError::BadShape);
+        }
+        Ok(Self { dim, n_params, rhs, jacobian })
+    }
+
+    /// Evaluate the RHS at `(t, state, params)`, writing each component
+    /// into `out_dy`. `scratch` is the per-call f64 stack — caller-owned
+    /// so the stepper loop can amortise allocation across thousands of
+    /// RHS calls.
+    ///
+    /// The state vector is exposed to the IR via `Expr::Var(i)`. There
+    /// is no implicit time variable yet — autonomous systems only; if a
+    /// non-autonomous system surfaces, lift `t` into an extra state
+    /// component the way JiTCODE does.
+    pub fn eval_rhs(
+        &self,
+        t: f64,
+        state: &[f64],
+        params: &[f64],
+        out_dy: &mut [f64],
+        scratch: &mut Vec<f64>,
+    ) {
+        assert_eq!(state.len(), self.dim, "state.len() != dim");
+        assert_eq!(params.len(), self.n_params, "params.len() != n_params");
+        assert_eq!(out_dy.len(), self.dim, "out_dy.len() != dim");
+        for (i, program) in self.rhs.iter().enumerate() {
+            out_dy[i] = CompiledMap::eval(program, t, state, params, scratch);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,8 +530,95 @@ mod tests {
             Expr::Add,
         ];
         let mut scratch = Vec::new();
-        let v = CompiledMap::eval(&program, &[], &[], &mut scratch);
+        let v = CompiledMap::eval(&program, 0.0, &[], &[], &mut scratch);
         assert_eq!(v, 11.0);
+    }
+
+    #[test]
+    fn eval_tanh_sinh_cosh_powf() {
+        // tanh(x) at x = 0.5
+        let mut scratch = Vec::new();
+        let prog = vec![Expr::Var(0), Expr::Tanh];
+        let v = CompiledMap::eval(&prog, 0.0, &[0.5], &[], &mut scratch);
+        assert!((v - (0.5_f64).tanh()).abs() < 1e-15);
+
+        // sinh(x) at x = -0.7
+        let prog = vec![Expr::Var(0), Expr::Sinh];
+        let v = CompiledMap::eval(&prog, 0.0, &[-0.7], &[], &mut scratch);
+        assert!((v - (-0.7_f64).sinh()).abs() < 1e-15);
+
+        // cosh(x) at x = 1.3
+        let prog = vec![Expr::Var(0), Expr::Cosh];
+        let v = CompiledMap::eval(&prog, 0.0, &[1.3], &[], &mut scratch);
+        assert!((v - (1.3_f64).cosh()).abs() < 1e-15);
+
+        // x ** 1.25 at x = 4.0  →  4 ** 1.25 = 4 * 4 ** 0.25 ≈ 5.6568542...
+        let prog = vec![Expr::Var(0), Expr::PowF(1.25)];
+        let v = CompiledMap::eval(&prog, 0.0, &[4.0], &[], &mut scratch);
+        assert!((v - (4.0_f64).powf(1.25)).abs() < 1e-13);
+
+        // x ** 0.5 == sqrt(x) at x = 9.0
+        let prog = vec![Expr::Var(0), Expr::PowF(0.5)];
+        let v = CompiledMap::eval(&prog, 0.0, &[9.0], &[], &mut scratch);
+        assert!((v - 3.0).abs() < 1e-13);
+    }
+
+    #[test]
+    fn eval_time_and_pow2() {
+        let mut scratch = Vec::new();
+
+        // sin(t) at t = 0.5
+        let prog = vec![Expr::Time, Expr::Sin];
+        let v = CompiledMap::eval(&prog, 0.5, &[], &[], &mut scratch);
+        assert!((v - (0.5_f64).sin()).abs() < 1e-15);
+
+        // x ** y at x=2.5, y=3.7  →  2.5_f64.powf(3.7)
+        let prog = vec![Expr::Var(0), Expr::Var(1), Expr::Pow2];
+        let v = CompiledMap::eval(&prog, 0.0, &[2.5, 3.7], &[], &mut scratch);
+        assert!((v - (2.5_f64).powf(3.7)).abs() < 1e-13);
+
+        // Var(0) ** Param(0) at x=4, n=2.5 → 4 ** 2.5 = 32
+        let prog = vec![Expr::Var(0), Expr::Param(0), Expr::Pow2];
+        let v = CompiledMap::eval(&prog, 0.0, &[4.0], &[2.5], &mut scratch);
+        assert!((v - 32.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn eval_compiled_ode_roundtrip() {
+        // RHS: dx/dt = -a * x + sin(x);  dim=1, params=[a]
+        // Wire format: dim=1 n_params=1 n_rhs=1
+        //              expr len=6 ops: [Param(0), Var(0), Mul, Neg, Var(0) sin, Add]
+        // Then has_jacobian=0.
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(&1u32.to_le_bytes()); // dim
+        buf.extend_from_slice(&1u32.to_le_bytes()); // n_params
+        buf.extend_from_slice(&1u32.to_le_bytes()); // n_rhs
+                                                    // program: a * x  ->  Neg  ->  + sin(x)
+                                                    //   Param(0), Var(0), Mul, Neg, Var(0), Sin, Add  = 7 ops
+        buf.extend_from_slice(&7u32.to_le_bytes());
+        buf.push(opcodes::PARAM);
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.push(opcodes::VAR);
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.push(opcodes::MUL);
+        buf.push(opcodes::NEG);
+        buf.push(opcodes::VAR);
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.push(opcodes::SIN);
+        buf.push(opcodes::ADD);
+        buf.push(0); // has_jacobian = false
+
+        let ode = CompiledOde::from_bytes(&buf).unwrap();
+        assert_eq!(ode.dim, 1);
+        assert_eq!(ode.n_params, 1);
+        assert!(ode.jacobian.is_none());
+
+        let mut out = [0.0; 1];
+        let mut scratch = Vec::new();
+        ode.eval_rhs(0.0, &[0.3], &[2.0], &mut out, &mut scratch);
+        // -2*0.3 + sin(0.3) ≈ -0.6 + 0.29552...
+        let expected = -2.0 * 0.3 + (0.3_f64).sin();
+        assert!((out[0] - expected).abs() < 1e-14);
     }
 
     #[test]
@@ -395,7 +637,7 @@ mod tests {
             Expr::Add,
         ];
         let mut scratch = Vec::new();
-        let v = CompiledMap::eval(&program, &[0.1, 0.1], &[1.4, 0.3], &mut scratch);
+        let v = CompiledMap::eval(&program, 0.0, &[0.1, 0.1], &[1.4, 0.3], &mut scratch);
         assert!((v - 1.086).abs() < 1e-12);
     }
 }

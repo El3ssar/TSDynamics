@@ -15,6 +15,18 @@ Contents grow incrementally as Rust kernels land (see
 
 from __future__ import annotations
 
-from ._core import add_one, iterate_map, lyapunov_spectrum_map
+from ._core import (
+    add_one,
+    eval_ode_rhs,
+    eval_ode_rhs_batch,
+    iterate_map,
+    lyapunov_spectrum_map,
+)
 
-__all__ = ["add_one", "iterate_map", "lyapunov_spectrum_map"]
+__all__ = [
+    "add_one",
+    "eval_ode_rhs",
+    "eval_ode_rhs_batch",
+    "iterate_map",
+    "lyapunov_spectrum_map",
+]

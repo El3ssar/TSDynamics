@@ -1,5 +1,44 @@
 ## Unreleased
 
+### Features (N2.a — Pure-Rust ODE stepper suite, sub-stage A)
+
+- **IR (ODE-side)**: extended the symbolic IR with the opcodes the
+  continuous catalogue needs that the discrete-map catalogue (N1) did
+  not — `OP_TIME` (explicit `t`), `OP_TANH` / `OP_SINH` / `OP_COSH`,
+  `OP_POWF` (fractional float exponent), `OP_POW2` (general two-operand
+  power for symbolic exponents like `x ** n` in `CircadianRhythm`,
+  `x ** (y * z)` in `YuWang`).  Wire format is forward-compatible —
+  opcode bytes are stable; map bytecode is unchanged.
+- **CompiledOde**: new payload alongside `CompiledMap` that carries
+  the RHS program, an optional Jacobian program (skipped when SymEngine
+  auto-diff yields unevaluated `Derivative` nodes on `Abs` / `sign` —
+  six systems hit this), `param_names`, `dim`, and `n_params`.
+- **`_ode_lowering`**: new module (`src/tsdynamics/base/_ode_lowering.py`)
+  that walks the SymEngine expression tree returned by `_equations` —
+  one-shot walker with var/param/time symbol maps, structural-parameter
+  baking, special cases for `sqrt(x) := x ** Rational(1, 2)`, and
+  best-effort Jacobian auto-diff with graceful fallback to
+  `has_jacobian=False`.
+- **PyO3 ODE RHS evaluator** (`crates/tsdyn-native/src/ode.rs`):
+  `eval_ode_rhs(bytecode, t, y, params) -> (dim,)` and
+  `eval_ode_rhs_batch(bytecode, ts, ys, params) -> (N, dim)`.  Both
+  re-exported from `tsdynamics._native`.  The batched form amortises
+  the PyO3 trampoline cost over the per-system regression sweep.
+- **Golden ODE trajectories**: `scripts/generate_ode_goldens.py` runs
+  JiTCODE on every built-in continuous system under a 45 s per-system
+  wallclock timeout and writes `tests/native/regression/ode/<System>.npz`
+  (`t, y, ic, params, param_names, structural_params, structural_values,
+  final_time, dt, rtol, atol, method, seed`).  110 of 115 systems land;
+  5 (`Duffing`, `SprottD`, `SprottI`, `ExcitableCell`, `BlinkingRotlet`)
+  skip because no random IC sits in the attractor basin — N2.b will
+  hand-pick ICs.
+- **Tests**: 345 new cases in `tests/test_native_ode.py` (115 systems
+  × 3 checks): lowering success, IR-vs-SymEngine `Lambdify` agreement
+  on 16 random `(t, y)` samples (rtol=1e-9, atol=1e-12; loose
+  atol=1e-6 for `JerkCircuit`), and golden loadability + non-triviality.
+  340 pass / 5 skip (the by-design no-golden systems).  Full suite:
+  1192 passed / 61 skipped in 148 s.
+
 ### Breaking changes (analysis API refinement, post-M2)
 
 - **analysis return types are unified**.  Every analysis primitive now
