@@ -14,7 +14,7 @@ Internal helpers (``ParamSet``, ``SystemBase``, ``staticjit``) live under
 ``tsdynamics.base`` / ``tsdynamics.utils`` for users who need them.
 """
 
-from . import base, systems, utils
+from . import analysis, base, systems, utils
 from ._version import __version__
 from .base import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
 from .systems import continuous as _continuous
@@ -38,6 +38,7 @@ __all__ = [
     "DiscreteMap",
     "Trajectory",
     # Sub-namespaces (for ``tsdynamics.systems.continuous.chaotic_attractors`` etc.)
+    "analysis",
     "base",
     "systems",
     "utils",

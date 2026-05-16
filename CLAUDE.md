@@ -54,6 +54,9 @@ src/tsdynamics/
 │   ├── ode_base.py           # ContinuousSystem (JiTCODE)
 │   ├── dde_base.py           # DelaySystem (JiTCDDE)
 │   └── map_base.py           # DiscreteMap (Numba)
+├── analysis/
+│   ├── __init__.py           # Re-exports trajectory_ops public API
+│   └── trajectory_ops.py     # Pure (t, y) ops behind Trajectory enrichment (M1)
 ├── systems/
 │   ├── continuous/
 │   │   ├── chaotic_attractors.py
@@ -85,7 +88,7 @@ src/tsdynamics/
 - Every built-in system class (`Lorenz`, `Rossler`, ..., `MackeyGlass`, ..., `Henon`, ...)
 - The three subclassable base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`
 - The result type: `Trajectory`
-- Submodules: `base`, `systems`, `utils`
+- Submodules: `analysis`, `base`, `systems`, `utils`
 - `__version__`
 
 Not exported at the top level (deliberately) but reachable via `tsdynamics.base` / `tsdynamics.utils`:
@@ -356,4 +359,21 @@ exps = mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1], burn_in=100.0, final
 h = ts.Henon()
 traj = h.iterate(steps=5000)
 exps = h.lyapunov_spectrum(steps=5000)        # → [0.42, -1.62]
+
+# Trajectory enrichment (M1) — every method returns a fresh Trajectory
+traj = ts.Lorenz().integrate(final_time=200, dt=0.005).after(50.0)
+sparse  = traj.decimate(every=10)
+uniform = traj.resample(dt_new=0.01, kind="cubic")
+xz      = traj.project(dims=(0, 2))
+middle  = traj.window(t0=100.0, t1=150.0)
+dtraj   = traj.derivative(order=1)
+r       = traj.norm()                              # ndarray (T,)
+tp, yp  = traj.local_maxima(component=2, prominence=1.0)
+isi     = traj.return_times(component=2, prominence=1.0)
+spec    = traj.to_dataspec(kind="phase_portrait_3d", dims=(0, 1, 2))
 ```
+
+The same operations are available as pure functions in
+`tsdynamics.analysis.trajectory_ops` (each takes `t, y` and returns the
+transformed arrays).  The `Trajectory` methods are thin wrappers — keep
+new algorithms in `analysis/` so they stay independently unit-testable.

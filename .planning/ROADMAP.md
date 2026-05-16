@@ -39,7 +39,7 @@ The roadmap runs four tracks in parallel:
 | M0 | Bootstrap `.planning/` framework | DONE | meta | This commit. |
 | R1 | Rust toolchain + maturin + CI wheels | DONE | C | Unblocks everything below. |
 | N1 | Rust map stepper (drops Numba dispatch) | DONE | E | First end-to-end Rust proof. IR + tracer + interpreter shipped. |
-| M1 | Trajectory enrichment | TODO | A | Slice/decimate/derivative/project/window. |
+| M1 | Trajectory enrichment | DONE | A | Slice/decimate/derivative/project/window. Landed 2026-05-16. |
 | M2 | Event & section detection | TODO | A | Powers Poincaré, return maps. |
 | R2 | Rust parameter-sweep kernel | TODO | C | rayon-backed. |
 | M3 | Parameter-sweep API on top of R2 | TODO | A | No Python fallback. |

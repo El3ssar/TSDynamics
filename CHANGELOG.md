@@ -12,6 +12,14 @@
 - **native**: Rust extension consolidated into a single cdylib
   `tsdynamics._native._core` (was `_smoke`). Exposes `add_one`,
   `iterate_map`, `lyapunov_spectrum_map`.
+- **trajectory**: `Trajectory` gained enrichment methods (M1) — `decimate`,
+  `resample`, `project`, `window`, `derivative`, `norm`, `local_maxima`,
+  `local_minima`, `return_times`, `to_dataspec`. Every method returns a
+  fresh `Trajectory` (or ndarray) and the source arrays are never aliased.
+- **analysis**: new `tsdynamics.analysis` subpackage exposing the same
+  enrichment operations as pure `(t, y) → (t', y')` functions in
+  `analysis.trajectory_ops`. The `Trajectory` methods are thin wrappers
+  so the algorithms stay independently unit-testable.
 
 ### Refactoring
 

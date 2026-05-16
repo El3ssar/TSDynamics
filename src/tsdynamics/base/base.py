@@ -7,6 +7,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from ..analysis import trajectory_ops as _ops
+
 # ---------------------------------------------------------------------------
 # ParamSet
 # ---------------------------------------------------------------------------
@@ -201,6 +203,236 @@ class Trajectory:
         """
         mask = self.t >= t0
         return Trajectory(self.t[mask], self.y[mask], self.system)
+
+    # --- enrichment (M1) ----------------------------------------------------
+    #
+    # Each method is a thin wrapper around the matching function in
+    # ``tsdynamics.analysis.trajectory_ops`` so the heavy logic stays
+    # independently unit-testable.  ``Trajectory`` is treated as immutable —
+    # every transformation returns a fresh instance.
+
+    def decimate(self, every: int) -> Trajectory:
+        """
+        Return a new ``Trajectory`` keeping every ``every``-th sample.
+
+        Parameters
+        ----------
+        every : int
+            Stride.  Must be ``>= 1``.
+
+        Returns
+        -------
+        Trajectory
+
+        Examples
+        --------
+        >>> dense = lor.integrate(final_time=10.0, dt=0.001)
+        >>> sparse = dense.decimate(every=10)         # 10× fewer samples
+        """
+        tn, yn = _ops.decimate(self.t, self.y, every)
+        return Trajectory(tn, yn, self.system)
+
+    def resample(self, dt_new: float, kind: str = "cubic") -> Trajectory:
+        """
+        Resample onto a uniform grid with spacing ``dt_new``.
+
+        Parameters
+        ----------
+        dt_new : float
+            New step.  Must be positive.
+        kind : {"linear", "cubic"}, default "cubic"
+
+        Returns
+        -------
+        Trajectory
+
+        Examples
+        --------
+        >>> traj = lor.integrate(final_time=10.0, dt=0.01)
+        >>> down = traj.resample(dt_new=0.05, kind="cubic")
+        """
+        tn, yn = _ops.resample(self.t, self.y, dt_new, kind=kind)
+        return Trajectory(tn, yn, self.system)
+
+    def project(self, dims: tuple[int, ...] | list[int] | np.ndarray) -> Trajectory:
+        """
+        Keep only the components listed in ``dims``.
+
+        The returned trajectory's ``dim`` may not match ``system.dim``; that
+        is intentional — projections are first-class citizens.
+
+        Parameters
+        ----------
+        dims : iterable of int
+
+        Returns
+        -------
+        Trajectory
+
+        Examples
+        --------
+        >>> traj = lor.integrate(final_time=50, dt=0.01)
+        >>> xz = traj.project(dims=(0, 2))            # only x and z
+        >>> xz.dim
+        2
+        """
+        tn, yn = _ops.project(self.t, self.y, dims)
+        return Trajectory(tn, yn, self.system)
+
+    def window(self, t0: float | None = None, t1: float | None = None) -> Trajectory:
+        """
+        Restrict the trajectory to ``[t0, t1]`` (inclusive on both ends).
+
+        Either bound may be ``None`` to leave that side open; bounds outside
+        the available time range are clipped silently.
+
+        Parameters
+        ----------
+        t0, t1 : float or None
+
+        Returns
+        -------
+        Trajectory
+
+        Examples
+        --------
+        >>> traj = lor.integrate(final_time=200, dt=0.01)
+        >>> middle = traj.window(t0=50.0, t1=100.0)
+        """
+        tn, yn = _ops.window(self.t, self.y, t0=t0, t1=t1)
+        return Trajectory(tn, yn, self.system)
+
+    def derivative(self, order: int = 1) -> Trajectory:
+        """
+        Numerical derivative of the state along time.
+
+        Uses :func:`numpy.gradient` (second-order accurate central
+        differences in the interior, first-order at edges); higher orders
+        recurse, so edge accuracy degrades with each application.
+
+        Parameters
+        ----------
+        order : int, default 1
+            Differentiation order.  Must be ``>= 1``.
+
+        Returns
+        -------
+        Trajectory
+            ``t`` unchanged; ``y`` replaced by its ``order``-th derivative.
+
+        Examples
+        --------
+        >>> traj = lor.integrate(final_time=10, dt=0.01)
+        >>> dtraj = traj.derivative(order=1)         # ẏ(t)
+        """
+        dy = _ops.derivative(self.t, self.y, order=order)
+        return Trajectory(self.t.copy(), dy, self.system)
+
+    def norm(self, axis: int = 1) -> np.ndarray:
+        """
+        Euclidean norm of the state at each time, ``||y(t)||``.
+
+        Parameters
+        ----------
+        axis : int, default 1
+            Axis to reduce.
+
+        Returns
+        -------
+        ndarray, shape (T,)
+
+        Examples
+        --------
+        >>> traj = lor.integrate(final_time=10, dt=0.01)
+        >>> r = traj.norm()
+        """
+        return _ops.norm(self.y, axis=axis)
+
+    def local_maxima(
+        self, component: int = 0, **find_peaks_kwargs: Any
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Return times and values of local maxima of one state component.
+
+        Extra keyword arguments (``prominence``, ``distance``, ``height``, …)
+        are forwarded to :func:`scipy.signal.find_peaks`.
+
+        Parameters
+        ----------
+        component : int, default 0
+        **find_peaks_kwargs
+            Forwarded to :func:`scipy.signal.find_peaks`.
+
+        Returns
+        -------
+        (t_peaks, y_peaks) : tuple of ndarrays
+
+        Examples
+        --------
+        >>> traj = lor.integrate(final_time=50, dt=0.01)
+        >>> tp, yp = traj.local_maxima(component=2, prominence=1.0)
+        """
+        return _ops.local_maxima(self.t, self.y, component=component, **find_peaks_kwargs)
+
+    def local_minima(
+        self, component: int = 0, **find_peaks_kwargs: Any
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Return times and values of local minima of one state component.
+
+        Parameters
+        ----------
+        component : int, default 0
+        **find_peaks_kwargs
+            Forwarded to :func:`scipy.signal.find_peaks`.
+
+        Returns
+        -------
+        (t_mins, y_mins) : tuple of ndarrays
+        """
+        return _ops.local_minima(self.t, self.y, component=component, **find_peaks_kwargs)
+
+    def return_times(self, component: int = 0, **find_peaks_kwargs: Any) -> np.ndarray:
+        """
+        Inter-peak intervals on one state component — the poor man's period.
+
+        Parameters
+        ----------
+        component : int, default 0
+        **find_peaks_kwargs
+            Forwarded to :func:`scipy.signal.find_peaks`.
+
+        Returns
+        -------
+        ndarray, shape (n_peaks - 1,)
+            Empty when fewer than two peaks are detected.
+
+        Examples
+        --------
+        >>> traj = lor.integrate(final_time=200, dt=0.005).after(50)
+        >>> isi = traj.return_times(component=2, prominence=1.0)
+        """
+        return _ops.return_times(self.t, self.y, component=component, **find_peaks_kwargs)
+
+    def to_dataspec(self, kind: str, **kwargs: Any) -> dict[str, Any]:
+        """
+        Build a ``DataSpec``-shaped dict describing this trajectory view.
+
+        Placeholder for V1.  Returns a plain dict whose keys mirror the
+        eventual :class:`DataSpec` attributes so call sites do not need to
+        change when V1 lands.
+
+        Parameters
+        ----------
+        kind : {"timeseries", "phase_portrait_2d", "phase_portrait_3d"}
+        dims : iterable of int, optional
+            Component indices to expose.  Required for phase-portrait kinds.
+
+        Returns
+        -------
+        dict
+        """
+        return _ops.to_dataspec(self.t, self.y, kind, **kwargs)
 
     def __repr__(self) -> str:
         return (

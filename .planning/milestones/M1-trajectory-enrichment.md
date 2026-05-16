@@ -1,6 +1,6 @@
 # Milestone M1 — Trajectory enrichment
 
-Status: TODO
+Status: DONE (2026-05-16)
 Depends on: M0
 Estimated scope: one chat
 Design doc: none (small, self-contained)
@@ -100,8 +100,8 @@ Modify:
 
 ## Acceptance criteria
 
-- [ ] Every new method has a docstring with a NumPy-style "Examples" block.
-- [ ] `tests/test_trajectory_enrichment.py` covers:
+- [x] Every new method has a docstring with a NumPy-style "Examples" block.
+- [x] `tests/test_trajectory_enrichment.py` covers:
   - decimate / resample on a synthetic ramp
   - project with valid + invalid dims
   - window edge cases (t0 < t.min, t1 > t.max)
@@ -109,10 +109,34 @@ Modify:
   - local_maxima / local_minima on `sin`
   - return_times reproduces 2π/ω on `sin(ω t)` within tolerance
   - immutability: source `traj.y is not result.y` for every transformation
-- [ ] `uv run pytest -m "not slow" --no-cov` passes.
-- [ ] `uv run ruff check src/ tests/` clean.
-- [ ] `uv run ruff format --check src/ tests/` clean.
-- [ ] Existing tests still pass (`Trajectory` API additive only).
+- [x] `uv run pytest -m "not slow" --no-cov` passes (660 passed).
+- [x] `uv run ruff check src/ tests/` clean.
+- [x] `uv run ruff format --check src/ tests/` clean.
+- [x] Existing tests still pass (full suite: 792 passed, 56 skipped).
+
+## Resolved open questions
+
+- `resample` default is **cubic**; ``kind="linear"`` available.  Implemented
+  via `scipy.interpolate.make_interp_spline` (k=3 / k=1) — replaces the
+  deprecated `interp1d` and works the same for both kinds.
+- `local_maxima` / `local_minima` / `return_times` accept `**kwargs` that
+  are forwarded verbatim to `scipy.signal.find_peaks` (`prominence`,
+  `distance`, `height`, `width`, …).
+- Kept the name `decimate` (matches numpy `[::n]` semantics).
+
+## Implementation notes
+
+- Heavy logic lives in `src/tsdynamics/analysis/trajectory_ops.py` as pure
+  `(t, y) → (t', y')` functions; `Trajectory` methods are thin wrappers.
+- `src/tsdynamics/analysis/__init__.py` re-exports the functions; the
+  subpackage is itself re-exported from `tsdynamics` top-level.
+- `to_dataspec` returns a plain dict with keys `{kind, t, y, dims, ...}`.
+  V1 will swap in the real `DataSpec` class without breaking call sites.
+- `derivative` uses repeated `np.gradient`; higher orders are recursive
+  applications, so edge accuracy degrades.  Tests check the interior only.
+- All transformations return new buffers (`copy()` on slices) so the source
+  `Trajectory` is never aliased — verified by a dedicated immutability test
+  class.
 
 ## Out of scope
 
