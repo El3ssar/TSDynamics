@@ -16,10 +16,7 @@ class Tent(DiscreteMap):
     @staticjit
     def _jacobian(X, mu):
         x = X
-        if x < 0.5:
-            return [-2 * mu]
-        else:
-            return [2 * mu]
+        return [np.where(x < 0.5, -2 * mu, 2 * mu)]
 
 
 class Baker(DiscreteMap):
@@ -28,31 +25,18 @@ class Baker(DiscreteMap):
 
     @staticjit
     def _step(X, alpha):
-        """
-        Right-hand side of the Baker map.
-
-        x, y: Current state variables
-        alpha: Fraction determining the fold (0 < alpha < 1)
-        """
         x, y = X
-        if 0 <= y < alpha:
-            xp = (2 * x) % 1  # Stretch in x
-            yp = y / alpha  # Fold in y
-        else:
-            xp = (2 * x - 1) % 1  # Shift after stretch
-            yp = (y - alpha) / (1 - alpha)  # Fold in y
+        in_first = (y >= 0) & (y < alpha)
+        xp = np.where(in_first, (2 * x) % 1, (2 * x - 1) % 1)
+        yp = np.where(in_first, y / alpha, (y - alpha) / (1 - alpha))
         return xp, yp
 
     @staticjit
     def _jacobian(X, alpha):
         x, y = X
-        if 0 <= y < alpha:
-            row1 = [2, 0]
-            row2 = [0, 1 / alpha]
-        else:
-            row1 = [2, 0]
-            row2 = [0, 1 / (1 - alpha)]
-        return row1, row2
+        in_first = (y >= 0) & (y < alpha)
+        j11 = np.where(in_first, 1 / alpha, 1 / (1 - alpha))
+        return (2.0, 0.0), (0.0, j11)
 
 
 class Circle(DiscreteMap):

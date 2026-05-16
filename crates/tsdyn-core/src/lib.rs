@@ -1,16 +1,17 @@
 //! Shared types and IR scaffolding for the TSDynamics Rust crates.
 //!
-//! This crate is intentionally empty for milestone R1. It exists as a hook in
-//! the Cargo workspace so that future kernel crates (sweep, recurrence, basin,
-//! …) can depend on a single source of shared types. The first real inhabitant
-//! will be `ProblemHandle`, an opaque wrapper around either a JiTCODE-cffi
-//! function pointer (Track E early phase) or a cranelift-JIT'd native function
-//! (after N4).
+//! Today this crate hosts the symbolic IR shared between every kernel crate
+//! (currently `tsdyn-maps`; later `tsdyn-ode`, `tsdyn-dde`, `tsdyn-sweep`).
+//! The `Expr` enum and bytecode format are stable interfaces — Python emits
+//! the bytecode, Rust decodes once per system, and every kernel evaluates
+//! against the same op set.
+
+pub mod ir;
 
 /// Opaque handle to a compiled right-hand-side / step function.
 ///
-/// Placeholder for R1: it carries no data. Analysis kernels in later
-/// milestones will consume `ProblemHandle` so they don't have to change when
-/// the underlying compilation pipeline is replaced.
+/// Placeholder kept for R1's smoke-test plumbing; later N-milestones may
+/// replace it with a richer wrapper around either a cranelift-JIT'd function
+/// (post-N4) or a [`ir::CompiledMap`] for discrete maps.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ProblemHandle;

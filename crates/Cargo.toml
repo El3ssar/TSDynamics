@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["tsdyn-core", "tsdyn-smoke"]
+members = ["tsdyn-core", "tsdyn-maps", "tsdyn-native"]
 
 [workspace.package]
 edition = "2021"

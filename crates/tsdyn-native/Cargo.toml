@@ -1,17 +1,19 @@
 [package]
-name = "tsdyn-smoke"
+name = "tsdyn-native"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "PyO3 smoke-test extension proving the Rust↔Python build pipeline."
+description = "PyO3 bindings for the TSDynamics Rust kernels (tsdynamics._native._core)."
 
 [lib]
-name = "tsdyn_smoke"
+name = "tsdyn_native"
 crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { workspace = true }
+numpy = "0.28"
 tsdyn-core = { path = "../tsdyn-core" }
+tsdyn-maps = { path = "../tsdyn-maps" }

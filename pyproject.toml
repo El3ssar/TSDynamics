@@ -71,8 +71,8 @@ docs = [
 # ── Maturin ────────────────────────────────────────────────────────────────────
 
 [tool.maturin]
-manifest-path = "crates/tsdyn-smoke/Cargo.toml"
-module-name = "tsdynamics._native._smoke"
+manifest-path = "crates/tsdyn-native/Cargo.toml"
+module-name = "tsdynamics._native._core"
 python-source = "src"
 python-packages = ["tsdynamics"]
 features = ["pyo3/extension-module"]

@@ -1,3 +1,34 @@
+## Unreleased
+
+### Features
+
+- **maps**: discrete-map iteration and Lyapunov spectrum now run through a
+  Rust kernel under a symbolic IR (N1). `DiscreteMap._step` /
+  `_jacobian` are traced once via NumPy ufunc / operator overloads,
+  lowered to a stack-machine bytecode, and evaluated in Rust. The IR op
+  set (`Const, Var, Param`, arithmetic, `Pow(i32)`, `Mod`, `Sin/Cos/Exp/
+  Log/Abs/Sqrt/Arccos/Sign`, `Where`, comparisons, `And`) is shared with
+  the upcoming variational ODE (N3) and cranelift JIT (N4) milestones.
+- **native**: Rust extension consolidated into a single cdylib
+  `tsdynamics._native._core` (was `_smoke`). Exposes `add_one`,
+  `iterate_map`, `lyapunov_spectrum_map`.
+
+### Refactoring
+
+- **maps/geometric**: `Tent` and `Baker` rewritten to use `np.where`
+  instead of Python `if`/`else` so they trace into the new IR. Outputs
+  are bit-identical to the previous Numba path.
+
+### Internals
+
+- **base**: new `_ir.py`, `_tracer.py`, `_lowering.py` under
+  `tsdynamics.base`. `DiscreteMap` keeps the Numba-compiled fallback
+  loop for user-defined maps that contain operations the IR can't yet
+  represent — they trigger `NotLowerableError` during lowering and the
+  dispatcher transparently falls through. `@staticjit` therefore stays
+  as `staticmethod(njit(...))`; making it a no-op is deferred until
+  the Numba fallback retires (post-N4).
+
 ## v1.0.0 (2026-05-15)
 
 ### Bug Fixes

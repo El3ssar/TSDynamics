@@ -2,17 +2,19 @@
 
 User code never imports from here directly. The public Python API in
 :mod:`tsdynamics` re-exports anything that is meant to be user-facing.
-This package exists so each Rust crate compiled by maturin has a stable
-installation target (e.g. ``tsdynamics._native._smoke``) and so the rest of
-the library can route hot loops through a single facade.
+This package exists so the single Rust extension (``_core``) compiled by
+maturin has a stable installation target and the rest of the library can
+route hot loops through one facade.
 
-The contents are populated incrementally as Rust kernels land (see
-``.planning/ROADMAP.md`` Track C / Track E). Milestone R1 only ships the
-``_smoke`` module, which exists to prove the PyO3 round trip works.
+Contents grow incrementally as Rust kernels land (see
+``.planning/ROADMAP.md`` Track C / Track E). N1 ships:
+
+- ``add_one`` — R1 smoke-test holdover.
+- ``iterate_map`` / ``lyapunov_spectrum_map`` — discrete-map kernels.
 """
 
 from __future__ import annotations
 
-from ._smoke import add_one
+from ._core import add_one, iterate_map, lyapunov_spectrum_map
 
-__all__ = ["add_one"]
+__all__ = ["add_one", "iterate_map", "lyapunov_spectrum_map"]
