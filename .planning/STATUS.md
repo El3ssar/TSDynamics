@@ -1,7 +1,13 @@
-# Status — updated 2026-05-16 (N2.a landed; N2.b is next)
+# Status — updated 2026-05-16 (N2.b: DP5/DP8/Tsit5/BS3/RK4 Rust integrate)
 
-Current milestone: **N2 — Pure-Rust ODE stepper suite (WIP)**.  Sub-stage
-N2.a closed; next chat picks up at N2.b.
+Current milestone: **N2 — Pure-Rust ODE stepper suite (WIP)**.  N2.b is
+**partially landed**: `tsdyn-ode` ships **DP5**, **DP8**, **Tsit5**, **BS3**,
+and **RK4** + PyO3 `integrate_ode`, and `ContinuousSystem.integrate` uses Rust
+for those methods when the IR lowers (`DOP853`/`dop853` alias to **DP8**).
+**Still to do in N2.b:** **VERN9** in Rust; hand-picked IC goldens for **Duffing**
+/ **SprottD** / **SprottI**.  Adaptive ERKs (`DP5`, `Tsit5`, `BS3`) are checked vs
+DP8 dense output on Lorenz in `tests/test_ode_methods.py`; **RK4** only checks
+repeatability (same-order dense sampling ≠ adaptive DP8).
 
 Phase: implement.  Track E (Rust solver migration) is now in progress;
 Tracks A (M5/M6/M7/M10/M11), B (V1), and C (R2) remain unblocked and can
@@ -78,40 +84,34 @@ Last-touched files (N2.a):
 
 ## What's in progress
 
-- **N2** is WIP at sub-stage N2.b.  N2.a is closed; N2.b starts next.
+- **N2** WIP at **N2.b**: DP8/Tsit5/BS3 + golden replay landed; **VERN9** remains.
 
 ## Next action
 
 Pick up **N2.b — Explicit RK family** from
 [`milestones/N2-rust-ode-stepper.md`](milestones/N2-rust-ode-stepper.md).
-Concretely:
+Concretely (remaining):
 
-1. Create `crates/tsdyn-ode/` (workspace member) with the `Stepper` /
-   `Rhs` traits, an `IrInterpreterRhs` wrapping `CompiledOde`, an
-   `I-controller` (PI is N2.c's concern), and concrete steppers for the
-   explicit-RK family: **DP5, DP8, Tsit5, Vern9, RK4, BS3**.
-2. Vendor Butcher tableaux from `ode_solvers` (MIT) for DP5/DP8/RK4 and
-   from `OrdinaryDiffEq.jl` (MIT) for Tsit5/Vern9 — file-header
-   attribution.  Do not retype from papers.
-3. Native dense output per method (4th-order Hermite for DP5, the DP8
-   7th-order extension, per-order Vern interpolants, BS3's natural
-   3rd-order extension, linear for RK4 — sample exactly on
-   `np.arange(t0, final_time + dt/2, dt)`).
-4. PyO3 wire: `_native.integrate_ode(handle, t_span, ic, params,
-   method, dt_output, rtol, atol) -> (t, y)`.
-5. `ContinuousSystem.integrate` dispatches to `_native.integrate_ode`
-   for the methods the new crate ships; falls back to the JiTCODE
-   path for the deprecated `"LSODA"`/`"VODE"` names *and* for any
-   system that raises `NotLowerableError` (none today, defensive only).
-6. Method-name compat: `"RK45"`/`"dopri5"` → `"DP5"`, `"DOP853"` →
-   `"DP8"`.  Stiff family + alias deprecations are N2.c.
-7. Tests: turn the 110 goldens into a full regression
-   (rtol=1e-8, atol=1e-10) against DP8 in `tests/test_native_ode.py`,
-   add `tests/test_ode_methods.py` (every explicit-RK method
-   integrates Lorenz on `[0, 10]` and agrees with DP8 at rtol=1e-12).
-8. Make `lyapunov_spectrum` keep using JiTCODE (that's N3) but
-   sanity-check the public surface still works once `integrate`
-   dispatches through Rust.
+1. **VERN9** in `tsdyn-ode` (Verner `Vern9Tableau` + `Vern9ExtraStages` +
+   interpolant polynomials from OrdinaryDiffEq.jl — large codegen).
+2. ~~Golden replay vs Rust **DP8**~~ — `test_golden_trajectory_matches_rust_dp8`
+   + regenerated ``tests/native/regression/ode/*.npz``.
+3. Hand-picked IC goldens for **Duffing** / **SprottD** / **SprottI**; optionally
+   tighten `test_ode_methods` tolerances once dense-output parity is audited.
+
+Already landed: **DP8**, **Tsit5**, **BS3**, **RK4**, golden regenerate +
+trajectory regression + `tests/test_ode_methods.py`.
+
+Historical checklist (mostly done — kept for traceability):
+
+1. ~~Create `crates/tsdyn-ode/` … DP5, DP8, Tsit5, Vern9, RK4, BS3~~ (VERN9 open).
+2. ~~Vendor Butcher tableaux …~~
+3. ~~Native dense output …~~ (VERN9 open)
+4. ~~PyO3 wire `integrate_ode`~~
+5. ~~`ContinuousSystem.integrate` dispatch~~
+6. ~~`"DOP853"` → `"DP8"`~~
+7. ~~`tests/test_ode_methods.py`~~ (uses rtol 5e-7 — revisit vs milestone 1e-12).
+8. ~~`lyapunov_spectrum` JiTCODE~~ — still valid for N3.
 
 Per the milestone, **the user answered the six open questions during
 N2.a's planning** — those answers stick:

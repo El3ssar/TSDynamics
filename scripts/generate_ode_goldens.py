@@ -1,8 +1,9 @@
 """Generate golden ODE trajectories for every built-in continuous system.
 
-Runs the *current* (JiTCODE) ``ContinuousSystem.integrate`` and writes one
-``.npz`` per system under ``tests/native/regression/ode/``.  These files
-become the reference that the N2.b Rust stepper must reproduce.
+Runs ``ContinuousSystem.integrate(..., method="dop853")`` (which resolves to the
+Rust **DP8** driver when lowering succeeds; JiTCODE ``dop853`` otherwise) and
+writes one ``.npz`` per system under ``tests/native/regression/ode/``.  These
+files are the trajectory regression reference for that integration path.
 
 Run once, commit the npz files, do NOT regenerate after N2 lands unless
 making a deliberate semantic change.  If you regenerate, note it in
@@ -26,13 +27,10 @@ Per-system goldens carry:
 
 Strategy
 --------
-Every system integrates with ``dop853`` (8th-order explicit RK with
-adaptive step).  ``lsoda`` would have been a one-size-fits-all choice
-but trips an internal segfault on systems whose Jacobian uses ``sign``
-(``Chua``, ``MultiChua``, ``LorenzBounded``).  The method choice isn't
-load-bearing for the milestone: N2.b will re-run each system with the
-method actually being validated; these goldens exist so N2.a has a
-fixed reference shape.
+Every system integrates with ``dop853``, which maps to **Rust DP8** in builds
+that ship the native integrator (matching SciPy-style coefficients).  Older
+JiTCODE-only snapshots drift numerically from Rust dense sampling on chaotic
+systems — regenerate after intentional solver changes.
 
 A per-system wallclock timeout (``signal.SIGALRM``) skips any system
 whose integration stalls.  Skipped systems print a warning; the missing

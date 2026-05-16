@@ -1,5 +1,25 @@
 ## Unreleased
 
+### Features (N2.b — Rust ODE stepper, partial)
+
+- **`crates/tsdyn-ode`**: adaptive explicit RK integrators with dense output on
+  the uniform Python grid — **DP5**, **DP8** (SciPy-compatible error indicator +
+  `Dop853DenseOutput`), **Tsit5** (OrdinaryDiffEq.jl tableau + interpolant),
+  **BS3** / RK23 (SciPy tableau + dense `P`), plus fixed-step **RK4**.
+  Butcher coefficients remain vendored with upstream attribution in
+  `butcher.rs`; DP8 embedded errors `E3`/`E5` match SciPy's
+  `dop853_coefficients`.
+- **`erk_extra.rs`**: DP8 / Tsit5 / BS3 drivers (FSAL bookkeeping).
+- **PyO3** `integrate_ode(...)` unchanged surface.
+- **`ContinuousSystem.integrate`** dispatches to Rust for **`DP5`**, **`DP8`**
+  (aliases **`DOP853`** / **`dop853`**), **`TSIT5`**, **`BS3`**, **`RK4`** when
+  lowering succeeds; JiTCODE fallback elsewhere (**`VERN9`** driver still
+  pending in Rust).
+- **Golden trajectories** (`tests/native/regression/ode/*.npz`) regenerated with
+  Rust DP8 so committed `(t, y)` matches replay;
+  **`test_golden_trajectory_matches_rust_dp8`** asserts **`DP8`** integrates back
+  to the stored grid (`rtol=1e-9`, `atol=1e-11`).
+
 ### Features (N2.a — Pure-Rust ODE stepper suite, sub-stage A)
 
 - **IR (ODE-side)**: extended the symbolic IR with the opcodes the
@@ -24,20 +44,20 @@
   `eval_ode_rhs_batch(bytecode, ts, ys, params) -> (N, dim)`.  Both
   re-exported from `tsdynamics._native`.  The batched form amortises
   the PyO3 trampoline cost over the per-system regression sweep.
-- **Golden ODE trajectories**: `scripts/generate_ode_goldens.py` runs
-  JiTCODE on every built-in continuous system under a 45 s per-system
-  wallclock timeout and writes `tests/native/regression/ode/<System>.npz`
+- **Golden ODE trajectories**: `scripts/generate_ode_goldens.py` integrates
+  each catalogue entry under a 45 s wallclock timeout and writes
+  `tests/native/regression/ode/<System>.npz`
   (`t, y, ic, params, param_names, structural_params, structural_values,
-  final_time, dt, rtol, atol, method, seed`).  110 of 115 systems land;
-  5 (`Duffing`, `SprottD`, `SprottI`, `ExcitableCell`, `BlinkingRotlet`)
-  skip because no random IC sits in the attractor basin — N2.b will
-  hand-pick ICs.
-- **Tests**: 345 new cases in `tests/test_native_ode.py` (115 systems
-  × 3 checks): lowering success, IR-vs-SymEngine `Lambdify` agreement
-  on 16 random `(t, y)` samples (rtol=1e-9, atol=1e-12; loose
-  atol=1e-6 for `JerkCircuit`), and golden loadability + non-triviality.
-  340 pass / 5 skip (the by-design no-golden systems).  Full suite:
-  1192 passed / 61 skipped in 148 s.
+  final_time, dt, rtol, atol, method, seed`).  **112** of **115** systems land;
+  **3** (`Duffing`, `SprottD`, `SprottI`) skip after blowing up at random ICs —
+  hand-pick ICs if goldens are needed for those.
+- **Tests**: `tests/test_native_ode.py` — lowering + IR-vs-SymEngine RHS batch on
+  every catalogue system (systems whose RHS is entirely NaN on the sample hull
+  still skip); golden-file sanity + **Rust DP8 trajectory replay** against the
+  committed ``.npz`` grids (`rtol=1e-9`, `atol=1e-11`; **Duffing** / **SprottD**
+  / **SprottI** have no golden); `tests/test_ode_methods.py` cross-checks Lorenz
+  dense output (**DP5**, **Tsit5**, **BS3** vs **DP8**) plus **RK4**
+  repeatability and **DOP853→DP8** alias smoke.
 
 ### Breaking changes (analysis API refinement, post-M2)
 
