@@ -1,5 +1,48 @@
 ## Unreleased
 
+### Breaking changes (analysis API refinement, post-M2)
+
+- **analysis return types are unified**.  Every analysis primitive now
+  returns a :class:`Trajectory`.  This deletes three special-case result
+  types and makes downstream code (V1 plotters) shape-agnostic.
+  - `norm` previously returned a bare 1-D ndarray; now a
+    `Trajectory` with `y.shape == (T, 1)`.
+  - `local_maxima` / `local_minima` previously returned a
+    `(t_peaks, y_peaks)` tuple; now a `Trajectory` of peak times and
+    peak heights (`y.shape == (K, 1)`).  Both gained a `refined=False`
+    kwarg — pass `refined=True` for sub-sample-accurate times/heights
+    via cubic-Hermite refinement.
+  - `return_times` previously returned a bare 1-D ndarray; now a
+    `Trajectory` of the first-peak time vs ISI.
+  - `detect_events` previously returned `EventResult`; now a
+    `Trajectory` of crossing times and state at crossings.  The
+    `EventResult` class is removed.
+  - `return_map` previously returned a `ReturnMap` dataclass; now a
+    `Trajectory` of crossing times and observable values
+    (`y.shape == (K, 1)`).  The canonical `x_{k+1}` vs `x_k` pair view
+    is now computed at plot time via
+    `traj.to_dataspec(kind="return_map", step=1)`.
+- **Three event-condition classes removed**.
+  `Threshold` was the same primitive as `Plane` with a different default
+  `direction` — replaced by `Plane(direction="up")` and the new shortcut
+  kwargs (`axis=`, `value=`, `direction=`).  `Custom` was a thin
+  callable wrapper — bare callables now accepted directly by
+  `detect_events` / `poincare_section` / `return_map`.  `LocalExtremum`
+  duplicated `local_maxima` / `local_minima` — superseded by
+  `local_maxima(refined=True)`.
+- **Three call styles** on every event-driven op
+  (`detect_events`, `poincare_section`, `return_map`):
+  ```python
+  traj.detect_events(axis=2, value=27.0, direction="up")   # shortcut kwargs
+  traj.detect_events(Plane(axis=2, value=27.0))            # condition object
+  traj.detect_events(lambda t, y: np.linalg.norm(y) - 1.0) # bare callable
+  ```
+- **File layout**: `analysis/events.py`, `analysis/sections.py`,
+  `analysis/return_map.py` were merged into `analysis/_events.py`.
+  Public surface unchanged — import everything from `tsdynamics.analysis`.
+- **Trajectory** gained a `meta: dict[str, Any]` field for future
+  per-result metadata.
+
 ### Features
 
 - **maps**: discrete-map iteration and Lyapunov spectrum now run through a

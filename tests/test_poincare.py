@@ -1,6 +1,12 @@
 """
 Tests for :func:`poincare_section` and :func:`return_map`.
 
+Both ops return a :class:`~tsdynamics.base.Trajectory` under the unified
+analysis contract — these tests check that, plus the convenience
+behaviours: canonical ``direction="up"`` default, all three call styles
+(condition object / callable / shortcut kwargs), and the
+``to_dataspec(kind="return_map")`` plot-prep helper.
+
 Heavy paths (Lorenz integrate at ``final_time=400``) are marked ``slow``;
 the lightweight synthetic-helix and oscillator tests run unconditionally.
 """
@@ -11,45 +17,40 @@ import numpy as np
 import pytest
 
 from tsdynamics.analysis import (
-    EventResult,
     LinearPlane,
     Plane,
-    ReturnMap,
-    Threshold,
     poincare_section,
     return_map,
 )
 from tsdynamics.base import Trajectory
 
 # ---------------------------------------------------------------------------
-# Fast synthetic tests (no integrator)
+# Fast synthetic fixtures
 # ---------------------------------------------------------------------------
 
 
 def _helix(n: int = 5000, t_max: float = 10 * np.pi) -> Trajectory:
-    """``y(t) = (cos t, sin t, 0.5 t)`` — a screw with 0.5/2π pitch."""
+    """``y(t) = (cos t, sin t, 0.5 t)`` — a screw with pitch 0.5/2π."""
     t = np.linspace(0.0, t_max, n)
     y = np.column_stack([np.cos(t), np.sin(t), 0.5 * t])
     return Trajectory(t, y, system=None)
 
 
-class TestPoincareSectionSynthetic:
-    def test_helix_y_zero_section(self) -> None:
-        traj = _helix()
-        sec = poincare_section(traj, Plane(axis=1, value=0.0))
-        # Up crossings of sin t happen at t = 0, 2π, 4π, ... — 5 over [0, 10π].
-        # The endpoint t = 0 isn't strictly bracketed; we expect at least 4.
-        assert sec.n_steps >= 4
-        # Section axis should be ~0 at every crossing.
-        np.testing.assert_allclose(sec.y[:, 1], 0.0, atol=1e-5)
+# ---------------------------------------------------------------------------
+# poincare_section
+# ---------------------------------------------------------------------------
 
-    def test_returns_trajectory(self) -> None:
+
+class TestPoincareSection:
+    def test_returns_trajectory_with_full_state(self) -> None:
         traj = _helix()
         sec = poincare_section(traj, Plane(axis=1, value=0.0))
         assert isinstance(sec, Trajectory)
         assert sec.dim == 3
+        # Section axis is zero at every crossing.
+        np.testing.assert_allclose(sec.y[:, 1], 0.0, atol=1e-5)
 
-    def test_section_passes_system_ref(self) -> None:
+    def test_inherits_system(self) -> None:
         marker = object()
         traj = _helix()
         traj.system = marker  # type: ignore[assignment]
@@ -57,13 +58,11 @@ class TestPoincareSectionSynthetic:
         assert sec.system is marker
 
     def test_canonical_direction_default_is_up(self) -> None:
-        # Up crossings only: cos t = 0 upward happens at t = 3π/2 (over [0, 4π],
-        # actually 3π/2 and 7π/2 — i.e. two crossings).
         t = np.linspace(0.0, 4 * np.pi, 4001)
         y = np.column_stack([np.cos(t), np.sin(t)])
         traj = Trajectory(t, y, system=None)
+        # Only the upward zeros of cos t: 3π/2 and 7π/2.
         sec = poincare_section(traj, Plane(axis=0, value=0.0))
-        # only up zeros of cos: 3π/2 and 7π/2
         assert sec.n_steps == 2
 
     def test_explicit_direction_override(self) -> None:
@@ -73,22 +72,22 @@ class TestPoincareSectionSynthetic:
         sec = poincare_section(traj, Plane(axis=0, value=0.0), direction="either")
         assert sec.n_steps == 4
 
-    def test_linear_plane_section(self) -> None:
-        # Diagonal plane x + y = 0 on the unit circle: two crossings per period.
+    def test_shortcut_kwargs(self) -> None:
+        traj = _helix()
+        sec = poincare_section(traj, axis=1, value=0.0)
+        assert isinstance(sec, Trajectory)
+        assert sec.n_steps >= 4
+
+    def test_linear_plane(self) -> None:
         t = np.linspace(0.0, 2 * np.pi, 5001)
         y = np.column_stack([np.cos(t), np.sin(t)])
         traj = Trajectory(t, y, system=None)
-        sec = poincare_section(
-            traj,
-            LinearPlane(normal=np.array([1.0, 1.0]), offset=0.0),
-            direction="up",
-        )
-        # Only the upward crossing (when x+y goes negative → positive).
-        # That happens at t = 7π/4.
+        sec = poincare_section(traj, LinearPlane(normal=np.array([1.0, 1.0]), offset=0.0))
+        # Only the upward crossing of x+y, at t = 7π/4.
         assert sec.n_steps == 1
         np.testing.assert_allclose(sec.t[0], 7 * np.pi / 4, atol=1e-4)
 
-    def test_tuple_input_accepted(self) -> None:
+    def test_tuple_input(self) -> None:
         t = np.linspace(0.0, 4 * np.pi, 4001)
         y = np.column_stack([np.cos(t), np.sin(t)])
         sec = poincare_section((t, y), Plane(axis=1, value=0.0))
@@ -96,32 +95,23 @@ class TestPoincareSectionSynthetic:
 
 
 # ---------------------------------------------------------------------------
-# return_map (synthetic)
+# return_map
 # ---------------------------------------------------------------------------
 
 
-class TestReturnMapSynthetic:
-    def test_pairs_consecutive_observable_values(self) -> None:
-        # Helix: at the y=0 up-crossing, x = cos(2π k) = 1 (constant). Boring but
-        # exercises the pairing logic with a known value.
+class TestReturnMap:
+    def test_returns_one_column_trajectory(self) -> None:
         traj = _helix()
         rmap = return_map(traj, Plane(axis=1, value=0.0), observable=0)
-        assert isinstance(rmap, ReturnMap)
-        assert rmap.x.size == rmap.y.size
-        if rmap.x.size:
-            np.testing.assert_allclose(rmap.x, 1.0, atol=1e-4)
-            np.testing.assert_allclose(rmap.y, 1.0, atol=1e-4)
+        assert isinstance(rmap, Trajectory)
+        assert rmap.y.shape[1] == 1
 
-    def test_step_two(self) -> None:
-        traj = _helix(n=10000, t_max=20 * np.pi)
-        rmap1 = return_map(traj, Plane(axis=1, value=0.0), observable=2, step=1)
-        rmap2 = return_map(traj, Plane(axis=1, value=0.0), observable=2, step=2)
-        # step=2 skips one crossing: rmap2.y == rmap1.y rolled by one.
-        assert rmap1.x.size > rmap2.x.size
-        if rmap2.x.size:
-            # z = 0.5 t increases by π between consecutive up crossings.
-            diffs = rmap2.y - rmap2.x
-            np.testing.assert_allclose(diffs, 2 * np.pi, atol=1e-3)
+    def test_helix_observable_constant(self) -> None:
+        # On the y=0 up-crossings, x = cos(2π k) = 1 for every k.
+        traj = _helix()
+        rmap = return_map(traj, Plane(axis=1, value=0.0), observable=0)
+        if rmap.n_steps:
+            np.testing.assert_allclose(rmap.y[:, 0], 1.0, atol=1e-4)
 
     def test_callable_observable(self) -> None:
         traj = _helix()
@@ -130,12 +120,13 @@ class TestReturnMapSynthetic:
             Plane(axis=1, value=0.0),
             observable=lambda t, y: float(y[0] + y[2]),
         )
-        assert rmap.observable_meta.endswith("(t, y)")
+        assert rmap.y.shape[1] == 1
 
-    def test_step_must_be_positive(self) -> None:
+    def test_shortcut_kwargs(self) -> None:
         traj = _helix()
-        with pytest.raises(ValueError, match="step"):
-            return_map(traj, Plane(axis=1, value=0.0), observable=0, step=0)
+        rmap = return_map(traj, axis=1, value=0.0, observable=2)
+        # The z-component at every up-crossing is 2π k * 0.5 = π k.
+        assert rmap.n_steps >= 4
 
     def test_invalid_observable_component(self) -> None:
         traj = _helix()
@@ -148,70 +139,85 @@ class TestReturnMapSynthetic:
             return_map(traj, Plane(axis=1, value=0.0), observable="not-an-obs")  # type: ignore[arg-type]
 
     def test_empty_when_no_crossings(self) -> None:
-        # Trajectory that never crosses y[1] = 100.
         t = np.linspace(0.0, 1.0, 100)
         y = np.column_stack([t, t, t])
-        rmap = return_map((t, y), Plane(axis=1, value=100.0, direction="up"))
-        assert rmap.x.size == 0
-        assert rmap.y.size == 0
-        assert rmap.t.size == 0
-
-    def test_to_dataspec(self) -> None:
-        traj = _helix()
-        rmap = return_map(traj, Plane(axis=1, value=0.0), observable=0)
-        spec = rmap.to_dataspec()
-        assert spec["kind"] == "return_map"
-        assert set(spec) >= {"x", "y", "t", "step", "observable"}
-
-    def test_to_dataspec_unknown_kind(self) -> None:
-        traj = _helix()
-        rmap = return_map(traj, Plane(axis=1, value=0.0), observable=0)
-        with pytest.raises(ValueError, match="unknown kind"):
-            rmap.to_dataspec(kind="hexapod")
+        rmap = return_map((t, y), axis=1, value=100.0)
+        assert rmap.n_steps == 0
+        assert rmap.y.shape == (0, 1)
 
 
 # ---------------------------------------------------------------------------
-# Trajectory methods agree with the free functions (M2 fluent API)
+# to_dataspec(kind="return_map") — the V1 plot-prep helper
+# ---------------------------------------------------------------------------
+
+
+class TestReturnMapDataspec:
+    def test_pair_view_step_one(self) -> None:
+        traj = _helix(n=10000, t_max=20 * np.pi)
+        rmap = return_map(traj, axis=1, value=0.0, observable=2)
+        spec = rmap.to_dataspec(kind="return_map")
+        assert spec["kind"] == "return_map"
+        # z increases by π between consecutive up-crossings.
+        diffs = spec["y"] - spec["x"]
+        np.testing.assert_allclose(diffs, np.pi, atol=1e-3)
+        # Step defaults to 1.
+        assert spec["step"] == 1
+
+    def test_pair_view_step_two(self) -> None:
+        traj = _helix(n=10000, t_max=20 * np.pi)
+        rmap = return_map(traj, axis=1, value=0.0, observable=2)
+        spec = rmap.to_dataspec(kind="return_map", step=2)
+        diffs = spec["y"] - spec["x"]
+        np.testing.assert_allclose(diffs, 2 * np.pi, atol=1e-3)
+        assert spec["step"] == 2
+
+    def test_observable_index_recorded(self) -> None:
+        traj = _helix()
+        rmap = return_map(traj, axis=1, value=0.0, observable=0)
+        spec = rmap.to_dataspec(kind="return_map")
+        assert spec["observable"] == 0
+
+    def test_empty_input_handled_cleanly(self) -> None:
+        # Trajectory with no crossings; the dataspec should still build.
+        t = np.linspace(0.0, 1.0, 100)
+        y = np.column_stack([t, t, t])
+        rmap = return_map((t, y), axis=1, value=100.0)
+        spec = rmap.to_dataspec(kind="return_map")
+        assert spec["x"].size == 0
+        assert spec["y"].size == 0
+
+
+# ---------------------------------------------------------------------------
+# Trajectory method form
 # ---------------------------------------------------------------------------
 
 
 class TestTrajectoryMethods:
-    def test_detect_events_method(self) -> None:
-        t = np.linspace(0.0, 4 * np.pi, 4001)
-        y = np.column_stack([np.sin(t), np.cos(t)])
-        traj = Trajectory(t, y)
-        ev = traj.detect_events(Threshold(component=0, value=0.5, direction="up"))
-        assert isinstance(ev, EventResult)
-        # sin t = 0.5 upward at t = π/6 and π/6 + 2π — two crossings.
-        assert ev.t.size == 2
-
     def test_poincare_section_method(self) -> None:
         traj = _helix()
         sec_func = poincare_section(traj, Plane(axis=1, value=0.0))
         sec_meth = traj.poincare_section(Plane(axis=1, value=0.0))
+        assert isinstance(sec_meth, Trajectory)
         np.testing.assert_array_equal(sec_func.t, sec_meth.t)
         np.testing.assert_array_equal(sec_func.y, sec_meth.y)
-        assert isinstance(sec_meth, Trajectory)
 
     def test_return_map_method(self) -> None:
         traj = _helix()
         rmap_func = return_map(traj, Plane(axis=1, value=0.0), observable=0)
         rmap_meth = traj.return_map(Plane(axis=1, value=0.0), observable=0)
-        assert isinstance(rmap_meth, ReturnMap)
-        np.testing.assert_array_equal(rmap_func.x, rmap_meth.x)
+        assert isinstance(rmap_meth, Trajectory)
+        np.testing.assert_array_equal(rmap_func.t, rmap_meth.t)
         np.testing.assert_array_equal(rmap_func.y, rmap_meth.y)
 
-    def test_default_trajectory_system_is_none(self) -> None:
-        # Allowing Trajectory(t, y) without a `system` argument is the
-        # whole point of making the API friendly for raw-array users.
-        t = np.linspace(0.0, 1.0, 100)
-        y = t[:, None]
-        traj = Trajectory(t, y)
-        assert traj.system is None
+    def test_method_shortcut_kwargs(self) -> None:
+        traj = _helix()
+        rmap = traj.return_map(axis=1, value=0.0, observable=0)
+        assert isinstance(rmap, Trajectory)
+        assert rmap.y.shape[1] == 1
 
 
 # ---------------------------------------------------------------------------
-# Lorenz section + return map (slow; integrates JiTCODE)
+# Lorenz integration (slow)
 # ---------------------------------------------------------------------------
 
 
@@ -221,44 +227,31 @@ class TestLorenzPoincare:
     def lorenz_traj(self) -> Trajectory:
         import tsdynamics as ts
 
-        # final_time=400, dt=0.005 → 80 001 samples; cheap on a modern laptop
-        # after JIT compilation. We drop a 50-time-unit transient.
-        lor = ts.Lorenz()
-        return lor.integrate(final_time=400.0, dt=0.005).after(50.0)
+        # 80 001 samples after dropping the 50-time-unit transient — cheap on
+        # a modern laptop once the JiT compilation has happened.
+        return ts.Lorenz().integrate(final_time=400.0, dt=0.005).after(50.0)
 
     def test_section_yields_many_points(self, lorenz_traj: Trajectory) -> None:
-        sec = poincare_section(lorenz_traj, Plane(axis=2, value=27.0, direction="up"))
-        # The classical milestone target is ≥ 100 crossings.
+        sec = poincare_section(lorenz_traj, axis=2, value=27.0)
         assert sec.n_steps >= 100
         np.testing.assert_allclose(sec.y[:, 2], 27.0, atol=1e-4)
 
-    def test_method_and_function_agree(self, lorenz_traj: Trajectory) -> None:
-        sec_func = poincare_section(lorenz_traj, Plane(axis=2, value=27.0))
-        sec_meth = lorenz_traj.poincare_section(Plane(axis=2, value=27.0))
+    def test_method_matches_function(self, lorenz_traj: Trajectory) -> None:
+        sec_func = poincare_section(lorenz_traj, axis=2, value=27.0)
+        sec_meth = lorenz_traj.poincare_section(axis=2, value=27.0)
         np.testing.assert_array_equal(sec_func.t, sec_meth.t)
         np.testing.assert_array_equal(sec_func.y, sec_meth.y)
 
     def test_return_map_has_unimodal_shape(self, lorenz_traj: Trajectory) -> None:
-        # The classical Lorenz return map of z-max vs subsequent z-max is
-        # tent-like.  Here we use the standard `z = 27, up` Poincaré
-        # section on the y-component (more robust than z-max detection)
-        # and assert two properties of the resulting return map:
-        #   1. it's *not* a straight line (RMS deviation from y = x is large);
-        #   2. the points are bounded — no runaway crossings.
-        sec_plane = Plane(axis=2, value=27.0, direction="up")
-        rmap = return_map(lorenz_traj, sec_plane, observable=0)
-        assert rmap.x.size >= 50
+        rmap = return_map(lorenz_traj, axis=2, value=27.0, observable=0)
+        spec = rmap.to_dataspec(kind="return_map", step=1)
+        assert spec["x"].size >= 50
 
-        # Bounded: every x value lies inside the attractor's natural support.
-        # Use 1.5x the observed range as a generous upper bound.
-        x_extent = np.ptp(rmap.x)
-        y_extent = np.ptp(rmap.y)
-        assert x_extent > 1.0  # actually varies
-        assert y_extent > 1.0
-        assert x_extent < 100.0
-        assert y_extent < 100.0
-
-        # Not a trivial fixed point: most pairs do not satisfy y ≈ x.
-        diffs = np.abs(rmap.y - rmap.x)
-        # At least one third of the pairs differ by more than 1 unit.
-        assert np.mean(diffs > 1.0) > 0.3
+        # Bounded: observable values stay within the attractor's natural range.
+        assert np.ptp(spec["x"]) > 1.0
+        assert np.ptp(spec["y"]) > 1.0
+        assert np.ptp(spec["x"]) < 100.0
+        assert np.ptp(spec["y"]) < 100.0
+        # Not a trivial fixed point: at least a third of pairs differ by more
+        # than 1 unit.
+        assert np.mean(np.abs(spec["y"] - spec["x"]) > 1.0) > 0.3

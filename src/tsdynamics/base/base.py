@@ -135,6 +135,11 @@ class Trajectory:
         State at each time point.
     system : SystemBase
         Back-reference to the system that produced this trajectory.
+    meta : dict
+        Free-form per-result metadata.  Analysis ops that need to surface
+        extra information about the result (e.g. ``detect_events`` may
+        stash per-event direction / source-index arrays here) write to
+        this dict.  Empty by default.
 
     Examples
     --------
@@ -146,12 +151,20 @@ class Trajectory:
     >>> t, y = traj          # tuple-unpack still works
     """
 
-    __slots__ = ("t", "y", "system")
+    __slots__ = ("t", "y", "system", "meta")
 
-    def __init__(self, t: np.ndarray, y: np.ndarray, system: Any = None) -> None:
+    def __init__(
+        self,
+        t: np.ndarray,
+        y: np.ndarray,
+        system: Any = None,
+        *,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
         self.t = np.asarray(t)
         self.y = np.asarray(y)
         self.system = system
+        self.meta = dict(meta) if meta else {}
 
     # --- compatibility / convenience ---
 
@@ -161,7 +174,7 @@ class Trajectory:
 
     def __getitem__(self, key):
         """Slice both arrays together: ``traj[100:]`` → new Trajectory."""
-        return Trajectory(self.t[key], self.y[key], self.system)
+        return Trajectory(self.t[key], self.y[key], self.system, meta=self.meta)
 
     @property
     def dim(self) -> int:
@@ -202,7 +215,7 @@ class Trajectory:
         Trajectory
         """
         mask = self.t >= t0
-        return Trajectory(self.t[mask], self.y[mask], self.system)
+        return Trajectory(self.t[mask], self.y[mask], self.system, meta=self.meta)
 
     # ------------------------------------------------------------------
     # Analysis methods (decimate, resample, project, window, derivative,

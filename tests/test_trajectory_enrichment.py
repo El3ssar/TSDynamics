@@ -202,15 +202,19 @@ class TestDerivative:
 
 
 class TestNorm:
-    def test_returns_ndarray(self, ramp_traj: Trajectory) -> None:
+    def test_returns_trajectory(self, ramp_traj: Trajectory) -> None:
         r = ramp_traj.norm()
-        assert isinstance(r, np.ndarray)
-        assert r.shape == (ramp_traj.n_steps,)
+        assert isinstance(r, Trajectory)
+        # One scalar per time → y has shape (T, 1)
+        assert r.y.shape == (ramp_traj.n_steps, 1)
+        # t is preserved (cloned, not shared)
+        np.testing.assert_allclose(r.t, ramp_traj.t)
+        assert r.t is not ramp_traj.t
 
     def test_values_match(self, ramp_traj: Trajectory) -> None:
         r = ramp_traj.norm()
         # y = [t, 2t, 3t] → ||y|| = sqrt(14) * |t|
-        np.testing.assert_allclose(r, np.sqrt(14) * ramp_traj.t)
+        np.testing.assert_allclose(r.y[:, 0], np.sqrt(14) * ramp_traj.t)
 
 
 # ---------------------------------------------------------------------------
@@ -220,36 +224,54 @@ class TestNorm:
 
 class TestPeaks:
     def test_local_maxima_on_sin(self, sin_traj: Trajectory) -> None:
-        tp, yp = sin_traj.local_maxima(component=0)
+        peaks = sin_traj.local_maxima(component=0)
         # sin has maxima at t = (π/2 + 2kπ) / ω; over [0, 10] with ω=2 that's k=0..2.
-        assert tp.size == 3
-        np.testing.assert_allclose(yp, 1.0, atol=1e-3)
+        assert isinstance(peaks, Trajectory)
+        assert peaks.t.size == 3
+        assert peaks.y.shape == (3, 1)
+        np.testing.assert_allclose(peaks.y[:, 0], 1.0, atol=1e-3)
 
     def test_local_minima_on_sin(self, sin_traj: Trajectory) -> None:
-        tm, ym = sin_traj.local_minima(component=0)
-        assert tm.size == 3
-        np.testing.assert_allclose(ym, -1.0, atol=1e-3)
+        troughs = sin_traj.local_minima(component=0)
+        assert troughs.t.size == 3
+        np.testing.assert_allclose(troughs.y[:, 0], -1.0, atol=1e-3)
+
+    def test_refined_kwarg_gives_subsample_accuracy(self, sin_traj: Trajectory) -> None:
+        # Coarse grid deliberately misaligned with π/2 so the discrete-peak
+        # time is detectably off from the analytical maximum.
+        t = np.linspace(0.0, 4 * np.pi, 51)
+        y = np.sin(t)[:, None]
+        traj = Trajectory(t, y, system=None)
+        coarse = traj.local_maxima(component=0)
+        refined = traj.local_maxima(component=0, refined=True)
+        err_coarse = np.abs(coarse.t[0] - np.pi / 2)
+        err_refined = np.abs(refined.t[0] - np.pi / 2)
+        # Coarse error is bounded by half the sample step ≈ 0.13.  Refined
+        # cubic-Hermite reduces it by at least an order of magnitude.
+        assert err_coarse > 1e-3
+        assert err_refined < err_coarse / 10
 
     def test_return_times_reproduce_period(self, sin_traj: Trajectory) -> None:
         isi = sin_traj.return_times(component=0)
-        assert isi.size >= 1
-        np.testing.assert_allclose(isi, 2 * np.pi / _SIN_OMEGA, rtol=1e-3)
+        assert isinstance(isi, Trajectory)
+        assert isi.n_steps >= 1
+        np.testing.assert_allclose(isi.y[:, 0], 2 * np.pi / _SIN_OMEGA, rtol=1e-3)
 
     def test_return_times_empty_when_no_peaks(self) -> None:
         t = np.linspace(0.0, 1.0, 100)
-        y = t[:, None]  # monotonic, no peaks at all
+        y = t[:, None]
         traj = Trajectory(t, y, system=None)
         isi = traj.return_times(component=0)
-        assert isi.size == 0
+        assert isi.n_steps == 0
+        assert isi.y.shape == (0, 1)
 
     def test_find_peaks_kwargs_forwarded(self, sin_traj: Trajectory) -> None:
-        # A unit-amplitude sin has prominence ≈ 2 between consecutive maxima;
-        # ask for more and find_peaks returns nothing — proving the kwarg
-        # made it through.
-        tp_loose, _ = sin_traj.local_maxima(component=0)
-        tp_strict, _ = sin_traj.local_maxima(component=0, prominence=2.5)
-        assert tp_strict.size <= tp_loose.size
-        assert tp_strict.size == 0
+        # Unit-amplitude sin has prominence ≈ 2 between consecutive maxima;
+        # asking for more returns nothing — proving the kwarg got through.
+        loose = sin_traj.local_maxima(component=0)
+        strict = sin_traj.local_maxima(component=0, prominence=2.5)
+        assert strict.t.size <= loose.t.size
+        assert strict.t.size == 0
 
     def test_invalid_component_raises(self, ramp_traj: Trajectory) -> None:
         with pytest.raises(IndexError):

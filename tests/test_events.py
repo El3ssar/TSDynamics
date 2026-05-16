@@ -1,9 +1,14 @@
 """
-Tests for M2 event detection.
+Tests for the event detection module.
 
-Covers the bracket helper, every built-in :class:`EventCondition`, the
-generic :func:`detect_events` driver, and a few edge cases (no events,
-short trajectories, direction filtering, refinement accuracy).
+Covers the bracket helper, the two built-in conditions (:class:`Plane`,
+:class:`LinearPlane`), shortcut-kwargs and bare-callable call styles for
+:func:`detect_events`, and a few edge cases (no events, short
+trajectories, direction filtering, refinement accuracy).
+
+The unified return type — :class:`~tsdynamics.base.Trajectory` — is
+checked throughout so the contract that "every analysis op returns a
+Trajectory" stays enforced.
 """
 
 from __future__ import annotations
@@ -11,17 +16,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tsdynamics.analysis.events import (
-    Custom,
+from tsdynamics.analysis import (
     EventCondition,
-    EventResult,
     LinearPlane,
-    LocalExtremum,
     Plane,
-    Threshold,
-    _bracket_mask,
     detect_events,
 )
+from tsdynamics.analysis._events import _bracket_mask
 from tsdynamics.base import Trajectory
 
 # ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ class TestBracketMask:
     def test_up_crossing(self) -> None:
         g = np.array([-1.0, -0.5, 0.5, 1.0, 0.0, -0.5])
         idx, direc = _bracket_mask(g, "up")
-        # Up crossings: between idx 1 (-0.5 → 0.5)
+        # Up crossing brackets [1, 2] only.
         assert idx.tolist() == [1]
         assert direc.tolist() == [1]
 
@@ -71,12 +72,10 @@ class TestBracketMask:
         assert direc.tolist() == [1, -1, 1]
 
     def test_exact_zero_treated_as_crossing(self) -> None:
-        # 0 → +: counts as up
         g = np.array([0.0, 1.0])
         idx, direc = _bracket_mask(g, "up")
         assert idx.tolist() == [0]
         assert direc.tolist() == [1]
-        # 0 → -: counts as down
         g = np.array([0.0, -1.0])
         idx, direc = _bracket_mask(g, "down")
         assert idx.tolist() == [0]
@@ -109,28 +108,21 @@ class TestPlane:
     def test_detect_finds_canonical_crossings(self, sin_traj: Trajectory) -> None:
         # cos t == 0 at t = π/2, 3π/2, 5π/2, 7π/2 over [0, 4π].
         p = Plane(axis=1, value=0.0, direction="either")
-        ev = p.detect(sin_traj.t, sin_traj.y)
+        t_ev, y_ev = p.detect(sin_traj.t, sin_traj.y)
         expected = np.array([np.pi / 2, 3 * np.pi / 2, 5 * np.pi / 2, 7 * np.pi / 2])
-        assert ev.t.size == expected.size
-        np.testing.assert_allclose(ev.t, expected, atol=1e-6)
+        assert t_ev.size == expected.size
+        np.testing.assert_allclose(t_ev, expected, atol=1e-6)
+        # Refined state at π/2: sin = 1.
+        np.testing.assert_allclose(y_ev[0, 0], 1.0, atol=1e-5)
 
     def test_detect_direction_filter(self, sin_traj: Trajectory) -> None:
         p_up = Plane(axis=1, value=0.0, direction="up")
         p_down = Plane(axis=1, value=0.0, direction="down")
-        ev_up = p_up.detect(sin_traj.t, sin_traj.y)
-        ev_down = p_down.detect(sin_traj.t, sin_traj.y)
-        # cos t has 2 upward zeros (at 3π/2, 7π/2) and 2 downward (π/2, 5π/2).
-        assert ev_up.t.size == 2
-        assert ev_down.t.size == 2
-        assert (ev_up.direction == 1).all()
-        assert (ev_down.direction == -1).all()
-
-    def test_detect_refines_state(self, sin_traj: Trajectory) -> None:
-        # At the section sin(π/2) = 1.
-        p = Plane(axis=1, value=0.0, direction="down")
-        ev = p.detect(sin_traj.t, sin_traj.y)
-        # The first downward zero of cos is at π/2; sin there is +1.
-        np.testing.assert_allclose(ev.y[0, 0], 1.0, atol=1e-5)
+        t_up, _ = p_up.detect(sin_traj.t, sin_traj.y)
+        t_dn, _ = p_down.detect(sin_traj.t, sin_traj.y)
+        # cos t has 2 upward zeros (3π/2, 7π/2) and 2 downward (π/2, 5π/2).
+        assert t_up.size == 2
+        assert t_dn.size == 2
 
 
 # ---------------------------------------------------------------------------
@@ -142,20 +134,19 @@ class TestLinearPlane:
     def test_axis_aligned_matches_plane(self, sin_traj: Trajectory) -> None:
         lp = LinearPlane(normal=np.array([0.0, 1.0]), offset=0.0, direction="up")
         p = Plane(axis=1, value=0.0, direction="up")
-        ev_lp = lp.detect(sin_traj.t, sin_traj.y)
-        ev_p = p.detect(sin_traj.t, sin_traj.y)
-        np.testing.assert_allclose(ev_lp.t, ev_p.t, atol=1e-9)
+        t_lp, _ = lp.detect(sin_traj.t, sin_traj.y)
+        t_p, _ = p.detect(sin_traj.t, sin_traj.y)
+        np.testing.assert_allclose(t_lp, t_p, atol=1e-9)
 
     def test_diagonal_plane(self) -> None:
-        # y = (cos t, sin t); we want x + y = 0  → cos t + sin t = 0
-        # That is t = 3π/4 + kπ → over [0, 2π] there are crossings at 3π/4 and 7π/4.
+        # y = (cos t, sin t); the section x + y = 0 is hit at 3π/4 + kπ.
         t = np.linspace(0.0, 2 * np.pi, 5001)
         y = np.column_stack([np.cos(t), np.sin(t)])
         lp = LinearPlane(normal=np.array([1.0, 1.0]), offset=0.0, direction="either")
-        ev = lp.detect(t, y)
+        t_ev, _ = lp.detect(t, y)
         expected = np.array([3 * np.pi / 4, 7 * np.pi / 4])
-        assert ev.t.size == expected.size
-        np.testing.assert_allclose(ev.t, expected, atol=1e-6)
+        assert t_ev.size == expected.size
+        np.testing.assert_allclose(t_ev, expected, atol=1e-6)
 
     def test_zero_normal_rejected(self) -> None:
         with pytest.raises(ValueError, match="zero vector"):
@@ -167,141 +158,133 @@ class TestLinearPlane:
 
 
 # ---------------------------------------------------------------------------
-# Threshold
+# detect_events — the public driver
 # ---------------------------------------------------------------------------
 
 
-class TestThreshold:
-    def test_default_direction_up(self) -> None:
-        th = Threshold(component=0, value=0.0)
-        assert th.direction == "up"
+class TestDetectEventsBasic:
+    def test_returns_trajectory(self, sin_traj: Trajectory) -> None:
+        out = detect_events(sin_traj, Plane(axis=1, value=0.0))
+        assert isinstance(out, Trajectory)
+        assert out.dim == sin_traj.dim
+        assert out.n_steps > 0
 
-    def test_detects_threshold_crossings(self, sin_traj: Trajectory) -> None:
-        # sin t crosses 0.5 upwards twice on [0, 4π] (at t = π/6 and t = π/6 + 2π).
-        th = Threshold(component=0, value=0.5, direction="up")
-        ev = th.detect(sin_traj.t, sin_traj.y)
+    def test_system_inherited(self, sin_traj: Trajectory) -> None:
+        marker = object()
+        sin_traj.system = marker  # type: ignore[assignment]
+        out = detect_events(sin_traj, Plane(axis=1, value=0.0))
+        assert out.system is marker
+
+    def test_tuple_input(self, sin_traj: Trajectory) -> None:
+        out = detect_events((sin_traj.t, sin_traj.y), Plane(axis=1, value=0.0))
+        assert isinstance(out, Trajectory)
+        assert out.system is None
+
+    def test_bare_arrays_input(self, sin_traj: Trajectory) -> None:
+        out = detect_events(sin_traj.t, sin_traj.y, Plane(axis=1, value=0.0))
+        assert isinstance(out, Trajectory)
+
+
+# ---------------------------------------------------------------------------
+# detect_events — three call styles
+# ---------------------------------------------------------------------------
+
+
+class TestDetectEventsCallStyles:
+    def test_explicit_plane(self, sin_traj: Trajectory) -> None:
+        ev = detect_events(sin_traj, Plane(axis=0, value=0.5, direction="up"))
+        # sin t = 0.5 upward at t = π/6 and π/6 + 2π over [0, 4π].
         expected = np.array([np.pi / 6, np.pi / 6 + 2 * np.pi])
-        assert ev.t.size == expected.size
+        assert ev.n_steps == expected.size
         np.testing.assert_allclose(ev.t, expected, atol=1e-5)
 
+    def test_shortcut_kwargs(self, sin_traj: Trajectory) -> None:
+        ev = detect_events(sin_traj, axis=0, value=0.5, direction="up")
+        expected = np.array([np.pi / 6, np.pi / 6 + 2 * np.pi])
+        assert ev.n_steps == expected.size
+        np.testing.assert_allclose(ev.t, expected, atol=1e-5)
 
-# ---------------------------------------------------------------------------
-# Custom
-# ---------------------------------------------------------------------------
+    def test_shortcut_kwargs_no_direction_means_either(self, sin_traj: Trajectory) -> None:
+        # Without explicit direction, default is "either" — both upward and
+        # downward zeros count.
+        ev = detect_events(sin_traj, axis=0, value=0.5)
+        # sin t = 0.5 hit four times on [0, 4π] (two up, two down).
+        assert ev.n_steps == 4
 
-
-class TestCustom:
-    def test_radial_crossing(self) -> None:
+    def test_callable_condition(self) -> None:
         # Spiral that crosses r=1: y(t) = (e^{0.05 t} cos t, e^{0.05 t} sin t).
-        # ||y|| = e^{0.05 t} → r=1 crossing at t=0.
         t = np.linspace(-2.0, 2.0, 1001)
         r = np.exp(0.05 * t)
         y = np.column_stack([r * np.cos(t), r * np.sin(t)])
-        cond = Custom(lambda _t, _y: float(np.linalg.norm(_y) - 1.0), direction="up")
-        ev = cond.detect(t, y)
-        assert ev.t.size == 1
+        ev = detect_events(
+            (t, y),
+            lambda _t, _y: float(np.linalg.norm(_y) - 1.0),
+            direction="up",
+        )
+        assert ev.n_steps == 1
         np.testing.assert_allclose(ev.t[0], 0.0, atol=1e-5)
 
+    def test_linear_plane_via_normal_kwarg(self) -> None:
+        # Shortcut for LinearPlane: pass normal=...
+        t = np.linspace(0.0, 2 * np.pi, 5001)
+        y = np.column_stack([np.cos(t), np.sin(t)])
+        ev = detect_events((t, y), normal=np.array([1.0, 1.0]), direction="either")
+        expected = np.array([3 * np.pi / 4, 7 * np.pi / 4])
+        assert ev.n_steps == expected.size
+        np.testing.assert_allclose(ev.t, expected, atol=1e-6)
 
-# ---------------------------------------------------------------------------
-# LocalExtremum
-# ---------------------------------------------------------------------------
-
-
-class TestLocalExtremum:
-    def test_default_kind_is_max(self) -> None:
-        ex = LocalExtremum(component=0)
-        assert ex.kind == "max"
-        assert ex.direction == "down"  # derivative crosses downward at a max
-
-    def test_finds_maxima_of_sin(self, sin_traj: Trajectory) -> None:
-        # sin t has maxima at t = π/2, 5π/2 over [0, 4π].
-        ex = LocalExtremum(component=0, kind="max")
-        ev = ex.detect(sin_traj.t, sin_traj.y)
-        expected = np.array([np.pi / 2, 5 * np.pi / 2])
-        assert ev.t.size == expected.size
-        np.testing.assert_allclose(ev.t, expected, atol=1e-3)
-        np.testing.assert_allclose(ev.y[:, 0], 1.0, atol=1e-4)
-
-    def test_finds_minima_of_sin(self, sin_traj: Trajectory) -> None:
-        ex = LocalExtremum(component=0, kind="min")
-        ev = ex.detect(sin_traj.t, sin_traj.y)
-        expected = np.array([3 * np.pi / 2, 7 * np.pi / 2])
-        assert ev.t.size == expected.size
-        np.testing.assert_allclose(ev.t, expected, atol=1e-3)
-        np.testing.assert_allclose(ev.y[:, 0], -1.0, atol=1e-4)
-
-    def test_rejects_bad_kind(self, sin_traj: Trajectory) -> None:
-        ex = LocalExtremum(component=0, kind="weird")  # type: ignore[arg-type]
-        with pytest.raises(ValueError, match="kind"):
-            ex.detect(sin_traj.t, sin_traj.y)
-
-    def test_rejects_bad_component(self, sin_traj: Trajectory) -> None:
-        ex = LocalExtremum(component=99, kind="max")
-        with pytest.raises(IndexError):
-            ex.detect(sin_traj.t, sin_traj.y)
-
-    def test_short_input_returns_empty(self) -> None:
-        ex = LocalExtremum(component=0, kind="max")
-        ev = ex.detect(np.array([0.0, 1.0]), np.array([[0.0], [1.0]]))
-        assert ev.t.size == 0
+    def test_method_form_matches_function(self, sin_traj: Trajectory) -> None:
+        m = sin_traj.detect_events(axis=0, value=0.5, direction="up")
+        f = detect_events(sin_traj, axis=0, value=0.5, direction="up")
+        np.testing.assert_array_equal(m.t, f.t)
+        np.testing.assert_array_equal(m.y, f.y)
 
 
 # ---------------------------------------------------------------------------
-# detect_events
+# detect_events — error cases
 # ---------------------------------------------------------------------------
 
 
-class TestDetectEvents:
-    def test_accepts_trajectory_object(self, sin_traj: Trajectory) -> None:
-        ev = detect_events(sin_traj, Plane(axis=1, value=0.0))
-        assert ev.t.size > 0
+class TestDetectEventsErrors:
+    def test_missing_condition_and_no_kwargs(self, sin_traj: Trajectory) -> None:
+        with pytest.raises(TypeError, match="Need a condition"):
+            detect_events(sin_traj)
 
-    def test_accepts_tuple(self, sin_traj: Trajectory) -> None:
-        ev = detect_events((sin_traj.t, sin_traj.y), Plane(axis=1, value=0.0))
-        assert ev.t.size > 0
+    def test_axis_without_value(self, sin_traj: Trajectory) -> None:
+        with pytest.raises(TypeError, match="axis="):
+            detect_events(sin_traj, axis=0)
 
-    def test_rejects_missing_arguments(self) -> None:
-        # No arguments at all → TypeError from the polymorphic wrapper.
-        with pytest.raises(TypeError):
-            detect_events()  # type: ignore[call-arg]
-
-    def test_rejects_bad_condition(self, sin_traj: Trajectory) -> None:
-        with pytest.raises(TypeError, match="\\.detect"):
+    def test_bad_condition_type(self, sin_traj: Trajectory) -> None:
+        with pytest.raises(TypeError, match="condition must be"):
             detect_events(sin_traj, object())  # type: ignore[arg-type]
 
     def test_no_events_on_monotonic_ramp(self, ramp_traj: Trajectory) -> None:
-        # y[0] = t never crosses 100 over [0, 10].
-        ev = detect_events(ramp_traj, Threshold(component=0, value=100.0, direction="up"))
-        assert ev.t.size == 0
-        assert ev.y.shape == (0, 3)
+        ev = detect_events(ramp_traj, axis=0, value=100.0, direction="up")
+        assert ev.n_steps == 0
+        assert ev.y.shape == (0, ramp_traj.dim)
 
-    def test_refinement_accuracy_on_sin(self) -> None:
-        # Increase resolution and confirm refined error scales below 1e-7.
+    def test_short_trajectory_returns_empty(self) -> None:
+        # Single-sample trajectory cannot bracket anything.
+        t = np.array([0.0])
+        y = np.array([[0.0, 1.0]])
+        ev = detect_events((t, y), axis=0, value=0.0)
+        assert ev.n_steps == 0
+
+
+# ---------------------------------------------------------------------------
+# Refinement accuracy
+# ---------------------------------------------------------------------------
+
+
+class TestRefinementAccuracy:
+    def test_sub_microsecond_on_sin(self) -> None:
         t = np.linspace(0.0, 2 * np.pi, 1001)
         y = np.column_stack([np.sin(t), np.cos(t)])
-        cond = Plane(axis=0, value=0.0, direction="up")
-        ev = detect_events((t, y), cond, rtol=1e-12)
-        # sin t = 0 upward at t = 0 and t = 2π.
-        # The endpoint t = 0 might not be detected (no left bracket); t = 2π is at endpoint.
-        # The interior zero we expect is at t = 2π — depending on sampling.
-        # Robust: find at least one crossing and assert sub-microsecond accuracy.
-        if ev.t.size:
+        ev = detect_events((t, y), axis=0, value=0.0, direction="up", rtol=1e-12)
+        if ev.n_steps:
+            # The interior up-zero is at t = 2π; refined error should be < 1e-6.
             errs = np.minimum(np.abs(ev.t - 2 * np.pi), np.abs(ev.t - 0.0))
             assert errs.min() < 1e-6
-
-    def test_result_is_eventresult(self, sin_traj: Trajectory) -> None:
-        ev = detect_events(sin_traj, Plane(axis=1, value=0.0))
-        assert isinstance(ev, EventResult)
-        # unpacks as (t, y)
-        t, y = ev
-        assert t.shape[0] == y.shape[0]
-        assert len(ev) == ev.t.size
-
-    def test_condition_attached(self, sin_traj: Trajectory) -> None:
-        cond = Plane(axis=1, value=0.0)
-        ev = detect_events(sin_traj, cond)
-        assert ev.condition is cond
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +296,3 @@ class TestProtocol:
     def test_builtins_satisfy_protocol(self) -> None:
         assert isinstance(Plane(axis=0, value=0.0), EventCondition)
         assert isinstance(LinearPlane(normal=np.array([1.0, 0.0])), EventCondition)
-        assert isinstance(Threshold(component=0, value=0.0), EventCondition)
-        assert isinstance(LocalExtremum(component=0), EventCondition)
-        assert isinstance(Custom(lambda t, y: 0.0), EventCondition)

@@ -1,44 +1,77 @@
 """
 Analysis primitives for trajectories.
 
+One contract, one return type
+-----------------------------
+
+Every analysis primitive in this module is a function
+``fn(t, y, *args, **kwargs)`` returning a
+:class:`~tsdynamics.base.Trajectory`.  No bare tuples, no ad-hoc result
+objects, no special-case shapes.  This is what lets plotters and
+downstream pipelines consume *any* analysis result uniformly:
+
+- Trajectory ops (``decimate``, ``resample``, ``project``, ``window``,
+  ``derivative``) — output has the trajectory's time + state shape.
+- Reductions (``norm``, ``local_maxima``, ``local_minima``,
+  ``return_times``) — output is a 1-column Trajectory ``(K, 1)``.
+- Event-driven ops (``detect_events``, ``poincare_section``,
+  ``return_map``) — output has crossing times + state (or observable)
+  at crossings.
+- Plot-prep (``to_dataspec``) — the single non-Trajectory exit, returns
+  a plain dict that V1 will turn into a real ``DataSpec``.
+
 Two API layers, one implementation
 ----------------------------------
 
-Every analysis primitive is defined exactly once — as a function
+Each primitive is decorated with :func:`._registry.trajectory_op`.  The
+decorator gives both forms for free:
 
-    fn(t, y, *args, **kwargs) -> result
-
-decorated with :func:`._registry.trajectory_op`.  The decorator gives you
-*both* of these for free:
-
-1. A polymorphic free function — call with a :class:`~tsdynamics.Trajectory`,
-   a ``(t, y)`` tuple, or bare ``t, y`` arrays::
+1. A polymorphic free function::
 
        decimate(traj, every=10)
        decimate((t, y), every=10)
        decimate(t, y, every=10)
-       detect_events(traj, Plane(axis=2, value=27.0))
+       detect_events(traj, axis=2, value=27.0)
        poincare_section((t, y), Plane(axis=2, value=27.0))
 
-2. A fluent method on :class:`~tsdynamics.Trajectory` — installed at
-   ``Trajectory``-class-init time by :func:`._registry.install_methods`::
+2. A fluent method on :class:`~tsdynamics.base.Trajectory`, installed
+   at ``Trajectory``-class-init time by
+   :func:`._registry.install_methods`::
 
        traj.decimate(every=10)
-       traj.detect_events(Plane(axis=2, value=27.0))
+       traj.detect_events(axis=2, value=27.0)
        traj.poincare_section(Plane(axis=2, value=27.0))
 
-Adding a new analysis primitive is therefore one decorated function plus
-one import here — there is no separate method to write, no docstring to
-duplicate, and no `_trajectory_ops`-vs-`base.py` mirror to keep in sync.
+Adding a new primitive is one decorated function plus one re-export
+from this module — no class to touch, no docstring to duplicate.
 
-Re-exported names below cover every registered op.  Implementation files
-live under leading-underscore names (``_registry.py``,
-``_trajectory_ops.py``) to mark them internal — import from this package
-instead.
+Event-driven ops accept three call styles
+-----------------------------------------
+
+:func:`detect_events`, :func:`poincare_section`, :func:`return_map` all
+accept any of:
+
+- An :class:`EventCondition` (``Plane``, ``LinearPlane``, or any
+  ``.detect``-bearing object).
+- A bare callable ``fn(t, y) -> float`` (sub-sample refinement still
+  applied; pass ``direction="up"`` etc. as a kwarg).
+- Shortcut kwargs ``axis=`` + ``value=`` (axis-aligned plane), or
+  ``normal=`` + ``offset=`` (linear plane).
+
+Pick whichever reads best at the call site.
 """
 
 from __future__ import annotations
 
+from ._events import (
+    Direction,
+    EventCondition,
+    LinearPlane,
+    Plane,
+    detect_events,
+    poincare_section,
+    return_map,
+)
 from ._trajectory_ops import (
     decimate,
     derivative,
@@ -51,36 +84,20 @@ from ._trajectory_ops import (
     to_dataspec,
     window,
 )
-from .events import (
-    Custom,
-    Direction,
-    EventCondition,
-    EventResult,
-    LinearPlane,
-    LocalExtremum,
-    Plane,
-    Threshold,
-    detect_events,
-)
-from .return_map import Observable, ReturnMap, return_map
-from .sections import poincare_section
 
 __all__ = [
-    # M2 — event detection and section construction.
-    "Custom",
+    # Event conditions (the only public condition classes — Threshold,
+    # Custom, LocalExtremum were dropped; use Plane(direction="up"),
+    # bare callables, and local_maxima(refined=True) respectively).
     "Direction",
     "EventCondition",
-    "EventResult",
     "LinearPlane",
-    "LocalExtremum",
-    "Observable",
     "Plane",
-    "ReturnMap",
-    "Threshold",
+    # Event-driven ops.
     "detect_events",
     "poincare_section",
     "return_map",
-    # M1 — trajectory enrichment.
+    # Trajectory enrichment.
     "decimate",
     "derivative",
     "local_maxima",

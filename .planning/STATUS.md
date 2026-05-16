@@ -1,4 +1,4 @@
-# Status — updated 2026-05-16 (M2 + registry refactor; Track E re-scoped)
+# Status — updated 2026-05-16 (M2 + registry refactor + analysis-API unification; Track E re-scoped)
 
 Current milestone: **none — M2 closed. Pick the next from ROADMAP.md.**
 **Track E (Rust solver migration) was re-scoped on 2026-05-16** —
@@ -75,6 +75,41 @@ new risk register, new open questions),
     return-map tests.  Full fast suite: **709 passed / 56 skipped**.  Full
     suite (slow included): **843 passed / 56 skipped** in ~118 s.
     `ruff check` and `ruff format --check` both clean.
+
+## Analysis-API unification (post-M2, 2026-05-16)
+
+Right after the registry refactor below landed, the analysis module was
+audited again and the **return-type fragmentation** that the post-M2 work
+hadn't addressed turned out to be the real source of API friction.  Six
+different result types (`Trajectory`, `EventResult`, `ReturnMap`, bare
+tuples, bare ndarrays, dicts) made downstream code (especially the
+upcoming V1 plotters) special-case six shapes.  Fixed:
+
+- **One return type to rule them all**: every analysis primitive now
+  returns a `Trajectory`.  Reductions (`norm`, `local_maxima`,
+  `local_minima`, `return_times`) return a 1-column trajectory
+  (`y.shape == (K, 1)`).  `detect_events` and `return_map` likewise.
+  The single non-Trajectory exit is `to_dataspec`, which is V1's job
+  to replace.
+- **Three event-condition classes deleted**: `Threshold` (same as
+  `Plane`), `Custom` (callable wrapper), `LocalExtremum` (duplicated
+  `local_maxima` / `local_minima`).  Two remain: `Plane`, `LinearPlane`.
+- **Three call styles** for every event-driven op — condition object,
+  bare callable, or shortcut kwargs (`axis=`, `value=`, `direction=`).
+  Pick whichever reads best.
+- **File layout**: `events.py`, `sections.py`, `return_map.py` collapsed
+  into a single `_events.py` (the user complained that return_map living
+  in a separate module made it feel weird).  Public surface unchanged.
+- **`local_maxima` / `local_minima` gained `refined=False`** — pass
+  `refined=True` for sub-sample-accurate Hermite refinement (the
+  algorithm that `LocalExtremum` used to ship as its own class).
+- **`Trajectory` gained `meta: dict`** for future per-result metadata.
+- **Tests**: rewrote `tests/test_events.py` (34 cases) and
+  `tests/test_poincare.py` (24 cases) for the unified contracts;
+  updated `tests/test_trajectory_enrichment.py` for the new return
+  shapes.  Full fast suite: **717 passed / 56 skipped**.  Full suite
+  (slow included): **852 passed / 56 skipped** in 117 s.  `ruff check`
+  and `ruff format --check` both clean.
 
 ## Analysis-layer registry refactor (post-M2)
 
@@ -195,6 +230,11 @@ is later.
 - **Optional section-axis collapse** in `poincare_section`: today we
   keep the full state; a `keep_axis=False` flag for the Plane case
   would be a one-liner if asked.
+- **Meta propagation through the registry**: `Trajectory.meta` is
+  defined and `__getitem__` / `.after` propagate it, but the
+  `@trajectory_op` registry currently does not — every output starts
+  with `meta={}`.  Add it when there's a first op that wants to surface
+  metadata (e.g. `direction` per event, `prominence` per peak).
 
 ## How to resume
 

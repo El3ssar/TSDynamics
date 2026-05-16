@@ -57,12 +57,11 @@ src/tsdynamics/
 ├── analysis/
 │   ├── __init__.py           # Re-exports every @trajectory_op as a free function
 │   ├── _registry.py          # trajectory_op decorator + install_methods (the design hub)
-│   ├── _trajectory_ops.py    # M1 ops: decimate/resample/project/window/derivative/norm/
-│   │                         # local_maxima/local_minima/return_times/to_dataspec
-│   ├── events.py             # EventCondition protocol + Plane / LinearPlane / Threshold /
-│   │                         # LocalExtremum / Custom + EventResult + detect_events (M2)
-│   ├── sections.py           # poincare_section (M2)
-│   └── return_map.py         # ReturnMap container + return_map() (M2)
+│   ├── _trajectory_ops.py    # Transforms + reductions: decimate/resample/project/window/
+│   │                         # derivative/norm/local_maxima/local_minima/return_times/
+│   │                         # to_dataspec
+│   └── _events.py            # EventCondition protocol + Plane / LinearPlane +
+│                             # detect_events / poincare_section / return_map
 ├── systems/
 │   ├── continuous/
 │   │   ├── chaotic_attractors.py
@@ -373,19 +372,31 @@ uniform = traj.resample(dt_new=0.01, kind="cubic")
 xz      = traj.project(dims=(0, 2))
 middle  = traj.window(t0=100.0, t1=150.0)
 dtraj   = traj.derivative(order=1)
-r       = traj.norm()                              # ndarray (T,)
-tp, yp  = traj.local_maxima(component=2, prominence=1.0)
-isi     = traj.return_times(component=2, prominence=1.0)
+rtraj   = traj.norm()                              # Trajectory, y.shape == (T, 1)
+peaks   = traj.local_maxima(component=2, prominence=1.0)            # Trajectory
+peaksR  = traj.local_maxima(component=2, refined=True)              # sub-sample Hermite refinement
+isi     = traj.return_times(component=2, prominence=1.0)            # Trajectory of ISIs
 spec    = traj.to_dataspec(kind="phase_portrait_3d", dims=(0, 1, 2))
 
 # Event & section detection (M2) — Poincaré, return maps, threshold crossings.
-# Condition classes live in tsdynamics.analysis (always imported from there).
-from tsdynamics.analysis import Plane, LinearPlane, Threshold, LocalExtremum, Custom
+# Three call styles per op: shortcut kwargs, condition object, or bare callable.
+from tsdynamics.analysis import Plane, LinearPlane                  # only two condition classes
 
-events  = traj.detect_events(Threshold(component=0, value=10.0, direction="up"))
-sec     = traj.poincare_section(Plane(axis=2, value=27.0))   # direction="up" by default
-rmap    = traj.return_map(Plane(axis=2, value=27.0), observable=0)
-spec    = rmap.to_dataspec(kind="return_map")
+# 1. Shortcut kwargs (the easy one)
+events = traj.detect_events(axis=0, value=10.0, direction="up")
+sec    = traj.poincare_section(axis=2, value=27.0)                  # direction="up" by default
+rmap   = traj.return_map(axis=2, value=27.0, observable=0)
+
+# 2. Condition objects (for power users / LinearPlane case)
+events = traj.detect_events(Plane(axis=0, value=10.0, direction="up"))
+sec    = traj.poincare_section(LinearPlane(normal=[1, 1, 0], offset=0))
+
+# 3. Bare callable
+events = traj.detect_events(lambda t, y: float(np.linalg.norm(y) - 1.0), direction="up")
+
+# Every result is a Trajectory.  To plot the canonical x_{k+1} vs x_k return map:
+spec   = rmap.to_dataspec(kind="return_map", step=1)                # {kind, x, y, t, step, observable}
+# plt.scatter(spec["x"], spec["y"])
 ```
 
 ### Two call forms, one implementation — the `@trajectory_op` registry
@@ -430,7 +441,7 @@ detect_events(traj, Plane(axis=2, value=27))  # free function form
 |-------------------|--------------------------------------|-----------------------------------------|
 | `"trajectory"`     | `(t_new, y_new)` tuple               | `Trajectory(t_new, y_new, system)`      |
 | `"ndarray_keep_t"` | ndarray with same time axis as input | `Trajectory(self.t.copy(), arr, system)`|
-| `"passthrough"`    | anything else (EventResult, ReturnMap, peak tuple, dict, …) | returned as-is |
+| `"passthrough"`    | anything else (only `to_dataspec` uses this — returns a plain dict that V1's `DataSpec` will replace) | returned as-is |
 
 `Trajectory.system` is inherited from the input when the input is a
 `Trajectory`, and is `None` when the caller supplied raw arrays / a
@@ -440,11 +451,18 @@ prefer `t, y = decimate(...)` still work transparently.
 ### Adding a new analysis primitive
 
 Drop the function next to its peers in
-`src/tsdynamics/analysis/_trajectory_ops.py` (or `events.py` /
-`sections.py` / `return_map.py` if it's section-shaped), give it a
-`(t, y, *args)` signature, decorate with `@trajectory_op(returns=...)`,
-re-export it from `analysis/__init__.py`.  That's it.  No class to
-touch, no docstring to duplicate, no wrapper method to keep in sync.
+`src/tsdynamics/analysis/_trajectory_ops.py` (or `_events.py` if it's
+section / event / return-map shaped), give it a `(t, y, *args)`
+signature, decorate with `@trajectory_op(returns=...)`, re-export it
+from `analysis/__init__.py`.  That's it.  No class to touch, no
+docstring to duplicate, no wrapper method to keep in sync.
+
+**Return-type contract.** The analysis module ships a single output
+type — :class:`Trajectory`.  Every primitive returns one, including the
+reductions (`norm`, `local_maxima`, `local_minima`, `return_times`) for
+which the output is a 1-column trajectory with `y.shape == (K, 1)`.
+The single non-Trajectory exit is `to_dataspec`, which builds the
+placeholder dict V1 will turn into a real `DataSpec`.
 
 ```python
 @trajectory_op(returns="trajectory")
