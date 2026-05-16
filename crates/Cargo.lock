@@ -451,6 +451,14 @@ dependencies = [
  "pyo3",
  "tsdyn-core",
  "tsdyn-maps",
+ "tsdyn-ode",
+]
+
+[[package]]
+name = "tsdyn-ode"
+version = "0.1.0"
+dependencies = [
+ "tsdyn-core",
 ]
 
 [[package]]

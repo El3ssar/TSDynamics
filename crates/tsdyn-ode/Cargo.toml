@@ -1,0 +1,12 @@
+[package]
+name = "tsdyn-ode"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure-Rust adaptive ERK steppers for TSDynamics (N2.b)."
+
+[dependencies]
+tsdyn-core = { path = "../tsdyn-core" }

@@ -1,15 +1,11 @@
-//! PyO3 bindings for the ODE IR evaluator (N2.a).
-//!
-//! Only the right-hand-side evaluator is exposed at this stage — the
-//! Rust stepper suite lands in N2.b. The Python side uses
-//! `eval_ode_rhs` to unit-test the SymEngine → IR lowering against
-//! JiTCODE's symbolic RHS on the full continuous catalogue.
+//! PyO3 bindings for the ODE IR evaluator and the Rust stepper (N2.b).
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tsdyn_core::ir::CompiledOde;
+use tsdyn_ode::integrate_ode_bytes;
 
 fn decode_ode(bytecode: &Bound<'_, PyBytes>) -> PyResult<CompiledOde> {
     let bytes: &[u8] = bytecode.as_bytes();
@@ -106,4 +102,37 @@ pub fn eval_ode_rhs_batch<'py>(
     let arr = numpy::ndarray::Array2::from_shape_vec((n, dim), out_flat)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("reshape: {e}")))?;
     Ok(arr.into_pyarray(py))
+}
+
+/// Integrate an IR-encoded ODE on a uniform output grid (``dt_output``).
+///
+/// Returns ``(t, y)`` where ``y`` has shape ``(len(t), dim)``.
+#[pyfunction]
+pub fn integrate_ode<'py>(
+    py: Python<'py>,
+    bytecode: &Bound<'py, PyBytes>,
+    t0: f64,
+    tf: f64,
+    y0: PyReadonlyArray1<'py, f64>,
+    params: PyReadonlyArray1<'py, f64>,
+    method: &str,
+    dt_output: f64,
+    rtol: f64,
+    atol: f64,
+) -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray2<f64>>)> {
+    let bytes = bytecode.as_bytes();
+    let y0s = y0.as_slice()?;
+    let pars = params.as_slice()?;
+    let (tvec, yflat) = py.detach(|| {
+        integrate_ode_bytes(bytes, pars, t0, tf, y0s, dt_output, method, rtol, atol)
+    })
+    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    let n = tvec.len();
+    let dim = if n > 0 { yflat.len() / n } else { 0 };
+    let arr2 = numpy::ndarray::Array2::from_shape_vec((n, dim), yflat)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("reshape: {e}")))?;
+    Ok((
+        PyArray1::from_vec(py, tvec),
+        arr2.into_pyarray(py),
+    ))
 }
