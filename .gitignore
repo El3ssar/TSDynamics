@@ -170,4 +170,7 @@ cython_debug/
 data/
 
 Tinkering
-src/tsdynamics/_version.py
+
+# Rust / Cargo (workspace is `crates/`; we keep Cargo.lock for reproducibility)
+crates/target/
+crates/**/target/

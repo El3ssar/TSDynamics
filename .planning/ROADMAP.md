@@ -37,7 +37,7 @@ The roadmap runs four tracks in parallel:
 | ID | Title | Status | Track | Notes |
 |----|-------|--------|-------|-------|
 | M0 | Bootstrap `.planning/` framework | DONE | meta | This commit. |
-| R1 | Rust toolchain + maturin + CI wheels | TODO | C | Unblocks everything below. |
+| R1 | Rust toolchain + maturin + CI wheels | DONE | C | Unblocks everything below. |
 | N1 | Rust map stepper (drops Numba dispatch) | TODO | E | First end-to-end Rust proof. |
 | M1 | Trajectory enrichment | TODO | A | Slice/decimate/derivative/project/window. |
 | M2 | Event & section detection | TODO | A | Powers Poincaré, return maps. |

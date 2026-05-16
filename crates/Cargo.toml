@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["tsdyn-core", "tsdyn-smoke"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.78"
+authors = ["Daniel Estevez <kemossabee@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/El3ssar/TSDynamics"
+
+[workspace.dependencies]
+pyo3 = { version = "0.28", features = ["extension-module"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3

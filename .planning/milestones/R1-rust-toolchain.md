@@ -1,9 +1,47 @@
 # Milestone R1 — Rust toolchain + maturin + CI wheels
 
-Status: TODO
+Status: DONE (landed 2026-05-16)
 Depends on: M0
 Estimated scope: one chat
 Design doc: [design/rust-acceleration.md](../design/rust-acceleration.md)
+
+## Outcome (2026-05-16)
+
+R1 landed. The Cargo workspace lives at [`crates/`](../../crates/), with
+`tsdyn-core` (rlib, placeholder `ProblemHandle`) and `tsdyn-smoke` (cdylib with
+PyO3 bindings). Maturin is the build backend; `tsdynamics._native._smoke`
+imports cleanly after `maturin develop --release`, and
+`add_one(41) == 42`.
+
+Tests: `tests/test_native_smoke.py` covers the import and the function via the
+facade. The existing fast test suite still passes (≥575 tests).
+
+CI: `.github/workflows/tests.yml` now installs the Rust toolchain before `uv
+sync` and runs `uv run maturin develop --release` before pytest.
+`.github/workflows/wheels.yml` is new and produces Linux + macOS wheels for
+cp312/cp313 plus a Linux sdist, on every push to master.
+
+PyO3 version: bumped to 0.28 (originally 0.22 in the plan sketch) to support
+Python 3.14 on the maintainer's host. PyO3 0.28 still supports cp312.
+
+### Deviations from the plan
+
+- **Versioning:** the plan called for `setuptools-scm` to write `_version.py`
+  via maturin's build pipeline. Maturin 1.x does not integrate with
+  `setuptools-scm` in a stable way (no built-in hook, and `[project] dynamic =
+  ["version"]` reads from Cargo.toml, not from setuptools-scm). Resolved by:
+  - Static `[project] version = "1.0.0"` in `pyproject.toml` (matches the
+    current git tag).
+  - `src/tsdynamics/_version.py` now reads `importlib.metadata.version(...)`
+    at import time; same `__version__` symbol as before.
+  - Dropped `hatch-vcs`, `hatch`, `setuptools-scm` from build/dev requirements.
+  - Follow-up: a future milestone may re-introduce SCM-driven versioning via
+    a small `update_version.py` script that bumps `Cargo.toml` from
+    `git describe` before each `maturin build`. Not blocking R2/N1.
+- **Release workflows** (`publish.yml`, `release.yml`) updated minimally to
+  install Rust and build via maturin. These currently produce single-platform
+  wheels; multi-platform wheels are emitted by `wheels.yml`. A future polish
+  milestone will collapse the three workflows.
 
 ## Motivation
 

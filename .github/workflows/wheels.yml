@@ -1,0 +1,78 @@
+name: Wheels
+
+on:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build_wheels:
+    name: "Wheels ${{ matrix.os }} / cp${{ matrix.python-version }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + build artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('crates/**/Cargo.toml', 'crates/**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Build wheel (maturin)
+        uses: PyO3/maturin-action@v1
+        with:
+          # Match the matrix Python; maturin-action will provision it.
+          target: ${{ runner.os == 'macOS' && 'universal2-apple-darwin' || 'x86_64-unknown-linux-gnu' }}
+          args: --release --out dist --interpreter python${{ matrix.python-version }}
+          # Linux uses manylinux_2_28 via PyO3/maturin-action defaults.
+          manylinux: ${{ runner.os == 'Linux' && '2_28' || 'auto' }}
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.os }}-cp${{ matrix.python-version }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build_sdist:
+    name: "sdist"
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build sdist (maturin)
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error

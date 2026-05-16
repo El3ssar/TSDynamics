@@ -1,0 +1,17 @@
+[package]
+name = "tsdyn-smoke"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyO3 smoke-test extension proving the Rust↔Python build pipeline."
+
+[lib]
+name = "tsdyn_smoke"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { workspace = true }
+tsdyn-core = { path = "../tsdyn-core" }
