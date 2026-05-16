@@ -3,7 +3,6 @@
 //! Coefficients vendored from the `ode-solvers` crate
 //! <https://github.com/srenevey/ode-solvers> (Apache-2.0), `src/butcher_tableau.rs`.
 #![allow(dead_code)]
-
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::type_complexity)]
 
@@ -69,7 +68,6 @@ pub mod dopri54 {
             5 => &A.5[..],
             _ => panic!("index out of bounds"),
         })[j - 1]
-            
     }
 
     /// Returns the _c<sub>i</sub>_ coefficient.
@@ -399,7 +397,6 @@ pub mod dopri853 {
             14 => &A.14[..],
             _ => panic!("index out of bounds"),
         })[j - 1]
-            
     }
 
     /// Returns the _b<sub>i</sub>_ coefficient.
@@ -581,10 +578,7 @@ mod tests {
     fn dopri853_a() {
         assert_eq!(dopri853::a(2, 1), 5.26001519587677318785587544488E-2);
         assert_eq!(dopri853::a(7, 4), 1.70252211019544039314978060272E-1);
-        assert_eq!(
-            dopri853::a(12, 9),
-            -8.87285693353062954433549289258E0
-        );
+        assert_eq!(dopri853::a(12, 9), -8.87285693353062954433549289258E0);
         assert_eq!(dopri853::a(15, 3), 0.0);
         assert_eq!(dopri853::a(4, 3), 8.87627564304205475450678981324E-2);
     }
@@ -604,10 +598,7 @@ mod tests {
     #[test]
     fn dopri853_d() {
         assert_eq!(dopri853::d(6, 4), 0.0);
-        assert_eq!(
-            dopri853::d(5, 9),
-            -0.22113666853125306036270938578E+02
-        );
+        assert_eq!(dopri853::d(5, 9), -0.22113666853125306036270938578E+02);
     }
 
     #[test]
@@ -618,9 +609,6 @@ mod tests {
 
     #[test]
     fn dopri853_bhh() {
-        assert_eq!(
-            dopri853::bhh(1),
-            0.244094488188976377952755905512E+00
-        );
+        assert_eq!(dopri853::bhh(1), 0.244094488188976377952755905512E+00);
     }
 }

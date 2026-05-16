@@ -128,9 +128,7 @@ pub(super) fn integrate_dp8<R: Rhs + ?Sized>(
             if acc {
                 dp8_prev_rej = false;
                 if !all_finite(&y_next) {
-                    return Err(IntegrateError::Diverged {
-                        t: t_old + h_step,
-                    });
+                    return Err(IntegrateError::Diverged { t: t_old + h_step });
                 }
 
                 for si in [13usize, 14, 15] {
@@ -250,17 +248,14 @@ pub(super) fn integrate_tsit5<R: Rhs + ?Sized>(
             rhs.eval(t_old + tsit5::C1 * h_step, &y_tmp, &mut k[1]);
 
             for i in 0..dim {
-                y_tmp[i] = y_stage_start[i]
-                    + h_step * (tsit5::A31 * k[0][i] + tsit5::A32 * k[1][i]);
+                y_tmp[i] =
+                    y_stage_start[i] + h_step * (tsit5::A31 * k[0][i] + tsit5::A32 * k[1][i]);
             }
             rhs.eval(t_old + tsit5::C2 * h_step, &y_tmp, &mut k[2]);
 
             for i in 0..dim {
                 y_tmp[i] = y_stage_start[i]
-                    + h_step
-                        * (tsit5::A41 * k[0][i]
-                            + tsit5::A42 * k[1][i]
-                            + tsit5::A43 * k[2][i]);
+                    + h_step * (tsit5::A41 * k[0][i] + tsit5::A42 * k[1][i] + tsit5::A43 * k[2][i]);
             }
             rhs.eval(t_old + tsit5::C3 * h_step, &y_tmp, &mut k[3]);
 
@@ -319,9 +314,7 @@ pub(super) fn integrate_tsit5<R: Rhs + ?Sized>(
             let (acc, h_new) = adapt_step(err, h_step, 4, 0.9, 0.2, 10.0);
             if acc {
                 if !all_finite(&y_next) {
-                    return Err(IntegrateError::Diverged {
-                        t: t_old + h_step,
-                    });
+                    return Err(IntegrateError::Diverged { t: t_old + h_step });
                 }
 
                 let t_new = t_old + h_step;
@@ -412,8 +405,7 @@ pub(super) fn integrate_bs3<R: Rhs + ?Sized>(
 
             for i in 0..dim {
                 y_next[i] = y_stage_start[i]
-                    + h_step
-                        * (bs3::B1 * k[0][i] + bs3::B2 * k[1][i] + bs3::B3 * k[2][i]);
+                    + h_step * (bs3::B1 * k[0][i] + bs3::B2 * k[1][i] + bs3::B3 * k[2][i]);
             }
             rhs.eval(t_old + h_step, &y_next, &mut k[3]);
 
@@ -436,9 +428,7 @@ pub(super) fn integrate_bs3<R: Rhs + ?Sized>(
             let (acc, h_new) = adapt_step(err, h_step, 2, 0.9, 0.2, 10.0);
             if acc {
                 if !all_finite(&y_next) {
-                    return Err(IntegrateError::Diverged {
-                        t: t_old + h_step,
-                    });
+                    return Err(IntegrateError::Diverged { t: t_old + h_step });
                 }
 
                 let t_new = t_old + h_step;

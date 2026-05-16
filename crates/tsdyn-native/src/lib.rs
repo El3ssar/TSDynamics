@@ -20,6 +20,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // N2.a ODE IR evaluator (no stepper yet — N2.b).
     m.add_function(wrap_pyfunction!(ode::eval_ode_rhs, m)?)?;
+    m.add_function(wrap_pyfunction!(ode::eval_ode_jacobian, m)?)?;
     m.add_function(wrap_pyfunction!(ode::eval_ode_rhs_batch, m)?)?;
     m.add_function(wrap_pyfunction!(ode::integrate_ode, m)?)?;
     Ok(())

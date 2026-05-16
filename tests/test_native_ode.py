@@ -17,9 +17,9 @@ Four guarantees:
    Rust **DP8** driver; recomputing with ``method="DP8"`` must recover the
    stored ``(t, y)`` on the uniform grid.
 
-Three systems have no golden file — ``Duffing``, ``SprottD``, ``SprottI``
-(random IC blows up under the golden tolerances).  They still run the
-lower-and-compare RHS checks; golden-file checks skip them.
+``Duffing``, ``SprottD``, and ``SprottI`` use fixed golden ICs (see
+``scripts/generate_ode_goldens.py``) because the catalogue RNG seed lands
+outside a viable basin for those systems.
 
 The RHS comparison uses SymEngine's ``Lambdify`` rather than the
 JiTCODE-compiled ``.so`` because the latter does not expose its
@@ -63,7 +63,7 @@ GOLDEN_DIR = Path(__file__).parent / "native" / "regression" / "ode"
 # Systems with no integrator-friendly random IC; goldens are skipped by
 # ``scripts/generate_ode_goldens.py`` for these.  The lowering + RHS
 # checks still run because they don't integrate.
-GOLDEN_SKIP = frozenset({"Duffing", "SprottD", "SprottI"})
+GOLDEN_SKIP: frozenset[str] = frozenset()
 
 # Rust DP8 replay of committed goldens — comfortably inside FP noise after a
 # full regenerate on the machine that committed the `.npz` files.

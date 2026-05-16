@@ -8,7 +8,10 @@ import pytest
 import tsdynamics as ts
 
 
-@pytest.mark.parametrize("method", ["DP5", "TSIT5", "BS3"])
+@pytest.mark.parametrize(
+    "method",
+    ["DP5", "TSIT5", "BS3", "VERN9"],
+)
 def test_lorenz_dense_output_matches_dp8(method: str) -> None:
     lor = ts.Lorenz()
     ic = np.array([1.0, 1.0, 1.0], dtype=float)
@@ -30,6 +33,24 @@ def test_lorenz_dense_output_matches_dp8(method: str) -> None:
     )
     np.testing.assert_allclose(tr.t, ref.t, rtol=0, atol=1e-14)
     np.testing.assert_allclose(tr.y, ref.y, rtol=5e-7, atol=1e-9)
+
+
+@pytest.mark.parametrize("method", ["ROSENBROCK23", "ROSENBROCK34", "RODAS4"])
+def test_lorenz_stiff_rust_trajectory_finite(method: str) -> None:
+    """Stiff Rosenbrock family: finite trajectory on Lorenz (no DP8 comparison — chaotic)."""
+
+    lor = ts.Lorenz()
+    ic = np.array([1.0, 1.0, 1.0], dtype=float)
+    tr = lor.integrate(
+        final_time=0.05,
+        dt=0.025,
+        ic=ic,
+        method=method,
+        rtol=1e-5,
+        atol=1e-8,
+    )
+    assert tr.y.shape == (tr.t.shape[0], 3)
+    assert np.isfinite(tr.y).all()
 
 
 def test_rk4_dense_integration_is_repeatable() -> None:

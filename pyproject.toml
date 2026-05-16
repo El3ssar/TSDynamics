@@ -172,6 +172,7 @@ filterwarnings = [
   "ignore:.*License classifiers have been superseded.*:UserWarning",
   "ignore:.*larger nsteps is needed.*:UserWarning",
   "ignore:.*step size becomes too small.*:UserWarning",
+  "ignore:method='LSODA'.*:DeprecationWarning",
   "ignore:.*divide by zero encountered in divide.*:RuntimeWarning",
   # JiTCODE/JiTCDDE leave TemporaryDirectory objects to GC cleanup; harmless on Python 3.14+
   "ignore:.*Implicitly cleaning up.*TemporaryDirectory.*:ResourceWarning",

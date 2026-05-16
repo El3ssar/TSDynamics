@@ -66,6 +66,14 @@ _VARIABLE_DIM_FACTORIES = {
     "MultiChua": lambda: importlib.import_module("tsdynamics").MultiChua(n_circuits=2),
 }
 
+# Basin-anchored ICs for systems where ``resolve_ic(None)`` with the golden
+# RNG seed blows up or stalls under the default tolerances (N2.b).
+_HAND_PICKED_IC: dict[str, np.ndarray] = {
+    "Duffing": np.array([0.1, 0.1, 0.0], dtype=float),
+    "SprottD": np.array([0.01, 0.01, 0.01], dtype=float),
+    "SprottI": np.array([0.01, 0.01, 0.01], dtype=float),
+}
+
 # Default integration parameters for the goldens. Short enough to keep
 # regeneration cheap, long enough that chaotic systems start populating
 # their attractor.
@@ -94,7 +102,10 @@ def _instantiate(class_name: str, module_path: str):
     return cls()
 
 
-def _resolve_ic(sys: object) -> np.ndarray:
+def _resolve_ic(sys: object, class_name: str) -> np.ndarray:
+    fixed = _HAND_PICKED_IC.get(class_name)
+    if fixed is not None:
+        return fixed.copy()
     np.random.seed(SEED)
     return sys.resolve_ic(ic=None).copy()
 
@@ -143,7 +154,7 @@ def main() -> None:
 
     for module_path, class_name in ALL_ODE_SYSTEMS:
         sys = _instantiate(class_name, module_path)
-        ic = _resolve_ic(sys)
+        ic = _resolve_ic(sys, class_name)
 
         t0 = time.perf_counter()
         try:

@@ -1,26 +1,52 @@
 ## Unreleased
 
+### Features (N2.c — stiff Rosenbrock integrators)
+
+- **`crates/tsdyn-core`**: `CompiledOde::eval_jacobian` (row-major
+  \(\partial f_i / \partial y_j\)).
+- **`crates/tsdyn-ode`**: Rosenbrock–Wanner stiff methods **Rosenbrock23**,
+  **Rosenbrock34** (ROS34PW1a), **Rodas4**; Gustafsson PI step-size control
+  (`adapt_step_pi`); dense samples on the uniform output grid via linear
+  interpolation between accepted step endpoints; linear solves for
+  \(W = I - \gamma\,dt\,J\) (Gauss–Jordan) with RHS scaling aligned to SciML’s
+  `(J - M/(\gamma dt)) k = -b` form for mass matrix \(I\).
+- **`crates/tsdyn-native`**: `eval_ode_jacobian`; `integrate_ode` accepts stiff
+  method names.
+- **`ContinuousSystem.integrate`**: Rust dispatch for stiff methods when the IR
+  includes a Jacobian; **LSODA** / **VODE** emit `DeprecationWarning`; optional
+  automatic remap to **ROSENBROCK23** on the Rust path is capped at **dim ≤ 24**
+  so large semidiscrete systems remain on JiTCODE unless the user picks an
+  explicit Rust stiff method.
+- **`h_init`**: minimum suggested initial step scales with \(|t_f - t_0|\)
+  instead of using `max(span, 1)` (fixes pathologically tiny spans).
+- **Tests**: Lorenz stiff smoke in `tests/test_ode_methods.py`; Rust regression
+  `crates/tsdyn-ode/tests/rosenbrock_lorenz.rs`.
+
 ### Features (N2.b — Rust ODE stepper, partial)
 
 - **`crates/tsdyn-ode`**: adaptive explicit RK integrators with dense output on
   the uniform Python grid — **DP5**, **DP8** (SciPy-compatible error indicator +
   `Dop853DenseOutput`), **Tsit5** (OrdinaryDiffEq.jl tableau + interpolant),
-  **BS3** / RK23 (SciPy tableau + dense `P`), plus fixed-step **RK4**.
+  **Vern9** (Verner 9(8) pair + OrdinaryDiffEq.jl extra stages & ninth-order
+  interpolant polynomials), **BS3** / RK23 (SciPy tableau + dense `P`), plus
+  fixed-step **RK4**.
   Butcher coefficients remain vendored with upstream attribution in
   `butcher.rs`; DP8 embedded errors `E3`/`E5` match SciPy's
   `dop853_coefficients`.
 - **`erk_extra.rs`**: DP8 / Tsit5 / BS3 drivers (FSAL bookkeeping).
 - **PyO3** `integrate_ode(...)` unchanged surface.
 - **`ContinuousSystem.integrate`** dispatches to Rust for **`DP5`**, **`DP8`**
-  (aliases **`DOP853`** / **`dop853`**), **`TSIT5`**, **`BS3`**, **`RK4`** when
-  lowering succeeds; JiTCODE fallback elsewhere (**`VERN9`** driver still
-  pending in Rust).
+  (aliases **`DOP853`** / **`dop853`**), **`TSIT5`**, **`VERN9`**, **`BS3`**,
+  **`RK4`** when lowering succeeds; JiTCODE fallback elsewhere.
 - **Golden trajectories** (`tests/native/regression/ode/*.npz`) regenerated with
   Rust DP8 so committed `(t, y)` matches replay;
   **`test_golden_trajectory_matches_rust_dp8`** asserts **`DP8`** integrates back
   to the stored grid (`rtol=1e-9`, `atol=1e-11`).
 - **Rust adaptive integrators** no longer enforce a fixed internal step cap;
   pathological runs still fail via non-finite state or step-size collapse.
+- **Golden ODE snapshots** for **`Duffing`**, **`SprottD`**, and **`SprottI`**
+  (fixed ICs in `scripts/generate_ode_goldens.py`) — random catalogue ICs were
+  unstable for those models under the default golden tolerances.
 
 ### Features (N2.a — Pure-Rust ODE stepper suite, sub-stage A)
 

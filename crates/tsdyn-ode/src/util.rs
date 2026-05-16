@@ -121,8 +121,13 @@ pub fn dense_tsit5_eval(y0: &[f64], k: &[Vec<f64>], h: f64, theta: f64, out: &mu
     let dim = out.len();
     for i in 0..dim {
         out[i] = y0[i]
-            + h * (k[0][i] * b1 + k[1][i] * b2 + k[2][i] * b3 + k[3][i] * b4
-                + k[4][i] * b5 + k[5][i] * b6 + k[6][i] * b7);
+            + h * (k[0][i] * b1
+                + k[1][i] * b2
+                + k[2][i] * b3
+                + k[3][i] * b4
+                + k[4][i] * b5
+                + k[5][i] * b6
+                + k[6][i] * b7);
     }
 }
 
@@ -137,8 +142,7 @@ pub fn dense_bs3_eval(y_old: &[f64], k: &[Vec<f64>], h: f64, x: f64, out: &mut [
     for i in 0..dim {
         let q0 = k[0][i];
         let q1 = (-4.0 / 3.0) * k[0][i] + k[1][i] + (4.0 / 3.0) * k[2][i] - k[3][i];
-        let q2 = (5.0 / 9.0) * k[0][i] + (-2.0 / 3.0) * k[1][i] + (-8.0 / 9.0) * k[2][i]
-            + k[3][i];
+        let q2 = (5.0 / 9.0) * k[0][i] + (-2.0 / 3.0) * k[1][i] + (-8.0 / 9.0) * k[2][i] + k[3][i];
         out[i] = y_old[i] + h * (q0 * p1 + q1 * p2 + q2 * p3);
     }
 }

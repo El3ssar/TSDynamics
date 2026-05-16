@@ -6,7 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Pure-Rust adaptive ERK steppers for TSDynamics (N2.b)."
+description = "Pure-Rust adaptive ODE integrators for TSDynamics (explicit RK + Rosenbrock stiff methods)."
 
 [dependencies]
 tsdyn-core = { path = "../tsdyn-core" }

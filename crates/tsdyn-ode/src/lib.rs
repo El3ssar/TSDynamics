@@ -3,8 +3,14 @@
 mod butcher;
 mod controller;
 mod erk_extra;
+mod lu;
 pub mod rhs;
+mod rosenbrock;
 mod util;
+mod vern9;
+mod vern9_extra;
+mod vern9_interp;
+mod vern9_main;
 
 use std::fmt;
 use std::str::FromStr;
@@ -23,6 +29,7 @@ pub enum IntegrateError {
     BadMethod(String),
     Diverged { t: f64 },
     ParamsLen { expected: usize, got: usize },
+    MissingJacobian { method: String },
 }
 
 impl fmt::Display for IntegrateError {
@@ -34,6 +41,10 @@ impl fmt::Display for IntegrateError {
             Self::ParamsLen { expected, got } => {
                 write!(f, "params length mismatch: expected {expected}, got {got}")
             }
+            Self::MissingJacobian { method } => write!(
+                f,
+                "method {method} requires a Jacobian in the IR bytecode (has_jacobian=false)"
+            ),
         }
     }
 }
@@ -48,6 +59,9 @@ pub enum Method {
     Vern9,
     Bs3,
     Rk4,
+    Rosenbrock23,
+    Rosenbrock34,
+    Rodas4,
 }
 
 impl FromStr for Method {
@@ -61,6 +75,9 @@ impl FromStr for Method {
             "VERN9" => Ok(Self::Vern9),
             "BS3" => Ok(Self::Bs3),
             "RK4" => Ok(Self::Rk4),
+            "ROSENBROCK23" => Ok(Self::Rosenbrock23),
+            "ROSENBROCK34" => Ok(Self::Rosenbrock34),
+            "RODAS4" => Ok(Self::Rodas4),
             _ => Err(IntegrateError::BadMethod(s.to_string())),
         }
     }
@@ -135,7 +152,8 @@ pub(crate) fn h_init<R: Rhs + ?Sized>(
         0.01 / d1.sqrt().max(d2)
     };
     let fac: f64 = 100.0;
-    dir * (fac * h0.abs()).min(h1.min(span)).max(1e-12 * span.max(1.0))
+    let rel_floor = (1e-12_f64 * span).max(1e-15_f64);
+    dir * (fac * h0.abs()).min(h1.min(span)).max(rel_floor)
 }
 
 /// Integrate `dy/dt = f(t,y)` on the uniform grid implied by `dt_output`.
@@ -182,7 +200,10 @@ pub fn integrate_ode(
         Method::Tsit5 => integrate_tsit5(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
         Method::Bs3 => integrate_bs3(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
         Method::Rk4 => integrate_rk4(&mut rhs, &t_grid, &mut y_rows),
-        Method::Vern9 => integrate_vern9(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
+        Method::Vern9 => vern9::integrate_vern9(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
+        Method::Rosenbrock23 | Method::Rosenbrock34 | Method::Rodas4 => {
+            rosenbrock::integrate_stiff(ode, params, &t_grid, &mut y_rows, method, rtol, atol)
+        }
     }?;
 
     let mut y_flat = Vec::with_capacity(nt * dim);
@@ -400,22 +421,10 @@ fn integrate_rk4<R: Rhs + ?Sized>(
                 y_out[i][j] + (h / 6.0) * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4v[j]);
         }
         if !all_finite(&y_out[i + 1]) {
-            return Err(IntegrateError::Diverged {
-                t: t_grid[i + 1],
-            });
+            return Err(IntegrateError::Diverged { t: t_grid[i + 1] });
         }
     }
     Ok(())
-}
-
-fn integrate_vern9<R: Rhs + ?Sized>(
-    _rhs: &mut R,
-    _t_grid: &[f64],
-    _y_out: &mut [Vec<f64>],
-    _rtol: f64,
-    _atol: f64,
-) -> Result<(), IntegrateError> {
-    Err(IntegrateError::BadMethod("VERN9 driver not linked".into()))
 }
 
 #[cfg(test)]

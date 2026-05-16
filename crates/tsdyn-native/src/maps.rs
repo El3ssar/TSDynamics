@@ -10,9 +10,8 @@ use tsdyn_maps::{iterate, lyapunov_spectrum};
 
 fn decode_map(bytecode: &Bound<'_, PyBytes>) -> PyResult<CompiledMap> {
     let bytes: &[u8] = bytecode.as_bytes();
-    CompiledMap::from_bytes(bytes).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("malformed IR bytecode: {e}"))
-    })
+    CompiledMap::from_bytes(bytes)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("malformed IR bytecode: {e}")))
 }
 
 #[pyfunction]
@@ -41,9 +40,8 @@ pub fn iterate_map<'py>(
         )));
     }
     let out = py.detach(|| iterate(&map, ic_slice, params_slice, steps));
-    let out = out.map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("map iterate failed: {e}"))
-    })?;
+    let out = out
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("map iterate failed: {e}")))?;
     let arr = Array2::from_shape_vec((steps, map.dim), out)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("reshape: {e}")))?;
     Ok(arr.into_pyarray(py))
@@ -82,9 +80,8 @@ pub fn lyapunov_spectrum_map<'py>(
             n_exp, map.dim
         )));
     }
-    let result = py.detach(|| {
-        lyapunov_spectrum(&map, ic_slice, params_slice, steps, n_exp, reortho_interval)
-    });
+    let result = py
+        .detach(|| lyapunov_spectrum(&map, ic_slice, params_slice, steps, n_exp, reortho_interval));
     let result = result.map_err(|e| {
         pyo3::exceptions::PyValueError::new_err(format!("lyapunov_spectrum failed: {e}"))
     })?;

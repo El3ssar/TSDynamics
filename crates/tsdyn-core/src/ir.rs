@@ -146,21 +146,30 @@ impl<'a> Reader<'a> {
 
     fn read_u32(&mut self) -> Result<u32, DecodeError> {
         let end = self.pos + 4;
-        let slice = self.buf.get(self.pos..end).ok_or(DecodeError::UnexpectedEof)?;
+        let slice = self
+            .buf
+            .get(self.pos..end)
+            .ok_or(DecodeError::UnexpectedEof)?;
         self.pos = end;
         Ok(u32::from_le_bytes(slice.try_into().unwrap()))
     }
 
     fn read_i32(&mut self) -> Result<i32, DecodeError> {
         let end = self.pos + 4;
-        let slice = self.buf.get(self.pos..end).ok_or(DecodeError::UnexpectedEof)?;
+        let slice = self
+            .buf
+            .get(self.pos..end)
+            .ok_or(DecodeError::UnexpectedEof)?;
         self.pos = end;
         Ok(i32::from_le_bytes(slice.try_into().unwrap()))
     }
 
     fn read_f64(&mut self) -> Result<f64, DecodeError> {
         let end = self.pos + 8;
-        let slice = self.buf.get(self.pos..end).ok_or(DecodeError::UnexpectedEof)?;
+        let slice = self
+            .buf
+            .get(self.pos..end)
+            .ok_or(DecodeError::UnexpectedEof)?;
         self.pos = end;
         Ok(f64::from_le_bytes(slice.try_into().unwrap()))
     }
@@ -261,7 +270,12 @@ impl CompiledMap {
         if !r.done() {
             return Err(DecodeError::BadShape);
         }
-        Ok(Self { dim, n_params, step, jacobian })
+        Ok(Self {
+            dim,
+            n_params,
+            step,
+            jacobian,
+        })
     }
 
     /// Evaluate one postfix program against (`t`, `state`, `params`).
@@ -486,7 +500,12 @@ impl CompiledOde {
         if !r.done() {
             return Err(DecodeError::BadShape);
         }
-        Ok(Self { dim, n_params, rhs, jacobian })
+        Ok(Self {
+            dim,
+            n_params,
+            rhs,
+            jacobian,
+        })
     }
 
     /// Evaluate the RHS at `(t, state, params)`, writing each component
@@ -511,6 +530,33 @@ impl CompiledOde {
         assert_eq!(out_dy.len(), self.dim, "out_dy.len() != dim");
         for (i, program) in self.rhs.iter().enumerate() {
             out_dy[i] = CompiledMap::eval(program, t, state, params, scratch);
+        }
+    }
+
+    /// Evaluate the Jacobian \(J_{ij} = \partial f_i / \partial y_j\) at `(t, state)`,
+    /// writing **row-major** `dim × dim` entries into `out_jac`.
+    ///
+    /// Requires [`CompiledOde::jacobian`](Self::jacobian); panics in debug builds if absent.
+    pub fn eval_jacobian(
+        &self,
+        t: f64,
+        state: &[f64],
+        params: &[f64],
+        out_jac: &mut [f64],
+        scratch: &mut Vec<f64>,
+    ) {
+        let jac = self
+            .jacobian
+            .as_ref()
+            .expect("eval_jacobian requires has_jacobian bytecode");
+        assert_eq!(state.len(), self.dim, "state.len() != dim");
+        assert_eq!(params.len(), self.n_params, "params.len() != n_params");
+        assert_eq!(out_jac.len(), self.dim * self.dim, "out_jac.len() != dim^2");
+        let dim = self.dim;
+        for i in 0..dim {
+            for j in 0..dim {
+                out_jac[i * dim + j] = CompiledMap::eval(&jac[i][j], t, state, params, scratch);
+            }
         }
     }
 }
@@ -628,12 +674,12 @@ mod tests {
         // 1 - 1.4 * 0.01 + 0.1 = 1.086
         let program = vec![
             Expr::Const(1.0),
-            Expr::Param(0),     // a
-            Expr::Var(0),       // x
+            Expr::Param(0), // a
+            Expr::Var(0),   // x
             Expr::Pow(2),
             Expr::Mul,
-            Expr::Sub,          // 1 - a*x^2
-            Expr::Var(1),       // y
+            Expr::Sub,    // 1 - a*x^2
+            Expr::Var(1), // y
             Expr::Add,
         ];
         let mut scratch = Vec::new();

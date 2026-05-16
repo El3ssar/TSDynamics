@@ -5,13 +5,14 @@ from __future__ import annotations
 import os
 import pathlib
 import sysconfig
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
 import numpy as np
 
-from ._ir import NotLowerableError
+from ._ir import CompiledOde, NotLowerableError
 from ._ode_lowering import lower_ode_to_ir
 from .base import SystemBase, Trajectory
 
@@ -44,8 +45,13 @@ _INTEGRATOR_MAP: dict[str, str] = {
 }
 _EXPLICIT_METHODS = frozenset({"dopri5", "dop853"})
 
-# N2.b — methods implemented by the Rust ERK driver (others use JiTCODE until ported).
-_RUST_NATIVE_METHODS = frozenset({"DP5", "DP8", "TSIT5", "BS3", "RK4"})
+# Rust-native methods (N2.b ERK + N2.c Rosenbrock); optional Jacobian for stiff family.
+_STIFF_RUST_METHODS = frozenset({"ROSENBROCK23", "ROSENBROCK34", "RODAS4"})
+# LSODA/VODE may route to Rust Rosenbrock only for modest state dimensions (dense ROW solves).
+_LSODA_AUTO_ROSS_DIM_CAP = 24
+_RUST_NATIVE_METHODS = frozenset(
+    {"DP5", "DP8", "TSIT5", "VERN9", "BS3", "RK4", *_STIFF_RUST_METHODS}
+)
 
 
 def _rust_integrator_name(method: str | None, default: str) -> str:
@@ -135,8 +141,8 @@ class ContinuousSystem(SystemBase, ABC):
     #                   a fresh wrapper without recompiling.
     _compiled_odes: ClassVar[dict[str, Any]] = {}
     _compiled_lyap: ClassVar[dict[str, str]] = {}
-    #: SymEngine → IR bytecode for the Rust stepper (N2.b); keyed like JiTCODE.
-    _compiled_ir_bytes: ClassVar[dict[tuple[type, int, int], bytes]] = {}
+    #: SymEngine → IR bytecode for the Rust stepper (N2); keyed like JiTCODE.
+    _compiled_ode_ir: ClassVar[dict[tuple[type, int, int], CompiledOde]] = {}
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -379,34 +385,61 @@ class ContinuousSystem(SystemBase, ABC):
         ic_arr = self.resolve_ic(ic)
         t_eval = _make_t_eval(t0, final_time, dt)
 
+        lsoda_vode = str(method).strip().upper() in ("LSODA", "VODE")
+        if lsoda_vode:
+            warnings.warn(
+                "method='LSODA' and method='VODE' are deprecated; for stiff ODEs prefer "
+                "method='Rosenbrock23' (or 'Rosenbrock34' / 'Rodas4') when the lowered IR "
+                "includes a Jacobian.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         rust_m = _rust_integrator_name(method, self._default_method)
-        if rust_m in _RUST_NATIVE_METHODS:
-            try:
-                key = _ode_ir_cache_key(self)
-                cache = type(self)._compiled_ir_bytes
-                if key not in cache:
-                    co = lower_ode_to_ir(
-                        type(self),
-                        dim=self.dim,
-                        params=dict(self.params),
-                        structural_params=type(self)._structural_params,
-                    )
-                    cache[key] = co.bytecode
-                bc = cache[key]
-            except NotLowerableError:
-                pass
-            else:
+
+        try:
+            key = _ode_ir_cache_key(self)
+            cache = type(self)._compiled_ode_ir
+            if key not in cache:
+                co = lower_ode_to_ir(
+                    type(self),
+                    dim=self.dim,
+                    params=dict(self.params),
+                    structural_params=type(self)._structural_params,
+                )
+                cache[key] = co
+            co = cache[key]
+        except NotLowerableError:
+            pass
+        else:
+            eff_rust = rust_m
+            if lsoda_vode and co.has_jacobian and co.dim <= _LSODA_AUTO_ROSS_DIM_CAP:
+                eff_rust = "ROSENBROCK23"
+
+            use_rust = eff_rust in _RUST_NATIVE_METHODS and (
+                eff_rust not in _STIFF_RUST_METHODS or co.has_jacobian
+            )
+
+            if eff_rust in _STIFF_RUST_METHODS and not co.has_jacobian:
+                warnings.warn(
+                    f"{eff_rust.lower()} requires a symbolic Jacobian in the IR; "
+                    "using an explicit JiTCODE integrator instead.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+            if use_rust:
                 from .._native import integrate_ode as _rust_integrate_ode
 
                 nonstruct = [k for k in self.params if k not in type(self)._structural_params]
                 params_np = np.asarray([self.params[k] for k in nonstruct], dtype=float)
                 t_out, y_out = _rust_integrate_ode(
-                    bc,
+                    co.bytecode,
                     float(t0),
                     float(final_time),
                     ic_arr,
                     params_np,
-                    rust_m,
+                    eff_rust,
                     float(dt),
                     float(rtol),
                     float(atol),
@@ -415,6 +448,9 @@ class ContinuousSystem(SystemBase, ABC):
                 return Trajectory(t=t_out.copy(), y=y_stack, system=self)
 
         integ_name = _INTEGRATOR_MAP.get(method, method)
+        jit_stiff_name = _rust_integrator_name(method, self._default_method)
+        if jit_stiff_name in _STIFF_RUST_METHODS:
+            integ_name = "dopri5"
 
         ode = self._ensure_compiled(for_lyap=False)
         ode.set_integrator(integ_name, rtol=rtol, atol=atol, **integrator_kwargs)

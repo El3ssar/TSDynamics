@@ -1,13 +1,23 @@
-# Status — updated 2026-05-16 (N2.b: DP5/DP8/Tsit5/BS3/RK4 Rust integrate)
+# Status — updated 2026-05-16 (N2.c: Rosenbrock stiff integrators landed)
 
-Current milestone: **N2 — Pure-Rust ODE stepper suite (WIP)**.  N2.b is
-**partially landed**: `tsdyn-ode` ships **DP5**, **DP8**, **Tsit5**, **BS3**,
-and **RK4** + PyO3 `integrate_ode`, and `ContinuousSystem.integrate` uses Rust
-for those methods when the IR lowers (`DOP853`/`dop853` alias to **DP8**).
-**Still to do in N2.b:** **VERN9** in Rust; hand-picked IC goldens for **Duffing**
-/ **SprottD** / **SprottI**.  Adaptive ERKs (`DP5`, `Tsit5`, `BS3`) are checked vs
-DP8 dense output on Lorenz in `tests/test_ode_methods.py`; **RK4** only checks
-repeatability (same-order dense sampling ≠ adaptive DP8).
+Current milestone: **N2 — Pure-Rust ODE stepper suite (WIP)**.  **N2.b** explicit-RK
+catalogue is **complete** for the originally scoped methods: `tsdyn-ode` ships
+**DP5**, **DP8**, **Tsit5**, **Vern9**, **BS3**, and **RK4** + PyO3
+`integrate_ode`; `ContinuousSystem.integrate` dispatches to Rust for all of them
+when the IR lowers (`DOP853`/`dop853` → **DP8**).  **N2.c** adds the stiff
+Rosenbrock family (**Rosenbrock23**, **Rosenbrock34** / ROS34PW1a, **Rodas4**) with
+PI step control, dense linear solves from the IR Jacobian, and PyO3 `eval_ode_jacobian`.
+**LSODA** / **VODE** are deprecated; optional automatic remap to Rust **ROSENBROCK23**
+applies only when **dim ≤ 24** so large semidiscrete problems stay on JiTCODE unless
+overridden.  Hand-picked IC goldens exist for **Duffing** / **SprottD** / **SprottI**
+(`scripts/generate_ode_goldens.py`).  Adaptive ERKs are checked vs DP8 dense output on
+Lorenz in `tests/test_ode_methods.py` (**VERN9** included); stiff Rust methods have a
+short-interval Lorenz smoke test; **RK4** remains repeatability-only.
+
+**N2.b polish (optional):** tighten `test_ode_methods` tolerances vs DP8 once
+dense-output parity is audited end-to-end; **Vern6/7/8** remain out of this
+chat’s scope (milestone catalogue names them; only **VERN9** was required for
+STATUS).
 
 Phase: implement.  Track E (Rust solver migration) is now in progress;
 Tracks A (M5/M6/M7/M10/M11), B (V1), and C (R2) remain unblocked and can
@@ -84,29 +94,27 @@ Last-touched files (N2.a):
 
 ## What's in progress
 
-- **N2** WIP at **N2.b**: DP8/Tsit5/BS3 + golden replay landed; **VERN9** remains.
+- **N2.d** next (per milestone file): further stiff solver work / polish as scoped there.
 
 ## Next action
 
-Pick up **N2.b — Explicit RK family** from
-[`milestones/N2-rust-ode-stepper.md`](milestones/N2-rust-ode-stepper.md).
-Concretely (remaining):
+Open [`milestones/N2-rust-ode-stepper.md`](milestones/N2-rust-ode-stepper.md)
+and begin **N2.d**, or pick a parallel milestone from the alternatives below.
 
-1. **VERN9** in `tsdyn-ode` (Verner `Vern9Tableau` + `Vern9ExtraStages` +
-   interpolant polynomials from OrdinaryDiffEq.jl — large codegen).
-2. ~~Golden replay vs Rust **DP8**~~ — `test_golden_trajectory_matches_rust_dp8`
-   + regenerated ``tests/native/regression/ode/*.npz``.
-3. Hand-picked IC goldens for **Duffing** / **SprottD** / **SprottI**; optionally
-   tighten `test_ode_methods` tolerances once dense-output parity is audited.
+Already landed for **N2.b**: **DP5**, **DP8**, **Tsit5**, **VERN9**, **BS3**,
+**RK4**, golden regenerate + trajectory regression + `tests/test_ode_methods.py`
++ Duffing/Sprott hand IC goldens.
 
-Already landed: **DP8**, **Tsit5**, **BS3**, **RK4**, golden regenerate +
-trajectory regression + `tests/test_ode_methods.py`.
+Already landed for **N2.c**: **ROSENBROCK23**, **ROSENBROCK34**, **RODAS4**, PI step
+control in `tsdyn-ode`, `CompiledOde::eval_jacobian`, PyO3 `eval_ode_jacobian`,
+`ContinuousSystem` stiff dispatch, LSODA/VODE deprecation + dim-capped Rust remap,
+`h_init` span scaling fix.
 
-Historical checklist (mostly done — kept for traceability):
+Historical checklist (N2.b — done):
 
-1. ~~Create `crates/tsdyn-ode/` … DP5, DP8, Tsit5, Vern9, RK4, BS3~~ (VERN9 open).
+1. ~~Create `crates/tsdyn-ode/` … DP5, DP8, Tsit5, Vern9, RK4, BS3~~
 2. ~~Vendor Butcher tableaux …~~
-3. ~~Native dense output …~~ (VERN9 open)
+3. ~~Native dense output …~~
 4. ~~PyO3 wire `integrate_ode`~~
 5. ~~`ContinuousSystem.integrate` dispatch~~
 6. ~~`"DOP853"` → `"DP8"`~~

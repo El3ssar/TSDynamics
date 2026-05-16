@@ -49,7 +49,7 @@ The roadmap runs four tracks in parallel:
 | M5 | Equilibria & local stability | TODO | A | Newton/Krylov + eigenvalue classification. |
 | M6 | Embedding utilities (promote internals) | TODO | A | AMI, FNN, Takens — currently hidden. |
 | M7 | Spectral toolkit | TODO | A | FFT, Welch PSD, spectrogram, CWT. |
-| N2 | Pure-Rust ODE stepper suite (RHS via IR) | WIP | E | Multi-chat. N2.a landed (IR extension + SymEngine lowering + PyO3 RHS + goldens). N2.b–d pending: Rust stepper crate, stiff family, polish. |
+| N2 | Pure-Rust ODE stepper suite (RHS via IR) | WIP | E | Multi-chat. N2.a+b landed (IR + explicit RKs incl. Vern9 + golden trajectories). N2.c–d: Rosenbrock stiff family, polish. |
 | N3 | Variational ODE Lyapunov in Rust | TODO | E | Builds on N2's stepper + IR. Drops `jitcode_lyap`. |
 | R3 | correlation_sum + boxcount kernels | TODO | C | Feeds M8. |
 | M8 | Fractal dimensions | TODO | A | On R3. Includes Kaplan-Yorke. |

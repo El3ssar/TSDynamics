@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from ._core import (
     add_one,
+    eval_ode_jacobian,
     eval_ode_rhs,
     eval_ode_rhs_batch,
     integrate_ode,
@@ -26,6 +27,7 @@ from ._core import (
 
 __all__ = [
     "add_one",
+    "eval_ode_jacobian",
     "eval_ode_rhs",
     "eval_ode_rhs_batch",
     "integrate_ode",
