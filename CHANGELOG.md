@@ -19,6 +19,8 @@
   Rust DP8 so committed `(t, y)` matches replay;
   **`test_golden_trajectory_matches_rust_dp8`** asserts **`DP8`** integrates back
   to the stored grid (`rtol=1e-9`, `atol=1e-11`).
+- **Rust adaptive integrators** no longer enforce a fixed internal step cap;
+  pathological runs still fail via non-finite state or step-size collapse.
 
 ### Features (N2.a — Pure-Rust ODE stepper suite, sub-stage A)
 

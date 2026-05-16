@@ -22,7 +22,6 @@ pub enum IntegrateError {
     BadBytecode(String),
     BadMethod(String),
     Diverged { t: f64 },
-    MaxSteps,
     ParamsLen { expected: usize, got: usize },
 }
 
@@ -32,7 +31,6 @@ impl fmt::Display for IntegrateError {
             Self::BadBytecode(s) => write!(f, "bad ODE bytecode: {s}"),
             Self::BadMethod(s) => write!(f, "unknown ODE method: {s}"),
             Self::Diverged { t } => write!(f, "non-finite state at t={t}"),
-            Self::MaxSteps => write!(f, "maximum step count exceeded"),
             Self::ParamsLen { expected, got } => {
                 write!(f, "params length mismatch: expected {expected}, got {got}")
             }
@@ -221,7 +219,6 @@ fn integrate_dp5<R: Rhs + ?Sized>(
     rtol: f64,
     atol: f64,
 ) -> Result<(), IntegrateError> {
-    const MAX_STEPS: u32 = 200_000;
     let dim = rhs.dim();
     let tf = *t_grid.last().unwrap();
     let t0 = t_grid[0];
@@ -243,16 +240,10 @@ fn integrate_dp5<R: Rhs + ?Sized>(
     rhs.eval(t, &y, &mut k[0]);
 
     let mut i_out = 1usize;
-    let mut n_step: u32 = 0;
 
     while i_out < t_grid.len() {
         let t_target = t_grid[i_out];
         while t < t_target - 1e-14 {
-            if n_step > MAX_STEPS {
-                return Err(IntegrateError::MaxSteps);
-            }
-            n_step += 1;
-
             let mut last = false;
             let dir = (tf - t0).signum();
             if (t + 1.01 * h - tf) * dir >= 0.0 {
