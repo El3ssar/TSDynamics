@@ -1,0 +1,11 @@
+[package]
+name = "tsdyn-solver-base"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared sampling utilities for ODE (`tsdyn-ode`) and future DDE (`tsdyn-d`) Rust steppers (Track E scaffolding)."
+
+[dependencies]

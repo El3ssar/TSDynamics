@@ -140,6 +140,46 @@ lowering fails on a user's `_equations` we raise a clear error pointing
 at the offending node — the way out is to file an issue requesting the
 op be added to the IR, not to flip a backend switch.
 
+### Extensibility — growing the method catalogue (DiffEq-style pool)
+
+The long-term product shape matches **DynamicalSystems.jl’s reliance on a deep
+solver ecosystem**: scientists pick an algorithm for their stiffness / accuracy /
+density-output needs; the library stays cohesive because **RHS/Jacobian access,
+adaptivity hooks, and output grids share one IR-backed evaluation layer**.
+
+Design rules so new methods remain cheap to maintain:
+
+1. **Single evaluation contract.** Every solver consumes the same IR-driven
+   `eval_rhs` / `eval_jacobian` paths (`tsdyn-core`). Adding Radau or another
+   implicit scheme later must **not** fork RHS semantics.
+
+2. **Localized implementations.** Each algorithm is a submodule tree under ``crates/tsdyn-ode/src/methods/``
+   (Butcher tableau, embedded explicit runners, Rosenbrock/LU bundles, Verner‑9 subtree, …). Register new work in
+   ``crate::driver::integrate_ode`` and Python `_rust_integrator_name` / `_RUST_NATIVE_METHODS` only — never fork IR eval.
+
+3. **Stable Python surface.** New Rust methods appear under documented `method=`
+   strings (aliases optional). User-facing docs carry a **methods table** listing
+   stiffness class, order, and caveats — mirror OrdinaryDiffEq’s algorithm docs
+   in miniature.
+
+4. **Regression per addition.** Every new integrator gets at least one focused test
+   (short horizon + golden or reference trajectory) so the pool stays trustworthy
+   as it grows.
+
+5. **N2.d housekeeping.** Optional **behaviour-neutral** module splits and clearer
+   dispatch grouping are encouraged **only** when they directly support (1)–(4).
+   Large architectural gambits belong to later milestones (e.g. N4 JIT), not N2.d.
+
+6. **Shared sampling.** The **`tsdyn-solver-base`** crate owns `uniform_time_grid` plus future grids/schedulers usable by
+   both ODE (**`tsdyn-ode`**) and DDE (**`tsdyn-dde`**, milestone N5) without circular crate dependencies.
+
+| Crate | Role |
+|-------|------|
+| `tsdyn-core` | IR bytecode interpreters (`CompiledOde`, discrete maps). |
+| `tsdyn-solver-base` | Output grids / schedulers unbiased toward ODE vs DDE. |
+| `tsdyn-ode` | ODE catalogue (`methods/`, `driver`; **N3** variational augmentation lands here next). |
+| `tsdyn-dde` *(N5 planned)* | Parallel crate for histories + breakpoints + its own catalogue. |
+
 **End state of N2**:
 
 - All built-in ODE systems integrate end-to-end in Rust.

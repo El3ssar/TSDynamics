@@ -1,4 +1,4 @@
-"""ContinuousSystem — ODE base class via JiTCODE."""
+"""ContinuousSystem — ODE base via Pure-Rust IR steppers + JiTCODE fallback."""
 
 from __future__ import annotations
 
@@ -84,45 +84,70 @@ def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
 
 class ContinuousSystem(SystemBase, ABC):
     """
-    Base class for ODE-based dynamical systems, compiled via JiTCODE.
+    Base class for finite-dimensional ODE dynamical systems.
+
+    Subclasses supply a symbolic :meth:`_equations` RHS; integration uses a **pure-Rust**
+    adaptive IR stepper when SymEngine lowering to bytecode succeeds (**N2**) and ``method``
+    names a catalogue entry. :meth:`integrate` still falls back silently to JiTCODE when lowering
+    fails (unsupported expression nodes).
+
+    Variational Lyapunov (:meth:`lyapunov_spectrum`) stays on JiTCODE until milestone **N3**.
 
     Subclass contract
     -----------------
     1. Declare ``params = {...}`` and ``dim = N`` at class level.
-    2. Implement ``_equations`` as a ``@staticmethod`` returning a
-       length-``dim`` sequence of JiTCODE / SymEngine symbolic expressions.
-    3. Optionally mark integer or loop-structural parameters in
-       ``_structural_params`` — these are baked into the compiled C code
-       rather than exposed as runtime control parameters.
+    2. Implement ``_equations`` as a ``@staticmethod`` returning a length-``dim``
+       sequence of symbolic expressions lowering can walk (SymEngine + JiTCODE rules).
+    3. Optionally declare ``_structural_params`` for loop bounds baked into bytecode.
 
-    Compilation
-    -----------
-    The first call to ``integrate`` or ``lyapunov_spectrum`` triggers JiTCODE
-    compilation. Non-structural parameters become JiTCODE ``control_pars``,
-    meaning the resulting ``.so`` module is compiled **once per class** (or
-    once per structural-param combination) and reused for all subsequent runs
-    and parameter changes, even across process restarts.
+    Native ``method`` catalogue (Rust, case-insensitive)
+    -----------------------------------------------------
+
+    Explicit adaptive Runge–Kutta (I step-size control):
+
+    ``"DP5"``, alias ``"RK45"`` / ``"dopri5"``; ``"DP8"``, alias ``"DOP853"`` / ``"dop853"``;
+    ``"TSIT5"``; ``"VERN9"``; ``"BS3"``; fixed-step ``"RK4"``.
+
+    Stiff Rosenbrock–Wanner (PI controller; Jacobian from IR bytecode):
+
+    ``"ROSENBROCK23"``, ``"ROSENBROCK34"``, ``"RODAS4"``.
+    Requires a Jacobian in the bytecode; lowering without one emits a warning and JiTCODE is used instead.
+
+    Legacy stiff switchers (**deprecated**):
+
+    ``"LSODA"``, ``"VODE"`` issue :class:`~warnings.DeprecationWarning`. When the Jacobian is available
+    and ``dim ≤ 24``, integrate may automatically remap onto ``"ROSENBROCK23"`` instead of JiTCODE;
+    larger sparse-friendly problems stay on JiTCODE unless you pick an explicit catalogue method.
+
+    Default integrator behaviour
+    ----------------------------
+
+    Class-level :attr:`_default_method` is ``"RK45"`` — it denotes the SciPy-era name while the Rust hot
+    path runs **DP5** (same order family). Smooth non-stiff problems often benefit from ``"DP8"`` /
+    ``"TSIT5"`` / ``"VERN9"`` at similar tolerances; switching the library default remains a deliberate **N2.e+**
+    release-note change.
+
+    Compilation and caching
+    -----------------------
+    First :meth:`integrate` on a lowering-capable path decodes bytecode once into an in-memory cache keyed
+    by ``(class, dim, hash(structural_values))``. First JiTCODE use still emits a compiled ``.so`` under
+    ``~/.cache/tsdynamics/`` (environment ``TSDYNAMICS_CACHE``); changing only non-structural parameters
+    reuses bytecode / shared objects across calls.
 
     Class-level attributes
     ----------------------
     _structural_params : frozenset[str]
-        Parameter names that appear as integer loop bounds or affect the
-        symbolic structure of ``_equations``.  These are baked in at compile
-        time.  For most systems this is empty (the default).
-
-        Example — Lorenz96 uses ``N`` to build the list comprehension::
-
-            _structural_params = frozenset({"N"})
+        Symbols baked into the IR / JIT like Lorenz96's loop length ``N``.
 
     _default_method : str
-        Default integrator name (default ``"RK45"``).
+        Default ``integrate(method=…)`` stem; aliases above still apply.
 
     Examples
     --------
     >>> lor = Lorenz()
     >>> traj = lor.integrate(final_time=100, dt=0.01)
     >>> t, y = traj          # tuple-unpack
-    >>> lor.sigma = 15.0     # change param — zero recompile cost
+    >>> lor.sigma = 15.0     # change param — bytecode stays valid
     >>> traj2 = lor.integrate(final_time=100)
     """
 
@@ -356,25 +381,39 @@ class ContinuousSystem(SystemBase, ABC):
         """
         Integrate the ODE and return a :class:`~tsdynamics.base.Trajectory`.
 
+        Sampling uses a uniform grid from ``t0`` through ``final_time`` (endpoint included),
+        analogous to wrapping ``numpy.arange(t0, final_time, dt)`` and appending ``final_time``.
+
         Parameters
         ----------
         final_time : float
-            End of integration window. Default 100.0.
+            End of integration window. Default ``100.0``.
         dt : float
-            Output sampling interval. The internal stepper is adaptive.
+            Uniform output spacing. Internal steps are adaptive and unrelated to ``dt``.
+            Default ``0.02``.
         t0 : float
-            Start time. Default 0.0. Allows warm restarts from a non-zero
-            time (the IC is interpreted as the state at ``t0``).
+            Start time (``ic`` holds the state there).
         ic : array-like, optional
-            Initial state at ``t0``. Falls back to ``self.ic``, then
-            ``U[0, 1)^dim``.
+            Initial state resolved via :meth:`~tsdynamics.base.SystemBase.resolve_ic`.
         method : str, optional
-            Integrator: ``"RK45"`` / ``"dopri5"`` (default), ``"DOP853"``,
-            ``"LSODA"``, ``"VODE"``.
+            Catalogue name routed to Pure-Rust when IR lowering succeeds.
+
+            Explicit: ``"DP5"`` (**alias** ``"RK45"``, ``"dopri5"``), ``"DP8"`` (**alias**
+            ``"DOP853"``, ``"dop853"``), ``"TSIT5"``, ``"VERN9"``, ``"BS3"``, ``"RK4"``.
+            Stiff: ``"ROSENBROCK23"``, ``"ROSENBROCK34"``, ``"RODAS4"``.
+            Deprecated: ``"LSODA"``, ``"VODE"``.
+            Default :attr:`_default_method` is ``"RK45"`` (**DP5** on Rust); smoother problems
+            often merit ``method="DP8"`` without changing library defaults globally.
         rtol, atol : float
-            Solver tolerances (default 1e-6 / 1e-9).
+            Solver tolerances. Default ``1e-6`` / ``1e-9``.
         **integrator_kwargs
-            Forwarded to ``jitcode.set_integrator`` (e.g. ``max_step``).
+            JiTCODE-only keyword arguments forwarded from ``jitcode.set_integrator``.
+
+        Notes
+        -----
+        If lowering emits :exc:`NotLowerableError`, integrate silently selects JiTCODE with the usual
+        SciPy name map. Selecting a Rosenbrock method without a Jacobian issues ``UserWarning`` and
+        continues on dopri5.
 
         Returns
         -------

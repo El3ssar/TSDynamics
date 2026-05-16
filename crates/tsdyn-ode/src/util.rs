@@ -108,7 +108,7 @@ pub fn dense_dop853_eval(y_old: &[f64], f_rows: &[Vec<f64>; 7], x: f64, out: &mu
 #[inline]
 pub fn dense_tsit5_eval(y0: &[f64], k: &[Vec<f64>], h: f64, theta: f64, out: &mut [f64]) {
     debug_assert!(k.len() >= 7);
-    use crate::butcher::tsit5_interp::*;
+    use crate::methods::butcher::tsit5_interp::*;
     let th = theta;
     let th2 = th * th;
     let b1 = th * eval_poly(&[R011, R012, R013, R014], th);

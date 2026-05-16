@@ -5,13 +5,18 @@
 //! (`lib/OrdinaryDiffEqVerner/src/verner_tableaus.jl`, MIT license — coefficients
 //! attributed to J.H. Verner).
 
-use crate::controller::adapt_step;
-use crate::rhs::Rhs;
-use crate::util::{axpy, copy_from, eval_poly};
-use crate::{all_finite, h_init, IntegrateError};
+mod extra;
+mod interp;
+mod main_stage;
 
-use crate::vern9_extra::*;
-use crate::vern9_main::*;
+use crate::controller::adapt_step;
+use crate::error::IntegrateError;
+use crate::rhs::Rhs;
+use crate::step_helpers::{all_finite, h_init};
+use crate::util::{axpy, copy_from, eval_poly};
+
+use extra::*;
+use main_stage::*;
 
 const K_EXTRA_START: usize = 16;
 
@@ -21,28 +26,28 @@ fn dense_vern9(y0: &[f64], k: &[Vec<f64>], h: f64, theta: f64, acc: &mut [f64], 
     let th = theta;
     let th2 = th * th;
     acc.fill(0.0);
-    let b1 = th * eval_poly(crate::vern9_interp::R01, th);
+    let b1 = th * eval_poly(interp::R01, th);
     axpy(b1, &k[0], acc);
 
     let polys: [&[f64]; 18] = [
-        crate::vern9_interp::R08,
-        crate::vern9_interp::R09,
-        crate::vern9_interp::R10,
-        crate::vern9_interp::R11,
-        crate::vern9_interp::R12,
-        crate::vern9_interp::R13,
-        crate::vern9_interp::R14,
-        crate::vern9_interp::R15,
-        crate::vern9_interp::R17,
-        crate::vern9_interp::R18,
-        crate::vern9_interp::R19,
-        crate::vern9_interp::R20,
-        crate::vern9_interp::R21,
-        crate::vern9_interp::R22,
-        crate::vern9_interp::R23,
-        crate::vern9_interp::R24,
-        crate::vern9_interp::R25,
-        crate::vern9_interp::R26,
+        interp::R08,
+        interp::R09,
+        interp::R10,
+        interp::R11,
+        interp::R12,
+        interp::R13,
+        interp::R14,
+        interp::R15,
+        interp::R17,
+        interp::R18,
+        interp::R19,
+        interp::R20,
+        interp::R21,
+        interp::R22,
+        interp::R23,
+        interp::R24,
+        interp::R25,
+        interp::R26,
     ];
     let kidx: [usize; 18] = [
         7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
@@ -56,7 +61,7 @@ fn dense_vern9(y0: &[f64], k: &[Vec<f64>], h: f64, theta: f64, acc: &mut [f64], 
     }
 }
 
-pub(super) fn integrate_vern9<R: Rhs + ?Sized>(
+pub(crate) fn integrate_vern9<R: Rhs + ?Sized>(
     rhs: &mut R,
     t_grid: &[f64],
     y_out: &mut [Vec<f64>],

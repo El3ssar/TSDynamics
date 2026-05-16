@@ -1,193 +1,37 @@
-# Status — updated 2026-05-16 (N2.c: Rosenbrock stiff integrators landed)
+# Status — updated 2026-05-17 (N2 ✅ — N3 🔧 variational Lyapunov begins)
 
-Current milestone: **N2 — Pure-Rust ODE stepper suite (WIP)**.  **N2.b** explicit-RK
-catalogue is **complete** for the originally scoped methods: `tsdyn-ode` ships
-**DP5**, **DP8**, **Tsit5**, **Vern9**, **BS3**, and **RK4** + PyO3
-`integrate_ode`; `ContinuousSystem.integrate` dispatches to Rust for all of them
-when the IR lowers (`DOP853`/`dop853` → **DP8**).  **N2.c** adds the stiff
-Rosenbrock family (**Rosenbrock23**, **Rosenbrock34** / ROS34PW1a, **Rodas4**) with
-PI step control, dense linear solves from the IR Jacobian, and PyO3 `eval_ode_jacobian`.
-**LSODA** / **VODE** are deprecated; optional automatic remap to Rust **ROSENBROCK23**
-applies only when **dim ≤ 24** so large semidiscrete problems stay on JiTCODE unless
-overridden.  Hand-picked IC goldens exist for **Duffing** / **SprottD** / **SprottI**
-(`scripts/generate_ode_goldens.py`).  Adaptive ERKs are checked vs DP8 dense output on
-Lorenz in `tests/test_ode_methods.py` (**VERN9** included); stiff Rust methods have a
-short-interval Lorenz smoke test; **RK4** remains repeatability-only.
+Track **N2** (Pure-Rust ODE suite) is **feature-complete enough to close**: IR dispatch, Rosenbrocks,
+golden regressions/benches from **N2.d**, and the reorganised **`crates/tsdyn-solver-base`** /
+**`methods/`** tree for growing multi-solver backends ahead of **N5 DDE**.
 
-**N2.b polish (optional):** tighten `test_ode_methods` tolerances vs DP8 once
-dense-output parity is audited end-to-end; **Vern6/7/8** remain out of this
-chat’s scope (milestone catalogue names them; only **VERN9** was required for
-STATUS).
+**What just landed**
 
-Phase: implement.  Track E (Rust solver migration) is now in progress;
-Tracks A (M5/M6/M7/M10/M11), B (V1), and C (R2) remain unblocked and can
-run in parallel chats.
+- **`tsdyn-solver-base`**: `uniform_time_grid` for ODE + future DDE output sampling.
+- **`tsdyn-ode/src/methods/`**: tableau + explicit + implicit timestep clusters; **`driver`** as sole catalogue **`match`**.
+- Design doc / **CLAUDE** updated with Rust layering; **CHANGELOG** rewritten “Changed” block.
 
-Last-touched files (N2.a):
+**Where we are**
 
-- `src/tsdynamics/base/_ir.py` — added `OP_TIME`, `OP_TANH`, `OP_SINH`,
-  `OP_COSH`, `OP_POW2`, `OP_POWF`; `Time` and `PowF` nodes; `CompiledOde`
-  dataclass + `serialize_ode` payload (RHS + optional Jacobian +
-  `param_names`).
-- `src/tsdynamics/base/_ode_lowering.py` (new) — SymEngine-tree walker
-  that lowers `cls._equations` to IR and best-effort auto-diffs the
-  Jacobian (skips silently to `has_jacobian=False` when SymEngine yields
-  unevaluated `Derivative` nodes on `Abs`/`sign`).
-- `crates/tsdyn-core/src/ir.rs` — added the matching Rust opcodes,
-  `Expr::{Time, Tanh, Sinh, Cosh, PowF, Pow2}`, a `CompiledOde::from_bytes`
-  decoder, and a `CompiledOde::eval_rhs(t, y, params)` evaluator.  Map
-  evaluator now takes `t: f64` (maps pass `0.0`).
-- `crates/tsdyn-native/src/ode.rs` (new) — PyO3 bindings:
-  `eval_ode_rhs(bytecode, t, y, params)` (single) and
-  `eval_ode_rhs_batch(bytecode, ts, ys, params)` (batched).
-- `crates/tsdyn-native/src/lib.rs`, `crates/tsdyn-maps/src/lib.rs` —
-  wiring + the `t: 0.0` pass-through for maps.
-- `src/tsdynamics/_native/__init__.py` — re-export the two new ODE
-  evaluators.
-- `scripts/generate_ode_goldens.py` (new) — runs JiTCODE on every
-  built-in continuous system with a per-system 45 s wallclock timeout
-  (`SIGALRM`) and writes `tests/native/regression/ode/<System>.npz` with
-  `t, y, ic, params, param_names, structural_params, structural_values,
-  final_time, dt, rtol, atol, method, seed`.  110 of 115 systems
-  succeed; 5 (`Duffing`, `SprottD`, `SprottI`, `ExcitableCell`,
-  `BlinkingRotlet`) skip because random ICs don't land in the attractor
-  basin or the system is too stiff for any of the explicit-RK / lsoda /
-  vode methods JiTCODE exposes — N2.b will hand-pick ICs for them.
-- `tests/native/regression/ode/` — 110 `.npz` files committed alongside.
-- `tests/test_native_ode.py` (new) — three parametrised tests per system
-  (115 × 3 = 345 cases): `test_lower_ode_succeeds`,
-  `test_ode_rhs_matches_symengine` (IR vs SymEngine `Lambdify` on 16
-  random `(t, y)` samples, rtol=1e-9 / atol=1e-12; loose atol=1e-6 for
-  `JerkCircuit` whose `exp(y/y0)` reaches ~5e7), and
-  `test_golden_ode_loadable` (skips the 5 by design).  340 pass, 5 skip.
-- `CHANGELOG.md` — entry under Unreleased.
-- `.planning/STATUS.md`, `.planning/ROADMAP.md` — N2 marked WIP.
+- **N3 — Variational ODE Lyapunov in Rust**: **ACTIVE** (`milestones/N3-rust-variational-lyapunov.md`). Next jobs: augmented IR/lowering sketch, **`lyapunov_spectrum_ode`** PyO3 surface, **`jitcode_lyap`** removal checklist, Lyap goldens.
 
-## What's done
+**Defer / parallel**
 
-- **M0**: planning framework bootstrapped.
-- **R1**: Rust toolchain + maturin + CI wheels — landed 2026-05-16.
-- **N1**: Rust map stepper — landed 2026-05-16.
-- **M1**: Trajectory enrichment — landed 2026-05-16.
-- **M2**: Event & section detection — landed 2026-05-16.
-- **N2.a**: ODE IR extension + SymEngine lowering + PyO3 RHS evaluator
-  + golden trajectory snapshot — landed 2026-05-16.
-  - Full IR opcode set is now ODE-complete: hyperbolic functions,
-    fractional and symbolic powers, explicit-time variable.
-  - 115 built-in continuous systems all lower to IR without error
-    (`NotLowerableError` doesn't fire for anyone in the catalogue).
-  - IR evaluation matches SymEngine's `Lambdify` within rtol=1e-9 on
-    every system; the NaN pattern (e.g. `WindmiReduced`'s
-    `v ** Rational(1, 2)` on negative samples) matches bit-exactly
-    between IR and SymEngine.
-  - Jacobian auto-diff lowers successfully for most systems; 6 with
-    `Abs`/`sign` keep `has_jacobian=False` until N2.c needs J for the
-    Rosenbrock family (then `_jacobian` can be supplied explicitly).
-  - `CompiledOde` carries `param_names` so the Rust evaluator can
-    consume Python's `ParamSet` insertion order verbatim.
-  - 110/115 systems also have golden trajectory snapshots; the 5
-    skipped ones get hand-picked ICs in N2.b.
-  - Tests: 1192 passed / 61 skipped across the full Python suite in
-    148 s; `cargo test --workspace --release` green (5 + 2 = 7 Rust
-    unit tests, including a new `eval_tanh_sinh_cosh_powf` over the
-    extended opcode set).  `ruff check` + `ruff format --check` clean.
+| Item | Bucket |
+|------|--------|
+| **R2** (rayon sweep) | Separate Track C milestone (no authored spec yet in-repo). Safe parallel once picked up independent of N3. |
+| **Vern6–8** timesteppers | Deferred N2 stretch goal. |
 
-## What's in progress
+## Next action for a solver chat
 
-- **N2.d** next (per milestone file): further stiff solver work / polish as scoped there.
+Continue **N3** Lyapunov port (see **`N3-rust-variational-lyapunov.md`** § Mission + acceptance).
 
-## Next action
+## Archived N2 housekeeping (carry if useful)
 
-Open [`milestones/N2-rust-ode-stepper.md`](milestones/N2-rust-ode-stepper.md)
-and begin **N2.d**, or pick a parallel milestone from the alternatives below.
-
-Already landed for **N2.b**: **DP5**, **DP8**, **Tsit5**, **VERN9**, **BS3**,
-**RK4**, golden regenerate + trajectory regression + `tests/test_ode_methods.py`
-+ Duffing/Sprott hand IC goldens.
-
-Already landed for **N2.c**: **ROSENBROCK23**, **ROSENBROCK34**, **RODAS4**, PI step
-control in `tsdyn-ode`, `CompiledOde::eval_jacobian`, PyO3 `eval_ode_jacobian`,
-`ContinuousSystem` stiff dispatch, LSODA/VODE deprecation + dim-capped Rust remap,
-`h_init` span scaling fix.
-
-Historical checklist (N2.b — done):
-
-1. ~~Create `crates/tsdyn-ode/` … DP5, DP8, Tsit5, Vern9, RK4, BS3~~
-2. ~~Vendor Butcher tableaux …~~
-3. ~~Native dense output …~~
-4. ~~PyO3 wire `integrate_ode`~~
-5. ~~`ContinuousSystem.integrate` dispatch~~
-6. ~~`"DOP853"` → `"DP8"`~~
-7. ~~`tests/test_ode_methods.py`~~ (uses rtol 5e-7 — revisit vs milestone 1e-12).
-8. ~~`lyapunov_spectrum` JiTCODE~~ — still valid for N3.
-
-Per the milestone, **the user answered the six open questions during
-N2.a's planning** — those answers stick:
-
-- Pure-Rust steppers (no `ode_solvers` Cargo dep; vendor tables only).
-- Always include `t_final` in the output grid
-  (`np.arange(t0, final_time + dt/2, dt)`).
-- Per-method controller default (I for explicit-RK; PI in N2.c for
-  Rosenbrock).
-- Silent fallback to JiTCODE on `NotLowerableError` for N2's lifetime.
-- Cache key `(class, dim, hash(structural_params))`.
-- Default method stays `"DP5"`.
-
-Alternative milestones still open if a different chat picks a different
-track:
-
-- **R2** (Rust parameter-sweep kernel): rayon-backed.  Unlocks M3 → M4.
-- **V1** (Viz skeleton).  M2 left three `to_dataspec` placeholder dicts.
-- **M5** (Equilibria), **M6** (Embedding utils), **M7** (Spectral
-  toolkit) — all independent of N2.
-
-## R1 follow-ups (still parked)
-
-- SCM-driven versioning via `update_version.py`.
-- Collapse `publish.yml` + `release.yml` + the wheel-emitting half of
-  `wheels.yml` into a single tag-triggered publish workflow.
-- Windows wheels: add to `wheels.yml` matrix after N2 proves no blockers.
-
-## N1 follow-ups (parked)
-
-- **Performance**: constant-folding pass on the IR.  Optional — N4
-  cranelift makes it moot.
-- **Disk-backed IR cache**: process-local for N1; revisit in N4.
-- **DynamicalSystems.jl comparison**: not yet recorded.  Add when P1's
-  benchmark harness lands.
-
-## M1 / M2 follow-ups (parked)
-
-(unchanged — see git history of this file for the full lists)
-
-## N2.a follow-ups (parked for N2.b/c)
-
-- **Jacobian for `Abs`/`sign` systems**: today the lowering silently
-  sets `has_jacobian=False`.  N2.c needs J for Rosenbrock.  Either
-  hand-supply `_jacobian` on the six affected systems
-  (MultiChua, AnishchenkoAstakhov, StickSlipOscillator,
-  CellularNeuralNetwork, Colpitts, FluidTrampoline) or add a
-  smooth-approximation `Abs` pass.
-- **5 missing goldens**: `Duffing`, `SprottD`, `SprottI`,
-  `ExcitableCell`, `BlinkingRotlet`.  Pick basin-anchored ICs in N2.b
-  (e.g. Duffing on its strange attractor needs `[1, 1, 0]`-ish; the
-  Sprotts need careful selection from Sprott's original tables).
-- **`JerkCircuit` numeric-precision quirk**: the `exp(y/y0)` term blows
-  past ~5e7 at random samples; current test uses `atol=1e-6` for it.
-  N2.b should switch to a smaller IC range for that one system in the
-  regression test (the `tests/test_native_ode.py` `RHS_SAMPLE_RANGE`
-  knob is the right place).
-- **PyO3 batched evaluator perf**: today every batch call re-decodes the
-  bytecode.  N2.b can hoist the decode out of the loop by passing a
-  pre-allocated `OdeProblemHandle` (the milestone already plans this).
+Jacobian gaps on **`Abs`**/**`sign`** systems; two golden NPZ gaps (**ExcitableCell**, **BlinkingRotlet**);
+tightening `tests/test_ode_methods.py` vs DP8 tolerances (`5e-7` interim).
 
 ## How to resume
 
-A future chat should:
-
-1. Read this file.
-2. Pick N2.b (or a parallel milestone from the alternatives above).
-3. Open `.planning/milestones/N2-rust-ode-stepper.md` and follow it.
-4. After landing the sub-milestone: tick N2.b in this STATUS.md (or
-   close N2 entirely if all four sub-stages land in one chat), update
-   ROADMAP.md if the status changes, commit `.planning/` with the code.
+1. `STATUS.md` + `milestones/N3-rust-variational-lyapunov.md`
+2. `design/native-solver-migration.md` § N3
+3. `CLAUDE.md` § Rust crates

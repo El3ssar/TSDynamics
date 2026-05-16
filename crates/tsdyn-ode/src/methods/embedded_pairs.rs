@@ -1,10 +1,11 @@
 //! Additional explicit Runge–Kutta drivers (DP8, Tsit5, BS3).
 
-use crate::butcher::{bs3, dop853_err, dopri853, tsit5};
 use crate::controller::adapt_step;
+use crate::error::IntegrateError;
+use crate::methods::butcher::{bs3, dop853_err, dopri853, tsit5};
 use crate::rhs::Rhs;
+use crate::step_helpers::{all_finite, h_init};
 use crate::util::{axpy, copy_from, dense_bs3_eval, dense_dop853_eval, dense_tsit5_eval};
-use crate::{all_finite, h_init, IntegrateError};
 
 fn dp853_error_norm(
     k: &[Vec<f64>],
@@ -58,7 +59,7 @@ fn adapt_dp853(err: f64, h: f64, step_rejected: bool) -> (bool, f64) {
     }
 }
 
-pub(super) fn integrate_dp8<R: Rhs + ?Sized>(
+pub(crate) fn integrate_dp8<R: Rhs + ?Sized>(
     rhs: &mut R,
     t_grid: &[f64],
     y_out: &mut [Vec<f64>],
@@ -199,7 +200,7 @@ pub(super) fn integrate_dp8<R: Rhs + ?Sized>(
     Ok(())
 }
 
-pub(super) fn integrate_tsit5<R: Rhs + ?Sized>(
+pub(crate) fn integrate_tsit5<R: Rhs + ?Sized>(
     rhs: &mut R,
     t_grid: &[f64],
     y_out: &mut [Vec<f64>],
@@ -351,7 +352,7 @@ pub(super) fn integrate_tsit5<R: Rhs + ?Sized>(
     Ok(())
 }
 
-pub(super) fn integrate_bs3<R: Rhs + ?Sized>(
+pub(crate) fn integrate_bs3<R: Rhs + ?Sized>(
     rhs: &mut R,
     t_grid: &[f64],
     y_out: &mut [Vec<f64>],

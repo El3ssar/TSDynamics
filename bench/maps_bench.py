@@ -60,6 +60,7 @@ def _bench_numba(name: str, steps: int) -> float:
 
 
 def main() -> None:
+    """Run all map benchmarks and append results to ``bench/RESULTS.md``."""
     print(f"{'Map':<14} {'Steps':>12} {'Rust (s)':>10} {'Numba (s)':>11} {'Speedup':>9}")
     print("-" * 60)
     rows = []

@@ -1,6 +1,6 @@
 # Milestone N2 — Pure-Rust ODE stepper suite
 
-Status: TODO
+Status: DONE (closed 2026-05-17)
 Depends on: R1 (toolchain), N1 (IR + tracer + interpreter)
 Estimated scope: **multi-chat** (probably 3–5 sessions if cleanly split)
 Design doc: [design/native-solver-migration.md](../design/native-solver-migration.md)
@@ -411,8 +411,14 @@ Suggested split if N2 is too big for one session (likely):
 - **N2.c — Stiff Rosenbrock family**: Rosenbrock23, Rosenbrock34, Rodas4.
   Stiff catalogue (Van der Pol at large μ, Brusselator, others)
   regression.  Methods table + deprecation aliases.
-- **N2.d — Polish**: benchmarks, docstrings, CHANGELOG, STATUS.md
-  rewrite.  Default-flip ready.
+- **N2.d — Polish + scalability groundwork**: benchmarks; docstrings; CHANGELOG;
+  STATUS.md rewrite; **default-flip readiness**.  Optionally include **bounded,
+  behaviour-neutral Rust organisation** in `crates/tsdyn-ode/` (module boundaries,
+  dispatch/registrations grouped so **adding another solver stays a localized
+  change**: tableau/step routine + enum/`match` arm + tests + docs row — see
+  [`design/native-solver-migration.md`](../design/native-solver-migration.md)
+  § Extensibility).  Avoid turning N2.d into an open-ended rewrite; cap scope in
+  STATUS.md before starting.
 
 Each sub-chat updates STATUS.md before closing so the next one can pick
 up cleanly.  N2.a is the only one with a hard prerequisite.

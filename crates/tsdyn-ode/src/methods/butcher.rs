@@ -548,7 +548,7 @@ pub mod bs3 {
 
 #[cfg(test)]
 mod tests {
-    use crate::butcher::{dopri54, dopri853};
+    use crate::methods::butcher::{dopri54, dopri853};
 
     #[test]
     fn dopri5_a() {

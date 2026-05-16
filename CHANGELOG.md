@@ -1,5 +1,14 @@
 ## Unreleased
 
+### Changed
+
+- **`crates/tsdyn-solver-base`** (new): **`uniform_time_grid`** output construction for ODE+DDE-aligned
+  tooling (planned **N5**).
+- **`crates/tsdyn-ode`**: all catalogue timestep routines live under **`src/methods/`** (`explicit_dp5_rk4`,
+  `embedded_pairs`, `implicit/{lu,rosenbrock}`, `vern9/`, tableau `butcher.rs`); **`driver`** consumes
+  **`tsdyn-solver-base::uniform_time_grid`** for output sampling.
+- **`bench/ode_bench.py`**: Lorenz/Rössler timings (**Rust DP5** vs JiTCODE **dopri5** shim); **`bench/RESULTS.md`**.
+- **`ContinuousSystem`** / **`integrate`** docstrings: Rust catalogue, fallbacks, **RK45 ⇒ DP5** / recommend **`DP8`**.
 ### Features (N2.c — stiff Rosenbrock integrators)
 
 - **`crates/tsdyn-core`**: `CompiledOde::eval_jacobian` (row-major

@@ -5,10 +5,12 @@
 //! Dense output on the fixed grid uses linear interpolation between step endpoints (Hermite deferred).
 
 use crate::controller::adapt_step_pi;
-use crate::lu::solve_linear_row_major;
-use crate::rhs::IrOdeRhs;
+use crate::error::IntegrateError;
+use crate::method::Method;
+use crate::methods::implicit::lu::solve_linear_row_major;
+use crate::rhs::{IrOdeRhs, Rhs};
+use crate::step_helpers::{all_finite, h_init};
 use crate::util::copy_from;
-use crate::{all_finite, h_init, IntegrateError, Method, Rhs};
 use tsdyn_core::ir::CompiledOde;
 
 /// Rosenbrock23 — OrdinaryDiffEq `Rosenbrock23Tableau`.

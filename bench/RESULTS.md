@@ -1,5 +1,7 @@
 # Map benchmarks
 
+ODE integrate timings (`bench/ode_bench.py`) are appended near the end under **§ ODE benchmarks**.
+
 Wall-clock time for ``iterate(steps)`` on built-in maps.
 Rust column uses the N1 IR-interpreted kernel; Numba column forces the
 fallback path via the ``_ir_cache = None`` poison.
@@ -35,4 +37,36 @@ Why this is fine for N1:
 | Logistic | 10,000,000 | 0.233 | 0.546 | 2.34× |
 | Ikeda | 1,000,000 | 0.221 | 0.040 | 0.18× |
 | FoldedTowel | 1,000,000 | 0.093 | 0.014 | 0.15× |
+
+
+## ODE benchmarks — run 2026-05-17 01:27:21
+
+Same `(final_time, dt, rtol, atol)` grid; **Rust DP5** evaluates the bytecode RHS in-process;
+**JiTCODE** runs ``dopri5`` while IR lowering is forced to raise ``NotLowerableError``.
+Whole-call wall time mixes stepping with output-grid sampling — small 3-D demos can favor
+Rust if Python/C bridge overhead dominates; RHS-only microbenchmarks skew the other way
+(N4 Cranelift will revisit raw throughput parity).
+
+| System | Rust DP5 (s) | JiTCODE dopri5 (s) | JiTCODE / Rust |
+|--------|---------------:|-------------------:|---------------:|
+| Lorenz | 0.0037 | 0.0464 | 12.664× |
+| Rossler | 0.0014 | 0.0409 | 28.280× |
+
+## ODE benchmarks — run 2026-05-17 01:29:45
+
+Same `(final_time, dt, rtol, atol)` grid; **Rust DP5** evaluates the bytecode RHS in-process;
+**JiTCODE** runs ``dopri5`` with IR lowering toggled off via `NotLowerableError`. Whole-call wall time includes output-grid sampling.
+
+| System | Rust DP5 (s) | JiTCODE dopri5 (s) | JiTCODE / Rust |
+|--------|---------------:|-------------------:|---------------:|
+| Lorenz | 0.0035 | 0.0435 | 12.300× |
+| Rossler | 0.0014 | 0.0383 | 28.116× |
+## Run 2026-05-17 01:30:00
+
+| Map | Steps | Rust (s) | Numba (s) | Speedup |
+|-----|------:|---------:|----------:|--------:|
+| Henon | 10,000,000 | 0.758 | 0.343 | 0.45× |
+| Logistic | 10,000,000 | 0.327 | 0.808 | 2.47× |
+| Ikeda | 1,000,000 | 0.273 | 0.045 | 0.17× |
+| FoldedTowel | 1,000,000 | 0.139 | 0.011 | 0.08× |
 

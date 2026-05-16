@@ -1,6 +1,6 @@
 # Milestone N3 — Variational ODE Lyapunov in Rust
 
-Status: TODO
+Status: WIP
 Depends on: N2 (stepper + IR + dispatch)
 Estimated scope: one chat
 Design doc: [design/native-solver-migration.md](../design/native-solver-migration.md)

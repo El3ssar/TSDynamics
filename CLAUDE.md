@@ -20,6 +20,20 @@ and the design docs under [`.planning/design/`](.planning/design/).
 
 For the protocol summary, see [`CLAUDE-PLANNING.md`](CLAUDE-PLANNING.md).
 
+### Rust solver layer (Track E — mission alignment)
+
+The roadmap targets a **pure-Rust compute core** with a **growing pool of integrators**
+(users choose via `method=`, no backend flag), in the same spirit as
+Julia’s **OrdinaryDiffEq.jl / DynamicalSystems.jl** coupling: many algorithms,
+shared RHS/IR plumbing. How we keep that pool maintainable over time —
+dispatch boundaries, adding a new solver — lives in
+[`.planning/design/native-solver-migration.md`](.planning/design/native-solver-migration.md)
+(section **Extensibility**).
+
+Rust crates (**`crates/`**): **`tsdyn-solver-base`** holds **`uniform_time_grid`** and other ODE/DDE-neutral helpers; **`tsdyn-ode`**
+clusters integrators inside **`src/methods/`** with internal **`driver`** dispatch matching the **`Method`** enum surfaced to Python;
+**`tsdyn-native`** exposes PyO3. **N5** adds **`tsdyn-dde`** beside **`tsdyn-ode`**, consuming the shared sampling primitives.
+
 ---
 
 ## Project overview

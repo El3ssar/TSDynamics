@@ -459,7 +459,12 @@ name = "tsdyn-ode"
 version = "0.1.0"
 dependencies = [
  "tsdyn-core",
+ "tsdyn-solver-base",
 ]
+
+[[package]]
+name = "tsdyn-solver-base"
+version = "0.1.0"
 
 [[package]]
 name = "typenum"
