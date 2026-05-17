@@ -50,7 +50,18 @@ _STIFF_RUST_METHODS = frozenset({"ROSENBROCK23", "ROSENBROCK34", "RODAS4"})
 # LSODA/VODE may route to Rust Rosenbrock only for modest state dimensions (dense ROW solves).
 _LSODA_AUTO_ROSS_DIM_CAP = 24
 _RUST_NATIVE_METHODS = frozenset(
-    {"DP5", "DP8", "TSIT5", "VERN9", "BS3", "RK4", *_STIFF_RUST_METHODS}
+    {
+        "DP5",
+        "DP8",
+        "TSIT5",
+        "VERN6",
+        "VERN7",
+        "VERN8",
+        "VERN9",
+        "BS3",
+        "RK4",
+        *_STIFF_RUST_METHODS,
+    }
 )
 
 
@@ -106,7 +117,7 @@ class ContinuousSystem(SystemBase, ABC):
     Explicit adaptive Runge–Kutta (I step-size control):
 
     ``"DP5"``, alias ``"RK45"`` / ``"dopri5"``; ``"DP8"``, alias ``"DOP853"`` / ``"dop853"``;
-    ``"TSIT5"``; ``"VERN9"``; ``"BS3"``; fixed-step ``"RK4"``.
+    ``"TSIT5"``; ``"VERN6"``, ``"VERN7"``, ``"VERN8"``, ``"VERN9"``; ``"BS3"``; fixed-step ``"RK4"``.
 
     Stiff Rosenbrock–Wanner (PI controller; Jacobian from IR bytecode):
 
@@ -124,7 +135,7 @@ class ContinuousSystem(SystemBase, ABC):
 
     Class-level :attr:`_default_method` is ``"RK45"`` — it denotes the SciPy-era name while the Rust hot
     path runs **DP5** (same order family). Smooth non-stiff problems often benefit from ``"DP8"`` /
-    ``"TSIT5"`` / ``"VERN9"`` at similar tolerances; switching the library default remains a deliberate **N2.e+**
+    ``"TSIT5"`` / ``"VERN6"``–``"VERN9"`` at similar tolerances; switching the library default remains a deliberate **N2.e+**
     release-note change.
 
     Compilation and caching
@@ -399,7 +410,8 @@ class ContinuousSystem(SystemBase, ABC):
             Catalogue name routed to Pure-Rust when IR lowering succeeds.
 
             Explicit: ``"DP5"`` (**alias** ``"RK45"``, ``"dopri5"``), ``"DP8"`` (**alias**
-            ``"DOP853"``, ``"dop853"``), ``"TSIT5"``, ``"VERN9"``, ``"BS3"``, ``"RK4"``.
+            ``"DOP853"``, ``"dop853"``), ``"TSIT5"``, ``"VERN6"``, ``"VERN7"``, ``"VERN8"``,
+            ``"VERN9"``, ``"BS3"``, ``"RK4"``.
             Stiff: ``"ROSENBROCK23"``, ``"ROSENBROCK34"``, ``"RODAS4"``.
             Deprecated: ``"LSODA"``, ``"VODE"``.
             Default :attr:`_default_method` is ``"RK45"`` (**DP5** on Rust); smoother problems

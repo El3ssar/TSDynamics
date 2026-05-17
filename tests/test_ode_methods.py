@@ -10,29 +10,41 @@ import tsdynamics as ts
 
 @pytest.mark.parametrize(
     "method",
-    ["DP5", "TSIT5", "BS3", "VERN9"],
+    ["DP5", "TSIT5", "BS3", "VERN6", "VERN7", "VERN8", "VERN9"],
 )
 def test_lorenz_dense_output_matches_dp8(method: str) -> None:
+    """Explicit ERKs converge to DP8 sampling on Lorénz once tolerances dominate truncation error."""
+
     lor = ts.Lorenz()
     ic = np.array([1.0, 1.0, 1.0], dtype=float)
+    rtol_req = atol_req = 1e-13
     ref = lor.integrate(
         final_time=10.0,
         dt=0.05,
         ic=ic,
         method="DP8",
-        rtol=1e-10,
-        atol=1e-12,
+        rtol=rtol_req,
+        atol=atol_req,
     )
     tr = lor.integrate(
         final_time=10.0,
         dt=0.05,
         ic=ic,
         method=method,
-        rtol=1e-10,
-        atol=1e-12,
+        rtol=rtol_req,
+        atol=atol_req,
     )
-    np.testing.assert_allclose(tr.t, ref.t, rtol=0, atol=1e-14)
-    np.testing.assert_allclose(tr.y, ref.y, rtol=5e-7, atol=1e-9)
+    np.testing.assert_allclose(tr.t, ref.t, rtol=0.0, atol=1e-14)
+    rtol_y = 1e-7
+    if method == "BS3":
+        atol_y = 3e-8
+    elif method == "VERN6":
+        atol_y = 2e-8
+    elif method in ("VERN7", "VERN8"):
+        atol_y = 1e-8
+    else:
+        atol_y = 9e-9
+    np.testing.assert_allclose(tr.y, ref.y, rtol=rtol_y, atol=atol_y)
 
 
 @pytest.mark.parametrize("method", ["ROSENBROCK23", "ROSENBROCK34", "RODAS4"])

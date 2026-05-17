@@ -17,6 +17,9 @@ use crate::method::Method;
 use crate::methods::embedded_pairs::{integrate_bs3, integrate_dp8, integrate_tsit5};
 use crate::methods::explicit_dp5_rk4::{integrate_dp5, integrate_rk4};
 use crate::methods::implicit::rosenbrock;
+use crate::methods::vern6;
+use crate::methods::vern7;
+use crate::methods::vern8;
 use crate::methods::vern9;
 use crate::rhs::IrOdeRhs;
 use crate::util::copy_from;
@@ -65,6 +68,9 @@ pub fn integrate_ode(
         Method::Tsit5 => integrate_tsit5(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
         Method::Bs3 => integrate_bs3(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
         Method::Rk4 => integrate_rk4(&mut rhs, &t_grid, &mut y_rows),
+        Method::Vern6 => vern6::integrate_vern6(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
+        Method::Vern7 => vern7::integrate_vern7(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
+        Method::Vern8 => vern8::integrate_vern8(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
         Method::Vern9 => vern9::integrate_vern9(&mut rhs, &t_grid, &mut y_rows, rtol, atol),
         Method::Rosenbrock23 | Method::Rosenbrock34 | Method::Rodas4 => {
             rosenbrock::integrate_stiff(ode, params, &t_grid, &mut y_rows, method, rtol, atol)
