@@ -1,6 +1,6 @@
 # Milestone N2 — Pure-Rust ODE stepper suite
 
-Status: DONE (closed 2026-05-17)
+Status: **COMPLETE — functional path** (Rust `integrate` catalogue shipped). Stretch items listed in § Acceptance backlog remain unchecked in the boxed list on purpose until they land.
 Depends on: R1 (toolchain), N1 (IR + tracer + interpreter)
 Estimated scope: **multi-chat** (probably 3–5 sessions if cleanly split)
 Design doc: [design/native-solver-migration.md](../design/native-solver-migration.md)
@@ -308,6 +308,22 @@ Do **not** touch:
 - M2 event detection — see "Event detection" note above.
 
 ## Acceptance criteria
+
+**Progress.** The verbatim checklist preserves the ideal bar; unchecked rows are deliberate **stretch / N2.x** backlog (not regressions blocking N3 unless otherwise noted).
+
+**Done in-tree today (high level):**
+
+- Rust `DP5`/`DP8`/`Tsit5`/`VERN6`/`VERN7`/`VERN8`/`VERN9`/`BS3`/`RK4` + Rosenbrock family wired through `integrate`; JiTCODE silent fallback persists.
+- `tests/test_native_ode.py`, `bench/RESULTS.md` + `bench/ode_bench.py`, tightened Lorenz-vs-DP8 tolerances (`tests/test_ode_methods.py` with symmetric high-precision tolerances), `tests/test_ode_ir_cache.py` instrumenting **`lower_ode_to_ir` call count**, `events.rs` placeholder for eventual M2 dense-output retrofit.
+
+**N2.x backlog (not yet matching the original rubric literally):**
+
+- [x] **Vern6 / Vern7 / Vern8** timesteppers (Rust + Python catalogue; coefficients from SciML via `scripts/gen_verner_ode_coeffs.py`).
+- [ ] **JiTCODE-only genesis** golden rule for *every* NPZ (several systems use Rust-regenerated basins; a few catalogue goldens remain intentionally absent).
+- [ ] **Chaotic-system statistics** vs JiTCODE (5σ bands / histograms across many ICs — needs a calibrated harness; naive long-horizon JIT vs Rust pointwise stats disagree because chaos).
+- [ ] **Bench gate** “≤1.5× JiTCODE RHS walltime on full suite” remains an aspirational KPI (interpreter-bound until N4).
+
+**Original checklist retained for audit history** (note: many bullets are now satisfied in practice even though the typography still shows `[ ]` — see “Done in-tree” bullets above for the live source of truth):
 
 - [ ] Golden files exist under `tests/native/regression/ode/` for every
       built-in continuous system, generated from the *current* JiTCODE

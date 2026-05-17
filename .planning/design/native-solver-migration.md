@@ -154,7 +154,7 @@ Design rules so new methods remain cheap to maintain:
    implicit scheme later must **not** fork RHS semantics.
 
 2. **Localized implementations.** Each algorithm is a submodule tree under ``crates/tsdyn-ode/src/methods/``
-   (Butcher tableau, embedded explicit runners, Rosenbrock/LU bundles, Verner‑9 subtree, …). Register new work in
+   (Butcher tableau, embedded explicit runners, Rosenbrock/LU bundles, Verner 6–9 subtrees, …). Register new work in
    ``crate::driver::integrate_ode`` and Python `_rust_integrator_name` / `_RUST_NATIVE_METHODS` only — never fork IR eval.
 
 3. **Stable Python surface.** New Rust methods appear under documented `method=`

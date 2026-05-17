@@ -1,37 +1,31 @@
-# Status — updated 2026-05-17 (N2 ✅ — N3 🔧 variational Lyapunov begins)
+# Status — updated 2026-05-17 (Track E clarification)
 
-Track **N2** (Pure-Rust ODE suite) is **feature-complete enough to close**: IR dispatch, Rosenbrocks,
-golden regressions/benches from **N2.d**, and the reorganised **`crates/tsdyn-solver-base`** /
-**`methods/`** tree for growing multi-solver backends ahead of **N5 DDE**.
+Track **N2** — **`integrate`** path is **functionally DONE** enough to unblock **N3**:
+Rust catalogue + regressions/benches landed. Stretch items (calibrated chaotic-vs-JIT statistics, genesis goldens wording) live under **`milestones/N2-rust-ode-stepper.md` § Acceptance criteria / N2.x backlog**.
 
-**What just landed**
+---
 
-- **`tsdyn-solver-base`**: `uniform_time_grid` for ODE + future DDE output sampling.
-- **`tsdyn-ode/src/methods/`**: tableau + explicit + implicit timestep clusters; **`driver`** as sole catalogue **`match`**.
-- Design doc / **CLAUDE** updated with Rust layering; **CHANGELOG** rewritten “Changed” block.
+### Can **N3** run in parallel?
 
-**Where we are**
+- **Depends on Track E prerequisites only:** yes — **N3** needs today's Rust `integrate` + IR Jacobian plumbing. It **does not** wait on the chaotic-stat harness.
+- **Parallel with Track C** (`R2`, …) or **V**/other rows: yes — orthogonal files (watch merge conflicts near `Cargo.toml`, `CHANGELOG`, `continuous` docs).
+- **Parallel with someone still grinding N2.x backlog**: usually yes on **distinct branches**, but coordinate if both touch **`ode_base.py`** / crates layout.
 
-- **N3 — Variational ODE Lyapunov in Rust**: **ACTIVE** (`milestones/N3-rust-variational-lyapunov.md`). Next jobs: augmented IR/lowering sketch, **`lyapunov_spectrum_ode`** PyO3 surface, **`jitcode_lyap`** removal checklist, Lyap goldens.
+---
 
-**Defer / parallel**
+**Active milestone:** **N3 — Variational ODE Lyapunov in Rust**
+(`milestones/N3-rust-variational-lyapunov.md`, `design/native-solver-migration.md` § N3).
 
-| Item | Bucket |
-|------|--------|
-| **R2** (rayon sweep) | Separate Track C milestone (no authored spec yet in-repo). Safe parallel once picked up independent of N3. |
-| **Vern6–8** timesteppers | Deferred N2 stretch goal. |
+Recent N2-completion additions this session:
 
-## Next action for a solver chat
+- `tests/test_ode_ir_cache.py` — verifies **`lower_ode_to_ir` called once per cache slice** (+ structural-split).
+- **`crates/tsdyn-ode/src/events.rs`** skeleton for future M2 dense-output retrofit.
+- **`tests/test_ode_methods.py`** — Lorenz-vs-DP8 dense alignment for **VERN6/7/8/9**, **DP5**, **TSIT5**, **BS3** with method-specific atol bands.
 
-Continue **N3** Lyapunov port (see **`N3-rust-variational-lyapunov.md`** § Mission + acceptance).
+---
 
-## Archived N2 housekeeping (carry if useful)
+## Next action
 
-Jacobian gaps on **`Abs`**/**`sign`** systems; two golden NPZ gaps (**ExcitableCell**, **BlinkingRotlet**);
-tightening `tests/test_ode_methods.py` vs DP8 tolerances (`5e-7` interim).
+Resume **N3** implementation (Rust variational LHS + QR + PyO3 + goldens workflow).
 
-## How to resume
-
-1. `STATUS.md` + `milestones/N3-rust-variational-lyapunov.md`
-2. `design/native-solver-migration.md` § N3
-3. `CLAUDE.md` § Rust crates
+Consult **`milestones/N3-rust-variational-lyapunov.md`** + **`CLAUDE.md`** § Rust crates.
