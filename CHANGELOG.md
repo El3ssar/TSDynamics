@@ -1,11 +1,20 @@
 ## Unreleased
 
+### Features
+
+- **Rust Verner (6,5) / (7,6) / (8,7)** integrators (**`VERN6`**, **`VERN7`**, **`VERN8`**) with SciML-tableau
+  dense output, wired through `crate::driver::integrate_ode` and `ContinuousSystem.integrate`.
+  Tableau / extra-stage coefficients regenerate from upstream Julia via **`scripts/gen_verner_ode_coeffs.py`**.
+
 ### Changed
 
+- **Tests / planning**: **`tests/test_ode_ir_cache.py`** asserts **`lower_ode_to_ir` is invoked once** per reusable IR cache slice (**twice** when structural dims differ); Lorenz-vs-DP8 regressions in **`tests/test_ode_methods.py`** cover **VERN6/7/8/9** alongside **DP5** / **TSIT5** / **BS3** with method-specific `atol` bands;
+  **`crates/tsdyn-ode/src/events.rs`** stub for eventual M2 dense-output retrofit.
+- **`milestones/N2-rust-ode-stepper.md`**, **`STATUS.md`**, **`ROADMAP.md`** — mark **N2 `integrate` path functionally DONE** (**N3** unblocked); remaining **N2.x backlog** items (e.g. calibrated chaotic-stats harness, bench KPI) are called out explicitly rather than blocking N3.
 - **`crates/tsdyn-solver-base`** (new): **`uniform_time_grid`** output construction for ODE+DDE-aligned
   tooling (planned **N5**).
-- **`crates/tsdyn-ode`**: all catalogue timestep routines live under **`src/methods/`** (`explicit_dp5_rk4`,
-  `embedded_pairs`, `implicit/{lu,rosenbrock}`, `vern9/`, tableau `butcher.rs`); **`driver`** consumes
+- **`crates/tsdyn-ode`**: catalogue timestep routines live under **`src/methods/`** (`explicit_dp5_rk4`,
+  `embedded_pairs`, `implicit/{lu,rosenbrock}`, `vern6/`, `vern7/`, `vern8/`, `vern9/`, tableau `butcher.rs`); **`driver`** consumes
   **`tsdyn-solver-base::uniform_time_grid`** for output sampling.
 - **`bench/ode_bench.py`**: Lorenz/Rössler timings (**Rust DP5** vs JiTCODE **dopri5** shim); **`bench/RESULTS.md`**.
 - **`ContinuousSystem`** / **`integrate`** docstrings: Rust catalogue, fallbacks, **RK45 ⇒ DP5** / recommend **`DP8`**.
@@ -36,6 +45,8 @@
 - **`crates/tsdyn-ode`**: adaptive explicit RK integrators with dense output on
   the uniform Python grid — **DP5**, **DP8** (SciPy-compatible error indicator +
   `Dop853DenseOutput`), **Tsit5** (OrdinaryDiffEq.jl tableau + interpolant),
+  **Vern6**, **Vern7**, **Vern8** (Verner pairs with SciML extra stages + dense
+  interpolants; coefficients via `scripts/gen_verner_ode_coeffs.py`),
   **Vern9** (Verner 9(8) pair + OrdinaryDiffEq.jl extra stages & ninth-order
   interpolant polynomials), **BS3** / RK23 (SciPy tableau + dense `P`), plus
   fixed-step **RK4**.
@@ -45,7 +56,7 @@
 - **`erk_extra.rs`**: DP8 / Tsit5 / BS3 drivers (FSAL bookkeeping).
 - **PyO3** `integrate_ode(...)` unchanged surface.
 - **`ContinuousSystem.integrate`** dispatches to Rust for **`DP5`**, **`DP8`**
-  (aliases **`DOP853`** / **`dop853`**), **`TSIT5`**, **`VERN9`**, **`BS3`**,
+  (aliases **`DOP853`** / **`dop853`**), **`TSIT5`**, **`VERN6`**, **`VERN7`**, **`VERN8`**, **`VERN9`**, **`BS3`**,
   **`RK4`** when lowering succeeds; JiTCODE fallback elsewhere.
 - **Golden trajectories** (`tests/native/regression/ode/*.npz`) regenerated with
   Rust DP8 so committed `(t, y)` matches replay;

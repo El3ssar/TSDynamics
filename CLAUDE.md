@@ -210,7 +210,8 @@ sys.lyapunov_spectrum(
 ) -> np.ndarray             # shape (n_exp,), descending
 ```
 
-Uses `jitcode_lyap`. The per-interval local exponents are time-weight averaged.
+Uses the Rust variational + QR integrator (**N3**): requires lowered IR with Jacobian;
+stiff ``method=`` strings remap to explicit **DP8**. ``integrator_kwargs`` are ignored (with a warning).
 
 ### `DelaySystem` (`base/dde_base.py`)
 

@@ -70,3 +70,8 @@ Same `(final_time, dt, rtol, atol)` grid; **Rust DP5** evaluates the bytecode RH
 | Ikeda | 1,000,000 | 0.273 | 0.045 | 0.17× |
 | FoldedTowel | 1,000,000 | 0.139 | 0.011 | 0.08× |
 
+## ODE Lyapunov (variational QR, **N3**) — run 2026-05-17
+
+Lorenz ``lyapunov_spectrum(dt=0.1, burn_in=50, final_time=200, method="DP8", rtol=1e-7, atol=1e-10, ic=[1,1,1])``:
+**~3.1 s** wall-clock on this machine (pure-Rust stepping + QR). Historical ``jitcode_lyap`` comparison removed with N3; regressions use ``tests/native/regression/ode/*.lyap.npz``.
+
