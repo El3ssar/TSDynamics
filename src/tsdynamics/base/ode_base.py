@@ -97,12 +97,11 @@ class ContinuousSystem(SystemBase, ABC):
     """
     Base class for finite-dimensional ODE dynamical systems.
 
-    Subclasses supply a symbolic :meth:`_equations` RHS; integration uses a **pure-Rust**
-    adaptive IR stepper when SymEngine lowering to bytecode succeeds (**N2**) and ``method``
-    names a catalogue entry. :meth:`integrate` still falls back silently to JiTCODE when lowering
-    fails (unsupported expression nodes).
-
-    Variational Lyapunov (:meth:`lyapunov_spectrum`) stays on JiTCODE until milestone **N3**.
+    Subclasses supply a symbolic :meth:`_equations` RHS; integration and Lyapunov
+    spectra use **pure-Rust** IR steppers when SymEngine lowering succeeds (**N2** /
+    **N3**). :meth:`integrate` falls back silently to JiTCODE only when lowering fails
+    (unsupported expression nodes). :meth:`lyapunov_spectrum` requires a lowered IR
+    **with Jacobian**; it does not use JiTCODE.
 
     Subclass contract
     -----------------
@@ -171,12 +170,7 @@ class ContinuousSystem(SystemBase, ABC):
     # Per-class in-process caches.
     # _compiled_odes  : cache_key (str) → jitcode object (stateless between
     #                   set_initial_value calls; safe to reuse).
-    # _compiled_lyap  : lyap_cache_key (str) → absolute path of the saved .so.
-    #                   jitcode_lyap objects are NOT cached (they carry tangent-
-    #                   vector state); we cache the path so each call can create
-    #                   a fresh wrapper without recompiling.
     _compiled_odes: ClassVar[dict[str, Any]] = {}
-    _compiled_lyap: ClassVar[dict[str, str]] = {}
     #: SymEngine → IR bytecode for the Rust stepper (N2); keyed like JiTCODE.
     _compiled_ode_ir: ClassVar[dict[tuple[type, int, int], CompiledOde]] = {}
 
@@ -246,25 +240,21 @@ class ContinuousSystem(SystemBase, ABC):
             name = f"tsdyn_{type(self).__name__}_{self.dim}"
         return _CACHE_DIR / name
 
-    def _ensure_compiled(self, for_lyap: bool = False, n_lyap: int = 0) -> Any:
+    def _ensure_compiled(self) -> Any:
         """
         Return a compiled JiTCODE object, compiling (and caching) if needed.
 
-        ``jitcode`` objects (regular integration) are cached in-process because
-        they are stateless between ``set_initial_value`` calls.
-        ``jitcode_lyap`` objects are **not** cached — they carry tangent-vector
-        state that must start fresh each call.  Instead, the compiled ``.so``
-        path is cached so each call can construct a new wrapper without
-        recompiling.
+        Used only by the JiTCODE **fallback** path for :meth:`integrate` when IR
+        lowering raises :exc:`NotLowerableError`.
+
+        ``jitcode`` objects are cached in-process because they are stateless between
+        ``set_initial_value`` calls.
 
         Lookup order
         ------------
-        1. In-process object cache (regular) / path cache (lyap).
+        1. In-process object cache.
         2. Disk cache (``_CACHE_DIR``).
-        3. Check ``sys.modules``: if a prior interrupted compilation registered
-           the module name but never saved the ``.so`` to disk, recover from the
-           still-live temp dir or fall back to a unique per-process module name
-           so the session keeps working without a kernel restart.
+        3. Check ``sys.modules`` for interrupted compilation recovery.
         4. Fresh compilation.
         """
         import shutil
@@ -272,28 +262,22 @@ class ContinuousSystem(SystemBase, ABC):
 
         import symengine
         from jitcode import jitcode as _jitcode
-        from jitcode import jitcode_lyap as _jitcode_lyap
         from jitcode import t as t_sym
         from jitcode import y
         from jitcxde_common.modules import modulename_from_path
 
-        cls_jitc = _jitcode_lyap if for_lyap else _jitcode
-        lyap_kwargs = {"n_lyap": n_lyap} if for_lyap else {}
-
-        so_suffix = f"_lyap{n_lyap}" if for_lyap else ""
-        saved_path = pathlib.Path(str(self._module_path()) + so_suffix)
+        saved_path = pathlib.Path(str(self._module_path()))
         cache_key = str(saved_path)
 
         control_syms = {k: symengine.Symbol(k) for k in self._control_params()}
         control_par_list = list(control_syms.values())
 
         def _load(path: str | pathlib.Path) -> Any:
-            return cls_jitc(
+            return _jitcode(
                 module_location=str(path),
                 n=self.dim,
                 control_pars=control_par_list,
                 verbose=False,
-                **lyap_kwargs,
             )
 
         def _find_so(base: pathlib.Path) -> pathlib.Path | None:
@@ -305,14 +289,8 @@ class ContinuousSystem(SystemBase, ABC):
             return hits[0] if hits else None
 
         # 1. In-process cache
-        if not for_lyap and cache_key in type(self)._compiled_odes:
+        if cache_key in type(self)._compiled_odes:
             return type(self)._compiled_odes[cache_key]
-        if for_lyap:
-            cached = type(self)._compiled_lyap.get(cache_key)
-            if cached and pathlib.Path(cached).exists():
-                return _load(cached)
-            if cached:
-                del type(self)._compiled_lyap[cache_key]  # stale — clear it
 
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -320,39 +298,23 @@ class ContinuousSystem(SystemBase, ABC):
         so = _find_so(saved_path)
         if so:
             ode = _load(so)
-            if for_lyap:
-                type(self)._compiled_lyap[cache_key] = str(so)
-            else:
-                type(self)._compiled_odes[cache_key] = ode
+            type(self)._compiled_odes[cache_key] = ode
             return ode
 
         # 3. Determine compile destination.
-        # JiTCODE registers the module name in sys.modules inside compile_C,
-        # *before* save_compiled copies the .so to its permanent location.
-        # If a prior call was interrupted in that window, the name is already
-        # in sys.modules and a fresh compile_C would raise NameError.
-        # Check upfront and either recover from the still-live temp dir or
-        # redirect to a unique per-process name.
         dest = saved_path
         mname = modulename_from_path(str(saved_path))
         if mname in sys.modules:
             live_so = getattr(sys.modules[mname], "__file__", None)
             if live_so and pathlib.Path(live_so).exists():
-                # The interrupted call's temp dir is still alive — copy the
-                # .so to the permanent location and load from there.
                 so = pathlib.Path(str(saved_path) + _EXT_SUFFIX)
                 try:
                     shutil.copy(live_so, so)
                 except OSError:
                     so = pathlib.Path(live_so)
                 ode = _load(so)
-                if for_lyap:
-                    type(self)._compiled_lyap[cache_key] = str(so)
-                else:
-                    type(self)._compiled_odes[cache_key] = ode
+                type(self)._compiled_odes[cache_key] = ode
                 return ode
-            # Temp dir already cleaned — compile under a unique name so the
-            # session works without a restart.
             dest = pathlib.Path(f"{saved_path}_{os.getpid()}")
 
         # 4. Fresh compilation
@@ -361,16 +323,11 @@ class ContinuousSystem(SystemBase, ABC):
         if len(f_sym) != self.dim:
             raise ValueError(f"_equations must return {self.dim} expressions, got {len(f_sym)}")
 
-        ode = cls_jitc(
-            f_sym, n=self.dim, control_pars=control_par_list, verbose=False, **lyap_kwargs
-        )
+        ode = _jitcode(f_sym, n=self.dim, control_pars=control_par_list, verbose=False)
         ode.generate_f_C()
         so = pathlib.Path(ode.save_compiled(destination=str(dest), overwrite=True))
 
-        if for_lyap:
-            type(self)._compiled_lyap[cache_key] = str(so)
-        else:
-            type(self)._compiled_odes[cache_key] = ode
+        type(self)._compiled_odes[cache_key] = ode
         return ode
 
     # ------------------------------------------------------------------ #
@@ -503,7 +460,7 @@ class ContinuousSystem(SystemBase, ABC):
         if jit_stiff_name in _STIFF_RUST_METHODS:
             integ_name = "dopri5"
 
-        ode = self._ensure_compiled(for_lyap=False)
+        ode = self._ensure_compiled()
         ode.set_integrator(integ_name, rtol=rtol, atol=atol, **integrator_kwargs)
         ode.set_parameters(*self._control_params().values())
         ode.set_initial_value(ic_arr, t0)
@@ -535,10 +492,15 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
-        **integrator_kwargs,
+        **integrator_kwargs: Any,
     ) -> np.ndarray:
         """
-        Estimate the Lyapunov spectrum using :func:`jitcode.jitcode_lyap`.
+        Estimate the Lyapunov spectrum via a variational QR algorithm in Rust (**N3**).
+
+        Requires the symbolic RHS to lower to IR bytecode **with Jacobian**
+        (``has_jacobian=True``). Stiff Rosenbrock methods are remapped to an explicit
+        high-order RK (``DP8``) because the augmented system is integrated with the
+        explicit catalogue only.
 
         Results are stored in ``self.meta['lyapunov_spectrum']``.
 
@@ -547,72 +509,117 @@ class ContinuousSystem(SystemBase, ABC):
         final_time : float
             Averaging window length after burn-in. Default 200.0.
         dt : float
-            Sampling interval for local exponent accumulation. Default 0.1.
+            Wall-clock interval between QR renormalisations of the tangent frame
+            (matches the historic JiTCODE sampling cadence). Default 0.1.
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
         n_exp : int, optional
             Number of exponents. Defaults to ``dim``.
         burn_in : float
-            Discard this much time before averaging. Default 50.0.
+            Discard this much time on the base flow before accumulating. Default 50.0.
         method : str, optional
-            Integrator (default ``"RK45"``).
+            Explicit Rust catalogue name (``DP5``, ``DP8``, …). Aliases ``RK45``/``DOP853``
+            map like :meth:`integrate`. Stiff names trigger a warning and use ``DP8``.
         rtol, atol : float
-            Tolerances.
+            Solver tolerances.
+        **integrator_kwargs
+            Ignored (kept for API compatibility). A warning is issued if non-empty.
 
         Returns
         -------
         ndarray, shape (n_exp,)
             Lyapunov exponents ordered from largest to smallest.
+
+        Raises
+        ------
+        NotLowerableError
+            If the RHS cannot be lowered to IR.
+        ValueError
+            If bytecode has no Jacobian or ``n_exp`` is invalid.
         """
+        if integrator_kwargs:
+            warnings.warn(
+                "integrator_kwargs are ignored for lyapunov_spectrum (Rust variational path).",
+                UserWarning,
+                stacklevel=2,
+            )
         if n_exp is not None and n_exp <= 0:
             raise ValueError(f"n_exp must be a positive integer, got {n_exp!r}")
         n_exp = n_exp if n_exp is not None else self.dim
         method = method or self._default_method
-        integ_name = _INTEGRATOR_MAP.get(method, method)
         ic_arr = self.resolve_ic(ic)
 
-        ode = self._ensure_compiled(for_lyap=True, n_lyap=n_exp)
-        ode.set_integrator(integ_name, rtol=rtol, atol=atol, **integrator_kwargs)
-        ode.set_parameters(*self._control_params().values())
-        ode.set_initial_value(ic_arr, 0.0)
+        if str(method).strip().upper() in ("LSODA", "VODE"):
+            warnings.warn(
+                "method='LSODA' and method='VODE' are deprecated for Lyapunov; "
+                "using explicit DP8 for the variational integrator.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
-        # Burn-in (discard transient; no exponent accumulation)
-        T = 0.0
-        while burn_in > T:
-            Tn = min(burn_in, T + dt)
-            ode.integrate(float(Tn))
-            T = Tn
+        rust_m = _rust_integrator_name(method, self._default_method)
+        if rust_m not in _RUST_NATIVE_METHODS:
+            raise ValueError(
+                f"method={method!r} is not a supported Rust integrator name for lyapunov_spectrum; "
+                f"try DP5, DP8, TSIT5, VERN6/7/8/9, BS3, or RK4."
+            )
+        if rust_m in _STIFF_RUST_METHODS:
+            warnings.warn(
+                f"method={method!r} selects a stiff Rust integrator; "
+                "variational Lyapunov uses explicit DP8 instead.",
+                UserWarning,
+                stacklevel=2,
+            )
+            rust_m = "DP8"
 
-        # Production: time-weighted average of local exponents
-        T_end = float(ode.t) + final_time
-        weights = []
-        ly_steps = []
-        T = float(ode.t)
-
-        while T_end > T:
-            Tn = min(T_end, T + dt)
-            ret = ode.integrate(float(Tn))
-
-            # jitcode_lyap.integrate returns (state, lyapunov_exponents).
-            # The fallback "else ret" would silently use the state vector as
-            # exponents — always enforce the tuple contract instead.
-            if not (isinstance(ret, tuple) and len(ret) >= 2):
-                raise RuntimeError(
-                    f"{type(self).__name__}: jitcode_lyap.integrate returned "
-                    f"unexpected type {type(ret)!r}; expected (state, lyap_exps) tuple."
+        try:
+            key = _ode_ir_cache_key(self)
+            cache = type(self)._compiled_ode_ir
+            if key not in cache:
+                co = lower_ode_to_ir(
+                    type(self),
+                    dim=self.dim,
+                    params=dict(self.params),
+                    structural_params=type(self)._structural_params,
                 )
-            local_lyaps = ret[1]
-            v = np.asarray(local_lyaps, float).ravel()
-            if v.size != n_exp:
-                raise ValueError(f"Expected {n_exp} local LEs, got shape {v.shape}")
+                cache[key] = co
+            co = cache[key]
+        except NotLowerableError:
+            raise NotLowerableError(
+                f"{type(self).__name__}: Lyapunov spectrum requires IR lowering; "
+                "offending expressions must be expressible in the SymEngine → IR opcode set."
+            ) from None
 
-            ly_steps.append(v)
-            weights.append(Tn - T)
-            T = Tn
+        if not co.has_jacobian:
+            raise ValueError(
+                f"{type(self).__name__}: Lyapunov spectrum needs a symbolic Jacobian in the IR "
+                "(add `_jacobian`, or avoid non-smooth primitives like `abs`/`sign` without one)."
+            )
 
-        W = np.asarray(weights, float)
-        L = np.vstack(ly_steps) if ly_steps else np.empty((0, n_exp), float)
-        exponents = (W[:, None] * L).sum(axis=0) / W.sum() if L.size else np.zeros(n_exp)
+        from .._native import lyapunov_spectrum_ode as _rust_lyap
+
+        nonstruct = [k for k in self.params if k not in type(self)._structural_params]
+        params_np = np.asarray([self.params[k] for k in nonstruct], dtype=float)
+
+        exponents = np.asarray(
+            _rust_lyap(
+                co.bytecode,
+                ic_arr,
+                params_np,
+                n_exp,
+                float(burn_in),
+                float(final_time),
+                float(dt),
+                rust_m,
+                float(rtol),
+                float(atol),
+            ),
+            dtype=float,
+        ).ravel()
+        if exponents.size != n_exp:
+            raise RuntimeError(
+                f"internal error: expected {n_exp} Lyapunov exponents, got shape {exponents.shape}"
+            )
 
         self.meta["lyapunov_spectrum"] = exponents
         return exponents

@@ -23,6 +23,7 @@ from ._core import (
     integrate_ode,
     iterate_map,
     lyapunov_spectrum_map,
+    lyapunov_spectrum_ode,
 )
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "integrate_ode",
     "iterate_map",
     "lyapunov_spectrum_map",
+    "lyapunov_spectrum_ode",
 ]
