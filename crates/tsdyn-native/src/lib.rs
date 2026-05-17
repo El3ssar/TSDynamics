@@ -23,5 +23,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ode::eval_ode_jacobian, m)?)?;
     m.add_function(wrap_pyfunction!(ode::eval_ode_rhs_batch, m)?)?;
     m.add_function(wrap_pyfunction!(ode::integrate_ode, m)?)?;
+    m.add_function(wrap_pyfunction!(ode::lyapunov_spectrum_ode, m)?)?;
     Ok(())
 }

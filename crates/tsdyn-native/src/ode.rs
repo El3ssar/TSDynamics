@@ -6,6 +6,7 @@ use pyo3::types::PyBytes;
 
 use tsdyn_core::ir::CompiledOde;
 use tsdyn_ode::integrate_ode_bytes;
+use tsdyn_ode::lyapunov_spectrum_ode_bytes;
 
 fn decode_ode(bytecode: &Bound<'_, PyBytes>) -> PyResult<CompiledOde> {
     let bytes: &[u8] = bytecode.as_bytes();
@@ -172,4 +173,44 @@ pub fn integrate_ode<'py>(
     let arr2 = numpy::ndarray::Array2::from_shape_vec((n, dim), yflat)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("reshape: {e}")))?;
     Ok((PyArray1::from_vec(py, tvec), arr2.into_pyarray(py)))
+}
+
+/// Variational QR Lyapunov spectrum on IR bytecode (**N3**).
+///
+/// ``dt_reortho`` is the wall-clock interval between QR renormalisations (typically
+/// match the Python ``dt`` sampling argument). Requires ``has_jacobian=1`` bytecode.
+#[pyfunction]
+pub fn lyapunov_spectrum_ode<'py>(
+    py: Python<'py>,
+    bytecode: &Bound<'py, PyBytes>,
+    ic: PyReadonlyArray1<'py, f64>,
+    params: PyReadonlyArray1<'py, f64>,
+    n_exp: usize,
+    burn_in: f64,
+    final_time: f64,
+    dt_reortho: f64,
+    method: &str,
+    rtol: f64,
+    atol: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let bytes = bytecode.as_bytes();
+    let ic_s = ic.as_slice()?;
+    let pars = params.as_slice()?;
+    let exps = py
+        .detach(|| {
+            lyapunov_spectrum_ode_bytes(
+                bytes,
+                pars,
+                ic_s,
+                burn_in,
+                final_time,
+                dt_reortho,
+                n_exp,
+                method,
+                rtol,
+                atol,
+            )
+        })
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(PyArray1::from_vec(py, exps))
 }
