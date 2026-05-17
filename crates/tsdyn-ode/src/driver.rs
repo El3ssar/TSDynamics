@@ -21,8 +21,70 @@ use crate::methods::vern6;
 use crate::methods::vern7;
 use crate::methods::vern8;
 use crate::methods::vern9;
-use crate::rhs::IrOdeRhs;
+use crate::rhs::{IrOdeRhs, Rhs};
 use crate::util::copy_from;
+
+/// Integrate `dy/dt = f(t,y)` from `t0` to `tf` and return the endpoint only.
+///
+/// Used by the variational Lyapunov driver (**N3**) for burn-in and short
+/// augmented-system segments between QR renormalisations.
+pub(crate) fn integrate_segment_explicit<R: Rhs + ?Sized>(
+    rhs: &mut R,
+    t0: f64,
+    tf: f64,
+    y0: &[f64],
+    method: Method,
+    rtol: f64,
+    atol: f64,
+) -> Result<Vec<f64>, IntegrateError> {
+    if !t0.is_finite() || !tf.is_finite() {
+        return Err(IntegrateError::BadBytecode(
+            "non-finite time in integrate_segment_explicit".into(),
+        ));
+    }
+    if (tf - t0).abs() < 1e-15 {
+        return Ok(y0.to_vec());
+    }
+    let t_grid = vec![t0, tf];
+    let dim = rhs.dim();
+    let mut y_rows: Vec<Vec<f64>> = vec![vec![0.0; dim]; 2];
+    copy_from(y0, &mut y_rows[0]);
+
+    match method {
+        Method::Dp5 => {
+            crate::methods::explicit_dp5_rk4::integrate_dp5(rhs, &t_grid, &mut y_rows, rtol, atol)?;
+        }
+        Method::Dp8 => {
+            crate::methods::embedded_pairs::integrate_dp8(rhs, &t_grid, &mut y_rows, rtol, atol)?;
+        }
+        Method::Tsit5 => {
+            crate::methods::embedded_pairs::integrate_tsit5(rhs, &t_grid, &mut y_rows, rtol, atol)?;
+        }
+        Method::Bs3 => {
+            crate::methods::embedded_pairs::integrate_bs3(rhs, &t_grid, &mut y_rows, rtol, atol)?;
+        }
+        Method::Rk4 => {
+            crate::methods::explicit_dp5_rk4::integrate_rk4(rhs, &t_grid, &mut y_rows)?;
+        }
+        Method::Vern6 => {
+            vern6::integrate_vern6(rhs, &t_grid, &mut y_rows, rtol, atol)?;
+        }
+        Method::Vern7 => {
+            vern7::integrate_vern7(rhs, &t_grid, &mut y_rows, rtol, atol)?;
+        }
+        Method::Vern8 => {
+            vern8::integrate_vern8(rhs, &t_grid, &mut y_rows, rtol, atol)?;
+        }
+        Method::Vern9 => {
+            vern9::integrate_vern9(rhs, &t_grid, &mut y_rows, rtol, atol)?;
+        }
+        Method::Rosenbrock23 | Method::Rosenbrock34 | Method::Rodas4 => {
+            return Err(IntegrateError::VariationalNeedsExplicit(format!("{method:?}")));
+        }
+    }
+
+    Ok(std::mem::take(&mut y_rows[1]))
+}
 
 /// Integrate `dy/dt = f(t,y)` on the uniform grid implied by `dt_output`.
 pub fn integrate_ode(

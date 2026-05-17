@@ -458,6 +458,7 @@ dependencies = [
 name = "tsdyn-ode"
 version = "0.1.0"
 dependencies = [
+ "nalgebra",
  "tsdyn-core",
  "tsdyn-solver-base",
 ]

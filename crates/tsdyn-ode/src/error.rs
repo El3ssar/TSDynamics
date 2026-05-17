@@ -9,6 +9,9 @@ pub enum IntegrateError {
     Diverged { t: f64 },
     ParamsLen { expected: usize, got: usize },
     MissingJacobian { method: String },
+    /// Rosenbrock / Rodas methods need an analytic augmented Jacobian — use an explicit method.
+    VariationalNeedsExplicit(String),
+    LyapunovConfig(String),
 }
 
 impl fmt::Display for IntegrateError {
@@ -24,6 +27,11 @@ impl fmt::Display for IntegrateError {
                 f,
                 "method {method} requires a Jacobian in the IR bytecode (has_jacobian=false)"
             ),
+            Self::VariationalNeedsExplicit(m) => write!(
+                f,
+                "variational Lyapunov integration does not support stiff method {m}; use an explicit RK method (DP5, DP8, TSIT5, VERN6–VERN9, BS3, RK4)"
+            ),
+            Self::LyapunovConfig(s) => write!(f, "Lyapunov configuration error: {s}"),
         }
     }
 }

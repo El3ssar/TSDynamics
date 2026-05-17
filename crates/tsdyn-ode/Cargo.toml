@@ -9,5 +9,6 @@ repository.workspace = true
 description = "Pure-Rust adaptive ODE integrators for TSDynamics (explicit RK + Rosenbrock stiff methods)."
 
 [dependencies]
+nalgebra = "0.34"
 tsdyn-core = { path = "../tsdyn-core" }
 tsdyn-solver-base = { path = "../tsdyn-solver-base" }
