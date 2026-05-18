@@ -63,7 +63,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import numpy as np
 from scipy.optimize import brentq
 
-from ._registry import trajectory_op
+from .._registry import trajectory_op
 
 Direction = Literal["up", "down", "either"]
 _DIRECTIONS: tuple[str, ...] = ("up", "down", "either")
@@ -260,8 +260,6 @@ class _ZeroCrossingCondition:
             elif g_hi == 0.0:
                 s_star = 1.0
             elif g_lo * g_hi > 0.0:
-                # Endpoints disagree with the sampled bracket — pick the side
-                # closer to zero so we still return *something* sensible.
                 s_star = 0.0 if abs(g_lo) < abs(g_hi) else 1.0
             else:
                 xtol = max(rtol * dt, 1e-15)
@@ -361,8 +359,6 @@ class LinearPlane(_ZeroCrossingCondition):
         return y @ self.normal - self.offset
 
 
-# Internal wrapper for users passing a bare callable instead of an
-# EventCondition object.  Not exported.
 class _CallableCondition(_ZeroCrossingCondition):
     def __init__(self, fn: Callable[[float, np.ndarray], float], direction: Direction) -> None:
         self.fn = fn
@@ -389,11 +385,6 @@ def _resolve_condition(
     Returns ``(condition, leftover_kwargs)``.  Pops the shortcut kwargs
     (``axis``, ``value``, ``direction``, ``normal``, ``offset``) and
     leaves any caller-specific kwargs (``rtol`` etc.) in place.
-
-    ``op_default_direction`` is the per-op default — ``"either"`` for
-    :func:`detect_events`, ``"up"`` for :func:`poincare_section` and
-    :func:`return_map` (canonical Poincaré).  Pass ``None`` here to
-    leave the direction completely up to the caller / condition object.
     """
     axis = kwargs.pop("axis", None)
     value = kwargs.pop("value", None)
@@ -402,7 +393,6 @@ def _resolve_condition(
     direction = kwargs.pop("direction", op_default_direction)
     has_shortcut = axis is not None or value is not None or normal is not None or "offset" in kwargs
 
-    # Style 1: shortcut kwargs only (no condition arg)
     if condition is None:
         if not has_shortcut:
             raise TypeError(
@@ -424,13 +414,8 @@ def _resolve_condition(
             f"axis={axis!r}, value={value!r}."
         )
 
-    # Style 2: an EventCondition object (anything with .detect)
     if hasattr(condition, "detect"):
         if direction is not None and getattr(condition, "direction", None) != direction:
-            # Override the condition's direction for this call.  We rebuild
-            # built-in conditions cleanly; for other condition types we
-            # honour what the user supplied as-is (their .detect is the
-            # source of truth).
             if isinstance(condition, Plane):
                 condition = Plane(axis=condition.axis, value=condition.value, direction=direction)
             elif isinstance(condition, LinearPlane):
@@ -441,7 +426,6 @@ def _resolve_condition(
                 )
         return condition, kwargs
 
-    # Style 3: a bare callable fn(t, y) -> float
     if callable(condition):
         return (
             _CallableCondition(condition, direction=direction or "either"),

@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tsdynamics.analysis import _trajectory_ops as ops
+from tsdynamics.analysis import _ops as ops
 from tsdynamics.base import Trajectory
 
 # ---------------------------------------------------------------------------

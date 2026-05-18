@@ -1,4 +1,4 @@
-from symengine import cos, sin, sqrt
+from symengine import cos, sign, sin, sqrt
 
 from tsdynamics.base import ContinuousSystem
 
@@ -219,3 +219,15 @@ class CellularNeuralNetwork(ContinuousSystem):
         ydot = -y - b * f(x) + c * f(y) - a * f(z)
         zdot = -z - b * f(x) + a * f(y) + f(z)
         return (xdot, ydot, zdot)
+
+    @staticmethod
+    def _jacobian(Y, t, *, a, b, c, d):
+        x, y, z = Y(0), Y(1), Y(2)
+
+        def fp(s):
+            return 0.5 * (sign(s + 1) - sign(s - 1))
+
+        row1 = [-1 + d * fp(x), -b * fp(y), -b * fp(z)]
+        row2 = [-b * fp(x), -1 + c * fp(y), -a * fp(z)]
+        row3 = [-b * fp(x), a * fp(y), -1 + fp(z)]
+        return row1, row2, row3

@@ -63,23 +63,21 @@ Pick whichever reads best at the call site.
 
 from __future__ import annotations
 
-from ._events import (
+from ._ops import (
     Direction,
     EventCondition,
     LinearPlane,
     Plane,
-    detect_events,
-    poincare_section,
-    return_map,
-)
-from ._trajectory_ops import (
     decimate,
     derivative,
+    detect_events,
     local_maxima,
     local_minima,
     norm,
+    poincare_section,
     project,
     resample,
+    return_map,
     return_times,
     to_dataspec,
     window,

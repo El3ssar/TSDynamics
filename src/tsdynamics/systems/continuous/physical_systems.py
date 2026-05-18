@@ -1,4 +1,4 @@
-from symengine import cos, exp, sign, sin, tanh
+from symengine import Abs, cos, exp, sign, sin, tanh
 
 from tsdynamics.base import ContinuousSystem
 
@@ -48,6 +48,16 @@ class Colpitts(ContinuousSystem):
         ydot = c - x - b * y - z
         zdot = y - d * z
         return (xdot, ydot, zdot)
+
+    @staticmethod
+    def _jacobian(Y, t, *, a, b, c, d, e):
+        x, y, z = Y(0), Y(1), Y(2)
+        u = z - (e - 1)
+        dfz_dz = -(1 - sign(u)) / 2
+        row1 = [0, 1, -a * dfz_dz]
+        row2 = [-1, -b, -1]
+        row3 = [0, 1, -d]
+        return row1, row2, row3
 
 
 class Laser(ContinuousSystem):
@@ -104,6 +114,16 @@ class FluidTrampoline(ContinuousSystem):
         ydot = -1 - (1 - sign(x)) / 2 * (x + psi * y * abs(y)) + gamma * cos(th)
         thdot = w
         return (xdot, ydot, thdot)
+
+    @staticmethod
+    def _jacobian(Y, t, *, gamma, psi, w):
+        x, y, th = Y(0), Y(1), Y(2)
+        hx = (1 - sign(x)) / 2
+        dy_dy = -hx * psi * (Abs(y) + y * sign(y))
+        row1 = [0, 1, 0]
+        row2 = [-hx, dy_dy, -gamma * sin(th)]
+        row3 = [0, 0, 0]
+        return row1, row2, row3
 
 
 class JerkCircuit(ContinuousSystem):

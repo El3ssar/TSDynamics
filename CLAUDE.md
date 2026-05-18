@@ -34,6 +34,12 @@ Rust crates (**`crates/`**): **`tsdyn-solver-base`** holds **`uniform_time_grid`
 clusters integrators inside **`src/methods/`** with internal **`driver`** dispatch matching the **`Method`** enum surfaced to Python;
 **`tsdyn-native`** exposes PyO3. **N5** adds **`tsdyn-dde`** beside **`tsdyn-ode`**, consuming the shared sampling primitives.
 
+**`_native` facade convention**: There is exactly **one** compiled extension module — `tsdynamics._native._core` (a single `cdylib` built by maturin from `tsdyn-native`). Every Track-C and Track-E Rust crate is an `rlib` linked into that one `cdylib`. Python sees all kernels under `_native._core`. **Do not create a second `cdylib`** — maturin's multi-extension-module support is non-standard and would complicate the build. New R-milestone kernels register their PyO3 functions in `crates/tsdyn-native/src/lib.rs`; the Python facade in `src/tsdynamics/_native/__init__.py` re-exports whatever the public API needs.
+
+**`_ode_lowering.py` / `_lowering.py`** (`src/tsdynamics/base/`): These are the Python-side SymEngine→IR bytecode translators. `_ode_lowering.py` uses a `_SymEngineWalker` class with a `walk(expr) → Node` dispatch method — add new opcodes or expression types as new branches in `walk`. N5 (DDE delayed-argument opcodes) may require subclassing or a separate `_dde_lowering.py` alongside.
+
+**`ir/` module** (`crates/tsdyn-core/src/ir/`): Split into `mod.rs` (shared: `Expr`, opcodes, decoder), `map.rs` (`CompiledMap`), `ode.rs` (`CompiledOde`). N5 adds `dde.rs` beside these.
+
 ---
 
 ## Project overview
@@ -71,11 +77,14 @@ src/tsdynamics/
 ├── analysis/
 │   ├── __init__.py           # Re-exports every @trajectory_op as a free function
 │   ├── _registry.py          # trajectory_op decorator + install_methods (the design hub)
-│   ├── _trajectory_ops.py    # Transforms + reductions: decimate/resample/project/window/
-│   │                         # derivative/norm/local_maxima/local_minima/return_times/
-│   │                         # to_dataspec
-│   └── _events.py            # EventCondition protocol + Plane / LinearPlane +
-│                             # detect_events / poincare_section / return_map
+│   └── _ops/                 # Domain-split op files — add one file per milestone here
+│       ├── __init__.py       # Imports all sub-files (triggers decorators) + re-exports
+│       ├── resampling.py     # decimate / resample / project / window
+│       ├── differential.py   # derivative / norm
+│       ├── peaks.py          # local_maxima / local_minima / return_times
+│       ├── events.py         # EventCondition + Plane / LinearPlane +
+│       │                     # detect_events / poincare_section / return_map
+│       └── dataspec.py       # to_dataspec (V1 DataSpec shim)
 ├── systems/
 │   ├── continuous/
 │   │   ├── chaotic_attractors.py

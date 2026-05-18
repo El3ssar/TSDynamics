@@ -177,7 +177,7 @@ Design rules so new methods remain cheap to maintain:
 |-------|------|
 | `tsdyn-core` | IR bytecode interpreters (`CompiledOde`, discrete maps). |
 | `tsdyn-solver-base` | Output grids / schedulers unbiased toward ODE vs DDE. |
-| `tsdyn-ode` | ODE catalogue (`methods/`, `driver`; **N3** variational augmentation lands here next). |
+| `tsdyn-ode` | ODE catalogue (`methods/`, `driver`; **N3** variational Lyapunov + QR landed here). |
 | `tsdyn-dde` *(N5 planned)* | Parallel crate for histories + breakpoints + its own catalogue. |
 
 **End state of N2**:
@@ -189,7 +189,7 @@ Design rules so new methods remain cheap to maintain:
 
 ### N3 — Variational ODE Lyapunov in Rust
 
-Builds directly on N2. The IR already knows how to evaluate the
+**Landed 2026-05-17.** Builds directly on N2. The IR already evaluates the
 Jacobian (the map case in N1 did this). N3 adds:
 
 - Auto-derive the variational system `Δ̇ = J(x) Δ` symbolically once per
@@ -202,9 +202,9 @@ Jacobian (the map case in N1 did this). N3 adds:
 - Reorthogonalize with `nalgebra` QR every `reortho_interval` steps.
 - Time-weight-averaged local exponents collected on the Rust side.
 
-End state: `ContinuousSystem.lyapunov_spectrum` drops `jitcode_lyap`
-entirely. JiTCODE is no longer needed for *any* ODE compute path — it
-remains only as a SymEngine convenience.
+End state (**reached**): `ContinuousSystem.lyapunov_spectrum` does not use
+`jitcode_lyap`. JiTCODE remains on the **`integrate`** fallback path when IR
+lowering fails; Lyapunov requires IR + Jacobian.
 
 ### N4 — Cranelift JIT for the IR
 

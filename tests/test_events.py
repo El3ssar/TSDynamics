@@ -22,7 +22,7 @@ from tsdynamics.analysis import (
     Plane,
     detect_events,
 )
-from tsdynamics.analysis._events import _bracket_mask
+from tsdynamics.analysis._ops.events import _bracket_mask
 from tsdynamics.base import Trajectory
 
 # ---------------------------------------------------------------------------

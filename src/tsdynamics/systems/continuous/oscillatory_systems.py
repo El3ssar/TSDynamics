@@ -57,6 +57,15 @@ class AnishchenkoAstakhov(ContinuousSystem):
         zdot = -eta * z + eta * (1 + sign(x)) / 2 * x**2
         return xdot, ydot, zdot
 
+    @staticmethod
+    def _jacobian(Y, t, *, eta, mu):
+        x, y, z = Y(0), Y(1), Y(2)
+        row1 = [mu - z, 1, -x]
+        row2 = [-1, 0, 0]
+        dzdx = eta * x * (1 + sign(x))
+        row3 = [dzdx, 0, -eta]
+        return row1, row2, row3
+
 
 class Aizawa(ContinuousSystem):
     params = {"a": 0.95, "b": 0.7, "c": 0.6, "d": 3.5, "e": 0.25, "f": 0.1}
@@ -96,6 +105,15 @@ class StickSlipOscillator(ContinuousSystem):
         vdot = eps * (gamma * cos(th) - tq) + a * x - b * x**3
         thdot = w
         return xdot, vdot, thdot
+
+    @staticmethod
+    def _jacobian(Y, t, *, a, alpha, b, beta, eps, gamma, t0, vs, w):
+        x, v, th = Y(0), Y(1), Y(2)
+        dv_dv = -alpha + 3 * beta * (v - vs) ** 2
+        row1 = [0, 1, 0]
+        row2 = [a - 3 * b * x**2, eps * dv_dv, -eps * gamma * sin(th)]
+        row3 = [0, 0, 0]
+        return row1, row2, row3
 
 
 class Torus(ContinuousSystem):

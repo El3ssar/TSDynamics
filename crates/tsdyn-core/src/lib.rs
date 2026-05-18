@@ -8,10 +8,14 @@
 
 pub mod ir;
 
-/// Opaque handle to a compiled right-hand-side / step function.
+/// Opaque handle to a compiled RHS / step function — reserved for N4.
 ///
-/// Placeholder kept for R1's smoke-test plumbing; later N-milestones may
-/// replace it with a richer wrapper around either a cranelift-JIT'd function
-/// (post-N4) or a [`ir::CompiledMap`] for discrete maps.
+/// N4 (Cranelift JIT) will fill this with a wrapper around a
+/// cranelift-compiled native function pointer.  At that point
+/// `ProblemHandle` replaces the current IR interpreter path in every
+/// stepper; Python holds one per system as an opaque capsule via PyO3.
+///
+/// Until N4 lands this struct exists only to give N4 a stable Python
+/// boundary to target — no milestones before N4 need to construct it.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ProblemHandle;

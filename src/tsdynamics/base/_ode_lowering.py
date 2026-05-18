@@ -20,13 +20,10 @@ The pipeline:
 4. Jacobian: if ``cls`` provides its own ``_jacobian``, trace it the
    same way.  Otherwise call ``symengine.diff`` cell by cell.  SymEngine
    leaves ``Abs`` / ``sign`` derivatives unevaluated as ``Derivative``
-   nodes — six systems (MultiChua, AnishchenkoAstakhov,
-   StickSlipOscillator, CellularNeuralNetwork, Colpitts,
-   FluidTrampoline) hit this.  For them we set ``has_jacobian = False``
-   on the resulting :class:`~tsdynamics.base._ir.CompiledOde`; the RHS
-   still lowers cleanly.  Stiff Rosenbrock methods (N2.c) and
-   variational Lyapunov (N3) are the only consumers of J, and both
-   arrive later.
+   nodes — until an explicit ``_jacobian`` is added, auto-diff fails and
+   ``has_jacobian`` is ``False``.  A few historical piecewise-smooth
+   catalogue systems (e.g. MultiChua) still omit a hand Jacobian; stiff
+   Rosenbrock (N2.c) and variational Lyapunov (N3) need ``has_jacobian``.
 
 Raises :class:`~tsdynamics.base._ir.NotLowerableError` for any RHS
 construct the IR can't represent — caller falls back to JiTCODE for
