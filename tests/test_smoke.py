@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 
 import numpy as np
-import pytest
 
 
 def test_package_importable() -> None:
@@ -78,7 +77,6 @@ def test_internals_not_in_top_level_all() -> None:
     assert "SystemBase" not in ts.__all__
 
 
-@pytest.mark.slow
 def test_lorenz_integrates() -> None:
     import tsdynamics as ts
 
@@ -87,7 +85,6 @@ def test_lorenz_integrates() -> None:
     assert np.all(np.isfinite(traj.y))
 
 
-@pytest.mark.slow
 def test_henon_iterates() -> None:
     import tsdynamics as ts
 

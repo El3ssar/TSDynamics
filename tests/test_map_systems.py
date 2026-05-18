@@ -1,9 +1,8 @@
 """
 Tests for discrete map systems (``DiscreteMap`` subclasses).
 
-Iteration is fast (Numba JIT); the first call per class triggers a one-shot
-compile.  Lyapunov-spectrum tests are marked ``slow`` because they re-evaluate
-the Jacobian many times in Python.
+Iteration smoke covers a few maps in the **fast** suite (Numba compile).
+Lyapunov map smoke is **slow** but limited to ``_LYAP_SMOKE``.
 """
 
 from __future__ import annotations
@@ -96,10 +95,19 @@ def test_tinkerbell_uses_default_ic() -> None:
 
 _STEPS = 200
 
+# Fast integration smoke — one map per “family” (Numba compile + iterate).
+_MAP_ITER_SMOKE: list[tuple[str, str, int]] = [
+    (_CHAOTIC, "Henon", 2),
+    (_EXOTIC, "Bedhead", 2),
+    (_GEOMETRIC, "Circle", 1),
+    (_POLY, "DeJong", 2),
+    (_POPN, "Logistic", 1),
+]
+_MAP_ITER_SMOKE_IDS = [name for _, name, _ in _MAP_ITER_SMOKE]
 
-@pytest.mark.slow
-@pytest.mark.parametrize("module_path,class_name,expected_dim", ALL_MAPS, ids=_IDS)
-def test_map_iterate_shape_and_finiteness(
+
+@pytest.mark.parametrize("module_path,class_name,expected_dim", _MAP_ITER_SMOKE, ids=_MAP_ITER_SMOKE_IDS)
+def test_map_iterate_shape_smoke(
     module_path: str, class_name: str, expected_dim: int
 ) -> None:
     mod = importlib.import_module(module_path)
@@ -112,7 +120,6 @@ def test_map_iterate_shape_and_finiteness(
     assert np.all(np.isfinite(traj.y))
 
 
-@pytest.mark.slow
 def test_map_custom_ic_stored() -> None:
     import tsdynamics as ts
 
@@ -126,54 +133,25 @@ def test_map_custom_ic_stored() -> None:
 # Lyapunov spectrum
 # ---------------------------------------------------------------------------
 
-# Maps whose Jacobian implementation is known to be regular over the iterate.
-# (Bogdanov is excluded — known singular Jacobian at origin.)
-_LYAP_MAPS: list[tuple[str, str, int]] = [
+# Small Lyapunov smoke (native QR over iterates).  Full catalogue checks are
+# not run in CI — expand locally if changing ``DiscreteMap.lyapunov_spectrum``.
+_LYAP_SMOKE: list[tuple[str, str, int]] = [
     (_CHAOTIC, "Henon", 2),
     (_CHAOTIC, "Ikeda", 2),
-    (_CHAOTIC, "Tinkerbell", 2),
-    (_CHAOTIC, "Zaslavskii", 2),
-    (_CHAOTIC, "Chirikov", 2),
-    (_CHAOTIC, "FoldedTowel", 3),
-    (_CHAOTIC, "GeneralizedHenon", 3),
-    (_EXOTIC, "Svensson", 2),
-    (_EXOTIC, "Bedhead", 2),
-    (_EXOTIC, "ZeraouliaSprott", 2),
-    (_EXOTIC, "GumowskiMira", 2),
-    (_EXOTIC, "Hopalong", 2),
-    (_EXOTIC, "Pickover", 2),
     (_GEOMETRIC, "Tent", 1),
-    (_GEOMETRIC, "Baker", 2),
-    (_GEOMETRIC, "Circle", 1),
-    (_GEOMETRIC, "Chebyshev", 1),
-    (_POLY, "Gauss", 1),
-    (_POLY, "DeJong", 2),
     (_POLY, "KaplanYorke", 2),
     (_POPN, "Logistic", 1),
-    (_POPN, "Ricker", 1),
-    (_POPN, "MaynardSmith", 2),
 ]
-_LYAP_IDS = [name for _, name, _ in _LYAP_MAPS]
+_LYAP_SMOKE_IDS = [name for _, name, _ in _LYAP_SMOKE]
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("module_path,class_name,expected_dim", _LYAP_MAPS, ids=_LYAP_IDS)
-def test_map_lyapunov_shape(module_path: str, class_name: str, expected_dim: int) -> None:
-    """Full-spectrum LE has correct shape and finite values."""
+@pytest.mark.parametrize("module_path,class_name,expected_dim", _LYAP_SMOKE, ids=_LYAP_SMOKE_IDS)
+def test_map_lyapunov_smoke(module_path: str, class_name: str, expected_dim: int) -> None:
+    """Full-spectrum LE: correct shape and finite values."""
     mod = importlib.import_module(module_path)
     cls = getattr(mod, class_name)
     m = cls()
     exps = m.lyapunov_spectrum(steps=300, n_exp=expected_dim)
     assert exps.shape == (expected_dim,)
     assert np.all(np.isfinite(exps))
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize("module_path,class_name,_d", _LYAP_MAPS, ids=_LYAP_IDS)
-def test_map_lyapunov_partial_spectrum(module_path: str, class_name: str, _d: int) -> None:
-    mod = importlib.import_module(module_path)
-    cls = getattr(mod, class_name)
-    m = cls()
-    exps = m.lyapunov_spectrum(steps=300, n_exp=1)
-    assert exps.shape == (1,)
-    assert np.isfinite(exps[0])

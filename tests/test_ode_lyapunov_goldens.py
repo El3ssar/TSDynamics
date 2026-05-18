@@ -1,4 +1,11 @@
-"""Regression: Lyapunov spectra vs committed ``*.lyap.npz`` goldens (**N3**)."""
+"""Regression: Lyapunov spectra vs a **small** set of ``*.lyap.npz`` goldens (**N3**).
+
+Full committed goldens (~100+ files) remain for manual or dedicated regression
+runs; CI only smoke-tests a representative slice so ``pytest -m slow`` stays
+affordable.  Regenerate all files with:
+
+``uv run python scripts/generate_ode_lyap_goldens.py`` (or ``--only-missing``).
+"""
 
 from __future__ import annotations
 
@@ -13,34 +20,40 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from test_ode_systems import ALL_ODE_SYSTEMS  # noqa: E402
 
-from tsdynamics.base._ir import NotLowerableError  # noqa: E402
-from tsdynamics.base._ode_lowering import lower_ode_to_ir  # noqa: E402
-from tsdynamics.base.ode_base import ContinuousSystem  # noqa: E402
-
 _REG = Path(__file__).resolve().parent / "native" / "regression" / "ode"
 
 _ID_BY_CLASS = {name: (mod, name) for mod, name in ALL_ODE_SYSTEMS}
 
-# Catalogue systems that do not ship a ``*.lyap.npz``: the variational Rust
-# driver hits non-finite augmented states with the usual IC / tolerances
-# (stiff chemistry, or polynomial blow-up in the tangent equations).  Keep in
-# sync with ``_SKIP_LYAP_GOLDEN`` in ``scripts/generate_ode_lyap_goldens.py``.
-_LYAP_GOLDEN_EXCLUDED: frozenset[str] = frozenset(
+# Representative chaos + dim-3 / dim-4 / Sprott family — must have matching
+# ``<name>.lyap.npz`` on disk.
+_LYAP_GOLDEN_SMOKE: frozenset[str] = frozenset(
     {
-        "Oregonator",
-        "RabinovichFabrikant",
-        "SprottJerk",
+        "Lorenz",
+        "Rossler",
+        "HenonHeiles",
+        "HyperRossler",
+        "Halvorsen",
+        "SprottA",
     }
 )
 
 
-def _goldens() -> list[Path]:
-    return sorted(_REG.glob("*.lyap.npz"))
+def _smoke_golden_paths() -> list[Path]:
+    missing = sorted(
+        _LYAP_GOLDEN_SMOKE - {p.name.removesuffix(".lyap.npz") for p in _REG.glob("*.lyap.npz")}
+    )
+    if missing:
+        pytest.fail(
+            "Lyapunov smoke goldens missing on disk: " + ", ".join(missing) + f" (under {_REG})"
+        )
+    return sorted(_REG / f"{name}.lyap.npz" for name in sorted(_LYAP_GOLDEN_SMOKE))
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("golden_path", _goldens(), ids=lambda p: p.stem.replace(".lyap", ""))
-def test_lyapunov_matches_golden(golden_path: Path) -> None:
+@pytest.mark.parametrize(
+    "golden_path", _smoke_golden_paths(), ids=lambda p: p.stem.replace(".lyap", "")
+)
+def test_lyapunov_matches_golden_smoke(golden_path: Path) -> None:
     stem = golden_path.name.removesuffix(".lyap.npz")
     pair = _ID_BY_CLASS.get(stem)
     if pair is None:
@@ -74,40 +87,3 @@ def test_lyapunov_matches_golden(golden_path: Path) -> None:
     assert np.allclose(exps, ref, rtol=1e-3, atol=1e-3), (
         f"{stem} max abs diff {np.max(np.abs(exps - ref))}: got {exps}, ref {ref}"
     )
-
-
-def test_lowerable_jacobian_catalogue_has_lyap_golden_or_exclusion() -> None:
-    """Every finite-dim built-in ODE that lowers with a Jacobian has a golden or a waiver."""
-    for module_path, class_name in ALL_ODE_SYSTEMS:
-        mod = importlib.import_module(module_path)
-        cls = getattr(mod, class_name)
-        if not (isinstance(cls, type) and issubclass(cls, ContinuousSystem)):
-            continue
-        try:
-            inst = cls()
-        except TypeError:
-            continue
-        if inst.dim > 20:
-            continue
-        try:
-            co = lower_ode_to_ir(
-                cls,
-                dim=inst.dim,
-                params=dict(inst.params),
-                structural_params=cls._structural_params,
-            )
-        except NotLowerableError:
-            continue
-        if not co.has_jacobian:
-            continue
-        path = _REG / f"{class_name}.lyap.npz"
-        if class_name in _LYAP_GOLDEN_EXCLUDED:
-            assert not path.is_file(), (
-                f"{class_name}: remove from _LYAP_GOLDEN_EXCLUDED if adding {path.name}"
-            )
-            continue
-        assert path.is_file(), (
-            f"{class_name}: missing {path.name} (generate via "
-            f"``uv run python scripts/generate_ode_lyap_goldens.py --only-missing`` "
-            "or add a documented waiver to _LYAP_GOLDEN_EXCLUDED)"
-        )

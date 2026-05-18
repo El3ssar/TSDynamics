@@ -11,6 +11,10 @@ Only systems without a ``*.lyap.npz`` yet (saves time; avoids churn):
 
 Each file stores ``lyapunov`` (1d), ``ic``, scalar ``burn_in``, ``final_time``, ``dt``,
 ``method``, ``rtol``, ``atol``, ``n_exp`` so tests can pin the conditioning.
+
+CI only runs :mod:`tests.test_ode_lyapunov_goldens` on a **smoke** subset (see
+``_LYAP_GOLDEN_SMOKE`` there); the repo may still carry many more ``*.lyap.npz``
+files for local / release validation.
 """
 
 from __future__ import annotations

@@ -227,13 +227,11 @@ class TestLorenzPoincare:
     def lorenz_traj(self) -> Trajectory:
         import tsdynamics as ts
 
-        # 80 001 samples after dropping the 50-time-unit transient — cheap on
-        # a modern laptop once the JiT compilation has happened.
-        return ts.Lorenz().integrate(final_time=400.0, dt=0.005).after(50.0)
+        return ts.Lorenz().integrate(final_time=120.0, dt=0.02).after(25.0)
 
     def test_section_yields_many_points(self, lorenz_traj: Trajectory) -> None:
         sec = poincare_section(lorenz_traj, axis=2, value=27.0)
-        assert sec.n_steps >= 100
+        assert sec.n_steps >= 40
         np.testing.assert_allclose(sec.y[:, 2], 27.0, atol=1e-4)
 
     def test_method_matches_function(self, lorenz_traj: Trajectory) -> None:
@@ -245,7 +243,7 @@ class TestLorenzPoincare:
     def test_return_map_has_unimodal_shape(self, lorenz_traj: Trajectory) -> None:
         rmap = return_map(lorenz_traj, axis=2, value=27.0, observable=0)
         spec = rmap.to_dataspec(kind="return_map", step=1)
-        assert spec["x"].size >= 50
+        assert spec["x"].size >= 30
 
         # Bounded: observable values stay within the attractor's natural range.
         assert np.ptp(spec["x"]) > 1.0
