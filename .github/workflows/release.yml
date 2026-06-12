@@ -1,91 +1,81 @@
+# Release pipeline: every push to main runs the test suite, then
+# python-semantic-release decides from the conventional commit messages
+# whether a release is due. If so it bumps __version__, commits, tags
+# vX.Y.Z, creates the GitHub release, and publishes to PyPI via OIDC
+# trusted publishing.
+#
+# PyPI trusted publishing is bound to THIS filename and the "pypi"
+# environment — do not rename either without re-registering on PyPI:
+#   owner = El3ssar, repository = TSDynamics,
+#   workflow = release.yml, environment = pypi
+
 name: Release
 
-# Triggered by pushing a SemVer tag (e.g. `v0.3.0`).
-# Builds sdist + wheel with hatch-vcs and publishes to PyPI via Trusted
-# Publishing (OIDC) — no API tokens stored as secrets.
-#
-# One-time PyPI setup:
-#   1. Create the project on https://pypi.org once (or claim the name).
-#   2. In project settings → Publishing → "Add a new pending publisher":
-#        owner          = El3ssar
-#        repository     = TSDynamics
-#        workflow name  = release.yml
-#        environment    = pypi
 on:
   push:
-    tags:
-      - "v*.*.*"
-  workflow_dispatch: {}
+    branches: [main]
+  workflow_dispatch:
 
-permissions:
-  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build sdist + wheel
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0   # hatch-vcs needs tags / full history
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Build distributions
-        run: uvx --from "hatch>=1.13" hatch build
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential
 
-      - name: Upload dist artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
+      - name: Sync project + dev deps
+        run: uv sync --group dev
 
-  publish:
-    name: Publish to PyPI
-    needs: build
+      - name: Lint
+        run: |
+          uv run ruff check src/ tests/
+          uv run ruff format --check src/ tests/
+
+      - name: Tests
+        run: uv run pytest --no-cov -q
+
+  release:
+    needs: test
+    if: github.repository == 'El3ssar/TSDynamics'
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/tsdynamics/
-    permissions:
-      id-token: write   # required for PyPI Trusted Publishing (OIDC)
-    steps:
-      - name: Download dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          # No `password:` — Trusted Publishing handles auth via OIDC.
-          packages-dir: dist/
-
-  github-release:
-    name: Create GitHub Release
-    needs: publish
-    runs-on: ubuntu-latest
+    environment: pypi
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v6
         with:
+          # PSR needs the full tag history to compute the next version.
           fetch-depth: 0
+          ref: ${{ github.sha }}
 
-      - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+      - name: Semantic release (version, tag, GitHub release, build)
+        id: semrel
+        uses: python-semantic-release/python-semantic-release@v10
         with:
-          name: dist
-          path: dist/
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create GitHub release with notes
-        uses: softprops/action-gh-release@v2
+      - name: Attach build artifacts to the GitHub release
+        if: steps.semrel.outputs.released == 'true'
+        uses: python-semantic-release/publish-action@v10
         with:
-          generate_release_notes: true
-          files: dist/*
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.semrel.outputs.tag }}
+
+      - name: Publish to PyPI
+        if: steps.semrel.outputs.released == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
