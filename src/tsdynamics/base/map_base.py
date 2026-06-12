@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from abc import abstractmethod
 from typing import Any, ClassVar
 
@@ -19,6 +20,37 @@ except ImportError:
         return fn
 
     _NUMBA = False
+
+
+# ---------------------------------------------------------------------------
+# Signature validation helpers
+# ---------------------------------------------------------------------------
+
+
+def _unwrap_static(obj: Any) -> Any:
+    """Peel ``staticmethod`` and Numba-dispatcher wrappers off a map method."""
+    fn = getattr(obj, "__func__", obj)  # staticmethod → wrapped callable
+    return getattr(fn, "py_func", fn)  # numba CPUDispatcher → python function
+
+
+def _positional_param_names(fn: Any) -> list[str] | None:
+    """
+    Return the parameter names after the state argument, or None if unknowable.
+
+    ``None`` is returned for catch-all signatures like ``(X, *params)`` (the
+    abstract methods on :class:`DiscreteMap`) and for callables that
+    ``inspect.signature`` cannot introspect.
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return None
+    names: list[str] = []
+    for p in list(sig.parameters.values())[1:]:
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            return None
+        names.append(p.name)
+    return names
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +94,32 @@ class DiscreteMap(SystemBase):
 
     # Class-level cache: (class_name, params_hash) → compiled iterate fn
     _iter_cache: ClassVar[dict[tuple, Any]] = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Validate the subclass contract at class-definition time.
+
+        ``_step`` / ``_jacobian`` receive parameters *positionally* in the
+        insertion order of the class-level ``params`` dict.  A mismatch
+        between the method signature and the dict order silently swaps
+        parameter values (this bit the Circle map once), so it is promoted
+        to an import-time ``TypeError``.
+        """
+        super().__init_subclass__(**kwargs)
+        declared = list(getattr(cls, "params", {}))
+        for name in ("_step", "_jacobian"):
+            method = getattr(cls, name, None)
+            if method is None:
+                continue
+            sig_names = _positional_param_names(_unwrap_static(method))
+            if sig_names is None:  # catch-all (X, *params) or non-introspectable
+                continue
+            if sig_names != declared:
+                raise TypeError(
+                    f"{cls.__name__}.{name} takes parameters {sig_names} but the "
+                    f"params dict declares {declared} — names and ORDER must match, "
+                    f"because parameters are passed positionally."
+                )
 
     # ------------------------------------------------------------------ #
     # Subclass interface
