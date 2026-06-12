@@ -1,11 +1,11 @@
 [build-system]
-requires = ["hatchling>=1.29.0", "hatch-vcs>=0.5.0"]
+requires = ["hatchling>=1.29.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "tsdynamics"
 dynamic = ["version"]
-description = "Compiled ODE/DDE integration and Lyapunov analysis for dynamical systems."
+description = "Compiled ODE/DDE integration, discrete maps, and chaos analysis for dynamical systems."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 license = "MIT"
@@ -19,6 +19,8 @@ keywords = [
   "chaos",
   "Lyapunov exponents",
   "nonlinear dynamics",
+  "bifurcation",
+  "attractors",
   "reservoir computing",
 ]
 
@@ -45,11 +47,16 @@ dependencies = [
 
 [project.urls]
 Source = "https://github.com/El3ssar/TSDynamics"
-Documentation = "https://github.com/El3ssar/TSDynamics#readme"
+Documentation = "https://el3ssar.github.io/TSDynamics/"
 Issues = "https://github.com/El3ssar/TSDynamics/issues"
-Changelog = "https://github.com/El3ssar/TSDynamics/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/El3ssar/TSDynamics/releases"
 
-# ── Dependency groups ──────────────────────────────────────────────────────────
+[project.optional-dependencies]
+plot = ["matplotlib>=3.9"]
+# Experimental Rust-backed ODE solver (DiffSL JIT). See docs → Theory → Backends.
+diffsol = ["pydiffsol>=0.5"]
+
+# ── Dependency groups (uv-native, dev-only) ────────────────────────────────────
 
 [dependency-groups]
 dev = [
@@ -57,58 +64,62 @@ dev = [
   "pytest-cov>=5.0",
   "ruff>=0.6",
   "mypy>=1.10",
-  "commitizen>=3.30",
   "pre-commit>=3.8",
-  "hatch>=1.13",
 ]
 docs = [
-  "sphinx>=9.0,<10.0",
-  "myst-parser>=5.0,<6.0",
-  "sphinx-autodoc-typehints>=3.0,<4.0",
-  "furo>=2025.1,<2026.0",
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.27",
+  "mkdocs-glightbox>=0.4",
+  "pymdown-extensions>=10.7",
+  "griffe>=1.0",
+  "matplotlib>=3.9",
 ]
 
 # ── Hatch ──────────────────────────────────────────────────────────────────────
 
 [tool.hatch.build]
 include = ["src/tsdynamics/**", "README.md", "LICENSE*"]
+# Local experiment debris (native extension prototypes) must never ship.
+exclude = ["src/tsdynamics/_native/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tsdynamics"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/tsdynamics/**", "README.md", "LICENSE*", "tests/**"]
+exclude = ["src/tsdynamics/_native/**"]
 
 [tool.hatch.version]
-source = "vcs"
+path = "src/tsdynamics/__init__.py"
 
-[tool.hatch.build.hooks.vcs]
-version-file = "src/tsdynamics/_version.py"
+# ── Release automation — python-semantic-release ───────────────────────────────
+# Version bumps are computed from conventional commit messages on main:
+#   feat: -> minor, fix:/perf: -> patch, "BREAKING CHANGE:"/! -> major
+# The version lives ONLY in src/tsdynamics/__init__.py; PSR rewrites it, commits,
+# tags vX.Y.Z, and creates the GitHub release. CI publishes to PyPI.
+# ───────────────────────────────────────────────────────────────────────────────
 
-# ── Commitizen ─────────────────────────────────────────────────────────────────
+[tool.semantic_release]
+version_variables = ["src/tsdynamics/__init__.py:__version__"]
+build_command = "python -m pip install build && python -m build"
+commit_message = "chore(release): v{version} [skip ci]"
+tag_format = "v{version}"
+allow_zero_version = true
+major_on_zero = false
 
-[tool.commitizen]
-tag_format = "v$version"
-version_scheme = "semver2"
-version_provider = "scm"
-update_changelog_on_bump = true
-changelog_incremental = true
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "" # release notes live on GitHub Releases, not in-repo
 
-[tool.commitizen.change_type_map]
-feat     = "Features"
-fix      = "Bug Fixes"
-perf     = "Performance"
-refactor = "Refactoring"
-docs     = "Documentation"
-test     = "Tests"
-ci       = "CI"
+[tool.semantic_release.commit_parser_options]
+parse_squash_commits = true
+ignore_merge_commits = true
 
 # ── Ruff ───────────────────────────────────────────────────────────────────────
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["src/tsdynamics/_version.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "D"]
@@ -151,7 +162,6 @@ line-ending   = "auto"
 python_version        = "3.12"
 strict                = true
 ignore_missing_imports = true
-exclude               = ["src/tsdynamics/_version.py"]
 
 [[tool.mypy.overrides]]
 module = ["numba.*", "jitcode.*", "jitcdde.*", "symengine.*", "pywt.*"]
@@ -161,7 +171,6 @@ ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["src/tsdynamics"]
-omit   = ["src/tsdynamics/_version.py"]
 
 [tool.coverage.report]
 show_missing = true
@@ -170,9 +179,10 @@ show_missing = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts   = "-q --tb=short --strict-markers --cov=src/tsdynamics --cov-report=term-missing"
+addopts   = "-q --tb=short --strict-markers --cov=src/tsdynamics --cov-report=term-missing -m 'not full'"
 markers   = [
   "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long simulations (deselect with: pytest -m 'not slow')",
+  "full: exhaustive sweeps that compile every built-in system; deselected by default, run nightly (select with: pytest -m full)",
 ]
 filterwarnings = [
   "error",

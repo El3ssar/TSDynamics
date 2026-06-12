@@ -15,10 +15,12 @@ Internal helpers (``ParamSet``, ``SystemBase``, ``staticjit``) live under
 """
 
 from . import base, systems, utils
-from ._version import __version__
 from .base import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
 from .systems import continuous as _continuous
 from .systems import discrete as _discrete
+
+# Single source of truth for the package version; rewritten by python-semantic-release.
+__version__ = "1.0.0"
 
 # Re-export every system class at the top level so ``from tsdynamics import Lorenz``
 # works without users having to remember which submodule a system lives in.
