@@ -258,6 +258,33 @@ class SystemBase:
     #: ICs in ``U[0, 1)^dim`` always diverge.
     default_ic: ClassVar[Any | None] = None
 
+    #: Optional component names, e.g. ``("x", "y", "z")``.  Enables named
+    #: access on trajectories (``traj["x"]``) and labelled docs figures.
+    variables: ClassVar[tuple[str, ...] | None] = None
+
+    #: Optional literature reference for the system, e.g.
+    #: ``"Lorenz (1963), J. Atmos. Sci. 20, 130"``.  Surfaced in the docs.
+    reference: ClassVar[str | None] = None
+
+    #: Optional known Lyapunov data used by the bulk known-value tests::
+    #:
+    #:     known_lyapunov = {
+    #:         "spectrum": (0.906, 0.0, -14.57),   # literature values
+    #:         "atol": 0.1,                        # per-exponent tolerance
+    #:         "kwargs": {"final_time": 300.0},    # forwarded to lyapunov_spectrum
+    #:         "source": "Sprott (2003)",
+    #:     }
+    known_lyapunov: ClassVar[dict | None] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # The framework bases (ContinuousSystem, DelaySystem, DiscreteMap, ...)
+        # live under tsdynamics.base and are not registrable systems themselves.
+        if not cls.__module__.startswith("tsdynamics.base"):
+            from tsdynamics.registry import register_class
+
+            register_class(cls)
+
     def __init__(
         self,
         params: dict | None = None,

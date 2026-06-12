@@ -7,6 +7,15 @@ from tsdynamics.utils import staticjit
 class Logistic(DiscreteMap):
     params = {"r": 3.9}
     dim = 1
+    variables = ("x",)
+    reference = "May (1976), Nature 261, 459-467"
+    known_lyapunov = {
+        "params": {"r": 4.0},
+        "spectrum": (0.6931,),  # exactly ln 2 at r = 4
+        "atol": (0.15,),
+        "kwargs": {"steps": 10_000},
+        "source": "exact result at r = 4",
+    }
 
     @staticjit
     def _step(X, r):

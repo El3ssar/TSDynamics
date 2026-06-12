@@ -19,6 +19,22 @@ class Lorenz(ContinuousSystem):
 
     params = {"sigma": 10.0, "rho": 28.0, "beta": 8 / 3}
     dim = 3
+    variables = ("x", "y", "z")
+    reference = "Lorenz (1963), J. Atmos. Sci. 20, 130-141"
+    known_lyapunov = {
+        "spectrum": (0.906, 0.0, -14.57),
+        "atol": (0.45, 0.2, 4.6),
+        "ic": (1.0, 1.0, 1.0),
+        "kwargs": {
+            "dt": 0.1,
+            "burn_in": 50.0,
+            "final_time": 200.0,
+            "method": "dop853",
+            "rtol": 1e-7,
+            "atol": 1e-10,
+        },
+        "source": "Sprott (2003), Chaos and Time-Series Analysis",
+    }
 
     @staticmethod
     def _equations(y, t, *, sigma, rho, beta):
@@ -163,6 +179,15 @@ class Lorenz84(ContinuousSystem):
 class Rossler(ContinuousSystem):
     params = {"a": 0.2, "b": 0.2, "c": 5.7}
     dim = 3
+    variables = ("x", "y", "z")
+    reference = "Rössler (1976), Phys. Lett. A 57, 397-398"
+    known_lyapunov = {
+        "spectrum": (0.0714, 0.0, -5.39),
+        "atol": (0.06, 0.06, 1.5),
+        "ic": (1.0, 0.0, 0.0),
+        "kwargs": {"dt": 0.1, "burn_in": 100.0, "final_time": 500.0},
+        "source": "Sprott (2003), Chaos and Time-Series Analysis",
+    }
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):

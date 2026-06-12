@@ -22,6 +22,20 @@ class MackeyGlass(DelaySystem):
 
     params = {"beta": 0.2, "gamma": 0.1, "tau": 17.0, "n": 10.0}
     dim = 1
+    variables = ("x",)
+    reference = "Mackey & Glass (1977), Science 197, 287-289"
+    known_lyapunov = {
+        "n_positive": 1,
+        "kwargs": {
+            "n_exp": 1,
+            "dt": 0.5,
+            "burn_in": 100.0,
+            "final_time": 1000.0,
+            "rtol": 1e-4,
+            "atol": 1e-4,
+        },
+        "source": "chaotic at tau = 17",
+    }
 
     @staticmethod
     def _equations(y, t, *, beta, gamma, tau, n):
