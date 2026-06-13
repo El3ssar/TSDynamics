@@ -68,6 +68,40 @@ def test_cross_validation_against_jitcode(name: str, ic: list) -> None:
 
 
 @pytest.mark.slow
+def test_cross_validation_over_sample() -> None:
+    """
+    diffsol (BDF) reproduces JiTCODE (dop853) across the curated ODE sample.
+
+    Short horizon + tight tolerances keep chaotic sensitivity from masking a
+    real translator/solver discrepancy; max abs deviation must stay < 1e-3.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from _sampling import INTEGRATION_SAMPLE
+
+    from tsdynamics import registry
+
+    bad = []
+    for name in INTEGRATION_SAMPLE:
+        cls = registry.get(name).cls
+        ic = cls().resolve_ic(None)
+        yj = cls().integrate(
+            ic=ic, final_time=1.5, dt=0.03, method="dop853", rtol=1e-10, atol=1e-12
+        ).y
+        yd = cls().integrate(
+            ic=ic, final_time=1.5, dt=0.03, backend="diffsol", method="LSODA",
+            rtol=1e-10, atol=1e-12,
+        ).y
+        n = min(len(yj), len(yd))
+        dev = float(np.max(np.abs(yj[:n] - yd[:n])))
+        if dev >= 1e-3:
+            bad.append((name, dev))
+    assert not bad, f"diffsol disagrees with jitcode on: {bad}"
+
+
+@pytest.mark.slow
 def test_stiff_solver_path() -> None:
     """The BDF mapping handles a stiff-ish problem."""
     traj = ts.Lorenz().integrate(

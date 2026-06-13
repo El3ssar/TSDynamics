@@ -35,8 +35,11 @@ jobs:
           restore-keys: |
             tsdyn-compile-${{ runner.os }}-py312-
 
-      - name: Sync project + dev deps
-        run: uv sync --group dev
+      - name: Sync project + dev deps (incl. the diffsol backend extra)
+        run: uv sync --group dev --extra diffsol
 
       - name: Full sweep
         run: uv run pytest -m full --no-cov -q
+
+      - name: diffsol backend cross-validation (Linux only; needs pydiffsol)
+        run: uv run pytest tests/test_diffsol_backend.py tests/test_diffsol_translation.py --no-cov -q
