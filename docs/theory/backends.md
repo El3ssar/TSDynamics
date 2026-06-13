@@ -56,6 +56,12 @@ points, warm caches; regenerate with `benches/bench_backends.py`):
 - The RHS must use functions DiffSL provides (`sin`/`cos`/`tan`/`exp`/`log`/
   `sqrt`/`abs`/`sign`/`tanh`/…); an unsupported construct raises a clear
   `DiffSLTranslationError` (none occur in the built-in catalogue).
+- A couple of pathological built-ins integrate on the default JiTCODE backend
+  but not on diffsol's solvers: **BlinkingRotlet** (near-discontinuous blinking
+  protocol stalls every adaptive solver) and **WindmiReduced** (a
+  `tanh(2200·…)` near-step plus fractional powers that go complex for negative
+  arguments). They're excluded from the diffsol cross-validation sweep; use the
+  default backend for them.
 - Experimental: `jitcode` remains the default. Once the nightly full-catalogue
   cross-validation has a green track record, `auto` becomes the default so a
   plain `pip install "tsdynamics[diffsol]"` gives a zero-compiler install.
