@@ -155,11 +155,13 @@ class ContinuousSystem(SystemBase, ABC):
 
     # Protocol stepping state (instances shadow these class defaults on first
     # ``reinit``).  Each instance owns a private jitcode wrapper loaded from
-    # the shared compiled .so, so two live steppers never clobber each other.
+    # a unique copy of the compiled .so, so two live steppers never clobber
+    # each other and module re-initialisation UB cannot occur.
     _stepper: Any = None
     _state_now: np.ndarray | None = None
     _t_now: float = 0.0
     _default_step_dt: ClassVar[float] = 0.01
+    _stepper_counter: ClassVar[int] = 0
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -384,13 +386,36 @@ class ContinuousSystem(SystemBase, ABC):
         return so
 
     def _fresh_stepper(self) -> Any:
-        """Build a private jitcode wrapper over the shared compiled .so."""
+        """
+        Build a private jitcode wrapper with genuinely isolated module state.
+
+        Loading the same compiled ``.so`` path twice re-runs its single-phase
+        init on shared static state — undefined behaviour that can segfault
+        once many extension modules are loaded.  Each stepper therefore loads
+        a uniquely named *copy* of the module, giving it its own dlopen
+        handle and namespace.
+        """
+        import shutil
+        import tempfile
+
         import symengine
         from jitcode import jitcode as _jitcode
 
+        so = pathlib.Path(self._so_path())
+        type(self)._stepper_counter += 1
+        # Same filename (PyInit_<stem> is baked into the binary), unique
+        # directory → distinct dlopen image per stepper.
+        tmpdir = tempfile.mkdtemp(
+            prefix=f"tsdyn_stepper_{os.getpid()}_{type(self)._stepper_counter}_"
+        )
+        unique = pathlib.Path(tmpdir) / so.name
+        shutil.copy(so, unique)
+        # Keep the temp dir referenced for the stepper's lifetime.
+        self._stepper_tmpdir = tmpdir
+
         control_syms = [symengine.Symbol(k) for k in self._control_params()]
         return _jitcode(
-            module_location=self._so_path(),
+            module_location=str(unique),
             n=self.dim,
             control_pars=control_syms,
             verbose=False,
