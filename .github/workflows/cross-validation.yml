@@ -1,0 +1,73 @@
+name: Cross-validation
+
+# The migration gate's foundation (ROADMAP §9, decision D1): the Rust engine is
+# cross-validated against the v2 numeric truth before any v2 backend is removed
+# (milestone M3, stream I-XVAL). This is the "cross-validation job" of the F4
+# CI matrix split — the third leg alongside:
+#
+#   * rust-workspace.yml  — builds/lints/tests the tsdyn-* engine workspace
+#   * ci.yml              — the Python lint + test matrix (the "python job")
+#   * cross-validation.yml (this file) — Rust-vs-v2 trajectory/RHS compare
+#
+# It builds the v2-seed accelerator (`tsdynamics-core`), installs it, and runs
+# the xval harness (tests/xval_harness.py) on Lorenz. The accelerator is the
+# Rust candidate today; when the new engine lands (E1–E7) the harness gains a
+# backend and this same job picks up the wider compare. I-XVAL grows the Lorenz
+# scaffold into the full-catalogue gate.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tests/xval_harness.py"
+      - "tests/test_xval*.py" # the Lorenz scaffold today; I-XVAL's catalogue sweeps later
+      - "crates/tsdynamics-core/**"
+      - "src/tsdynamics/backends/rustcore.py"
+      - ".github/workflows/cross-validation.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: cross-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-vs-v2:
+    name: Rust-vs-v2 cross-validation (Lorenz)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/tsdynamics-core/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('crates/tsdynamics-core/Cargo.lock') }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync project + dev deps
+        run: uv sync --group dev
+
+      - name: Build the accelerator wheel (the Rust candidate)
+        run: >-
+          uv run --no-project --with maturin
+          maturin build --release
+          -m crates/tsdynamics-core/Cargo.toml
+          --out crates/tsdynamics-core/dist
+
+      - name: Install the accelerator into the project venv
+        run: uv pip install crates/tsdynamics-core/dist/*.whl
+
+      - name: Cross-validate Rust vs v2 on Lorenz
+        run: uv run pytest tests/test_xval.py --no-cov -q
