@@ -1,8 +1,16 @@
-# Release pipeline: every push to main runs the test suite, then
-# python-semantic-release decides from the conventional commit messages
-# whether a release is due. If so it bumps __version__, commits, tags
-# vX.Y.Z, creates the GitHub release, and publishes to PyPI via OIDC
+# Release pipeline.
+#
+# Automated path (push to main): run the suite, then python-semantic-release
+# decides from the conventional commit messages whether a release is due. If
+# so it bumps __version__, commits, tags vX.Y.Z, creates the GitHub release
+# with the built wheel + sdist attached, and publishes to PyPI via OIDC
 # trusted publishing.
+#
+# Manual path (workflow_dispatch with `publish_tag`): re-publish an
+# already-tagged release's built artifacts to PyPI. Use this to ship a tag
+# whose automated publish failed (e.g. the trusted publisher was not yet
+# registered), without re-running PSR — the gate `released == true` is only
+# true for a fresh release, so a plain re-run never re-publishes.
 #
 # PyPI trusted publishing is bound to THIS filename and the "pypi"
 # environment — do not rename either without re-registering on PyPI:
@@ -15,6 +23,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: "Re-publish an existing tag's artifacts to PyPI (e.g. v2.0.0). Leave blank for a normal release run."
+        required: false
+        default: ""
 
 concurrency:
   group: release
@@ -22,6 +35,7 @@ concurrency:
 
 jobs:
   test:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -50,7 +64,7 @@ jobs:
 
   release:
     needs: test
-    if: github.repository == 'El3ssar/TSDynamics'
+    if: github.event_name == 'push' && github.repository == 'El3ssar/TSDynamics'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -78,4 +92,27 @@ jobs:
 
       - name: Publish to PyPI
         if: steps.semrel.outputs.released == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  republish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_tag != ''
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download the tag's built artifacts from its GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          gh release download "${{ inputs.publish_tag }}" \
+            --repo "${{ github.repository }}" \
+            --dir dist --pattern '*.whl' --pattern '*.tar.gz'
+          ls -l dist
+
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
