@@ -1,0 +1,42 @@
+# Nightly exhaustive sweep: compiles and integrates EVERY built-in system
+# (pytest -m full). Too slow for PR CI; the JiTCODE/JiTCDDE compile cache
+# is persisted between runs so only systems whose equations changed
+# recompile.
+
+name: Nightly full sweep
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC daily
+  workflow_dispatch:
+
+jobs:
+  full-sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Restore compile cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/tsdynamics
+          key: tsdyn-compile-${{ runner.os }}-py312-${{ hashFiles('src/tsdynamics/systems/**', 'uv.lock') }}
+          restore-keys: |
+            tsdyn-compile-${{ runner.os }}-py312-
+
+      - name: Sync project + dev deps
+        run: uv sync --group dev
+
+      - name: Full sweep
+        run: uv run pytest -m full --no-cov -q

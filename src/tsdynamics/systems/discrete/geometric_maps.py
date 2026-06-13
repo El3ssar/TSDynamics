@@ -17,14 +17,17 @@ class Tent(DiscreteMap):
     def _jacobian(X, mu):
         x = X
         if x < 0.5:
-            return [-2 * mu]
-        else:
             return [2 * mu]
+        else:
+            return [-2 * mu]
 
 
 class Baker(DiscreteMap):
     params = {"alpha": 0.5}
     dim = 2
+    # Float doubling collapses the orbit onto the x = 0 discontinuity after
+    # ~53 iterations, so finite differences always straddle the jump there.
+    _jacobian_fd_check = False
 
     @staticjit
     def _step(X, alpha):
@@ -90,5 +93,6 @@ class Chebyshev(DiscreteMap):
 
     @staticjit
     def _jacobian(X, a):
+        # chain rule: d/dx arccos(x) = -1/sqrt(1-x^2), the two minuses cancel
         x = X
-        return [-a * np.sin(a * np.arccos(x)) / np.sqrt(1 - x**2)]
+        return [a * np.sin(a * np.arccos(x)) / np.sqrt(1 - x**2)]

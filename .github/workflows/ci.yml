@@ -1,14 +1,13 @@
 name: CI
 
+# PR gate: lint + tests. Pushes to main are covered by release.yml's test job.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
-# Cancel superseded runs on the same PR/branch.
+# Cancel superseded runs on the same PR.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,11 +25,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Sync dev deps (locked ruff — matches local results)
+        run: uv sync --group dev
+
       - name: ruff check
-        run: uv run --with "ruff>=0.15" ruff check src/ tests/
+        run: uv run ruff check src/ tests/
 
       - name: ruff format --check
-        run: uv run --with "ruff>=0.15" ruff format --check src/ tests/
+        run: uv run ruff format --check src/ tests/
 
   test:
     name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
@@ -42,9 +44,6 @@ jobs:
         python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
-        with:
-          # hatch-vcs needs full history to derive the version string.
-          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -62,7 +61,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Run fast tests
-        run: uv run pytest -m "not slow" --no-cov -q
+        run: uv run pytest -m "not slow and not full" --no-cov -q
 
       - name: Run full test suite
         run: uv run pytest --cov=src/tsdynamics --cov-report=xml

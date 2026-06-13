@@ -14,10 +14,11 @@ Internal but accessible for advanced use:
 - :class:`ParamSet` — fixed-key parameter container backing ``system.params``.
 """
 
-from .base import ParamSet, SystemBase, Trajectory
+from .base import MetaStore, ParamSet, SystemBase, Trajectory
 from .dde_base import DelaySystem
 from .map_base import DiscreteMap
 from .ode_base import ContinuousSystem
+from .protocol import System
 
 __all__ = [
     # The three classes users subclass.
@@ -26,8 +27,11 @@ __all__ = [
     "DiscreteMap",
     # Return type.
     "Trajectory",
+    # The runtime protocol all analysis functions consume.
+    "System",
     # Lower-level surface (kept here so it has a real import path, but not
     # in tsdynamics.__all__).
     "SystemBase",
     "ParamSet",
+    "MetaStore",
 ]

@@ -1,11 +1,11 @@
-"""Tests for ``tsdynamics.base``: ParamSet, Trajectory, SystemBase."""
+"""Tests for ``tsdynamics.base``: ParamSet, Trajectory, MetaStore, SystemBase."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from tsdynamics.base import ParamSet, SystemBase, Trajectory
+from tsdynamics.base import MetaStore, ParamSet, SystemBase, Trajectory
 
 # ---------------------------------------------------------------------------
 # A minimal SystemBase subclass for direct testing
@@ -198,3 +198,132 @@ class TestSystemBase:
         s2 = _Stub()
         s1.meta["foo"] = 1
         assert s2.meta == {}
+
+
+# ---------------------------------------------------------------------------
+# MetaStore
+# ---------------------------------------------------------------------------
+
+
+class TestMetaStore:
+    def test_dict_style_read_write(self) -> None:
+        m = MetaStore()
+        m["x"] = 1
+        assert m["x"] == 1
+        assert "x" in m
+        assert len(m) == 1
+
+    def test_writes_append_history(self) -> None:
+        m = MetaStore()
+        m["x"] = 1
+        m["x"] = 2
+        assert m["x"] == 2  # latest wins on read
+        hist = m.history("x")
+        assert [h["value"] for h in hist] == [1, 2]
+
+    def test_record_stores_context(self) -> None:
+        m = MetaStore()
+        m.record("spec", [0.9, 0.0], dt=0.1, final_time=200.0)
+        rec = m.history("spec")[-1]
+        assert rec["context"] == {"dt": 0.1, "final_time": 200.0}
+        assert "timestamp" in rec
+
+    def test_equality_against_plain_dict(self) -> None:
+        m = MetaStore()
+        assert m == {}
+        m["a"] = 5
+        assert m == {"a": 5}
+        assert m != {"a": 6}
+
+    def test_missing_key_raises(self) -> None:
+        m = MetaStore()
+        with pytest.raises(KeyError):
+            m["nope"]
+
+    def test_latest_snapshot(self) -> None:
+        m = MetaStore()
+        m["a"] = 1
+        m["b"] = 2
+        m["a"] = 3
+        assert m.latest() == {"a": 3, "b": 2}
+
+
+# ---------------------------------------------------------------------------
+# Trajectory — named components, point-set ops, provenance
+# ---------------------------------------------------------------------------
+
+
+class _NamedStub(SystemBase):
+    params = {"a": 1.0}
+    dim = 3
+    variables = ("x", "y", "z")
+
+
+class TestTrajectoryNamedAccess:
+    def _traj(self) -> Trajectory:
+        y = np.arange(30, dtype=float).reshape(10, 3)
+        return Trajectory(np.arange(10), y, system=_NamedStub())
+
+    def test_named_component(self) -> None:
+        traj = self._traj()
+        np.testing.assert_array_equal(traj["y"], traj.y[:, 1])
+
+    def test_named_multi_component(self) -> None:
+        traj = self._traj()
+        np.testing.assert_array_equal(traj[["x", "z"]], traj.y[:, [0, 2]])
+
+    def test_component_accepts_names_and_ints(self) -> None:
+        traj = self._traj()
+        np.testing.assert_array_equal(traj.component("z"), traj.component(2))
+
+    def test_unknown_name_raises_with_options(self) -> None:
+        traj = self._traj()
+        with pytest.raises(KeyError, match="Declared variables"):
+            traj["w"]
+
+    def test_unnamed_system_raises_helpfully(self) -> None:
+        traj = Trajectory(np.arange(3), np.zeros((3, 2)), system=_StubNoParams())
+        with pytest.raises(KeyError, match="declares no"):
+            traj["x"]
+
+    def test_row_slicing_still_works(self) -> None:
+        traj = self._traj()
+        sl = traj[2:5]
+        assert isinstance(sl, Trajectory)
+        assert sl.n_steps == 3
+
+
+class TestTrajectoryPointSetOps:
+    def test_minmax(self) -> None:
+        y = np.array([[0.0, 5.0], [2.0, -1.0], [1.0, 3.0]])
+        traj = Trajectory(np.arange(3), y, system=None)
+        lo, hi = traj.minmax()
+        np.testing.assert_array_equal(lo, [0.0, -1.0])
+        np.testing.assert_array_equal(hi, [2.0, 5.0])
+
+    def test_standardize(self) -> None:
+        rng = np.random.default_rng(1)
+        traj = Trajectory(np.arange(100), rng.normal(5.0, 3.0, size=(100, 2)), system=None)
+        std = traj.standardize()
+        np.testing.assert_allclose(std.y.mean(axis=0), 0.0, atol=1e-12)
+        np.testing.assert_allclose(std.y.std(axis=0), 1.0, atol=1e-12)
+        assert "standardized" in std.meta
+
+    def test_standardize_constant_component_is_safe(self) -> None:
+        y = np.column_stack([np.ones(10), np.arange(10.0)])
+        traj = Trajectory(np.arange(10), y, system=None)
+        std = traj.standardize()
+        assert np.all(np.isfinite(std.y))
+
+    def test_neighbors(self) -> None:
+        y = np.array([[0.0, 0.0], [1.0, 0.0], [5.0, 5.0]])
+        traj = Trajectory(np.arange(3), y, system=None)
+        dist, idx = traj.neighbors([0.9, 0.1], k=1)
+        assert idx == 1
+        dist2, idx2 = traj.neighbors([0.0, 0.0], k=2)
+        assert list(idx2) == [0, 1]
+
+    def test_meta_preserved_through_slicing_and_after(self) -> None:
+        traj = Trajectory(np.arange(10.0), np.zeros((10, 2)), system=None, meta={"k": 1})
+        assert traj[2:].meta == {"k": 1}
+        assert traj.after(5.0).meta == {"k": 1}

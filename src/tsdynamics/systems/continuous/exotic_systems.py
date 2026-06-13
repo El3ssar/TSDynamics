@@ -36,6 +36,20 @@ class HyperCai(ContinuousSystem):
 class HyperBao(ContinuousSystem):
     params = {"a": 36, "b": 3, "c": 20, "d": 0.1, "e": 21}
     dim = 4
+    reference = "Bao & Liu (2008), Chin. Phys. B 17, 4111"
+    known_lyapunov = {
+        "n_positive": 2,
+        "kwargs": {
+            "n_exp": 2,
+            "dt": 0.05,
+            "burn_in": 50.0,
+            "final_time": 200.0,
+            "method": "dop853",
+            "rtol": 1e-6,
+            "atol": 1e-8,
+        },
+        "source": "hyperchaotic: two positive exponents",
+    }
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):

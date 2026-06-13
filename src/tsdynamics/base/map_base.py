@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from abc import abstractmethod
 from typing import Any, ClassVar
 
@@ -19,6 +20,37 @@ except ImportError:
         return fn
 
     _NUMBA = False
+
+
+# ---------------------------------------------------------------------------
+# Signature validation helpers
+# ---------------------------------------------------------------------------
+
+
+def _unwrap_static(obj: Any) -> Any:
+    """Peel ``staticmethod`` and Numba-dispatcher wrappers off a map method."""
+    fn = getattr(obj, "__func__", obj)  # staticmethod → wrapped callable
+    return getattr(fn, "py_func", fn)  # numba CPUDispatcher → python function
+
+
+def _positional_param_names(fn: Any) -> list[str] | None:
+    """
+    Return the parameter names after the state argument, or None if unknowable.
+
+    ``None`` is returned for catch-all signatures like ``(X, *params)`` (the
+    abstract methods on :class:`DiscreteMap`) and for callables that
+    ``inspect.signature`` cannot introspect.
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return None
+    names: list[str] = []
+    for p in list(sig.parameters.values())[1:]:
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            return None
+        names.append(p.name)
+    return names
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +95,42 @@ class DiscreteMap(SystemBase):
     # Class-level cache: (class_name, params_hash) → compiled iterate fn
     _iter_cache: ClassVar[dict[tuple, Any]] = {}
 
+    #: Set to False on maps whose orbit visits discontinuities, where the
+    #: finite-difference Jacobian validation in the test suite cannot apply.
+    _jacobian_fd_check: ClassVar[bool] = True
+
+    # Protocol stepping state (instances shadow these class defaults).
+    _state_now: np.ndarray | None = None
+    _n_now: int = 0
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Validate the subclass contract at class-definition time.
+
+        ``_step`` / ``_jacobian`` receive parameters *positionally* in the
+        insertion order of the class-level ``params`` dict.  A mismatch
+        between the method signature and the dict order silently swaps
+        parameter values (this bit the Circle map once), so it is promoted
+        to an import-time ``TypeError``.
+        """
+        # Validate BEFORE super().__init_subclass__ so a failing class is
+        # never registered in the system registry.
+        declared = list(getattr(cls, "params", {}))
+        for name in ("_step", "_jacobian"):
+            method = getattr(cls, name, None)
+            if method is None:
+                continue
+            sig_names = _positional_param_names(_unwrap_static(method))
+            if sig_names is None:  # catch-all (X, *params) or non-introspectable
+                continue
+            if sig_names != declared:
+                raise TypeError(
+                    f"{cls.__name__}.{name} takes parameters {sig_names} but the "
+                    f"params dict declares {declared} — names and ORDER must match, "
+                    f"because parameters are passed positionally."
+                )
+        super().__init_subclass__(**kwargs)
+
     # ------------------------------------------------------------------ #
     # Subclass interface
     # ------------------------------------------------------------------ #
@@ -105,6 +173,87 @@ class DiscreteMap(SystemBase):
         ...
 
     # ------------------------------------------------------------------ #
+    # System protocol — incremental stepping
+    # ------------------------------------------------------------------ #
+
+    @property
+    def is_discrete(self) -> bool:
+        """Maps are discrete-time systems."""
+        return True
+
+    def reinit(
+        self,
+        u: Any | None = None,
+        *,
+        t: float | None = None,
+        params: dict | None = None,
+    ) -> None:
+        """(Re)start stepping from state ``u`` at iteration count ``t``."""
+        if params:
+            for k, v in params.items():
+                self.params[k] = v
+        self._state_now = self.resolve_ic(u)
+        self._n_now = int(t) if t is not None else 0
+
+    def step(self, n_or_dt: int | None = None) -> np.ndarray:
+        """Advance ``n`` iterations (default 1) and return the new state."""
+        if self._state_now is None:
+            self.reinit()
+        if n_or_dt is None:
+            n = 1
+        else:
+            nf = float(n_or_dt)
+            if not nf.is_integer() or nf < 1:
+                raise ValueError(
+                    f"{type(self).__name__}.step takes a positive whole number of "
+                    f"iterations, got {n_or_dt!r} (fractional time steps have no "
+                    f"meaning for discrete maps)."
+                )
+            n = int(nf)
+        x = self._state_now
+        params = self.params.as_tuple()
+
+        iterate_fn = self._get_iterate_fn() if n > 16 else None
+        if iterate_fn is not None:
+            x = iterate_fn(x.copy(), n)[-1].copy()
+        else:
+            step_fn = type(self)._step
+            for _ in range(n):
+                x = np.asarray(step_fn(x, *params), dtype=float).ravel()
+        if not np.isfinite(x).all():
+            raise RuntimeError(
+                f"{type(self).__name__}: map diverged at iteration {self._n_now + n}."
+            )
+        self._state_now = np.asarray(x, dtype=float).reshape(self.dim)
+        self._n_now += n
+        return self._state_now.copy()
+
+    def state(self) -> np.ndarray:
+        """Return a copy of the current state (implicit ``reinit`` if cold)."""
+        if self._state_now is None:
+            self.reinit()
+        return self._state_now.copy()
+
+    def set_state(self, u: Any) -> None:
+        """Overwrite the current state."""
+        self._state_now = np.asarray(u, dtype=float).reshape(self.dim)
+
+    def time(self) -> float:
+        """Return the current iteration count."""
+        return float(self._n_now)
+
+    def trajectory(
+        self,
+        steps: int = 1000,
+        *,
+        transient: int = 0,
+        **kwargs,
+    ) -> Trajectory:
+        """Protocol-uniform trajectory: ``iterate`` plus optional transient drop."""
+        traj = self.iterate(steps=transient + steps, **kwargs)
+        return traj[transient:] if transient > 0 else traj
+
+    # ------------------------------------------------------------------ #
     # Compiled iterate loop
     # ------------------------------------------------------------------ #
 
@@ -121,7 +270,10 @@ class DiscreteMap(SystemBase):
         if not _NUMBA:
             return None
 
-        cache_key = (type(self).__name__, self.params.param_hash())
+        # Key on the class OBJECT, not its name: a same-named user class (or a
+        # notebook redefinition with edited _step) must never reuse another
+        # definition's compiled loop.
+        cache_key = (type(self), self.params.param_hash())
         cache = type(self)._iter_cache
 
         if cache_key in cache:
@@ -190,7 +342,12 @@ class DiscreteMap(SystemBase):
                     bad = np.argmax(~np.isfinite(out).all(axis=1))
                     raise ValueError(f"Divergence detected at step {bad}")
 
-                return Trajectory(t=np.arange(steps), y=out, system=self)
+                return Trajectory(
+                    t=np.arange(steps),
+                    y=out,
+                    system=self,
+                    meta=self._provenance(family="map", steps=steps, ic=ic_arr.copy()),
+                )
 
             except ValueError as exc:
                 if attempt == max_retries - 1:
@@ -295,7 +452,13 @@ class DiscreteMap(SystemBase):
 
             if not failed and intervals > 0:
                 exponents = lyap_sums / (intervals * reortho_interval)
-                self.meta["lyapunov_spectrum"] = exponents
+                self.meta.record(
+                    "lyapunov_spectrum",
+                    exponents,
+                    steps=steps,
+                    n_exp=n_exp,
+                    reortho_interval=reortho_interval,
+                )
                 return exponents
 
             if attempt < max_retries - 1:

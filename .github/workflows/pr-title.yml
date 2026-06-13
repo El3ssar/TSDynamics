@@ -1,0 +1,26 @@
+# PRs are squash-merged: the PR title becomes the commit message that
+# python-semantic-release parses to decide the version bump. Enforce
+# conventional-commit format on the title itself.
+
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Title must be a conventional commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "Title: $TITLE"
+          if echo "$TITLE" | grep -qE '^(feat|fix|perf|docs|chore|ci|refactor|test|style|build)(\([a-z0-9_-]+\))?!?: .+'; then
+            echo "OK"
+          else
+            echo "::error::PR title must be a conventional commit, e.g. 'feat: add Chen attractor'."
+            echo "::error::Allowed prefixes: feat fix perf docs chore ci refactor test style build (optionally with (scope) and ! for breaking)."
+            exit 1
+          fi

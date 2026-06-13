@@ -309,9 +309,9 @@ class HindmarshRose(ContinuousSystem):
     @staticmethod
     def _jacobian(Y, t, a, b, c, d, s, tx, tz):
         x, y, z = Y(0), Y(1), Y(2)
-        row1 = [-1 / tx - 3 * a / tx * x**2 + 2 * b / tx * x, 1 / tx, 1 / tx]
+        row1 = [-1 - 3 * a / tx * x**2 + 2 * b / tx * x, 1 / tx, 1 / tx]
         row2 = [-3 * a * x**2 - 2 * (d - b) * x, 0, 1]
-        row3 = [-s / tz, 0, -1 / tz - c / tz]
+        row3 = [-s / tz, 0, -1 / tz]
         return row1, row2, row3
 
 

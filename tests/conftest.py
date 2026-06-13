@@ -1,18 +1,34 @@
-"""Shared pytest fixtures and configuration for TSDynamics tests."""
+"""Shared pytest fixtures and registry-driven parametrization."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
+from tsdynamics import registry
 
-def pytest_configure(config: pytest.Config) -> None:
-    """Register the ``slow`` marker centrally."""
-    config.addinivalue_line(
-        "markers",
-        "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long "
-        "simulations (deselect with: pytest -m 'not slow').",
-    )
+# ---------------------------------------------------------------------------
+# Registry-driven parametrization
+#
+# Any test that takes one of these fixture names is automatically run once
+# per registered built-in system of the matching family.  Adding a new
+# system to the library therefore adds it to the bulk suite with zero
+# test-file edits.
+# ---------------------------------------------------------------------------
+
+_FAMILY_FIXTURES = {
+    "ode_entry": "ode",
+    "dde_entry": "dde",
+    "map_entry": "map",
+    "system_entry": None,  # every family
+}
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    for fixture, family in _FAMILY_FIXTURES.items():
+        if fixture in metafunc.fixturenames:
+            entries = registry.all_systems(family=family)
+            metafunc.parametrize(fixture, entries, ids=[e.name for e in entries])
 
 
 @pytest.fixture

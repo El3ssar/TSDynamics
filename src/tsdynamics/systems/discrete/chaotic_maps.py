@@ -19,6 +19,14 @@ class Henon(DiscreteMap):
 
     params = {"a": 1.4, "b": 0.3}
     dim = 2
+    variables = ("x", "y")
+    reference = "Hénon (1976), Commun. Math. Phys. 50, 69-77"
+    known_lyapunov = {
+        "spectrum": (0.419, -1.623),
+        "atol": (0.2, 0.4),
+        "kwargs": {"steps": 10_000},
+        "source": "Sprott (2003), Chaos and Time-Series Analysis",
+    }
 
     @staticjit
     def _step(X, a, b):
@@ -101,6 +109,13 @@ class Tinkerbell(DiscreteMap):
     params = {"a": 0.9, "b": -0.6013, "c": 2.0, "d": 0.5}
     dim = 2
     default_ic = np.array([-0.72, -0.64])
+    variables = ("x", "y")
+    reference = "Nusse & Yorke (1994), Dynamics: Numerical Explorations"
+    known_lyapunov = {
+        "n_positive": 1,
+        "kwargs": {"steps": 20_000},
+        "source": "chaotic at default parameters",
+    }
 
     @staticjit
     def _step(X, a, b, c, d):
@@ -154,7 +169,7 @@ class Zaslavskii(DiscreteMap):
         x, y = X
         mu = (1 - np.exp(-r)) / r
 
-        dxpdx = nu * (1 + mu * y) - 2 * np.pi * eps * nu * mu * np.sin(2 * np.pi * x)
+        dxpdx = 1 - 2 * np.pi * eps * nu * mu * np.sin(2 * np.pi * x)
         dxpdy = nu * mu
 
         dypdx = -2 * np.pi * eps * np.exp(-r) * np.sin(2 * np.pi * x)
@@ -178,9 +193,10 @@ class Chirikov(DiscreteMap):
 
     @staticjit
     def _jacobian(X, k):
+        # x' = x + p' inherits the p'-row derivatives
         p, x = X
         row1 = [1, k * np.cos(x)]
-        row2 = [1, 1]
+        row2 = [1, 1 + k * np.cos(x)]
         return row1, row2
 
 
@@ -188,6 +204,12 @@ class Chirikov(DiscreteMap):
 class FoldedTowel(DiscreteMap):
     params = {"a": 3.8, "b": 0.05, "c": 0.35, "d": 0.1, "e": 1.9, "f": 3.78, "g": 0.2}
     dim = 3
+    reference = "Rössler (1979), Phys. Lett. A 71, 155-157"
+    known_lyapunov = {
+        "n_positive": 2,
+        "kwargs": {"steps": 20_000},
+        "source": "hyperchaotic map: two positive exponents",
+    }
 
     @staticjit
     def _step(X, a, b, c, d, e, f, g):
@@ -200,12 +222,12 @@ class FoldedTowel(DiscreteMap):
     @staticjit
     def _jacobian(X, a, b, c, d, e, f, g):
         x, y, z = X
-        row1 = [a * (1 - 2 * x), -b * (1 - 2 * z), 2 * b * (y - c)]
+        row1 = [a * (1 - 2 * x), -b * (1 - 2 * z), 2 * b * (y + c)]
 
         row2 = [
-            -d * e * ((y - c) * (1 + 2 * z) - 1),
+            -d * e * ((y + c) * (1 + 2 * z) - 1),
             d * (1 + 2 * z) * (1 - e * x),
-            2 * d * (y - c) * (1 - e * x),
+            2 * d * (y + c) * (1 - e * x),
         ]
 
         row3 = [0, g, f * (1 - 2 * z)]
@@ -231,7 +253,7 @@ class GeneralizedHenon(DiscreteMap):
     @staticjit
     def _jacobian(X, a, b):
         x, y, z = X
-        row1 = [0, -2 * y, b]
+        row1 = [0, -2 * y, -b]
         row2 = [1, 0, 0]
         row3 = [0, 1, 0]
 

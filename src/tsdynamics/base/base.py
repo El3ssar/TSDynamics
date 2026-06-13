@@ -113,6 +113,81 @@ class ParamSet(MutableMapping):
 
 
 # ---------------------------------------------------------------------------
+# MetaStore
+# ---------------------------------------------------------------------------
+
+
+class MetaStore(MutableMapping):
+    """
+    Append-with-history metadata store for computed results.
+
+    Behaves like a dict for everyday use (``meta["lyapunov_spectrum"]``
+    reads/writes the *latest* value), but every write is appended rather
+    than overwritten, so earlier results survive::
+
+        sys.meta.record("lyapunov_spectrum", spec, dt=0.1, final_time=200.0)
+        sys.meta["lyapunov_spectrum"]            # latest value
+        sys.meta.history("lyapunov_spectrum")    # every record, with context
+
+    Equality compares the latest values against a plain dict (or another
+    MetaStore), preserving ``sys.meta == {}`` style assertions.
+    """
+
+    __slots__ = ("_records",)
+
+    def __init__(self) -> None:
+        self._records: dict[str, list[dict]] = {}
+
+    def record(self, key: str, value: Any, **context: Any) -> Any:
+        """Append ``value`` under ``key`` with optional context kwargs."""
+        import time
+
+        self._records.setdefault(key, []).append(
+            {"value": value, "context": context, "timestamp": time.time()}
+        )
+        return value
+
+    def history(self, key: str) -> list[dict]:
+        """Return every record for ``key`` (oldest first), with context."""
+        return list(self._records.get(key, []))
+
+    def latest(self) -> dict[str, Any]:
+        """Return a plain dict of the latest value per key."""
+        return {k: recs[-1]["value"] for k, recs in self._records.items()}
+
+    # --- MutableMapping protocol (operates on latest values) ---
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.record(key, value)
+
+    def __getitem__(self, key: str) -> Any:
+        recs = self._records.get(key)
+        if not recs:
+            raise KeyError(key)
+        return recs[-1]["value"]
+
+    def __delitem__(self, key: str) -> None:
+        del self._records[key]
+
+    def __iter__(self):
+        return iter(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, MetaStore):
+            return self.latest() == other.latest()
+        if isinstance(other, dict):
+            return self.latest() == other
+        return NotImplemented
+
+    def __repr__(self) -> str:
+        keys = {k: len(v) for k, v in self._records.items()}
+        return f"MetaStore({keys})"
+
+
+# ---------------------------------------------------------------------------
 # Trajectory
 # ---------------------------------------------------------------------------
 
@@ -133,23 +208,35 @@ class Trajectory:
         State at each time point.
     system : SystemBase
         Back-reference to the system that produced this trajectory.
+    meta : dict
+        Provenance: system name, params snapshot, solver, tolerances, ic.
 
     Examples
     --------
     >>> traj = lor.integrate(final_time=100)
     >>> traj.dim
     3
-    >>> traj.after(20.0)    # drop transient
+    >>> traj["x"]            # named component (via the class's ``variables``)
+    array([...])
+    >>> traj.after(20.0)     # drop transient
     Trajectory(n_steps=..., dim=3, t=[20.0, 100.0])
     >>> t, y = traj          # tuple-unpack still works
     """
 
-    __slots__ = ("t", "y", "system")
+    __slots__ = ("t", "y", "system", "meta", "_kdtree")
 
-    def __init__(self, t: np.ndarray, y: np.ndarray, system: Any) -> None:
+    def __init__(
+        self,
+        t: np.ndarray,
+        y: np.ndarray,
+        system: Any,
+        meta: dict | None = None,
+    ) -> None:
         self.t = np.asarray(t)
         self.y = np.asarray(y)
         self.system = system
+        self.meta = dict(meta) if meta else {}
+        self._kdtree = None
 
     # --- compatibility / convenience ---
 
@@ -158,8 +245,49 @@ class Trajectory:
         return iter((self.t, self.y))
 
     def __getitem__(self, key):
-        """Slice both arrays together: ``traj[100:]`` → new Trajectory."""
-        return Trajectory(self.t[key], self.y[key], self.system)
+        """
+        Component access by name, or joint row slicing.
+
+        - ``traj["x"]`` → 1-D component array (requires the system class to
+          declare ``variables``).
+        - ``traj[["x", "z"]]`` → ``(T, 2)`` array.
+        - anything else (int/slice/mask) slices ``t`` and ``y`` together and
+          returns a new :class:`Trajectory`.
+        """
+        if isinstance(key, str):
+            return self.y[:, self._component_index(key)]
+        if isinstance(key, list | tuple) and key and all(isinstance(k, str) for k in key):
+            return self.y[:, [self._component_index(k) for k in key]]
+        if isinstance(key, int | np.integer):
+            # Keep the result a well-formed Trajectory (one row), not a
+            # corrupted one built from scalars.
+            return Trajectory(
+                np.atleast_1d(self.t[key]),
+                np.atleast_2d(self.y[key]),
+                self.system,
+                meta=self.meta,
+            )
+        return Trajectory(self.t[key], self.y[key], self.system, meta=self.meta)
+
+    @property
+    def variables(self) -> tuple[str, ...] | None:
+        """Component names declared by the system class, if any."""
+        if self.system is None:
+            return None
+        return getattr(type(self.system), "variables", None)
+
+    def _component_index(self, name: str) -> int:
+        names = self.variables
+        if names is None:
+            raise KeyError(
+                f"{type(self.system).__name__ if self.system else 'This system'} declares no "
+                f"`variables`; use integer indexing or add e.g. variables = ('x', 'y', 'z') "
+                f"to the system class."
+            )
+        try:
+            return names.index(name)
+        except ValueError:
+            raise KeyError(f"Unknown component {name!r}. Declared variables: {names}") from None
 
     @property
     def dim(self) -> int:
@@ -171,19 +299,22 @@ class Trajectory:
         """Number of time steps."""
         return len(self.t)
 
-    def component(self, i: int) -> np.ndarray:
+    def component(self, i: int | str) -> np.ndarray:
         """
         Return a single state component.
 
         Parameters
         ----------
-        i : int
-            Component index.
+        i : int or str
+            Component index, or component name when the system declares
+            ``variables``.
 
         Returns
         -------
         ndarray, shape (T,)
         """
+        if isinstance(i, str):
+            i = self._component_index(i)
         return self.y[:, i]
 
     def after(self, t0: float) -> Trajectory:
@@ -200,7 +331,54 @@ class Trajectory:
         Trajectory
         """
         mask = self.t >= t0
-        return Trajectory(self.t[mask], self.y[mask], self.system)
+        return Trajectory(self.t[mask], self.y[mask], self.system, meta=self.meta)
+
+    # --- point-set operations ---
+
+    def minmax(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return per-component ``(minima, maxima)``, each of shape ``(dim,)``."""
+        return self.y.min(axis=0), self.y.max(axis=0)
+
+    def standardize(self) -> Trajectory:
+        """
+        Return a copy with zero mean and unit standard deviation per component.
+
+        The applied transform is recorded in ``meta["standardized"]``.
+        """
+        mean = self.y.mean(axis=0)
+        std = self.y.std(axis=0)
+        std = np.where(std < np.finfo(float).tiny, 1.0, std)
+        return Trajectory(
+            self.t,
+            (self.y - mean) / std,
+            self.system,
+            meta={**self.meta, "standardized": {"mean": mean, "std": std}},
+        )
+
+    def neighbors(self, q: Any, k: int = 1) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Nearest trajectory points to query point(s) ``q``.
+
+        Builds a KD-tree lazily on first call and caches it; subsequent
+        queries are O(log T).
+
+        Parameters
+        ----------
+        q : array-like, shape (dim,) or (m, dim)
+            Query point(s).
+        k : int
+            Number of neighbours per query point.
+
+        Returns
+        -------
+        (distances, indices)
+            As returned by :meth:`scipy.spatial.cKDTree.query`.
+        """
+        from scipy.spatial import cKDTree
+
+        if self._kdtree is None:
+            self._kdtree = cKDTree(self.y)
+        return self._kdtree.query(np.asarray(q, dtype=float), k=k)
 
     def __repr__(self) -> str:
         return (
@@ -258,6 +436,33 @@ class SystemBase:
     #: ICs in ``U[0, 1)^dim`` always diverge.
     default_ic: ClassVar[Any | None] = None
 
+    #: Optional component names, e.g. ``("x", "y", "z")``.  Enables named
+    #: access on trajectories (``traj["x"]``) and labelled docs figures.
+    variables: ClassVar[tuple[str, ...] | None] = None
+
+    #: Optional literature reference for the system, e.g.
+    #: ``"Lorenz (1963), J. Atmos. Sci. 20, 130"``.  Surfaced in the docs.
+    reference: ClassVar[str | None] = None
+
+    #: Optional known Lyapunov data used by the bulk known-value tests::
+    #:
+    #:     known_lyapunov = {
+    #:         "spectrum": (0.906, 0.0, -14.57),   # literature values
+    #:         "atol": 0.1,                        # per-exponent tolerance
+    #:         "kwargs": {"final_time": 300.0},    # forwarded to lyapunov_spectrum
+    #:         "source": "Sprott (2003)",
+    #:     }
+    known_lyapunov: ClassVar[dict | None] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # The framework bases (ContinuousSystem, DelaySystem, DiscreteMap, ...)
+        # live under tsdynamics.base and are not registrable systems themselves.
+        if not cls.__module__.startswith("tsdynamics.base"):
+            from tsdynamics.registry import register_class
+
+            register_class(cls)
+
     def __init__(
         self,
         params: dict | None = None,
@@ -284,8 +489,9 @@ class SystemBase:
         ic_arr = np.asarray(ic, dtype=float) if ic is not None else None
         object.__setattr__(self, "ic", ic_arr)
 
-        # Metadata store: store computed properties (Lyapunov, etc.) here
-        object.__setattr__(self, "meta", {})
+        # Metadata store: computed properties (Lyapunov, etc.) accumulate here
+        # with history — repeated runs append instead of overwriting.
+        object.__setattr__(self, "meta", MetaStore())
 
     # --- transparent attribute routing through params ---
 
@@ -378,6 +584,17 @@ class SystemBase:
         return arr
 
     # --- misc ---
+
+    def _provenance(self, **extra: Any) -> dict:
+        """Build the provenance dict attached to trajectories as ``traj.meta``."""
+        from tsdynamics import __version__
+
+        return {
+            "system": type(self).__name__,
+            "params": self.params.as_dict(),
+            "tsdynamics": __version__,
+            **extra,
+        }
 
     def __repr__(self) -> str:
         params_str = ", ".join(f"{k}={v}" for k, v in self.params.items())

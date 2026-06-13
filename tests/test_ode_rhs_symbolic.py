@@ -2,20 +2,14 @@
 Fast symbolic checks for every ODE system's ``_equations`` and ``_jacobian``.
 
 These tests evaluate the RHS / Jacobian symbolically — no C compilation, no
-integration — so they run in <1 s even for the full suite.  The intent is to
-catch shape errors, wrong parameter signatures, and bad imports.
+integration — so they run in <1 s even for the full registry sweep.  The
+intent is to catch shape errors, wrong parameter signatures, and bad imports.
 """
 
 from __future__ import annotations
 
-import importlib
-
-import pytest
 from jitcode import t as t_sym
 from jitcode import y as y_sym
-
-# Import the canonical system list from the integration tests.
-from test_ode_systems import _IDS, ALL_ODE_SYSTEMS  # noqa: E402
 
 
 def _eval_equations(sys: object):
@@ -23,45 +17,37 @@ def _eval_equations(sys: object):
     return list(type(sys)._equations(y_sym, t_sym, **sys.params.as_dict()))
 
 
-def _eval_jacobian(sys: object) -> list | None:
-    """Call ``sys._jacobian(y, t, **params)`` if defined, else return None."""
-    cls = type(sys)
-    if "_jacobian" not in cls.__dict__:
-        # Check inherited too — only base ABCs have it as abstract.
-        return None
-    fn = cls._jacobian
-    return list(fn(y_sym, t_sym, **sys.params.as_dict()))
-
-
-@pytest.mark.parametrize("module_path,class_name", ALL_ODE_SYSTEMS, ids=_IDS)
-def test_ode_equations_returns_dim_expressions(module_path: str, class_name: str) -> None:
+def test_ode_equations_returns_dim_expressions(ode_entry) -> None:
     """``_equations`` must yield exactly ``dim`` symbolic expressions."""
-    mod = importlib.import_module(module_path)
-    cls = getattr(mod, class_name)
-    sys = cls()
+    sys = ode_entry.cls()
     expr_list = _eval_equations(sys)
     assert len(expr_list) == sys.dim, (
-        f"{class_name}._equations returned {len(expr_list)} expressions, expected {sys.dim}"
+        f"{ode_entry.name}._equations returned {len(expr_list)} expressions, expected {sys.dim}"
     )
 
 
-@pytest.mark.parametrize("module_path,class_name", ALL_ODE_SYSTEMS, ids=_IDS)
-def test_ode_jacobian_shape_if_defined(module_path: str, class_name: str) -> None:
+def test_ode_jacobian_shape_if_defined(ode_entry) -> None:
     """Where ``_jacobian`` is defined, it must return a ``dim × dim`` matrix."""
-    mod = importlib.import_module(module_path)
-    cls = getattr(mod, class_name)
+    import pytest
+
+    cls = ode_entry.cls
+    if "_jacobian" not in cls.__dict__:
+        pytest.skip(f"{ode_entry.name} does not define _jacobian")
     sys = cls()
-    jac = _eval_jacobian(sys)
-    if jac is None:
-        pytest.skip(f"{class_name} does not define _jacobian")
+    jac = list(cls._jacobian(y_sym, t_sym, **sys.params.as_dict()))
     assert len(jac) == sys.dim, (
-        f"{class_name}._jacobian returned {len(jac)} rows, expected {sys.dim}"
+        f"{ode_entry.name}._jacobian returned {len(jac)} rows, expected {sys.dim}"
     )
     for i, row in enumerate(jac):
         cols = list(row)
         assert len(cols) == sys.dim, (
-            f"{class_name}._jacobian row {i} has {len(cols)} cols, expected {sys.dim}"
+            f"{ode_entry.name}._jacobian row {i} has {len(cols)} cols, expected {sys.dim}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Variable-dim systems with non-default sizes
+# ---------------------------------------------------------------------------
 
 
 def test_lorenz96_equations_returns_n_expressions() -> None:

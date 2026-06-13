@@ -1,0 +1,82 @@
+# Documentation: build on every PR and push to main (validation),
+# deploy to GitHub Pages only on push to main.
+#
+# System figures are rendered at build time by hooks/docs_autogen.py with an
+# on-disk cache (.cache/docs-figures) keyed by class-source hashes, restored
+# via actions/cache so only new/changed systems re-render.
+
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DISABLE_MKDOCS_2_WARNING: "true"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install build deps (jitcdde figures need a C compiler)
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Restore figure cache
+        uses: actions/cache@v5
+        with:
+          path: .cache/docs-figures
+          key: docs-figures-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/**') }}
+          restore-keys: |
+            docs-figures-
+
+      - name: Sync project + docs deps
+        run: uv sync --group docs
+
+      - name: Build documentation
+        run: uv run mkdocs build --strict
+
+      - name: Upload site artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: site
+          path: site/
+          retention-days: 3
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: docs-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Download site artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: site
+          path: site
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          force_orphan: true
