@@ -1,350 +1,456 @@
-# TSDynamics Roadmap
+# TSDynamics Roadmap — v3 "Rust Engine + Parity" Program
 
-**Goal:** evolve TSDynamics from a compiled-integration + Lyapunov library into the
-reference Python platform for nonlinear dynamics — system definition, trajectory
-generation, chaos quantification, attractor/basin analysis, fractal dimensions,
-time-series analysis, and visualization — while keeping the current dead-simple
-subclass contract (`params` + `dim` + one `_equations`/`_step` method).
+**Mission.** Make TSDynamics *the* reference platform for nonlinear dynamics in
+Python: every capability the established Julia dynamical-systems ecosystem
+offers — reproduced with our own design — plus first-class DDEs, SDEs, a
+zero-warmup Rust engine, and the simplest system-definition contract in any
+language. Then go beyond it.
 
-This document is the working plan. Phases are ordered by dependency, not strict
-calendar. Each phase has acceptance criteria so progress is measurable.
+**This file is the single source of truth for the v3 program.** It is written
+for *autonomous coding sessions* (including future instances of the assistant)
+who will build it **in parallel**. Read the banner below before doing anything.
 
 ---
 
-## Status — as of v2.2 (Phase-2 Part-2 kickoff)
+## ⛳ READ THIS FIRST — you are one of many concurrent sessions
 
-> Single source of truth for *where we are*. Update this block when a phase
-> moves. The plan below this section is the destination; this is the position.
+Several sessions (other instances of you) are working this roadmap **at the same
+time**. To not collide:
 
-**Shipped to PyPI:** v2.0.0 (platform relaunch) · v2.0.1 (Blasius basin fix) ·
-v2.1.0/v2.1.1 (Phase-1 tail, finite-basin ICs) · v2.2.x (nightly-hang fix;
-stiff systems default to an implicit solver). Release + docs deploy are
-automated on every push to `main` (python-semantic-release + GitHub Pages) and
-proven end-to-end. Docs live at <https://el3ssar.github.io/TSDynamics/>.
+1. **You own exactly one Work Stream.** Your launcher tells you your stream ID
+   (e.g. `E2`, `A7`). If it didn't, ask which stream to take, or pick an
+   `unclaimed` one from the **Stream Board** (§6) and say which you're taking.
+2. **Work in a dedicated git worktree**, never on `main` directly:
+   `git worktree add ../tsd-<ID> -b stream/<ID>-<slug> main`. One worktree per
+   stream → no two sessions ever share a working tree.
+3. **Touch only the paths your stream `owns`** (listed per stream). If you need
+   something outside them, you need an *interface*, not an edit — see §5.
+4. **Interfaces are frozen after the Foundation milestone (M0).** Build against
+   them; do not change a shared trait/registry/contract in a feature stream. If
+   an interface is wrong, open a separate `[interface]` PR and flag it.
+5. **One PR per stream, titled `[<ID>] …`. Merge only on green CI.** Rebase onto
+   `main` before merging; never force-push `main`.
+6. **Shared files are append-only** (registries, workspace members, CI matrix,
+   `__init__` re-exports). Add your line; never reorder or reformat others'. The
+   architecture is deliberately built so most work needs *no* shared-file edits
+   (one-file-per-thing + auto-discovery — see §4e).
+7. **Never name the Julia ecosystem (or any competitor) in shipped code, docs,
+   or comments.** Cite the *original papers*. (This ROADMAP is an internal
+   planning doc and may name the benchmark; nothing here ships.)
+8. **Keep `main` always releasable.** Every merged PR must leave the full test
+   suite green and the package importable.
 
-| Phase | State | Notes |
+---
+
+## 1. The decisions that govern this program
+
+These were made deliberately; treat them as fixed unless this file changes.
+
+| # | Decision | Consequence |
 |---|---|---|
-| **1 — Core abstraction** | ✅ **done** | `System` protocol on all families; `PoincareMap`/`StroboscopicMap`/`TangentSystem`/`EnsembleSystem`/`ProjectedSystem`/`WrappedSystem`; `Trajectory` (named components, KD-tree, set distances, provenance `MetaStore`); `tsdynamics.sampling` (Box/Ball/Grid, samplers, `grid_points`, `set_distance`); symbolic Jacobian autogen (13 real bugs fixed); registry-driven tests. *Deferred:* route per-family `lyapunov_spectrum` through `TangentSystem`; parallelize `EnsembleSystem`. |
-| **2 — Rust backend** | 🟡 **~70%** | **Part 1 (ODE on diffsol) nearly done:** `backend="auto"`/`"diffsol"` (pydiffsol, prebuilt LLVM wheels) **translates 100% of the 118 ODEs**, cross-validated vs JiTCODE (sample on `slow`, full catalogue nightly via `test_diffsol_backend.py::test_cross_validation_full_catalogue`), benchmarked (`benches/bench_backends.py`: 9–29× JiTCODE, ~180× SciPy), documented (Theory → Backends). *Left in part 1:* flip the literal default to `auto` once the nightly full-catalogue gate is green. **Part 2 (the bespoke `tsdynamics-core` PyO3/maturin crate) — underway:** an expression **tape VM** lowers a system's symbolic `_equations` (and its **analytic Jacobian**) to flat SSA instructions a Rust stack machine evaluates GIL-free (no runtime compiler) — **all 118 ODEs lower and match the symbolic RHS to 1e-15**. **Three solver kernels** (the multi-solver pillar): fixed-step **RK4**, adaptive **Dormand-Prince RK45** (matches SciPy at tolerance, ~300× more accurate than fixed RK4), and an L-stable linearly-implicit **stiff** kernel (aliases `LSODA`/`BDF`/`Rosenbrock`) cross-validated vs SciPy Radau/LSODA on stiff Van der Pol/Robertson/Oregonator. **rayon ensemble** integration is race-free and **~90× a SciPy per-trajectory loop** (the basin/Monte-Carlo primitive); diverging trajectories raise/return NaN, not silent garbage. `tsdynamics` stays pure-Python, the crate is an optional accelerator; maturin wheel built + tested in CI (`rust-core.yml`), every increment adversarially reviewed. *Left:* **SDE** family, Rust **DDE** solver, cross-platform wheel publish + a `[rustcore]` extra, then wire ensembles/basins onto it. |
-| **3 — Chaos quantification** | 🟡 **~50%** | Done: `orbit_diagram`, `poincare_section`, `max_lyapunov`, `kaplan_yorke_dimension`, `fixed_points` (maps), `lyapunov_spectrum` dispatcher. *Left:* `lyapunov_from_data` (Kantz), GALI, 0–1 test, expansion entropy, periodic orbits, `estimate_period`, `fixed_points` for flows. |
-| **4 — Attractors & basins (the moat)** | ⬜ **0%** | **Next milestone.** Depends only on Phase 1 (done) — *not* on 2 or 3. |
-| **5 — Time-series & geometry** | ⬜ **0%** | embeddings, fractal dimensions, entropy/complexity, recurrence, surrogates. |
-| **6 — Visualization** | ⬜ **0%** (user-facing) | figure tooling exists inside the docs build; no `tsdynamics.plot` module yet. |
-| **7 — Ecosystem & credibility** | 🟡 **~40%** | docs site + citations + known-value tests + semantic-release done. *Left:* docstring-citation lint rule, hypothesis tests, conda-forge, benchmark notebook, JOSS. |
+| **D1** | **Rust is the sole integration engine** (total replacement). | JiTCODE, JiTCDDE, Numba-maps and the diffsol bridge are migrated onto the Rust engine and **removed** once parity + cross-validation are proven. One engine to maintain; no Python-only fallback long-term. |
+| **D2** | **Tiered execution: SSA-tape interpreter + optional Cranelift JIT.** | Interpreter = zero warmup (sweeps, tests, small/medium systems). Cranelift JIT = native-code RHS for large/hot problems. **Pure-Rust** (no LLVM) → wheels stay trivial. Both implement one `Evaluator` interface. |
+| **D3** | **Clean break, no compatibility shims.** | v3 reorganizes the package freely (modular submodules, Cargo workspace). Old import paths may simply move. Audience is small; we optimize for the right design, not back-compat. |
+| **D4** | **Traits + registries + external plugins.** | A Rust trait per extensible kind (`Evaluator`, `Solver`, `Problem`); name registries; **Python entry-point discovery** so third parties register their own systems / solvers / analyses / transforms **without forking**. |
+| **D5** | **Parallel work via git worktrees, PR-per-stream.** | See the banner. Worktree isolation + interface-first design is what makes ~20 streams safe to run at once. |
+| **D6** | **Visualization is deferred.** | No `viz` work in the v3 gate. A thin `tsdynamics.viz` stub exists so result objects *can* grow a `.plot()` later, but every stream concentrates on the engine, numerics, and data extraction. |
+| **D7** | **v3.0 ships on big-bang parity.** | v3.0 is **not** cut until the new architecture + Rust sole-engine **and** the parity moat (basins, fractal dimensions, delay embeddings, recurrence/RQA, surrogates, the full chaos-quantification suite) are all in and literature-validated. One dramatic launch. Internal milestones (M0…M6, §7) stage the work; they are not separate PyPI releases unless we choose to pre-release `3.0.0bN`. |
 
-**Solver coverage (Phase-2 pillar).** No single solver fits every system —
-explicit methods fail on stiff RHS, implicit ones can fail elsewhere. Each
-system therefore declares its own `_default_method`; stiff built-ins
-(Oregonator, Duffing, SprottL/P, SprottJerk) default to `LSODA` so
-`integrate()` works out of the box. The broader goal — a discoverable,
-extensible multi-solver layer with automatic stiffness detection across both
-backends — is tracked under Phase 2 (and is what the diffsol/Rust work must
-preserve). Two systems still resist all adaptive solvers (BlinkingRotlet) or
-diffsol specifically (WindmiReduced) and are documented exclusions.
-
-**Dependency reality (not the numbering):** Phase 4's prerequisites are all in
-Phase 1, which is complete. **Phase 2 (Rust) is a *performance* multiplier for
-Phase 4, not a prerequisite** — basins run on the current JiTCODE backend, just
-slower at large grid sizes (the cheap mitigation is parallelizing
-`EnsembleSystem`, a deferred Phase-1 item, not the full Rust migration). The
-**rest of Phase 3 is independent of Phase 4** — neither blocks the other. So
-Phase 4 can proceed now; do Phase 2 as a parallel track.
-
-**Open follow-ups:** Dependabot security alerts on the repo (7); parallelize
-`EnsembleSystem` if basin compute is slow.
+**Still-open sub-decisions** (do **not** block on these unless your stream needs
+them; flagged in §11): the SDE noise contract; the Cranelift JIT trigger
+heuristic; the exact public top-level `__all__`; whether `tsdynamics` ships as
+one maturin wheel or keeps a separable accelerator. Resolve via an
+`[interface]`/`[decision]` PR + a note to the maintainer.
 
 ---
 
-## 0. Where we are (audit summary, June 2026)
+## 2. Status — where we are at the start of v3 (post v2.2.x)
 
-**Strong (keep):**
-- Three system families with a unified feel: `ContinuousSystem` (JiTCODE),
-  `DelaySystem` (JiTCDDE), `DiscreteMap` (Numba).
-- Compile caching with structural/control parameter split — param sweeps don't recompile.
-- `ParamSet` fixed-key container kills silent param bugs.
-- 149 built-in systems (123 ODE, 5 DDE, 26 maps) — already a larger predefined
-  catalogue than any comparable library.
-- Lyapunov spectra for *all three* families. DDE Lyapunov spectra in particular are
-  something no mainstream competitor offers.
-- Clean CI (lint + tests on Linux/macOS, py3.12/3.13), fast test suite.
+**Shipped to PyPI (v2 line):** v2.0–v2.2.x. Release + docs deploy automated on
+every push to `main` (python-semantic-release + GitHub Pages).
 
-**Weak (fix):**
-- Analysis breadth: Lyapunov spectra is essentially the *only* analysis tool.
-  No basins, no dimensions, no Poincaré sections, no orbit diagrams, no embeddings,
-  no recurrence/entropy/surrogates, no plotting.
-- 116/123 ODE systems lack `_jacobian`; all DDE systems lack it.
-- Map `_step`/`_jacobian` signature order vs `params` order is unchecked at runtime.
-- Jacobian correctness is never validated against finite differences in tests.
-- DDE Lyapunov requires the clunky two-call workflow (integrate → pass `ic=`).
-- JiTCODE/JiTCDDE: runtime C-compiler dependency, slow first compile, fragile cache,
-  upstream maintenance risk.
-- `meta` storage overwrites results; no provenance.
+**The v2 Rust seed (already merged — this is what the v3 engine grows from):**
+- `crates/tsdynamics-core/` — a PyO3/maturin crate, **optional accelerator**.
+- An **SSA expression tape VM**: the symbolic `_equations` (and the analytic
+  Jacobian) lower to a flat instruction tape a Rust stack machine evaluates
+  GIL-free. **All 118 ODEs lower and match the symbolic RHS to 1e-15.**
+- **Three solver kernels**, each cross-validated vs SciPy: fixed-step **RK4**,
+  adaptive **Dormand-Prince RK45** (Hermite dense output), and an L-stable
+  linearly-implicit **stiff** kernel using the analytic Jacobian (vs Radau/LSODA
+  on Van der Pol/Robertson/Oregonator/Chua).
+- **rayon ensemble** integration: race-free, ~90× a SciPy per-trajectory loop;
+  diverging trajectories raise / return `NaN` (never silent garbage).
+- CI: `rust-core.yml` builds the wheel + runs the numeric suite. Every increment
+  was adversarially reviewed.
 
-**Competitive context.** The benchmark ecosystem to surpass is a Julia umbrella of
-11 packages (~550 exported functions) organized around one idea: *a single
-`DynamicalSystem` abstraction that every analysis function consumes*, plus
-composable derived systems (Poincaré map of a flow is itself a map → orbit diagram
-of it is a bifurcation diagram, for free). Its known gaps — no DDE support at all,
-young/shallow SDE support, JIT latency at every session start, heavyweight GUI
-dependencies — are precisely where a precompiled Python library can win.
+**v2 still in place (to be replaced under D1):** JiTCODE (ODE), JiTCDDE (DDE),
+Numba (maps), the diffsol bridge. 149 built-in systems (118 ODE + 5 DDE +
+26 maps). `System` protocol + derived wrappers + `Trajectory` + registry +
+`tsdynamics.sampling`.
+
+**The v3 job** is to (a) promote that seed into a proper modular engine that is
+*the* backend for **all** families, (b) reorganize the library into separated,
+pluggable modules, and (c) build the analysis/parity layer on top — all in
+parallel.
 
 ---
 
-## 1. Phase 1 — Core abstraction redesign (the multiplier)
+## 3. Architecture at a glance
 
-Everything later depends on this. The single most important architectural move:
-**decouple "being a dynamical system" from "being one of our three base classes"**
-so that every analysis function can consume any system, including derived ones.
-
-### 1.1 The `System` runtime protocol
-
-A minimal stepping interface implemented by all families and all wrappers:
-
-```python
-class System(Protocol):
-    dim: int
-    def step(self, n_or_dt) -> None
-    def state(self) -> np.ndarray
-    def set_state(self, u) -> None
-    def time(self) -> float | int
-    def reinit(self, u=None, *, t=None, params=None) -> None
-    def trajectory(self, T, *, dt=..., transient=0.0, ...) -> Trajectory
-    @property
-    def is_discrete(self) -> bool
+```
+                    ┌──────────────────────────────────────────────┐
+   user writes →    │  System subclass: params + dim + _equations    │   (contract UNCHANGED)
+                    └───────────────┬──────────────────────────────┘
+                                    │  symbolic (SymEngine)
+                        ┌───────────▼────────────┐
+   Python: tsdynamics  │  compile → IR (tape)     │  tsdynamics.engine.compile
+                        └───────────┬────────────┘
+   ───────────────────────────────  FFI (PyO3, zero-copy)  ───────────────────
+                        ┌───────────▼────────────┐
+   Rust workspace       │  tsdyn-ir   (instruction set / tape)            │
+                        │  tsdyn-vm   (interpreter)  ─┐                    │
+                        │  tsdyn-jit  (Cranelift)   ──┴► Evaluator trait   │
+                        │  tsdyn-solvers (Solver trait: RK*, stiff, SDE,…) │
+                        │  tsdyn-engine (problem + ensembles + rayon + RNG)│
+                        │  tsdyn-core (PyO3 → tsdynamics._rust)            │
+                        └──────────────────────────────────────────────┘
 ```
 
-- `ContinuousSystem`, `DelaySystem`, `DiscreteMap` keep their current subclass
-  contract *unchanged*; they gain the protocol methods.
-- A `WrappedSystem` adapter lets users plug any external stepper (their own
-  simulation code) into the whole analysis library. Cheap to build, huge reach.
+Everything above the FFI line is Python and pure-Python-importable; everything
+below is the compiled wheel. The **Evaluator trait** (interpreter or JIT) and the
+**Solver trait** are the two seams that make the engine pluggable; the
+**Python registries + entry points** make systems/solvers/analyses/transforms
+pluggable from outside.
 
-### 1.2 Derived systems (composition layer)
+---
 
-| Wrapper | What it does | What it unlocks |
+## 4. Target design (the contracts every stream builds against)
+
+### 4a. Rust: a Cargo **workspace** of small crates
+
+`crates/` becomes a workspace (`crates/Cargo.toml` with `[workspace] members`).
+One concern per crate so streams don't collide:
+
+| Crate | Responsibility | Depends on |
 |---|---|---|
-| `PoincareMap(sys, plane)` | root-found plane crossings of a flow, exposed as a discrete map | return maps, bifurcation diagrams of flows, PSOS |
-| `StroboscopicMap(sys, period)` | sample a forced flow every period | forced-oscillator analysis |
-| `TangentSystem(sys, k)` | state + k deviation vectors via Jacobian | Lyapunov spectra (unified!), GALI, covariant vectors later |
-| `EnsembleSystem(sys, states)` | many ICs stepped in lockstep (Rust/rayon) | max-Lyapunov by rescaling, basin sampling, ensemble statistics |
-| `ProjectedSystem(sys, proj, complete)` | analysis on a subspace | high-dim systems |
+| `tsdyn-ir` | The instruction set + tape data structure (ops, args, immediates, outputs, jac_outputs). Pure data + a builder. **The frozen contract** between Python-compile and Rust-eval. | — |
+| `tsdyn-vm` | The interpreter `Evaluator` over `tsdyn-ir` (today's stack machine, generalized). | `tsdyn-ir` |
+| `tsdyn-jit` | A Cranelift `Evaluator` that compiles a tape to native code. Same trait as `tsdyn-vm`. | `tsdyn-ir`, `cranelift-*` |
+| `tsdyn-solvers` | The `Solver` trait + one module per kernel (explicit RK family, implicit/stiff family, SDE, symplectic…). Dense output, error control, step adaption live here. | `tsdyn-ir` (calls `Evaluator`) |
+| `tsdyn-engine` | Problem definition (ODE/DDE/SDE/map), the integrate loop, **ensembles (rayon)**, RNG/Wiener substrate, DDE history buffers, event detection. Wires an `Evaluator` + a `Solver` to a `Problem`. | all above |
+| `tsdyn-core` | PyO3 bindings → builds the `tsdynamics._rust` extension module. Thin: marshal numpy ↔ slices, release GIL, dispatch. | `tsdyn-engine` |
 
-Lyapunov code then collapses: one QR/Benettin implementation on `TangentSystem`
-replaces the three per-family implementations (the DDE family keeps its special
-path — that one is a differentiator to preserve and document loudly).
+**Trait sketches (Foundation stream freezes the real signatures):**
 
-### 1.3 `Trajectory` → first-class state-space data
+```rust
+// tsdyn-ir
+pub struct Tape { /* ops, a, b, imm, outputs, jac_outputs, n_state, n_param */ }
 
-`Trajectory` grows into the lingua franca every analysis function accepts
-(system *or* trajectory where meaningful):
+// the seam D2 hangs on:
+pub trait Evaluator {            // implemented by tsdyn-vm AND tsdyn-jit
+    fn eval(&self, u: &[f64], p: &[f64], t: f64, deriv: &mut [f64]);
+    fn eval_jac(&self, u: &[f64], p: &[f64], t: f64, deriv: &mut [f64], jac: &mut [f64]);
+}
 
-- Named components (`traj["x"]`, names from an optional class attr `variables`).
-- Point-set semantics: `minmax`, `standardize`, fancy indexing, iteration over points.
-- Neighbor searches (KD-tree; SciPy now, Rust later) — one shared API used by
-  embeddings, dimensions, data-Lyapunov, recurrence.
-- Set distances (centroid / Hausdorff / minimum) — needed for attractor matching.
-- `sample_statespace(region)` helpers (box/sphere/grid samplers) for basin work.
-- Provenance: `traj.meta` records system, params, solver, tolerances, seed.
-- `system.meta` results become append-with-key (`meta.record("lyapunov", value, **ctx)`),
-  no silent overwrites.
+// tsdyn-solvers — one impl per kernel, registered by name
+pub trait Solver {
+    fn name(&self) -> &'static str;
+    fn caps(&self) -> Caps;       // explicit/implicit, adaptive, needs_jacobian, supports: ODE|SDE|…
+    fn step(&mut self, ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome;
+}
+```
 
-### 1.4 Housekeeping in the same phase
+### 4b. Python: a clean modular package (D3 — things MOVE)
 
-- Runtime introspection check: map `_step`/`_jacobian` signature must match
-  `params` insertion order (raise at class definition time, not silently).
-- Finite-difference Jacobian validation test, parametrized over all systems
-  defining `_jacobian`.
-- Symbolic Jacobian autogeneration (SymEngine `diff`) so *every* ODE system gets
-  a Jacobian for free; hand-written ones become optional overrides.
-- Fix dependabot security alerts (8 on the repo) and re-accept the CI action bumps.
+```
+src/tsdynamics/
+├── __init__.py            # curated re-exports (append-only per stream)
+├── _rust/                 # the compiled extension (built by tsdyn-core)
+├── registry.py            # registries: systems / solvers / analyses / transforms
+├── plugins.py             # entry-point discovery (D4)
+├── engine/                # the Rust-facing engine API
+│   ├── compile.py         #   symbolic _equations (+Jacobian) → IR/tape
+│   ├── problem.py         #   Problem builders per family
+│   └── run.py             #   integrate / ensemble entry points, backend select (interp|jit)
+├── solvers/               # solver registry + per-solver Python metadata; plugin hook
+├── families/              # base classes + the System protocol
+│   ├── protocol.py, base.py
+│   ├── continuous.py, delay.py, discrete.py, stochastic.py   # all → Rust engine
+├── derived/               # PoincareMap, StroboscopicMap, TangentSystem, EnsembleSystem, …
+├── data/                  # Trajectory, state-space regions/samplers, set distances, KD-tree
+├── systems/               # the built-in catalogue (one module per category, as today)
+├── analysis/              # the quantification layer (see Track C)
+│   ├── lyapunov/  chaos/  fixedpoints/  orbits/
+│   ├── basins/    dimensions/  embedding/  entropy/  recurrence/  surrogate/
+├── transforms/            # signal/data transforms feeding analysis (spectral, filters, features)
+└── viz/                   # DEFERRED — stub only (D6)
+```
 
-**Acceptance:** all existing tests pass unchanged; `lyapunov_spectrum` for ODEs and
-maps routed through `TangentSystem`; Poincaré section of the Rössler attractor and
-a bifurcation diagram of the logistic map each take ≤ 5 lines of user code.
+Old paths (`tsdynamics.base.ode_base`, `tsdynamics.backends.*`,
+`tsdynamics.sampling`) **move**; update imports, no shims (D3).
 
----
+### 4c. The execution engine (D1 + D2)
 
-## 2. Phase 2 — Rust numerical backend
+- The **IR/tape** (`tsdyn-ir`) is the universal lowering target. The Python
+  `engine.compile` produces it from any system's symbolic form (RHS + Jacobian
+  for stiff). Maps lower their `_step`; DDEs lower RHS with delayed-state slots;
+  SDEs lower drift + diffusion (see S-ENG-SDE).
+- Two `Evaluator`s: interpreter (default, zero warmup) and Cranelift JIT (opt-in
+  / auto for large or long runs). **Numerical results must match** between them
+  (a cross-check test is mandatory in the JIT stream).
+- One integrate path per family in `tsdyn-engine`; ensembles are rayon fan-out
+  over independent `Evaluator`+`Solver` workers (already proven race-free).
+- Determinism: every stochastic/sampling entry takes a seed; ensembles seed
+  per-trajectory-index so parallel == serial bit-for-bit.
 
-Replace the JiTCODE/JiTCDDE C-codegen pipeline with a Rust extension crate
-(`tsdynamics-core`) shipped as prebuilt wheels via PyO3 + maturin. Reuse existing
-crates; do not write integrators from scratch.
+### 4d. Solvers as separate, registered units (the modularity the maintainer asked for)
 
-### 2.1 Chosen components (research conclusions)
+Each solver is **its own module/file** implementing `Solver`, registered by name
+in a registry that is **auto-populated** (Rust: an `inventory`/`linkme`-style
+registry or an explicit `register!` per file; Python: a `solvers/` directory
+scanned at import). Adding a solver = adding one file + one registry line in
+*that file* — **no central table to edit**, so two solver streams never
+conflict. Capability flags drive `method=` resolution and an
+**auto-stiffness-detection** layer (pick implicit when the Jacobian spectrum /
+rejected-step ratio says stiff).
 
-| Concern | Component | Why |
-|---|---|---|
-| ODE/DAE solving | **diffsol** crate (MIT, JOSS-published, active) | BDF + SDIRK (stiff) + explicit RK, dense output, event detection, forward/adjoint sensitivities, sparse algebra |
-| Equation JIT | **DiffSL** (diffsol's DSL, Cranelift backend) | runtime JIT ≪ 1 s, pure-Rust dependency tree → trivially wheelable; no C compiler on user machines, no compile cache needed |
-| RHS authoring | translator: SymEngine expression tree → DiffSL source (~few hundred lines of Python) | users keep writing the exact same `_equations`; strictly simpler than the current C codegen |
-| DDE solving | **differential-equations** crate (Apache-2.0) | the only maintained Rust DDE solver: method of steps, dense history interpolation, constant/time-/state-dependent delays, events |
-| SDE solving (new family) | same crate (Euler–Maruyama, Milstein) | cheapest path to an `StochasticSystem` family — a known weak spot of the competition |
-| Maps | pure-Rust iteration via the same translator (Numba kept as fallback during transition) | kills JIT warmup; rayon ensembles |
-| Python interop | PyO3 (abi3-py312), rust-numpy (zero-copy), GIL released for whole integrations, rayon inside | the polars model |
-| Escape hatch | Numba `@cfunc` address passed as `extern "C"` fn pointer | plain-Python RHS that the DSL can't express (numbalsoda-proven pattern) |
+### 4e. Why this parallelizes (the anti-collision design)
 
-### 2.2 Migration strategy
-
-1. `backend="rust" | "jitcode"` switch on `ContinuousSystem`; land Rust as
-   experimental, promote to default after one minor release of parity testing,
-   then drop JiTCODE (and the C-compiler requirement, and `~/.cache/tsdynamics`).
-2. Cross-validation suite: every built-in system integrated with both backends,
-   trajectories compared within tolerance; Lyapunov spectra compared to literature.
-3. Benchmark suite (`benches/`) tracked in CI: vs SciPy, vs old backend, and vs
-   the Julia ecosystem on identical problems (Lorenz, Rössler, MackeyGlass,
-   Lorenz-96 N=128, stiff Robertson). Publish results in docs.
-4. Wheels: manylinux + macOS (arm64/x86_64) + Windows via maturin-action.
-   Cranelift only in wheels; LLVM backend optional for source builds.
-
-**Acceptance:** `pip install tsdynamics` with zero compiler toolchain; first
-integration of a fresh system < 1 s end-to-end; ≥ 10× SciPy on small chaotic
-systems; DDE + SDE families running on the Rust backend; ensemble of 10⁴ Lorenz
-ICs integrated in parallel through one call.
-
----
-
-## 3. Phase 3 — Chaos quantification layer (`tsdynamics.analysis`)
-
-All functions take a `System` (or `Trajectory` where data-driven). Ship with
-citations in every docstring.
-
-- **Lyapunov:** `lyapunov_spectrum(sys)` (QR/Benettin on `TangentSystem`),
-  `max_lyapunov(sys)` (two-trajectory rescaling on `EnsembleSystem`, no Jacobian
-  needed), `lyapunov_from_data(traj)` (Kantz-style neighborhood divergence).
-- **Derived quantities:** `kaplan_yorke_dimension(spectrum)`, sum-vs-divergence
-  consistency check, finite-time/local growth rates.
-- **Chaos tests:** GALI_k (Skokos), 0–1 test (Gottwald–Melbourne) on plain
-  time series, expansion entropy (Hunt–Ott) on sampled regions.
-- **Structure:** `orbit_diagram(map_like, param, values)` — works on
-  `DiscreteMap`, `PoincareMap`, `StroboscopicMap` (= bifurcation diagrams of
-  flows by composition), carries state across parameter values;
-  `poincare_section(sys_or_traj, plane)`; `fixed_points(sys, box)` (interval
-  root finding + stability via Jacobian eigenvalues); periodic orbits
-  (Schmelcher–Diakonos and Davidchack–Lai for maps; least-squares shooting for
-  flows); `estimate_period(x)` (autocorrelation, periodogram, YIN).
-
-**Acceptance:** logistic orbit diagram, Rössler bifurcation diagram via
-`PoincareMap`, Hénon fixed points with stability, Lorenz Kaplan–Yorke ≈ 2.06 —
-each as a tested example.
+- **One file per thing**: one crate per concern, one module per solver, one
+  module per system category, one module per analysis. Streams edit disjoint
+  files.
+- **Auto-discovery over central registries**: systems self-register
+  (`__init_subclass__`, already true); solvers/analyses/transforms discovered by
+  directory scan + entry points. Few hand-edited shared tables.
+- **Append-only shared files**: `crates/Cargo.toml` members, top-level
+  `__init__.py` re-exports, the CI job matrix — add your line at the end.
+- **Interface-first milestone (M0)** freezes the traits/registry/IR so feature
+  streams compile against stable seams from day one.
 
 ---
 
-## 4. Phase 4 — Attractors, basins, global stability (the moat)
+## 5. Working in parallel — the protocol (D5)
 
-This is the flagship capability that has no Python equivalent anywhere — landing
-it credibly is what makes the "surpass" claim real.
+**Lifecycle of a stream session:**
+1. Confirm your stream ID; read its row in §6 (goal, `owns`, `depends-on`,
+   `parallel-with`, acceptance).
+2. `git worktree add ../tsd-<ID> -b stream/<ID>-<slug> main`.
+3. Build only within `owns`. Consume frozen interfaces from §4; do not modify
+   them. Need a new interface? Smallest possible `[interface]` PR first, merged
+   before dependents rely on it.
+4. Tests: add your stream's tests; keep the whole suite green. Rust streams:
+   `cargo fmt --check` + `cargo clippy -- -D warnings` + tests. Python streams:
+   `ruff check` + `ruff format --check` + `pytest`.
+5. **Adversarially review** non-trivial numeric/Rust work before the PR (spawn a
+   review pass; it has repeatedly caught real defects). Fix; regression-test.
+6. PR titled `[<ID>] …`; green CI; rebase; merge; `git worktree remove`.
 
-- **Attractor finding** (`find_attractors`): recurrences-in-grid finite-state
-  machine (Datseris & Wagemakers 2022), featurize-and-cluster (DBSCAN, bSTAB-style
-  per Stender & Hoffmann 2021), and proximity-to-known-attractors. Grid
-  subdivision for multiscale attractors.
-- **Basins:** `basins_of_attraction(finder, grid)` (full grids),
-  `basin_fractions(finder, sampler)` (Monte Carlo), convergence diagnostics.
-  Rust-parallel ensemble integration underneath.
-- **Basin geometry:** basin entropy (Daza 2016), basin boundary fractal dimension,
-  uncertainty exponent (Grebogi 1983), Wada tests.
-- **Global continuation:** seed-continue-match across a parameter range —
-  attractors *and* basin fractions tracked, with set-distance matchers
-  (Hungarian assignment) — plus `tipping_probabilities` (Kaszás 2019).
-- **Resilience:** minimal fatal shock (Halekotte & Feudel 2020), edge tracking
-  between attractors.
+**If you finish early or are blocked:** pick another `unclaimed` stream (respect
+`depends-on`), or extend test/bench/doc coverage of a `done` stream. Announce
+what you took.
 
-**Acceptance:** Duffing and magnetic-pendulum basins reproduced (plots in docs);
-multistable Lorenz-84 continuation showing attractor birth/death across forcing;
-basin fraction error < 1% vs published values on at least two literature systems.
+**Conflict rules:** never reorder/reformat code you don't own; never edit a
+frozen interface in a feature PR; if `main` moved under you, rebase (don't
+merge-commit); if two streams genuinely need the same file, the later one waits
+or coordinates via the maintainer.
 
----
-
-## 5. Phase 5 — Time-series & geometry layer
-
-- **Delay embeddings:** `embed(x, dim, delay)` + generalized multivariate
-  version; delay estimation (autocorrelation zero/min, first minimum of mutual
-  information); dimension estimation (Cao's AFNN, Kennel's FNN); PECUZAL-style
-  unified optimization later.
-- **Fractal dimensions:** correlation sum (with Theiler window) +
-  Grassberger–Procaccia, box-assisted fast variant, generalized/Rényi
-  box-counting dimension, fixed-mass estimator, automated scaling-region fitting
-  (largest-linear-region with confidence intervals — shared infrastructure).
-- **Entropy & complexity:** permutation entropy, sample/approximate entropy,
-  dispersion entropy, multiscale wrappers. Architecture: composable
-  (outcome-space × estimator × measure) so the catalogue multiplies; integrate
-  **lzcomplexity** (our own LZ76 C++ library) as the Lempel–Ziv provider.
-- **Recurrence:** recurrence matrices (fixed ε / fixed rate), RQA measures
-  (DET, LAM, L_max, entropy, trapping time...), windowed RQA. Sparse + Rust.
-- **Surrogates:** shuffle, Fourier phase, AAFT, IAAFT + a proper
-  `SurrogateTest(statistic, x, method) → p-value` harness.
-
-**Acceptance:** correlation dimension of Lorenz ≈ 2.05 from a trajectory;
-embedding pipeline reconstructs Rössler attractor from x-component only; RQA on
-logistic map regime change; surrogate test rejects linearity for Lorenz data.
+**Definition of done (every stream):** code + tests green in CI; public API
+documented (NumPy docstrings, paper citations, **no competitor names**);
+`main` still releasable; acceptance bullets met.
 
 ---
 
-## 6. Phase 6 — Visualization (`tsdynamics.plot`)
+## 6. The Stream Board
 
-Two tiers, both optional extras (no hard plotting dependency in core):
+Status legend: `done` · `active` · `unclaimed` · `blocked(by …)`.
+Mark your stream `active` in your first PR (one-line edit to its row). Streams
+in the **same tier** are designed to run **simultaneously**.
 
-- **Static (matplotlib, `tsdynamics[plot]`):** trajectory/phase portraits (2D/3D),
-  orbit diagrams, Poincaré sections, basins heatmaps (attractors overlaid),
-  continuation curves, recurrence plots, embedding diagnostics, spectrum plots.
-  One consistent style; every analysis result type knows how to draw itself
-  (`result.plot(ax=...)`).
-- **Interactive (`tsdynamics[interactive]`, plotly or pyqtgraph — decide by
-  prototype):** live trajectory explorer with parameter sliders, zoomable
-  orbit diagram with on-demand recomputation, click-to-seed Poincaré explorer,
-  cobweb diagrams for 1D maps, animated basin/continuation evolution.
-- Notebook-first: everything must look right in Jupyter; GUI windows optional.
+### Tier 0 — Foundation (small, fast, mostly sequential; UNBLOCKS EVERYONE)
 
-**Acceptance:** docs gallery with ≥ 15 one-snippet plots; interactive orbit
-diagram zoom-recompute demo.
+> Goal: in a handful of tight PRs, freeze every interface so Tiers 1–3 fan out.
+> Prefer to land these first; coordinate closely (few sessions, or one).
+
+| ID | Stream | Owns | Depends | Acceptance |
+|----|--------|------|---------|------------|
+| **F0** | Cargo **workspace** scaffold | `crates/Cargo.toml`, crate skeletons (`tsdyn-ir/vm/jit/solvers/engine/core`) with empty-but-compiling lib targets | — | `cargo build` over the workspace; CI builds it; existing `tsdynamics-core` behavior preserved or re-homed into `tsdyn-core`. |
+| **F1** | **IR contract** (`tsdyn-ir`) | the `Tape` types + builder + opcode set (migrate from today's vm.rs) | F0 | Opcodes documented; Python↔Rust round-trip test; the v2 tape semantics preserved (still matches symbolic RHS to 1e-15). |
+| **F2** | **Evaluator + Solver traits** | trait defs in `tsdyn-ir`/`tsdyn-solvers`, the registry mechanism (Rust auto-register + Python `solvers/` scan + `plugins.py` entry points), `Caps` flags | F1 | A dummy solver registers and is discoverable by name from Python; entry-point discovery loads an out-of-tree toy plugin in a test. |
+| **F3** | **Python package reorg skeleton** | the new directory tree (§4b) with modules created and imports re-pointed; `registry.py` extended to 4 registries | F0 | `import tsdynamics` works; full v2 test suite passes against moved paths (tests updated, no shims). |
+| **F4** | **Parallel-dev harness** | `STREAMS`/board automation, CI matrix split (rust-workspace job + python job + cross-validation job), worktree/branch conventions doc, the migration cross-validation scaffold (Rust-vs-v2 trajectory compare) | F0 | CI green on an empty change; a `make claim`/docs path for sessions; cross-validation harness runs on Lorenz. |
+
+### Tier 1 — Engine (Rust + the Python compile/run seam) — parallel after F2
+
+| ID | Stream | Owns | Depends | Parallel-with | Acceptance |
+|----|--------|------|---------|----------|------------|
+| **E1** | Interpreter evaluator (`tsdyn-vm`) | `crates/tsdyn-vm/**` | F1 | E2,E3,… | RHS+Jac eval matches v2 tape to 1e-15 over all 118 ODEs. |
+| **E2** | **Cranelift JIT** evaluator (`tsdyn-jit`) | `crates/tsdyn-jit/**` | F1,F2 | E1,E3,… | JIT eval == interpreter eval to ~1e-12 across catalogue; compile latency benchmarked; wheels still build with no LLVM. |
+| **E3** | Explicit solver family | `crates/tsdyn-solvers/explicit/**` (RK4, DP45/RK45, DOP853, Tsit5…) | F2 | E4,E5 | Each matches SciPy at tolerance; one file per method; all auto-registered. |
+| **E4** | Implicit/stiff solver family | `crates/tsdyn-solvers/implicit/**` (Rosenbrock, SDIRK/TR-BDF2, BDF) | F2 | E3,E5 | vs Radau/LSODA on Robertson/VdP/Oregonator; analytic-Jacobian path. |
+| **E5** | Engine core: integrate + ensembles + RNG | `crates/tsdyn-engine/**` | E1 | E3,E4 | single + rayon ensemble paths; seeded determinism (parallel==serial). |
+| **E6** | **Symbolic → IR compiler** (Python) | `tsdynamics/engine/compile.py` (migrate from rustcore.py emitter), `problem.py`, `run.py` | F1,F3 | E1–E5 | all families lower; Jacobian lowering with a.e. abs/sign resolution; backend select `interp|jit`. |
+| **E7** | PyO3 bindings (`tsdyn-core`) | `crates/tsdyn-core/**`, `tsdynamics/_rust` | E5,E6 | — | numpy zero-copy; GIL released; the documented Python engine API. |
+| **E-SDE** | **SDE** engine + solvers (NEW family) | `tsdyn-solvers/sde/**`, Wiener/RNG in engine, `families/stochastic.py` | E5, **§11-SDE decision** | E-DDE | Euler–Maruyama + Milstein; converges to known SDE moments (OU process, geometric BM); seeded ensembles. |
+| **E-DDE** | **DDE** engine (method of steps) | `tsdyn-engine/dde.rs` (history ring buffer + dense interp), `families/delay.py` | E5 | E-SDE | Mackey–Glass matches JiTCDDE within tol; constant + state-dependent delays. |
+| **E-MAP** | Maps on the engine | `families/discrete.py` + `tsdyn-engine` map loop | E5 | — | all 26 maps iterate natively; matches v2 Numba within fp tol. |
+
+### Tier 2 — Python core on the new engine — parallel after E6/E7 land
+
+| ID | Stream | Owns | Depends | Acceptance |
+|----|--------|------|---------|------------|
+| **C-FAM** | Family base classes on Rust engine | `families/continuous.py, delay.py, discrete.py, stochastic.py`, protocol | E6,E7 | subclass contract UNCHANGED; 149 systems integrate via Rust; registry family detection incl. `stochastic`. |
+| **C-SOLV** | Solver registry + selection + **auto-stiffness** | `tsdynamics/solvers/**` | F2,E3,E4 | `method=` resolves by name/caps; unknown → clear error; auto-detect picks implicit on stiff RHS; plugin solvers selectable. |
+| **C-DATA** | `Trajectory` + state-space data | `tsdynamics/data/**` (migrate sampling, set distances, KD-tree) | F3 | feature-parity with v2 `Trajectory`/`sampling`; the lingua franca every analysis consumes. |
+| **C-DERIV** | Derived systems on new engine | `tsdynamics/derived/**` | C-FAM,C-DATA | Poincaré/Stroboscopic/Tangent/Ensemble/Projected/Wrapped all green; `TangentSystem` is the one Lyapunov engine. |
+
+### Tier 3 — Analysis & data extraction — **the wide parallel front** (one session each)
+
+> These depend on Tier 2 contracts (`System`, `Trajectory`) but **not on each
+> other**. This is where many sessions run at once.
+
+| ID | Stream | Owns (`tsdynamics/…`) | Depends | Acceptance (literature-validated) |
+|----|--------|------------------------|---------|-----------|
+| **A-LYAP** | Lyapunov suite | `analysis/lyapunov/**` | C-DERIV | spectrum via TangentSystem; `max_lyapunov`; `lyapunov_from_data` (Kantz); Kaplan–Yorke. Lorenz D_KY≈2.06. |
+| **A-CHAOS** | Chaos indicators | `analysis/chaos/**` | C-DERIV | GALI_k (Skokos), 0–1 test (Gottwald–Melbourne), expansion entropy (Hunt–Ott). |
+| **A-FP** | Fixed points & periodic orbits | `analysis/fixedpoints/**`, `orbits/**` | C-DERIV | maps (have) + flows; Schmelcher–Diakonos / Davidchack–Lai; shooting for flows; `estimate_period`. |
+| **A-ORBIT** | Orbit/bifurcation + sections | `analysis/orbits/**` | C-DERIV | `orbit_diagram` over map/Poincaré/Stroboscopic; `poincare_section`. Logistic + Rössler-via-Poincaré. |
+| **A-BASIN** | **Attractors & basins (the moat)** | `analysis/basins/**` | C-DERIV, E5 | `find_attractors` (recurrence-FSM + featurize-cluster + proximity), `basins_of_attraction`, `basin_fractions`, basin entropy/uncertainty-exponent/Wada, global continuation + matching, tipping, resilience. Duffing & magnetic-pendulum basins; basin-fraction error <1% on ≥2 literature systems. *(Large — may sub-split into A-BASIN-find / -basins / -continuation.)* |
+| **A-DIM** | Fractal dimensions | `analysis/dimensions/**` | C-DATA | correlation sum + GP (Theiler window), box-assisted, generalized/Rényi, fixed-mass, automated scaling-region fit. Lorenz corr-dim≈2.05. |
+| **A-EMBED** | Delay embeddings | `analysis/embedding/**` | C-DATA | `embed`; delay (ACF/MI); dimension (Cao AFNN, Kennel FNN); multivariate. Reconstruct Rössler from x only. |
+| **A-ENT** | Entropy & complexity | `analysis/entropy/**` | C-DATA | permutation/sample/dispersion entropy + multiscale; composable (outcome-space × estimator × measure); integrate **lzcomplexity** (our LZ76 lib) as the LZ provider. |
+| **A-RQA** | Recurrence & RQA | `analysis/recurrence/**` | C-DATA | recurrence matrices (fixed ε / rate), RQA (DET, LAM, L_max, entropy, trapping), windowed; sparse + Rust kernel. |
+| **A-SURR** | Surrogates | `analysis/surrogate/**` | C-DATA | shuffle/FT/AAFT/IAAFT + `SurrogateTest(stat, x, method) → p`. Rejects linearity for Lorenz. |
+| **T-XFORM** | Transforms / feature extraction | `tsdynamics/transforms/**` | C-DATA | spectral (PSD, spectral entropy — migrate from lzcomplexity bridge), detrend/filter/normalize, generic feature extractors feeding analysis. |
+
+### Tier 4 — Infrastructure & migration — continuous, parallel-safe
+
+| ID | Stream | Owns | Depends | Acceptance |
+|----|--------|------|---------|------------|
+| **I-WHEEL** | Cross-platform wheels + packaging | maturin-action CI; decide one-wheel vs accelerator (§11) | E7 | manylinux + macOS(arm64/x86_64) + Windows wheels; `pip install tsdynamics` needs **no compiler**. |
+| **I-BENCH** | Benchmarks + perf tracking | `benches/**`, CI perf job | E5 | vs SciPy + (internally) the Julia baseline on Lorenz/Rössler/MackeyGlass/Lorenz-96 N=128/Robertson; time-to-first-result tracked. |
+| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** |
+| **I-DOCS** | Docs restructure (NOT viz) | `docs/**`, autogen hook updated to new layout | F3 | site builds `--strict`; per-system pages; tutorial "equations → basins"; citation lint rule. |
+| **I-QA** | Test/property/known-value harness | `tests/**` shared fixtures, hypothesis tests, known-value catalogue | F3 | registry-driven sweeps over new families; property tests for embeddings/dimensions. |
 
 ---
 
-## 7. Phase 7 — Ecosystem & credibility
+## 7. Milestones → the v3.0 gate (D7)
 
-- **Docs:** mkdocs-material site — tutorial ("from equations to basins in 10
-  minutes"), per-function reference with paper citations, theory notes, gallery,
-  benchmark page. Docstring citations enforced by lint rule.
-- **Quality:** property-based tests (hypothesis) for embeddings/dimensions;
-  cross-validation against published values catalogued in one test module;
-  deterministic seeding everywhere (`rng=` argument convention).
-- **Distribution:** conda-forge feedstock, versioned changelog, semver.
-- **Paper:** JOSS submission once Phases 2–4 land (the DDE Lyapunov + basins +
-  Rust backend combination is the headline).
-- **Performance marketing:** published, reproducible benchmark notebook vs the
-  Julia ecosystem and SciPy — speed *and* time-to-first-result (their JIT warmup
-  vs our precompiled wheels).
+Internal milestones stage the program; **v3.0 ships only when M6 is complete**
+(optionally preceded by `3.0.0bN` pre-releases off M4/M5).
+
+- **M0 — Foundations frozen:** F0–F4. Workspace builds; traits/registry/IR
+  frozen; package reorg in place; CI split + xval harness live. *Unblocks all.*
+- **M1 — Engine parity (ODE):** E1,E3,E4,E5,E6,E7 + C-FAM(ODE) + C-SOLV. ODEs
+  integrate on Rust through the new API, matching v2; interpreter path.
+- **M2 — JIT + all families:** E2 (Cranelift), E-MAP, E-DDE, E-SDE, C-DERIV.
+  Every family on the engine; JIT == interpreter; SDE family exists.
+- **M3 — Old engine retired:** I-XVAL green → remove JiTCODE/JiTCDDE/diffsol/
+  Numba. **D1 complete.** (Big internal moment.)
+- **M4 — Chaos quantification:** A-LYAP, A-CHAOS, A-FP, A-ORBIT + C-DATA.
+- **M5 — Parity moat:** A-BASIN, A-DIM, A-EMBED, A-ENT, A-RQA, A-SURR, T-XFORM.
+- **M6 — Launch readiness:** I-WHEEL, I-BENCH, I-DOCS, I-QA all green; parity
+  matrix (§8) all ✅ or consciously-deferred. **Cut v3.0.**
+
+```
+M0 ─┬─► M1 ─► M2 ─► M3 (engine done)
+    └─► (Tier-3 analysis A-* can start as soon as C-DERIV/C-DATA from M1/M2 land)
+M4 + M5 run largely in parallel across many sessions ─► M6 ─► v3.0
+```
 
 ---
 
-## 8. Differentiators to protect (why we win, not just tie)
+## 8. Parity matrix — reproduce-then-surpass
 
-1. **DDEs as first-class citizens** — integration *and* Lyapunov spectra. The
-   competition has zero DDE support in its unified interface.
-2. **Zero warmup** — prebuilt wheels + sub-second Cranelift JIT vs minutes of
-   session-start compilation latency.
-3. **Simplest system definition in any language** — `params` + `dim` +
-   `_equations`, already proven over 149 systems. Never regress this.
-4. **Python ecosystem gravity** — NumPy/pandas/sklearn/ML interop for free;
-   basin classifiers, surrogate ML models, neural operators all one import away.
-5. **149+ built-in systems** with literature defaults, growing.
+The benchmark ecosystem exposes ~550 functions around one idea: a single system
+abstraction every analysis consumes, plus composable derived systems. We match
+the **capabilities** with our own design; we do **not** copy code or names.
 
-## 9. Risks & mitigations
+| Capability cluster | Our home | Stream | v3.0? |
+|---|---|---|---|
+| Unified system interface + derived systems | `families/`, `derived/` | C-FAM, C-DERIV | ✅ (exists, re-homed) |
+| ODE/map integration, zero-warmup | `engine/`, `tsdyn-*` | E1–E7 | ✅ |
+| **DDE** integration + Lyapunov | `families/delay`, engine | E-DDE | ✅ (**differentiator**) |
+| **SDE** family | `families/stochastic` | E-SDE | ✅ (**competition is shallow here**) |
+| Lyapunov spectra / max / from-data | `analysis/lyapunov` | A-LYAP | ✅ |
+| GALI, 0–1 test, expansion entropy | `analysis/chaos` | A-CHAOS | ✅ |
+| Orbit/bifurcation diagrams, Poincaré | `analysis/orbits` | A-ORBIT | ✅ |
+| Fixed/periodic orbits | `analysis/fixedpoints` | A-FP | ✅ |
+| **Attractors, basins, continuation, tipping, resilience** | `analysis/basins` | A-BASIN | ✅ (**the moat**) |
+| Fractal dimensions | `analysis/dimensions` | A-DIM | ✅ |
+| Delay embeddings | `analysis/embedding` | A-EMBED | ✅ |
+| Entropy/complexity (+ LZ via lzcomplexity) | `analysis/entropy` | A-ENT | ✅ |
+| Recurrence / RQA | `analysis/recurrence` | A-RQA | ✅ |
+| Surrogates + tests | `analysis/surrogate` | A-SURR | ✅ |
+| Visualization | `viz/` | — | ❌ deferred (D6) → 3.x |
+
+**Our additions over the benchmark (build into the design now, fill later):**
+first-class DDE+SDE in the *same* interface; zero session warmup (interpreter)
+with native speed on demand (JIT); Python ecosystem gravity
+(numpy/pandas/sklearn/ML interop free); the simplest definition contract; 149+
+built-in systems; an **external plugin ecosystem** (D4) the benchmark lacks.
+
+---
+
+## 9. Migration plan (D1 — total replacement, no shims D3)
+
+1. New engine lands **alongside** v2 backends behind the new `engine/run.py`.
+2. **I-XVAL** continuously compares Rust vs v2 trajectories + Lyapunov across the
+   whole catalogue; gate = all within tolerance, literature values reproduced.
+3. On a green gate (M3), **delete** JiTCODE, JiTCDDE, Numba-map and diffsol code
+   paths and dependencies; drop the C-compiler requirement and the
+   `~/.cache/tsdynamics` compile cache. Update docs/CLAUDE.md.
+4. `tsdynamics` becomes a **compiled (maturin) package** shipping wheels
+   (I-WHEEL). Confirm the one-wheel-vs-accelerator packaging in §11 before M3.
+
+---
+
+## 10. Risks & mitigations
 
 | Risk | Mitigation |
 |---|---|
-| DiffSL can't express some RHS (heavy branching) | Numba-cfunc pointer escape hatch; keep symbolic→C fallback until parity proven |
-| `differential-equations` crate is young (one maintainer) | vendor the DDE module; cross-validate against JiTCDDE before switching defaults; upstream fixes |
-| Basin/continuation phase is research-grade work | implement against published reference results; keep scope per-release small (finder → basins → continuation) |
-| Scope explosion (550-function target) | phases gated by acceptance criteria; analysis functions land only with literature-validated tests |
-| Breaking users during backend swap | `backend=` flag + one deprecation cycle; trajectory cross-validation suite in CI |
+| Interfaces churn → breaks parallel streams | M0 freezes them; changes only via `[interface]` PRs with a heads-up. |
+| Cranelift JIT diverges numerically from interpreter | mandatory eval-equality test in E2; interpreter is the reference. |
+| DDE in Rust is hard (history, dense interp) | E-DDE migrated last (M2); keep JiTCDDE until xval-green; vendor/borrow a vetted method-of-steps. |
+| Removing v2 backends regresses a system | I-XVAL gate is mandatory before any deletion; deletion is its own reviewed PR. |
+| Scope explosion (parity = many functions) | milestones gated by literature-validated acceptance; analysis lands only with a validated test. |
+| Parallel sessions collide | worktrees + one-file-per-thing + append-only shared files + auto-discovery (§4e). |
+| SDE contract chosen wrong (permanent API) | resolve §11-SDE before E-SDE; pick the diagonal-Itô default unless told otherwise. |
 
-## 10. Suggested order of attack
+---
 
-1. **Now:** Phase 1 (protocol + derived systems + Trajectory + housekeeping) — pure
-   Python, immediately unlocks Phase 3 features even on the old backend.
-2. **Parallel track:** Phase 2 prototype — SymEngine→DiffSL translator + pydiffsol
-   spike on Lorenz/Rössler/Robertson to de-risk before writing our own bindings.
-3. Phase 3 → 4 → 5 in order (4 is the moat; 5 is parallelizable among contributors).
-4. Phase 6 starts as soon as Phase 3 produces plottable results (gallery-driven
-   development).
-5. Phase 7 continuous, JOSS after 4.
+## 11. Open decisions (resolve via `[decision]` PR + maintainer note; don't block siblings)
+
+- **SDE noise contract** *(needed by E-SDE)* — diagonal-Itô (`_drift` +
+  `_diffusion` per-component, EM+Milstein) is the recommended default; matrix /
+  scalar / Stratonovich variants are alternatives. **Maintainer to confirm.**
+- **Cranelift JIT trigger** *(E2/E6)* — manual `backend="jit"` first; later an
+  auto-heuristic (system size × run length × sweep count). Ship manual, then
+  auto.
+- **Packaging shape** *(I-WHEEL/M3)* — one `tsdynamics` maturin wheel vs keeping
+  a separable accelerator. Total replacement (D1) points to one wheel; confirm
+  before M3.
+- **Top-level `__all__`** *(F3)* — finalize the curated public surface during the
+  reorg; keep it small and obvious.
+- **lzcomplexity integration** *(A-ENT/T-XFORM)* — vendor vs optional dependency
+  for the LZ76/spectral providers.
+
+---
+
+## 12. Differentiators to protect (never regress)
+
+1. **DDEs and SDEs as first-class citizens** in the one interface — integration
+   *and* Lyapunov. The benchmark has no DDEs and shallow SDEs.
+2. **Zero warmup** (interpreter) *plus* native speed on demand (Cranelift JIT) —
+   vs minutes of session-start compilation elsewhere.
+3. **Simplest system definition in any language** — `params` + `dim` +
+   `_equations`/`_step`. Proven over 149 systems. Never make it harder.
+4. **Python ecosystem gravity** — numpy/pandas/sklearn/ML one import away.
+5. **Pluggable everything** (D4) — an external ecosystem the benchmark can't
+   match from a monolith.
+
+---
+
+*Keep this file current: when a stream flips state, edit its row in §6 (one
+line). When a milestone completes, tick it in §7. The plan below the decisions
+is the destination; §2 and the board are the position.*
