@@ -183,3 +183,8 @@ crates/*/dist/
 crates/*/.venv/
 
 crates/*/uv.lock
+
+# Per-stream parallel-dev git worktrees (ROADMAP §5). Kept inside the project
+# (not the parent directory, which holds unrelated projects) and ignored so the
+# superproject's `git status` and the parent folder stay clean.
+.claude/worktrees/
