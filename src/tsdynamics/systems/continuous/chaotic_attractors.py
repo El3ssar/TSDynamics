@@ -581,7 +581,7 @@ class RabinovichFabrikant(ContinuousSystem):
     def _jacobian(Y, t, *, a, g):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [2 * x * y + g, z - 1 + x**2, y]
-        row2 = [3 * z + 1 - x**2, g, 3 * x]
+        row2 = [3 * z + 1 - 3 * x**2, g, 3 * x]
         row3 = [-2 * y * z, -2 * x * z, -2 * (a + x * y)]
         return row1, row2, row3
 
@@ -602,7 +602,7 @@ class Dadras(ContinuousSystem):
     def _jacobian(Y, t, c, e, o, p, r):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [-p, 1 + o * z, o * y]
-        row2 = [-z, r, -x]
+        row2 = [-z, r, 1 - x]
         row3 = [c * y, c * x, -e]
         return row1, row2, row3
 
@@ -1068,7 +1068,7 @@ class SprottMore(ContinuousSystem):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [0, 1, 0]
         row2 = [-1, -sign(z), 0]
-        row3 = [-2 * x * exp(-(x**2)), 2 * y, 0]
+        row3 = [2 * x * exp(-(x**2)), 2 * y, 0]
         return row1, row2, row3
 
 

@@ -169,7 +169,7 @@ class Zaslavskii(DiscreteMap):
         x, y = X
         mu = (1 - np.exp(-r)) / r
 
-        dxpdx = nu * (1 + mu * y) - 2 * np.pi * eps * nu * mu * np.sin(2 * np.pi * x)
+        dxpdx = 1 - 2 * np.pi * eps * nu * mu * np.sin(2 * np.pi * x)
         dxpdy = nu * mu
 
         dypdx = -2 * np.pi * eps * np.exp(-r) * np.sin(2 * np.pi * x)
@@ -193,9 +193,10 @@ class Chirikov(DiscreteMap):
 
     @staticjit
     def _jacobian(X, k):
+        # x' = x + p' inherits the p'-row derivatives
         p, x = X
         row1 = [1, k * np.cos(x)]
-        row2 = [1, 1]
+        row2 = [1, 1 + k * np.cos(x)]
         return row1, row2
 
 
@@ -221,12 +222,12 @@ class FoldedTowel(DiscreteMap):
     @staticjit
     def _jacobian(X, a, b, c, d, e, f, g):
         x, y, z = X
-        row1 = [a * (1 - 2 * x), -b * (1 - 2 * z), 2 * b * (y - c)]
+        row1 = [a * (1 - 2 * x), -b * (1 - 2 * z), 2 * b * (y + c)]
 
         row2 = [
-            -d * e * ((y - c) * (1 + 2 * z) - 1),
+            -d * e * ((y + c) * (1 + 2 * z) - 1),
             d * (1 + 2 * z) * (1 - e * x),
-            2 * d * (y - c) * (1 - e * x),
+            2 * d * (y + c) * (1 - e * x),
         ]
 
         row3 = [0, g, f * (1 - 2 * z)]
@@ -252,7 +253,7 @@ class GeneralizedHenon(DiscreteMap):
     @staticjit
     def _jacobian(X, a, b):
         x, y, z = X
-        row1 = [0, -2 * y, b]
+        row1 = [0, -2 * y, -b]
         row2 = [1, 0, 0]
         row3 = [0, 1, 0]
 

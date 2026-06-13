@@ -17,9 +17,12 @@ class Bogdanov(DiscreteMap):
 
     @staticjit
     def _jacobian(X, eps, k, mu):
+        # x' = x + y' inherits the y'-row derivatives
         x, y = X
-        row1 = [1, 1 + eps + mu * x]
-        row2 = [2 * k * x - k * x + mu * y, 1 + eps + mu * x]
+        dyp_dx = k * (2 * x - 1) + mu * y
+        dyp_dy = 1 + eps + mu * x
+        row1 = [1 + dyp_dx, dyp_dy]
+        row2 = [dyp_dx, dyp_dy]
         return row1, row2
 
 
@@ -57,8 +60,8 @@ class Bedhead(DiscreteMap):
     def _jacobian(X, a, b):
         x, y = X
         row1 = [
-            y * np.cos(x * y / b) / b - a * np.sin(a * x - y),
-            np.sin(x * y / b) + y * np.cos(a * x - y) + np.sin(a * x - y),
+            y**2 * np.cos(x * y / b) / b - a * np.sin(a * x - y),
+            np.sin(x * y / b) + x * y * np.cos(x * y / b) / b + np.sin(a * x - y),
         ]
         row2 = [1, np.cos(y) / b]
         return row1, row2
@@ -112,11 +115,11 @@ class GumowskiMira(DiscreteMap):
 
         dxdy = b
 
-        dydx = dxdx * (
-            a + (4 * (1 - a) * xp) / (1 + xp**2) - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2 - 1
-        )
+        # y' = G(x') - x  →  dy'/dx = G'(x')·dx'/dx - 1,  dy'/dy = G'(x')·b
+        gprime_xp = a + (4 * (1 - a) * xp) / (1 + xp**2) - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2
+        dydx = dxdx * gprime_xp - 1
 
-        dydy = b * (a + (4 * (1 - a) * xp) / (1 + xp**2) - (4 * (1 - a) * xp**3) / (1 + xp**2) ** 2)
+        dydy = b * gprime_xp
 
         row1 = [dxdx, dxdy]
         row2 = [dydx, dydy]
