@@ -175,3 +175,11 @@ src/tsdynamics/_version.py
 # Generated docs artifacts (figures render at build time, cache in .cache/)
 docs/assets/figures/systems/
 site/
+
+# Rust core crate build artifacts (Cargo.lock IS committed for reproducible
+# wheel builds — the crate ships a distributable artifact).
+crates/*/target/
+crates/*/dist/
+crates/*/.venv/
+
+crates/*/uv.lock
