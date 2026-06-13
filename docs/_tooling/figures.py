@@ -92,19 +92,39 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
 
     blowup.terminal = True
 
+    class _BudgetExceeded(Exception):
+        pass
+
     ic = _resolve_ic(sys_obj, opts.get("ic"))
     for attempt in range(4):
         if ic is None or attempt > 0:
             ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
-        sol = solve_ivp(
-            lambda t, u: rhs(u, t),
-            (0.0, final_time),
-            np.asarray(ic, dtype=float),
-            t_eval=np.arange(0.0, final_time, dt),
-            rtol=1e-7,
-            atol=1e-9,
-            events=blowup,
-        )
+
+        # Hard wall-time guard: a stiff or pathological system must not stall
+        # the whole docs build — cap the RHS evaluation budget per attempt.
+        calls = 0
+
+        def rhs_capped(t, u):
+            nonlocal calls
+            calls += 1
+            if calls > 300_000:
+                raise _BudgetExceeded
+            return rhs(u, t)
+
+        try:
+            sol = solve_ivp(
+                rhs_capped,
+                (0.0, final_time),
+                np.asarray(ic, dtype=float),
+                t_eval=np.arange(0.0, final_time, dt),
+                method="LSODA",  # auto stiff/non-stiff switching
+                rtol=1e-7,
+                atol=1e-9,
+                events=blowup,
+            )
+        except _BudgetExceeded:
+            ic = None
+            continue
         y = sol.y.T
         diverged = sol.status == 1 or not np.all(np.isfinite(y))  # event fired
         if sol.success and not diverged and len(y) > 50 and np.max(np.abs(y)) < 1e6:

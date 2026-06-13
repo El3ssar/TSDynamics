@@ -110,6 +110,32 @@ A related helper, `_rhs_numeric()`, exposes a fast numeric `f(u, t)` used
 by the [Poincaré crossing refinement](../analysis/poincare.md) — the
 compiled JiTCODE path remains the integrator of record.
 
+## The diffsol backend (experimental)
+
+`integrate(backend="diffsol")` skips the C toolchain entirely: the same
+symbolic equations are translated to a small solver DSL, JIT-compiled
+through LLVM at runtime, and integrated by Rust solver kernels (Tsit45 for
+non-stiff work; BDF / TR-BDF2 / ESDIRK34 for stiff problems). Initial
+conditions and parameters are solve-time inputs, so one compiled module per
+system serves every run.
+
+Indicative numbers (Lorenz, 1000 time units, `rtol=1e-9`, 100 000 output
+points, warm caches, one machine):
+
+| backend | wall time | cold start |
+|---|---|---|
+| `jitcode` (dopri5) | 1.72 s | seconds (C compiler) |
+| `diffsol` (tsit45) | **0.16 s** | **0.07 s** (LLVM JIT) |
+
+Cross-validation against the JiTCODE path is part of the test suite
+(`tests/test_diffsol_backend.py`). The backend is experimental: ODEs only,
+and the right-hand side must use functions the DSL provides — unsupported
+constructs raise a clear `DiffSLTranslationError`.
+
+```bash
+pip install "tsdynamics[diffsol]"
+```
+
 ## See also
 
 - [Install](../start/install.md) — the C toolchain requirement
