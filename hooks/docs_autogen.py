@@ -84,13 +84,15 @@ def _system_page(entry, fig_path: Path | None) -> str:
         depth = family_dir.count("/") + 2  # family dir + category dir
         rel = "../" * depth + f"assets/figures/systems/{entry.name}.png"
         parts += [
-            f'<figure markdown="span">',
+            '<figure markdown="span">',
             f'  <img src="{rel}" alt="{entry.name} attractor" loading="lazy">',
-            f"</figure>",
+            "</figure>",
             "",
         ]
 
-    call = "iterate(steps=10_000)" if entry.family == "map" else "integrate(final_time=100.0, dt=0.01)"
+    call = (
+        "iterate(steps=10_000)" if entry.family == "map" else "integrate(final_time=100.0, dt=0.01)"
+    )
     parts += [
         "## Usage",
         "",

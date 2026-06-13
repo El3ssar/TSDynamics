@@ -108,7 +108,7 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
 
     blowup.terminal = True
 
-    class _BudgetExceeded(Exception):
+    class _BudgetError(Exception):
         pass
 
     ic = _resolve_ic(sys_obj, opts.get("ic"))
@@ -124,7 +124,7 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
             nonlocal calls
             calls += 1
             if calls > 300_000:
-                raise _BudgetExceeded
+                raise _BudgetError
             return rhs(u, t)
 
         try:
@@ -140,7 +140,7 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
                 atol=1e-9,
                 events=blowup,
             )
-        except _BudgetExceeded:
+        except _BudgetError:
             ic = None
             continue
         y = sol.y.T

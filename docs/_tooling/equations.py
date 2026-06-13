@@ -110,8 +110,7 @@ def _map_latex(entry) -> str:
     out = fn(X, *params)  # NumPy calls on sympy symbols raise → fallback
     out_list = [out] if dim == 1 and not isinstance(out, tuple | list) else list(out)
     lines = [
-        rf"{n}' &= {sympy.latex(sympy.sympify(e))}"
-        for n, e in zip(names, out_list, strict=True)
+        rf"{n}' &= {sympy.latex(sympy.sympify(e))}" for n, e in zip(names, out_list, strict=True)
     ]
     return _aligned(lines)
 
