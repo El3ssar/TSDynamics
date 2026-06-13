@@ -11,6 +11,39 @@ calendar. Each phase has acceptance criteria so progress is measurable.
 
 ---
 
+## Status — as of v2.1.0
+
+> Single source of truth for *where we are*. Update this block when a phase
+> moves. The plan below this section is the destination; this is the position.
+
+**Shipped to PyPI:** v2.0.0 (platform relaunch) · v2.0.1 (Blasius basin fix) ·
+v2.1.0 (Phase-1 tail). Release + docs deploy are automated on every push to
+`main` (python-semantic-release + GitHub Pages) and proven end-to-end. Docs
+live at <https://el3ssar.github.io/TSDynamics/>.
+
+| Phase | State | Notes |
+|---|---|---|
+| **1 — Core abstraction** | ✅ **done** | `System` protocol on all families; `PoincareMap`/`StroboscopicMap`/`TangentSystem`/`EnsembleSystem`/`ProjectedSystem`/`WrappedSystem`; `Trajectory` (named components, KD-tree, set distances, provenance `MetaStore`); `tsdynamics.sampling` (Box/Ball/Grid, samplers, `grid_points`, `set_distance`); symbolic Jacobian autogen (13 real bugs fixed); registry-driven tests. *Deferred:* route per-family `lyapunov_spectrum` through `TangentSystem`; parallelize `EnsembleSystem`. |
+| **2 — Rust backend** | 🟡 **~25%** | `backend="diffsol"` spike works + cross-validated + benchmarked (~11× on Lorenz). *Left:* the real `tsdynamics-core` PyO3/maturin crate, Cranelift DiffSL in **prebuilt wheels** (zero-compiler install — JiTCODE is still default), Rust **DDE** solver, **SDE** family, rayon ensembles, `benches/` in CI. |
+| **3 — Chaos quantification** | 🟡 **~50%** | Done: `orbit_diagram`, `poincare_section`, `max_lyapunov`, `kaplan_yorke_dimension`, `fixed_points` (maps), `lyapunov_spectrum` dispatcher. *Left:* `lyapunov_from_data` (Kantz), GALI, 0–1 test, expansion entropy, periodic orbits, `estimate_period`, `fixed_points` for flows. |
+| **4 — Attractors & basins (the moat)** | ⬜ **0%** | **Next milestone.** Depends only on Phase 1 (done) — *not* on 2 or 3. |
+| **5 — Time-series & geometry** | ⬜ **0%** | embeddings, fractal dimensions, entropy/complexity, recurrence, surrogates. |
+| **6 — Visualization** | ⬜ **0%** (user-facing) | figure tooling exists inside the docs build; no `tsdynamics.plot` module yet. |
+| **7 — Ecosystem & credibility** | 🟡 **~40%** | docs site + citations + known-value tests + semantic-release done. *Left:* docstring-citation lint rule, hypothesis tests, conda-forge, benchmark notebook, JOSS. |
+
+**Dependency reality (not the numbering):** Phase 4's prerequisites are all in
+Phase 1, which is complete. **Phase 2 (Rust) is a *performance* multiplier for
+Phase 4, not a prerequisite** — basins run on the current JiTCODE backend, just
+slower at large grid sizes (the cheap mitigation is parallelizing
+`EnsembleSystem`, a deferred Phase-1 item, not the full Rust migration). The
+**rest of Phase 3 is independent of Phase 4** — neither blocks the other. So
+Phase 4 can proceed now; do Phase 2 as a parallel track.
+
+**Open follow-ups:** Dependabot security alerts on the repo (7); parallelize
+`EnsembleSystem` if basin compute is slow.
+
+---
+
 ## 0. Where we are (audit summary, June 2026)
 
 **Strong (keep):**
