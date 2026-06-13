@@ -61,3 +61,10 @@ jobs:
 
       - name: build
         run: cargo build --workspace --locked
+
+      # Added by stream F1: the IR contract ships round-trip / semantics tests
+      # that must run in CI for `main` to be releasable. `--all-features` also
+      # exercises the off-by-default `reference` evaluator. F4 can fold this into
+      # the unified matrix.
+      - name: test
+        run: cargo test --workspace --all-features --locked

@@ -6,4 +6,13 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-# Leaf crate: no dependencies (the IR is the root of the engine build graph).
+# Leaf crate: no runtime dependencies (the IR is the root of the engine build
+# graph). The `reference` feature pulls in nothing — it is std-only.
+
+[features]
+# Off by default: keeps the published surface "pure data + builder" (ROADMAP
+# §4a). Enables `tsdyn_ir::reference`, the canonical reference evaluator used to
+# validate the IR and as an oracle for the production evaluators (tsdyn-vm /
+# tsdyn-jit). The crate's golden/coverage tests require it (`--features
+# reference`, or `--all-features`).
+reference = []
