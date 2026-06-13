@@ -1,6 +1,10 @@
 name: CI
 
-# PR gate: lint + tests. Pushes to main are covered by release.yml's test job.
+# PR gate: lint + tests, but SCOPE-AWARE — the Python lint/test matrix only runs
+# when Python or test code actually changes. Docs-only or Rust-only PRs skip it
+# (Rust is covered by rust-core.yml, which is itself path-scoped). The always-on
+# "CI summary" job is the single stable check to gate merges on: it is green when
+# every required job either passed or was legitimately skipped.
 on:
   pull_request:
     branches: [main]
@@ -10,9 +14,38 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  # Detect what changed so we can skip out-of-scope work.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'src/**'
+              - 'tests/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/ci.yml'
+        # NOTE: the Rust crate (crates/**) is intentionally NOT here — it has no
+        # effect on the pure-Python test suite today and is validated by
+        # rust-core.yml. Revisit when the Rust engine becomes load-bearing for
+        # Python (ROADMAP stream I-XVAL / milestone M3).
+
   lint:
     name: Lint (ruff)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -36,6 +69,8 @@ jobs:
 
   test:
     name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -73,3 +108,25 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
         continue-on-error: true
+
+  # Single stable status check to require for merge. Green iff every required
+  # job passed OR was skipped (out-of-scope). Fails if any of them failed or was
+  # cancelled. Configure branch protection (if any) to require ONLY this check.
+  ci-summary:
+    name: CI summary
+    if: always()
+    needs: [changes, lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on required jobs
+        run: |
+          echo "changes=${{ needs.changes.result }} lint=${{ needs.lint.result }} test=${{ needs.test.result }}"
+          for r in "${{ needs.changes.result }}" "${{ needs.lint.result }}" "${{ needs.test.result }}"; do
+            case "$r" in
+              failure|cancelled)
+                echo "::error::a required job did not pass ($r)"
+                exit 1
+                ;;
+            esac
+          done
+          echo "CI OK — passed or skipped (skips are expected for out-of-scope changes)."
