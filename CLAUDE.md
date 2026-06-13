@@ -84,7 +84,12 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
 - Analysis: `orbit_diagram`, `OrbitDiagram`, `poincare_section`,
   `lyapunov_spectrum`, `max_lyapunov`, `kaplan_yorke_dimension`,
   `fixed_points`, `FixedPoint`
-- Submodules: `analysis`, `base`, `derived`, `registry`, `systems`, `utils`
+- Derived: `WrappedSystem` (adapt any external stepper to the protocol)
+- State-space geometry (`sampling`): `Box`, `Ball`, `Grid`, `sampler`,
+  `grid_points`, `set_distance` — the primitives the basin/attractor layer
+  builds on (Monte-Carlo + full-grid sampling, attractor-matching distances)
+- Submodules: `analysis`, `base`, `derived`, `registry`, `sampling`,
+  `systems`, `utils`
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.base`; `staticjit` via `tsdynamics.utils`.

@@ -23,7 +23,7 @@ analysis functions.  Internal helpers (``ParamSet``, ``SystemBase``,
 ``staticjit``) live under ``tsdynamics.base`` / ``tsdynamics.utils``.
 """
 
-from . import analysis, base, derived, registry, systems, utils
+from . import analysis, base, derived, registry, sampling, systems, utils
 from .analysis import (
     FixedPoint,
     OrbitDiagram,
@@ -41,7 +41,9 @@ from .derived import (
     ProjectedSystem,
     StroboscopicMap,
     TangentSystem,
+    WrappedSystem,
 )
+from .sampling import Ball, Box, Grid, grid_points, sampler, set_distance
 from .systems import continuous as _continuous
 from .systems import discrete as _discrete
 
@@ -71,6 +73,7 @@ __all__ = [
     "ProjectedSystem",
     "StroboscopicMap",
     "TangentSystem",
+    "WrappedSystem",
     # Analysis toolkit
     "FixedPoint",
     "OrbitDiagram",
@@ -80,11 +83,19 @@ __all__ = [
     "max_lyapunov",
     "orbit_diagram",
     "poincare_section",
+    # State-space geometry (regions, samplers, set distances)
+    "Ball",
+    "Box",
+    "Grid",
+    "grid_points",
+    "sampler",
+    "set_distance",
     # Sub-namespaces (for ``tsdynamics.systems.continuous.chaotic_attractors`` etc.)
     "analysis",
     "base",
     "derived",
     "registry",
+    "sampling",
     "systems",
     "utils",
     # All built-in systems

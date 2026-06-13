@@ -271,10 +271,12 @@ class Trajectory:
 
     @property
     def variables(self) -> tuple[str, ...] | None:
-        """Component names declared by the system class, if any."""
+        """Component names declared by the system (instance attr or class ClassVar)."""
         if self.system is None:
             return None
-        return getattr(type(self.system), "variables", None)
+        # Instance lookup falls back to the ClassVar for the built-in families,
+        # and also honours per-instance names (e.g. WrappedSystem).
+        return getattr(self.system, "variables", None)
 
     def _component_index(self, name: str) -> int:
         names = self.variables
@@ -379,6 +381,18 @@ class Trajectory:
         if self._kdtree is None:
             self._kdtree = cKDTree(self.y)
         return self._kdtree.query(np.asarray(q, dtype=float), k=k)
+
+    def set_distance(self, other: Any, *, method: str = "centroid") -> float:
+        """
+        Distance to another point set (Trajectory or array), as a set.
+
+        ``method`` is ``"centroid"`` (default), ``"hausdorff"``, or
+        ``"minimum"`` — see :func:`tsdynamics.sampling.set_distance`.  The
+        matching primitive behind attractor deduplication and continuation.
+        """
+        from tsdynamics.sampling import set_distance
+
+        return set_distance(self, other, method=method)
 
     def __repr__(self) -> str:
         return (
