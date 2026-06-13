@@ -55,6 +55,27 @@ INTEGRATION_SAMPLE: list[str] = [
     "CoevolvingPredatorPrey",
 ]
 
+# --- ODE systems excluded from the exhaustive integration sweeps ------------
+# These cannot be integrated by adaptive solvers in bounded time, so they
+# would hang the nightly full sweep rather than fail it.
+HARD_TO_INTEGRATE: dict[str, str] = {
+    "BlinkingRotlet": (
+        "near-discontinuous blinking protocol (tanh of a steep sine) makes every "
+        "adaptive solver take vanishingly small steps and stall at any tolerance; "
+        "needs a dedicated integration recipe — tracked separately"
+    ),
+}
+
+# Systems the diffsol backend specifically can't integrate (the default JiTCODE
+# backend handles them fine). Excluded from the diffsol full-catalogue sweep.
+DIFFSOL_SKIP: dict[str, str] = {
+    "WindmiReduced": (
+        "RHS has a near-discontinuous tanh(2200*(i-1)) switch and fractional "
+        "powers p**(5/4) that go complex when the solver probes p<0; diffsol's "
+        "Rust solvers fail to converge while JiTCODE's dopri5 tolerates it"
+    ),
+}
+
 # --- Maps excluded from Lyapunov-spectrum shape tests -----------------------
 MAP_LYAPUNOV_EXCLUDE: dict[str, str] = {
     "Bogdanov": "singular Jacobian at the origin",

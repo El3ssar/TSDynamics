@@ -13,6 +13,9 @@ on:
 jobs:
   full-sweep:
     runs-on: ubuntu-latest
+    # Hard cap so a pathological system fails the run in minutes instead of
+    # hanging for the full 6-hour GitHub Actions ceiling.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
