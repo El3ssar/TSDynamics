@@ -1,14 +1,33 @@
-//! The [`Interpreter`] — the stack-machine `Evaluator` over an IR [`Tape`],
-//! plus its reusable [`Scratch`] register file.
+//! The [`Interpreter`] — the stack-machine evaluator over an IR [`Tape`].
 //!
 //! An interpreter walks the tape in one linear pass: instruction `i` reads the
 //! registers earlier instructions wrote and stores its own result in register
 //! `i` (single static assignment — the [`Tape`] guarantees the references only
-//! point backwards). The register file is the only working memory, so the hot
-//! loop allocates nothing once a [`Scratch`] exists. There is no callback into
-//! Python and no shared mutable state, so an `&Interpreter` is [`Sync`]: an
-//! ensemble shares one interpreter across rayon workers, each with its own
-//! [`Scratch`] (ROADMAP §4c).
+//! point backwards). A caller-owned **scratch** slice is that register file, so
+//! the hot loop allocates nothing. There is no callback into Python and no
+//! shared mutable state, so an `&Interpreter` is [`Sync`]: an ensemble builds one
+//! interpreter and shares it across rayon workers, each owning its own scratch
+//! buffer — exactly the v2 engine's build-once / per-worker-`Workspace` pattern
+//! (ROADMAP §4c).
+//!
+//! # Surface mirrors the engine `Evaluator` seam
+//!
+//! The method surface here — [`dim`], [`n_param`], [`n_scratch`],
+//! [`has_jacobian`], [`eval`], [`eval_jac`] — deliberately matches the
+//! object-safe `Evaluator` trait the engine and solvers dispatch through
+//! (`&dyn Evaluator`, frozen by stream F2 in `tsdyn-ir`). The interpreter is the
+//! register-file evaluator, so `n_scratch()` is the tape's register count; the
+//! JIT (stream E2) will report `0`. Once the F2 trait lands on `main`, wiring it
+//! up is a one-line `impl Evaluator for Interpreter` that forwards to these
+//! inherent methods — E1 builds only against the frozen F1 IR and does not take
+//! that dependency itself.
+//!
+//! [`dim`]: Interpreter::dim
+//! [`n_param`]: Interpreter::n_param
+//! [`n_scratch`]: Interpreter::n_scratch
+//! [`has_jacobian`]: Interpreter::has_jacobian
+//! [`eval`]: Interpreter::eval
+//! [`eval_jac`]: Interpreter::eval_jac
 //!
 //! # Relationship to the reference evaluator
 //!
@@ -24,51 +43,6 @@
 
 use tsdyn_ir::{Op, Tape};
 
-/// The register file an [`Interpreter`] writes as it walks a tape — one `f64`
-/// per instruction.
-///
-/// Sized once with [`Scratch::for_tape`] and reused across steps and across
-/// trajectories: every register is overwritten before it is read within a single
-/// evaluation, so a dirty buffer left over from a previous call yields identical
-/// results (the `reused_scratch_is_deterministic` test pins this). Keeping the
-/// buffer caller-owned is what lets [`Interpreter::eval`] take `&self` and run
-/// allocation-free inside a parallel ensemble.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Scratch {
-    regs: Vec<f64>,
-}
-
-impl Scratch {
-    /// A register file sized for `tape` (one slot per instruction), zero-filled.
-    #[inline]
-    pub fn for_tape(tape: &Tape) -> Self {
-        Scratch {
-            regs: vec![0.0; tape.n_reg()],
-        }
-    }
-
-    /// Number of registers.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.regs.len()
-    }
-
-    /// Whether the register file is empty (a tape with no instructions).
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.regs.is_empty()
-    }
-
-    /// Grow or shrink the register file to fit `tape`, reusing the allocation.
-    ///
-    /// Lets one `Scratch` be retargeted when a worker moves between tapes of
-    /// different sizes without freeing and reallocating the buffer.
-    #[inline]
-    pub fn resize_for(&mut self, tape: &Tape) {
-        self.regs.resize(tape.n_reg(), 0.0);
-    }
-}
-
 /// A tape evaluator that interprets the instruction stream directly.
 ///
 /// Construct one from a validated [`Tape`]; it owns the tape and exposes the two
@@ -78,7 +52,8 @@ impl Scratch {
 /// - [`eval_jac`](Interpreter::eval_jac) — `du/dt` and the analytic Jacobian in
 ///   one pass, the implicit/stiff-solver path.
 ///
-/// Both take a caller-owned [`Scratch`] and write into caller-owned output
+/// Both take a caller-owned `scratch` register file of length
+/// [`n_scratch`](Interpreter::n_scratch) and write into caller-owned output
 /// slices, so a hot loop reuses every buffer. The [`eval_alloc`] /
 /// [`eval_jac_alloc`] convenience methods allocate their own scratch for one-off
 /// calls and tests.
@@ -103,23 +78,31 @@ impl Interpreter {
         &self.tape
     }
 
-    /// System dimension (number of derivative outputs).
+    /// System dimension — the length of `u`, `deriv`, and `√(jac.len())`.
     #[inline]
     pub fn dim(&self) -> usize {
         self.tape.dim()
     }
 
-    /// Whether the tape carries an analytic Jacobian (see
-    /// [`Interpreter::eval_jac`]).
+    /// Declared parameter width — the expected length of `p`.
+    #[inline]
+    pub fn n_param(&self) -> usize {
+        self.tape.n_param()
+    }
+
+    /// Length of the `scratch` register file [`eval`](Interpreter::eval)
+    /// requires — the tape's instruction (register) count. Size one buffer per
+    /// worker from this and reuse it across every step.
+    #[inline]
+    pub fn n_scratch(&self) -> usize {
+        self.tape.n_reg()
+    }
+
+    /// Whether the tape carries an analytic Jacobian (so
+    /// [`eval_jac`](Interpreter::eval_jac) is meaningful).
     #[inline]
     pub fn has_jacobian(&self) -> bool {
         self.tape.has_jacobian()
-    }
-
-    /// A fresh [`Scratch`] sized for this interpreter's tape.
-    #[inline]
-    pub fn scratch(&self) -> Scratch {
-        Scratch::for_tape(&self.tape)
     }
 
     /// Walk the tape, filling the register file `regs`.
@@ -173,25 +156,27 @@ impl Interpreter {
     /// Evaluate `du/dt` at `(u, p, t)` into `deriv`, using `scratch` as the
     /// working register file.
     ///
-    /// `u` must have at least the tape's declared state width, `p` its parameter
-    /// width, `deriv` exactly [`dim`](Interpreter::dim), and `scratch` must be
-    /// sized for this tape (use [`scratch`](Interpreter::scratch)). All are
+    /// `u` must be at least [`dim`](Interpreter::dim) long, `p` at least
+    /// [`n_param`](Interpreter::n_param), `deriv` at least `dim`, and `scratch`
+    /// at least [`n_scratch`](Interpreter::n_scratch). The scratch contents on
+    /// entry are irrelevant and on exit unspecified. All buffers are
     /// caller-owned so a hot loop reuses them with no allocation.
     #[inline]
-    pub fn eval(&self, u: &[f64], p: &[f64], t: f64, scratch: &mut Scratch, deriv: &mut [f64]) {
+    pub fn eval(&self, u: &[f64], p: &[f64], t: f64, scratch: &mut [f64], deriv: &mut [f64]) {
         self.debug_check_buffers(u, p, scratch, deriv);
-        self.run(u, p, t, &mut scratch.regs);
+        self.run(u, p, t, scratch);
         for (k, &slot) in self.tape.outputs().iter().enumerate() {
-            deriv[k] = scratch.regs[slot as usize];
+            deriv[k] = scratch[slot as usize];
         }
     }
 
     /// Evaluate `du/dt` (into `deriv`) and the row-major `dim × dim` Jacobian
-    /// `∂f_k/∂u_j` (into `jac`) in a single tape pass.
+    /// `∂f_k/∂u_j` at `jac[k * dim + j]` in a single tape pass.
     ///
     /// Requires a tape carrying a Jacobian ([`has_jacobian`]); for a tape
     /// without one, `jac` is left untouched (the tape exposes no Jacobian
-    /// registers). `jac` must hold `dim * dim` elements.
+    /// registers). `jac` must hold at least `dim * dim` elements; the other
+    /// buffers follow [`eval`](Interpreter::eval)'s contract.
     ///
     /// [`has_jacobian`]: Interpreter::has_jacobian
     #[inline]
@@ -200,7 +185,7 @@ impl Interpreter {
         u: &[f64],
         p: &[f64],
         t: f64,
-        scratch: &mut Scratch,
+        scratch: &mut [f64],
         deriv: &mut [f64],
         jac: &mut [f64],
     ) {
@@ -211,26 +196,45 @@ impl Interpreter {
             jac.len(),
             self.tape.jac_outputs().len()
         );
-        self.run(u, p, t, &mut scratch.regs);
+        self.run(u, p, t, scratch);
         for (k, &slot) in self.tape.outputs().iter().enumerate() {
-            deriv[k] = scratch.regs[slot as usize];
+            deriv[k] = scratch[slot as usize];
         }
         for (m, &slot) in self.tape.jac_outputs().iter().enumerate() {
-            jac[m] = scratch.regs[slot as usize];
+            jac[m] = scratch[slot as usize];
         }
+    }
+
+    /// Allocate scratch and return `du/dt` — convenience for one-off calls.
+    pub fn eval_alloc(&self, u: &[f64], p: &[f64], t: f64) -> Vec<f64> {
+        let mut scratch = vec![0.0; self.n_scratch()];
+        let mut deriv = vec![0.0; self.dim()];
+        self.eval(u, p, t, &mut scratch, &mut deriv);
+        deriv
+    }
+
+    /// Allocate scratch and return `(du/dt, Jacobian)` with the Jacobian
+    /// row-major `dim × dim` — convenience for one-off calls.
+    pub fn eval_jac_alloc(&self, u: &[f64], p: &[f64], t: f64) -> (Vec<f64>, Vec<f64>) {
+        let dim = self.dim();
+        let mut scratch = vec![0.0; self.n_scratch()];
+        let mut deriv = vec![0.0; dim];
+        let mut jac = vec![0.0; dim * dim];
+        self.eval_jac(u, p, t, &mut scratch, &mut deriv, &mut jac);
+        (deriv, jac)
     }
 
     /// Debug-only precondition checks shared by [`eval`](Interpreter::eval) and
     /// [`eval_jac`](Interpreter::eval_jac): surface a wrong-sized buffer with a
-    /// clear message in dev/test builds. Compiled out of release builds, so the
-    /// hot loop pays nothing.
+    /// clear message in dev/test builds (the trait contract invites this).
+    /// Compiled out of release builds, so the hot loop pays nothing.
     #[inline]
-    fn debug_check_buffers(&self, u: &[f64], p: &[f64], scratch: &Scratch, deriv: &[f64]) {
+    fn debug_check_buffers(&self, u: &[f64], p: &[f64], scratch: &[f64], deriv: &[f64]) {
         debug_assert!(
-            scratch.len() == self.tape.n_reg(),
-            "scratch sized {} but tape needs {} registers (use Interpreter::scratch)",
+            scratch.len() >= self.n_scratch(),
+            "scratch too small: {} < {} registers (use Interpreter::n_scratch)",
             scratch.len(),
-            self.tape.n_reg()
+            self.n_scratch()
         );
         debug_assert!(
             deriv.len() >= self.dim(),
@@ -245,30 +249,11 @@ impl Interpreter {
             self.tape.n_state()
         );
         debug_assert!(
-            p.len() >= self.tape.n_param(),
+            p.len() >= self.n_param(),
             "param slice too small: {} < n_param {}",
             p.len(),
-            self.tape.n_param()
+            self.n_param()
         );
-    }
-
-    /// Allocate scratch and return `du/dt` — convenience for one-off calls.
-    pub fn eval_alloc(&self, u: &[f64], p: &[f64], t: f64) -> Vec<f64> {
-        let mut scratch = self.scratch();
-        let mut deriv = vec![0.0; self.dim()];
-        self.eval(u, p, t, &mut scratch, &mut deriv);
-        deriv
-    }
-
-    /// Allocate scratch and return `(du/dt, Jacobian)` with the Jacobian
-    /// row-major `dim × dim` — convenience for one-off calls.
-    pub fn eval_jac_alloc(&self, u: &[f64], p: &[f64], t: f64) -> (Vec<f64>, Vec<f64>) {
-        let dim = self.dim();
-        let mut scratch = self.scratch();
-        let mut deriv = vec![0.0; dim];
-        let mut jac = vec![0.0; dim * dim];
-        self.eval_jac(u, p, t, &mut scratch, &mut deriv, &mut jac);
-        (deriv, jac)
     }
 }
 
@@ -485,7 +470,7 @@ mod tests {
         let x = b.state(0);
         let s = b.sin(x);
         let interp = Interpreter::new(b.finish(&[s], &[], 1, 0).unwrap());
-        let mut scratch = interp.scratch();
+        let mut scratch = vec![0.0; interp.n_scratch()];
         let mut d1 = [0.0];
         let mut d2 = [0.0];
         interp.eval(&[0.7], &[], 0.0, &mut scratch, &mut d1);
@@ -497,52 +482,23 @@ mod tests {
     }
 
     #[test]
-    fn scratch_is_sized_to_n_reg() {
+    fn n_scratch_is_the_register_count() {
         let interp = Interpreter::new(lorenz());
-        let scratch = interp.scratch();
-        assert_eq!(scratch.len(), interp.tape().n_reg());
-        assert!(!scratch.is_empty());
+        assert_eq!(interp.n_scratch(), interp.tape().n_reg());
+        assert!(interp.n_scratch() > 0);
+        assert_eq!(interp.dim(), 3);
+        assert_eq!(interp.n_param(), 3);
     }
 
     #[test]
-    fn resize_for_retargets_a_reused_scratch() {
-        // A worker carrying one Scratch across tapes of different sizes resizes
-        // in place, then evaluates the new tape correctly.
-        let small = {
-            let mut b = TapeBuilder::new();
-            let x = b.state(0);
-            Interpreter::new(b.finish(&[x], &[], 1, 0).unwrap()) // n_reg = 1
-        };
-        let big = Interpreter::new(lorenz()); // n_reg > 1
-
-        let mut scratch = small.scratch();
-        assert_eq!(scratch.len(), small.tape().n_reg());
-
-        scratch.resize_for(big.tape());
-        assert_eq!(scratch.len(), big.tape().n_reg());
-        let mut deriv = vec![0.0; big.dim()];
-        big.eval(&[1.0, 2.0, 3.0], &LORENZ_P, 0.0, &mut scratch, &mut deriv);
-        assert!((deriv[0] - 10.0 * (2.0 - 1.0)).abs() < 1e-15);
-
-        // …and back down for the smaller tape.
-        scratch.resize_for(small.tape());
-        assert_eq!(scratch.len(), small.tape().n_reg());
-    }
-
-    #[test]
-    #[should_panic(expected = "scratch sized")]
-    fn eval_rejects_a_wrongly_sized_scratch_in_debug() {
-        // A scratch from a *different* tape is the classic misuse the debug
-        // precondition check catches early (debug builds only).
+    #[should_panic(expected = "scratch too small")]
+    fn eval_rejects_a_too_small_scratch_in_debug() {
+        // An undersized scratch is the classic misuse the debug precondition
+        // check catches early (debug builds only).
         let interp = Interpreter::new(lorenz());
-        let other = Interpreter::new({
-            let mut b = TapeBuilder::new();
-            let x = b.state(0);
-            b.finish(&[x], &[], 1, 0).unwrap()
-        });
-        let mut wrong = other.scratch(); // sized 1, not lorenz's n_reg
+        let mut tiny = vec![0.0; 1]; // lorenz needs many more registers
         let mut deriv = vec![0.0; interp.dim()];
-        interp.eval(&[1.0, 2.0, 3.0], &LORENZ_P, 0.0, &mut wrong, &mut deriv);
+        interp.eval(&[1.0, 2.0, 3.0], &LORENZ_P, 0.0, &mut tiny, &mut deriv);
     }
 
     #[test]
@@ -552,7 +508,7 @@ mod tests {
         let x = b.state(0);
         let interp = Interpreter::new(b.finish(&[x], &[], 1, 0).unwrap());
         assert!(!interp.has_jacobian());
-        let mut scratch = interp.scratch();
+        let mut scratch = vec![0.0; interp.n_scratch()];
         let mut deriv = [0.0];
         let mut jac = [f64::NAN]; // sentinel; must remain untouched
         interp.eval_jac(&[5.0], &[], 0.0, &mut scratch, &mut deriv, &mut jac);
@@ -561,11 +517,10 @@ mod tests {
     }
 
     #[test]
-    fn interpreter_and_scratch_are_send_and_sync() {
+    fn interpreter_is_send_and_sync() {
         // The ensemble path shares one `&Interpreter` across rayon workers, each
-        // owning its own `Scratch`; lock those bounds in at compile time.
+        // owning its own scratch buffer; lock the bounds in at compile time.
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<Interpreter>();
-        assert_send_sync::<Scratch>();
     }
 }

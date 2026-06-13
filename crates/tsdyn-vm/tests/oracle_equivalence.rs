@@ -139,7 +139,7 @@ fn interpreter_matches_reference_bit_for_bit() {
             let t = rng.f64_in(-3.0, 3.0);
 
             // RHS-only path.
-            let mut scratch = interp.scratch();
+            let mut scratch = vec![0.0; interp.n_scratch()];
             let mut deriv = vec![0.0; interp.dim()];
             interp.eval(&u, &p, t, &mut scratch, &mut deriv);
             let want = reference::eval_alloc(&tape, &u, &p, t);
@@ -175,7 +175,7 @@ fn reused_scratch_stays_bit_identical_to_reference() {
     for _ in 0..100 {
         let tape = random_tape(&mut rng);
         let interp = Interpreter::new(tape.clone());
-        let mut scratch = interp.scratch();
+        let mut scratch = vec![0.0; interp.n_scratch()];
         let mut deriv = vec![0.0; interp.dim()];
         for _ in 0..5 {
             let u: Vec<f64> = (0..tape.n_state()).map(|_| rng.f64_in(-2.0, 2.0)).collect();
