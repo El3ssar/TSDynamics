@@ -75,6 +75,28 @@ class DoubleGyre(ContinuousSystem):
 
 
 class BlinkingRotlet(ContinuousSystem):
+    r"""Blinking-rotlet flow — a model of chaotic advection in Stokes mixing.
+
+    A passive tracer in a circular cell stirred by two off-centre rotlets at
+    radius ``+b`` and ``-b`` that alternate being active with period ``tau``,
+    the switch being a steep ``tanh`` ramp.  The periodic blinking folds and
+    stretches material lines, producing chaotic advection (Aref-type *blinking*
+    flow).  State is ``(r, theta, t)`` in polar coordinates with an explicit
+    clock; ``dtheta`` carries a ``1/r`` factor singular at the cell centre, so
+    ``default_ic`` sits on a bounded orbit away from ``r = 0``.
+
+    Compile note
+    ------------
+    The rotlet velocity field is a large rational expression.  JiTCODE's
+    default ``simplify(ratio=1)`` codegen pass is super-linear in expression
+    size and effectively hangs while *compiling* this RHS — which is what made
+    the system look un-integrable.  ``_compile_simplify = False`` skips that
+    pass (the C compiler optimises the unsimplified code), after which the flow
+    integrates in well under a millisecond at every tolerance, even at the
+    original steep ``tanh`` switch.
+    """
+
+    reference = "Meleshko & Aref (1996), Phys. Fluids 8, 3215-3217"
     params = {
         "a": 1.0,
         "b": 0.5298833894399929,
@@ -83,6 +105,15 @@ class BlinkingRotlet(ContinuousSystem):
         "tau": 3.0,
     }
     dim = 3
+    variables = ("r", "theta", "t")
+    #: On a bounded orbit (``r`` stays in ``[0.8, 0.91]``) away from the
+    #: ``r = 0`` angular singularity, so default sweeps stay bounded.
+    default_ic = [0.8, 4.887, 0.0]
+
+    # The rotlet RHS is a large rational expression; JiTCODE's default
+    # simplify(ratio=1) pass is super-linear on it and effectively hangs the
+    # compile.  Skip it — the C compiler optimises the unsimplified code.
+    _compile_simplify = False
 
     @staticmethod
     def _rotlet(r, theta, a, b, bc):

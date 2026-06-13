@@ -239,7 +239,9 @@ TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # docs sanity
    and the docs build generates its page (equations + figure) automatically.
 4. Optional metadata: `variables`, `reference`, `known_lyapunov` ClassVars;
    `default_ic` if random ICs escape the basin; `_structural_params` for
-   variable-dim systems; `_jacobian_fd_check = False` for discontinuous maps.
+   variable-dim systems; `_jacobian_fd_check = False` for discontinuous maps;
+   `_compile_simplify = False` for an ODE whose large rational RHS hangs
+   JiTCODE's simplify codegen pass.
 5. For a new DDE: also add a non-equilibrium history to
    `tests/_sampling.py::DDE_HISTORIES` (guard test enforces this).
 
@@ -264,6 +266,8 @@ Compiled JiTCODE/JiTCDDE objects live in `~/.cache/tsdynamics/`
 | Situation | What happens / what to do |
 |---|---|
 | `_equations` uses NumPy or `math` | JiTCODE can't compile it. Use `symengine.sin`/`cos`/... |
+| Compile hangs on a large rational RHS (e.g. rotlet flows) | JiTCODE's `simplify(ratio=1)` codegen pass is super-linear. Set `_compile_simplify = False` on the class (see `BlinkingRotlet`). |
+| Fractional power / steep `tanh` fails only on `backend="diffsol"` | Solvers probe outside the physical domain: a real `p**q` goes complex for `p<0`, and autodiff of `tanh(k·x)` overflows for huge `k·x`. Guard with `abs(p)` under the power and clamp the `tanh` argument (see `WindmiReduced`). |
 | Variable-dim system without `_structural_params` | Compile-time `range(N)` fails. Add `_structural_params = frozenset({"N"})`. |
 | Map params order ≠ `_step` signature order | **Raises `TypeError` at import** (since v2). |
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |

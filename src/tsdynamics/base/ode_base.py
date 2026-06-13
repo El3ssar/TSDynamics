@@ -153,6 +153,14 @@ class ContinuousSystem(SystemBase, ABC):
 
     _default_method: ClassVar[str] = "RK45"
 
+    #: Whether JiTCODE should run SymEngine's ``simplify(ratio=1)`` on each RHS
+    #: expression before emitting C.  ``None`` keeps JiTCODE's own default
+    #: (enabled for ``dim <= 10``).  Set ``False`` on systems whose RHS is a
+    #: large rational expression: the simplify pass is super-linear and can
+    #: effectively hang at compile time, while the C compiler optimises the
+    #: unsimplified code just as well (see ``BlinkingRotlet``).
+    _compile_simplify: ClassVar[bool | None] = None
+
     #: Parameters whose values affect the symbolic *structure* of _equations
     #: (e.g. integer loop bounds). These are baked in at compile time.
     _structural_params: ClassVar[frozenset[str]] = frozenset()
@@ -390,7 +398,7 @@ class ContinuousSystem(SystemBase, ABC):
         ode = cls_jitc(
             f_sym, n=self.dim, control_pars=control_par_list, verbose=False, **lyap_kwargs
         )
-        ode.generate_f_C()
+        ode.generate_f_C(simplify=type(self)._compile_simplify)
         so = pathlib.Path(ode.save_compiled(destination=str(dest), overwrite=True))
 
         if for_lyap:

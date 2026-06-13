@@ -56,25 +56,20 @@ INTEGRATION_SAMPLE: list[str] = [
 ]
 
 # --- ODE systems excluded from the exhaustive integration sweeps ------------
-# These cannot be integrated by adaptive solvers in bounded time, so they
-# would hang the nightly full sweep rather than fail it.
-HARD_TO_INTEGRATE: dict[str, str] = {
-    "BlinkingRotlet": (
-        "near-discontinuous blinking protocol (tanh of a steep sine) makes every "
-        "adaptive solver take vanishingly small steps and stall at any tolerance; "
-        "needs a dedicated integration recipe — tracked separately"
-    ),
-}
+# Systems that cannot be integrated by adaptive solvers in bounded time would
+# hang the nightly full sweep rather than fail it, so they are skipped here.
+# Currently empty: ``BlinkingRotlet`` (the former entry) only *looked*
+# un-integrable because JiTCODE's simplify(ratio=1) codegen pass hangs on its
+# large rational RHS — fixed with ``_compile_simplify = False`` on the class.
+HARD_TO_INTEGRATE: dict[str, str] = {}
 
 # Systems the diffsol backend specifically can't integrate (the default JiTCODE
 # backend handles them fine). Excluded from the diffsol full-catalogue sweep.
-DIFFSOL_SKIP: dict[str, str] = {
-    "WindmiReduced": (
-        "RHS has a near-discontinuous tanh(2200*(i-1)) switch and fractional "
-        "powers p**(5/4) that go complex when the solver probes p<0; diffsol's "
-        "Rust solvers fail to converge while JiTCODE's dopri5 tolerates it"
-    ),
-}
+# Currently empty: ``WindmiReduced`` (the former entry) now integrates on every
+# diffsol solver after guarding the fractional power with ``abs(p)`` and
+# clamping the steep ``tanh`` argument (autodiff-safe) — both no-ops on the
+# physical trajectory.
+DIFFSOL_SKIP: dict[str, str] = {}
 
 # --- Maps excluded from Lyapunov-spectrum shape tests -----------------------
 MAP_LYAPUNOV_EXCLUDE: dict[str, str] = {

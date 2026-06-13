@@ -140,13 +140,52 @@ class JerkCircuit(ContinuousSystem):
 
 
 class WindmiReduced(ContinuousSystem):
+    r"""Reduced WINDMI model of the solar-wind–magnetosphere–ionosphere coupling.
+
+    Three-variable reduction (field-aligned current ``i``, voltage ``v``,
+    pressure ``p``) of the WINDMI energy-conserving model.  The pressure-loss
+    term carries a fractional power ``p**(5/4)`` gated by a steep
+    ``tanh(d1*(i-1))`` switch (``d1 = 2200`` makes it a near-step at ``i = 1``,
+    the substorm-onset threshold).
+
+    Numerical guards (no change to the dynamics)
+    --------------------------------------------
+    Two robustness guards let every backend reproduce the same orbit that
+    JiTCODE's explicit dopri5 already handles:
+
+    * ``abs(p)`` under the fractional power.  On the attractor ``p >= 0``, but
+      adaptive and implicit solvers probe trial states with ``p < 0`` where the
+      real ``p**(5/4)`` is complex.  ``abs(p)`` is identical to ``p`` on the
+      physical trajectory and real, ``C^1`` everywhere.
+
+    * The ``tanh`` argument is clamped to ``[-_TANH_CLAMP, _TANH_CLAMP]``.
+      ``tanh`` saturates to ``±1`` to machine precision past ``|arg| ≈ 20``, so
+      clamping leaves the switch value unchanged, but it stops the diffsol Rust
+      kernels' automatic differentiation from overflowing on ``exp`` of an
+      enormous ``d1*(i-1)`` (≈ ±1500 on the orbit) — the actual cause of their
+      Newton/error-test failures.  The clamp uses ``abs`` only, which both the
+      JiTCODE and DiffSL paths support.
+    """
+
+    reference = "Horton, Weigel & Sprott (2001), Phys. Plasmas 8, 2946-2952"
     params = {"a1": 0.247, "b1": 10.8, "b2": 0.0752, "b3": 1.06, "d1": 2200, "vsw": 5}
     dim = 3
+    variables = ("i", "v", "p")
+
+    #: Bound on the ``tanh`` switch argument; ``tanh(±20)`` already equals ``±1``
+    #: to ~1e-18, so clamping is dynamically invisible but autodiff-safe.
+    _TANH_CLAMP = 25.0
 
     @staticmethod
     def _equations(Y, t, *, a1, b1, b2, b3, d1, vsw):
         i, v, p = Y(0), Y(1), Y(2)
+        # Clamp d1*(i-1) to [-C, C] via the abs identity
+        # clamp(z, -C, C) = (|z + C| - |z - C|) / 2 — smooth-enough (abs only)
+        # and translatable by both the JiTCODE and DiffSL backends.
+        c = WindmiReduced._TANH_CLAMP
+        z = d1 * (i - 1)
+        z_clamped = (abs(z + c) - abs(z - c)) / 2
         idot = a1 * (vsw - v)
         vdot = b1 * i - b2 * p**1 / 2 - b3 * v
-        pdot = vsw**2 - p ** (5 / 4) * vsw ** (1 / 2) * (1 + tanh(d1 * (i - 1))) / 2
+        pdot = vsw**2 - abs(p) ** (5 / 4) * vsw ** (1 / 2) * (1 + tanh(z_clamped)) / 2
         return idot, vdot, pdot
