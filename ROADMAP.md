@@ -11,20 +11,21 @@ calendar. Each phase has acceptance criteria so progress is measurable.
 
 ---
 
-## Status — as of v2.1.0
+## Status — as of v2.2 (Phase-2 Part-2 kickoff)
 
 > Single source of truth for *where we are*. Update this block when a phase
 > moves. The plan below this section is the destination; this is the position.
 
 **Shipped to PyPI:** v2.0.0 (platform relaunch) · v2.0.1 (Blasius basin fix) ·
-v2.1.0 (Phase-1 tail). Release + docs deploy are automated on every push to
-`main` (python-semantic-release + GitHub Pages) and proven end-to-end. Docs
-live at <https://el3ssar.github.io/TSDynamics/>.
+v2.1.0/v2.1.1 (Phase-1 tail, finite-basin ICs) · v2.2.x (nightly-hang fix;
+stiff systems default to an implicit solver). Release + docs deploy are
+automated on every push to `main` (python-semantic-release + GitHub Pages) and
+proven end-to-end. Docs live at <https://el3ssar.github.io/TSDynamics/>.
 
 | Phase | State | Notes |
 |---|---|---|
 | **1 — Core abstraction** | ✅ **done** | `System` protocol on all families; `PoincareMap`/`StroboscopicMap`/`TangentSystem`/`EnsembleSystem`/`ProjectedSystem`/`WrappedSystem`; `Trajectory` (named components, KD-tree, set distances, provenance `MetaStore`); `tsdynamics.sampling` (Box/Ball/Grid, samplers, `grid_points`, `set_distance`); symbolic Jacobian autogen (13 real bugs fixed); registry-driven tests. *Deferred:* route per-family `lyapunov_spectrum` through `TangentSystem`; parallelize `EnsembleSystem`. |
-| **2 — Rust backend** | 🟡 **~50%** | **Part 1 (ODE on diffsol) nearly done:** `backend="auto"`/`"diffsol"` (pydiffsol, prebuilt LLVM wheels) **translates 100% of the 118 ODEs**, cross-validated vs JiTCODE (sample on `slow`, full catalogue nightly via `test_diffsol_backend.py::test_cross_validation_full_catalogue`), benchmarked (`benches/bench_backends.py`: 9–29× JiTCODE, ~180× SciPy), documented (Theory → Backends). *Left in part 1:* flip the literal default to `auto` once the nightly full-catalogue gate is green. **Part 2 (its own milestone):** the bespoke `tsdynamics-core` PyO3/maturin crate — Rust **DDE** solver, **SDE** family, rayon ensembles, cross-platform prebuilt wheels. |
+| **2 — Rust backend** | 🟡 **~60%** | **Part 1 (ODE on diffsol) nearly done:** `backend="auto"`/`"diffsol"` (pydiffsol, prebuilt LLVM wheels) **translates 100% of the 118 ODEs**, cross-validated vs JiTCODE (sample on `slow`, full catalogue nightly via `test_diffsol_backend.py::test_cross_validation_full_catalogue`), benchmarked (`benches/bench_backends.py`: 9–29× JiTCODE, ~180× SciPy), documented (Theory → Backends). *Left in part 1:* flip the literal default to `auto` once the nightly full-catalogue gate is green. **Part 2 (the bespoke `tsdynamics-core` PyO3/maturin crate) — underway:** an expression **tape VM** lowers a system's symbolic `_equations` to flat SSA instructions a Rust stack machine evaluates GIL-free (no runtime compiler) — **all 118 ODEs lower and match the symbolic RHS to 1e-15**; fixed-step RK4 matches SciPy; **rayon ensemble** integration is race-free and **~90× a SciPy per-trajectory loop** (the basin/Monte-Carlo primitive); `tsdynamics` stays pure-Python, the crate is an optional accelerator; maturin wheel built + tested in CI (`rust-core.yml`). *Left:* adaptive/stiff Rust solvers, **SDE** family, Rust **DDE** solver, cross-platform wheel publish + a `[rustcore]` extra, then wire ensembles/basins onto it. |
 | **3 — Chaos quantification** | 🟡 **~50%** | Done: `orbit_diagram`, `poincare_section`, `max_lyapunov`, `kaplan_yorke_dimension`, `fixed_points` (maps), `lyapunov_spectrum` dispatcher. *Left:* `lyapunov_from_data` (Kantz), GALI, 0–1 test, expansion entropy, periodic orbits, `estimate_period`, `fixed_points` for flows. |
 | **4 — Attractors & basins (the moat)** | ⬜ **0%** | **Next milestone.** Depends only on Phase 1 (done) — *not* on 2 or 3. |
 | **5 — Time-series & geometry** | ⬜ **0%** | embeddings, fractal dimensions, entropy/complexity, recurrence, surrogates. |

@@ -88,6 +88,30 @@ points, warm caches; regenerate with `benches/bench_backends.py`):
   cross-validation has a green track record, `auto` becomes the default so a
   plain `pip install "tsdynamics[diffsol]"` gives a zero-compiler install.
 
+## The Rust core (experimental accelerator)
+
+`tsdynamics` is pure-Python and installs with no compiler. The optional
+`tsdynamics-core` package (a PyO3/maturin Rust crate) adds GIL-free numeric
+kernels the Python layer offloads to when it is present.
+
+Its keystone is an **expression tape VM**: the *same* symbolic `_equations`
+that feed the DiffSL backend are lowered to a flat list of SSA instructions,
+which a small Rust stack machine evaluates with no Python callbacks and no
+runtime compiler. That makes **ensemble integration** — thousands of
+independent trajectories from a grid of initial conditions — embarrassingly
+parallel via [rayon](https://github.com/rayon-rs/rayon), the primitive that
+makes basin-of-attraction and Monte-Carlo sweeps tractable.
+
+The tape lowers and reproduces the RHS of **all 118 built-in ODE systems** to
+machine precision (guarded on every CI run by
+`tests/test_rustcore_translation.py`); the RK4 stepper and rayon ensemble are
+cross-validated against SciPy and a serial reference. It is the foundation the
+planned Rust **SDE** and **DDE** solvers build on — see the project roadmap.
+
+> Experimental and not yet a user-facing `backend=`: fixed-step explicit RK4
+> only (use `jitcode`/`diffsol` for stiff systems), and the crate is not yet on
+> PyPI. Build it locally with `maturin build -m crates/tsdynamics-core/Cargo.toml`.
+
 ## See also
 
 - [Compilation pipeline](compilation.md) — the JiTCODE path and the shared symbolic core
