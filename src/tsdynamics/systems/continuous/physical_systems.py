@@ -72,6 +72,17 @@ class Laser(ContinuousSystem):
 
 
 class Blasius(ContinuousSystem):
+    """Three-level food chain with Holling type-II functional responses.
+
+    The chaotic "teacup" attractor lives on a finite basin around a coexistence
+    equilibrium near ``x ≈ 20`` — which is also the prey-runaway threshold of
+    the type-II response, where predation saturates below the resource's growth
+    rate. Random ``U[0, 1)^3`` ICs (small ``y``, sizeable ``z``) fall outside
+    the basin and ``x`` blows up exponentially, so a known on-attractor point is
+    set as ``default_ic`` to keep default integration bounded.
+    """
+
+    reference = "Blasius, Huppert & Stone (1999), Nature 399, 354-359"
     params = {
         "a": 1,
         "alpha1": 0.2,
@@ -83,6 +94,7 @@ class Blasius(ContinuousSystem):
         "zs": 0.006,
     }
     dim = 3
+    default_ic = [4.031713, 5.1113788, 0.016508812]
 
     @staticmethod
     def _equations(Y, t, *, a, alpha1, alpha2, b, c, k1, k2, zs):

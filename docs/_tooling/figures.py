@@ -38,8 +38,8 @@ FIG_OVERRIDES: dict[str, dict] = {
     "MultiChua": {"ic": "0.1*ones"},
     "DoubleGyre": {"final_time": 40.0},
     "Oregonator": {"skip": True},  # stiff — solve_ivp needs special handling
-    "Blasius": {"skip": True},  # diverges at default params from every tried IC — investigate
     # Systems whose attractor basin misses U[0,1)^dim — literature ICs:
+    "Blasius": {"ic": [4.031713, 5.1113788, 0.016508812]},  # teacup attractor
     "RabinovichFabrikant": {"ic": [-1.0, 0.0, 0.5]},
     "SprottD": {"ic": [0.1, 0.05, 0.05], "final_time": 60.0},
     "SprottI": {"ic": [0.1, 0.05, 0.05], "final_time": 60.0},
