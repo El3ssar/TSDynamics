@@ -31,6 +31,16 @@ live at <https://el3ssar.github.io/TSDynamics/>.
 | **6 — Visualization** | ⬜ **0%** (user-facing) | figure tooling exists inside the docs build; no `tsdynamics.plot` module yet. |
 | **7 — Ecosystem & credibility** | 🟡 **~40%** | docs site + citations + known-value tests + semantic-release done. *Left:* docstring-citation lint rule, hypothesis tests, conda-forge, benchmark notebook, JOSS. |
 
+**Solver coverage (Phase-2 pillar).** No single solver fits every system —
+explicit methods fail on stiff RHS, implicit ones can fail elsewhere. Each
+system therefore declares its own `_default_method`; stiff built-ins
+(Oregonator, Duffing, SprottL/P, SprottJerk) default to `LSODA` so
+`integrate()` works out of the box. The broader goal — a discoverable,
+extensible multi-solver layer with automatic stiffness detection across both
+backends — is tracked under Phase 2 (and is what the diffsol/Rust work must
+preserve). Two systems still resist all adaptive solvers (BlinkingRotlet) or
+diffsol specifically (WindmiReduced) and are documented exclusions.
+
 **Dependency reality (not the numbering):** Phase 4's prerequisites are all in
 Phase 1, which is complete. **Phase 2 (Rust) is a *performance* multiplier for
 Phase 4, not a prerequisite** — basins run on the current JiTCODE backend, just

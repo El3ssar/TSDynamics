@@ -134,10 +134,9 @@ def test_ode_full_integration_sweep(ode_entry) -> None:
     # get a fixed (seeded) draw so the sweep is reproducible, not flaky.
     np.random.seed(zlib.crc32(ode_entry.name.encode()) & 0xFFFFFFFF)
     ic = sys.resolve_ic(None)
-    if ode_entry.name == "Oregonator":  # stiff — needs an implicit solver
-        traj = sys.integrate(ic=ic, final_time=1.0, dt=0.1, method="LSODA", rtol=1e-8, atol=1e-10)
-    else:
-        traj = sys.integrate(ic=ic, final_time=2.0, dt=0.1, rtol=1e-5, atol=1e-7)
+    # Each system carries its own _default_method (stiff systems default to an
+    # implicit solver), so the plain default path must integrate them all.
+    traj = sys.integrate(ic=ic, final_time=2.0, dt=0.1, rtol=1e-5, atol=1e-7)
     assert traj.y.shape[1] == sys.dim
     assert np.all(np.isfinite(traj.y))
 

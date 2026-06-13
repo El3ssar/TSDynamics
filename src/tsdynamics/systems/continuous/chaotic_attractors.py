@@ -547,6 +547,9 @@ class MultiChua(ContinuousSystem):
 class Duffing(ContinuousSystem):
     params = {"alpha": 1.0, "beta": -1.0, "delta": 0.1, "gamma": 0.35, "omega": 1.4}
     dim = 3
+    # The explicit default (dopri5) fails to integrate this system; an implicit
+    # solver handles it robustly, so make that the default.
+    _default_method = "LSODA"
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, delta, gamma, omega):
@@ -889,6 +892,7 @@ class SprottK(ContinuousSystem):
 class SprottL(ContinuousSystem):
     params = {"a": 0.9, "b": 3.9}
     dim = 3
+    _default_method = "LSODA"  # explicit default solver fails; use an implicit one
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -975,6 +979,7 @@ class SprottO(ContinuousSystem):
 class SprottP(ContinuousSystem):
     params = {"a": 2.7}
     dim = 3
+    _default_method = "LSODA"  # explicit default solver fails; use an implicit one
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1080,6 +1085,7 @@ class SprottMore(ContinuousSystem):
 class SprottJerk(ContinuousSystem):
     params = {"mu": 2.017}
     dim = 3
+    _default_method = "LSODA"  # explicit default solver fails; use an implicit one
 
     @staticmethod
     def _equations(Y, t, *, mu):
