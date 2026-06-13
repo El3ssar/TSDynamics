@@ -17,9 +17,10 @@ who will build it **in parallel**. Read the banner below before doing anything.
 Several sessions (other instances of you) are working this roadmap **at the same
 time**. To not collide:
 
-1. **You own exactly one Work Stream.** Your launcher tells you your stream ID
-   (e.g. `E2`, `A7`). If it didn't, ask which stream to take, or pick an
-   `unclaimed` one from the **Stream Board** (§6) and say which you're taking.
+1. **You own exactly one Work Stream.** Your launcher may tell you your stream ID
+   (e.g. `E2`, `A7`). If it didn't, **follow the Claiming Protocol (§6.0)**: query
+   the GitHub `stream` issues, pick a free, unblocked one, assign yourself, and
+   say which you took. Never start two streams; never start a `blocked` one.
 2. **Work in a dedicated git worktree**, never on `main` directly:
    `git worktree add ../tsd-<ID> -b stream/<ID>-<slug> main`. One worktree per
    stream → no two sessions ever share a working tree.
@@ -263,8 +264,50 @@ documented (NumPy docstrings, paper citations, **no competitor names**);
 ## 6. The Stream Board
 
 Status legend: `done` · `active` · `unclaimed` · `blocked(by …)`.
-Mark your stream `active` in your first PR (one-line edit to its row). Streams
-in the **same tier** are designed to run **simultaneously**.
+Streams in the **same tier** are designed to run **simultaneously**.
+
+### 6.0 Claiming protocol — how a fresh session knows what's free
+
+There is **no shared runtime memory** between sessions. The only state every
+session can observe is **git + GitHub**, so claims live there, not in chat.
+
+**Source of truth = GitHub Issues (one ticket per stream).** Each stream has an
+issue titled `[<ID>] <name>`, label `stream` (+ a `tier:N` label), its row in the
+body, and its blockers as `Depends on #…` task-list links. A stream is:
+
+- **free** — issue open & **unassigned**, and all its `depends-on` issues closed;
+- **taken** — issue **assigned**, or an open `stream/<ID>-*` branch / PR exists;
+- **done** — issue **closed** (its PR merged).
+
+**A self-directed session ("read the ROADMAP and start working") MUST, before
+touching code:**
+
+```bash
+gh issue list --label stream --state open \
+    --json number,title,assignees,labels         # candidate tickets
+gh pr list --state open --json headRefName        # 2nd signal: branches in flight
+```
+1. Drop tickets whose `depends-on` issues aren't closed (blocked).
+2. Drop tickets already **assigned** or with an open `stream/<ID>-*` PR/branch.
+3. Pick the highest-priority remaining (lowest tier first; Foundation before all).
+4. **Claim before coding:** `gh issue edit <n> --add-assignee @me` **and** comment
+   "claimed by <session label>". Then **re-list once** — if it was taken in the
+   gap, release and pick another. (Assign-then-recheck closes most of the race.)
+5. `git worktree add ../tsd-<ID> -b stream/<ID>-<slug> main`; open the PR with
+   **`Closes #<n>`** in the body so the ticket closes on merge.
+6. If you abandon a stream, **unassign + comment** so it returns to the pool.
+
+**Race reality (be honest):** GitHub has no atomic claim — two sessions launched
+in the same second *could* grab one ticket. Two mitigations: the
+assign-then-recheck step above; and the **zero-race path — the human assigns
+streams at launch** ("you are `A-DIM`"). Use self-service pickup for "give me
+anything free", explicit assignment when firing several at once.
+
+**Why issues, not a board file:** a `STREAMS.md` claim file merge-conflicts and a
+claim only becomes visible *after* its PR merges; issues are conflict-free,
+queryable, and assignable. The §6 tables stay the human-readable definition;
+the **issues are the live claim state**. *(Generate/refresh the issues from this
+board with the maintainer's `gh`-based bootstrap — one issue per row.)*
 
 ### Tier 0 — Foundation (small, fast, mostly sequential; UNBLOCKS EVERYONE)
 
