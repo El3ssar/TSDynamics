@@ -183,6 +183,9 @@ pub fn integrate_dense(tape: &Tape, u0: &[f64], p: &[f64], t_eval: &[f64], h: f6
     let d = tape.dim();
     let n_t = t_eval.len();
     let mut out = vec![0.0; n_t * d];
+    if n_t == 0 {
+        return out; // nothing to fill (guard before the slice below)
+    }
     let mut u = u0.to_vec();
     let mut ws = Workspace::for_tape(tape);
     out[0..d].copy_from_slice(&u);

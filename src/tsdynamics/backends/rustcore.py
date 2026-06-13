@@ -253,13 +253,38 @@ def _args(tape: CompiledTape):
     return (tape.ops, tape.a, tape.b, tape.imm, tape.outputs, tape.n_state, tape.n_param)
 
 
+# Method names: fixed-step RK4, or the adaptive Dormand-Prince 5(4) kernel.
+# These are the only kernels the crate implements; an unknown name is rejected
+# (rather than silently downgraded) — there is no DOP853/LSODA kernel to reach.
+_FIXED_RK4 = {"RK4", "rk4"}
+_ADAPTIVE = {"RK45", "rk45", "dopri5", "DP45"}
+_METHODS = _FIXED_RK4 | _ADAPTIVE
+
+
+def _check_method(method: str) -> None:
+    if method not in _METHODS:
+        raise ValueError(
+            f"rustcore: unknown method {method!r}; supported: {sorted(_METHODS)} "
+            "(RK4 = fixed step, RK45/dopri5 = adaptive). For stiff systems use the "
+            "jitcode/diffsol backends."
+        )
+
+
+def _as_state(x: Any, dim: int, name: str) -> np.ndarray:
+    """Coerce to a contiguous float64 1-D vector of length ``dim`` (or raise)."""
+    a = np.ascontiguousarray(x, dtype=np.float64).ravel()
+    if a.size != dim:
+        raise ValueError(f"rustcore: {name} has length {a.size}, expected dim={dim}")
+    return a
+
+
 def eval_rhs(
     system: Any, u: Any, t: float = 0.0, *, tape: CompiledTape | None = None
 ) -> np.ndarray:
     """Evaluate ``du/dt`` once in Rust — used to cross-check the tape."""
     core = _require()
     tape = tape or compile_tape(system)
-    u = np.asarray(u, dtype=np.float64)
+    u = _as_state(u, tape.n_state, "u")
     return np.asarray(core.eval_rhs(*_args(tape), u, _params_vec(system, tape), float(t)))
 
 
@@ -268,19 +293,41 @@ def integrate_dense(
     ic: Any,
     t_eval: Any,
     *,
+    method: str = "RK45",
+    rtol: float = 1e-6,
+    atol: float = 1e-9,
     h: float | None = None,
     tape: CompiledTape | None = None,
 ) -> np.ndarray:
-    """Fixed-step RK4 trajectory at ``t_eval`` (internal step ``h``)."""
+    """Integrate a trajectory and sample it at ``t_eval``.
+
+    ``method="RK45"`` (default) uses error-controlled adaptive Dormand-Prince
+    5(4) with Hermite dense output (``rtol``/``atol`` set the tolerance);
+    ``method="RK4"`` uses fixed-step RK4 with internal step ``h``.
+
+    Raises ``RuntimeError`` if the trajectory diverges or the step collapses
+    before reaching the final time (matching the jitcode/diffsol backends).
+    """
+    _check_method(method)
     core = _require()
     tape = tape or compile_tape(system)
-    t_eval = np.asarray(t_eval, dtype=np.float64)
-    if h is None:
-        h = float(np.min(np.diff(t_eval))) if t_eval.size > 1 else 1e-2
-    ic = np.asarray(ic, dtype=np.float64)
-    return np.asarray(
-        core.integrate_dense_py(*_args(tape), ic, _params_vec(system, tape), t_eval, float(h))
-    )
+    t_eval = np.ascontiguousarray(t_eval, dtype=np.float64)
+    ic = _as_state(ic, tape.n_state, "ic")
+    p = _params_vec(system, tape)
+    if method in _FIXED_RK4:
+        if h is None:
+            h = float(np.min(np.diff(t_eval))) if t_eval.size > 1 else 1e-2
+        y = np.asarray(core.integrate_dense_py(*_args(tape), ic, p, t_eval, float(h)))
+    else:
+        y = np.asarray(
+            core.integrate_dense_rk45_py(*_args(tape), ic, p, t_eval, float(rtol), float(atol))
+        )
+    if not np.all(np.isfinite(y)):
+        raise RuntimeError(
+            f"{type(system).__name__}: rustcore integration diverged or the step "
+            "collapsed before reaching the final time."
+        )
+    return y
 
 
 def ensemble_final(
@@ -289,19 +336,40 @@ def ensemble_final(
     t0: float,
     t1: float,
     *,
+    method: str = "RK45",
+    rtol: float = 1e-6,
+    atol: float = 1e-9,
     h: float = 1e-2,
     tape: CompiledTape | None = None,
 ) -> np.ndarray:
     """Integrate a batch of initial conditions in parallel; return final states.
 
     ``u0_batch`` is ``(n, dim)``; each row is integrated from ``t0`` to ``t1``
-    and its final state returned as row of the ``(n, dim)`` result.
+    and its final state returned as a row of the ``(n, dim)`` result.
+    ``method`` selects the adaptive (``"RK45"``, default) or fixed-step
+    (``"RK4"``) kernel, as in :func:`integrate_dense`.
+
+    A trajectory that diverges (escapes to infinity) yields a row of ``NaN``
+    rather than aborting the batch — the basin/ensemble caller classifies those
+    initial conditions as escaped.
     """
+    _check_method(method)
     core = _require()
     tape = tape or compile_tape(system)
     u0_batch = np.ascontiguousarray(u0_batch, dtype=np.float64)
+    if u0_batch.ndim != 2 or u0_batch.shape[1] != tape.n_state:
+        raise ValueError(
+            f"rustcore: u0_batch must be (n, {tape.n_state}); got shape {u0_batch.shape}"
+        )
+    p = _params_vec(system, tape)
+    if method in _FIXED_RK4:
+        return np.asarray(
+            core.integrate_ensemble_final_py(
+                *_args(tape), u0_batch, p, float(t0), float(t1), float(h)
+            )
+        )
     return np.asarray(
-        core.integrate_ensemble_final_py(
-            *_args(tape), u0_batch, _params_vec(system, tape), float(t0), float(t1), float(h)
+        core.integrate_ensemble_final_rk45_py(
+            *_args(tape), u0_batch, p, float(t0), float(t1), float(rtol), float(atol)
         )
     )
