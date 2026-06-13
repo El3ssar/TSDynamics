@@ -78,6 +78,7 @@ class HyperJha(ContinuousSystem):
 class HyperQi(ContinuousSystem):
     params = {"a": 50, "b": 24, "c": 13, "d": 8, "e": 33, "f": 30}
     dim = 4
+    default_ic = [1.0, 2.0, 1.0, 1.0]  # random U[0,1)^4 escapes the basin
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e, f):

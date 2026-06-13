@@ -568,6 +568,7 @@ class Duffing(ContinuousSystem):
 class RabinovichFabrikant(ContinuousSystem):
     params = {"a": 1.1, "g": 0.87}
     dim = 3
+    default_ic = [-1.0, 0.0, 0.5]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
     def _equations(Y, t, *, a, g):
@@ -718,6 +719,7 @@ class SprottC(ContinuousSystem):
 class SprottD(ContinuousSystem):
     params = {}
     dim = 3
+    default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
     def _equations(Y, t):
@@ -823,6 +825,7 @@ class SprottH(ContinuousSystem):
 class SprottI(ContinuousSystem):
     params = {"a": 0.2}
     dim = 3
+    default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -907,6 +910,7 @@ class SprottL(ContinuousSystem):
 class SprottM(ContinuousSystem):
     params = {"a": 1.7}
     dim = 3
+    default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -949,6 +953,7 @@ class SprottN(ContinuousSystem):
 class SprottO(ContinuousSystem):
     params = {"a": 2.7}
     dim = 3
+    default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1141,6 +1146,7 @@ class Rucklidge(ContinuousSystem):
 class HyperRossler(ContinuousSystem):
     params = {"a": 0.25, "b": 3.0, "c": 0.5, "d": 0.05}
     dim = 4
+    default_ic = [-10.0, -6.0, 0.0, 10.0]  # random U[0,1)^4 escapes the basin
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1219,6 +1225,7 @@ class GuckenheimerHolmes(ContinuousSystem):
 class HenonHeiles(ContinuousSystem):
     params = {"lam": 1}
     dim = 4
+    default_ic = [0.1, 0.1, 0.1, 0.1]  # low-energy bounded orbit; random U[0,1)^4 can be unbound
 
     @staticmethod
     def _equations(Y, t, *, lam):
