@@ -22,8 +22,10 @@ time**. To not collide:
    the GitHub `stream` issues, pick a free, unblocked one, assign yourself, and
    say which you took. Never start two streams; never start a `blocked` one.
 2. **Work in a dedicated git worktree**, never on `main` directly:
-   `git worktree add ../tsd-<ID> -b stream/<ID>-<slug> main`. One worktree per
-   stream → no two sessions ever share a working tree.
+   `git worktree add .claude/worktrees/tsd-<ID> -b stream/<ID>-<slug> main`. Keep
+   the worktree *inside* the project under `.claude/worktrees/` (gitignored) — not
+   in the parent directory, which holds unrelated projects and must stay clean.
+   One worktree per stream → no two sessions ever share a working tree.
 3. **Touch only the paths your stream `owns`** (listed per stream). If you need
    something outside them, you need an *interface*, not an edit — see §5.
 4. **Interfaces are frozen after the Foundation milestone (M0).** Build against
@@ -235,7 +237,8 @@ rejected-step ratio says stiff).
 **Lifecycle of a stream session:**
 1. Confirm your stream ID; read its row in §6 (goal, `owns`, `depends-on`,
    `parallel-with`, acceptance).
-2. `git worktree add ../tsd-<ID> -b stream/<ID>-<slug> main`.
+2. `git worktree add .claude/worktrees/tsd-<ID> -b stream/<ID>-<slug> main`
+   (inside the project, under the gitignored `.claude/worktrees/`).
 3. Build only within `owns`. Consume frozen interfaces from §4; do not modify
    them. Need a new interface? Smallest possible `[interface]` PR first, merged
    before dependents rely on it.
@@ -293,8 +296,9 @@ gh pr list --state open --json headRefName        # 2nd signal: branches in flig
 4. **Claim before coding:** `gh issue edit <n> --add-assignee @me` **and** comment
    "claimed by <session label>". Then **re-list once** — if it was taken in the
    gap, release and pick another. (Assign-then-recheck closes most of the race.)
-5. `git worktree add ../tsd-<ID> -b stream/<ID>-<slug> main`; open the PR with
-   **`Closes #<n>`** in the body so the ticket closes on merge.
+5. `git worktree add .claude/worktrees/tsd-<ID> -b stream/<ID>-<slug> main`
+   (inside the project, under the gitignored `.claude/worktrees/`); open the PR
+   with **`Closes #<n>`** in the body so the ticket closes on merge.
 6. If you abandon a stream, **unassign + comment** so it returns to the pool.
 
 **Race reality (be honest):** GitHub has no atomic claim — two sessions launched
