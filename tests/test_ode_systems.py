@@ -121,6 +121,7 @@ def test_ode_integration_shape_and_finiteness(name: str) -> None:
 
 
 @pytest.mark.full
+@pytest.mark.slow  # belt-and-braces: `-m "not slow"` alone must never trigger 118 compiles
 def test_ode_full_integration_sweep(ode_entry) -> None:
     sys = ode_entry.cls()
     if ode_entry.name == "Oregonator":  # stiff — needs tight tolerances

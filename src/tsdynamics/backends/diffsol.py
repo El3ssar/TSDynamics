@@ -93,9 +93,7 @@ def _diffsl_printer():
             if name in direct:
                 args = ", ".join(self._print(a) for a in expr.args)
                 return f"{direct[name]}({args})"
-            raise DiffSLTranslationError(
-                f"DiffSL has no equivalent for function {name!r}."
-            )
+            raise DiffSLTranslationError(f"DiffSL has no equivalent for function {name!r}.")
 
     return DiffSLPrinter()
 
