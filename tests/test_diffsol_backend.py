@@ -31,6 +31,14 @@ def test_unknown_backend_rejected() -> None:
         ts.Lorenz().integrate(final_time=1.0, dt=0.1, backend="quantum")
 
 
+def test_auto_backend_uses_diffsol_when_available() -> None:
+    """With pydiffsol installed, backend='auto' routes to diffsol."""
+    traj = ts.Lorenz().integrate(
+        final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0], backend="auto"
+    )
+    assert traj.meta["backend"] == "diffsol"
+
+
 # ---------------------------------------------------------------------------
 # Solving + cross-validation (no C compiler needed — pure LLVM JIT)
 # ---------------------------------------------------------------------------
@@ -108,3 +116,34 @@ def test_stiff_solver_path() -> None:
         final_time=2.0, dt=0.01, ic=[1.0, 1.0, 1.0], backend="diffsol", method="LSODA"
     )
     assert np.all(np.isfinite(traj.y))
+
+
+@pytest.mark.full
+def test_cross_validation_full_catalogue() -> None:
+    """
+    The gate for flipping the default backend to diffsol: *every* built-in ODE
+    must integrate on diffsol (BDF) and agree with JiTCODE (dop853) to <1e-3
+    over a short window.  Runs nightly (``-m full``) with the diffsol extra.
+    """
+    from tsdynamics import registry
+
+    bad = []
+    for e in registry.all_systems(family="ode"):
+        cls = e.cls
+        try:
+            ic = cls().resolve_ic(None)
+            yj = cls().integrate(
+                ic=ic, final_time=1.0, dt=0.02, method="dop853", rtol=1e-10, atol=1e-12
+            ).y
+            yd = cls().integrate(
+                ic=ic, final_time=1.0, dt=0.02, backend="diffsol", method="LSODA",
+                rtol=1e-10, atol=1e-12,
+            ).y
+        except Exception as exc:  # noqa: BLE001 — record which system & why
+            bad.append((e.name, f"error: {str(exc).splitlines()[-1][:50]}"))
+            continue
+        n = min(len(yj), len(yd))
+        dev = float(np.max(np.abs(yj[:n] - yd[:n])))
+        if dev >= 1e-3:
+            bad.append((e.name, round(dev, 5)))
+    assert not bad, f"{len(bad)}/118 ODEs disagree or error on diffsol: {bad}"

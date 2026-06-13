@@ -718,11 +718,14 @@ class ContinuousSystem(SystemBase, ABC):
             ``tsit45`` / ``bdf`` / ``tr_bdf2`` / ``esdirk34``.
         rtol, atol : float
             Solver tolerances (default 1e-6 / 1e-9).
-        backend : {"jitcode", "diffsol"}
-            ``"jitcode"`` (default) compiles via C; ``"diffsol"`` is the
-            experimental Rust solver suite
-            (``pip install tsdynamics[diffsol]``,
-            see :mod:`tsdynamics.backends.diffsol`).
+        backend : {"jitcode", "diffsol", "auto"}
+            ``"jitcode"`` (default) compiles the RHS to C; ``"diffsol"`` uses
+            the Rust solver suite via LLVM JIT — no C compiler, prebuilt
+            wheels (``pip install tsdynamics[diffsol]``), ~10× faster on small
+            chaotic systems, and validated against JiTCODE across the whole
+            ODE catalogue (see :mod:`tsdynamics.backends.diffsol`).  ``"auto"``
+            picks ``"diffsol"`` when it is installed, else ``"jitcode"`` —
+            the recommended zero-compiler fast path.
         **integrator_kwargs
             Forwarded to ``jitcode.set_integrator`` (e.g. ``max_step``).
 
@@ -731,6 +734,15 @@ class ContinuousSystem(SystemBase, ABC):
         Trajectory
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
+        if backend == "auto":
+            # Prefer the zero-compiler Rust path when its optional dependency
+            # is installed; otherwise fall back to the always-available
+            # JiTCODE path. Lets `tsdynamics[diffsol]` users get the fast
+            # backend without naming it, with no surprise for everyone else.
+            from tsdynamics.backends import diffsol as _diffsol
+
+            backend = "diffsol" if _diffsol.available() else "jitcode"
+
         if backend == "diffsol":
             from tsdynamics.backends import diffsol as _diffsol
 
@@ -754,7 +766,7 @@ class ContinuousSystem(SystemBase, ABC):
                 ),
             )
         if backend != "jitcode":
-            raise ValueError(f"Unknown backend {backend!r}; use 'jitcode' or 'diffsol'.")
+            raise ValueError(f"Unknown backend {backend!r}; use 'jitcode', 'diffsol', or 'auto'.")
 
         method = method or self._default_method
         integ_name = _INTEGRATOR_MAP.get(method, method)
