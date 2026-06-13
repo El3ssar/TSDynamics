@@ -57,10 +57,10 @@ These were made deliberately; treat them as fixed unless this file changes.
 | **D7** | **v3.0 ships on big-bang parity.** | v3.0 is **not** cut until the new architecture + Rust sole-engine **and** the parity moat (basins, fractal dimensions, delay embeddings, recurrence/RQA, surrogates, the full chaos-quantification suite) are all in and literature-validated. One dramatic launch. Internal milestones (M0…M6, §7) stage the work; they are not separate PyPI releases unless we choose to pre-release `3.0.0bN`. |
 
 **Still-open sub-decisions** (do **not** block on these unless your stream needs
-them; flagged in §11): the SDE noise contract; the Cranelift JIT trigger
-heuristic; the exact public top-level `__all__`; whether `tsdynamics` ships as
-one maturin wheel or keeps a separable accelerator. Resolve via an
-`[interface]`/`[decision]` PR + a note to the maintainer.
+them; flagged in §11): the Cranelift JIT trigger heuristic; the exact public
+top-level `__all__`; whether `tsdynamics` ships as one maturin wheel or keeps a
+separable accelerator. Resolve via an `[interface]`/`[decision]` PR + a note to
+the maintainer. *(The SDE noise contract is now **decided** — see §11.)*
 
 ---
 
@@ -290,7 +290,7 @@ in the **same tier** are designed to run **simultaneously**.
 | **E5** | Engine core: integrate + ensembles + RNG | `crates/tsdyn-engine/**` | E1 | E3,E4 | single + rayon ensemble paths; seeded determinism (parallel==serial). |
 | **E6** | **Symbolic → IR compiler** (Python) | `tsdynamics/engine/compile.py` (migrate from rustcore.py emitter), `problem.py`, `run.py` | F1,F3 | E1–E5 | all families lower; Jacobian lowering with a.e. abs/sign resolution; backend select `interp|jit`. |
 | **E7** | PyO3 bindings (`tsdyn-core`) | `crates/tsdyn-core/**`, `tsdynamics/_rust` | E5,E6 | — | numpy zero-copy; GIL released; the documented Python engine API. |
-| **E-SDE** | **SDE** engine + solvers (NEW family) | `tsdyn-solvers/sde/**`, Wiener/RNG in engine, `families/stochastic.py` | E5, **§11-SDE decision** | E-DDE | Euler–Maruyama + Milstein; converges to known SDE moments (OU process, geometric BM); seeded ensembles. |
+| **E-SDE** | **SDE** engine + solvers (NEW family, **diagonal-Itô**, §11) | `tsdyn-solvers/sde/**`, Wiener/RNG in engine, `families/stochastic.py` | E5 | E-DDE | `_drift`+`_diffusion` (per-component); Euler–Maruyama + Milstein; converges to known SDE moments (OU process, geometric BM); seeded ensembles. |
 | **E-DDE** | **DDE** engine (method of steps) | `tsdyn-engine/dde.rs` (history ring buffer + dense interp), `families/delay.py` | E5 | E-SDE | Mackey–Glass matches JiTCDDE within tol; constant + state-dependent delays. |
 | **E-MAP** | Maps on the engine | `families/discrete.py` + `tsdyn-engine` map loop | E5 | — | all 26 maps iterate natively; matches v2 Numba within fp tol. |
 
@@ -415,15 +415,22 @@ built-in systems; an **external plugin ecosystem** (D4) the benchmark lacks.
 | Removing v2 backends regresses a system | I-XVAL gate is mandatory before any deletion; deletion is its own reviewed PR. |
 | Scope explosion (parity = many functions) | milestones gated by literature-validated acceptance; analysis lands only with a validated test. |
 | Parallel sessions collide | worktrees + one-file-per-thing + append-only shared files + auto-discovery (§4e). |
-| SDE contract chosen wrong (permanent API) | resolve §11-SDE before E-SDE; pick the diagonal-Itô default unless told otherwise. |
+| SDE contract is a permanent public API | **resolved: diagonal-Itô** (§11) — `_drift`+`_diffusion`, EM+Milstein; matrix/scalar/Stratonovich are later opt-in variants behind the same family, not a redesign. |
 
 ---
 
 ## 11. Open decisions (resolve via `[decision]` PR + maintainer note; don't block siblings)
 
-- **SDE noise contract** *(needed by E-SDE)* — diagonal-Itô (`_drift` +
-  `_diffusion` per-component, EM+Milstein) is the recommended default; matrix /
-  scalar / Stratonovich variants are alternatives. **Maintainer to confirm.**
+- **SDE noise contract — ✅ DECIDED: diagonal-Itô.** Contract:
+  `_drift(y, t, **params)` (the deterministic part, exactly like `_equations`) +
+  `_diffusion(y, t, **params)` returning **one noise coefficient per state
+  component**, each multiplying an independent Wiener increment. **Itô**
+  interpretation. Solvers: **Euler–Maruyama** (order 0.5) and **Milstein**
+  (order 1.0 — uses `∂g/∂u`, which the tape Jacobian already provides). This
+  covers additive and multiplicative diagonal noise — the large majority of
+  applied SDE models. Matrix (`dim×m`), scalar, and Stratonovich variants may be
+  added later as opt-in modes **behind the same family**, so this is not a future
+  redesign. E-SDE builds exactly this.
 - **Cranelift JIT trigger** *(E2/E6)* — manual `backend="jit"` first; later an
   auto-heuristic (system size × run length × sweep count). Ship manual, then
   auto.
