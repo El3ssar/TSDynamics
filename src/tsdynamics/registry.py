@@ -127,8 +127,10 @@ def register_class(cls: type) -> None:
     )
 
     bucket = _BY_NAME.setdefault(entry.name, [])
-    if is_builtin and any(e.is_builtin for e in bucket):
-        other = next(e for e in bucket if e.is_builtin)
+    # Re-importing/reloading the SAME builtin module is fine (the entry below
+    # replaces the stale one); only a different module is a duplicate bug.
+    if is_builtin and any(e.is_builtin and e.module != entry.module for e in bucket):
+        other = next(e for e in bucket if e.is_builtin and e.module != entry.module)
         raise TypeError(
             f"Duplicate built-in system name {entry.name!r}: "
             f"already defined in {other.module}, redefined in {entry.module}."

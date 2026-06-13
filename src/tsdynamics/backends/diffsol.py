@@ -84,6 +84,12 @@ def _diffsl_printer():
         def _print_Abs(self, expr):  # noqa: N802 — sympy printer dispatch name
             return f"abs({self._print(expr.args[0])})"
 
+        def _print_Pi(self, expr):  # noqa: N802 — sympy printer dispatch name
+            return "3.141592653589793"
+
+        def _print_Exp1(self, expr):  # noqa: N802 — sympy printer dispatch name
+            return "2.718281828459045"
+
         def _print_sign(self, expr):
             arg = self._print(expr.args[0])
             return f"(2.0 * heaviside({arg}) - 1.0)"
@@ -116,7 +122,9 @@ def to_diffsl(system: Any) -> tuple[str, list[str]]:
     dim = sys_obj.dim
     struct_vals = sys_obj._structural_vals()
     control_names = list(sys_obj._control_params())
-    control_syms = {k: symengine.Symbol(k) for k in control_names}
+    # Sanitized DSL identifiers — raw parameter names may collide with DiffSL
+    # reserved words or use characters its grammar rejects.
+    control_syms = {k: symengine.Symbol(f"tsdp{i}") for i, k in enumerate(control_names)}
 
     exprs = list(type(sys_obj)._equations(y, t_sym, **{**struct_vals, **control_syms}))
     if len(exprs) != dim:
@@ -124,6 +132,11 @@ def to_diffsl(system: Any) -> tuple[str, list[str]]:
 
     state_names = [f"{_STATE_PREFIX}{i}" for i in range(dim)]
     subs = {y(i): symengine.Symbol(state_names[i]) for i in range(dim)}
+    # DiffSL's internal clock always starts at 0; integrate() may start at t0.
+    # Shift explicit time dependence so non-autonomous systems stay correct:
+    # every occurrence of t becomes (t + tsdt0), with tsdt0 a solve-time input.
+    t0_sym = symengine.Symbol("tsdt0")
+    subs[t_sym] = t_sym + t0_sym
 
     printer = _diffsl_printer()
     rhs_lines = []
@@ -131,7 +144,8 @@ def to_diffsl(system: Any) -> tuple[str, list[str]]:
         sympy_expr = symengine.sympify(e).subs(subs)._sympy_()
         rhs_lines.append(f"  {printer.doprint(sympy_expr)},")
 
-    inputs = [f"  {k} = {float(sys_obj.params[k])!r}," for k in control_names]
+    inputs = [f"  {control_syms[k]} = {float(sys_obj.params[k])!r}," for k in control_names]
+    inputs += ["  tsdt0 = 0.0,"]
     inputs += [f"  ic{i} = 0.0," for i in range(dim)]
     states = [f"  {state_names[i]} = ic{i}," for i in range(dim)]
 
@@ -160,9 +174,13 @@ _SOLVER_MAP = {
     "tsit45": "tsit45",
     "RK45": "tsit45",
     "dopri5": "tsit45",
+    "DOP853": "tsit45",
+    "dop853": "tsit45",
     "bdf": "bdf",
     "LSODA": "bdf",
     "lsoda": "bdf",
+    "VODE": "bdf",
+    "vode": "bdf",
     "tr_bdf2": "tr_bdf2",
     "esdirk34": "esdirk34",
 }
@@ -223,7 +241,8 @@ def integrate(
 
     t_eval = _make_t_eval(t0, final_time, dt)
     control_vals = [float(system.params[k]) for k in control_names]
-    params_vec = np.concatenate([control_vals, np.asarray(ic, dtype=float)])
+    # Input layout must mirror to_diffsl: [*controls, tsdt0, *ics].
+    params_vec = np.concatenate([control_vals, [float(t0)], np.asarray(ic, dtype=float)])
 
     sol = ode.solve_dense(params_vec, t_eval - t0)
     y = np.asarray(sol.ys, dtype=float).T

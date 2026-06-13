@@ -121,6 +121,8 @@ def orbit_diagram(
         else:
             idx.append(int(c))
 
+    import warnings
+
     values_arr = np.asarray(list(values), dtype=float)
     points: list[np.ndarray] = []
     state: np.ndarray | None = None
@@ -128,13 +130,26 @@ def orbit_diagram(
     for v in values_arr:
         current = sys.with_params(**{param: v})
         start = state if (carry_state and state is not None) else ic
-        current.reinit(start)
-        for _ in range(transient):
-            current.step()
-        rec = np.empty((n, len(idx)))
-        for i in range(n):
-            u = current.step()
-            rec[i] = u[idx]
+        try:
+            current.reinit(start)
+            for _ in range(transient):
+                current.step()
+            rec = np.empty((n, len(idx)))
+            for i in range(n):
+                u = current.step()
+                rec[i] = u[idx]
+        except RuntimeError as exc:
+            # One divergent value must not discard the whole sweep: record an
+            # empty point set and restart the next value from `ic`.
+            warnings.warn(
+                f"orbit_diagram: {param}={v:g} diverged ({exc}); recording an "
+                f"empty set for this value.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            points.append(np.empty((0, len(idx))))
+            state = None
+            continue
         points.append(rec)
         if carry_state:
             state = current.state()

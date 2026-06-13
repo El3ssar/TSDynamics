@@ -113,7 +113,8 @@ class DiscreteMap(SystemBase):
         parameter values (this bit the Circle map once), so it is promoted
         to an import-time ``TypeError``.
         """
-        super().__init_subclass__(**kwargs)
+        # Validate BEFORE super().__init_subclass__ so a failing class is
+        # never registered in the system registry.
         declared = list(getattr(cls, "params", {}))
         for name in ("_step", "_jacobian"):
             method = getattr(cls, name, None)
@@ -128,6 +129,7 @@ class DiscreteMap(SystemBase):
                     f"params dict declares {declared} — names and ORDER must match, "
                     f"because parameters are passed positionally."
                 )
+        super().__init_subclass__(**kwargs)
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -197,7 +199,17 @@ class DiscreteMap(SystemBase):
         """Advance ``n`` iterations (default 1) and return the new state."""
         if self._state_now is None:
             self.reinit()
-        n = int(n_or_dt) if n_or_dt is not None else 1
+        if n_or_dt is None:
+            n = 1
+        else:
+            nf = float(n_or_dt)
+            if not nf.is_integer() or nf < 1:
+                raise ValueError(
+                    f"{type(self).__name__}.step takes a positive whole number of "
+                    f"iterations, got {n_or_dt!r} (fractional time steps have no "
+                    f"meaning for discrete maps)."
+                )
+            n = int(nf)
         x = self._state_now
         params = self.params.as_tuple()
 
@@ -258,7 +270,10 @@ class DiscreteMap(SystemBase):
         if not _NUMBA:
             return None
 
-        cache_key = (type(self).__name__, self.params.param_hash())
+        # Key on the class OBJECT, not its name: a same-named user class (or a
+        # notebook redefinition with edited _step) must never reuse another
+        # definition's compiled loop.
+        cache_key = (type(self), self.params.param_hash())
         cache = type(self)._iter_cache
 
         if cache_key in cache:

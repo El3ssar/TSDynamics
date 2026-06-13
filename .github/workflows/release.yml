@@ -59,9 +59,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # PSR needs the full tag history to compute the next version.
+          # PSR needs the full tag history AND an attached branch (it commits
+          # the version bump back) — do not pin ref to a sha (detached HEAD).
           fetch-depth: 0
-          ref: ${{ github.sha }}
 
       - name: Semantic release (version, tag, GitHub release, build)
         id: semrel

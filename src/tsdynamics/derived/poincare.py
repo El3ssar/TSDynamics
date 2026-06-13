@@ -211,6 +211,10 @@ class PoincareMap(DerivedSystem):
     def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
         """Restart the inner flow and clear crossing bookkeeping."""
         self.system.reinit(u, **kwargs)
+        # Parameter values are baked into the numeric RHS — rebuild it so the
+        # Hermite refinement matches the (possibly re-parametrized) dynamics.
+        if hasattr(self.system, "_rhs_numeric"):
+            self._rhs = self.system._rhs_numeric()
         self._u_cross = None
         self._t_cross = None
         self._n_cross = 0

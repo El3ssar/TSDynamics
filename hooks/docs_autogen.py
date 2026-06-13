@@ -81,12 +81,12 @@ def _system_page(entry, fig_path: Path | None) -> str:
             parts += [f"**Variables:** `{', '.join(entry.cls.variables)}`", ""]
 
     if fig_path is not None:
+        # Markdown image syntax (not raw HTML): MkDocs rewrites the relative
+        # path for use_directory_urls, so it works both locally and deployed.
         depth = family_dir.count("/") + 2  # family dir + category dir
         rel = "../" * depth + f"assets/figures/systems/{entry.name}.png"
         parts += [
-            '<figure markdown="span">',
-            f'  <img src="{rel}" alt="{entry.name} attractor" loading="lazy">',
-            "</figure>",
+            f"![{entry.name} attractor]({rel}){{ loading=lazy }}",
             "",
         ]
 

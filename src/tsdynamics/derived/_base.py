@@ -48,6 +48,10 @@ class DerivedSystem:
         """Return a new wrapper of the same kind around a re-parametrized copy."""
         return self._rebuild(self.system.with_params(**overrides))
 
+    def copy(self) -> DerivedSystem:
+        """Return a new wrapper of the same kind around a copy of the inner system."""
+        return self._rebuild(self.system.copy())
+
     def _rebuild(self, inner: Any) -> DerivedSystem:
         """Construct a new wrapper of the same kind around ``inner``."""
         raise NotImplementedError

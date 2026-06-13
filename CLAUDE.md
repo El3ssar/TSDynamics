@@ -217,7 +217,7 @@ TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # docs sanity
   conventional commits (feat→minor, fix/perf→patch, `!`→major) → tag,
   GitHub release, PyPI publish via trusted publishing (`environment: pypi`,
   bound to the filename `release.yml` — don't rename).
-- No CHANGELOG file — release notes live on GitHub Releases.
+- CHANGELOG.md is maintained by python-semantic-release; release notes also land on GitHub Releases.
 - Workflows: `ci.yml` (PR gate), `docs.yml` (build + Pages deploy with
   figure cache), `release.yml`, `pr-title.yml`, `nightly.yml` (`-m full`).
 

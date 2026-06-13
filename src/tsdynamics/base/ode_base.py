@@ -92,7 +92,12 @@ def _resolve_derivative_nodes(expr):
         new_args = [walk(a) for a in args]
         if all(na is a for na, a in zip(new_args, args, strict=True)):
             return e
-        return e.func(*new_args)
+        try:
+            return e.func(*new_args)
+        except (TypeError, RuntimeError):
+            # Some node types (e.g. Piecewise) flatten their args and cannot
+            # be reconstructed via func(*args) — keep the original node.
+            return e
 
     return walk(symengine.sympify(expr))
 
@@ -215,6 +220,25 @@ class ContinuousSystem(SystemBase, ABC):
         """Return the structural parameter key→value pairs (baked in)."""
         return {k: self.params[k] for k in type(self)._structural_params}
 
+    def _equations_hash(self) -> str:
+        """
+        Content hash of the RHS definition, part of every compile-cache key.
+
+        Without it, two same-named classes (user shadowing a builtin, or a
+        notebook cell redefining a class with edited equations) would silently
+        reuse each other's compiled dynamics.
+        """
+        import hashlib
+        import inspect
+
+        fn = type(self)._equations
+        fn = getattr(fn, "__func__", fn)
+        try:
+            src = inspect.getsource(fn)
+        except (OSError, TypeError):  # dynamically defined without source
+            src = repr(getattr(fn, "__code__", fn).co_code)
+        return hashlib.md5(src.encode()).hexdigest()[:8]
+
     def _control_params(self) -> dict[str, Any]:
         """Return the non-structural parameters (become control_pars)."""
         structural = type(self)._structural_params
@@ -231,6 +255,7 @@ class ContinuousSystem(SystemBase, ABC):
         import hashlib
         import json
 
+        eq = self._equations_hash()
         struct_vals = self._structural_vals()
         if struct_vals:
             # 64-bit slice of the MD5 digest matches ParamSet.param_hash so all
@@ -238,9 +263,9 @@ class ContinuousSystem(SystemBase, ABC):
             h = hashlib.md5(
                 json.dumps(sorted(struct_vals.items()), default=str).encode()
             ).hexdigest()[:16]
-            name = f"tsdyn_{type(self).__name__}_{self.dim}_{h}"
+            name = f"tsdyn_{type(self).__name__}_{self.dim}_{h}_{eq}"
         else:
-            name = f"tsdyn_{type(self).__name__}_{self.dim}"
+            name = f"tsdyn_{type(self).__name__}_{self.dim}_{eq}"
         return _CACHE_DIR / name
 
     def _ensure_compiled(self, for_lyap: bool = False, n_lyap: int = 0) -> Any:
@@ -294,10 +319,12 @@ class ContinuousSystem(SystemBase, ABC):
             )
 
         def _find_so(base: pathlib.Path) -> pathlib.Path | None:
+            # save_compiled writes plain "<name>.so"; interrupted-compile
+            # recovery writes the full EXT_SUFFIX form — accept both.
             hits = [
                 f
                 for f in _CACHE_DIR.glob(f"{base.name}.*")
-                if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0
+                if (f.name.endswith(_EXT_SUFFIX) or f.name.endswith(".so")) and f.stat().st_size > 0
             ]
             return hits[0] if hits else None
 
@@ -385,13 +412,19 @@ class ContinuousSystem(SystemBase, ABC):
     def _so_path(self) -> str:
         """Ensure the non-lyap module is compiled and return its .so path."""
         cache_key = str(self._module_path())
+        so = type(self)._compiled_so.get(cache_key)
+        if so is not None and not pathlib.Path(so).exists():
+            # Cache directory was wiped while we were running — recompile.
+            so = None
+            type(self)._compiled_so.pop(cache_key, None)
+            type(self)._compiled_odes.pop(cache_key, None)
         self._ensure_compiled(for_lyap=False)
         so = type(self)._compiled_so.get(cache_key)
         if so is None:  # object-cache hit recorded before path tracking
             hits = [
                 f
                 for f in _CACHE_DIR.glob(f"{self._module_path().name}.*")
-                if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0
+                if (f.name.endswith(_EXT_SUFFIX) or f.name.endswith(".so")) and f.stat().st_size > 0
             ]
             if not hits:
                 raise RuntimeError(f"{type(self).__name__}: compiled module not found on disk.")
@@ -411,12 +444,21 @@ class ContinuousSystem(SystemBase, ABC):
         """
         import shutil
         import tempfile
+        import weakref
 
         import symengine
         from jitcode import jitcode as _jitcode
 
         so = pathlib.Path(self._so_path())
         type(self)._stepper_counter += 1
+
+        # Reclaim the previous stepper's copy before making a new one —
+        # parameter sweeps reinit thousands of times and must not accumulate
+        # one temp dir per reinit.
+        old = getattr(self, "_stepper_tmpdir", None)
+        if old:
+            shutil.rmtree(old, ignore_errors=True)
+
         # Same filename (PyInit_<stem> is baked into the binary), unique
         # directory → distinct dlopen image per stepper.
         tmpdir = tempfile.mkdtemp(
@@ -424,8 +466,10 @@ class ContinuousSystem(SystemBase, ABC):
         )
         unique = pathlib.Path(tmpdir) / so.name
         shutil.copy(so, unique)
-        # Keep the temp dir referenced for the stepper's lifetime.
+        # Keep the temp dir referenced for the stepper's lifetime, and make
+        # sure instance death / interpreter exit removes it.
         self._stepper_tmpdir = tmpdir
+        weakref.finalize(self, shutil.rmtree, tmpdir, ignore_errors=True)
 
         control_syms = [symengine.Symbol(k) for k in self._control_params()]
         return _jitcode(

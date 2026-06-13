@@ -87,7 +87,7 @@ Every push to `main` runs `.github/workflows/release.yml`, which:
 2. Parses the conventional-commit messages since the last release: `feat:` → minor, `fix:`/`perf:` → patch, `!`/`BREAKING CHANGE` → major.  Chore/ci/docs-only pushes release nothing.
 3. If a release is due: rewrites `__version__` in `src/tsdynamics/__init__.py`, commits, tags `vX.Y.Z`, creates the GitHub Release with generated notes, and publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no API tokens).
 
-Release notes live on [GitHub Releases](https://github.com/El3ssar/TSDynamics/releases); there is no in-repo changelog.
+Release notes land on [GitHub Releases](https://github.com/El3ssar/TSDynamics/releases) and python-semantic-release keeps CHANGELOG.md up to date.
 
 **One-time PyPI setup** (only the project owner needs to do this once):
 

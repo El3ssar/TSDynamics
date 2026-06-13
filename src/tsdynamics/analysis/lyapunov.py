@@ -116,6 +116,10 @@ def max_lyapunov(
             "max_lyapunov needs set_state, which delay systems cannot support — "
             "use DelaySystem.lyapunov_spectrum (jitcdde_lyap) instead."
         )
+    if sys.is_discrete and dt is not None:
+        raise ValueError(
+            "dt has no meaning for discrete maps — omit it (every step is one iteration)."
+        )
 
     rng = np.random.default_rng(seed)
     ref = sys.copy()

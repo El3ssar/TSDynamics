@@ -144,8 +144,18 @@ class DelaySystem(SystemBase, ABC):
     # ------------------------------------------------------------------ #
 
     def _cache_key(self) -> str:
-        """Return unique key for this (class, params) combination."""
-        return f"{type(self).__name__}_{self.params.param_hash():016x}"
+        """Return a unique key for this (class, params, equations) combination."""
+        import hashlib
+        import inspect
+
+        fn = type(self)._equations
+        fn = getattr(fn, "__func__", fn)
+        try:
+            src = inspect.getsource(fn)
+        except (OSError, TypeError):
+            src = repr(getattr(fn, "__code__", fn).co_code)
+        eq = hashlib.md5(src.encode()).hexdigest()[:8]
+        return f"{type(self).__name__}_{self.params.param_hash():016x}_{eq}"
 
     def _module_path(self) -> pathlib.Path:
         return _CACHE_DIR / f"tsdyn_dde_{self._cache_key()}"
@@ -182,10 +192,12 @@ class DelaySystem(SystemBase, ABC):
         cache_key = str(dest_path)
 
         def _find_so(base: pathlib.Path) -> pathlib.Path | None:
+            # save_compiled writes plain "<name>.so"; interrupted-compile
+            # recovery writes the full EXT_SUFFIX form — accept both.
             hits = [
                 f
                 for f in _CACHE_DIR.glob(f"{base.name}.*")
-                if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0
+                if (f.name.endswith(_EXT_SUFFIX) or f.name.endswith(".so")) and f.stat().st_size > 0
             ]
             return hits[0] if hits else None
 

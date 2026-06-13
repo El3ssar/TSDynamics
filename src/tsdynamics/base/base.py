@@ -258,6 +258,15 @@ class Trajectory:
             return self.y[:, self._component_index(key)]
         if isinstance(key, list | tuple) and key and all(isinstance(k, str) for k in key):
             return self.y[:, [self._component_index(k) for k in key]]
+        if isinstance(key, int | np.integer):
+            # Keep the result a well-formed Trajectory (one row), not a
+            # corrupted one built from scalars.
+            return Trajectory(
+                np.atleast_1d(self.t[key]),
+                np.atleast_2d(self.y[key]),
+                self.system,
+                meta=self.meta,
+            )
         return Trajectory(self.t[key], self.y[key], self.system, meta=self.meta)
 
     @property
