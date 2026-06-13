@@ -135,10 +135,10 @@ def test_diffsol_integrates_full_catalogue() -> None:
     (``-m full``) with the diffsol extra.
 
     Numeric agreement with JiTCODE is checked separately on the curated sample
-    (``test_cross_validation_over_sample``).  We deliberately do NOT cross-check
-    the JiTCODE reference here for the whole catalogue: a couple of systems
-    (see ``HARD_TO_INTEGRATE``) stall every adaptive solver and can't produce a
-    bounded reference, which would hang the sweep rather than measure diffsol.
+    (``test_cross_validation_over_sample``); here we only assert each diffsol
+    trajectory is finite.  ``HARD_TO_INTEGRATE | DIFFSOL_SKIP`` is honoured as
+    an escape hatch for systems that genuinely cannot be integrated, but both
+    sets are currently empty — the whole ODE catalogue integrates on diffsol.
     """
     import sys
     import zlib
