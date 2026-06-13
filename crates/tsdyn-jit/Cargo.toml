@@ -1,0 +1,13 @@
+[package]
+name = "tsdyn-jit"
+description = "TSDynamics JIT: a Cranelift Evaluator that compiles an IR tape to native code (pure Rust, no LLVM)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tsdyn-ir.workspace = true
+# cranelift-* dependencies are added by stream E2 (kept out of the F0 skeleton
+# so the workspace builds instantly with no heavy codegen deps).

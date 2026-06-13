@@ -1,0 +1,11 @@
+[package]
+name = "tsdyn-vm"
+description = "TSDynamics interpreter: a zero-warmup Evaluator that walks the IR tape on a stack machine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tsdyn-ir.workspace = true

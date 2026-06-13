@@ -1,0 +1,9 @@
+[package]
+name = "tsdyn-ir"
+description = "TSDynamics engine IR: the instruction-tape contract between the Python compiler and the Rust evaluators."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+# Leaf crate: no dependencies (the IR is the root of the engine build graph).

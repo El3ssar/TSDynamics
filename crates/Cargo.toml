@@ -1,0 +1,55 @@
+# TSDynamics Rust engine — Cargo workspace (v3 program, ROADMAP §4a).
+#
+# One concern per crate so parallel work streams edit disjoint files. The build
+# graph mirrors the architecture table; the owning stream is noted per crate:
+#
+#   tsdyn-ir       the instruction-tape contract                  (F1)  → —
+#   tsdyn-vm       interpreter `Evaluator` over the tape          (E1)  → ir
+#   tsdyn-jit      Cranelift `Evaluator`, same trait              (E2)  → ir (+cranelift)
+#   tsdyn-solvers  `Solver` trait + one kernel per module         (E3/E4) → ir
+#   tsdyn-engine   problem + integrate loop + ensembles + RNG     (E5)  → ir, vm, jit, solvers
+#   tsdyn-core     PyO3 bindings → the `tsdynamics._rust` module  (E7)  → engine
+#
+# These are empty-but-compiling skeletons (F0): each crate owner fills its own
+# files behind the frozen interfaces. The dependency edges below are pre-wired
+# so the workspace builds as a unit from day one.
+#
+# The v2 accelerator `tsdynamics-core` is intentionally **excluded**: it is the
+# engine being replaced (D1), stays standalone with its own lockfile, and keeps
+# building/testing unchanged via `.github/workflows/rust-core.yml` until the
+# migration gate (M3 / I-XVAL) retires it. The migration plan (§9) is explicit
+# that the new engine "lands alongside" the v2 backends.
+
+[workspace]
+resolver = "2"
+members = [
+    "tsdyn-ir",
+    "tsdyn-vm",
+    "tsdyn-jit",
+    "tsdyn-solvers",
+    "tsdyn-engine",
+    "tsdyn-core",
+]
+exclude = ["tsdynamics-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Daniel Estevez"]
+repository = "https://github.com/El3ssar/TSDynamics"
+
+# Shared version pins. Member crates opt in with `<dep>.workspace = true` so the
+# whole engine agrees on one version of each. Internal crates are referenced by
+# path here; external engine/binding deps (pyo3, numpy, rayon) are pre-pinned to
+# the versions already proven in `tsdynamics-core`. Solver-/JIT-specific deps
+# (e.g. cranelift for tsdyn-jit) are declared by their owning crate, not here.
+[workspace.dependencies]
+tsdyn-ir = { path = "tsdyn-ir" }
+tsdyn-vm = { path = "tsdyn-vm" }
+tsdyn-jit = { path = "tsdyn-jit" }
+tsdyn-solvers = { path = "tsdyn-solvers" }
+tsdyn-engine = { path = "tsdyn-engine" }
+rayon = "1.10"
+pyo3 = { version = "0.26", features = ["extension-module", "abi3-py312"] }
+numpy = "0.26"
