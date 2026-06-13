@@ -25,11 +25,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Sync dev deps (locked ruff — matches local results)
+        run: uv sync --group dev
+
       - name: ruff check
-        run: uv run --with "ruff>=0.15" ruff check src/ tests/
+        run: uv run ruff check src/ tests/
 
       - name: ruff format --check
-        run: uv run --with "ruff>=0.15" ruff format --check src/ tests/
+        run: uv run ruff format --check src/ tests/
 
   test:
     name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})

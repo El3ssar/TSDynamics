@@ -69,7 +69,7 @@ def _diffsl_printer():
     }
 
     class DiffSLPrinter(StrPrinter):
-        def _print_Pow(self, expr):
+        def _print_Pow(self, expr):  # noqa: N802 — sympy printer dispatch name
             import sympy
 
             base = self._print(expr.base)
@@ -81,14 +81,14 @@ def _diffsl_printer():
                 return f"(({base}) * ({base}))"
             return f"pow({base}, {self._print(expr.exp)})"
 
-        def _print_Abs(self, expr):
+        def _print_Abs(self, expr):  # noqa: N802 — sympy printer dispatch name
             return f"abs({self._print(expr.args[0])})"
 
         def _print_sign(self, expr):
             arg = self._print(expr.args[0])
             return f"(2.0 * heaviside({arg}) - 1.0)"
 
-        def _print_Function(self, expr):
+        def _print_Function(self, expr):  # noqa: N802 — sympy printer dispatch name
             name = expr.func.__name__
             if name in direct:
                 args = ", ".join(self._print(a) for a in expr.args)
