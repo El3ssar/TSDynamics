@@ -21,9 +21,7 @@ def test_every_ode_translates_to_diffsl(ode_entry) -> None:
     except DiffSLTranslationError as exc:
         # A genuine "DiffSL can't express this" is allowed but must be visible:
         # fail loudly so the coverage number can't silently regress unnoticed.
-        raise AssertionError(
-            f"{ode_entry.name}: no longer translates to DiffSL — {exc}"
-        ) from exc
+        raise AssertionError(f"{ode_entry.name}: no longer translates to DiffSL — {exc}") from exc
     assert "in_i {" in code and "u_i {" in code and "F_i {" in code
     # control inputs = the non-structural params (structural ones, e.g.
     # Lorenz96's N, are baked into the generated module, not solve-time inputs).

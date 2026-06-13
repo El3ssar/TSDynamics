@@ -33,9 +33,7 @@ def test_unknown_backend_rejected() -> None:
 
 def test_auto_backend_uses_diffsol_when_available() -> None:
     """With pydiffsol installed, backend='auto' routes to diffsol."""
-    traj = ts.Lorenz().integrate(
-        final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0], backend="auto"
-    )
+    traj = ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0], backend="auto")
     assert traj.meta["backend"] == "diffsol"
 
 
@@ -95,13 +93,24 @@ def test_cross_validation_over_sample() -> None:
     for name in INTEGRATION_SAMPLE:
         cls = registry.get(name).cls
         ic = cls().resolve_ic(None)
-        yj = cls().integrate(
-            ic=ic, final_time=1.5, dt=0.03, method="dop853", rtol=1e-10, atol=1e-12
-        ).y
-        yd = cls().integrate(
-            ic=ic, final_time=1.5, dt=0.03, backend="diffsol", method="LSODA",
-            rtol=1e-10, atol=1e-12,
-        ).y
+        yj = (
+            cls()
+            .integrate(ic=ic, final_time=1.5, dt=0.03, method="dop853", rtol=1e-10, atol=1e-12)
+            .y
+        )
+        yd = (
+            cls()
+            .integrate(
+                ic=ic,
+                final_time=1.5,
+                dt=0.03,
+                backend="diffsol",
+                method="LSODA",
+                rtol=1e-10,
+                atol=1e-12,
+            )
+            .y
+        )
         n = min(len(yj), len(yd))
         dev = float(np.max(np.abs(yj[:n] - yd[:n])))
         if dev >= 1e-3:
@@ -132,13 +141,24 @@ def test_cross_validation_full_catalogue() -> None:
         cls = e.cls
         try:
             ic = cls().resolve_ic(None)
-            yj = cls().integrate(
-                ic=ic, final_time=1.0, dt=0.02, method="dop853", rtol=1e-10, atol=1e-12
-            ).y
-            yd = cls().integrate(
-                ic=ic, final_time=1.0, dt=0.02, backend="diffsol", method="LSODA",
-                rtol=1e-10, atol=1e-12,
-            ).y
+            yj = (
+                cls()
+                .integrate(ic=ic, final_time=1.0, dt=0.02, method="dop853", rtol=1e-10, atol=1e-12)
+                .y
+            )
+            yd = (
+                cls()
+                .integrate(
+                    ic=ic,
+                    final_time=1.0,
+                    dt=0.02,
+                    backend="diffsol",
+                    method="LSODA",
+                    rtol=1e-10,
+                    atol=1e-12,
+                )
+                .y
+            )
         except Exception as exc:  # noqa: BLE001 — record which system & why
             bad.append((e.name, f"error: {str(exc).splitlines()[-1][:50]}"))
             continue
