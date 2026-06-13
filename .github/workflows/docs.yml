@@ -17,6 +17,9 @@ concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  DISABLE_MKDOCS_2_WARNING: "true"
+
 jobs:
   build:
     runs-on: ubuntu-latest

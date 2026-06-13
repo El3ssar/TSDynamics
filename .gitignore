@@ -171,3 +171,7 @@ data/
 
 Tinkering
 src/tsdynamics/_version.py
+
+# Generated docs artifacts (figures render at build time, cache in .cache/)
+docs/assets/figures/systems/
+site/

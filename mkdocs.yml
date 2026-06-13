@@ -1,0 +1,191 @@
+# =========================================================================
+# TSDynamics documentation
+# =========================================================================
+# Journey-based structure: Start (productive in 10 min) → Systems (the
+# catalogue, mostly auto-generated) → Analysis (the toolkit) → Theory
+# (the math) → Reference (auto-generated API) → Project.
+#
+# Per-system pages under Systems are injected at build time by
+# hooks/docs_autogen.py; the nav below lists only the hand-written pages.
+#
+# Local preview:    mkdocs serve
+# Production build: mkdocs build --strict
+# =========================================================================
+
+site_name: TSDynamics
+site_description: >-
+  Compiled dynamical systems for Python — 149 built-in ODEs, DDEs and maps,
+  JIT-compiled integration, and a chaos-analysis toolkit.
+site_url: https://el3ssar.github.io/TSDynamics/
+site_author: Daniel Estevez
+
+repo_name: El3ssar/TSDynamics
+repo_url: https://github.com/El3ssar/TSDynamics
+edit_uri: edit/main/docs/
+copyright: >-
+  Copyright &copy; 2024–2026 Daniel Estevez — MIT License
+
+docs_dir: docs
+
+exclude_docs: |
+  _tooling/
+
+hooks:
+  - hooks/docs_autogen.py
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Figtree
+    code: IBM Plex Mono
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark
+    - scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light
+  features:
+    - content.code.annotate
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/El3ssar/TSDynamics
+      name: TSDynamics on GitHub
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/tsdynamics/
+      name: TSDynamics on PyPI
+
+extra_css:
+  - css/tsdynamics.css
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
+
+extra_javascript:
+  - js/math.js
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js
+
+plugins:
+  - search
+  - glightbox:
+      effect: zoom
+      zoomable: true
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          inventories:
+            - https://docs.python.org/3/objects.inv
+            - https://numpy.org/doc/stable/objects.inv
+            - https://docs.scipy.org/doc/scipy/objects.inv
+          options:
+            docstring_style: numpy
+            docstring_section_style: spacy
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            separate_signature: true
+            merge_init_into_class: true
+            show_source: true
+            show_bases: true
+            members_order: source
+            heading_level: 2
+            filters:
+              - "!^_"
+              - "^__init__$"
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      title: On this page
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: El3ssar
+      repo: TSDynamics
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Home: index.md
+  - Start:
+      - start/index.md
+      - Install: start/install.md
+      - First trajectory: start/first-trajectory.md
+      - The mental model: start/concepts.md
+  - Systems:
+      - systems/index.md
+      - Continuous:
+          - systems/continuous/index.md
+      - Delay:
+          - systems/delay/index.md
+      - Discrete:
+          - systems/discrete/index.md
+  - Analysis:
+      - analysis/index.md
+      - Integrate & iterate: analysis/integrate.md
+      - Lyapunov spectra: analysis/lyapunov.md
+      - Orbit & bifurcation diagrams: analysis/orbit-diagrams.md
+      - Poincaré sections: analysis/poincare.md
+      - Fixed points: analysis/fixed-points.md
+  - Theory:
+      - theory/index.md
+      - Compilation pipeline: theory/compilation.md
+      - Lyapunov exponents: theory/lyapunov.md
+      - Conventions: theory/conventions.md
+  - Reference:
+      - reference/index.md
+      - Top level: reference/top-level.md
+      - Base classes: reference/base.md
+      - Derived systems: reference/derived.md
+      - Analysis: reference/analysis.md
+      - Registry: reference/registry.md
+      - Utilities: reference/utils.md
+  - Project:
+      - project/index.md
+      - Contributing: project/contributing.md
+      - Citation: project/citation.md
+      - Changelog: project/changelog.md
+
+validation:
+  omitted_files: warn
+  absolute_links: warn

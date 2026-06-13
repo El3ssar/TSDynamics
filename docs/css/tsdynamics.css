@@ -1,0 +1,92 @@
+/* =========================================================================
+   TSDynamics — small refinements over mkdocs-material defaults.
+   Theme colors come from the deep-purple palette in mkdocs.yml; this file
+   only adds a kicker label, figure/table polish, and code-block trim.
+   ========================================================================= */
+
+:root {
+  --ts-radius: 8px;
+}
+
+/* Kicker — small section label above page titles:
+   <span class="ts-kicker">Start · 02</span> */
+.ts-kicker {
+  display: block;
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--md-accent-fg-color);
+  margin-bottom: 0.5rem;
+}
+
+/* Headings — slightly tighter display */
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.md-typeset h2 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Code blocks — rounded, hairline border */
+.md-typeset .highlight {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--ts-radius);
+  overflow: hidden;
+}
+
+/* Tables — contained, mono headers */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--ts-radius);
+  overflow: hidden;
+  box-shadow: none;
+  font-size: 0.72rem;
+}
+
+.md-typeset table:not([class]) th {
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Figures — framed, with mono captions */
+.md-typeset figure {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--ts-radius);
+  padding: 0.7rem;
+}
+
+.md-typeset figcaption {
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  font-style: normal;
+  color: var(--md-default-fg-color--light);
+  max-width: none;
+}
+
+/* Display math — quiet panel, scrollable when wide */
+.md-typeset .katex-display {
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--ts-radius);
+  overflow-x: auto;
+}
+
+/* Card grids — lift on hover */
+.md-typeset .grid.cards > ul > li {
+  border-radius: var(--ts-radius);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+  transform: translateY(-2px);
+}

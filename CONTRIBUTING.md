@@ -28,8 +28,7 @@ uv sync --group dev
 Optional: install pre-commit hooks so style is enforced before you commit:
 
 ```bash
-uv run pre-commit install                # standard hook (runs on each commit)
-uv run pre-commit install --hook-type commit-msg   # commitizen on the commit message
+uv run pre-commit install                # ruff lint + format on each commit
 ```
 
 ---
@@ -58,7 +57,7 @@ uv run pytest -m "not slow" --no-cov
 uv run pytest --no-cov
 ```
 
-If you add a new system, also add a row to `tests/test_ode_systems.py::ALL_ODE_SYSTEMS` (or its DDE / map equivalents) — see the *Adding a new system* section below for the full template.
+The test suite is registry-driven: a new system is swept automatically — no test-file edits needed.  Only new DDEs need one extra line (a non-equilibrium history in `tests/_sampling.py::DDE_HISTORIES`; a guard test reminds you).
 
 ### 3. Commit
 
@@ -72,36 +71,23 @@ test: cover Tinkerbell default_ic path
 ci: pin ruff to 0.15
 ```
 
-If pre-commit hooks are installed, `commitizen` will validate the message on commit.
-
 ### 4. Open a PR
 
-GitHub Actions runs `ruff check`, `ruff format --check`, and the full test matrix (Python 3.12 + 3.13 on Linux and macOS) for every PR. The PR must be green before review.
+GitHub Actions runs `ruff check`, `ruff format --check`, the full test matrix (Python 3.12 + 3.13 on Linux and macOS), and a docs build for every PR.  **The PR title must be a conventional commit** (enforced by the `pr-title.yml` check): PRs are squash-merged, so the title becomes the commit message that decides the next release.
 
 ---
 
 ## Release process
 
-Versioning is **fully Git-tag driven** via `hatch-vcs`. Releases require no local builds — pushing the tag triggers everything.
+Releases are **fully automated** via [python-semantic-release](https://python-semantic-release.readthedocs.io/): nobody bumps versions or pushes tags by hand.
 
-```bash
-# Bump version (commitizen reads commits since the last tag and decides
-# the semver bump; --yes accepts the suggestion). This:
-#   - bumps the tag
-#   - updates CHANGELOG.md
-#   - commits both
-#   - creates the new annotated tag
-uv run cz bump --yes
+Every push to `main` runs `.github/workflows/release.yml`, which:
 
-git push origin main
-git push origin --tags
-```
+1. Runs lint + the full test suite.
+2. Parses the conventional-commit messages since the last release: `feat:` → minor, `fix:`/`perf:` → patch, `!`/`BREAKING CHANGE` → major.  Chore/ci/docs-only pushes release nothing.
+3. If a release is due: rewrites `__version__` in `src/tsdynamics/__init__.py`, commits, tags `vX.Y.Z`, creates the GitHub Release with generated notes, and publishes to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no API tokens).
 
-The push of the new `v*.*.*` tag triggers `.github/workflows/release.yml`, which:
-
-1. Builds an sdist and a wheel with `hatch build`.
-2. Publishes them to PyPI using [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no API tokens needed).
-3. Creates a GitHub Release with auto-generated notes and the built artifacts attached.
+Release notes live on [GitHub Releases](https://github.com/El3ssar/TSDynamics/releases); there is no in-repo changelog.
 
 **One-time PyPI setup** (only the project owner needs to do this once):
 
@@ -122,7 +108,7 @@ The push of the new `v*.*.*` tag triggers `.github/workflows/release.yml`, which
 | `ruff check` | Lint (E, F, I, N, UP, B, SIM, D rules) | `pyproject.toml [tool.ruff]` |
 | `ruff format` | Formatter (line length 100) | `pyproject.toml [tool.ruff.format]` |
 | `mypy` | Optional type checking | `pyproject.toml [tool.mypy]` |
-| `commitizen` | Conventional Commits enforcement | `pyproject.toml [tool.commitizen]` |
+| `pr-title.yml` | Conventional-commit PR titles | `.github/workflows/pr-title.yml` |
 | Docstrings | NumPy convention | `pyproject.toml [tool.ruff.lint.pydocstyle]` |
 
 CI will reject a PR with any `ruff` error. Type errors are advisory for now.
@@ -159,7 +145,8 @@ class MyAttractor(ContinuousSystem):
 
 - Use **only** symbolic operations (`symengine.sin`, `cos`, `+`, `*`, `**`, `abs`, ...). No NumPy, no `math`, no Python control flow over `y`.
 - Return a sequence of exactly `dim` expressions.
-- Add the class name to the module's `__all__` and to `src/tsdynamics/systems/continuous/__init__.py` `__all__`.
+- Add the class name to the module's `__all__` and to `src/tsdynamics/systems/continuous/__init__.py` `__all__` — a registry consistency test fails if you forget.
+- That's it: the registry sweeps it into the bulk tests and the docs build generates its page (equations + attractor figure) automatically.  Optional metadata ClassVars: `variables`, `reference`, `known_lyapunov`.
 
 ### DDE — `DelaySystem`
 
