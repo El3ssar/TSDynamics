@@ -12,15 +12,17 @@ optional accelerator is installed::
 
     pip install tsdynamics-core    # or the [rustcore] extra
 
-Limitations (experimental): ODEs only; fixed-step explicit RK4 (no stiff
-support — use the ``jitcode``/``diffsol`` backends for stiff systems); the RHS
-must use functions the tape VM provides (the same set the DiffSL backend
-supports).  Unsupported constructs raise :class:`TapeCompileError`.
+Solvers (select with ``method=``): fixed-step ``RK4``, adaptive Dormand-Prince
+``RK45`` (default), and an L-stable linearly-implicit ``stiff`` kernel (aliases
+``Rosenbrock``/``LSODA``/``BDF``) that uses the system's analytic Jacobian —
+also lowered into the tape. Limitations (experimental): ODEs only; the RHS must
+use functions the tape VM provides (the same set the DiffSL backend supports).
+Unsupported constructs raise :class:`TapeCompileError`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -101,6 +103,9 @@ class CompiledTape:
     n_state: int
     n_param: int
     control_names: list[str]
+    # Register index of each Jacobian entry, row-major dim×dim; empty unless the
+    # tape was compiled with_jacobian=True (only the stiff solver needs it).
+    jac_outputs: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
 
 
 class _Emitter:
@@ -191,17 +196,23 @@ class _Emitter:
         return self._push(OP_POW, a=base_reg, b=self.emit(exp))
 
 
-def compile_tape(system: Any) -> CompiledTape:
+def compile_tape(system: Any, *, with_jacobian: bool = False) -> CompiledTape:
     """
     Lower a :class:`~tsdynamics.base.ContinuousSystem`'s RHS to a tape.
 
     Structural parameters are folded to constants; control parameters become
     inputs in ``control_names`` order (the layout the solve-time params vector
     must follow).
+
+    With ``with_jacobian=True`` the analytic Jacobian ``∂f_k/∂u_j`` is
+    differentiated symbolically and emitted into the *same* tape (sharing
+    common subexpressions with the RHS) — the stiff solver consumes it.
     """
     import symengine
     from jitcode import t as t_sym
     from jitcode import y
+
+    from tsdynamics.base.ode_base import _resolve_derivative_nodes
 
     dim = system.dim
     struct_vals = system._structural_vals()
@@ -212,11 +223,22 @@ def compile_tape(system: Any) -> CompiledTape:
     if len(exprs) != dim:
         raise ValueError(f"_equations must return {dim} expressions, got {len(exprs)}")
 
-    subs = {y(i): symengine.Symbol(f"u{i}") for i in range(dim)}
+    u_syms = [symengine.Symbol(f"u{i}") for i in range(dim)]
+    subs = {y(i): u_syms[i] for i in range(dim)}
     subs[t_sym] = symengine.Symbol("t")
+    rhs = [symengine.sympify(e).subs(subs) for e in exprs]
 
     em = _Emitter()
-    outputs = [em.emit(symengine.sympify(e).subs(subs)._sympy_()) for e in exprs]
+    outputs = [em.emit(e._sympy_()) for e in rhs]
+    jac_outputs: list[int] = []
+    if with_jacobian:
+        # Row-major dim×dim: ∂f_k/∂u_j. _resolve_derivative_nodes rewrites the
+        # unevaluated d|u|/du → sign(u) and d·sign/du → 0 a.e. (the same a.e.
+        # convention the jitcode/diffsol Jacobian autogen uses), so systems with
+        # abs/sign still lower cleanly.
+        for e in rhs:
+            for s in u_syms:
+                jac_outputs.append(em.emit(_resolve_derivative_nodes(e.diff(s))._sympy_()))
 
     return CompiledTape(
         ops=np.asarray(em.ops, dtype=np.int32),
@@ -227,6 +249,7 @@ def compile_tape(system: Any) -> CompiledTape:
         n_state=dim,
         n_param=len(control_names),
         control_names=control_names,
+        jac_outputs=np.asarray(jac_outputs, dtype=np.int32),
     )
 
 
@@ -253,21 +276,55 @@ def _args(tape: CompiledTape):
     return (tape.ops, tape.a, tape.b, tape.imm, tape.outputs, tape.n_state, tape.n_param)
 
 
-# Method names: fixed-step RK4, or the adaptive Dormand-Prince 5(4) kernel.
-# These are the only kernels the crate implements; an unknown name is rejected
-# (rather than silently downgraded) — there is no DOP853/LSODA kernel to reach.
+def _args_stiff(tape: CompiledTape):
+    # Stiff kernels take jac_outputs after outputs (mirrors the Rust signature).
+    return (
+        tape.ops,
+        tape.a,
+        tape.b,
+        tape.imm,
+        tape.outputs,
+        tape.jac_outputs,
+        tape.n_state,
+        tape.n_param,
+    )
+
+
+# Method names → kernel. RK4 = fixed step; RK45/dopri5 = adaptive Dormand-Prince
+# 5(4); stiff = L-stable linearly-implicit solver with the analytic Jacobian.
+# The SciPy-style stiff names (LSODA/BDF/Radau) route to the stiff kernel so
+# `method="LSODA"` does the expected thing rather than silently downgrading.
 _FIXED_RK4 = {"RK4", "rk4"}
 _ADAPTIVE = {"RK45", "rk45", "dopri5", "DP45"}
-_METHODS = _FIXED_RK4 | _ADAPTIVE
+_STIFF = {
+    "stiff",
+    "Rosenbrock",
+    "rosenbrock",
+    "ROS1",
+    "LSODA",
+    "lsoda",
+    "BDF",
+    "bdf",
+    "Radau",
+    "radau",
+}
+_METHODS = _FIXED_RK4 | _ADAPTIVE | _STIFF
 
 
 def _check_method(method: str) -> None:
     if method not in _METHODS:
         raise ValueError(
             f"rustcore: unknown method {method!r}; supported: {sorted(_METHODS)} "
-            "(RK4 = fixed step, RK45/dopri5 = adaptive). For stiff systems use the "
-            "jitcode/diffsol backends."
+            "(RK4 = fixed step, RK45/dopri5 = adaptive explicit, "
+            "stiff/Rosenbrock/LSODA/BDF = L-stable implicit)."
         )
+
+
+def _stiff_tape(system: Any, tape: CompiledTape | None) -> CompiledTape:
+    """Return a tape carrying the analytic Jacobian (recompiled if the given one lacks it)."""
+    if tape is not None and tape.jac_outputs.size:
+        return tape
+    return compile_tape(system, with_jacobian=True)
 
 
 def _as_state(x: Any, dim: int, name: str) -> np.ndarray:
@@ -303,14 +360,16 @@ def integrate_dense(
 
     ``method="RK45"`` (default) uses error-controlled adaptive Dormand-Prince
     5(4) with Hermite dense output (``rtol``/``atol`` set the tolerance);
-    ``method="RK4"`` uses fixed-step RK4 with internal step ``h``.
+    ``method="RK4"`` uses fixed-step RK4 with internal step ``h``;
+    ``method="stiff"`` (aliases ``Rosenbrock``/``LSODA``/``BDF``) uses an
+    L-stable linearly-implicit solver with the system's analytic Jacobian.
 
     Raises ``RuntimeError`` if the trajectory diverges or the step collapses
     before reaching the final time (matching the jitcode/diffsol backends).
     """
     _check_method(method)
     core = _require()
-    tape = tape or compile_tape(system)
+    tape = _stiff_tape(system, tape) if method in _STIFF else (tape or compile_tape(system))
     t_eval = np.ascontiguousarray(t_eval, dtype=np.float64)
     ic = _as_state(ic, tape.n_state, "ic")
     p = _params_vec(system, tape)
@@ -318,6 +377,12 @@ def integrate_dense(
         if h is None:
             h = float(np.min(np.diff(t_eval))) if t_eval.size > 1 else 1e-2
         y = np.asarray(core.integrate_dense_py(*_args(tape), ic, p, t_eval, float(h)))
+    elif method in _STIFF:
+        y = np.asarray(
+            core.integrate_dense_stiff_py(
+                *_args_stiff(tape), ic, p, t_eval, float(rtol), float(atol)
+            )
+        )
     else:
         y = np.asarray(
             core.integrate_dense_rk45_py(*_args(tape), ic, p, t_eval, float(rtol), float(atol))
@@ -346,8 +411,9 @@ def ensemble_final(
 
     ``u0_batch`` is ``(n, dim)``; each row is integrated from ``t0`` to ``t1``
     and its final state returned as a row of the ``(n, dim)`` result.
-    ``method`` selects the adaptive (``"RK45"``, default) or fixed-step
-    (``"RK4"``) kernel, as in :func:`integrate_dense`.
+    ``method`` selects the adaptive (``"RK45"``, default), fixed-step
+    (``"RK4"``), or stiff (``"stiff"``/``"LSODA"``) kernel, as in
+    :func:`integrate_dense`.
 
     A trajectory that diverges (escapes to infinity) yields a row of ``NaN``
     rather than aborting the batch — the basin/ensemble caller classifies those
@@ -355,7 +421,7 @@ def ensemble_final(
     """
     _check_method(method)
     core = _require()
-    tape = tape or compile_tape(system)
+    tape = _stiff_tape(system, tape) if method in _STIFF else (tape or compile_tape(system))
     u0_batch = np.ascontiguousarray(u0_batch, dtype=np.float64)
     if u0_batch.ndim != 2 or u0_batch.shape[1] != tape.n_state:
         raise ValueError(
@@ -366,6 +432,12 @@ def ensemble_final(
         return np.asarray(
             core.integrate_ensemble_final_py(
                 *_args(tape), u0_batch, p, float(t0), float(t1), float(h)
+            )
+        )
+    if method in _STIFF:
+        return np.asarray(
+            core.integrate_ensemble_final_stiff_py(
+                *_args_stiff(tape), u0_batch, p, float(t0), float(t1), float(rtol), float(atol)
             )
         )
     return np.asarray(

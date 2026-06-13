@@ -58,6 +58,10 @@ pub struct Tape {
     pub imm: Vec<f64>,
     /// Register index holding each derivative component (length = `dim`).
     pub outputs: Vec<i32>,
+    /// Register index holding each Jacobian entry, row-major `dim × dim`
+    /// (`jac_outputs[k*dim + j] = ∂f_k/∂u_j`).  Empty for the explicit kernels
+    /// that need no Jacobian; populated for the stiff solver.
+    pub jac_outputs: Vec<i32>,
     // Declared lengths from the Python side; carried for FFI symmetry and
     // future validation, not read by the evaluator (indices are baked in).
     #[allow(dead_code)]
@@ -77,12 +81,9 @@ impl Tape {
         self.ops.len()
     }
 
-    /// Evaluate `du/dt` at `(u, p, t)` into `deriv`, using `regs` as scratch.
-    ///
-    /// `regs` must have length `n_reg()` and `deriv` length `dim()`; both are
-    /// caller-owned so a hot loop reuses them across steps with no allocation.
+    /// Run the instruction tape, filling the register file `regs`.
     #[inline]
-    pub fn eval(&self, u: &[f64], p: &[f64], t: f64, regs: &mut [f64], deriv: &mut [f64]) {
+    fn run(&self, u: &[f64], p: &[f64], t: f64, regs: &mut [f64]) {
         for i in 0..self.ops.len() {
             let a = self.a[i] as usize;
             let r = match self.ops[i] {
@@ -119,8 +120,39 @@ impl Tape {
             };
             regs[i] = r;
         }
+    }
+
+    /// Evaluate `du/dt` at `(u, p, t)` into `deriv`, using `regs` as scratch.
+    ///
+    /// `regs` must have length `n_reg()` and `deriv` length `dim()`; both are
+    /// caller-owned so a hot loop reuses them across steps with no allocation.
+    #[inline]
+    pub fn eval(&self, u: &[f64], p: &[f64], t: f64, regs: &mut [f64], deriv: &mut [f64]) {
+        self.run(u, p, t, regs);
         for (k, &slot) in self.outputs.iter().enumerate() {
             deriv[k] = regs[slot as usize];
+        }
+    }
+
+    /// Evaluate both `du/dt` (into `deriv`) and the Jacobian `∂f/∂u` (into
+    /// `jac`, row-major `dim × dim`) in a single tape pass.  Requires a tape
+    /// built with `jac_outputs`.
+    #[inline]
+    pub fn eval_jac(
+        &self,
+        u: &[f64],
+        p: &[f64],
+        t: f64,
+        regs: &mut [f64],
+        deriv: &mut [f64],
+        jac: &mut [f64],
+    ) {
+        self.run(u, p, t, regs);
+        for (k, &slot) in self.outputs.iter().enumerate() {
+            deriv[k] = regs[slot as usize];
+        }
+        for (m, &slot) in self.jac_outputs.iter().enumerate() {
+            jac[m] = regs[slot as usize];
         }
     }
 }

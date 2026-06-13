@@ -47,6 +47,40 @@ class _Twin(ContinuousSystem):
         return [y(0), y(0)]
 
 
+class _LinStiff(ContinuousSystem):
+    """y' = -k y — large k stresses L-stability (exact decay to ~0)."""
+
+    params = {"k": 1000.0}
+    dim = 1
+
+    @staticmethod
+    def _equations(y, t, *, k):
+        return [-k * y(0)]
+
+
+class _VdPStiff(ContinuousSystem):
+    """Stiff van der Pol oscillator (μ = 1000)."""
+
+    params = {"mu": 1000.0}
+    dim = 2
+
+    @staticmethod
+    def _equations(y, t, *, mu):
+        return [y(1), mu * (1 - y(0) ** 2) * y(1) - y(0)]
+
+
+class _Robertson(ContinuousSystem):
+    """Robertson's stiff chemical-kinetics problem."""
+
+    params: dict = {}
+    dim = 3
+
+    @staticmethod
+    def _equations(y, t):
+        a, b, c = y(0), y(1), y(2)
+        return [-0.04 * a + 1e4 * b * c, 0.04 * a - 1e4 * b * c - 3e7 * b * b, 3e7 * b * b]
+
+
 @pytest.mark.parametrize("name", _EVAL_SAMPLE)
 def test_tape_eval_matches_symbolic_rhs(name: str) -> None:
     """The Rust tape evaluates the exact same RHS as the symbolic core."""
@@ -212,6 +246,84 @@ def test_dimension_mismatch_raises() -> None:
 def test_empty_t_eval_returns_empty(method: str) -> None:
     y = rc.integrate_dense(ts.Lorenz(), [1.0, 1.0, 1.0], np.array([]), method=method)
     assert y.shape[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Stiff solver — L-stable linearly-implicit kernel with the analytic Jacobian.
+# ---------------------------------------------------------------------------
+
+
+def test_stiff_is_l_stable() -> None:
+    """y' = -1000 y integrates accurately to ~0 (an explicit method would blow up)."""
+    sys = _LinStiff()
+    t_eval = np.linspace(0.0, 1.0, 101)
+    y = rc.integrate_dense(sys, [1.0], t_eval, method="stiff", rtol=1e-7, atol=1e-9)
+    assert np.all(np.isfinite(y))
+    np.testing.assert_allclose(y[:, 0], np.exp(-1000.0 * t_eval), atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("sys_factory", "ic", "T", "ref_method"),
+    [
+        (_VdPStiff, [2.0, 0.0], 30.0, "Radau"),
+        (_Robertson, [1.0, 0.0, 0.0], 40.0, "Radau"),
+    ],
+)
+def test_stiff_matches_scipy(sys_factory, ic, T, ref_method) -> None:
+    """The stiff kernel reproduces SciPy's implicit solvers on classic stiff problems."""
+    from scipy.integrate import solve_ivp
+
+    sys = sys_factory()
+    t_eval = np.linspace(0.0, T, 200)
+    y = rc.integrate_dense(sys, ic, t_eval, method="stiff", rtol=1e-7, atol=1e-10)
+    assert np.all(np.isfinite(y))
+    f = sys._rhs_numeric()
+    ref = solve_ivp(
+        lambda t, u: f(u, t), (0.0, T), ic, t_eval=t_eval, rtol=1e-11, atol=1e-12, method=ref_method
+    ).y.T
+    np.testing.assert_allclose(y, ref, rtol=1e-3, atol=1e-6)
+
+
+def test_stiff_handles_abs_sign_systems() -> None:
+    """A piecewise-linear system (Chua) integrates via the resolved-sign Jacobian."""
+    from scipy.integrate import solve_ivp
+
+    sys = ts.Chua()
+    ic = sys.resolve_ic(0.1 * np.ones(sys.dim))
+    t_eval = np.linspace(0.0, 4.0, 201)
+    y = rc.integrate_dense(sys, ic, t_eval, method="stiff", rtol=1e-7, atol=1e-9)
+    assert np.all(np.isfinite(y))
+    f = sys._rhs_numeric()
+    ref = solve_ivp(
+        lambda t, u: f(u, t), (0.0, 4.0), ic, t_eval=t_eval, rtol=1e-10, atol=1e-12, method="LSODA"
+    ).y.T
+    early = t_eval <= 2.0
+    np.testing.assert_allclose(y[early], ref[early], atol=1e-3)
+
+
+def test_stiff_method_aliases_route_to_stiff_kernel() -> None:
+    """LSODA/BDF names reach the stiff kernel (no silent downgrade to explicit)."""
+    sys = _LinStiff()
+    t_eval = np.linspace(0.0, 1.0, 51)
+    for alias in ("LSODA", "BDF", "Rosenbrock"):
+        y = rc.integrate_dense(sys, [1.0], t_eval, method=alias, rtol=1e-7, atol=1e-9)
+        np.testing.assert_allclose(y[:, 0], np.exp(-1000.0 * t_eval), atol=1e-6)
+
+
+def test_stiff_ensemble_deterministic_and_matches_serial() -> None:
+    sys = _VdPStiff()
+    rng = np.random.default_rng(0)
+    batch = rng.uniform(-2.0, 2.0, size=(200, 2))
+    fin = rc.ensemble_final(sys, batch, 0.0, 5.0, method="stiff", rtol=1e-6, atol=1e-8)
+    assert fin.shape == batch.shape and np.all(np.isfinite(fin))
+    np.testing.assert_array_equal(
+        fin, rc.ensemble_final(sys, batch, 0.0, 5.0, method="stiff", rtol=1e-6, atol=1e-8)
+    )
+    for i in (0, 100, 199):
+        serial = rc.integrate_dense(
+            sys, batch[i], np.array([0.0, 5.0]), method="stiff", rtol=1e-6, atol=1e-8
+        )[-1]
+        np.testing.assert_array_equal(fin[i], serial)
 
 
 def test_version_is_exposed() -> None:
