@@ -56,31 +56,45 @@ def _resolve_derivative_nodes(expr):
     Replace unevaluated SymEngine ``Derivative`` nodes with a.e. derivatives.
 
     SymEngine leaves ``d|u|/du`` and ``d sign(u)/du`` unevaluated, which
-    ``Lambdify`` cannot compile.  Almost everywhere, ``d|u|/du = sign(u)``
-    and ``d sign(u)/du = 0`` — the measure-zero kink is irrelevant for
+    ``Lambdify`` cannot compile.  Almost everywhere, ``d sign(u)/d· = 0``
+    and ``d|u|/du = sign(u)`` — the measure-zero kink is irrelevant for
     numeric Jacobian evaluation along an orbit.
+
+    Works directly on the SymEngine tree: these nodes may differentiate with
+    respect to *expressions* (chain-rule dummies), which cannot round-trip
+    through SymPy at all.
     """
     import symengine
 
     if "Derivative" not in str(expr):
         return expr
 
-    import sympy
+    def walk(e):
+        name = type(e).__name__
+        if name == "Derivative":
+            target = e.args[0]
+            wrt = e.args[1]
+            tname = type(target).__name__
+            if tname == "sign":
+                return symengine.Integer(0)
+            if tname == "Abs":
+                g = target.args[0]
+                if g == wrt:
+                    return symengine.sign(g)
+                try:  # wrt may be a symbol or a y(i) application — diff handles both
+                    return symengine.sign(g) * walk(g.diff(wrt))
+                except RuntimeError:
+                    return e
+            return e  # unknown derivative — leave it; Lambdify will fail loudly
+        args = e.args
+        if not args:
+            return e
+        new_args = [walk(a) for a in args]
+        if all(na is a for na, a in zip(new_args, args, strict=True)):
+            return e
+        return e.func(*new_args)
 
-    def _repl(node):
-        inner = node.expr
-        ((var, order),) = node.variable_count
-        if order != 1:
-            return node
-        if isinstance(inner, sympy.Abs):
-            arg = inner.args[0]
-            return sympy.sign(arg) * sympy.diff(arg, var)
-        if isinstance(inner, sympy.sign):
-            return sympy.S.Zero
-        return node
-
-    resolved = expr._sympy_().replace(lambda x: isinstance(x, sympy.Derivative), _repl)
-    return symengine.sympify(resolved)
+    return walk(symengine.sympify(expr))
 
 
 # ---------------------------------------------------------------------------

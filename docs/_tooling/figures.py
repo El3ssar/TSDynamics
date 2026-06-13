@@ -38,6 +38,19 @@ FIG_OVERRIDES: dict[str, dict] = {
     "MultiChua": {"ic": "0.1*ones"},
     "DoubleGyre": {"final_time": 40.0},
     "Oregonator": {"skip": True},  # stiff — solve_ivp needs special handling
+    "Blasius": {"skip": True},  # diverges at default params from every tried IC — investigate
+    # Systems whose attractor basin misses U[0,1)^dim — literature ICs:
+    "RabinovichFabrikant": {"ic": [-1.0, 0.0, 0.5]},
+    "SprottD": {"ic": [0.1, 0.05, 0.05], "final_time": 60.0},
+    "SprottI": {"ic": [0.1, 0.05, 0.05], "final_time": 60.0},
+    "SprottM": {"ic": [0.1, 0.05, 0.05], "final_time": 60.0},
+    "SprottO": {"ic": [0.1, 0.05, 0.05], "final_time": 60.0},
+    "HyperRossler": {"ic": [-10.0, -6.0, 0.0, 10.0], "final_time": 60.0},
+    "HyperQi": {"ic": [1.0, 2.0, 1.0, 1.0], "final_time": 30.0},
+    "HenonHeiles": {"ic": [0.1, 0.1, 0.1, 0.1]},  # low energy → bounded
+    # Discontinuous (sign) right-hand sides — RK45 steps across the jumps:
+    "StickSlipOscillator": {"ic": [0.1, 0.1, 0.1], "final_time": 60.0, "method": "RK45"},
+    "Colpitts": {"ic": [0.1, 0.1, 0.1], "final_time": 40.0, "method": "RK45"},
 }
 
 
@@ -63,11 +76,14 @@ def _style():
     return plt
 
 
+RENDERER_VERSION = "2"  # bump manually when rendering output materially changes
+
+
 def cache_key(entry) -> str:
-    """Content hash: class source + renderer source."""
+    """Content hash: class source + this system's overrides + renderer version."""
     cls_src = inspect.getsource(entry.cls)
-    self_src = pathlib.Path(__file__).read_text()
-    return hashlib.sha256((cls_src + self_src).encode()).hexdigest()[:20]
+    opts = repr(sorted(FIG_OVERRIDES.get(entry.name, {}).items()))
+    return hashlib.sha256((cls_src + opts + RENDERER_VERSION).encode()).hexdigest()[:20]
 
 
 def _resolve_ic(sys_obj, override):
@@ -117,7 +133,9 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
                 (0.0, final_time),
                 np.asarray(ic, dtype=float),
                 t_eval=np.arange(0.0, final_time, dt),
-                method="LSODA",  # auto stiff/non-stiff switching
+                # LSODA auto-switches for stiffness; RK45 for discontinuous
+                # right-hand sides (sign/abs), where LSODA churns.
+                method=opts.get("method", "LSODA"),
                 rtol=1e-7,
                 atol=1e-9,
                 events=blowup,
