@@ -1,0 +1,63 @@
+name: Rust workspace
+
+# Builds and lints the v3 Rust engine workspace (crates/Cargo.toml — the
+# tsdyn-* crates). Pure Rust: no Python toolchain needed. The v2 accelerator
+# `tsdynamics-core` is excluded from this workspace and is covered separately by
+# rust-core.yml.
+#
+# F4 owns the broader CI matrix split (rust-workspace + python + cross-validation
+# jobs); this is the minimal workspace-build gate F0's acceptance requires and a
+# starting point F4 can fold in.
+#
+# Note: rust-core.yml still triggers on the broader `crates/**`, so an edit to a
+# tsdyn-* crate fires BOTH this job and rust-core.yml's maturin+pytest run
+# (redundant, but harmless — no break). F0 leaves rust-core.yml untouched by
+# mandate; F4 should narrow rust-core.yml's path filter to
+# `crates/tsdynamics-core/**` when it splits the matrix.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/tsdyn-*/**"
+      - "crates/Cargo.toml"
+      - "crates/Cargo.lock"
+      - ".github/workflows/rust-workspace.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: rust-workspace-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: crates
+
+jobs:
+  build-and-lint:
+    name: Build + fmt + clippy (workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/target
+          key: cargo-workspace-${{ runner.os }}-${{ hashFiles('crates/Cargo.lock') }}
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: build
+        run: cargo build --workspace --locked

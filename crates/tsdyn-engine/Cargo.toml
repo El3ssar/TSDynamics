@@ -1,0 +1,17 @@
+[package]
+name = "tsdyn-engine"
+description = "TSDynamics engine: problem definitions, the integrate loop, rayon ensembles, RNG/Wiener substrate and DDE history buffers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tsdyn-ir.workspace = true
+tsdyn-vm.workspace = true
+tsdyn-jit.workspace = true
+tsdyn-solvers.workspace = true
+# rayon is pre-pinned in the workspace; stream E5 opts in when the ensemble
+# path moves here:
+# rayon.workspace = true

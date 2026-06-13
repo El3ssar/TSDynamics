@@ -1,0 +1,17 @@
+[package]
+name = "tsdyn-core"
+description = "TSDynamics PyO3 bindings: marshals numpy <-> slices, releases the GIL, and builds the `tsdynamics._rust` extension module."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# Stream E7 converts this into the compiled extension: it sets
+#   [lib] name = "_rust"; crate-type = ["cdylib"]
+# and opts into the workspace-pinned pyo3/numpy (`pyo3.workspace = true`,
+# `numpy.workspace = true`). The F0 skeleton is a plain library so the workspace
+# builds with no Python toolchain present.
+
+[dependencies]
+tsdyn-engine.workspace = true
