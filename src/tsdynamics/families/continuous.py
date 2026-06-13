@@ -706,7 +706,7 @@ class ContinuousSystem(SystemBase, ABC):
         **integrator_kwargs,
     ) -> Trajectory:
         """
-        Integrate the ODE and return a :class:`~tsdynamics.base.Trajectory`.
+        Integrate the ODE and return a :class:`~tsdynamics.families.Trajectory`.
 
         Parameters
         ----------
@@ -731,7 +731,7 @@ class ContinuousSystem(SystemBase, ABC):
             the Rust solver suite via LLVM JIT — no C compiler, prebuilt
             wheels (``pip install tsdynamics[diffsol]``), ~10× faster on small
             chaotic systems, and validated against JiTCODE across the whole
-            ODE catalogue (see :mod:`tsdynamics.backends.diffsol`).  ``"auto"``
+            ODE catalogue (see :mod:`tsdynamics.engine.diffsol`).  ``"auto"``
             picks ``"diffsol"`` when it is installed, else ``"jitcode"`` —
             the recommended zero-compiler fast path.
         **integrator_kwargs
@@ -747,12 +747,12 @@ class ContinuousSystem(SystemBase, ABC):
             # is installed; otherwise fall back to the always-available
             # JiTCODE path. Lets `tsdynamics[diffsol]` users get the fast
             # backend without naming it, with no surprise for everyone else.
-            from tsdynamics.backends import diffsol as _diffsol
+            from tsdynamics.engine import diffsol as _diffsol
 
             backend = "diffsol" if _diffsol.available() else "jitcode"
 
         if backend == "diffsol":
-            from tsdynamics.backends import diffsol as _diffsol
+            from tsdynamics.engine import diffsol as _diffsol
 
             ic_arr = self.resolve_ic(ic)
             t_eval, y_out = _diffsol.integrate(

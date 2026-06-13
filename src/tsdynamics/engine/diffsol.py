@@ -106,7 +106,7 @@ def _diffsl_printer():
 
 def to_diffsl(system: Any) -> tuple[str, list[str]]:
     """
-    Translate a :class:`~tsdynamics.base.ContinuousSystem`'s RHS to DiffSL.
+    Translate a :class:`~tsdynamics.families.ContinuousSystem`'s RHS to DiffSL.
 
     Returns
     -------
@@ -237,7 +237,7 @@ def integrate(
     ode.rtol = rtol
     ode.atol = atol
 
-    from tsdynamics.base.ode_base import _make_t_eval
+    from tsdynamics.families.continuous import _make_t_eval
 
     t_eval = _make_t_eval(t0, final_time, dt)
     control_vals = [float(system.params[k]) for k in control_names]

@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from tsdynamics.base import DelaySystem
+from tsdynamics.families import DelaySystem
 
 __all__ = ["kaplan_yorke_dimension", "lyapunov_spectrum", "max_lyapunov"]
 
@@ -78,7 +78,7 @@ def max_lyapunov(
     Maximal Lyapunov exponent by two-trajectory rescaling (Benettin et al. 1976).
 
     Runs a reference and a perturbed copy of the system in lockstep through
-    the :class:`~tsdynamics.base.System` protocol — no Jacobian needed, so it
+    the :class:`~tsdynamics.families.System` protocol — no Jacobian needed, so it
     works for any ODE or map (including ones with non-smooth right-hand
     sides).  Not available for DDEs (their state cannot be ``set_state``-ed);
     use ``DelaySystem.lyapunov_spectrum`` instead.

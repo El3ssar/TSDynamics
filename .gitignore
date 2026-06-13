@@ -167,7 +167,9 @@ cython_debug/
 # Additional ignores
 *.ipynb
 .python-version
-data/
+# Anchored to the repo root: a top-level scratch data dir is ignored, but the
+# src/tsdynamics/data/ package (state-space data layer) is NOT.
+/data/
 
 Tinkering
 src/tsdynamics/_version.py

@@ -29,7 +29,7 @@ absent. Two backends ship today:
   available; needs no C compiler. The stand-in "reference" until the new engine
   and the v2 compiled backends are both wired in as backends.
 * :class:`RustCore` — the v2-seed accelerator
-  (:mod:`tsdynamics.backends.rustcore`). Available only when ``tsdynamics-core``
+  (:mod:`tsdynamics.engine.rustcore`). Available only when ``tsdynamics-core``
   is installed; also exposes a pointwise ``eval_rhs`` for :func:`crossvalidate_rhs`.
 
 The comparison functions return an :class:`XValReport` (max abs/rel error,
@@ -123,7 +123,7 @@ class ScipyReference:
 class RustCore:
     """Candidate backend: the experimental ``tsdynamics-core`` accelerator.
 
-    Wraps :mod:`tsdynamics.backends.rustcore`. ``method`` selects the kernel
+    Wraps :mod:`tsdynamics.engine.rustcore`. ``method`` selects the kernel
     (``RK45`` adaptive default, ``RK4`` fixed-step, ``stiff``); see that module
     for the full list. Exposes :meth:`eval_rhs` so :func:`crossvalidate_rhs` can
     check the tape lowering pointwise.
@@ -145,13 +145,13 @@ class RustCore:
 
     def available(self) -> bool:
         """Whether the optional ``tsdynamics-core`` wheel is installed."""
-        from tsdynamics.backends import rustcore as rc
+        from tsdynamics.engine import rustcore as rc
 
         return rc.available()
 
     def integrate_dense(self, system: Any, ic: Any, t_eval: np.ndarray) -> np.ndarray:
         """Integrate via the Rust kernel and sample at ``t_eval``."""
-        from tsdynamics.backends import rustcore as rc
+        from tsdynamics.engine import rustcore as rc
 
         ic = np.asarray(system.resolve_ic(ic), dtype=np.float64).ravel()
         return rc.integrate_dense(
@@ -160,7 +160,7 @@ class RustCore:
 
     def eval_rhs(self, system: Any, u: Any, t: float = 0.0) -> np.ndarray:
         """Evaluate ``du/dt`` once in Rust (used by :func:`crossvalidate_rhs`)."""
-        from tsdynamics.backends import rustcore as rc
+        from tsdynamics.engine import rustcore as rc
 
         return rc.eval_rhs(system, u, t)
 

@@ -2,7 +2,7 @@
 Derived systems — wrappers that present an existing system through a new lens.
 
 The composition layer of the library: every wrapper implements the
-:class:`~tsdynamics.base.System` protocol, so anything written for systems
+:class:`~tsdynamics.families.System` protocol, so anything written for systems
 works on wrapped systems too.  A :class:`PoincareMap` of a flow *is* a
 discrete map; an orbit diagram over it is a bifurcation diagram of the flow.
 

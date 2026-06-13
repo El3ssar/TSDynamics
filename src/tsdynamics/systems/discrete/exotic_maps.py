@@ -1,6 +1,6 @@
 import numpy as np
 
-from tsdynamics.base import DiscreteMap
+from tsdynamics.families import DiscreteMap
 from tsdynamics.utils import staticjit
 
 

@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from tsdynamics.base import Trajectory
+from tsdynamics.families import Trajectory
 
 __all__ = ["WrappedSystem"]
 

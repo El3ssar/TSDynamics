@@ -1,6 +1,6 @@
 from symengine import cos, pi, sin, tanh
 
-from tsdynamics.base import ContinuousSystem
+from tsdynamics.families import ContinuousSystem
 
 
 class VallisElNino(ContinuousSystem):

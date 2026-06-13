@@ -1,6 +1,6 @@
 from symengine import cos, pi, sign, sin
 
-from tsdynamics.base import ContinuousSystem
+from tsdynamics.families import ContinuousSystem
 
 
 class ShimizuMorioka(ContinuousSystem):

@@ -21,7 +21,7 @@ on:
       - "tests/xval_harness.py"
       - "tests/test_xval*.py" # the Lorenz scaffold today; I-XVAL's catalogue sweeps later
       - "crates/tsdynamics-core/**"
-      - "src/tsdynamics/backends/rustcore.py"
+      - "src/tsdynamics/engine/rustcore.py"
       - ".github/workflows/cross-validation.yml"
   workflow_dispatch:
 

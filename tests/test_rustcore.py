@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.backends import rustcore as rc
-from tsdynamics.base.ode_base import ContinuousSystem
+from tsdynamics.engine import rustcore as rc
+from tsdynamics.families.continuous import ContinuousSystem
 
 pytestmark = pytest.mark.skipif(
     not rc.available(), reason="tsdynamics-core (Rust accelerator) is not installed"

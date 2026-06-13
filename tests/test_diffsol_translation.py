@@ -11,7 +11,7 @@ needs pydiffsol and is therefore skipped when the extra is absent).
 from __future__ import annotations
 
 from tsdynamics import registry
-from tsdynamics.backends.diffsol import DiffSLTranslationError, to_diffsl
+from tsdynamics.engine.diffsol import DiffSLTranslationError, to_diffsl
 
 
 def test_every_ode_translates_to_diffsl(ode_entry) -> None:

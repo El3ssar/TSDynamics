@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from tsdynamics.base import DiscreteMap
+from tsdynamics.families import DiscreteMap
 
 __all__ = ["FixedPoint", "fixed_points"]
 

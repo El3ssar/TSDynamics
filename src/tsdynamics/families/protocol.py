@@ -1,8 +1,8 @@
 """
 The ``System`` runtime protocol — the contract every analysis function consumes.
 
-All three families (:class:`~tsdynamics.base.ContinuousSystem`,
-:class:`~tsdynamics.base.DelaySystem`, :class:`~tsdynamics.base.DiscreteMap`)
+All three families (:class:`~tsdynamics.families.ContinuousSystem`,
+:class:`~tsdynamics.families.DelaySystem`, :class:`~tsdynamics.families.DiscreteMap`)
 and every derived-system wrapper (:mod:`tsdynamics.derived`) implement this
 interface, so analysis code can be written once against ``System`` and applied
 to anything that steps:
@@ -15,7 +15,7 @@ to anything that steps:
   function, not a point; use ``reinit(u)`` to restart from a constant past.
 - ``time()`` is the current time (or iteration count for maps).
 - ``reinit(u, t=..., params=...)`` restarts the internal stepper.
-- ``trajectory(...)`` produces a :class:`~tsdynamics.base.Trajectory` on a
+- ``trajectory(...)`` produces a :class:`~tsdynamics.families.Trajectory` on a
   uniform grid (delegates to ``integrate`` / ``iterate``).
 
 Stepping state is lazily initialised: the first ``step()`` or ``state()``

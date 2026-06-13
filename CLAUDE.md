@@ -34,16 +34,24 @@ output grids, and documentation.
 
 ## Repository layout
 
+The v3 modular layout (stream F3 reorg; old `base/`, `backends/`, `sampling.py`
+paths have MOVED, no shims):
+
 ```
 src/tsdynamics/
 ├── __init__.py               # __version__ (managed by python-semantic-release) + re-exports
-├── registry.py               # SystemEntry + all_systems/by_family/get/families
-├── base/
+├── registry.py               # 4 registries: systems (SystemEntry + all_systems/…) + solvers/analyses/transforms (generic Registry)
+├── families/                 # base classes + the System protocol (was base/)
 │   ├── base.py               # SystemBase, ParamSet, Trajectory, MetaStore
 │   ├── protocol.py           # the System runtime Protocol
-│   ├── ode_base.py           # ContinuousSystem (JiTCODE + jacobian autogen + protocol)
-│   ├── dde_base.py           # DelaySystem (JiTCDDE + protocol, forward-only)
-│   └── map_base.py           # DiscreteMap (Numba + signature validation + protocol)
+│   ├── continuous.py         # ContinuousSystem (was ode_base.py; JiTCODE + jacobian autogen)
+│   ├── delay.py              # DelaySystem (was dde_base.py; JiTCDDE, forward-only)
+│   ├── discrete.py           # DiscreteMap (was map_base.py; Numba + signature validation)
+│   └── stochastic.py         # SDE family — skeleton stub (stream E-SDE fills it)
+├── engine/                   # Rust-facing engine layer (was backends/); E6 adds compile/problem/run; E7 adds _rust
+│   ├── rustcore.py           # symbolic RHS+Jacobian → instruction tape (E6 → compile.py)
+│   └── diffsol.py            # experimental SymEngine→DiffSL + pydiffsol (v2 backend; retired at M3)
+├── solvers/                  # solver registry + per-solver metadata — OWNED BY STREAM F2 (not created here)
 ├── derived/
 │   ├── _base.py              # DerivedSystem (wrapper base, with_params rebuilds)
 │   ├── poincare.py           # PoincareMap (Hermite-refined crossings)
@@ -51,13 +59,15 @@ src/tsdynamics/
 │   ├── tangent.py            # TangentSystem (Lyapunov engine)
 │   ├── ensemble.py           # EnsembleSystem
 │   └── projected.py          # ProjectedSystem
-├── analysis/
+├── data/                     # state-space geometry + trajectory lingua franca (was sampling.py)
+│   └── sampling.py           # Box/Ball/Grid, sampler, grid_points, set_distance (C-DATA grows this)
+├── analysis/                 # quantifiers (A-* streams subpackage these later)
 │   ├── orbit_diagram.py      # orbit_diagram + OrbitDiagram
 │   ├── poincare.py           # poincare_section (system or trajectory input)
 │   ├── lyapunov.py           # lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension
 │   └── fixed_points.py       # fixed_points + FixedPoint (maps, multi-start Newton)
-├── backends/
-│   └── diffsol.py            # experimental: SymEngine→DiffSL translator + pydiffsol
+├── transforms/               # signal/feature transforms — skeleton (stream T-XFORM)
+├── viz/                      # DEFERRED stub only (decision D6)
 ├── systems/
 │   ├── continuous/           # 8 ODE category modules + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
@@ -85,18 +95,29 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
   `lyapunov_spectrum`, `max_lyapunov`, `kaplan_yorke_dimension`,
   `fixed_points`, `FixedPoint`
 - Derived: `WrappedSystem` (adapt any external stepper to the protocol)
-- State-space geometry (`sampling`): `Box`, `Ball`, `Grid`, `sampler`,
+- State-space geometry (`data`): `Box`, `Ball`, `Grid`, `sampler`,
   `grid_points`, `set_distance` — the primitives the basin/attractor layer
   builds on (Monte-Carlo + full-grid sampling, attractor-matching distances)
-- Submodules: `analysis`, `base`, `derived`, `registry`, `sampling`,
+- Submodules: `analysis`, `data`, `derived`, `families`, `registry`,
   `systems`, `utils`
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
-(protocol) via `tsdynamics.base`; `staticjit` via `tsdynamics.utils`.
+(protocol) via `tsdynamics.families`; `staticjit` via `tsdynamics.utils`.
+The engine layer (`tsdynamics.engine`) and the skeleton `transforms`/`viz`
+packages are importable but not advertised in `__all__`.
 
 ---
 
 ## The registry (load-bearing!)
+
+`registry.py` hosts **four** registries: the specialised *system* registry
+(below) plus three generic name→object `Registry` containers — `registry.solvers`,
+`registry.analyses`, `registry.transforms`. The generic ones only store/look up;
+the discovery that fills them (the `solvers/` scan + entry-point plugins) lives in
+stream F2's `solvers/` and `plugins.py`. **Family detection keys off the module
+prefix `tsdynamics.families`** (the `_BASE_PREFIX` in `registry.py` and the guard
+in `SystemBase.__init_subclass__`) — both moved from `tsdynamics.base` in the F3
+reorg; keep them in lock-step if the families package ever moves again.
 
 Every concrete `SystemBase` subclass auto-registers at class-definition time
 (`SystemBase.__init_subclass__` → `registry.register_class`). `SystemEntry`
@@ -121,7 +142,7 @@ or `n_positive`, plus `params`/`ic`/`kwargs`/`source`).
 
 ## Base classes
 
-### `SystemBase` (`base/base.py`)
+### `SystemBase` (`families/base.py`)
 
 As before (ParamSet with fixed keys, attribute forwarding, `copy()` /
 `with_params()`, `resolve_ic()` priority: arg > self.ic > default_ic > random)
@@ -140,7 +161,7 @@ plus:
 - `meta` carries provenance (system, params, solver, dt, tolerances, ic,
   version); preserved through slicing/`after()`.
 
-### The `System` protocol (`base/protocol.py`)
+### The `System` protocol (`families/protocol.py`)
 
 All three families + all derived wrappers implement:
 `step(n_or_dt) -> new state`, `state()`, `set_state(u)`, `time()`,
@@ -164,7 +185,7 @@ All three families + all derived wrappers implement:
   used at runtime; it is cross-checked against autogen in tests. `abs`/`sign`
   derivatives are resolved a.e. (`_resolve_derivative_nodes`).
 - `integrate(..., backend="diffsol")` routes to
-  `tsdynamics.backends.diffsol` (optional extra; translator: SymEngine →
+  `tsdynamics.engine.diffsol` (optional extra; translator: SymEngine →
   DiffSL with ICs-as-inputs, LLVM JIT, solver map RK45→tsit45, LSODA→bdf).
 
 ### `DiscreteMap` extras

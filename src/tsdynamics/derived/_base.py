@@ -13,7 +13,7 @@ class DerivedSystem:
     """
     Base for wrappers that present an existing system through a new lens.
 
-    A derived system implements the :class:`~tsdynamics.base.System` protocol
+    A derived system implements the :class:`~tsdynamics.families.System` protocol
     by delegating to a wrapped system, transforming what "one step" or "the
     state" means (Poincaré crossings, stroboscopic samples, projections...).
 

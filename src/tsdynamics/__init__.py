@@ -20,10 +20,10 @@ The top-level namespace re-exports every built-in system (see
 :mod:`tsdynamics.registry` for programmatic access), the three base classes
 users subclass to define new systems, the derived-system wrappers, and the
 analysis functions.  Internal helpers (``ParamSet``, ``SystemBase``,
-``staticjit``) live under ``tsdynamics.base`` / ``tsdynamics.utils``.
+``staticjit``) live under ``tsdynamics.families`` / ``tsdynamics.utils``.
 """
 
-from . import analysis, base, derived, registry, sampling, systems, utils
+from . import analysis, data, derived, families, registry, systems, utils
 from .analysis import (
     FixedPoint,
     OrbitDiagram,
@@ -34,7 +34,7 @@ from .analysis import (
     orbit_diagram,
     poincare_section,
 )
-from .base import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
+from .data import Ball, Box, Grid, grid_points, sampler, set_distance
 from .derived import (
     EnsembleSystem,
     PoincareMap,
@@ -43,7 +43,7 @@ from .derived import (
     TangentSystem,
     WrappedSystem,
 )
-from .sampling import Ball, Box, Grid, grid_points, sampler, set_distance
+from .families import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
 from .systems import continuous as _continuous
 from .systems import discrete as _discrete
 
@@ -92,10 +92,10 @@ __all__ = [
     "set_distance",
     # Sub-namespaces (for ``tsdynamics.systems.continuous.chaotic_attractors`` etc.)
     "analysis",
-    "base",
+    "data",
     "derived",
+    "families",
     "registry",
-    "sampling",
     "systems",
     "utils",
     # All built-in systems

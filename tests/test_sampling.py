@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.sampling import Ball, Box, Grid, grid_points, sampler, set_distance
+from tsdynamics.data import Ball, Box, Grid, grid_points, sampler, set_distance
 
 # ---------------------------------------------------------------------------
 # Regions

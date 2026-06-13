@@ -1,23 +1,27 @@
 """
-Base classes for dynamical systems.
+System families — the base classes users subclass to define a system.
 
 Public, intended for subclassing:
 
-- :class:`ContinuousSystem` — ODE systems (compiled via JiTCODE).
-- :class:`DelaySystem` — delay differential systems (compiled via JiTCDDE).
-- :class:`DiscreteMap` — iterated maps (compiled via Numba).
+- :class:`ContinuousSystem` (``families/continuous.py``) — ODE systems.
+- :class:`DelaySystem` (``families/delay.py``) — delay differential systems.
+- :class:`DiscreteMap` (``families/discrete.py``) — iterated maps.
 - :class:`Trajectory` — the result type returned by ``integrate`` / ``iterate``.
 
 Internal but accessible for advanced use:
 
 - :class:`SystemBase` — common base for all three; most users do not need it.
 - :class:`ParamSet` — fixed-key parameter container backing ``system.params``.
+
+A future :mod:`~tsdynamics.families.stochastic` adds the SDE family (stream
+E-SDE); all families lower to the shared Rust engine under
+:mod:`~tsdynamics.engine`.
 """
 
 from .base import MetaStore, ParamSet, SystemBase, Trajectory
-from .dde_base import DelaySystem
-from .map_base import DiscreteMap
-from .ode_base import ContinuousSystem
+from .continuous import ContinuousSystem
+from .delay import DelaySystem
+from .discrete import DiscreteMap
 from .protocol import System
 
 __all__ = [

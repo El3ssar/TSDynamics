@@ -1,4 +1,4 @@
-from tsdynamics.base import ContinuousSystem
+from tsdynamics.families import ContinuousSystem
 
 
 class CoevolvingPredatorPrey(ContinuousSystem):

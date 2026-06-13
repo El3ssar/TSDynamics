@@ -1,6 +1,6 @@
 from symengine import cos, exp, sign, sin, tanh
 
-from tsdynamics.base import ContinuousSystem
+from tsdynamics.families import ContinuousSystem
 
 
 class DoublePendulum(ContinuousSystem):

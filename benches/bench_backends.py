@@ -53,7 +53,7 @@ def _scipy_run(name: str, ic: list) -> None:
 
 def main() -> None:
     """Print a Markdown benchmark table for the available backends."""
-    from tsdynamics.backends import diffsol
+    from tsdynamics.engine import diffsol
 
     have_diffsol = diffsol.available()
     print(f"diffsol available: {have_diffsol}\n")

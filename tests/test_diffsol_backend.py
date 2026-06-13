@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("pydiffsol")
 
 import tsdynamics as ts
-from tsdynamics.backends import diffsol as dsl
+from tsdynamics.engine import diffsol as dsl
 
 # ---------------------------------------------------------------------------
 # Translator (fast)
