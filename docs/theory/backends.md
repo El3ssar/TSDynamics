@@ -104,16 +104,25 @@ makes basin-of-attraction and Monte-Carlo sweeps tractable.
 
 The tape lowers and reproduces the RHS of **all 118 built-in ODE systems** to
 machine precision (guarded on every CI run by
-`tests/test_rustcore_translation.py`). It integrates with error-controlled
-adaptive **Dormand-Prince 5(4)** (`dopri5`, the default — Hermite dense output,
-cross-validated against SciPy's `RK45`) or fixed-step **RK4**, and the rayon
-ensemble is checked bit-identical to a serial reference. A diverging trajectory
-raises (single integration) or returns `NaN` (ensemble — so escaped initial
-conditions are flagged, not faked). It is the foundation the planned Rust
-**SDE** and **DDE** solvers build on — see the project roadmap.
+`tests/test_rustcore_translation.py`). Three solver kernels are available via
+`method=`:
 
-> Experimental and not yet a user-facing `backend=`: explicit methods only
-> (use `jitcode`/`diffsol` for stiff systems), and the crate is not yet on
+| `method` | kernel |
+|---|---|
+| `RK45` / `dopri5` (default) | adaptive Dormand-Prince 5(4), Hermite dense output |
+| `RK4` | fixed-step classic RK4 |
+| `stiff` / `Rosenbrock` / `LSODA` / `BDF` | L-stable linearly-implicit Euler + Richardson, with the **analytic Jacobian** |
+
+The stiff kernel lowers the system's symbolic Jacobian into the *same* tape
+(abs/sign derivatives resolved a.e.), so it needs no finite differences and no
+Newton iteration — cross-validated against SciPy's `Radau`/`LSODA` on stiff Van
+der Pol, Robertson, and Oregonator. The rayon ensemble is checked bit-identical
+to a serial reference; a diverging trajectory raises (single integration) or
+returns `NaN` (ensemble — so escaped initial conditions are flagged, not faked).
+It is the foundation the planned Rust **SDE** and **DDE** solvers build on — see
+the project roadmap.
+
+> Experimental and not yet a user-facing `backend=`, and the crate is not yet on
 > PyPI. Build it locally with `maturin build -m crates/tsdynamics-core/Cargo.toml`.
 
 ## See also

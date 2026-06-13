@@ -47,3 +47,32 @@ def test_tape_coverage_is_total() -> None:
         except Exception as exc:  # noqa: BLE001 — record, don't abort
             failed.append((e.name, str(exc).splitlines()[0][:60]))
     assert not failed, f"{len(failed)} ODE systems no longer compile to a tape: {failed}"
+
+
+def test_every_ode_jacobian_compiles_to_tape(ode_entry) -> None:
+    """The analytic Jacobian must lower too (stiff solver) — incl. abs/sign systems."""
+    cls = ode_entry.cls
+    try:
+        tape = compile_tape(cls(), with_jacobian=True)
+    except TapeCompileError as exc:
+        raise AssertionError(
+            f"{ode_entry.name}: Jacobian no longer lowers to a tape — {exc}"
+        ) from exc
+    dim = cls().dim
+    # One register per Jacobian entry, row-major dim×dim.
+    assert tape.jac_outputs.size == dim * dim
+    n = tape.ops.size
+    assert tape.jac_outputs.size == 0 or (
+        tape.jac_outputs.max() < n and tape.jac_outputs.min() >= 0
+    )
+
+
+def test_jacobian_coverage_is_total() -> None:
+    """Every ODE's analytic Jacobian lowers — abs/sign derivatives resolved a.e."""
+    failed = []
+    for e in registry.all_systems(family="ode"):
+        try:
+            compile_tape(e.cls(), with_jacobian=True)
+        except Exception as exc:  # noqa: BLE001 — record, don't abort
+            failed.append((e.name, str(exc).splitlines()[0][:60]))
+    assert not failed, f"{len(failed)} ODE Jacobians no longer compile to a tape: {failed}"
