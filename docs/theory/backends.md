@@ -23,6 +23,28 @@ ts.Lorenz().integrate(final_time=100, dt=0.01, backend="diffsol")  # explicit Ru
 ts.Lorenz().integrate(final_time=100, dt=0.01, backend="auto")     # diffsol if installed
 ```
 
+## Choosing a solver
+
+`integrate(method=...)` selects the solver. Names are SciPy-style and map onto
+each backend's kernels:
+
+| `method` | JiTCODE | diffsol |
+|---|---|---|
+| `RK45` / `dopri5` | dopri5 (explicit, default) | tsit45 |
+| `DOP853` | dop853 | tsit45 |
+| `LSODA` / `VODE` | lsoda / vode (implicit, stiff) | bdf |
+| `tr_bdf2`, `esdirk34` | — | (implicit) |
+
+**Stiff systems need an implicit solver.** An explicit method (the default
+`RK45`) can fail outright on a stiff right-hand side. Systems known to need an
+implicit solver declare it themselves — e.g. `Oregonator`, `Duffing`,
+`SprottL`, `SprottP`, `SprottJerk` set ``_default_method = "LSODA"`` — so
+`sys.integrate()` "just works" without the caller having to know. When you
+define a stiff system of your own, set ``_default_method`` on the class.
+
+> Broadening solver coverage (more methods, automatic stiffness detection,
+> per-system hints) is an ongoing Phase-2 goal — see the project roadmap.
+
 ## The diffsol backend
 
 `backend="diffsol"` translates the *same* symbolic `_equations` to

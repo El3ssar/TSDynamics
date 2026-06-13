@@ -37,6 +37,9 @@ class Oregonator(ContinuousSystem):
         "epsilon": 1e-2,
     }
     dim = 3  # Three variables: X, Y, Z (reduced forms of the chemical species)
+    # Classic stiff system (Field–Noyes); an explicit solver cannot integrate
+    # it, so default to an implicit one.
+    _default_method = "LSODA"
 
     @staticmethod
     def _equations(Y, t, *, q, f, mu, epsilon):
