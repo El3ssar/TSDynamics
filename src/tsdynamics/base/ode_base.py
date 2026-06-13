@@ -51,6 +51,38 @@ def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
     return t_arr
 
 
+def _resolve_derivative_nodes(expr):
+    """
+    Replace unevaluated SymEngine ``Derivative`` nodes with a.e. derivatives.
+
+    SymEngine leaves ``d|u|/du`` and ``d sign(u)/du`` unevaluated, which
+    ``Lambdify`` cannot compile.  Almost everywhere, ``d|u|/du = sign(u)``
+    and ``d sign(u)/du = 0`` — the measure-zero kink is irrelevant for
+    numeric Jacobian evaluation along an orbit.
+    """
+    import symengine
+
+    if "Derivative" not in str(expr):
+        return expr
+
+    import sympy
+
+    def _repl(node):
+        inner = node.expr
+        ((var, order),) = node.variable_count
+        if order != 1:
+            return node
+        if isinstance(inner, sympy.Abs):
+            arg = inner.args[0]
+            return sympy.sign(arg) * sympy.diff(arg, var)
+        if isinstance(inner, sympy.sign):
+            return sympy.S.Zero
+        return node
+
+    resolved = expr._sympy_().replace(lambda x: isinstance(x, sympy.Derivative), _repl)
+    return symengine.sympify(resolved)
+
+
 # ---------------------------------------------------------------------------
 # ContinuousSystem
 # ---------------------------------------------------------------------------
@@ -113,8 +145,21 @@ class ContinuousSystem(SystemBase, ABC):
     #                   jitcode_lyap objects are NOT cached (they carry tangent-
     #                   vector state); we cache the path so each call can create
     #                   a fresh wrapper without recompiling.
+    # _lambdified     : cache_key (str) → (rhs_fn, jac_fn, control_names) —
+    #                   SymEngine-Lambdified numeric RHS/Jacobian evaluators,
+    #                   keyed like the compile cache (class + dim + structural).
     _compiled_odes: ClassVar[dict[str, Any]] = {}
     _compiled_lyap: ClassVar[dict[str, str]] = {}
+    _compiled_so: ClassVar[dict[str, str]] = {}
+    _lambdified: ClassVar[dict[str, tuple]] = {}
+
+    # Protocol stepping state (instances shadow these class defaults on first
+    # ``reinit``).  Each instance owns a private jitcode wrapper loaded from
+    # the shared compiled .so, so two live steppers never clobber each other.
+    _stepper: Any = None
+    _state_now: np.ndarray | None = None
+    _t_now: float = 0.0
+    _default_step_dt: ClassVar[float] = 0.01
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -260,6 +305,7 @@ class ContinuousSystem(SystemBase, ABC):
                 type(self)._compiled_lyap[cache_key] = str(so)
             else:
                 type(self)._compiled_odes[cache_key] = ode
+                type(self)._compiled_so[cache_key] = str(so)
             return ode
 
         # 3. Determine compile destination.
@@ -286,6 +332,7 @@ class ContinuousSystem(SystemBase, ABC):
                     type(self)._compiled_lyap[cache_key] = str(so)
                 else:
                     type(self)._compiled_odes[cache_key] = ode
+                    type(self)._compiled_so[cache_key] = str(so)
                 return ode
             # Temp dir already cleaned — compile under a unique name so the
             # session works without a restart.
@@ -307,7 +354,248 @@ class ContinuousSystem(SystemBase, ABC):
             type(self)._compiled_lyap[cache_key] = str(so)
         else:
             type(self)._compiled_odes[cache_key] = ode
+            type(self)._compiled_so[cache_key] = str(so)
         return ode
+
+    # ------------------------------------------------------------------ #
+    # System protocol — incremental stepping
+    # ------------------------------------------------------------------ #
+
+    @property
+    def is_discrete(self) -> bool:
+        """ODEs are continuous-time systems."""
+        return False
+
+    def _so_path(self) -> str:
+        """Ensure the non-lyap module is compiled and return its .so path."""
+        cache_key = str(self._module_path())
+        self._ensure_compiled(for_lyap=False)
+        so = type(self)._compiled_so.get(cache_key)
+        if so is None:  # object-cache hit recorded before path tracking
+            hits = [
+                f
+                for f in _CACHE_DIR.glob(f"{self._module_path().name}.*")
+                if f.name.endswith(_EXT_SUFFIX) and f.stat().st_size > 0
+            ]
+            if not hits:
+                raise RuntimeError(f"{type(self).__name__}: compiled module not found on disk.")
+            so = str(hits[0])
+            type(self)._compiled_so[cache_key] = so
+        return so
+
+    def _fresh_stepper(self) -> Any:
+        """Build a private jitcode wrapper over the shared compiled .so."""
+        import symengine
+        from jitcode import jitcode as _jitcode
+
+        control_syms = [symengine.Symbol(k) for k in self._control_params()]
+        return _jitcode(
+            module_location=self._so_path(),
+            n=self.dim,
+            control_pars=control_syms,
+            verbose=False,
+        )
+
+    def reinit(
+        self,
+        u: Any | None = None,
+        *,
+        t: float | None = None,
+        params: dict | None = None,
+        method: str | None = None,
+        rtol: float = 1e-6,
+        atol: float = 1e-9,
+        **integrator_kwargs,
+    ) -> None:
+        """
+        (Re)start the incremental stepper from state ``u`` at time ``t``.
+
+        Parameters
+        ----------
+        u : array-like, optional
+            Initial state (falls back to ``self.ic``, then random).
+        t : float, optional
+            Start time (default 0.0).
+        params : dict, optional
+            Parameter overrides applied (in place) before restarting.
+        method, rtol, atol, **integrator_kwargs
+            Stepper configuration, as in :meth:`integrate`.
+        """
+        if params:
+            for k, v in params.items():
+                self.params[k] = v
+        t0 = float(t) if t is not None else 0.0
+        ic_arr = self.resolve_ic(u)
+
+        stepper = self._fresh_stepper()
+        m = method or self._default_method
+        stepper.set_integrator(_INTEGRATOR_MAP.get(m, m), rtol=rtol, atol=atol, **integrator_kwargs)
+        stepper.set_parameters(*self._control_params().values())
+        stepper.set_initial_value(ic_arr, t0)
+
+        self._stepper = stepper
+        self._state_now = ic_arr.copy()
+        self._t_now = t0
+
+    def step(self, n_or_dt: float | None = None) -> np.ndarray:
+        """
+        Advance the system by ``dt`` (default 0.01) and return the new state.
+
+        The first call performs an implicit :meth:`reinit`.  Parameter changes
+        made after ``reinit`` take effect on the next ``reinit``, not on a
+        live stepper.
+        """
+        if self._stepper is None:
+            self.reinit()
+        dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
+        self._t_now = self._t_now + dt
+        state = np.asarray(self._stepper.integrate(self._t_now), dtype=float)
+        if not np.isfinite(state).all():
+            raise RuntimeError(
+                f"{type(self).__name__}: ODE diverged at t={self._t_now:.6g} during step()."
+            )
+        self._state_now = state.copy()
+        return state
+
+    def state(self) -> np.ndarray:
+        """Return a copy of the current state (implicit ``reinit`` if cold)."""
+        if self._state_now is None:
+            self.reinit()
+        return self._state_now.copy()
+
+    def set_state(self, u: Any) -> None:
+        """Overwrite the current state without changing the current time."""
+        u_arr = np.asarray(u, dtype=float).reshape(self.dim)
+        if self._stepper is None:
+            self.reinit(u_arr)
+        else:
+            self._stepper.set_initial_value(u_arr, self._t_now)
+            self._state_now = u_arr.copy()
+
+    def time(self) -> float:
+        """Return the current stepper time."""
+        return self._t_now
+
+    def trajectory(
+        self,
+        final_time: float = 100.0,
+        *,
+        dt: float = 0.02,
+        transient: float = 0.0,
+        **kwargs,
+    ) -> Trajectory:
+        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
+        traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
+        return traj.after(transient) if transient > 0 else traj
+
+    # ------------------------------------------------------------------ #
+    # Symbolic Jacobian autogeneration + numeric RHS
+    # ------------------------------------------------------------------ #
+
+    def jacobian_sym(self) -> list[list[Any]]:
+        """
+        Return the symbolic Jacobian of ``_equations``, differentiated by SymEngine.
+
+        Rows are ``d f_i / d y(j)`` for the *current* structural parameters;
+        non-structural parameters appear as symbols.  Hand-written
+        ``_jacobian`` methods on system classes are never used at runtime —
+        this autogenerated form is the single source of truth (the test suite
+        cross-checks hand-written ones against it).
+
+        Returns
+        -------
+        list of ``dim`` rows, each a list of ``dim`` SymEngine expressions.
+        """
+        import symengine
+        from jitcode import t as t_sym
+        from jitcode import y
+
+        struct_vals = self._structural_vals()
+        control_syms = {k: symengine.Symbol(k) for k in self._control_params()}
+        f_sym = list(type(self)._equations(y, t_sym, **{**struct_vals, **control_syms}))
+        if len(f_sym) != self.dim:
+            raise ValueError(f"_equations must return {self.dim} expressions, got {len(f_sym)}")
+        return [
+            [_resolve_derivative_nodes(symengine.sympify(fi).diff(y(j))) for j in range(self.dim)]
+            for fi in f_sym
+        ]
+
+    def _build_lambdified(self) -> tuple[Any, Any, list[str]]:
+        """
+        Build (and cache) SymEngine-Lambdified numeric RHS and Jacobian.
+
+        Both take a flat argument vector ``[y_0..y_{dim-1}, t, *control_params]``.
+        Cached per (class, dim, structural-hash) — parameter value changes
+        need no rebuild because control params are call-time arguments.
+        """
+        key = str(self._module_path())
+        cached = type(self)._lambdified.get(key)
+        if cached is not None:
+            return cached
+
+        import symengine
+        from jitcode import t as t_sym
+        from jitcode import y
+
+        struct_vals = self._structural_vals()
+        control_names = list(self._control_params())
+        control_syms = {k: symengine.Symbol(k) for k in control_names}
+        f_sym = [
+            symengine.sympify(e)
+            for e in type(self)._equations(y, t_sym, **{**struct_vals, **control_syms})
+        ]
+        jac_rows = [
+            [_resolve_derivative_nodes(fi.diff(y(j))) for j in range(self.dim)] for fi in f_sym
+        ]
+
+        # Lambdify needs plain symbols — swap the y(i) function applications out.
+        y_syms = [symengine.Symbol(f"y_{i}") for i in range(self.dim)]
+        subs = {y(i): y_syms[i] for i in range(self.dim)}
+        args = [*y_syms, t_sym, *(control_syms[k] for k in control_names)]
+        rhs_fn = symengine.Lambdify(args, [e.subs(subs) for e in f_sym])
+        jac_fn = symengine.Lambdify(args, [e.subs(subs) for row in jac_rows for e in row])
+
+        entry = (rhs_fn, jac_fn, control_names)
+        type(self)._lambdified[key] = entry
+        return entry
+
+    def jacobian(self, u: Any, t: float = 0.0) -> np.ndarray:
+        """
+        Evaluate the (autogenerated) Jacobian numerically at state ``u``.
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+            State at which to evaluate.
+        t : float
+            Time (matters only for non-autonomous systems).
+
+        Returns
+        -------
+        ndarray, shape (dim, dim)
+        """
+        _, jac_fn, control_names = self._build_lambdified()
+        vals = [float(self.params[k]) for k in control_names]
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+        return np.asarray(jac_fn(arg), dtype=float).reshape(self.dim, self.dim)
+
+    def _rhs_numeric(self):
+        """
+        Return a fast numeric RHS callable ``f(u, t) -> ndarray``.
+
+        Parameter values are captured at call time of this method; build a
+        fresh callable after changing parameters.  Used by figure tooling,
+        Poincaré crossing refinement, and backend cross-validation — the
+        compiled JiTCODE path remains the integrator of record.
+        """
+        rhs_fn, _, control_names = self._build_lambdified()
+        vals = np.array([float(self.params[k]) for k in control_names])
+
+        def rhs(u: Any, t: float = 0.0) -> np.ndarray:
+            arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+            return np.asarray(rhs_fn(arg), dtype=float).ravel()
+
+        return rhs
 
     # ------------------------------------------------------------------ #
     # Integration
@@ -323,6 +611,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
+        backend: str = "jitcode",
         **integrator_kwargs,
     ) -> Trajectory:
         """
@@ -342,9 +631,15 @@ class ContinuousSystem(SystemBase, ABC):
             ``U[0, 1)^dim``.
         method : str, optional
             Integrator: ``"RK45"`` / ``"dopri5"`` (default), ``"DOP853"``,
-            ``"LSODA"``, ``"VODE"``.
+            ``"LSODA"``, ``"VODE"``.  The diffsol backend maps these onto
+            ``tsit45`` / ``bdf`` / ``tr_bdf2`` / ``esdirk34``.
         rtol, atol : float
             Solver tolerances (default 1e-6 / 1e-9).
+        backend : {"jitcode", "diffsol"}
+            ``"jitcode"`` (default) compiles via C; ``"diffsol"`` is the
+            experimental Rust solver suite
+            (``pip install tsdynamics[diffsol]``,
+            see :mod:`tsdynamics.backends.diffsol`).
         **integrator_kwargs
             Forwarded to ``jitcode.set_integrator`` (e.g. ``max_step``).
 
@@ -353,6 +648,31 @@ class ContinuousSystem(SystemBase, ABC):
         Trajectory
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
+        if backend == "diffsol":
+            from tsdynamics.backends import diffsol as _diffsol
+
+            ic_arr = self.resolve_ic(ic)
+            t_eval, y_out = _diffsol.integrate(
+                self, final_time, dt, t0=t0, ic=ic_arr, method=method, rtol=rtol, atol=atol
+            )
+            return Trajectory(
+                t=t_eval,
+                y=y_out,
+                system=self,
+                meta=self._provenance(
+                    family="ode",
+                    backend="diffsol",
+                    method=method or "tsit45",
+                    dt=dt,
+                    t0=t0,
+                    rtol=rtol,
+                    atol=atol,
+                    ic=ic_arr.copy(),
+                ),
+            )
+        if backend != "jitcode":
+            raise ValueError(f"Unknown backend {backend!r}; use 'jitcode' or 'diffsol'.")
+
         method = method or self._default_method
         integ_name = _INTEGRATOR_MAP.get(method, method)
         ic_arr = self.resolve_ic(ic)
@@ -373,7 +693,20 @@ class ContinuousSystem(SystemBase, ABC):
                 )
             y_out[k] = state
 
-        return Trajectory(t=t_eval, y=y_out, system=self)
+        return Trajectory(
+            t=t_eval,
+            y=y_out,
+            system=self,
+            meta=self._provenance(
+                family="ode",
+                method=integ_name,
+                dt=dt,
+                t0=t0,
+                rtol=rtol,
+                atol=atol,
+                ic=ic_arr.copy(),
+            ),
+        )
 
     # ------------------------------------------------------------------ #
     # Lyapunov spectrum
@@ -469,5 +802,13 @@ class ContinuousSystem(SystemBase, ABC):
         L = np.vstack(ly_steps) if ly_steps else np.empty((0, n_exp), float)
         exponents = (W[:, None] * L).sum(axis=0) / W.sum() if L.size else np.zeros(n_exp)
 
-        self.meta["lyapunov_spectrum"] = exponents
+        self.meta.record(
+            "lyapunov_spectrum",
+            exponents,
+            dt=dt,
+            final_time=final_time,
+            burn_in=burn_in,
+            n_exp=n_exp,
+            method=integ_name,
+        )
         return exponents

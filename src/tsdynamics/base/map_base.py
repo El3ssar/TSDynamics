@@ -95,6 +95,14 @@ class DiscreteMap(SystemBase):
     # Class-level cache: (class_name, params_hash) → compiled iterate fn
     _iter_cache: ClassVar[dict[tuple, Any]] = {}
 
+    #: Set to False on maps whose orbit visits discontinuities, where the
+    #: finite-difference Jacobian validation in the test suite cannot apply.
+    _jacobian_fd_check: ClassVar[bool] = True
+
+    # Protocol stepping state (instances shadow these class defaults).
+    _state_now: np.ndarray | None = None
+    _n_now: int = 0
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
         Validate the subclass contract at class-definition time.
@@ -161,6 +169,77 @@ class DiscreteMap(SystemBase):
         array-like of shape (dim, dim).
         """
         ...
+
+    # ------------------------------------------------------------------ #
+    # System protocol — incremental stepping
+    # ------------------------------------------------------------------ #
+
+    @property
+    def is_discrete(self) -> bool:
+        """Maps are discrete-time systems."""
+        return True
+
+    def reinit(
+        self,
+        u: Any | None = None,
+        *,
+        t: float | None = None,
+        params: dict | None = None,
+    ) -> None:
+        """(Re)start stepping from state ``u`` at iteration count ``t``."""
+        if params:
+            for k, v in params.items():
+                self.params[k] = v
+        self._state_now = self.resolve_ic(u)
+        self._n_now = int(t) if t is not None else 0
+
+    def step(self, n_or_dt: int | None = None) -> np.ndarray:
+        """Advance ``n`` iterations (default 1) and return the new state."""
+        if self._state_now is None:
+            self.reinit()
+        n = int(n_or_dt) if n_or_dt is not None else 1
+        x = self._state_now
+        params = self.params.as_tuple()
+
+        iterate_fn = self._get_iterate_fn() if n > 16 else None
+        if iterate_fn is not None:
+            x = iterate_fn(x.copy(), n)[-1].copy()
+        else:
+            step_fn = type(self)._step
+            for _ in range(n):
+                x = np.asarray(step_fn(x, *params), dtype=float).ravel()
+        if not np.isfinite(x).all():
+            raise RuntimeError(
+                f"{type(self).__name__}: map diverged at iteration {self._n_now + n}."
+            )
+        self._state_now = np.asarray(x, dtype=float).reshape(self.dim)
+        self._n_now += n
+        return self._state_now.copy()
+
+    def state(self) -> np.ndarray:
+        """Return a copy of the current state (implicit ``reinit`` if cold)."""
+        if self._state_now is None:
+            self.reinit()
+        return self._state_now.copy()
+
+    def set_state(self, u: Any) -> None:
+        """Overwrite the current state."""
+        self._state_now = np.asarray(u, dtype=float).reshape(self.dim)
+
+    def time(self) -> float:
+        """Return the current iteration count."""
+        return float(self._n_now)
+
+    def trajectory(
+        self,
+        steps: int = 1000,
+        *,
+        transient: int = 0,
+        **kwargs,
+    ) -> Trajectory:
+        """Protocol-uniform trajectory: ``iterate`` plus optional transient drop."""
+        traj = self.iterate(steps=transient + steps, **kwargs)
+        return traj[transient:] if transient > 0 else traj
 
     # ------------------------------------------------------------------ #
     # Compiled iterate loop
@@ -248,7 +327,12 @@ class DiscreteMap(SystemBase):
                     bad = np.argmax(~np.isfinite(out).all(axis=1))
                     raise ValueError(f"Divergence detected at step {bad}")
 
-                return Trajectory(t=np.arange(steps), y=out, system=self)
+                return Trajectory(
+                    t=np.arange(steps),
+                    y=out,
+                    system=self,
+                    meta=self._provenance(family="map", steps=steps, ic=ic_arr.copy()),
+                )
 
             except ValueError as exc:
                 if attempt == max_retries - 1:
@@ -353,7 +437,13 @@ class DiscreteMap(SystemBase):
 
             if not failed and intervals > 0:
                 exponents = lyap_sums / (intervals * reortho_interval)
-                self.meta["lyapunov_spectrum"] = exponents
+                self.meta.record(
+                    "lyapunov_spectrum",
+                    exponents,
+                    steps=steps,
+                    n_exp=n_exp,
+                    reortho_interval=reortho_interval,
+                )
                 return exponents
 
             if attempt < max_retries - 1:

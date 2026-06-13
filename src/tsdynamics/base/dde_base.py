@@ -108,6 +108,12 @@ class DelaySystem(SystemBase, ABC):
     _compiled_ddes: ClassVar[dict[str, str]] = {}
     _compiled_lyap: ClassVar[dict[str, str]] = {}
 
+    # Protocol stepping state (instances shadow these class defaults).
+    _stepper: Any = None
+    _state_now: np.ndarray | None = None
+    _t_now: float = 0.0
+    _default_step_dt: ClassVar[float] = 0.1
+
     # ------------------------------------------------------------------ #
     # Subclass interface
     # ------------------------------------------------------------------ #
@@ -276,6 +282,109 @@ class DelaySystem(SystemBase, ABC):
         return max(delays) * 1.01 if delays else 1.0
 
     # ------------------------------------------------------------------ #
+    # System protocol — incremental stepping (forward-only)
+    # ------------------------------------------------------------------ #
+
+    @property
+    def is_discrete(self) -> bool:
+        """DDEs are continuous-time systems."""
+        return False
+
+    def reinit(
+        self,
+        u: Any | None = None,
+        *,
+        t: float | None = None,
+        params: dict | None = None,
+        rtol: float | None = None,
+        atol: float | None = None,
+        **kwargs,
+    ) -> None:
+        """
+        (Re)start the incremental stepper from a constant past equal to ``u``.
+
+        DDE state is a history *function*; the protocol restart uses a
+        constant past (the same convention as ``lyapunov_spectrum``).  For a
+        custom history, use :meth:`integrate` with ``history=`` and continue
+        from ``traj.y[-1]``.
+        """
+        from jitcdde import jitcdde as _jitcdde
+
+        if params:
+            for k, v in params.items():
+                self.params[k] = v
+        if t is not None and float(t) != 0.0:
+            raise NotImplementedError(
+                "DelaySystem.reinit only supports t=0 — JiTCDDE pasts start there."
+            )
+        ic_arr = self.resolve_ic(u)
+        so_path = self._ensure_compiled(for_lyap=False)
+
+        stepper = _jitcdde(
+            module_location=str(so_path),
+            n=self.dim,
+            delays=self._delays(),
+            max_delay=self._max_delay(),
+            verbose=False,
+        )
+        stepper.constant_past(ic_arr)
+        stepper.set_integration_parameters(
+            rtol=rtol if rtol is not None else self._default_rtol,
+            atol=atol if atol is not None else self._default_atol,
+            **kwargs,
+        )
+        stepper.initial_discontinuities_handled = True
+
+        self._stepper = stepper
+        self._state_now = ic_arr.copy()
+        self._t_now = float(stepper.t)
+
+    def step(self, n_or_dt: float | None = None) -> np.ndarray:
+        """Advance by ``dt`` (default 0.1, forward-only) and return the new state."""
+        if self._stepper is None:
+            self.reinit()
+        dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
+        self._t_now = self._t_now + dt
+        state = np.asarray(self._stepper.integrate(self._t_now), dtype=float)
+        if not np.isfinite(state).all():
+            raise RuntimeError(
+                f"{type(self).__name__}: DDE diverged at t={self._t_now:.6g} during step()."
+            )
+        self._state_now = state.copy()
+        return state
+
+    def state(self) -> np.ndarray:
+        """Return a copy of the current state (implicit ``reinit`` if cold)."""
+        if self._state_now is None:
+            self.reinit()
+        return self._state_now.copy()
+
+    def set_state(self, u: Any) -> None:
+        """Not available for DDEs — their state is a whole history function."""
+        raise NotImplementedError(
+            f"{type(self).__name__}.set_state is impossible for delay systems: the "
+            f"instantaneous state is a history function over [t - max_delay, t], not a "
+            f"point.  Use reinit(u) to restart from a constant past, or integrate(...) "
+            f"with a history callable."
+        )
+
+    def time(self) -> float:
+        """Return the current stepper time."""
+        return self._t_now
+
+    def trajectory(
+        self,
+        final_time: float = 100.0,
+        *,
+        dt: float = 0.02,
+        transient: float = 0.0,
+        **kwargs,
+    ) -> Trajectory:
+        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
+        traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
+        return traj.after(transient) if transient > 0 else traj
+
+    # ------------------------------------------------------------------ #
     # Integration
     # ------------------------------------------------------------------ #
 
@@ -356,7 +465,19 @@ class DelaySystem(SystemBase, ABC):
         for k in range(1, t_eval.size):
             y_out[k] = dde.integrate(float(t_eval[k]))
 
-        return Trajectory(t=t_eval, y=y_out, system=self)
+        return Trajectory(
+            t=t_eval,
+            y=y_out,
+            system=self,
+            meta=self._provenance(
+                family="dde",
+                dt=dt,
+                rtol=rtol,
+                atol=atol,
+                ic=ic_arr.copy(),
+                history="callable" if history is not None else "constant",
+            ),
+        )
 
     # ------------------------------------------------------------------ #
     # Lyapunov spectrum
@@ -472,5 +593,12 @@ class DelaySystem(SystemBase, ABC):
         L = np.vstack([ly_steps[i] for i, m in enumerate(mask) if m])
         exponents = (W[mask, None] * L).sum(0) / W[mask].sum()
 
-        self.meta["lyapunov_spectrum"] = exponents
+        self.meta.record(
+            "lyapunov_spectrum",
+            exponents,
+            dt=dt,
+            final_time=final_time,
+            burn_in=burn_in,
+            n_exp=n_exp,
+        )
         return exponents
