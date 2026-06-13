@@ -9,3 +9,7 @@ repository.workspace = true
 
 [dependencies]
 tsdyn-ir.workspace = true
+# Link-time solver auto-registry (ROADMAP §4d). Solver-specific, so declared
+# here rather than in `workspace.dependencies` (per the workspace manifest's
+# convention for per-crate deps). Pure Rust, no build script → wheel-friendly.
+inventory = "0.3.24"

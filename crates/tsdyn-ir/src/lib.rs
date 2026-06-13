@@ -18,6 +18,9 @@
 //! - [`TapeBuilder`] — a typed builder mirroring the Python emitter, for
 //!   hand-written and in-Rust-lowered tapes.
 //! - [`IrError`] — the validation failure type.
+//! - [`Evaluator`] — the object-safe trait every production evaluator
+//!   (`tsdyn-vm`, `tsdyn-jit`) implements; one of the two pluggability seams
+//!   (the other is `Solver` in `tsdyn-solvers`).  Added by stream **F2**.
 //! - `reference` (off-by-default feature) — a canonical reference evaluator that
 //!   *defines* the operational semantics and serves as an oracle for the
 //!   production evaluators; see [`mod@reference`].
@@ -62,16 +65,19 @@
 //!
 //! # Stream boundaries (ROADMAP §4a)
 //!
-//! This crate (stream **F1**) freezes the *data* contract — opcodes, tape,
-//! builder, validation.  The `Evaluator`/`Solver` **traits** and the registry
-//! mechanism are stream **F2** and are intentionally *not* defined here; the
-//! reference evaluator is plain functions, not a trait impl, so it does not
-//! pre-empt that seam.
+//! Stream **F1** froze the *data* contract — opcodes, tape, builder, validation.
+//! Stream **F2** adds the first pluggability seam, the [`Evaluator`] trait, here
+//! (so every downstream evaluator/solver/engine crate sees it without a new
+//! build-graph edge); the matching `Solver` trait + the name/plugin registries
+//! live in `tsdyn-solvers`.  The F1 [`reference`] evaluator stays plain
+//! functions — it does not implement [`Evaluator`], so it remains a neutral
+//! oracle rather than a privileged production impl.
 //!
 //! [`tsdyn-vm`]: https://docs.rs/tsdyn-vm
 //! [`tsdyn-jit`]: https://docs.rs/tsdyn-jit
 
 mod builder;
+mod eval;
 mod op;
 mod tape;
 
@@ -79,5 +85,6 @@ mod tape;
 pub mod reference;
 
 pub use builder::{Reg, TapeBuilder};
+pub use eval::Evaluator;
 pub use op::{Op, OpKind};
 pub use tape::{IrError, Tape};
