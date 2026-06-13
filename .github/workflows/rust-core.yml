@@ -7,7 +7,11 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "crates/**"
+      # Scoped to the v2 accelerator crate only (F4 CI matrix split). The v3
+      # tsdyn-* workspace is covered by rust-workspace.yml, and the Rust-vs-v2
+      # numeric compare by cross-validation.yml — an edit there no longer fires
+      # this accelerator-build redundantly.
+      - "crates/tsdynamics-core/**"
       - "src/tsdynamics/backends/rustcore.py"
       - "tests/test_rustcore*.py"
       - ".github/workflows/rust-core.yml"
