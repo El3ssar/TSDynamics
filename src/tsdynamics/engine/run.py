@@ -56,6 +56,8 @@ __all__ = [
     "eval_rhs",
     "integrate",
     "resolve_backend",
+    "sde_ensemble_final",
+    "sde_integrate_dense",
 ]
 
 #: The selectable backend names.  ``"interp"`` / ``"jit"`` run on the compiled
@@ -317,15 +319,27 @@ def _run_continuous(
     atol: float,
     backend: str,
 ) -> np.ndarray:
-    """Integrate a continuous-time problem (ODE/DDE/SDE) and sample at ``t_eval``."""
+    """Integrate a continuous-time problem (ODE) and sample at ``t_eval``."""
     if backend == "reference":
         if not isinstance(problem, ODEProblem):
             raise NotImplementedError(
                 f"the reference integrator covers ODEs (and maps) only, not "
                 f"{problem.family!r}; use backend='interp'/'jit' (the Rust engine) for "
-                f"DDE/SDE integration."
+                f"DDE integration, or StochasticSystem.integrate for SDEs."
             )
         return _reference_ode(problem, t_eval, method=method, rtol=rtol, atol=atol)
+
+    if isinstance(problem, SDEProblem):
+        # On the engine path: the generic integrate seam carries neither the SDE
+        # noise seed nor the step-as-noise-scale, and the drift tape is ODE-shaped
+        # (n_state == dim), so dispatching here would silently integrate the
+        # *deterministic* drift as an ODE. Route SDEs through their seeded entry
+        # point instead. (The reference path above already rejected SDEs.)
+        raise NotImplementedError(
+            "run.integrate cannot carry the SDE noise seed/step; use "
+            "StochasticSystem.integrate(backend=...) for diagonal-Itô SDEs, or "
+            "run.sde_integrate_dense(problem, t_eval, dt=, method=, seed=, backend=)."
+        )
 
     eng = _engine()
     y = _engine_integrate_dense(
@@ -410,6 +424,23 @@ def ensemble(
     ics = np.ascontiguousarray(ics, dtype=np.float64)
     if ics.ndim != 2 or ics.shape[1] != problem.dim:
         raise ValueError(f"ics must be (n, {problem.dim}); got shape {ics.shape}")
+
+    # Maps and SDEs are dispatched before the (ODE-shaped) start-time logic below:
+    # a MapProblem has no ``t0``, and an SDE batch needs its own seeded entry
+    # point (the generic path would integrate the drift as a deterministic ODE).
+    if isinstance(problem, SDEProblem):
+        raise NotImplementedError(
+            "run.ensemble cannot carry the SDE noise seed/step; use "
+            "StochasticSystem.ensemble(...) for diagonal-Itô SDEs, or "
+            "run.sde_ensemble_final(problem, ics, t0=, t1=, dt=, method=, seed=, backend=)."
+        )
+    if isinstance(problem, MapProblem):
+        steps = int(round(final_time))
+        if backend == "reference":
+            return _reference_map_ensemble(problem, ics, steps)
+        eng = _engine()
+        return np.asarray(_engine_map_ensemble_final(eng, problem, ics, steps), dtype=np.float64)
+
     start = problem.t0 if t0 is None else float(t0)
 
     if backend == "reference":
@@ -431,6 +462,134 @@ def ensemble(
         ),
         dtype=np.float64,
     )
+
+
+# ---------------------------------------------------------------------------
+# SDE integration (diagonal-Itô; drift + diffusion tapes)
+# ---------------------------------------------------------------------------
+#
+# The SDE engine entry points.  Unlike :func:`integrate` / :func:`ensemble`,
+# these carry the two SDE-specific knobs — the fixed step ``dt`` (which *is* the
+# noise scale ``√dt``) and the noise ``seed`` — and drive the two-tape engine
+# call (drift + diffusion).  The family base class
+# (:class:`~tsdynamics.families.stochastic.StochasticSystem`) calls these for its
+# ``backend="interp"/"jit"`` path and wraps the result as a Trajectory with
+# provenance; the pure-Python reference path stays in the family.
+
+
+def sde_integrate_dense(
+    problem: SDEProblem,
+    t_eval: np.ndarray,
+    *,
+    dt: float,
+    method: str,
+    seed: int,
+    backend: str = "interp",
+) -> np.ndarray:
+    """Integrate one diagonal-Itô SDE trajectory on the engine.
+
+    Parameters
+    ----------
+    problem : SDEProblem
+        The lowered drift + diffusion tapes plus runtime context.
+    t_eval : ndarray
+        Output grid; the first row of the result is the state at ``t_eval[0]``.
+    dt : float
+        Fixed step *and* noise scale (each Wiener increment is ``~ N(0, dt)``).
+    method : str
+        SDE kernel name (``"euler_maruyama"`` / ``"milstein"``).
+    seed : int
+        Seed for the noise stream (a ``u64``).
+    backend : str, default "interp"
+        ``"interp"`` or ``"jit"``.  ``"reference"`` has no engine SDE integrator
+        (the pure-Python reference lives in the family).
+
+    Returns
+    -------
+    ndarray, shape (len(t_eval), dim)
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    NotImplementedError
+        If ``backend="reference"`` (use the family's reference integrator).
+    RuntimeError
+        If the trajectory diverged before the final time.
+    """
+    backend = resolve_backend(backend)
+    if backend == "reference":
+        raise NotImplementedError(
+            "the engine SDE path needs backend='interp'/'jit'; the pure-Python "
+            "reference SDE integrator lives in StochasticSystem.integrate."
+        )
+    eng = _engine()
+    y = eng.integrate_sde_dense(
+        *problem.drift.to_arrays(),
+        *problem.diffusion.to_arrays(),
+        np.ascontiguousarray(problem.ic, dtype=np.float64),
+        problem.params_vec(),
+        np.ascontiguousarray(t_eval, dtype=np.float64),
+        method,
+        float(dt),
+        int(seed),
+        backend == "jit",
+    )
+    return np.asarray(y, dtype=np.float64)
+
+
+def sde_ensemble_final(
+    problem: SDEProblem,
+    ics: np.ndarray,
+    *,
+    t0: float,
+    t1: float,
+    dt: float,
+    method: str,
+    seed: int,
+    backend: str = "interp",
+) -> np.ndarray:
+    """Integrate a batch of SDE initial conditions to ``t1`` and return final states.
+
+    ``ics`` is ``(n, dim)``.  Trajectory ``i`` is seeded by ``seed_for(seed, i)``
+    inside the engine, so the batch is **parallel == serial** bit-for-bit; a
+    diverging trajectory yields a row of ``NaN`` rather than aborting the batch.
+
+    Parameters
+    ----------
+    problem : SDEProblem
+    ics : ndarray, shape (n, dim)
+    t0, t1 : float
+        Integration window.
+    dt, method, seed, backend
+        As in :func:`sde_integrate_dense` (``seed`` is the ensemble base seed).
+
+    Returns
+    -------
+    ndarray, shape (n, dim)
+        Final states (rows of ``NaN`` for diverged trajectories).
+    """
+    backend = resolve_backend(backend)
+    if backend == "reference":
+        raise NotImplementedError(
+            "the engine SDE ensemble needs backend='interp'/'jit'; the pure-Python "
+            "reference SDE ensemble lives in StochasticSystem.ensemble."
+        )
+    eng = _engine()
+    ics = np.ascontiguousarray(ics, dtype=np.float64)
+    y = eng.integrate_sde_ensemble_final(
+        *problem.drift.to_arrays(),
+        *problem.diffusion.to_arrays(),
+        ics,
+        problem.params_vec(),
+        float(t0),
+        float(t1),
+        method,
+        float(dt),
+        int(seed),
+        backend == "jit",
+    )
+    return np.asarray(y, dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +648,21 @@ def _engine_ensemble_final(
         float(rtol),
         float(atol),
         bool(jit),
+    )
+
+
+def _engine_map_ensemble_final(
+    eng: Any, problem: MapProblem, ics: np.ndarray, steps: int
+) -> np.ndarray:
+    """Dispatch a parallel map ensemble (final iterates) to the engine.
+
+    Map parameters fold into the tape (``n_param == 0``), so there is no
+    parameter vector; a diverging trajectory comes back as a ``NaN`` row.
+    """
+    return eng.iterate_ensemble_final(
+        *problem.tape.to_arrays(),
+        np.ascontiguousarray(ics, dtype=np.float64),
+        int(steps),
     )
 
 
@@ -561,6 +735,30 @@ def _reference_map(problem: MapProblem, steps: int) -> np.ndarray:
                 f"(0-based, of {steps} requested)."
             )
         out[i] = x
+    return out
+
+
+def _reference_map_ensemble(problem: MapProblem, ics: np.ndarray, steps: int) -> np.ndarray:
+    """Loop the reference map iterator over a batch; NaN row on divergence.
+
+    The pure-Python twin of the engine map ensemble: each IC is iterated to its
+    ``f^{steps}`` final state; a diverged orbit becomes a ``NaN`` row (mirroring
+    the engine's per-trajectory isolation) rather than aborting the batch.
+    """
+    out = np.empty_like(ics)
+    if steps <= 0:
+        out[:] = ics
+        return out
+    for i, ic in enumerate(ics):
+        sub = MapProblem(
+            tape=problem.tape,
+            ic=np.asarray(ic, dtype=np.float64),
+            system=problem.system,
+        )
+        try:
+            out[i] = _reference_map(sub, steps)[-1]
+        except (RuntimeError, ValueError):
+            out[i] = np.nan
     return out
 
 

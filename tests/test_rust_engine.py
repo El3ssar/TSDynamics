@@ -159,13 +159,18 @@ def test_unknown_method_raises_value_error():
         _rust.integrate_dense(*arrays, ic, p, t_eval, "no-such-method", 1e-6, 1e-9, False)
 
 
-def test_jit_backend_raises_not_implemented():
+def test_jit_backend_matches_interpreter_bit_for_bit():
+    # The JIT bridge (stream E-WIRE) wired backend="jit": it must now run *and*
+    # agree with the interpreter bit-for-bit (the JIT evaluator is bit-identical
+    # on `eval`, and the same adaptive loop drives both), replacing the old
+    # `jit=True` -> NotImplementedError stub.
     arrays = _lorenz_arrays()
     ic = np.array([1.0, 1.0, 1.0])
     p = np.array([10.0, 28.0, 8.0 / 3.0])
-    t_eval = np.array([0.0, 0.1])
-    with pytest.raises(NotImplementedError):
-        _rust.integrate_dense(*arrays, ic, p, t_eval, "rk45", 1e-6, 1e-9, True)
+    t_eval = np.linspace(0.0, 2.0, 11)
+    interp = np.asarray(_rust.integrate_dense(*arrays, ic, p, t_eval, "dop853", 1e-9, 1e-11, False))
+    jit = np.asarray(_rust.integrate_dense(*arrays, ic, p, t_eval, "dop853", 1e-9, 1e-11, True))
+    np.testing.assert_array_equal(interp, jit)
 
 
 def test_malformed_tape_raises_value_error():
