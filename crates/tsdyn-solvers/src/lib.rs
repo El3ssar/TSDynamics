@@ -1,12 +1,48 @@
-//! `tsdyn-solvers` — the `Solver` trait and its kernels, one method per module
-//! (explicit RK family, implicit/stiff family, SDE, symplectic, ...).
+//! `tsdyn-solvers` — the [`Solver`] trait and the solver name registry, plus
+//! (in later streams) one module per integration kernel.
 //!
-//! Each kernel calls an `Evaluator` (from `tsdyn-ir`) for RHS/Jacobian values;
-//! dense output, error control and step adaption live here. Solvers are
-//! auto-registered by name (a `register!`-per-file / `inventory`-style registry)
-//! so adding a method is adding one file with no central table to edit — that is
-//! what lets two solver streams (E3, E4) run without colliding (ROADMAP §4d).
+//! This crate owns the second of the two engine seams (the first,
+//! [`Evaluator`], lives in `tsdyn-ir`): the [`Solver`] trait a kernel implements
+//! and the [`register_solver!`] mechanism a kernel uses to make itself
+//! discoverable by name — with **no central dispatch table** (ROADMAP §4d), so
+//! the explicit (E3), implicit/stiff (E4) and SDE (E-SDE) families can be built
+//! in parallel without ever editing a shared file.
 //!
-//! Skeleton only (stream F0). The trait + registry mechanism land in **stream
-//! F2**; the explicit family in **E3**, the implicit/stiff family in **E4**,
-//! the SDE family in **E-SDE**. See ROADMAP §4a/§4d.
+//! # What stream F2 freezes here
+//!
+//! - [`Solver`] — the kernel trait (`name`/`caps`/`step`), object-safe so the
+//!   engine drives `&mut dyn Solver` chosen by a `method=` string.
+//! - [`Caps`] / [`ProblemKind`] / [`ProblemKinds`] / [`SolverKind`] — the
+//!   capability metadata driving `method=` resolution and auto-stiffness.
+//! - [`SolverState`] / [`StepOutcome`] — the per-worker integration state and
+//!   the step/accept/retry/fail outcome the engine loops on.
+//! - [`SolverRegistration`] + [`register_solver!`] + [`find`]/[`make`]/
+//!   [`registered`]/[`available`]/[`duplicates`] — the link-time auto-registry
+//!   (via [`inventory`]).
+//!
+//! [`Evaluator`] is re-exported so a kernel author imports both seams from one
+//! crate.
+//!
+//! # What later streams add
+//!
+//! The actual kernels: `explicit/` (E3 — RK4, DP45/RK45, DOP853, Tsit5…),
+//! `implicit/` (E4 — Rosenbrock, SDIRK/TR-BDF2, BDF), `sde/` (E-SDE —
+//! Euler–Maruyama, Milstein).  Each is one file ending in a `register_solver!`.
+
+mod caps;
+mod registry;
+mod solver;
+
+pub use caps::{Caps, ProblemKind, ProblemKinds, SolverKind};
+pub use registry::{available, duplicates, find, make, registered, SolverRegistration};
+pub use solver::{Solver, SolverState, StepOutcome};
+
+// The Evaluator seam lives in tsdyn-ir; re-export it so kernel authors get both
+// halves of the engine contract from this one crate.
+pub use tsdyn_ir::Evaluator;
+
+// Re-export `inventory` at the crate root so `register_solver!` can expand to
+// `$crate::inventory::submit!` — the registering crate then needs only a
+// dependency on `tsdyn-solvers`, not on `inventory` directly. Not a stable API.
+#[doc(hidden)]
+pub use inventory;
