@@ -350,18 +350,25 @@ def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray,
         y = _reference_map(problem, steps)
     else:
         eng = _engine()
-        y = np.asarray(
-            eng.iterate_map(*problem.tape.to_arrays(), problem.ic, int(steps)), dtype=np.float64
+        diverged_msg = (
+            f"{_name(problem)}: map diverged or produced a non-finite state before "
+            f"reaching {steps} iterations."
         )
-        # Backstop mirroring _run_continuous: the compiled map loop (stream E-MAP)
-        # is expected to raise on a non-finite iterate, but guard here too so the
-        # engine map path can never hand back a silently poisoned trajectory,
-        # whatever way the binding surfaces divergence.
-        if not np.all(np.isfinite(y)):
-            raise RuntimeError(
-                f"{_name(problem)}: map diverged or produced a non-finite state before "
-                f"reaching {steps} iterations."
+        try:
+            y = np.asarray(
+                eng.iterate_map(*problem.tape.to_arrays(), problem.ic, int(steps)),
+                dtype=np.float64,
             )
+        except RuntimeError as exc:
+            # The compiled map loop raises (EngineError::Diverged → RuntimeError)
+            # at the first non-finite iterate — the engine's diverge-loudly
+            # contract. Re-raise with the system name so the message matches every
+            # other boundary (ODE/DDE/reference).
+            raise RuntimeError(diverged_msg) from exc
+        # Defense-in-depth: should the binding ever return NaN instead of raising,
+        # still refuse to hand back a silently poisoned trajectory.
+        if not np.all(np.isfinite(y)):
+            raise RuntimeError(diverged_msg)
     return np.arange(problem.n0, problem.n0 + steps), y
 
 
