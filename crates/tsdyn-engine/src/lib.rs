@@ -35,6 +35,8 @@ pub mod ensemble;
 pub mod integrate;
 pub mod problem;
 pub mod rng;
+// Appended by stream E-MAP (kept append-only — see the module docs above).
+pub mod map;
 
 #[cfg(test)]
 mod testkit;
@@ -42,6 +44,11 @@ mod testkit;
 pub use ensemble::{ensemble_final, EnsembleFinal, TrajStatus};
 pub use integrate::{integrate_final, integrate_grid, IntegrateConfig, IntegrateError};
 pub use problem::OdeProblem;
+// Appended by stream E-MAP.
+pub use map::{
+    iterate_dense, iterate_ensemble_final, iterate_final as iterate_map_final, MapEnsembleFinal,
+    MapError, MapProblem, MapTrajStatus,
+};
 
 /// Check that the linked solver registry has no duplicate names, returning the
 /// clashing names if any.

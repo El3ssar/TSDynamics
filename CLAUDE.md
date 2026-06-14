@@ -199,6 +199,12 @@ All three families + all derived wrappers implement:
 - `_jacobian_fd_check = False` ClassVar opts a map out of the
   finite-difference Jacobian test (only for orbits living on discontinuities,
   e.g. Baker).
+- `iterate(backend=...)` selects where iteration runs: `"numba"` (default, the
+  v2 in-process loop) or the Rust engine (`"reference"` pure-Python oracle now;
+  `"interp"`/`"jit"` once `tsdynamics._rust` ships). The engine loop lives in
+  `crates/tsdyn-engine/src/map.rs`; non-Numba backends lower `_step` to the IR,
+  so piecewise/`numpy`-ufunc steps raise `TapeCompileError`. The engine path
+  diverges loudly (raises, no random-IC retry).
 
 ---
 
