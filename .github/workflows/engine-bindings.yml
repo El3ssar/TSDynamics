@@ -23,7 +23,10 @@ on:
       - "crates/tsdyn-solvers/**"
       - "crates/tsdyn-engine/**"
       - "src/tsdynamics/engine/**"
+      - "src/tsdynamics/families/**"
       - "tests/test_rust_engine.py"
+      - "tests/test_dde_engine.py"
+      - "tests/test_map_engine.py"
       - ".github/workflows/engine-bindings.yml"
   workflow_dispatch:
 
@@ -87,5 +90,22 @@ jobs:
       - name: Install the extension into the source tree
         run: cp crates/tsdyn-core/target/release/lib_rust.so src/tsdynamics/_rust.abi3.so
 
-      - name: Run the Python binding tests
-        run: uv run pytest tests/test_rust_engine.py --no-cov -q
+      # Fail loudly if the extension did not actually load: every engine test
+      # uses `importorskip("tsdynamics._rust")`, so a broken build would
+      # otherwise turn the whole suite into silent skips reported as success.
+      - name: Assert the engine extension is importable
+        run: uv run python -c "import tsdynamics._rust; print('tsdynamics._rust loaded OK')"
+
+      # Exercise the compiled engine end-to-end through the Python API: the ODE
+      # bindings (test_rust_engine.py) plus the native DDE and map loops
+      # (test_dde_engine.py / test_map_engine.py). These all skip in ci.yml
+      # because `_rust` is absent there, so this is the only job that runs them
+      # with the real extension. The slow tier runs too (the Rust-vs-jitcdde
+      # comparisons live there); `full` stays deselected via pyproject addopts.
+      - name: Run the Python binding + engine-path tests
+        run: >-
+          uv run pytest
+          tests/test_rust_engine.py
+          tests/test_dde_engine.py
+          tests/test_map_engine.py
+          --no-cov -q
