@@ -54,7 +54,7 @@ src/tsdynamics/
 │   ├── run.py                # backend select (interp|jit|reference) + integrate/ensemble (E6)
 │   ├── rustcore.py           # v2-seed tape emitter + accelerator wrappers (superseded by compile/run; retired at M3)
 │   └── diffsol.py            # experimental SymEngine→DiffSL + pydiffsol (v2 backend; retired at M3)
-├── solvers/                  # solver registry + per-solver metadata — OWNED BY STREAM F2 (not created here)
+├── solvers/                  # F2 registry mechanism + C-SOLV in-tree specs (explicit/implicit/stochastic) + method= resolution/aliases + auto-stiffness (select.py)
 ├── derived/
 │   ├── _base.py              # DerivedSystem (wrapper base, with_params rebuilds)
 │   ├── poincare.py           # PoincareMap (Hermite-refined crossings)
@@ -349,7 +349,7 @@ Compiled JiTCODE/JiTCDDE objects live in `~/.cache/tsdynamics/`
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |
 | Tight tolerances on DDE | `rtol=atol=1e-3` is the safe start. |
 | `set_state` on a DDE | Raises by design — use `reinit(u)`. |
-| Implicit method on the Rust engine without a Jacobian | `integrate(method="rosenbrock"/"trbdf2", backend="interp"/"jit")` needs a Jacobian-carrying tape. The engine **raises** (it will not silently degrade to forward Euler); pass a problem built `with_jacobian=True`, or use an explicit method. Auto-setting this for implicit methods is C-SOLV's job. |
+| Implicit method on the Rust engine without a Jacobian | `integrate(method="rosenbrock"/"trbdf2", backend="interp"/"jit")` needs a Jacobian-carrying tape. The engine **raises** (it will not silently degrade to forward Euler); pass a problem built `with_jacobian=True`, or use an explicit method. `tsdynamics.solvers.build_kwargs(method)` returns `{"with_jacobian": True}` for implicit methods (C-SOLV); the family engine-dispatch seam (C-FAM) merges it so the stiff path "just works". |
 | Param change ignored by a live stepper | `reinit()` after parameter changes (or use `with_params`). |
 | Stale compiled cache after editing `_equations` | Wipe `~/.cache/tsdynamics/`. |
 | Orbit diagram over a DDE wrapper | Recompiles per parameter value — slow by design, document it. |
