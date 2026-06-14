@@ -11,13 +11,13 @@ treatments live in the [Analysis](../analysis/index.md) section.
 
 ## Orbit diagrams
 
-::: tsdynamics.analysis.orbit_diagram.orbit_diagram
+::: tsdynamics.analysis.orbits.orbit_diagram.orbit_diagram
 
-::: tsdynamics.analysis.orbit_diagram.OrbitDiagram
+::: tsdynamics.analysis.orbits.orbit_diagram.OrbitDiagram
 
 ## Poincaré sections
 
-::: tsdynamics.analysis.poincare.poincare_section
+::: tsdynamics.analysis.orbits.poincare.poincare_section
 
 ## Lyapunov quantifiers
 
@@ -29,6 +29,6 @@ treatments live in the [Analysis](../analysis/index.md) section.
 
 ## Fixed points
 
-::: tsdynamics.analysis.fixed_points.fixed_points
+::: tsdynamics.analysis.fixedpoints.fixed_points
 
-::: tsdynamics.analysis.fixed_points.FixedPoint
+::: tsdynamics.analysis.fixedpoints.FixedPoint
