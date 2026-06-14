@@ -36,20 +36,25 @@ class Baker(DiscreteMap):
 
         x, y: Current state variables
         alpha: Fraction determining the fold (0 < alpha < 1)
+
+        Written branchlessly with ``np.where`` (rather than a Python ``if`` on
+        the state) so the step traces to a straight-line tape and runs on the
+        Rust engine.  On the attractor ``y in [0, 1)`` the single test
+        ``y < alpha`` is equivalent to ``0 <= y < alpha``.
         """
         x, y = X
-        if 0 <= y < alpha:
-            xp = (2 * x) % 1  # Stretch in x
-            yp = y / alpha  # Fold in y
-        else:
-            xp = (2 * x - 1) % 1  # Shift after stretch
-            yp = (y - alpha) / (1 - alpha)  # Fold in y
+        lower = y < alpha
+        xp = np.where(lower, (2 * x) % 1, (2 * x - 1) % 1)  # stretch / shift in x
+        yp = np.where(lower, y / alpha, (y - alpha) / (1 - alpha))  # fold in y
         return xp, yp
 
     @staticjit
     def _jacobian(X, alpha):
         x, y = X
-        if 0 <= y < alpha:
+        # Same branch test as ``_step`` (``y < alpha``, equivalent to
+        # ``0 <= y < alpha`` on the attractor) so the hand Jacobian matches the
+        # symbolic derivative of the lowered step.
+        if y < alpha:
             row1 = [2, 0]
             row2 = [0, 1 / alpha]
         else:

@@ -55,10 +55,12 @@ def _resolve_derivative_nodes(expr):
     """
     Replace unevaluated SymEngine ``Derivative`` nodes with a.e. derivatives.
 
-    SymEngine leaves ``d|u|/du`` and ``d sign(u)/du`` unevaluated, which
-    ``Lambdify`` cannot compile.  Almost everywhere, ``d sign(u)/d· = 0``
-    and ``d|u|/du = sign(u)`` — the measure-zero kink is irrelevant for
-    numeric Jacobian evaluation along an orbit.
+    SymEngine leaves ``d|u|/du``, ``d sign(u)/du`` and ``d floor(u)/du`` /
+    ``d ceil(u)/du`` unevaluated (the last two wrapped in a ``Subs``), which
+    ``Lambdify`` and the tape emitter cannot compile.  Almost everywhere,
+    ``d sign(u)/d· = 0``, ``d|u|/du = sign(u)`` and ``d floor(u)/d· =
+    d ceil(u)/d· = 0`` (floor/ceil are piecewise-constant) — the measure-zero
+    kink is irrelevant for numeric Jacobian evaluation along an orbit.
 
     Works directly on the SymEngine tree: these nodes may differentiate with
     respect to *expressions* (chain-rule dummies), which cannot round-trip
@@ -66,7 +68,8 @@ def _resolve_derivative_nodes(expr):
     """
     import symengine
 
-    if "Derivative" not in str(expr):
+    s = str(expr)
+    if "Derivative" not in s and "Subs" not in s:
         return expr
 
     def walk(e):
@@ -75,7 +78,8 @@ def _resolve_derivative_nodes(expr):
             target = e.args[0]
             wrt = e.args[1]
             tname = type(target).__name__
-            if tname == "sign":
+            if tname in ("sign", "floor", "ceiling"):
+                # Piecewise-constant a.e.: derivative is zero off the kinks.
                 return symengine.Integer(0)
             if tname == "Abs":
                 g = target.args[0]
@@ -86,6 +90,29 @@ def _resolve_derivative_nodes(expr):
                 except RuntimeError:
                     return e
             return e  # unknown derivative — leave it; Lambdify will fail loudly
+        if name == "Subs":
+            # ``Subs(Derivative(floor(ξ), ξ), ξ, g)`` — the chain-rule form of a
+            # floor/ceil derivative.  If the substituted-into expression resolves
+            # to a constant, the substitution is that constant.
+            inner = walk(e.args[0])
+            if not inner.free_symbols and inner == symengine.Integer(0):
+                return symengine.Integer(0)
+            if inner is e.args[0]:
+                return e
+            try:
+                return e.func(inner, *e.args[1:])
+            except (TypeError, RuntimeError):
+                return e
+        if name == "Piecewise":
+            # ``args`` is flattened ``(expr0, cond0, expr1, cond1, …)`` and a
+            # Piecewise cannot be rebuilt via ``func(*args)`` — re-pair the
+            # resolved expressions with their (unchanged) conditions.
+            args = e.args
+            new_args = [walk(a) for a in args]
+            if all(na is a for na, a in zip(new_args, args, strict=True)):
+                return e
+            pairs = [(new_args[i], new_args[i + 1]) for i in range(0, len(new_args), 2)]
+            return symengine.Piecewise(*pairs)
         args = e.args
         if not args:
             return e

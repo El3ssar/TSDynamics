@@ -1,19 +1,20 @@
-"""Cross-validation for the discrete-map engine path (stream E-MAP).
+"""Cross-validation for the discrete-map engine path (streams E-MAP, E-OPS).
 
-Every built-in map is swept once (via the registry-driven ``map_entry`` fixture)
-and falls into one of two buckets:
+Every built-in map is swept once (via the registry-driven ``map_entry`` fixture).
+Since stream **E-OPS** added the non-smooth / piecewise opcodes (comparison,
+``min``/``max``, ``floor``/``ceil``, ``mod``) and taught the map tracer to model
+NumPy array math symbolically, **every** built-in map now lowers to a
+straight-line tape and iterates on the engine:
 
-* **Lowerable** — ``_step`` traces to a straight-line tape, so the map iterates
-  on the engine.  We check the lowered next-state map equals the v2 Numba
-  ``_step`` *pointwise* to a tight tolerance (the chaos-free signal that the
-  lowering is arithmetically faithful), and that a short engine-iterated
-  trajectory tracks the Numba trajectory (the loop's bookkeeping — ordering,
-  shape, step-index axis).
-* **Non-lowerable** — ``_step`` either branches on the state / uses ``%`` (a
-  discontinuity the straight-line IR has no opcode for) or calls a NumPy ufunc
-  that does not dispatch onto symbolic operands.  These are pinned to raise
-  :class:`~tsdynamics.engine.compile.TapeCompileError`, so the boundary is
-  explicit and this test fails loudly if the lowering coverage ever changes.
+* the lowered next-state map equals the v2 Numba ``_step`` *pointwise* to a tight
+  tolerance (the chaos-free signal that the lowering is arithmetically faithful);
+* a short engine-iterated trajectory tracks the Numba trajectory (the loop's
+  bookkeeping — ordering, shape, step-index axis).
+
+Two earlier obstacles are now handled: NumPy ufuncs on the symbolic state (the
+tracer rebinds ``np`` to a SymEngine-backed shim) and genuine discontinuities —
+modular reduction ``%`` lowers via ``floor`` and a state branch is written
+branchlessly with ``np.where`` (→ ``Piecewise`` → comparison-masked blend).
 
 The engine's native loop (the Rust ``tsdyn-engine`` map iterator, stream E-MAP)
 is exercised here through the ``reference`` backend: it iterates the *same*
@@ -33,39 +34,12 @@ from tsdynamics.engine.compile import TapeCompileError
 from tsdynamics.engine.problem import map_problem
 from tsdynamics.families.discrete import _unwrap_static
 
-# ---------------------------------------------------------------------------
-# The non-lowerable catalogue, split by *why* it cannot become a straight-line
-# tape.  Both classes iterate on the v2 Numba path until the lowering grows to
-# cover them; the split records what each would need.
-# ---------------------------------------------------------------------------
-
-#: Steps written with NumPy ufuncs (``np.sin``/``np.cos``/``np.exp``/...), which
-#: the IR *could* represent (it has Sin/Cos/Exp/Sqrt/Abs/Sign/... opcodes) — they
-#: fail only because the ufunc does not dispatch onto a symbolic operand during
-#: tracing.  Folding a ufunc-dispatching trace into the lowering (a compile-layer
-#: change) would let these lower unchanged.
-_NONLOWERABLE_UFUNC = frozenset(
-    {
-        "Ikeda",
-        "Chirikov",
-        "Svensson",
-        "Bedhead",
-        "Hopalong",
-        "Pickover",
-        "Chebyshev",
-        "Gauss",
-        "DeJong",
-        "Ricker",
-    }
-)
-
-#: Steps with a genuine discontinuity — modular reduction (``%``) or a state
-#: branch — that the straight-line IR cannot represent at all (no mod/floor
-#: opcode); these need a new IR primitive, not just a richer trace.
-_NONLOWERABLE_DISCONTINUOUS = frozenset({"Zaslavskii", "Baker", "Circle", "KaplanYorke"})
-
-#: Maps that do not lower to the frozen straight-line IR today.
-NON_LOWERABLE = _NONLOWERABLE_UFUNC | _NONLOWERABLE_DISCONTINUOUS
+#: Maps that do not lower to the frozen straight-line IR.  Empty since E-OPS:
+#: the non-smooth opcode block plus the symbolic-NumPy tracer cover the whole
+#: built-in catalogue.  Kept as a named guard so a future regression (or a new
+#: map using a construct the tracer cannot model) trips
+#: :func:`test_non_lowerable_set_is_exhaustive` loudly.
+NON_LOWERABLE: frozenset[str] = frozenset()
 
 
 def _attractor_states(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -> np.ndarray:

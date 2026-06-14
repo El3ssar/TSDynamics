@@ -58,10 +58,24 @@
 //! | 44 | `Asinh` | unary  | `regs[a].asinh()` |
 //! | 45 | `Acosh` | unary  | `regs[a].acosh()` |
 //! | 46 | `Atanh` | unary  | `regs[a].atanh()` |
+//! | 50 | `Lt`    | binary | `(regs[a] <  regs[b]) as f64` |
+//! | 51 | `Le`    | binary | `(regs[a] <= regs[b]) as f64` |
+//! | 52 | `Gt`    | binary | `(regs[a] >  regs[b]) as f64` |
+//! | 53 | `Ge`    | binary | `(regs[a] >= regs[b]) as f64` |
+//! | 54 | `Eq`    | binary | `(regs[a] == regs[b]) as f64` |
+//! | 55 | `Ne`    | binary | `(regs[a] != regs[b]) as f64` |
+//! | 56 | `Min`   | binary | `regs[a].min(regs[b])` (`f64::min`) |
+//! | 57 | `Max`   | binary | `regs[a].max(regs[b])` (`f64::max`) |
+//! | 58 | `Floor` | unary  | `regs[a].floor()` |
+//! | 59 | `Ceil`  | unary  | `regs[a].ceil()` |
+//! | 60 | `Mod`   | binary | floored modulo `a - b*(a/b).floor()` |
+//! | 61 | `Rem`   | binary | truncated remainder `regs[a] % regs[b]` |
 //!
 //! The wire values are the FFI contract: they are exactly what the Python
 //! emitter writes and the v2 VM read.  See [`Tape`] for the per-instruction
-//! `a`/`b`/`imm` layout.
+//! `a`/`b`/`imm` layout.  Wire range **50-69** is the non-smooth / piecewise
+//! block (stream **E-OPS**), reserved by ROADMAP §13d and added additively
+//! without renumbering anything below it.
 //!
 //! # Stream boundaries (ROADMAP §4a)
 //!

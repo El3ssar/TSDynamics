@@ -58,6 +58,26 @@ pub fn run(tape: &Tape, u: &[f64], p: &[f64], t: f64, regs: &mut [f64]) {
             Op::Asinh => regs[ai].asinh(),
             Op::Acosh => regs[ai].acosh(),
             Op::Atanh => regs[ai].atanh(),
+            // Comparisons: 1.0 if the relation holds, else 0.0 (NaN compares
+            // false, so `Ne` is the only one true on a NaN operand).
+            Op::Lt => (regs[ai] < regs[b[i] as usize]) as i32 as f64,
+            Op::Le => (regs[ai] <= regs[b[i] as usize]) as i32 as f64,
+            Op::Gt => (regs[ai] > regs[b[i] as usize]) as i32 as f64,
+            Op::Ge => (regs[ai] >= regs[b[i] as usize]) as i32 as f64,
+            Op::Eq => (regs[ai] == regs[b[i] as usize]) as i32 as f64,
+            Op::Ne => (regs[ai] != regs[b[i] as usize]) as i32 as f64,
+            Op::Min => regs[ai].min(regs[b[i] as usize]),
+            Op::Max => regs[ai].max(regs[b[i] as usize]),
+            Op::Floor => regs[ai].floor(),
+            Op::Ceil => regs[ai].ceil(),
+            // Floored modulo (Python `%` / `np.mod`): result takes the sign of
+            // the divisor; `mod(a, 0)` is NaN (`0 * inf`).
+            Op::Mod => {
+                let (x, y) = (regs[ai], regs[b[i] as usize]);
+                x - y * (x / y).floor()
+            }
+            // Truncated remainder (Rust `%` / C `fmod`): sign of the dividend.
+            Op::Rem => regs[ai] % regs[b[i] as usize],
         };
         regs[i] = r;
     }
