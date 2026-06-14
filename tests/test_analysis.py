@@ -185,3 +185,15 @@ def test_bifurcation_diagram_of_flow_via_poincare() -> None:
     for _, pts in od:
         assert pts.shape == (15, 1)
         assert np.all(np.isfinite(pts))
+
+
+@pytest.mark.slow
+def test_orbit_diagram_named_component_over_poincare() -> None:
+    """Regression: a NAMED component over a derived wrapper must resolve via the
+    instance, not ``type(sys).variables`` — which leaks the property descriptor
+    and raised ``AttributeError: 'property' object has no attribute 'index'``."""
+    pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
+    od = ts.orbit_diagram(pmap, "c", [5.7], n=10, transient=10, components="y", ic=[1.0, 1.0, 0.0])
+    assert len(od) == 1
+    ((_, pts),) = list(od)
+    assert pts.shape == (10, 1)

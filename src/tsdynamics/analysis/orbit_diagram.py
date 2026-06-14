@@ -111,7 +111,12 @@ def orbit_diagram(
         )
 
     comp = (components,) if isinstance(components, int | str) else tuple(components)
-    names = getattr(type(sys), "variables", None) or getattr(sys, "variables", None)
+    # Resolve names via the *instance* (not ``type(sys)``): a derived wrapper
+    # exposes ``variables`` as a property, so ``type(sys).variables`` returns the
+    # descriptor object (truthy) and short-circuits — breaking named components
+    # over a PoincareMap/StroboscopicMap.  Instance lookup returns the ClassVar
+    # for families and the resolved names for wrappers alike.
+    names = getattr(sys, "variables", None)
     idx: list[int] = []
     for c in comp:
         if isinstance(c, str):

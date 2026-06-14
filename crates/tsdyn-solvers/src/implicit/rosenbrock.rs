@@ -65,6 +65,15 @@ impl BaseStep for RosBase {
         let n = u.len();
         self.ensure(n);
 
+        // Defence in depth: an implicit kernel must never run on an evaluator that
+        // cannot supply a Jacobian. Without one, `eval_jac` leaves `jac` untouched
+        // (all-zeros), the shifted matrix becomes `I`, and the step degenerates to
+        // an unstable forward-Euler one. The engine boundary rejects this first
+        // (`bridge::require_jacobian_if_needed`); this protects direct callers.
+        if !ev.has_jacobian() {
+            return BaseOutcome::Diverged;
+        }
+
         // f(t,u) and J(t,u) in one tape pass.
         ev.eval_jac(u, p, t, scratch, &mut self.f0, &mut self.jac);
         if !self.f0.iter().all(|x| x.is_finite()) || !self.jac.iter().all(|x| x.is_finite()) {

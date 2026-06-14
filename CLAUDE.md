@@ -338,6 +338,7 @@ Compiled JiTCODE/JiTCDDE objects live in `~/.cache/tsdynamics/`
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |
 | Tight tolerances on DDE | `rtol=atol=1e-3` is the safe start. |
 | `set_state` on a DDE | Raises by design — use `reinit(u)`. |
+| Implicit method on the Rust engine without a Jacobian | `integrate(method="rosenbrock"/"trbdf2", backend="interp"/"jit")` needs a Jacobian-carrying tape. The engine **raises** (it will not silently degrade to forward Euler); pass a problem built `with_jacobian=True`, or use an explicit method. Auto-setting this for implicit methods is C-SOLV's job. |
 | Param change ignored by a live stepper | `reinit()` after parameter changes (or use `with_params`). |
 | Stale compiled cache after editing `_equations` | Wipe `~/.cache/tsdynamics/`. |
 | Orbit diagram over a DDE wrapper | Recompiles per parameter value — slow by design, document it. |

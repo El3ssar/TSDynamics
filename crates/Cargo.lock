@@ -471,19 +471,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
-name = "tsdyn-core"
-version = "0.1.0"
-dependencies = [
- "tsdyn-engine",
-]
-
-[[package]]
 name = "tsdyn-engine"
 version = "0.1.0"
 dependencies = [
  "rayon",
  "tsdyn-ir",
- "tsdyn-jit",
  "tsdyn-solvers",
  "tsdyn-vm",
 ]
@@ -500,7 +492,6 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-jit",
  "cranelift-module",
- "cranelift-native",
  "tsdyn-ir",
  "tsdyn-vm",
 ]

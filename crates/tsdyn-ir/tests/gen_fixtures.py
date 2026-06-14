@@ -5,7 +5,7 @@ This is the *Python* end of the Python↔Rust round-trip that guards the frozen
 IR contract.  For each chosen system it:
 
 1. lowers the symbolic right-hand side (and analytic Jacobian) to a tape with the
-   v2 emitter (:func:`tsdynamics.backends.rustcore.compile_tape`) — exactly the
+   v2 emitter (:func:`tsdynamics.engine.rustcore.compile_tape`) — exactly the
    integer arrays the engine ships across the FFI boundary;
 2. evaluates the *symbolic* RHS and Jacobian at a few checkpoints via the
    system's own ``_rhs_numeric`` / ``jacobian`` (an engine-independent ground
@@ -62,7 +62,7 @@ def _fmt_ints(xs) -> str:
 def build_fixture_text(name: str) -> str:
     """Return the full text of the fixture for system ``name`` (no I/O)."""
     import tsdynamics as ts
-    from tsdynamics.backends.rustcore import compile_tape
+    from tsdynamics.engine.rustcore import compile_tape
 
     spec = FIXTURE_SYSTEMS[name]
     system = getattr(ts, name)()

@@ -6,6 +6,67 @@ offers — reproduced with our own design — plus first-class DDEs, SDEs, a
 zero-warmup Rust engine, and the simplest system-definition contract in any
 language. Then go beyond it.
 
+The bar is not "works" — it is **robust, deep, and ready-to-publish**. A
+researcher should define a system in three lines, integrate it on a fast and
+trustworthy engine, and run the full chaos-quantification and parity-moat suite
+to produce literature-validated, reproducible, citable results — without leaving
+Python. **§0** lists the aspirational perks that define "superior"; **§13** holds
+the live consolidation status and the continuation notes independent sessions
+build from.
+
+---
+
+## 0. Vision — what "superior" means (the perks we are building toward)
+
+These are commitments, not nice-to-haves. Every stream should advance at least
+one and regress none. They are the yardstick for "are we better than the
+benchmark yet?".
+
+1. **The simplest system-definition contract in any language — and never
+   regress it.** `params` + `dim` + one symbolic `_equations` (or `_step` +
+   `_jacobian` for maps; `_drift` + `_diffusion` for SDEs). The user writes the
+   math; the library handles compilation, caching, output grids, provenance and
+   docs. Proven over 149 systems — the moat a monolith can't copy.
+2. **One uniform interface across every family.** ODE, DDE, SDE and maps all
+   implement the same `System` protocol and compose through the same derived
+   wrappers. **First-class DDEs and SDEs** — integration *and* Lyapunov — in that
+   one interface is a standing differentiator.
+3. **A real numerical-solver collection, pluggable by name.** Explicit RK family
+   (rk4 / rk45 / tsit5 / dop853), L-stable implicit/stiff family
+   (Rosenbrock-W / TR-BDF2, analytic-Jacobian), SDE kernels (Euler–Maruyama /
+   Milstein), DDE method-of-steps — with error control, dense output, event
+   detection, auto-stiffness selection, and **third-party solvers registerable
+   from outside**. Symplectic/geometric integrators, higher-order stiff
+   (BDF/Radau) and adaptive-order methods are on the roadmap, not the ceiling.
+4. **Zero warmup *and* native speed on demand.** The SSA-tape interpreter starts
+   instantly; the pure-Rust Cranelift JIT delivers native throughput for
+   large/hot problems — both behind one `Evaluator`, numerically identical.
+5. **A complete, literature-validated analysis moat.** Lyapunov (spectra / max /
+   from-data), chaos indicators (GALI, 0–1 test, expansion entropy), fixed &
+   periodic orbits for maps *and* flows, **attractors / basins / global
+   continuation / tipping / resilience** (the deepest part of the moat), fractal
+   dimensions, delay embeddings, entropy & complexity (incl. LZ76), recurrence /
+   RQA, surrogate hypothesis tests. Each lands only with a test reproducing a
+   published value.
+6. **Transforms / feature extraction feeding analysis.** Spectral (PSD, spectral
+   entropy), detrend / filter / normalize, generic feature extractors — the
+   signal layer that turns raw trajectories into analyzable features.
+7. **Publication-grade reproducibility, baked in.** Every result carries
+   provenance (`Trajectory.meta`: system, params, solver, tolerances, ic, seed,
+   version); every stochastic/sampling entry is seeded so parallel == serial
+   bit-for-bit; quantifiers cite the *original* literature (never a competitor).
+8. **Python ecosystem gravity.** numpy / pandas / scikit-learn / the ML stack one
+   import away; `Trajectory` is the lingua franca everything consumes.
+9. **Pluggable everything.** Systems, solvers, analyses and transforms
+   self-register (class hooks + directory scans + entry-point plugins) — an
+   external ecosystem a monolith can't match.
+10. **Performance you can publish.** Benchmarked vs SciPy and (internally) the
+    Julia baseline on Lorenz / Rössler / Mackey–Glass / Lorenz-96 N=128 /
+    Robertson; time-to-first-result tracked as a first-class metric.
+11. **Visualization (deferred to 3.x, designed for now).** Result objects are
+    shaped so a `.plot()` / dashboard layer can grow on top without a redesign
+    (D6).
+
 **This file is the single source of truth for the v3 program.** It is written
 for *autonomous coding sessions* (including future instances of the assistant)
 who will build it **in parallel**. Read the banner below before doing anything.
@@ -386,14 +447,22 @@ board with the maintainer's `gh`-based bootstrap — one issue per row.)*
 Internal milestones stage the program; **v3.0 ships only when M6 is complete**
 (optionally preceded by `3.0.0bN` pre-releases off M4/M5).
 
-- **M0 — Foundations frozen:** F0–F4. Workspace builds; traits/registry/IR
-  frozen; package reorg in place; CI split + xval harness live. *Unblocks all.*
-- **M1 — Engine parity (ODE):** E1,E3,E4,E5,E6,E7 + C-FAM(ODE) + C-SOLV. ODEs
-  integrate on Rust through the new API, matching v2; interpreter path.
-- **M2 — JIT + all families:** E2 (Cranelift), E-MAP, E-DDE, E-SDE, C-DERIV.
-  Every family on the engine; JIT == interpreter; SDE family exists.
+- **M0 — Foundations frozen:** F0–F4. ✅ **DONE.** Workspace builds;
+  traits/registry/IR frozen; package reorg in place; CI split + xval harness live.
+  *Unblocks all.*
+- **M1 — Engine parity (ODE):** E1,E3,E4,E5,E6,E7 + C-FAM(ODE) + C-SOLV. 🟡
+  **engine ✅, Python wiring open.** E1–E7 merged; ODEs integrate on Rust via
+  `backend="interp"` — but **C-FAM/C-SOLV not started**, so the v2 backends are
+  still the default runtime. (See §13b.)
+- **M2 — JIT + all families:** E2 (Cranelift), E-MAP, E-DDE, E-SDE, C-DERIV. 🟡
+  **kernels ✅, reach open.** All merged, but the **SDE FFI and map-ensemble
+  bindings are missing and the JIT is hard-rejected at the bridge** (E-WIRE), and
+  C-DERIV is not started. JIT==interpreter holds in Rust but is untested through
+  Python (I-XVAL).
 - **M3 — Old engine retired:** I-XVAL green → remove JiTCODE/JiTCDDE/diffsol/
-  Numba. **D1 complete.** (Big internal moment.)
+  Numba. **D1 complete.** (Big internal moment.) ⚠️ **Blocked on evidence:** the
+  xval gate must validate `tsdynamics._rust` over the catalogue first (§13b), and
+  the piecewise-map opcodes (E-OPS) must land or those maps die at deletion.
 - **M4 — Chaos quantification:** A-LYAP, A-CHAOS, A-FP, A-ORBIT + C-DATA.
 - **M5 — Parity moat:** A-BASIN, A-DIM, A-EMBED, A-ENT, A-RQA, A-SURR, T-XFORM.
 - **M6 — Launch readiness:** I-WHEEL, I-BENCH, I-DOCS, I-QA all green; parity
@@ -505,6 +574,121 @@ built-in systems; an **external plugin ecosystem** (D4) the benchmark lacks.
 
 ---
 
+## 13. Consolidation status & continuation notes (review of 2026-06-14)
+
+A full cross-subsystem review after the engine streams landed (M0 + the Tier-1
+engine + C-DATA) found a **strong substrate with a mid-migration gap**: the hard
+parts (IR, interpreter, JIT, RK + stiff + SDE kernels, DDE method-of-steps) are
+built and tested, but a large surface of finished code is **not yet reachable
+from Python**, the runtime still defaults to the v2 backends, and the
+cross-validation evidence layer does not yet cover the shipping engine. A
+consolidation PR (`chore/v3-consolidation`) landed the safe correctness and
+hygiene fixes; the structural work is carved into the streams below so
+independent sessions continue cleanly.
+
+### 13a. Landed in the consolidation PR (done)
+
+- **Stiff-solver safety (CRITICAL):** implicit kernels (`rosenbrock`/`trbdf2`) on
+  the engine now **refuse a Jacobian-less tape** instead of silently degrading to
+  an unstable forward-Euler step — guarded both at the kernel and at the
+  `tsdyn-core` boundary (`require_jacobian_if_needed`), mirroring the DDE guard.
+- **Named-component correctness:** `ProjectedSystem` names its *projected*
+  columns (was mislabelling / IndexError-ing); `orbit_diagram` resolves names via
+  the instance (was leaking the `variables` property descriptor → AttributeError
+  over Poincaré/Stroboscopic wrappers).
+- **Robustness guards:** backward (`t1 < t0`) ensemble requests and zero-dim
+  tapes are rejected loudly instead of returning stale/NaN results.
+- **Oracle honesty:** the Python reference `OP_POWI` now uses square-and-multiply
+  (matching Rust `f64::powi`), not NumPy `pow`; the "mirrors reference.rs exactly"
+  claim is softened (bit-exactness is I-XVAL's gate).
+- **Hygiene:** dropped the unused `tsdyn-jit` dep from `tsdyn-engine` and
+  `cranelift-native` from `tsdyn-jit` (cranelift no longer enters the wheel build
+  tree; `tsdyn-core/Cargo.lock` regenerated); fixed the `gen_fixtures.py` pre-F3
+  import + added a regenerator smoke test.
+
+### 13b. Carved out for the named streams (extend their issues)
+
+- **C-FAM** (issue #34) — the seam C-FAM was meant to pre-stage does not exist: only
+  `DiscreteMap` routes through `engine.run.integrate`; DDE/SDE reimplement
+  integration inline and ODE never calls the seam. Before flipping the default to
+  Rust: add a **shared engine-dispatch seam** on `SystemBase` (a
+  `_default_backend` ClassVar + a thin `_run`/`_dispatch` template), route all
+  four families through `run.integrate` (add `_run_dde`/`_run_sde` branches),
+  **hoist the four byte-identical `_make_t_eval` copies and the divergent
+  `_provenance`** into one place (and thread `ic`/`t0` into engine-path
+  provenance). Also add **SDE registry detection** (`'sde'` in `Family`,
+  `'StochasticSystem'` in `_FAMILY_BASES`, broaden `_has_concrete_rhs` to accept
+  `_drift`) + an SDE history/fixture hook analogous to `DDE_HISTORIES`.
+- **C-SOLV** (issue #35) — register the **in-tree solver specs** (the `solvers/` directory
+  ships zero today, so `method=` resolves against an empty table) and pair the
+  engine's new Jacobian guard with a **Python-side auto-set of `with_jacobian`**
+  when the resolved method is implicit, so the common stiff path "just works"
+  instead of raising. Auto-stiffness selection sits on top.
+- **I-XVAL** (issue #51) — the gate currently validates the **v2-seed `tsdynamics-core`** on
+  Lorenz only, not `tsdynamics._rust`. Add a `RustEngine` backend to
+  `xval_harness.py` (`run.integrate(backend="interp"/"jit")`), point
+  `cross-validation.yml` at the compiled extension over the **registry
+  catalogue**, add Python-level **interp==jit** and **reference==engine** parity
+  tests (incl. bit-exact `OP_POWI`), and replace `engine-bindings.yml`'s
+  hand-maintained file list with a marker/glob + a meta-test asserting every
+  `importorskip("tsdynamics._rust")` module is covered (the skip-as-success
+  blind-spot that required out-of-band patch #72).
+- **C-DERIV / A-LYAP** (issues #37 / #38) — `TangentSystem` is billed as "the one Lyapunov engine"
+  but the family `lyapunov_spectrum` methods triplicate the QR/`jitcode_lyap`
+  loop, and its ODE mode is JiTCODE-only (deleted at M3) with no Rust variational
+  replacement. Unify into one **backend-neutral variational core** so ODE
+  Lyapunov survives M3.
+
+### 13c. New streams to add to the board (open issues for these)
+
+- **E-WIRE (issue #75) — reach the finished engine code from Python.** Add the SDE FFI
+  (`integrate_sde_dense` / `_ensemble`) and the map-ensemble binding to
+  `tsdyn-core`, and **wire the Cranelift JIT** (replace the `Unsupported` stub in
+  `bridge.rs::guard_continuous` with a `JitEvaluator` dispatched through the
+  existing `&dyn Evaluator` seam). Today: SDEs run pure-Python, `backend="jit"` is
+  a dead option, and `map.rs::iterate_ensemble_final` has no binding. *(Depends:
+  E5, E6, E7. Unblocks the SDE/JIT perks and parts of C-FAM/I-XVAL.)*
+- **E-OPS (issue #76) — non-smooth / piecewise opcodes.** The IR has no
+  comparison/select/min/max/floor/ceil/mod, so built-in modular/piecewise maps
+  (Circle, Tent, Baker, Bernoulli) cannot lower and have **zero Rust path** — a
+  hard blocker for the M3 Numba deletion. Add an additive opcode block in the
+  **reserved wire-value range 50–69** (preserving the F1 freeze), document the
+  a.e.-derivative conventions, and teach the map-lowering tracer to emit them.
+  *(Depends: F1. `[interface]`-class change — coordinate; it extends, never
+  renumbers, the frozen IR.)*
+- **E-EVENT (issue #77) — event functions + dense output.** Poincaré-section root-finding,
+  recurrence and event detection live entirely in Python today. Add an optional
+  **dense-output / event channel** to the `Solver` trait and an event-expression
+  hook to the IR/engine, so A-ORBIT / A-BASIN / A-RQA can drive events natively.
+  *(Depends: F2, E3/E5. Additive to the frozen `Solver` trait — design as an
+  optional capability, not a breaking signature change.)*
+- **A-LAYOUT (issue #78) — analysis subpackage restructure (run before the A-\* fan-out).**
+  `analysis/` is still the flat v2 quartet; the A-streams each own a *subpackage*.
+  Move, with re-exports preserving the public API **and** updating the
+  `docs/reference/*` mkdocstrings paths (so `mkdocs --strict` stays green):
+  `lyapunov.py → lyapunov/`, `fixed_points.py → fixedpoints/` (note the rename),
+  `orbit_diagram.py` **+** `poincare.py → orbits/`; create empty
+  `chaos/ basins/ dimensions/ embedding/ entropy/ recurrence/ surrogate/`
+  packages. Also wire `analyses`/`transforms` discovery+registration mirroring
+  `solvers/` (two of four D4 plugin kinds have no consumer yet). *(Depends: F3.
+  Mechanical but cross-cutting — land it as one focused PR so the A-* streams
+  branch off the target layout conflict-free.)*
+
+### 13d. Reserved contract space (additive — preserves the M0 freeze)
+
+- **IR opcodes 50–69** are reserved for the E-OPS non-smooth/piecewise block
+  (comparison, select, min/max, floor/ceil, rem/mod). Structural ops occupy
+  0–3/10–15/20–21 and elementary functions 30–46; the 50–69 range extends the
+  frozen `Op` enum without renumbering anything.
+- The **`Solver` trait will gain an optional event/dense-output capability**
+  (E-EVENT) behind a `Caps` flag, so existing kernels need no change.
+- The **Jacobian is `dim×dim` (state-only)** today; parameter-sensitivity
+  (`∂f/∂p`) and DDE variational dynamics will need a generalized jac block — call
+  it out in any tape-shape work so it lands additively, not as a re-freeze.
+
+---
+
 *Keep this file current: when a stream flips state, edit its row in §6 (one
 line). When a milestone completes, tick it in §7. The plan below the decisions
-is the destination; §2 and the board are the position.*
+is the destination; §2 and the board are the position. §13 is the live
+consolidation ledger — fold its items into §6 rows as their issues are filed.*

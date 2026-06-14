@@ -77,6 +77,26 @@ class TestProjected:
         assert traj.y.shape == (50, 1)
         assert traj.meta["projected"] == (0,)
 
+    def test_projected_trajectory_named_access(self) -> None:
+        # Regression: the projected trajectory must name its OWN columns, not the
+        # inner system's full variables (which silently mislabel / IndexError).
+        proj = ts.ProjectedSystem(ts.Henon(), ["y"])
+        assert proj.variables == ("y",)
+        traj = proj.trajectory(steps=20, ic=[0.1, 0.1])
+        np.testing.assert_array_equal(traj["y"], traj.y[:, 0])
+        # "x" is outside the projected view → KeyError, never a mislabel/IndexError.
+        with pytest.raises(KeyError):
+            _ = traj["x"]
+
+    def test_projected_trajectory_named_access_reordered(self) -> None:
+        # A reordering projection: names must track the projection, not the inner
+        # column order.
+        proj = ts.ProjectedSystem(ts.Henon(), ["y", "x"])
+        assert proj.variables == ("y", "x")
+        traj = proj.trajectory(steps=20, ic=[0.1, 0.1])
+        np.testing.assert_array_equal(traj["y"], traj.y[:, 0])
+        np.testing.assert_array_equal(traj["x"], traj.y[:, 1])
+
 
 # ---------------------------------------------------------------------------
 # EnsembleSystem on a map (fast)
