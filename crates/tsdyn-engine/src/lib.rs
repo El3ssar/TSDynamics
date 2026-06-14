@@ -37,6 +37,8 @@ pub mod problem;
 pub mod rng;
 // Appended by stream E-MAP (kept append-only — see the module docs above).
 pub mod map;
+// Appended by stream E-SDE (kept append-only — see the module docs above).
+pub mod sde;
 
 #[cfg(test)]
 mod testkit;
@@ -48,6 +50,11 @@ pub use problem::OdeProblem;
 pub use map::{
     iterate_dense, iterate_ensemble_final, iterate_final as iterate_map_final, MapEnsembleFinal,
     MapError, MapProblem, MapTrajStatus,
+};
+// Appended by stream E-SDE.
+pub use sde::{
+    sde_ensemble_final, sde_integrate_final, sde_integrate_grid, SdeConfig, SdeEnsembleFinal,
+    SdeError, SdeProblem, SdeTrajStatus,
 };
 
 /// Check that the linked solver registry has no duplicate names, returning the
