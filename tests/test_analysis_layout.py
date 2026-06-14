@@ -59,7 +59,9 @@ def test_top_level_reexports_unchanged(name):
 
 
 def test_analysis_all_is_stable():
-    assert set(analysis.__all__) == set(_PUBLIC)
+    # The A-LAYOUT public surface must remain exported; analysis streams (A-DIM,
+    # A-ENT, …) append to __all__, so this is a subset check, not equality.
+    assert set(_PUBLIC) <= set(analysis.__all__)
 
 
 # ── new subpackage layout ───────────────────────────────────────────────────────
@@ -86,10 +88,9 @@ def test_subpackage_importable(pkg):
     assert isinstance(mod.__all__, list)
 
 
-@pytest.mark.parametrize(
-    "pkg", ["chaos", "basins", "dimensions", "embedding", "recurrence", "surrogate"]
-)
+@pytest.mark.parametrize("pkg", ["chaos", "basins", "embedding", "recurrence", "surrogate"])
 def test_placeholder_subpackages_are_empty(pkg):
+    # ``dimensions`` (A-DIM) and ``entropy`` (A-ENT) are filled — no longer placeholders.
     mod = importlib.import_module(f"tsdynamics.analysis.{pkg}")
     assert mod.__all__ == []
 
