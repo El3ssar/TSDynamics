@@ -3,7 +3,7 @@ from typing import ClassVar
 import numpy as np
 from symengine import cos, exp, sign, sin
 
-from tsdynamics.base import ContinuousSystem
+from tsdynamics.families import ContinuousSystem
 
 
 class Lorenz(ContinuousSystem):

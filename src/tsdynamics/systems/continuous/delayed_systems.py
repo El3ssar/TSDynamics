@@ -1,6 +1,6 @@
 from symengine import sin, tanh
 
-from tsdynamics.base import DelaySystem
+from tsdynamics.families import DelaySystem
 
 
 class MackeyGlass(DelaySystem):

@@ -21,10 +21,10 @@ spec = ts.lyapunov_spectrum(ts.Henon())
 
 | Symbol | Canonical home |
 | ------ | -------------- |
-| [`ContinuousSystem`][tsdynamics.base.ode_base.ContinuousSystem] | `tsdynamics.base.ode_base` |
-| [`DelaySystem`][tsdynamics.base.dde_base.DelaySystem] | `tsdynamics.base.dde_base` |
-| [`DiscreteMap`][tsdynamics.base.map_base.DiscreteMap] | `tsdynamics.base.map_base` |
-| [`Trajectory`][tsdynamics.base.base.Trajectory] | `tsdynamics.base.base` |
+| [`ContinuousSystem`][tsdynamics.families.continuous.ContinuousSystem] | `tsdynamics.families.continuous` |
+| [`DelaySystem`][tsdynamics.families.delay.DelaySystem] | `tsdynamics.families.delay` |
+| [`DiscreteMap`][tsdynamics.families.discrete.DiscreteMap] | `tsdynamics.families.discrete` |
+| [`Trajectory`][tsdynamics.families.base.Trajectory] | `tsdynamics.families.base` |
 
 ## Derived-system wrappers
 
@@ -59,11 +59,11 @@ the [registry](registry.md).
 
 ## Submodules
 
-`tsdynamics.base`, `tsdynamics.systems`, `tsdynamics.derived`,
+`tsdynamics.families`, `tsdynamics.systems`, `tsdynamics.derived`,
 `tsdynamics.analysis`, `tsdynamics.registry`, and `tsdynamics.utils` are
 importable as attributes. Lower-level surface that is deliberately *not*
 re-exported at the top level — `SystemBase`, `ParamSet`, `MetaStore`, the
-`System` protocol, `staticjit` — lives under `tsdynamics.base` and
+`System` protocol, `staticjit` — lives under `tsdynamics.families` and
 `tsdynamics.utils`; see [Base classes](base.md) and [Utilities](utils.md).
 
 `tsdynamics.__version__` is the installed package version.

@@ -128,4 +128,4 @@ the project roadmap.
 ## See also
 
 - [Compilation pipeline](compilation.md) — the JiTCODE path and the shared symbolic core
-- API: `tsdynamics.backends.diffsol`
+- API: `tsdynamics.engine.diffsol`

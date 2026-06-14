@@ -1,5 +1,5 @@
 """
-Analysis toolkit — quantifiers that consume any :class:`~tsdynamics.base.System`.
+Analysis toolkit — quantifiers that consume any :class:`~tsdynamics.families.System`.
 
 - :func:`orbit_diagram` — parameter sweeps of discrete(-ized) systems;
   composed with :class:`~tsdynamics.derived.PoincareMap` /

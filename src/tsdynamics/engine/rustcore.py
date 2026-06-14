@@ -198,7 +198,7 @@ class _Emitter:
 
 def compile_tape(system: Any, *, with_jacobian: bool = False) -> CompiledTape:
     """
-    Lower a :class:`~tsdynamics.base.ContinuousSystem`'s RHS to a tape.
+    Lower a :class:`~tsdynamics.families.ContinuousSystem`'s RHS to a tape.
 
     Structural parameters are folded to constants; control parameters become
     inputs in ``control_names`` order (the layout the solve-time params vector
@@ -212,7 +212,7 @@ def compile_tape(system: Any, *, with_jacobian: bool = False) -> CompiledTape:
     from jitcode import t as t_sym
     from jitcode import y
 
-    from tsdynamics.base.ode_base import _resolve_derivative_nodes
+    from tsdynamics.families.continuous import _resolve_derivative_nodes
 
     dim = system.dim
     struct_vals = system._structural_vals()

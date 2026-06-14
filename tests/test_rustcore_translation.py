@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from tsdynamics import registry
-from tsdynamics.backends.rustcore import TapeCompileError, compile_tape
+from tsdynamics.engine.rustcore import TapeCompileError, compile_tape
 
 
 def test_every_ode_compiles_to_tape(ode_entry) -> None:

@@ -65,7 +65,7 @@ def orbit_diagram(
     """
     Sweep a parameter and record the asymptotic orbit at each value.
 
-    Works on anything discrete: a :class:`~tsdynamics.base.DiscreteMap`
+    Works on anything discrete: a :class:`~tsdynamics.families.DiscreteMap`
     directly, or a flow wrapped in a
     :class:`~tsdynamics.derived.PoincareMap` /
     :class:`~tsdynamics.derived.StroboscopicMap` — in which case this *is*

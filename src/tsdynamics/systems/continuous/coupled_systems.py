@@ -1,6 +1,6 @@
 from symengine import cosh, exp, sign, sinh, tanh
 
-from tsdynamics.base import ContinuousSystem
+from tsdynamics.families import ContinuousSystem
 
 
 class Sakarya(ContinuousSystem):

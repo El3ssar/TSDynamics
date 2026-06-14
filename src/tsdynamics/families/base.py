@@ -387,10 +387,10 @@ class Trajectory:
         Distance to another point set (Trajectory or array), as a set.
 
         ``method`` is ``"centroid"`` (default), ``"hausdorff"``, or
-        ``"minimum"`` — see :func:`tsdynamics.sampling.set_distance`.  The
+        ``"minimum"`` — see :func:`tsdynamics.data.set_distance`.  The
         matching primitive behind attractor deduplication and continuation.
         """
-        from tsdynamics.sampling import set_distance
+        from tsdynamics.data import set_distance
 
         return set_distance(self, other, method=method)
 
@@ -471,8 +471,8 @@ class SystemBase:
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # The framework bases (ContinuousSystem, DelaySystem, DiscreteMap, ...)
-        # live under tsdynamics.base and are not registrable systems themselves.
-        if not cls.__module__.startswith("tsdynamics.base"):
+        # live under tsdynamics.families and are not registrable systems themselves.
+        if not cls.__module__.startswith("tsdynamics.families"):
             from tsdynamics.registry import register_class
 
             register_class(cls)

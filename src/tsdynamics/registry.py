@@ -1,13 +1,20 @@
 """
 Runtime registry of dynamical-system classes.
 
-Every concrete subclass of :class:`~tsdynamics.base.base.SystemBase` is
+Every concrete subclass of :class:`~tsdynamics.families.base.SystemBase` is
 registered automatically at class-definition time (via
 ``SystemBase.__init_subclass__``) — built-in systems and user-defined ones
 alike.  Built-in systems (those defined under ``tsdynamics.systems``) are
 what the bulk test-suite and the documentation generator iterate over;
 user-defined classes are registered too but excluded from iteration by
 default.
+
+Alongside the system registry, this module hosts three sibling name registries
+— :data:`solvers`, :data:`analyses`, and :data:`transforms` — generic
+:class:`Registry` containers (name → object + metadata).  They are the seam
+the extensible kinds register into; the *discovery* that fills them (the
+``solvers/`` directory scan and the :mod:`~tsdynamics.plugins` entry-point
+loader) lives outside this import-light module.
 
 This module must stay import-light: it is imported while the ``tsdynamics``
 package itself is still initialising, so it may only depend on the standard
@@ -33,12 +40,17 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 __all__ = [
+    "Registry",
+    "RegistryEntry",
     "SystemEntry",
     "all_systems",
+    "analyses",
     "by_family",
     "categories",
     "families",
     "get",
+    "solvers",
+    "transforms",
 ]
 
 Family = Literal["ode", "dde", "map", "other"]
@@ -54,7 +66,7 @@ _FAMILY_BASES: dict[str, Family] = {
 }
 
 _BUILTIN_PREFIX = "tsdynamics.systems"
-_BASE_PREFIX = "tsdynamics.base"
+_BASE_PREFIX = "tsdynamics.families"
 
 
 @dataclass(frozen=True, eq=False)
@@ -209,3 +221,145 @@ def categories(family: str | None = None, *, builtin: bool | None = True) -> dic
     for e in all_systems(family=family, builtin=builtin):
         counts[e.category] = counts.get(e.category, 0) + 1
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Generic name registries: solvers / analyses / transforms
+#
+# The system registry above is deliberately specialised (family detection,
+# builtin shadowing, ``__init_subclass__`` hooks).  The other extensible kinds
+# need only a name → object map with metadata, so they share one small generic
+# container.  Discovery (directory scans, entry-point plugins) lives elsewhere
+# and merely calls ``register``.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RegistryEntry:
+    """One named, registered object plus its metadata."""
+
+    name: str
+    obj: Any
+    metadata: Mapping[str, Any]
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"RegistryEntry({self.name!r})"
+
+
+class Registry:
+    """
+    A minimal, generic name → object registry.
+
+    Backs the :data:`solvers`, :data:`analyses`, and :data:`transforms`
+    registries.  It only stores and looks up; the *discovery* that fills it
+    (the ``solvers/`` scan, :mod:`~tsdynamics.plugins` entry points) is built
+    on top of it elsewhere.
+
+    Registration is usable directly or as a decorator::
+
+        solvers.register("rk4", Rk4Solver, order=4)        # direct
+
+        @solvers.register("dp45", order=5, adaptive=True)  # decorator
+        class Dp45Solver: ...
+
+    Re-registering the *same* object under a name is idempotent (safe across
+    module re-imports).  A clash between two *different* objects on one name
+    raises unless ``replace=True``.
+    """
+
+    def __init__(self, kind: str) -> None:
+        self._kind = kind
+        self._entries: dict[str, RegistryEntry] = {}
+
+    @property
+    def kind(self) -> str:
+        """What this registry holds (``"solver"`` / ``"analysis"`` / ``"transform"``)."""
+        return self._kind
+
+    def _insert(self, name: str, obj: Any, *, replace: bool, metadata: Mapping[str, Any]) -> None:
+        existing = self._entries.get(name)
+        if existing is not None and existing.obj is not obj and not replace:
+            raise ValueError(
+                f"{self._kind} {name!r} is already registered to a different object; "
+                f"pass replace=True to override."
+            )
+        self._entries[name] = RegistryEntry(
+            name=name, obj=obj, metadata=MappingProxyType(dict(metadata))
+        )
+
+    def register(
+        self,
+        name: str,
+        obj: Any = None,
+        *,
+        replace: bool = False,
+        **metadata: Any,
+    ) -> Any:
+        """
+        Register ``obj`` under ``name``.
+
+        Called with ``obj`` it registers and returns it; called without it
+        returns a decorator (so it can wrap a class/function definition).
+        Extra keyword arguments are stored as the entry's ``metadata``.
+        """
+        if obj is None:
+
+            def _decorator(target: Any) -> Any:
+                self._insert(name, target, replace=replace, metadata=metadata)
+                return target
+
+            return _decorator
+        self._insert(name, obj, replace=replace, metadata=metadata)
+        return obj
+
+    def get(self, name: str) -> Any:
+        """Return the object registered under ``name`` (raises ``KeyError`` with hints)."""
+        entry = self._entries.get(name)
+        if entry is not None:
+            return entry.obj
+        close = [n for n in self._entries if n.lower() == name.lower()]
+        hint = f" Did you mean {close[0]!r}?" if close else ""
+        raise KeyError(f"No {self._kind} registered as {name!r}.{hint}")
+
+    def entry(self, name: str) -> RegistryEntry:
+        """Return the full :class:`RegistryEntry` (object + metadata) for ``name``."""
+        try:
+            return self._entries[name]
+        except KeyError:
+            raise KeyError(f"No {self._kind} registered as {name!r}.") from None
+
+    def names(self) -> list[str]:
+        """Return registered names, in registration order."""
+        return list(self._entries)
+
+    def all(self) -> list[RegistryEntry]:
+        """All entries, in registration order."""
+        return list(self._entries.values())
+
+    def unregister(self, name: str) -> None:
+        """Remove ``name`` (raises ``KeyError`` if absent)."""
+        del self._entries[name]
+
+    def clear(self) -> None:
+        """Drop every entry (mainly for tests)."""
+        self._entries.clear()
+
+    def __contains__(self, name: object) -> bool:  # noqa: D105
+        return name in self._entries
+
+    def __iter__(self):  # noqa: D105
+        return iter(self._entries.values())
+
+    def __len__(self) -> int:  # noqa: D105
+        return len(self._entries)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"Registry(kind={self._kind!r}, {len(self._entries)} registered)"
+
+
+#: Registered integration solvers (filled by the ``solvers/`` scan + plugins).
+solvers = Registry("solver")
+#: Registered analysis functions (Lyapunov, dimensions, recurrence, …).
+analyses = Registry("analysis")
+#: Registered data/signal transforms (spectral, filters, feature extractors).
+transforms = Registry("transform")

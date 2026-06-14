@@ -80,7 +80,7 @@ _FROZEN_FUNCS = {
 
 
 def test_emitter_opcodes_match_the_frozen_wire_values():
-    from tsdynamics.backends import rustcore
+    from tsdynamics.engine import rustcore
 
     for const_name, wire in _FROZEN_STRUCTURAL.items():
         assert getattr(rustcore, const_name) == wire, const_name
@@ -99,7 +99,7 @@ _SYSTEMS = list(gen.FIXTURE_SYSTEMS)
 def test_committed_fixture_tape_structure_is_current(name):
     """A fresh emission must reproduce the committed tape arrays exactly."""
     import tsdynamics as ts
-    from tsdynamics.backends.rustcore import compile_tape
+    from tsdynamics.engine.rustcore import compile_tape
 
     fx = gen.parse_fixture(gen.fixture_path(name).read_text())
     system = getattr(ts, name)()
@@ -122,7 +122,7 @@ def test_committed_fixture_tape_structure_is_current(name):
 def test_committed_fixture_values_match_symbolic_rhs(name):
     """Committed checkpoint deriv/jac must match today's symbolic engine."""
     import tsdynamics as ts
-    from tsdynamics.backends.rustcore import compile_tape
+    from tsdynamics.engine.rustcore import compile_tape
 
     fx = gen.parse_fixture(gen.fixture_path(name).read_text())
     system = getattr(ts, name)()

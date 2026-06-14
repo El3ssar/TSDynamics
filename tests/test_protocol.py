@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.base import System
+from tsdynamics.families import System
 
 # ---------------------------------------------------------------------------
 # Structural conformance (fast)

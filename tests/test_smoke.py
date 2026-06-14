@@ -13,7 +13,7 @@ def test_package_importable() -> None:
 
 
 def test_submodules_importable() -> None:
-    for module in ["tsdynamics.base", "tsdynamics.utils", "tsdynamics.systems"]:
+    for module in ["tsdynamics.families", "tsdynamics.utils", "tsdynamics.systems"]:
         importlib.import_module(module)
 
 

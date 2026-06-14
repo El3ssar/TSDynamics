@@ -27,7 +27,7 @@ from xval_harness import (
 )
 
 import tsdynamics as ts
-from tsdynamics.backends import rustcore as rc
+from tsdynamics.engine import rustcore as rc
 
 _LORENZ_IC = [1.0, 1.0, 1.0]
 _T_EVAL = np.linspace(0.0, 5.0, 501)

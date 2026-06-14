@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.base import ContinuousSystem, DelaySystem, DiscreteMap
+from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap
 
 from ._base import DerivedSystem
 
@@ -104,7 +104,7 @@ class TangentSystem(DerivedSystem):
         method = kwargs.pop("method", None) or self.system._default_method
         rtol = kwargs.pop("rtol", 1e-6)
         atol = kwargs.pop("atol", 1e-9)
-        from tsdynamics.base.ode_base import _INTEGRATOR_MAP
+        from tsdynamics.families.continuous import _INTEGRATOR_MAP
 
         ode = self.system._ensure_compiled(for_lyap=True, n_lyap=self.k)
         ode.set_integrator(_INTEGRATOR_MAP.get(method, method), rtol=rtol, atol=atol, **kwargs)

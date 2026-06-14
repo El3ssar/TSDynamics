@@ -1,11 +1,11 @@
-"""Tests for ``tsdynamics.base``: ParamSet, Trajectory, MetaStore, SystemBase."""
+"""Tests for ``tsdynamics.families``: ParamSet, Trajectory, MetaStore, SystemBase."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from tsdynamics.base import MetaStore, ParamSet, SystemBase, Trajectory
+from tsdynamics.families import MetaStore, ParamSet, SystemBase, Trajectory
 
 # ---------------------------------------------------------------------------
 # A minimal SystemBase subclass for direct testing

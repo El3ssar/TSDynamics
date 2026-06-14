@@ -1,6 +1,6 @@
 from symengine import cos, sin, sqrt
 
-from tsdynamics.base import ContinuousSystem
+from tsdynamics.families import ContinuousSystem
 
 
 class NuclearQuadrupole(ContinuousSystem):

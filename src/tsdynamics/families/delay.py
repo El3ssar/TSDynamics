@@ -412,7 +412,7 @@ class DelaySystem(SystemBase, ABC):
         **kwargs,
     ) -> Trajectory:
         """
-        Integrate the DDE and return a :class:`~tsdynamics.base.Trajectory`.
+        Integrate the DDE and return a :class:`~tsdynamics.families.Trajectory`.
 
         Parameters
         ----------

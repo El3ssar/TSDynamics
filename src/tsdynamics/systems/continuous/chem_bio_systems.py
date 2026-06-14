@@ -1,7 +1,7 @@
 # import numpy as np
 from symengine import cos, exp, pi, sin
 
-from tsdynamics.base import ContinuousSystem
+from tsdynamics.families import ContinuousSystem
 
 
 class GlycolyticOscillation(ContinuousSystem):

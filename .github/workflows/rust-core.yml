@@ -12,7 +12,7 @@ on:
       # numeric compare by cross-validation.yml — an edit there no longer fires
       # this accelerator-build redundantly.
       - "crates/tsdynamics-core/**"
-      - "src/tsdynamics/backends/rustcore.py"
+      - "src/tsdynamics/engine/rustcore.py"
       - "tests/test_rustcore*.py"
       - ".github/workflows/rust-core.yml"
   workflow_dispatch:
