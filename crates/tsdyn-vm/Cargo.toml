@@ -9,3 +9,11 @@ repository.workspace = true
 
 [dependencies]
 tsdyn-ir.workspace = true
+
+[dev-dependencies]
+# The integration tests validate the production interpreter against the
+# canonical `reference` evaluator (the v2 stack-machine port) and the shared
+# golden fixtures. The `reference` feature is dev-only: it never enters the
+# production build (resolver "2" keeps dev-dep features out of `cargo build`),
+# so the interpreter stays the sole evaluation path in the shipped crate.
+tsdyn-ir = { workspace = true, features = ["reference"] }
