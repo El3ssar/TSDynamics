@@ -367,8 +367,12 @@ fn integrate_dde_dense<'py>(
 /// Integrate a batch of initial conditions to `t1` in parallel (rayon), returning
 /// each final state as a row of an `(n_ic, dim)` array.
 ///
-/// `ics` is `(n_ic, dim)`. A diverging trajectory yields a row of `NaN` rather
-/// than aborting the batch; the run is seeded/scheduling-independent.
+/// `ics` is `(n_ic, dim)`. `first_step` is the integration cadence (the user's
+/// `dt`): only the first trial step for an adaptive kernel, but the step for the
+/// whole run for the fixed-step `rk4` — so it is threaded through to keep the
+/// ensemble numerically identical to [`integrate_dense`] for fixed-step methods.
+/// A diverging trajectory yields a row of `NaN` rather than aborting the batch;
+/// the run is seeded/scheduling-independent.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn integrate_ensemble_final<'py>(
@@ -385,6 +389,7 @@ fn integrate_ensemble_final<'py>(
     p: PyReadonlyArray1<f64>,
     t0: f64,
     t1: f64,
+    first_step: f64,
     method: String,
     rtol: f64,
     atol: f64,
@@ -406,6 +411,7 @@ fn integrate_ensemble_final<'py>(
                 &p,
                 t0,
                 t1,
+                first_step,
                 &method,
                 rtol,
                 atol,

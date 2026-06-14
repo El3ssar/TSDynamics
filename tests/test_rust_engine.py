@@ -122,6 +122,35 @@ def test_ensemble_matches_reference(name):
     np.testing.assert_allclose(eng, ref, atol=1e-6, rtol=1e-6)
 
 
+# Deterministic, on-attractor ICs for the fixed-step agreement test: rk4 at a
+# coarse step from a random U[0,1)^3 IC can blow up before the window ends, so
+# pin a tame starting point per system (Lorenz has no `default_ic`).
+_RK4_IC = {"Lorenz": [1.0, 1.0, 1.0], "Rossler": [0.1, 0.1, 0.1]}
+
+
+@pytest.mark.parametrize("name", ODE_SYSTEMS)
+def test_rk4_dense_and_ensemble_agree(name):
+    """A fixed-step method must reach the same final state through the dense and
+    ensemble paths when handed the same ``dt`` cadence.
+
+    ``rk4``'s step is fixed (the first step *is* the step for the whole run), so
+    the dense path — which derives its step from the output grid — and the
+    ensemble — which now takes ``dt`` as its cadence — would disagree numerically
+    if the ensemble invented its own step (the old ``span/100`` behaviour). ``dt``
+    is binary-exact (1/128) and divides the span, and these flows are autonomous,
+    so the two take identical steps and land on the same state to fp tolerance.
+    """
+    system = _sys(name)
+    ic = _RK4_IC[name]
+    kw = dict(final_time=1.0, dt=2**-7, method="rk4")
+    final_via_dense = run.integrate(system, ic=ic, backend="interp", **kw).y[-1]
+    final_via_ensemble = run.ensemble(
+        system, np.asarray(ic, dtype=float)[None, :], backend="interp", **kw
+    )[0]
+    assert np.all(np.isfinite(final_via_dense))
+    np.testing.assert_allclose(final_via_ensemble, final_via_dense, rtol=0, atol=1e-12)
+
+
 @pytest.mark.parametrize("name", MAP_SYSTEMS)
 def test_map_iteration_matches_reference_exactly(name):
     system = _sys(name)
