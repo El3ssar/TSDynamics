@@ -583,6 +583,16 @@ pub fn integrate_dde_dense(
 /// `ics` is a row-major `(n_ic, dim)` buffer. A diverging trajectory yields a
 /// `NaN` row rather than aborting the batch (the engine's ensemble contract); the
 /// run is seeded/scheduling-independent, so results are bit-for-bit reproducible.
+///
+/// `first_step` is the integration cadence the caller threads in (the user's
+/// `dt`). For an adaptive kernel it is only the first *trial* step — the
+/// controller adapts away from it — but for the fixed-step `rk4` it *is* the step
+/// for the whole run. The single-trajectory [`integrate_dense`] derives its
+/// cadence from the output grid ([`first_step_from_grid`]); the ensemble has no
+/// grid, so it must be handed the same cadence rather than inventing a
+/// `span`-relative guess. Without this knob a fixed-step ensemble and the dense
+/// path disagree numerically — the bug this argument fixes. The SDE ensemble
+/// ([`sde_ensemble_final`]) already carries an explicit `dt` for the same reason.
 #[allow(clippy::too_many_arguments)]
 pub fn ensemble_final(
     tape: Tape,
@@ -590,6 +600,7 @@ pub fn ensemble_final(
     p: &[f64],
     t0: f64,
     t1: f64,
+    first_step: f64,
     method: &str,
     rtol: f64,
     atol: f64,
@@ -638,16 +649,18 @@ pub fn ensemble_final(
     // Validate the method up front (one clear error before the rayon fan-out).
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
-    let span = t1 - t0; // non-negative: the backward case is rejected above
-                        // First *trial* step. Adaptive kernels (rk45/tsit5/dop853 — the default
-                        // RK45) adapt away from this immediately, so the value only seeds the
-                        // controller. NOTE: a fixed-step kernel (rk4) keeps it as the step for the
-                        // whole run, so an rk4 ensemble integrates at span/100 while the dense path
-                        // (integrate_dense) uses the user's output grid — they disagree, and the
-                        // ensemble caller has no cadence knob to fix it. Giving the ODE ensemble an
-                        // explicit step for fixed-step methods is solver-config work (C-SOLV/C-FAM),
-                        // tracked separately; adaptive methods (and all SDE/map paths) are unaffected.
-    let first_step = if span > 0.0 { span / 100.0 } else { 1.0 };
+    // The cadence is the caller's (the user's `dt`), no longer a `span/100` guess:
+    // for an adaptive kernel it seeds the controller, but for the fixed-step `rk4`
+    // it *is* the step, so it must match the dense path's grid-derived step or the
+    // two entry points disagree (the bug this fixes). The engine treats a
+    // non-finite or non-positive first step as a hard-`assert!` caller error
+    // (it would spin to the step limit or step the wrong way), so reject it here
+    // as a clean `BadShape`, mirroring the SDE path's `check_sde_dt`.
+    if !(first_step.is_finite() && first_step > 0.0) {
+        return Err(EngineError::BadShape(format!(
+            "integration cadence (first_step) must be finite and positive; got {first_step}"
+        )));
+    }
     let cfg = IntegrateConfig::new(first_step);
     let ev = build_evaluator(tape, jit)?;
     let result = engine_ensemble(
@@ -1191,6 +1204,7 @@ mod tests {
                 &[2.0],
                 0.0,
                 1.5,
+                0.015,
                 "rk45",
                 1e-10,
                 1e-12,
@@ -1214,6 +1228,7 @@ mod tests {
             &[2.0],
             0.0,
             1.5,
+            0.015,
             "rk45",
             1e-10,
             1e-12,
@@ -1233,6 +1248,112 @@ mod tests {
     }
 
     #[test]
+    fn rk4_dense_and_ensemble_take_the_same_fixed_step() {
+        // The fix: a fixed-step method must reach the same final state through the
+        // single-trajectory (dense) and the parallel (ensemble) paths when handed
+        // the same cadence. `rk4`'s step is fixed — the first step IS the step for
+        // the whole run — so the dense path (which derives it from the output grid)
+        // and the ensemble (handed it as `first_step`) must agree. dt = 0.25 is
+        // binary-exact and divides the span, so the two take identical steps; the
+        // oscillator is autonomous, so the final state is bit-for-bit equal.
+        let dt = 0.25_f64;
+        let (t0, t1) = (0.0, 2.0);
+        let ic = [1.0, 0.0];
+        // Dense over a grid spaced exactly `dt`, so each segment is one rk4 step and
+        // `first_step_from_grid` recovers `dt`; the last (x, v) row is the final state.
+        let n = ((t1 - t0) / dt).round() as usize; // 8 segments
+        let t_eval: Vec<f64> = (0..=n).map(|i| t0 + i as f64 * dt).collect();
+        let dense = integrate_dense(
+            oscillator_tape(),
+            &ic,
+            &[],
+            &t_eval,
+            "rk4",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap();
+        let dense_final = &dense[dense.len() - 2..];
+        // Ensemble of the single IC with the matching cadence.
+        let ens = ensemble_final(
+            oscillator_tape(),
+            &ic,
+            &[],
+            t0,
+            t1,
+            dt,
+            "rk4",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap();
+        assert_eq!(ens.len(), 2);
+        assert_eq!(
+            dense_final[0].to_bits(),
+            ens[0].to_bits(),
+            "x: dense {} vs ensemble {}",
+            dense_final[0],
+            ens[0]
+        );
+        assert_eq!(
+            dense_final[1].to_bits(),
+            ens[1].to_bits(),
+            "v: dense {} vs ensemble {}",
+            dense_final[1],
+            ens[1]
+        );
+        // The cadence is load-bearing for a fixed-step kernel: the retired
+        // `span/100` guess (0.02 here) takes different steps and lands elsewhere, so
+        // the two paths would have disagreed without this knob.
+        let ens_old_guess = ensemble_final(
+            oscillator_tape(),
+            &ic,
+            &[],
+            t0,
+            t1,
+            (t1 - t0) / 100.0,
+            "rk4",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap();
+        assert!(
+            (ens_old_guess[0] - ens[0]).abs() > 1e-9,
+            "a different fixed step should land elsewhere: {} ~ {}",
+            ens_old_guess[0],
+            ens[0]
+        );
+    }
+
+    #[test]
+    fn ensemble_rejects_non_positive_cadence() {
+        // The first_step validation: a non-finite or non-positive cadence is a clean
+        // BadShape (→ ValueError), not a PanicException from the engine's hard assert.
+        for bad in [0.0, -0.1, f64::NAN, f64::INFINITY] {
+            let err = ensemble_final(
+                decay_tape(),
+                &[1.0, 2.0],
+                &[2.0],
+                0.0,
+                1.0,
+                bad,
+                "rk45",
+                1e-6,
+                1e-9,
+                false,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, EngineError::BadShape(_)),
+                "cadence {bad}: got {err:?}"
+            );
+        }
+    }
+
+    #[test]
     fn ensemble_isolates_a_diverging_trajectory() {
         // x0 = 1 blows up before t = 2; x0 = -1 decays and stays finite.
         let states = ensemble_final(
@@ -1241,6 +1362,7 @@ mod tests {
             &[],
             0.0,
             2.0,
+            0.02,
             "rk45",
             1e-8,
             1e-10,
@@ -1260,6 +1382,7 @@ mod tests {
             &[],
             0.0,
             1.0,
+            0.01,
             "rk45",
             1e-6,
             1e-9,
@@ -1384,6 +1507,7 @@ mod tests {
             &[2.0],
             0.0,
             f64::INFINITY,
+            0.01,
             "rk45",
             1e-6,
             1e-9,
@@ -1552,6 +1676,7 @@ mod tests {
                 &[2.0],
                 0.0,
                 1.0,
+                0.01,
                 method,
                 1e-6,
                 1e-9,
@@ -1602,6 +1727,7 @@ mod tests {
             &[2.0],
             1.0,
             0.0,
+            0.01,
             "rk45",
             1e-6,
             1e-9,

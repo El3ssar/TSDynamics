@@ -277,6 +277,8 @@ class _FakeEngine:
 
     def integrate_ensemble_final(self, *args):
         self.ensemble_calls.append(args)
+        # Payload: (ops, a, b, imm, outputs, jac, n_state, n_param, ics, params,
+        #           t0, t1, first_step, method, rtol, atol, jit).
         ics = args[8]
         return np.zeros_like(ics)
 
@@ -307,11 +309,12 @@ def test_engine_ensemble_dispatch_payload(monkeypatch) -> None:
     monkeypatch.setattr(run, "_engine", lambda: fake)
     lor = ts.Lorenz()
     ics = np.random.default_rng(0).standard_normal((5, 3))
-    out = run.ensemble(lor, ics, final_time=3.0, backend="interp")
+    out = run.ensemble(lor, ics, final_time=3.0, dt=0.05, backend="interp")
     assert out.shape == (5, 3)
     assert len(fake.ensemble_calls) == 1
     a = fake.ensemble_calls[0]
     np.testing.assert_array_equal(a[8], ics)  # the ics batch
+    assert a[12] == pytest.approx(0.05)  # the fixed-step cadence (the user's dt)
     assert a[-1] is False  # jit flag (interp)
 
 

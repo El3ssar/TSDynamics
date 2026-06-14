@@ -391,6 +391,7 @@ def ensemble(
     ics: Any,
     *,
     final_time: float = 100.0,
+    dt: float = 0.02,
     t0: float | None = None,
     method: str = "RK45",
     rtol: float = 1e-6,
@@ -411,6 +412,13 @@ def ensemble(
     system_or_problem : SystemBase or Problem
     ics : array-like, shape (n, dim)
         The batch of initial conditions.
+    dt : float, default 0.02
+        Integration cadence.  For an adaptive method this seeds the controller's
+        first trial step (it adapts away from it); for the fixed-step ``rk4`` it
+        *is* the step taken for the whole run.  Matching :func:`integrate`'s
+        ``dt`` so a fixed-step method gives the same trajectory through the dense
+        and ensemble paths.  Consumed only by the compiled engine (the reference
+        backend integrates adaptively via SciPy and ignores it).
     final_time, t0, method, rtol, atol, backend
         As in :func:`integrate`.
 
@@ -455,6 +463,7 @@ def ensemble(
             ics,
             start,
             float(final_time),
+            first_step=float(dt),
             method=method,
             rtol=rtol,
             atol=atol,
@@ -632,18 +641,26 @@ def _engine_ensemble_final(
     t0: float,
     t1: float,
     *,
+    first_step: float,
     method: str,
     rtol: float,
     atol: float,
     jit: bool,
 ) -> np.ndarray:
-    """Dispatch a parallel ensemble integration (final states) to the engine."""
+    """Dispatch a parallel ensemble integration (final states) to the engine.
+
+    ``first_step`` is the integration cadence (the user's ``dt``): only the first
+    trial step for an adaptive kernel, but the step for the whole run for the
+    fixed-step ``rk4`` — so the ensemble and dense (:func:`integrate`) paths take
+    identical steps for fixed-step methods.
+    """
     return eng.integrate_ensemble_final(
         *_primary_tape(problem).to_arrays(),
         ics,
         problem.params_vec(),
         float(t0),
         float(t1),
+        float(first_step),
         method,
         float(rtol),
         float(atol),
