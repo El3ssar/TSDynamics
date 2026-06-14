@@ -148,6 +148,23 @@ impl Interpreter {
                 Op::Asinh => regs[ai].asinh(),
                 Op::Acosh => regs[ai].acosh(),
                 Op::Atanh => regs[ai].atanh(),
+                // Non-smooth / piecewise ops (E-OPS) — identical expressions to
+                // the `tsdyn-ir` reference, so the two agree to the last bit.
+                Op::Lt => (regs[ai] < regs[b[i] as usize]) as i32 as f64,
+                Op::Le => (regs[ai] <= regs[b[i] as usize]) as i32 as f64,
+                Op::Gt => (regs[ai] > regs[b[i] as usize]) as i32 as f64,
+                Op::Ge => (regs[ai] >= regs[b[i] as usize]) as i32 as f64,
+                Op::Eq => (regs[ai] == regs[b[i] as usize]) as i32 as f64,
+                Op::Ne => (regs[ai] != regs[b[i] as usize]) as i32 as f64,
+                Op::Min => regs[ai].min(regs[b[i] as usize]),
+                Op::Max => regs[ai].max(regs[b[i] as usize]),
+                Op::Floor => regs[ai].floor(),
+                Op::Ceil => regs[ai].ceil(),
+                Op::Mod => {
+                    let (x, y) = (regs[ai], regs[b[i] as usize]);
+                    x - y * (x / y).floor()
+                }
+                Op::Rem => regs[ai] % regs[b[i] as usize],
             };
             regs[i] = r;
         }

@@ -63,7 +63,7 @@ struct MathDecl {
 /// Every opcode that lowers to a host call, paired with its shim. Opcodes not
 /// listed here (the leaves, arithmetic, `Sqrt`, `Abs`) lower to native Cranelift
 /// instructions.
-fn math_table() -> [MathDecl; 17] {
+fn math_table() -> [MathDecl; 29] {
     macro_rules! d {
         ($op:expr, $name:literal, $shim:path, $arity:expr) => {
             MathDecl {
@@ -92,6 +92,19 @@ fn math_table() -> [MathDecl; 17] {
         d!(Op::Asinh, "tsdyn_asinh", shims::asinh, Arity::Unary),
         d!(Op::Acosh, "tsdyn_acosh", shims::acosh, Arity::Unary),
         d!(Op::Atanh, "tsdyn_atanh", shims::atanh, Arity::Unary),
+        // Non-smooth / piecewise block (stream E-OPS).
+        d!(Op::Lt, "tsdyn_lt", shims::lt, Arity::Binary),
+        d!(Op::Le, "tsdyn_le", shims::le, Arity::Binary),
+        d!(Op::Gt, "tsdyn_gt", shims::gt, Arity::Binary),
+        d!(Op::Ge, "tsdyn_ge", shims::ge, Arity::Binary),
+        d!(Op::Eq, "tsdyn_eq", shims::eq, Arity::Binary),
+        d!(Op::Ne, "tsdyn_ne", shims::ne, Arity::Binary),
+        d!(Op::Min, "tsdyn_min", shims::min, Arity::Binary),
+        d!(Op::Max, "tsdyn_max", shims::max, Arity::Binary),
+        d!(Op::Floor, "tsdyn_floor", shims::floor, Arity::Unary),
+        d!(Op::Ceil, "tsdyn_ceil", shims::ceil, Arity::Unary),
+        d!(Op::Mod, "tsdyn_mod", shims::modulo, Arity::Binary),
+        d!(Op::Rem, "tsdyn_rem", shims::rem, Arity::Binary),
     ]
 }
 
@@ -277,12 +290,24 @@ fn build_body(
                 let e = bcx.ins().iconst(types::I32, b[i] as i64);
                 call_math(module, math_ids, &mut frefs, &mut bcx, Op::Powi, &[x, e])
             }
-            // Every remaining opcode is a unary transcendental (or `Sign`) lowered
-            // to a host call with the same `[reg(a)]` argument.
-            transcendental => {
-                let x = reg(&regs, a[i]);
-                call_math(module, math_ids, &mut frefs, &mut bcx, transcendental, &[x])
-            }
+            // Every remaining opcode lowers to a host shim: the unary
+            // transcendentals / `Sign` / `Floor` / `Ceil` take `[reg(a)]`, the
+            // comparisons / `Min` / `Max` / `Mod` / `Rem` take `[reg(a), reg(b)]`.
+            // Dispatching by arity keeps them bit-identical to the interpreter.
+            shim => match shim.kind() {
+                OpKind::Unary => {
+                    let x = reg(&regs, a[i]);
+                    call_math(module, math_ids, &mut frefs, &mut bcx, shim, &[x])
+                }
+                OpKind::Binary => {
+                    let (x, y) = (reg(&regs, a[i]), reg(&regs, b[i]));
+                    call_math(module, math_ids, &mut frefs, &mut bcx, shim, &[x, y])
+                }
+                // Leaves and `Powi` are handled by explicit arms above.
+                OpKind::Leaf | OpKind::Powi => {
+                    unreachable!("leaf/powi handled by explicit arms: {shim:?}")
+                }
+            },
         };
         regs[i] = Some(value);
     }

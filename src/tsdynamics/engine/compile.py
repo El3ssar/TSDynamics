@@ -45,6 +45,8 @@ the same convention the symbolic Jacobian autogen uses.
 
 from __future__ import annotations
 
+import math
+import types
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -85,6 +87,28 @@ OP_POWI = 15  # regs[a] ** b          (b is the literal integer exponent)
 OP_NEG = 20
 OP_RECIP = 21
 
+# ---------------------------------------------------------------------------
+# Non-smooth / piecewise opcodes — wire range 50-69 (stream E-OPS).
+# Additive to the frozen IR (range reserved by ROADMAP §13d); they let modular
+# and piecewise maps (Circle's ``% 1``, Baker's branch) lower onto the engine.
+# Comparisons yield 1.0 (true) / 0.0 (false); ``Min``/``Max`` follow ``f64::min``/
+# ``max`` (NaN returns the other operand); ``Floor``/``Ceil`` are IEEE round to
+# integral; ``Mod`` is the floored modulo (Python ``%`` / ``np.mod``) and ``Rem``
+# the truncated remainder (Rust ``%`` / C ``fmod``).
+# ---------------------------------------------------------------------------
+OP_LT = 50  # regs[a] <  regs[b]  -> 1.0 / 0.0
+OP_LE = 51  # regs[a] <= regs[b]
+OP_GT = 52  # regs[a] >  regs[b]
+OP_GE = 53  # regs[a] >= regs[b]
+OP_EQ = 54  # regs[a] == regs[b]
+OP_NE = 55  # regs[a] != regs[b]
+OP_MIN = 56  # min(regs[a], regs[b])
+OP_MAX = 57  # max(regs[a], regs[b])
+OP_FLOOR = 58  # floor(regs[a])
+OP_CEIL = 59  # ceil(regs[a])
+OP_MOD = 60  # floored modulo: regs[a] - regs[b] * floor(regs[a] / regs[b])
+OP_REM = 61  # truncated remainder: regs[a] % regs[b]  (C fmod)
+
 #: SymEngine/SymPy function spelling → unary opcode.  Matches ``tsdyn-ir``'s
 #: ``Op::name`` spellings for the elementary functions.
 _FUNC_OPS: dict[str, int] = {
@@ -105,14 +129,40 @@ _FUNC_OPS: dict[str, int] = {
     "asinh": 44,
     "acosh": 45,
     "atanh": 46,
+    "floor": OP_FLOOR,
+    "ceiling": OP_CEIL,
 }
 _OP_SQRT = 35
 
+#: SymPy relational ``rel_op`` string → comparison opcode (yields 1.0 / 0.0).
+_REL_OPS: dict[str, int] = {
+    "<": OP_LT,
+    "<=": OP_LE,
+    ">": OP_GT,
+    ">=": OP_GE,
+    "==": OP_EQ,
+    "!=": OP_NE,
+}
+
 #: Opcodes whose register file slot is filled by reading a single source
-#: register ``a`` (the unary functions plus ``Neg``/``Recip``).
+#: register ``a`` (the unary functions plus ``Neg``/``Recip`` and the
+#: round-to-integral ops).
 _UNARY_OPS: frozenset[int] = frozenset({OP_NEG, OP_RECIP, *_FUNC_OPS.values()})
 #: Binary opcodes (read registers ``a`` and ``b``).
-_BINARY_OPS: frozenset[int] = frozenset({OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POW})
+_BINARY_OPS: frozenset[int] = frozenset(
+    {
+        OP_ADD,
+        OP_SUB,
+        OP_MUL,
+        OP_DIV,
+        OP_POW,
+        *_REL_OPS.values(),
+        OP_MIN,
+        OP_MAX,
+        OP_MOD,
+        OP_REM,
+    }
+)
 #: Leaf opcodes (read an input or an immediate; no register operands).
 _LEAF_OPS: frozenset[int] = frozenset({OP_CONST, OP_STATE, OP_PARAM, OP_TIME})
 
@@ -406,7 +456,41 @@ class _Emitter:
         if isinstance(expr, sympy.Pow):
             return self._emit_pow(expr)
 
+        # Piecewise / selection (maps with ``np.where`` or a branch).  Lowered
+        # to a comparison-masked arithmetic blend; see ``_emit_piecewise``.
+        if isinstance(expr, sympy.Piecewise):
+            return self._emit_piecewise(expr)
+
+        # A relational (``a < b`` …) used as a value yields 1.0 / 0.0 via a
+        # comparison opcode.  These reach the emitter only as Piecewise
+        # conditions (SymPy forbids ``Relational`` inside ``Add``/``Mul``).
+        if isinstance(expr, sympy.core.relational.Relational):
+            return self._emit_relational(expr)
+
+        # Boolean connectives over 0/1-valued conditions: And → product,
+        # Or → a + b - a*b, Not → 1 - a (each input is already 0/1).
+        if isinstance(expr, sympy.logic.boolalg.BooleanFunction):
+            return self._emit_boolean(expr)
+
         name = type(expr).__name__
+
+        # n-ary Min / Max fold left into binary OP_MIN / OP_MAX.
+        if name == "Min" or name == "Max":
+            op = OP_MIN if name == "Min" else OP_MAX
+            args = expr.args
+            acc = self.emit(args[0])
+            for term in args[1:]:
+                acc = self._push(op, a=acc, b=self.emit(term))
+            return acc
+
+        # Floored modulo ``Mod(a, b)`` (SymPy's ``%``; the maps' bare ``%`` is
+        # canonicalised to ``a - floor(a/b)*b`` instead, but a literal Mod node
+        # lowers directly).
+        if name == "Mod":
+            if len(expr.args) != 2:
+                raise TapeCompileError(f"Mod expects 2 arguments, got {len(expr.args)}")
+            return self._push(OP_MOD, a=self.emit(expr.args[0]), b=self.emit(expr.args[1]))
+
         op = _FUNC_OPS.get(name)
         if op is not None:
             if len(expr.args) != 1:
@@ -416,6 +500,68 @@ class _Emitter:
             return self._push(op, a=self.emit(expr.args[0]))
 
         raise TapeCompileError(f"the instruction tape has no equivalent for {name!r}.")
+
+    def _emit_relational(self, expr: Any) -> int:
+        """Emit a comparison opcode (1.0 if the relation holds, else 0.0)."""
+        op = _REL_OPS.get(expr.rel_op)
+        if op is None:
+            raise TapeCompileError(f"the instruction tape has no equivalent for {expr.rel_op!r}.")
+        lhs, rhs = expr.args
+        return self._push(op, a=self.emit(lhs), b=self.emit(rhs))
+
+    def _emit_boolean(self, expr: Any) -> int:
+        """Lower And/Or/Not over 0/1-valued conditions to arithmetic."""
+        import sympy
+
+        if isinstance(expr, sympy.And):
+            acc = self.emit(expr.args[0])
+            for term in expr.args[1:]:
+                acc = self._push(OP_MUL, a=acc, b=self.emit(term))  # c1 * c2 * …
+            return acc
+        if isinstance(expr, sympy.Or):
+            # a + b - a*b, folded so the running accumulator stays in {0, 1}.
+            acc = self.emit(expr.args[0])
+            for term in expr.args[1:]:
+                t = self.emit(term)
+                s = self._push(OP_ADD, a=acc, b=t)
+                p = self._push(OP_MUL, a=acc, b=t)
+                acc = self._push(OP_SUB, a=s, b=p)
+            return acc
+        if isinstance(expr, sympy.Not):
+            one = self._push(OP_CONST, imm=1.0)
+            return self._push(OP_SUB, a=one, b=self.emit(expr.args[0]))
+        raise TapeCompileError(
+            f"the instruction tape has no equivalent for boolean {type(expr).__name__!r}."
+        )
+
+    def _emit_piecewise(self, expr: Any) -> int:
+        """Lower ``Piecewise((e0, c0), …, (en, True))`` to a masked blend.
+
+        Each condition ``ck`` emits to a 1.0/0.0 mask; the value is built from
+        the last (default) branch backwards as ``mk*ek + (1 - mk)*acc``.  This
+        evaluates **both** branches, so a branch that is singular on the
+        unselected region (``0*inf = nan``) would poison the result — fine for
+        the finite-branch piecewise maps this targets, a caveat for general use.
+        """
+        import sympy
+
+        pairs = [(p.args[0], p.args[1]) for p in expr.args]
+        if pairs[-1][1] != sympy.true:
+            raise TapeCompileError(
+                "Piecewise must end with a default (True) branch to lower to a tape "
+                f"(got condition {pairs[-1][1]!r}); the engine cannot represent a "
+                "partial/undefined region."
+            )
+        acc = self.emit(pairs[-1][0])
+        for value, cond in reversed(pairs[:-1]):
+            mask = self.emit(cond)
+            val = self.emit(value)
+            one = self._push(OP_CONST, imm=1.0)
+            inv = self._push(OP_SUB, a=one, b=mask)  # 1 - mask
+            sel = self._push(OP_MUL, a=mask, b=val)  # mask * value
+            other = self._push(OP_MUL, a=inv, b=acc)  # (1 - mask) * acc
+            acc = self._push(OP_ADD, a=sel, b=other)
+        return acc
 
     def _emit_pow(self, expr: Any) -> int:
         import sympy
@@ -594,6 +740,126 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
 # ---------------------------------------------------------------------------
 
 
+class _SymbolicNumpy:
+    """A drop-in ``numpy`` whose array math returns SymEngine expressions.
+
+    A map's ``_step`` is written for the numeric (Numba) backend with ``np.sin``,
+    ``np.where``, ``%`` and friends.  NumPy's object-dtype ufunc loop calls a
+    method *named after the ufunc* on each element (``elem.sin()``), which a raw
+    SymEngine symbol does not have — so ``np.sin(symbolic_state)`` raises.  When
+    *tracing* a step we rebind its ``np`` global to this shim: the elementary
+    functions, ``floor``/``ceil``, ``abs``/``sign``, ``min``/``max``, ``mod`` and
+    ``where`` (→ ``Piecewise``) lower to SymEngine, while every other attribute
+    (``array``, ``zeros``, constants other than ``pi``/``e``, …) falls through to
+    the real :mod:`numpy`.  Arithmetic and comparisons need no shim — SymEngine
+    already overloads ``+``/``*``/``%``/``<`` on its expressions.
+    """
+
+    def __init__(self) -> None:
+        import symengine as se
+
+        def unary(fn: Any) -> Any:
+            def f(x: Any) -> Any:
+                arr = np.asarray(x, dtype=object)
+                if arr.ndim == 0:
+                    return fn(arr.item())
+                out = np.empty(arr.shape, dtype=object)
+                flat = out.ravel()
+                for i, v in enumerate(arr.ravel()):
+                    flat[i] = fn(v)
+                return out
+
+            return f
+
+        def binary(fn: Any) -> Any:
+            def f(x: Any, y: Any) -> Any:
+                ax = np.asarray(x, dtype=object)
+                ay = np.asarray(y, dtype=object)
+                if ax.ndim == 0 and ay.ndim == 0:
+                    return fn(ax.item(), ay.item())
+                bx, by = np.broadcast_arrays(ax, ay)
+                out = np.empty(bx.shape, dtype=object)
+                flat = out.ravel()
+                for i, (a, b) in enumerate(zip(bx.ravel(), by.ravel(), strict=True)):
+                    flat[i] = fn(a, b)
+                return out
+
+            return f
+
+        def where(cond: Any, a: Any, b: Any) -> Any:
+            def pw(c: Any, x: Any, y: Any) -> Any:
+                return se.Piecewise((x, c), (y, True))
+
+            ac = np.asarray(cond, dtype=object)
+            aa = np.asarray(a, dtype=object)
+            ab = np.asarray(b, dtype=object)
+            if ac.ndim == 0 and aa.ndim == 0 and ab.ndim == 0:
+                return pw(ac.item(), aa.item(), ab.item())
+            bc, ba, bb = np.broadcast_arrays(ac, aa, ab)
+            out = np.empty(bc.shape, dtype=object)
+            flat = out.ravel()
+            for i, (c, x, y) in enumerate(zip(bc.ravel(), ba.ravel(), bb.ravel(), strict=True)):
+                flat[i] = pw(c, x, y)
+            return out
+
+        self.pi = math.pi
+        self.e = math.e
+        for name, fn in (
+            ("sin", se.sin),
+            ("cos", se.cos),
+            ("tan", se.tan),
+            ("exp", se.exp),
+            ("log", se.log),
+            ("sqrt", se.sqrt),
+            ("arcsin", se.asin),
+            ("arccos", se.acos),
+            ("arctan", se.atan),
+            ("sinh", se.sinh),
+            ("cosh", se.cosh),
+            ("tanh", se.tanh),
+            ("arcsinh", se.asinh),
+            ("arccosh", se.acosh),
+            ("arctanh", se.atanh),
+            ("floor", se.floor),
+            ("ceil", se.ceiling),
+            ("abs", se.Abs),
+            ("absolute", se.Abs),
+            ("sign", se.sign),
+        ):
+            setattr(self, name, unary(fn))
+        self.minimum = binary(se.Min)
+        self.maximum = binary(se.Max)
+        self.fmin = self.minimum
+        self.fmax = self.maximum
+        self.mod = binary(lambda a, b: a % b)
+        self.remainder = self.mod
+        self.power = binary(lambda a, b: a**b)
+        self.where = where
+
+    def __getattr__(self, name: str) -> Any:
+        # Anything not overridden above (array, zeros, dtype, …) is the real
+        # numpy.  ``__getattr__`` runs only on a miss, so overrides win.
+        return getattr(np, name)
+
+
+def _trace_step(step_fn: Any) -> Any:
+    """Return a copy of ``step_fn`` whose ``np`` global is the symbolic shim.
+
+    Rebinding the global on a fresh :class:`types.FunctionType` (sharing the
+    original code object) keeps the real module untouched and the operation
+    thread-safe — no monkeypatching of shared state.
+    """
+    g = dict(step_fn.__globals__)
+    g["np"] = _SymbolicNumpy()
+    return types.FunctionType(
+        step_fn.__code__,
+        g,
+        step_fn.__name__,
+        step_fn.__defaults__,
+        step_fn.__closure__,
+    )
+
+
 def lower_map(system: Any, *, with_jacobian: bool = False) -> Tape:
     """Lower a :class:`~tsdynamics.families.DiscreteMap` step to a tape.
 
@@ -633,7 +899,7 @@ def lower_map(system: Any, *, with_jacobian: bool = False) -> Tape:
     dim = system.dim
     u_syms = [symengine.Symbol(f"u{i}") for i in range(dim)]
     state = np.array(u_syms, dtype=object)
-    step = _unwrap_static(type(system)._step)
+    step = _trace_step(_unwrap_static(type(system)._step))
     params = system.params.as_tuple()
 
     try:
@@ -642,16 +908,17 @@ def lower_map(system: Any, *, with_jacobian: bool = False) -> Tape:
     except TapeCompileError:
         raise
     except Exception as err:  # noqa: BLE001 - any tracing failure means "not lowerable"
-        # A numeric ``_step`` can fail to trace on symbolic state in many ways:
-        # branching (``TypeError`` on a Relational), NumPy ufuncs that don't
-        # dispatch (``AttributeError``), shape/index errors (``ValueError`` /
-        # ``IndexError``), etc.  Whatever the cause, it means this map cannot
-        # lower to a straight-line tape — surface one clear error type.
+        # A numeric ``_step`` can still fail to trace on symbolic state: a Python
+        # ``if`` on the state (``TypeError`` on a Relational's truth value — use
+        # ``np.where`` for a branchless step instead), a NumPy routine the
+        # symbolic shim does not cover, shape/index errors, etc.  Whatever the
+        # cause, it means this map cannot lower to a straight-line tape — surface
+        # one clear error type.
         raise TapeCompileError(
             f"{type(system).__name__}: _step cannot be traced symbolically "
-            f"({type(err).__name__}: {err}). Maps that branch on the state "
-            f"(piecewise/discontinuous) or use NumPy ufuncs on the state vector "
-            f"cannot lower to a straight-line tape."
+            f"({type(err).__name__}: {err}). Maps that branch on the state with a "
+            f"Python ``if`` (rewrite the branch with ``np.where``) or call a NumPy "
+            f"routine the tracer does not model cannot lower to a straight-line tape."
         ) from err
 
     if len(exprs) != dim:
@@ -1005,10 +1272,30 @@ def run_tape(tape: Tape, u: Any, p: Any = (), t: float = 0.0) -> np.ndarray:
                 r = -regs[ai]
             elif op == OP_RECIP:
                 r = 1.0 / regs[ai]
+            elif op in _BINARY_FUNC:
+                r = _BINARY_FUNC[op](regs[ai], regs[int(b[i])])
             else:
                 r = _UNARY_FUNC[op](regs[ai])
             regs[i] = r
     return regs
+
+
+def _fmin(x: np.float64, y: np.float64) -> np.float64:
+    """``f64::min`` semantics: a NaN operand returns the other; else the smaller."""
+    if x != x:
+        return y
+    if y != y:
+        return x
+    return x if x < y else y
+
+
+def _fmax(x: np.float64, y: np.float64) -> np.float64:
+    """``f64::max`` semantics: a NaN operand returns the other; else the larger."""
+    if x != x:
+        return y
+    if y != y:
+        return x
+    return x if x > y else y
 
 
 # Unary opcode → NumPy implementation (sign matches the a.e. convention:
@@ -1031,6 +1318,33 @@ _UNARY_FUNC: dict[int, Any] = {
     44: np.arcsinh,
     45: np.arccosh,
     46: np.arctanh,
+    OP_FLOOR: np.floor,
+    OP_CEIL: np.ceil,
+}
+
+# Binary opcode → implementation.  Comparisons yield 1.0 / 0.0; Min/Max follow
+# ``f64::min``/``max`` (NaN returns the other operand); Mod is the floored
+# modulo and Rem the truncated remainder (C ``fmod``) — matching the Rust
+# evaluators' IEEE-754 *values* op-for-op.
+#
+# Caveat (sub-ULP): on the measure-zero edges these can disagree with the Rust
+# arms in the SIGN of a zero or NaN result — ``min``/``max`` of a ``±0.0`` tie
+# and ``mod``/``rem`` by a zero divisor (Python yields a ``-NaN``, Rust a
+# ``+NaN``).  The values are equal; only the sign bit differs, and no built-in
+# map reaches these inputs (``%`` lowers via ``floor``, not ``OP_MOD``).  True
+# bit-for-bit agreement across the FFI boundary is asserted by the I-XVAL gate
+# against the compiled engine, not promised by this pure-Python oracle.
+_BINARY_FUNC: dict[int, Any] = {
+    OP_LT: lambda x, y: 1.0 if x < y else 0.0,
+    OP_LE: lambda x, y: 1.0 if x <= y else 0.0,
+    OP_GT: lambda x, y: 1.0 if x > y else 0.0,
+    OP_GE: lambda x, y: 1.0 if x >= y else 0.0,
+    OP_EQ: lambda x, y: 1.0 if x == y else 0.0,
+    OP_NE: lambda x, y: 1.0 if x != y else 0.0,
+    OP_MIN: _fmin,
+    OP_MAX: _fmax,
+    OP_MOD: lambda x, y: x - y * np.floor(x / y),
+    OP_REM: np.fmod,  # C fmod (truncated); NaN on a zero divisor under errstate
 }
 
 

@@ -261,8 +261,181 @@ fn abs_and_sign() {
     );
 }
 
-/// Belt-and-braces: confirm the four tests above collectively touch all 29
-/// opcodes (a single tape that uses each exactly once still evaluates).
+#[test]
+fn nonsmooth_ops() {
+    // A NaN built once for the "NaN compares false / returns the other" checks.
+    let nan = |b: &mut TapeBuilder| {
+        let z = b.constant(0.0);
+        b.div(z, z)
+    };
+
+    // Comparisons yield 1.0 (true) / 0.0 (false). u0 = 0.3, u2 = 2.0.
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(0), b.state(2));
+            b.lt(x, y)
+        }),
+        1.0,
+    ); // 0.3 < 2.0
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(2), b.state(0));
+            b.lt(x, y)
+        }),
+        0.0,
+    ); // 2.0 < 0.3
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(0), b.state(0));
+            b.le(x, y)
+        }),
+        1.0,
+    ); // 0.3 <= 0.3
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(2), b.state(0));
+            b.gt(x, y)
+        }),
+        1.0,
+    ); // 2.0 > 0.3
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(0), b.state(2));
+            b.ge(x, y)
+        }),
+        0.0,
+    ); // 0.3 >= 2.0
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(0), b.state(0));
+            b.eq(x, y)
+        }),
+        1.0,
+    ); // 0.3 == 0.3
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(0), b.state(2));
+            b.eq(x, y)
+        }),
+        0.0,
+    ); // 0.3 == 2.0
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(0), b.state(2));
+            b.ne(x, y)
+        }),
+        1.0,
+    ); // 0.3 != 2.0
+       // A NaN operand compares false everywhere except `!=`.
+    close(
+        eval_one(|b| {
+            let (n, x) = (nan(b), b.state(0));
+            b.lt(n, x)
+        }),
+        0.0,
+    );
+    close(
+        eval_one(|b| {
+            let (n, x) = (nan(b), b.state(0));
+            b.ne(n, x)
+        }),
+        1.0,
+    );
+
+    // min / max — u0 = 0.3, u2 = 2.0.
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(0), b.state(2));
+            b.min(x, y)
+        }),
+        0.3,
+    );
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(0), b.state(2));
+            b.max(x, y)
+        }),
+        2.0,
+    );
+    // f64::min: a NaN operand returns the other.
+    close(
+        eval_one(|b| {
+            let (x, n) = (b.state(0), nan(b));
+            b.min(x, n)
+        }),
+        0.3,
+    );
+
+    // floor / ceil — u1 = 1.5; also a negative argument.
+    close(
+        eval_one(|b| {
+            let x = b.state(1);
+            b.floor(x)
+        }),
+        1.0,
+    );
+    close(
+        eval_one(|b| {
+            let x = b.state(1);
+            let nx = b.neg(x);
+            b.floor(nx)
+        }),
+        -2.0,
+    );
+    close(
+        eval_one(|b| {
+            let x = b.state(1);
+            b.ceil(x)
+        }),
+        2.0,
+    );
+    close(
+        eval_one(|b| {
+            let x = b.state(1);
+            let nx = b.neg(x);
+            b.ceil(nx)
+        }),
+        -1.0,
+    );
+
+    // Floored modulo (sign of divisor) vs truncated remainder (sign of dividend),
+    // shown by a negative dividend: mod(-1.5, 2) = 0.5 but rem(-1.5, 2) = -1.5.
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(1), b.state(2));
+            b.modulo(x, y)
+        }),
+        1.5,
+    );
+    close(
+        eval_one(|b| {
+            let x = b.state(1);
+            let nx = b.neg(x);
+            let y = b.state(2);
+            b.modulo(nx, y)
+        }),
+        0.5,
+    );
+    close(
+        eval_one(|b| {
+            let (x, y) = (b.state(1), b.state(2));
+            b.rem(x, y)
+        }),
+        1.5,
+    );
+    close(
+        eval_one(|b| {
+            let x = b.state(1);
+            let nx = b.neg(x);
+            let y = b.state(2);
+            b.rem(nx, y)
+        }),
+        -1.5,
+    );
+}
+
+/// Belt-and-braces: confirm the tests above collectively touch all 41 opcodes
+/// (a single tape that uses each exactly once still evaluates).
 #[test]
 fn every_opcode_is_reachable_in_one_tape() {
     let mut b = TapeBuilder::new();
@@ -299,6 +472,19 @@ fn every_opcode_is_reachable_in_one_tape() {
         b.asinh(u0),
         b.acosh(u1),
         b.atanh(u0),
+        // non-smooth / piecewise block (E-OPS)
+        b.lt(u0, u2),
+        b.le(u0, u2),
+        b.gt(u0, u2),
+        b.ge(u0, u2),
+        b.eq(u0, u2),
+        b.ne(u0, u2),
+        b.min(u0, u2),
+        b.max(u0, u2),
+        b.floor(u1),
+        b.ceil(u1),
+        b.modulo(u1, u2),
+        b.rem(u1, u2),
     ];
     // also surface the leaves so Const/State/Param/Time are outputs too
     outs.extend([c, u0, p0, t]);

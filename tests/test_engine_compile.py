@@ -54,6 +54,19 @@ def test_opcode_wire_values_match_frozen_ir() -> None:
     assert (compile_ir.OP_NEG, compile_ir.OP_RECIP) == (20, 21)
     assert compile_ir._FUNC_OPS["sin"] == 30 and compile_ir._FUNC_OPS["atanh"] == 46
     assert compile_ir._FUNC_OPS["Abs"] == 36 and compile_ir._FUNC_OPS["sign"] == 37
+    # Non-smooth / piecewise block (stream E-OPS) — reserved wire range 50-69.
+    assert (
+        compile_ir.OP_LT,
+        compile_ir.OP_LE,
+        compile_ir.OP_GT,
+        compile_ir.OP_GE,
+        compile_ir.OP_EQ,
+        compile_ir.OP_NE,
+    ) == (50, 51, 52, 53, 54, 55)
+    assert (compile_ir.OP_MIN, compile_ir.OP_MAX) == (56, 57)
+    assert (compile_ir.OP_FLOOR, compile_ir.OP_CEIL) == (58, 59)
+    assert (compile_ir.OP_MOD, compile_ir.OP_REM) == (60, 61)
+    assert compile_ir._FUNC_OPS["floor"] == 58 and compile_ir._FUNC_OPS["ceiling"] == 59
 
 
 # ---------------------------------------------------------------------------
@@ -357,23 +370,56 @@ def test_map_lowers_and_matches_step(map_entry, rng) -> None:
         assert np.allclose(J, np.asarray(jac(u, *params), dtype=float), rtol=1e-7, atol=1e-9)
 
 
-def test_branching_map_raises_tape_compile_error() -> None:
-    """A map that branches on its state (Baker) cannot trace → clear error."""
-    baker = ts.Baker()
+def test_baker_branchless_step_lowers() -> None:
+    """Baker's piecewise step lowers since E-OPS (branch rewritten as ``np.where``).
+
+    Its modular reductions lower via ``floor`` and the branch via a ``Piecewise``
+    comparison-blend, so the formerly-unrepresentable map is now a straight-line
+    tape — with a Jacobian that survives the floor/Piecewise derivative.
+    """
+    tape = lower_map(ts.Baker(), with_jacobian=True)
+    assert tape.dim == 2
+    assert tape.has_jacobian
+
+
+def test_python_branch_on_state_raises_tape_compile_error() -> None:
+    """A *Python* ``if`` on the state still cannot trace → a clear error.
+
+    E-OPS lowers branchless selection (``np.where`` → ``Piecewise``), but a
+    data-dependent Python branch is fundamentally untraceable: evaluating it
+    forces a Boolean truth value of a symbolic Relational.
+    """
+    from tsdynamics.families import DiscreteMap
+    from tsdynamics.utils import staticjit
+
+    class _PyBranchMap(DiscreteMap):
+        params = {"a": 0.5}
+        dim = 1
+
+        @staticjit
+        def _step(X, a):
+            x = X
+            if x < a:  # Python branch on the state — unrepresentable
+                return a * x
+            return a * (1.0 - x)
+
+        @staticjit
+        def _jacobian(X, a):
+            return [a]
+
     with pytest.raises(TapeCompileError, match="trace"):
-        lower_map(baker)
+        lower_map(_PyBranchMap())
 
 
-def test_at_least_some_maps_lower() -> None:
-    """A meaningful fraction of the map catalogue lowers (the traceable ones)."""
-    lowered = 0
+def test_whole_map_catalogue_lowers() -> None:
+    """Every built-in map lowers to a straight-line tape (the E-OPS acceptance)."""
+    failed = []
     for e in registry.all_systems(family="map"):
         try:
             lower_map(e.cls())
-            lowered += 1
         except TapeCompileError:
-            pass
-    assert lowered >= 8, f"expected several maps to lower, only {lowered} did"
+            failed.append(e.name)
+    assert not failed, f"maps that no longer lower: {failed}"
 
 
 # ---------------------------------------------------------------------------

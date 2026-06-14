@@ -217,6 +217,71 @@ impl TapeBuilder {
         self.unary(Op::Atanh, x)
     }
 
+    // ---- non-smooth / piecewise block (stream E-OPS) ----
+
+    /// Apply any binary opcode (the arithmetic binaries, the comparisons,
+    /// `Min`/`Max`, `Mod`/`Rem`) to `x` and `y`.
+    ///
+    /// Panics if `op` is not a binary op (a programming error — use the unary,
+    /// leaf or `powi` constructors for those).
+    pub fn binary(&mut self, op: Op, x: Reg, y: Reg) -> Reg {
+        assert!(
+            matches!(op.kind(), crate::op::OpKind::Binary),
+            "TapeBuilder::binary called with non-binary op {:?}",
+            op
+        );
+        self.push(op, x.as_i32(), y.as_i32(), 0.0)
+    }
+
+    /// `(x < y) as f64` (1.0 / 0.0).
+    pub fn lt(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Lt, x, y)
+    }
+    /// `(x <= y) as f64`.
+    pub fn le(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Le, x, y)
+    }
+    /// `(x > y) as f64`.
+    pub fn gt(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Gt, x, y)
+    }
+    /// `(x >= y) as f64`.
+    pub fn ge(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Ge, x, y)
+    }
+    /// `(x == y) as f64`.
+    pub fn eq(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Eq, x, y)
+    }
+    /// `(x != y) as f64`.
+    pub fn ne(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Ne, x, y)
+    }
+    /// `x.min(y)` (`f64::min`).
+    pub fn min(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Min, x, y)
+    }
+    /// `x.max(y)` (`f64::max`).
+    pub fn max(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Max, x, y)
+    }
+    /// `x.floor()`.
+    pub fn floor(&mut self, x: Reg) -> Reg {
+        self.unary(Op::Floor, x)
+    }
+    /// `x.ceil()`.
+    pub fn ceil(&mut self, x: Reg) -> Reg {
+        self.unary(Op::Ceil, x)
+    }
+    /// Floored modulo `x - y * (x / y).floor()`.
+    pub fn modulo(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Mod, x, y)
+    }
+    /// Truncated remainder `x % y` (C `fmod`).
+    pub fn rem(&mut self, x: Reg, y: Reg) -> Reg {
+        self.binary(Op::Rem, x, y)
+    }
+
     /// Finish into a validated [`Tape`].
     ///
     /// `outputs` are the registers holding each derivative component;

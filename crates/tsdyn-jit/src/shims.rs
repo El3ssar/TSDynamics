@@ -52,3 +52,43 @@ pub(crate) extern "C" fn powi(base: f64, exp: i32) -> f64 {
 pub(crate) extern "C" fn sign(x: f64) -> f64 {
     x.signum() * ((x != 0.0) as i32 as f64)
 }
+
+// ---- non-smooth / piecewise block (stream E-OPS) ----
+//
+// Each shim is the *exact* expression the interpreter and the IR `reference`
+// evaluator use for the same opcode, so the JIT stays bit-for-bit identical
+// (including NaN/±∞).  Comparisons go through a shim too (rather than native
+// Cranelift `fcmp`) purely so every E-OPS op shares this one provably-identical
+// definition.
+
+/// `x.floor()` (`Op::Floor`).
+pub(crate) extern "C" fn floor(x: f64) -> f64 {
+    x.floor()
+}
+
+/// `x.ceil()` (`Op::Ceil`).
+pub(crate) extern "C" fn ceil(x: f64) -> f64 {
+    x.ceil()
+}
+
+/// Define an `extern "C"` binary shim `name(a, b) = $body`.
+macro_rules! binary_shim {
+    ($name:ident, |$a:ident, $b:ident| $body:expr) => {
+        pub(crate) extern "C" fn $name($a: f64, $b: f64) -> f64 {
+            $body
+        }
+    };
+}
+
+binary_shim!(lt, |a, b| (a < b) as i32 as f64);
+binary_shim!(le, |a, b| (a <= b) as i32 as f64);
+binary_shim!(gt, |a, b| (a > b) as i32 as f64);
+binary_shim!(ge, |a, b| (a >= b) as i32 as f64);
+binary_shim!(eq, |a, b| (a == b) as i32 as f64);
+binary_shim!(ne, |a, b| (a != b) as i32 as f64);
+binary_shim!(min, |a, b| a.min(b));
+binary_shim!(max, |a, b| a.max(b));
+// `modulo` = floored modulo (Python `%` / `np.mod`), `Op::Mod`.
+binary_shim!(modulo, |a, b| a - b * (a / b).floor());
+// `rem` = truncated remainder (Rust `%` / C `fmod`), `Op::Rem`.
+binary_shim!(rem, |a, b| a % b);
