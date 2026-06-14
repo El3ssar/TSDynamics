@@ -173,6 +173,52 @@ def test_reference_map_iterate_matches_step_exactly() -> None:
     assert traj.y.shape == (5, 2)
 
 
+def test_reference_map_diverges_loudly() -> None:
+    """A diverging map raises rather than returning silent inf/NaN rows.
+
+    The reference map iterator enforces the "diverge loudly" contract: a
+    non-finite iterate is reported (naming the 0-based iterate index), never
+    handed back as plausible data — matching the ODE finiteness guard in
+    ``_run_continuous`` and the contract the compiled map loop will enforce
+    (stream E-MAP).
+    """
+    import re
+
+    from tsdynamics.engine.compile import eval_tape
+    from tsdynamics.engine.problem import map_problem
+
+    # Independently locate the 0-based iterate where the lowered tape first goes
+    # non-finite, so the index assertion is pinned to the actual blow-up rather
+    # than to the Logistic default parameter (and would catch an off-by-one in
+    # the reported index).
+    prob = map_problem(ts.Logistic(ic=[2.0]))
+    x = np.asarray(prob.ic, dtype=float).ravel()
+    expected_idx = None
+    for i in range(60):
+        x = eval_tape(prob.tape, x)
+        if not np.isfinite(x).all():
+            expected_idx = i
+            break
+    assert expected_idx is not None, "Logistic ic=[2.0] should diverge within 60 steps"
+
+    # Logistic with an initial condition outside [0, 1] escapes to -inf.
+    with pytest.raises(RuntimeError, match=r"diverged.*iteration \d+") as exc:
+        run.integrate(ts.Logistic(), final_time=60, ic=[2.0], backend="reference")
+    msg = str(exc.value)
+    assert "Logistic" in msg
+    reported = int(re.search(r"iteration (\d+)", msg).group(1))
+    assert reported == expected_idx, f"reported iteration {reported}, expected {expected_idx}"
+
+
+def test_reference_map_finite_orbit_iterates_without_raising() -> None:
+    """A bounded orbit returns a full finite trajectory — the per-iterate guard
+    must not fire on a healthy run (a ``not``-inversion or over-eager check would
+    break every normal map iteration)."""
+    traj = run.integrate(ts.Logistic(), final_time=60, ic=[0.2], backend="reference")
+    assert traj.y.shape == (60, 1)
+    assert np.all(np.isfinite(traj.y))
+
+
 def test_map_time_axis_starts_at_n0() -> None:
     """A warm-restart map carries its starting iteration index on the time axis."""
     from tsdynamics.engine.problem import map_problem

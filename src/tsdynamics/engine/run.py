@@ -353,6 +353,15 @@ def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray,
         y = np.asarray(
             eng.iterate_map(*problem.tape.to_arrays(), problem.ic, int(steps)), dtype=np.float64
         )
+        # Backstop mirroring _run_continuous: the compiled map loop (stream E-MAP)
+        # is expected to raise on a non-finite iterate, but guard here too so the
+        # engine map path can never hand back a silently poisoned trajectory,
+        # whatever way the binding surfaces divergence.
+        if not np.all(np.isfinite(y)):
+            raise RuntimeError(
+                f"{_name(problem)}: map diverged or produced a non-finite state before "
+                f"reaching {steps} iterations."
+            )
     return np.arange(problem.n0, problem.n0 + steps), y
 
 
@@ -523,12 +532,27 @@ def _reference_ode(
 
 
 def _reference_map(problem: MapProblem, steps: int) -> np.ndarray:
-    """Iterate the lowered map tape in pure Python for ``steps`` steps."""
+    """Iterate the lowered map tape in pure Python for ``steps`` steps.
+
+    Diverges loudly: a non-finite iterate raises (naming the 0-based iterate
+    index) rather than returning silent inf/NaN rows.  This matches the
+    finiteness guard the ODE path already applies in :func:`_run_continuous`, and
+    the diverge-loudly contract the compiled map loop will enforce (stream
+    E-MAP, whose agreed shape is a ``NonFinite { step }`` error keyed by the same
+    0-based iterate index).  So the pure-Python reference oracle and the engine
+    agree on divergence handling — the cross-validation harness compares the two
+    directly.
+    """
     tape = problem.tape
     out = np.empty((steps, problem.dim), dtype=np.float64)
     x = np.asarray(problem.ic, dtype=np.float64).ravel()
     for i in range(steps):
         x = eval_tape(tape, x)
+        if not np.all(np.isfinite(x)):
+            raise RuntimeError(
+                f"{_name(problem)}: map diverged — non-finite state at iteration {i} "
+                f"(0-based, of {steps} requested)."
+            )
         out[i] = x
     return out
 
