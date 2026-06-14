@@ -306,6 +306,8 @@ class DiscreteMap(SystemBase):
         steps: int = 1000,
         ic: Any | None = None,
         max_retries: int = 10,
+        *,
+        backend: str = "numba",
     ) -> Trajectory:
         """
         Iterate the map for ``steps`` steps.
@@ -321,13 +323,35 @@ class DiscreteMap(SystemBase):
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
         max_retries : int
-            Retry with a new random IC if divergence is detected.
+            Retry with a new random IC if divergence is detected (Numba path
+            only — the engine path raises on divergence instead of retrying).
+        backend : str, default "numba"
+            Where the iteration runs.
+
+            - ``"numba"`` (default) — the in-process Numba/Python loop described
+              above.
+            - ``"reference"`` — the lowered next-state tape, iterated in pure
+              Python (the dependency-light oracle the engine is validated
+              against).
+            - ``"interp"`` / ``"jit"`` / ``"auto"`` — the Rust engine's native
+              map loop (interpreter or Cranelift JIT).  Requires the compiled
+              extension (:mod:`tsdynamics._rust`, stream E7); until it is built
+              these raise :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
+
+            Any non-``"numba"`` backend lowers ``_step`` to the engine IR, so it
+            requires a map whose step traces symbolically (see
+            :func:`tsdynamics.engine.compile.lower_map`); piecewise or
+            ``numpy``-ufunc steps raise
+            :class:`~tsdynamics.engine.compile.TapeCompileError`.
 
         Returns
         -------
         Trajectory
             ``t`` is ``arange(steps)`` (integer step indices, not float times).
         """
+        if backend != "numba":
+            return self._iterate_engine(steps=steps, ic=ic, backend=backend)
+
         ic_arr = self.resolve_ic(ic)
         iterate_fn = self._get_iterate_fn()
 
@@ -355,6 +379,34 @@ class DiscreteMap(SystemBase):
                 print(f"Warning: {exc}. Retrying with a new random IC.")
                 ic_arr = np.random.rand(self.dim)
                 object.__setattr__(self, "ic", ic_arr.copy())
+
+    def _iterate_engine(self, *, steps: int, ic: Any | None, backend: str) -> Trajectory:
+        """Iterate on the Rust engine (or its pure-Python reference evaluator).
+
+        Lowers ``_step`` to the engine IR and runs the native map loop (stream
+        E-MAP), bypassing the Numba path entirely.  This is the seam that makes a
+        map iterate on the same engine as every other family; the eventual
+        default once the compiled extension ships (the v2 Numba loop is retired
+        with the rest of the legacy backends at migration time).
+
+        Divergence is reported (it is not silently returned and there is no
+        random-IC retry — the engine's "diverge loudly" contract); reach for the
+        Numba path if you want the retry behaviour.
+        """
+        from tsdynamics.engine import run as engine_run
+
+        traj = engine_run.integrate(self, final_time=steps, ic=ic, backend=backend)
+        # Enforce "diverge loudly" at the family boundary so every backend behaves
+        # alike: the Rust engine path raises on a non-finite iterate, but the
+        # pure-Python reference iterator returns the offending rows as-is — catch
+        # those here rather than handing back a quietly poisoned trajectory.
+        finite_rows = np.isfinite(traj.y).all(axis=1)
+        if not finite_rows.all():
+            bad = int(np.argmin(finite_rows))
+            raise RuntimeError(
+                f"{type(self).__name__}: map diverged at iteration {bad} (backend={backend!r})."
+            )
+        return traj
 
     def _iterate_python(self, ic: np.ndarray, steps: int) -> np.ndarray:
         """Pure-Python fallback (used when Numba is unavailable)."""
