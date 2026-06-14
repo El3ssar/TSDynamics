@@ -267,3 +267,41 @@ __all__ = [
     "register",
     "unregister",
 ]
+
+# ── Selection layer (stream C-SOLV) ────────────────────────────────────────────
+# Built on top of the F2 registry above: ``method=`` resolution + aliases, the
+# auto-stiffness detector/policy, and the ``with_jacobian`` auto-set hook the
+# family engine-dispatch seam (stream C-FAM) consumes.  Imported after the
+# registry is populated (``_scan()`` already imported ``select`` as a submodule;
+# this binds its public surface onto the package).
+from .select import (  # noqa: E402
+    DEFAULT_METHOD,
+    STIFF_METHOD,
+    Resolution,
+    available_for,
+    build_kwargs,
+    default_method,
+    is_implicit,
+    is_stiff,
+    needs_jacobian,
+    normalize,
+    recommend,
+    resolve,
+    select,
+)
+
+__all__ += [
+    "DEFAULT_METHOD",
+    "STIFF_METHOD",
+    "Resolution",
+    "available_for",
+    "build_kwargs",
+    "default_method",
+    "is_implicit",
+    "is_stiff",
+    "needs_jacobian",
+    "normalize",
+    "recommend",
+    "resolve",
+    "select",
+]
