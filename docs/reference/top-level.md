@@ -24,7 +24,7 @@ spec = ts.lyapunov_spectrum(ts.Henon())
 | [`ContinuousSystem`][tsdynamics.families.continuous.ContinuousSystem] | `tsdynamics.families.continuous` |
 | [`DelaySystem`][tsdynamics.families.delay.DelaySystem] | `tsdynamics.families.delay` |
 | [`DiscreteMap`][tsdynamics.families.discrete.DiscreteMap] | `tsdynamics.families.discrete` |
-| [`Trajectory`][tsdynamics.families.base.Trajectory] | `tsdynamics.families.base` |
+| [`Trajectory`][tsdynamics.data.Trajectory] | `tsdynamics.data` |
 
 ## Derived-system wrappers
 

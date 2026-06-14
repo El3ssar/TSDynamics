@@ -234,7 +234,7 @@ def set_distance(
     - ``"minimum"`` — the smallest pairwise distance (do the sets touch?).
       KD-tree accelerated.
 
-    Accepts :class:`~tsdynamics.families.Trajectory` (uses ``.y``), arrays, or any
+    Accepts :class:`~tsdynamics.data.Trajectory` (uses ``.y``), arrays, or any
     array-like.
     """
     A = _as_points(a)

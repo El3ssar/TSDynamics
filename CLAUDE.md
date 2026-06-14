@@ -42,7 +42,7 @@ src/tsdynamics/
 ├── __init__.py               # __version__ (managed by python-semantic-release) + re-exports
 ├── registry.py               # 4 registries: systems (SystemEntry + all_systems/…) + solvers/analyses/transforms (generic Registry)
 ├── families/                 # base classes + the System protocol (was base/)
-│   ├── base.py               # SystemBase, ParamSet, Trajectory, MetaStore
+│   ├── base.py               # SystemBase, ParamSet, MetaStore (re-exports Trajectory from data)
 │   ├── protocol.py           # the System runtime Protocol
 │   ├── continuous.py         # ContinuousSystem (was ode_base.py; JiTCODE + jacobian autogen)
 │   ├── delay.py              # DelaySystem (was dde_base.py; JiTCDDE, forward-only)
@@ -63,7 +63,8 @@ src/tsdynamics/
 │   ├── ensemble.py           # EnsembleSystem
 │   └── projected.py          # ProjectedSystem
 ├── data/                     # state-space geometry + trajectory lingua franca (was sampling.py)
-│   └── sampling.py           # Box/Ball/Grid, sampler, grid_points, set_distance (C-DATA grows this)
+│   ├── trajectory.py         # Trajectory (canonical home; re-exported via families + top level)
+│   └── sampling.py           # Box/Ball/Grid, sampler, grid_points, set_distance
 ├── analysis/                 # quantifiers (A-* streams subpackage these later)
 │   ├── orbit_diagram.py      # orbit_diagram + OrbitDiagram
 │   ├── poincare.py           # poincare_section (system or trajectory input)
@@ -156,7 +157,12 @@ plus:
   `meta.history(key)` → all records. `meta == {}` still works.
 - `_provenance(**extra)` builds the dict attached to `Trajectory.meta`.
 
-### `Trajectory`
+### `Trajectory` (`data/trajectory.py`)
+
+Lives in `tsdynamics.data` — it is a *data* type the families produce, not a
+family itself. Re-exported from `families.base` / `tsdynamics.families` and the
+top level, so `from tsdynamics import Trajectory` and `from tsdynamics.data
+import Trajectory` are the same object.
 
 - Named components when the class declares `variables`: `traj["x"]`,
   `traj[["x","z"]]`, `traj.component("x")`.
