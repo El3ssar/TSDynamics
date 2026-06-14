@@ -1,0 +1,91 @@
+name: Engine bindings
+
+# Builds the `tsdynamics._rust` engine extension (stream E7, crates/tsdyn-core)
+# and runs its Rust unit tests + the end-to-end Python binding tests. This is the
+# job that actually *exercises* the compiled engine: the default Python matrix
+# (ci.yml) runs without it (so tests/test_rust_engine.py skips there), and the
+# pure-Rust workspace job (rust-workspace.yml) excludes this pyo3 cdylib (a
+# `cargo test --workspace` cannot link a pyo3 extension on a Python-free runner).
+#
+# The extension is built with `cargo` and dropped into the source tree
+# (`src/tsdynamics/_rust.abi3.so`) rather than `pip install`ed as a separate
+# wheel: installing a standalone `tsdynamics._rust` wheel beside the editable
+# `tsdynamics` package would split `tsdynamics.__path__` and hide the submodule.
+# The cross-platform wheel build is stream I-WHEEL's (it uses the maturin
+# pyproject this crate ships).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/tsdyn-core/**"
+      - "crates/tsdyn-ir/**"
+      - "crates/tsdyn-vm/**"
+      - "crates/tsdyn-solvers/**"
+      - "crates/tsdyn-engine/**"
+      - "src/tsdynamics/engine/**"
+      - "tests/test_rust_engine.py"
+      - ".github/workflows/engine-bindings.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: engine-bindings-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build _rust + binding tests
+    runs-on: ubuntu-latest
+    env:
+      MANIFEST: crates/tsdyn-core/Cargo.toml
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/tsdyn-core/target
+          key: cargo-tsdyn-core-${{ runner.os }}-${{ hashFiles('crates/tsdyn-core/Cargo.lock') }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync project + dev deps
+        run: uv sync --group dev
+
+      # pyo3's build script needs a Python interpreter at build time; cargo
+      # test/build (without the extension-module feature) also links libpython,
+      # which the uv-managed interpreter provides. Point pyo3 at the venv Python
+      # for every cargo step below.
+      - name: Locate the project interpreter
+        run: echo "PYO3_PYTHON=$(uv run python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+
+      - name: rustfmt
+        run: cargo fmt --manifest-path "$MANIFEST" --check
+
+      - name: clippy
+        run: cargo clippy --manifest-path "$MANIFEST" --all-targets --locked -- -D warnings
+
+      - name: Rust unit tests (the pure-Rust bridge)
+        run: cargo test --manifest-path "$MANIFEST" --locked
+
+      - name: Build the engine extension
+        run: cargo build --release --features extension-module --manifest-path "$MANIFEST" --locked
+
+      - name: Install the extension into the source tree
+        run: cp crates/tsdyn-core/target/release/lib_rust.so src/tsdynamics/_rust.abi3.so
+
+      - name: Run the Python binding tests
+        run: uv run pytest tests/test_rust_engine.py --no-cov -q
