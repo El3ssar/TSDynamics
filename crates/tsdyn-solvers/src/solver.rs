@@ -128,4 +128,31 @@ pub trait Solver: Send {
     /// accepted (the standard embedded-RK pattern).  On
     /// [`Failed`](StepOutcome::Failed) the run is aborted by the engine.
     fn step(&mut self, ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome;
+
+    /// Dense output: interpolate the state *within the most recently accepted
+    /// step*.
+    ///
+    /// A kernel that carries a native continuous extension — a dense-output
+    /// formula, advertised by [`Caps::dense`](crate::Caps::dense) — writes the
+    /// interpolated state `u(t0 + theta·h)` for `theta ∈ [0, 1]` into `out` and
+    /// returns `true`; `u0` is the state at the start of that step and `h` the
+    /// (positive) step size it just took. `out` has length
+    /// [`SolverState::dim`](SolverState::dim).
+    ///
+    /// The default returns `false` and writes nothing: the kernel has no native
+    /// interpolant. The engine then falls back to a cubic-Hermite continuous
+    /// extension built from the step endpoints and their derivatives — which
+    /// needs only the [`Evaluator`] — so every kernel gets O(h⁴) dense output
+    /// regardless, and existing kernels need no change.
+    ///
+    /// This is the additive event/dense-output capability of ROADMAP §13d: a new
+    /// **defaulted** method behind a [`Caps`](crate::Caps) flag, never a change
+    /// to [`step`](Solver::step). Calling it is only meaningful immediately after
+    /// `step` returned [`Accepted`](StepOutcome::Accepted) for a kernel whose
+    /// [`caps`](Solver::caps) report `dense == true`; the engine checks the flag
+    /// before calling, and treats a `false` return as "use the Hermite fallback".
+    fn interpolate(&self, u0: &[f64], h: f64, theta: f64, out: &mut [f64]) -> bool {
+        let _ = (u0, h, theta, out);
+        false
+    }
 }
