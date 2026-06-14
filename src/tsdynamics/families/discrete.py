@@ -99,6 +99,11 @@ class DiscreteMap(SystemBase):
     #: finite-difference Jacobian validation in the test suite cannot apply.
     _jacobian_fd_check: ClassVar[bool] = True
 
+    #: The default runtime backend (see :attr:`SystemBase._default_backend`).
+    #: ``"numba"`` — the v2 in-process iterate loop — until the M3 migration flips
+    #: it to the Rust engine's native map loop.
+    _default_backend: ClassVar[str] = "numba"
+
     # Protocol stepping state (instances shadow these class defaults).
     _state_now: np.ndarray | None = None
     _n_now: int = 0
@@ -307,7 +312,7 @@ class DiscreteMap(SystemBase):
         ic: Any | None = None,
         max_retries: int = 10,
         *,
-        backend: str = "numba",
+        backend: str | None = None,
     ) -> Trajectory:
         """
         Iterate the map for ``steps`` steps.
@@ -325,8 +330,9 @@ class DiscreteMap(SystemBase):
         max_retries : int
             Retry with a new random IC if divergence is detected (Numba path
             only — the engine path raises on divergence instead of retrying).
-        backend : str, default "numba"
-            Where the iteration runs.
+        backend : str, optional
+            Where the iteration runs.  Defaults to ``_default_backend``
+            (``"numba"``).
 
             - ``"numba"`` (default) — the in-process Numba/Python loop described
               above.
@@ -349,6 +355,8 @@ class DiscreteMap(SystemBase):
         Trajectory
             ``t`` is ``arange(steps)`` (integer step indices, not float times).
         """
+        backend = backend if backend is not None else self._default_backend
+
         if backend != "numba":
             return self._iterate_engine(steps=steps, ic=ic, backend=backend)
 
@@ -383,9 +391,11 @@ class DiscreteMap(SystemBase):
     def _iterate_engine(self, *, steps: int, ic: Any | None, backend: str) -> Trajectory:
         """Iterate on the Rust engine (or its pure-Python reference evaluator).
 
-        Lowers ``_step`` to the engine IR and runs the native map loop (stream
-        E-MAP), bypassing the Numba path entirely.  This is the seam that makes a
-        map iterate on the same engine as every other family; the eventual
+        Routes through the shared engine-dispatch seam
+        (:meth:`SystemBase._dispatch` → :func:`tsdynamics.engine.run.integrate`),
+        which lowers ``_step`` to the engine IR and runs the native map loop
+        (stream E-MAP), bypassing the Numba path entirely.  This is the seam that
+        makes a map iterate on the same engine as every other family; the eventual
         default once the compiled extension ships (the v2 Numba loop is retired
         with the rest of the legacy backends at migration time).
 
@@ -393,9 +403,7 @@ class DiscreteMap(SystemBase):
         random-IC retry — the engine's "diverge loudly" contract); reach for the
         Numba path if you want the retry behaviour.
         """
-        from tsdynamics.engine import run as engine_run
-
-        traj = engine_run.integrate(self, final_time=steps, ic=ic, backend=backend)
+        traj = self._dispatch(backend=backend, final_time=steps, ic=ic)
         # Enforce "diverge loudly" at the family boundary so every backend behaves
         # alike: the Rust engine path raises on a non-finite iterate, but the
         # pure-Python reference iterator returns the offending rows as-is — catch

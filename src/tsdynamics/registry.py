@@ -53,7 +53,7 @@ __all__ = [
     "transforms",
 ]
 
-Family = Literal["ode", "dde", "map", "other"]
+Family = Literal["ode", "dde", "map", "sde", "other"]
 
 #: Maps the *name* of the family base class to the family tag.  Matched
 #: against the MRO, nearest ancestor first, so a ``DelaySystem`` subclass is
@@ -62,6 +62,7 @@ Family = Literal["ode", "dde", "map", "other"]
 _FAMILY_BASES: dict[str, Family] = {
     "DiscreteMap": "map",
     "DelaySystem": "dde",
+    "StochasticSystem": "sde",
     "ContinuousSystem": "ode",
 }
 
@@ -103,12 +104,20 @@ def _family_of(cls: type) -> Family:
     return "other"
 
 
+#: The method names that mark a *concrete* system: an ODE/DDE ``_equations``,
+#: a map ``_step``, or an SDE ``_drift`` (the diagonal-Itô drift, mirroring how
+#: ``_equations`` marks the deterministic families).  A class that defines one
+#: of these outside the framework bases is registrable; an abstract intermediate
+#: base that only inherits them is not.
+_RHS_METHODS: frozenset[str] = frozenset({"_equations", "_step", "_drift"})
+
+
 def _has_concrete_rhs(cls: type) -> bool:
-    """Check that ``_equations``/``_step`` is defined outside the framework bases."""
+    """Check that a concrete right-hand side is defined outside the framework bases."""
     for ancestor in cls.__mro__:
         if ancestor.__module__.startswith(_BASE_PREFIX):
             return False  # reached the framework bases without finding a rhs
-        if "_equations" in ancestor.__dict__ or "_step" in ancestor.__dict__:
+        if any(name in ancestor.__dict__ for name in _RHS_METHODS):
             return True
     return False
 
@@ -163,7 +172,7 @@ def all_systems(
 
     Parameters
     ----------
-    family : {"ode", "dde", "map", "other"}, optional
+    family : {"ode", "dde", "map", "sde", "other"}, optional
         Keep only one family.
     category : str, optional
         Keep only one category (module stem, e.g. ``"chaotic_attractors"``).

@@ -268,6 +268,16 @@ class SystemBase:
     #:     }
     known_lyapunov: ClassVar[dict | None] = None
 
+    #: The runtime backend this family's engine-dispatch seam uses when a caller
+    #: does not name one.  Each family sets it to its current default integrator
+    #: — the **v2** backend today (``"jitcode"`` / ``"jitcdde"`` / ``"numba"`` /
+    #: ``"reference"``), so behaviour is unchanged.  It is the single knob the
+    #: migration (M3 / I-XVAL) flips to a Rust engine backend once cross-validation
+    #: gates it; until then every family keeps integrating on its v2 path by
+    #: default.  Read by the family ``integrate`` / ``iterate`` methods and by
+    #: :meth:`_dispatch`, so "the default backend" lives in exactly one place.
+    _default_backend: ClassVar[str] = "reference"
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # The framework bases (ContinuousSystem, DelaySystem, DiscreteMap, ...)
@@ -396,6 +406,30 @@ class SystemBase:
             arr = np.random.rand(self.dim)
         object.__setattr__(self, "ic", arr.copy())
         return arr
+
+    # --- engine-dispatch seam ---
+
+    def _dispatch(self, *, backend: str, **kwargs: Any) -> Trajectory:
+        """Route this system's engine-path run through the one engine seam.
+
+        Every family's ``interp`` / ``jit`` / ``reference`` integration branch
+        funnels here, so the FFI marshalling, the divergence guards and the
+        engine-path provenance live once in
+        :func:`tsdynamics.engine.run.integrate` rather than being re-implemented
+        per family.  Family-specific run inputs pass straight through as keyword
+        arguments — ``history`` for a delay system, ``ic`` / ``method`` /
+        ``rtol`` / ``atol`` / ``t0`` for the continuous families, ``final_time``
+        (the step count) for a map.
+
+        Diagonal-Itô SDEs are the one family that does **not** route here: the
+        generic seam cannot carry their noise seed and step-as-noise-scale, so
+        :class:`~tsdynamics.families.stochastic.StochasticSystem` drives the
+        dedicated ``run.sde_integrate_dense`` / ``run.sde_ensemble_final`` seam
+        instead (and ``run.integrate`` refuses an SDE problem).
+        """
+        from tsdynamics.engine import run
+
+        return run.integrate(self, backend=backend, **kwargs)
 
     # --- misc ---
 

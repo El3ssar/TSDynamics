@@ -11,6 +11,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from tsdynamics.utils.grids import make_output_grid
+
 from .base import SystemBase, Trajectory
 
 # Platform-specific compiled extension suffix (e.g. ".cpython-312-x86_64-linux-gnu.so").
@@ -41,14 +43,6 @@ _INTEGRATOR_MAP: dict[str, str] = {
     "vode": "vode",
 }
 _EXPLICIT_METHODS = frozenset({"dopri5", "dop853"})
-
-
-def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
-    """Build a uniform output grid from t0 to tf (inclusive)."""
-    t_arr = np.arange(t0, tf, dt)
-    if t_arr.size == 0 or t_arr[-1] < tf - 1e-12:
-        t_arr = np.append(t_arr, tf)
-    return t_arr
 
 
 def _resolve_derivative_nodes(expr):
@@ -179,6 +173,11 @@ class ContinuousSystem(SystemBase, ABC):
     """
 
     _default_method: ClassVar[str] = "RK45"
+
+    #: The default runtime backend (see :attr:`SystemBase._default_backend`).
+    #: ``"jitcode"`` — the v2 compile-to-C path — until the M3 migration flips it
+    #: to a Rust engine backend.
+    _default_backend: ClassVar[str] = "jitcode"
 
     #: Whether JiTCODE should run SymEngine's ``simplify(ratio=1)`` on each RHS
     #: expression before emitting C.  ``None`` keeps JiTCODE's own default
@@ -729,7 +728,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
-        backend: str = "jitcode",
+        backend: str | None = None,
         **integrator_kwargs,
     ) -> Trajectory:
         """
@@ -753,14 +752,26 @@ class ContinuousSystem(SystemBase, ABC):
             ``tsit45`` / ``bdf`` / ``tr_bdf2`` / ``esdirk34``.
         rtol, atol : float
             Solver tolerances (default 1e-6 / 1e-9).
-        backend : {"jitcode", "diffsol", "auto"}
-            ``"jitcode"`` (default) compiles the RHS to C; ``"diffsol"`` uses
-            the Rust solver suite via LLVM JIT — no C compiler, prebuilt
-            wheels (``pip install tsdynamics[diffsol]``), ~10× faster on small
-            chaotic systems, and validated against JiTCODE across the whole
-            ODE catalogue (see :mod:`tsdynamics.engine.diffsol`).  ``"auto"``
-            picks ``"diffsol"`` when it is installed, else ``"jitcode"`` —
-            the recommended zero-compiler fast path.
+        backend : {"jitcode", "diffsol", "auto", "interp", "jit", "reference"}, optional
+            Where the ODE is integrated.  Defaults to ``_default_backend``
+            (``"jitcode"``).
+
+            - ``"jitcode"`` — the v2 path: compile the RHS to C.
+            - ``"diffsol"`` — the Rust solver suite via LLVM JIT — no C compiler,
+              prebuilt wheels (``pip install tsdynamics[diffsol]``), ~10× faster on
+              small chaotic systems, validated against JiTCODE across the whole
+              ODE catalogue (see :mod:`tsdynamics.engine.diffsol`).
+            - ``"auto"`` — ``"diffsol"`` when it is installed, else ``"jitcode"``.
+            - ``"interp"`` / ``"jit"`` — the **Rust sole engine** (the SSA-tape
+              interpreter or the Cranelift JIT) via the shared engine seam
+              (:func:`tsdynamics.engine.run.integrate`).  Requires the compiled
+              extension (:mod:`tsdynamics._rust`); until it is built these raise
+              :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
+            - ``"reference"`` — the dependency-light pure-Python oracle (the
+              lowered tape integrated with SciPy); the engine path's validation
+              backend, usable without the compiled wheel.
+
+            ``**integrator_kwargs`` apply to the ``"jitcode"`` path only.
         **integrator_kwargs
             Forwarded to ``jitcode.set_integrator`` (e.g. ``max_step``).
 
@@ -769,6 +780,23 @@ class ContinuousSystem(SystemBase, ABC):
         Trajectory
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
+        backend = backend if backend is not None else self._default_backend
+
+        if backend in ("interp", "jit", "reference"):
+            # The Rust sole engine (or its pure-Python reference) via the one
+            # shared engine-dispatch seam — the same path every family routes its
+            # engine run through.
+            return self._dispatch(
+                backend=backend,
+                final_time=final_time,
+                dt=dt,
+                t0=t0,
+                ic=ic,
+                method=method or self._default_method,
+                rtol=rtol,
+                atol=atol,
+            )
+
         if backend == "auto":
             # Prefer the zero-compiler Rust path when its optional dependency
             # is installed; otherwise fall back to the always-available
@@ -801,12 +829,15 @@ class ContinuousSystem(SystemBase, ABC):
                 ),
             )
         if backend != "jitcode":
-            raise ValueError(f"Unknown backend {backend!r}; use 'jitcode', 'diffsol', or 'auto'.")
+            raise ValueError(
+                f"Unknown backend {backend!r}; use 'jitcode', 'diffsol', 'auto', "
+                f"'interp', 'jit', or 'reference'."
+            )
 
         method = method or self._default_method
         integ_name = _INTEGRATOR_MAP.get(method, method)
         ic_arr = self.resolve_ic(ic)
-        t_eval = _make_t_eval(t0, final_time, dt)
+        t_eval = make_output_grid(t0, final_time, dt)
 
         ode = self._ensure_compiled(for_lyap=False)
         ode.set_integrator(integ_name, rtol=rtol, atol=atol, **integrator_kwargs)

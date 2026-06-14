@@ -13,6 +13,11 @@ hand-picked subsets and inputs that cannot be derived from the registry:
 - ``DDE_HISTORIES`` — non-equilibrium history callables per DDE system
   (a constant history at a fixed point makes every exponent ≈ 0).  A guard
   test asserts completeness, so adding a DDE without a history fails loudly.
+- ``SDE_SAMPLES`` — per-SDE-system integration inputs (a reproducible ``seed``
+  and an in-basin ``ic``) for the registry-driven stochastic sweep, the
+  diagonal-Itô analogue of ``DDE_HISTORIES``.  Empty today (no built-in SDE
+  systems yet); a guard test keeps it in lock-step with the ``sde`` family so a
+  future built-in SDE without an entry fails loudly.
 """
 
 from __future__ import annotations
@@ -107,3 +112,12 @@ DDE_HISTORIES: dict[str, object] = {
     "ScrollDelay": _scroll_history,
     "PiecewiseCircuit": _piece_history,
 }
+
+
+# --- SDE samples (per-system seed + in-basin ic for the stochastic sweep) ----
+# The diagonal-Itô analogue of DDE_HISTORIES.  Empty today: there are no
+# built-in SDE systems yet (the registry now detects the ``sde`` family, but the
+# catalogue under ``systems/`` has none).  When a built-in StochasticSystem
+# lands, add ``"<Name>": {"seed": <int>, "ic": [...]}`` here; a guard test in
+# ``test_registry.py`` asserts this stays complete against the ``sde`` family.
+SDE_SAMPLES: dict[str, dict] = {}

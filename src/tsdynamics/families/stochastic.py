@@ -48,6 +48,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from tsdynamics.utils.grids import make_output_grid
+
 from .base import SystemBase, Trajectory
 
 __all__ = ["StochasticSystem"]
@@ -257,6 +259,14 @@ class StochasticSystem(SystemBase, ABC):
     _default_method: ClassVar[str] = "euler_maruyama"
     _default_step_dt: ClassVar[float] = 0.01
 
+    #: The default runtime backend (see :attr:`SystemBase._default_backend`).
+    #: ``"reference"`` — the pure-Python diagonal-Itô integrator — stays the
+    #: default until the M3 migration flips it to the Rust SDE engine.  Unlike the
+    #: other families the SDE engine path does not go through ``run.integrate``
+    #: (which cannot carry the noise seed/step); it uses the dedicated
+    #: ``run.sde_integrate_dense`` / ``run.sde_ensemble_final`` seam.
+    _default_backend: ClassVar[str] = "reference"
+
     #: Parameters whose values affect the symbolic *structure* of the dynamics
     #: (e.g. integer loop bounds); baked in at lowering time, like the ODE family.
     _structural_params: ClassVar[frozenset[str]] = frozenset()
@@ -425,7 +435,7 @@ class StochasticSystem(SystemBase, ABC):
         ic: Any | None = None,
         method: str | None = None,
         seed: int | None = None,
-        backend: str = "reference",
+        backend: str | None = None,
     ) -> Trajectory:
         """
         Integrate the SDE and return a :class:`~tsdynamics.families.Trajectory`.
@@ -448,11 +458,12 @@ class StochasticSystem(SystemBase, ABC):
         seed : int, optional
             Seed for the noise realisation (random if omitted). The resolved seed
             is recorded in ``traj.meta["seed"]`` so a run can be reproduced.
-        backend : str, default "reference"
-            ``"reference"`` (the pure-Python reference integrator, the default)
-            or ``"interp"`` / ``"jit"`` to dispatch the two-tape SDE call to the
-            compiled Rust engine (:mod:`tsdynamics._rust`).  The engine path
-            reproduces the reference under a fixed seed and raises
+        backend : str, optional
+            Defaults to ``_default_backend`` (``"reference"``, the pure-Python
+            reference integrator).  ``"interp"`` / ``"jit"`` dispatch the two-tape
+            SDE call to the compiled Rust engine (:mod:`tsdynamics._rust`) via the
+            dedicated ``run.sde_integrate_dense`` seam.  The engine path reproduces
+            the reference under a fixed seed and raises
             :class:`~tsdynamics.engine.run.EngineNotAvailableError` if the
             extension is not built.
 
@@ -463,11 +474,12 @@ class StochasticSystem(SystemBase, ABC):
         """
         from tsdynamics.engine import run
 
+        backend = backend if backend is not None else self._default_backend
         canon = self._resolve_method(method)
         base_seed = _resolve_seed(seed)
         ic_arr = self.resolve_ic(ic)
         problem = self._problem(ic=ic_arr, t0=t0, method=canon)
-        t_eval = _make_t_eval(t0, final_time, dt)
+        t_eval = make_output_grid(t0, final_time, dt)
 
         backend_canon = run.resolve_backend(backend)
         if backend_canon == "reference":
@@ -505,7 +517,7 @@ class StochasticSystem(SystemBase, ABC):
         t0: float = 0.0,
         method: str | None = None,
         seed: int | None = None,
-        backend: str = "reference",
+        backend: str | None = None,
     ) -> np.ndarray:
         """
         Integrate a batch of initial conditions and return their final states.
@@ -524,11 +536,11 @@ class StochasticSystem(SystemBase, ABC):
             The batch of initial conditions.
         final_time, dt, t0, method, seed
             As in :meth:`integrate` (``seed`` is the ensemble's base seed).
-        backend : str, default "reference"
-            ``"reference"`` (pure-Python loop) or ``"interp"`` / ``"jit"`` to fan
-            the batch out on the compiled engine's rayon pool.  Both seed each
-            trajectory by index, so the final states match across backends to
-            floating-point tolerance.
+        backend : str, optional
+            Defaults to ``_default_backend`` (``"reference"``, a pure-Python
+            loop).  ``"interp"`` / ``"jit"`` fan the batch out on the compiled
+            engine's rayon pool.  Both seed each trajectory by index, so the final
+            states match across backends to floating-point tolerance.
 
         Returns
         -------
@@ -537,6 +549,7 @@ class StochasticSystem(SystemBase, ABC):
         """
         from tsdynamics.engine import run
 
+        backend = backend if backend is not None else self._default_backend
         canon = self._resolve_method(method)
         base_seed = _resolve_seed(seed)
         ics = np.ascontiguousarray(ics, dtype=np.float64)
@@ -634,14 +647,6 @@ class StochasticSystem(SystemBase, ABC):
                 f"{sorted(set(_METHODS.values()))} (aliases: {sorted(_METHODS)})."
             )
         return canon
-
-
-def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
-    """Uniform output grid from ``t0`` to ``tf`` inclusive (matches the families)."""
-    t_arr = np.arange(t0, tf, dt)
-    if t_arr.size == 0 or t_arr[-1] < tf - 1e-12:
-        t_arr = np.append(t_arr, tf)
-    return t_arr
 
 
 def _resolve_seed(seed: int | None) -> int:
