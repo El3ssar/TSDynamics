@@ -27,12 +27,13 @@
 //! onto the right Python exception type.
 
 use tsdyn_engine::{
-    ensemble_final as engine_ensemble, integrate_grid, IntegrateConfig, IntegrateError,
+    ensemble_final as engine_ensemble, integrate_dde_grid, integrate_grid, DelaySlot,
+    IntegrateConfig, IntegrateError,
 };
 use tsdyn_ir::{Evaluator, Tape};
 use tsdyn_solvers::explicit::{Dop853, Rk45, Tsit5};
 use tsdyn_solvers::implicit::{RosenbrockW, TrBdf2};
-use tsdyn_solvers::Solver;
+use tsdyn_solvers::{Solver, SolverKind};
 use tsdyn_vm::Interpreter;
 
 /// Why an engine call could not be served.
@@ -393,6 +394,139 @@ pub fn integrate_dense(
     let cfg = IntegrateConfig::new(first_step_from_grid(t_eval));
     integrate_grid(&ev, &mut *solver, &ic[..ev.dim()], p, t_eval, &cfg)
         .map_err(|e| EngineError::Diverged(diverge_msg(&e)))
+}
+
+/// Integrate a delay differential equation through the output grid `t_eval`,
+/// returning a flat row-major `(t_eval.len(), dim)` buffer (the first row is `ic`).
+///
+/// `tape` is the lowered DDE right-hand side over `dim + n_slots` inputs — the
+/// extra inputs are the delay slots, and delay-system parameters are folded into
+/// the tape as constants, so `n_param == 0`. `slot_components` / `slot_delays`
+/// (each length `n_slots = n_state − dim`) describe slot `k`: the true-state
+/// component it samples and its positive, constant delay. `past_t` / `past_y` are
+/// the user-supplied past on `[t0 − max_delay, t0]` — ascending times and a flat
+/// `(n_past, dim)` value buffer; a single sample is a constant past. Only
+/// **explicit** kernels are supported (the method of steps treats each delayed
+/// term as known history, so the step is an explicit ODE step; an implicit kernel
+/// would need a delayed Jacobian). Divergence raises ([`EngineError::Diverged`]).
+#[allow(clippy::too_many_arguments)]
+pub fn integrate_dde_dense(
+    tape: Tape,
+    slot_components: &[i32],
+    slot_delays: &[f64],
+    ic: &[f64],
+    past_t: &[f64],
+    past_y: &[f64],
+    t_eval: &[f64],
+    method: &str,
+    rtol: f64,
+    atol: f64,
+    jit: bool,
+) -> Result<Vec<f64>, EngineError> {
+    if jit {
+        return Err(EngineError::Unsupported(
+            "the JIT evaluator (tsdyn-jit, stream E2) is not built yet; use backend='interp'"
+                .to_string(),
+        ));
+    }
+    let dim = tape.dim();
+    let n_slots = slot_components.len();
+    // The DDE lowering's shape contract: n_state = dim + n_slots, parameters folded.
+    if slot_delays.len() != n_slots {
+        return Err(EngineError::BadShape(format!(
+            "slot_components ({n_slots}) and slot_delays ({}) must have equal length",
+            slot_delays.len()
+        )));
+    }
+    if tape.n_param() != 0 {
+        return Err(EngineError::BadShape(format!(
+            "DDE integration expects a tape with n_param == 0 (delay-system parameters fold to \
+             constants); got n_param = {}",
+            tape.n_param()
+        )));
+    }
+    if tape.n_state() != dim + n_slots {
+        return Err(EngineError::BadShape(format!(
+            "DDE tape has n_state = {} but dim = {dim} and {n_slots} delay slots (expected \
+             n_state = dim + n_slots = {})",
+            tape.n_state(),
+            dim + n_slots
+        )));
+    }
+    if ic.len() < dim {
+        return Err(EngineError::BadShape(format!(
+            "initial state has length {}, need dim = {dim}",
+            ic.len()
+        )));
+    }
+    // The past buffer: at least one sample, finite ascending times, (n_past, dim).
+    let n_past = past_t.len();
+    if n_past == 0 {
+        return Err(EngineError::BadShape(
+            "past history must have at least one sample (the constant-past case)".to_string(),
+        ));
+    }
+    if past_y.len() != n_past * dim {
+        return Err(EngineError::BadShape(format!(
+            "past_y length {} != n_past ({n_past}) * dim ({dim})",
+            past_y.len()
+        )));
+    }
+    if past_t.iter().any(|t| !t.is_finite()) {
+        return Err(EngineError::BadShape(
+            "past_t must be all finite".to_string(),
+        ));
+    }
+    for w in past_t.windows(2) {
+        if w[1] < w[0] {
+            return Err(EngineError::BadShape(
+                "past_t must be non-decreasing".to_string(),
+            ));
+        }
+    }
+    // Build the delay slots, validating each component index and delay magnitude.
+    let mut slots = Vec::with_capacity(n_slots);
+    for (k, (&c, &d)) in slot_components.iter().zip(slot_delays.iter()).enumerate() {
+        if c < 0 || (c as usize) >= dim {
+            return Err(EngineError::BadShape(format!(
+                "delay slot {k} references component {c}, outside 0..{dim}"
+            )));
+        }
+        if d <= 0.0 || !d.is_finite() {
+            return Err(EngineError::BadShape(format!(
+                "delay slot {k} has a non-positive or non-finite delay {d}"
+            )));
+        }
+        slots.push(DelaySlot {
+            component: c as usize,
+            delay: d,
+        });
+    }
+    validate_grid(t_eval)?;
+    // The method of steps drives explicit kernels only (no delayed Jacobian here).
+    let name = resolve_solver(method)?;
+    let reg = tsdyn_solvers::find(name).expect("resolve_solver returns a registered name");
+    if reg.caps.kind == SolverKind::Implicit || reg.caps.needs_jacobian {
+        return Err(EngineError::Unsupported(format!(
+            "DDE integration supports explicit methods only; {name:?} is implicit. Use an \
+             explicit method such as 'rk45', 'tsit5', 'dop853', or 'rk4'."
+        )));
+    }
+    let ev = VmEvaluator::new(tape);
+    let mut solver = build_solver(name, rtol, atol);
+    let cfg = IntegrateConfig::new(first_step_from_grid(t_eval));
+    integrate_dde_grid(
+        &ev,
+        &mut *solver,
+        dim,
+        &slots,
+        &ic[..dim],
+        past_t,
+        past_y,
+        t_eval,
+        &cfg,
+    )
+    .map_err(|e| EngineError::Diverged(diverge_msg(&e)))
 }
 
 /// Integrate a batch of initial conditions to `t1` in parallel, returning each
@@ -878,5 +1012,140 @@ mod tests {
         let tape = b.finish(&[nx], &[], 1, 1).unwrap();
         let err = iterate_map(tape, &[0.1], 3).unwrap_err();
         assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+    }
+
+    /// The lowered DDE tape for `y'(t) = −y(t − 1)`: one output `−u1` over two
+    /// inputs (`u0 = y(t)`, `u1 = y(t − 1)`, the single delay slot), no params.
+    fn neg_delay_dde_tape() -> Tape {
+        let mut b = TapeBuilder::new();
+        let _y = b.state(0);
+        let y_tau = b.state(1);
+        let dy = b.neg(y_tau);
+        b.finish(&[dy], &[], 2, 0).unwrap()
+    }
+
+    #[test]
+    fn integrate_dde_matches_method_of_steps_closed_form() {
+        // Constant past 1; analytic y(1) = 0, y(2) = −0.5 (method of steps).
+        let t_eval: Vec<f64> = (0..=20).map(|i| i as f64 * 0.1).collect();
+        let y = integrate_dde_dense(
+            neg_delay_dde_tape(),
+            &[0],   // slot 0 → component 0
+            &[1.0], // delay 1
+            &[1.0], // ic
+            &[0.0], // past times (single sample → constant past)
+            &[1.0], // past values
+            &t_eval,
+            "rk45",
+            1e-9,
+            1e-11,
+            false,
+        )
+        .unwrap();
+        assert_eq!(y.len(), t_eval.len());
+        assert_eq!(y[0], 1.0); // first row is the IC
+        assert!((y[10] - 0.0).abs() < 1e-6, "y(1) = {}", y[10]);
+        assert!((y[20] + 0.5).abs() < 1e-6, "y(2) = {}", y[20]);
+    }
+
+    #[test]
+    fn integrate_dde_rejects_implicit_method() {
+        let err = integrate_dde_dense(
+            neg_delay_dde_tape(),
+            &[0],
+            &[1.0],
+            &[1.0],
+            &[0.0],
+            &[1.0],
+            &[0.0, 1.0],
+            "rosenbrock",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(err, EngineError::Unsupported(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn integrate_dde_rejects_shape_mismatches() {
+        // n_state (2) != dim (1) + slots (2): the tape has only one delay input.
+        let bad_slots = integrate_dde_dense(
+            neg_delay_dde_tape(),
+            &[0, 0],
+            &[1.0, 2.0],
+            &[1.0],
+            &[0.0],
+            &[1.0],
+            &[0.0, 1.0],
+            "rk45",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(bad_slots, EngineError::BadShape(_)),
+            "got {bad_slots:?}"
+        );
+
+        // A delay slot referencing a non-existent component.
+        let bad_comp = integrate_dde_dense(
+            neg_delay_dde_tape(),
+            &[5],
+            &[1.0],
+            &[1.0],
+            &[0.0],
+            &[1.0],
+            &[0.0, 1.0],
+            "rk45",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(bad_comp, EngineError::BadShape(_)),
+            "got {bad_comp:?}"
+        );
+
+        // A non-positive delay.
+        let bad_delay = integrate_dde_dense(
+            neg_delay_dde_tape(),
+            &[0],
+            &[0.0],
+            &[1.0],
+            &[0.0],
+            &[1.0],
+            &[0.0, 1.0],
+            "rk45",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(bad_delay, EngineError::BadShape(_)),
+            "got {bad_delay:?}"
+        );
+    }
+
+    #[test]
+    fn integrate_dde_rejects_jit() {
+        let err = integrate_dde_dense(
+            neg_delay_dde_tape(),
+            &[0],
+            &[1.0],
+            &[1.0],
+            &[0.0],
+            &[1.0],
+            &[0.0, 1.0],
+            "rk45",
+            1e-6,
+            1e-9,
+            true,
+        )
+        .unwrap_err();
+        assert!(matches!(err, EngineError::Unsupported(_)), "got {err:?}");
     }
 }

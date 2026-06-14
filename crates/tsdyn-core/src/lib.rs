@@ -20,6 +20,7 @@
 //! | [`eval_jac`] | `((dim,), (dim*dim,))` | RHS + row-major Jacobian |
 //! | [`iterate_map`] | `(steps, dim)` | iterate a discrete map |
 //! | [`integrate_dense`] | `(n_t, dim)` | one trajectory, sampled on a grid |
+//! | [`integrate_dde_dense`] | `(n_t, dim)` | one DDE trajectory (method of steps) |
 //! | [`integrate_ensemble_final`] | `(n_ic, dim)` | parallel batch → final states |
 //! | [`solvers`] | `list[str]` | registered `method=` names (introspection) |
 //!
@@ -257,6 +258,68 @@ fn integrate_dense<'py>(
     PyArray1::from_vec(py, flat).reshape([n_t, dim])
 }
 
+/// Integrate a delay differential equation through `t_eval`, returning an
+/// `(n_t, dim)` array whose first row is the initial condition.
+///
+/// The leading tape arrays describe the lowered DDE right-hand side over
+/// `dim + n_slots` inputs (the extra inputs are the delay slots; parameters fold
+/// into the tape, so `n_param == 0`). `slot_components` / `slot_delays` describe
+/// each delay slot, and `past_t` / `past_y` (flat `(n_past, dim)`) the user past
+/// on `[t0 − max_delay, t0]` — a single sample is a constant past. Only explicit
+/// `method`s are supported (the method of steps); `jit=True` is reserved for the
+/// Cranelift evaluator (stream E2) and raises `NotImplementedError`.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn integrate_dde_dense<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    slot_components: PyReadonlyArray1<i32>,
+    slot_delays: PyReadonlyArray1<f64>,
+    ic: PyReadonlyArray1<f64>,
+    past_t: PyReadonlyArray1<f64>,
+    past_y: PyReadonlyArray1<f64>,
+    t_eval: PyReadonlyArray1<f64>,
+    method: String,
+    rtol: f64,
+    atol: f64,
+    jit: bool,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let dim = tape.dim();
+    let slot_components = vec_i32("slot_components", &slot_components)?;
+    let slot_delays = vec_f64("slot_delays", &slot_delays)?;
+    let ic = vec_f64("ic", &ic)?;
+    let past_t = vec_f64("past_t", &past_t)?;
+    let past_y = vec_f64("past_y", &past_y)?;
+    let t_eval = vec_f64("t_eval", &t_eval)?;
+    let n_t = t_eval.len();
+    let flat = py
+        .detach(|| {
+            bridge::integrate_dde_dense(
+                tape.build()?,
+                &slot_components,
+                &slot_delays,
+                &ic,
+                &past_t,
+                &past_y,
+                &t_eval,
+                &method,
+                rtol,
+                atol,
+                jit,
+            )
+        })
+        .map_err(to_py_err)?;
+    PyArray1::from_vec(py, flat).reshape([n_t, dim])
+}
+
 /// Integrate a batch of initial conditions to `t1` in parallel (rayon), returning
 /// each final state as a row of an `(n_ic, dim)` array.
 ///
@@ -349,6 +412,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(eval_jac, m)?)?;
     m.add_function(wrap_pyfunction!(iterate_map, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_dense, m)?)?;
+    m.add_function(wrap_pyfunction!(integrate_dde_dense, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_ensemble_final, m)?)?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
     m.add_function(wrap_pyfunction!(_version, m)?)?;
