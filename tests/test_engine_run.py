@@ -205,6 +205,12 @@ def test_eval_rhs_reference_matches_symbolic(rng) -> None:
 
 def test_engine_backend_raises_when_extension_absent() -> None:
     """``interp``/``jit`` raise a clear error until ``tsdynamics._rust`` is built."""
+    try:
+        import tsdynamics._rust  # noqa: F401
+    except ImportError:
+        pass
+    else:  # E7 built the engine extension — the "absent" path no longer applies.
+        pytest.skip("the engine extension (tsdynamics._rust) is built")
     with pytest.raises(EngineNotAvailableError, match="tsdynamics._rust"):
         run.integrate(ts.Lorenz(), final_time=1.0, backend="interp")
 

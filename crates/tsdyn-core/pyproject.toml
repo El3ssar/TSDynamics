@@ -1,0 +1,38 @@
+# Packaging scaffold for the `tsdynamics._rust` engine extension (stream E7).
+#
+# This builds the compiled engine as the `tsdynamics._rust` submodule. It is the
+# starting point stream **I-WHEEL** refines into the cross-platform wheel set and
+# resolves the open packaging-shape question (ROADMAP §11: one `tsdynamics`
+# maturin wheel vs a separable accelerator). Until then:
+#
+#   * the dev / CI build does NOT install this wheel alongside the editable
+#     `tsdynamics` package (that would split `tsdynamics.__path__` and hide the
+#     submodule). Instead it builds the cdylib and drops it into the source tree:
+#
+#         cargo build --release --features extension-module \
+#             --manifest-path crates/tsdyn-core/Cargo.toml
+#         cp crates/tsdyn-core/target/release/lib_rust.so \
+#             src/tsdynamics/_rust.abi3.so
+#
+#     The editable install then imports `tsdynamics._rust` from the adjacent .so.
+#   * `maturin build -m crates/tsdyn-core/Cargo.toml` produces a standalone
+#     `tsdynamics._rust` wheel for I-WHEEL to fold into the final shape.
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tsdynamics-rust-engine"
+description = "TSDynamics Rust engine extension (tsdynamics._rust): the zero-warmup tape interpreter + solver kernels."
+requires-python = ">=3.12"
+license = "MIT"
+classifiers = ["Programming Language :: Rust", "Private :: Do Not Upload"]
+dynamic = ["version"]
+
+[tool.maturin]
+# The compiled extension is the `_rust` submodule of the `tsdynamics` package.
+module-name = "tsdynamics._rust"
+# Enable the crate's `extension-module` feature (→ `pyo3/extension-module`), so
+# the shipped .so does not link libpython. `cargo test`/`clippy` deliberately
+# build WITHOUT this feature (see crates/tsdyn-core/Cargo.toml).
+features = ["extension-module"]

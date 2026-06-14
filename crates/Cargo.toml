@@ -28,9 +28,19 @@ members = [
     "tsdyn-jit",
     "tsdyn-solvers",
     "tsdyn-engine",
-    "tsdyn-core",
 ]
-exclude = ["tsdynamics-core"]
+# `tsdyn-core` (the PyO3 binding → `tsdynamics._rust`) is excluded for the same
+# reason as `tsdynamics-core`, made concrete by stream E7: it is a `pyo3`
+# *extension-module* `cdylib`. Such a crate cannot be a clean `--workspace`
+# member — `rust-workspace.yml` runs `cargo test --workspace --all-features` on a
+# Python-free runner, and a pyo3 extension test/build target either fails to link
+# libpython (no `extension-module`) or leaves the Python C-API symbols undefined
+# in the test harness (`extension-module` on). It therefore keeps its own
+# lockfile and is built by `maturin`/`cargo` in its own CI job (E7), path-
+# depending on the engine crates above — exactly the standalone-accelerator shape
+# `tsdynamics-core` already uses. The migration plan (§9) is explicit that the new
+# engine "lands alongside" the v2 backends.
+exclude = ["tsdynamics-core", "tsdyn-core"]
 
 [workspace.package]
 version = "0.1.0"

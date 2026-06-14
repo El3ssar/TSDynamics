@@ -1,17 +1,43 @@
 [package]
 name = "tsdyn-core"
-description = "TSDynamics PyO3 bindings: marshals numpy <-> slices, releases the GIL, and builds the `tsdynamics._rust` extension module."
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-authors.workspace = true
-repository.workspace = true
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Daniel Estevez"]
+repository = "https://github.com/El3ssar/TSDynamics"
+description = "TSDynamics PyO3 bindings: marshal numpy <-> slices, release the GIL, and build the `tsdynamics._rust` engine extension."
 
-# Stream E7 converts this into the compiled extension: it sets
-#   [lib] name = "_rust"; crate-type = ["cdylib"]
-# and opts into the workspace-pinned pyo3/numpy (`pyo3.workspace = true`,
-# `numpy.workspace = true`). The F0 skeleton is a plain library so the workspace
-# builds with no Python toolchain present.
+# Stream E7. This crate is the only one that knows about Python; it converts the
+# F0 skeleton into the compiled extension. It is deliberately **outside** the
+# `crates/` workspace (see the exclude note in `crates/Cargo.toml`): a pyo3
+# `extension-module` cdylib cannot ride `cargo test --workspace` on a Python-free
+# runner, so it keeps its own lockfile and is built by maturin/cargo here. The
+# engine crates it drives are pulled in by path.
+[lib]
+name = "_rust"
+# `cdylib` builds the importable extension; `rlib` lets `cargo test` build this
+# crate's own unit tests (the pure-Rust bridge in `bridge.rs`).
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-tsdyn-engine.workspace = true
+# pyo3 WITHOUT `extension-module` by default: a plain `cargo build`/`cargo test`
+# then links libpython normally so the bridge unit tests run. `maturin` (and the
+# CI wheel build) turn on `extension-module` via the `extension-module` feature
+# below, which suppresses the libpython link for the shipped `.so`. abi3-py312 →
+# one wheel for CPython >= 3.12.
+pyo3 = { version = "0.26", default-features = false, features = ["abi3-py312"] }
+numpy = "0.26"
+
+# The engine, by path (this crate is not a workspace member, so no `.workspace`).
+# rayon reaches us transitively through tsdyn-engine, which owns the ensemble
+# fan-out; this crate never calls it directly, so it is not a direct dependency.
+tsdyn-ir = { path = "../tsdyn-ir" }
+tsdyn-vm = { path = "../tsdyn-vm" }
+tsdyn-solvers = { path = "../tsdyn-solvers" }
+tsdyn-engine = { path = "../tsdyn-engine" }
+
+[features]
+# Enabled by maturin (`[tool.maturin] features = ["extension-module"]`) when
+# building the shipped extension; left OFF for `cargo test` so the unit-test
+# harness links libpython and runs. Kept off the default set on purpose.
+extension-module = ["pyo3/extension-module"]
