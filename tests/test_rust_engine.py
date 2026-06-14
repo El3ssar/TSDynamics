@@ -132,6 +132,14 @@ def test_map_iteration_matches_reference_exactly(name):
     np.testing.assert_array_equal(eng.y, ref.y)
 
 
+def test_compiled_map_diverges_loudly():
+    # The compiled (interp) map loop must raise on a non-finite iterate rather
+    # than return inf/NaN rows — the same diverge-loudly contract the reference
+    # loop enforces. Logistic from x0 = 2 (outside [0, 1]) escapes to -inf.
+    with pytest.raises(RuntimeError, match="diverged"):
+        ts.Logistic().iterate(steps=60, ic=[2.0], backend="interp")
+
+
 # ---------------------------------------------------------------------------
 # Error paths — the binding maps each EngineError to the right exception type
 # ---------------------------------------------------------------------------

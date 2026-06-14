@@ -27,8 +27,8 @@
 //! onto the right Python exception type.
 
 use tsdyn_engine::{
-    ensemble_final as engine_ensemble, integrate_dde_grid, integrate_grid, DelaySlot,
-    IntegrateConfig, IntegrateError,
+    ensemble_final as engine_ensemble, integrate_dde_grid, integrate_grid, iterate_dense,
+    DelaySlot, IntegrateConfig, IntegrateError, MapError,
 };
 use tsdyn_ir::{Evaluator, Tape};
 use tsdyn_solvers::explicit::{Dop853, Rk45, Tsit5};
@@ -260,9 +260,14 @@ fn check_inputs(tape: &Tape, u: &[f64], p: &[f64]) -> Result<(), EngineError> {
 /// Row `i` is the state after `i + 1` applications of the map; the initial
 /// condition itself is **not** included (matching the Python reference map loop).
 /// Map parameters are folded into the tape as constants (`n_param == 0`), so no
-/// parameter vector is threaded. A blown-up orbit propagates IEEE `inf`/`NaN`
-/// rather than raising — an unbounded map is the user's data, not an engine
-/// failure.
+/// parameter vector is threaded. A blown-up orbit raises
+/// [`EngineError::Diverged`] at the first non-finite iterate — the engine's
+/// "diverge loudly" contract — rather than returning a silently poisoned buffer.
+///
+/// The iteration itself is the shared engine map loop
+/// ([`tsdyn_engine::iterate_dense`]); this wrapper only adds the boundary shape
+/// checks the FFI seam needs, since the engine loop validates shapes with
+/// `debug_assert!` (compiled out in release).
 pub fn iterate_map(tape: Tape, ic: &[f64], steps: usize) -> Result<Vec<f64>, EngineError> {
     let dim = tape.dim();
     // A map's next-state dimension equals its state dimension, and the lowering
@@ -291,17 +296,13 @@ pub fn iterate_map(tape: Tape, ic: &[f64], steps: usize) -> Result<Vec<f64>, Eng
             ic.len()
         )));
     }
-    let interp = Interpreter::new(tape);
-    let mut scratch = vec![0.0; interp.n_scratch()];
-    let mut x = ic[..dim].to_vec();
-    let mut next = vec![0.0; dim];
-    let mut out = Vec::with_capacity(steps * dim);
-    for _ in 0..steps {
-        interp.eval(&x, &[], 0.0, &mut scratch, &mut next);
-        out.extend_from_slice(&next);
-        x.copy_from_slice(&next);
-    }
-    Ok(out)
+    // Delegate to the shared engine map loop: one iteration implementation, one
+    // divergence contract. Parameters are folded into the tape (`n_param == 0`),
+    // so the parameter slice is empty; the guards above stand in for the engine
+    // loop's release-stripped `debug_assert!`s.
+    let ev = VmEvaluator::new(tape);
+    iterate_dense(&ev, &ic[..dim], &[], steps)
+        .map_err(|e| EngineError::Diverged(map_diverge_msg(&e)))
 }
 
 // ---------------------------------------------------------------------------
@@ -598,6 +599,11 @@ pub fn ensemble_final(
 /// Prefix the engine's diverge message so the Python `RuntimeError` reads clearly.
 fn diverge_msg(e: &IntegrateError) -> String {
     format!("integration diverged before reaching the final time: {e}")
+}
+
+/// Prefix the engine's map-divergence message, mirroring [`diverge_msg`].
+fn map_diverge_msg(e: &MapError) -> String {
+    format!("map diverged before completing all iterations: {e}")
 }
 
 #[cfg(test)]
@@ -900,6 +906,15 @@ mod tests {
             assert!((out[2 * i] - x).abs() < 1e-14, "step {i} x");
             assert!((out[2 * i + 1] - y).abs() < 1e-14, "step {i} y");
         }
+    }
+
+    #[test]
+    fn iterate_map_diverges_loudly() {
+        // The Hénon map from a far-outside initial condition escapes to infinity;
+        // delegation to the engine loop must raise at the first non-finite iterate
+        // instead of returning a buffer of inf/NaN.
+        let err = iterate_map(henon_tape(), &[10.0, 10.0], 200).unwrap_err();
+        assert!(matches!(err, EngineError::Diverged(_)), "got {err:?}");
     }
 
     #[test]
