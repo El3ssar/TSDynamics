@@ -14,7 +14,7 @@ protocol the analysis toolkit is written against.
 
 ::: tsdynamics.families.base.MetaStore
 
-::: tsdynamics.families.base.Trajectory
+::: tsdynamics.data.Trajectory
 
 ::: tsdynamics.families.base.SystemBase
 
