@@ -19,15 +19,24 @@
 //! | [`eval_rhs`] | `(dim,)` | one RHS / next-state evaluation |
 //! | [`eval_jac`] | `((dim,), (dim*dim,))` | RHS + row-major Jacobian |
 //! | [`iterate_map`] | `(steps, dim)` | iterate a discrete map |
+//! | [`iterate_ensemble_final`] | `(n_ic, dim)` | parallel map batch → final states |
 //! | [`integrate_dense`] | `(n_t, dim)` | one trajectory, sampled on a grid |
 //! | [`integrate_dde_dense`] | `(n_t, dim)` | one DDE trajectory (method of steps) |
-//! | [`integrate_ensemble_final`] | `(n_ic, dim)` | parallel batch → final states |
+//! | [`integrate_ensemble_final`] | `(n_ic, dim)` | parallel ODE batch → final states |
+//! | [`integrate_sde_dense`] | `(n_t, dim)` | one SDE trajectory (drift + diffusion) |
+//! | [`integrate_sde_ensemble_final`] | `(n_ic, dim)` | parallel SDE batch → final states |
 //! | [`solvers`] | `list[str]` | registered `method=` names (introspection) |
 //!
 //! Each leading call passes the tape wire arrays
 //! `(ops, a, b, imm, outputs, jac_outputs, n_state, n_param)` — exactly the tuple
 //! Python's `Tape.to_arrays()` yields — followed by the runtime vectors and
-//! solver options.
+//! solver options. The two SDE entry points pass **two** tapes back to back (the
+//! drift, then the diffusion), since a diagonal-Itô step drives both.
+//!
+//! Both production evaluators are reachable: every continuous entry point takes a
+//! `jit` flag selecting the interpreter (`false`) or the Cranelift JIT (`true`),
+//! and the two are numerically identical (E-WIRE wired the JIT through the same
+//! `&dyn Evaluator` seam the interpreter uses).
 
 mod bridge;
 
@@ -47,7 +56,7 @@ fn to_py_err(e: EngineError) -> PyErr {
             PyValueError::new_err(msg)
         }
         EngineError::Unsupported(_) => PyNotImplementedError::new_err(msg),
-        EngineError::Diverged(_) => PyRuntimeError::new_err(msg),
+        EngineError::JitCompile(_) | EngineError::Diverged(_) => PyRuntimeError::new_err(msg),
     }
 }
 
@@ -214,6 +223,40 @@ fn iterate_map<'py>(
     PyArray1::from_vec(py, flat).reshape([steps, dim])
 }
 
+/// Iterate a batch of map initial conditions `steps` times in parallel (rayon),
+/// returning each final state as a row of an `(n_ic, dim)` array.
+///
+/// `ics` is `(n_ic, dim)`. A diverging trajectory yields a row of `NaN` rather
+/// than aborting the batch; maps carry no randomness, so the result is
+/// independent of thread count.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn iterate_ensemble_final<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    ics: PyReadonlyArray2<f64>,
+    steps: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let dim = tape.dim();
+    let ics_vec = ics
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("ics must be a C-contiguous (n, dim) float64 array"))?
+        .to_vec();
+    let n_ic = ics.shape()[0];
+    let flat = py
+        .detach(|| bridge::map_ensemble_final(tape.build()?, &ics_vec, steps))
+        .map_err(to_py_err)?;
+    PyArray1::from_vec(py, flat).reshape([n_ic, dim])
+}
+
 // ---------------------------------------------------------------------------
 // Integration
 // ---------------------------------------------------------------------------
@@ -222,8 +265,9 @@ fn iterate_map<'py>(
 /// `(n_t, dim)` array whose first row is the initial condition.
 ///
 /// `method` resolves through the solver registry (case-insensitively); `rtol` /
-/// `atol` configure the built-in adaptive kernels. `jit=True` is reserved for the
-/// Cranelift evaluator (stream E2) and currently raises `NotImplementedError`.
+/// `atol` configure the built-in adaptive kernels. `jit=True` selects the
+/// Cranelift native-code evaluator (`tsdyn-jit`); it is numerically identical to
+/// the interpreter (`jit=False`).
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn integrate_dense<'py>(
@@ -266,8 +310,8 @@ fn integrate_dense<'py>(
 /// into the tape, so `n_param == 0`). `slot_components` / `slot_delays` describe
 /// each delay slot, and `past_t` / `past_y` (flat `(n_past, dim)`) the user past
 /// on `[t0 − max_delay, t0]` — a single sample is a constant past. Only explicit
-/// `method`s are supported (the method of steps); `jit=True` is reserved for the
-/// Cranelift evaluator (stream E2) and raises `NotImplementedError`.
+/// `method`s are supported (the method of steps); `jit=True` selects the
+/// Cranelift evaluator (numerically identical to the interpreter).
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn integrate_dde_dense<'py>(
@@ -373,6 +417,173 @@ fn integrate_ensemble_final<'py>(
 }
 
 // ---------------------------------------------------------------------------
+// SDE integration (two tapes: drift + diffusion)
+// ---------------------------------------------------------------------------
+
+/// Integrate one diagonal-Itô SDE trajectory and sample at every `t_eval` point,
+/// returning an `(n_t, dim)` array whose first row is the state at `t_eval[0]`.
+///
+/// The two tapes are passed back to back — first the drift `f`, then the
+/// diffusion `g` (the per-component diagonal noise coefficients, carrying `∂g/∂u`
+/// for Milstein). `method` is the SDE kernel name (`euler_maruyama` / `milstein`,
+/// resolved against the SDE registry), `dt` the fixed step *and* noise scale
+/// `√dt`, `seed` the noise stream's seed, and `jit` selects the Cranelift
+/// evaluator (numerically identical to the interpreter). Divergence raises
+/// `RuntimeError`.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn integrate_sde_dense<'py>(
+    py: Python<'py>,
+    ops_d: PyReadonlyArray1<i32>,
+    a_d: PyReadonlyArray1<i32>,
+    b_d: PyReadonlyArray1<i32>,
+    imm_d: PyReadonlyArray1<f64>,
+    outputs_d: PyReadonlyArray1<i32>,
+    jac_outputs_d: PyReadonlyArray1<i32>,
+    n_state_d: usize,
+    n_param_d: usize,
+    ops_g: PyReadonlyArray1<i32>,
+    a_g: PyReadonlyArray1<i32>,
+    b_g: PyReadonlyArray1<i32>,
+    imm_g: PyReadonlyArray1<f64>,
+    outputs_g: PyReadonlyArray1<i32>,
+    jac_outputs_g: PyReadonlyArray1<i32>,
+    n_state_g: usize,
+    n_param_g: usize,
+    ic: PyReadonlyArray1<f64>,
+    p: PyReadonlyArray1<f64>,
+    t_eval: PyReadonlyArray1<f64>,
+    method: String,
+    dt: f64,
+    seed: u64,
+    jit: bool,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let drift = OwnedTape::copy_in(
+        &ops_d,
+        &a_d,
+        &b_d,
+        &imm_d,
+        &outputs_d,
+        &jac_outputs_d,
+        n_state_d,
+        n_param_d,
+    )?;
+    let diffusion = OwnedTape::copy_in(
+        &ops_g,
+        &a_g,
+        &b_g,
+        &imm_g,
+        &outputs_g,
+        &jac_outputs_g,
+        n_state_g,
+        n_param_g,
+    )?;
+    let dim = drift.dim();
+    let ic = vec_f64("ic", &ic)?;
+    let p = vec_f64("p", &p)?;
+    let t_eval = vec_f64("t_eval", &t_eval)?;
+    let n_t = t_eval.len();
+    let flat = py
+        .detach(|| {
+            bridge::sde_integrate_dense(
+                drift.build()?,
+                diffusion.build()?,
+                &ic,
+                &p,
+                &t_eval,
+                &method,
+                dt,
+                seed,
+                jit,
+            )
+        })
+        .map_err(to_py_err)?;
+    PyArray1::from_vec(py, flat).reshape([n_t, dim])
+}
+
+/// Integrate a batch of SDE initial conditions to `t1` in parallel (rayon),
+/// returning each final state as a row of an `(n_ic, dim)` array.
+///
+/// Drift then diffusion tapes as in [`integrate_sde_dense`]; `ics` is
+/// `(n_ic, dim)`. Worker `i` is seeded by `seed_for(seed, i)` so the batch is
+/// **parallel == serial** bit-for-bit; a diverging trajectory yields a `NaN` row
+/// rather than aborting the batch.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn integrate_sde_ensemble_final<'py>(
+    py: Python<'py>,
+    ops_d: PyReadonlyArray1<i32>,
+    a_d: PyReadonlyArray1<i32>,
+    b_d: PyReadonlyArray1<i32>,
+    imm_d: PyReadonlyArray1<f64>,
+    outputs_d: PyReadonlyArray1<i32>,
+    jac_outputs_d: PyReadonlyArray1<i32>,
+    n_state_d: usize,
+    n_param_d: usize,
+    ops_g: PyReadonlyArray1<i32>,
+    a_g: PyReadonlyArray1<i32>,
+    b_g: PyReadonlyArray1<i32>,
+    imm_g: PyReadonlyArray1<f64>,
+    outputs_g: PyReadonlyArray1<i32>,
+    jac_outputs_g: PyReadonlyArray1<i32>,
+    n_state_g: usize,
+    n_param_g: usize,
+    ics: PyReadonlyArray2<f64>,
+    p: PyReadonlyArray1<f64>,
+    t0: f64,
+    t1: f64,
+    method: String,
+    dt: f64,
+    seed: u64,
+    jit: bool,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let drift = OwnedTape::copy_in(
+        &ops_d,
+        &a_d,
+        &b_d,
+        &imm_d,
+        &outputs_d,
+        &jac_outputs_d,
+        n_state_d,
+        n_param_d,
+    )?;
+    let diffusion = OwnedTape::copy_in(
+        &ops_g,
+        &a_g,
+        &b_g,
+        &imm_g,
+        &outputs_g,
+        &jac_outputs_g,
+        n_state_g,
+        n_param_g,
+    )?;
+    let dim = drift.dim();
+    let ics_vec = ics
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("ics must be a C-contiguous (n, dim) float64 array"))?
+        .to_vec();
+    let n_ic = ics.shape()[0];
+    let p = vec_f64("p", &p)?;
+    let flat = py
+        .detach(|| {
+            bridge::sde_ensemble_final(
+                drift.build()?,
+                diffusion.build()?,
+                &ics_vec,
+                &p,
+                t0,
+                t1,
+                &method,
+                dt,
+                seed,
+                jit,
+            )
+        })
+        .map_err(to_py_err)?;
+    PyArray1::from_vec(py, flat).reshape([n_ic, dim])
+}
+
+// ---------------------------------------------------------------------------
 // Introspection
 // ---------------------------------------------------------------------------
 
@@ -401,19 +612,30 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The duplicate-name tripwire the registry contract asks the engine to run
     // once at startup: link-time registration cannot reject a clash, so two
     // kernels sharing a name would silently shadow each other. Fail the import
-    // loudly instead.
+    // loudly instead — for both the ODE/stiff `Solver` registry and the SDE
+    // kernel registry (`tsdyn_solvers::sde`), which E-WIRE now reaches.
     if let Err(dups) = tsdyn_engine::check_solver_registry() {
         return Err(PyRuntimeError::new_err(format!(
             "solver registry has duplicate method names: {dups:?} — two kernels registered \
              under the same name (a build/link bug)"
         )));
     }
+    let sde_dups = tsdyn_solvers::sde::duplicates();
+    if !sde_dups.is_empty() {
+        return Err(PyRuntimeError::new_err(format!(
+            "SDE kernel registry has duplicate method names: {sde_dups:?} — two kernels \
+             registered under the same name (a build/link bug)"
+        )));
+    }
     m.add_function(wrap_pyfunction!(eval_rhs, m)?)?;
     m.add_function(wrap_pyfunction!(eval_jac, m)?)?;
     m.add_function(wrap_pyfunction!(iterate_map, m)?)?;
+    m.add_function(wrap_pyfunction!(iterate_ensemble_final, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_dense, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_dde_dense, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_ensemble_final, m)?)?;
+    m.add_function(wrap_pyfunction!(integrate_sde_dense, m)?)?;
+    m.add_function(wrap_pyfunction!(integrate_sde_ensemble_final, m)?)?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
     m.add_function(wrap_pyfunction!(_version, m)?)?;
     Ok(())

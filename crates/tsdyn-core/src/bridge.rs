@@ -26,13 +26,17 @@
 //! Errors surface as [`EngineError`], a Python-free enum the binding layer maps
 //! onto the right Python exception type.
 
+use tsdyn_engine::rng::SplitMix64;
 use tsdyn_engine::{
     ensemble_final as engine_ensemble, integrate_dde_grid, integrate_grid, iterate_dense,
-    DelaySlot, IntegrateConfig, IntegrateError, MapError,
+    iterate_ensemble_final as engine_iterate_ensemble, sde_ensemble_final as engine_sde_ensemble,
+    sde_integrate_grid, DelaySlot, IntegrateConfig, IntegrateError, MapError, SdeConfig, SdeError,
 };
 use tsdyn_ir::{Evaluator, Tape};
+use tsdyn_jit::JitEvaluator;
 use tsdyn_solvers::explicit::{Dop853, Rk45, Tsit5};
 use tsdyn_solvers::implicit::{RosenbrockW, TrBdf2};
+use tsdyn_solvers::sde::{self, SdeKernel};
 use tsdyn_solvers::{Solver, SolverKind};
 use tsdyn_vm::Interpreter;
 
@@ -53,9 +57,11 @@ pub enum EngineError {
     /// `ValueError`.
     UnknownMethod(String),
     /// A capability that is wired in the Python seam but not yet built in the
-    /// engine (the Cranelift JIT; DDE/SDE engine integration). →
-    /// `NotImplementedError`.
+    /// engine (e.g. state-dependent DDE delays). → `NotImplementedError`.
     Unsupported(String),
+    /// The Cranelift JIT (`tsdyn-jit`) could not compile the tape — a host-ISA
+    /// or codegen failure, distinct from a malformed tape. → `RuntimeError`.
+    JitCompile(String),
     /// The trajectory diverged or the step collapsed before the target time (the
     /// "diverge loudly" contract). → `RuntimeError`.
     Diverged(String),
@@ -68,6 +74,7 @@ impl core::fmt::Display for EngineError {
             | EngineError::BadShape(m)
             | EngineError::UnknownMethod(m)
             | EngineError::Unsupported(m)
+            | EngineError::JitCompile(m)
             | EngineError::Diverged(m) => f.write_str(m),
         }
     }
@@ -123,6 +130,27 @@ impl Evaluator for VmEvaluator {
         jac: &mut [f64],
     ) {
         self.interp.eval_jac(u, p, t, scratch, deriv, jac);
+    }
+}
+
+/// Build the [`Evaluator`] a run drives: the Cranelift JIT ([`JitEvaluator`])
+/// when `jit`, else the zero-warmup interpreter ([`VmEvaluator`]).
+///
+/// This is the seam decision D2 hangs on — both back the *same* [`Evaluator`]
+/// trait, so every integrate / iterate / ensemble loop below drives either as
+/// `&dyn Evaluator` with no other change, and the two are numerically identical
+/// (bit-for-bit on `eval`; the JIT's contract). Returning a boxed trait object
+/// rather than a concrete type is what lets one call site choose the backend.
+/// `dyn Evaluator: Sync` (the trait's supertrait), so the boxed evaluator shares
+/// freely across the rayon ensemble workers. A Cranelift build failure (host ISA
+/// / codegen) surfaces as [`EngineError::JitCompile`]; the interpreter never
+/// fails to build.
+fn build_evaluator(tape: Tape, jit: bool) -> Result<Box<dyn Evaluator>, EngineError> {
+    if jit {
+        let ev = JitEvaluator::new(&tape).map_err(|e| EngineError::JitCompile(e.to_string()))?;
+        Ok(Box::new(ev))
+    } else {
+        Ok(Box::new(VmEvaluator::new(tape)))
     }
 }
 
@@ -309,22 +337,18 @@ pub fn iterate_map(tape: Tape, ic: &[f64], steps: usize) -> Result<Vec<f64>, Eng
 // Integration
 // ---------------------------------------------------------------------------
 
-/// Reject the families the engine cannot integrate yet, and the JIT backend
-/// until stream E2 lands. A DDE tape carries delay-slot inputs beyond the real
-/// state (`n_state > dim`); only ODE-shaped tapes (`n_state == dim`) integrate
-/// here today.
-fn guard_continuous(tape: &Tape, jit: bool) -> Result<(), EngineError> {
-    if jit {
-        return Err(EngineError::Unsupported(
-            "the JIT evaluator (tsdyn-jit, stream E2) is not built yet; use backend='interp'"
-                .to_string(),
-        ));
-    }
+/// Reject a tape that is not ODE-shaped on the single/ensemble ODE path. A DDE
+/// tape carries delay-slot inputs beyond the real state (`n_state > dim`) and an
+/// SDE is a tape *pair*; both have their own entry points
+/// ([`integrate_dde_dense`] / [`sde_integrate_dense`]), so the bare ODE driver
+/// only accepts `n_state == dim`. (The JIT is no longer rejected here — both
+/// evaluators are built; see [`build_evaluator`].)
+fn guard_continuous(tape: &Tape) -> Result<(), EngineError> {
     if tape.n_state() != tape.dim() {
         return Err(EngineError::Unsupported(format!(
-            "engine integration currently supports ODE-shaped tapes (n_state == dim); got \
-             n_state = {} > dim = {} (a DDE/SDE tape). DDE/SDE integration lands with streams \
-             E-DDE / E-SDE.",
+            "engine ODE integration supports ODE-shaped tapes (n_state == dim); got \
+             n_state = {} > dim = {} (a DDE/SDE tape). Use the DDE entry point \
+             (integrate_dde_dense) or the SDE entry points (integrate_sde_*).",
             tape.n_state(),
             tape.dim()
         )));
@@ -409,7 +433,7 @@ pub fn integrate_dense(
     atol: f64,
     jit: bool,
 ) -> Result<Vec<f64>, EngineError> {
-    guard_continuous(&tape, jit)?;
+    guard_continuous(&tape)?;
     check_inputs(&tape, ic, p)?;
     if tape.dim() == 0 {
         return Err(EngineError::BadShape(
@@ -419,10 +443,10 @@ pub fn integrate_dense(
     validate_grid(t_eval)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
-    let ev = VmEvaluator::new(tape);
+    let ev = build_evaluator(tape, jit)?;
     let mut solver = build_solver(name, rtol, atol);
     let cfg = IntegrateConfig::new(first_step_from_grid(t_eval));
-    integrate_grid(&ev, &mut *solver, &ic[..ev.dim()], p, t_eval, &cfg)
+    integrate_grid(&*ev, &mut *solver, &ic[..ev.dim()], p, t_eval, &cfg)
         .map_err(|e| EngineError::Diverged(diverge_msg(&e)))
 }
 
@@ -453,12 +477,6 @@ pub fn integrate_dde_dense(
     atol: f64,
     jit: bool,
 ) -> Result<Vec<f64>, EngineError> {
-    if jit {
-        return Err(EngineError::Unsupported(
-            "the JIT evaluator (tsdyn-jit, stream E2) is not built yet; use backend='interp'"
-                .to_string(),
-        ));
-    }
     let dim = tape.dim();
     let n_slots = slot_components.len();
     // The DDE lowering's shape contract: n_state = dim + n_slots, parameters folded.
@@ -542,11 +560,11 @@ pub fn integrate_dde_dense(
              explicit method such as 'rk45', 'tsit5', 'dop853', or 'rk4'."
         )));
     }
-    let ev = VmEvaluator::new(tape);
+    let ev = build_evaluator(tape, jit)?;
     let mut solver = build_solver(name, rtol, atol);
     let cfg = IntegrateConfig::new(first_step_from_grid(t_eval));
     integrate_dde_grid(
-        &ev,
+        &*ev,
         &mut *solver,
         dim,
         &slots,
@@ -577,7 +595,7 @@ pub fn ensemble_final(
     atol: f64,
     jit: bool,
 ) -> Result<Vec<f64>, EngineError> {
-    guard_continuous(&tape, jit)?;
+    guard_continuous(&tape)?;
     if p.len() < tape.n_param() {
         return Err(EngineError::BadShape(format!(
             "parameter vector has length {}, need n_param = {}",
@@ -621,12 +639,274 @@ pub fn ensemble_final(
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
     let span = t1 - t0; // non-negative: the backward case is rejected above
+                        // First *trial* step. Adaptive kernels (rk45/tsit5/dop853 — the default
+                        // RK45) adapt away from this immediately, so the value only seeds the
+                        // controller. NOTE: a fixed-step kernel (rk4) keeps it as the step for the
+                        // whole run, so an rk4 ensemble integrates at span/100 while the dense path
+                        // (integrate_dense) uses the user's output grid — they disagree, and the
+                        // ensemble caller has no cadence knob to fix it. Giving the ODE ensemble an
+                        // explicit step for fixed-step methods is solver-config work (C-SOLV/C-FAM),
+                        // tracked separately; adaptive methods (and all SDE/map paths) are unaffected.
     let first_step = if span > 0.0 { span / 100.0 } else { 1.0 };
     let cfg = IntegrateConfig::new(first_step);
-    let ev = VmEvaluator::new(tape);
+    let ev = build_evaluator(tape, jit)?;
     let result = engine_ensemble(
-        &ev,
+        &*ev,
         |_i| build_solver(name, rtol, atol),
+        ics,
+        p,
+        t0,
+        t1,
+        &cfg,
+    );
+    Ok(result.states)
+}
+
+// ---------------------------------------------------------------------------
+// Map ensemble
+// ---------------------------------------------------------------------------
+
+/// Iterate a batch of map initial conditions to their `f^{steps}` in parallel,
+/// returning each final state as a flat row-major `(n_ic, dim)` buffer.
+///
+/// `ics` is a row-major `(n_ic, dim)` buffer; map parameters fold into the tape
+/// (`n_param == 0`). Mirrors the ODE [`ensemble_final`] contract: a diverging
+/// trajectory yields a `NaN` row rather than aborting the batch, so this returns
+/// the buffer directly (`NaN` rows mark the failures) instead of raising — the
+/// per-trajectory analogue of the single map loop's [`EngineError::Diverged`].
+/// Maps carry no randomness, so the result is independent of thread count.
+pub fn map_ensemble_final(tape: Tape, ics: &[f64], steps: usize) -> Result<Vec<f64>, EngineError> {
+    let dim = tape.dim();
+    // The same shape contract `iterate_map` enforces, applied here before the
+    // rayon fan-out so a malformed tape is a clean error, not a release-mode
+    // out-of-bounds inside a worker (the engine loop guards with debug_assert!).
+    if tape.n_param() != 0 {
+        return Err(EngineError::BadShape(format!(
+            "map iteration expects a tape with n_param == 0 (map parameters fold to \
+             constants); got n_param = {}",
+            tape.n_param()
+        )));
+    }
+    if tape.n_state() != dim {
+        return Err(EngineError::BadShape(format!(
+            "map iteration expects n_state == dim (state and next-state share a \
+             dimension); got n_state = {} != dim = {dim}",
+            tape.n_state()
+        )));
+    }
+    if dim == 0 {
+        return Err(EngineError::BadShape(
+            "system dimension is zero (the tape has no outputs)".to_string(),
+        ));
+    }
+    if !ics.len().is_multiple_of(dim) {
+        return Err(EngineError::BadShape(format!(
+            "ensemble initial-condition buffer length {} is not a multiple of dim = {dim}",
+            ics.len()
+        )));
+    }
+    // Maps fold their parameters into the tape, so the parameter slice is empty.
+    let ev = VmEvaluator::new(tape);
+    let result = engine_iterate_ensemble(&ev, ics, &[], steps);
+    Ok(result.states)
+}
+
+// ---------------------------------------------------------------------------
+// SDE integration (diagonal-Itô, two tapes: drift + diffusion)
+// ---------------------------------------------------------------------------
+
+/// Resolve a `method=` string to an SDE-kernel factory (case-insensitively),
+/// validating that the diffusion tape carries `∂g/∂u` when the scheme needs it.
+///
+/// The SDE kernels live in their *own* registry (`tsdyn_solvers::sde`), separate
+/// from the [`Solver`] registry — an SDE step needs two evaluators and a Wiener
+/// increment, not the frozen `Solver::step` signature. Milstein (order 1.0)
+/// reads the diagonal diffusion Jacobian, so a Milstein run over a diffusion
+/// tape lowered without one (`with_diffusion_jacobian=False`) is rejected here —
+/// the SDE twin of [`require_jacobian_if_needed`]. Returns the `fn` factory (a
+/// fresh kernel per call; `fn` pointers are `Sync`, so it threads through the
+/// ensemble fan-out).
+fn resolve_sde(method: &str, diffusion: &Tape) -> Result<fn() -> Box<dyn SdeKernel>, EngineError> {
+    let reg = sde::find(method)
+        .or_else(|| sde::find(&method.to_lowercase()))
+        .ok_or_else(|| {
+            EngineError::UnknownMethod(format!(
+                "unknown SDE method {method:?}; available: {:?}",
+                sde::available()
+            ))
+        })?;
+    if reg.caps.needs_jacobian && !diffusion.has_jacobian() {
+        return Err(EngineError::BadShape(format!(
+            "SDE method {:?} needs the diffusion Jacobian ∂g/∂u, but the diffusion tape was \
+             lowered without one (with_diffusion_jacobian=False). Lower the diffusion with its \
+             Jacobian, or use 'euler_maruyama'.",
+            reg.name
+        )));
+    }
+    Ok(reg.make)
+}
+
+/// Validate the SDE tape pair and shared parameters, returning the dimension.
+///
+/// The drift and diffusion are each `dim → dim` over the *same* (state,
+/// parameter) layout (the diagonal-Itô contract); both must be ODE-shaped
+/// (`n_state == dim`) and agree on `dim` and `n_param`, and `p` must cover that
+/// `n_param`. Reachable from a hand-built tape pair, not the Python seam, so a
+/// mismatch is a clean error rather than a release-mode panic in the SDE loop's
+/// `debug_assert!`s.
+fn check_sde_tapes(drift: &Tape, diffusion: &Tape, p: &[f64]) -> Result<usize, EngineError> {
+    let dim = drift.dim();
+    if dim == 0 {
+        return Err(EngineError::BadShape(
+            "system dimension is zero (the drift tape has no outputs)".to_string(),
+        ));
+    }
+    if drift.n_state() != dim {
+        return Err(EngineError::BadShape(format!(
+            "SDE drift tape must be ODE-shaped (n_state == dim); got n_state = {} != dim = {dim}",
+            drift.n_state()
+        )));
+    }
+    if diffusion.dim() != dim || diffusion.n_state() != dim {
+        return Err(EngineError::BadShape(format!(
+            "SDE diffusion tape must match the drift (dim = {dim}); got diffusion dim = {}, \
+             n_state = {}",
+            diffusion.dim(),
+            diffusion.n_state()
+        )));
+    }
+    if drift.n_param() != diffusion.n_param() {
+        return Err(EngineError::BadShape(format!(
+            "SDE drift and diffusion must share the parameter layout; got drift n_param = {}, \
+             diffusion n_param = {}",
+            drift.n_param(),
+            diffusion.n_param()
+        )));
+    }
+    if p.len() < drift.n_param() {
+        return Err(EngineError::BadShape(format!(
+            "parameter vector has length {}, need n_param = {}",
+            p.len(),
+            drift.n_param()
+        )));
+    }
+    Ok(dim)
+}
+
+/// Reject a non-finite or non-positive SDE step. `dt` is the step *and* the
+/// noise scale (`√dt`), and the engine hard-`assert!`s a positive finite step;
+/// validate at the boundary so it is a clean error, not a `PanicException`.
+fn check_sde_dt(dt: f64) -> Result<(), EngineError> {
+    if !(dt.is_finite() && dt > 0.0) {
+        return Err(EngineError::BadShape(format!(
+            "SDE step dt must be finite and positive; got {dt}"
+        )));
+    }
+    Ok(())
+}
+
+/// Integrate one diagonal-Itô SDE trajectory through the output grid `t_eval`,
+/// returning a flat row-major `(t_eval.len(), dim)` buffer (the first row is the
+/// state at `t_eval[0]`).
+///
+/// `drift`/`diffusion` are the two lowered tapes; `method` selects the SDE
+/// kernel by name (`euler_maruyama` / `milstein`); `dt` is the fixed step (and
+/// the noise scale `√dt`); `seed` makes the sample path reproducible. A landing
+/// step to a grid point that is not on the `dt` lattice is shortened with an
+/// `N(0, h)` increment (a valid step on a non-uniform partition). Divergence
+/// raises ([`EngineError::Diverged`]).
+#[allow(clippy::too_many_arguments)] // drift + diffusion + the usual grid args + the SDE step/seed.
+pub fn sde_integrate_dense(
+    drift: Tape,
+    diffusion: Tape,
+    ic: &[f64],
+    p: &[f64],
+    t_eval: &[f64],
+    method: &str,
+    dt: f64,
+    seed: u64,
+    jit: bool,
+) -> Result<Vec<f64>, EngineError> {
+    let kernel_make = resolve_sde(method, &diffusion)?;
+    let dim = check_sde_tapes(&drift, &diffusion, p)?;
+    if ic.len() < dim {
+        return Err(EngineError::BadShape(format!(
+            "initial state has length {}, need dim = {dim}",
+            ic.len()
+        )));
+    }
+    check_sde_dt(dt)?;
+    validate_grid(t_eval)?;
+    let drift_ev = build_evaluator(drift, jit)?;
+    let diff_ev = build_evaluator(diffusion, jit)?;
+    let mut kernel = kernel_make();
+    let mut rng = SplitMix64::new(seed);
+    let cfg = SdeConfig::new(dt);
+    sde_integrate_grid(
+        &*drift_ev,
+        &*diff_ev,
+        &mut *kernel,
+        &mut rng,
+        &ic[..dim],
+        p,
+        t_eval,
+        &cfg,
+    )
+    .map_err(|e| EngineError::Diverged(sde_diverge_msg(&e)))
+}
+
+/// Integrate a batch of SDE initial conditions to `t1` in parallel, returning
+/// each final state as a flat row-major `(n_ic, dim)` buffer.
+///
+/// `ics` is a row-major `(n_ic, dim)` buffer. Worker `i` draws its noise from a
+/// stream seeded by `seed_for(seed, i)` — depending only on the index — so the
+/// batch is **parallel == serial** bit-for-bit (the engine owns the per-index
+/// seeding here, unlike the ODE ensemble). A diverging trajectory yields a `NaN`
+/// row rather than aborting the batch.
+#[allow(clippy::too_many_arguments)] // drift + diffusion + batch + the SDE step/seed.
+pub fn sde_ensemble_final(
+    drift: Tape,
+    diffusion: Tape,
+    ics: &[f64],
+    p: &[f64],
+    t0: f64,
+    t1: f64,
+    method: &str,
+    dt: f64,
+    seed: u64,
+    jit: bool,
+) -> Result<Vec<f64>, EngineError> {
+    let kernel_make = resolve_sde(method, &diffusion)?;
+    let dim = check_sde_tapes(&drift, &diffusion, p)?;
+    check_sde_dt(dt)?;
+    if !(t0.is_finite() && t1.is_finite()) {
+        return Err(EngineError::BadShape(format!(
+            "integration times must be finite; got t0 = {t0}, t1 = {t1}"
+        )));
+    }
+    // The fixed-step SDE loop runs while `t < t1`; a backward request would never
+    // step and silently return the unchanged ICs. Reject it (mirroring the ODE
+    // ensemble) rather than return stale ICs as a successful batch.
+    if t1 < t0 {
+        return Err(EngineError::BadShape(format!(
+            "backward integration is not supported (t1 = {t1} < t0 = {t0}); request t1 >= t0."
+        )));
+    }
+    if !ics.len().is_multiple_of(dim) {
+        return Err(EngineError::BadShape(format!(
+            "ensemble initial-condition buffer length {} is not a multiple of dim = {dim}",
+            ics.len()
+        )));
+    }
+    let drift_ev = build_evaluator(drift, jit)?;
+    let diff_ev = build_evaluator(diffusion, jit)?;
+    let cfg = SdeConfig::new(dt);
+    // `kernel_make` is a `fn` pointer (a fresh kernel per worker; `fn` is `Sync`).
+    let result = engine_sde_ensemble(
+        &*drift_ev,
+        &*diff_ev,
+        kernel_make,
+        seed,
         ics,
         p,
         t0,
@@ -644,6 +924,11 @@ fn diverge_msg(e: &IntegrateError) -> String {
 /// Prefix the engine's map-divergence message, mirroring [`diverge_msg`].
 fn map_diverge_msg(e: &MapError) -> String {
     format!("map diverged before completing all iterations: {e}")
+}
+
+/// Prefix the engine's SDE-divergence message, mirroring [`diverge_msg`].
+fn sde_diverge_msg(e: &SdeError) -> String {
+    format!("SDE integration diverged before reaching the final time: {e}")
 }
 
 #[cfg(test)]
@@ -850,22 +1135,8 @@ mod tests {
     }
 
     #[test]
-    fn integrate_dense_rejects_jit_and_unknown_method() {
+    fn integrate_dense_rejects_unknown_method() {
         let t_eval = [0.0, 1.0];
-        assert!(matches!(
-            integrate_dense(
-                decay_tape(),
-                &[1.0],
-                &[1.0],
-                &t_eval,
-                "rk45",
-                1e-6,
-                1e-9,
-                true
-            )
-            .unwrap_err(),
-            EngineError::Unsupported(_)
-        ));
         assert!(matches!(
             integrate_dense(
                 decay_tape(),
@@ -880,6 +1151,58 @@ mod tests {
             .unwrap_err(),
             EngineError::UnknownMethod(_)
         ));
+    }
+
+    #[test]
+    fn integrate_dense_jit_matches_interp_bit_for_bit() {
+        // The JIT bridge: the same problem integrated with jit=true vs jit=false
+        // must agree bit-for-bit. The JIT evaluator is bit-identical to the
+        // interpreter on `eval`, and the adaptive loop drives both through the
+        // same `&dyn Evaluator` code, so every step decision is identical.
+        let t_eval: Vec<f64> = (0..=12).map(|i| i as f64 * 0.25).collect();
+        let run = |jit| {
+            integrate_dense(
+                lorenz_tape(),
+                &[1.0, 2.0, 3.0],
+                &[10.0, 28.0, 8.0 / 3.0],
+                &t_eval,
+                "dop853",
+                1e-9,
+                1e-11,
+                jit,
+            )
+            .unwrap()
+        };
+        let interp = run(false);
+        let jit = run(true);
+        assert_eq!(interp.len(), jit.len());
+        for (i, (a, b)) in interp.iter().zip(jit.iter()).enumerate() {
+            assert_eq!(a.to_bits(), b.to_bits(), "row {i}: jit {b} != interp {a}");
+        }
+    }
+
+    #[test]
+    fn ensemble_jit_matches_interp_bit_for_bit() {
+        let ics: Vec<f64> = (0..8).map(|i| 0.5 + i as f64).collect();
+        let run = |jit| {
+            ensemble_final(
+                decay_tape(),
+                &ics,
+                &[2.0],
+                0.0,
+                1.5,
+                "rk45",
+                1e-10,
+                1e-12,
+                jit,
+            )
+            .unwrap()
+        };
+        let interp = run(false);
+        let jit = run(true);
+        for (a, b) in interp.iter().zip(jit.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits());
+        }
     }
 
     #[test]
@@ -1289,21 +1612,305 @@ mod tests {
     }
 
     #[test]
-    fn integrate_dde_rejects_jit() {
-        let err = integrate_dde_dense(
-            neg_delay_dde_tape(),
-            &[0],
+    fn integrate_dde_jit_matches_interp_bit_for_bit() {
+        // The JIT bridge reaches the DDE method-of-steps engine too: the lowered
+        // DDE tape compiles to native code, and the same explicit kernel over the
+        // same history must reproduce the interpreter run bit-for-bit.
+        let t_eval: Vec<f64> = (0..=20).map(|i| i as f64 * 0.1).collect();
+        let run = |jit| {
+            integrate_dde_dense(
+                neg_delay_dde_tape(),
+                &[0],
+                &[1.0],
+                &[1.0],
+                &[0.0],
+                &[1.0],
+                &t_eval,
+                "rk45",
+                1e-9,
+                1e-11,
+                jit,
+            )
+            .unwrap()
+        };
+        let interp = run(false);
+        let jit = run(true);
+        assert_eq!(interp.len(), jit.len());
+        for (i, (a, b)) in interp.iter().zip(jit.iter()).enumerate() {
+            assert_eq!(a.to_bits(), b.to_bits(), "row {i}: jit {b} != interp {a}");
+        }
+    }
+
+    // -- SDE bridge ----------------------------------------------------------
+
+    /// GBM drift `f(x) = μx` (no parameters; μ folded in as a constant).
+    fn gbm_drift_tape(mu: f64) -> Tape {
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let m = b.constant(mu);
+        let f = b.mul(m, x);
+        b.finish(&[f], &[], 1, 0).unwrap()
+    }
+
+    /// GBM diffusion `g(x) = σx` carrying its diagonal Jacobian `∂g/∂x = σ`
+    /// (so the Milstein kernel has the `∂g/∂u` it reads).
+    fn gbm_diff_tape_jac(sigma: f64) -> Tape {
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let s = b.constant(sigma);
+        let g = b.mul(s, x);
+        b.finish(&[g], &[s], 1, 0).unwrap()
+    }
+
+    /// GBM diffusion `g(x) = σx` *without* a Jacobian (the Euler–Maruyama case,
+    /// and the tape a Milstein run must refuse).
+    fn gbm_diff_tape(sigma: f64) -> Tape {
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let s = b.constant(sigma);
+        let g = b.mul(s, x);
+        b.finish(&[g], &[], 1, 0).unwrap()
+    }
+
+    #[test]
+    fn sde_integrate_dense_first_row_is_ic_and_stays_finite() {
+        let t_eval: Vec<f64> = (0..=10).map(|i| i as f64 * 0.1).collect();
+        let y = sde_integrate_dense(
+            gbm_drift_tape(0.1),
+            gbm_diff_tape(0.3),
             &[1.0],
+            &[],
+            &t_eval,
+            "euler_maruyama",
+            0.01,
+            42,
+            false,
+        )
+        .unwrap();
+        assert_eq!(y.len(), t_eval.len());
+        assert_eq!(y[0], 1.0, "first row must be the initial condition");
+        assert!(y.iter().all(|x| x.is_finite()));
+    }
+
+    #[test]
+    fn sde_ensemble_is_parallel_equals_serial() {
+        // The headline determinism contract through the bridge: ensemble row i
+        // (seeded by seed_for(base, i) inside the engine) equals a single
+        // trajectory seeded the same way and integrated [t0, t1] in one segment.
+        use tsdyn_engine::rng::seed_for;
+        let (base, t0, t1, dt) = (0xC0FFEE_u64, 0.0, 1.0, 0.01);
+        let ics: Vec<f64> = (0..6).map(|i| 1.0 + 0.1 * i as f64).collect();
+        let batch = sde_ensemble_final(
+            gbm_drift_tape(0.15),
+            gbm_diff_tape_jac(0.3),
+            &ics,
+            &[],
+            t0,
+            t1,
+            "milstein",
+            dt,
+            base,
+            false,
+        )
+        .unwrap();
+        assert_eq!(batch.len(), ics.len());
+        for (i, &x0) in ics.iter().enumerate() {
+            let single = sde_integrate_dense(
+                gbm_drift_tape(0.15),
+                gbm_diff_tape_jac(0.3),
+                &[x0],
+                &[],
+                &[t0, t1],
+                "milstein",
+                dt,
+                seed_for(base, i as u64),
+                false,
+            )
+            .unwrap();
+            assert_eq!(
+                batch[i].to_bits(),
+                single[1].to_bits(),
+                "trajectory {i}: ensemble != seeded single"
+            );
+        }
+    }
+
+    #[test]
+    fn sde_jit_matches_interp_bit_for_bit() {
+        // jit==interp for an SDE: the noise stream is seed-driven (identical), and
+        // both evaluators are bit-identical, so the whole path matches bit-for-bit.
+        let t_eval: Vec<f64> = (0..=15).map(|i| i as f64 * 0.05).collect();
+        let run = |jit| {
+            sde_integrate_dense(
+                gbm_drift_tape(0.2),
+                gbm_diff_tape_jac(0.4),
+                &[1.0],
+                &[],
+                &t_eval,
+                "milstein",
+                0.005,
+                7,
+                jit,
+            )
+            .unwrap()
+        };
+        let interp = run(false);
+        let jit = run(true);
+        for (a, b) in interp.iter().zip(jit.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits());
+        }
+    }
+
+    #[test]
+    fn sde_rejects_unknown_method() {
+        let err = sde_integrate_dense(
+            gbm_drift_tape(0.1),
+            gbm_diff_tape(0.3),
             &[1.0],
-            &[0.0],
-            &[1.0],
-            &[0.0, 1.0],
-            "rk45",
-            1e-6,
-            1e-9,
-            true,
+            &[],
+            &[0.0, 0.1],
+            "no-such-scheme",
+            0.01,
+            0,
+            false,
         )
         .unwrap_err();
-        assert!(matches!(err, EngineError::Unsupported(_)), "got {err:?}");
+        assert!(matches!(err, EngineError::UnknownMethod(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn sde_milstein_requires_a_diffusion_jacobian() {
+        // Milstein reads ∂g/∂u; a diffusion tape lowered without one must be
+        // rejected loudly (BadShape → ValueError), not run with a missing term.
+        let err = sde_integrate_dense(
+            gbm_drift_tape(0.1),
+            gbm_diff_tape(0.3), // no Jacobian
+            &[1.0],
+            &[],
+            &[0.0, 0.1],
+            "milstein",
+            0.01,
+            0,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+        // Euler–Maruyama needs no diffusion Jacobian, so the same tape is fine.
+        assert!(sde_integrate_dense(
+            gbm_drift_tape(0.1),
+            gbm_diff_tape(0.3),
+            &[1.0],
+            &[],
+            &[0.0, 0.1],
+            "euler_maruyama",
+            0.01,
+            0,
+            false,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn sde_ensemble_isolates_a_diverged_trajectory() {
+        // Drift f(x)=x² (g=0) blows up from x0=1 before t=2 but decays from -1;
+        // the diverged row must be NaN, the healthy one finite.
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let f = b.mul(x, x);
+        let drift = b.finish(&[f], &[], 1, 0).unwrap();
+        let zero_diff = {
+            let mut b = TapeBuilder::new();
+            let _x = b.state(0);
+            let z = b.constant(0.0);
+            b.finish(&[z], &[], 1, 0).unwrap()
+        };
+        let states = sde_ensemble_final(
+            drift,
+            zero_diff,
+            &[1.0, -1.0],
+            &[],
+            0.0,
+            2.0,
+            "euler_maruyama",
+            0.01,
+            0,
+            false,
+        )
+        .unwrap();
+        assert!(states[0].is_nan(), "diverged row should be NaN");
+        assert!(states[1].is_finite());
+    }
+
+    #[test]
+    fn sde_rejects_non_positive_dt_and_backward_time() {
+        assert!(matches!(
+            sde_integrate_dense(
+                gbm_drift_tape(0.1),
+                gbm_diff_tape(0.3),
+                &[1.0],
+                &[],
+                &[0.0, 0.1],
+                "euler_maruyama",
+                0.0, // bad dt
+                0,
+                false,
+            )
+            .unwrap_err(),
+            EngineError::BadShape(_)
+        ));
+        assert!(matches!(
+            sde_ensemble_final(
+                gbm_drift_tape(0.1),
+                gbm_diff_tape(0.3),
+                &[1.0],
+                &[],
+                1.0,
+                0.0, // backward
+                "euler_maruyama",
+                0.01,
+                0,
+                false,
+            )
+            .unwrap_err(),
+            EngineError::BadShape(_)
+        ));
+    }
+
+    // -- Map ensemble --------------------------------------------------------
+
+    #[test]
+    fn map_ensemble_matches_a_serial_iterate_loop() {
+        // The ensemble final states must equal iterating each IC with the single
+        // map loop — bit-for-bit (maps carry no randomness).
+        let ics = [0.1, 0.1, -0.2, 0.05, 0.3, -0.1];
+        let steps = 25;
+        let n_ic = ics.len() / 2;
+        let batch = map_ensemble_final(henon_tape(), &ics, steps).unwrap();
+        assert_eq!(batch.len(), ics.len());
+        for i in 0..n_ic {
+            let dense = iterate_map(henon_tape(), &ics[2 * i..2 * i + 2], steps).unwrap();
+            let last = &dense[(steps - 1) * 2..]; // final iterate row
+            assert_eq!(batch[2 * i].to_bits(), last[0].to_bits(), "traj {i} x");
+            assert_eq!(batch[2 * i + 1].to_bits(), last[1].to_bits(), "traj {i} y");
+        }
+    }
+
+    #[test]
+    fn map_ensemble_isolates_a_diverged_trajectory() {
+        // Hénon from far outside the basin escapes to infinity → a NaN row; an
+        // on-attractor IC stays finite. The batch is not aborted.
+        let states = map_ensemble_final(henon_tape(), &[10.0, 10.0, 0.1, 0.1], 200).unwrap();
+        assert!(
+            states[0].is_nan() || states[1].is_nan(),
+            "diverged row should be NaN"
+        );
+        assert!(states[2].is_finite() && states[3].is_finite());
+    }
+
+    #[test]
+    fn map_ensemble_rejects_ragged_batch() {
+        // 3 is not a multiple of dim = 2.
+        let err = map_ensemble_final(henon_tape(), &[0.1, 0.1, 0.2], 5).unwrap_err();
+        assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
     }
 }

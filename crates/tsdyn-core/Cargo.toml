@@ -31,8 +31,15 @@ numpy = "0.26"
 # The engine, by path (this crate is not a workspace member, so no `.workspace`).
 # rayon reaches us transitively through tsdyn-engine, which owns the ensemble
 # fan-out; this crate never calls it directly, so it is not a direct dependency.
+#
+# tsdyn-jit is a *direct* dependency (E-WIRE): the JIT bridge constructs a
+# `JitEvaluator` here and dispatches it through the engine's `&dyn Evaluator`
+# seam, so the Cranelift backend (pure Rust, no LLVM) enters the wheel build tree
+# via this crate. It was correctly dropped from `tsdyn-engine` in #74 — the
+# engine drives evaluators by trait and never names a concrete one.
 tsdyn-ir = { path = "../tsdyn-ir" }
 tsdyn-vm = { path = "../tsdyn-vm" }
+tsdyn-jit = { path = "../tsdyn-jit" }
 tsdyn-solvers = { path = "../tsdyn-solvers" }
 tsdyn-engine = { path = "../tsdyn-engine" }
 

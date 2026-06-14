@@ -17,13 +17,15 @@ the diffusion carrying ``∂g/∂u`` for Milstein).
 
 Solvers (the real engine, ``tsdyn-solvers``/``tsdyn-engine``): **Euler–Maruyama**
 (strong order 0.5) and **Milstein** (strong order 1.0, which reads ``∂g/∂u``).
-Integration here runs through a dependency-light **pure-Python reference
-integrator** that mirrors the Rust engine's semantics — the same drift/diffusion
-tapes, the same diagonal Wiener substrate (a faithful port of the engine's
-``SplitMix64`` / ``seed_for`` / ``fill_wiener``), and the same per-trajectory-
-index seeding so an ensemble is reproducible. It is the lowering/oracle path;
-wiring the compiled engine (``backend="interp"``/``"jit"``) for SDEs is an E7
-follow-up (the FFI surface for the two-tape SDE call lives in ``tsdyn-core``).
+The default ``backend="reference"`` runs a dependency-light **pure-Python
+reference integrator** that mirrors the Rust engine's semantics — the same
+drift/diffusion tapes, the same diagonal Wiener substrate (a faithful port of the
+engine's ``SplitMix64`` / ``seed_for`` / ``fill_wiener``), and the same
+per-trajectory-index seeding so an ensemble is reproducible. ``backend="interp"``
+/ ``"jit"`` dispatch the two-tape SDE call to the compiled engine
+(``tsdynamics._rust``, the FFI surface in ``tsdyn-core``; stream E-WIRE) — the
+interpreter and the Cranelift JIT — reproducing the reference path under a fixed
+seed. The reference stays the default until the migration gate (M3) flips it.
 
 Registry note
 -------------
@@ -423,6 +425,7 @@ class StochasticSystem(SystemBase, ABC):
         ic: Any | None = None,
         method: str | None = None,
         seed: int | None = None,
+        backend: str = "reference",
     ) -> Trajectory:
         """
         Integrate the SDE and return a :class:`~tsdynamics.families.Trajectory`.
@@ -445,19 +448,37 @@ class StochasticSystem(SystemBase, ABC):
         seed : int, optional
             Seed for the noise realisation (random if omitted). The resolved seed
             is recorded in ``traj.meta["seed"]`` so a run can be reproduced.
+        backend : str, default "reference"
+            ``"reference"`` (the pure-Python reference integrator, the default)
+            or ``"interp"`` / ``"jit"`` to dispatch the two-tape SDE call to the
+            compiled Rust engine (:mod:`tsdynamics._rust`).  The engine path
+            reproduces the reference under a fixed seed and raises
+            :class:`~tsdynamics.engine.run.EngineNotAvailableError` if the
+            extension is not built.
 
         Returns
         -------
         Trajectory
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
+        from tsdynamics.engine import run
+
         canon = self._resolve_method(method)
         base_seed = _resolve_seed(seed)
         ic_arr = self.resolve_ic(ic)
         problem = self._problem(ic=ic_arr, t0=t0, method=canon)
         t_eval = _make_t_eval(t0, final_time, dt)
-        rng = _SplitMix64(base_seed)
-        y = self._run_reference(problem, t_eval, dt, canon, rng)
+
+        backend_canon = run.resolve_backend(backend)
+        if backend_canon == "reference":
+            rng = _SplitMix64(base_seed)
+            y = self._run_reference(problem, t_eval, dt, canon, rng)
+            engine = "reference"
+        else:
+            y = run.sde_integrate_dense(
+                problem, t_eval, dt=dt, method=canon, seed=base_seed, backend=backend_canon
+            )
+            engine = "rust"
 
         return Trajectory(
             t=t_eval,
@@ -465,7 +486,8 @@ class StochasticSystem(SystemBase, ABC):
             system=self,
             meta=self._provenance(
                 family="sde",
-                backend="reference",
+                engine=engine,
+                backend=backend_canon,
                 method=canon,
                 dt=dt,
                 t0=t0,
@@ -483,6 +505,7 @@ class StochasticSystem(SystemBase, ABC):
         t0: float = 0.0,
         method: str | None = None,
         seed: int | None = None,
+        backend: str = "reference",
     ) -> np.ndarray:
         """
         Integrate a batch of initial conditions and return their final states.
@@ -501,17 +524,38 @@ class StochasticSystem(SystemBase, ABC):
             The batch of initial conditions.
         final_time, dt, t0, method, seed
             As in :meth:`integrate` (``seed`` is the ensemble's base seed).
+        backend : str, default "reference"
+            ``"reference"`` (pure-Python loop) or ``"interp"`` / ``"jit"`` to fan
+            the batch out on the compiled engine's rayon pool.  Both seed each
+            trajectory by index, so the final states match across backends to
+            floating-point tolerance.
 
         Returns
         -------
         ndarray, shape (n, dim)
             Final states (rows of ``NaN`` for diverged trajectories).
         """
+        from tsdynamics.engine import run
+
         canon = self._resolve_method(method)
         base_seed = _resolve_seed(seed)
         ics = np.ascontiguousarray(ics, dtype=np.float64)
         if ics.ndim != 2 or ics.shape[1] != self.dim:
             raise ValueError(f"ics must be (n, {self.dim}); got shape {ics.shape}")
+
+        backend_canon = run.resolve_backend(backend)
+        if backend_canon != "reference":
+            problem = self._problem(ic=ics[0], t0=t0, method=canon)
+            return run.sde_ensemble_final(
+                problem,
+                ics,
+                t0=t0,
+                t1=float(final_time),
+                dt=dt,
+                method=canon,
+                seed=base_seed,
+                backend=backend_canon,
+            )
 
         problem = self._problem(ic=ics[0], t0=t0, method=canon)
         drift, diffusion = problem.drift, problem.diffusion

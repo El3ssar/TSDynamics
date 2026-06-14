@@ -224,18 +224,24 @@ All three families + all derived wrappers implement:
   (one noise coefficient per component); both symbolic, both lower via
   `engine.compile.lower_sde` (drift tape + diffusion tape, the latter carrying
   `∂g/∂u` for Milstein).
-- `integrate(..., method=, seed=)` runs a fixed-step scheme — `dt` *is* the
-  noise scale `√dt` (so `dt` sets both the discretisation and the output grid).
+- `integrate(..., method=, seed=, backend=)` runs a fixed-step scheme — `dt` *is*
+  the noise scale `√dt` (so `dt` sets both the discretisation and the output grid).
   `method`: `"euler_maruyama"` (order 0.5, default) or `"milstein"` (order 1.0).
   `seed` makes the noise realisation reproducible (recorded in `traj.meta`).
-- `ensemble(ics, ...)` seeds trajectory `i` from `seed_for(seed, i)` — depending
-  only on the index — so a batch is reproducible and mirrors the Rust engine's
-  parallel-equals-serial contract; a diverged trajectory becomes a `NaN` row.
+  `backend`: `"reference"` (default, pure Python) or `"interp"`/`"jit"` — the
+  compiled engine via `tsdynamics._rust` (stream E-WIRE).
+- `ensemble(ics, ..., backend=)` seeds trajectory `i` from `seed_for(seed, i)` —
+  depending only on the index — so a batch is reproducible and mirrors the Rust
+  engine's parallel-equals-serial contract; a diverged trajectory becomes a `NaN`
+  row. `backend="interp"/"jit"` fans the batch out on the engine's rayon pool.
 - The real engine is Rust: kernels in `crates/tsdyn-solvers/src/sde/**`
   (own `SdeKernel` trait, RNG-free — the engine hands them a pre-drawn `dw`),
-  loop + seeded RNG in `crates/tsdyn-engine/src/sde.rs`. The Python path uses a
-  pure-Python **reference** integrator (a faithful `SplitMix64` port); wiring
-  SDEs through `backend="interp"/"jit"` (`tsdynamics._rust`) is an E7 follow-up.
+  loop + seeded RNG in `crates/tsdyn-engine/src/sde.rs`. The two-tape SDE FFI
+  (`integrate_sde_dense` / `integrate_sde_ensemble_final` in `tsdyn-core`) is
+  wired (stream E-WIRE): `backend="interp"/"jit"` dispatches the drift+diffusion
+  call to the engine (interpreter or Cranelift JIT) and reproduces the Python
+  reference under a fixed seed. The pure-Python **reference** integrator (a
+  faithful `SplitMix64` port) stays the default until the migration gate (M3).
 - **Not yet registry-detected**: SDE systems lower/integrate via
   `build_problem`'s `_drift`/`_diffusion` duck-typing, but the registry's family
   tag (`stochastic`) is stream C-FAM's job, so they don't appear in

@@ -27,6 +27,7 @@ on:
       - "tests/test_rust_engine.py"
       - "tests/test_dde_engine.py"
       - "tests/test_map_engine.py"
+      - "tests/test_engine_wire.py"
       - ".github/workflows/engine-bindings.yml"
   workflow_dispatch:
 
@@ -97,15 +98,18 @@ jobs:
         run: uv run python -c "import tsdynamics._rust; print('tsdynamics._rust loaded OK')"
 
       # Exercise the compiled engine end-to-end through the Python API: the ODE
-      # bindings (test_rust_engine.py) plus the native DDE and map loops
-      # (test_dde_engine.py / test_map_engine.py). These all skip in ci.yml
-      # because `_rust` is absent there, so this is the only job that runs them
-      # with the real extension. The slow tier runs too (the Rust-vs-jitcdde
-      # comparisons live there); `full` stays deselected via pyproject addopts.
+      # bindings (test_rust_engine.py), the native DDE and map loops
+      # (test_dde_engine.py / test_map_engine.py), and the E-WIRE surface
+      # (test_engine_wire.py: the SDE FFI, the map-ensemble binding, and the JIT
+      # bridge). These all skip in ci.yml because `_rust` is absent there, so this
+      # is the only job that runs them with the real extension. The slow tier runs
+      # too (the Rust-vs-jitcdde comparisons live there); `full` stays deselected
+      # via pyproject addopts.
       - name: Run the Python binding + engine-path tests
         run: >-
           uv run pytest
           tests/test_rust_engine.py
           tests/test_dde_engine.py
           tests/test_map_engine.py
+          tests/test_engine_wire.py
           --no-cov -q
