@@ -187,6 +187,20 @@ def test_reference_pow_forms() -> None:
     assert got == pytest.approx(want, rel=1e-13)
 
 
+def test_powi_uses_square_and_multiply() -> None:
+    """``OP_POWI`` reduces by square-and-multiply (matching Rust ``f64::powi``),
+    not NumPy's exp·log ``pow`` — the integer-power path of the reference oracle.
+    Cross-language bit-exactness is asserted by the I-XVAL gate; here we check the
+    reduction is mathematically correct across signs and the edge exponents."""
+    from tsdynamics.engine.compile import _powi
+
+    for base, exp in [(0.9, 50), (1.1, 13), (2.0, 10), (0.5, -4), (7.0, 1)]:
+        assert float(_powi(np.float64(base), exp)) == pytest.approx(base**exp, rel=1e-12)
+    assert float(_powi(np.float64(4.0), 0)) == 1.0
+    assert float(_powi(np.float64(-3.0), 1)) == -3.0
+    assert float(_powi(np.float64(2.0), -3)) == pytest.approx(0.125, rel=1e-15)
+
+
 def test_run_tape_coerces_scalar_params() -> None:
     """``run_tape`` accepts a scalar/empty parameter argument without error."""
     import symengine

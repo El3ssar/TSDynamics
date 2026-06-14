@@ -95,6 +95,13 @@ def test_emitter_opcodes_match_the_frozen_wire_values():
 _SYSTEMS = list(gen.FIXTURE_SYSTEMS)
 
 
+def test_fixture_regenerator_runs():
+    """The documented regeneration path must work, so the IR contract's own
+    provenance tooling cannot silently rot (it imported a pre-F3 module path)."""
+    text = gen.build_fixture_text(_SYSTEMS[0])
+    assert text and "system" in gen.parse_fixture(text)
+
+
 @pytest.mark.parametrize("name", _SYSTEMS)
 def test_committed_fixture_tape_structure_is_current(name):
     """A fresh emission must reproduce the committed tape arrays exactly."""

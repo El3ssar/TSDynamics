@@ -332,6 +332,29 @@ fn guard_continuous(tape: &Tape, jit: bool) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// Reject a method that needs an analytic Jacobian when the tape carries none.
+///
+/// The implicit kernels (`rosenbrock`/`trbdf2`) freeze `∂f/∂u` each step and
+/// solve `(I − c·h·J)`. Driving them over a tape compiled *without* a Jacobian
+/// (`with_jacobian=False`) leaves `eval_jac`'s `jac` buffer untouched — i.e. the
+/// all-zeros it was initialised to — so the iteration matrix collapses to `I` and
+/// the L-stable step silently degrades to an *unstable forward-Euler* one: a
+/// plausible-but-wrong trajectory with no error raised. Reject it loudly here, at
+/// the boundary, mirroring the DDE path's explicit-method guard. The implicit
+/// kernels also self-guard (defence in depth), but this gives the actionable
+/// message (recompile with a Jacobian, or pick an explicit method).
+fn require_jacobian_if_needed(tape: &Tape, name: &'static str) -> Result<(), EngineError> {
+    let reg = tsdyn_solvers::find(name).expect("resolve_solver returns a registered name");
+    if reg.caps.needs_jacobian && !tape.has_jacobian() {
+        return Err(EngineError::BadShape(format!(
+            "method {name:?} needs an analytic Jacobian, but the tape was compiled without one \
+             (with_jacobian=False). Recompile the problem with a Jacobian, or choose an explicit \
+             method such as 'rk45', 'tsit5', 'dop853', or 'rk4'."
+        )));
+    }
+    Ok(())
+}
+
 /// First trial step from an output grid: the first positive gap, else a small
 /// default. For an adaptive kernel this is only the first attempt (it adapts);
 /// for the fixed-step `rk4` it is the step itself.
@@ -388,8 +411,14 @@ pub fn integrate_dense(
 ) -> Result<Vec<f64>, EngineError> {
     guard_continuous(&tape, jit)?;
     check_inputs(&tape, ic, p)?;
+    if tape.dim() == 0 {
+        return Err(EngineError::BadShape(
+            "system dimension is zero (the tape has no outputs)".to_string(),
+        ));
+    }
     validate_grid(t_eval)?;
     let name = resolve_solver(method)?;
+    require_jacobian_if_needed(&tape, name)?;
     let ev = VmEvaluator::new(tape);
     let mut solver = build_solver(name, rtol, atol);
     let cfg = IntegrateConfig::new(first_step_from_grid(t_eval));
@@ -564,6 +593,16 @@ pub fn ensemble_final(
             "integration times must be finite; got t0 = {t0}, t1 = {t1}"
         )));
     }
+    // Backward integration is not supported yet: the engine loop runs while
+    // `t < t1`, so a request with `t1 < t0` would never step and silently return
+    // the unchanged initial conditions as a successful batch. Reject it loudly
+    // until a backward-time path lands, rather than return stale ICs as `Ok`.
+    if t1 < t0 {
+        return Err(EngineError::BadShape(format!(
+            "backward integration is not supported (t1 = {t1} < t0 = {t0}); the engine integrates \
+             forward in time. Request t1 >= t0."
+        )));
+    }
     let dim = tape.dim();
     // The engine's ensemble path hard-asserts a positive dimension; guard it here
     // so a zero-output tape is a clean error, not a panic.
@@ -580,7 +619,8 @@ pub fn ensemble_final(
     }
     // Validate the method up front (one clear error before the rayon fan-out).
     let name = resolve_solver(method)?;
-    let span = (t1 - t0).abs();
+    require_jacobian_if_needed(&tape, name)?;
+    let span = t1 - t0; // non-negative: the backward case is rejected above
     let first_step = if span > 0.0 { span / 100.0 } else { 1.0 };
     let cfg = IntegrateConfig::new(first_step);
     let ev = VmEvaluator::new(tape);
@@ -611,7 +651,9 @@ mod tests {
     use super::*;
     use tsdyn_ir::TapeBuilder;
 
-    /// dx/dt = -k x ⇒ x(t) = x0 e^{-k t}; one parameter, one state.
+    /// dx/dt = -k x ⇒ x(t) = x0 e^{-k t}; one parameter, one state. No Jacobian
+    /// (jac_outputs empty), so `has_jacobian()` is false — the case an implicit
+    /// kernel must refuse.
     fn decay_tape() -> Tape {
         let mut b = TapeBuilder::new();
         let k = b.param(0);
@@ -619,6 +661,18 @@ mod tests {
         let kx = b.mul(k, x);
         let dx = b.neg(kx);
         b.finish(&[dx], &[], 1, 1).unwrap()
+    }
+
+    /// The same decay system carrying its analytic Jacobian ∂(dx)/∂x = −k, so the
+    /// implicit kernels have the `∂f/∂u` they require.
+    fn decay_tape_jac() -> Tape {
+        let mut b = TapeBuilder::new();
+        let k = b.param(0);
+        let x = b.state(0);
+        let kx = b.mul(k, x);
+        let dx = b.neg(kx);
+        let neg_k = b.neg(k);
+        b.finish(&[dx], &[neg_k], 1, 1).unwrap()
     }
 
     /// Undamped oscillator dx=v, dv=-x ⇒ (cos t, -sin t) from (1, 0).
@@ -941,7 +995,7 @@ mod tests {
         let t_eval: Vec<f64> = (0..=6).map(|i| i as f64 * 0.4).collect();
         for method in ["rosenbrock", "trbdf2"] {
             let y = integrate_dense(
-                decay_tape(),
+                decay_tape_jac(),
                 &[1.0],
                 &[2.0],
                 &t_eval,
@@ -1143,6 +1197,77 @@ mod tests {
             matches!(bad_delay, EngineError::BadShape(_)),
             "got {bad_delay:?}"
         );
+    }
+
+    #[test]
+    fn implicit_methods_refuse_a_tape_without_a_jacobian() {
+        // The critical guard: rosenbrock/trbdf2 freeze ∂f/∂u each step. On a tape
+        // compiled without a Jacobian the iteration matrix would collapse to I and
+        // the L-stable step would silently degrade to forward Euler. The engine
+        // must reject this loudly (BadShape → ValueError), not integrate.
+        let t_eval = [0.0, 0.5, 1.0];
+        for method in ["rosenbrock", "trbdf2"] {
+            let err =
+                integrate_dense(decay_tape(), &[1.0], &[2.0], &t_eval, method, 1e-6, 1e-9, false)
+                    .unwrap_err();
+            assert!(
+                matches!(err, EngineError::BadShape(_)),
+                "{method} (no Jacobian): got {err:?}"
+            );
+            // The ensemble path guards identically.
+            let err = ensemble_final(
+                decay_tape(),
+                &[1.0, 2.0],
+                &[2.0],
+                0.0,
+                1.0,
+                method,
+                1e-6,
+                1e-9,
+                false,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, EngineError::BadShape(_)),
+                "{method} ensemble (no Jacobian): got {err:?}"
+            );
+        }
+        // With the Jacobian present, the same implicit method integrates fine.
+        let y = integrate_dense(
+            decay_tape_jac(),
+            &[1.0],
+            &[2.0],
+            &t_eval,
+            "rosenbrock",
+            1e-9,
+            1e-11,
+            false,
+        );
+        assert!(y.is_ok(), "rosenbrock with a Jacobian should integrate: {y:?}");
+        // Explicit methods never need a Jacobian, so the no-Jacobian tape is fine.
+        assert!(
+            integrate_dense(decay_tape(), &[1.0], &[2.0], &t_eval, "rk45", 1e-6, 1e-9, false)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn ensemble_rejects_backward_integration() {
+        // t1 < t0 would never enter the forward step loop and silently return the
+        // unchanged ICs as a successful batch; reject it instead.
+        let err = ensemble_final(
+            decay_tape(),
+            &[1.0, 2.0],
+            &[2.0],
+            1.0,
+            0.0,
+            "rk45",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
     }
 
     #[test]

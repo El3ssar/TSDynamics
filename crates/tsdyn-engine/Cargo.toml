@@ -10,8 +10,12 @@ repository.workspace = true
 [dependencies]
 tsdyn-ir.workspace = true
 tsdyn-vm.workspace = true
-tsdyn-jit.workspace = true
 tsdyn-solvers.workspace = true
+# The engine drives any `&dyn Evaluator` (interpreter or JIT) — it does not
+# depend on `tsdyn-jit`. The JIT is wired in at the binding layer (`tsdyn-core`),
+# which constructs a `JitEvaluator` and hands it to these loops. Depending on it
+# here would drag the whole cranelift toolchain into every wheel build for no
+# engine-side use; keep that edge in `tsdyn-core` when the JIT path is wired.
 # The ensemble fan-out (ensemble.rs) lives here as of stream E5; rayon is
 # pre-pinned in the workspace so the whole engine agrees on one version.
 rayon.workspace = true

@@ -73,6 +73,19 @@ class ProjectedSystem(DerivedSystem):
         """Dimension of the projected view."""
         return len(self.components)
 
+    @property
+    def variables(self) -> tuple[str, ...] | None:
+        """Component names of the *projected* view (the inner names, subset).
+
+        Overrides :class:`DerivedSystem`'s pass-through (which would return the
+        inner system's *full* names and mislabel the projected columns).  Returns
+        ``None`` when the inner system declares no ``variables``.
+        """
+        inner = getattr(type(self.system), "variables", None)
+        if inner is None:
+            return None
+        return tuple(inner[i] for i in self.components)
+
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
         """Advance the full system; return the projected new state."""
         return self.system.step(n_or_dt)[list(self.components)]
@@ -111,4 +124,8 @@ class ProjectedSystem(DerivedSystem):
         """Full-system trajectory with projected columns."""
         traj = self.system.trajectory(*args, **kwargs)
         meta = {**traj.meta, "projected": self.components}
-        return Trajectory(traj.t, traj.y[:, list(self.components)], self.system, meta=meta)
+        # Back-reference ``self`` (not the inner system): the returned ``y`` holds
+        # only the projected columns, and ``self.variables`` names exactly those —
+        # so ``traj["x"]`` resolves to the right column and an unknown name raises
+        # KeyError rather than silently mislabelling or IndexError-ing.
+        return Trajectory(traj.t, traj.y[:, list(self.components)], self, meta=meta)

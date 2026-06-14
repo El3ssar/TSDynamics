@@ -16,8 +16,9 @@ tsdyn-ir.workspace = true
 cranelift-codegen = "0.131"
 cranelift-frontend = "0.131"
 cranelift-module = "0.131"
+# `cranelift-jit` detects the host ISA internally (via cranelift-native), so we
+# do not depend on cranelift-native directly — `JITBuilder::new` pulls it in.
 cranelift-jit = "0.131"
-cranelift-native = "0.131"
 
 [dev-dependencies]
 # The cross-validation tests check the JIT against the production interpreter

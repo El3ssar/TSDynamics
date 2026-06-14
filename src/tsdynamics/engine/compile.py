@@ -901,8 +901,38 @@ def _unwrap_static_callable(fn: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Reference evaluator — mirrors crates/tsdyn-ir/src/reference.rs exactly.
+# Reference evaluator — mirrors crates/tsdyn-ir/src/reference.rs.
+#
+# Every opcode replicates the Rust reference's IEEE-754 semantics. The integer
+# power ``OP_POWI`` uses the same square-and-multiply reduction as Rust's
+# ``f64::powi`` (see ``_powi`` below) rather than NumPy's ``pow`` (an
+# exp·log reduction that differs by a few ULP); cross-language *bit-exact*
+# agreement on every op is asserted by the I-XVAL migration gate once the
+# compiled wheel is built, not here.
 # ---------------------------------------------------------------------------
+
+
+def _powi(base: np.float64, exp: int) -> np.float64:
+    """Integer power by square-and-multiply, matching Rust's ``f64::powi``.
+
+    NumPy's ``base ** int`` promotes the exponent to a float and takes an
+    ``exp·log`` path, which drifts from the Rust evaluators' repeated-multiply
+    reduction by up to a few ULP.  Replicating square-and-multiply here keeps the
+    pure-Python reference a faithful oracle on the ``OP_POWI`` path.
+    """
+    n = int(exp)
+    b = base
+    if n < 0:
+        b = np.float64(1.0) / b
+        n = -n
+    result = np.float64(1.0)
+    while n > 0:
+        if n & 1:
+            result = result * b
+        n >>= 1
+        if n > 0:
+            b = b * b
+    return result
 
 
 def run_tape(tape: Tape, u: Any, p: Any = (), t: float = 0.0) -> np.ndarray:
@@ -969,7 +999,8 @@ def run_tape(tape: Tape, u: Any, p: Any = (), t: float = 0.0) -> np.ndarray:
                 # operands being NumPy scalars — never let a Python ``float`` in.
                 r = regs[ai] ** regs[int(b[i])]
             elif op == OP_POWI:
-                r = regs[ai] ** int(b[i])
+                # Square-and-multiply (matches Rust f64::powi), not NumPy pow.
+                r = _powi(regs[ai], int(b[i]))
             elif op == OP_NEG:
                 r = -regs[ai]
             elif op == OP_RECIP:

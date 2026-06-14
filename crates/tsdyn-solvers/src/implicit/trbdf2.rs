@@ -160,6 +160,15 @@ impl BaseStep for TrBdf2Base {
         let n = u.len();
         self.ensure(n);
 
+        // Defence in depth: both substages freeze the analytic Jacobian, so an
+        // evaluator that cannot supply one would leave the iteration matrix at I
+        // and silently degrade the step to forward Euler. The engine boundary
+        // rejects this first (`bridge::require_jacobian_if_needed`); guard here too
+        // for direct callers.
+        if !ev.has_jacobian() {
+            return BaseOutcome::Diverged;
+        }
+
         // Method coefficients (γ = 2 − √2). The two substages share I − a·h·J.
         let g = 2.0 - std::f64::consts::SQRT_2;
         let d = 0.5 * g; // trapezoidal substage coefficient
