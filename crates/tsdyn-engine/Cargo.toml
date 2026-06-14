@@ -12,6 +12,6 @@ tsdyn-ir.workspace = true
 tsdyn-vm.workspace = true
 tsdyn-jit.workspace = true
 tsdyn-solvers.workspace = true
-# rayon is pre-pinned in the workspace; stream E5 opts in when the ensemble
-# path moves here:
-# rayon.workspace = true
+# The ensemble fan-out (ensemble.rs) lives here as of stream E5; rayon is
+# pre-pinned in the workspace so the whole engine agrees on one version.
+rayon.workspace = true
