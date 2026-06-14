@@ -608,7 +608,7 @@ independent sessions continue cleanly.
 
 ### 13b. Carved out for the named streams (extend their issues)
 
-- **C-FAM** — the seam C-FAM was meant to pre-stage does not exist: only
+- **C-FAM** (issue #34) — the seam C-FAM was meant to pre-stage does not exist: only
   `DiscreteMap` routes through `engine.run.integrate`; DDE/SDE reimplement
   integration inline and ODE never calls the seam. Before flipping the default to
   Rust: add a **shared engine-dispatch seam** on `SystemBase` (a
@@ -619,12 +619,12 @@ independent sessions continue cleanly.
   provenance). Also add **SDE registry detection** (`'sde'` in `Family`,
   `'StochasticSystem'` in `_FAMILY_BASES`, broaden `_has_concrete_rhs` to accept
   `_drift`) + an SDE history/fixture hook analogous to `DDE_HISTORIES`.
-- **C-SOLV** — register the **in-tree solver specs** (the `solvers/` directory
+- **C-SOLV** (issue #35) — register the **in-tree solver specs** (the `solvers/` directory
   ships zero today, so `method=` resolves against an empty table) and pair the
   engine's new Jacobian guard with a **Python-side auto-set of `with_jacobian`**
   when the resolved method is implicit, so the common stiff path "just works"
   instead of raising. Auto-stiffness selection sits on top.
-- **I-XVAL** — the gate currently validates the **v2-seed `tsdynamics-core`** on
+- **I-XVAL** (issue #51) — the gate currently validates the **v2-seed `tsdynamics-core`** on
   Lorenz only, not `tsdynamics._rust`. Add a `RustEngine` backend to
   `xval_harness.py` (`run.integrate(backend="interp"/"jit")`), point
   `cross-validation.yml` at the compiled extension over the **registry
@@ -633,7 +633,7 @@ independent sessions continue cleanly.
   hand-maintained file list with a marker/glob + a meta-test asserting every
   `importorskip("tsdynamics._rust")` module is covered (the skip-as-success
   blind-spot that required out-of-band patch #72).
-- **C-DERIV / A-LYAP** — `TangentSystem` is billed as "the one Lyapunov engine"
+- **C-DERIV / A-LYAP** (issues #37 / #38) — `TangentSystem` is billed as "the one Lyapunov engine"
   but the family `lyapunov_spectrum` methods triplicate the QR/`jitcode_lyap`
   loop, and its ODE mode is JiTCODE-only (deleted at M3) with no Rust variational
   replacement. Unify into one **backend-neutral variational core** so ODE
@@ -641,14 +641,14 @@ independent sessions continue cleanly.
 
 ### 13c. New streams to add to the board (open issues for these)
 
-- **E-WIRE — reach the finished engine code from Python.** Add the SDE FFI
+- **E-WIRE (issue #75) — reach the finished engine code from Python.** Add the SDE FFI
   (`integrate_sde_dense` / `_ensemble`) and the map-ensemble binding to
   `tsdyn-core`, and **wire the Cranelift JIT** (replace the `Unsupported` stub in
   `bridge.rs::guard_continuous` with a `JitEvaluator` dispatched through the
   existing `&dyn Evaluator` seam). Today: SDEs run pure-Python, `backend="jit"` is
   a dead option, and `map.rs::iterate_ensemble_final` has no binding. *(Depends:
   E5, E6, E7. Unblocks the SDE/JIT perks and parts of C-FAM/I-XVAL.)*
-- **E-OPS — non-smooth / piecewise opcodes.** The IR has no
+- **E-OPS (issue #76) — non-smooth / piecewise opcodes.** The IR has no
   comparison/select/min/max/floor/ceil/mod, so built-in modular/piecewise maps
   (Circle, Tent, Baker, Bernoulli) cannot lower and have **zero Rust path** — a
   hard blocker for the M3 Numba deletion. Add an additive opcode block in the
@@ -656,13 +656,13 @@ independent sessions continue cleanly.
   a.e.-derivative conventions, and teach the map-lowering tracer to emit them.
   *(Depends: F1. `[interface]`-class change — coordinate; it extends, never
   renumbers, the frozen IR.)*
-- **E-EVENT — event functions + dense output.** Poincaré-section root-finding,
+- **E-EVENT (issue #77) — event functions + dense output.** Poincaré-section root-finding,
   recurrence and event detection live entirely in Python today. Add an optional
   **dense-output / event channel** to the `Solver` trait and an event-expression
   hook to the IR/engine, so A-ORBIT / A-BASIN / A-RQA can drive events natively.
   *(Depends: F2, E3/E5. Additive to the frozen `Solver` trait — design as an
   optional capability, not a breaking signature change.)*
-- **A-LAYOUT — analysis subpackage restructure (run before the A-\* fan-out).**
+- **A-LAYOUT (issue #78) — analysis subpackage restructure (run before the A-\* fan-out).**
   `analysis/` is still the flat v2 quartet; the A-streams each own a *subpackage*.
   Move, with re-exports preserving the public API **and** updating the
   `docs/reference/*` mkdocstrings paths (so `mkdocs --strict` stays green):
