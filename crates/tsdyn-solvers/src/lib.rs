@@ -33,6 +33,11 @@ mod caps;
 mod registry;
 mod solver;
 
+// Solver-kernel families: one module per family, each filled by its own stream
+// (E3 explicit; E4 implicit; E-SDE stochastic). Append-only — add a family line,
+// never reorder. Each kernel inside self-registers via `register_solver!`.
+pub mod explicit;
+
 pub use caps::{Caps, ProblemKind, ProblemKinds, SolverKind};
 pub use registry::{available, duplicates, find, make, registered, SolverRegistration};
 pub use solver::{Solver, SolverState, StepOutcome};
