@@ -37,6 +37,7 @@ mod solver;
 // (E3 explicit; E4 implicit; E-SDE stochastic). Append-only — add a family line,
 // never reorder. Each kernel inside self-registers via `register_solver!`.
 pub mod explicit;
+pub mod implicit;
 
 pub use caps::{Caps, ProblemKind, ProblemKinds, SolverKind};
 pub use registry::{available, duplicates, find, make, registered, SolverRegistration};
