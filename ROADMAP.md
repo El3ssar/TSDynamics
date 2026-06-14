@@ -401,20 +401,29 @@ board with the maintainer's `gh`-based bootstrap — one issue per row.)*
 | **E-SDE** | **SDE** engine + solvers (NEW family, **diagonal-Itô**, §11) | `tsdyn-solvers/sde/**`, Wiener/RNG in engine, `families/stochastic.py` | E5 | E-DDE | `_drift`+`_diffusion` (per-component); Euler–Maruyama + Milstein; converges to known SDE moments (OU process, geometric BM); seeded ensembles. |
 | **E-DDE** | **DDE** engine (method of steps) | `tsdyn-engine/dde.rs` (history ring buffer + dense interp), `families/delay.py` | E5 | E-SDE | Mackey–Glass matches JiTCDDE within tol; constant + state-dependent delays. |
 | **E-MAP** | Maps on the engine | `families/discrete.py` + `tsdyn-engine` map loop | E5 | — | all 26 maps iterate natively; matches v2 Numba within fp tol. |
+| **E-WIRE** (#75) | Reach the finished engine code from Python | `crates/tsdyn-core/**` (SDE FFI, map-ensemble binding, JIT bridge), `engine/run.py` dispatch, `families/stochastic.py` engine path | E5,E6,E7 | E-OPS,E-EVENT | `backend="jit"` == `interp` through Python; SDE `interp` == the Python reference (EM+Milstein, seeded); map-ensemble binding matches the serial loop. (§13c) |
+| **E-OPS** (#76) | Non-smooth / piecewise IR opcodes | `tsdyn-ir/src/op.rs` (additive, wire range **50–69**), the three evaluator arms, `engine/compile.py` emitter + map tracer | F1 | E-WIRE,E-EVENT | Circle/Tent/Baker/Bernoulli lower & iterate on the engine, matching v2 Numba; vm==jit==reference on the new ops. **`[interface]`-class — extends, never renumbers, the frozen IR.** (§13c/§13d) |
+| **E-EVENT** (#77) | Event functions + dense output | `tsdyn-solvers` (Caps + optional trait capability), `tsdyn-engine` event/dense hook, IR event-expression channel | F2,E3,E5 | E-WIRE,E-OPS | engine-detected Poincaré crossing matches the Python Hermite refinement to O(dt⁴); kernels without the capability unchanged. **Additive to the frozen `Solver` trait.** (§13c/§13d) |
 
 ### Tier 2 — Python core on the new engine — parallel after E6/E7 land
 
 | ID | Stream | Owns | Depends | Acceptance |
 |----|--------|------|---------|------------|
-| **C-FAM** | Family base classes on Rust engine | `families/continuous.py, delay.py, discrete.py, stochastic.py`, protocol | E6,E7 | subclass contract UNCHANGED; 149 systems integrate via Rust; registry family detection incl. `stochastic`. |
-| **C-SOLV** | Solver registry + selection + **auto-stiffness** | `tsdynamics/solvers/**` | F2,E3,E4 | `method=` resolves by name/caps; unknown → clear error; auto-detect picks implicit on stiff RHS; plugin solvers selectable. |
-| **C-DATA** | `Trajectory` + state-space data | `tsdynamics/data/**` (migrate sampling, set distances, KD-tree) | F3 | feature-parity with v2 `Trajectory`/`sampling`; the lingua franca every analysis consumes. |
-| **C-DERIV** | Derived systems on new engine | `tsdynamics/derived/**` | C-FAM,C-DATA | Poincaré/Stroboscopic/Tangent/Ensemble/Projected/Wrapped all green; `TangentSystem` is the one Lyapunov engine. |
+| **C-FAM** | Family base classes on Rust engine | `families/continuous.py, delay.py, discrete.py, stochastic.py`, protocol | E6,E7,E-WIRE | subclass contract UNCHANGED; 149 systems integrate via Rust; registry family detection incl. `stochastic`. **Build the shared engine-dispatch seam + SDE registry detection first — see §13b.** |
+| **C-SOLV** | Solver registry + selection + **auto-stiffness** | `tsdynamics/solvers/**` | F2,E3,E4 | `method=` resolves by name/caps; unknown → clear error; auto-detect picks implicit on stiff RHS; plugin solvers selectable. **Register the in-tree solver specs (zero today) + auto-set `with_jacobian` for implicit methods — see §13b.** |
+| **C-DATA** | `Trajectory` + state-space data | `tsdynamics/data/**` (migrate sampling, set distances, KD-tree) | F3 | ✅ **DONE** (#36). feature-parity with v2 `Trajectory`/`sampling`; the lingua franca every analysis consumes. |
+| **C-DERIV** | Derived systems on new engine | `tsdynamics/derived/**` | C-FAM,C-DATA | Poincaré/Stroboscopic/Tangent/Ensemble/Projected/Wrapped all green. **`TangentSystem` must become one backend-neutral variational core (it is triplicated + JiTCODE-only today) — see §13b.** |
 
 ### Tier 3 — Analysis & data extraction — **the wide parallel front** (one session each)
 
 > These depend on Tier 2 contracts (`System`, `Trajectory`) but **not on each
 > other**. This is where many sessions run at once.
+>
+> **Prerequisite — run [A-LAYOUT (#78)](§13c) first.** `analysis/` is still the
+> flat v2 quartet; A-LAYOUT restructures it into the subpackages each row below
+> `owns` (with re-exports + docs-path updates) so these streams branch off the
+> target layout conflict-free instead of colliding on the flat modules. Every A-*
+> row implicitly depends on A-LAYOUT.
 
 | ID | Stream | Owns (`tsdynamics/…`) | Depends | Acceptance (literature-validated) |
 |----|--------|------------------------|---------|-----------|
@@ -436,7 +445,7 @@ board with the maintainer's `gh`-based bootstrap — one issue per row.)*
 |----|--------|------|---------|------------|
 | **I-WHEEL** | Cross-platform wheels + packaging | maturin-action CI; decide one-wheel vs accelerator (§11) | E7 | manylinux + macOS(arm64/x86_64) + Windows wheels; `pip install tsdynamics` needs **no compiler**. |
 | **I-BENCH** | Benchmarks + perf tracking | `benches/**`, CI perf job | E5 | vs SciPy + (internally) the Julia baseline on Lorenz/Rössler/MackeyGlass/Lorenz-96 N=128/Robertson; time-to-first-result tracked. |
-| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** |
+| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP, E-WIRE | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** **Today the gate validates the v2-seed crate, not `tsdynamics._rust`; rebuild it around the real engine + interp==jit + reference==engine — see §13b.** |
 | **I-DOCS** | Docs restructure (NOT viz) | `docs/**`, autogen hook updated to new layout | F3 | site builds `--strict`; per-system pages; tutorial "equations → basins"; citation lint rule. |
 | **I-QA** | Test/property/known-value harness | `tests/**` shared fixtures, hypothesis tests, known-value catalogue | F3 | registry-driven sweeps over new families; property tests for embeddings/dimensions. |
 
