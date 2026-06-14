@@ -1,0 +1,189 @@
+"""
+Shape-preserving signal conditioning: detrend, normalize, and filter.
+
+Each function takes a :class:`~tsdynamics.data.Trajectory` (or array) and returns
+an object of the *same* type and shape — a ``Trajectory`` in yields a new
+``Trajectory`` carrying the original time base, system back-reference and
+provenance (plus a note of the transform), mirroring
+:meth:`tsdynamics.data.Trajectory.standardize`; an array in yields an array out.
+Time is taken to run along axis 0, so multi-channel ``(T, channels)`` signals are
+conditioned channel-by-channel.
+
+The filters are Butterworth designs (Butterworth 1930) applied as second-order
+sections with zero-phase forward-backward filtering, so they introduce **no**
+phase delay — important when a filtered signal is fed back into phase-sensitive
+analysis (embeddings, recurrence).
+
+References
+----------
+Butterworth, S. (1930). On the theory of filter amplifiers.
+*Experimental Wireless and the Wireless Engineer*, 7, 536-541.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+from scipy import signal as _sig
+
+from ._common import resolve_fs, to_signal, wrap_like
+
+__all__ = [
+    "bandpass",
+    "bandstop",
+    "butter_filter",
+    "detrend",
+    "highpass",
+    "lowpass",
+    "normalize",
+]
+
+_TINY = np.finfo(float).tiny
+
+
+def detrend(x: Any, *, kind: str = "linear") -> Any:
+    """
+    Remove a constant or linear trend from each channel.
+
+    Parameters
+    ----------
+    x : Trajectory or array-like
+        Signal with time along axis 0.
+    kind : {"linear", "constant"}, default "linear"
+        ``"linear"`` subtracts a least-squares straight line; ``"constant"``
+        subtracts the mean.
+
+    Returns
+    -------
+    Trajectory or ndarray
+        Same type and shape as ``x``, detrended.
+    """
+    if kind not in ("linear", "constant"):
+        raise ValueError(f"detrend kind must be 'linear' or 'constant', got {kind!r}.")
+    sig = to_signal(x)
+    out = _sig.detrend(sig, axis=0, type=kind)
+    return wrap_like(x, out, detrended=kind)
+
+
+def normalize(x: Any, *, method: str = "zscore") -> Any:
+    """
+    Rescale each channel by a per-channel statistic.
+
+    Parameters
+    ----------
+    x : Trajectory or array-like
+        Signal with time along axis 0.
+    method : {"zscore", "minmax", "l2", "demean"}, default "zscore"
+        - ``"zscore"`` — subtract the mean, divide by the standard deviation.
+        - ``"minmax"`` — affinely map each channel onto ``[0, 1]``.
+        - ``"l2"`` — divide by the Euclidean norm.
+        - ``"demean"`` — subtract the mean only.
+
+        Channels with zero spread (constant signals) are passed through their
+        location shift unscaled rather than producing ``inf``/``nan``.
+
+    Returns
+    -------
+    Trajectory or ndarray
+        Same type and shape as ``x``, normalised.
+    """
+    sig = to_signal(x)
+    if method == "zscore":
+        loc = sig.mean(axis=0)
+        scale = sig.std(axis=0)
+    elif method == "minmax":
+        loc = sig.min(axis=0)
+        scale = sig.max(axis=0) - loc
+    elif method == "l2":
+        loc = 0.0
+        scale = np.sqrt((sig**2).sum(axis=0))
+    elif method == "demean":
+        loc = sig.mean(axis=0)
+        scale = 1.0
+    else:
+        raise ValueError(
+            f"unknown normalize method {method!r}; use 'zscore', 'minmax', 'l2', or 'demean'."
+        )
+    scale = np.where(np.abs(scale) < _TINY, 1.0, scale)
+    out = (sig - loc) / scale
+    return wrap_like(x, out, normalized=method)
+
+
+def butter_filter(
+    x: Any,
+    cutoff: float | tuple[float, float] | Any,
+    *,
+    btype: str,
+    fs: float | None = None,
+    dt: float | None = None,
+    order: int = 4,
+) -> Any:
+    """
+    Zero-phase Butterworth filter.
+
+    Designs a Butterworth filter of the given order and applies it forward and
+    backward (zero phase) as second-order sections.
+
+    Parameters
+    ----------
+    x : Trajectory or array-like
+        Signal with time along axis 0.
+    cutoff : float or (float, float)
+        Cutoff frequency in the same units as ``fs``; a scalar for ``"lowpass"``
+        / ``"highpass"``, a ``(low, high)`` pair for ``"bandpass"`` / ``"bandstop"``.
+    btype : {"lowpass", "highpass", "bandpass", "bandstop"}
+        Filter band type.
+    fs, dt : float, optional
+        Sampling frequency / spacing (see :func:`tsdynamics.transforms.power_spectral_density`).
+    order : int, default 4
+        Butterworth order (per band edge).
+
+    Returns
+    -------
+    Trajectory or ndarray
+        Same type and shape as ``x``, filtered.
+
+    Notes
+    -----
+    Zero-phase filtering doubles the effective order and needs the signal to be
+    longer than the filter's padding (a few times ``order``); very short signals
+    raise from :func:`scipy.signal.sosfiltfilt`.
+    """
+    rate = resolve_fs(x, fs=fs, dt=dt)
+    nyquist = 0.5 * rate
+    edges = np.atleast_1d(np.asarray(cutoff, dtype=float))
+    if np.any(edges <= 0.0) or np.any(edges >= nyquist):
+        raise ValueError(
+            f"cutoff {cutoff!r} must lie strictly between 0 and the Nyquist "
+            f"frequency ({nyquist:g}); reduce the cutoff or raise fs."
+        )
+    if btype in ("bandpass", "bandstop") and edges.size != 2:
+        raise ValueError(f"{btype} needs a (low, high) cutoff pair, got {cutoff!r}.")
+    if btype in ("lowpass", "highpass") and edges.size != 1:
+        raise ValueError(f"{btype} needs a single scalar cutoff, got {cutoff!r}.")
+
+    sig = to_signal(x)
+    sos = _sig.butter(order, cutoff, btype=btype, fs=rate, output="sos")
+    out = _sig.sosfiltfilt(sos, sig, axis=0)
+    return wrap_like(x, out, filtered={"btype": btype, "cutoff": cutoff, "order": order})
+
+
+def lowpass(x: Any, cutoff: float, **kwargs: Any) -> Any:
+    """Zero-phase Butterworth low-pass filter (see :func:`butter_filter`)."""
+    return butter_filter(x, cutoff, btype="lowpass", **kwargs)
+
+
+def highpass(x: Any, cutoff: float, **kwargs: Any) -> Any:
+    """Zero-phase Butterworth high-pass filter (see :func:`butter_filter`)."""
+    return butter_filter(x, cutoff, btype="highpass", **kwargs)
+
+
+def bandpass(x: Any, low: float, high: float, **kwargs: Any) -> Any:
+    """Zero-phase Butterworth band-pass filter (see :func:`butter_filter`)."""
+    return butter_filter(x, (low, high), btype="bandpass", **kwargs)
+
+
+def bandstop(x: Any, low: float, high: float, **kwargs: Any) -> Any:
+    """Zero-phase Butterworth band-stop filter (see :func:`butter_filter`)."""
+    return butter_filter(x, (low, high), btype="bandstop", **kwargs)
