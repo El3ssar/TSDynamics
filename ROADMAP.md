@@ -460,9 +460,12 @@ Internal milestones stage the program; **v3.0 ships only when M6 is complete**
   traits/registry/IR frozen; package reorg in place; CI split + xval harness live.
   *Unblocks all.*
 - **M1 — Engine parity (ODE):** E1,E3,E4,E5,E6,E7 + C-FAM(ODE) + C-SOLV. 🟡
-  **engine ✅, Python wiring open.** E1–E7 merged; ODEs integrate on Rust via
-  `backend="interp"` — but **C-FAM/C-SOLV not started**, so the v2 backends are
-  still the default runtime. (See §13b.)
+  **engine ✅, seam ✅, default flip pending.** E1–E7 merged; **C-FAM landed the
+  shared engine-dispatch seam** (`SystemBase._default_backend` + `_dispatch` →
+  `run.integrate`), routing all four families' engine path through one place and
+  adding `sde` registry detection — so every family now reaches the Rust engine
+  via `backend="interp"`. The **v2 backends stay the default** (`_default_backend`
+  is the M3 flip knob) until I-XVAL gates it; **C-SOLV** still owed. (See §13b.)
 - **M2 — JIT + all families:** E2 (Cranelift), E-MAP, E-DDE, E-SDE, C-DERIV. 🟡
   **kernels ✅, reach open.** All merged, but the **SDE FFI and map-ensemble
   bindings are missing and the JIT is hard-rejected at the bridge** (E-WIRE), and
@@ -617,17 +620,20 @@ independent sessions continue cleanly.
 
 ### 13b. Carved out for the named streams (extend their issues)
 
-- **C-FAM** (issue #34) — the seam C-FAM was meant to pre-stage does not exist: only
-  `DiscreteMap` routes through `engine.run.integrate`; DDE/SDE reimplement
-  integration inline and ODE never calls the seam. Before flipping the default to
-  Rust: add a **shared engine-dispatch seam** on `SystemBase` (a
-  `_default_backend` ClassVar + a thin `_run`/`_dispatch` template), route all
-  four families through `run.integrate` (add `_run_dde`/`_run_sde` branches),
-  **hoist the four byte-identical `_make_t_eval` copies and the divergent
-  `_provenance`** into one place (and thread `ic`/`t0` into engine-path
-  provenance). Also add **SDE registry detection** (`'sde'` in `Family`,
-  `'StochasticSystem'` in `_FAMILY_BASES`, broaden `_has_concrete_rhs` to accept
-  `_drift`) + an SDE history/fixture hook analogous to `DDE_HISTORIES`.
+- **C-FAM** (issue #34) — ✅ **landed (PR for #34).** The shared engine-dispatch
+  seam now exists: `SystemBase._default_backend` (per-family, the M3 flip knob) +
+  a thin `_dispatch` template → `engine.run.integrate`. `run.integrate` became
+  family-polymorphic — it grew a `_run_dde` branch (the DDE FFI + history sampling
+  moved out of `delay.py`) and threads `ic`/`t0`/`steps` into engine-path
+  provenance — and all four families' engine path funnels through the seam (ODE
+  gained the `interp`/`jit`/`reference` routing it lacked; DDE/map delegate; SDE
+  keeps the dedicated `run.sde_*` seam, which `run.integrate` refuses since it
+  cannot carry the noise seed/step). The four byte-identical `_make_t_eval` copies
+  are hoisted to `utils.grids.make_output_grid`. **SDE registry detection** is in
+  (`'sde'` in `Family`, `'StochasticSystem'` in `_FAMILY_BASES`,
+  `_has_concrete_rhs` accepts `_drift`) plus the `SDE_SAMPLES` fixture hook +
+  completeness guard (analogous to `DDE_HISTORIES`). The **default runtime stays
+  v2** until the M3 migration flips `_default_backend`.
 - **C-SOLV** (issue #35) — register the **in-tree solver specs** (the `solvers/` directory
   ships zero today, so `method=` resolves against an empty table) and pair the
   engine's new Jacobian guard with a **Python-side auto-set of `with_jacobian`**

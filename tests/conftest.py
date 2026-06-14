@@ -20,6 +20,7 @@ _FAMILY_FIXTURES = {
     "ode_entry": "ode",
     "dde_entry": "dde",
     "map_entry": "map",
+    "sde_entry": "sde",  # no built-in SDE systems yet → empty sweep, ready for them
     "system_entry": None,  # every family
 }
 

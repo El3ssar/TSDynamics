@@ -8,7 +8,7 @@ fails here.
 from __future__ import annotations
 
 import pytest
-from _sampling import DDE_HISTORIES, INTEGRATION_SAMPLE
+from _sampling import DDE_HISTORIES, INTEGRATION_SAMPLE, SDE_SAMPLES
 
 import tsdynamics as ts
 from tsdynamics import registry
@@ -45,7 +45,7 @@ def test_entries_have_consistent_metadata(system_entry) -> None:
     assert system_entry.name == cls.__name__
     assert system_entry.module == cls.__module__
     assert dict(system_entry.params) == dict(cls.params)
-    assert system_entry.family in ("ode", "dde", "map")
+    assert system_entry.family in ("ode", "dde", "map", "sde")
     assert system_entry.is_builtin
 
 
@@ -110,6 +110,21 @@ def test_dde_histories_complete() -> None:
     assert dde_names == set(DDE_HISTORIES), (
         f"DDE_HISTORIES (tests/_sampling.py) out of sync with registry: "
         f"missing {dde_names - set(DDE_HISTORIES)}, stale {set(DDE_HISTORIES) - dde_names}"
+    )
+
+
+def test_sde_samples_complete() -> None:
+    """Every built-in SDE system needs a seed/ic entry in SDE_SAMPLES.
+
+    The diagonal-Itô analogue of ``test_dde_histories_complete``.  Trivially
+    satisfied today (no built-in ``sde`` systems), it fails loudly the moment a
+    built-in :class:`~tsdynamics.StochasticSystem` is added without its sample —
+    the same "just write the class" safety the DDE guard provides.
+    """
+    sde_names = {e.name for e in registry.all_systems(family="sde")}
+    assert sde_names == set(SDE_SAMPLES), (
+        f"SDE_SAMPLES (tests/_sampling.py) out of sync with registry: "
+        f"missing {sde_names - set(SDE_SAMPLES)}, stale {set(SDE_SAMPLES) - sde_names}"
     )
 
 

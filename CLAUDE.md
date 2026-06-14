@@ -135,8 +135,13 @@ records name/cls/family/category/dim/params/reference/known_lyapunov.
   is builtin-only (module under `tsdynamics.systems`); user classes register
   as non-builtin.
 - **Family detection walks the MRO** (`DiscreteMap` → map, `DelaySystem` → dde,
-  `ContinuousSystem` → ode) — NOT the module path; the DDE systems live in
-  `systems/continuous/delayed_systems.py`.
+  `StochasticSystem` → sde, `ContinuousSystem` → ode) — NOT the module path; the
+  DDE systems live in `systems/continuous/delayed_systems.py`.  A class is
+  *concrete* (registrable) when it defines `_equations` / `_step` / `_drift`
+  outside the framework bases (`_has_concrete_rhs`); `_drift` is the SDE marker.
+  There are no built-in SDE systems yet, so `registry.families()` stays
+  `{'ode': …, 'dde': …, 'map': …}` for builtins, but a user `StochasticSystem`
+  subclass now registers (non-builtin) with family `sde`.
 - Duplicate builtin class names raise at import.
 - Consumers: registry-driven test parametrization (`tests/conftest.py`
   `pytest_generate_tests`), the docs autogen hook, and users.
@@ -160,6 +165,19 @@ plus:
   `meta.record(key, value, **context)`, `meta[key]` → latest,
   `meta.history(key)` → all records. `meta == {}` still works.
 - `_provenance(**extra)` builds the dict attached to `Trajectory.meta`.
+- **Engine-dispatch seam (stream C-FAM):** `_default_backend` ClassVar +
+  `_dispatch(backend=, **kwargs)`. Every family's `interp` / `jit` / `reference`
+  integration branch funnels through `_dispatch` → `engine.run.integrate`, so the
+  FFI marshalling, divergence guards and engine-path provenance live once in
+  `run.integrate` instead of being re-implemented per family. `_default_backend`
+  is each family's current default integrator (the **v2** backend — `jitcode` /
+  `jitcdde` / `numba` / `reference`); it is the single knob the M3 migration
+  flips to a Rust engine backend, and passing `backend=None` to a family's
+  `integrate` / `iterate` resolves to it. The output grid each family samples on
+  is the one hoisted `tsdynamics.utils.grids.make_output_grid` (the four
+  byte-identical `_make_t_eval` copies are gone). **SDEs are the exception** —
+  they keep the dedicated `run.sde_integrate_dense` / `run.sde_ensemble_final`
+  seam (`run.integrate` cannot carry the noise seed/step and refuses an SDE).
 
 ### `Trajectory` (`data/trajectory.py`)
 
@@ -197,9 +215,14 @@ All three families + all derived wrappers implement:
   diffsol cross-validation). Hand-written `_jacobian` on ODE systems is never
   used at runtime; it is cross-checked against autogen in tests. `abs`/`sign`
   derivatives are resolved a.e. (`_resolve_derivative_nodes`).
-- `integrate(..., backend="diffsol")` routes to
-  `tsdynamics.engine.diffsol` (optional extra; translator: SymEngine →
-  DiffSL with ICs-as-inputs, LLVM JIT, solver map RK45→tsit45, LSODA→bdf).
+- `integrate(backend=)` defaults to `_default_backend` (`"jitcode"`, the v2
+  compile-to-C path). `"diffsol"` routes to `tsdynamics.engine.diffsol` (optional
+  extra; translator: SymEngine → DiffSL with ICs-as-inputs, LLVM JIT, solver map
+  RK45→tsit45, LSODA→bdf); `"auto"` picks diffsol-or-jitcode. `"interp"` / `"jit"`
+  / `"reference"` route through the shared C-FAM seam (`_dispatch` →
+  `engine.run.integrate`) to the Rust sole engine (or its pure-Python oracle) —
+  the additive routing C-FAM gives the ODE family (it had no `interp`/`jit` path
+  before).
 
 ### `DiscreteMap` extras
 
@@ -242,10 +265,17 @@ All three families + all derived wrappers implement:
   call to the engine (interpreter or Cranelift JIT) and reproduces the Python
   reference under a fixed seed. The pure-Python **reference** integrator (a
   faithful `SplitMix64` port) stays the default until the migration gate (M3).
-- **Not yet registry-detected**: SDE systems lower/integrate via
-  `build_problem`'s `_drift`/`_diffusion` duck-typing, but the registry's family
-  tag (`stochastic`) is stream C-FAM's job, so they don't appear in
-  `registry.all_systems()` yet.
+- **Registry-detected (stream C-FAM):** a concrete `StochasticSystem` subclass
+  registers with family `sde` (`_drift` is the concrete-rhs marker, and
+  `StochasticSystem` is in the family-base table), so it appears in
+  `registry.all_systems(family="sde")`. There are no built-in SDE systems in the
+  catalogue yet, so `registry.families()` (builtin-only) is unchanged; a future
+  built-in SDE needs an entry in `tests/_sampling.py::SDE_SAMPLES` (a guard test
+  enforces completeness, mirroring `DDE_HISTORIES`).
+- **The SDE engine path does not use `run.integrate`** (it cannot carry the noise
+  seed/step): `backend="interp"/"jit"` dispatch through the dedicated
+  `run.sde_integrate_dense` / `run.sde_ensemble_final` seam, and `run.integrate`
+  /`run.ensemble` *refuse* an SDE problem.
 
 ---
 
@@ -314,7 +344,9 @@ TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # docs sanity
    `_compile_simplify = False` for an ODE whose large rational RHS hangs
    JiTCODE's simplify codegen pass.
 5. For a new DDE: also add a non-equilibrium history to
-   `tests/_sampling.py::DDE_HISTORIES` (guard test enforces this).
+   `tests/_sampling.py::DDE_HISTORIES` (guard test enforces this).  For a new
+   *built-in* SDE (`StochasticSystem` subclass): add a `{"seed":…, "ic":…}` entry
+   to `tests/_sampling.py::SDE_SAMPLES` (the `sde`-family guard test enforces it).
 
 ---
 

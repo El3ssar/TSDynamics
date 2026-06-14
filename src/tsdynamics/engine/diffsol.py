@@ -237,9 +237,9 @@ def integrate(
     ode.rtol = rtol
     ode.atol = atol
 
-    from tsdynamics.families.continuous import _make_t_eval
+    from tsdynamics.utils.grids import make_output_grid
 
-    t_eval = _make_t_eval(t0, final_time, dt)
+    t_eval = make_output_grid(t0, final_time, dt)
     control_vals = [float(system.params[k]) for k in control_names]
     # Input layout must mirror to_diffsl: [*controls, tsdt0, *ics].
     params_vec = np.concatenate([control_vals, [float(t0)], np.asarray(ic, dtype=float)])

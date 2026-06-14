@@ -38,6 +38,8 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics.utils.grids import make_output_grid
+
 from .compile import eval_tape, eval_tape_jac
 from .problem import (
     DDEProblem,
@@ -135,14 +137,6 @@ def _as_problem(obj: Any, **build_kwargs: Any) -> Problem:
     if isinstance(obj, ODEProblem | MapProblem | DDEProblem | SDEProblem):
         return obj
     return build_problem(obj, **build_kwargs)
-
-
-def _make_t_eval(t0: float, tf: float, dt: float) -> np.ndarray:
-    """Uniform output grid from ``t0`` to ``tf`` inclusive (matches the families)."""
-    t_arr = np.arange(t0, tf, dt)
-    if t_arr.size == 0 or t_arr[-1] < tf - 1e-12:
-        t_arr = np.append(t_arr, tf)
-    return t_arr
 
 
 # ---------------------------------------------------------------------------
@@ -251,19 +245,29 @@ def integrate(
     rtol: float = 1e-6,
     atol: float = 1e-9,
     backend: str = "interp",
+    history: Any = None,
     **build_kwargs: Any,
 ):
     """Integrate a system on the engine and return a :class:`~tsdynamics.families.Trajectory`.
+
+    The single family-polymorphic engine entry point: every family's engine path
+    (ODE, map and DDE) funnels here, so FFI marshalling, divergence guards and
+    engine-path provenance live in one place rather than being re-implemented per
+    family.  The family is detected from the built :class:`Problem` and dispatched
+    to the matching runner.  Diagonal-Itô **SDEs are the exception** — the generic
+    seam cannot carry their noise seed and step-as-noise-scale, so they are
+    refused here (use :func:`sde_integrate_dense`).
 
     Parameters
     ----------
     system_or_problem : SystemBase or Problem
         The system (lowered to a Problem here) or a pre-built Problem.
     final_time : float, default 100.0
-        End of the integration window.
+        End of the integration window.  For a map this is the (rounded) number of
+        iterations.
     dt : float, default 0.02
         Output sampling interval (the internal stepper is adaptive for adaptive
-        methods).
+        methods).  Ignored for a map.
     t0 : float, optional
         Start time; defaults to the Problem's ``t0``.
     ic : array-like, optional
@@ -275,6 +279,9 @@ def integrate(
     backend : str, default "interp"
         ``"interp"``, ``"jit"`` (compiled engine), or ``"reference"``
         (pure-Python; ODE and map only).
+    history : callable, optional
+        For a DDE only — ``h(s) -> sequence`` defining the past for ``s <= 0``;
+        ``None`` is a constant past equal to the resolved initial state.
 
     Returns
     -------
@@ -286,7 +293,8 @@ def integrate(
         For ``"interp"``/``"jit"`` when :mod:`tsdynamics._rust` is not built.
     NotImplementedError
         For ``backend="reference"`` on a DDE or SDE (the reference integrator
-        covers ODEs and maps only).
+        covers ODEs and maps only), and for any SDE problem (the generic seam
+        cannot carry the noise seed/step — use :func:`sde_integrate_dense`).
     """
     from tsdynamics.families import Trajectory
 
@@ -296,18 +304,53 @@ def integrate(
     if isinstance(problem, MapProblem):
         steps = int(round(final_time))
         t_arr, y = _run_map(problem, steps, backend)
+        meta = _provenance(
+            problem,
+            backend=backend,
+            steps=steps,
+            ic=np.asarray(problem.ic, dtype=np.float64).copy(),
+        )
     else:
         start = problem.t0 if t0 is None else float(t0)
-        t_eval = _make_t_eval(start, final_time, dt)
-        y = _run_continuous(problem, t_eval, method=method, rtol=rtol, atol=atol, backend=backend)
+        t_eval = make_output_grid(start, final_time, dt)
         t_arr = t_eval
+        if isinstance(problem, DDEProblem):
+            y, ic0 = _run_dde(
+                problem,
+                t_eval,
+                history=history,
+                dt=dt,
+                method=method,
+                rtol=rtol,
+                atol=atol,
+                backend=backend,
+            )
+            meta = _provenance(
+                problem,
+                backend=backend,
+                method=method,
+                dt=dt,
+                rtol=rtol,
+                atol=atol,
+                ic=np.asarray(ic0, dtype=np.float64).copy(),
+                history="callable" if history is not None else "constant",
+            )
+        else:  # ODEProblem (an SDEProblem is rejected inside _run_continuous)
+            y = _run_continuous(
+                problem, t_eval, method=method, rtol=rtol, atol=atol, backend=backend
+            )
+            meta = _provenance(
+                problem,
+                backend=backend,
+                method=method,
+                dt=dt,
+                t0=start,
+                rtol=rtol,
+                atol=atol,
+                ic=np.asarray(problem.ic, dtype=np.float64).copy(),
+            )
 
-    return Trajectory(
-        t=t_arr,
-        y=y,
-        system=problem.system,
-        meta=_provenance(problem, backend=backend, method=method, dt=dt, rtol=rtol, atol=atol),
-    )
+    return Trajectory(t=t_arr, y=y, system=problem.system, meta=meta)
 
 
 def _run_continuous(
@@ -352,6 +395,112 @@ def _run_continuous(
             f"reaching the final time."
         )
     return y
+
+
+def _run_dde(
+    problem: DDEProblem,
+    t_eval: np.ndarray,
+    *,
+    history: Any,
+    dt: float,
+    method: str,
+    rtol: float,
+    atol: float,
+    backend: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Integrate a DDE on the Rust method-of-steps engine (stream E-DDE).
+
+    The delay system lowers (via :func:`tsdynamics.engine.compile.lower_dde`) to a
+    tape over ``dim + n_slots`` inputs whose extra inputs are the delay slots; the
+    engine fills those from a history buffer it interpolates with cubic Hermite,
+    reusing the explicit solver kernels for each step.  Only constant delays
+    lower; a state-dependent delay raises ``TapeCompileError`` at build time (use
+    the family's ``backend="jitcdde"``).
+
+    Returns ``(y, ic0)`` — the sampled trajectory and the ``t0`` state used (the
+    constant past, or ``history(0)`` for a callable past) so the caller can record
+    it in provenance.
+    """
+    if backend == "reference":
+        raise NotImplementedError(
+            f"{_name(problem)}: backend='reference' has no DDE integrator; use "
+            f"backend='interp'/'jit' (the Rust engine), or the family's "
+            f"integrate(backend='jitcdde') for the v2 backend."
+        )
+    try:
+        eng = _engine()
+    except EngineNotAvailableError as err:
+        # The generic accessor steers callers to backend='reference', which a DDE
+        # rejects one branch up — give the DDE-correct fallback (jitcdde) instead.
+        raise EngineNotAvailableError(
+            f"{_name(problem)}: the Rust DDE engine (tsdynamics._rust, stream E7) is not "
+            f"built; use the family's integrate(backend='jitcdde') for the v2 DDE backend."
+        ) from err
+
+    dim = problem.dim
+    max_delay = problem.max_delay
+    # The t0 state and the past on [-max_delay, 0]; a constant past (no history
+    # callable) is a single sample the engine treats as constant.
+    past_t, past_y, ic0 = _sample_past(history, problem.ic, dim, max_delay, dt)
+
+    slot_components = np.array([s.component for s in problem.delay_slots], dtype=np.int32)
+    slot_delays = np.array([s.delay for s in problem.delay_slots], dtype=np.float64)
+
+    y = np.asarray(
+        eng.integrate_dde_dense(
+            *problem.tape.to_arrays(),
+            slot_components,
+            slot_delays,
+            np.ascontiguousarray(ic0, dtype=np.float64),
+            np.ascontiguousarray(past_t, dtype=np.float64),
+            np.ascontiguousarray(past_y.ravel(), dtype=np.float64),
+            np.ascontiguousarray(t_eval, dtype=np.float64),
+            method,
+            float(rtol),
+            float(atol),
+            backend == "jit",
+        ),
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(y)):
+        raise RuntimeError(
+            f"{_name(problem)}: DDE integration diverged or the step collapsed before "
+            f"reaching the final time (backend={backend!r}, method={method!r})."
+        )
+    return y, ic0
+
+
+def _sample_past(
+    history: Any,
+    ic_arr: np.ndarray,
+    dim: int,
+    max_delay: float,
+    dt: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sample the past on ``[-max_delay, 0]``, returning ``(past_t, past_y, ic0)``.
+
+    A ``None`` history is a constant past equal to ``ic_arr`` — a single sample
+    the engine reads as constant.  A callable is sampled densely (so the engine's
+    finite-difference Hermite tangents stay accurate), with the ``t0`` state taken
+    as ``history(0)``.
+    """
+    if history is None:
+        past_t = np.array([0.0], dtype=float)
+        past_y = np.asarray(ic_arr, dtype=float).reshape(1, dim)
+        return past_t, past_y, np.asarray(ic_arr, dtype=float)
+
+    # Dense sampling: step no coarser than the output dt and well below the delay,
+    # capped so a tiny delay or dt cannot explode the sample count.
+    step = min(dt, max_delay / 200.0) if max_delay > 0.0 else dt
+    step = max(step, 1e-9)
+    n = max(2, int(np.ceil(max_delay / step)) + 1)
+    n = min(n, 200_000)
+    past_t = np.linspace(-max_delay, 0.0, n)
+    past_y = np.array(
+        [np.asarray(history(s), dtype=float).reshape(dim) for s in past_t],
+        dtype=float,
+    )
+    return past_t, past_y, past_y[-1].copy()
 
 
 def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray, np.ndarray]:
@@ -441,6 +590,15 @@ def ensemble(
             "run.ensemble cannot carry the SDE noise seed/step; use "
             "StochasticSystem.ensemble(...) for diagonal-Itô SDEs, or "
             "run.sde_ensemble_final(problem, ics, t0=, t1=, dt=, method=, seed=, backend=)."
+        )
+    if isinstance(problem, DDEProblem):
+        # A DDE batch would need a per-trajectory history buffer; the engine has
+        # no batched method-of-steps path. Refuse rather than fan the (extended,
+        # delay-slot) tape out through the ODE ensemble FFI and return garbage.
+        raise NotImplementedError(
+            "run.ensemble has no DDE path (the engine integrates delay systems one "
+            "trajectory at a time); use DelaySystem.integrate(backend='interp') per "
+            "initial condition."
         )
     if isinstance(problem, MapProblem):
         steps = int(round(final_time))
