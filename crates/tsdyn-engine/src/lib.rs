@@ -28,7 +28,8 @@
 //!
 //! The DDE engine (method of steps, history buffers) is stream **E-DDE**; the
 //! SDE problem/kernels that consume [`rng`] are stream **E-SDE**; the discrete
-//! map loop is stream **E-MAP**. Each adds its own module plus one `pub mod`
+//! map loop is stream **E-MAP**; event detection + dense output is stream
+//! **E-EVENT** ([`event`]). Each adds its own module plus one `pub mod`
 //! line here (kept append-only). See ROADMAP §4a.
 
 pub mod ensemble;
@@ -41,6 +42,8 @@ pub mod map;
 pub mod sde;
 // Appended by stream E-DDE (method-of-steps DDE integrator).
 pub mod dde;
+// Appended by stream E-EVENT (event detection + dense output).
+pub mod event;
 
 #[cfg(test)]
 mod testkit;
@@ -60,6 +63,8 @@ pub use sde::{
 };
 // Appended by stream E-DDE.
 pub use dde::{integrate_dde_grid, DelaySlot};
+// Appended by stream E-EVENT.
+pub use event::{integrate_events, EventDirection, EventHit, EventOutcome, EventSpec, HermiteStep};
 
 /// Check that the linked solver registry has no duplicate names, returning the
 /// clashing names if any.

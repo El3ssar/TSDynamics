@@ -3,10 +3,11 @@
 //!
 //! A [`Caps`] value answers the questions the engine asks when picking and
 //! configuring a kernel: is it explicit or implicit, does it control its own
-//! step size, does it require the analytic Jacobian, and which problem families
-//! ([`ProblemKind`]) can it integrate.  Capabilities are pure data, constructed
-//! in `const` context so a kernel can register them in a static initializer (see
-//! [`crate::register_solver!`]).
+//! step size, does it require the analytic Jacobian, which problem families
+//! ([`ProblemKind`]) can it integrate, and whether it carries a native
+//! dense-output interpolant ([`Caps::dense`]).  Capabilities are pure data,
+//! constructed in `const` context so a kernel can register them in a static
+//! initializer (see [`crate::register_solver!`]).
 
 /// A single problem family an evaluator/solver can describe or handle.
 ///
@@ -107,6 +108,19 @@ pub struct Caps {
     pub needs_jacobian: bool,
     /// The problem families this kernel can integrate.
     pub supports: ProblemKinds,
+    /// Carries a *native* dense-output interpolant — a continuous extension of
+    /// the just-taken step exposed through
+    /// [`Solver::interpolate`](crate::Solver::interpolate).
+    ///
+    /// `false` (the default for every constructor) means the kernel offers no
+    /// interpolant of its own; the engine's event/dense-output layer then falls
+    /// back to a cubic-Hermite continuous extension built from the step
+    /// endpoints and their derivatives, which needs only the
+    /// [`Evaluator`](tsdyn_ir::Evaluator).  So this flag is purely an
+    /// *optimisation/accuracy* signal — every kernel gets O(h⁴) dense output
+    /// regardless — and existing kernels need no change (ROADMAP §13d: the
+    /// event/dense-output capability is additive, behind this flag).
+    pub dense: bool,
 }
 
 impl Caps {
@@ -118,6 +132,7 @@ impl Caps {
             adaptive: false,
             needs_jacobian: false,
             supports,
+            dense: false,
         }
     }
 
@@ -131,12 +146,23 @@ impl Caps {
             adaptive: false,
             needs_jacobian: true,
             supports,
+            dense: false,
         }
     }
 
     /// Mark this kernel as adaptive (own error control + step adaption).
     pub const fn adaptive(mut self) -> Self {
         self.adaptive = true;
+        self
+    }
+
+    /// Mark this kernel as carrying a native dense-output interpolant
+    /// ([`dense`](Caps::dense)) — it implements
+    /// [`Solver::interpolate`](crate::Solver::interpolate), so the engine uses
+    /// that continuous extension for event detection / dense output instead of
+    /// the endpoint cubic-Hermite fallback.
+    pub const fn with_dense(mut self) -> Self {
+        self.dense = true;
         self
     }
 
@@ -176,5 +202,27 @@ mod tests {
         let c = Caps::implicit(ProblemKinds::of(ProblemKind::Ode));
         assert_eq!(c.kind, SolverKind::Implicit);
         assert!(c.needs_jacobian);
+    }
+
+    #[test]
+    fn dense_defaults_off_and_is_opt_in() {
+        // Every kernel built through the constructors gets `dense = false`, so
+        // the engine's endpoint-Hermite fallback drives them and existing
+        // kernels need no change (ROADMAP §13d).
+        assert!(!Caps::explicit(ProblemKinds::of(ProblemKind::Ode)).dense);
+        assert!(!Caps::implicit(ProblemKinds::of(ProblemKind::Ode)).dense);
+        // `with_dense()` is the explicit opt-in, composable in const context.
+        static C: Caps = Caps::explicit(ProblemKinds::of(ProblemKind::Ode))
+            .adaptive()
+            .with_dense();
+        assert!(C.dense);
+        assert!(C.adaptive);
+        // Idempotent and order-independent with the other builders.
+        let ode = ProblemKinds::of(ProblemKind::Ode);
+        assert!(Caps::explicit(ode).with_dense().with_dense().dense);
+        assert_eq!(
+            Caps::explicit(ode).adaptive().with_dense(),
+            Caps::explicit(ode).with_dense().adaptive()
+        );
     }
 }
