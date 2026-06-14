@@ -31,6 +31,13 @@ from tsdynamics.engine.compile import lower_ode  # noqa: E402
 ODE_SYSTEMS = ["Lorenz", "Rossler"]
 MAP_SYSTEMS = ["Henon", "Logistic"]
 
+# Deterministic, in-basin initial conditions for the map tests. Hénon has no
+# `default_ic`, so a random `U[0, 1)^2` IC (the `resolve_ic(None)` fallback)
+# lands outside its bounded basin often enough to make the map test flaky —
+# diverging to a non-finite state before 200 iterations. Pin a known on-attractor
+# IC per map so the engine-vs-reference comparison is reproducible.
+_MAP_IC = {"Henon": [0.1, 0.1], "Logistic": [0.3]}
+
 
 def _sys(name):
     return getattr(ts, name)()
@@ -118,8 +125,9 @@ def test_ensemble_matches_reference(name):
 @pytest.mark.parametrize("name", MAP_SYSTEMS)
 def test_map_iteration_matches_reference_exactly(name):
     system = _sys(name)
-    eng = run.integrate(system, final_time=200, backend="interp")
-    ref = run.integrate(system, final_time=200, backend="reference")
+    ic = _MAP_IC[name]
+    eng = run.integrate(system, final_time=200, backend="interp", ic=ic)
+    ref = run.integrate(system, final_time=200, backend="reference", ic=ic)
     assert eng.y.shape == ref.y.shape
     np.testing.assert_array_equal(eng.y, ref.y)
 
