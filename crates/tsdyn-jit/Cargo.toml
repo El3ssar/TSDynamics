@@ -9,5 +9,20 @@ repository.workspace = true
 
 [dependencies]
 tsdyn-ir.workspace = true
-# cranelift-* dependencies are added by stream E2 (kept out of the F0 skeleton
-# so the workspace builds instantly with no heavy codegen deps).
+# Cranelift (pure-Rust codegen — no LLVM, so wheels stay trivial to build, D2).
+# JIT-specific deps are declared here by the owning crate, not pinned in the
+# workspace table (see crates/Cargo.toml). All cranelift-* crates move in
+# lock-step, so one version line keeps them consistent.
+cranelift-codegen = "0.131"
+cranelift-frontend = "0.131"
+cranelift-module = "0.131"
+cranelift-jit = "0.131"
+cranelift-native = "0.131"
+
+[dev-dependencies]
+# The cross-validation tests check the JIT against the production interpreter
+# (`tsdyn-vm`, stream E1) and the canonical `reference` evaluator (the v2
+# stack-machine port). The `reference` feature is dev-only: it never enters the
+# production build (resolver "2" keeps dev-dep features out of `cargo build`).
+tsdyn-vm.workspace = true
+tsdyn-ir = { workspace = true, features = ["reference"] }
