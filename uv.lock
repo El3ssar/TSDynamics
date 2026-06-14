@@ -642,6 +642,19 @@ wheels = [
 ]
 
 [[package]]
+name = "lzcomplexity"
+version = "0.10.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/31/f6578ec7de5aba8ce45b40c9492078c5471af1290d82fb87ef0d02fde3a3/lzcomplexity-0.10.1-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:dd8efee83b7910f8bdfc5f83abc1f3631eb98741ea4a597ff0e75686dad1bfef", size = 1191210, upload-time = "2026-05-12T12:51:17.033Z" },
+    { url = "https://files.pythonhosted.org/packages/73/e5/a2d083101ea59b9963e81d3584ec8f41d1b8fe18d7ad69e2f345b9f65540/lzcomplexity-0.10.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9a78ecbfc65d206b0ed2871c6a12d1e4d2a8f5fb82b1cae9e582b13fc913e0ce", size = 1216375, upload-time = "2026-05-12T12:51:02.076Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/22/e0ccea90757badcde6942e58871095719930bb639601b405a39302e682f5/lzcomplexity-0.10.1-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:4da10dfe0fd7609302211c6adf66ead1823fb845c5ff3b85a4888c4907df0d08", size = 1191217, upload-time = "2026-05-12T12:49:49.386Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/93/6953049f5b683ba2a54fc5b5eb152bc5a8df3d3c4368f04a0f3e6fc2ee03/lzcomplexity-0.10.1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f23318569b8dd4550e9babcbe16e5058379f464da9b3724ff1f1bb91db3577f4", size = 1216377, upload-time = "2026-05-12T12:51:29.768Z" },
+    { url = "https://files.pythonhosted.org/packages/66/ab/31aca71d56c2f7e18438c36c43d4587f1f98c5c95530a26332170185ab8a/lzcomplexity-0.10.1-cp314-cp314-macosx_12_0_arm64.whl", hash = "sha256:666b9bb1d8162af6f349f25912f41732df648cfd94c83829a6376e05f89cc5c9", size = 1191200, upload-time = "2026-05-12T12:49:55.577Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/db/f492f77eb865fd2694fb0cdf5102df7db4066188bbdb496b7a9f957b56dd/lzcomplexity-0.10.1-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b5ba2f1dc14e1325856a6771ff9682df1ff7ce3dff2a591f37cfd4c3a81b87d4", size = 1216375, upload-time = "2026-05-12T12:51:30.252Z" },
+]
+
+[[package]]
 name = "markdown"
 version = "3.10.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1586,6 +1599,9 @@ dependencies = [
 diffsol = [
     { name = "pydiffsol" },
 ]
+lz = [
+    { name = "lzcomplexity" },
+]
 plot = [
     { name = "matplotlib" },
 ]
@@ -1612,6 +1628,7 @@ docs = [
 requires-dist = [
     { name = "jitcdde", specifier = ">=1.8,<2.0" },
     { name = "jitcode", specifier = ">=1.7,<2.0" },
+    { name = "lzcomplexity", marker = "extra == 'lz'", specifier = ">=0.9" },
     { name = "matplotlib", marker = "extra == 'plot'", specifier = ">=3.9" },
     { name = "numba", specifier = ">=0.60,<1.0" },
     { name = "numpy", specifier = ">=2.0,<3.0" },
@@ -1620,7 +1637,7 @@ requires-dist = [
     { name = "symengine", specifier = ">=0.13,<1.0" },
     { name = "sympy", specifier = ">=1.13,<2.0" },
 ]
-provides-extras = ["diffsol", "plot"]
+provides-extras = ["diffsol", "lz", "plot"]
 
 [package.metadata.requires-dev]
 dev = [

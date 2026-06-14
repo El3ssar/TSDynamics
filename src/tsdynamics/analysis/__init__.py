@@ -14,10 +14,14 @@ re-exported here so the public surface is flat:
   :func:`max_lyapunov` / :func:`kaplan_yorke_dimension`.
 - :mod:`~tsdynamics.analysis.fixedpoints` — :func:`fixed_points`, multi-start
   Newton fixed-point finding for maps with linear stability.
+- :mod:`~tsdynamics.analysis.entropy` — composable :func:`entropy` plus
+  :func:`permutation_entropy`, :func:`dispersion_entropy`,
+  :func:`sample_entropy` / :func:`approximate_entropy`,
+  :func:`multiscale_entropy`, and Lempel–Ziv :func:`lz76_complexity` /
+  :func:`lz76_entropy`.
 
 The remaining subpackages (``chaos``, ``basins``, ``dimensions``, ``embedding``,
-``entropy``, ``recurrence``, ``surrogate``) are placeholders the analysis streams
-fill in.
+``recurrence``, ``surrogate``) are placeholders the analysis streams fill in.
 
 Out-of-tree analyses register through the ``tsdynamics.analyses`` entry-point
 group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
@@ -26,6 +30,17 @@ group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
 
 from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
+from .entropy import (
+    approximate_entropy,
+    dispersion_entropy,
+    entropy,
+    lz76_complexity,
+    lz76_entropy,
+    multiscale_entropy,
+    permutation_entropy,
+    sample_entropy,
+    weighted_permutation_entropy,
+)
 from .fixedpoints import FixedPoint, fixed_points
 from .lyapunov import kaplan_yorke_dimension, lyapunov_spectrum, max_lyapunov
 from .orbits import OrbitDiagram, orbit_diagram, poincare_section
@@ -33,12 +48,21 @@ from .orbits import OrbitDiagram, orbit_diagram, poincare_section
 __all__ = [
     "FixedPoint",
     "OrbitDiagram",
+    "approximate_entropy",
+    "dispersion_entropy",
+    "entropy",
     "fixed_points",
     "kaplan_yorke_dimension",
     "lyapunov_spectrum",
+    "lz76_complexity",
+    "lz76_entropy",
     "max_lyapunov",
+    "multiscale_entropy",
     "orbit_diagram",
+    "permutation_entropy",
     "poincare_section",
+    "sample_entropy",
+    "weighted_permutation_entropy",
 ]
 
 

@@ -38,6 +38,16 @@ _PUBLIC = [
     "orbit_diagram",
     "OrbitDiagram",
     "poincare_section",
+    # entropy & complexity (stream A-ENT)
+    "entropy",
+    "permutation_entropy",
+    "weighted_permutation_entropy",
+    "dispersion_entropy",
+    "sample_entropy",
+    "approximate_entropy",
+    "multiscale_entropy",
+    "lz76_complexity",
+    "lz76_entropy",
 ]
 
 
@@ -77,7 +87,7 @@ def test_subpackage_importable(pkg):
 
 
 @pytest.mark.parametrize(
-    "pkg", ["chaos", "basins", "dimensions", "embedding", "entropy", "recurrence", "surrogate"]
+    "pkg", ["chaos", "basins", "dimensions", "embedding", "recurrence", "surrogate"]
 )
 def test_placeholder_subpackages_are_empty(pkg):
     mod = importlib.import_module(f"tsdynamics.analysis.{pkg}")

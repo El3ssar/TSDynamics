@@ -55,6 +55,9 @@ Changelog = "https://github.com/El3ssar/TSDynamics/releases"
 plot = ["matplotlib>=3.9"]
 # Experimental Rust-backed ODE solver (DiffSL JIT). See docs → Theory → Backends.
 diffsol = ["pydiffsol>=0.5"]
+# Optional fast LZ76 provider for analysis.entropy (provider="lzcomplexity").
+# The built-in native parser is the default and needs no extra.
+lz = ["lzcomplexity>=0.9"]
 
 # ── Dependency groups (uv-native, dev-only) ────────────────────────────────────
 
