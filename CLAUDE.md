@@ -48,8 +48,11 @@ src/tsdynamics/
 │   ├── delay.py              # DelaySystem (was dde_base.py; JiTCDDE, forward-only)
 │   ├── discrete.py           # DiscreteMap (was map_base.py; Numba + signature validation)
 │   └── stochastic.py         # SDE family — skeleton stub (stream E-SDE fills it)
-├── engine/                   # Rust-facing engine layer (was backends/); E6 adds compile/problem/run; E7 adds _rust
-│   ├── rustcore.py           # symbolic RHS+Jacobian → instruction tape (E6 → compile.py)
+├── engine/                   # Rust-facing engine layer (was backends/); E7 adds _rust
+│   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator (E6)
+│   ├── problem.py            # per-family Problem builders bundling a tape + runtime context (E6)
+│   ├── run.py                # backend select (interp|jit|reference) + integrate/ensemble (E6)
+│   ├── rustcore.py           # v2-seed tape emitter + accelerator wrappers (superseded by compile/run; retired at M3)
 │   └── diffsol.py            # experimental SymEngine→DiffSL + pydiffsol (v2 backend; retired at M3)
 ├── solvers/                  # solver registry + per-solver metadata — OWNED BY STREAM F2 (not created here)
 ├── derived/
