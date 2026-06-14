@@ -39,6 +39,8 @@ pub mod rng;
 pub mod map;
 // Appended by stream E-SDE (kept append-only — see the module docs above).
 pub mod sde;
+// Appended by stream E-DDE (method-of-steps DDE integrator).
+pub mod dde;
 
 #[cfg(test)]
 mod testkit;
@@ -56,6 +58,8 @@ pub use sde::{
     sde_ensemble_final, sde_integrate_final, sde_integrate_grid, SdeConfig, SdeEnsembleFinal,
     SdeError, SdeProblem, SdeTrajStatus,
 };
+// Appended by stream E-DDE.
+pub use dde::{integrate_dde_grid, DelaySlot};
 
 /// Check that the linked solver registry has no duplicate names, returning the
 /// clashing names if any.

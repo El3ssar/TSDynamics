@@ -409,6 +409,8 @@ class DelaySystem(SystemBase, ABC):
         history: History = None,
         rtol: float | None = None,
         atol: float | None = None,
+        backend: str = "jitcdde",
+        method: str = "rk45",
         **kwargs,
     ) -> Trajectory:
         """
@@ -429,14 +431,37 @@ class DelaySystem(SystemBase, ABC):
         rtol, atol : float
             Integration tolerances.  DDEs typically need 1e-3; very tight
             tolerances can stall the solver.
+        backend : str, default "jitcdde"
+            Which engine integrates the DDE.  ``"jitcdde"`` (the default) is the
+            v2 compiled backend.  ``"interp"`` / ``"jit"`` route to the Rust
+            method-of-steps engine (history ring buffer + cubic-Hermite dense
+            interpolation; stream E-DDE), reusing the explicit solver kernels.
+            The Rust path supports **constant** delays; a state-dependent delay
+            raises (use ``"jitcdde"`` for those until the lowering grows dynamic
+            delay slots).  ``**kwargs`` are ignored by the engine backends.
+        method : str, default "rk45"
+            The explicit kernel for the engine backends (``"rk45"``, ``"tsit5"``,
+            ``"dop853"``, ``"rk4"``); ignored when ``backend="jitcdde"``.
         **kwargs
             Forwarded to ``jitcdde.set_integration_parameters``
-            (e.g. ``max_step``, ``first_step``).
+            (e.g. ``max_step``, ``first_step``) on the ``"jitcdde"`` backend.
 
         Returns
         -------
         Trajectory
         """
+        if backend not in (None, "jitcdde", "v2"):
+            return self._integrate_engine(
+                final_time,
+                dt,
+                ic=ic,
+                history=history,
+                rtol=rtol,
+                atol=atol,
+                backend=backend,
+                method=method,
+            )
+
         from jitcdde import jitcdde as _jitcdde
 
         rtol = rtol if rtol is not None else self._default_rtol
@@ -490,6 +515,137 @@ class DelaySystem(SystemBase, ABC):
                 history="callable" if history is not None else "constant",
             ),
         )
+
+    # ------------------------------------------------------------------ #
+    # Rust engine integration (method of steps) — stream E-DDE
+    # ------------------------------------------------------------------ #
+
+    def _integrate_engine(
+        self,
+        final_time: float,
+        dt: float,
+        *,
+        ic: Any | None,
+        history: History,
+        rtol: float | None,
+        atol: float | None,
+        backend: str,
+        method: str,
+    ) -> Trajectory:
+        """Integrate the DDE on the Rust method-of-steps engine (stream E-DDE).
+
+        The delay system lowers (via :func:`tsdynamics.engine.compile.lower_dde`)
+        to a tape over ``dim + n_slots`` inputs whose extra inputs are the delay
+        slots; the engine fills those from a history buffer it interpolates with
+        cubic Hermite, reusing the explicit solver kernels for each step.  Only
+        constant delays lower; a state-dependent delay raises ``TapeCompileError``
+        (use ``backend="jitcdde"``).
+        """
+        from tsdynamics.engine.problem import dde_problem
+        from tsdynamics.engine.run import resolve_backend
+
+        backend = resolve_backend(backend)
+        if backend == "reference":
+            raise NotImplementedError(
+                f"{type(self).__name__}: backend='reference' has no DDE integrator; use "
+                f"backend='interp' (the Rust engine) or backend='jitcdde' (the v2 backend)."
+            )
+        try:
+            from tsdynamics import _rust
+        except ImportError as err:
+            from tsdynamics.engine.run import EngineNotAvailableError
+
+            raise EngineNotAvailableError(
+                "the Rust engine extension (tsdynamics._rust, stream E7) is not built; use "
+                "backend='jitcdde' for the v2 DDE backend."
+            ) from err
+
+        rtol = rtol if rtol is not None else self._default_rtol
+        atol = atol if atol is not None else self._default_atol
+
+        problem = dde_problem(self, ic=ic)
+        dim = problem.dim
+        max_delay = problem.max_delay
+        t_eval = _make_t_eval(0.0, final_time, dt)
+
+        # The t0 state and the past on [-max_delay, 0]; a constant past (no
+        # history callable) is a single sample that the engine treats as constant.
+        past_t, past_y, ic0 = self._sample_past(history, problem.ic, dim, max_delay, dt)
+
+        slot_components = np.array([s.component for s in problem.delay_slots], dtype=np.int32)
+        slot_delays = np.array([s.delay for s in problem.delay_slots], dtype=np.float64)
+
+        y = np.asarray(
+            _rust.integrate_dde_dense(
+                *problem.tape.to_arrays(),
+                slot_components,
+                slot_delays,
+                np.ascontiguousarray(ic0, dtype=np.float64),
+                np.ascontiguousarray(past_t, dtype=np.float64),
+                np.ascontiguousarray(past_y.ravel(), dtype=np.float64),
+                np.ascontiguousarray(t_eval, dtype=np.float64),
+                method,
+                float(rtol),
+                float(atol),
+                backend == "jit",
+            ),
+            dtype=np.float64,
+        )
+        if not np.all(np.isfinite(y)):
+            raise RuntimeError(
+                f"{type(self).__name__}: DDE integration diverged or the step collapsed before "
+                f"reaching the final time (backend={backend!r}, method={method!r})."
+            )
+
+        return Trajectory(
+            t=t_eval,
+            y=y,
+            system=self,
+            meta=self._provenance(
+                family="dde",
+                engine="rust",
+                backend=backend,
+                method=method,
+                dt=dt,
+                rtol=rtol,
+                atol=atol,
+                ic=np.asarray(ic0, dtype=float).copy(),
+                history="callable" if history is not None else "constant",
+            ),
+        )
+
+    def _sample_past(
+        self,
+        history: History,
+        ic_arr: np.ndarray,
+        dim: int,
+        max_delay: float,
+        dt: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Sample the past on ``[-max_delay, 0]``, returning ``(past_t, past_y, ic0)``.
+
+        A ``None`` history is a constant past equal to ``ic_arr`` — a single
+        sample the engine reads as constant.  A callable is sampled densely (so
+        the engine's finite-difference Hermite tangents stay accurate), with the
+        ``t0`` state taken as ``history(0)``.
+        """
+        if history is None:
+            past_t = np.array([0.0], dtype=float)
+            past_y = np.asarray(ic_arr, dtype=float).reshape(1, dim)
+            return past_t, past_y, np.asarray(ic_arr, dtype=float)
+
+        # Dense sampling: step no coarser than the output dt and well below the
+        # delay, capped so a tiny delay or dt cannot explode the sample count.
+        step = min(dt, max_delay / 200.0) if max_delay > 0.0 else dt
+        step = max(step, 1e-9)
+        n = max(2, int(np.ceil(max_delay / step)) + 1)
+        n = min(n, 200_000)
+        past_t = np.linspace(-max_delay, 0.0, n)
+        past_y = np.array(
+            [np.asarray(history(s), dtype=float).reshape(dim) for s in past_t],
+            dtype=float,
+        )
+        return past_t, past_y, past_y[-1].copy()
 
     # ------------------------------------------------------------------ #
     # Lyapunov spectrum
