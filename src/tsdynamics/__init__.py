@@ -43,7 +43,13 @@ from .derived import (
     TangentSystem,
     WrappedSystem,
 )
-from .families import ContinuousSystem, DelaySystem, DiscreteMap, Trajectory
+from .families import (
+    ContinuousSystem,
+    DelaySystem,
+    DiscreteMap,
+    StochasticSystem,
+    Trajectory,
+)
 from .systems import continuous as _continuous
 from .systems import discrete as _discrete
 
@@ -66,6 +72,7 @@ __all__ = [
     "ContinuousSystem",
     "DelaySystem",
     "DiscreteMap",
+    "StochasticSystem",
     "Trajectory",
     # Derived-system wrappers (composition layer)
     "EnsembleSystem",

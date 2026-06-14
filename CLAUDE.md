@@ -47,7 +47,7 @@ src/tsdynamics/
 │   ├── continuous.py         # ContinuousSystem (was ode_base.py; JiTCODE + jacobian autogen)
 │   ├── delay.py              # DelaySystem (was dde_base.py; JiTCDDE, forward-only)
 │   ├── discrete.py           # DiscreteMap (was map_base.py; Numba + signature validation)
-│   └── stochastic.py         # SDE family — skeleton stub (stream E-SDE fills it)
+│   └── stochastic.py         # StochasticSystem — diagonal-Itô SDEs (_drift+_diffusion; EM/Milstein)
 ├── engine/                   # Rust-facing engine layer (was backends/); E7 adds _rust
 │   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator (E6)
 │   ├── problem.py            # per-family Problem builders bundling a tape + runtime context (E6)
@@ -91,7 +91,8 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
 `tsdynamics.__all__` exports:
 
 - Every built-in system class (149 today: 118 ODE + 5 DDE + 26 maps)
-- Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`; result type `Trajectory`
+- Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`,
+  `StochasticSystem`; result type `Trajectory`
 - Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
   `EnsembleSystem`, `ProjectedSystem`
 - Analysis: `orbit_diagram`, `OrbitDiagram`, `poincare_section`,
@@ -205,6 +206,31 @@ All three families + all derived wrappers implement:
   `crates/tsdyn-engine/src/map.rs`; non-Numba backends lower `_step` to the IR,
   so piecewise/`numpy`-ufunc steps raise `TapeCompileError`. The engine path
   diverges loudly (raises, no random-IC retry).
+
+### `StochasticSystem` extras
+
+- **Diagonal-Itô SDE** family (`families/stochastic.py`):
+  `dX_k = f_k dt + g_k dW_k` with independent `dW_k`. Subclass contract is
+  `_drift(y, t, **params)` (like `_equations`) + `_diffusion(y, t, **params)`
+  (one noise coefficient per component); both symbolic, both lower via
+  `engine.compile.lower_sde` (drift tape + diffusion tape, the latter carrying
+  `∂g/∂u` for Milstein).
+- `integrate(..., method=, seed=)` runs a fixed-step scheme — `dt` *is* the
+  noise scale `√dt` (so `dt` sets both the discretisation and the output grid).
+  `method`: `"euler_maruyama"` (order 0.5, default) or `"milstein"` (order 1.0).
+  `seed` makes the noise realisation reproducible (recorded in `traj.meta`).
+- `ensemble(ics, ...)` seeds trajectory `i` from `seed_for(seed, i)` — depending
+  only on the index — so a batch is reproducible and mirrors the Rust engine's
+  parallel-equals-serial contract; a diverged trajectory becomes a `NaN` row.
+- The real engine is Rust: kernels in `crates/tsdyn-solvers/src/sde/**`
+  (own `SdeKernel` trait, RNG-free — the engine hands them a pre-drawn `dw`),
+  loop + seeded RNG in `crates/tsdyn-engine/src/sde.rs`. The Python path uses a
+  pure-Python **reference** integrator (a faithful `SplitMix64` port); wiring
+  SDEs through `backend="interp"/"jit"` (`tsdynamics._rust`) is an E7 follow-up.
+- **Not yet registry-detected**: SDE systems lower/integrate via
+  `build_problem`'s `_drift`/`_diffusion` duck-typing, but the registry's family
+  tag (`stochastic`) is stream C-FAM's job, so they don't appear in
+  `registry.all_systems()` yet.
 
 ---
 

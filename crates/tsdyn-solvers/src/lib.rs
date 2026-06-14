@@ -38,6 +38,7 @@ mod solver;
 // never reorder. Each kernel inside self-registers via `register_solver!`.
 pub mod explicit;
 pub mod implicit;
+pub mod sde;
 
 pub use caps::{Caps, ProblemKind, ProblemKinds, SolverKind};
 pub use registry::{available, duplicates, find, make, registered, SolverRegistration};
