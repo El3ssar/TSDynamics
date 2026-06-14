@@ -103,6 +103,7 @@ version = "0.1.0"
 dependencies = [
  "inventory",
  "tsdyn-ir",
+ "tsdyn-vm",
 ]
 
 [[package]]

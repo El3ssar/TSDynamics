@@ -13,3 +13,11 @@ tsdyn-ir.workspace = true
 # here rather than in `workspace.dependencies` (per the workspace manifest's
 # convention for per-crate deps). Pure Rust, no build script → wheel-friendly.
 inventory = "0.3.24"
+
+[dev-dependencies]
+# The interpreter evaluator (stream E1) — used only by the kernel test suites to
+# turn hand-built tapes (stiff benchmarks with analytic Jacobians) into a real
+# `Evaluator`, so the implicit kernels are exercised through the exact RHS/Jacobian
+# seam they consume in production. A dev-only edge: `tsdyn-vm` depends on
+# `tsdyn-ir` alone, so it adds no cycle and keeps test builds light (no Cranelift).
+tsdyn-vm.workspace = true
