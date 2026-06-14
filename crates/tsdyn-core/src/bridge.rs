@@ -1207,9 +1207,17 @@ mod tests {
         // must reject this loudly (BadShape → ValueError), not integrate.
         let t_eval = [0.0, 0.5, 1.0];
         for method in ["rosenbrock", "trbdf2"] {
-            let err =
-                integrate_dense(decay_tape(), &[1.0], &[2.0], &t_eval, method, 1e-6, 1e-9, false)
-                    .unwrap_err();
+            let err = integrate_dense(
+                decay_tape(),
+                &[1.0],
+                &[2.0],
+                &t_eval,
+                method,
+                1e-6,
+                1e-9,
+                false,
+            )
+            .unwrap_err();
             assert!(
                 matches!(err, EngineError::BadShape(_)),
                 "{method} (no Jacobian): got {err:?}"
@@ -1243,12 +1251,22 @@ mod tests {
             1e-11,
             false,
         );
-        assert!(y.is_ok(), "rosenbrock with a Jacobian should integrate: {y:?}");
-        // Explicit methods never need a Jacobian, so the no-Jacobian tape is fine.
         assert!(
-            integrate_dense(decay_tape(), &[1.0], &[2.0], &t_eval, "rk45", 1e-6, 1e-9, false)
-                .is_ok()
+            y.is_ok(),
+            "rosenbrock with a Jacobian should integrate: {y:?}"
         );
+        // Explicit methods never need a Jacobian, so the no-Jacobian tape is fine.
+        assert!(integrate_dense(
+            decay_tape(),
+            &[1.0],
+            &[2.0],
+            &t_eval,
+            "rk45",
+            1e-6,
+            1e-9,
+            false
+        )
+        .is_ok());
     }
 
     #[test]
