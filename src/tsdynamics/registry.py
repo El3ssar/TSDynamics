@@ -9,12 +9,13 @@ what the bulk test-suite and the documentation generator iterate over;
 user-defined classes are registered too but excluded from iteration by
 default.
 
-Alongside the system registry, this module hosts three sibling name registries
-— :data:`solvers`, :data:`analyses`, and :data:`transforms` — generic
-:class:`Registry` containers (name → object + metadata).  They are the seam
-the extensible kinds register into; the *discovery* that fills them (the
-``solvers/`` directory scan and the :mod:`~tsdynamics.plugins` entry-point
-loader) lives outside this import-light module.
+Alongside the system registry, this module hosts two *reserved* generic name
+registries — :data:`analyses` and :data:`transforms` — :class:`Registry`
+containers (name → object + metadata) for the analysis and transform streams to
+register into.  Solvers are **not** registered here: they live in the richer
+:mod:`tsdynamics.solvers` registry (a ``name → SolverSpec`` table carrying
+capability flags, populated by that package's directory scan + the
+:mod:`~tsdynamics.plugins` entry-point loader).
 
 This module must stay import-light: it is imported while the ``tsdynamics``
 package itself is still initialising, so it may only depend on the standard
@@ -49,7 +50,6 @@ __all__ = [
     "categories",
     "families",
     "get",
-    "solvers",
     "transforms",
 ]
 
@@ -224,13 +224,18 @@ def categories(family: str | None = None, *, builtin: bool | None = True) -> dic
 
 
 # ---------------------------------------------------------------------------
-# Generic name registries: solvers / analyses / transforms
+# Generic name registries: analyses / transforms
 #
 # The system registry above is deliberately specialised (family detection,
-# builtin shadowing, ``__init_subclass__`` hooks).  The other extensible kinds
-# need only a name → object map with metadata, so they share one small generic
-# container.  Discovery (directory scans, entry-point plugins) lives elsewhere
-# and merely calls ``register``.
+# builtin shadowing, ``__init_subclass__`` hooks).  The analysis and transform
+# kinds need only a name → object map with metadata, so they share one small
+# generic container.  Discovery (directory scans, entry-point plugins) lives
+# elsewhere and merely calls ``register``.
+#
+# Solvers do *not* use this generic container: they have their own richer
+# ``name → SolverSpec`` registry in :mod:`tsdynamics.solvers` (capability flags,
+# kernel names, directory + entry-point discovery).  Keep solver registration
+# there — do not re-add a ``solvers`` registry here.
 # ---------------------------------------------------------------------------
 
 
@@ -250,17 +255,16 @@ class Registry:
     """
     A minimal, generic name → object registry.
 
-    Backs the :data:`solvers`, :data:`analyses`, and :data:`transforms`
-    registries.  It only stores and looks up; the *discovery* that fills it
-    (the ``solvers/`` scan, :mod:`~tsdynamics.plugins` entry points) is built
-    on top of it elsewhere.
+    Backs the :data:`analyses` and :data:`transforms` registries.  It only
+    stores and looks up; the *discovery* that fills it (directory scans,
+    :mod:`~tsdynamics.plugins` entry points) is built on top of it elsewhere.
 
     Registration is usable directly or as a decorator::
 
-        solvers.register("rk4", Rk4Solver, order=4)        # direct
+        analyses.register("lyapunov", lyapunov_spectrum)        # direct
 
-        @solvers.register("dp45", order=5, adaptive=True)  # decorator
-        class Dp45Solver: ...
+        @analyses.register("corr_dim", needs="trajectory")      # decorator
+        def correlation_dimension(traj): ...
 
     Re-registering the *same* object under a name is idempotent (safe across
     module re-imports).  A clash between two *different* objects on one name
@@ -357,8 +361,6 @@ class Registry:
         return f"Registry(kind={self._kind!r}, {len(self._entries)} registered)"
 
 
-#: Registered integration solvers (filled by the ``solvers/`` scan + plugins).
-solvers = Registry("solver")
 #: Registered analysis functions (Lyapunov, dimensions, recurrence, …).
 analyses = Registry("analysis")
 #: Registered data/signal transforms (spectral, filters, feature extractors).

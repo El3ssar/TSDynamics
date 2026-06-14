@@ -111,3 +111,28 @@ def test_dde_histories_complete() -> None:
         f"DDE_HISTORIES (tests/_sampling.py) out of sync with registry: "
         f"missing {dde_names - set(DDE_HISTORIES)}, stale {set(DDE_HISTORIES) - dde_names}"
     )
+
+
+# ---------------------------------------------------------------------------
+# One solver registry, not two
+# ---------------------------------------------------------------------------
+
+
+def test_solver_registry_is_not_duplicated_in_registry_module() -> None:
+    """Solvers register in ``tsdynamics.solvers``, never in ``registry``.
+
+    ``registry`` keeps only the *reserved* generic ``analyses``/``transforms``
+    seams; the solver registry is the richer ``SolverSpec`` table in
+    ``tsdynamics.solvers``. A stray ``registry.solvers`` would resurrect the
+    two-registries-for-one-thing split this guard exists to prevent.
+    """
+    from tsdynamics import solvers
+    from tsdynamics.registry import Registry
+
+    assert not hasattr(registry, "solvers"), (
+        "registry.solvers is back — solvers belong in tsdynamics.solvers"
+    )
+    assert isinstance(registry.analyses, Registry)
+    assert isinstance(registry.transforms, Registry)
+    # The real solver registry exposes the SolverSpec-based API.
+    assert hasattr(solvers, "register") and hasattr(solvers, "available")

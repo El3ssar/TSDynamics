@@ -40,7 +40,7 @@ paths have MOVED, no shims):
 ```
 src/tsdynamics/
 ├── __init__.py               # __version__ (managed by python-semantic-release) + re-exports
-├── registry.py               # 4 registries: systems (SystemEntry + all_systems/…) + solvers/analyses/transforms (generic Registry)
+├── registry.py               # system registry (SystemEntry + all_systems/…) + reserved generic analyses/transforms (solvers live in tsdynamics.solvers)
 ├── families/                 # base classes + the System protocol (was base/)
 │   ├── base.py               # SystemBase, ParamSet, MetaStore (re-exports Trajectory from data)
 │   ├── protocol.py           # the System runtime Protocol
@@ -115,11 +115,14 @@ packages are importable but not advertised in `__all__`.
 
 ## The registry (load-bearing!)
 
-`registry.py` hosts **four** registries: the specialised *system* registry
-(below) plus three generic name→object `Registry` containers — `registry.solvers`,
-`registry.analyses`, `registry.transforms`. The generic ones only store/look up;
-the discovery that fills them (the `solvers/` scan + entry-point plugins) lives in
-stream F2's `solvers/` and `plugins.py`. **Family detection keys off the module
+`registry.py` hosts the specialised *system* registry (below) plus two
+*reserved* generic name→object `Registry` containers — `registry.analyses` and
+`registry.transforms` — for the analysis/transform streams to register into (no
+consumer wired yet). **Solvers are not registered here**: they live in the
+richer `tsdynamics.solvers` registry (a `name → SolverSpec` table with
+capability flags + `solvers/` directory and entry-point discovery via
+`plugins.py`, stream F2). Do not re-add a `solvers` registry to `registry.py`.
+**Family detection keys off the module
 prefix `tsdynamics.families`** (the `_BASE_PREFIX` in `registry.py` and the guard
 in `SystemBase.__init_subclass__`) — both moved from `tsdynamics.base` in the F3
 reorg; keep them in lock-step if the families package ever moves again.
