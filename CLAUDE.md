@@ -65,11 +65,12 @@ src/tsdynamics/
 ├── data/                     # state-space geometry + trajectory lingua franca (was sampling.py)
 │   ├── trajectory.py         # Trajectory (canonical home; re-exported via families + top level)
 │   └── sampling.py           # Box/Ball/Grid, sampler, grid_points, set_distance
-├── analysis/                 # quantifiers (A-* streams subpackage these later)
-│   ├── orbit_diagram.py      # orbit_diagram + OrbitDiagram
-│   ├── poincare.py           # poincare_section (system or trajectory input)
-│   ├── lyapunov.py           # lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension
-│   └── fixed_points.py       # fixed_points + FixedPoint (maps, multi-start Newton)
+├── analysis/                 # quantifiers, one subpackage per A-* stream (A-LAYOUT reorg)
+│   ├── __init__.py           # flat re-exports (public API) + analyses plugin discovery
+│   ├── orbits/               # orbit_diagram + OrbitDiagram (orbit_diagram.py); poincare_section (poincare.py)
+│   ├── lyapunov/             # lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension
+│   ├── fixedpoints/          # fixed_points + FixedPoint (maps, multi-start Newton; was fixed_points.py)
+│   └── chaos/ basins/ dimensions/ embedding/ entropy/ recurrence/ surrogate/   # empty, owned by A-* streams
 ├── transforms/               # signal/feature transforms — skeleton (stream T-XFORM)
 ├── viz/                      # DEFERRED stub only (decision D6)
 ├── systems/
@@ -116,9 +117,13 @@ packages are importable but not advertised in `__all__`.
 ## The registry (load-bearing!)
 
 `registry.py` hosts the specialised *system* registry (below) plus two
-*reserved* generic name→object `Registry` containers — `registry.analyses` and
-`registry.transforms` — for the analysis/transform streams to register into (no
-consumer wired yet). **Solvers are not registered here**: they live in the
+generic name→object `Registry` containers — `registry.analyses` and
+`registry.transforms` — for the analysis/transform streams to register into.
+Out-of-tree plugins are wired in (A-LAYOUT): `tsdynamics.analysis`/
+`tsdynamics.transforms` call `plugins.register_entry_points` at import to load
+the `tsdynamics.analyses`/`tsdynamics.transforms` entry-point groups; in-tree
+analyses/transforms self-register from their own subpackages (the A-* streams).
+**Solvers are not registered here**: they live in the
 richer `tsdynamics.solvers` registry (a `name → SolverSpec` table with
 capability flags + `solvers/` directory and entry-point discovery via
 `plugins.py`, stream F2). Do not re-add a `solvers` registry to `registry.py`.

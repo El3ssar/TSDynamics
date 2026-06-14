@@ -28,7 +28,7 @@ import warnings
 from collections.abc import Iterator
 from importlib.metadata import EntryPoint, entry_points
 from types import ModuleType
-from typing import Any
+from typing import Any, Protocol
 
 # ── Entry-point group names (the frozen plugin contract) ───────────────────────
 SYSTEMS_GROUP = "tsdynamics.systems"
@@ -126,3 +126,59 @@ def import_submodules(package: ModuleType) -> dict[str, ModuleType]:
         full_name = f"{package.__name__}.{info.name}"
         imported[info.name] = importlib.import_module(full_name)
     return imported
+
+
+class _RegistryLike(Protocol):
+    """The minimal surface :func:`register_entry_points` needs of a registry.
+
+    Both :class:`tsdynamics.registry.Registry` instances satisfy this; spelling
+    it as a Protocol keeps :mod:`plugins` decoupled from the registry module
+    (which imports nothing from here, so a hard import would risk a cycle).
+    """
+
+    def __contains__(self, name: object) -> bool: ...  # noqa: D105
+
+    def register(self, name: str, obj: Any) -> Any: ...  # noqa: D105
+
+
+def register_entry_points(
+    registry: _RegistryLike, group: str, *, strict: bool = False
+) -> list[str]:
+    """Load the plugins in *group* and register each into *registry* by name.
+
+    The generic-registry counterpart of
+    :func:`tsdynamics.solvers.discover_plugins`: it wires the
+    ``tsdynamics.analyses`` and ``tsdynamics.transforms`` plugin kinds into their
+    :class:`~tsdynamics.registry.Registry` consumers (the two of the four D4
+    plugin kinds that otherwise have no consumer).
+
+    Each entry point resolves to the object to register **verbatim** under the
+    entry point's own name — an analysis function, a transform callable, … —
+    unlike :mod:`~tsdynamics.solvers`, whose plugins resolve to ``SolverSpec``
+    metadata.  Names already present are left untouched, so this is safe to call
+    repeatedly (e.g. after installing a new plugin).  Plugin load failures are
+    isolated by :func:`load_plugins` (warn-and-skip unless *strict*).
+
+    Parameters
+    ----------
+    registry : Registry
+        The generic registry to populate (``registry.analyses`` /
+        ``registry.transforms``).
+    group : str
+        The entry-point group to load (:data:`ANALYSES_GROUP` /
+        :data:`TRANSFORMS_GROUP`).
+    strict : bool, default False
+        Forwarded to :func:`load_plugins`: re-raise the first load failure
+        instead of warning and continuing.
+
+    Returns
+    -------
+    list[str]
+        The names newly registered by this call, in load order.
+    """
+    newly: list[str] = []
+    for name, obj in load_plugins(group, strict=strict).items():
+        if name not in registry:
+            registry.register(name, obj)
+            newly.append(name)
+    return newly

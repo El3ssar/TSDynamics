@@ -40,14 +40,14 @@ spec = ts.lyapunov_spectrum(ts.Henon())
 
 | Symbol | Canonical home |
 | ------ | -------------- |
-| [`orbit_diagram`][tsdynamics.analysis.orbit_diagram.orbit_diagram] | `tsdynamics.analysis.orbit_diagram` |
-| [`OrbitDiagram`][tsdynamics.analysis.orbit_diagram.OrbitDiagram] | `tsdynamics.analysis.orbit_diagram` |
-| [`poincare_section`][tsdynamics.analysis.poincare.poincare_section] | `tsdynamics.analysis.poincare` |
+| [`orbit_diagram`][tsdynamics.analysis.orbits.orbit_diagram.orbit_diagram] | `tsdynamics.analysis.orbits.orbit_diagram` |
+| [`OrbitDiagram`][tsdynamics.analysis.orbits.orbit_diagram.OrbitDiagram] | `tsdynamics.analysis.orbits.orbit_diagram` |
+| [`poincare_section`][tsdynamics.analysis.orbits.poincare.poincare_section] | `tsdynamics.analysis.orbits.poincare` |
 | [`lyapunov_spectrum`][tsdynamics.analysis.lyapunov.lyapunov_spectrum] | `tsdynamics.analysis.lyapunov` |
 | [`max_lyapunov`][tsdynamics.analysis.lyapunov.max_lyapunov] | `tsdynamics.analysis.lyapunov` |
 | [`kaplan_yorke_dimension`][tsdynamics.analysis.lyapunov.kaplan_yorke_dimension] | `tsdynamics.analysis.lyapunov` |
-| [`fixed_points`][tsdynamics.analysis.fixed_points.fixed_points] | `tsdynamics.analysis.fixed_points` |
-| [`FixedPoint`][tsdynamics.analysis.fixed_points.FixedPoint] | `tsdynamics.analysis.fixed_points` |
+| [`fixed_points`][tsdynamics.analysis.fixedpoints.fixed_points] | `tsdynamics.analysis.fixedpoints` |
+| [`FixedPoint`][tsdynamics.analysis.fixedpoints.FixedPoint] | `tsdynamics.analysis.fixedpoints` |
 
 ## The 149 built-in systems
 
