@@ -68,6 +68,7 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.10",
   "pre-commit>=3.8",
+  "hypothesis>=6.100",
 ]
 docs = [
   "mkdocs>=1.6",

@@ -423,6 +423,39 @@ uv run pytest -m full --no-cov         # exhaustive sweep (nightly in CI)
 TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # docs sanity
 ```
 
+### Test harness (stream I-QA)
+
+The suite has three layers, all **registry-driven where possible** so new
+systems/analyses join the sweeps with zero test edits:
+
+- **Registry sweeps.** `tests/conftest.py` parametrizes fixtures over the
+  registries: `ode_entry`/`dde_entry`/`map_entry`/`sde_entry`/`system_entry`
+  (built-in systems) and `analysis_entry`/`transform_entry` (the D4
+  `registry.analyses`/`registry.transforms` plugin surface — the latter only
+  populates once `tsdynamics.transforms` is imported, which `conftest` does).
+  `tests/test_analysis_registry.py` runs the meta-QA over every registered
+  analysis/transform (callable, documented, round-trips, top-level export
+  agreement) plus headline-membership guards.
+- **Property tests (Hypothesis).** `tests/test_property_*.py` assert
+  *mathematical invariants* of the analysis/transform layer (embed value
+  preservation, PSD non-negativity, permutation-entropy monotone-transform
+  invariance, surrogate spectrum/amplitude preservation, recurrence symmetry +
+  target-rate calibration, dimension-of-a-d-cube ≈ d, …). `hypothesis` is a dev
+  dependency; `conftest` registers a profile (deadline off, health checks
+  suppressed — required under `filterwarnings=["error"]`). Shared deterministic
+  signal builders live in `tests/_strategies.py` (sinusoid/AR(1)/logistic/Hénon,
+  compile-free → fast tier); reproducible by seed so a failing example replays.
+- **Known-value catalogue.** `tests/test_known_values.py` (literature Lyapunov
+  spectra via the `known_lyapunov` ClassVar) and `tests/test_known_quantifiers.py`
+  (analytic identities + cross-quantifier "regular vs random" agreement: five
+  independent complexity measures must concur). Per-stream literature numbers
+  stay in each stream's own test file; `test_known_quantifiers.py` does not
+  duplicate them.
+
+When adding an analysis/transform, the registry meta-QA picks it up
+automatically (give it a docstring, register it). When adding a property test,
+reuse `_strategies` and assert a real invariant — never a tautology.
+
 ---
 
 ## Versioning & release (python-semantic-release)
