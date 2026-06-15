@@ -7,10 +7,13 @@ description: TSDynamics — 149 built-in dynamical systems, compiled integration
 **149 built-in dynamical systems. Compiled integration. Chaos analysis.**
 
 TSDynamics is a Python library for studying dynamical systems: continuous
-flows, delay equations, and discrete maps, all behind one interface. You
-define the math in a single symbolic method; the library compiles it to
-native code, caches the binary, and gives you trajectories, Lyapunov
-spectra, bifurcation diagrams, Poincaré sections, and fixed points.
+flows, delay equations, stochastic systems, and discrete maps, all behind one
+interface. You define the math in a single symbolic method; the library
+compiles it to native code, caches the binary, and gives you trajectories,
+Lyapunov spectra and chaos indicators, fixed and periodic orbits, bifurcation
+diagrams and Poincaré sections, fractal dimensions and delay embeddings,
+recurrence/RQA, entropy and complexity, surrogate tests, and the full
+attractor / basin / continuation suite.
 
 ```python
 import tsdynamics as ts
@@ -59,9 +62,9 @@ call — in this session or the next — reuses the cached binary.
 
     ---
 
-    Subclass one of three base classes, declare a `params` dict and `dim`,
-    write one method. Your class auto-registers, the test suite sweeps it,
-    and its documentation page is generated from the code.
+    Subclass one of the family base classes, declare a `params` dict and
+    `dim`, write one method. Your class auto-registers, the test suite sweeps
+    it, and its documentation page is generated from the code.
 
 </div>
 
@@ -73,7 +76,9 @@ call — in this session or the next — reuses the cached binary.
 | ----------- | ----- |
 | Install and run your first trajectory | [Start](start/index.md) |
 | Browse the built-in systems | [Systems](systems/index.md) |
-| Lyapunov spectra, bifurcation diagrams, sections | [Analysis](analysis/index.md) |
+| Lyapunov, chaos, dimensions, basins, recurrence, surrogates | [Analysis](analysis/index.md) |
+| Follow an end-to-end walkthrough (equations → basins) | [Tutorials](tutorials/index.md) |
+| Turn trajectories into features (spectra, filters) | [Transforms](transforms/index.md) |
 | Understand the compilation cache and the math | [Theory](theory/index.md) |
 | Look up an exact signature | [Reference](reference/index.md) |
 | Contribute a system | [Project](project/contributing.md) |

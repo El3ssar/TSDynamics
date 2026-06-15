@@ -32,6 +32,7 @@ exclude_docs: |
 
 hooks:
   - hooks/docs_autogen.py
+  - hooks/citation_lint.py
 
 theme:
   name: material
@@ -167,6 +168,18 @@ nav:
       - Orbit & bifurcation diagrams: analysis/orbit-diagrams.md
       - Poincaré sections: analysis/poincare.md
       - Fixed points & periodic orbits: analysis/fixed-points.md
+      - Chaos indicators: analysis/chaos.md
+      - Recurrence & RQA: analysis/recurrence.md
+      - Fractal dimensions: analysis/dimensions.md
+      - Delay embeddings: analysis/embedding.md
+      - Entropy & complexity: analysis/entropy.md
+      - Surrogates & nonlinearity tests: analysis/surrogate.md
+      - Attractors & basins: analysis/basins.md
+  - Transforms:
+      - transforms/index.md
+  - Tutorials:
+      - tutorials/index.md
+      - From equations to basins: tutorials/equations-to-basins.md
   - Theory:
       - theory/index.md
       - Compilation pipeline: theory/compilation.md
@@ -179,6 +192,9 @@ nav:
       - Base classes: reference/base.md
       - Derived systems: reference/derived.md
       - Analysis: reference/analysis.md
+      - Transforms: reference/transforms.md
+      - Data & state-space: reference/data.md
+      - Solvers: reference/solvers.md
       - Registry: reference/registry.md
       - Utilities: reference/utils.md
   - Project:

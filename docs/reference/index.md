@@ -15,10 +15,13 @@ trust your installed version.
 | You are looking for | Page |
 | ------------------- | ---- |
 | Everything importable straight from `tsdynamics` | [Top level](top-level.md) |
-| `ContinuousSystem`, `DelaySystem`, `DiscreteMap`, `Trajectory`, the `System` protocol | [Base classes](base.md) |
-| `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `EnsembleSystem`, `ProjectedSystem` | [Derived systems](derived.md) |
-| `orbit_diagram`, `poincare_section`, `lyapunov_spectrum`, `max_lyapunov`, `fixed_points` | [Analysis](analysis.md) |
-| Programmatic access to the 149 built-in systems | [Registry](registry.md) |
+| `ContinuousSystem`, `DelaySystem`, `DiscreteMap`, `StochasticSystem`, `Trajectory`, the `System` protocol | [Base classes](base.md) |
+| `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `EnsembleSystem`, `ProjectedSystem`, `WrappedSystem` | [Derived systems](derived.md) |
+| Lyapunov, chaos indicators, fixed/periodic orbits, orbit diagrams, basins, dimensions, embeddings, entropy, recurrence, surrogates | [Analysis](analysis.md) |
+| `power_spectral_density`, `detrend`, `normalize`, filters, `extract_features` | [Transforms](transforms.md) |
+| `Box`, `Ball`, `Grid`, `sampler`, `grid_points`, `set_distance` | [Data & state-space](data.md) |
+| `method=` resolution, `SolverSpec`, auto-stiffness, registering a solver | [Solvers](solvers.md) |
+| Programmatic access to the built-in system catalogue | [Registry](registry.md) |
 | `staticjit`, timestep estimation | [Utilities](utils.md) |
 | A specific built-in system (equations, defaults, figures) | [Systems](../systems/index.md) |
 
