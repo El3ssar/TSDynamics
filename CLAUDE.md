@@ -74,7 +74,8 @@ src/tsdynamics/
 │   ├── entropy/              # A-ENT: permutation/dispersion/sample/multiscale entropy + LZ76 (composable OutcomeSpace×estimator×measure)
 │   ├── chaos/               # A-CHAOS: GALI_k (Skokos) + 0–1 test (Gottwald–Melbourne) + expansion entropy (Hunt–Ott); maps via _jacobian, flows via self-contained RK4 variational core (no engine/compile)
 │   ├── recurrence/          # A-RQA: recurrence_matrix (fixed ε / target rate, sparse cKDTree) + rqa (DET/LAM/L_max/ENTR/TT) + windowed_rqa; self-registers into registry.analyses
-│   └── basins/ embedding/ surrogate/   # empty, owned by A-* streams
+│   ├── surrogate/           # A-SURR: surrogates (shuffle/FT/AAFT/IAAFT generators) + time_reversal_asymmetry/nonlinear_prediction_error stats + surrogate_test→SurrogateTest (rank p + sigma); self-registers into registry.analyses
+│   └── basins/ embedding/   # basins empty (A-BASIN); embedding owned by A-EMBED
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
 ├── viz/                      # DEFERRED stub only (decision D6)
 ├── systems/
@@ -114,7 +115,11 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
   `fixed_mass_dimension`, `DimensionResult`; chaos indicators (A-CHAOS)
   `gali`, `GALIResult`, `zero_one_test`, `expansion_entropy`,
   `ExpansionEntropyResult`; recurrence & RQA (A-RQA) `recurrence_matrix`,
-  `RecurrenceMatrix`, `rqa`, `RQAResult`, `windowed_rqa`, `WindowedRQA`
+  `RecurrenceMatrix`, `rqa`, `RQAResult`, `windowed_rqa`, `WindowedRQA`;
+  surrogates & nonlinearity tests (A-SURR) `surrogates`, `random_shuffle`,
+  `fourier_surrogate`, `aaft_surrogate`, `iaaft_surrogate`,
+  `time_reversal_asymmetry`, `nonlinear_prediction_error`, `surrogate_test`,
+  `SurrogateTest`
 - Derived: `WrappedSystem` (adapt any external stepper to the protocol)
 - State-space geometry (`data`): `Box`, `Ball`, `Grid`, `sampler`,
   `grid_points`, `set_distance` — the primitives the basin/attractor layer
