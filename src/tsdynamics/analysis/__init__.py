@@ -24,9 +24,13 @@ re-exported here so the public surface is flat:
   :func:`generalized_dimension` (with :func:`box_counting_dimension`,
   :func:`information_dimension`, :func:`dimension_spectrum`) and
   :func:`fixed_mass_dimension`.
+- :mod:`~tsdynamics.analysis.embedding` — delay embeddings: :func:`embed`
+  (Takens reconstruction), delay selection :func:`optimal_delay` (mutual
+  information / autocorrelation) and dimension selection :func:`cao_dimension` /
+  :func:`false_nearest_neighbors` (unified by :func:`embedding_dimension`).
 
-The remaining subpackages (``chaos``, ``basins``, ``embedding``,
-``recurrence``, ``surrogate``) are placeholders the analysis streams fill in.
+The remaining subpackages (``chaos``, ``basins``, ``recurrence``,
+``surrogate``) are placeholders the analysis streams fill in.
 
 Out-of-tree analyses register through the ``tsdynamics.analyses`` entry-point
 group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
@@ -45,6 +49,16 @@ from .dimensions import (
     generalized_dimension,
     information_dimension,
 )
+from .embedding import (
+    EmbeddingDimension,
+    autocorrelation,
+    cao_dimension,
+    embed,
+    embedding_dimension,
+    false_nearest_neighbors,
+    mutual_information,
+    optimal_delay,
+)
 from .entropy import (
     approximate_entropy,
     dispersion_entropy,
@@ -62,15 +76,21 @@ from .orbits import OrbitDiagram, orbit_diagram, poincare_section
 
 __all__ = [
     "DimensionResult",
+    "EmbeddingDimension",
     "FixedPoint",
     "OrbitDiagram",
     "approximate_entropy",
+    "autocorrelation",
     "box_counting_dimension",
+    "cao_dimension",
     "correlation_dimension",
     "correlation_sum",
     "dimension_spectrum",
     "dispersion_entropy",
+    "embed",
+    "embedding_dimension",
     "entropy",
+    "false_nearest_neighbors",
     "fixed_mass_dimension",
     "fixed_points",
     "generalized_dimension",
@@ -81,6 +101,8 @@ __all__ = [
     "lz76_entropy",
     "max_lyapunov",
     "multiscale_entropy",
+    "mutual_information",
+    "optimal_delay",
     "orbit_diagram",
     "permutation_entropy",
     "poincare_section",

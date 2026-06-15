@@ -88,3 +88,29 @@ measure — plus the named measures built on it.
 ::: tsdynamics.analysis.dimensions.fixedmass.fixed_mass_dimension
 
 ::: tsdynamics.analysis.dimensions.DimensionResult
+
+## Delay embeddings
+
+State-space reconstruction from a scalar (or multivariate) measurement
+(Takens, 1981): the time-delay map, plus the delay- and dimension-selection
+heuristics that parameterise it.
+
+::: tsdynamics.analysis.embedding.embed.embed
+
+### Delay selection
+
+::: tsdynamics.analysis.embedding.delay.optimal_delay
+
+::: tsdynamics.analysis.embedding.delay.mutual_information
+
+::: tsdynamics.analysis.embedding.delay.autocorrelation
+
+### Dimension selection
+
+::: tsdynamics.analysis.embedding.dimension.embedding_dimension
+
+::: tsdynamics.analysis.embedding.dimension.cao_dimension
+
+::: tsdynamics.analysis.embedding.dimension.false_nearest_neighbors
+
+::: tsdynamics.analysis.embedding.dimension.EmbeddingDimension
