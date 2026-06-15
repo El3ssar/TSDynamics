@@ -14,27 +14,33 @@
 //! - [`TrBdf2`] (`"trbdf2"`) — a trapezoidal + BDF2 composite ESDIRK with
 //!   modified-Newton substages. Stiffly accurate; a different mechanism from the
 //!   Rosenbrock kernel, so the two cross-validate each other.
+//! - [`Bdf`] (`"bdf"`) — a **variable-order (1–5), variable-step** fixed-leading-
+//!   coefficient BDF (stream E-BDF). It adapts its *order* as well as its step, so
+//!   it takes far larger steps than the fixed-order kernels through a smooth stiff
+//!   phase — the high-order stiff workhorse that closes the warm-throughput gap to
+//!   a variable-order BDF reference (`benches/REPORT.md`).
 //!
-//! Both estimate the local error by **step doubling + Richardson extrapolation**
-//! (the shared [`control`] machinery), so they drive the engine's frozen
-//! accept/reject loop without a per-method embedded estimator. Each lives in its
-//! own file ending in a `register_solver!` line and is discovered by name through
-//! the registry — no central table (ROADMAP §4d), so this family was built
+//! The two one-step kernels estimate the local error by **step doubling +
+//! Richardson extrapolation** (the shared [`control`] machinery); the multistep
+//! [`Bdf`] carries its own difference-array history and a native order/step
+//! controller instead. All three drive the engine's frozen accept/reject loop and
+//! live in their own file ending in a `register_solver!` line, discovered by name
+//! through the registry — no central table (ROADMAP §4d), so this family was built
 //! without touching the explicit (E3) or SDE (E-SDE) families.
 //!
-//! # Not yet here
+//! # Possible future work
 //!
-//! A variable-order **BDF** (multistep) kernel is the remaining item from the
-//! stream's scope; it carries its own history across steps and is best added as
-//! its own file in this directory once the one-step kernels are validated. The
-//! acceptance benchmarks (stiff linear, Van der Pol, Robertson, Oregonator) are
-//! met by the two one-step kernels above.
+//! A Radau IIA collocation kernel (higher-order, A-stable, dense-output friendly)
+//! would round out the stiff family; it slots in as another file here behind the
+//! same `Solver` seam.
 
 mod control;
 mod linalg;
 
+pub mod bdf;
 pub mod rosenbrock;
 pub mod trbdf2;
 
+pub use bdf::Bdf;
 pub use rosenbrock::RosenbrockW;
 pub use trbdf2::TrBdf2;
