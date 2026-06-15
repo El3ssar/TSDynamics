@@ -122,9 +122,9 @@ These were made deliberately; treat them as fixed unless this file changes.
 
 **Still-open sub-decisions** (do **not** block on these unless your stream needs
 them; flagged in §11): the Cranelift JIT trigger heuristic; the exact public
-top-level `__all__`; whether `tsdynamics` ships as one maturin wheel or keeps a
-separable accelerator. Resolve via an `[interface]`/`[decision]` PR + a note to
-the maintainer. *(The SDE noise contract is now **decided** — see §11.)*
+top-level `__all__`. Resolve via an `[interface]`/`[decision]` PR + a note to
+the maintainer. *(The SDE noise contract and the packaging shape are now
+**decided** — see §11.)*
 
 ---
 
@@ -443,7 +443,7 @@ board with the maintainer's `gh`-based bootstrap — one issue per row.)*
 
 | ID | Stream | Owns | Depends | Acceptance |
 |----|--------|------|---------|------------|
-| **I-WHEEL** | Cross-platform wheels + packaging | maturin-action CI; decide one-wheel vs accelerator (§11) | E7 | manylinux + macOS(arm64/x86_64) + Windows wheels; `pip install tsdynamics` needs **no compiler**. |
+| **I-WHEEL** | Cross-platform wheels + packaging | maturin-action CI; decide one-wheel vs accelerator (§11) | E7 | manylinux + macOS(arm64/x86_64) + Windows wheels; `pip install tsdynamics` needs **no compiler**. 🟡 **active:** packaging shape **decided** (§11: separable accelerator now → one wheel at M3) + `wheels.yml` maturin matrix (manylinux/musllinux/macOS/Windows, abi3) + fixed the `tsdynamics._rust` mixed-layout so the wheel is importable. PyPI publish of the engine deferred to M3 (gated by I-XVAL). |
 | **I-BENCH** | Benchmarks + perf tracking | `benches/**`, CI perf job | E5 | vs SciPy + (internally) the Julia baseline on Lorenz/Rössler/MackeyGlass/Lorenz-96 N=128/Robertson; time-to-first-result tracked. |
 | **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP, E-WIRE | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** **Today the gate validates the v2-seed crate, not `tsdynamics._rust`; rebuild it around the real engine + interp==jit + reference==engine — see §13b.** |
 | **I-DOCS** | Docs restructure (NOT viz) | `docs/**`, autogen hook updated to new layout | F3 | site builds `--strict`; per-system pages; tutorial "equations → basins"; citation lint rule. |
@@ -562,9 +562,21 @@ built-in systems; an **external plugin ecosystem** (D4) the benchmark lacks.
 - **Cranelift JIT trigger** *(E2/E6)* — manual `backend="jit"` first; later an
   auto-heuristic (system size × run length × sweep count). Ship manual, then
   auto.
-- **Packaging shape** *(I-WHEEL/M3)* — one `tsdynamics` maturin wheel vs keeping
-  a separable accelerator. Total replacement (D1) points to one wheel; confirm
-  before M3.
+- **Packaging shape — ✅ DECIDED (I-WHEEL): separable accelerator now → one wheel
+  at M3.** Pre-M3 the engine is an *optional* accelerator and the v2 backends are
+  the default, so `tsdynamics._rust` ships as a standalone `tsdynamics-rust-engine`
+  wheel that drops only `tsdynamics/_rust.abi3.so` into the `tsdynamics` namespace
+  (zero file-collision with the pure-Python `tsdynamics` wheel via a maturin
+  mixed-layout namespace mount; the python-semantic-release PyPI release stays
+  pure-Python and untouched). The cross-platform build pipeline (`wheels.yml`:
+  manylinux + musllinux + macOS + Windows, abi3 ⇒ one wheel per platform covers
+  CPython ≥ 3.12) is built now and produces no-compiler-needed wheels for every
+  listed platform. The pre-M3 engine wheel is kept off PyPI (`Private :: Do Not
+  Upload`) and built as a CI artifact only, since it is gated by I-XVAL. At M3,
+  when I-XVAL retires the v2 backends and the engine becomes mandatory, the two
+  distributions fold into a single `tsdynamics` maturin wheel (root build-backend
+  → maturin, `python-source = "src"`, same `module-name`) — D1's one-wheel end
+  state. Recipe + rationale in `docs/theory/packaging.md`.
 - **Top-level `__all__`** *(F3)* — finalize the curated public surface during the
   reorg; keep it small and obvious.
 - **lzcomplexity integration** *(A-ENT/T-XFORM)* — vendor vs optional dependency

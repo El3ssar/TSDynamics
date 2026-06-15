@@ -1,0 +1,170 @@
+name: Wheels
+
+# Cross-platform prebuilt wheels for the `tsdynamics._rust` engine extension
+# (stream I-WHEEL, ROADMAP §11). The extension is abi3 (cp312), so ONE wheel per
+# (platform, arch) covers every CPython >= 3.12 — no per-version matrix.
+#
+# Packaging shape (pre-M3): a separable, optional accelerator distribution
+# `tsdynamics-rust-engine` that ships only `tsdynamics/_rust.abi3.so` into the
+# `tsdynamics` namespace, so a user gets the engine with NO Rust toolchain. The
+# pure-Python `tsdynamics` wheel + its python-semantic-release PyPI publish
+# (release.yml) are untouched. At M3 the two fold into one `tsdynamics` maturin
+# wheel — see docs/about/packaging.md.
+#
+# This workflow only *builds and verifies* wheels (uploaded as artifacts). It does
+# NOT publish to PyPI: the pre-M3 engine is gated by I-XVAL and deliberately kept
+# off the index (its pyproject carries `Private :: Do Not Upload`). PyPI publishing
+# is wired at M3 when the engine becomes the default.
+#
+#   * pull_request (packaging paths only) → a cheap single-platform build smoke,
+#     so a packaging-layout regression is caught before merge.
+#   * workflow_dispatch / tag push (v*)   → the full manylinux + musllinux + macOS
+#     + Windows matrix + sdist.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/wheels.yml"
+      - "crates/tsdyn-core/pyproject.toml"
+      - "crates/tsdyn-core/Cargo.toml"
+      - "crates/tsdyn-core/python/**"
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  # Cancel superseded PR runs, but never abort an in-flight release-tag / dispatch
+  # build — those produce the actual artifact set and must run to completion.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Emit the build matrix: a one-platform smoke on PRs (the full matrix is heavy
+  # and the cross-arch/macOS/Windows builds are standard maturin-action paths), the
+  # full set on a manual run or a release tag.
+  matrix:
+    name: Resolve build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.set.outputs.include }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          full='[
+            {"label":"linux-x86_64","runner":"ubuntu-latest","target":"x86_64","manylinux":"auto","native":true},
+            {"label":"linux-aarch64","runner":"ubuntu-latest","target":"aarch64","manylinux":"auto","native":false},
+            {"label":"musllinux-x86_64","runner":"ubuntu-latest","target":"x86_64","manylinux":"musllinux_1_2","native":false},
+            {"label":"musllinux-aarch64","runner":"ubuntu-latest","target":"aarch64","manylinux":"musllinux_1_2","native":false},
+            {"label":"macos-x86_64","runner":"macos-13","target":"x86_64","manylinux":"auto","native":true},
+            {"label":"macos-aarch64","runner":"macos-14","target":"aarch64","manylinux":"auto","native":true},
+            {"label":"windows-x64","runner":"windows-latest","target":"x64","manylinux":"auto","native":true}
+          ]'
+          smoke='[
+            {"label":"linux-x86_64","runner":"ubuntu-latest","target":"x86_64","manylinux":"auto","native":true}
+          ]'
+          # Collapse to a single line for the matrix output.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            chosen=$(echo "$smoke" | tr -d '\n ')
+          else
+            chosen=$(echo "$full" | tr -d '\n ')
+          fi
+          echo "include=$chosen" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: matrix
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.include) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          # manylinux is honoured on Linux only; ignored on macOS / Windows.
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist --manifest-path crates/tsdyn-core/Cargo.toml
+          # sccache speeds up non-release builds; disabled on tags for clean rebuilds.
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+      # Install the freshly built wheel and import it. Only on native runners: a
+      # cross-compiled aarch64 wheel (or a musl wheel on a glibc host) cannot run
+      # here. The engine has no runtime deps and imports without numpy, so a bare
+      # interpreter suffices; `tsdynamics._rust` resolves via PEP 420 even without
+      # the pure-Python `tsdynamics` package present.
+      - name: Verify the wheel imports
+        if: ${{ matrix.native }}
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # numpy is the engine's only runtime dependency (its whole FFI surface is
+          # rust-numpy arrays); install it from the index first so the engine wheel
+          # resolves under --no-index (which forces use of the freshly built wheel).
+          python -m pip install numpy
+          python -m pip install --no-index --find-links dist tsdynamics-rust-engine
+          python -c "import tsdynamics._rust as r; assert hasattr(r, 'integrate_dense'), dir(r); print('tsdynamics._rust import OK on ${{ matrix.label }}')"
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-${{ matrix.label }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # The sdist vendors the sibling path-dependency crates (tsdyn-ir/vm/jit/
+      # solvers/engine), so it is self-contained and buildable — but building it
+      # still needs a Rust toolchain, so it is the fallback for platforms not in
+      # the wheel matrix, not the no-compiler path.
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path crates/tsdyn-core/Cargo.toml
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # Single stable status check to gate merges on (mirrors ci.yml's ci-summary).
+  wheels-summary:
+    name: Wheels summary
+    if: always()
+    # `matrix` is included so a matrix-resolution failure (which would *skip*
+    # `build`, not fail it) cannot slip through as a green merge check.
+    needs: [matrix, build, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the build jobs
+        run: |
+          echo "matrix=${{ needs.matrix.result }} build=${{ needs.build.result }} sdist=${{ needs.sdist.result }}"
+          for r in "${{ needs.matrix.result }}" "${{ needs.build.result }}" "${{ needs.sdist.result }}"; do
+            case "$r" in
+              failure|cancelled)
+                echo "::error::a wheels job did not pass ($r)"
+                exit 1
+                ;;
+            esac
+          done
+          echo "Wheels OK — built or legitimately skipped."
