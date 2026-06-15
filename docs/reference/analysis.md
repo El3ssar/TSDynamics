@@ -37,6 +37,21 @@ treatments live in the [Analysis](../analysis/index.md) section.
 
 ::: tsdynamics.analysis.fixedpoints.FixedPoint
 
+## Chaos indicators
+
+Three literature-validated answers to "is this orbit chaotic?": the Generalized
+Alignment Index (GALI), the 0--1 test, and Hunt--Ott expansion entropy.
+
+::: tsdynamics.analysis.chaos.gali.gali
+
+::: tsdynamics.analysis.chaos.gali.GALIResult
+
+::: tsdynamics.analysis.chaos.zero_one.zero_one_test
+
+::: tsdynamics.analysis.chaos.expansion.expansion_entropy
+
+::: tsdynamics.analysis.chaos.expansion.ExpansionEntropyResult
+
 ## Entropy & complexity
 
 Composable estimation — an [`OutcomeSpace`](#tsdynamics.analysis.entropy.core.OutcomeSpace)

@@ -27,7 +27,9 @@ from . import analysis, data, derived, families, registry, systems, utils
 from .analysis import (
     DimensionResult,
     EmbeddingDimension,
+    ExpansionEntropyResult,
     FixedPoint,
+    GALIResult,
     LyapunovFromData,
     OrbitDiagram,
     approximate_entropy,
@@ -41,9 +43,11 @@ from .analysis import (
     embed,
     embedding_dimension,
     entropy,
+    expansion_entropy,
     false_nearest_neighbors,
     fixed_mass_dimension,
     fixed_points,
+    gali,
     generalized_dimension,
     information_dimension,
     kaplan_yorke_dimension,
@@ -60,6 +64,7 @@ from .analysis import (
     poincare_section,
     sample_entropy,
     weighted_permutation_entropy,
+    zero_one_test,
 )
 from .data import Ball, Box, Grid, grid_points, sampler, set_distance
 from .derived import (
@@ -136,6 +141,12 @@ __all__ = [
     "false_nearest_neighbors",
     "mutual_information",
     "optimal_delay",
+    # Chaos indicators
+    "ExpansionEntropyResult",
+    "GALIResult",
+    "expansion_entropy",
+    "gali",
+    "zero_one_test",
     # Entropy & complexity
     "approximate_entropy",
     "dispersion_entropy",

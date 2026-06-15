@@ -39,6 +39,13 @@ group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
 
 from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
+from .chaos import (
+    ExpansionEntropyResult,
+    GALIResult,
+    expansion_entropy,
+    gali,
+    zero_one_test,
+)
 from .dimensions import (
     DimensionResult,
     box_counting_dimension,
@@ -83,7 +90,9 @@ from .orbits import OrbitDiagram, orbit_diagram, poincare_section
 __all__ = [
     "DimensionResult",
     "EmbeddingDimension",
+    "ExpansionEntropyResult",
     "FixedPoint",
+    "GALIResult",
     "LyapunovFromData",
     "OrbitDiagram",
     "approximate_entropy",
@@ -97,9 +106,11 @@ __all__ = [
     "embed",
     "embedding_dimension",
     "entropy",
+    "expansion_entropy",
     "false_nearest_neighbors",
     "fixed_mass_dimension",
     "fixed_points",
+    "gali",
     "generalized_dimension",
     "information_dimension",
     "kaplan_yorke_dimension",
@@ -116,6 +127,7 @@ __all__ = [
     "poincare_section",
     "sample_entropy",
     "weighted_permutation_entropy",
+    "zero_one_test",
 ]
 
 
