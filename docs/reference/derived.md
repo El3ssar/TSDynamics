@@ -1,5 +1,5 @@
 ---
-description: API reference for tsdynamics.derived — PoincareMap, StroboscopicMap, TangentSystem, EnsembleSystem, ProjectedSystem.
+description: API reference for tsdynamics.derived — PoincareMap, StroboscopicMap, TangentSystem, EnsembleSystem, ProjectedSystem, WrappedSystem.
 ---
 
 <span class="ts-kicker">Reference</span>
@@ -20,5 +20,7 @@ compose with them transparently. Prose introduction:
 ::: tsdynamics.derived.ensemble.EnsembleSystem
 
 ::: tsdynamics.derived.projected.ProjectedSystem
+
+::: tsdynamics.derived.wrapped.WrappedSystem
 
 ::: tsdynamics.derived._base.DerivedSystem

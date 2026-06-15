@@ -125,6 +125,18 @@ the project roadmap.
 > Experimental and not yet a user-facing `backend=`, and the crate is not yet on
 > PyPI. Build it locally with `maturin build -m crates/tsdynamics-core/Cargo.toml`.
 
+!!! info "Where this is heading — the v3 tiered engine"
+    The accelerator above is the *seed* of a single Rust engine that will back
+    **every** family (ODE, DDE, map, SDE). It exposes two numerically-identical
+    evaluators behind one interface — a zero-warmup **interpreter** and a
+    pure-Rust **Cranelift JIT** (no LLVM, so wheels stay trivial) — selectable
+    as `integrate(..., backend="interp")` or `backend="jit"`, with
+    `backend="reference"` a pure-Python oracle for cross-validation. These
+    options already exist in the API surface. They remain **opt-in and under
+    cross-validation**: the C-compiled `jitcode` path stays the default until
+    the migration is gated complete, after which it (and the diffsol bridge) is
+    retired in favour of the one engine.
+
 ## See also
 
 - [Compilation pipeline](compilation.md) — the JiTCODE path and the shared symbolic core

@@ -37,6 +37,33 @@ Docstrings follow the NumPy convention; commits follow
 [Conventional Commits](https://www.conventionalcommits.org/)
 (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `ci:`).
 
+## Documentation
+
+```bash
+uv sync --group docs                              # mkdocs + material + mkdocstrings
+TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # fast, figure-less validation
+uv run mkdocs serve                               # live preview at 127.0.0.1:8000
+```
+
+The build must pass `--strict` (CI enforces it). Two build-time conventions
+are worth knowing:
+
+- **The system catalogue is auto-generated.** `hooks/docs_autogen.py` renders
+  one page per registered system — equations from the symbolic definition,
+  a parameter table, the `reference`, and a cached phase portrait — so a new
+  system documents itself. Set `TSD_DOCS_FIGURES=0` to skip the (slow) figure
+  rendering during local previews.
+- **Citations, never competitors.** `hooks/citation_lint.py` fails the build
+  if a published page names a competing dynamical-systems library or the
+  `*.jl` ecosystem. Cite the **original paper** for every method — that is
+  both the scholarly norm and a hard rule here. (The bare word "Julia" is
+  fine — "Julia set", a person's name — only library/ecosystem references are
+  blocked.)
+
+When you add an analysis or transform, add its prose page under
+`docs/analysis/` or `docs/transforms/`, an mkdocstrings stanza on the matching
+`docs/reference/*` page, and a `nav` entry in `mkdocs.yml`.
+
 ## Releases
 
 PRs are **squash-merged**, and the PR title becomes the commit message —

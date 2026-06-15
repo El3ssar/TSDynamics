@@ -1,5 +1,5 @@
 ---
-description: API reference for tsdynamics.families — the three family base classes, Trajectory, ParamSet, MetaStore, and the System protocol.
+description: API reference for tsdynamics.families — the family base classes, Trajectory, ParamSet, MetaStore, and the System protocol.
 ---
 
 <span class="ts-kicker">Reference</span>
@@ -7,8 +7,10 @@ description: API reference for tsdynamics.families — the three family base cla
 # Base classes
 
 The shared machinery (`ParamSet`, `MetaStore`, `Trajectory`,
-`SystemBase`), the three family bases users subclass, and the `System`
-protocol the analysis toolkit is written against.
+`SystemBase`), the four family bases users subclass — `ContinuousSystem`
+(ODEs), `DelaySystem` (DDEs), `DiscreteMap` (maps) and `StochasticSystem`
+(diagonal-Itô SDEs) — and the `System` protocol the analysis toolkit is
+written against.
 
 ::: tsdynamics.families.base.ParamSet
 
@@ -23,5 +25,7 @@ protocol the analysis toolkit is written against.
 ::: tsdynamics.families.delay.DelaySystem
 
 ::: tsdynamics.families.discrete.DiscreteMap
+
+::: tsdynamics.families.stochastic.StochasticSystem
 
 ::: tsdynamics.families.protocol.System
