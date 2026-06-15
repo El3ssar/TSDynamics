@@ -63,6 +63,15 @@ Numba, which ships its own backend.
 pip install "tsdynamics[plot]"
 ```
 
+## The Rust engine accelerator
+
+The zero-warmup Rust engine (`backend="interp"` / `backend="jit"`) ships as a
+separate, optional, **prebuilt** distribution — no compiler needed. It is gated
+during the v2→Rust migration and is built as a cross-platform wheel rather than
+published to the index yet; see [Packaging & distribution](../theory/packaging.md)
+for how it is shaped, why, and the path to folding it into a single `tsdynamics`
+wheel.
+
 ## Verify the install
 
 ```python

@@ -186,6 +186,7 @@ nav:
       - Backends: theory/backends.md
       - Lyapunov exponents: theory/lyapunov.md
       - Conventions: theory/conventions.md
+      - Packaging & distribution: theory/packaging.md
   - Reference:
       - reference/index.md
       - Top level: reference/top-level.md

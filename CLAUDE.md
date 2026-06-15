@@ -467,7 +467,19 @@ reuse `_strategies` and assert a real invariant — never a tautology.
   bound to the filename `release.yml` — don't rename).
 - CHANGELOG.md is maintained by python-semantic-release; release notes also land on GitHub Releases.
 - Workflows: `ci.yml` (PR gate), `docs.yml` (build + Pages deploy with
-  figure cache), `release.yml`, `pr-title.yml`, `nightly.yml` (`-m full`).
+  figure cache), `release.yml`, `pr-title.yml`, `nightly.yml` (`-m full`),
+  `wheels.yml` (stream I-WHEEL: cross-platform `tsdynamics._rust` engine wheels —
+  manylinux/musllinux/macOS/Windows, abi3; build smoke on packaging PRs, full
+  matrix on dispatch/tag, artifacts only — no PyPI publish pre-M3).
+- **Packaging shape (I-WHEEL, ROADMAP §11):** the pure-Python `tsdynamics` wheel
+  (root `pyproject.toml`, hatchling + PSR) and the compiled engine ship as **two
+  distributions pre-M3** — the engine is a separable `tsdynamics-rust-engine`
+  wheel (`crates/tsdyn-core/pyproject.toml`, maturin) that drops only
+  `tsdynamics/_rust.abi3.so` into the namespace via a mixed-layout mount
+  (`crates/tsdyn-core/python/tsdynamics/`, PEP-420, no `__init__.py`) so the two
+  coexist with zero file collision. Converges to **one maturin wheel at M3** (when
+  I-XVAL retires the v2 backends). Full rationale + recipe: `docs/theory/packaging.md`;
+  invariants guarded by `tests/test_packaging.py`.
 
 ---
 
