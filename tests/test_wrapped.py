@@ -57,6 +57,29 @@ def test_wrapped_max_lyapunov_chaotic() -> None:
     assert lam > 0.3
 
 
+def _expanding_flow(u, dt):
+    # exact flow map of dx/dt = 0.5 x over a time increment dt
+    return [u[0] * np.exp(0.5 * dt)]
+
+
+def test_wrapped_continuous_max_lyapunov_dt_normalization() -> None:
+    # Regression: a *continuous* WrappedSystem stepped with dt=None must
+    # normalize by the real per-step time advance (its ``default_dt``), not a
+    # hardcoded 0.01.  dx/dt = 0.5 x has maximal exponent 0.5; the dt=None call
+    # must (a) recover 0.5 and (b) equal the explicit-dt call.  The previous
+    # code read the missing ``_default_step_dt`` attribute, fell back to 0.01,
+    # and returned the exponent scaled by default_dt/0.01 = 5x too large.
+    # d0 is large (1e-4) on purpose: the flow is exactly linear, so the growth
+    # rate is independent of the perturbation size, and a small d0 against a
+    # growing reference would lose it to floating-point cancellation.
+    kw = {"n_rescale": 100, "steps_per": 2, "transient": 10, "d0": 1e-4, "seed": 0}
+    w = ts.WrappedSystem(_expanding_flow, dim=1, is_discrete=False, initial=[1.0], default_dt=0.05)
+    lam_default = ts.max_lyapunov(w, ic=[1.0], **kw)  # dt=None → steps by 0.05
+    lam_explicit = ts.max_lyapunov(w, ic=[1.0], dt=0.05, **kw)
+    assert lam_default == pytest.approx(0.5, abs=1e-6)
+    assert lam_default == pytest.approx(lam_explicit, rel=1e-9)
+
+
 def test_wrapped_orbit_diagram_via_protocol() -> None:
     # a wrapped discrete system feeds straight into orbit_diagram
     w = ts.WrappedSystem(_logistic_step, dim=1, is_discrete=True, initial=[0.5])

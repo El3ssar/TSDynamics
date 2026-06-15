@@ -86,6 +86,43 @@ to `d0`, repeat `n_rescale` times. Because it only uses `step`/`state`/
 right-hand sides where no Jacobian exists. Not available for DDEs
 (no `set_state`); use `DelaySystem.lyapunov_spectrum` there.
 
+## `lyapunov_from_data` — from a measured series
+
+When you have a recording but no equations, the maximal exponent can be
+estimated from neighbour divergence in a delay embedding:
+
+```python
+traj = ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1])
+res = ts.lyapunov_from_data(traj.y[:, 0], m=4, k_max=12, fit=(0, 6))
+float(res)            # ≈ 0.42  (Hénon, per iteration)
+```
+
+The signal is reconstructed in an `m`-dimensional delay embedding (delay
+`tau`); for each point its neighbours are found and the **mean log distance
+between their forward images** is tracked as a function of look-ahead `k`.
+Two estimators are available via `method=`:
+
+- `"kantz"` (default) averages over all neighbours within a ball of radius
+  `eps` — robust to noise (Kantz 1994).
+- `"rosenstein"` tracks the single nearest neighbour — cheaper, good for
+  short records (Rosenstein, Collins & De Luca 1993).
+
+A Theiler window rejects temporally-correlated neighbours (Theiler 1986).
+The result carries the full **stretching curve** `res.times` vs
+`res.divergence`; the exponent is the slope of its linear scaling region:
+
+```python
+res = ts.lyapunov_from_data(x, dt=0.05, m=5, tau=3, k_max=60)
+res.times, res.divergence       # inspect, then set fit=(lo, hi)
+```
+
+!!! warning "Inspect the curve"
+    The estimate is only as good as the embedding and the chosen scaling
+    region. For flows the curve typically *overshoots* before settling into
+    the genuine linear region, so the automatic fit can overestimate —
+    always look at `times` vs `divergence` and pass an explicit
+    `fit=(lo, hi)` for a publishable number.
+
 ## Kaplan–Yorke dimension
 
 ```python

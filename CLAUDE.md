@@ -68,7 +68,7 @@ src/tsdynamics/
 ├── analysis/                 # quantifiers, one subpackage per A-* stream (A-LAYOUT reorg)
 │   ├── __init__.py           # flat re-exports (public API) + analyses plugin discovery
 │   ├── orbits/               # orbit_diagram + OrbitDiagram (orbit_diagram.py); poincare_section (poincare.py)
-│   ├── lyapunov/             # lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension
+│   ├── lyapunov/             # A-LYAP: lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
 │   ├── fixedpoints/          # fixed_points + FixedPoint (maps, multi-start Newton; was fixed_points.py)
 │   ├── dimensions/           # A-DIM: correlation/generalized-Rényi/fixed-mass fractal dims + scaling-region fit
 │   ├── entropy/              # A-ENT: permutation/dispersion/sample/multiscale entropy + LZ76 (composable OutcomeSpace×estimator×measure)
@@ -101,6 +101,8 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
   `EnsembleSystem`, `ProjectedSystem`
 - Analysis: `orbit_diagram`, `OrbitDiagram`, `poincare_section`,
   `lyapunov_spectrum`, `max_lyapunov`, `kaplan_yorke_dimension`,
+  `lyapunov_from_data`, `LyapunovFromData` (A-LYAP: maximal exponent from a
+  time series, Kantz/Rosenstein),
   `fixed_points`, `FixedPoint`; fractal dimensions (A-DIM)
   `correlation_dimension`, `correlation_sum`, `generalized_dimension`,
   `box_counting_dimension`, `information_dimension`, `dimension_spectrum`,
@@ -321,6 +323,15 @@ All three families + all derived wrappers implement:
   `TangentSystem.lyapunov_spectrum(...)` wraps the streaming `step()`/
   `exponents()` API into the standard burn-in + time-weighted estimate.
 - `max_lyapunov` (Benettin two-trajectory) needs `set_state` → raises for DDEs.
+  Its continuous normalization divides by the **measured elapsed `time()`** of
+  the reference run (not a guessed step-size attribute), so it is correct for
+  any continuous system including `WrappedSystem` stepped with `dt=None`.
+- `lyapunov_from_data` (A-LYAP) estimates the maximal exponent from a measured
+  series via delay embedding + neighbour divergence (Kantz 1994 default,
+  Rosenstein et al. 1993 optional); returns a `LyapunovFromData` carrying the
+  stretching curve `S(k)` — fit the linear scaling region (inspect, then pass
+  `fit=(lo, hi)`). A private delay-embed helper keeps it independent of the
+  delay-embedding stream.
 - `fixed_points` is map-only for now.
 
 ---
