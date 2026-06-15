@@ -77,7 +77,14 @@ from .entropy import (
     sample_entropy,
     weighted_permutation_entropy,
 )
-from .fixedpoints import FixedPoint, fixed_points
+from .fixedpoints import (
+    FixedPoint,
+    PeriodicOrbit,
+    estimate_period,
+    fixed_points,
+    periodic_orbit,
+    periodic_orbits,
+)
 from .lyapunov import (
     LyapunovFromData,
     kaplan_yorke_dimension,
@@ -95,6 +102,7 @@ __all__ = [
     "GALIResult",
     "LyapunovFromData",
     "OrbitDiagram",
+    "PeriodicOrbit",
     "approximate_entropy",
     "autocorrelation",
     "box_counting_dimension",
@@ -106,6 +114,7 @@ __all__ = [
     "embed",
     "embedding_dimension",
     "entropy",
+    "estimate_period",
     "expansion_entropy",
     "false_nearest_neighbors",
     "fixed_mass_dimension",
@@ -123,6 +132,8 @@ __all__ = [
     "mutual_information",
     "optimal_delay",
     "orbit_diagram",
+    "periodic_orbit",
+    "periodic_orbits",
     "permutation_entropy",
     "poincare_section",
     "sample_entropy",

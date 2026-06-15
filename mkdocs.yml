@@ -166,7 +166,7 @@ nav:
       - Lyapunov spectra: analysis/lyapunov.md
       - Orbit & bifurcation diagrams: analysis/orbit-diagrams.md
       - Poincaré sections: analysis/poincare.md
-      - Fixed points: analysis/fixed-points.md
+      - Fixed points & periodic orbits: analysis/fixed-points.md
   - Theory:
       - theory/index.md
       - Compilation pipeline: theory/compilation.md

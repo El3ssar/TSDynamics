@@ -69,7 +69,7 @@ src/tsdynamics/
 │   ├── __init__.py           # flat re-exports (public API) + analyses plugin discovery
 │   ├── orbits/               # orbit_diagram + OrbitDiagram (orbit_diagram.py); poincare_section (poincare.py)
 │   ├── lyapunov/             # A-LYAP: lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
-│   ├── fixedpoints/          # fixed_points + FixedPoint (maps, multi-start Newton; was fixed_points.py)
+│   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL — fixed.py), periodic_orbits/periodic_orbit/PeriodicOrbit + estimate_period (periodic.py), shared primitives (_common.py); self-registers
 │   ├── dimensions/           # A-DIM: correlation/generalized-Rényi/fixed-mass fractal dims + scaling-region fit
 │   ├── entropy/              # A-ENT: permutation/dispersion/sample/multiscale entropy + LZ76 (composable OutcomeSpace×estimator×measure)
 │   ├── chaos/               # A-CHAOS: GALI_k (Skokos) + 0–1 test (Gottwald–Melbourne) + expansion entropy (Hunt–Ott); maps via _jacobian, flows via self-contained RK4 variational core (no engine/compile)
@@ -104,7 +104,10 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
   `lyapunov_spectrum`, `max_lyapunov`, `kaplan_yorke_dimension`,
   `lyapunov_from_data`, `LyapunovFromData` (A-LYAP: maximal exponent from a
   time series, Kantz/Rosenstein),
-  `fixed_points`, `FixedPoint`; fractal dimensions (A-DIM)
+  `fixed_points`, `FixedPoint` (A-FP: maps *and* flow equilibria, Newton +
+  Schmelcher–Diakonos/Davidchack–Lai), `periodic_orbits` (map period-p orbits),
+  `periodic_orbit` (flow single shooting), `PeriodicOrbit`, `estimate_period`;
+  fractal dimensions (A-DIM)
   `correlation_dimension`, `correlation_sum`, `generalized_dimension`,
   `box_counting_dimension`, `information_dimension`, `dimension_spectrum`,
   `fixed_mass_dimension`, `DimensionResult`; chaos indicators (A-CHAOS)
@@ -335,7 +338,21 @@ All three families + all derived wrappers implement:
   stretching curve `S(k)` — fit the linear scaling region (inspect, then pass
   `fit=(lo, hi)`). A private delay-embed helper keeps it independent of the
   delay-embedding stream.
-- `fixed_points` is map-only for now.
+- `fixed_points` (A-FP) finds map fixed points (`f(x)=x`) **and** flow equilibria
+  (`f(x)=0`) by multi-start Newton on the analytic Jacobian; `method="sd"`/`"dl"`
+  add the Schmelcher–Diakonos/Davidchack–Lai stabilising transformations (maps
+  only) to reach unstable points. Map stability is `|λ|<1`, flow stability
+  `Re λ<0` (the `FixedPoint.continuous` flag picks the convention).
+- `periodic_orbits` (A-FP) finds map period-`p` orbits as fixed points of `fᵖ`
+  (Davidchack–Lai by default), with a minimal-period (`prime`) filter and
+  cyclic-shift dedup. `periodic_orbit` finds a flow limit cycle by single
+  shooting on `(x0, T)` (bordered Newton + monodromy via the RK4 variational
+  core; Floquet multipliers for stability, the trivial ≈1 multiplier found by
+  eigenvector alignment with `f(x0)`; rejects equilibrium-collapse on a centre).
+  `estimate_period` reads a signal's period (autocorrelation/FFT) to seed
+  shooting. All A-FP routines are backend-free (fast tier), self-contained in
+  `analysis/fixedpoints/` (own `_common.py`), and self-register into
+  `registry.analyses`.
 
 ---
 
