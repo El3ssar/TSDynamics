@@ -44,11 +44,92 @@ class OrbitDiagram:
         y = np.concatenate([p[:, component] for p in self.points])
         return x, y
 
+    def periods(
+        self, *, component: int = 0, max_period: int = 16, rtol: float = 0.01
+    ) -> np.ndarray:
+        """
+        Return the detected period at each swept parameter value.
+
+        Counts the distinct asymptotic branches in the recorded orbit — the
+        period of a periodic window — by clustering the points of one component
+        with a scale-free gap test: a new branch starts where the sorted-value
+        gap exceeds ``rtol`` times the orbit's range.
+
+        Parameters
+        ----------
+        component : int, default 0
+            Which recorded component to count branches in.
+        max_period : int, default 16
+            Periods above this are reported as ``0`` (treated as aperiodic /
+            chaotic — too many branches to resolve as a cycle).
+        rtol : float, default 0.01
+            Relative gap (fraction of the per-value range) separating branches.
+
+        Returns
+        -------
+        numpy.ndarray of int
+            One entry per parameter value: the period ``1, 2, 4, …``, ``0`` for
+            aperiodic, or ``-1`` where the sweep recorded no points (diverged).
+        """
+        out = np.empty(len(self.values), dtype=int)
+        for k, pts in enumerate(self.points):
+            if pts.shape[0] == 0:
+                out[k] = -1
+                continue
+            p = _count_branches(pts[:, component], rtol)
+            out[k] = p if p <= max_period else 0
+        return out
+
+    def bifurcation_points(
+        self, *, component: int = 0, max_period: int = 16, rtol: float = 0.01
+    ) -> np.ndarray:
+        """
+        Parameter values where the detected period changes.
+
+        Locates the boundaries of the period-doubling cascade (and other
+        bifurcations) as the midpoints between consecutive swept values across
+        which :meth:`periods` differs.  Transitions touching a diverged value
+        (``-1``) are skipped.
+
+        Returns
+        -------
+        numpy.ndarray of float
+            Estimated bifurcation parameter values, in sweep order.  Their
+            resolution is the spacing of ``values``.
+        """
+        p = self.periods(component=component, max_period=max_period, rtol=rtol)
+        changed = (p[:-1] != p[1:]) & (p[:-1] != -1) & (p[1:] != -1)
+        (i,) = np.nonzero(changed)
+        return 0.5 * (self.values[i] + self.values[i + 1])
+
     def __repr__(self) -> str:
         return (
             f"OrbitDiagram({self.param!r}, {len(self.values)} values, "
             f"{self.points[0].shape[0] if self.points else 0} points/value)"
         )
+
+
+def _count_branches(col: np.ndarray, rtol: float) -> int:
+    """
+    Distinct branches in ``col`` — clusters separated by a gap > ``rtol``·range.
+
+    The scale-relative *negligible-spread* guard (``span <= rtol·scale``) is what
+    keeps this honest for flows: a periodic-orbit branch recorded from a Poincaré
+    map differs only by integration noise, so its whole spread is tiny relative to
+    its magnitude and must collapse to one branch — without it the relative gap
+    test would shatter a single noisy branch into many.  A converged map orbit
+    has round-off-small within-branch spread and trips the same guard, correctly
+    reading a period-1 window as one branch.  Non-finite values are dropped.
+    """
+    s = np.asarray(col, dtype=float)
+    s = np.sort(s[np.isfinite(s)])
+    if s.size <= 1:
+        return int(s.size)
+    span = s[-1] - s[0]
+    scale = max(abs(s[0]), abs(s[-1]), 1.0)
+    if span <= rtol * scale:  # spread negligible vs magnitude → a single branch
+        return 1
+    return 1 + int(np.count_nonzero(np.diff(s) > rtol * span))
 
 
 def orbit_diagram(

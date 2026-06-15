@@ -19,6 +19,12 @@ treatments live in the [Analysis](../analysis/index.md) section.
 
 ::: tsdynamics.analysis.orbits.poincare.poincare_section
 
+## Return maps
+
+::: tsdynamics.analysis.orbits.return_map.return_map
+
+::: tsdynamics.analysis.orbits.return_map.ReturnMap
+
 ## Lyapunov quantifiers
 
 ::: tsdynamics.analysis.lyapunov.lyapunov_spectrum
