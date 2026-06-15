@@ -184,6 +184,7 @@ addopts   = "-q --tb=short --strict-markers --cov=src/tsdynamics --cov-report=te
 markers   = [
   "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long simulations (deselect with: pytest -m 'not slow')",
   "full: exhaustive sweeps that compile every built-in system; deselected by default, run nightly (select with: pytest -m full)",
+  "engine: requires the compiled tsdynamics._rust extension; auto-applied to modules that import it and selected by the engine CI job with -m engine (stream I-XVAL)",
 ]
 filterwarnings = [
   "error",

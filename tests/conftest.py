@@ -74,6 +74,32 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
             metafunc.parametrize(fixture, entries, ids=[e.name for e in entries])
 
 
+# ---------------------------------------------------------------------------
+# Engine-marker auto-tagging (stream I-XVAL)
+#
+# Any test module that imports the compiled ``tsdynamics._rust`` extension is
+# tagged with the ``engine`` marker, so the engine CI job selects them all with
+# ``-m engine`` instead of a hand-maintained file list.  The tag follows the
+# import (see ``_engine_marker``), so a new engine test file is covered with zero
+# CI edits.  ``tests/test_engine_coverage.py`` asserts this invariant holds.
+# ---------------------------------------------------------------------------
+
+_engine_module_cache: dict[str, bool] = {}
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    from _engine_marker import is_engine_test_file
+
+    for item in items:
+        path = str(item.path)
+        flag = _engine_module_cache.get(path)
+        if flag is None:
+            flag = is_engine_test_file(path)
+            _engine_module_cache[path] = flag
+        if flag:
+            item.add_marker(pytest.mark.engine)
+
+
 @pytest.fixture
 def rng() -> np.random.Generator:
     """A reproducible NumPy ``Generator`` seeded at 42."""

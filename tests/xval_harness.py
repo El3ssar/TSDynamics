@@ -22,15 +22,22 @@ Design
 ``IntegrationBackend`` is a duck-typed seam: anything with a ``name`` and an
 ``integrate_dense(system, ic, t_eval)`` method qualifies, and reports
 ``available()`` so a sweep *skips* (never fails) when an optional backend is
-absent. Two backends ship today:
+absent. Three backends ship today:
 
 * :class:`ScipyReference` — integrates the system's symbolic RHS
   (``_rhs_numeric``, the v2 numeric truth) with SciPy at tight tolerance. Always
-  available; needs no C compiler. The stand-in "reference" until the new engine
-  and the v2 compiled backends are both wired in as backends.
+  available; needs no C compiler. The trustworthy reference the migration
+  candidate is measured against.
+* :class:`RustEngine` — **the migration candidate**: the shipping engine
+  (:mod:`tsdynamics._rust`) through its public seam ``engine.run.integrate`` /
+  ``engine.run.eval_rhs`` (``backend="interp"`` or ``"jit"``). Available only
+  when the compiled extension is built; exposes ``eval_rhs`` for
+  :func:`crossvalidate_rhs`. The M3 removal gate (stream I-XVAL) sweeps this over
+  the registry catalogue.
 * :class:`RustCore` — the v2-seed accelerator
-  (:mod:`tsdynamics.engine.rustcore`). Available only when ``tsdynamics-core``
-  is installed; also exposes a pointwise ``eval_rhs`` for :func:`crossvalidate_rhs`.
+  (:mod:`tsdynamics.engine.rustcore`), retired at M3. Available only when
+  ``tsdynamics-core`` is installed; also exposes ``eval_rhs``. Kept for the
+  legacy Lorenz scaffold (``test_xval.py``) until the v2 seed is removed.
 
 The comparison functions return an :class:`XValReport` (max abs/rel error,
 tolerance, pass/fail) instead of asserting, so callers can aggregate across a
@@ -51,6 +58,7 @@ import numpy as np
 __all__ = [
     "IntegrationBackend",
     "RustCore",
+    "RustEngine",
     "ScipyReference",
     "XValReport",
     "crossvalidate",
@@ -165,6 +173,104 @@ class RustCore:
         return rc.eval_rhs(system, u, t)
 
 
+class RustEngine:
+    """The migration candidate: the shipping Rust engine (:mod:`tsdynamics._rust`).
+
+    Unlike :class:`RustCore` (the v2-seed ``tsdynamics-core`` accelerator that the
+    F4 scaffold wrapped), this backend drives the *new* engine through its public
+    Python seam — :func:`tsdynamics.engine.run.integrate` and
+    :func:`tsdynamics.engine.run.eval_rhs` — exactly the path the family base
+    classes use.  It is the backend the M3 removal gate (stream I-XVAL) sweeps
+    over the whole registry catalogue to authorise deleting the v2 backends.
+
+    Parameters
+    ----------
+    backend
+        ``"interp"`` (the SSA-tape interpreter, default) or ``"jit"`` (the
+        Cranelift JIT).  The two are numerically identical by contract, so a
+        sweep can run the same comparison through either and an ``interp``-vs-
+        ``jit`` cross-check pins that contract.
+    method, rtol, atol
+        Forwarded to :func:`~tsdynamics.engine.run.integrate`.  Defaults are a
+        tight adaptive ``RK45``.
+
+    Notes
+    -----
+    :meth:`integrate_dense` rides ``run.integrate``, which samples on the uniform
+    grid :func:`tsdynamics.utils.grids.make_output_grid` builds from
+    ``(t0, final_time, dt)``.  That grid reproduces a uniform ``t_eval`` exactly,
+    so the harness contract ("sample at ``t_eval``") is met for uniform grids
+    (the only kind the sweeps use); a non-uniform ``t_eval`` raises rather than
+    silently resampling.
+    """
+
+    def __init__(
+        self,
+        *,
+        backend: str = "interp",
+        method: str = "RK45",
+        rtol: float = 1e-10,
+        atol: float = 1e-12,
+    ) -> None:
+        self.backend = backend
+        self.method = method
+        self.rtol = rtol
+        self.atol = atol
+        self.name = f"rust:{backend}:{method}"
+
+    def available(self) -> bool:
+        """Whether the compiled engine extension (:mod:`tsdynamics._rust`) is built."""
+        try:
+            import tsdynamics._rust  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def integrate_dense(self, system: Any, ic: Any, t_eval: np.ndarray) -> np.ndarray:
+        """Integrate via the Rust engine and sample at a uniform ``t_eval``."""
+        from tsdynamics.engine import run
+
+        t_eval = np.ascontiguousarray(t_eval, dtype=np.float64)
+        ic = np.asarray(system.resolve_ic(ic), dtype=np.float64).ravel()
+        if t_eval.size == 0:
+            return np.empty((0, ic.size), dtype=np.float64)
+        if t_eval.size == 1:
+            # A single sample is the state at t_eval[0] — the initial condition.
+            return ic.reshape(1, -1)
+        t0 = float(t_eval[0])
+        tf = float(t_eval[-1])
+        dt = float(t_eval[1] - t_eval[0])
+        if not np.allclose(np.diff(t_eval), dt, rtol=0.0, atol=1e-12):
+            raise ValueError(
+                f"{self.name}: integrate_dense needs a uniform t_eval grid "
+                "(run.integrate samples on a uniform output grid)"
+            )
+        traj = run.integrate(
+            system,
+            final_time=tf,
+            dt=dt,
+            t0=t0,
+            ic=ic,
+            backend=self.backend,
+            method=self.method,
+            rtol=self.rtol,
+            atol=self.atol,
+        )
+        y = np.ascontiguousarray(traj.y, dtype=np.float64)
+        if y.shape[0] != t_eval.size or not np.allclose(traj.t, t_eval, rtol=0.0, atol=1e-9):
+            raise RuntimeError(
+                f"{self.name}: engine output grid (n={y.shape[0]}) did not align with "
+                f"the requested t_eval (n={t_eval.size})"
+            )
+        return y
+
+    def eval_rhs(self, system: Any, u: Any, t: float = 0.0) -> np.ndarray:
+        """Evaluate ``du/dt`` once on the engine (used by :func:`crossvalidate_rhs`)."""
+        from tsdynamics.engine import run
+
+        return np.asarray(run.eval_rhs(system, u, t, backend=self.backend), dtype=np.float64)
+
+
 @dataclass(frozen=True)
 class XValReport:
     """Outcome of one cross-validation: error magnitudes + a pass/fail verdict.
@@ -208,9 +314,16 @@ def _compare(
 ) -> tuple[float, float, bool, str]:
     """Return ``(max_abs_err, max_rel_err, passed, detail)`` for two arrays.
 
-    A shape mismatch is a programming error and raises; a non-finite *mismatch*
-    (one side NaN/Inf where the other is finite) is a hard validation failure,
-    not an exception — the report carries the verdict.
+    A shape mismatch is a programming error and raises.  A non-finite *mismatch*
+    — one side NaN/Inf where the other is finite, or both non-finite but *not the
+    same* value (``+inf`` vs ``-inf``, ``inf`` vs ``NaN``) — is a hard validation
+    failure carried in the verdict, not an exception.  Two sides that *agree* on
+    the same non-finite value (both ``+inf``, both ``-inf``, both ``NaN``) are a
+    genuine agreement and count as a pass: an overflow that both the engine and
+    the reference reach identically is not a discrepancy.  Errors are measured
+    only on the jointly-finite positions, so the ``inf - inf`` subtraction (which
+    would raise a RuntimeWarning, escalated to an error under the suite's
+    ``filterwarnings=["error"]``) never runs.
     """
     candidate = np.asarray(candidate, dtype=np.float64)
     reference = np.asarray(reference, dtype=np.float64)
@@ -220,23 +333,30 @@ def _compare(
             f"vs reference {reference.shape}"
         )
     finite = np.isfinite(candidate) & np.isfinite(reference)
-    all_finite = bool(finite.all())  # vacuously True for empty arrays
-    abs_err = np.abs(candidate - reference)
+    # Non-finite positions where the two sides agree on the same value (both ±inf
+    # by `==`, both NaN) are not mismatches; everything else non-finite is.
+    both_nonfinite = ~np.isfinite(candidate) & ~np.isfinite(reference)
+    both_nan = np.isnan(candidate) & np.isnan(reference)
+    agree_nonfinite = both_nonfinite & (both_nan | np.equal(candidate, reference))
+    mismatch = ~finite & ~agree_nonfinite
+    n_mismatch = int(mismatch.sum())
+
     if finite.any():
         ref_mag = np.abs(reference[finite])
-        max_abs = float(abs_err[finite].max())
-        max_rel = float((abs_err[finite] / (ref_mag + 1e-300)).max())
-        within = bool(np.all(abs_err[finite] <= atol + rtol * ref_mag))
+        abs_err = np.abs(candidate[finite] - reference[finite])
+        max_abs = float(abs_err.max())
+        max_rel = float((abs_err / (ref_mag + 1e-300)).max())
+        within = bool(np.all(abs_err <= atol + rtol * ref_mag))
     elif candidate.size == 0:
         # Nothing to compare (e.g. an empty t_eval) — a vacuous pass.
         max_abs = max_rel = 0.0
         within = True
     else:
-        # Non-empty but entirely non-finite on both sides.
-        max_abs = max_rel = float("inf")
-        within = False
-    detail = "" if all_finite else f"{int((~finite).sum())}/{finite.size} non-finite mismatches"
-    return max_abs, max_rel, (within and all_finite), detail
+        # No jointly-finite position: a pass only if every entry agrees non-finite.
+        max_abs = max_rel = 0.0 if n_mismatch == 0 else float("inf")
+        within = True
+    detail = "" if n_mismatch == 0 else f"{n_mismatch}/{candidate.size} non-finite mismatches"
+    return max_abs, max_rel, (within and n_mismatch == 0), detail
 
 
 def crossvalidate(
