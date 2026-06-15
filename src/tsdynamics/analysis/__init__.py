@@ -28,9 +28,13 @@ re-exported here so the public surface is flat:
   (Takens reconstruction), delay selection :func:`optimal_delay` (mutual
   information / autocorrelation) and dimension selection :func:`cao_dimension` /
   :func:`false_nearest_neighbors` (unified by :func:`embedding_dimension`).
+- :mod:`~tsdynamics.analysis.recurrence` — recurrence plots and RQA:
+  :func:`recurrence_matrix` (fixed threshold / target rate, sparse), :func:`rqa`
+  (determinism, laminarity, line entropy, trapping time, …) and
+  :func:`windowed_rqa` (those measures in a sliding window).
 
-The remaining subpackages (``chaos``, ``basins``, ``recurrence``,
-``surrogate``) are placeholders the analysis streams fill in.
+The remaining subpackages (``basins``, ``surrogate``) are placeholders the
+analysis streams fill in.
 
 Out-of-tree analyses register through the ``tsdynamics.analyses`` entry-point
 group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
@@ -93,6 +97,14 @@ from .lyapunov import (
     max_lyapunov,
 )
 from .orbits import OrbitDiagram, orbit_diagram, poincare_section
+from .recurrence import (
+    RecurrenceMatrix,
+    RQAResult,
+    WindowedRQA,
+    recurrence_matrix,
+    rqa,
+    windowed_rqa,
+)
 
 __all__ = [
     "DimensionResult",
@@ -103,6 +115,9 @@ __all__ = [
     "LyapunovFromData",
     "OrbitDiagram",
     "PeriodicOrbit",
+    "RQAResult",
+    "RecurrenceMatrix",
+    "WindowedRQA",
     "approximate_entropy",
     "autocorrelation",
     "box_counting_dimension",
@@ -136,8 +151,11 @@ __all__ = [
     "periodic_orbits",
     "permutation_entropy",
     "poincare_section",
+    "recurrence_matrix",
+    "rqa",
     "sample_entropy",
     "weighted_permutation_entropy",
+    "windowed_rqa",
     "zero_one_test",
 ]
 

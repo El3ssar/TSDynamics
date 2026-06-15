@@ -33,6 +33,9 @@ from .analysis import (
     LyapunovFromData,
     OrbitDiagram,
     PeriodicOrbit,
+    RecurrenceMatrix,
+    RQAResult,
+    WindowedRQA,
     approximate_entropy,
     autocorrelation,
     box_counting_dimension,
@@ -66,8 +69,11 @@ from .analysis import (
     periodic_orbits,
     permutation_entropy,
     poincare_section,
+    recurrence_matrix,
+    rqa,
     sample_entropy,
     weighted_permutation_entropy,
+    windowed_rqa,
     zero_one_test,
 )
 from .data import Ball, Box, Grid, grid_points, sampler, set_distance
@@ -155,6 +161,13 @@ __all__ = [
     "expansion_entropy",
     "gali",
     "zero_one_test",
+    # Recurrence & RQA
+    "RQAResult",
+    "RecurrenceMatrix",
+    "WindowedRQA",
+    "recurrence_matrix",
+    "rqa",
+    "windowed_rqa",
     # Entropy & complexity
     "approximate_entropy",
     "dispersion_entropy",
