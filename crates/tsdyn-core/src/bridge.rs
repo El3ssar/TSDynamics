@@ -292,11 +292,22 @@ fn check_inputs(tape: &Tape, u: &[f64], p: &[f64]) -> Result<(), EngineError> {
 /// [`EngineError::Diverged`] at the first non-finite iterate — the engine's
 /// "diverge loudly" contract — rather than returning a silently poisoned buffer.
 ///
+/// `jit` selects the evaluator the loop drives: the Cranelift native-code
+/// [`JitEvaluator`] when `true` (each step is one native `f(cur)` call instead of
+/// a tape walk — faster for the cheapest single-orbit maps), else the zero-warmup
+/// interpreter. Both back the same [`Evaluator`] trait and are bit-for-bit
+/// identical on `eval`, so the iterate is numerically identical either way.
+///
 /// The iteration itself is the shared engine map loop
 /// ([`tsdyn_engine::iterate_dense`]); this wrapper only adds the boundary shape
 /// checks the FFI seam needs, since the engine loop validates shapes with
 /// `debug_assert!` (compiled out in release).
-pub fn iterate_map(tape: Tape, ic: &[f64], steps: usize) -> Result<Vec<f64>, EngineError> {
+pub fn iterate_map(
+    tape: Tape,
+    ic: &[f64],
+    steps: usize,
+    jit: bool,
+) -> Result<Vec<f64>, EngineError> {
     let dim = tape.dim();
     // A map's next-state dimension equals its state dimension, and the lowering
     // folds parameters into constants, so the iteration feeds a `dim`-length state
@@ -328,8 +339,8 @@ pub fn iterate_map(tape: Tape, ic: &[f64], steps: usize) -> Result<Vec<f64>, Eng
     // divergence contract. Parameters are folded into the tape (`n_param == 0`),
     // so the parameter slice is empty; the guards above stand in for the engine
     // loop's release-stripped `debug_assert!`s.
-    let ev = VmEvaluator::new(tape);
-    iterate_dense(&ev, &ic[..dim], &[], steps)
+    let ev = build_evaluator(tape, jit)?;
+    iterate_dense(&*ev, &ic[..dim], &[], steps)
         .map_err(|e| EngineError::Diverged(map_diverge_msg(&e)))
 }
 
@@ -688,7 +699,16 @@ pub fn ensemble_final(
 /// the buffer directly (`NaN` rows mark the failures) instead of raising — the
 /// per-trajectory analogue of the single map loop's [`EngineError::Diverged`].
 /// Maps carry no randomness, so the result is independent of thread count.
-pub fn map_ensemble_final(tape: Tape, ics: &[f64], steps: usize) -> Result<Vec<f64>, EngineError> {
+///
+/// `jit` selects the per-worker evaluator (Cranelift native code vs the
+/// interpreter); both are bit-for-bit identical, and the one [`Evaluator`] is
+/// shared across the rayon workers (`Evaluator: Sync`).
+pub fn map_ensemble_final(
+    tape: Tape,
+    ics: &[f64],
+    steps: usize,
+    jit: bool,
+) -> Result<Vec<f64>, EngineError> {
     let dim = tape.dim();
     // The same shape contract `iterate_map` enforces, applied here before the
     // rayon fan-out so a malformed tape is a clean error, not a release-mode
@@ -719,8 +739,8 @@ pub fn map_ensemble_final(tape: Tape, ics: &[f64], steps: usize) -> Result<Vec<f
         )));
     }
     // Maps fold their parameters into the tape, so the parameter slice is empty.
-    let ev = VmEvaluator::new(tape);
-    let result = engine_iterate_ensemble(&ev, ics, &[], steps);
+    let ev = build_evaluator(tape, jit)?;
+    let result = engine_iterate_ensemble(&*ev, ics, &[], steps);
     Ok(result.states)
 }
 
@@ -1394,7 +1414,7 @@ mod tests {
 
     #[test]
     fn iterate_map_reproduces_henon_orbit() {
-        let out = iterate_map(henon_tape(), &[0.1, 0.1], 3).unwrap();
+        let out = iterate_map(henon_tape(), &[0.1, 0.1], 3, false).unwrap();
         assert_eq!(out.len(), 6);
         // Hand-roll three Hénon steps (a=1.4, b=0.3).
         let (mut x, mut y) = (0.1_f64, 0.1_f64);
@@ -1413,7 +1433,7 @@ mod tests {
         // The Hénon map from a far-outside initial condition escapes to infinity;
         // delegation to the engine loop must raise at the first non-finite iterate
         // instead of returning a buffer of inf/NaN.
-        let err = iterate_map(henon_tape(), &[10.0, 10.0], 200).unwrap_err();
+        let err = iterate_map(henon_tape(), &[10.0, 10.0], 200, false).unwrap_err();
         assert!(matches!(err, EngineError::Diverged(_)), "got {err:?}");
     }
 
@@ -1526,7 +1546,7 @@ mod tests {
         let k = b.param(0);
         let nx = b.add(x, k);
         let tape = b.finish(&[nx], &[], 1, 1).unwrap();
-        let err = iterate_map(tape, &[0.1], 3).unwrap_err();
+        let err = iterate_map(tape, &[0.1], 3, false).unwrap_err();
         assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
     }
 
@@ -2011,10 +2031,10 @@ mod tests {
         let ics = [0.1, 0.1, -0.2, 0.05, 0.3, -0.1];
         let steps = 25;
         let n_ic = ics.len() / 2;
-        let batch = map_ensemble_final(henon_tape(), &ics, steps).unwrap();
+        let batch = map_ensemble_final(henon_tape(), &ics, steps, false).unwrap();
         assert_eq!(batch.len(), ics.len());
         for i in 0..n_ic {
-            let dense = iterate_map(henon_tape(), &ics[2 * i..2 * i + 2], steps).unwrap();
+            let dense = iterate_map(henon_tape(), &ics[2 * i..2 * i + 2], steps, false).unwrap();
             let last = &dense[(steps - 1) * 2..]; // final iterate row
             assert_eq!(batch[2 * i].to_bits(), last[0].to_bits(), "traj {i} x");
             assert_eq!(batch[2 * i + 1].to_bits(), last[1].to_bits(), "traj {i} y");
@@ -2025,7 +2045,7 @@ mod tests {
     fn map_ensemble_isolates_a_diverged_trajectory() {
         // Hénon from far outside the basin escapes to infinity → a NaN row; an
         // on-attractor IC stays finite. The batch is not aborted.
-        let states = map_ensemble_final(henon_tape(), &[10.0, 10.0, 0.1, 0.1], 200).unwrap();
+        let states = map_ensemble_final(henon_tape(), &[10.0, 10.0, 0.1, 0.1], 200, false).unwrap();
         assert!(
             states[0].is_nan() || states[1].is_nan(),
             "diverged row should be NaN"
@@ -2036,7 +2056,81 @@ mod tests {
     #[test]
     fn map_ensemble_rejects_ragged_batch() {
         // 3 is not a multiple of dim = 2.
-        let err = map_ensemble_final(henon_tape(), &[0.1, 0.1, 0.2], 5).unwrap_err();
+        let err = map_ensemble_final(henon_tape(), &[0.1, 0.1, 0.2], 5, false).unwrap_err();
         assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn iterate_map_jit_equals_interpreter_bit_for_bit() {
+        // The map JIT path (jit=true) must reproduce the interpreter path
+        // (jit=false) to the last bit — the E2 equality invariant, applied to the
+        // map loop the same way it holds for the continuous path. Cover a 2-D map
+        // (Hénon) and a 1-D map (x' = x², contracting from x0 < 1).
+        let steps = 64;
+        for ic in [[0.1, 0.1], [-0.2, 0.05], [0.31, -0.12]] {
+            let interp = iterate_map(henon_tape(), &ic, steps, false).unwrap();
+            let jit = iterate_map(henon_tape(), &ic, steps, true).unwrap();
+            assert_eq!(interp.len(), jit.len());
+            for (k, (i, j)) in interp.iter().zip(jit.iter()).enumerate() {
+                assert_eq!(
+                    i.to_bits(),
+                    j.to_bits(),
+                    "henon iterate {k}: interp {i} != jit {j}"
+                );
+            }
+        }
+        // 1-D map under the JIT.
+        let interp = iterate_map(blowup_tape(), &[0.5], 20, false).unwrap();
+        let jit = iterate_map(blowup_tape(), &[0.5], 20, true).unwrap();
+        for (k, (i, j)) in interp.iter().zip(jit.iter()).enumerate() {
+            assert_eq!(
+                i.to_bits(),
+                j.to_bits(),
+                "1-D iterate {k}: interp {i} != jit {j}"
+            );
+        }
+    }
+
+    #[test]
+    fn iterate_map_jit_diverges_loudly() {
+        // The diverge-loudly contract must hold on the JIT path too: x' = x² from
+        // x0 = 10 escapes to +inf, and the engine must raise at the first
+        // non-finite iterate rather than return a poisoned buffer.
+        let err = iterate_map(blowup_tape(), &[10.0], 2000, true).unwrap_err();
+        assert!(matches!(err, EngineError::Diverged(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn map_ensemble_jit_isolates_a_diverged_trajectory() {
+        // Mixed-fate batch under the JIT: x0 = 10 blows up (NaN row), x0 = 0.5
+        // stays finite — the NaN must stay isolated to the diverged row.
+        let states = map_ensemble_final(blowup_tape(), &[10.0, 0.5], 2000, true).unwrap();
+        assert!(
+            states[0].is_nan(),
+            "diverged row should be NaN, got {}",
+            states[0]
+        );
+        assert!(
+            states[1].is_finite(),
+            "finite row should survive, got {}",
+            states[1]
+        );
+    }
+
+    #[test]
+    fn map_ensemble_jit_equals_interpreter_bit_for_bit() {
+        // Same invariant for the parallel map ensemble path.
+        let ics = [0.1, 0.1, -0.2, 0.05, 0.3, -0.1, 0.0, 0.2];
+        let steps = 40;
+        let interp = map_ensemble_final(henon_tape(), &ics, steps, false).unwrap();
+        let jit = map_ensemble_final(henon_tape(), &ics, steps, true).unwrap();
+        assert_eq!(interp.len(), jit.len());
+        for (k, (i, j)) in interp.iter().zip(jit.iter()).enumerate() {
+            assert_eq!(
+                i.to_bits(),
+                j.to_bits(),
+                "row elem {k}: interp {i} != jit {j}"
+            );
+        }
     }
 }

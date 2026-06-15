@@ -213,12 +213,13 @@ fn iterate_map<'py>(
     n_param: usize,
     ic: PyReadonlyArray1<f64>,
     steps: usize,
+    jit: bool,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
     let dim = tape.dim();
     let ic = vec_f64("ic", &ic)?;
     let flat = py
-        .detach(|| bridge::iterate_map(tape.build()?, &ic, steps))
+        .detach(|| bridge::iterate_map(tape.build()?, &ic, steps, jit))
         .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([steps, dim])
 }
@@ -243,6 +244,7 @@ fn iterate_ensemble_final<'py>(
     n_param: usize,
     ics: PyReadonlyArray2<f64>,
     steps: usize,
+    jit: bool,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
     let dim = tape.dim();
@@ -252,7 +254,7 @@ fn iterate_ensemble_final<'py>(
         .to_vec();
     let n_ic = ics.shape()[0];
     let flat = py
-        .detach(|| bridge::map_ensemble_final(tape.build()?, &ics_vec, steps))
+        .detach(|| bridge::map_ensemble_final(tape.build()?, &ics_vec, steps, jit))
         .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([n_ic, dim])
 }

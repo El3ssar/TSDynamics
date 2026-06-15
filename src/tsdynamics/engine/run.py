@@ -519,14 +519,21 @@ def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray,
         )
         try:
             y = np.asarray(
-                eng.iterate_map(*problem.tape.to_arrays(), problem.ic, int(steps)),
+                eng.iterate_map(
+                    *problem.tape.to_arrays(), problem.ic, int(steps), backend == "jit"
+                ),
                 dtype=np.float64,
             )
         except RuntimeError as exc:
             # The compiled map loop raises (EngineError::Diverged → RuntimeError)
             # at the first non-finite iterate — the engine's diverge-loudly
-            # contract. Re-raise with the system name so the message matches every
-            # other boundary (ODE/DDE/reference).
+            # contract. Re-raise *that* with the system name so the message matches
+            # every other boundary (ODE/DDE/reference). A non-divergence
+            # RuntimeError (e.g. a JIT compile failure from backend="jit") is a
+            # different fault and must propagate unchanged, not be mislabelled as a
+            # numerical blow-up.
+            if "diverg" not in str(exc).lower():
+                raise
             raise RuntimeError(diverged_msg) from exc
         # Defense-in-depth: should the binding ever return NaN instead of raising,
         # still refuse to hand back a silently poisoned trajectory.
@@ -605,7 +612,10 @@ def ensemble(
         if backend == "reference":
             return _reference_map_ensemble(problem, ics, steps)
         eng = _engine()
-        return np.asarray(_engine_map_ensemble_final(eng, problem, ics, steps), dtype=np.float64)
+        return np.asarray(
+            _engine_map_ensemble_final(eng, problem, ics, steps, jit=(backend == "jit")),
+            dtype=np.float64,
+        )
 
     start = problem.t0 if t0 is None else float(t0)
 
@@ -827,17 +837,20 @@ def _engine_ensemble_final(
 
 
 def _engine_map_ensemble_final(
-    eng: Any, problem: MapProblem, ics: np.ndarray, steps: int
+    eng: Any, problem: MapProblem, ics: np.ndarray, steps: int, *, jit: bool
 ) -> np.ndarray:
     """Dispatch a parallel map ensemble (final iterates) to the engine.
 
     Map parameters fold into the tape (``n_param == 0``), so there is no
     parameter vector; a diverging trajectory comes back as a ``NaN`` row.
+    ``jit`` picks the native-code evaluator over the interpreter (bit-for-bit
+    identical results).
     """
     return eng.iterate_ensemble_final(
         *problem.tape.to_arrays(),
         np.ascontiguousarray(ics, dtype=np.float64),
         int(steps),
+        bool(jit),
     )
 
 

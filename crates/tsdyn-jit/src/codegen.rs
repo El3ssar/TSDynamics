@@ -108,10 +108,54 @@ fn math_table() -> [MathDecl; 29] {
     ]
 }
 
+/// Build the [`JITBuilder`] every tape is compiled through, asking Cranelift for
+/// `opt_level = "speed"` rather than its default `"none"`.
+///
+/// [`JITBuilder::new`] leaves Cranelift at `opt_level = "none"` (minimise
+/// *compile* time by disabling most optimisations). `"speed"` ("generate the
+/// fastest possible code") is the I-BENCH report's C4 recommendation and the
+/// intent-correct default for a native-code evaluator — but see the measured
+/// effect below before reading it as a speed-up.
+///
+/// **Measured effect: neutral on the benched workloads.** An interleaved A/B
+/// (`none` vs `speed`, drift-cancelled) on the compute-bound 128-dim Lorenz-96
+/// ODE and the Hénon map showed *no* runtime difference beyond noise — `jit`
+/// stays a tie with gcc-`-O3` JiTCODE either way. The tapes lower to already-CSE'd
+/// straight-line SSA with no loops or redundancy for Cranelift's GVN/LICM/
+/// instruction-combining to exploit, and the solver's per-step vector arithmetic
+/// (the other half of a large ODE step) is rustc-compiled, outside Cranelift's
+/// reach. The flag is kept because it is the correct intent, costs only a sub-ms
+/// of extra one-time compile (verified by `compile_latency`), is bit-for-bit safe
+/// (below), and *may* help arithmetic-heavy tapes outside the bench sample; it is
+/// not claimed as a speed-up on the measured cases.
+///
+/// We route through [`JITBuilder::with_flags`] rather than hand-building an ISA so
+/// the JIT's two non-negotiable relocation flags stay correct: `with_flags`
+/// applies our `opt_level` *first*, then force-sets `use_colocated_libcalls=false`
+/// and `is_pic=false` (which [`cranelift_jit::JITModule`] asserts) before building
+/// the host ISA via the same `cranelift-native` detection [`JITBuilder::new`] uses.
+/// So this changes *only* the optimisation level — no new dependency, still pure
+/// Rust / no LLVM, and the host-CPU feature set is unchanged.
+///
+/// # Numerical contract preserved
+///
+/// `opt_level = "speed"` enables Cranelift's general optimisation passes (GVN,
+/// LICM, instruction combining, register allocation); it does **not** enable
+/// floating-point contraction (FMA), reassociation or any fast-math relaxation,
+/// so the natively-lowered IEEE-754 ops stay bit-identical to the interpreter's
+/// Rust operators. The `interpreter_equivalence` fuzz test re-asserts this
+/// bit-for-bit equality at the new opt level.
+fn build_jit_builder() -> Result<JITBuilder, JitError> {
+    Ok(JITBuilder::with_flags(
+        &[("opt_level", "speed")],
+        default_libcall_names(),
+    )?)
+}
+
 /// Compile `tape` into a [`Compiled`] holding the finalized `eval`/`eval_jac`
 /// function pointers.
 pub(crate) fn compile(tape: &Tape) -> Result<Compiled, JitError> {
-    let mut builder = JITBuilder::new(default_libcall_names())?;
+    let mut builder = build_jit_builder()?;
     let table = math_table();
     // Register every shim's address with the JIT before the module is created
     // (symbols cannot be added afterwards).
