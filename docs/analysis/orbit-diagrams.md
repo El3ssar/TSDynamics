@@ -96,7 +96,31 @@ od = ts.orbit_diagram(
   (DDE structure depends on all parameters). Budget accordingly, or sweep
   coarsely first.
 
+## Quantifying the cascade
+
+Counting branches by hand (above) is exactly what `OrbitDiagram.periods()`
+automates — and `bifurcation_points()` turns the changes into estimated
+bifurcation parameters:
+
+```python
+od = ts.orbit_diagram(
+    ts.Logistic(), "r", np.linspace(2.9, 3.6, 400), n=64, transient=2000,
+)
+
+od.periods()              # period at each value: 1, 2, 4, …, 0 (aperiodic), -1 (diverged)
+od.bifurcation_points()   # → ≈ [3.0, 3.449, …]  the period-doubling onsets
+```
+
+`periods()` clusters each value's recorded points with a scale-free gap test
+(a new branch where the sorted-value gap exceeds `rtol` times the range), caps
+runaway counts at `max_period` (reported as `0` — aperiodic), and marks
+diverged sweeps `-1`. For the logistic map the first two onsets land on the
+textbook values $r_1 = 3$ and $r_2 = 1 + \sqrt{6} \approx 3.449$. The
+resolution of `bifurcation_points()` is the spacing of the swept `values` —
+sweep finely near a transition to pin it down.
+
 ## See also
 
 - [Poincaré sections](poincare.md) — the section machinery behind `PoincareMap`
+- [Return maps](poincare.md#first-return-maps) — the 1-D map hidden in a flow
 - [Reference · Analysis](../reference/analysis.md) — `orbit_diagram` / `OrbitDiagram` signatures

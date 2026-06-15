@@ -75,6 +75,38 @@ a parameter sweep of a flow into a bifurcation diagram. A `RuntimeError`
 is raised if no crossing occurs within `max_time` (the plane may miss the
 attractor, or `direction` is wrong).
 
+## First-return maps
+
+A *return map* takes the idea one step further: it records successive values of
+a single recurring observable and plots each against its successor
+$(v_n, v_{n+1})$, exposing the one-dimensional map that organises the flow.
+`return_map` builds it two ways.
+
+The classic construction (Lorenz, 1963) records successive **local maxima** of
+a coordinate:
+
+```python
+rm = ts.return_map(ts.Lorenz(), "z", kind="max", final_time=400.0, transient=40.0)
+x, y = rm.flat()
+# plt.plot(x, y, ".")   # the famous single-humped z-maxima cusp map
+```
+
+The Lorenz $z$-maxima fall on a tight, single-valued curve — direct evidence
+that a 1-D map governs the attractor. Recorded values are sharpened by
+parabolic interpolation, so a coarse detection step still locates each peak
+accurately.
+
+The other construction records an observable at successive **section
+crossings** — the section's own return map:
+
+```python
+rm = ts.return_map(ts.Rossler(), "y", kind="poincare", plane=(0, 0.0), steps=400)
+```
+
+Either source can be a live system (integrated for you) or an existing
+`Trajectory` (or, for extrema, a bare 1-D array). A filled cloud instead of a
+curve is the signature that the dynamics are *not* effectively 1-D.
+
 ## See also
 
 - [Orbit & bifurcation diagrams](orbit-diagrams.md) — sweeping a `PoincareMap`

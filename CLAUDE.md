@@ -67,7 +67,7 @@ src/tsdynamics/
 │   └── sampling.py           # Box/Ball/Grid, sampler, grid_points, set_distance
 ├── analysis/                 # quantifiers, one subpackage per A-* stream (A-LAYOUT reorg)
 │   ├── __init__.py           # flat re-exports (public API) + analyses plugin discovery
-│   ├── orbits/               # orbit_diagram + OrbitDiagram (orbit_diagram.py); poincare_section (poincare.py)
+│   ├── orbits/               # A-ORBIT: orbit_diagram + OrbitDiagram (+ periods/bifurcation_points; orbit_diagram.py); poincare_section (poincare.py); return_map + ReturnMap (first-return/next-amplitude map; return_map.py); self-registers into registry.analyses
 │   ├── lyapunov/             # A-LYAP: lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
 │   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL — fixed.py), periodic_orbits/periodic_orbit/PeriodicOrbit + estimate_period (periodic.py), shared primitives (_common.py); self-registers
 │   ├── dimensions/           # A-DIM: correlation/generalized-Rényi/fixed-mass fractal dims + scaling-region fit
@@ -102,7 +102,10 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
   `StochasticSystem`; result type `Trajectory`
 - Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
   `EnsembleSystem`, `ProjectedSystem`
-- Analysis: `orbit_diagram`, `OrbitDiagram`, `poincare_section`,
+- Analysis: `orbit_diagram`, `OrbitDiagram` (+ `.periods()` /
+  `.bifurcation_points()` cascade quantifiers), `poincare_section`, `return_map`,
+  `ReturnMap` (A-ORBIT: first-return / next-amplitude map — Lorenz z-maxima cusp
+  + Poincaré-crossing variant),
   `lyapunov_spectrum`, `max_lyapunov`, `kaplan_yorke_dimension`,
   `lyapunov_from_data`, `LyapunovFromData` (A-LYAP: maximal exponent from a
   time series, Kantz/Rosenstein),
@@ -360,6 +363,18 @@ All three families + all derived wrappers implement:
   shooting. All A-FP routines are backend-free (fast tier), self-contained in
   `analysis/fixedpoints/` (own `_common.py`), and self-register into
   `registry.analyses`.
+- `orbit_diagram` (A-ORBIT) sweeps a parameter of any discrete view (a
+  `DiscreteMap`, or a flow wrapped in `PoincareMap` / `StroboscopicMap` → a
+  bifurcation diagram) recording the asymptotic orbit; `OrbitDiagram.periods()`
+  /`.bifurcation_points()` quantify the cascade (scale-free branch clustering;
+  logistic onsets land on `r₁=3`, `r₂=1+√6`). `return_map` builds the
+  first-return / next-amplitude map of a recurring observable — successive
+  extrema (`kind="max"/"min"`, the Lorenz z-maxima cusp, parabolically sharpened)
+  or successive Poincaré crossings (`kind="poincare"`) — from a System,
+  `Trajectory`, or bare 1-D series. `poincare_section` gives root-refined
+  crossings from a system or interpolated crossings from data. The orbits
+  subpackage is backend-free (extrema/sweeps over the standard stepping API) and
+  self-registers into `registry.analyses`.
 
 ---
 

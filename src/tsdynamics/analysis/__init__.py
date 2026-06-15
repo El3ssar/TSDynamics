@@ -101,7 +101,7 @@ from .lyapunov import (
     lyapunov_spectrum,
     max_lyapunov,
 )
-from .orbits import OrbitDiagram, orbit_diagram, poincare_section
+from .orbits import OrbitDiagram, ReturnMap, orbit_diagram, poincare_section, return_map
 from .recurrence import (
     RecurrenceMatrix,
     RQAResult,
@@ -133,6 +133,7 @@ __all__ = [
     "PeriodicOrbit",
     "RQAResult",
     "RecurrenceMatrix",
+    "ReturnMap",
     "SurrogateTest",
     "WindowedRQA",
     "aaft_surrogate",
@@ -174,6 +175,7 @@ __all__ = [
     "poincare_section",
     "random_shuffle",
     "recurrence_matrix",
+    "return_map",
     "rqa",
     "sample_entropy",
     "surrogate_test",
