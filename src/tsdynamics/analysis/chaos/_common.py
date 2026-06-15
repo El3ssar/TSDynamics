@@ -199,8 +199,19 @@ def gali_volume(w: np.ndarray) -> float:
     Equals the norm of the wedge product ``\hat w_1 \wedge \dots \wedge \hat
     w_k`` (the volume of the parallelepiped the unit vectors span): ``1`` when
     orthonormal, ``\to 0`` as they align (Skokos et al. 2007).
+
+    A collapsed frame spans zero volume.  Guard the SVD accordingly: for a
+    chaotic orbit the unit columns align to within machine precision (and a
+    diverged orbit makes them non-finite), where LAPACK's iterative SVD can fail
+    to converge — the volume is ``0`` in either case, so return it rather than
+    raise.
     """
-    s = np.linalg.svd(w, compute_uv=False)
+    if not np.all(np.isfinite(w)):
+        return 0.0
+    try:
+        s = np.linalg.svd(w, compute_uv=False)
+    except np.linalg.LinAlgError:
+        return 0.0
     return float(np.prod(s))
 
 
@@ -209,8 +220,19 @@ def expansion_volume(m: np.ndarray) -> float:
 
     The volume growth of the unit ball under ``M`` restricted to its expanding
     directions (``= 1`` when ``M`` is non-expanding).
+
+    The raw fundamental matrix is not renormalised, so a long horizon can
+    overflow to non-finite — that is unbounded growth, so report ``+inf`` (the
+    ``ln E(t)`` fit masks non-finite samples) rather than let a degenerate SVD
+    raise.
     """
-    s = np.linalg.svd(np.atleast_2d(m), compute_uv=False)
+    m = np.atleast_2d(m)
+    if not np.all(np.isfinite(m)):
+        return float("inf")
+    try:
+        s = np.linalg.svd(m, compute_uv=False)
+    except np.linalg.LinAlgError:
+        return float("inf")
     s = s[s > 1.0]
     return float(np.prod(s)) if s.size else 1.0
 

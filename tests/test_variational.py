@@ -158,13 +158,18 @@ def test_ode_family_delegates_to_tangent_jitcode() -> None:
     The family method *is* ``TangentSystem(self, backend="jitcode").lyapunov_spectrum``,
     so the two agree up to ``jitcode_lyap``'s random initial tangent directions
     (which make finite-time estimates non-bit-identical across fresh runs).
+    ``final_time`` is long enough that both estimates have converged: a shorter
+    window leaves the two independent maximal-exponent estimates with run-to-run
+    and platform FP spread wider than ``atol`` (observed ~0.057 at
+    ``final_time=80``), so this validates agreement-at-convergence rather than
+    masking it with a looser tolerance.
     """
     via_family = ts.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(
-        final_time=80.0, dt=0.1, burn_in=20.0
+        final_time=240.0, dt=0.1, burn_in=40.0
     )
     via_tangent = TangentSystem(
         ts.Lorenz(ic=[1.0, 1.0, 1.0]), k=3, backend="jitcode"
-    ).lyapunov_spectrum(final_time=80.0, dt=0.1, burn_in=20.0)
+    ).lyapunov_spectrum(final_time=240.0, dt=0.1, burn_in=40.0)
     np.testing.assert_allclose(via_family, via_tangent, atol=0.05)
 
 

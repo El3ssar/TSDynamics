@@ -193,3 +193,57 @@ def test_result_repr_and_float():
 def test_indicators_self_register():
     for name in ("gali", "zero_one_test", "expansion_entropy"):
         assert name in registry.analyses
+
+
+# ── robustness: degenerate / diverging frames must not crash (regression) ─────
+
+
+def test_gali_random_ic_henon_never_crashes():
+    """Random-IC GALI on the Hénon map must never raise (regression).
+
+    ``Henon`` declares no ``default_ic``, so every call rolls a random IC; many
+    land outside the attractor's basin and escape to infinity, which used to make
+    the deviation frame non-finite and crash ``np.linalg.svd`` with
+    ``LinAlgError`` (run-to-run non-deterministically, and at every long horizon).
+    ``gali`` must retry onto the attractor and return a chaotic result every time.
+    """
+    for _ in range(20):
+        g = gali(ts.Henon(), k=2, steps=1500)
+        assert isinstance(g, GALIResult)
+        assert np.all(np.isfinite(g.values))
+        assert g.is_chaotic()  # Hénon is chaotic → GALI₂ collapses to ~0
+
+
+def test_gali_offbasin_ic_retries_onto_attractor():
+    """An explicit IC that escapes the basin is recovered by the random-IC retry."""
+    g = gali(ts.Henon(), k=2, ic=[10.0, 10.0], steps=80, seed=0)
+    assert isinstance(g, GALIResult)
+    assert np.all(np.isfinite(g.values))
+    assert g.is_chaotic()
+
+
+def test_gali_volume_degenerate_returns_zero():
+    """A collapsed or non-finite deviation frame spans zero volume, never raises."""
+    from tsdynamics.analysis.chaos._common import gali_volume
+
+    # two perfectly aligned unit columns → zero parallelepiped volume
+    assert gali_volume(np.array([[1.0, 1.0], [0.0, 0.0]])) == pytest.approx(0.0)
+    # a non-finite frame (diverged orbit) is treated as collapsed, not a crash
+    assert gali_volume(np.array([[np.inf, 0.0], [np.nan, 1.0]])) == 0.0
+
+
+def test_expansion_volume_overflow_returns_inf():
+    """A non-finite fundamental matrix (overflowed growth) reports +inf, never raises."""
+    from tsdynamics.analysis.chaos._common import expansion_volume
+
+    assert expansion_volume(np.array([[np.inf, 0.0], [0.0, 1.0]])) == np.inf
+    assert expansion_volume(np.array([[np.nan, 0.0], [0.0, 1.0]])) == np.inf
+    assert expansion_volume(np.eye(2)) == pytest.approx(1.0)  # non-expanding
+
+
+def test_expansion_entropy_long_horizon_no_crash():
+    """A long un-renormalised horizon overflows the tangent product but must not crash."""
+    box = Box([-1.6, -0.5], [1.6, 0.5])
+    h = expansion_entropy(ts.Henon(), box, n_samples=60, steps=300, seed=0)
+    assert isinstance(h, ExpansionEntropyResult)
+    assert np.isfinite(float(h))

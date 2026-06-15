@@ -157,6 +157,16 @@ def gali(
     -------
     GALIResult
 
+    Raises
+    ------
+    NotImplementedError
+        If ``system`` is neither a discrete map nor a continuous flow.
+    ValueError
+        If ``k`` is outside ``[2, dim]``; if ``dt`` is passed for a map (or
+        ``steps`` for a flow); or if the orbit diverges to a non-finite state
+        from every tried initial condition after the retry budget — in which
+        case pass an ``ic`` from a known basin point (or shorten ``transient``).
+
     Examples
     --------
     >>> gali(Henon(), k=2, steps=60).is_chaotic()      # exponential collapse
@@ -185,15 +195,14 @@ def gali(
         raise ValueError(f"k must satisfy 2 <= k <= dim ({dim}); got {k}.")
 
     rng = np.random.default_rng(seed)
-    x = np.asarray(system.resolve_ic(ic), dtype=float).ravel()
-    w = _c.orthonormal_frame(dim, k, rng)
+    w0 = _c.orthonormal_frame(dim, k, rng)
 
     if mode == "map":
         if dt is not None:
             raise ValueError("dt has no meaning for a discrete map — omit it.")
         n_steps = 1000 if steps is None else int(steps)
         n_burn = 500 if transient is None else int(transient)
-        times, values = _gali_map(system, x, w, n_steps, n_burn)
+        run_args: tuple = (n_steps, n_burn)
         discrete = True
     else:
         if steps is not None:
@@ -201,26 +210,65 @@ def gali(
         t_end = 100.0 if final_time is None else float(final_time)
         step_dt = 0.1 if dt is None else float(dt)
         t_burn = 20.0 if transient is None else float(transient)
-        times, values = _gali_flow(system, x, w, t_end, step_dt, t_burn, int(n_internal))
+        run_args = (t_end, step_dt, t_burn, int(n_internal))
         discrete = False
 
-    return GALIResult(k=k, times=times, values=values, is_discrete=discrete)
+    # Track the tangent dynamics from a point that stays on the attractor.  An
+    # orbit that escapes the basin (common when the IC is random — many systems
+    # carry no ``default_ic``) blows up to a non-finite state and frame, so the
+    # runner soft-fails and we retry from a fresh seeded random IC, matching the
+    # map convention in :class:`~tsdynamics.derived.TangentSystem` (the seed
+    # keeps the retries reproducible).
+    max_retries = 10
+    for attempt in range(max_retries):
+        x = (
+            np.asarray(system.resolve_ic(ic), dtype=float).ravel()
+            if attempt == 0
+            else rng.random(dim)
+        )
+        w = w0.copy()
+        result = (
+            _gali_map(system, x, w, *run_args)
+            if mode == "map"
+            else _gali_flow(system, x, w, *run_args)
+        )
+        if result is not None:
+            times, values = result
+            return GALIResult(k=k, times=times, values=values, is_discrete=discrete)
+
+    raise ValueError(
+        f"gali: {type(system).__name__} orbit diverges from every tried IC after "
+        f"{max_retries} attempts — pass an `ic` from a known basin point, or shorten "
+        "the burn-in via `transient`."
+    )
 
 
 def _gali_map(
     system: Any, x: np.ndarray, w: np.ndarray, n_steps: int, n_burn: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """GALI for a map: ``W <- J(x) W`` (Jacobian at the pre-image), per-column normalise."""
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """GALI for a map: ``W <- J(x) W`` (Jacobian at the pre-image), per-column normalise.
+
+    Returns ``None`` (soft failure) if the orbit or the tangent frame diverges to
+    a non-finite value, so the caller can retry from a fresh IC.
+    """
     step, jac = _c.map_fns(system)
-    for _ in range(n_burn):
-        x = step(x)
-    values = np.empty(n_steps)
-    times = np.arange(1, n_steps + 1, dtype=float)
-    for i in range(n_steps):
-        w = jac(x) @ w
-        x = step(x)
-        w = _c.normalize_columns(w)
-        values[i] = _c.gali_volume(w)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        for _ in range(n_burn):
+            x = step(x)
+            if not np.all(np.isfinite(x)):
+                return None
+        values = np.empty(n_steps)
+        times = np.arange(1, n_steps + 1, dtype=float)
+        for i in range(n_steps):
+            j = jac(x)  # Jacobian at the pre-image x_n
+            x = step(x)
+            if not np.all(np.isfinite(j)) or not np.all(np.isfinite(x)):
+                return None
+            w = j @ w
+            if not np.all(np.isfinite(w)):
+                return None
+            w = _c.normalize_columns(w)
+            values[i] = _c.gali_volume(w)
     return times, values
 
 
@@ -232,25 +280,34 @@ def _gali_flow(
     dt: float,
     transient: float,
     n_internal: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """GALI for a flow: RK4-evolve the variational system, per-column normalise per ``dt``."""
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """GALI for a flow: RK4-evolve the variational system, per-column normalise per ``dt``.
+
+    Returns ``None`` (soft failure) on a non-finite (diverged) orbit or frame, so
+    the caller can retry from a fresh IC.
+    """
     rhs, jac = _c.flow_fns(system)
     h_burn = dt / max(1, n_internal)
     t = 0.0
     n_burn = int(round(max(0.0, transient) / h_burn))
-    for _ in range(n_burn):
-        x = _c.rk4_state(rhs, x, t, h_burn)
-        t += h_burn
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        for _ in range(n_burn):
+            x = _c.rk4_state(rhs, x, t, h_burn)
+            t += h_burn
+            if not np.all(np.isfinite(x)):
+                return None
 
-    n_steps = int(round(final_time / dt))
-    h = dt / max(1, n_internal)
-    values = np.empty(n_steps)
-    times = np.empty(n_steps)
-    for i in range(n_steps):
-        for _ in range(n_internal):
-            x, w = _c.rk4_variational(rhs, jac, x, w, t, h)
-            t += h
-        w = _c.normalize_columns(w)
-        values[i] = _c.gali_volume(w)
-        times[i] = t
+        n_steps = int(round(final_time / dt))
+        h = dt / max(1, n_internal)
+        values = np.empty(n_steps)
+        times = np.empty(n_steps)
+        for i in range(n_steps):
+            for _ in range(n_internal):
+                x, w = _c.rk4_variational(rhs, jac, x, w, t, h)
+                t += h
+            if not np.all(np.isfinite(x)) or not np.all(np.isfinite(w)):
+                return None
+            w = _c.normalize_columns(w)
+            values[i] = _c.gali_volume(w)
+            times[i] = t
     return times, values
