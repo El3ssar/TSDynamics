@@ -887,7 +887,14 @@ class ContinuousSystem(SystemBase, ABC):
         **integrator_kwargs,
     ) -> np.ndarray:
         """
-        Estimate the Lyapunov spectrum using :func:`jitcode.jitcode_lyap`.
+        Estimate the Lyapunov spectrum of the flow.
+
+        Delegates to :class:`~tsdynamics.derived.tangent.TangentSystem`, the one
+        backend-neutral variational/Lyapunov engine shared across families.  The
+        default ``backend="jitcode"`` integrates the compiled variational
+        equations (:func:`jitcode.jitcode_lyap`); ``TangentSystem(self,
+        backend="interp"/"jit"/"reference")`` runs the same estimate on the Rust
+        engine (the successor that survives the JiTCODE removal at M3).
 
         Results are stored in ``self.meta['lyapunov_spectrum']``.
 
@@ -915,61 +922,16 @@ class ContinuousSystem(SystemBase, ABC):
         """
         if n_exp is not None and n_exp <= 0:
             raise ValueError(f"n_exp must be a positive integer, got {n_exp!r}")
-        n_exp = n_exp if n_exp is not None else self.dim
-        method = method or self._default_method
-        integ_name = _INTEGRATOR_MAP.get(method, method)
-        ic_arr = self.resolve_ic(ic)
+        from tsdynamics.derived.tangent import TangentSystem
 
-        ode = self._ensure_compiled(for_lyap=True, n_lyap=n_exp)
-        ode.set_integrator(integ_name, rtol=rtol, atol=atol, **integrator_kwargs)
-        ode.set_parameters(*self._control_params().values())
-        ode.set_initial_value(ic_arr, 0.0)
-
-        # Burn-in (discard transient; no exponent accumulation)
-        T = 0.0
-        while burn_in > T:
-            Tn = min(burn_in, T + dt)
-            ode.integrate(float(Tn))
-            T = Tn
-
-        # Production: time-weighted average of local exponents
-        T_end = float(ode.t) + final_time
-        weights = []
-        ly_steps = []
-        T = float(ode.t)
-
-        while T_end > T:
-            Tn = min(T_end, T + dt)
-            ret = ode.integrate(float(Tn))
-
-            # jitcode_lyap.integrate returns (state, lyapunov_exponents).
-            # The fallback "else ret" would silently use the state vector as
-            # exponents — always enforce the tuple contract instead.
-            if not (isinstance(ret, tuple) and len(ret) >= 2):
-                raise RuntimeError(
-                    f"{type(self).__name__}: jitcode_lyap.integrate returned "
-                    f"unexpected type {type(ret)!r}; expected (state, lyap_exps) tuple."
-                )
-            local_lyaps = ret[1]
-            v = np.asarray(local_lyaps, float).ravel()
-            if v.size != n_exp:
-                raise ValueError(f"Expected {n_exp} local LEs, got shape {v.shape}")
-
-            ly_steps.append(v)
-            weights.append(Tn - T)
-            T = Tn
-
-        W = np.asarray(weights, float)
-        L = np.vstack(ly_steps) if ly_steps else np.empty((0, n_exp), float)
-        exponents = (W[:, None] * L).sum(axis=0) / W.sum() if L.size else np.zeros(n_exp)
-
-        self.meta.record(
-            "lyapunov_spectrum",
-            exponents,
-            dt=dt,
+        k = n_exp if n_exp is not None else self.dim
+        return TangentSystem(self, k=k, backend="jitcode").lyapunov_spectrum(
             final_time=final_time,
+            dt=dt,
+            ic=ic,
             burn_in=burn_in,
-            n_exp=n_exp,
-            method=integ_name,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            **integrator_kwargs,
         )
-        return exponents

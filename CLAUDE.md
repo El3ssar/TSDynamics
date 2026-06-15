@@ -294,8 +294,27 @@ All three families + all derived wrappers implement:
   caching keeps sweeps cheap; DDE sweeps recompile per value).
 - `PoincareMap` refines crossings with cubic Hermite using `_rhs_numeric`
   (O(dt⁴)); falls back to linear interpolation for DDEs.
-- `TangentSystem`: maps = NumPy QR loop; ODEs = wraps `jitcode_lyap`; DDEs
-  raise (use `DelaySystem.lyapunov_spectrum`).
+- **`TangentSystem` is the one Lyapunov engine** (stream C-DERIV): the
+  variational/QR machinery lives here, and `DiscreteMap.lyapunov_spectrum` /
+  `ContinuousSystem.lyapunov_spectrum` are thin delegations to it (no more
+  triplicated QR/`jitcode_lyap` loops). Modes:
+  - **maps**: NumPy `W ← J(x)·W` + QR, Jacobian at the **pre-image** `x_n` (the
+    correct tangent-map convention), with random-IC retry on divergence.
+  - **ODEs**: two interchangeable backends via `backend=`. `"jitcode"` (default)
+    wraps the compiled variational equations (`jitcode_lyap`).
+    `"interp"`/`"jit"`/`"reference"` is the **backend-neutral** path: the
+    *extended* variational ODE (state ⊕ k tangent vectors, built in
+    `derived/_variational.py` and lowered via the public
+    `engine.compile.lower_expressions`) is integrated per dt-chunk through
+    `engine.run.integrate` then QR-reorthonormalised — the successor that
+    survives the JiTCODE removal at M3 (the Rust engine becomes the variational
+    integrator). Validated now via `backend="reference"` against analytic
+    spectra; `"interp"`/`"jit"` need the `tsdynamics._rust` wheel.
+  - **DDEs**: raise — their tangent space is the infinite-dimensional history
+    space; use `DelaySystem.lyapunov_spectrum` (still `jitcdde_lyap`, the
+    documented exception, NOT routed through `TangentSystem`).
+  `TangentSystem.lyapunov_spectrum(...)` wraps the streaming `step()`/
+  `exponents()` API into the standard burn-in + time-weighted estimate.
 - `max_lyapunov` (Benettin two-trajectory) needs `set_state` → raises for DDEs.
 - `fixed_points` is map-only for now.
 
