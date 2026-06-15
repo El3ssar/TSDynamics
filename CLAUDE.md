@@ -470,7 +470,20 @@ reuse `_strategies` and assert a real invariant — never a tautology.
   figure cache), `release.yml`, `pr-title.yml`, `nightly.yml` (`-m full`),
   `wheels.yml` (stream I-WHEEL: cross-platform `tsdynamics._rust` engine wheels —
   manylinux/musllinux/macOS/Windows, abi3; build smoke on packaging PRs, full
-  matrix on dispatch/tag, artifacts only — no PyPI publish pre-M3).
+  matrix on dispatch/tag, artifacts only — no PyPI publish pre-M3),
+  `engine-bindings.yml` (builds `tsdynamics._rust` + runs the **engine-marked**
+  tests — see below), `cross-validation.yml` (stream I-XVAL: builds the real
+  engine + runs the catalogue **M3 removal gate**, `tests/test_xval_catalogue.py`).
+- **The `engine` marker (stream I-XVAL):** any test module that imports the
+  compiled `tsdynamics._rust` extension is auto-tagged `engine` by a
+  `conftest.pytest_collection_modifyitems` hook (detection in
+  `tests/_engine_marker.py`), so the engine CI job selects them with
+  `-m "engine and not full"` instead of a hand-maintained file list — a new
+  engine test joins the job with zero CI edits. `tests/test_engine_coverage.py`
+  guards the invariant (and that `engine-bindings.yml` never reverts to a file
+  list). These engine tests `importorskip("tsdynamics._rust")`, so they skip
+  cleanly in the wheel-free `ci.yml` matrix and run for real only where the
+  extension is built.
 - **Packaging shape (I-WHEEL, ROADMAP §11):** the pure-Python `tsdynamics` wheel
   (root `pyproject.toml`, hatchling + PSR) and the compiled engine ship as **two
   distributions pre-M3** — the engine is a separable `tsdynamics-rust-engine`

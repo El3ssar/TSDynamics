@@ -445,7 +445,7 @@ board with the maintainer's `gh`-based bootstrap — one issue per row.)*
 |----|--------|------|---------|------------|
 | **I-WHEEL** | Cross-platform wheels + packaging | maturin-action CI; decide one-wheel vs accelerator (§11) | E7 | manylinux + macOS(arm64/x86_64) + Windows wheels; `pip install tsdynamics` needs **no compiler**. 🟡 **active:** packaging shape **decided** (§11: separable accelerator now → one wheel at M3) + `wheels.yml` maturin matrix (manylinux/musllinux/macOS/Windows, abi3) + fixed the `tsdynamics._rust` mixed-layout so the wheel is importable. PyPI publish of the engine deferred to M3 (gated by I-XVAL). |
 | **I-BENCH** | Benchmarks + perf tracking | `benches/**`, CI perf job | E5 | vs SciPy + (internally) the Julia baseline on Lorenz/Rössler/MackeyGlass/Lorenz-96 N=128/Robertson; time-to-first-result tracked. |
-| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP, E-WIRE | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** **Today the gate validates the v2-seed crate, not `tsdynamics._rust`; rebuild it around the real engine + interp==jit + reference==engine — see §13b.** |
+| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP, E-WIRE | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** 🟡 **gate built:** the catalogue cross-validation gate now targets the **real `tsdynamics._rust`** (`tests/test_xval_catalogue.py`: RHS lowering 1e-9 + interp==jit bit-exact + reference==engine incl. bit-exact OP_POWI + curated trajectory-vs-JiTCODE + engine literature Lyapunov), `cross-validation.yml` rebuilt around it, and the `engine`-marker auto-tag + `test_engine_coverage.py` close the #72 engine-test blind spot. **The v2-backend removal is the remaining step — its own gated PR (runs only once this gate is green in CI).** |
 | **I-DOCS** | Docs restructure (NOT viz) | `docs/**`, autogen hook updated to new layout | F3 | site builds `--strict`; per-system pages; tutorial "equations → basins"; citation lint rule. |
 | **I-QA** | Test/property/known-value harness | `tests/**` shared fixtures, hypothesis tests, known-value catalogue | F3 | registry-driven sweeps over new families; property tests for embeddings/dimensions. |
 
@@ -472,9 +472,12 @@ Internal milestones stage the program; **v3.0 ships only when M6 is complete**
   C-DERIV is not started. JIT==interpreter holds in Rust but is untested through
   Python (I-XVAL).
 - **M3 — Old engine retired:** I-XVAL green → remove JiTCODE/JiTCDDE/diffsol/
-  Numba. **D1 complete.** (Big internal moment.) ⚠️ **Blocked on evidence:** the
-  xval gate must validate `tsdynamics._rust` over the catalogue first (§13b), and
-  the piecewise-map opcodes (E-OPS) must land or those maps die at deletion.
+  Numba. **D1 complete.** (Big internal moment.) 🟡 **gate built, removal pending:**
+  the xval gate now validates the real `tsdynamics._rust` over the catalogue
+  (§13b I-XVAL — RHS/interp==jit/reference==engine/trajectory/Lyapunov, with the
+  engine-coverage blind-spot closed), and the piecewise-map opcodes landed
+  (E-OPS #76). The removal PR (delete the v2 paths, flip `_default_backend`, drop
+  the C-compiler deps) runs once this gate is green in CI.
 - **M4 — Chaos quantification:** A-LYAP, A-CHAOS, A-FP, A-ORBIT + C-DATA.
 - **M5 — Parity moat:** A-BASIN, A-DIM, A-EMBED, A-ENT, A-RQA, A-SURR, T-XFORM.
 - **M6 — Launch readiness:** I-WHEEL, I-BENCH, I-DOCS, I-QA all green; parity
@@ -651,15 +654,24 @@ independent sessions continue cleanly.
   engine's new Jacobian guard with a **Python-side auto-set of `with_jacobian`**
   when the resolved method is implicit, so the common stiff path "just works"
   instead of raising. Auto-stiffness selection sits on top.
-- **I-XVAL** (issue #51) — the gate currently validates the **v2-seed `tsdynamics-core`** on
-  Lorenz only, not `tsdynamics._rust`. Add a `RustEngine` backend to
-  `xval_harness.py` (`run.integrate(backend="interp"/"jit")`), point
-  `cross-validation.yml` at the compiled extension over the **registry
-  catalogue**, add Python-level **interp==jit** and **reference==engine** parity
-  tests (incl. bit-exact `OP_POWI`), and replace `engine-bindings.yml`'s
-  hand-maintained file list with a marker/glob + a meta-test asserting every
-  `importorskip("tsdynamics._rust")` module is covered (the skip-as-success
-  blind-spot that required out-of-band patch #72).
+- **I-XVAL** (issue #51) — ✅ **gate built (PR for #51, part 1).** The gate no
+  longer validates the v2-seed `tsdynamics-core` on Lorenz: a `RustEngine` backend
+  in `xval_harness.py` drives the real `tsdynamics._rust` via
+  `run.integrate(backend="interp"/"jit")`, and `tests/test_xval_catalogue.py`
+  sweeps the **registry catalogue** — RHS lowering (1e-9), **interp==jit**
+  (bit-for-bit), **reference==engine** (incl. bit-exact `OP_POWI` on a synthetic
+  tape), a curated trajectory-vs-JiTCODE early-window leg, and engine literature
+  Lyapunov (Lorenz/Rössler). `cross-validation.yml` is rebuilt to compile the real
+  engine and run that gate. `engine-bindings.yml`'s hand-maintained file list is
+  replaced by an auto-applied `engine` marker (`tests/_engine_marker.py` +
+  `conftest` hook) selected with `-m "engine and not full"`, and
+  `tests/test_engine_coverage.py` is the meta-test asserting every
+  `importorskip("tsdynamics._rust")` module is covered (closing the
+  skip-as-success blind-spot of out-of-band patch #72 — which had still left
+  `test_bdf_stiff.py`/`test_cfam_seam.py` uncovered). **Still owed (part 2,
+  gated on this gate being green in CI):** delete the v2 backends, flip
+  `_default_backend`, drop the C-compiler deps + `~/.cache/tsdynamics`, fold to one
+  maturin wheel — D1 / M3, its own reviewed PR.
 - **C-DERIV / A-LYAP** (issues #37 / #38) — `TangentSystem` is billed as "the one Lyapunov engine"
   but the family `lyapunov_spectrum` methods triplicate the QR/`jitcode_lyap`
   loop, and its ODE mode is JiTCODE-only (deleted at M3) with no Rust variational

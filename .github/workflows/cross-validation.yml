@@ -1,27 +1,35 @@
 name: Cross-validation
 
-# The migration gate's foundation (ROADMAP §9, decision D1): the Rust engine is
-# cross-validated against the v2 numeric truth before any v2 backend is removed
-# (milestone M3, stream I-XVAL). This is the "cross-validation job" of the F4
-# CI matrix split — the third leg alongside:
+# The M3 migration gate (ROADMAP §9, decision D1, stream I-XVAL): the *shipping*
+# Rust engine (`tsdynamics._rust`) is cross-validated against the v2 numeric truth
+# across the whole registry catalogue before any v2 backend (JiTCODE / JiTCDDE /
+# Numba / diffsol) is removed. This is the "cross-validation job" of the F4 CI
+# matrix split — the third leg alongside:
 #
 #   * rust-workspace.yml  — builds/lints/tests the tsdyn-* engine workspace
 #   * ci.yml              — the Python lint + test matrix (the "python job")
-#   * cross-validation.yml (this file) — Rust-vs-v2 trajectory/RHS compare
+#   * cross-validation.yml (this file) — the catalogue Rust-vs-v2 removal gate
 #
-# It builds the v2-seed accelerator (`tsdynamics-core`), installs it, and runs
-# the xval harness (tests/xval_harness.py) on Lorenz. The accelerator is the
-# Rust candidate today; when the new engine lands (E1–E7) the harness gains a
-# backend and this same job picks up the wider compare. I-XVAL grows the Lorenz
-# scaffold into the full-catalogue gate.
+# It builds the real engine extension (`crates/tsdyn-core` → `tsdynamics._rust`),
+# drops it into the source tree, and runs the catalogue gate
+# (`tests/test_xval_catalogue.py`): RHS lowering vs the symbolic truth, interp ==
+# jit (bit-for-bit), reference == engine (incl. bit-exact OP_POWI), and an
+# early-window trajectory match against the actual v2 JiTCODE backend over a
+# curated sample. The legacy Lorenz scaffold (`tests/test_xval.py`) still runs as
+# a plumbing check. Until this gate is green over the catalogue, no v2 backend is
+# deleted.
 on:
   pull_request:
     branches: [main]
     paths:
+      - "crates/**"
+      # The whole Python package: the engine integrate / variational-Lyapunov path
+      # reaches utils/grids.py, derived/, and the solver layer, not just engine/ +
+      # families/ — a source regression there must re-run the removal gate rather
+      # than bypass it (ci.yml skips the gate for lack of the extension).
+      - "src/tsdynamics/**"
       - "tests/xval_harness.py"
-      - "tests/test_xval*.py" # the Lorenz scaffold today; I-XVAL's catalogue sweeps later
-      - "crates/tsdynamics-core/**"
-      - "src/tsdynamics/engine/rustcore.py"
+      - "tests/test_xval*.py"
       - ".github/workflows/cross-validation.yml"
   workflow_dispatch:
 
@@ -31,8 +39,10 @@ concurrency:
 
 jobs:
   rust-vs-v2:
-    name: Rust-vs-v2 cross-validation (Lorenz)
+    name: Rust-vs-v2 catalogue removal gate
     runs-on: ubuntu-latest
+    env:
+      MANIFEST: crates/tsdyn-core/Cargo.toml
     steps:
       - uses: actions/checkout@v6
 
@@ -45,8 +55,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            crates/tsdynamics-core/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('crates/tsdynamics-core/Cargo.lock') }}
+            crates/tsdyn-core/target
+          key: cargo-tsdyn-core-${{ runner.os }}-${{ hashFiles('crates/tsdyn-core/Cargo.lock') }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -59,15 +69,23 @@ jobs:
       - name: Sync project + dev deps
         run: uv sync --group dev
 
-      - name: Build the accelerator wheel (the Rust candidate)
-        run: >-
-          uv run --no-project --with maturin
-          maturin build --release
-          -m crates/tsdynamics-core/Cargo.toml
-          --out crates/tsdynamics-core/dist
+      # pyo3's build script needs an interpreter at build time; point it at the venv.
+      - name: Locate the project interpreter
+        run: echo "PYO3_PYTHON=$(uv run python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
 
-      - name: Install the accelerator into the project venv
-        run: uv pip install crates/tsdynamics-core/dist/*.whl
+      - name: Build the engine extension (the real tsdynamics._rust)
+        run: cargo build --release --features extension-module --manifest-path "$MANIFEST" --locked
 
-      - name: Cross-validate Rust vs v2 on Lorenz
-        run: uv run pytest tests/test_xval.py --no-cov -q
+      - name: Install the extension into the source tree
+        run: cp crates/tsdyn-core/target/release/lib_rust.so src/tsdynamics/_rust.abi3.so
+
+      # Fail loudly if the extension did not load: the gate `importorskip`s it, so
+      # a broken build would otherwise turn the gate into silent skips.
+      - name: Assert the engine extension is importable
+        run: uv run python -c "import tsdynamics._rust; print('tsdynamics._rust loaded OK')"
+
+      # The catalogue removal gate (fast + slow tiers; the slow tier compiles the
+      # v2 JiTCODE backend for the curated trajectory comparison). `full` stays
+      # deselected via pyproject addopts.
+      - name: Run the catalogue removal gate
+        run: uv run pytest tests/test_xval_catalogue.py tests/test_xval.py --no-cov -q
