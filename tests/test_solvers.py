@@ -27,7 +27,7 @@ import tsdynamics as ts
 from tsdynamics import solvers
 from tsdynamics.solvers import SolverCaps, SolverSpec
 
-# The eight kernels C-SOLV mirrors, with the caps facts the resolver keys on.
+# The kernels C-SOLV mirrors, with the caps facts the resolver keys on.
 # (name, kind, adaptive, needs_jacobian, family)
 _EXPECTED_BUILTINS = {
     "rk4": ("explicit", False, False, "ode"),
@@ -36,6 +36,7 @@ _EXPECTED_BUILTINS = {
     "dop853": ("explicit", True, False, "ode"),
     "rosenbrock": ("implicit", True, True, "ode"),
     "trbdf2": ("implicit", True, True, "ode"),
+    "bdf": ("implicit", True, True, "ode"),
     "euler_maruyama": ("explicit", False, False, "sde"),
     "milstein": ("explicit", False, True, "sde"),
 }
@@ -93,6 +94,7 @@ def test_available_for_filters_by_family():
         "dop853",
         "rosenbrock",
         "trbdf2",
+        "bdf",
     }
     assert set(solvers.available_for("sde")) == {"euler_maruyama", "milstein"}
     # DDE reuses the explicit ODE stage integrators (method-of-steps), so the
@@ -222,10 +224,20 @@ def test_unknown_method_raises_listing_available():
         assert "rk45" in str(exc) and "rosenbrock" in str(exc)
 
 
-@pytest.mark.parametrize("scipy_stiff", ["LSODA", "BDF", "Radau", "vode"])
+@pytest.mark.parametrize("scipy_stiff", ["LSODA", "Radau", "vode"])
 def test_unknown_scipy_stiff_name_hints_engine_kernel(scipy_stiff):
     with pytest.raises(ValueError, match="rosenbrock"):
         solvers.resolve(scipy_stiff)
+
+
+@pytest.mark.parametrize("name", ["bdf", "BDF", "gear"])
+def test_bdf_resolves_to_the_engine_kernel(name):
+    # "bdf" used to be a SciPy stiff name with no engine kernel; stream E-BDF added
+    # the variable-order BDF kernel, so it now resolves like any built-in.
+    res = solvers.resolve(name, family="ode")
+    assert res.name == "bdf"
+    assert res.is_implicit is True
+    assert res.build_kwargs == {"with_jacobian": True}
 
 
 def test_resolve_rejects_wrong_family():
@@ -281,7 +293,8 @@ def test_default_method_for_maps_raises():
 
 def test_select_policy():
     assert solvers.select("ode", stiff=False) == "rk45"
-    assert solvers.select("ode", stiff=True) == "rosenbrock"
+    # The variable-order BDF is the default stiff ODE kernel (stream E-BDF).
+    assert solvers.select("ode", stiff=True) == "bdf"
     # SDE has no implicit alternative — stiff verdict is ignored.
     assert solvers.select("sde", stiff=True) == "euler_maruyama"
 
@@ -316,7 +329,7 @@ def test_is_stiff_is_conservative_on_bad_probe():
 
 def test_recommend_picks_implicit_on_stiff():
     res = solvers.recommend(_StiffLinear())
-    assert res.name == "rosenbrock"
+    assert res.name == "bdf"
     assert res.is_implicit is True
     assert res.build_kwargs == {"with_jacobian": True}
 

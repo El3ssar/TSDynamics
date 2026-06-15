@@ -81,6 +81,7 @@ _ALIASES: dict[str, str] = {
     "tr_bdf2": "trbdf2",
     "trbdf": "trbdf2",
     "sdirk": "trbdf2",
+    "gear": "bdf",
     # SDE
     "em": "euler_maruyama",
     "eulermaruyama": "euler_maruyama",
@@ -90,16 +91,21 @@ _ALIASES: dict[str, str] = {
 #: SciPy / v2 stiff method names that have **no** engine kernel.  Resolving one
 #: fails with a hint pointing at the engine's stiff family rather than a bare
 #: "unknown method", because a user reaching for these clearly wants a stiff
-#: solver.
-_STIFF_SCIPY_NAMES: frozenset[str] = frozenset({"lsoda", "bdf", "radau", "vode"})
+#: solver.  (``"bdf"`` is **not** here — it now names the engine's variable-order
+#: BDF kernel, stream E-BDF — so it resolves like any built-in.)
+_STIFF_SCIPY_NAMES: frozenset[str] = frozenset({"lsoda", "radau", "vode"})
 
 #: The default kernel per family (the zero-config choice).  DDE reuses the ODE
 #: stage integrators (method-of-steps), so it shares the ODE default.
 DEFAULT_METHOD: dict[str, str] = {"ode": "rk45", "dde": "rk45", "sde": "euler_maruyama"}
 
 #: The default *stiff* kernel per family — what :func:`select` returns when the
-#: RHS is stiff.  Only families with an implicit kernel appear.
-STIFF_METHOD: dict[str, str] = {"ode": "rosenbrock", "dde": "rosenbrock"}
+#: RHS is stiff.  Only families with an implicit kernel appear.  The ODE default
+#: is the variable-order ``bdf`` (stream E-BDF): it takes far larger steps through
+#: a smooth stiff phase than the fixed-order ``rosenbrock``/``trbdf2`` (which stay
+#: selectable by name), closing the warm-throughput gap to a variable-order BDF
+#: reference (``benches/REPORT.md``).
+STIFF_METHOD: dict[str, str] = {"ode": "bdf", "dde": "rosenbrock"}
 
 
 def normalize(method: str) -> str:

@@ -51,9 +51,9 @@ def _sys(name):
 def test_solver_registry_survived_into_the_cdylib():
     names = _rust.solvers()
     assert names, "solver registry is empty — link-time registrations were dead-stripped"
-    # The four explicit kernels (E3) and the two implicit ones (E4) must all be
-    # reachable by name from the wheel.
-    for expected in ("rk4", "rk45", "tsit5", "dop853", "rosenbrock", "trbdf2"):
+    # The four explicit kernels (E3) and the three implicit ones (E4 +
+    # E-BDF's variable-order "bdf") must all be reachable by name from the wheel.
+    for expected in ("rk4", "rk45", "tsit5", "dop853", "rosenbrock", "trbdf2", "bdf"):
         assert expected in names, f"{expected} missing from {names}"
 
 

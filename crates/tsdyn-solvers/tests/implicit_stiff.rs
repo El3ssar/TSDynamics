@@ -324,7 +324,7 @@ fn oregonator() -> VmEval {
 /// require the Jacobian.
 #[test]
 fn kernels_are_registered_with_implicit_caps() {
-    for name in ["rosenbrock", "trbdf2"] {
+    for name in ["rosenbrock", "trbdf2", "bdf"] {
         let solver = make(name).unwrap_or_else(|| panic!("{name} should be registered"));
         assert_eq!(solver.name(), name);
         let caps = solver.caps();
@@ -369,7 +369,7 @@ fn stiff_linear_matches_exact_solution() {
     let t1 = 0.1;
     let exact = stiff_linear_exact(t1);
 
-    for name in ["rosenbrock", "trbdf2"] {
+    for name in ["rosenbrock", "trbdf2", "bdf"] {
         let mut solver = make(name).unwrap();
         // First step deliberately far above the explicit stability limit.
         let got = integrate_to(&ev, solver.as_mut(), &u0, &p, 0.0, t1, 0.05)
@@ -495,6 +495,211 @@ fn oregonator_methods_agree() {
     }
 }
 
+/// Like [`integrate_to`] but also returns the number of accepted steps — used to
+/// show the variable-order BDF reaches a target accuracy in fewer steps than the
+/// fixed-order kernels on a smooth stiff problem (its reason to exist).
+fn integrate_counting(
+    ev: &dyn Evaluator,
+    solver: &mut dyn Solver,
+    u0: &[f64],
+    p: &[f64],
+    t0: f64,
+    t1: f64,
+    first_step: f64,
+) -> Result<(Vec<f64>, u64), String> {
+    let mut st = SolverState::for_evaluator(ev, u0.to_vec(), t0, p.to_vec());
+    let mut h = first_step;
+    let mut steps = 0u64;
+    let mut accepted = 0u64;
+    while st.t < t1 {
+        steps += 1;
+        if steps > 5_000_000 {
+            return Err(format!("step limit at t = {}", st.t));
+        }
+        let remaining = t1 - st.t;
+        let landing = h >= remaining;
+        let h_try = if landing { remaining } else { h };
+        match solver.step(ev, &mut st, h_try) {
+            StepOutcome::Accepted { h_next } => {
+                accepted += 1;
+                if landing {
+                    st.t = t1;
+                } else if h_next.is_finite() && h_next > 0.0 {
+                    h = h_next;
+                }
+            }
+            StepOutcome::Rejected { h_next } => {
+                if !(h_next.is_finite() && h_next > 0.0) {
+                    return Err(format!("step collapsed at t = {}", st.t));
+                }
+                h = h_next;
+            }
+            StepOutcome::Failed => return Err(format!("solver failed at t = {}", st.t)),
+        }
+    }
+    Ok((st.u, accepted))
+}
+
+/// The variable-order BDF reproduces the stiff linear system's exact solution and
+/// reaches it in **far fewer steps** than the order-1 Rosenbrock kernel over a
+/// long smooth stiff decay — the high-order efficiency that is the whole point of
+/// adding it. Single-segment integration (no output grid) lets the kernel take its
+/// natural large steps, so the step-count gap is visible.
+#[test]
+fn bdf_uses_fewer_steps_than_rosenbrock_on_smooth_stiff_decay() {
+    let ev = stiff_linear();
+    let p = [-500.5, 499.5];
+    let u0 = [1.0, 0.0];
+    let t1 = 20.0; // long enough for the fast mode to die and the slow mode to dominate
+    let exact = stiff_linear_exact(t1);
+
+    let mut bdf = make("bdf").unwrap();
+    let mut ros = make("rosenbrock").unwrap();
+    let (yb, nb) = integrate_counting(&ev, bdf.as_mut(), &u0, &p, 0.0, t1, 1e-3).unwrap();
+    let (_yr, nr) = integrate_counting(&ev, ros.as_mut(), &u0, &p, 0.0, t1, 1e-3).unwrap();
+
+    assert!(
+        max_diff(&yb, &exact) < 1e-5,
+        "bdf inaccurate: {yb:?} vs {exact:?}"
+    );
+    assert!(
+        nb < nr,
+        "bdf should take fewer steps than rosenbrock: bdf {nb} vs rosenbrock {nr}"
+    );
+}
+
+/// On the three nonlinear stiff benchmarks the multistep BDF agrees with the two
+/// mechanically-different one-step kernels — a three-way cross-validation a shared
+/// bug could not fake (BDF carries history; the others do not).
+#[test]
+#[allow(clippy::type_complexity)] // a small local table of (evaluator, params, u0, …) cases
+fn bdf_agrees_with_one_step_kernels_on_nonlinear_benchmarks() {
+    // (evaluator, params, u0, t1, first_step, rel_tol)
+    let van = van_der_pol();
+    let rob = robertson();
+    let ore = oregonator();
+    let cases: [(&VmEval, &[f64], &[f64], f64, f64, f64); 3] = [
+        (&van, &[5.0], &[2.0, 0.0], 10.0, 1e-3, 1e-3),
+        (
+            &rob,
+            &[0.04, 3.0e7, 1.0e4],
+            &[1.0, 0.0, 0.0],
+            4.0,
+            1e-6,
+            1e-3,
+        ),
+        (
+            &ore,
+            &[77.27, 8.375e-6, 0.161],
+            &[1.0, 2.0, 3.0],
+            5.0,
+            1e-5,
+            5e-3,
+        ),
+    ];
+    let names = ["van der Pol", "Robertson", "Oregonator"];
+    for ((ev, p, u0, t1, h0, rtol), label) in cases.into_iter().zip(names) {
+        let mut bdf = make("bdf").unwrap();
+        let mut ros = make("rosenbrock").unwrap();
+        let mut trb = make("trbdf2").unwrap();
+        let b = integrate_to(ev, bdf.as_mut(), u0, p, 0.0, t1, h0)
+            .unwrap_or_else(|e| panic!("{label}: bdf failed: {e}"));
+        let r = integrate_to(ev, ros.as_mut(), u0, p, 0.0, t1, h0)
+            .unwrap_or_else(|e| panic!("{label}: rosenbrock failed: {e}"));
+        let t = integrate_to(ev, trb.as_mut(), u0, p, 0.0, t1, h0)
+            .unwrap_or_else(|e| panic!("{label}: trbdf2 failed: {e}"));
+        for i in 0..b.len() {
+            let scale = 1e-8 + b[i].abs().max(r[i].abs()).max(t[i].abs());
+            assert!(
+                (b[i] - r[i]).abs() < rtol * scale && (b[i] - t[i]).abs() < rtol * scale,
+                "{label} component {i}: bdf {} vs rosenbrock {} vs trbdf2 {}",
+                b[i],
+                r[i],
+                t[i]
+            );
+        }
+    }
+}
+
+/// Tightening the tolerance reduces the BDF's error against the stiff-linear exact
+/// solution — its error controller actually controls error.
+#[test]
+fn bdf_tighter_tolerance_reduces_error() {
+    use tsdyn_solvers::implicit::Bdf;
+    let ev = stiff_linear();
+    let p = [-500.5, 499.5];
+    let u0 = [1.0, 0.0];
+    let t1 = 0.5;
+    let exact = stiff_linear_exact(t1);
+
+    let mut loose = Bdf::with_tolerances(1e-4, 1e-7);
+    let mut tight = Bdf::with_tolerances(1e-9, 1e-12);
+    let e_loose = max_diff(
+        &integrate_to(&ev, &mut loose, &u0, &p, 0.0, t1, 1e-3).unwrap(),
+        &exact,
+    );
+    let e_tight = max_diff(
+        &integrate_to(&ev, &mut tight, &u0, &p, 0.0, t1, 1e-3).unwrap(),
+        &exact,
+    );
+    assert!(
+        e_tight <= e_loose,
+        "tighter tol should not increase error: loose {e_loose:e}, tight {e_tight:e}"
+    );
+    assert!(e_tight < 1e-7, "tight error {e_tight:e} unexpectedly large");
+}
+
+/// The BDF reproduces a stiff-linear solution identically whether stepped in one
+/// shot or forced onto a fine output grid — proving the multistep history survives
+/// the engine's step-to-grid landing (which hands the kernel a smaller `h` than it
+/// asked for at every output point). This is the grid-limited path the warm
+/// benchmarks actually run.
+#[test]
+fn bdf_grid_landing_matches_single_shot() {
+    let ev = stiff_linear();
+    let p = [-500.5, 499.5];
+    let u0 = [1.0, 0.0];
+    let t1 = 2.0;
+    let exact = stiff_linear_exact(t1);
+
+    // One shot.
+    let mut one = make("bdf").unwrap();
+    let single = integrate_to(&ev, one.as_mut(), &u0, &p, 0.0, t1, 1e-3).unwrap();
+
+    // Forced onto a fine grid: integrate segment by segment, carrying state and
+    // step across segments exactly as the engine's `integrate_grid` does.
+    let mut grid = make("bdf").unwrap();
+    let mut st = SolverState::for_evaluator(&ev, u0.to_vec(), 0.0, p.to_vec());
+    let mut h = 1e-3;
+    let n_seg = 200usize;
+    for k in 1..=n_seg {
+        let target = t1 * k as f64 / n_seg as f64;
+        while st.t < target {
+            let remaining = target - st.t;
+            let landing = h >= remaining;
+            let h_try = if landing { remaining } else { h };
+            match grid.step(&ev, &mut st, h_try) {
+                StepOutcome::Accepted { h_next } => {
+                    if landing {
+                        st.t = target;
+                    } else if h_next > 0.0 {
+                        h = h_next;
+                    }
+                }
+                StepOutcome::Rejected { h_next } => h = h_next,
+                StepOutcome::Failed => panic!("grid bdf failed at t = {}", st.t),
+            }
+        }
+    }
+    // Both reach the exact solution; the grid path is at least as accurate.
+    assert!(max_diff(&single, &exact) < 1e-5, "single-shot inaccurate");
+    assert!(
+        max_diff(&st.u, &exact) < 1e-5,
+        "grid path inaccurate: {:?}",
+        st.u
+    );
+}
+
 /// A diverging RHS is reported, never silently returned (the engine contract,
 /// exercised through the kernels' `Failed`/collapsed-step path). `x' = x²` blows
 /// up at `t = 1`; integrating past it must error.
@@ -508,7 +713,12 @@ fn divergence_is_reported() {
     let jac = b.mul(two, x);
     let ev = VmEval::new(Interpreter::new(b.finish(&[dx], &[jac], 1, 0).unwrap()));
 
-    let mut solver = make("rosenbrock").unwrap();
-    let res = integrate_to(&ev, solver.as_mut(), &[1.0], &[], 0.0, 2.0, 1e-3);
-    assert!(res.is_err(), "integrating past the blow-up should error");
+    for name in ["rosenbrock", "bdf"] {
+        let mut solver = make(name).unwrap();
+        let res = integrate_to(&ev, solver.as_mut(), &[1.0], &[], 0.0, 2.0, 1e-3);
+        assert!(
+            res.is_err(),
+            "{name}: integrating past the blow-up should error"
+        );
+    }
 }

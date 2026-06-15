@@ -18,12 +18,15 @@ from . import SolverCaps, SolverSpec, register
 
 _ODE = frozenset({"ode"})
 
-#: ``name -> description`` for the stiff family.  Both are adaptive (step
-#: doubling + Richardson) and need the analytic Jacobian (see
-#: ``crates/tsdyn-solvers/src/implicit/mod.rs``).
+#: ``name -> description`` for the stiff family.  All are adaptive and need the
+#: analytic Jacobian (see ``crates/tsdyn-solvers/src/implicit/mod.rs``).  The
+#: one-step kernels (``rosenbrock``/``trbdf2``) control error by step doubling +
+#: Richardson; ``bdf`` is the variable-order multistep kernel with its own
+#: order/step controller.
 _IMPLICIT: dict[str, str] = {
     "rosenbrock": "linearly-implicit Rosenbrock-W (one linear solve per step)",
     "trbdf2": "TR-BDF2 composite ESDIRK (trapezoidal + BDF2)",
+    "bdf": "variable-order (1-5) fixed-leading-coefficient BDF",
 }
 
 for _name, _desc in _IMPLICIT.items():

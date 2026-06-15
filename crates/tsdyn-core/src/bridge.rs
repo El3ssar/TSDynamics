@@ -35,7 +35,7 @@ use tsdyn_engine::{
 use tsdyn_ir::{Evaluator, Tape};
 use tsdyn_jit::JitEvaluator;
 use tsdyn_solvers::explicit::{Dop853, Rk45, Tsit5};
-use tsdyn_solvers::implicit::{RosenbrockW, TrBdf2};
+use tsdyn_solvers::implicit::{Bdf, RosenbrockW, TrBdf2};
 use tsdyn_solvers::sde::{self, SdeKernel};
 use tsdyn_solvers::{Solver, SolverKind};
 use tsdyn_vm::Interpreter;
@@ -207,7 +207,7 @@ pub fn resolve_solver(method: &str) -> Result<&'static str, EngineError> {
 ///
 /// `name` must already be a registry name (from [`resolve_solver`]). Every
 /// built-in *adaptive* kernel — the explicit family (`rk45`/`tsit5`/`dop853`) and
-/// the implicit family (`rosenbrock`/`trbdf2`) — owns its `rtol`/`atol` (the
+/// the implicit family (`rosenbrock`/`trbdf2`/`bdf`) — owns its `rtol`/`atol` (the
 /// frozen `Solver::step` carries none), so each is constructed through its
 /// `with_tolerances` constructor here to honour the requested accuracy. The
 /// fixed-step `rk4` (no tolerances) and any out-of-tree plugin kernel build
@@ -225,6 +225,7 @@ pub fn build_solver(name: &'static str, rtol: f64, atol: f64) -> Box<dyn Solver>
         "dop853" => Box::new(Dop853::with_tolerances(rtol, atol)),
         "rosenbrock" => Box::new(RosenbrockW::with_tolerances(rtol, atol)),
         "trbdf2" => Box::new(TrBdf2::with_tolerances(rtol, atol)),
+        "bdf" => Box::new(Bdf::with_tolerances(rtol, atol)),
         // The fixed-step `rk4` (no tolerances) and any out-of-tree plugin kernel
         // build through the registry factory. `name` came from the registry
         // (via `resolve_solver`), so `make` is guaranteed `Some`.
@@ -1098,7 +1099,15 @@ mod tests {
     #[test]
     fn build_solver_honours_tolerances_and_names() {
         // Smoke: every documented name builds a kernel reporting that name.
-        for name in ["rk4", "rk45", "tsit5", "dop853", "rosenbrock", "trbdf2"] {
+        for name in [
+            "rk4",
+            "rk45",
+            "tsit5",
+            "dop853",
+            "rosenbrock",
+            "trbdf2",
+            "bdf",
+        ] {
             let resolved = resolve_solver(name).unwrap();
             let s = build_solver(resolved, 1e-9, 1e-12);
             assert_eq!(s.name(), name);
@@ -1455,11 +1464,11 @@ mod tests {
 
     #[test]
     fn implicit_kernels_honour_requested_tolerances() {
-        // The build_solver fix: rosenbrock/trbdf2 must integrate at the requested
-        // tolerance, not the kernel default — a tight run on the smooth decay must
-        // hit the closed form to well under the loose 1e-3/1e-6 default accuracy.
+        // The build_solver fix: rosenbrock/trbdf2/bdf must integrate at the
+        // requested tolerance, not the kernel default — a tight run on the smooth
+        // decay must hit the closed form to well under the loose default accuracy.
         let t_eval: Vec<f64> = (0..=6).map(|i| i as f64 * 0.4).collect();
-        for method in ["rosenbrock", "trbdf2"] {
+        for method in ["rosenbrock", "trbdf2", "bdf"] {
             let y = integrate_dense(
                 decay_tape_jac(),
                 &[1.0],
@@ -1668,12 +1677,12 @@ mod tests {
 
     #[test]
     fn implicit_methods_refuse_a_tape_without_a_jacobian() {
-        // The critical guard: rosenbrock/trbdf2 freeze ∂f/∂u each step. On a tape
-        // compiled without a Jacobian the iteration matrix would collapse to I and
-        // the L-stable step would silently degrade to forward Euler. The engine
+        // The critical guard: rosenbrock/trbdf2/bdf freeze ∂f/∂u each step. On a
+        // tape compiled without a Jacobian the iteration matrix would collapse to I
+        // and the implicit step would silently degrade to forward Euler. The engine
         // must reject this loudly (BadShape → ValueError), not integrate.
         let t_eval = [0.0, 0.5, 1.0];
-        for method in ["rosenbrock", "trbdf2"] {
+        for method in ["rosenbrock", "trbdf2", "bdf"] {
             let err = integrate_dense(
                 decay_tape(),
                 &[1.0],
