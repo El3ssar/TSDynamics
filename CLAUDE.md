@@ -71,7 +71,7 @@ src/tsdynamics/
 │   ├── lyapunov/             # lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension
 │   ├── fixedpoints/          # fixed_points + FixedPoint (maps, multi-start Newton; was fixed_points.py)
 │   └── chaos/ basins/ dimensions/ embedding/ entropy/ recurrence/ surrogate/   # empty, owned by A-* streams
-├── transforms/               # signal/feature transforms — skeleton (stream T-XFORM)
+├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
 ├── viz/                      # DEFERRED stub only (decision D6)
 ├── systems/
 │   ├── continuous/           # 8 ODE category modules + delayed_systems.py (DDEs!)
@@ -109,8 +109,10 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.families`; `staticjit` via `tsdynamics.utils`.
-The engine layer (`tsdynamics.engine`) and the skeleton `transforms`/`viz`
-packages are importable but not advertised in `__all__`.
+The engine layer (`tsdynamics.engine`) and the `transforms` / skeleton `viz`
+packages are importable (`from tsdynamics import transforms`) but not advertised
+in the top-level `__all__`; `transforms` carries its own flat public surface
+(`tsdynamics.transforms.__all__`).
 
 ---
 
