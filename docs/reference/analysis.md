@@ -141,3 +141,22 @@ heuristics that parameterise it.
 ::: tsdynamics.analysis.embedding.dimension.false_nearest_neighbors
 
 ::: tsdynamics.analysis.embedding.dimension.EmbeddingDimension
+
+## Recurrence & RQA
+
+Recurrence plots (Eckmann, Kamphorst & Ruelle, 1987) record when a trajectory
+revisits its own past; recurrence quantification analysis (Marwan et al., 2007)
+reduces that structure to scalar measures of determinism and laminarity, run
+globally or in a sliding window.
+
+::: tsdynamics.analysis.recurrence.matrix.recurrence_matrix
+
+::: tsdynamics.analysis.recurrence.matrix.RecurrenceMatrix
+
+::: tsdynamics.analysis.recurrence.rqa.rqa
+
+::: tsdynamics.analysis.recurrence.rqa.RQAResult
+
+::: tsdynamics.analysis.recurrence.windowed.windowed_rqa
+
+::: tsdynamics.analysis.recurrence.windowed.WindowedRQA
