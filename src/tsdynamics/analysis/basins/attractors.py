@@ -1,0 +1,466 @@
+r"""
+Attractor finding via recurrences.
+
+The estimator tessellates state space into cells and follows a trajectory cell
+by cell with a small finite-state machine: while it keeps landing in *new* cells
+it is transient; once it recurrently re-visits cells it has located an
+**attractor** (the recurrent cell set), and every transient cell that led there
+is labelled as that attractor's **basin**.  Later initial conditions that wander
+into an already-labelled cell inherit its attractor cheaply, so the cost falls as
+state space fills in.
+
+This is the recurrence approach of
+
+    G. Datseris and A. Wagemakers, "Effortless estimation of basins of
+    attraction", *Chaos* **32**, 023104 (2022).
+
+with the cell-visitation idea going back to H. E. Nusse and J. A. Yorke,
+*Dynamics: Numerical Explorations* (Springer, 1997).
+
+:func:`find_attractors` runs the machine from a cloud of seeds and returns the
+attractors it discovers; :class:`AttractorMapper` is the reusable engine the
+basin and continuation layers drive over a full grid.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+
+from ...data import Ball, Box, Grid, sampler, set_distance
+from ._common import CellGrid, recurrence_grid, representative
+
+__all__ = [
+    "Attractor",
+    "AttractorMapper",
+    "AttractorSet",
+    "find_attractors",
+]
+
+#: Label returned for an initial condition that leaves the region / never settles.
+DIVERGED = -1
+
+
+# ---------------------------------------------------------------------------
+# Result objects
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Attractor:
+    """
+    One located attractor: a point cloud of states sampled on it.
+
+    Attributes
+    ----------
+    id : int
+        Integer label (``>= 1``) identifying this attractor within its set.
+    points : ndarray, shape (m, dim)
+        States sampled while the trajectory was on the attractor.  A fixed point
+        collapses to one repeated point; a cycle/chaotic set spreads out.
+    cells : int
+        Number of distinct grid cells the attractor occupies (a coarse size).
+    """
+
+    id: int
+    points: np.ndarray = field(repr=False)
+    cells: int
+
+    @property
+    def center(self) -> np.ndarray:
+        """The centroid of the point cloud (an attractor representative)."""
+        return representative(self.points)
+
+    @property
+    def dim(self) -> int:
+        """State-space dimension."""
+        return self.points.shape[1]
+
+    def __repr__(self) -> str:  # noqa: D105
+        c = np.round(self.center, 4)
+        return f"Attractor(id={self.id}, center={c.tolist()}, cells={self.cells})"
+
+
+@dataclass(frozen=True)
+class AttractorSet:
+    """
+    The attractors found in a region, keyed by integer id.
+
+    Attributes
+    ----------
+    attractors : dict[int, Attractor]
+        Located attractors, id → :class:`Attractor`.
+    diverged : int
+        How many seeds left the region / never settled.
+    seeds : int
+        How many seeds were classified in total.
+    """
+
+    attractors: dict[int, Attractor]
+    diverged: int
+    seeds: int
+
+    def __len__(self) -> int:  # noqa: D105
+        return len(self.attractors)
+
+    def __iter__(self) -> Iterator[Attractor]:  # noqa: D105
+        return iter(self.attractors.values())
+
+    def __getitem__(self, key: int) -> Attractor:  # noqa: D105
+        return self.attractors[key]
+
+    @property
+    def ids(self) -> list[int]:
+        """Sorted attractor ids."""
+        return sorted(self.attractors)
+
+    @property
+    def centers(self) -> np.ndarray:
+        """Stack of attractor representatives, shape ``(n_attractors, dim)``."""
+        return np.array([self.attractors[k].center for k in self.ids])
+
+    def match(self, point: Any, *, method: str = "centroid") -> int | None:
+        """
+        Return the id of the attractor closest to ``point`` (or ``None`` if empty).
+
+        Uses :func:`tsdynamics.data.set_distance`; ``point`` may be a single state
+        or a point cloud.
+        """
+        if not self.attractors:
+            return None
+        pts = np.atleast_2d(np.asarray(point, dtype=float))  # a single state -> (1, dim)
+        dists = {k: set_distance(self.attractors[k].points, pts, method=method) for k in self.ids}
+        return min(dists, key=dists.get)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"AttractorSet({len(self)} attractors, {self.diverged}/{self.seeds} diverged)"
+
+
+# ---------------------------------------------------------------------------
+# The recurrence finite-state machine
+# ---------------------------------------------------------------------------
+
+
+class AttractorMapper:
+    r"""
+    Map an initial condition to the attractor it converges to, via recurrences.
+
+    Drive any :class:`~tsdynamics.families.System` (map or flow) over a shared
+    :class:`~tsdynamics.analysis.basins._common.CellGrid`.  :meth:`map_ic` returns
+    a positive integer attractor id (discovering a new one if needed) or
+    :data:`DIVERGED` (``-1``).  Labels persist across calls, so a sweep over many
+    initial conditions amortises: most settle by hitting an already-labelled cell.
+
+    Parameters
+    ----------
+    system : System
+        A discrete map or a continuous flow (DDE/SDE are not supported).
+    cellgrid : CellGrid
+        The state-space tessellation the recurrences are detected on.
+    dt : float, default 1.0
+        Integration step between cell checks for a *flow* (ignored for a map,
+        which advances one iteration per check).
+    max_steps : int, default 10000
+        Hard cap on steps per initial condition before giving up (``DIVERGED``).
+    consecutive_recurrences : int, default 30
+        New attractor declared after this many consecutive steps into
+        already-visited (this-trajectory) cells.
+    attractor_locate_steps : int, default 30
+        Extra steps integrated once an attractor is declared, to flesh out its
+        cell set.
+    attractor_revisits : int, default 2
+        Steps in a known attractor's cells before an initial condition is assigned
+        to it.
+    basin_revisits : int, default 10
+        Steps in a known basin's cells before inheriting that basin (the
+        sparse-labelling shortcut).
+    lost_steps : int, default 20
+        Consecutive steps outside the region before declaring divergence.
+    """
+
+    def __init__(
+        self,
+        system: Any,
+        cellgrid: CellGrid,
+        *,
+        dt: float = 1.0,
+        max_steps: int = 10000,
+        consecutive_recurrences: int = 30,
+        attractor_locate_steps: int = 30,
+        attractor_revisits: int = 2,
+        basin_revisits: int = 10,
+        lost_steps: int = 20,
+    ) -> None:
+        self.system = system
+        self.grid = cellgrid
+        self.dt = float(dt)
+        self.max_steps = int(max_steps)
+        self.mx_fnd = int(consecutive_recurrences)
+        self.mx_loc = int(attractor_locate_steps)
+        self.mx_att = int(attractor_revisits)
+        self.mx_bas = int(basin_revisits)
+        self.mx_lost = int(lost_steps)
+
+        self._discrete = bool(getattr(system, "is_discrete", False))
+        self._step_arg: int | float = 1 if self._discrete else self.dt
+
+        # Persistent labels (sparse): cell key → attractor id.
+        self._att_cells: dict[tuple[int, ...], int] = {}
+        self._bas_cells: dict[tuple[int, ...], int] = {}
+        self._att_points: dict[int, list[np.ndarray]] = {}
+        self._next_id = 1
+
+    # -- driving the system through the protocol --
+
+    def _reinit(self, ic: np.ndarray) -> None:
+        self.system.reinit(np.asarray(ic, dtype=float))
+
+    def _advance(self) -> np.ndarray | None:
+        """Advance one step; ``None`` if the trajectory blew up (raised / non-finite)."""
+        try:
+            state = np.asarray(self.system.step(self._step_arg), dtype=float).reshape(-1)
+        except (RuntimeError, FloatingPointError, OverflowError, ArithmeticError):
+            # maps raise on divergence; flows may overflow — both mean "gone".
+            return None
+        return state if np.all(np.isfinite(state)) else None
+
+    # -- the FSM --
+
+    def map_ic(self, ic: Any) -> int:
+        """Classify one initial condition; return its attractor id or ``DIVERGED``."""
+        self._reinit(ic)
+        visited: dict[tuple[int, ...], int] = {}
+        trail: list[tuple[int, ...]] = []
+        c = att_hit = bas_hit = lost = 0
+
+        for it in range(self.max_steps):
+            state = self._advance()
+            if state is None:
+                # the step blew up — the trajectory is gone for good.
+                return DIVERGED
+            cell = self.grid.index(state)
+
+            if cell is None:
+                # finite but outside the region: a transient excursion may return.
+                lost += 1
+                c = att_hit = bas_hit = 0
+                if lost >= self.mx_lost:
+                    return DIVERGED
+                continue
+            lost = 0
+
+            known = self._att_cells.get(cell)
+            if known is not None:
+                att_hit += 1
+                c = bas_hit = 0
+                if att_hit >= self.mx_att:
+                    self._label_basin(trail, known)
+                    return known
+                continue
+
+            known = self._bas_cells.get(cell)
+            if known is not None:
+                bas_hit += 1
+                c = att_hit = 0
+                if bas_hit >= self.mx_bas:
+                    self._label_basin(trail, known)
+                    return known
+                continue
+
+            # an unlabelled cell
+            att_hit = bas_hit = 0
+            if cell in visited:
+                c += 1
+                if c >= self.mx_fnd:
+                    return self._locate_attractor(trail)
+            else:
+                visited[cell] = it
+                c = 0
+            trail.append(cell)
+
+        return DIVERGED
+
+    def _locate_attractor(self, trail: list[tuple[int, ...]]) -> int:
+        """Recurrence detected: integrate on to map the attractor, then label."""
+        new_id = self._next_id
+        self._next_id += 1
+        att_cells: set[tuple[int, ...]] = set()
+        points: list[np.ndarray] = []
+
+        for _ in range(self.mx_loc):
+            state = self._advance()
+            if state is None:
+                break
+            cell = self.grid.index(state)
+            if cell is None:
+                break
+            att_cells.add(cell)
+            points.append(state.copy())
+
+        if not att_cells:
+            # Could not pin the attractor down (left the region while locating).
+            self._next_id -= 1
+            return DIVERGED
+
+        for cell in att_cells:
+            self._att_cells[cell] = new_id
+            self._bas_cells.pop(cell, None)
+        self._att_points[new_id] = points
+
+        # transient cells that led here become basin cells (not the attractor's).
+        for cell in trail:
+            if cell not in self._att_cells:
+                self._bas_cells.setdefault(cell, new_id)
+        return new_id
+
+    def _label_basin(self, trail: list[tuple[int, ...]], att_id: int) -> None:
+        """Mark an initial condition's transient cells as ``att_id``'s basin."""
+        for cell in trail:
+            if cell not in self._att_cells:
+                self._bas_cells.setdefault(cell, att_id)
+
+    # -- proximity dedup --
+
+    def merge_map(self, tol: float) -> dict[int, int]:
+        """
+        Group attractor ids whose point clouds sit within ``tol`` (centroid).
+
+        The recurrence machine occasionally splits one attractor into two cell
+        sets (e.g. a chaotic set approached from two sides).  A small ``tol``
+        unions only near-coincident ids, leaving genuinely distinct attractors
+        apart.  Returns ``{old_id: canonical_id}``.
+        """
+        ids = sorted(self._att_points)
+        parent = {k: k for k in ids}
+
+        def find(a: int) -> int:
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        centers = {k: representative(np.asarray(self._att_points[k], dtype=float)) for k in ids}
+        for i, a in enumerate(ids):
+            for c in ids[i + 1 :]:
+                if find(a) == find(c):
+                    continue
+                if float(np.linalg.norm(centers[a] - centers[c])) <= tol:
+                    parent[find(c)] = find(a)
+        return {k: find(k) for k in ids}
+
+    # -- harvest --
+
+    def attractor_set(
+        self, diverged: int, seeds: int, *, merge: dict[int, int] | None = None
+    ) -> AttractorSet:
+        """Bundle the discovered attractors into an :class:`AttractorSet`."""
+        merge = merge or {}
+        cell_counts: dict[int, int] = {}
+        for att_id in self._att_cells.values():
+            cid = merge.get(att_id, att_id)
+            cell_counts[cid] = cell_counts.get(cid, 0) + 1
+
+        pooled: dict[int, list[np.ndarray]] = {}
+        for k, pts in self._att_points.items():
+            pooled.setdefault(merge.get(k, k), []).extend(pts)
+
+        attractors = {
+            cid: Attractor(
+                id=cid,
+                points=np.atleast_2d(np.asarray(pts, dtype=float)),
+                cells=cell_counts.get(cid, 0),
+            )
+            for cid, pts in pooled.items()
+        }
+        return AttractorSet(attractors=attractors, diverged=diverged, seeds=seeds)
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+
+def find_attractors(
+    system: Any,
+    region: Box | Ball | Grid,
+    *,
+    resolution: int | tuple[int, ...] = 100,
+    n_seeds: int = 1000,
+    seed: int | None = 0,
+    dt: float = 1.0,
+    max_steps: int = 10000,
+    merge_tol: float | None = None,
+    **fsm: Any,
+) -> AttractorSet:
+    r"""
+    Find the attractors a system has within a region, via recurrences.
+
+    Tessellate ``region`` into cells, draw ``n_seeds`` random initial conditions
+    from it, and follow each until it settles into a recurrent cell set (a new
+    attractor) or inherits one already found (Datseris & Wagemakers, 2022).
+
+    Parameters
+    ----------
+    system : System
+        A discrete map or continuous flow.  Delay and stochastic systems are not
+        supported (their state is not a finite-dimensional point).
+    region : Box, Ball, or Grid
+        Where to sample initial conditions and the box the recurrence cells cover.
+    resolution : int or tuple of int, default 100
+        Recurrence cells per axis when ``region`` is a Box/Ball (a Grid carries
+        its own ``counts``).  Too coarse merges distinct attractors; too fine
+        stops a chaotic trajectory from recurring — tune it to the attractor scale.
+    n_seeds : int, default 1000
+        Number of random initial conditions to classify.
+    seed : int, optional
+        Seed for the initial-condition sampler (reproducible).
+    dt : float, default 1.0
+        Integration step between cell checks for a flow (ignored for a map).
+    max_steps : int, default 10000
+        Per-seed step cap before declaring divergence.
+    merge_tol : float, optional
+        Merge attractors whose centroids lie within this distance (a split-set
+        cleanup).  ``None`` uses two recurrence-cell diagonals; ``0`` disables it.
+    **fsm
+        Finite-state-machine thresholds forwarded to :class:`AttractorMapper`
+        (``consecutive_recurrences``, ``attractor_locate_steps``,
+        ``attractor_revisits``, ``basin_revisits``, ``lost_steps``).
+
+    Returns
+    -------
+    AttractorSet
+        The located attractors plus how many seeds diverged.
+
+    References
+    ----------
+    G. Datseris and A. Wagemakers, "Effortless estimation of basins of
+    attraction", *Chaos* **32**, 023104 (2022).
+    """
+    if getattr(system, "is_discrete", False) is False and _looks_unsupported(system):
+        raise TypeError("find_attractors supports maps and flows, not delay/stochastic systems.")
+
+    grid = recurrence_grid(region, resolution)
+    mapper = AttractorMapper(system, grid, dt=dt, max_steps=max_steps, **fsm)
+    draw = sampler(region, seed=seed)
+
+    diverged = 0
+    for _ in range(int(n_seeds)):
+        if mapper.map_ic(draw()) == DIVERGED:
+            diverged += 1
+    merge = mapper.merge_map(resolve_merge_tol(grid, merge_tol))
+    return mapper.attractor_set(diverged=diverged, seeds=int(n_seeds), merge=merge)
+
+
+def resolve_merge_tol(cellgrid: CellGrid, merge_tol: float | None) -> float:
+    """Resolve the proximity-merge tolerance (``None`` → two cell diagonals)."""
+    if merge_tol is None:
+        return 2.0 * float(np.linalg.norm(cellgrid.delta))
+    return float(merge_tol)
+
+
+def _looks_unsupported(system: Any) -> bool:
+    """Return True for delay / stochastic systems (no finite-dimensional state)."""
+    return hasattr(system, "_drift") or hasattr(system, "history") or hasattr(system, "_delays")
