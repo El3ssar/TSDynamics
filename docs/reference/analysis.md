@@ -195,3 +195,51 @@ otherwise random.
 ::: tsdynamics.analysis.surrogate.statistics.time_reversal_asymmetry
 
 ::: tsdynamics.analysis.surrogate.statistics.nonlinear_prediction_error
+
+## Attractors & basins
+
+The global stability picture of a multistable system. Attractors are located by
+following trajectories through a cell tessellation until they recurrently revisit
+cells (Datseris & Wagemakers, 2022); the basin of each is the set of initial
+conditions reaching it. Basin *stability* (Menck et al., 2013) is an attractor's
+share of a sampled region; basin *entropy* (Daza et al., 2016) and the
+*uncertainty exponent* (Grebogi et al., 1983) quantify how fractal the boundaries
+are; continuation tracks attractors and their basins across a parameter.
+
+::: tsdynamics.analysis.basins.attractors.find_attractors
+
+::: tsdynamics.analysis.basins.attractors.AttractorSet
+
+::: tsdynamics.analysis.basins.attractors.Attractor
+
+::: tsdynamics.analysis.basins.basins.basins_of_attraction
+
+::: tsdynamics.analysis.basins.basins.BasinsResult
+
+::: tsdynamics.analysis.basins.basins.basin_fractions
+
+::: tsdynamics.analysis.basins.basins.BasinFractions
+
+### Boundary structure
+
+::: tsdynamics.analysis.basins.metrics.basin_entropy
+
+::: tsdynamics.analysis.basins.metrics.BasinEntropy
+
+::: tsdynamics.analysis.basins.metrics.uncertainty_exponent
+
+::: tsdynamics.analysis.basins.metrics.UncertaintyExponent
+
+::: tsdynamics.analysis.basins.metrics.wada_property
+
+::: tsdynamics.analysis.basins.metrics.WadaResult
+
+::: tsdynamics.analysis.basins.metrics.resilience
+
+### Continuation & tipping
+
+::: tsdynamics.analysis.basins.continuation.continuation
+
+::: tsdynamics.analysis.basins.continuation.ContinuationResult
+
+::: tsdynamics.analysis.basins.continuation.tipping_points

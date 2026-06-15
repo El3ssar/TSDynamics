@@ -75,7 +75,8 @@ src/tsdynamics/
 │   ├── chaos/               # A-CHAOS: GALI_k (Skokos) + 0–1 test (Gottwald–Melbourne) + expansion entropy (Hunt–Ott); maps via _jacobian, flows via self-contained RK4 variational core (no engine/compile)
 │   ├── recurrence/          # A-RQA: recurrence_matrix (fixed ε / target rate, sparse cKDTree) + rqa (DET/LAM/L_max/ENTR/TT) + windowed_rqa; self-registers into registry.analyses
 │   ├── surrogate/           # A-SURR: surrogates (shuffle/FT/AAFT/IAAFT generators) + time_reversal_asymmetry/nonlinear_prediction_error stats + surrogate_test→SurrogateTest (rank p + sigma); self-registers into registry.analyses
-│   └── basins/ embedding/   # basins empty (A-BASIN); embedding owned by A-EMBED
+│   ├── basins/              # A-BASIN: find_attractors/basins_of_attraction (recurrence-FSM AttractorMapper) + basin_fractions (basin stability) + basin_entropy/uncertainty_exponent/wada_property (boundary structure) + continuation/tipping_points + resilience; cell tessellation in _common.py; self-registers into registry.analyses
+│   └── embedding/           # owned by A-EMBED
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
 ├── viz/                      # DEFERRED stub only (decision D6)
 ├── systems/
@@ -122,7 +123,11 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
   surrogates & nonlinearity tests (A-SURR) `surrogates`, `random_shuffle`,
   `fourier_surrogate`, `aaft_surrogate`, `iaaft_surrogate`,
   `time_reversal_asymmetry`, `nonlinear_prediction_error`, `surrogate_test`,
-  `SurrogateTest`
+  `SurrogateTest`; attractors & basins (A-BASIN) `find_attractors`,
+  `basins_of_attraction`, `basin_fractions`, `basin_entropy`,
+  `uncertainty_exponent`, `wada_property`, `continuation`, `tipping_points`,
+  `resilience`, `Attractor`, `AttractorSet`, `BasinsResult`, `BasinFractions`,
+  `BasinEntropy`, `UncertaintyExponent`, `WadaResult`, `ContinuationResult`
 - Derived: `WrappedSystem` (adapt any external stepper to the protocol)
 - State-space geometry (`data`): `Box`, `Ball`, `Grid`, `sampler`,
   `grid_points`, `set_distance` — the primitives the basin/attractor layer
@@ -375,6 +380,26 @@ All three families + all derived wrappers implement:
   crossings from a system or interpolated crossings from data. The orbits
   subpackage is backend-free (extrema/sweeps over the standard stepping API) and
   self-registers into `registry.analyses`.
+- `find_attractors` / `basins_of_attraction` (A-BASIN) drive any map/flow over a
+  `CellGrid` tessellation with a recurrence finite-state machine (the
+  `AttractorMapper`, Datseris–Wagemakers 2022): a trajectory that recurrently
+  re-visits cells has found an attractor, transient cells become its basin, and a
+  near-coincident split is proximity-merged (`merge_tol`). Flows step by `dt` per
+  cell check, maps by one iteration; a raised/non-finite step is divergence, a
+  finite out-of-box excursion uses the lost-counter. `basins_of_attraction` paints
+  a `Grid` (pass a separate `recurrence` box to image a *slice* of a higher-dim
+  flow — the magnetic pendulum); `basin_fractions` is Monte-Carlo basin stability
+  (Menck 2013). The metrics read a label image (no integration, fast tier):
+  `basin_entropy` (Daza 2016 `Sb`/`Sbb`, `Sbb>ln2` ⇒ fractal), `uncertainty_exponent`
+  (Grebogi 1983, `D₀=D−α`; `as_label_array` squeezes degenerate slice axes so the
+  dimension is right), `wada_property` (Daza 2015 grid test), `resilience`
+  (Halekotte–Feudel 2020 distance-to-boundary via EDT). `continuation` re-finds +
+  matches attractors across a parameter by `set_distance` (greedy nearest, RAFM
+  Datseris 2023; `min_fraction` drops saddle-passage spurious sets), and
+  `tipping_points` reads off where a basin annihilates. Validation systems
+  (Newton z³ map ⅓-basins, two-well Duffing ½-basins, magnetic pendulum) live in
+  `tests/test_basins.py` — they are TEST-LOCAL, not catalogue systems.
+  Self-registers into `registry.analyses` (family `basins`).
 
 ---
 

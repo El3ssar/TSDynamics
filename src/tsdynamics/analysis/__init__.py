@@ -37,9 +37,11 @@ re-exported here so the public surface is flat:
   statistics :func:`time_reversal_asymmetry` / :func:`nonlinear_prediction_error`,
   and :func:`surrogate_test` (rank p-value + significance via a
   :class:`SurrogateTest`).
-
-The remaining subpackage (``basins``) is a placeholder the attractor/basin stream
-fills in.
+- :mod:`~tsdynamics.analysis.basins` — attractors & basins: :func:`find_attractors`
+  and :func:`basins_of_attraction` (recurrence finder), :func:`basin_fractions`
+  (basin stability), :func:`basin_entropy`, :func:`uncertainty_exponent` and
+  :func:`wada_property` (boundary structure), :func:`continuation` /
+  :func:`tipping_points` (global continuation) and :func:`resilience`.
 
 Out-of-tree analyses register through the ``tsdynamics.analyses`` entry-point
 group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
@@ -48,6 +50,25 @@ group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
 
 from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
+from .basins import (
+    Attractor,
+    AttractorSet,
+    BasinEntropy,
+    BasinFractions,
+    BasinsResult,
+    ContinuationResult,
+    UncertaintyExponent,
+    WadaResult,
+    basin_entropy,
+    basin_fractions,
+    basins_of_attraction,
+    continuation,
+    find_attractors,
+    resilience,
+    tipping_points,
+    uncertainty_exponent,
+    wada_property,
+)
 from .chaos import (
     ExpansionEntropyResult,
     GALIResult,
@@ -123,6 +144,12 @@ from .surrogate import (
 )
 
 __all__ = [
+    "Attractor",
+    "AttractorSet",
+    "BasinEntropy",
+    "BasinFractions",
+    "BasinsResult",
+    "ContinuationResult",
     "DimensionResult",
     "EmbeddingDimension",
     "ExpansionEntropyResult",
@@ -135,12 +162,18 @@ __all__ = [
     "RecurrenceMatrix",
     "ReturnMap",
     "SurrogateTest",
+    "UncertaintyExponent",
+    "WadaResult",
     "WindowedRQA",
     "aaft_surrogate",
     "approximate_entropy",
     "autocorrelation",
+    "basin_entropy",
+    "basin_fractions",
+    "basins_of_attraction",
     "box_counting_dimension",
     "cao_dimension",
+    "continuation",
     "correlation_dimension",
     "correlation_sum",
     "dimension_spectrum",
@@ -151,6 +184,7 @@ __all__ = [
     "estimate_period",
     "expansion_entropy",
     "false_nearest_neighbors",
+    "find_attractors",
     "fixed_mass_dimension",
     "fixed_points",
     "fourier_surrogate",
@@ -175,12 +209,16 @@ __all__ = [
     "poincare_section",
     "random_shuffle",
     "recurrence_matrix",
+    "resilience",
     "return_map",
     "rqa",
     "sample_entropy",
     "surrogate_test",
     "surrogates",
     "time_reversal_asymmetry",
+    "tipping_points",
+    "uncertainty_exponent",
+    "wada_property",
     "weighted_permutation_entropy",
     "windowed_rqa",
     "zero_one_test",
