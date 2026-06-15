@@ -32,9 +32,14 @@ re-exported here so the public surface is flat:
   :func:`recurrence_matrix` (fixed threshold / target rate, sparse), :func:`rqa`
   (determinism, laminarity, line entropy, trapping time, …) and
   :func:`windowed_rqa` (those measures in a sliding window).
+- :mod:`~tsdynamics.analysis.surrogate` — surrogate-data nonlinearity tests:
+  :func:`surrogates` (shuffle / FT / AAFT / IAAFT generators), the discriminating
+  statistics :func:`time_reversal_asymmetry` / :func:`nonlinear_prediction_error`,
+  and :func:`surrogate_test` (rank p-value + significance via a
+  :class:`SurrogateTest`).
 
-The remaining subpackages (``basins``, ``surrogate``) are placeholders the
-analysis streams fill in.
+The remaining subpackage (``basins``) is a placeholder the attractor/basin stream
+fills in.
 
 Out-of-tree analyses register through the ``tsdynamics.analyses`` entry-point
 group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
@@ -105,6 +110,17 @@ from .recurrence import (
     rqa,
     windowed_rqa,
 )
+from .surrogate import (
+    SurrogateTest,
+    aaft_surrogate,
+    fourier_surrogate,
+    iaaft_surrogate,
+    nonlinear_prediction_error,
+    random_shuffle,
+    surrogate_test,
+    surrogates,
+    time_reversal_asymmetry,
+)
 
 __all__ = [
     "DimensionResult",
@@ -117,7 +133,9 @@ __all__ = [
     "PeriodicOrbit",
     "RQAResult",
     "RecurrenceMatrix",
+    "SurrogateTest",
     "WindowedRQA",
+    "aaft_surrogate",
     "approximate_entropy",
     "autocorrelation",
     "box_counting_dimension",
@@ -134,8 +152,10 @@ __all__ = [
     "false_nearest_neighbors",
     "fixed_mass_dimension",
     "fixed_points",
+    "fourier_surrogate",
     "gali",
     "generalized_dimension",
+    "iaaft_surrogate",
     "information_dimension",
     "kaplan_yorke_dimension",
     "lyapunov_from_data",
@@ -145,15 +165,20 @@ __all__ = [
     "max_lyapunov",
     "multiscale_entropy",
     "mutual_information",
+    "nonlinear_prediction_error",
     "optimal_delay",
     "orbit_diagram",
     "periodic_orbit",
     "periodic_orbits",
     "permutation_entropy",
     "poincare_section",
+    "random_shuffle",
     "recurrence_matrix",
     "rqa",
     "sample_entropy",
+    "surrogate_test",
+    "surrogates",
+    "time_reversal_asymmetry",
     "weighted_permutation_entropy",
     "windowed_rqa",
     "zero_one_test",

@@ -160,3 +160,32 @@ globally or in a sliding window.
 ::: tsdynamics.analysis.recurrence.windowed.windowed_rqa
 
 ::: tsdynamics.analysis.recurrence.windowed.WindowedRQA
+
+## Surrogates & nonlinearity tests
+
+The surrogate-data method (Theiler et al., 1992; Schreiber & Schmitz, 1996) tests
+a series for nonlinear structure against an ensemble of surrogates that reproduce
+its linear properties (amplitude distribution and/or power spectrum) but are
+otherwise random.
+
+::: tsdynamics.analysis.surrogate.hypothesis.surrogate_test
+
+::: tsdynamics.analysis.surrogate.hypothesis.SurrogateTest
+
+### Generators
+
+::: tsdynamics.analysis.surrogate.generators.surrogates
+
+::: tsdynamics.analysis.surrogate.generators.random_shuffle
+
+::: tsdynamics.analysis.surrogate.generators.fourier_surrogate
+
+::: tsdynamics.analysis.surrogate.generators.aaft_surrogate
+
+::: tsdynamics.analysis.surrogate.generators.iaaft_surrogate
+
+### Statistics
+
+::: tsdynamics.analysis.surrogate.statistics.time_reversal_asymmetry
+
+::: tsdynamics.analysis.surrogate.statistics.nonlinear_prediction_error
