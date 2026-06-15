@@ -120,7 +120,7 @@ def _build_systems() -> dict[str, dict[str, Any]]:
             "ic": [1.0, 1.0, 1.0],
             "final_time": 40.0,
             "dt": 0.01,
-            "method": "rosenbrock",
+            "method": "bdf",  # variable-order BDF (E-BDF) — the auto-stiffness default
             "v2_method": "LSODA",
             "scipy_method": "LSODA",
             "rtol": 1e-7,
@@ -135,7 +135,7 @@ def _build_systems() -> dict[str, dict[str, Any]]:
             "ic": [0.1, 0.1, 0.0],
             "final_time": 200.0,
             "dt": 0.01,
-            "method": "rosenbrock",
+            "method": "bdf",  # variable-order BDF (E-BDF) — the auto-stiffness default
             "v2_method": "LSODA",
             "scipy_method": "LSODA",
             "rtol": 1e-7,
