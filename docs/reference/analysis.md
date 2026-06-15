@@ -32,3 +32,41 @@ treatments live in the [Analysis](../analysis/index.md) section.
 ::: tsdynamics.analysis.fixedpoints.fixed_points
 
 ::: tsdynamics.analysis.fixedpoints.FixedPoint
+
+## Entropy & complexity
+
+Composable estimation — an [`OutcomeSpace`](#tsdynamics.analysis.entropy.core.OutcomeSpace)
+(how a series is symbolised), a probability estimator, and an information
+measure — plus the named measures built on it.
+
+::: tsdynamics.analysis.entropy.core.entropy
+
+::: tsdynamics.analysis.entropy.permutation.permutation_entropy
+
+::: tsdynamics.analysis.entropy.permutation.weighted_permutation_entropy
+
+::: tsdynamics.analysis.entropy.dispersion.dispersion_entropy
+
+::: tsdynamics.analysis.entropy.sample.sample_entropy
+
+::: tsdynamics.analysis.entropy.sample.approximate_entropy
+
+::: tsdynamics.analysis.entropy.multiscale.multiscale_entropy
+
+::: tsdynamics.analysis.entropy.lz.lz76_complexity
+
+::: tsdynamics.analysis.entropy.lz.lz76_entropy
+
+### Composable building blocks
+
+::: tsdynamics.analysis.entropy.core.OutcomeSpace
+
+::: tsdynamics.analysis.entropy.core.OrdinalPatterns
+
+::: tsdynamics.analysis.entropy.core.Dispersion
+
+::: tsdynamics.analysis.entropy.core.Shannon
+
+::: tsdynamics.analysis.entropy.core.Renyi
+
+::: tsdynamics.analysis.entropy.core.Tsallis

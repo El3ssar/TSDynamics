@@ -27,12 +27,21 @@ from . import analysis, data, derived, families, registry, systems, utils
 from .analysis import (
     FixedPoint,
     OrbitDiagram,
+    approximate_entropy,
+    dispersion_entropy,
+    entropy,
     fixed_points,
     kaplan_yorke_dimension,
     lyapunov_spectrum,
+    lz76_complexity,
+    lz76_entropy,
     max_lyapunov,
+    multiscale_entropy,
     orbit_diagram,
+    permutation_entropy,
     poincare_section,
+    sample_entropy,
+    weighted_permutation_entropy,
 )
 from .data import Ball, Box, Grid, grid_points, sampler, set_distance
 from .derived import (
@@ -90,6 +99,16 @@ __all__ = [
     "max_lyapunov",
     "orbit_diagram",
     "poincare_section",
+    # Entropy & complexity
+    "approximate_entropy",
+    "dispersion_entropy",
+    "entropy",
+    "lz76_complexity",
+    "lz76_entropy",
+    "multiscale_entropy",
+    "permutation_entropy",
+    "sample_entropy",
+    "weighted_permutation_entropy",
     # State-space geometry (regions, samplers, set distances)
     "Ball",
     "Box",
