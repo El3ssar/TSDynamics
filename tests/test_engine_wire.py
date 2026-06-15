@@ -194,7 +194,8 @@ def test_run_integrate_and_ensemble_reject_sde_problems():
 # ---------------------------------------------------------------------------
 
 
-def test_map_ensemble_binding_matches_serial_iterate():
+@pytest.mark.parametrize("jit", [False, True])
+def test_map_ensemble_binding_matches_serial_iterate(jit):
     henon = ts.Henon()
     prob = map_problem(henon)
     arrays = prob.tape.to_arrays()
@@ -202,11 +203,20 @@ def test_map_ensemble_binding_matches_serial_iterate():
     # On-attractor ICs so the orbits stay finite over the horizon.
     ics = np.array([0.1, 0.1]) + 0.05 * rng.standard_normal((8, 2))
     steps = 40
-    batch = np.asarray(_rust.iterate_ensemble_final(*arrays, np.ascontiguousarray(ics), steps))
+    batch = np.asarray(_rust.iterate_ensemble_final(*arrays, np.ascontiguousarray(ics), steps, jit))
     assert batch.shape == (8, 2)
     for i, ic in enumerate(ics):
-        dense = np.asarray(_rust.iterate_map(*arrays, np.ascontiguousarray(ic), steps))
+        dense = np.asarray(_rust.iterate_map(*arrays, np.ascontiguousarray(ic), steps, jit))
         np.testing.assert_array_equal(batch[i], dense[-1])  # final iterate, bit-for-bit
+
+
+def test_map_jit_equals_interp_through_run():
+    """The map JIT path reproduces the interpreter path bit-for-bit (E2 invariant
+    over the map loop, driven through the public run.integrate seam)."""
+    henon = ts.Henon()
+    interp = run.integrate(henon, final_time=300, ic=[0.1, 0.1], backend="interp")
+    jit = run.integrate(henon, final_time=300, ic=[0.1, 0.1], backend="jit")
+    np.testing.assert_array_equal(interp.y, jit.y)
 
 
 def test_map_ensemble_through_run_matches_single_integrate():
