@@ -31,11 +31,19 @@ treatments live in the [Analysis](../analysis/index.md) section.
 
 ::: tsdynamics.analysis.lyapunov.kaplan_yorke_dimension
 
-## Fixed points
+## Fixed points & periodic orbits
 
-::: tsdynamics.analysis.fixedpoints.fixed_points
+::: tsdynamics.analysis.fixedpoints.fixed.fixed_points
 
-::: tsdynamics.analysis.fixedpoints.FixedPoint
+::: tsdynamics.analysis.fixedpoints.fixed.FixedPoint
+
+::: tsdynamics.analysis.fixedpoints.periodic.periodic_orbits
+
+::: tsdynamics.analysis.fixedpoints.periodic.periodic_orbit
+
+::: tsdynamics.analysis.fixedpoints.periodic.PeriodicOrbit
+
+::: tsdynamics.analysis.fixedpoints.periodic.estimate_period
 
 ## Chaos indicators
 
