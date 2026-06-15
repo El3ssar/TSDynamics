@@ -19,8 +19,13 @@ re-exported here so the public surface is flat:
   :func:`sample_entropy` / :func:`approximate_entropy`,
   :func:`multiscale_entropy`, and Lempel–Ziv :func:`lz76_complexity` /
   :func:`lz76_entropy`.
+- :mod:`~tsdynamics.analysis.dimensions` — fractal dimensions:
+  :func:`correlation_dimension` (Grassberger--Procaccia), the generalized/Rényi
+  :func:`generalized_dimension` (with :func:`box_counting_dimension`,
+  :func:`information_dimension`, :func:`dimension_spectrum`) and
+  :func:`fixed_mass_dimension`.
 
-The remaining subpackages (``chaos``, ``basins``, ``dimensions``, ``embedding``,
+The remaining subpackages (``chaos``, ``basins``, ``embedding``,
 ``recurrence``, ``surrogate``) are placeholders the analysis streams fill in.
 
 Out-of-tree analyses register through the ``tsdynamics.analyses`` entry-point
@@ -30,6 +35,16 @@ group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
 
 from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
+from .dimensions import (
+    DimensionResult,
+    box_counting_dimension,
+    correlation_dimension,
+    correlation_sum,
+    dimension_spectrum,
+    fixed_mass_dimension,
+    generalized_dimension,
+    information_dimension,
+)
 from .entropy import (
     approximate_entropy,
     dispersion_entropy,
@@ -46,12 +61,20 @@ from .lyapunov import kaplan_yorke_dimension, lyapunov_spectrum, max_lyapunov
 from .orbits import OrbitDiagram, orbit_diagram, poincare_section
 
 __all__ = [
+    "DimensionResult",
     "FixedPoint",
     "OrbitDiagram",
     "approximate_entropy",
+    "box_counting_dimension",
+    "correlation_dimension",
+    "correlation_sum",
+    "dimension_spectrum",
     "dispersion_entropy",
     "entropy",
+    "fixed_mass_dimension",
     "fixed_points",
+    "generalized_dimension",
+    "information_dimension",
     "kaplan_yorke_dimension",
     "lyapunov_spectrum",
     "lz76_complexity",

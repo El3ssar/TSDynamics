@@ -70,3 +70,21 @@ measure — plus the named measures built on it.
 ::: tsdynamics.analysis.entropy.core.Renyi
 
 ::: tsdynamics.analysis.entropy.core.Tsallis
+
+## Fractal dimensions
+
+::: tsdynamics.analysis.dimensions.correlation.correlation_dimension
+
+::: tsdynamics.analysis.dimensions.correlation.correlation_sum
+
+::: tsdynamics.analysis.dimensions.generalized.generalized_dimension
+
+::: tsdynamics.analysis.dimensions.generalized.box_counting_dimension
+
+::: tsdynamics.analysis.dimensions.generalized.information_dimension
+
+::: tsdynamics.analysis.dimensions.generalized.dimension_spectrum
+
+::: tsdynamics.analysis.dimensions.fixedmass.fixed_mass_dimension
+
+::: tsdynamics.analysis.dimensions.DimensionResult
