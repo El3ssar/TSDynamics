@@ -57,12 +57,19 @@ from .entropy import (
     weighted_permutation_entropy,
 )
 from .fixedpoints import FixedPoint, fixed_points
-from .lyapunov import kaplan_yorke_dimension, lyapunov_spectrum, max_lyapunov
+from .lyapunov import (
+    LyapunovFromData,
+    kaplan_yorke_dimension,
+    lyapunov_from_data,
+    lyapunov_spectrum,
+    max_lyapunov,
+)
 from .orbits import OrbitDiagram, orbit_diagram, poincare_section
 
 __all__ = [
     "DimensionResult",
     "FixedPoint",
+    "LyapunovFromData",
     "OrbitDiagram",
     "approximate_entropy",
     "box_counting_dimension",
@@ -76,6 +83,7 @@ __all__ = [
     "generalized_dimension",
     "information_dimension",
     "kaplan_yorke_dimension",
+    "lyapunov_from_data",
     "lyapunov_spectrum",
     "lz76_complexity",
     "lz76_entropy",

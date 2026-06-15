@@ -25,6 +25,10 @@ treatments live in the [Analysis](../analysis/index.md) section.
 
 ::: tsdynamics.analysis.lyapunov.max_lyapunov
 
+::: tsdynamics.analysis.lyapunov.from_data.lyapunov_from_data
+
+::: tsdynamics.analysis.lyapunov.from_data.LyapunovFromData
+
 ::: tsdynamics.analysis.lyapunov.kaplan_yorke_dimension
 
 ## Fixed points

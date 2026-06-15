@@ -8,7 +8,16 @@ import numpy as np
 
 from tsdynamics.families import DelaySystem
 
-__all__ = ["kaplan_yorke_dimension", "lyapunov_spectrum", "max_lyapunov"]
+from ... import registry as _registry
+from .from_data import LyapunovFromData, lyapunov_from_data
+
+__all__ = [
+    "LyapunovFromData",
+    "kaplan_yorke_dimension",
+    "lyapunov_from_data",
+    "lyapunov_spectrum",
+    "max_lyapunov",
+]
 
 
 def kaplan_yorke_dimension(spectrum: Any) -> float:
@@ -132,6 +141,7 @@ def max_lyapunov(
     direction *= d0 / np.linalg.norm(direction)
     pert.reinit(ref.state() + direction)
 
+    t_start = ref.time()
     log_sum = 0.0
     for _ in range(n_rescale):
         for _ in range(steps_per):
@@ -148,8 +158,31 @@ def max_lyapunov(
         pert.set_state(ref.state() + (d0 / d) * delta)
 
     if sys.is_discrete:
-        elapsed_per_cycle = float(steps_per)
+        elapsed = float(n_rescale * steps_per)
     else:
-        step_dt = dt if dt is not None else getattr(sys, "_default_step_dt", 0.01)
-        elapsed_per_cycle = steps_per * float(step_dt)
-    return log_sum / (n_rescale * elapsed_per_cycle)
+        # Normalize by the *actual* elapsed integration time, read from the
+        # reference trajectory's clock — robust to whatever per-step advance the
+        # system makes when ``dt`` is ``None`` (built-in flows step by their own
+        # ``_default_step_dt``; a continuous ``WrappedSystem`` steps by its
+        # ``default_dt``). Guessing a step-size attribute name silently rescales
+        # the exponent whenever the guess misses the real per-step advance.
+        elapsed = float(ref.time() - t_start)
+        if elapsed <= 0.0 or not np.isfinite(elapsed):
+            raise RuntimeError(
+                "max_lyapunov: the reference clock did not advance — a continuous "
+                "system must report elapsed time through time(); pass an explicit dt."
+            )
+    return log_sum / elapsed
+
+
+# Self-register the headline Lyapunov quantifiers (D4 / §4e: in-tree analyses
+# register from their own subpackage).  Idempotent across re-imports — `register`
+# keeps the same object under the same name.
+for _name, _fn, _meta in (
+    ("lyapunov_spectrum", lyapunov_spectrum, {"needs": "system", "family": "lyapunov"}),
+    ("max_lyapunov", max_lyapunov, {"needs": "system", "family": "lyapunov"}),
+    ("lyapunov_from_data", lyapunov_from_data, {"needs": "series", "family": "lyapunov"}),
+    ("kaplan_yorke_dimension", kaplan_yorke_dimension, {"needs": "spectrum", "family": "lyapunov"}),
+):
+    _registry.analyses.register(_name, _fn, **_meta)
+del _name, _fn, _meta

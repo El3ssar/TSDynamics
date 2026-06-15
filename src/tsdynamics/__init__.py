@@ -27,6 +27,7 @@ from . import analysis, data, derived, families, registry, systems, utils
 from .analysis import (
     DimensionResult,
     FixedPoint,
+    LyapunovFromData,
     OrbitDiagram,
     approximate_entropy,
     box_counting_dimension,
@@ -40,6 +41,7 @@ from .analysis import (
     generalized_dimension,
     information_dimension,
     kaplan_yorke_dimension,
+    lyapunov_from_data,
     lyapunov_spectrum,
     lz76_complexity,
     lz76_entropy,
@@ -101,6 +103,7 @@ __all__ = [
     # Analysis toolkit
     "DimensionResult",
     "FixedPoint",
+    "LyapunovFromData",
     "OrbitDiagram",
     "box_counting_dimension",
     "correlation_dimension",
@@ -111,6 +114,7 @@ __all__ = [
     "generalized_dimension",
     "information_dimension",
     "kaplan_yorke_dimension",
+    "lyapunov_from_data",
     "lyapunov_spectrum",
     "max_lyapunov",
     "orbit_diagram",
