@@ -72,7 +72,8 @@ src/tsdynamics/
 │   ├── fixedpoints/          # fixed_points + FixedPoint (maps, multi-start Newton; was fixed_points.py)
 │   ├── dimensions/           # A-DIM: correlation/generalized-Rényi/fixed-mass fractal dims + scaling-region fit
 │   ├── entropy/              # A-ENT: permutation/dispersion/sample/multiscale entropy + LZ76 (composable OutcomeSpace×estimator×measure)
-│   └── chaos/ basins/ embedding/ recurrence/ surrogate/   # empty, owned by A-* streams
+│   ├── chaos/               # A-CHAOS: GALI_k (Skokos) + 0–1 test (Gottwald–Melbourne) + expansion entropy (Hunt–Ott); maps via _jacobian, flows via self-contained RK4 variational core (no engine/compile)
+│   └── basins/ embedding/ recurrence/ surrogate/   # empty, owned by A-* streams
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
 ├── viz/                      # DEFERRED stub only (decision D6)
 ├── systems/
@@ -106,7 +107,9 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
   `fixed_points`, `FixedPoint`; fractal dimensions (A-DIM)
   `correlation_dimension`, `correlation_sum`, `generalized_dimension`,
   `box_counting_dimension`, `information_dimension`, `dimension_spectrum`,
-  `fixed_mass_dimension`, `DimensionResult`
+  `fixed_mass_dimension`, `DimensionResult`; chaos indicators (A-CHAOS)
+  `gali`, `GALIResult`, `zero_one_test`, `expansion_entropy`,
+  `ExpansionEntropyResult`
 - Derived: `WrappedSystem` (adapt any external stepper to the protocol)
 - State-space geometry (`data`): `Box`, `Ball`, `Grid`, `sampler`,
   `grid_points`, `set_distance` — the primitives the basin/attractor layer
