@@ -32,6 +32,11 @@ correlation sum (Grassberger & Procaccia 1983): the fraction of point
 pairs closer than $\varepsilon$ scales as $C(\varepsilon)\sim
 \varepsilon^{D_2}$, so $D_2$ is the slope of $\log C$ vs $\log\varepsilon$.
 
+<figure markdown>
+![dimensions showcase](../assets/figures/analysis/dimensions.png){ loading=lazy }
+<figcaption>The Grassberger–Procaccia correlation sum of a Hénon attractor on log–log axes: the slope of the straight scaling region (rose line, points circled) between the small-$r$ noise floor and the large-$r$ saturation knee is the correlation dimension $D_2\approx1.17$, read off directly by <code>correlation_dimension</code>.</figcaption>
+</figure>
+
 ```python
 import tsdynamics as ts
 

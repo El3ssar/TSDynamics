@@ -27,7 +27,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import as_series, phase_randomize
+from ._common import _as_series, _phase_randomize
 
 __all__ = [
     "aaft_surrogate",
@@ -67,7 +67,7 @@ def random_shuffle(x: Any, n: int = 1, *, seed: int | None = None, component: in
     Parameters
     ----------
     x : array-like or Trajectory
-        The source series (see :func:`~tsdynamics.analysis.surrogate._common.as_series`).
+        The source series (see :func:`~tsdynamics.analysis.surrogate._common._as_series`).
     n : int, default 1
         Number of surrogates to draw.
     seed : int, optional
@@ -80,7 +80,7 @@ def random_shuffle(x: Any, n: int = 1, *, seed: int | None = None, component: in
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
     """
-    series = as_series(x, component)
+    series = _as_series(x, component)
     rng = np.random.default_rng(seed)
     N = series.size
     out = np.empty((int(n), N), dtype=float)
@@ -114,9 +114,9 @@ def fourier_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component:
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
     """
-    series = as_series(x, component)
+    series = _as_series(x, component)
     rng = np.random.default_rng(seed)
-    return phase_randomize(series, int(n), rng)
+    return _phase_randomize(series, int(n), rng)
 
 
 def aaft_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component: int | None = None):
@@ -144,7 +144,7 @@ def aaft_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component: in
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
     """
-    series = as_series(x, component)
+    series = _as_series(x, component)
     rng = np.random.default_rng(seed)
     N = series.size
     ranks_x = _ranks(series)
@@ -154,7 +154,7 @@ def aaft_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component: in
     for i in range(int(n)):
         # Gaussian series sharing x's rank order, then phase-randomised.
         gaussian = np.sort(rng.standard_normal(N))[ranks_x]
-        gaussian_surrogate = phase_randomize(gaussian, 1, rng)[0]
+        gaussian_surrogate = _phase_randomize(gaussian, 1, rng)[0]
         # Re-impose x's amplitude distribution by matching ranks.
         out[i] = sorted_x[_ranks(gaussian_surrogate)]
     return out
@@ -196,7 +196,7 @@ def iaaft_surrogate(
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
     """
-    series = as_series(x, component)
+    series = _as_series(x, component)
     rng = np.random.default_rng(seed)
     N = series.size
     target_magnitude = np.abs(np.fft.rfft(series))

@@ -1,0 +1,406 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+{{ super() }}
+{% endblock %}
+
+{% block content %}
+<style>
+  .md-content__inner { padding: 0; max-width: none; }
+  .md-content__inner::before { display: none; }
+  .md-sidebar { display: none; }
+  .md-footer__inner { display: none !important; }
+
+  .ts-home { font-family: var(--md-text-font-family); color: var(--ts-ink); }
+  .md-typeset .ts-home a { border-bottom: none; }
+  .ts-wrap { padding: 0 0.6rem; }
+
+  /* ---- Hero: asymmetric, oversized display serif, live attractor ---- */
+  .ts-hero {
+    display: grid;
+    grid-template-columns: 6.4fr 5.6fr;
+    gap: 2.4rem;
+    align-items: center;
+    padding-top: 3.4rem;
+    padding-bottom: 2.4rem;
+  }
+  @media (max-width: 960px) { .ts-hero { grid-template-columns: 1fr; } }
+
+  .ts-hero-title {
+    display: flex; align-items: center; gap: 1rem;
+    animation: ts-rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .md-typeset .ts-wordmark, .ts-wordmark {
+    font-family: var(--ts-display);
+    font-size: clamp(2.7rem, 6vw, 4.3rem);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1;
+    margin: 0 !important;
+  }
+  .ts-wm-ts {
+    background: linear-gradient(120deg, var(--ts-indigo-strong), var(--ts-teal));
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+  }
+  .ts-wm-dyn { color: var(--ts-ink); }
+  .ts-hero-mark { width: clamp(46px, 4.6vw, 62px); height: auto; display: block; flex: 0 0 auto; }
+
+  .ts-hero-tagline {
+    font-family: var(--ts-mono);
+    font-size: 0.66rem; font-weight: 500; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--ts-muted);
+    margin: 0.9rem 0;
+    animation: ts-rise 0.5s 0.07s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .ts-hero-sub {
+    font-size: 0.92rem; line-height: 1.7; color: var(--ts-ink-soft);
+    max-width: 31rem; margin-bottom: 1.5rem;
+    animation: ts-rise 0.5s 0.14s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .ts-hero-cta { display: flex; gap: 0.7rem; flex-wrap: wrap;
+    animation: ts-rise 0.5s 0.21s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .md-typeset .ts-home a.ts-btn {
+    display: inline-block; padding: 0.62rem 1.15rem;
+    font-family: var(--ts-mono);
+    font-size: 0.62rem; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase;
+    border: 1px solid var(--ts-rule-strong); border-radius: 6px;
+    color: var(--ts-ink); background: var(--ts-surface);
+    transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease, color 0.12s ease;
+  }
+  .md-typeset .ts-home a.ts-btn:hover { border-color: var(--ts-teal); color: var(--ts-teal-strong); transform: translateY(-1px); }
+  .md-typeset .ts-home a.ts-btn--primary { background: var(--ts-indigo); border-color: var(--ts-indigo); color: #fff; }
+  .md-typeset .ts-home a.ts-btn--primary:hover { background: var(--ts-indigo-strong); border-color: var(--ts-indigo-strong); color: #fff; }
+
+  .md-typeset .ts-home figure.ts-attractor {
+    margin: 0; padding: 0; border: none; background: transparent; box-shadow: none;
+    animation: ts-fade 0.9s 0.3s both;
+  }
+  .ts-attractor canvas { width: 100%; height: auto; display: block; }
+  .ts-legend {
+    display: flex; gap: 1.1rem; justify-content: flex-end; margin-top: 0.4rem;
+    font-family: var(--ts-mono); font-size: 0.58rem; font-weight: 500;
+    letter-spacing: 0.05em; color: var(--ts-ink-soft);
+  }
+  .ts-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .ts-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .ts-legend .ts-leg-flow i { background: var(--ts-indigo); }
+  .ts-legend .ts-leg-head i { background: var(--ts-teal); }
+  .ts-attractor figcaption {
+    margin-top: 0.3rem; text-align: right;
+    font-family: var(--ts-mono); font-size: 0.58rem; color: var(--ts-muted);
+  }
+  .ts-attractor figcaption a { color: inherit; border-bottom: 1px dotted var(--ts-muted); }
+  .ts-attractor figcaption a:hover { color: var(--ts-teal); }
+
+  @keyframes ts-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes ts-fade { from { opacity: 0; } to { opacity: 1; } }
+
+  /* ---- Full-bleed code band ---- */
+  .ts-band {
+    width: 100vw; margin-left: calc(50% - 50vw);
+    background: var(--ts-surface);
+    border-top: 1px solid var(--ts-rule); border-bottom: 1px solid var(--ts-rule);
+    padding: 3rem 0;
+  }
+  .ts-band-inner {
+    max-width: 58rem; margin: 0 auto; padding: 0 1.2rem;
+    display: grid; grid-template-columns: 2fr 3fr; gap: 2.4rem; align-items: center;
+  }
+  @media (max-width: 960px) { .ts-band-inner { grid-template-columns: 1fr; } }
+  .ts-band h2 { font-family: var(--ts-display); font-weight: 600; font-size: 1.55rem; line-height: 1.2; color: var(--ts-ink); margin: 0 0 0.8rem; }
+  .ts-band p { font-size: 0.82rem; line-height: 1.7; color: var(--ts-ink-soft); margin: 0; }
+  .ts-band pre {
+    margin: 0; padding: 1.2rem 1.4rem; overflow-x: auto;
+    background: var(--md-code-bg-color); border: 1px solid var(--ts-rule);
+    border-left: 3px solid var(--ts-indigo);
+    border-radius: 8px; font-family: var(--ts-mono); font-size: 0.72rem;
+    line-height: 1.75; color: var(--md-code-fg-color);
+  }
+  .ts-band .c { color: var(--md-code-hl-comment-color); }
+  .ts-band .k { color: var(--md-code-hl-keyword-color); }
+  .ts-band .s { color: var(--md-code-hl-string-color); }
+  .ts-band .n { color: var(--md-code-hl-number-color); }
+
+  /* ---- Principles ---- */
+  .ts-principles { padding-top: 3.2rem; padding-bottom: 0.6rem; }
+  .ts-principles-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.2rem; }
+  @media (max-width: 960px) { .ts-principles-grid { grid-template-columns: 1fr; } }
+  .ts-principle { border-top: 2px solid var(--ts-ink); padding-top: 0.9rem; }
+  .ts-principle .no { font-family: var(--ts-mono); font-size: 0.62rem; letter-spacing: 0.08em; color: var(--ts-teal); }
+  .ts-principle h3 { font-family: var(--ts-display); font-size: 1.1rem; font-weight: 600; margin: 0.3rem 0 0.45rem; color: var(--ts-ink); }
+  .ts-principle p { font-size: 0.76rem; line-height: 1.65; color: var(--ts-ink-soft); margin: 0; }
+  .ts-principle a { color: var(--ts-teal-strong); border-bottom: 1px solid transparent; }
+  .ts-principle a:hover { border-bottom-color: var(--ts-teal); }
+
+  /* ---- Tracks ---- */
+  .ts-tracks { padding-top: 2.4rem; padding-bottom: 4rem; }
+  .ts-tracks-head { font-family: var(--ts-mono); font-size: 0.6rem; font-weight: 600;
+    letter-spacing: 0.18em; text-transform: uppercase; color: var(--ts-muted); margin-bottom: 1.2rem; }
+  .ts-tracks-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  @media (max-width: 960px) { .ts-tracks-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .ts-tracks-grid { grid-template-columns: 1fr; } }
+  .md-typeset .ts-home a.ts-track {
+    display: block; padding: 1.05rem 1.1rem 1.15rem;
+    border: 1px solid var(--ts-rule); border-radius: 8px;
+    background: var(--ts-surface); box-shadow: var(--ts-shadow);
+    transition: border-color 0.14s ease, transform 0.14s ease;
+  }
+  .md-typeset .ts-home a.ts-track:hover { border-color: var(--ts-teal); transform: translateY(-2px); }
+  .ts-track b { font-family: var(--ts-display); font-size: 0.98rem; font-weight: 600; display: block; margin-bottom: 0.3rem; color: var(--ts-ink); }
+  .ts-track span { font-size: 0.72rem; line-height: 1.55; color: var(--ts-ink-soft); }
+</style>
+
+<div class="ts-home">
+
+  <section class="ts-hero ts-wrap">
+    <div>
+      <div class="ts-hero-title">
+        <h1 class="ts-wordmark"><span class="ts-wm-ts">TS</span><span class="ts-wm-dyn">Dynamics</span></h1>
+        <img class="ts-hero-mark" src="assets/logo.svg" alt="TSDynamics attractor mark" width="62" height="62">
+      </div>
+      <p class="ts-hero-tagline">Dynamical systems &amp; chaos analysis · Python on a Rust engine</p>
+      <p class="ts-hero-sub">
+        Define the math once, as one symbolic method. TSDynamics lowers it to a
+        native engine and hands you trajectories, Lyapunov spectra, bifurcation
+        diagrams, fractal dimensions, recurrence, basins and more — across 149
+        built-in ODEs, delay equations and maps, with no compile step and no warmup.
+      </p>
+      <div class="ts-hero-cta">
+        <a class="ts-btn ts-btn--primary" href="start/first-trajectory/">First trajectory — 5 min</a>
+        <a class="ts-btn" href="systems/">Browse 149 systems</a>
+        <a class="ts-btn" href="analysis/">Analysis toolkit</a>
+      </div>
+    </div>
+    <figure class="ts-attractor">
+      <canvas id="ts-attractor-canvas" width="960" height="820"
+        aria-label="A chaotic attractor rotating slowly in 3D; the system changes as it runs"></canvas>
+      <div class="ts-legend">
+        <span class="ts-leg-flow"><i></i>trajectory</span>
+        <span class="ts-leg-head"><i></i>state</span>
+      </div>
+      <figcaption><span id="ts-attractor-name">—</span> — integrated live by the engine;
+        a new 3D system as it runs.</figcaption>
+    </figure>
+  </section>
+
+  <section class="ts-band">
+    <div class="ts-band-inner">
+      <div>
+        <h2>From equations to a chaotic attractor</h2>
+        <p>
+          Instantiate a system, integrate, read named components, and measure
+          the Lyapunov spectrum — the right-hand side is lowered to the Rust
+          engine in-process, so the first call runs at full speed.
+        </p>
+      </div>
+      <pre><span class="k">import</span> tsdynamics <span class="k">as</span> ts
+
+lor = ts.systems.<span class="k">Lorenz</span>()
+traj = lor.integrate(final_time=<span class="n">100.0</span>, dt=<span class="n">0.01</span>)
+
+traj[<span class="s">"x"</span>]                 <span class="c"># named component access</span>
+traj.after(<span class="n">20.0</span>)            <span class="c"># drop the transient</span>
+
+lor.lyapunov_spectrum()    <span class="c"># ≈ [0.906, 0.0, -14.57]</span>
+ts.kaplan_yorke_dimension(_)  <span class="c"># ≈ 2.06</span></pre>
+    </div>
+  </section>
+
+  <section class="ts-principles ts-wrap">
+    <div class="ts-principles-grid">
+      <div class="ts-principle">
+        <span class="no">No. 1</span>
+        <h3>A native engine, zero warmup</h3>
+        <p>ODEs, delay equations and maps all lower to one Rust engine — an
+        SSA-tape interpreter with a Cranelift JIT alongside. No compile step,
+        no warmup: the <a href="theory/backends/">first call runs at full speed</a>.</p>
+      </div>
+      <div class="ts-principle">
+        <span class="no">No. 2</span>
+        <h3>149 systems out of the box</h3>
+        <p>118 continuous flows, 5 delay systems and 26 maps — Lorenz to
+        Mackey–Glass to Hénon — each with literature defaults, named variables
+        and <a href="systems/">a generated page with its attractor</a>.</p>
+      </div>
+      <div class="ts-principle">
+        <span class="no">No. 3</span>
+        <h3>One protocol, every analysis</h3>
+        <p>Everything that steps — a map, a flow, a Poincaré section of a flow —
+        shares one protocol, so the <a href="analysis/">toolkit composes</a>: an
+        orbit diagram over a Poincaré map <em>is</em> a bifurcation diagram.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="ts-tracks ts-wrap">
+    <div class="ts-tracks-head">Choose a track</div>
+    <div class="ts-tracks-grid">
+      <a class="ts-track" href="start/">
+        <b>Start</b>
+        <span>Install, integrate your first trajectory, and the handful of ideas the library is built on.</span>
+      </a>
+      <a class="ts-track" href="systems/">
+        <b>Systems</b>
+        <span>The catalogue: 118 flows, 5 delay equations and 26 maps, each with equations and a phase portrait.</span>
+      </a>
+      <a class="ts-track" href="analysis/">
+        <b>Analysis</b>
+        <span>Lyapunov, chaos indicators, fractal dimensions, recurrence, embeddings, surrogates, basins.</span>
+      </a>
+      <a class="ts-track" href="transforms/">
+        <b>Transforms</b>
+        <span>Spectra, filters and features — turn a trajectory into the inputs for the analysis toolkit.</span>
+      </a>
+      <a class="ts-track" href="theory/">
+        <b>Theory</b>
+        <span>The compilation pipeline, the backends, the Lyapunov machinery, and the conventions.</span>
+      </a>
+      <a class="ts-track" href="reference/">
+        <b>Reference</b>
+        <span>The full public API, generated from the source docstrings, plus the solver catalogue.</span>
+      </a>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  // The hero: a chaotic attractor integrated by TSDynamics, rotating slowly
+  // in 3D. The head (teal) traces the current state along the trajectory
+  // (indigo); when a full pass completes, a new 3D system takes over, so a
+  // single visit tours many attractors. Trajectories were generated offline
+  // by docs/_tooling/make_hero.py using the library itself.
+  var TAIL = 1150;       // trailing samples drawn
+  var SPEED = 1.25;      // samples advanced per frame
+  var YAW_RATE = 0.08;   // rad/s rotation
+  var TILT = -0.42;      // fixed pitch for the 3D feel
+
+  var canvas = document.getElementById("ts-attractor-canvas");
+  if (!canvas || canvas.dataset.live) return;
+  canvas.dataset.live = "1";
+  var ctx = canvas.getContext("2d");
+  var label = document.getElementById("ts-attractor-name");
+  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  var W = canvas.width, H = canvas.height;
+  var colors = { flow: "#4f46e5", head: "#0d9488" };
+  var frame = 0;
+
+  function readColors() {
+    var cs = getComputedStyle(document.body);
+    colors.flow = (cs.getPropertyValue("--ts-indigo") || "#4f46e5").trim();
+    colors.head = (cs.getPropertyValue("--ts-teal") || "#0d9488").trim();
+  }
+
+  function geometry(pts) {
+    var c = [0, 0, 0], i, j;
+    for (i = 0; i < pts.length; i++) for (j = 0; j < 3; j++) c[j] += pts[i][j];
+    for (j = 0; j < 3; j++) c[j] /= pts.length;
+    var ds = [];
+    for (i = 0; i < pts.length; i++) {
+      var dx = pts[i][0] - c[0], dy = pts[i][1] - c[1], dz = pts[i][2] - c[2];
+      ds.push(Math.sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    ds.sort(function (a, b) { return a - b; });
+    return { c: c, r: ds[Math.floor(ds.length * 0.97)] * 1.05 };
+  }
+
+  function project(p, geo, yaw) {
+    var x = p[0] - geo.c[0], y = p[1] - geo.c[1], z = p[2] - geo.c[2];
+    var cy = Math.cos(yaw), sy = Math.sin(yaw);
+    var x1 = x * cy + z * sy, z1 = -x * sy + z * cy;
+    var ct = Math.cos(TILT), st = Math.sin(TILT);
+    var y2 = y * ct - z1 * st;
+    var scale = (Math.min(W, H) / 2 - 30) / geo.r;
+    return [W / 2 + x1 * scale, H / 2 - y2 * scale];
+  }
+
+  function drawTail(pts, upto, geo, yaw) {
+    var from = Math.max(0, upto - TAIL);
+    var n = upto - from;
+    if (n < 2) return;
+    var CHUNKS = 12, k;
+    for (k = 0; k < CHUNKS; k++) {
+      var a = from + Math.floor(n * k / CHUNKS);
+      var b = Math.min(from + Math.floor(n * (k + 1) / CHUNKS) + 1, upto);
+      if (b - a < 2) continue;
+      ctx.globalAlpha = 0.05 + 0.85 * Math.pow((k + 1) / CHUNKS, 1.7);
+      ctx.beginPath();
+      var p = project(pts[a], geo, yaw);
+      ctx.moveTo(p[0], p[1]);
+      for (var i = a + 1; i < b; i++) { p = project(pts[i], geo, yaw); ctx.lineTo(p[0], p[1]); }
+      ctx.strokeStyle = colors.flow;
+      ctx.lineWidth = 2.4; ctx.lineJoin = "round"; ctx.lineCap = "round";
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    var tip = project(pts[upto - 1], geo, yaw);
+    var glow = ctx.createRadialGradient(tip[0], tip[1], 0, tip[0], tip[1], 16);
+    glow.addColorStop(0, colors.head);
+    glow.addColorStop(1, "rgba(13,148,136,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(tip[0], tip[1], 16, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = colors.head;
+    ctx.beginPath(); ctx.arc(tip[0], tip[1], 4.5, 0, 6.2832); ctx.fill();
+  }
+
+  function run(data) {
+    var pts = [];
+    for (var i = 0; i < data.n; i++) pts.push([data.xyz[3 * i], data.xyz[3 * i + 1], data.xyz[3 * i + 2]]);
+    var geo = geometry(pts);
+    var total = pts.length;
+    var t = 12;
+    var t0 = performance.now();
+    if (label) label.textContent = data.name;
+    readColors();
+
+    if (reduced) {
+      ctx.clearRect(0, 0, W, H);
+      drawTail(pts, total, geo, 0.7);
+      window.setTimeout(next, 6000);   // still tour systems, without motion
+      return;
+    }
+
+    function tick(now) {
+      if (canvas.dataset.gen !== String(myGen)) return;  // a newer system took over
+      var yaw = ((now - t0) / 1000) * YAW_RATE;
+      if (++frame % 40 === 0) readColors();
+      ctx.clearRect(0, 0, W, H);
+      drawTail(pts, Math.floor(t), geo, yaw);
+      t += SPEED;
+      if (t >= total) { next(); return; }   // full pass done → next system
+      requestAnimationFrame(tick);
+    }
+    var myGen = ++genCounter;
+    canvas.dataset.gen = String(myGen);
+    requestAnimationFrame(tick);
+  }
+
+  var genCounter = 0;
+  var systems = [], lastPick = null;
+
+  function next() {
+    if (!systems.length) return;
+    var pick;
+    do { pick = systems[Math.floor(Math.random() * systems.length)]; }
+    while (pick === lastPick && systems.length > 1);
+    lastPick = pick;
+    fetch("assets/hero/" + pick + ".json")
+      .then(function (r) { return r.json(); })
+      .then(run)
+      .catch(function () { window.setTimeout(next, 1500); });
+  }
+
+  fetch("assets/hero/manifest.json")
+    .then(function (r) { return r.json(); })
+    .then(function (m) { systems = m.systems || []; next(); })
+    .catch(function () { /* leave the canvas empty rather than break the page */ });
+})();
+</script>
+{% endblock %}
+
+{% block footer %}
+{{ super() }}
+{% endblock %}

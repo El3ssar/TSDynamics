@@ -28,8 +28,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-figures"
 OUT_DIR = ROOT / "docs" / "assets" / "figures" / "systems"
 
-_ACCENT = "#5e35b1"
-_ACCENT_2 = "#00897b"
+_ACCENT = "#4f46e5"  # indigo — flow/system (matches the docs identity)
+_ACCENT_2 = "#0d9488"  # teal — secondary / delay-embedding view
 
 #: Per-system rendering overrides: final_time, dt, ic, kind, transient_frac.
 FIG_OVERRIDES: dict[str, dict] = {
@@ -76,7 +76,7 @@ def _style():
     return plt
 
 
-RENDERER_VERSION = "2"  # bump manually when rendering output materially changes
+RENDERER_VERSION = "3"  # bump manually when rendering output materially changes
 
 
 def cache_key(entry) -> str:

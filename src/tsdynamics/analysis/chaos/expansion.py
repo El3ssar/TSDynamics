@@ -147,7 +147,7 @@ def expansion_entropy(
             f"{type(system).__name__}."
         )
 
-    box = _c.resolve_region(system, region)
+    box = _c._resolve_region(system, region)
     if box.dim != system.dim:
         raise ValueError(
             f"region dimension ({box.dim}) does not match system dimension ({system.dim})."
@@ -180,7 +180,7 @@ def expansion_entropy(
             "expansion entropy: fewer than two finite ln E(t) points in the fit range "
             "(too few survivors stayed in the region — enlarge it or shorten the horizon)."
         )
-    slope, intercept, stderr = _c.linfit(t_fit[finite], y_fit[finite])
+    slope, intercept, stderr = _c._linfit(t_fit[finite], y_fit[finite])
     return ExpansionEntropyResult(
         entropy=slope,
         stderr=stderr,
@@ -217,7 +217,7 @@ def _expansion_map(
     system: Any, ics: np.ndarray, box: Box, n_steps: int
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Accumulate ``G(DF^t)`` for a map; ``DF^t = J(x_{t-1})...J(x_0)`` per sample."""
-    step, jac = _c.map_fns(system)
+    step, jac = _c._map_fns(system)
     dim = int(system.dim)
     n = ics.shape[0]
     eye = np.eye(dim)
@@ -250,7 +250,7 @@ def _expansion_flow(
     system: Any, ics: np.ndarray, box: Box, final_time: float, dt: float, n_internal: int
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Accumulate ``G(Phi(t))`` for a flow; ``Phi`` is the RK4 fundamental matrix per sample."""
-    rhs, jac = _c.flow_fns(system)
+    rhs, jac = _c._flow_fns(system)
     dim = int(system.dim)
     n = ics.shape[0]
     n_steps = int(round(final_time / dt))
@@ -272,7 +272,7 @@ def _expansion_flow(
                 continue
             x, m, t = states[i], mats[i], t_local[i]
             for _ in range(n_internal):
-                x, m = _c.rk4_variational(rhs, jac, x, m, t, h)
+                x, m = _c._rk4_variational(rhs, jac, x, m, t, h)
                 t += h
             states[i], mats[i], t_local[i] = x, m, t
             if not box.contains(x):

@@ -103,7 +103,7 @@ class GALIResult:
             mask &= t >= t_min
         if int(np.count_nonzero(mask)) < 2:
             return 0.0
-        slope, _, _ = _c.linfit(t[mask], np.log(v[mask]))
+        slope, _, _ = _c._linfit(t[mask], np.log(v[mask]))
         return float(-slope)
 
     def is_chaotic(self, *, threshold: float = 1e-6) -> bool:
@@ -195,7 +195,7 @@ def gali(
         raise ValueError(f"k must satisfy 2 <= k <= dim ({dim}); got {k}.")
 
     rng = np.random.default_rng(seed)
-    w0 = _c.orthonormal_frame(dim, k, rng)
+    w0 = _c._orthonormal_frame(dim, k, rng)
 
     if mode == "map":
         if dt is not None:
@@ -251,7 +251,7 @@ def _gali_map(
     Returns ``None`` (soft failure) if the orbit or the tangent frame diverges to
     a non-finite value, so the caller can retry from a fresh IC.
     """
-    step, jac = _c.map_fns(system)
+    step, jac = _c._map_fns(system)
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         for _ in range(n_burn):
             x = step(x)
@@ -267,7 +267,7 @@ def _gali_map(
             w = j @ w
             if not np.all(np.isfinite(w)):
                 return None
-            w = _c.normalize_columns(w)
+            w = _c._normalize_columns(w)
             values[i] = _c.gali_volume(w)
     return times, values
 
@@ -286,13 +286,13 @@ def _gali_flow(
     Returns ``None`` (soft failure) on a non-finite (diverged) orbit or frame, so
     the caller can retry from a fresh IC.
     """
-    rhs, jac = _c.flow_fns(system)
+    rhs, jac = _c._flow_fns(system)
     h_burn = dt / max(1, n_internal)
     t = 0.0
     n_burn = int(round(max(0.0, transient) / h_burn))
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         for _ in range(n_burn):
-            x = _c.rk4_state(rhs, x, t, h_burn)
+            x = _c._rk4_state(rhs, x, t, h_burn)
             t += h_burn
             if not np.all(np.isfinite(x)):
                 return None
@@ -303,11 +303,11 @@ def _gali_flow(
         times = np.empty(n_steps)
         for i in range(n_steps):
             for _ in range(n_internal):
-                x, w = _c.rk4_variational(rhs, jac, x, w, t, h)
+                x, w = _c._rk4_variational(rhs, jac, x, w, t, h)
                 t += h
             if not np.all(np.isfinite(x)) or not np.all(np.isfinite(w)):
                 return None
-            w = _c.normalize_columns(w)
+            w = _c._normalize_columns(w)
             values[i] = _c.gali_volume(w)
             times[i] = t
     return times, values

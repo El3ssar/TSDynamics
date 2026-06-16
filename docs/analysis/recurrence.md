@@ -14,6 +14,11 @@ of determinism, laminarity and predictability (Marwan, Romano, Thiel & Kurths
 2007). TSDynamics builds the matrix sparsely with a `cKDTree` and runs the
 quantifiers globally or in a sliding window.
 
+<figure markdown>
+![recurrence showcase](../assets/figures/analysis/recurrence.png){ loading=lazy }
+<figcaption>At a fixed recurrence rate the logistic map's recurrence plot tells the regimes apart at a glance: a period-4 cycle (r = 3.5) recurs on clean, evenly spaced parallel diagonals, while deterministic chaos (r = 4.0) shatters them into a short-lined speckle.</figcaption>
+</figure>
+
 | Function | Returns | Gives you |
 |---|---|---|
 | [`recurrence_matrix`](#the-recurrence-matrix) | `RecurrenceMatrix` | the sparse plot $R_{ij}$ |

@@ -36,7 +36,10 @@ hooks:
 
 theme:
   name: material
+  custom_dir: docs/overrides
   language: en
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
   icon:
     repo: fontawesome/brands/github
   font:
@@ -44,14 +47,14 @@ theme:
     code: IBM Plex Mono
   palette:
     - scheme: default
-      primary: deep purple
-      accent: deep purple
+      primary: indigo
+      accent: teal
       toggle:
         icon: material/weather-night
         name: Switch to dark
     - scheme: slate
-      primary: deep purple
-      accent: deep purple
+      primary: indigo
+      accent: teal
       toggle:
         icon: material/weather-sunny
         name: Switch to light
@@ -78,6 +81,7 @@ extra:
 
 extra_css:
   - css/tsdynamics.css
+  - https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
 
 extra_javascript:
@@ -184,6 +188,7 @@ nav:
       - theory/index.md
       - Compilation pipeline: theory/compilation.md
       - Backends: theory/backends.md
+      - Solvers & methods: theory/solvers.md
       - Lyapunov exponents: theory/lyapunov.md
       - Conventions: theory/conventions.md
       - Packaging & distribution: theory/packaging.md

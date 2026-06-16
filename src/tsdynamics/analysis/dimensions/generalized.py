@@ -29,7 +29,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import DimensionResult, as_points, default_scales
+from ._common import DimensionResult, _as_points, _default_scales
 from ._scaling import fit_scaling_region
 
 __all__ = [
@@ -107,7 +107,7 @@ def generalized_dimension(
     scales : ndarray, optional
         Box sizes :math:`\epsilon`.  Default: a log-spaced grid spanning the
         attractor diameter
-        (:func:`~tsdynamics.analysis.dimensions._common.default_scales`).
+        (:func:`~tsdynamics.analysis.dimensions._common._default_scales`).
     n_scales : int, default 18
         Number of box sizes when ``scales`` is not given.
     sat_frac : float, default 0.85
@@ -130,11 +130,11 @@ def generalized_dimension(
     dimensions of fractals and strange attractors", *Physica D* **8**, 435
     (1983).
     """
-    points = as_points(data)
+    points = _as_points(data)
     n = points.shape[0]
     mins = points.min(axis=0)
     if scales is None:
-        scales = default_scales(points, n_scales=n_scales)
+        scales = _default_scales(points, n_scales=n_scales)
     scales = np.asarray(scales, dtype=float)
     if np.any(scales <= 0.0):
         raise ValueError("box sizes (scales) must be positive.")
@@ -211,14 +211,14 @@ def dimension_spectrum(
     dict[float, DimensionResult]
         ``{q: DimensionResult}`` in the order of ``qs``.
     """
-    points = as_points(data)
+    points = _as_points(data)
     n = points.shape[0]
     mins = points.min(axis=0)
     if qs is None:
         qs = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
     qs = [float(q) for q in np.atleast_1d(qs)]
     if scales is None:
-        scales = default_scales(points, n_scales=n_scales)
+        scales = _default_scales(points, n_scales=n_scales)
     scales = np.asarray(scales, dtype=float)
 
     order = np.argsort(scales)

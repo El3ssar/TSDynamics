@@ -33,7 +33,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import as_points, metric_p, threshold_for_rate
+from ._common import _as_points, _metric_p, _threshold_for_rate
 
 __all__ = ["RecurrenceMatrix", "recurrence_matrix"]
 
@@ -146,9 +146,9 @@ def recurrence_matrix(
 
     if (threshold is None) == (recurrence_rate is None):
         raise ValueError("pass exactly one of threshold= or recurrence_rate=.")
-    points = as_points(data)
+    points = _as_points(data)
     n = points.shape[0]
-    p = metric_p(metric)
+    p = _metric_p(metric)
     w = int(theiler_window)
     if w < 0:
         raise ValueError("theiler_window must be non-negative.")
@@ -163,7 +163,7 @@ def recurrence_matrix(
         rate = float(recurrence_rate)
         if not (0.0 < rate < 1.0):
             raise ValueError(f"recurrence_rate must be in (0, 1), got {recurrence_rate!r}.")
-        eps = threshold_for_rate(points, rate, p, w)
+        eps = _threshold_for_rate(points, rate, p, w)
 
     tree = cKDTree(points)
     pairs = tree.query_pairs(r=eps, p=p, output_type="ndarray")  # (M, 2), i < j

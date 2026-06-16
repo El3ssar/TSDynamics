@@ -3,7 +3,7 @@ Shared primitives for the attractor / basin layer.
 
 Two concerns live here so the headline modules stay focused:
 
-- **State-space tessellation** (:class:`CellGrid`): bin a continuous (or
+- **State-space tessellation** (:class:`_CellGrid`): bin a continuous (or
   discrete) state into one of ``counts[i]`` cells per axis, with out-of-region
   detection.  The recurrence attractor finder
   (:mod:`tsdynamics.analysis.basins.attractors`) and the grid-based metrics
@@ -27,13 +27,7 @@ import numpy as np
 
 from ...data import Ball, Box, Grid
 
-__all__ = [
-    "CellGrid",
-    "apply_merge",
-    "as_label_array",
-    "recurrence_grid",
-    "representative",
-]
+__all__: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -41,12 +35,12 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class CellGrid:
+class _CellGrid:
     """
     A regular tessellation of a box ``[lo, hi]`` into ``counts[i]`` cells per axis.
 
     Unlike :class:`~tsdynamics.data.Grid` (which enumerates lattice *points*),
-    a :class:`CellGrid` bins a continuous position into a half-open cell
+    a :class:`_CellGrid` bins a continuous position into a half-open cell
     ``[lo + k*delta, lo + (k+1)*delta)``.  It is the substrate the recurrence
     attractor finder walks: a trajectory is followed cell by cell and an
     attractor is the recurrent set of cells it settles into.
@@ -74,8 +68,8 @@ class CellGrid:
         self.delta = (self.hi - self.lo) / self._n
 
     @classmethod
-    def from_grid(cls, grid: Grid) -> CellGrid:
-        """Build a :class:`CellGrid` whose cell counts are ``grid.counts``."""
+    def from_grid(cls, grid: Grid) -> _CellGrid:
+        """Build a :class:`_CellGrid` whose cell counts are ``grid.counts``."""
         return cls(grid.lo, grid.hi, grid.counts)
 
     def index(self, u: np.ndarray) -> tuple[int, ...] | None:
@@ -108,9 +102,9 @@ class CellGrid:
 # ---------------------------------------------------------------------------
 
 
-def recurrence_grid(region: Box | Ball | Grid, resolution: int | tuple[int, ...]) -> CellGrid:
+def _recurrence_grid(region: Box | Ball | Grid, resolution: int | tuple[int, ...]) -> _CellGrid:
     """
-    Build the recurrence :class:`CellGrid` covering ``region``.
+    Build the recurrence :class:`_CellGrid` covering ``region``.
 
     A :class:`~tsdynamics.data.Grid` keeps its own ``counts``; a
     :class:`~tsdynamics.data.Box` or :class:`~tsdynamics.data.Ball` is tessellated
@@ -124,7 +118,7 @@ def recurrence_grid(region: Box | Ball | Grid, resolution: int | tuple[int, ...]
         its own ``counts``).
     """
     if isinstance(region, Grid):
-        return CellGrid.from_grid(region)
+        return _CellGrid.from_grid(region)
     if isinstance(region, Box):
         lo, hi = region.lo, region.hi
     elif isinstance(region, Ball):
@@ -134,7 +128,7 @@ def recurrence_grid(region: Box | Ball | Grid, resolution: int | tuple[int, ...]
         raise TypeError(f"unsupported region type {type(region).__name__}")
     dim = lo.size
     counts = (resolution,) * dim if np.isscalar(resolution) else tuple(resolution)
-    return CellGrid(lo, hi, counts)
+    return _CellGrid(lo, hi, counts)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +136,7 @@ def recurrence_grid(region: Box | Ball | Grid, resolution: int | tuple[int, ...]
 # ---------------------------------------------------------------------------
 
 
-def as_label_array(basins: Any) -> np.ndarray:
+def _as_label_array(basins: Any) -> np.ndarray:
     """
     Coerce a basin diagram to an integer label array.
 
@@ -164,13 +158,13 @@ def as_label_array(basins: Any) -> np.ndarray:
     return squeezed if squeezed.ndim >= 1 else arr
 
 
-def representative(points: np.ndarray) -> np.ndarray:
+def _representative(points: np.ndarray) -> np.ndarray:
     """Return a single representative point (the centroid) of an attractor cloud."""
     pts = np.atleast_2d(np.asarray(points, dtype=float))
     return pts.mean(axis=0)
 
 
-def apply_merge(labels: np.ndarray, merge: dict[int, int]) -> np.ndarray:
+def _apply_merge(labels: np.ndarray, merge: dict[int, int]) -> np.ndarray:
     """Remap a label array through ``{old_id: canonical_id}`` (others unchanged)."""
     if not merge:
         return labels

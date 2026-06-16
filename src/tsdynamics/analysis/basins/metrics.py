@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import as_label_array
+from ._common import _as_label_array
 from .basins import BasinsResult
 
 __all__ = [
@@ -195,7 +195,7 @@ def basin_entropy(basins: Any, *, box_size: int = 5, base: float = np.e) -> Basi
     "Basin entropy: a new tool to analyze uncertainty in dynamical systems",
     *Scientific Reports* **6**, 31416 (2016).
     """
-    labels = as_label_array(basins)
+    labels = _as_label_array(basins)
     if box_size < 1:
         raise ValueError(f"box_size must be >= 1, got {box_size}")
     log = np.log(base)
@@ -282,7 +282,7 @@ def uncertainty_exponent(
     C. Grebogi, S. W. McDonald, E. Ott and J. A. Yorke, "Final state sensitivity:
     an obstruction to predictability", *Physics Letters A* **99**, 415 (1983).
     """
-    labels = as_label_array(basins)
+    labels = _as_label_array(basins)
     radii = tuple(int(r) for r in radii)
     if len(radii) < 2:
         raise ValueError("need at least two radii to fit a slope.")
@@ -375,7 +375,7 @@ def wada_property(
     """
     from scipy.ndimage import maximum_filter
 
-    labels = as_label_array(basins)
+    labels = _as_label_array(basins)
     colors = [int(c) for c in np.unique(labels) if c >= 1]
     radii = tuple(int(r) for r in radii)
     boundary = _neighbor_differs(labels, 1)

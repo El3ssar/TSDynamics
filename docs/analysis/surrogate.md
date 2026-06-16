@@ -14,6 +14,11 @@ compute a discriminating statistic on the data and on each surrogate, and
 reject the linear null when the data sits in the tail of the surrogate
 distribution (Theiler, Eubank, Longtin, Galdrikian & Farmer 1992).
 
+<figure markdown>
+![surrogate showcase](../assets/figures/analysis/surrogate.png){ loading=lazy }
+<figcaption>A surrogate-data test of the Lorenz z-component: the time-reversal asymmetry statistic on the data (rose) sits 17σ outside the null distribution of 200 IAAFT surrogates (indigo), so the linear-stochastic null is rejected at p ≈ 0.01.</figcaption>
+</figure>
+
 | Function | Builds / does | Preserves |
 |---|---|---|
 | [`random_shuffle`](#generators) | permutation of the samples | amplitude distribution only |

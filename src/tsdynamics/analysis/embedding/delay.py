@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import as_series
+from ._common import _as_series
 
 __all__ = ["autocorrelation", "mutual_information", "optimal_delay"]
 
@@ -56,7 +56,7 @@ def autocorrelation(
     normalised by the zero-lag value, so it is an unbiased-in-mean estimate
     (each lag divided by the full zero-lag variance, the standard convention).
     """
-    x = as_series(data, component=component)
+    x = _as_series(data, component=component)
     n = x.size
     max_lag = int(max_lag)
     if max_lag < 0:
@@ -126,7 +126,7 @@ def mutual_information(
     A. M. Fraser and H. L. Swinney, "Independent coordinates for strange
     attractors from mutual information", *Phys. Rev. A* **33**, 1134 (1986).
     """
-    x = as_series(data, component=component)
+    x = _as_series(data, component=component)
     n = x.size
     max_lag = int(max_lag)
     if max_lag < 0:

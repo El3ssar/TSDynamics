@@ -29,7 +29,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import DimensionResult, as_points, default_radii, metric_p, pnorm
+from ._common import DimensionResult, _as_points, _default_radii, _metric_p, _pnorm
 from ._scaling import fit_scaling_region
 
 __all__ = ["correlation_dimension", "correlation_sum"]
@@ -38,7 +38,7 @@ __all__ = ["correlation_dimension", "correlation_sum"]
 def _near_diagonal_distances(points: np.ndarray, w: int, p: float) -> np.ndarray:
     """Distances of all pairs ``(i, i+off)`` with ``1 <= off <= w`` (the Theiler band)."""
     n = points.shape[0]
-    chunks = [pnorm(points[:-off] - points[off:], p) for off in range(1, w + 1) if off < n]
+    chunks = [_pnorm(points[:-off] - points[off:], p) for off in range(1, w + 1) if off < n]
     return np.concatenate(chunks) if chunks else np.empty(0)
 
 
@@ -59,7 +59,7 @@ def correlation_sum(
         1-D series is treated as a single component).
     radii : ndarray, optional
         Radii at which to evaluate :math:`C(r)`.  Default: a data-adaptive
-        log-spaced grid (:func:`~tsdynamics.analysis.dimensions._common.default_radii`).
+        log-spaced grid (:func:`~tsdynamics.analysis.dimensions._common._default_radii`).
     theiler_window : int, default 0
         Exclude pairs with :math:`|i - j| \le w`.  Use a few autocorrelation
         times for densely sampled flows; 0 for already-decorrelated point sets.
@@ -82,14 +82,14 @@ def correlation_sum(
     """
     from scipy.spatial import cKDTree
 
-    points = as_points(data)
+    points = _as_points(data)
     n = points.shape[0]
     w = int(theiler_window)
     if w < 0:
         raise ValueError("theiler_window must be non-negative.")
-    p = metric_p(metric)
+    p = _metric_p(metric)
     if radii is None:
-        radii = default_radii(points, p=p, n_radii=n_radii)
+        radii = _default_radii(points, p=p, n_radii=n_radii)
     radii = np.asarray(radii, dtype=float)
 
     order = np.argsort(radii)

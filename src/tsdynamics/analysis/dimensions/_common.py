@@ -1,7 +1,7 @@
 r"""
 Shared plumbing for the fractal-dimension estimators.
 
-Holds the point-set coercion (:func:`as_points`), metric handling, default
+Holds the point-set coercion (:func:`_as_points`), metric handling, default
 log-spaced scale grids, and the :class:`DimensionResult` container every
 estimator returns.  The numerical estimators live in :mod:`.correlation`,
 :mod:`.generalized` and :mod:`.fixedmass`; the scaling-region fit they all share
@@ -20,7 +20,7 @@ from ._scaling import local_slopes
 __all__ = ["DimensionResult"]
 
 
-def as_points(data: Any) -> np.ndarray:
+def _as_points(data: Any) -> np.ndarray:
     """Coerce a trajectory / array / point list to a ``(N, dim)`` float array.
 
     Accepts anything with a ``.y`` attribute (a
@@ -58,7 +58,7 @@ def as_points(data: Any) -> np.ndarray:
     return np.ascontiguousarray(arr)
 
 
-def metric_p(metric: str | float) -> float:
+def _metric_p(metric: str | float) -> float:
     """Map a metric name (or a Minkowski exponent) to a ``scipy`` ``p`` value.
 
     Recognises ``"euclidean"`` (``p=2``), ``"manhattan"``/``"cityblock"``/``"l1"``
@@ -94,7 +94,7 @@ def metric_p(metric: str | float) -> float:
     return table[key]
 
 
-def pnorm(diff: np.ndarray, p: float) -> np.ndarray:
+def _pnorm(diff: np.ndarray, p: float) -> np.ndarray:
     """Row-wise Minkowski-``p`` norm of a ``(M, dim)`` array of differences."""
     a = np.abs(diff)
     if p == float("inf"):
@@ -111,7 +111,7 @@ def _diameter(points: np.ndarray) -> float:
     return float((points.max(axis=0) - points.min(axis=0)).max())
 
 
-def default_radii(
+def _default_radii(
     points: np.ndarray,
     *,
     p: float,
@@ -154,7 +154,7 @@ def default_radii(
     j = rng.integers(0, n, size=m)
     keep = i != j
     i, j = i[keep], j[keep]
-    d = pnorm(points[i] - points[j], p)
+    d = _pnorm(points[i] - points[j], p)
     d = d[d > 0.0]
     if d.size == 0:
         diam = _diameter(points) or 1.0
@@ -167,7 +167,7 @@ def default_radii(
     return np.logspace(np.log10(r_lo), np.log10(r_hi), n_radii)
 
 
-def default_scales(
+def _default_scales(
     points: np.ndarray,
     *,
     n_scales: int = 16,

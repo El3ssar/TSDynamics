@@ -6,6 +6,11 @@ description: Integration and iteration in depth — solver choices, tolerances, 
 
 # Integrate & iterate
 
+<figure markdown>
+![integrate showcase](../assets/figures/analysis/integrate.png){ loading=lazy }
+<figcaption>A single <code>Lorenz().integrate(...)</code> call returns one <code>Trajectory</code>: the same data drawn as the strange attractor in state space (left) and as the x, y, z time series it samples on the output grid (right).</figcaption>
+</figure>
+
 ## Solvers and tolerances (ODE)
 
 ```python

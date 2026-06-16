@@ -24,6 +24,11 @@ deform as a parameter moves, and how robust an attractor is to a perturbation.
 | [`tipping_points`](#continuation-tipping-resilience) | where a basin dies | a `ContinuationResult` |
 | [`resilience`](#continuation-tipping-resilience) | distance to the boundary | a `BasinsResult` |
 
+<figure markdown>
+![basins showcase](../assets/figures/analysis/basins.png){ loading=lazy }
+<figcaption>Basins of attraction for Newton's method on $z^3=1$: every initial point in the complex plane is coloured by which of the three roots (white dots, the cube roots of unity) it converges to, and the three basins interleave on a fractal Julia-set boundary — the Wada hallmark where every boundary point touches all three colours.</figcaption>
+</figure>
+
 ## Locating attractors
 
 `find_attractors` drives any map or flow over a cell tessellation of a search

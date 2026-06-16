@@ -19,6 +19,11 @@ diffeomorphic to the true state space — so invariants like dimension and
 the maximal Lyapunov exponent survive. TSDynamics gives you the embedding
 map plus the two heuristics that pick its parameters $\tau$ and $m$.
 
+<figure markdown>
+![embedding showcase](../assets/figures/analysis/embedding.png){ loading=lazy }
+<figcaption>Takens' theorem in action: the true Rössler attractor (left, its real $(x,y)$ projection) and its delay reconstruction (right, $(x(t),\,x(t-\tau))$ built from the single observable $x(t)$ with $\tau$ chosen by mutual information) share the same geometry — the state space recovered from one coordinate.</figcaption>
+</figure>
+
 | Function | Picks | Method |
 |---|---|---|
 | [`embed`](#the-embedding-map) | the vectors $\mathbf{y}_t$ | Takens delay map |

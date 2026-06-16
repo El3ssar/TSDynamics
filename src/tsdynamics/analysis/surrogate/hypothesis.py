@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import as_series, empirical_pvalue, gaussian_significance
+from ._common import _as_series, _gaussian_significance, empirical_pvalue
 from .generators import surrogates
 from .statistics import STATISTICS
 
@@ -135,7 +135,7 @@ def surrogate_test(
     ValueError
         If ``statistic``, ``method`` or ``tail`` is unknown.
     """
-    series = as_series(x, component)
+    series = _as_series(x, component)
     stat_kw = statistic_kwargs or {}
 
     if callable(statistic):
@@ -158,7 +158,7 @@ def surrogate_test(
     surrogate_statistics = np.array([float(stat_fn(s, **stat_kw)) for s in ensemble], dtype=float)
 
     p_value = empirical_pvalue(data_statistic, surrogate_statistics, tail)
-    z_score = gaussian_significance(data_statistic, surrogate_statistics)
+    z_score = _gaussian_significance(data_statistic, surrogate_statistics)
     return SurrogateTest(
         data_statistic=data_statistic,
         surrogate_statistics=surrogate_statistics,

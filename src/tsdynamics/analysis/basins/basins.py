@@ -29,8 +29,8 @@ from typing import Any
 import numpy as np
 
 from ...data import Ball, Box, Grid, grid_points, sampler
-from ._common import apply_merge, recurrence_grid
-from .attractors import DIVERGED, AttractorMapper, AttractorSet, resolve_merge_tol
+from ._common import _apply_merge, _recurrence_grid
+from .attractors import DIVERGED, AttractorSet, _AttractorMapper, resolve_merge_tol
 
 __all__ = [
     "BasinFractions",
@@ -191,7 +191,7 @@ def basins_of_attraction(
         two recurrence-cell diagonals; ``0`` disables it.
     **fsm
         Finite-state-machine thresholds forwarded to
-        :class:`~tsdynamics.analysis.basins.attractors.AttractorMapper`.
+        :class:`~tsdynamics.analysis.basins.attractors._AttractorMapper`.
 
     Returns
     -------
@@ -204,10 +204,10 @@ def basins_of_attraction(
     attraction", *Chaos* **32**, 023104 (2022).
     """
     if recurrence is None:
-        cellgrid = recurrence_grid(grid, grid.counts)
+        cellgrid = _recurrence_grid(grid, grid.counts)
     else:
-        cellgrid = recurrence_grid(recurrence, recurrence_resolution)
-    mapper = AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
+        cellgrid = _recurrence_grid(recurrence, recurrence_resolution)
+    mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
 
     points = grid_points(grid)
     labels = np.empty(points.shape[0], dtype=np.int64)
@@ -219,7 +219,7 @@ def basins_of_attraction(
             diverged += 1
 
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
-    labels = apply_merge(labels.reshape(grid.shape), merge)
+    labels = _apply_merge(labels.reshape(grid.shape), merge)
     attractors = mapper.attractor_set(diverged=diverged, seeds=points.shape[0], merge=merge)
     return BasinsResult(labels=labels, grid=grid, attractors=attractors)
 
@@ -266,7 +266,7 @@ def basin_fractions(
         two recurrence-cell diagonals; ``0`` disables it.
     **fsm
         Finite-state-machine thresholds forwarded to
-        :class:`~tsdynamics.analysis.basins.attractors.AttractorMapper`.
+        :class:`~tsdynamics.analysis.basins.attractors._AttractorMapper`.
 
     Returns
     -------
@@ -278,8 +278,8 @@ def basin_fractions(
     P. J. Menck, J. Heitzig, N. Marwan and J. Kurths, "How basin stability
     complements the linear-stability paradigm", *Nature Physics* **9**, 89 (2013).
     """
-    cellgrid = recurrence_grid(region, resolution)
-    mapper = AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
+    cellgrid = _recurrence_grid(region, resolution)
+    mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
     draw = sampler(region, seed=seed)
 
     n = int(n)
