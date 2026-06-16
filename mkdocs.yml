@@ -188,6 +188,7 @@ nav:
       - theory/index.md
       - Compilation pipeline: theory/compilation.md
       - Backends: theory/backends.md
+      - Solvers & methods: theory/solvers.md
       - Lyapunov exponents: theory/lyapunov.md
       - Conventions: theory/conventions.md
       - Packaging & distribution: theory/packaging.md
