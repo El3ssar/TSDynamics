@@ -580,19 +580,29 @@ class DelaySystem(SystemBase, ABC):
         burn_in: float = 50.0,
         rtol: float | None = None,
         atol: float | None = None,
+        backend: str | None = None,
         **kwargs,
     ) -> np.ndarray:
         """
-        Estimate the ``n_exp`` leading Lyapunov exponents via :class:`jitcdde.jitcdde_lyap`.
+        Estimate the ``n_exp`` leading Lyapunov exponents of the delay system.
 
-        Results are stored in ``self.meta['lyapunov_spectrum']``.
+        Two backends compute the same quantity (results stored in
+        ``self.meta['lyapunov_spectrum']``):
+
+        - ``backend="jitcdde"`` (the v2 default) — :class:`jitcdde.jitcdde_lyap`.
+        - ``backend="interp"`` / ``"jit"`` — the **engine** estimator (stream
+          E-DDE-LYAP): the extended variational DDE integrated on the Rust engine
+          with function-space Benettin renormalisation
+          (:func:`tsdynamics.families._dde_lyapunov.dde_lyapunov_spectrum`). This
+          is the path that survives the JiTCDDE removal at M3.  ``"reference"`` is
+          rejected (the engine has no pure-Python DDE integrator).
 
         Parameters
         ----------
         final_time : float
             Averaging window after burn-in. Default 200.0.
         dt : float
-            Sampling interval. Default 0.1.
+            Sampling interval (engine path: should divide the maximum delay).
         ic : array-like, optional
             Initial state. Provide the end-state of a prior ``integrate``
             call so the trajectory starts on the attractor (recommended).
@@ -602,25 +612,57 @@ class DelaySystem(SystemBase, ABC):
         burn_in : float
             Discard interval. Default 50.0.
         rtol, atol : float, optional
-            Integration tolerances.  Defaults to ``_default_rtol`` /
-            ``_default_atol`` (both ``1e-3``).  Do **not** use ODE-style
-            tight values (e.g. ``1e-6``/``1e-9``) — DDE solvers are stiff and
-            tight tolerances cause the variational equations to accumulate
-            floating-point garbage before the first Lyapunov renormalisation,
-            producing ``Inf`` / ``NaN`` exponents.
+            Integration tolerances.  For ``jitcdde`` the defaults are the loose
+            ``_default_rtol`` / ``_default_atol`` (both ``1e-3``) — tight
+            ODE-style values make the variational equations accumulate
+            floating-point garbage before the first renormalisation.  The engine
+            path renormalises every delay window and uses tighter defaults
+            (``1e-7`` / ``1e-9``).
+        backend : str, optional
+            ``"jitcdde"`` (v2 default), ``"interp"``, or ``"jit"``.  Defaults to
+            :attr:`_default_backend`.
 
         Notes
         -----
-        ``past_from_function`` is NOT used here because it is incompatible
-        with ``jitcdde_lyap`` internally.  A constant past from ``ic`` is
-        used instead.  For best results, pass ``ic=traj.y[-1]`` from a
-        prior ``integrate`` run — this places the trajectory on the
-        attractor and avoids trivial exponents from equilibrium pasts.
+        For best results, pass ``ic=traj.y[-1]`` from a prior ``integrate`` run —
+        this places the trajectory on the attractor and avoids trivial exponents
+        from equilibrium pasts.
 
         Returns
         -------
         ndarray, shape (n_exp,)
         """
+        backend = backend if backend is not None else self._default_backend
+        if backend not in ("jitcdde", "v2"):  # "v2" aliases jitcdde (matches integrate())
+            from tsdynamics.families._dde_lyapunov import dde_lyapunov_spectrum
+
+            if kwargs:
+                raise TypeError(
+                    f"lyapunov_spectrum(backend={backend!r}) does not accept the "
+                    f"jitcdde-only keyword(s) {sorted(kwargs)}."
+                )
+            exps = dde_lyapunov_spectrum(
+                self,
+                n_exp=n_exp,
+                final_time=final_time,
+                dt=dt,
+                burn_in=burn_in,
+                ic=ic,
+                backend=backend,
+                rtol=rtol if rtol is not None else 1e-7,
+                atol=atol if atol is not None else 1e-9,
+            )
+            self.meta.record(
+                "lyapunov_spectrum",
+                exps,
+                backend=backend,
+                n_exp=n_exp,
+                final_time=final_time,
+                dt=dt,
+                burn_in=burn_in,
+            )
+            return exps
+
         from jitcdde import jitcdde_lyap as _jitcdde_lyap
 
         rtol = rtol if rtol is not None else self._default_rtol

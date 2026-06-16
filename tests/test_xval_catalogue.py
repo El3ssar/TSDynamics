@@ -8,7 +8,7 @@ system joins it with zero edits, and self-contained enough that a green run here
 (plus the per-family binding tests and the literature-Lyapunov checks) is the
 evidence that authorises the deletion PR.
 
-The gate has five legs, ordered by how tolerance-tight (and chaos-free) the
+The gate has six legs, ordered by how tolerance-tight (and chaos-free) the
 signal is:
 
 1. **RHS lowering** — for every ODE the engine's ``du/dt`` matches the symbolic
@@ -29,6 +29,9 @@ signal is:
 5. **literature Lyapunov** — the engine variational backend (the successor to
    ``jitcode_lyap`` at M3) reproduces the published Lyapunov spectrum on a
    curated set of chaotic flows, with ``interp`` and ``jit`` agreeing (slow).
+6. **DDE Lyapunov vs v2** — the engine DDE-Lyapunov estimator (the successor to
+   ``jitcdde_lyap``, stream E-DDE-LYAP) reproduces JiTCDDE on Mackey–Glass; the
+   full 5-DDE parity sweep is in ``test_dde_lyapunov.py`` (slow).
 
 Maps get legs 1–2 as a one-step lowering check (engine next-state vs the v2
 Numba ``_step``, then interp vs jit).  DDEs are gated for finiteness + engine
@@ -410,3 +413,29 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     np.testing.assert_allclose(
         interp, jit, rtol=0.0, atol=1e-6, err_msg=f"{name}: interp vs jit Lyapunov spectrum"
     )
+
+
+# ---------------------------------------------------------------------------
+# Leg 6 — engine DDE Lyapunov vs the real v2 JiTCDDE backend (slow)
+# ---------------------------------------------------------------------------
+#
+# DDE Lyapunov (DelaySystem.lyapunov_spectrum) is the last v2 holdout the M3
+# removal waits on (stream E-DDE-LYAP, #110): jitcdde cannot be deleted until the
+# engine reproduces it.  The full 5-DDE parity sweep lives in
+# tests/test_dde_lyapunov.py (engine-marked); this gate leg pins the canonical
+# Mackey-Glass case so the *removal gate* itself is conditioned on DDE-Lyapunov
+# parity (and on the engine value matching the system's known_lyapunov sign).
+
+
+@pytest.mark.slow
+def test_dde_engine_lyapunov_matches_jitcdde_mackeyglass() -> None:
+    """Mackey-Glass: the engine DDE-Lyapunov λ₁ is positive and tracks JiTCDDE."""
+    from _sampling import DDE_HISTORIES
+
+    mg = ts.MackeyGlass()
+    ic = mg.integrate(final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]).y[-1]
+    common = dict(n_exp=1, burn_in=200.0, final_time=2000.0, ic=ic)
+    ref = mg.lyapunov_spectrum(backend="jitcdde", dt=0.1, rtol=1e-5, atol=1e-5, **common)
+    eng = mg.lyapunov_spectrum(backend="interp", dt=0.05, **common)
+    assert eng[0] > 0.0  # chaotic — matches known_lyapunov n_positive=1
+    assert abs(eng[0] - ref[0]) <= 0.25 * abs(ref[0]) + 5e-4, f"engine {eng[0]} vs jitcdde {ref[0]}"
