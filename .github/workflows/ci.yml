@@ -1,10 +1,10 @@
 name: CI
 
 # PR gate: lint + tests, but SCOPE-AWARE — the Python lint/test matrix only runs
-# when Python or test code actually changes. Docs-only or Rust-only PRs skip it
-# (Rust is covered by rust-core.yml, which is itself path-scoped). The always-on
-# "CI summary" job is the single stable check to gate merges on: it is green when
-# every required job either passed or was legitimately skipped.
+# when Python, test, or engine-crate code changes (post-M3 the Rust engine is the
+# sole integration backend, so a `crates/**` change affects the suite). Docs-only
+# PRs skip it. The always-on "CI summary" job is the single stable check to gate
+# merges on: it is green when every required job either passed or was skipped.
 on:
   pull_request:
     branches: [main]

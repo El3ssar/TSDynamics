@@ -213,9 +213,10 @@ plus:
   for every concrete family; the abstract `SystemBase` keeps `"reference"` (the
   wheel-free oracle). Passing `backend=None` to a family's `integrate` /
   `iterate` resolves to it. `run.integrate` also resolves the `method=` string
-  through the solver registry (`solvers.resolve`) — canonicalising names and
-  mapping legacy stiff aliases (`"LSODA"` → `"bdf"`) — and rebuilds the ODE tape
-  `with_jacobian=True` when an implicit kernel needs it. The output grid each
+  through the solver registry (`solvers.resolve`) — canonicalising spellings and
+  aliases (`"RK45"`/`"dopri5"` → `"rk45"`) and rejecting v2-only names (`"LSODA"`)
+  with a stiff hint — and rebuilds the ODE tape `with_jacobian=True` when an
+  implicit kernel needs it. The output grid each
   family samples on is the one hoisted `tsdynamics.utils.grids.make_output_grid`
   (the four byte-identical `_make_t_eval` copies are gone). **SDEs are the
   exception** — they keep the dedicated `run.sde_integrate_dense` /

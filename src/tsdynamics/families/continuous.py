@@ -285,12 +285,17 @@ class ContinuousSystem(SystemBase, ABC):
         be = backend if backend is not None else self._default_backend
         self._step_backend = be if be in ("interp", "jit") else "interp"
 
+        from tsdynamics import solvers
         from tsdynamics.engine.problem import ode_problem
 
         # Lower the tape ONCE here and reuse it for every step() — a sweep reinits
         # thousands of times, so re-lowering per step would dominate the cost.
-        self._engine_problem = ode_problem(self, ic=ic_arr, t0=t0)
+        # Resolve the step method first so an implicit kernel (bdf/rosenbrock/
+        # trbdf2) gets a Jacobian-carrying tape — step() reuses this exact tape,
+        # so the Jacobian must be baked in here or the engine refuses the step.
         self._step_method = method or self._default_method
+        jac_kw = solvers.resolve(self._step_method).build_kwargs
+        self._engine_problem = ode_problem(self, ic=ic_arr, t0=t0, **jac_kw)
         self._step_rtol = float(rtol)
         self._step_atol = float(atol)
         self._state_now = ic_arr.copy()

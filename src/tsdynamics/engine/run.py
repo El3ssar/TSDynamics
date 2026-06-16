@@ -71,9 +71,8 @@ class EngineNotAvailableError(RuntimeError):
     """The compiled Rust engine (:mod:`tsdynamics._rust`, stream E7) is not available.
 
     Raised when an ``"interp"`` / ``"jit"`` run is requested but the extension
-    module is not importable.  Use ``backend="reference"`` for pure-Python RHS
-    evaluation and small ODE/map runs, or the family's own ``integrate`` for the
-    v2 backends, until the engine wheel is built.
+    module is not importable.  Use ``backend="reference"`` for pure-Python ODE/map
+    runs, or reinstall the compiled wheel (``pip install tsdynamics``).
     """
 
 
@@ -120,9 +119,9 @@ def _engine() -> Any:
         from tsdynamics import _rust
     except ImportError as err:  # pragma: no cover - until E7 builds the wheel
         raise EngineNotAvailableError(
-            "the Rust engine extension (tsdynamics._rust, stream E7) is not built; "
-            "use backend='reference' for pure-Python evaluation, or the family's own "
-            "integrate() for the v2 backends."
+            "the Rust engine extension (tsdynamics._rust) is not built; "
+            "use backend='reference' for pure-Python ODE/map evaluation, or "
+            "reinstall the compiled wheel (`pip install tsdynamics`)."
         ) from err
     return _rust
 
@@ -301,9 +300,10 @@ def integrate(
     backend = resolve_backend(backend)
 
     # Resolve the solver name to a canonical engine kernel (the C-SOLV → C-FAM
-    # wiring): this also maps legacy SciPy/v2 stiff names (e.g. "LSODA") to the
-    # engine's variable-order "bdf".  Maps ignore `method` and an SDE problem is
-    # refused below, so resolving is harmless in both cases.
+    # wiring): this normalises spellings/aliases (e.g. "RK45" → "rk45",
+    # "dopri5" → "rk45") and rejects unknown or v2-only names (e.g. "LSODA") with
+    # a listing error + a stiff hint pointing at "bdf".  Maps ignore `method` and
+    # an SDE problem is refused below, so resolving is harmless in both cases.
     from tsdynamics import solvers
 
     resolution = solvers.resolve(method)

@@ -17,15 +17,15 @@ the diffusion carrying ``∂g/∂u`` for Milstein).
 
 Solvers (the real engine, ``tsdyn-solvers``/``tsdyn-engine``): **Euler–Maruyama**
 (strong order 0.5) and **Milstein** (strong order 1.0, which reads ``∂g/∂u``).
-The default ``backend="reference"`` runs a dependency-light **pure-Python
-reference integrator** that mirrors the Rust engine's semantics — the same
-drift/diffusion tapes, the same diagonal Wiener substrate (a faithful port of the
-engine's ``SplitMix64`` / ``seed_for`` / ``fill_wiener``), and the same
-per-trajectory-index seeding so an ensemble is reproducible. ``backend="interp"``
-/ ``"jit"`` dispatch the two-tape SDE call to the compiled engine
-(``tsdynamics._rust``, the FFI surface in ``tsdyn-core``; stream E-WIRE) — the
-interpreter and the Cranelift JIT — reproducing the reference path under a fixed
-seed. The reference stays the default until the migration gate (M3) flips it.
+The default ``backend="interp"`` (and ``"jit"``) dispatches the two-tape SDE call
+to the compiled Rust engine (``tsdynamics._rust``, the FFI surface in
+``tsdyn-core``; stream E-WIRE) — the interpreter and the Cranelift JIT.
+``backend="reference"`` runs a dependency-light **pure-Python reference
+integrator** that mirrors the engine's semantics — the same drift/diffusion
+tapes, the same diagonal Wiener substrate (a faithful port of the engine's
+``SplitMix64`` / ``seed_for`` / ``fill_wiener``), and the same
+per-trajectory-index seeding — reproducing the engine path bit-for-bit under a
+fixed seed; it is the wheel-free oracle.
 
 Registry note
 -------------
@@ -260,11 +260,11 @@ class StochasticSystem(SystemBase, ABC):
     _default_step_dt: ClassVar[float] = 0.01
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"reference"`` — the pure-Python diagonal-Itô integrator — stays the
-    #: default until the M3 migration flips it to the Rust SDE engine.  Unlike the
-    #: other families the SDE engine path does not go through ``run.integrate``
-    #: (which cannot carry the noise seed/step); it uses the dedicated
-    #: ``run.sde_integrate_dense`` / ``run.sde_ensemble_final`` seam.
+    #: ``"interp"`` — the Rust SDE engine.  Unlike the other families the SDE
+    #: engine path does not go through ``run.integrate`` (which cannot carry the
+    #: noise seed/step); it uses the dedicated ``run.sde_integrate_dense`` /
+    #: ``run.sde_ensemble_final`` seam.  ``"reference"`` is the wheel-free
+    #: pure-Python oracle.
     _default_backend: ClassVar[str] = "interp"
 
     #: Parameters whose values affect the symbolic *structure* of the dynamics
@@ -459,8 +459,8 @@ class StochasticSystem(SystemBase, ABC):
             Seed for the noise realisation (random if omitted). The resolved seed
             is recorded in ``traj.meta["seed"]`` so a run can be reproduced.
         backend : str, optional
-            Defaults to ``_default_backend`` (``"reference"``, the pure-Python
-            reference integrator).  ``"interp"`` / ``"jit"`` dispatch the two-tape
+            Defaults to ``_default_backend`` (``"interp"``).  ``"interp"`` /
+            ``"jit"`` dispatch the two-tape
             SDE call to the compiled Rust engine (:mod:`tsdynamics._rust`) via the
             dedicated ``run.sde_integrate_dense`` seam.  The engine path reproduces
             the reference under a fixed seed and raises
@@ -537,9 +537,9 @@ class StochasticSystem(SystemBase, ABC):
         final_time, dt, t0, method, seed
             As in :meth:`integrate` (``seed`` is the ensemble's base seed).
         backend : str, optional
-            Defaults to ``_default_backend`` (``"reference"``, a pure-Python
-            loop).  ``"interp"`` / ``"jit"`` fan the batch out on the compiled
-            engine's rayon pool.  Both seed each trajectory by index, so the final
+            Defaults to ``_default_backend`` (``"interp"``).  ``"interp"`` /
+            ``"jit"`` fan the batch out on the compiled engine's rayon pool;
+            ``"reference"`` is a pure-Python loop.  All seed each trajectory by index, so the final
             states match across backends to floating-point tolerance.
 
         Returns
