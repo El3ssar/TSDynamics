@@ -4,10 +4,10 @@ Build-time figure rendering for the per-system documentation pages.
 Strategy
 --------
 - **ODE** figures integrate with ``scipy.solve_ivp`` over the system's
-  SymEngine-lambdified numeric RHS (``_rhs_numeric``) — no C compiler, no
-  JiTCODE round trip, ~0.1–1 s per system.
-- **DDE** figures use the real ``integrate`` (JiTCDDE; only 5 systems).
-- **Map** figures iterate via the family API (Numba).
+  SymEngine-lambdified numeric RHS (``_rhs_numeric``) — no engine needed, no
+  warmup, ~0.1–1 s per system.
+- **DDE** figures use the real ``integrate`` (the Rust engine; only 5 systems).
+- **Map** figures iterate via the family API (the Rust engine).
 
 A content-addressed cache under ``.cache/docs-figures`` keyed by
 ``sha256(class source ‖ this module's source)`` means only new or changed
