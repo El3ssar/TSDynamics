@@ -12,6 +12,11 @@ that answer it from different angles: an alignment index of tangent vectors,
 a single scalar drawn from one observable, and a derivative-volume growth
 rate that estimates topological entropy.
 
+<figure markdown>
+![chaos showcase](../assets/figures/analysis/chaos.png){ loading=lazy }
+<figcaption>On the chaotic Lorenz attractor both alignment indices collapse exponentially, and the decay rate is fixed by the Lyapunov gaps: GALI₂ falls at λ₁−λ₂ ≈ 0.91 (λ₂ ≈ 0 along the flow) while GALI₃ falls at (λ₁−λ₂)+(λ₁−λ₃) ≈ 16.4, hitting the floating-point floor almost immediately — the measured curves (indigo/teal) tracking the predicted Skokos-law slopes (dashed).</figcaption>
+</figure>
+
 | Function | Answers | Chaotic ⇒ | Regular ⇒ |
 |---|---|---|---|
 | [`gali`](#gali-generalized-alignment-index) | tangent-vector volume | exponential decay | $\sim O(1)$ / power law |

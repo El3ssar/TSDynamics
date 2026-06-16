@@ -13,6 +13,11 @@ estimate and the Kaplan–Yorke dimension. The uniform entry point
 `ts.lyapunov_spectrum(sys, **kwargs)` dispatches to the right family
 implementation.
 
+<figure markdown>
+![lyapunov showcase](../assets/figures/analysis/lyapunov.png){ loading=lazy }
+<figcaption>Running Lyapunov spectrum of the Lorenz system: as the tangent frame is stepped along the attractor, the three time-averaged exponents settle onto their known values [0.906, 0, -14.57] (dashed), the positive-zero-negative signature that certifies chaos.</figcaption>
+</figure>
+
 ## Per family
 
 === "ODE"

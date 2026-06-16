@@ -11,6 +11,11 @@ its crossings through a hyperplane — periodic orbits become finite point
 sets, chaotic attractors become fractal dust. `poincare_section` accepts
 either a live system or an already-computed trajectory.
 
+<figure markdown>
+![poincare showcase](../assets/figures/analysis/poincare.png){ loading=lazy }
+<figcaption>The Rössler flow (faint indigo, x–z projection) crossed by the section plane y = 0: the teal crossings collapse from the full 2-D attractor onto a thin, near-one-dimensional return set — the hallmark of a Poincaré section.</figcaption>
+</figure>
+
 ## From a system (accurate)
 
 ```python

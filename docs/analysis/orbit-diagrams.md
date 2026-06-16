@@ -10,6 +10,11 @@ description: Orbit diagrams of maps, attractor following with carry_state, and b
 each value — the classic picture of period-doubling cascades and chaotic
 bands.
 
+<figure markdown>
+![orbit-diagram showcase](../assets/figures/analysis/orbit-diagram.png){ loading=lazy }
+<figcaption>The logistic map's asymptotic orbit swept over the growth rate r: a single fixed point period-doubles at r₁=3, again at r₂=1+√6, and cascades into chaos near r≈3.57, interleaved with periodic windows (the wide period-3 band near r≈3.83).</figcaption>
+</figure>
+
 ## Maps: the logistic diagram
 
 ```python

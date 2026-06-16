@@ -10,6 +10,11 @@ The invariant sets that organise a dynamical system — fixed points, equilibria
 and periodic orbits — for **maps and flows**, each returned with its
 linear-stability data.
 
+<figure markdown>
+![fixed-points showcase](../assets/figures/analysis/fixed-points.png){ loading=lazy }
+<figcaption>Van der Pol (μ = 1): trajectories (indigo) spiral off the unstable equilibrium at the origin (rose ✕, from `fixed_points`) and onto the isolated limit cycle (teal, T ≈ 6.663, from `periodic_orbit` by single shooting).</figcaption>
+</figure>
+
 | Function | Finds | For |
 |---|---|---|
 | [`fixed_points`](#fixed-points-and-equilibria) | `f(x) = x` / `f(x) = 0` | maps + flows |

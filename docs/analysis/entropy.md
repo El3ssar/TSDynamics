@@ -111,6 +111,11 @@ the series — non-overlapping block averages at scales $1, 2, \dots$ — to
 separate genuine long-range complexity from short-range noise (Costa,
 Goldberger & Peng 2002). It returns one value per scale.
 
+<figure markdown>
+![entropy showcase](../assets/figures/analysis/entropy.png){ loading=lazy }
+<figcaption>Multiscale sample entropy of three signals: white noise (amber) starts highest but decays monotonically with scale, while logistic-map chaos (indigo) rises and holds a high plateau — its long-range complexity survives coarse-graining — and the periodic sine (teal) stays flat near zero.</figcaption>
+</figure>
+
 ```python
 ts.multiscale_entropy(x, scales=5)
 # array([0.659, 1.392, 1.571, 1.592, 1.545])     # logistic r=4
