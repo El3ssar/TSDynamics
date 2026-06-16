@@ -445,7 +445,7 @@ board with the maintainer's `gh`-based bootstrap — one issue per row.)*
 |----|--------|------|---------|------------|
 | **I-WHEEL** | Cross-platform wheels + packaging | maturin-action CI; decide one-wheel vs accelerator (§11) | E7 | manylinux + macOS(arm64/x86_64) + Windows wheels; `pip install tsdynamics` needs **no compiler**. 🟡 **active:** packaging shape **decided** (§11: separable accelerator now → one wheel at M3) + `wheels.yml` maturin matrix (manylinux/musllinux/macOS/Windows, abi3) + fixed the `tsdynamics._rust` mixed-layout so the wheel is importable. PyPI publish of the engine deferred to M3 (gated by I-XVAL). |
 | **I-BENCH** | Benchmarks + perf tracking | `benches/**`, CI perf job | E5 | vs SciPy + (internally) the Julia baseline on Lorenz/Rössler/MackeyGlass/Lorenz-96 N=128/Robertson; time-to-first-result tracked. |
-| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP, E-WIRE | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** 🟡 **gate built:** the catalogue cross-validation gate now targets the **real `tsdynamics._rust`** (`tests/test_xval_catalogue.py`: RHS lowering 1e-9 + interp==jit bit-exact + reference==engine incl. bit-exact OP_POWI + curated trajectory-vs-JiTCODE + engine literature Lyapunov), `cross-validation.yml` rebuilt around it, and the `engine`-marker auto-tag + `test_engine_coverage.py` close the #72 engine-test blind spot. **The v2-backend removal is the remaining step — its own gated PR (runs only once this gate is green in CI).** |
+| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP, E-WIRE | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** 🟡 **gate MERGED (#109):** the catalogue cross-validation gate targets the **real `tsdynamics._rust`** (`tests/test_xval_catalogue.py`: RHS lowering 1e-9 + interp==jit bit-exact + reference==engine incl. bit-exact OP_POWI + curated trajectory-vs-JiTCODE + engine literature Lyapunov), `cross-validation.yml` rebuilt around it, and the `engine`-marker auto-tag + `test_engine_coverage.py` close the #72 engine-test blind spot. **Removal DEFERRED — blocked on [E-DDE-LYAP #110]:** deleting jitcdde would regress DDE Lyapunov (no Rust replacement; would break MackeyGlass `known_lyapunov`). jitcode/numba/diffsol are removal-ready and wait on #110. |
 | **I-DOCS** | Docs restructure (NOT viz) | `docs/**`, autogen hook updated to new layout | F3 | site builds `--strict`; per-system pages; tutorial "equations → basins"; citation lint rule. |
 | **I-QA** | Test/property/known-value harness | `tests/**` shared fixtures, hypothesis tests, known-value catalogue | F3 | registry-driven sweeps over new families; property tests for embeddings/dimensions. |
 
@@ -472,12 +472,18 @@ Internal milestones stage the program; **v3.0 ships only when M6 is complete**
   C-DERIV is not started. JIT==interpreter holds in Rust but is untested through
   Python (I-XVAL).
 - **M3 — Old engine retired:** I-XVAL green → remove JiTCODE/JiTCDDE/diffsol/
-  Numba. **D1 complete.** (Big internal moment.) 🟡 **gate built, removal pending:**
-  the xval gate now validates the real `tsdynamics._rust` over the catalogue
-  (§13b I-XVAL — RHS/interp==jit/reference==engine/trajectory/Lyapunov, with the
-  engine-coverage blind-spot closed), and the piecewise-map opcodes landed
-  (E-OPS #76). The removal PR (delete the v2 paths, flip `_default_backend`, drop
-  the C-compiler deps) runs once this gate is green in CI.
+  Numba. **D1 complete.** (Big internal moment.) 🟡 **gate merged (#109), removal
+  blocked on one missing engine piece:** the xval gate validates the real
+  `tsdynamics._rust` over the catalogue (§13b I-XVAL — RHS/interp==jit/
+  reference==engine/trajectory/Lyapunov, blind-spot closed) and the piecewise-map
+  opcodes landed (E-OPS #76), so jitcode/numba/diffsol are removal-ready. **But
+  jitcdde cannot be deleted yet:** DDE *Lyapunov* (`DelaySystem.lyapunov_spectrum`
+  → `jitcdde_lyap`) has **no Rust replacement** (the engine has DDE *integration*
+  via E-DDE but no DDE variational/Lyapunov), and deleting it would regress a §12.1
+  differentiator + break `test_known_values` (MackeyGlass). **→ new blocker
+  [E-DDE-LYAP #110](Rust DDE variational + Lyapunov).** The removal PR (delete the
+  v2 paths, flip `_default_backend`, drop the C-compiler deps, fold to one maturin
+  wheel) runs once **#110** lands, so the nuke is complete with zero regression.
 - **M4 — Chaos quantification:** A-LYAP, A-CHAOS, A-FP, A-ORBIT + C-DATA.
 - **M5 — Parity moat:** A-BASIN, A-DIM, A-EMBED, A-ENT, A-RQA, A-SURR, T-XFORM.
 - **M6 — Launch readiness:** I-WHEEL, I-BENCH, I-DOCS, I-QA all green; parity
@@ -712,6 +718,18 @@ independent sessions continue cleanly.
   `solvers/` (two of four D4 plugin kinds have no consumer yet). *(Depends: F3.
   Mechanical but cross-cutting — land it as one focused PR so the A-* streams
   branch off the target layout conflict-free.)*
+- **E-DDE-LYAP (issue #110) — Rust DDE variational + Lyapunov (blocks the M3 removal).**
+  Surfaced while scoping the M3 removal: jitcode/numba/diffsol have engine
+  replacements and delete cleanly, but **jitcdde does not** — DDE *integration* is
+  on the engine (E-DDE), yet DDE *Lyapunov* (`DelaySystem.lyapunov_spectrum` →
+  `jitcdde_lyap`) has no Rust path, so deleting jitcdde would regress a §12.1
+  differentiator and break `MackeyGlass.known_lyapunov`. Build the engine DDE
+  variational integrator: a delayed Jacobian in the IR (the §13d generalized-jac
+  block), deviation histories on the existing method-of-steps `History`,
+  Benettin/QR, an `integrate_dde_lyapunov` FFI, and `DelaySystem.lyapunov_spectrum(
+  backend="interp"/"jit")` wiring; gate on MackeyGlass literature + jitcdde parity
+  across all 5 DDEs. *(Depends: E-DDE #32, the ODE variational core. Tier 1.
+  **Blocks the I-XVAL removal half (#51) — runs before any jitcdde deletion.**)*
 
 ### 13d. Reserved contract space (additive — preserves the M0 freeze)
 
@@ -723,7 +741,9 @@ independent sessions continue cleanly.
   (E-EVENT) behind a `Caps` flag, so existing kernels need no change.
 - The **Jacobian is `dim×dim` (state-only)** today; parameter-sensitivity
   (`∂f/∂p`) and DDE variational dynamics will need a generalized jac block — call
-  it out in any tape-shape work so it lands additively, not as a re-freeze.
+  it out in any tape-shape work so it lands additively, not as a re-freeze. The
+  **per-delay-slot Jacobian** this implies is the first concrete consumer
+  (E-DDE-LYAP #110).
 
 ---
 
