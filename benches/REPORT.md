@@ -1,5 +1,12 @@
 # Rust engine vs v2 backends — performance decision gate (I-BENCH)
 
+> **Historical record (M3).** This report is the speed evidence that justified
+> retiring the v2 backends. That migration has since landed — the v2 backends
+> (JiTCODE/JiTCDDE/Numba/diffsol) and the head-to-head benchmark scripts that
+> generated these tables are gone — so the numbers below are not reproducible on
+> the current tree. The report is kept as the migration's decision rationale (it
+> is why the engine's variable-order `bdf` is the default stiff kernel).
+
 **Question this report answers.** The maintainer is about to retire the v2
 backends (JiTCODE / JiTCDDE / Numba / diffsol) in favour of the Rust engine at
 milestone **M3** (stream I-XVAL flips `SystemBase._default_backend`). I-XVAL

@@ -299,7 +299,8 @@ def test_engine_integrate_dispatch_payload(monkeypatch) -> None:
     assert (n_state, n_param) == (3, 3)
     np.testing.assert_array_equal(ic, [1.0, 1.0, 1.0])
     np.testing.assert_allclose(params, [10.0, 28.0, 8.0 / 3.0])
-    assert method == "RK45" and jit is True
+    # The solver registry canonicalises the method name before dispatch ("RK45" → "rk45").
+    assert method == "rk45" and jit is True
     assert outputs.size == 3
     assert traj.y.shape == (t_eval.size, 3)
 

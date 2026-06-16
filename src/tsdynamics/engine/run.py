@@ -299,7 +299,31 @@ def integrate(
     from tsdynamics.families import Trajectory
 
     backend = resolve_backend(backend)
+
+    # Resolve the solver name to a canonical engine kernel (the C-SOLV → C-FAM
+    # wiring): this also maps legacy SciPy/v2 stiff names (e.g. "LSODA") to the
+    # engine's variable-order "bdf".  Maps ignore `method` and an SDE problem is
+    # refused below, so resolving is harmless in both cases.
+    from tsdynamics import solvers
+
+    resolution = solvers.resolve(method)
+    method = resolution.name
+
     problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
+
+    # The implicit ODE kernels (bdf/rosenbrock/trbdf2) need ∂f/∂u on the tape, or
+    # the engine refuses the step.  Rebuild once with the Jacobian when the
+    # resolved method needs it and the tape lacks it — only for an ODE built from
+    # a system (DDEs drive explicit kernels only; maps fold params in; a pre-built
+    # Problem we cannot re-lower, so the engine raises its clear guard instead).
+    if (
+        resolution.build_kwargs.get("with_jacobian")
+        and isinstance(problem, ODEProblem)
+        and not problem.tape.has_jacobian
+        and "with_jacobian" not in build_kwargs
+        and not isinstance(system_or_problem, ODEProblem)
+    ):
+        problem = _as_problem(system_or_problem, ic=ic, with_jacobian=True, **build_kwargs)
 
     if isinstance(problem, MapProblem):
         steps = int(round(final_time))
@@ -978,18 +1002,22 @@ def _reference_ensemble(
     return out
 
 
-#: TSDynamics solver name → SciPy ``solve_ivp`` method (reference backend only).
+#: Canonical engine kernel name → SciPy ``solve_ivp`` method (reference backend
+#: only — the pure-Python oracle).  Keys are the names :func:`solvers.resolve`
+#: produces (lower-case), so the reference path sees the same canonical method the
+#: engine does.  SciPy has no Tsitouras / fixed-RK4 / Rosenbrock-W / TR-BDF2
+#: integrator, so those map to the nearest-character SciPy solver (an explicit RK
+#: for the explicit kernels, an implicit one for the implicit kernels) — close
+#: enough for an oracle, since the reference backend validates the *tape*, not the
+#: exact stepper.
 _SCIPY_METHOD: dict[str, str] = {
-    "RK45": "RK45",
-    "dopri5": "RK45",
-    "DOP853": "DOP853",
+    "rk45": "RK45",
+    "tsit5": "RK45",
+    "rk4": "RK45",
     "dop853": "DOP853",
-    "LSODA": "LSODA",
-    "lsoda": "LSODA",
-    "BDF": "BDF",
     "bdf": "BDF",
-    "Radau": "Radau",
-    "radau": "Radau",
+    "rosenbrock": "Radau",
+    "trbdf2": "BDF",
 }
 
 

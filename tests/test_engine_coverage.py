@@ -12,13 +12,14 @@ This module removes the blind spot structurally and guards that it stays gone:
 * the ``engine`` marker is **auto-applied** to any module that imports the
   compiled extension (``conftest`` + :mod:`_engine_marker`), so coverage follows
   the import, not a list;
-* ``engine-bindings.yml`` selects those tests with ``-m engine`` — no file list;
-* ``cross-validation.yml`` builds the real ``tsdynamics._rust`` engine and runs
-  the catalogue removal gate.
+* ``engine-bindings.yml`` selects those tests with ``-m engine`` — no file list —
+  and builds the real ``tsdynamics._rust`` engine to run them (including the
+  catalogue gate ``test_xval_catalogue.py``).
 
+Post-M3 the engine is the sole integration backend, so ``ci.yml`` builds it too
+and runs the whole suite; ``engine-bindings.yml`` stays as the focused FFI job.
 These checks are pure source/workflow inspection (no compiled engine needed), so
-they run in the wheel-free matrix too — the regression is caught even where the
-engine is absent.
+they run anywhere — the regression is caught even before the extension is built.
 """
 
 from __future__ import annotations
@@ -134,37 +135,26 @@ def test_engine_bindings_selects_by_marker_not_a_file_list() -> None:
     assert not handlisted, f"engine-bindings.yml hand-lists test files: {sorted(set(handlisted))}"
 
 
-def test_cross_validation_builds_the_real_engine_and_runs_the_gate() -> None:
-    """``cross-validation.yml`` builds ``tsdynamics._rust``, runs the gate, keeps the slow tier.
+def test_engine_bindings_builds_the_real_engine() -> None:
+    """``engine-bindings.yml`` builds the real engine crate ``tsdyn-core``.
 
-    Guards the migration gate against (a) silently reverting to the v2-seed
-    ``tsdynamics-core`` accelerator (retired at M3) — it must build the real
-    engine crate ``tsdyn-core``; and (b) silently dropping the slow tier — legs 4
-    (engine-vs-real-JiTCODE) and 5 (engine Lyapunov) are ``@pytest.mark.slow`` and
-    are the *only* legs that compare against the compiled v2 backend, so a
-    ``-m "not slow"`` slipped into the gate command would gut the removal gate
-    while this guard stayed green.
+    Guards against silently reverting to the retired v2-seed ``tsdynamics-core``
+    accelerator: the engine job must build the real binding crate ``tsdyn-core``
+    (→ ``tsdynamics._rust``) that backs the whole post-M3 integration path.
     """
-    wf = (_WORKFLOWS / "cross-validation.yml").read_text(encoding="utf-8")
-    assert "tsdyn-core" in wf, "cross-validation.yml must build the real engine (crates/tsdyn-core)"
-    gate_cmds = [cmd for cmd in _pytest_run_commands(wf) if "test_xval_catalogue.py" in cmd]
-    assert gate_cmds, "cross-validation.yml must run the catalogue removal gate"
-    for cmd in gate_cmds:
-        assert "not slow" not in cmd, (
-            f"cross-validation gate must keep the slow tier (legs 4/5 vs compiled v2): {cmd!r}"
-        )
+    wf = (_WORKFLOWS / "engine-bindings.yml").read_text(encoding="utf-8")
+    assert "tsdyn-core" in wf, "engine-bindings.yml must build the real engine (crates/tsdyn-core)"
 
 
-def test_engine_workflows_cover_the_engine_source_tree() -> None:
-    """Both engine jobs trigger on the whole package, not just engine/ + families/.
+def test_engine_bindings_covers_the_engine_source_tree() -> None:
+    """The engine job triggers on the whole package, not just engine/ + families/.
 
     The engine integrate / variational-Lyapunov path reaches ``utils/grids.py``,
     ``derived/`` and the solver layer too; a path filter narrower than
-    ``src/tsdynamics/**`` would let a pure-source regression there bypass both
-    engine jobs (ci.yml skips the engine tests for lack of the extension).
+    ``src/tsdynamics/**`` would let a pure-source regression there bypass the
+    focused engine job.
     """
-    for name in ("engine-bindings.yml", "cross-validation.yml"):
-        wf = (_WORKFLOWS / name).read_text(encoding="utf-8")
-        assert "src/tsdynamics/**" in wf, (
-            f"{name} must trigger on the whole package (src/tsdynamics/**), not a sub-tree"
-        )
+    wf = (_WORKFLOWS / "engine-bindings.yml").read_text(encoding="utf-8")
+    assert "src/tsdynamics/**" in wf, (
+        "engine-bindings.yml must trigger on the whole package (src/tsdynamics/**), not a sub-tree"
+    )

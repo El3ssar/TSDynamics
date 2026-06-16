@@ -14,9 +14,9 @@ The correctness bars:
 - **Absolute**: a linear DDE with a closed-form method-of-steps solution
   (``y'(t) = −y(t−1)``, constant past 1 ⇒ ``y(1) = 0``, ``y(2) = −0.5``) — no
   chaotic-divergence caveat.
-- **Parity**: the Rust engine matches the v2 JiTCDDE backend within tolerance on
-  Mackey–Glass and every built-in delay system (compared on an early window,
-  before any chaotic amplification).
+
+The Rust-vs-v2 JiTCDDE parity sweep ran in the E-DDE PR before JiTCDDE was
+retired at M3; what remains here are the reference-free absolute checks.
 """
 
 from __future__ import annotations
@@ -94,44 +94,19 @@ def test_callable_past_is_interpolated():
 
 
 # ---------------------------------------------------------------------------
-# Parity with the v2 JiTCDDE backend (slow — JiTCDDE compiles C)
+# Every built-in DDE integrates to a finite trajectory on the engine (slow)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
-def test_mackey_glass_matches_jitcdde():
-    """The acceptance system: Rust vs JiTCDDE, constant and callable past.
-
-    Mackey–Glass at τ = 17 is only weakly chaotic (λ ≈ 0.009), so a tight
-    tolerance keeps the two integrators in lock-step over a long window.
-    """
-    mg = ts.MackeyGlass()
-    common = dict(final_time=120.0, dt=0.5, rtol=1e-8, atol=1e-8)
-    # Constant past.
-    tj = mg.integrate(backend="jitcdde", ic=[1.2], **common)
-    te = mg.integrate(backend="interp", ic=[1.2], **common)
-    assert np.abs(tj.y - te.y).max() < 1e-4
-    # Callable past.
-    hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]  # noqa: E731
-    tjh = mg.integrate(backend="jitcdde", history=hist, **common)
-    teh = mg.integrate(backend="interp", history=hist, **common)
-    assert np.abs(tjh.y - teh.y).max() < 1e-4
-
-
-@pytest.mark.slow
 @pytest.mark.parametrize("name", _dde_names())
-def test_engine_matches_jitcdde_early(name):
-    """Every built-in DDE: Rust matches JiTCDDE on the pre-chaotic early window."""
+def test_every_builtin_dde_integrates_finite(name):
+    """Every built-in DDE produces a finite early-window trajectory on the engine."""
     sys = getattr(ts, name)()
     history = DDE_HISTORIES[name]
-    common = dict(final_time=20.0, dt=0.25, history=history, rtol=1e-8, atol=1e-8)
-    tj = sys.integrate(backend="jitcdde", **common)
-    te = sys.integrate(backend="interp", **common)
-    assert te.y.shape == tj.y.shape
+    te = sys.integrate(backend="interp", final_time=20.0, dt=0.25, history=history)
     assert np.all(np.isfinite(te.y)), f"{name}: engine produced non-finite states"
-    mask = tj.t <= 8.0
-    diff = np.abs(tj.y[mask] - te.y[mask]).max()
-    assert diff < 5e-3, f"{name}: engine vs JiTCDDE early diff {diff}"
+    assert te.meta["engine"] == "rust"
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +128,9 @@ def test_reference_backend_is_unsupported_for_dde():
 
 
 def test_unknown_method_raises():
-    with pytest.raises(ValueError, match="unknown method"):
+    # The solver registry resolves the method first, so an unknown name is
+    # rejected there (with the available-methods listing) before the engine.
+    with pytest.raises(ValueError, match="unknown solver method"):
         _LinearDDE().integrate(backend="interp", method="no-such", final_time=1.0, dt=0.1, ic=[1.0])
 
 

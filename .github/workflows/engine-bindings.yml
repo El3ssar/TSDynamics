@@ -1,18 +1,17 @@
 name: Engine bindings
 
-# Builds the `tsdynamics._rust` engine extension (stream E7, crates/tsdyn-core)
-# and runs its Rust unit tests + the end-to-end Python binding tests. This is the
-# job that actually *exercises* the compiled engine: the default Python matrix
-# (ci.yml) runs without it (so the engine-marked tests skip there), and the
-# pure-Rust workspace job (rust-workspace.yml) excludes this pyo3 cdylib (a
-# `cargo test --workspace` cannot link a pyo3 extension on a Python-free runner).
+# Builds the `tsdynamics._rust` engine extension (crates/tsdyn-core) and runs its
+# Rust unit tests + the engine-marked Python tests. Post-M3 the engine is the sole
+# integration backend, so ci.yml builds it too and runs the whole suite; this is
+# the *focused* engine job — it adds the Rust-side fmt/clippy/cargo-test of the
+# binding crate (which rust-workspace.yml's `cargo test --workspace` cannot, since
+# a pyo3 extension cdylib will not link on a Python-free runner) plus a fast
+# `-m engine` feedback loop on the FFI surface.
 #
 # The extension is built with `cargo` and dropped into the source tree
-# (`src/tsdynamics/_rust.abi3.so`) rather than `pip install`ed as a separate
-# wheel: installing a standalone `tsdynamics._rust` wheel beside the editable
-# `tsdynamics` package would split `tsdynamics.__path__` and hide the submodule.
-# The cross-platform wheel build is stream I-WHEEL's (it uses the maturin
-# pyproject this crate ships).
+# (`src/tsdynamics/_rust.abi3.so`) — the same artifact `maturin` produces, but
+# without a full wheel build. The cross-platform release wheels are built by
+# wheels.yml / release.yml from the root maturin pyproject.
 on:
   pull_request:
     branches: [main]

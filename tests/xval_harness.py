@@ -1,51 +1,38 @@
-"""Rust-vs-v2 trajectory cross-validation harness (ROADMAP stream F4).
+"""Engine trajectory/RHS cross-validation harness (ROADMAP stream I-XVAL).
 
-The migration plan (ROADMAP §9, decision D1) makes the Rust engine the sole
-integration backend and *deletes* the v2 backends (JiTCODE/JiTCDDE/Numba/diffsol)
-once parity is proven. Before any v2 backend is removed (milestone M3, stream
-I-XVAL) every system's Rust trajectory must be shown to match its v2 trajectory
-within tolerance, and its Rust RHS to match the symbolic RHS to ~1e-15.
+The migration plan (ROADMAP §9, decision D1) made the Rust engine the sole
+integration backend (milestone M3): the v2 backends (JiTCODE/JiTCDDE/Numba/
+diffsol) are deleted. The original removal gate proved, across the whole
+catalogue, that the engine's RHS matched the symbolic RHS to ~1e-10 and that
+``interp`` and ``jit`` were bit-for-bit identical — this harness is the scaffold
+those checks ran on, retained as the engine's standing self-consistency gate.
 
-This module is the *scaffold* that gate is built on: a small, backend-agnostic
-comparison engine plus a couple of concrete backends. It deliberately ships in
-``tests/`` (not in ``src/``) — it is validation tooling, not public API. Two
-downstream streams extend it:
-
-* **I-XVAL** sweeps :func:`crossvalidate` / :func:`crossvalidate_rhs` over the
-  whole catalogue and turns the aggregate into the removal gate.
-* the **engine streams (E1–E7)** add the new engine as one more
-  :class:`IntegrationBackend`, so the same harness compares it to the v2
-  reference with no new plumbing.
+It deliberately ships in ``tests/`` (not in ``src/``) — it is validation tooling,
+not public API. The catalogue gate (``test_xval_catalogue.py``) sweeps
+:func:`crossvalidate` / :func:`crossvalidate_rhs` over the registry.
 
 Design
 ------
 ``IntegrationBackend`` is a duck-typed seam: anything with a ``name`` and an
 ``integrate_dense(system, ic, t_eval)`` method qualifies, and reports
-``available()`` so a sweep *skips* (never fails) when an optional backend is
-absent. Three backends ship today:
+``available()`` so a sweep *skips* (never fails) when a backend is absent. Two
+backends ship:
 
 * :class:`ScipyReference` — integrates the system's symbolic RHS
-  (``_rhs_numeric``, the v2 numeric truth) with SciPy at tight tolerance. Always
-  available; needs no C compiler. The trustworthy reference the migration
-  candidate is measured against.
-* :class:`RustEngine` — **the migration candidate**: the shipping engine
-  (:mod:`tsdynamics._rust`) through its public seam ``engine.run.integrate`` /
-  ``engine.run.eval_rhs`` (``backend="interp"`` or ``"jit"``). Available only
-  when the compiled extension is built; exposes ``eval_rhs`` for
-  :func:`crossvalidate_rhs`. The M3 removal gate (stream I-XVAL) sweeps this over
-  the registry catalogue.
-* :class:`RustCore` — the v2-seed accelerator
-  (:mod:`tsdynamics.engine.rustcore`), retired at M3. Available only when
-  ``tsdynamics-core`` is installed; also exposes ``eval_rhs``. Kept for the
-  legacy Lorenz scaffold (``test_xval.py``) until the v2 seed is removed.
+  (``_rhs_numeric``, the independent numeric truth) with SciPy at tight
+  tolerance. Always available. The trustworthy reference the engine is measured
+  against.
+* :class:`RustEngine` — the shipping engine (:mod:`tsdynamics._rust`) through its
+  public seam ``engine.run.integrate`` / ``engine.run.eval_rhs``
+  (``backend="interp"`` or ``"jit"``). Available only when the compiled extension
+  is built; exposes ``eval_rhs`` for :func:`crossvalidate_rhs`.
 
 The comparison functions return an :class:`XValReport` (max abs/rel error,
 tolerance, pass/fail) instead of asserting, so callers can aggregate across a
 sweep. Two correct integrators of a *chaotic* flow diverge exponentially, so
 trajectory comparison is only meaningful on an early ``window=`` where Lyapunov
-amplification is small — the same convention the rustcore numeric tests use. The
-RHS check has no such limit: it compares pointwise evaluations and holds to
-~1e-9 everywhere.
+amplification is small. The RHS check has no such limit: it compares pointwise
+evaluations and holds to ~1e-9 everywhere.
 """
 
 from __future__ import annotations
@@ -57,7 +44,6 @@ import numpy as np
 
 __all__ = [
     "IntegrationBackend",
-    "RustCore",
     "RustEngine",
     "ScipyReference",
     "XValReport",
@@ -128,60 +114,14 @@ class ScipyReference:
         return np.ascontiguousarray(sol.y.T)
 
 
-class RustCore:
-    """Candidate backend: the experimental ``tsdynamics-core`` accelerator.
-
-    Wraps :mod:`tsdynamics.engine.rustcore`. ``method`` selects the kernel
-    (``RK45`` adaptive default, ``RK4`` fixed-step, ``stiff``); see that module
-    for the full list. Exposes :meth:`eval_rhs` so :func:`crossvalidate_rhs` can
-    check the tape lowering pointwise.
-    """
-
-    def __init__(
-        self,
-        *,
-        method: str = "RK45",
-        rtol: float = 1e-10,
-        atol: float = 1e-12,
-        h: float | None = None,
-    ) -> None:
-        self.method = method
-        self.rtol = rtol
-        self.atol = atol
-        self.h = h
-        self.name = f"rustcore:{method}"
-
-    def available(self) -> bool:
-        """Whether the optional ``tsdynamics-core`` wheel is installed."""
-        from tsdynamics.engine import rustcore as rc
-
-        return rc.available()
-
-    def integrate_dense(self, system: Any, ic: Any, t_eval: np.ndarray) -> np.ndarray:
-        """Integrate via the Rust kernel and sample at ``t_eval``."""
-        from tsdynamics.engine import rustcore as rc
-
-        ic = np.asarray(system.resolve_ic(ic), dtype=np.float64).ravel()
-        return rc.integrate_dense(
-            system, ic, t_eval, method=self.method, rtol=self.rtol, atol=self.atol, h=self.h
-        )
-
-    def eval_rhs(self, system: Any, u: Any, t: float = 0.0) -> np.ndarray:
-        """Evaluate ``du/dt`` once in Rust (used by :func:`crossvalidate_rhs`)."""
-        from tsdynamics.engine import rustcore as rc
-
-        return rc.eval_rhs(system, u, t)
-
-
 class RustEngine:
-    """The migration candidate: the shipping Rust engine (:mod:`tsdynamics._rust`).
+    """The shipping Rust engine (:mod:`tsdynamics._rust`).
 
-    Unlike :class:`RustCore` (the v2-seed ``tsdynamics-core`` accelerator that the
-    F4 scaffold wrapped), this backend drives the *new* engine through its public
-    Python seam — :func:`tsdynamics.engine.run.integrate` and
+    Drives the engine through its public Python seam —
+    :func:`tsdynamics.engine.run.integrate` and
     :func:`tsdynamics.engine.run.eval_rhs` — exactly the path the family base
-    classes use.  It is the backend the M3 removal gate (stream I-XVAL) sweeps
-    over the whole registry catalogue to authorise deleting the v2 backends.
+    classes use.  It is the backend the catalogue gate (stream I-XVAL) sweeps over
+    the whole registry to keep the engine honest against the symbolic truth.
 
     Parameters
     ----------
@@ -425,7 +365,7 @@ def crossvalidate_rhs(
 
     This is the strongest, tolerance-tight signal that a system *lowers*
     correctly — it has no chaotic-divergence caveat. ``candidate`` must expose an
-    ``eval_rhs(system, u, t)`` method (only :class:`RustCore` does today).
+    ``eval_rhs(system, u, t)`` method (:class:`RustEngine` does).
 
     Returns
     -------
