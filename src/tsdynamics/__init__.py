@@ -124,7 +124,7 @@ from .families import (
 )
 
 # Single source of truth for the package version; rewritten by python-semantic-release.
-__version__ = "2.5.1"
+__version__ = "3.0.0"
 
 # Built-in system classes are NOT bound into this namespace — that would bury the
 # submodules (``analysis``, ``data``, ``systems``, …) under ~149 model names in
