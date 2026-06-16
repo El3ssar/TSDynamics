@@ -18,7 +18,7 @@ with the cell-visitation idea going back to H. E. Nusse and J. A. Yorke,
 *Dynamics: Numerical Explorations* (Springer, 1997).
 
 :func:`find_attractors` runs the machine from a cloud of seeds and returns the
-attractors it discovers; :class:`AttractorMapper` is the reusable engine the
+attractors it discovers; :class:`_AttractorMapper` is the reusable engine the
 basin and continuation layers drive over a full grid.
 """
 
@@ -31,11 +31,10 @@ from typing import Any
 import numpy as np
 
 from ...data import Ball, Box, Grid, sampler, set_distance
-from ._common import CellGrid, recurrence_grid, representative
+from ._common import _CellGrid, _recurrence_grid, _representative
 
 __all__ = [
     "Attractor",
-    "AttractorMapper",
     "AttractorSet",
     "find_attractors",
 ]
@@ -72,7 +71,7 @@ class Attractor:
     @property
     def center(self) -> np.ndarray:
         """The centroid of the point cloud (an attractor representative)."""
-        return representative(self.points)
+        return _representative(self.points)
 
     @property
     def dim(self) -> int:
@@ -144,12 +143,12 @@ class AttractorSet:
 # ---------------------------------------------------------------------------
 
 
-class AttractorMapper:
+class _AttractorMapper:
     r"""
     Map an initial condition to the attractor it converges to, via recurrences.
 
     Drive any :class:`~tsdynamics.families.System` (map or flow) over a shared
-    :class:`~tsdynamics.analysis.basins._common.CellGrid`.  :meth:`map_ic` returns
+    :class:`~tsdynamics.analysis.basins._common._CellGrid`.  :meth:`map_ic` returns
     a positive integer attractor id (discovering a new one if needed) or
     :data:`DIVERGED` (``-1``).  Labels persist across calls, so a sweep over many
     initial conditions amortises: most settle by hitting an already-labelled cell.
@@ -158,7 +157,7 @@ class AttractorMapper:
     ----------
     system : System
         A discrete map or a continuous flow (DDE/SDE are not supported).
-    cellgrid : CellGrid
+    cellgrid : _CellGrid
         The state-space tessellation the recurrences are detected on.
     dt : float, default 1.0
         Integration step between cell checks for a *flow* (ignored for a map,
@@ -184,7 +183,7 @@ class AttractorMapper:
     def __init__(
         self,
         system: Any,
-        cellgrid: CellGrid,
+        cellgrid: _CellGrid,
         *,
         dt: float = 1.0,
         max_steps: int = 10000,
@@ -342,7 +341,7 @@ class AttractorMapper:
                 a = parent[a]
             return a
 
-        centers = {k: representative(np.asarray(self._att_points[k], dtype=float)) for k in ids}
+        centers = {k: _representative(np.asarray(self._att_points[k], dtype=float)) for k in ids}
         for i, a in enumerate(ids):
             for c in ids[i + 1 :]:
                 if find(a) == find(c):
@@ -425,7 +424,7 @@ def find_attractors(
         Merge attractors whose centroids lie within this distance (a split-set
         cleanup).  ``None`` uses two recurrence-cell diagonals; ``0`` disables it.
     **fsm
-        Finite-state-machine thresholds forwarded to :class:`AttractorMapper`
+        Finite-state-machine thresholds forwarded to :class:`_AttractorMapper`
         (``consecutive_recurrences``, ``attractor_locate_steps``,
         ``attractor_revisits``, ``basin_revisits``, ``lost_steps``).
 
@@ -442,8 +441,8 @@ def find_attractors(
     if getattr(system, "is_discrete", False) is False and _looks_unsupported(system):
         raise TypeError("find_attractors supports maps and flows, not delay/stochastic systems.")
 
-    grid = recurrence_grid(region, resolution)
-    mapper = AttractorMapper(system, grid, dt=dt, max_steps=max_steps, **fsm)
+    grid = _recurrence_grid(region, resolution)
+    mapper = _AttractorMapper(system, grid, dt=dt, max_steps=max_steps, **fsm)
     draw = sampler(region, seed=seed)
 
     diverged = 0
@@ -454,7 +453,7 @@ def find_attractors(
     return mapper.attractor_set(diverged=diverged, seeds=int(n_seeds), merge=merge)
 
 
-def resolve_merge_tol(cellgrid: CellGrid, merge_tol: float | None) -> float:
+def resolve_merge_tol(cellgrid: _CellGrid, merge_tol: float | None) -> float:
     """Resolve the proximity-merge tolerance (``None`` → two cell diagonals)."""
     if merge_tol is None:
         return 2.0 * float(np.linalg.norm(cellgrid.delta))

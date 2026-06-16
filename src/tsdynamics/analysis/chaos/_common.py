@@ -25,7 +25,7 @@ from tsdynamics.data import Box
 # ── observable coercion (0--1 test) ──────────────────────────────────────────
 
 
-def as_observable(data: object, component: int | None = None) -> np.ndarray:
+def _as_observable(data: object, component: int | None = None) -> np.ndarray:
     """Coerce a scalar observable to a 1-D ``float`` array.
 
     Accepts a 1-D array-like, or a :class:`~tsdynamics.data.Trajectory`
@@ -79,7 +79,7 @@ def _unwrap(x: np.ndarray, dim: int) -> object:
     return float(a[0]) if dim == 1 else a
 
 
-def map_fns(system: object) -> tuple[Callable, Callable]:
+def _map_fns(system: object) -> tuple[Callable, Callable]:
     """Return ``(step, jac)`` callables for a discrete map.
 
     ``step(x) -> ndarray (dim,)`` advances one iteration; ``jac(x) -> ndarray
@@ -127,7 +127,7 @@ def _finite_diff_jac(step: Callable, x: np.ndarray, dim: int, eps: float = 1e-7)
 # ── tangent dynamics: flows ──────────────────────────────────────────────────
 
 
-def flow_fns(system: object) -> tuple[Callable, Callable]:
+def _flow_fns(system: object) -> tuple[Callable, Callable]:
     """Return ``(rhs, jac)`` for a flow: ``rhs(u, t)`` and ``jac(u, t)``.
 
     Both come from the SymEngine-lambdified numeric forms
@@ -143,7 +143,7 @@ def flow_fns(system: object) -> tuple[Callable, Callable]:
     return rhs, jac
 
 
-def rk4_state(rhs: Callable, x: np.ndarray, t: float, h: float) -> np.ndarray:
+def _rk4_state(rhs: Callable, x: np.ndarray, t: float, h: float) -> np.ndarray:
     """One classic RK4 step of ``dx/dt = rhs(x, t)`` (state only; for burn-in)."""
     k1 = rhs(x, t)
     k2 = rhs(x + 0.5 * h * k1, t + 0.5 * h)
@@ -152,7 +152,7 @@ def rk4_state(rhs: Callable, x: np.ndarray, t: float, h: float) -> np.ndarray:
     return x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
 
-def rk4_variational(
+def _rk4_variational(
     rhs: Callable, jac: Callable, x: np.ndarray, m: np.ndarray, t: float, h: float
 ) -> tuple[np.ndarray, np.ndarray]:
     r"""One RK4 step of the augmented system ``dx/dt = f``, ``dM/dt = J(x) M``.
@@ -180,13 +180,13 @@ def rk4_variational(
 # ── linear algebra ───────────────────────────────────────────────────────────
 
 
-def orthonormal_frame(dim: int, k: int, rng: np.random.Generator) -> np.ndarray:
+def _orthonormal_frame(dim: int, k: int, rng: np.random.Generator) -> np.ndarray:
     """Return ``k`` random orthonormal column vectors in ``R^dim`` (shape ``(dim, k)``)."""
     q, _ = np.linalg.qr(rng.standard_normal((dim, dim)))
     return np.ascontiguousarray(q[:, :k])
 
 
-def normalize_columns(m: np.ndarray) -> np.ndarray:
+def _normalize_columns(m: np.ndarray) -> np.ndarray:
     """Scale each column of ``m`` to unit Euclidean norm (zero columns left as-is)."""
     norms = np.linalg.norm(m, axis=0)
     norms = np.where(norms > 0.0, norms, 1.0)
@@ -237,7 +237,7 @@ def expansion_volume(m: np.ndarray) -> float:
     return float(np.prod(s)) if s.size else 1.0
 
 
-def linfit(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float]:
+def _linfit(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float]:
     """Least-squares line ``y ≈ slope·x + intercept``; return ``(slope, intercept, stderr)``.
 
     ``stderr`` is the standard error of the slope (``0`` for a two-point fit).
@@ -262,7 +262,7 @@ def linfit(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float]:
     return slope, intercept, stderr
 
 
-def pearson(x: np.ndarray, y: np.ndarray) -> float:
+def _pearson(x: np.ndarray, y: np.ndarray) -> float:
     """Pearson correlation of two equal-length vectors (``0`` if either is constant)."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -273,7 +273,7 @@ def pearson(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.sum(xm * ym) / denom)
 
 
-def resolve_region(system: object, region: object, *, margin: float = 0.1) -> Box:
+def _resolve_region(system: object, region: object, *, margin: float = 0.1) -> Box:
     """Coerce a region argument to a :class:`~tsdynamics.data.Box`.
 
     Accepts a ``Box``, an ``(lo, hi)`` pair, or ``None`` — in which case the box
@@ -297,7 +297,7 @@ def _sample_orbit_box(system: object, n: int = 2000, transient: int = 500) -> np
 
     x = np.asarray(system.resolve_ic(None), dtype=float).ravel()
     if isinstance(system, DiscreteMap):
-        step, _ = map_fns(system)
+        step, _ = _map_fns(system)
         for _ in range(transient):
             x = step(x)
         pts = np.empty((n, x.size))
@@ -306,14 +306,14 @@ def _sample_orbit_box(system: object, n: int = 2000, transient: int = 500) -> np
             pts[i] = x
         return pts
     if isinstance(system, ContinuousSystem):
-        rhs, _ = flow_fns(system)
+        rhs, _ = _flow_fns(system)
         h, t = 0.01, 0.0
         for _ in range(transient):
-            x = rk4_state(rhs, x, t, h)
+            x = _rk4_state(rhs, x, t, h)
             t += h
         pts = np.empty((n, x.size))
         for i in range(n):
-            x = rk4_state(rhs, x, t, h)
+            x = _rk4_state(rhs, x, t, h)
             t += h
             pts[i] = x
         return pts

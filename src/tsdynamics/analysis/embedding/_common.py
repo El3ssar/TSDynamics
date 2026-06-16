@@ -2,8 +2,8 @@ r"""
 Shared input coercion for the delay-embedding toolkit.
 
 The estimators in this subpackage operate on a single scalar time series
-(:func:`as_series`) or, for multivariate reconstruction, on a bundle of
-synchronous channels (:func:`as_channels`).  Both accept a
+(:func:`_as_series`) or, for multivariate reconstruction, on a bundle of
+synchronous channels (:func:`_as_channels`).  Both accept a
 :class:`~tsdynamics.data.Trajectory`, a raw array, or a plain sequence, so the
 public functions read a trajectory and a NumPy array the same way.
 
@@ -17,15 +17,15 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["as_channels", "as_series", "is_trajectory"]
+__all__: list[str] = []
 
 
-def is_trajectory(x: Any) -> bool:
+def _is_trajectory(x: Any) -> bool:
     """Return whether ``x`` quacks like a :class:`~tsdynamics.data.Trajectory`."""
     return hasattr(x, "y") and hasattr(x, "component") and not isinstance(x, np.ndarray)
 
 
-def as_series(x: Any, component: int | str | None = None) -> np.ndarray:
+def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
     """Coerce ``x`` into a contiguous 1-D ``float64`` array (one scalar series).
 
     Parameters
@@ -50,7 +50,7 @@ def as_series(x: Any, component: int | str | None = None) -> np.ndarray:
         If ``component`` is ambiguous/meaningless, the series is not 1-D after
         selection, has fewer than two samples, or contains non-finite values.
     """
-    if is_trajectory(x):
+    if _is_trajectory(x):
         if component is None:
             if x.y.ndim == 1 or x.y.shape[1] == 1:
                 arr = np.asarray(x.y, dtype=float).ravel()
@@ -85,7 +85,7 @@ def as_series(x: Any, component: int | str | None = None) -> np.ndarray:
     return arr
 
 
-def as_channels(x: Any) -> np.ndarray:
+def _as_channels(x: Any) -> np.ndarray:
     """Coerce ``x`` into a contiguous ``(N, d)`` array of synchronous channels.
 
     Used by multivariate embedding.  Accepts a
@@ -107,7 +107,7 @@ def as_channels(x: Any) -> np.ndarray:
         If the channels have unequal length, the result is not 2-D, there are
         fewer than two samples, or any value is non-finite.
     """
-    if is_trajectory(x):
+    if _is_trajectory(x):
         arr = np.asarray(x.y, dtype=float)
     else:
         # A list/tuple of 1-D series -> stack as columns; reject ragged input.

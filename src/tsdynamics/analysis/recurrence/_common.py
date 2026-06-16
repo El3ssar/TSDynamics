@@ -1,11 +1,11 @@
 r"""
 Shared plumbing for the recurrence / RQA toolkit.
 
-Holds the point-set coercion (:func:`as_points`), metric handling
-(:func:`metric_p`), the run-length extractors that turn a recurrence matrix's
-diagonals and columns into line-length histograms (:func:`run_lengths`,
-:func:`runs_from_sorted`), and the recurrence-rate → threshold inversion
-(:func:`threshold_for_rate`).  The estimators live in :mod:`.matrix`,
+Holds the point-set coercion (:func:`_as_points`), metric handling
+(:func:`_metric_p`), the run-length extractors that turn a recurrence matrix's
+diagonals and columns into line-length histograms (:func:`_run_lengths`,
+:func:`_runs_from_sorted`), and the recurrence-rate → threshold inversion
+(:func:`_threshold_for_rate`).  The estimators live in :mod:`.matrix`,
 :mod:`.rqa` and :mod:`.windowed`.
 
 The :class:`~tsdynamics.data.Trajectory` is duck-typed (``.y``) to avoid an
@@ -18,10 +18,10 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["as_points", "metric_p"]
+__all__: list[str] = []
 
 
-def as_points(data: Any) -> np.ndarray:
+def _as_points(data: Any) -> np.ndarray:
     """Coerce a trajectory / array / series to a ``(N, dim)`` float array.
 
     Accepts anything with a ``.y`` attribute (a
@@ -62,7 +62,7 @@ def as_points(data: Any) -> np.ndarray:
     return np.ascontiguousarray(arr)
 
 
-def metric_p(metric: str | float) -> float:
+def _metric_p(metric: str | float) -> float:
     """Map a metric name (or a Minkowski exponent) to a ``scipy`` ``p`` value.
 
     Recognises ``"euclidean"`` (``p=2``), ``"manhattan"``/``"cityblock"``/``"l1"``
@@ -96,7 +96,7 @@ def metric_p(metric: str | float) -> float:
     return table[key]
 
 
-def run_lengths(mask: np.ndarray) -> np.ndarray:
+def _run_lengths(mask: np.ndarray) -> np.ndarray:
     """Lengths of maximal runs of ``True`` in a 1-D boolean array.
 
     Used for diagonal lines, where the recurrence values along a diagonal are
@@ -113,7 +113,7 @@ def run_lengths(mask: np.ndarray) -> np.ndarray:
     return ends - starts
 
 
-def runs_from_sorted(indices: np.ndarray) -> np.ndarray:
+def _runs_from_sorted(indices: np.ndarray) -> np.ndarray:
     """Lengths of runs of consecutive integers in a sorted index array.
 
     Used for vertical lines: a sparse column's stored row indices are ascending,
@@ -166,7 +166,7 @@ def _sample_valid_distances(
     return _dist(i, j)
 
 
-def threshold_for_rate(
+def _threshold_for_rate(
     points: np.ndarray,
     rate: float,
     p: float,

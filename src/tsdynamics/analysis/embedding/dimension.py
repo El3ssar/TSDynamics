@@ -28,7 +28,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import as_series
+from ._common import _as_series
 
 __all__ = [
     "EmbeddingDimension",
@@ -166,7 +166,7 @@ def cao_dimension(
     L. Cao, "Practical method for determining the minimum embedding dimension of
     a scalar time series", *Physica D* **110**, 43 (1997).
     """
-    x = as_series(data, component=component)
+    x = _as_series(data, component=component)
     tau, max_dim = int(delay), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
@@ -257,7 +257,7 @@ def false_nearest_neighbors(
     dimension for phase-space reconstruction using a geometrical construction",
     *Phys. Rev. A* **45**, 3403 (1992).
     """
-    x = as_series(data, component=component)
+    x = _as_series(data, component=component)
     tau, max_dim = int(delay), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")

@@ -1,12 +1,12 @@
 r"""
 Shared plumbing for the surrogate-data toolkit.
 
-Holds the scalar-series coercion (:func:`as_series`, duck-typed against a
+Holds the scalar-series coercion (:func:`_as_series`, duck-typed against a
 :class:`~tsdynamics.data.Trajectory` to avoid an import cycle), the half-spectrum
-phase randomiser the Fourier-family generators share (:func:`phase_randomize`),
+phase randomiser the Fourier-family generators share (:func:`_phase_randomize`),
 and the hypothesis-test arithmetic that turns a data statistic plus a surrogate
 ensemble into a rank p-value and a Gaussian significance (:func:`empirical_pvalue`,
-:func:`gaussian_significance`).  The generators live in :mod:`.generators`, the
+:func:`_gaussian_significance`).  The generators live in :mod:`.generators`, the
 discriminating statistics in :mod:`.statistics`, and the test wrapper in
 :mod:`.hypothesis`.
 """
@@ -18,10 +18,10 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["as_series", "empirical_pvalue", "gaussian_significance", "phase_randomize"]
+__all__ = ["empirical_pvalue"]
 
 
-def as_series(x: Any, component: int | str | None = None) -> np.ndarray:
+def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
     """Coerce ``x`` into a finite 1-D ``float64`` array (a single scalar series).
 
     Accepts a 1-D array-like, a 2-D array (a column is selected by ``component``),
@@ -90,7 +90,7 @@ def as_series(x: Any, component: int | str | None = None) -> np.ndarray:
     return arr
 
 
-def phase_randomize(x: np.ndarray, n: int, rng: np.random.Generator) -> np.ndarray:
+def _phase_randomize(x: np.ndarray, n: int, rng: np.random.Generator) -> np.ndarray:
     r"""Return ``n`` phase-randomised (Fourier) surrogates of ``x``.
 
     Each surrogate keeps the magnitude spectrum :math:`|X_k|` of ``x`` exactly —
@@ -168,7 +168,7 @@ def empirical_pvalue(t_data: float, t_surr: np.ndarray, tail: str = "two") -> fl
     raise ValueError(f"tail must be 'two', 'greater' or 'less', got {tail!r}.")
 
 
-def gaussian_significance(t_data: float, t_surr: np.ndarray) -> float:
+def _gaussian_significance(t_data: float, t_surr: np.ndarray) -> float:
     r"""Significance of ``t_data`` in standard deviations of the surrogate ensemble.
 
     The classic surrogate "number of sigmas"

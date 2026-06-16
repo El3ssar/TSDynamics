@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import as_points
+from ._common import _as_points
 from .rqa import RQAResult, rqa
 
 __all__ = ["WindowedRQA", "windowed_rqa"]
@@ -134,7 +134,7 @@ def windowed_rqa(
     ValueError
         If ``window`` is out of range or ``step < 1``.
     """
-    points = as_points(data)
+    points = _as_points(data)
     n = points.shape[0]
     window = int(window)
     if window < 2:

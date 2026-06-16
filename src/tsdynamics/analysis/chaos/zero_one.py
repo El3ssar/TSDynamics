@@ -83,7 +83,7 @@ def zero_one_test(
     Gottwald & Melbourne (2004), *Proc. R. Soc. A* 460, 603--611.
     Gottwald & Melbourne (2009), *SIAM J. Appl. Dyn. Syst.* 8, 129--145.
     """
-    phi = _c.as_observable(observable, component)
+    phi = _c._as_observable(observable, component)
     n = phi.size
     if n < 200:
         raise ValueError(
@@ -116,7 +116,7 @@ def zero_one_test(
         # only the (diffusive) trend remains (Gottwald & Melbourne 2009, eq. 2.6).
         osc = mean_phi_sq * (1.0 - np.cos(lags * c)) / (1.0 - np.cos(c))
         d = msd - osc
-        k_c[idx] = _c.pearson(lags, d)
+        k_c[idx] = _c._pearson(lags, d)
 
     k = float(np.median(k_c))
     return (k, k_c) if return_distribution else k

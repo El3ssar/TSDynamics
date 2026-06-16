@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import DimensionResult, as_points, metric_p
+from ._common import DimensionResult, _as_points, _metric_p
 from ._scaling import fit_scaling_region
 
 __all__ = ["fixed_mass_dimension"]
@@ -103,12 +103,12 @@ def fixed_mass_dimension(
     """
     from scipy.spatial import cKDTree
 
-    points = as_points(data)
+    points = _as_points(data)
     n = points.shape[0]
     w = int(theiler_window)
     if w < 0:
         raise ValueError("theiler_window must be non-negative.")
-    p = metric_p(metric)
+    p = _metric_p(metric)
 
     if ks is None:
         k_hi = max(n // 10, min_window + 1)

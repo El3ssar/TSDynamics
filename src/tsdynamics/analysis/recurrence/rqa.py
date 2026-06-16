@@ -29,7 +29,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import run_lengths, runs_from_sorted
+from ._common import _run_lengths, _runs_from_sorted
 from .matrix import RecurrenceMatrix, recurrence_matrix
 
 __all__ = ["RQAResult", "rqa"]
@@ -105,7 +105,7 @@ def _diagonal_lengths(mat: Any) -> np.ndarray:
     n = mat.shape[0]
     out: list[np.ndarray] = []
     for k in range(1, n):
-        runs = run_lengths(np.asarray(mat.diagonal(k), dtype=bool))
+        runs = _run_lengths(np.asarray(mat.diagonal(k), dtype=bool))
         if runs.size:
             out.append(runs)
     return np.concatenate(out) if out else np.empty(0, dtype=np.intp)
@@ -118,7 +118,7 @@ def _vertical_lengths(mat: Any) -> np.ndarray:
     indptr, indices = csc.indptr, csc.indices
     out: list[np.ndarray] = []
     for j in range(csc.shape[1]):
-        runs = runs_from_sorted(indices[indptr[j] : indptr[j + 1]])
+        runs = _runs_from_sorted(indices[indptr[j] : indptr[j + 1]])
         if runs.size:
             out.append(runs)
     return np.concatenate(out) if out else np.empty(0, dtype=np.intp)

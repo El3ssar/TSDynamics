@@ -28,7 +28,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import as_channels, as_series, is_trajectory
+from ._common import _as_channels, _as_series, _is_trajectory
 
 __all__ = ["embed"]
 
@@ -109,10 +109,10 @@ def embed(
             raise ValueError("a per-channel `dimension` sequence needs a multivariate input.")
         if not isinstance(delay, (int, np.integer)):
             raise ValueError("a per-channel `delay` sequence needs a multivariate input.")
-        series = as_series(data, component=component)
+        series = _as_series(data, component=component)
         return _embed_single(series, int(dimension), int(delay))
 
-    channels = as_channels(data)
+    channels = _as_channels(data)
     n_channels = channels.shape[1]
     dims = _as_per_channel(dimension, n_channels, "dimension")
     delays = _as_per_channel(delay, n_channels, "delay")
@@ -128,7 +128,7 @@ def embed(
 
 def _looks_univariate(data: Any) -> bool:
     """Whether ``data`` is a single scalar series (1-D, or a 1-column 2-D / trajectory)."""
-    if is_trajectory(data):
+    if _is_trajectory(data):
         return data.y.ndim == 1 or data.y.shape[1] == 1
     if isinstance(data, (list, tuple)):
         # A list of 1-D series is multivariate; a flat numeric list is univariate.
