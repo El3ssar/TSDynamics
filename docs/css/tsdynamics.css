@@ -1,18 +1,72 @@
 /* =========================================================================
-   TSDynamics — small refinements over mkdocs-material defaults.
-   Theme colors come from the deep-purple palette in mkdocs.yml; this file
-   only adds a kicker label, figure/table polish, and code-block trim.
+   TSDynamics — design system on top of mkdocs-material.
+   Identity: an indigo→teal duo (flow/system = indigo, analysis = teal),
+   a Fraunces display serif for the wordmark + page titles, IBM Plex Mono
+   kickers, and a hairline editorial chrome. Tokens drive both the hero
+   (docs/overrides/home.html) and the body pages.
    ========================================================================= */
 
 :root {
   --ts-radius: 8px;
+
+  /* Brand duo */
+  --ts-indigo: #4f46e5;
+  --ts-indigo-strong: #4338ca;
+  --ts-teal: #0d9488;
+  --ts-teal-strong: #0f766e;
+
+  /* Editorial chrome — light */
+  --ts-ink: #0c1222;
+  --ts-ink-soft: #2b3550;
+  --ts-muted: #6b7488;
+  --ts-bg: #ffffff;
+  --ts-surface: #f7f8fb;
+  --ts-rule: #e6e8ef;
+  --ts-rule-strong: #cbd0de;
+  --ts-shadow: 0 1px 2px rgba(12, 18, 34, 0.04), 0 8px 24px rgba(12, 18, 34, 0.05);
+
+  /* Type roles */
+  --ts-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --ts-mono: var(--md-code-font-family), "IBM Plex Mono", monospace;
 }
 
-/* Kicker — small section label above page titles:
-   <span class="ts-kicker">Start · 02</span> */
+/* Material primary/accent → our duo (light) */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #4f46e5;
+  --md-primary-fg-color--light: #6366f1;
+  --md-primary-fg-color--dark: #4338ca;
+  --md-accent-fg-color: #0d9488;
+  --md-typeset-a-color: #4338ca;
+}
+
+/* Editorial chrome — dark (slate) */
+[data-md-color-scheme="slate"] {
+  --ts-indigo: #818cf8;
+  --ts-indigo-strong: #a5b4fc;
+  --ts-teal: #2dd4bf;
+  --ts-teal-strong: #5eead4;
+
+  --ts-ink: #eef1f8;
+  --ts-ink-soft: #c2cbde;
+  --ts-muted: #8a93ab;
+  --ts-bg: #0b0f1a;
+  --ts-surface: #121726;
+  --ts-rule: #232a3d;
+  --ts-rule-strong: #313a52;
+  --ts-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+
+  --md-primary-fg-color: #4f46e5;
+  --md-primary-fg-color--light: #818cf8;
+  --md-primary-fg-color--dark: #3730a3;
+  --md-accent-fg-color: #2dd4bf;
+  --md-typeset-a-color: #a5b4fc;
+  --md-default-bg-color: #0b0f1a;
+}
+
+/* ---- Kicker — small section label above page titles ------------------- */
 .ts-kicker {
   display: block;
-  font-family: var(--md-code-font-family);
+  font-family: var(--ts-mono);
   font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.16em;
@@ -21,10 +75,12 @@
   margin-bottom: 0.5rem;
 }
 
-/* Headings — slightly tighter display */
+/* ---- Headings — Fraunces display serif for h1, tight sans for h2 ------- */
 .md-typeset h1 {
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--ts-display);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ts-ink);
 }
 
 .md-typeset h2 {
@@ -32,14 +88,14 @@
   letter-spacing: -0.01em;
 }
 
-/* Code blocks — rounded, hairline border */
+/* ---- Code blocks — rounded, hairline border --------------------------- */
 .md-typeset .highlight {
   border: 1px solid var(--md-default-fg-color--lightest);
   border-radius: var(--ts-radius);
   overflow: hidden;
 }
 
-/* Tables — contained, mono headers */
+/* ---- Tables — contained, mono headers --------------------------------- */
 .md-typeset table:not([class]) {
   border: 1px solid var(--md-default-fg-color--lightest);
   border-radius: var(--ts-radius);
@@ -49,7 +105,7 @@
 }
 
 .md-typeset table:not([class]) th {
-  font-family: var(--md-code-font-family);
+  font-family: var(--ts-mono);
   font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -57,7 +113,7 @@
   color: var(--md-default-fg-color--light);
 }
 
-/* Figures — framed, with mono captions */
+/* ---- Figures — framed, mono captions ---------------------------------- */
 .md-typeset figure {
   border: 1px solid var(--md-default-fg-color--lightest);
   border-radius: var(--ts-radius);
@@ -65,14 +121,14 @@
 }
 
 .md-typeset figcaption {
-  font-family: var(--md-code-font-family);
+  font-family: var(--ts-mono);
   font-size: 0.6rem;
   font-style: normal;
   color: var(--md-default-fg-color--light);
   max-width: none;
 }
 
-/* Display math — quiet panel, scrollable when wide */
+/* ---- Display math — quiet panel, scrollable when wide ----------------- */
 .md-typeset .katex-display {
   padding: 1rem 1.2rem;
   border: 1px solid var(--md-default-fg-color--lightest);
@@ -80,13 +136,20 @@
   overflow-x: auto;
 }
 
-/* Card grids — lift on hover */
+/* ---- Card grids — lift on hover, accent edge -------------------------- */
 .md-typeset .grid.cards > ul > li {
   border-radius: var(--ts-radius);
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .md-typeset .grid.cards > ul > li:hover {
   border-color: var(--md-accent-fg-color);
   transform: translateY(-2px);
+  box-shadow: var(--ts-shadow);
+}
+
+/* ---- System-page attractor figures — let the transparent PNGs breathe - */
+.md-typeset figure img[src*="figures/systems"] {
+  display: block;
+  margin: 0 auto;
 }

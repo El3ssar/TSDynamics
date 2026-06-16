@@ -1,5 +1,10 @@
 ---
+template: home.html
+title: TSDynamics — dynamical systems & chaos analysis for Python
 description: TSDynamics — 149 built-in dynamical systems, compiled integration, and chaos analysis for Python.
+hide:
+  - navigation
+  - toc
 ---
 
 # TSDynamics
