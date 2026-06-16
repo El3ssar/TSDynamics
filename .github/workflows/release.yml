@@ -13,9 +13,11 @@
 #   4. publish — upload every wheel + the sdist to PyPI via OIDC trusted
 #                publishing, and attach them to the GitHub Release.
 #
-# Manual path (workflow_dispatch with `publish_tag`): re-publish an already-tagged
-# release's artifacts to PyPI (e.g. a publish that failed when the trusted
-# publisher was not yet registered) without re-running PSR.
+# Manual path (workflow_dispatch with `publish_tag`): (re)build the wheels + sdist
+# for an already-tagged release and publish them to PyPI, without re-running PSR.
+# Use it to finish a release whose wheel build was interrupted (e.g. a starved
+# macOS runner) or whose publish failed (e.g. the trusted publisher was not yet
+# registered). It runs the same build+publish jobs as the auto path.
 #
 # PyPI trusted publishing is bound to THIS filename and the "pypi" environment —
 # do not rename either without re-registering on PyPI:
@@ -30,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_tag:
-        description: "Re-publish an existing tag's artifacts to PyPI (e.g. v3.0.0). Leave blank for a normal release run."
+        description: "Build + publish this existing tag to PyPI (e.g. v3.0.0). Leave blank for a normal release run."
         required: false
         default: ""
 
@@ -92,9 +94,24 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-  wheels:
+  # Single gate that drives the build + publish for BOTH paths: a fresh
+  # auto-release (push to main, PSR cut a version) OR a manual recovery
+  # (workflow_dispatch with `publish_tag`, e.g. to finish a release whose wheel
+  # build was interrupted). Resolves the tag to build/publish from either source.
+  resolve:
     needs: release
-    if: needs.release.outputs.released == 'true'
+    if: >-
+      always() &&
+      (needs.release.outputs.released == 'true' ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_tag != ''))
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ needs.release.outputs.tag || inputs.publish_tag }}
+    steps:
+      - run: echo "Building + publishing ${{ needs.release.outputs.tag || inputs.publish_tag }}"
+
+  wheels:
+    needs: resolve
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -105,15 +122,19 @@ jobs:
           - { label: linux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: auto }
           - { label: musllinux-x86_64, runner: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
           - { label: musllinux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: musllinux_1_2 }
-          - { label: macos-x86_64, runner: macos-13, target: x86_64, manylinux: auto }
+          # macOS x86_64 is CROSS-COMPILED on a macos-14 (ARM) runner — the
+          # `macos-13` (Intel) pool is being retired and starves the queue. The
+          # extension is abi3 and links no libpython/C deps, so the cross build is
+          # clean; it is import-verified on a native x86_64 host elsewhere.
+          - { label: macos-x86_64, runner: macos-14, target: x86_64, manylinux: auto }
           - { label: macos-aarch64, runner: macos-14, target: aarch64, manylinux: auto }
           - { label: windows-x64, runner: windows-latest, target: x64, manylinux: auto }
     steps:
-      # Check out the *tag* PSR created so the built wheel carries the bumped
-      # version (the run's github.sha is the pre-bump commit).
+      # Check out the *tag* (PSR's new tag, or the dispatched publish_tag) so the
+      # built wheel carries the released version, not the pre-bump commit.
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release.outputs.tag }}
+          ref: ${{ needs.resolve.outputs.tag }}
 
       - uses: actions/setup-python@v6
         with:
@@ -138,13 +159,12 @@ jobs:
           if-no-files-found: error
 
   sdist:
-    needs: release
-    if: needs.release.outputs.released == 'true'
+    needs: resolve
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release.outputs.tag }}
+          ref: ${{ needs.resolve.outputs.tag }}
 
       # The sdist vendors the sibling path-dependency crates (tsdyn-ir/vm/jit/
       # solvers/engine), so it is self-contained and buildable from source.
@@ -162,8 +182,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [release, wheels, sdist]
-    if: needs.release.outputs.released == 'true'
+    needs: [resolve, wheels, sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -183,30 +202,10 @@ jobs:
       - name: Attach artifacts to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ needs.release.outputs.tag }}" dist/* --repo "${{ github.repository }}"
+        run: gh release upload "${{ needs.resolve.outputs.tag }}" dist/* --clobber --repo "${{ github.repository }}"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-
-  republish:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_tag != ''
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download the tag's built artifacts from its GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p dist
-          gh release download "${{ inputs.publish_tag }}" \
-            --repo "${{ github.repository }}" \
-            --dir dist --pattern '*.whl' --pattern '*.tar.gz'
-          ls -l dist
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A recovery re-run may re-upload an already-published file; don't fail.
+          skip-existing: true
