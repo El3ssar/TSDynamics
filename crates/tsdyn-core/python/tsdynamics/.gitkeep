@@ -1,3 +1,0 @@
-# Namespace mount for maturin (see ../../pyproject.toml [tool.maturin]).
-# Keeps this empty package dir in git so the wheel lands tsdynamics/_rust.abi3.so.
-# Excluded from the built wheel via `exclude = ["**/.gitkeep"]`.

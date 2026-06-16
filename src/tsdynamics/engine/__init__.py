@@ -17,18 +17,11 @@ The E6 seam (symbolic definitions → engine):
   context (ic, parameters, delays, …) into a per-family ``Problem``.
 - :mod:`~tsdynamics.engine.run` — backend selection (``interp`` / ``jit`` /
   ``reference``) and the ``integrate`` / ``ensemble`` entry points.
+- :mod:`~tsdynamics.engine.symbols` — the engine-native ``y`` / ``t`` symbolic
+  state/time provider that ``_equations`` is written against.
 
-Present today (migrated here from the v2 ``backends`` package):
-
-- :mod:`~tsdynamics.engine.rustcore` — the v2-seed tape emitter + accelerator
-  wrappers (``tsdynamics-core``); superseded by ``compile``/``run`` and retired
-  with the other v2 backends at milestone M3.
-- :mod:`~tsdynamics.engine.diffsol` — the experimental DiffSL/pydiffsol bridge
-  (``pip install tsdynamics[diffsol]``).  A v2-era backend, retired once the
-  Rust sole-engine reaches parity (milestone M3).
-
-All are imported lazily by their callers, so importing this package is cheap
-and pulls in no optional dependency.
+The Rust engine is the sole integration backend (the v2 JiTCODE / JiTCDDE /
+Numba / diffsol backends were retired at milestone M3).
 """
 
-__all__ = ["compile", "diffsol", "problem", "run", "rustcore"]
+__all__ = ["compile", "problem", "run", "symbols"]

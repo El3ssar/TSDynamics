@@ -60,11 +60,12 @@ def build_variational_tape(system: Any, k: int) -> Any:
         A lowered, validated tape with ``dim·(k+1)`` state inputs and outputs.
     """
     import symengine
-    from jitcode import t as t_sym
-    from jitcode import y
 
     from tsdynamics.engine.compile import lower_expressions
+    from tsdynamics.engine.symbols import state_time_symbols
     from tsdynamics.families.continuous import _resolve_derivative_nodes
+
+    y, t_sym = state_time_symbols()
 
     dim = system.dim
     if not 1 <= int(k) <= dim:

@@ -62,8 +62,6 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     matching :func:`tsdynamics.engine.compile.lower_dde`.
     """
     import symengine
-    from jitcdde import t as t_sym
-    from jitcdde import y
 
     from tsdynamics.engine.compile import (
         DelaySlot,
@@ -71,7 +69,10 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
         _past_y_component_and_delay,
         lower_expressions,
     )
+    from tsdynamics.engine.symbols import state_time_symbols
     from tsdynamics.families.continuous import _resolve_derivative_nodes
+
+    y, t_sym = state_time_symbols()
 
     dim = system.dim
     exprs = list(type(system)._equations(y, t_sym, **system.params.as_dict()))

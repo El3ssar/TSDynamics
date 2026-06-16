@@ -10,27 +10,14 @@ import numpy as np
 
 from .base import SystemBase, Trajectory
 
-try:
-    from numba import njit as _njit
-
-    _NUMBA = True
-except ImportError:
-
-    def _njit(fn):
-        return fn
-
-    _NUMBA = False
-
-
 # ---------------------------------------------------------------------------
 # Signature validation helpers
 # ---------------------------------------------------------------------------
 
 
 def _unwrap_static(obj: Any) -> Any:
-    """Peel ``staticmethod`` and Numba-dispatcher wrappers off a map method."""
-    fn = getattr(obj, "__func__", obj)  # staticmethod → wrapped callable
-    return getattr(fn, "py_func", fn)  # numba CPUDispatcher → python function
+    """Peel the ``staticmethod`` wrapper off a map method to get the raw callable."""
+    return getattr(obj, "__func__", obj)
 
 
 def _positional_param_names(fn: Any) -> list[str] | None:
@@ -92,17 +79,14 @@ class DiscreteMap(SystemBase):
     >>> traj2 = h_variant.iterate(steps=10_000)
     """
 
-    # Class-level cache: (class_name, params_hash) → compiled iterate fn
-    _iter_cache: ClassVar[dict[tuple, Any]] = {}
-
     #: Set to False on maps whose orbit visits discontinuities, where the
     #: finite-difference Jacobian validation in the test suite cannot apply.
     _jacobian_fd_check: ClassVar[bool] = True
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"numba"`` — the v2 in-process iterate loop — until the M3 migration flips
-    #: it to the Rust engine's native map loop.
-    _default_backend: ClassVar[str] = "numba"
+    #: ``"interp"`` — the Rust engine's native map loop (the sole map backend
+    #: since the M3 migration retired the Numba loop).
+    _default_backend: ClassVar[str] = "interp"
 
     # Protocol stepping state (instances shadow these class defaults).
     _state_now: np.ndarray | None = None
@@ -218,13 +202,9 @@ class DiscreteMap(SystemBase):
         x = self._state_now
         params = self.params.as_tuple()
 
-        iterate_fn = self._get_iterate_fn() if n > 16 else None
-        if iterate_fn is not None:
-            x = iterate_fn(x.copy(), n)[-1].copy()
-        else:
-            step_fn = type(self)._step
-            for _ in range(n):
-                x = np.asarray(step_fn(x, *params), dtype=float).ravel()
+        step_fn = type(self)._step
+        for _ in range(n):
+            x = np.asarray(step_fn(x, *params), dtype=float).ravel()
         if not np.isfinite(x).all():
             raise RuntimeError(
                 f"{type(self).__name__}: map diverged at iteration {self._n_now + n}."
@@ -261,46 +241,6 @@ class DiscreteMap(SystemBase):
     # ------------------------------------------------------------------ #
     # Compiled iterate loop
     # ------------------------------------------------------------------ #
-
-    def _get_iterate_fn(self):
-        """
-        Return a Numba-compiled iterate function for the current params.
-
-        The function signature is ``iterate(ic, steps) → (steps, dim) array``.
-
-        When Numba is unavailable, returns ``None`` and the caller falls back
-        to a pure-Python loop.  The compiled function is cached per
-        ``(class_name, params_hash)`` — a param change triggers one re-JIT.
-        """
-        if not _NUMBA:
-            return None
-
-        # Key on the class OBJECT, not its name: a same-named user class (or a
-        # notebook redefinition with edited _step) must never reuse another
-        # definition's compiled loop.
-        cache_key = (type(self), self.params.param_hash())
-        cache = type(self)._iter_cache
-
-        if cache_key in cache:
-            return cache[cache_key]
-
-        step_fn = type(self)._step  # @njit-compiled static method
-        params_tuple = self.params.as_tuple()
-        dim = self.dim
-
-        @_njit
-        def _iterate(ic: np.ndarray, steps: int) -> np.ndarray:
-            out = np.empty((steps, dim))
-            x = ic.copy()
-            for i in range(steps):
-                nxt = step_fn(x, *params_tuple)
-                for j in range(dim):
-                    out[i, j] = nxt[j]
-                    x[j] = nxt[j]
-            return out
-
-        cache[cache_key] = _iterate
-        return _iterate
 
     # ------------------------------------------------------------------ #
     # Iteration
@@ -357,32 +297,16 @@ class DiscreteMap(SystemBase):
         """
         backend = backend if backend is not None else self._default_backend
 
-        if backend != "numba":
-            return self._iterate_engine(steps=steps, ic=ic, backend=backend)
-
+        # Iterate on the Rust engine.  Preserve the random-IC retry only when no
+        # explicit ``ic`` was given (a random draw can land off-basin); an
+        # explicit ic that diverges raises loudly, the engine's contract.
+        ic_explicit = ic is not None
         ic_arr = self.resolve_ic(ic)
-        iterate_fn = self._get_iterate_fn()
-
         for attempt in range(max_retries):
             try:
-                if iterate_fn is not None:
-                    out = iterate_fn(ic_arr.copy(), steps)
-                else:
-                    out = self._iterate_python(ic_arr.copy(), steps)
-
-                if not np.all(np.isfinite(out)):
-                    bad = np.argmax(~np.isfinite(out).all(axis=1))
-                    raise ValueError(f"Divergence detected at step {bad}")
-
-                return Trajectory(
-                    t=np.arange(steps),
-                    y=out,
-                    system=self,
-                    meta=self._provenance(family="map", steps=steps, ic=ic_arr.copy()),
-                )
-
-            except ValueError as exc:
-                if attempt == max_retries - 1:
+                return self._iterate_engine(steps=steps, ic=ic_arr, backend=backend)
+            except RuntimeError as exc:
+                if ic_explicit or attempt == max_retries - 1:
                     raise
                 print(f"Warning: {exc}. Retrying with a new random IC.")
                 ic_arr = np.random.rand(self.dim)
@@ -415,16 +339,6 @@ class DiscreteMap(SystemBase):
                 f"{type(self).__name__}: map diverged at iteration {bad} (backend={backend!r})."
             )
         return traj
-
-    def _iterate_python(self, ic: np.ndarray, steps: int) -> np.ndarray:
-        """Pure-Python fallback (used when Numba is unavailable)."""
-        params = self.params.as_tuple()
-        out = np.empty((steps, self.dim))
-        x = ic
-        for i in range(steps):
-            x = np.asarray(type(self)._step(x, *params), dtype=float)
-            out[i] = x
-        return out
 
     # ------------------------------------------------------------------ #
     # Lyapunov spectrum

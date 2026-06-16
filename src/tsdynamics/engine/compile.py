@@ -707,8 +707,10 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
     Tape
     """
     import symengine
-    from jitcode import t as t_sym
-    from jitcode import y
+
+    from tsdynamics.engine.symbols import state_time_symbols
+
+    y, t_sym = state_time_symbols()
 
     dim = system.dim
     struct_vals = system._structural_vals()
@@ -965,8 +967,9 @@ def lower_dde(system: Any) -> tuple[Tape, list[DelaySlot]]:
         unsupported construct.
     """
     import symengine
-    from jitcdde import t as t_sym
-    from jitcdde import y
+    from tsdynamics.engine.symbols import state_time_symbols
+
+    y, t_sym = state_time_symbols()
 
     dim = system.dim
     exprs = list(type(system)._equations(y, t_sym, **system.params.as_dict()))
@@ -1018,12 +1021,22 @@ def lower_dde(system: Any) -> tuple[Tape, list[DelaySlot]]:
 
 
 def _is_past_y(node: Any) -> bool:
-    """Whether a SymEngine node is a JiTCDDE delayed-state access (``past_y(...)``)."""
-    return type(node).__name__ == "FunctionSymbol" and str(node).startswith("past_y")
+    """Whether a SymEngine node is a delayed-state access ``y(component, t - τ)``.
+
+    The engine-native state symbol is ``symengine.Function("y")``: a *current*
+    access ``y(i)`` is a one-argument ``FunctionSymbol`` named ``y`` and a
+    *delayed* access ``y(i, t - τ)`` is the two-argument form — so delayed
+    accesses are distinguished from current ones by arity.
+    """
+    return (
+        type(node).__name__ == "FunctionSymbol"
+        and str(node).startswith("y(")
+        and len(node.args) == 2
+    )
 
 
 def _past_y_component_and_delay(node: Any, t_sym: Any, system: Any) -> tuple[int, float]:
-    """Extract ``(component, delay)`` from a ``past_y(t - τ, component, anchors)`` node.
+    """Extract ``(component, delay)`` from a ``y(component, t - τ)`` delayed access.
 
     The delay magnitude is ``t - delay_time``; it must be a positive constant
     (state-independent) for the slot scheme to apply.
@@ -1031,8 +1044,8 @@ def _past_y_component_and_delay(node: Any, t_sym: Any, system: Any) -> tuple[int
     import symengine
 
     args = node.args
-    delay_time = symengine.sympify(args[0])  # symbolic time of the access, e.g. ``t - tau``
-    component = int(args[1])
+    component = int(args[0])
+    delay_time = symengine.sympify(args[1])  # symbolic time of the access, e.g. ``t - tau``
 
     # The delay magnitude is τ = t - delay_time.  SymEngine does not fold
     # ``t - (t - τ)`` to ``τ``, so evaluate delay_time at t = 0 (→ -τ) instead.
@@ -1109,8 +1122,10 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
         If ``_drift`` / ``_diffusion`` is missing or returns the wrong length.
     """
     import symengine
-    from jitcode import t as t_sym
-    from jitcode import y
+
+    from tsdynamics.engine.symbols import state_time_symbols
+
+    y, t_sym = state_time_symbols()
 
     drift_fn = getattr(type(system), "_drift", None)
     diff_fn = getattr(type(system), "_diffusion", None)

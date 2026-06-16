@@ -108,17 +108,16 @@ class TangentSystem(DerivedSystem):
             raise ValueError(f"k must be in [1, {system.dim}], got {self.k}")
 
         if self._mode == "map":
-            self._backend = "numba"
+            self._backend = "map"
         else:
-            self._backend = (backend or "jitcode").lower()
-            if self._backend != "jitcode" and self._backend not in _ENGINE_BACKENDS:
+            self._backend = (backend or "interp").lower()
+            if self._backend not in _ENGINE_BACKENDS:
                 raise ValueError(
-                    f"unknown ODE tangent backend {backend!r}; choose 'jitcode' (default), "
-                    f"or {sorted(_ENGINE_BACKENDS)} (the engine variational path)."
+                    f"unknown ODE tangent backend {backend!r}; choose from "
+                    f"{sorted(_ENGINE_BACKENDS)} (the engine variational path)."
                 )
 
         self._W: np.ndarray | None = None  # (dim, k) deviation vectors (map mode)
-        self._ode_lyap: Any = None  # jitcode_lyap wrapper (ode jitcode mode)
         self._ext_tape: Any = None  # extended variational tape (ode engine mode)
         self._z: np.ndarray | None = None  # extended state (ode engine mode)
         self._t = 0.0
@@ -171,26 +170,7 @@ class TangentSystem(DerivedSystem):
         self._atol = kwargs.pop("atol", 1e-9)
         self._integrator_kwargs = dict(kwargs)
 
-        if self._backend in _ENGINE_BACKENDS:
-            self._reinit_ode_engine(ic_arr)
-        else:
-            self._reinit_ode_jitcode(ic_arr, t0)
-
-    def _reinit_ode_jitcode(self, ic_arr: np.ndarray, t0: float) -> None:
-        """Build a fresh ``jitcode_lyap`` wrapper from the cached compiled module."""
-        from tsdynamics.families.continuous import _INTEGRATOR_MAP
-
-        method = self._method or self.system._default_method
-        ode = self.system._ensure_compiled(for_lyap=True, n_lyap=self.k)
-        ode.set_integrator(
-            _INTEGRATOR_MAP.get(method, method),
-            rtol=self._rtol,
-            atol=self._atol,
-            **self._integrator_kwargs,
-        )
-        ode.set_parameters(*self.system._control_params().values())
-        ode.set_initial_value(ic_arr, t0)
-        self._ode_lyap = ode
+        self._reinit_ode_engine(ic_arr)
 
     def _reinit_ode_engine(self, ic_arr: np.ndarray) -> None:
         """Lower the extended variational tape and seed the extended state."""
@@ -217,9 +197,7 @@ class TangentSystem(DerivedSystem):
         if self._mode == "map":
             return self._step_map(int(n_or_dt) if n_or_dt is not None else 1)
         dt = float(n_or_dt) if n_or_dt is not None else self._ODE_DEFAULT_DT
-        if self._backend in _ENGINE_BACKENDS:
-            return self._step_ode_engine(dt)
-        return self._step_ode_jitcode(dt)
+        return self._step_ode_engine(dt)
 
     def _step_map(self, n: int) -> np.ndarray:
         if self._W is None:
@@ -237,20 +215,6 @@ class TangentSystem(DerivedSystem):
             self._sum_growths += growths
             self._elapsed += 1.0
         return sys.state()
-
-    def _step_ode_jitcode(self, dt: float) -> np.ndarray:
-        if self._ode_lyap is None:
-            self.reinit()
-        self._t += dt
-        ret = self._ode_lyap.integrate(self._t)
-        if not (isinstance(ret, tuple) and len(ret) >= 2):
-            raise RuntimeError("jitcode_lyap.integrate returned an unexpected value")
-        state = np.asarray(ret[0], dtype=float)
-        local = np.asarray(ret[1], dtype=float).ravel()[: self.k]
-        self._last_growths = local * dt  # local exponents → log stretch over dt
-        self._sum_growths += self._last_growths
-        self._elapsed += dt
-        return state
 
     def _step_ode_engine(self, dt: float) -> np.ndarray:
         if self._z is None:

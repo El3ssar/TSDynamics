@@ -265,7 +265,7 @@ class StochasticSystem(SystemBase, ABC):
     #: other families the SDE engine path does not go through ``run.integrate``
     #: (which cannot carry the noise seed/step); it uses the dedicated
     #: ``run.sde_integrate_dense`` / ``run.sde_ensemble_final`` seam.
-    _default_backend: ClassVar[str] = "reference"
+    _default_backend: ClassVar[str] = "interp"
 
     #: Parameters whose values affect the symbolic *structure* of the dynamics
     #: (e.g. integer loop bounds); baked in at lowering time, like the ODE family.
