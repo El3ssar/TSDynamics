@@ -343,7 +343,7 @@ def test_ode_trajectory_matches_reference_early(name) -> None:
     flow diverge exponentially, so agreement is only expected before Lyapunov
     amplification dominates (the harness ``window=`` convention).
     """
-    sys = ts.__dict__[name]()
+    sys = getattr(ts, name)()
     ic = _resolve_ic(sys, name)
     t_eval = np.arange(0.0, 3.0 + 1e-9, 0.01)
     engine = RustEngine(backend="interp", rtol=1e-10, atol=1e-12)
@@ -384,7 +384,7 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     successor to ``jitcode_lyap``.  ``interp`` and ``jit`` must also agree closely
     (the same lowering, integrated by two numerically-identical evaluators).
     """
-    cls = ts.__dict__[name]
+    cls = getattr(ts, name)
     meta = dict(cls().known_lyapunov)
     expected = np.asarray(meta["spectrum"], dtype=float)
     atol = np.asarray(meta["atol"], dtype=float)
