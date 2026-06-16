@@ -10,7 +10,7 @@ The home for the SDE family base class. Per the resolved noise contract
   component**, each multiplying an independent Wiener increment,
 
 so the SDE is ``dX_k = f_k(X, t) dt + g_k(X, t) dW_k`` with independent
-``dW_k`` (Itô interpretation). Both are written symbolically with the JiTCODE
+``dW_k`` (Itô interpretation). Both are written symbolically with the SymEngine
 ``y``/``t`` accessors, just like every other family, and lower to instruction
 tapes through :func:`tsdynamics.engine.compile.lower_sde` (drift + diffusion,
 the diffusion carrying ``∂g/∂u`` for Milstein).

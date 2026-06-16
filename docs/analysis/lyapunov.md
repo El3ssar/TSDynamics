@@ -23,11 +23,11 @@ implementation.
     # ≈ [0.906, 0.0, -14.57]
     ```
 
-    Integrates the **variational equations** alongside the flow
-    (`jitcode_lyap`): JiTCODE differentiates the right-hand side
-    symbolically and compiles state + tangent dynamics into the same C
-    module. Local exponents are accumulated after `burn_in` and averaged
-    with time weights. `n_exp` defaults to `dim`.
+    Integrates the **variational equations** alongside the flow: the
+    right-hand side is differentiated symbolically and the extended
+    state + tangent dynamics run on the Rust engine. Local exponents are
+    accumulated after `burn_in` and averaged with time weights. `n_exp`
+    defaults to `dim`.
 
 === "Map"
 
@@ -50,7 +50,7 @@ implementation.
     mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])         # then measure
     ```
 
-    Uses `jitcdde_lyap`, which cannot start from an arbitrary history
+    Starts from a constant past rather than an arbitrary history
     function — hence the **two-call workflow**: integrate to the
     attractor, then hand the end state to `lyapunov_spectrum`, which
     restarts from a constant past at that point. A DDE has infinitely
@@ -153,8 +153,8 @@ tang.exponents()      # running spectrum estimate ≈ [0.42, -1.62]
 tang.growths()        # per-step log stretch factors
 ```
 
-Maps use NumPy QR; ODEs wrap the compiled variational module. DDEs are
-excluded — their tangent space is infinite-dimensional.
+Maps use NumPy QR; ODEs integrate the extended variational system on the
+engine. DDEs are excluded — their tangent space is infinite-dimensional.
 
 ## See also
 

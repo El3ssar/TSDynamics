@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from jitcode import t as t_sym
-from jitcode import y as y_sym
 
 import tsdynamics as ts
+from tsdynamics.engine.symbols import state_time_symbols
+
+# The engine-native symbolic state/time accessors (`y(i)` / `t`), byte-identical
+# to the callables a system's `_equations` is written against.
+y_sym, t_sym = state_time_symbols()
 
 # ---------------------------------------------------------------------------
 # DiscreteMap import-time checker
@@ -93,8 +96,9 @@ def test_ode_equations_accept_declared_params(ode_entry) -> None:
 
 
 def test_dde_equations_accept_declared_params(dde_entry) -> None:
-    from jitcdde import t as t_dde
-    from jitcdde import y as y_dde
+    # The same engine-native y/t accessors carry the 2-argument delayed form
+    # y(i, t - tau) that DDE _equations use.
+    y_dde, t_dde = state_time_symbols()
 
     sys = dde_entry.cls()
     exprs = list(type(sys)._equations(y_dde, t_dde, **sys.params.as_dict()))

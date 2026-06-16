@@ -438,8 +438,7 @@ def _run_dde(
     tape over ``dim + n_slots`` inputs whose extra inputs are the delay slots; the
     engine fills those from a history buffer it interpolates with cubic Hermite,
     reusing the explicit solver kernels for each step.  Only constant delays
-    lower; a state-dependent delay raises ``TapeCompileError`` at build time (use
-    the family's ``backend="jitcdde"``).
+    lower; a state-dependent delay raises ``TapeCompileError`` at build time.
 
     Returns ``(y, ic0)`` — the sampled trajectory and the ``t0`` state used (the
     constant past, or ``history(0)`` for a callable past) so the caller can record
@@ -448,17 +447,14 @@ def _run_dde(
     if backend == "reference":
         raise NotImplementedError(
             f"{_name(problem)}: backend='reference' has no DDE integrator; use "
-            f"backend='interp'/'jit' (the Rust engine), or the family's "
-            f"integrate(backend='jitcdde') for the v2 backend."
+            f"backend='interp'/'jit' (the Rust engine)."
         )
     try:
         eng = _engine()
     except EngineNotAvailableError as err:
-        # The generic accessor steers callers to backend='reference', which a DDE
-        # rejects one branch up — give the DDE-correct fallback (jitcdde) instead.
         raise EngineNotAvailableError(
-            f"{_name(problem)}: the Rust DDE engine (tsdynamics._rust, stream E7) is not "
-            f"built; use the family's integrate(backend='jitcdde') for the v2 DDE backend."
+            f"{_name(problem)}: the Rust DDE engine (tsdynamics._rust) is not built; "
+            f"install the compiled wheel (`pip install tsdynamics`) to integrate DDEs."
         ) from err
 
     dim = problem.dim

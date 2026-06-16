@@ -14,7 +14,7 @@ traj = sys.integrate(
     dt=0.02,                 # output grid; internal stepper is adaptive
     t0=0.0,                  # warm restarts from non-zero times allowed
     ic=None,                 # falls back to self.ic, then default_ic, then random
-    method="RK45",
+    method="rk45",
     rtol=1e-6, atol=1e-9,
     # extra kwargs (e.g. max_step=...) forwarded to the integrator
 )
@@ -22,10 +22,11 @@ traj = sys.integrate(
 
 | `method` | Engine | Use it for |
 | -------- | ------ | ---------- |
-| `"RK45"` / `"dopri5"` | Dormand–Prince 5(4) | The default; good general-purpose explicit solver |
-| `"DOP853"` | Dormand–Prince 8(5,3) | High accuracy at tight tolerances (e.g. Lyapunov reference runs) |
-| `"LSODA"` | Adams / BDF, auto-switching | Stiff or stiffness-switching systems |
-| `"VODE"` | Adams / BDF | Stiff systems; alternative to LSODA |
+| `"rk45"` | Dormand–Prince 5(4) | The default; good general-purpose explicit solver |
+| `"dop853"` | Dormand–Prince 8(5,3) | High accuracy at tight tolerances (e.g. Lyapunov reference runs) |
+| `"tsit5"` | Tsitouras 5(4) | Explicit alternative to `rk45` |
+| `"bdf"` | Variable-order (1–5) BDF | Stiff systems; the auto-stiffness default |
+| `"rosenbrock"` / `"trbdf2"` | Linearly-implicit / ESDIRK | Stiff systems, selectable by name |
 
 Two grids are at play: the **internal adaptive steps**, controlled by
 `rtol`/`atol`, decide accuracy; the **output grid** `dt` only decides where
@@ -64,7 +65,7 @@ parameters, solver, tolerances, and the actual IC used:
 ```python
 traj.meta
 # {'system': 'Lorenz', 'params': {...}, 'tsdynamics': '1.0.0',
-#  'family': 'ode', 'method': 'dopri5', 'dt': 0.01, 't0': 0.0,
+#  'family': 'ode', 'method': 'rk45', 'dt': 0.01, 't0': 0.0,
 #  'rtol': 1e-06, 'atol': 1e-09, 'ic': array([...])}
 ```
 

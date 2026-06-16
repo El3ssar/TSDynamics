@@ -26,21 +26,21 @@ History = Callable[[float], Sequence[float]] | None
 
 class DelaySystem(SystemBase, ABC):
     """
-    Base class for delay differential systems (DDEs), compiled via JiTCDDE.
+    Base class for delay differential systems (DDEs), integrated on the engine.
 
     Subclass contract
     -----------------
     1. Declare ``params = {...}`` and ``dim = N``.
     2. Implement ``_equations`` as a ``@staticmethod`` returning a
-       length-``dim`` sequence of JiTCDDE symbolic expressions.
+       length-``dim`` sequence of SymEngine symbolic expressions.
        Use ``y(i, t - tau)`` for delayed state access.
 
-    Compilation & caching
-    ---------------------
-    DDE systems cache compiled modules per ``(class, params_hash)``.  Unlike
-    ODEs, delay values directly affect the history-buffer structure and cannot
-    easily be treated as runtime control parameters.  The compiled ``.so`` is
-    saved to disk so subsequent runs with the same parameters reload instantly.
+    Lowering
+    --------
+    Each system is lowered once to an in-process IR tape with no warmup.  Delay
+    values directly affect the history-buffer structure, so they are baked into
+    the tape rather than read live like the other parameters; a delay change
+    re-lowers, while ordinary parameters are read live with no re-lowering.
 
     DDEs typically need looser tolerances than ODEs (start with ``rtol=atol=1e-3``).
 
@@ -51,10 +51,9 @@ class DelaySystem(SystemBase, ABC):
 
     .. note::
         Provide a non-equilibrium history to avoid trivial Lyapunov exponents.
-        For ``lyapunov_spectrum``, ``past_from_function`` is incompatible with
-        ``jitcdde_lyap``; the workaround is to run ``integrate`` first with the
-        desired history, then pass the end-state as ``ic`` to
-        ``lyapunov_spectrum`` which uses ``constant_past`` internally.
+        ``lyapunov_spectrum`` starts from a constant past, so the workaround is
+        to run ``integrate`` first with the desired history, then pass the
+        end-state as ``ic`` to ``lyapunov_spectrum``.
 
     Examples
     --------
@@ -69,7 +68,7 @@ class DelaySystem(SystemBase, ABC):
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
     #: ``"interp"`` — the Rust method-of-steps DDE engine (the sole DDE backend
-    #: since the M3 migration retired JiTCDDE).
+    #: since the M3 migration retired the v2 backends).
     _default_backend: ClassVar[str] = "interp"
 
     #: Names of parameters that hold delay values (must be positive floats).
@@ -100,10 +99,10 @@ class DelaySystem(SystemBase, ABC):
 
         Parameters
         ----------
-        y : JiTCDDE ``y``-accessor.
+        y : symbolic state accessor.
             ``y(i)`` for current state component ``i``;
             ``y(i, t - tau)`` for delayed access.
-        t : JiTCDDE time symbol.
+        t : symbolic time variable.
         **params
             Current parameter values as Python floats.
 
@@ -172,7 +171,7 @@ class DelaySystem(SystemBase, ABC):
         """
         Return the maximum delay value with a small safety margin.
 
-        JiTCDDE requires ``max_delay >= max(delays)``; we add a 1% margin to
+        The engine requires ``max_delay >= max(delays)``; we add a 1% margin to
         avoid edge effects in the history evaluation.
         """
         delays = self._delays()
@@ -312,20 +311,16 @@ class DelaySystem(SystemBase, ABC):
             tolerances can stall the solver.
         backend : str, optional
             Which engine integrates the DDE.  Defaults to ``_default_backend``
-            (``"jitcdde"``, the v2 compiled backend).  ``"interp"`` / ``"jit"``
-            route — through the shared engine seam
-            (:func:`tsdynamics.engine.run.integrate`) — to the Rust method-of-steps
-            engine (history ring buffer + cubic-Hermite dense interpolation;
-            stream E-DDE), reusing the explicit solver kernels.  The Rust path
-            supports **constant** delays; a state-dependent delay raises (use
-            ``"jitcdde"`` for those until the lowering grows dynamic delay slots).
-            ``**kwargs`` are ignored by the engine backends.
+            (``"interp"``).  ``"interp"`` / ``"jit"`` route — through the shared
+            engine seam (:func:`tsdynamics.engine.run.integrate`) — to the Rust
+            method-of-steps engine (history ring buffer + cubic-Hermite dense
+            interpolation; stream E-DDE), reusing the explicit solver kernels.
+            Only **constant** delays lower; a state-dependent delay raises.
+            ``backend="reference"`` is unsupported for DDEs (there is no
+            pure-Python delay integrator).
         method : str, default "rk45"
-            The explicit kernel for the engine backends (``"rk45"``, ``"tsit5"``,
-            ``"dop853"``, ``"rk4"``); ignored when ``backend="jitcdde"``.
-        **kwargs
-            Forwarded to ``jitcdde.set_integration_parameters``
-            (e.g. ``max_step``, ``first_step``) on the ``"jitcdde"`` backend.
+            The explicit kernel (``"rk45"``, ``"tsit5"``, ``"dop853"``,
+            ``"rk4"``); the method of steps drives explicit kernels only.
 
         Returns
         -------
@@ -368,8 +363,8 @@ class DelaySystem(SystemBase, ABC):
         the Rust method-of-steps integrator — a history ring buffer with
         cubic-Hermite dense interpolation, reusing the explicit solver kernels.
         Only constant delays lower; a state-dependent delay raises
-        ``TapeCompileError`` and ``backend="reference"`` raises (use
-        ``backend="jitcdde"`` for either).
+        ``TapeCompileError``, and ``backend="reference"`` raises (there is no
+        pure-Python delay integrator).
 
         DDE tolerances default to ``_default_rtol`` / ``_default_atol`` (both
         ``1e-3``) and are resolved here before handing off, since the generic
@@ -409,23 +404,19 @@ class DelaySystem(SystemBase, ABC):
         """
         Estimate the ``n_exp`` leading Lyapunov exponents of the delay system.
 
-        Two backends compute the same quantity (results stored in
-        ``self.meta['lyapunov_spectrum']``):
-
-        - ``backend="jitcdde"`` (the v2 default) — :class:`jitcdde.jitcdde_lyap`.
-        - ``backend="interp"`` / ``"jit"`` — the **engine** estimator (stream
-          E-DDE-LYAP): the extended variational DDE integrated on the Rust engine
-          with function-space Benettin renormalisation
-          (:func:`tsdynamics.families._dde_lyapunov.dde_lyapunov_spectrum`). This
-          is the path that survives the JiTCDDE removal at M3.  ``"reference"`` is
-          rejected (the engine has no pure-Python DDE integrator).
+        The **engine** estimator (stream E-DDE-LYAP, result stored in
+        ``self.meta['lyapunov_spectrum']``) integrates the extended variational
+        DDE on the Rust engine with a function-space Benettin renormalisation
+        (:func:`tsdynamics.families._dde_lyapunov.dde_lyapunov_spectrum`):
+        ``backend="interp"`` / ``"jit"``.  ``"reference"`` is rejected (the engine
+        has no pure-Python DDE integrator).
 
         Parameters
         ----------
         final_time : float
             Averaging window after burn-in. Default 200.0.
         dt : float
-            Sampling interval (engine path: should divide the maximum delay).
+            Sampling interval (should divide the maximum delay).
         ic : array-like, optional
             Initial state. Provide the end-state of a prior ``integrate``
             call so the trajectory starts on the attractor (recommended).
@@ -435,15 +426,11 @@ class DelaySystem(SystemBase, ABC):
         burn_in : float
             Discard interval. Default 50.0.
         rtol, atol : float, optional
-            Integration tolerances.  For ``jitcdde`` the defaults are the loose
-            ``_default_rtol`` / ``_default_atol`` (both ``1e-3``) — tight
-            ODE-style values make the variational equations accumulate
-            floating-point garbage before the first renormalisation.  The engine
-            path renormalises every delay window and uses tighter defaults
-            (``1e-7`` / ``1e-9``).
+            Integration tolerances.  The engine path renormalises every delay
+            window and uses defaults of ``1e-7`` / ``1e-9``.
         backend : str, optional
-            ``"jitcdde"`` (v2 default), ``"interp"``, or ``"jit"``.  Defaults to
-            :attr:`_default_backend`.
+            ``"interp"`` or ``"jit"``.  Defaults to :attr:`_default_backend`
+            (``"interp"``).
 
         Notes
         -----
@@ -461,7 +448,7 @@ class DelaySystem(SystemBase, ABC):
         if kwargs:
             raise TypeError(
                 f"lyapunov_spectrum(backend={backend!r}) does not accept the "
-                f"jitcdde-only keyword(s) {sorted(kwargs)}."
+                f"extra integration keyword(s) {sorted(kwargs)}."
             )
         exps = dde_lyapunov_spectrum(
             self,

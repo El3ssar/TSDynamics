@@ -88,12 +88,12 @@ od = ts.orbit_diagram(
 
 ## Cost notes
 
-- **Maps** — each value costs one quick Numba re-JIT plus the iterations;
-  sweeps of hundreds of values are routine.
-- **ODE-backed wrappers** — parameter changes reuse the compiled module
-  (control parameters), so the per-value cost is just the integration.
-- **DDE-backed sweeps** — each parameter value compiles a fresh module
-  (DDE structure depends on all parameters). Budget accordingly, or sweep
+- **Maps** — each value costs just the iterations; sweeps of hundreds of
+  values are routine.
+- **ODE-backed wrappers** — parameter changes are control parameters of the
+  lowered tape, so the per-value cost is just the integration.
+- **DDE-backed sweeps** — each parameter value re-lowers the delay equation
+  (its structure depends on all parameters). Budget accordingly, or sweep
   coarsely first.
 
 ## Quantifying the cascade

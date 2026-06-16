@@ -1,5 +1,5 @@
 ---
-description: The 5 built-in delay differential systems — DDEs compiled via JiTCDDE, with history functions and DDE Lyapunov spectra.
+description: The 5 built-in delay differential systems — DDEs run on the native Rust engine, with history functions and DDE Lyapunov spectra.
 ---
 
 <span class="ts-kicker">Systems · Delay</span>
@@ -43,9 +43,9 @@ Avoid constant pasts at equilibria — the trajectory simply sits there.
 
 ## Lyapunov spectra: the two-step pattern
 
-DDE Lyapunov spectra — a capability few tools offer — use `jitcdde_lyap`
-internally, which is incompatible with arbitrary history functions. The
-supported pattern is therefore *integrate first, then measure*:
+DDE Lyapunov spectra — a capability few tools offer — start from a constant
+past rather than an arbitrary history function. The supported pattern is
+therefore *integrate first, then measure*:
 
 ```python
 traj = mg.integrate(final_time=500.0, dt=0.5, history=hist)   # reach the attractor
@@ -68,13 +68,12 @@ is deliberate:
     first renormalization, producing `inf`/`nan` exponents. Start at
     `1e-3` and tighten only with evidence.
 
-## Compilation note
+## Lowering note
 
-Unlike ODEs, a DDE's compiled module depends on **all** of its parameters
-(delays shape the history buffer), so the cache key includes the full
-parameter hash and each parameter set compiles once. Parameter sweeps over
-DDEs are correspondingly more expensive than over ODEs — see
-[the compilation pipeline](../../theory/compilation.md).
+Unlike ODEs, a DDE's lowered tape depends on **all** of its parameters
+(delays shape the history buffer), so each parameter set is re-lowered.
+Parameter sweeps over DDEs are correspondingly more expensive than over
+ODEs — see [the compilation pipeline](../../theory/compilation.md).
 
 ## See also
 

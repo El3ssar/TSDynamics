@@ -10,9 +10,9 @@ TSDynamics ships **149 built-in systems** across three families:
 
 | Family | Base class | Count | Time | Engine |
 | ------ | ---------- | ----- | ---- | ------ |
-| [Continuous](continuous/index.md) | `ContinuousSystem` | 118 | continuous | JiTCODE (compiled C) |
-| [Delay](delay/index.md) | `DelaySystem` | 5 | continuous, with memory | JiTCDDE (compiled C) |
-| [Discrete](discrete/index.md) | `DiscreteMap` | 26 | discrete | Numba (JIT) |
+| [Continuous](continuous/index.md) | `ContinuousSystem` | 118 | continuous | Rust engine |
+| [Delay](delay/index.md) | `DelaySystem` | 5 | continuous, with memory | Rust engine |
+| [Discrete](discrete/index.md) | `DiscreteMap` | 26 | discrete | Rust engine |
 
 Every built-in is importable from the top level:
 

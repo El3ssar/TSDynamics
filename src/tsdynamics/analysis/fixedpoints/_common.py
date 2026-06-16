@@ -6,8 +6,8 @@ Holds the family-agnostic tangent-dynamics primitives the detectors share:
 - ``map_fns`` / ``flow_fns`` — ``(step, jac)`` for a :class:`~tsdynamics.families.DiscreteMap`
   (compiled ``_step`` / ``_jacobian``) and ``(rhs, jac)`` for a
   :class:`~tsdynamics.families.ContinuousSystem` (SymEngine-lambdified numeric
-  RHS / Jacobian).  Both are backend-free, so the detectors run in the fast
-  tier without JiTCODE or the Rust engine.
+  RHS / Jacobian).  Both are self-contained, so the detectors run in the fast
+  tier with no engine tape lowering.
 - ``rk4_state`` / ``rk4_variational`` — the classic and the augmented
   (state ⊕ fundamental matrix) RK4 steps used by the flow shooting/monodromy
   code.
@@ -120,8 +120,8 @@ def flow_fns(system: object) -> tuple[Callable, Callable]:
 
     Both come from the SymEngine-lambdified numeric forms
     (:meth:`ContinuousSystem._rhs_numeric` / :meth:`ContinuousSystem.jacobian`),
-    so the shooting/monodromy integrator needs no JiTCODE compilation and runs
-    in the fast tier.  Parameters are captured at call time.
+    so the shooting/monodromy integrator is self-contained (no engine tape
+    lowering) and runs in the fast tier.  Parameters are captured at call time.
     """
     rhs = system._rhs_numeric()
 

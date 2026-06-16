@@ -104,9 +104,9 @@ def test_reference_backend_is_rejected() -> None:
         ts.MackeyGlass().lyapunov_spectrum(backend="reference")
 
 
-def test_jitcdde_only_kwargs_rejected_on_engine_path() -> None:
-    """A jitcdde-only integration keyword is rejected on the engine path, not silently ignored."""
-    with pytest.raises(TypeError, match="jitcdde-only"):
+def test_extra_kwargs_rejected_on_engine_path() -> None:
+    """A stray integration keyword is rejected on the engine path, not silently ignored."""
+    with pytest.raises(TypeError, match="extra integration keyword"):
         ts.MackeyGlass().lyapunov_spectrum(backend="interp", max_step=0.1)
 
 

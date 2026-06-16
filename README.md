@@ -6,11 +6,12 @@
 [![Docs](https://github.com/El3ssar/TSDynamics/actions/workflows/docs.yml/badge.svg)](https://el3ssar.github.io/TSDynamics/)
 [![PyPI](https://img.shields.io/pypi/v/tsdynamics)](https://pypi.org/project/tsdynamics/)
 
-**Dynamical systems in Python: 149 built-in systems, compiled integration, and
-chaos analysis — with the simplest system-definition contract anywhere.**
+**Dynamical systems in Python: 149 built-in systems, a native Rust integration
+engine, and chaos analysis — with the simplest system-definition contract
+anywhere.**
 
-You write the math (one symbolic method); TSDynamics handles compilation,
-caching, integration, Lyapunov spectra, bifurcation diagrams, Poincaré
+You write the math (one symbolic method); TSDynamics lowers it to a native Rust
+engine and handles integration, Lyapunov spectra, bifurcation diagrams, Poincaré
 sections, and even the documentation page for your system.
 
 ```python
@@ -29,24 +30,22 @@ ts.kaplan_yorke_dimension(_)           # → ~2.06
 
 ## Highlights
 
-- **Three families, one interface** — ODEs (compiled via JiTCODE),
-  delay-differential equations (JiTCDDE — including **DDE Lyapunov spectra**),
-  and discrete maps (Numba). All implement one stepping protocol, so every
+- **Three families, one interface** — ODEs, delay-differential equations
+  (including **DDE Lyapunov spectra**), and discrete maps, all running on the
+  same native Rust engine. All implement one stepping protocol, so every
   analysis tool works on every system.
 - **149 built-in systems** with literature parameters: Lorenz, Rössler, Chua,
   21 Sprott flows, Mackey–Glass, Hénon, ... each with an auto-generated docs
   page showing its equations and attractor.
-- **Compile once, sweep forever** — parameters are runtime control values;
-  changing them never recompiles. Compiled modules persist across sessions.
+- **Native engine, zero warmup** — equations lower to a Rust engine (an SSA-tape
+  interpreter, with a Cranelift JIT alongside) in-process; parameters are runtime
+  control values, so changing them is free and there is no compile step or cache.
 - **Composition** — a `PoincareMap` of a flow *is* a discrete map, so
   `orbit_diagram(PoincareMap(Rossler(), (1, 0.0)), "c", values)` draws the
   bifurcation diagram of a flow with one line.
 - **Analysis toolkit** — orbit/bifurcation diagrams, Poincaré sections
   (root-refined), maximal Lyapunov exponent without Jacobians, Kaplan–Yorke
   dimension, fixed points with stability.
-- **Experimental Rust backend** — `integrate(backend="diffsol")` JIT-compiles
-  your equations through LLVM and solves them with Rust kernels; no C
-  compiler needed (`pip install tsdynamics[diffsol]`).
 
 ## Install
 
@@ -54,12 +53,12 @@ ts.kaplan_yorke_dimension(_)           # → ~2.06
 pip install tsdynamics            # or: uv add tsdynamics
 ```
 
-A C toolchain is required for the default compiled backends
-(`build-essential` + `python3-dev` on Debian/Ubuntu, `xcode-select --install`
-on macOS, MSVC Build Tools on Windows).
+A prebuilt `abi3` wheel (manylinux / musllinux / macOS / Windows) bundles the
+native Rust engine, so no Rust toolchain and no C compiler are needed to install
+or run. Building from the sdist needs a Rust toolchain (the build backend is
+[maturin](https://www.maturin.rs/)).
 
-Optional extras: `tsdynamics[plot]` (matplotlib), `tsdynamics[diffsol]`
-(Rust solver backend).
+Optional extra: `tsdynamics[plot]` (matplotlib).
 
 ## Define your own system
 

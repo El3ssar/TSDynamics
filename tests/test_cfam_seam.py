@@ -198,11 +198,12 @@ def test_run_integrate_refuses_sde_without_the_engine() -> None:
         run.ensemble(prob, np.ones((3, 1)), final_time=1.0, backend="interp")
 
 
-def test_dde_engine_absent_gives_jitcdde_guidance(monkeypatch) -> None:
-    """When ``tsdynamics._rust`` is absent, the DDE seam steers users to jitcdde.
+def test_dde_engine_absent_gives_install_guidance(monkeypatch) -> None:
+    """When ``tsdynamics._rust`` is absent, the DDE seam steers users to install the wheel.
 
     The shared ``run._engine`` accessor recommends ``backend='reference'``, which a
-    DDE rejects — so ``_run_dde`` re-raises with the DDE-correct fallback instead.
+    DDE rejects (no pure-Python delay integrator) — so ``_run_dde`` re-raises with
+    the DDE-correct guidance (install the compiled wheel) instead.
     """
     from tsdynamics.engine.run import EngineNotAvailableError
 
@@ -210,7 +211,7 @@ def test_dde_engine_absent_gives_jitcdde_guidance(monkeypatch) -> None:
         raise EngineNotAvailableError("simulated: extension not built")
 
     monkeypatch.setattr(run, "_engine", boom)
-    with pytest.raises(EngineNotAvailableError, match="jitcdde"):
+    with pytest.raises(EngineNotAvailableError, match="compiled wheel"):
         ts.MackeyGlass().integrate(backend="interp", final_time=1.0, dt=0.5, ic=[1.0])
 
 

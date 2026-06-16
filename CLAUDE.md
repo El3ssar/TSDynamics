@@ -8,12 +8,16 @@ update this doc in the same PR.
 
 ## Project overview
 
-**TSDynamics** is a Python library for studying dynamical systems. It provides:
+**TSDynamics** is a Python library for studying dynamical systems. As of v3.0.0
+(milestone **M3**) the **Rust engine (`tsdynamics._rust`) is the sole integration
+backend** — the v2 backends (JiTCODE / JiTCDDE / Numba / diffsol) are gone. It
+provides:
 
-- Compiled ODE integration via JiTCODE (`ContinuousSystem`), with an
-  experimental Rust backend via pydiffsol (`backend="diffsol"`)
-- Compiled DDE integration via JiTCDDE (`DelaySystem`)
-- Discrete-map iteration via Numba (`DiscreteMap`)
+- ODE / DDE / SDE integration and discrete-map iteration on the Rust engine
+  (`ContinuousSystem`, `DelaySystem`, `StochasticSystem`, `DiscreteMap`), reached
+  through `backend="interp"` (the SSA-tape interpreter, default), `"jit"` (the
+  Cranelift JIT), or `"reference"` (a dependency-light pure-Python SciPy oracle,
+  ODE + maps only)
 - A uniform stepping protocol (`System`) implemented by all families
 - Derived-system wrappers (`PoincareMap`, `StroboscopicMap`, `TangentSystem`,
   `EnsembleSystem`, `ProjectedSystem`)
@@ -22,8 +26,9 @@ update this doc in the same PR.
 - A runtime registry of all systems powering bulk tests and auto-generated docs
 
 The user defines the math (one symbolic `_equations` method, or `_step` +
-`_jacobian` for maps); the library handles compilation, caching, integration,
-output grids, and documentation.
+`_jacobian` for maps); the library lowers it to an engine IR tape (via SymEngine)
+and handles integration, output grids, and documentation. There is no
+compilation/warmup step and no on-disk compile cache.
 
 **Author:** Daniel Estevez
 **Python:** ≥ 3.12
@@ -44,16 +49,15 @@ src/tsdynamics/
 ├── families/                 # base classes + the System protocol (was base/)
 │   ├── base.py               # SystemBase, ParamSet, MetaStore (re-exports Trajectory from data)
 │   ├── protocol.py           # the System runtime Protocol
-│   ├── continuous.py         # ContinuousSystem (was ode_base.py; JiTCODE + jacobian autogen)
-│   ├── delay.py              # DelaySystem (was dde_base.py; JiTCDDE, forward-only)
-│   ├── discrete.py           # DiscreteMap (was map_base.py; Numba + signature validation)
+│   ├── continuous.py         # ContinuousSystem (engine integrate + jacobian autogen)
+│   ├── delay.py              # DelaySystem (engine method-of-steps, forward-only)
+│   ├── discrete.py           # DiscreteMap (engine iterate + signature validation)
 │   └── stochastic.py         # StochasticSystem — diagonal-Itô SDEs (_drift+_diffusion; EM/Milstein)
-├── engine/                   # Rust-facing engine layer (was backends/); E7 adds _rust
-│   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator (E6)
-│   ├── problem.py            # per-family Problem builders bundling a tape + runtime context (E6)
-│   ├── run.py                # backend select (interp|jit|reference) + integrate/ensemble (E6)
-│   ├── rustcore.py           # v2-seed tape emitter + accelerator wrappers (superseded by compile/run; retired at M3)
-│   └── diffsol.py            # experimental SymEngine→DiffSL + pydiffsol (v2 backend; retired at M3)
+├── engine/                   # Rust-facing engine layer; tsdynamics._rust is the sole backend
+│   ├── symbols.py            # engine-native symbolic frontend: state_time_symbols() → (Function("y"), Symbol("t"))
+│   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator
+│   ├── problem.py            # per-family Problem builders bundling a tape + runtime context
+│   └── run.py                # backend select (interp|jit|reference) + integrate/ensemble + solver resolve/with_jacobian wiring
 ├── solvers/                  # F2 registry mechanism + C-SOLV in-tree specs (explicit/implicit/stochastic) + method= resolution/aliases + auto-stiffness (select.py)
 ├── derived/
 │   ├── _base.py              # DerivedSystem (wrapper base, with_params rebuilds)
@@ -205,14 +209,18 @@ plus:
   integration branch funnels through `_dispatch` → `engine.run.integrate`, so the
   FFI marshalling, divergence guards and engine-path provenance live once in
   `run.integrate` instead of being re-implemented per family. `_default_backend`
-  is each family's current default integrator (the **v2** backend — `jitcode` /
-  `jitcdde` / `numba` / `reference`); it is the single knob the M3 migration
-  flips to a Rust engine backend, and passing `backend=None` to a family's
-  `integrate` / `iterate` resolves to it. The output grid each family samples on
-  is the one hoisted `tsdynamics.utils.grids.make_output_grid` (the four
-  byte-identical `_make_t_eval` copies are gone). **SDEs are the exception** —
-  they keep the dedicated `run.sde_integrate_dense` / `run.sde_ensemble_final`
-  seam (`run.integrate` cannot carry the noise seed/step and refuses an SDE).
+  is each family's default integrator — `"interp"` (the Rust engine interpreter)
+  for every concrete family; the abstract `SystemBase` keeps `"reference"` (the
+  wheel-free oracle). Passing `backend=None` to a family's `integrate` /
+  `iterate` resolves to it. `run.integrate` also resolves the `method=` string
+  through the solver registry (`solvers.resolve`) — canonicalising names and
+  mapping legacy stiff aliases (`"LSODA"` → `"bdf"`) — and rebuilds the ODE tape
+  `with_jacobian=True` when an implicit kernel needs it. The output grid each
+  family samples on is the one hoisted `tsdynamics.utils.grids.make_output_grid`
+  (the four byte-identical `_make_t_eval` copies are gone). **SDEs are the
+  exception** — they keep the dedicated `run.sde_integrate_dense` /
+  `run.sde_ensemble_final` seam (`run.integrate` cannot carry the noise
+  seed/step and refuses an SDE).
 
 ### `Trajectory` (`data/trajectory.py`)
 
@@ -234,12 +242,13 @@ All three families + all derived wrappers implement:
 `reinit(u, *, t, params)`, `trajectory(...)`, `is_discrete`.
 
 - First `step()`/`state()` on a cold system does an implicit `reinit()`.
-- ODE: each instance gets a private jitcode wrapper from the shared cached
-  `.so` (`_fresh_stepper`) — two live steppers never clobber each other.
+- ODE: `reinit` lowers the system to an engine tape once; each `step(dt)`
+  integrates one `dt` chunk through `run.integrate` from the live state.
 - **DDE `set_state` raises** (state is a history function); `reinit(u)`
-  restarts from a constant past. DDE stepping is forward-only.
-- Map `step(n)` uses the compiled batch loop for n > 16, per-call `_step`
-  otherwise (avoids per-params re-JIT in orbit-diagram sweeps).
+  restarts from a constant past. DDE stepping is forward-only (each `step`
+  re-integrates from the constant past via the method of steps).
+- Map `step(n)` runs the per-call pure-Python `_step` loop (silencing NumPy FP
+  warnings so an overflow surfaces as the explicit divergence `RuntimeError`).
 - Param changes after `reinit` need a new `reinit` to reach a live stepper.
 
 ### `ContinuousSystem` extras
@@ -247,17 +256,15 @@ All three families + all derived wrappers implement:
 - **Jacobian autogen**: `jacobian_sym()` (SymEngine `diff` wrt `y(j)`),
   `jacobian(u, t)` numeric via cached `symengine.Lambdify`, `_rhs_numeric()`
   (fast numeric RHS — used by figures, Poincaré Hermite refinement, and the
-  diffsol cross-validation). Hand-written `_jacobian` on ODE systems is never
-  used at runtime; it is cross-checked against autogen in tests. `abs`/`sign`
+  reference-backend cross-validation). Hand-written `_jacobian` on ODE systems is
+  never used at runtime; it is cross-checked against autogen in tests. `abs`/`sign`
   derivatives are resolved a.e. (`_resolve_derivative_nodes`).
-- `integrate(backend=)` defaults to `_default_backend` (`"jitcode"`, the v2
-  compile-to-C path). `"diffsol"` routes to `tsdynamics.engine.diffsol` (optional
-  extra; translator: SymEngine → DiffSL with ICs-as-inputs, LLVM JIT, solver map
-  RK45→tsit45, LSODA→bdf); `"auto"` picks diffsol-or-jitcode. `"interp"` / `"jit"`
-  / `"reference"` route through the shared C-FAM seam (`_dispatch` →
-  `engine.run.integrate`) to the Rust sole engine (or its pure-Python oracle) —
-  the additive routing C-FAM gives the ODE family (it had no `interp`/`jit` path
-  before).
+- `integrate(backend=)` defaults to `_default_backend` (`"interp"`). `"interp"`
+  / `"jit"` / `"reference"` route through the shared C-FAM seam (`_dispatch` →
+  `engine.run.integrate`) to the Rust engine (or its pure-Python oracle).
+  `run.integrate` resolves `method=` through the solver registry and lowers the
+  tape `with_jacobian=True` for the implicit stiff kernels (`bdf` /`rosenbrock` /
+  `trbdf2`); stiff catalogue systems declare `_default_method = "bdf"`.
 
 ### `DiscreteMap` extras
 
@@ -267,12 +274,12 @@ All three families + all derived wrappers implement:
 - `_jacobian_fd_check = False` ClassVar opts a map out of the
   finite-difference Jacobian test (only for orbits living on discontinuities,
   e.g. Baker).
-- `iterate(backend=...)` selects where iteration runs: `"numba"` (default, the
-  v2 in-process loop) or the Rust engine (`"reference"` pure-Python oracle now;
-  `"interp"`/`"jit"` once `tsdynamics._rust` ships). The engine loop lives in
-  `crates/tsdyn-engine/src/map.rs`; non-Numba backends lower `_step` to the IR,
-  so piecewise/`numpy`-ufunc steps raise `TapeCompileError`. The engine path
-  diverges loudly (raises, no random-IC retry).
+- `iterate(backend=...)` runs the iteration on the Rust engine (`"interp"`
+  default / `"jit"` / `"reference"` pure-Python oracle). The engine loop lives in
+  `crates/tsdyn-engine/src/map.rs`; all backends lower `_step` to the IR, so
+  piecewise/`numpy`-ufunc steps raise `TapeCompileError`. The engine path
+  diverges loudly (raises); the random-IC retry still applies when `iterate` is
+  called without an explicit `ic`.
 
 ### `StochasticSystem` extras
 
@@ -296,10 +303,10 @@ All three families + all derived wrappers implement:
   (own `SdeKernel` trait, RNG-free — the engine hands them a pre-drawn `dw`),
   loop + seeded RNG in `crates/tsdyn-engine/src/sde.rs`. The two-tape SDE FFI
   (`integrate_sde_dense` / `integrate_sde_ensemble_final` in `tsdyn-core`) is
-  wired (stream E-WIRE): `backend="interp"/"jit"` dispatches the drift+diffusion
-  call to the engine (interpreter or Cranelift JIT) and reproduces the Python
-  reference under a fixed seed. The pure-Python **reference** integrator (a
-  faithful `SplitMix64` port) stays the default until the migration gate (M3).
+  wired (stream E-WIRE): `backend="interp"/"jit"` (the default) dispatches the
+  drift+diffusion call to the engine (interpreter or Cranelift JIT). The
+  pure-Python **reference** integrator (a faithful `SplitMix64` port) reproduces
+  it bit-for-bit under a fixed seed and stays available as the wheel-free oracle.
 - **Registry-detected (stream C-FAM):** a concrete `StochasticSystem` subclass
   registers with family `sde` (`_drift` is the concrete-rhs marker, and
   `StochasticSystem` is in the family-base table), so it appears in
@@ -324,26 +331,20 @@ All three families + all derived wrappers implement:
   (O(dt⁴)); falls back to linear interpolation for DDEs.
 - **`TangentSystem` is the one Lyapunov engine** (stream C-DERIV): the
   variational/QR machinery lives here, and `DiscreteMap.lyapunov_spectrum` /
-  `ContinuousSystem.lyapunov_spectrum` are thin delegations to it (no more
-  triplicated QR/`jitcode_lyap` loops). Modes:
+  `ContinuousSystem.lyapunov_spectrum` are thin delegations to it. Modes:
   - **maps**: NumPy `W ← J(x)·W` + QR, Jacobian at the **pre-image** `x_n` (the
     correct tangent-map convention), with random-IC retry on divergence.
-  - **ODEs**: two interchangeable backends via `backend=`. `"jitcode"` (default)
-    wraps the compiled variational equations (`jitcode_lyap`).
-    `"interp"`/`"jit"`/`"reference"` is the **backend-neutral** path: the
-    *extended* variational ODE (state ⊕ k tangent vectors, built in
-    `derived/_variational.py` and lowered via the public
-    `engine.compile.lower_expressions`) is integrated per dt-chunk through
-    `engine.run.integrate` then QR-reorthonormalised — the successor that
-    survives the JiTCODE removal at M3 (the Rust engine becomes the variational
-    integrator). Validated now via `backend="reference"` against analytic
-    spectra; `"interp"`/`"jit"` need the `tsdynamics._rust` wheel.
+  - **ODEs**: the **backend-neutral** engine path via `backend=`
+    (`"interp"`/`"jit"`/`"reference"`): the *extended* variational ODE (state ⊕ k
+    tangent vectors, built in `derived/_variational.py` and lowered via the
+    public `engine.compile.lower_expressions`) is integrated per dt-chunk through
+    `engine.run.integrate` then QR-reorthonormalised. `backend="reference"`
+    validates it against analytic spectra without the compiled wheel;
+    `backend="jitcode"` (and any other legacy name) raises
+    `ValueError("unknown ODE tangent backend")`.
   - **DDEs**: raise — their tangent space is the infinite-dimensional history
     space; use `DelaySystem.lyapunov_spectrum` (NOT routed through
-    `TangentSystem`), which now has **two backends** (stream E-DDE-LYAP):
-    `backend="jitcdde"` (default, `jitcdde_lyap`) and `backend="interp"/"jit"`
-    (the engine path — see below). DDE Lyapunov is the last v2 holdout the M3
-    removal waits on, so the engine path is what lets jitcdde be deleted.
+    `TangentSystem`), the engine estimator described below.
   `TangentSystem.lyapunov_spectrum(...)` wraps the streaming `step()`/
   `exponents()` API into the standard burn-in + time-weighted estimate.
 - **`DelaySystem.lyapunov_spectrum(backend="interp"/"jit")`** (E-DDE-LYAP) is the
@@ -357,12 +358,12 @@ All three families + all derived wrappers implement:
   deviation **history segment** (a function-space QR, so `n_exp` may exceed
   `dim`); with chunk `= τ_max` and `dt | τ_max` the base history is reused exactly
   (no reseed-interpolation error) and the deviation directions are recombined
-  exactly (the variational dynamics is linear). Validated vs `jitcdde_lyap` on all
-  5 built-in DDEs (and a 2-D synthetic DDE), with the Mackey–Glass leading
-  exponent positive (matching its `known_lyapunov` `n_positive=1`);
-  `interp`==`jit` bit-for-bit.
-  `backend="reference"` raises (no pure-Python DDE integrator). The default stays
-  `jitcdde` until M3 flips `_default_backend`.
+  exactly (the variational dynamics is linear). Validated (reference-free) on all
+  5 built-in DDEs (and a 2-D synthetic DDE): descending spectrum that brackets 0,
+  Mackey–Glass leading exponent positive (matching its `known_lyapunov`
+  `n_positive=1`), `interp`==`jit` bit-for-bit. (The original Rust-vs-`jitcdde`
+  parity gate ran before JiTCDDE was removed.) `backend="reference"` raises (no
+  pure-Python DDE integrator); `"interp"`/`"jit"` only.
 - `max_lyapunov` (Benettin two-trajectory) needs `set_state` → raises for DDEs.
   Its continuous normalization divides by the **measured elapsed `time()`** of
   the reference run (not a guessed step-size attribute), so it is correct for
@@ -480,39 +481,41 @@ reuse `_strategies` and assert a real invariant — never a tautology.
 
 ## Versioning & release (python-semantic-release)
 
-- `__version__` lives ONLY in `src/tsdynamics/__init__.py`; PSR rewrites it.
-- Every push to `main` runs `release.yml`: tests → PSR computes the bump from
-  conventional commits (feat→minor, fix/perf→patch, `!`→major) → tag,
-  GitHub release, PyPI publish via trusted publishing (`environment: pypi`,
-  bound to the filename `release.yml` — don't rename).
+- `__version__` lives in `src/tsdynamics/__init__.py` **and** `[project].version`
+  in `pyproject.toml`; PSR rewrites both (`version_variables` + `version_toml`).
+  The static `[project].version` is required because the build backend is
+  `maturin` (it cannot read a Python `__version__`).
+- Every push to `main` runs `release.yml`: `test` (builds the engine + runs the
+  suite) → PSR computes the bump from conventional commits (feat→minor,
+  fix/perf→patch, `!`→major) and tags vX.Y.Z + creates the GitHub Release (PSR
+  does **not** build — `build_command=""`) → `wheels`/`sdist` build the
+  per-platform abi3 wheels from the new tag → `publish` uploads them to PyPI via
+  trusted publishing (`environment: pypi`, bound to the filename `release.yml` —
+  don't rename) and attaches them to the Release.
 - CHANGELOG.md is maintained by python-semantic-release; release notes also land on GitHub Releases.
-- Workflows: `ci.yml` (PR gate), `docs.yml` (build + Pages deploy with
-  figure cache), `release.yml`, `pr-title.yml`, `nightly.yml` (`-m full`),
-  `wheels.yml` (stream I-WHEEL: cross-platform `tsdynamics._rust` engine wheels —
-  manylinux/musllinux/macOS/Windows, abi3; build smoke on packaging PRs, full
-  matrix on dispatch/tag, artifacts only — no PyPI publish pre-M3),
-  `engine-bindings.yml` (builds `tsdynamics._rust` + runs the **engine-marked**
-  tests — see below), `cross-validation.yml` (stream I-XVAL: builds the real
-  engine + runs the catalogue **M3 removal gate**, `tests/test_xval_catalogue.py`).
+- Workflows: `ci.yml` (PR gate — installs Rust + builds the engine via
+  `uv sync`, runs the suite), `docs.yml` (build + Pages deploy with figure cache),
+  `release.yml`, `pr-title.yml`, `nightly.yml` (`-m full`), `rust-workspace.yml`
+  (the pure-Rust tsdyn-* workspace), `engine-bindings.yml` (the focused engine job:
+  tsdyn-core fmt/clippy/cargo-test + the **engine-marked** Python tests, including
+  the catalogue gate `tests/test_xval_catalogue.py`), `wheels.yml` (cross-platform
+  abi3 wheel build smoke on packaging PRs + on-demand full matrix, artifacts only —
+  the release build/publish lives in `release.yml`).
 - **The `engine` marker (stream I-XVAL):** any test module that imports the
   compiled `tsdynamics._rust` extension is auto-tagged `engine` by a
   `conftest.pytest_collection_modifyitems` hook (detection in
-  `tests/_engine_marker.py`), so the engine CI job selects them with
+  `tests/_engine_marker.py`), so `engine-bindings.yml` selects them with
   `-m "engine and not full"` instead of a hand-maintained file list — a new
   engine test joins the job with zero CI edits. `tests/test_engine_coverage.py`
-  guards the invariant (and that `engine-bindings.yml` never reverts to a file
-  list). These engine tests `importorskip("tsdynamics._rust")`, so they skip
-  cleanly in the wheel-free `ci.yml` matrix and run for real only where the
-  extension is built.
-- **Packaging shape (I-WHEEL, ROADMAP §11):** the pure-Python `tsdynamics` wheel
-  (root `pyproject.toml`, hatchling + PSR) and the compiled engine ship as **two
-  distributions pre-M3** — the engine is a separable `tsdynamics-rust-engine`
-  wheel (`crates/tsdyn-core/pyproject.toml`, maturin) that drops only
-  `tsdynamics/_rust.abi3.so` into the namespace via a mixed-layout mount
-  (`crates/tsdyn-core/python/tsdynamics/`, PEP-420, no `__init__.py`) so the two
-  coexist with zero file collision. Converges to **one maturin wheel at M3** (when
-  I-XVAL retires the v2 backends). Full rationale + recipe: `docs/theory/packaging.md`;
-  invariants guarded by `tests/test_packaging.py`.
+  guards the invariant. These engine tests `importorskip("tsdynamics._rust")`, so
+  they still skip cleanly anywhere the extension is absent.
+- **Packaging shape (ROADMAP §11):** the project ships as **one maturin wheel** —
+  the pure-Python `tsdynamics` package (from `src/`, `python-source="src"`) plus
+  the compiled `tsdynamics/_rust` abi3 extension (`module-name="tsdynamics._rust"`,
+  `manifest-path="crates/tsdyn-core/Cargo.toml"`) in the same wheel. abi3 (cp312)
+  means one wheel per (platform, arch) covers every CPython ≥ 3.12. Full rationale
+  + recipe: `docs/theory/packaging.md`; invariants guarded by
+  `tests/test_packaging.py`.
 
 ---
 
@@ -528,8 +531,7 @@ reuse `_strategies` and assert a real invariant — never a tautology.
 4. Optional metadata: `variables`, `reference`, `known_lyapunov` ClassVars;
    `default_ic` if random ICs escape the basin; `_structural_params` for
    variable-dim systems; `_jacobian_fd_check = False` for discontinuous maps;
-   `_compile_simplify = False` for an ODE whose large rational RHS hangs
-   JiTCODE's simplify codegen pass.
+   `_default_method = "bdf"` for a stiff ODE.
 5. For a new DDE: also add a non-equilibrium history to
    `tests/_sampling.py::DDE_HISTORIES` (guard test enforces this).  For a new
    *built-in* SDE (`StochasticSystem` subclass): add a `{"seed":…, "ic":…}` entry
@@ -537,17 +539,19 @@ reuse `_strategies` and assert a real invariant — never a tautology.
 
 ---
 
-## Compilation cache
+## No compilation cache (zero warmup)
 
-Compiled JiTCODE/JiTCDDE objects live in `~/.cache/tsdynamics/`
-(override: `TSDYNAMICS_CACHE`).
+The engine lowers each system to an in-process IR tape on first use — there is
+**no on-disk compile cache** and no C-compilation step (the old
+`~/.cache/tsdynamics/` JiTCODE/JiTCDDE cache and the `TSDYNAMICS_CACHE` override
+are gone). Editing an `_equations`/`_step` body just takes effect on the next
+run; nothing to wipe.
 
-- ODE cache key: `tsdyn_<ClassName>_<dim>[_<hash-of-structural-params>]`;
-  non-structural params are runtime control parameters — no recompile on change.
-- DDE cache key: `tsdyn_dde_<ClassName>_<hash-of-all-params>`.
-- The docs figure cache is separate: `.cache/docs-figures`, keyed by class
-  source hash (CI persists it via actions/cache).
-- Wipe `~/.cache/tsdynamics/` after editing an `_equations` body.
+- Control parameters are read live from the system on every run, so a
+  parameter change never re-lowers. A *delay* value (DDE) or a structural
+  parameter is baked into the tape, so changing one re-lowers.
+- The docs figure cache is unrelated and still exists: `.cache/docs-figures`,
+  keyed by class source hash (CI persists it via actions/cache).
 
 ---
 
@@ -555,18 +559,15 @@ Compiled JiTCODE/JiTCDDE objects live in `~/.cache/tsdynamics/`
 
 | Situation | What happens / what to do |
 |---|---|
-| `_equations` uses NumPy or `math` | JiTCODE can't compile it. Use `symengine.sin`/`cos`/... |
-| Compile hangs on a large rational RHS (e.g. rotlet flows) | JiTCODE's `simplify(ratio=1)` codegen pass is super-linear. Set `_compile_simplify = False` on the class (see `BlinkingRotlet`). |
-| Fractional power / steep `tanh` fails only on `backend="diffsol"` | Solvers probe outside the physical domain: a real `p**q` goes complex for `p<0`, and autodiff of `tanh(k·x)` overflows for huge `k·x`. Guard with `abs(p)` under the power and clamp the `tanh` argument (see `WindmiReduced`). |
-| Variable-dim system without `_structural_params` | Compile-time `range(N)` fails. Add `_structural_params = frozenset({"N"})`. |
-| Map params order ≠ `_step` signature order | **Raises `TypeError` at import** (since v2). |
+| `_equations` uses NumPy or `math` | The engine tape can't lower it. Use `symengine.sin`/`cos`/... |
+| Variable-dim system without `_structural_params` | Lowering-time `range(N)` fails. Add `_structural_params = frozenset({"N"})`. |
+| Map params order ≠ `_step` signature order | **Raises `TypeError` at import**. |
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |
 | Tight tolerances on DDE | `rtol=atol=1e-3` is the safe start. |
 | `set_state` on a DDE | Raises by design — use `reinit(u)`. |
-| Implicit method on the Rust engine without a Jacobian | `integrate(method="bdf"/"rosenbrock"/"trbdf2", backend="interp"/"jit")` needs a Jacobian-carrying tape. The engine **raises** (it will not silently degrade to forward Euler); pass a problem built `with_jacobian=True`, or use an explicit method. `tsdynamics.solvers.build_kwargs(method)` returns `{"with_jacobian": True}` for implicit methods (C-SOLV); the family engine-dispatch seam (C-FAM) merges it so the stiff path "just works". `"bdf"` is the **variable-order (1–5) BDF** (stream E-BDF) and the default the auto-stiffness layer picks for stiff ODEs — far faster than the fixed-order `rosenbrock`/`trbdf2` (which stay selectable by name); see `benches/REPORT.md`. |
+| Stiff ODE: which method? | `"bdf"` is the **variable-order (1–5) BDF** and the right default for stiff ODEs (far faster than the fixed-order `rosenbrock`/`trbdf2`, which stay selectable). `run.integrate` auto-builds the Jacobian-carrying tape for the implicit kernels, so `integrate(method="bdf")` "just works". The legacy SciPy name `"LSODA"` is no longer a method — declare `_default_method = "bdf"`. |
 | Param change ignored by a live stepper | `reinit()` after parameter changes (or use `with_params`). |
-| Stale compiled cache after editing `_equations` | Wipe `~/.cache/tsdynamics/`. |
-| Orbit diagram over a DDE wrapper | Recompiles per parameter value — slow by design, document it. |
+| Orbit diagram over a DDE wrapper | Re-lowers the tape per parameter value — slow by design, document it. |
 | New DDE fails `test_dde_histories_complete` | Add its history to `tests/_sampling.py`. |
 
 ---
@@ -584,8 +585,8 @@ traj["x"]                                   # named component
 exps = lor.lyapunov_spectrum(final_time=300.0)   # → [0.91, ~0, -14.57]
 ts.kaplan_yorke_dimension(exps)             # → ~2.06
 
-# Experimental Rust backend
-traj = lor.integrate(final_time=100.0, dt=0.01, backend="diffsol")
+# Backends: "interp" (default) / "jit" (Cranelift) / "reference" (pure-Python oracle)
+traj = lor.integrate(final_time=100.0, dt=0.01, backend="jit")
 
 # Protocol stepping
 lor.reinit([1.0, 1.0, 1.0])

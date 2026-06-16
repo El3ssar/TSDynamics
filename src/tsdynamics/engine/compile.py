@@ -745,7 +745,7 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
 class _SymbolicNumpy:
     """A drop-in ``numpy`` whose array math returns SymEngine expressions.
 
-    A map's ``_step`` is written for the numeric (Numba) backend with ``np.sin``,
+    A map's ``_step`` is written for numeric (NumPy) evaluation with ``np.sin``,
     ``np.where``, ``%`` and friends.  NumPy's object-dtype ufunc loop calls a
     method *named after the ufunc* on each element (``elem.sin()``), which a raw
     SymEngine symbol does not have — so ``np.sin(symbolic_state)`` raises.  When
@@ -865,7 +865,7 @@ def _trace_step(step_fn: Any) -> Any:
 def lower_map(system: Any, *, with_jacobian: bool = False) -> Tape:
     """Lower a :class:`~tsdynamics.families.DiscreteMap` step to a tape.
 
-    A map's ``_step`` is a numeric (Numba/staticjit) function, so it is *traced*
+    A map's ``_step`` is a numeric (``staticjit``) function, so it is *traced*
     symbolically — evaluated on a symbolic state vector — to recover the
     straight-line next-state expression, which is then lowered.  With
     ``with_jacobian=True`` the map Jacobian ``∂step_k/∂u_j`` is the symbolic
@@ -1185,9 +1185,8 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
 
 
 def _unwrap_static_callable(fn: Any) -> Any:
-    """Peel ``staticmethod``/Numba wrappers off a method, returning the callable."""
-    fn = getattr(fn, "__func__", fn)
-    return getattr(fn, "py_func", fn)
+    """Peel the ``staticmethod`` wrapper off a method, returning the raw callable."""
+    return getattr(fn, "__func__", fn)
 
 
 # ---------------------------------------------------------------------------

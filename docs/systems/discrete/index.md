@@ -1,5 +1,5 @@
 ---
-description: The 26 built-in discrete maps — Numba-compiled iteration and QR-based Lyapunov spectra, across five categories.
+description: The 26 built-in discrete maps — native-engine iteration and QR-based Lyapunov spectra, across five categories.
 ---
 
 <span class="ts-kicker">Systems · Discrete</span>
@@ -9,8 +9,8 @@ description: The 26 built-in discrete maps — Numba-compiled iteration and QR-b
 **26 iterated maps**, subclasses of
 [`DiscreteMap`](../../reference/base.md). A map is defined by two plain
 numeric static methods — `_step` and `_jacobian` — decorated with
-`@staticjit`, which applies Numba's `njit` (and degrades gracefully to
-pure Python when Numba is unavailable):
+`@staticjit` (a `staticmethod` marker); the Rust engine lowers `_step` to its
+IR and iterates it natively:
 
 ```python
 from tsdynamics.utils import staticjit
@@ -54,12 +54,11 @@ h = ts.Henon()
 traj = h.iterate(steps=10_000)     # Trajectory; traj.t is arange(steps)
 ```
 
-On first call, a Numba loop is compiled with the current parameter values
-inlined and cached per `(class, params)`; changing a parameter costs one
-quick re-JIT. If an orbit diverges (random ICs can land outside the
-attractor basin), `iterate` retries with fresh random ICs up to
-`max_retries` times. Maps whose basin is small declare a class-level
-`default_ic` so the first try lands inside.
+The map iterates on the Rust engine with no warmup; parameters are control
+values of the lowered tape, so changing one is free. If an orbit diverges
+(random ICs can land outside the attractor basin), `iterate` retries with
+fresh random ICs up to `max_retries` times. Maps whose basin is small declare
+a class-level `default_ic` so the first try lands inside.
 
 ## Lyapunov spectrum
 

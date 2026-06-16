@@ -47,7 +47,7 @@ def _positional_param_names(fn: Any) -> list[str] | None:
 
 class DiscreteMap(SystemBase):
     """
-    Base class for discrete maps with Numba-accelerated iteration.
+    Base class for discrete maps iterated on the engine.
 
     Subclass contract
     -----------------
@@ -56,13 +56,12 @@ class DiscreteMap(SystemBase):
        Parameters arrive as **positional arguments** in the order they appear
        in the class-level ``params`` dict.
 
-    Compilation
-    -----------
-    On the first call to ``iterate``, a Numba-compiled loop is built that
-    inlines ``_step`` with the current parameter values baked in.  This
-    eliminates per-step Python overhead.  The compiled loop is cached in
-    ``_iter_cache`` per ``(class, params_hash)``; changing a parameter
-    triggers a fresh compile on the next call.
+    Iteration
+    ---------
+    ``iterate`` lowers ``_step`` to an in-process IR tape and runs the engine's
+    native map loop, with no warmup.  The engine reads the current parameter
+    values live on every run, so a parameter change never triggers a
+    re-lowering.
 
     Lyapunov spectrum
     -----------------
@@ -85,7 +84,7 @@ class DiscreteMap(SystemBase):
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
     #: ``"interp"`` — the Rust engine's native map loop (the sole map backend
-    #: since the M3 migration retired the Numba loop).
+    #: since the M3 migration retired the v2 backends).
     _default_backend: ClassVar[str] = "interp"
 
     # Protocol stepping state (instances shadow these class defaults).
@@ -260,11 +259,7 @@ class DiscreteMap(SystemBase):
         backend: str | None = None,
     ) -> Trajectory:
         """
-        Iterate the map for ``steps`` steps.
-
-        Uses a Numba-compiled loop when available (significant speedup for
-        large ``steps`` or high-dim maps).  Falls back to a Python loop
-        when Numba is not installed.
+        Iterate the map for ``steps`` steps on the engine.
 
         Parameters
         ----------
@@ -273,24 +268,22 @@ class DiscreteMap(SystemBase):
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
         max_retries : int
-            Retry with a new random IC if divergence is detected (Numba path
-            only — the engine path raises on divergence instead of retrying).
+            Retry with a new random IC if divergence is detected (only when no
+            explicit ``ic`` was given; an explicit ic that diverges raises).
         backend : str, optional
             Where the iteration runs.  Defaults to ``_default_backend``
-            (``"numba"``).
+            (``"interp"``).
 
-            - ``"numba"`` (default) — the in-process Numba/Python loop described
-              above.
+            - ``"interp"`` (default) / ``"jit"`` — the Rust engine's native
+              map loop (interpreter or Cranelift JIT).  Requires the compiled
+              extension (:mod:`tsdynamics._rust`); until it is built these
+              raise :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
             - ``"reference"`` — the lowered next-state tape, iterated in pure
               Python (the dependency-light oracle the engine is validated
               against).
-            - ``"interp"`` / ``"jit"`` / ``"auto"`` — the Rust engine's native
-              map loop (interpreter or Cranelift JIT).  Requires the compiled
-              extension (:mod:`tsdynamics._rust`, stream E7); until it is built
-              these raise :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
 
-            Any non-``"numba"`` backend lowers ``_step`` to the engine IR, so it
-            requires a map whose step traces symbolically (see
+            Every backend lowers ``_step`` to the engine IR, so it requires a
+            map whose step traces symbolically (see
             :func:`tsdynamics.engine.compile.lower_map`); piecewise or
             ``numpy``-ufunc steps raise
             :class:`~tsdynamics.engine.compile.TapeCompileError`.
@@ -323,14 +316,12 @@ class DiscreteMap(SystemBase):
         Routes through the shared engine-dispatch seam
         (:meth:`SystemBase._dispatch` → :func:`tsdynamics.engine.run.integrate`),
         which lowers ``_step`` to the engine IR and runs the native map loop
-        (stream E-MAP), bypassing the Numba path entirely.  This is the seam that
-        makes a map iterate on the same engine as every other family; the eventual
-        default once the compiled extension ships (the v2 Numba loop is retired
-        with the rest of the legacy backends at migration time).
+        (stream E-MAP).  This is the seam that makes a map iterate on the same
+        engine as every other family.
 
         Divergence is reported (it is not silently returned and there is no
-        random-IC retry — the engine's "diverge loudly" contract); reach for the
-        Numba path if you want the retry behaviour.
+        random-IC retry — the engine's "diverge loudly" contract); the
+        random-IC retry lives in :meth:`iterate` for the implicit-ic case.
         """
         traj = self._dispatch(backend=backend, final_time=steps, ic=ic)
         # Enforce "diverge loudly" at the family boundary so every backend behaves

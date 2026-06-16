@@ -38,9 +38,10 @@ dynamics is linear, so a linear combination of deviation solutions is a solution
 acting on that sampled representative.  When ``dt`` does not divide ``τ_max`` the
 reseed falls back to off-grid interpolation (a warning is emitted).
 
-Validated against ``jitcdde_lyap`` on the five built-in DDEs (and a 2-D synthetic
-DDE) — the Mackey–Glass leading exponent is positive, matching its
-``known_lyapunov`` ``n_positive=1``; ``interp`` and ``jit`` agree bit-for-bit.
+Validated (reference-free) on the five built-in DDEs (and a 2-D synthetic DDE) —
+the Mackey–Glass leading exponent is positive, matching its ``known_lyapunov``
+``n_positive=1``; ``interp`` and ``jit`` agree bit-for-bit. (The original
+Rust-vs-``jitcdde_lyap`` parity gate ran before JiTCDDE was removed.)
 """
 
 from __future__ import annotations
@@ -261,8 +262,7 @@ def dde_lyapunov_spectrum(
     if backend == "reference":
         raise NotImplementedError(
             "DDE Lyapunov has no pure-Python reference integrator; use "
-            "backend='interp'/'jit' (the Rust engine), or the family's "
-            "lyapunov_spectrum(backend='jitcdde') for the v2 path."
+            "backend='interp'/'jit' (the Rust engine)."
         )
 
     tape, slots, dim = _build_extended_tape(system, n_exp)

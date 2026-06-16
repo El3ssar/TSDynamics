@@ -1,5 +1,5 @@
 ---
-description: The 118 built-in continuous flows — ODE systems compiled via JiTCODE, organized into eight categories.
+description: The 118 built-in continuous flows — ODE systems run on the native Rust engine, organized into eight categories.
 ---
 
 <span class="ts-kicker">Systems · Continuous</span>
@@ -9,8 +9,8 @@ description: The 118 built-in continuous flows — ODE systems compiled via JiTC
 The largest family: **118 ODE systems**, all subclasses of
 [`ContinuousSystem`](../../reference/base.md). Each declares its parameters
 and dimension at class level and defines the vector field in one symbolic
-`_equations` method; JiTCODE compiles it to C on first use and the binary
-is cached across sessions (see
+`_equations` method; it is lowered to the native Rust engine in-process and
+runs with no warmup (see
 [the compilation pipeline](../../theory/compilation.md)).
 
 ```python
@@ -45,28 +45,27 @@ sys.integrate(
     dt=0.02,             # OUTPUT grid only — the stepper is adaptive
     t0=0.0,              # start time (warm restarts allowed)
     ic=None,             # initial state; falls back to self.ic, then random
-    method="RK45",       # "RK45"/"dopri5", "DOP853", "LSODA", "VODE"
+    method="rk45",       # "rk45" (default), "dop853", "tsit5", "rk4", "bdf", ...
     rtol=1e-6, atol=1e-9,
 ) -> Trajectory
 ```
 
 `lyapunov_spectrum(final_time=200.0, dt=0.1, burn_in=50.0, n_exp=None, ...)`
-computes the spectrum from compiled variational equations — see
+computes the spectrum from the variational equations — see
 [Lyapunov spectra](../../analysis/lyapunov.md).
 
 ## Variable-dimension systems
 
 A few systems (Lorenz-96, Kuramoto–Sivashinsky, MultiChua) have a
 parameter that sets the *number of equations*. Such parameters are
-**structural** — baked into the compiled binary rather than adjustable at
-runtime:
+**structural** — they change the shape of the equations rather than being
+adjustable at runtime:
 
 ```python
 l96 = ts.Lorenz96(N=10, f=8.0)     # N is structural; f is a control param
 ```
 
-Changing `f` is free; changing `N` triggers one compile per new value
-(each cached separately).
+Changing `f` is free; changing `N` re-lowers the equations for the new size.
 
 ## See also
 

@@ -96,24 +96,22 @@ def _resolve_derivative_nodes(expr):
 
 class ContinuousSystem(SystemBase, ABC):
     """
-    Base class for ODE-based dynamical systems, compiled via JiTCODE.
+    Base class for ODE-based dynamical systems, integrated on the engine.
 
     Subclass contract
     -----------------
     1. Declare ``params = {...}`` and ``dim = N`` at class level.
     2. Implement ``_equations`` as a ``@staticmethod`` returning a
-       length-``dim`` sequence of JiTCODE / SymEngine symbolic expressions.
+       length-``dim`` sequence of SymEngine symbolic expressions.
     3. Optionally mark integer or loop-structural parameters in
-       ``_structural_params`` — these are baked into the compiled C code
+       ``_structural_params`` — these are baked into the lowered tape
        rather than exposed as runtime control parameters.
 
-    Compilation
-    -----------
-    The first call to ``integrate`` or ``lyapunov_spectrum`` triggers JiTCODE
-    compilation. Non-structural parameters become JiTCODE ``control_pars``,
-    meaning the resulting ``.so`` module is compiled **once per class** (or
-    once per structural-param combination) and reused for all subsequent runs
-    and parameter changes, even across process restarts.
+    Lowering
+    --------
+    Each system is lowered once to an in-process IR tape with no warmup; the
+    engine reads non-structural parameters live from the system on every run,
+    so a parameter change never triggers a re-lowering.
 
     Class-level attributes
     ----------------------
@@ -142,7 +140,7 @@ class ContinuousSystem(SystemBase, ABC):
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
     #: ``"interp"`` — the zero-warmup Rust engine interpreter (the sole engine
-    #: since the M3 migration retired the v2 JiTCODE/diffsol backends).
+    #: since the M3 migration retired the v2 backends).
     _default_backend: ClassVar[str] = "interp"
 
     #: Parameters whose values affect the symbolic *structure* of _equations
@@ -176,11 +174,11 @@ class ContinuousSystem(SystemBase, ABC):
 
         Parameters
         ----------
-        y : JiTCODE ``y``-accessor — call ``y(i)`` for state component ``i``.
-        t : JiTCODE time symbol.
+        y : symbolic state accessor — call ``y(i)`` for state component ``i``.
+        t : symbolic time variable.
         **params
             Current parameter values.  For non-structural params these are
-            SymEngine symbols during compilation and float values during any
+            SymEngine symbols during lowering and float values during any
             Python-fallback evaluation.
 
         Returns
@@ -222,7 +220,7 @@ class ContinuousSystem(SystemBase, ABC):
         return hashlib.md5(src.encode()).hexdigest()[:8]
 
     def _control_params(self) -> dict[str, Any]:
-        """Return the non-structural parameters (become control_pars)."""
+        """Return the non-structural parameters (the engine's live control parameters)."""
         structural = type(self)._structural_params
         return {k: v for k, v in self.params.items() if k not in structural}
 
@@ -464,7 +462,7 @@ class ContinuousSystem(SystemBase, ABC):
         Parameter values are captured at call time of this method; build a
         fresh callable after changing parameters.  Used by figure tooling,
         Poincaré crossing refinement, and backend cross-validation — the
-        compiled JiTCODE path remains the integrator of record.
+        engine remains the integrator of record.
         """
         rhs_fn, _, control_names = self._build_lambdified()
         vals = np.array([float(self.params[k]) for k in control_names])
