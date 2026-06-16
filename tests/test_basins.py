@@ -315,10 +315,10 @@ def test_continuation_result_tipping_method_matches_function():
 
 
 def test_as_label_array_rejects_non_integer():
-    from tsdynamics.analysis.basins._common import as_label_array
+    from tsdynamics.analysis.basins._common import _as_label_array
 
     with pytest.raises(ValueError):
-        as_label_array(np.array([0.3, 1.7]))
+        _as_label_array(np.array([0.3, 1.7]))
 
 
 def test_attractor_set_match_picks_nearest():
