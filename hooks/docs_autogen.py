@@ -99,7 +99,7 @@ def _system_page(entry, fig_path: Path | None) -> str:
         "```python",
         "import tsdynamics as ts",
         "",
-        f"sys = ts.{entry.name}()",
+        f"sys = ts.systems.{entry.name}()",
         f"traj = sys.{call}",
         "```",
         "",

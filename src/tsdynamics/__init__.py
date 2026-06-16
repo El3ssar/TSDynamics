@@ -3,7 +3,7 @@ TSDynamics — compiled dynamical systems: integration, iteration, and chaos ana
 
 Quick start
 -----------
->>> from tsdynamics import Lorenz, MackeyGlass, Henon
+>>> from tsdynamics.systems import Lorenz, MackeyGlass, Henon
 >>> traj = Lorenz().integrate(final_time=100.0, dt=0.01)
 >>> traj.t.shape, traj.y.shape
 ((10001,), (10001, 3))
@@ -16,11 +16,13 @@ ensembles), and :mod:`~tsdynamics.analysis` provides the quantifiers that
 consume them (orbit/bifurcation diagrams, Poincaré sections, Lyapunov tools,
 fixed points).
 
-The top-level namespace re-exports every built-in system (see
-:mod:`tsdynamics.registry` for programmatic access), the three base classes
-users subclass to define new systems, the derived-system wrappers, and the
-analysis functions.  Internal helpers (``ParamSet``, ``SystemBase``,
-``staticjit``) live under ``tsdynamics.families`` / ``tsdynamics.utils``.
+Built-in systems live under :mod:`tsdynamics.systems` (``tsdynamics.systems.Lorenz``)
+so the top-level namespace stays focused on the base classes, the derived-system
+wrappers, the analysis functions, and the submodules.  For backwards
+compatibility ``tsdynamics.Lorenz`` (and ``from tsdynamics import Lorenz``) still
+resolve lazily.  See :mod:`tsdynamics.registry` for programmatic access.  Internal
+helpers (``ParamSet``, ``SystemBase``, ``staticjit``) live under
+``tsdynamics.families`` / ``tsdynamics.utils``.
 """
 
 from . import analysis, data, derived, families, registry, systems, utils
@@ -120,21 +122,18 @@ from .families import (
     StochasticSystem,
     Trajectory,
 )
-from .systems import continuous as _continuous
-from .systems import discrete as _discrete
 
 # Single source of truth for the package version; rewritten by python-semantic-release.
 __version__ = "2.5.1"
 
-# Re-export every system class at the top level so ``from tsdynamics import Lorenz``
-# works without users having to remember which submodule a system lives in.
-_continuous_names = list(_continuous.__all__)
-_discrete_names = list(_discrete.__all__)
-for _name in _continuous_names:
-    globals()[_name] = getattr(_continuous, _name)
-for _name in _discrete_names:
-    globals()[_name] = getattr(_discrete, _name)
-del _name
+# Built-in system classes are NOT bound into this namespace — that would bury the
+# submodules (``analysis``, ``data``, ``systems``, …) under ~149 model names in
+# ``dir()`` / autocomplete. The canonical path is ``tsdynamics.systems.<Name>``
+# (e.g. ``tsdynamics.systems.Lorenz``). For backwards compatibility, ``tsd.Lorenz``
+# and ``from tsdynamics import Lorenz`` still resolve, lazily, via ``__getattr__``
+# below — but the names stay out of ``__all__`` and ``__dir__`` so they don't clutter
+# the top-level surface.
+_SYSTEM_NAMES = frozenset(systems._SYSTEM_NAMES)
 
 __all__ = [
     "__version__",
@@ -251,7 +250,22 @@ __all__ = [
     "registry",
     "systems",
     "utils",
-    # All built-in systems
-    *_continuous_names,
-    *_discrete_names,
 ]
+
+
+def __getattr__(name: str):
+    """Lazily resolve a built-in system class (``tsdynamics.Lorenz``).
+
+    Kept for backwards compatibility — the canonical path is
+    ``tsdynamics.systems.<Name>``. Resolving here (instead of binding all ~149
+    classes into the namespace) keeps ``dir()`` / autocomplete focused on the
+    submodules and public API.
+    """
+    if name in _SYSTEM_NAMES:
+        return getattr(systems, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Top-level surface = the public API in ``__all__`` (models live under ``systems``)."""
+    return sorted(__all__)

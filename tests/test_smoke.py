@@ -45,7 +45,7 @@ def test_systems_subpackages_importable() -> None:
 
 
 def test_top_level_reexports() -> None:
-    """Built-in systems are accessible directly from the top-level namespace."""
+    """Built-in systems stay accessible from the top-level namespace (lazily)."""
     import tsdynamics as ts
 
     for name in (
@@ -59,6 +59,34 @@ def test_top_level_reexports() -> None:
         "Logistic",
     ):
         assert hasattr(ts, name), f"{name} missing from tsdynamics top-level"
+
+
+def test_systems_is_the_canonical_model_path() -> None:
+    """``tsdynamics.systems.<Name>`` is the canonical flat path; ``tsd.<Name>`` is its alias."""
+    import tsdynamics as ts
+
+    assert ts.systems.Lorenz is ts.Lorenz
+    assert ts.systems.Henon is ts.Henon
+    # The flat catalogue covers every registered builtin.
+    from tsdynamics import registry
+
+    flat = set(ts.systems.__all__)
+    for entry in registry.all_systems():
+        assert entry.name in flat, f"{entry.name} not flat-exported at tsdynamics.systems"
+
+
+def test_models_do_not_clutter_top_level_namespace() -> None:
+    """Models are hidden from ``dir()`` / ``__all__`` so the submodules stay findable."""
+    import tsdynamics as ts
+
+    assert "Lorenz" not in ts.__all__
+    assert "Lorenz" not in dir(ts)
+    # ...but the public submodules and base classes ARE on the top-level surface.
+    for name in ("analysis", "data", "derived", "systems", "registry", "ContinuousSystem"):
+        assert name in dir(ts)
+    # An unknown attribute still raises a clean AttributeError (not a model miss).
+    with pytest.raises(AttributeError):
+        _ = ts.DefinitelyNotASystem
 
 
 def test_utils_public_surface() -> None:

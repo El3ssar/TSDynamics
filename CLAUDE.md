@@ -100,9 +100,19 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
 
 ## Public API surface
 
+Built-in system classes are **not** in the top-level `__all__` (nor `dir()`):
+they live under `tsdynamics.systems` — the canonical path is
+`tsdynamics.systems.<Name>` (e.g. `tsdynamics.systems.Lorenz`, flat across
+`continuous`/`discrete`), kept off the top level so the submodules stay findable.
+For backwards compatibility a module-level `__getattr__` still resolves
+`tsdynamics.Lorenz` / `from tsdynamics import Lorenz` lazily. `systems/__init__.py`
+flat-re-exports every catalogue class automatically (driven by each category
+module's `__all__`), so a new system needs no manual edit there.
+
 `tsdynamics.__all__` exports:
 
-- Every built-in system class (149 today: 118 ODE + 5 DDE + 26 maps)
+- The 149 built-in systems are reachable via `tsdynamics.systems` (149 today:
+  118 ODE + 5 DDE + 26 maps), not the top-level `__all__`
 - Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`,
   `StochasticSystem`; result type `Trajectory`
 - Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
@@ -525,8 +535,11 @@ reuse `_strategies` and assert a real invariant — never a tautology.
 1. Drop the class into the right module under `systems/continuous/` or
    `systems/discrete/`, following the family contract (see docs → Start →
    concepts, or any existing system).
-2. Add the class name to the module's `__all__` and the parent package's
-   `__init__.py` (a registry test fails loudly if you forget).
+2. Add the class name to the module's `__all__` and the category package's
+   `__init__.py` (`systems/continuous/__init__.py` or `systems/discrete/__init__.py`).
+   `systems/__init__.py` flat-re-exports it automatically (→ `tsdynamics.systems.<Name>`
+   and the lazy `tsdynamics.<Name>`); a registry test fails loudly if you forget the
+   category `__all__`.
 3. **That's it** — the registry picks it up, the bulk test suite sweeps it,
    and the docs build generates its page (equations + figure) automatically.
 4. Optional metadata: `variables`, `reference`, `known_lyapunov` ClassVars;
