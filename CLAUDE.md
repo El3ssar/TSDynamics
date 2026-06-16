@@ -339,10 +339,30 @@ All three families + all derived wrappers implement:
     integrator). Validated now via `backend="reference"` against analytic
     spectra; `"interp"`/`"jit"` need the `tsdynamics._rust` wheel.
   - **DDEs**: raise — their tangent space is the infinite-dimensional history
-    space; use `DelaySystem.lyapunov_spectrum` (still `jitcdde_lyap`, the
-    documented exception, NOT routed through `TangentSystem`).
+    space; use `DelaySystem.lyapunov_spectrum` (NOT routed through
+    `TangentSystem`), which now has **two backends** (stream E-DDE-LYAP):
+    `backend="jitcdde"` (default, `jitcdde_lyap`) and `backend="interp"/"jit"`
+    (the engine path — see below). DDE Lyapunov is the last v2 holdout the M3
+    removal waits on, so the engine path is what lets jitcdde be deleted.
   `TangentSystem.lyapunov_spectrum(...)` wraps the streaming `step()`/
   `exponents()` API into the standard burn-in + time-weighted estimate.
+- **`DelaySystem.lyapunov_spectrum(backend="interp"/"jit")`** (E-DDE-LYAP) is the
+  engine DDE Lyapunov estimator (`families/_dde_lyapunov.py`), the
+  infinite-dimensional-history analogue of the ODE variational core: it builds
+  the **extended** DDE — base state ⊕ `k` deviation states, the deviation
+  equations being the symbolic variational dynamics (a per-current-state Jacobian
+  plus one Jacobian per delay slot, so delayed deviations are just extra delay
+  slots — **the frozen IR is untouched**) — and integrates it on the Rust DDE
+  engine in chunks of one delay window. Benettin renormalisation is over the
+  deviation **history segment** (a function-space QR, so `n_exp` may exceed
+  `dim`); with chunk `= τ_max` and `dt | τ_max` the base history is reused exactly
+  (no reseed-interpolation error) and the deviation directions are recombined
+  exactly (the variational dynamics is linear). Validated vs `jitcdde_lyap` on all
+  5 built-in DDEs (and a 2-D synthetic DDE), with the Mackey–Glass leading
+  exponent positive (matching its `known_lyapunov` `n_positive=1`);
+  `interp`==`jit` bit-for-bit.
+  `backend="reference"` raises (no pure-Python DDE integrator). The default stays
+  `jitcdde` until M3 flips `_default_backend`.
 - `max_lyapunov` (Benettin two-trajectory) needs `set_state` → raises for DDEs.
   Its continuous normalization divides by the **measured elapsed `time()`** of
   the reference run (not a guessed step-size attribute), so it is correct for
