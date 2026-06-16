@@ -1,42 +1,32 @@
 name: Wheels
 
-# Cross-platform prebuilt wheels for the `tsdynamics._rust` engine extension
-# (stream I-WHEEL, ROADMAP §11). The extension is abi3 (cp312), so ONE wheel per
-# (platform, arch) covers every CPython >= 3.12 — no per-version matrix.
+# Cross-platform prebuilt wheels for `tsdynamics` (post-M3: the Rust engine is the
+# sole integration backend, so the package ships as ONE compiled maturin wheel —
+# the pure-Python sources from `src/` + the `tsdynamics/_rust` abi3 extension).
+# The extension is abi3 (cp312), so ONE wheel per (platform, arch) covers every
+# CPython >= 3.12 — no per-version matrix.
 #
-# Packaging shape (pre-M3): a separable, optional accelerator distribution
-# `tsdynamics-rust-engine` that ships only `tsdynamics/_rust.abi3.so` into the
-# `tsdynamics` namespace, so a user gets the engine with NO Rust toolchain. The
-# pure-Python `tsdynamics` wheel + its python-semantic-release PyPI publish
-# (release.yml) are untouched. At M3 the two fold into one `tsdynamics` maturin
-# wheel — see docs/about/packaging.md.
-#
-# This workflow only *builds and verifies* wheels (uploaded as artifacts). It does
-# NOT publish to PyPI: the pre-M3 engine is gated by I-XVAL and deliberately kept
-# off the index (its pyproject carries `Private :: Do Not Upload`). PyPI publishing
-# is wired at M3 when the engine becomes the default.
+# This workflow only *builds and verifies* wheels (uploaded as artifacts) for a
+# packaging-shape PR smoke and on-demand builds. The release build + PyPI publish
+# lives in release.yml (which owns the version tag and the OIDC trusted-publisher
+# binding) — so this file deliberately does NOT trigger on tags and never
+# publishes.
 #
 #   * pull_request (packaging paths only) → a cheap single-platform build smoke,
 #     so a packaging-layout regression is caught before merge.
-#   * workflow_dispatch / tag push (v*)   → the full manylinux + musllinux + macOS
-#     + Windows matrix + sdist.
+#   * workflow_dispatch                   → the full manylinux + musllinux + macOS
+#     + Windows matrix + sdist (artifacts only).
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
   pull_request:
     branches: [main]
     paths:
       - ".github/workflows/wheels.yml"
-      - "crates/tsdyn-core/pyproject.toml"
-      - "crates/tsdyn-core/Cargo.toml"
-      - "crates/tsdyn-core/python/**"
+      - "pyproject.toml"
+      - "crates/**"
 
 concurrency:
   group: wheels-${{ github.ref }}
-  # Cancel superseded PR runs, but never abort an in-flight release-tag / dispatch
-  # build — those produce the actual artifact set and must run to completion.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -45,7 +35,7 @@ permissions:
 jobs:
   # Emit the build matrix: a one-platform smoke on PRs (the full matrix is heavy
   # and the cross-arch/macOS/Windows builds are standard maturin-action paths), the
-  # full set on a manual run or a release tag.
+  # full set on a manual run.
   matrix:
     name: Resolve build matrix
     runs-on: ubuntu-latest
@@ -90,32 +80,29 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Build from the root pyproject: [tool.maturin] points manifest-path at the
+      # engine crate and python-source at src/, so the wheel is the full
+      # `tsdynamics` package + the `tsdynamics/_rust` abi3 extension.
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           # manylinux is honoured on Linux only; ignored on macOS / Windows.
           manylinux: ${{ matrix.manylinux }}
-          args: --release --out dist --manifest-path crates/tsdyn-core/Cargo.toml
-          # sccache speeds up non-release builds; disabled on tags for clean rebuilds.
-          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          args: --release --out dist
+          sccache: "true"
 
       # Install the freshly built wheel and import it. Only on native runners: a
       # cross-compiled aarch64 wheel (or a musl wheel on a glibc host) cannot run
-      # here. The engine has no runtime deps and imports without numpy, so a bare
-      # interpreter suffices; `tsdynamics._rust` resolves via PEP 420 even without
-      # the pure-Python `tsdynamics` package present.
-      - name: Verify the wheel imports
+      # here. The runtime deps (numpy/scipy/symengine/sympy) come from the index;
+      # the engine wheel itself resolves under --find-links.
+      - name: Verify the wheel imports + integrates
         if: ${{ matrix.native }}
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          # numpy is the engine's only runtime dependency (its whole FFI surface is
-          # rust-numpy arrays); install it from the index first so the engine wheel
-          # resolves under --no-index (which forces use of the freshly built wheel).
-          python -m pip install numpy
-          python -m pip install --no-index --find-links dist tsdynamics-rust-engine
-          python -c "import tsdynamics._rust as r; assert hasattr(r, 'integrate_dense'), dir(r); print('tsdynamics._rust import OK on ${{ matrix.label }}')"
+          python -m pip install --find-links dist tsdynamics
+          python -c "import tsdynamics as ts, tsdynamics._rust; t = ts.Lorenz().integrate(final_time=5.0, dt=0.01); assert t.meta['engine'] == 'rust'; print('tsdynamics wheel import + integrate OK on ${{ matrix.label }}')"
 
       - name: Upload wheel
         uses: actions/upload-artifact@v6
@@ -131,14 +118,12 @@ jobs:
       - uses: actions/checkout@v6
 
       # The sdist vendors the sibling path-dependency crates (tsdyn-ir/vm/jit/
-      # solvers/engine), so it is self-contained and buildable — but building it
-      # still needs a Rust toolchain, so it is the fallback for platforms not in
-      # the wheel matrix, not the no-compiler path.
+      # solvers/engine), so it is self-contained and buildable from source.
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          args: --out dist --manifest-path crates/tsdyn-core/Cargo.toml
+          args: --out dist
 
       - name: Upload sdist
         uses: actions/upload-artifact@v6

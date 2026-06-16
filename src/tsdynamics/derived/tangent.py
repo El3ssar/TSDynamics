@@ -14,8 +14,7 @@ from ._variational import build_variational_tape, embed_extended, split_extended
 __all__ = ["TangentSystem"]
 
 #: ODE backends that integrate the *extended* variational system on the engine
-#: (interpreter / Cranelift JIT / pure-Python reference), rather than JiTCODE's
-#: compiled ``jitcode_lyap`` variational equations.
+#: (interpreter / Cranelift JIT / pure-Python reference).
 _ENGINE_BACKENDS = frozenset({"interp", "jit", "reference"})
 
 
@@ -46,24 +45,16 @@ class TangentSystem(DerivedSystem):
 
     Implementation per family
     -------------------------
-    - **Maps**: pure NumPy — ``W ← J(x)·W`` with the compiled ``_jacobian``
-      evaluated at the pre-image (the correct tangent-map convention), then QR.
-    - **ODEs**: two interchangeable variational backends, selected by
-      ``backend=``:
-
-      * ``"jitcode"`` (default) — the compiled variational equations
-        (``jitcode_lyap``), which JiTCODE builds by symbolic differentiation;
-        zero Python-side Jacobian work in the hot loop.
-      * ``"interp"`` / ``"jit"`` / ``"reference"`` — the **backend-neutral**
-        path: the *extended* ODE (state ⊕ ``k`` tangent vectors, see
-        :mod:`tsdynamics.derived._variational`) is lowered to an engine tape and
-        integrated per step on the Rust engine (or the pure-Python reference
-        oracle), then QR-reorthonormalised here.  This is the successor that
-        survives the JiTCODE removal at the M3 migration gate.
-
+    - **Maps**: pure NumPy — ``W ← J(x)·W`` with ``_jacobian`` evaluated at the
+      pre-image (the correct tangent-map convention), then QR.
+    - **ODEs**: the *extended* ODE (state ⊕ ``k`` tangent vectors, see
+      :mod:`tsdynamics.derived._variational`) is lowered to an engine tape and
+      integrated per step on the Rust engine (or the pure-Python reference
+      oracle), then QR-reorthonormalised here.  Select the variational backend
+      with ``backend=``: ``"interp"`` (default), ``"jit"``, or ``"reference"``.
     - **DDEs**: not supported — tangent dynamics of a DDE lives in an
       infinite-dimensional history space; use
-      ``DelaySystem.lyapunov_spectrum`` which wraps ``jitcdde_lyap``.
+      ``DelaySystem.lyapunov_spectrum`` (the engine DDE Lyapunov estimator).
 
     Parameters
     ----------
@@ -73,8 +64,8 @@ class TangentSystem(DerivedSystem):
         Number of deviation vectors (``1 ≤ k ≤ system.dim``).  Defaults to the
         full state dimension.
     backend : str, optional
-        ODE variational backend (ignored for maps): ``"jitcode"`` (default),
-        ``"interp"``, ``"jit"``, or ``"reference"``.
+        ODE variational backend (ignored for maps): ``"interp"`` (default),
+        ``"jit"``, or ``"reference"``.
 
     Examples
     --------
@@ -108,17 +99,16 @@ class TangentSystem(DerivedSystem):
             raise ValueError(f"k must be in [1, {system.dim}], got {self.k}")
 
         if self._mode == "map":
-            self._backend = "numba"
+            self._backend = "map"
         else:
-            self._backend = (backend or "jitcode").lower()
-            if self._backend != "jitcode" and self._backend not in _ENGINE_BACKENDS:
+            self._backend = (backend or "interp").lower()
+            if self._backend not in _ENGINE_BACKENDS:
                 raise ValueError(
-                    f"unknown ODE tangent backend {backend!r}; choose 'jitcode' (default), "
-                    f"or {sorted(_ENGINE_BACKENDS)} (the engine variational path)."
+                    f"unknown ODE tangent backend {backend!r}; choose from "
+                    f"{sorted(_ENGINE_BACKENDS)} (the engine variational path)."
                 )
 
         self._W: np.ndarray | None = None  # (dim, k) deviation vectors (map mode)
-        self._ode_lyap: Any = None  # jitcode_lyap wrapper (ode jitcode mode)
         self._ext_tape: Any = None  # extended variational tape (ode engine mode)
         self._z: np.ndarray | None = None  # extended state (ode engine mode)
         self._t = 0.0
@@ -171,26 +161,7 @@ class TangentSystem(DerivedSystem):
         self._atol = kwargs.pop("atol", 1e-9)
         self._integrator_kwargs = dict(kwargs)
 
-        if self._backend in _ENGINE_BACKENDS:
-            self._reinit_ode_engine(ic_arr)
-        else:
-            self._reinit_ode_jitcode(ic_arr, t0)
-
-    def _reinit_ode_jitcode(self, ic_arr: np.ndarray, t0: float) -> None:
-        """Build a fresh ``jitcode_lyap`` wrapper from the cached compiled module."""
-        from tsdynamics.families.continuous import _INTEGRATOR_MAP
-
-        method = self._method or self.system._default_method
-        ode = self.system._ensure_compiled(for_lyap=True, n_lyap=self.k)
-        ode.set_integrator(
-            _INTEGRATOR_MAP.get(method, method),
-            rtol=self._rtol,
-            atol=self._atol,
-            **self._integrator_kwargs,
-        )
-        ode.set_parameters(*self.system._control_params().values())
-        ode.set_initial_value(ic_arr, t0)
-        self._ode_lyap = ode
+        self._reinit_ode_engine(ic_arr)
 
     def _reinit_ode_engine(self, ic_arr: np.ndarray) -> None:
         """Lower the extended variational tape and seed the extended state."""
@@ -217,9 +188,7 @@ class TangentSystem(DerivedSystem):
         if self._mode == "map":
             return self._step_map(int(n_or_dt) if n_or_dt is not None else 1)
         dt = float(n_or_dt) if n_or_dt is not None else self._ODE_DEFAULT_DT
-        if self._backend in _ENGINE_BACKENDS:
-            return self._step_ode_engine(dt)
-        return self._step_ode_jitcode(dt)
+        return self._step_ode_engine(dt)
 
     def _step_map(self, n: int) -> np.ndarray:
         if self._W is None:
@@ -237,20 +206,6 @@ class TangentSystem(DerivedSystem):
             self._sum_growths += growths
             self._elapsed += 1.0
         return sys.state()
-
-    def _step_ode_jitcode(self, dt: float) -> np.ndarray:
-        if self._ode_lyap is None:
-            self.reinit()
-        self._t += dt
-        ret = self._ode_lyap.integrate(self._t)
-        if not (isinstance(ret, tuple) and len(ret) >= 2):
-            raise RuntimeError("jitcode_lyap.integrate returned an unexpected value")
-        state = np.asarray(ret[0], dtype=float)
-        local = np.asarray(ret[1], dtype=float).ravel()[: self.k]
-        self._last_growths = local * dt  # local exponents → log stretch over dt
-        self._sum_growths += self._last_growths
-        self._elapsed += dt
-        return state
 
     def _step_ode_engine(self, dt: float) -> np.ndarray:
         if self._z is None:
@@ -312,22 +267,18 @@ class TangentSystem(DerivedSystem):
     def deviations(self) -> np.ndarray:
         """Return the current orthonormal deviation vectors, shape ``(dim, k)``.
 
-        Available for maps and the ODE engine backend (both carry the deviation
-        matrix explicitly); the ODE ``jitcode`` backend hides it inside
-        ``jitcode_lyap`` and raises.
+        Available on every supported backend — maps and the ODE engine
+        backends both carry the deviation matrix explicitly.
         """
         if self._mode == "map":
             if self._W is None:
                 raise RuntimeError("deviations() is available after reinit()")
             return self._W.copy()
-        if self._backend in _ENGINE_BACKENDS:
-            if self._z is None:
-                raise RuntimeError("deviations() is available after reinit()")
-            return split_extended(self._z, self.system.dim, self.k)[1]
-        raise RuntimeError(
-            "deviations() is not available for the ODE 'jitcode' backend "
-            "(jitcode_lyap hides the deviation vectors); use an engine backend."
-        )
+        # ODE engine backend (interp/jit/reference): the constructor rejects any
+        # other backend, so the deviation vectors are always carried explicitly.
+        if self._z is None:
+            raise RuntimeError("deviations() is available after reinit()")
+        return split_extended(self._z, self.system.dim, self.k)[1]
 
     def growths(self) -> np.ndarray:
         """Return the log stretch factors ``log|diag R|`` from the most recent step."""

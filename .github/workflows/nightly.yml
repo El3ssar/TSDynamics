@@ -1,7 +1,5 @@
-# Nightly exhaustive sweep: compiles and integrates EVERY built-in system
-# (pytest -m full). Too slow for PR CI; the JiTCODE/JiTCDDE compile cache
-# is persisted between runs so only systems whose equations changed
-# recompile.
+# Nightly exhaustive sweep: integrates EVERY built-in system on the Rust engine
+# (pytest -m full). Too slow for PR CI.
 
 name: Nightly full sweep
 
@@ -19,6 +17,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The engine is the sole integration backend, so the sweep needs the
+      # compiled `tsdynamics._rust`; `uv sync` builds it via maturin (needs Rust).
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -27,22 +30,8 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install build deps
-        run: sudo apt-get update && sudo apt-get install -y build-essential
-
-      - name: Restore compile cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/tsdynamics
-          key: tsdyn-compile-${{ runner.os }}-py312-${{ hashFiles('src/tsdynamics/systems/**', 'uv.lock') }}
-          restore-keys: |
-            tsdyn-compile-${{ runner.os }}-py312-
-
-      - name: Sync project + dev deps (incl. the diffsol backend extra)
-        run: uv sync --group dev --extra diffsol
+      - name: Sync project + dev deps (builds the engine)
+        run: uv sync --group dev
 
       - name: Full sweep
         run: uv run pytest -m full --no-cov -q
-
-      - name: diffsol backend cross-validation (Linux only; needs pydiffsol)
-        run: uv run pytest tests/test_diffsol_backend.py tests/test_diffsol_translation.py --no-cov -q

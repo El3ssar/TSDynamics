@@ -34,8 +34,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install build deps (jitcdde figures need a C compiler)
-        run: sudo apt-get update && sudo apt-get install -y build-essential
+      # The docs import `tsdynamics` (autogen pages, figures), so the build needs
+      # the compiled engine; `uv sync` builds it via maturin (needs Rust).
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Restore figure cache
         uses: actions/cache@v5

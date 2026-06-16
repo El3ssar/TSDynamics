@@ -1,11 +1,11 @@
 [build-system]
-requires = ["hatchling>=1.29.0"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "tsdynamics"
-dynamic = ["version"]
-description = "Compiled ODE/DDE integration, discrete maps, and chaos analysis for dynamical systems."
+version = "2.5.1"
+description = "Zero-warmup Rust-engine ODE/DDE/SDE integration, discrete maps, and chaos analysis for dynamical systems."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 license = "MIT"
@@ -38,9 +38,8 @@ classifiers = [
 dependencies = [
   "numpy>=2.0,<3.0",
   "scipy>=1.14,<2.0",
-  "numba>=0.60,<1.0",
-  "jitcdde>=1.8,<2.0",
-  "jitcode>=1.7,<2.0",
+  # symengine/sympy are the symbolic FRONTEND (lower _equations to the engine IR,
+  # autogen the Jacobian, render docs LaTeX) — not a v2 integration backend.
   "symengine>=0.13,<1.0",
   "sympy>=1.13,<2.0",
 ]
@@ -53,8 +52,6 @@ Changelog = "https://github.com/El3ssar/TSDynamics/releases"
 
 [project.optional-dependencies]
 plot = ["matplotlib>=3.9"]
-# Experimental Rust-backed ODE solver (DiffSL JIT). See docs → Theory → Backends.
-diffsol = ["pydiffsol>=0.5"]
 # Optional fast LZ76 provider for analysis.entropy (provider="lzcomplexity").
 # The built-in native parser is the default and needs no extra.
 lz = ["lzcomplexity>=0.9"]
@@ -80,33 +77,32 @@ docs = [
   "matplotlib>=3.9",
 ]
 
-# ── Hatch ──────────────────────────────────────────────────────────────────────
+# ── maturin (the single compiled wheel: Python package + Rust engine) ──────────
+# Since M3 the engine is the sole backend, so `tsdynamics` is one maturin wheel
+# carrying both the Python tree (src/) and the `tsdynamics._rust` extension built
+# from the cdylib crate.  abi3 (CPython ≥ 3.12) → one wheel per platform.
 
-[tool.hatch.build]
-include = ["src/tsdynamics/**", "README.md", "LICENSE*"]
-# Local experiment debris (native extension prototypes) must never ship.
+[tool.maturin]
+module-name = "tsdynamics._rust"
+python-source = "src"
+manifest-path = "crates/tsdyn-core/Cargo.toml"
+features = ["extension-module"]
 exclude = ["src/tsdynamics/_native/**"]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/tsdynamics"]
-
-[tool.hatch.build.targets.sdist]
-include = ["src/tsdynamics/**", "README.md", "LICENSE*", "tests/**"]
-exclude = ["src/tsdynamics/_native/**"]
-
-[tool.hatch.version]
-path = "src/tsdynamics/__init__.py"
 
 # ── Release automation — python-semantic-release ───────────────────────────────
 # Version bumps are computed from conventional commit messages on main:
 #   feat: -> minor, fix:/perf: -> patch, "BREAKING CHANGE:"/! -> major
-# The version lives ONLY in src/tsdynamics/__init__.py; PSR rewrites it, commits,
-# tags vX.Y.Z, and creates the GitHub release. CI publishes to PyPI.
+# maturin cannot read __version__ from a Python file, so the canonical version is
+# the static [project] version (PSR rewrites it) and src/tsdynamics/__init__.py is
+# kept in lock-step.  PSR does NOT build (the platform wheels are built by the
+# release wheel matrix); it only computes the bump, rewrites the version, tags and
+# creates the GitHub release.
 # ───────────────────────────────────────────────────────────────────────────────
 
 [tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
 version_variables = ["src/tsdynamics/__init__.py:__version__"]
-build_command = "python -m pip install build && python -m build"
+build_command = ""
 commit_message = "chore(release): v{version} [skip ci]"
 tag_format = "v{version}"
 allow_zero_version = true
@@ -165,7 +161,7 @@ strict                = true
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["numba.*", "jitcode.*", "jitcdde.*", "symengine.*", "pywt.*"]
+module = ["symengine.*", "pywt.*"]
 ignore_missing_imports = true
 
 # ── Coverage ───────────────────────────────────────────────────────────────────
@@ -182,19 +178,12 @@ show_missing = true
 testpaths = ["tests"]
 addopts   = "-q --tb=short --strict-markers --cov=src/tsdynamics --cov-report=term-missing -m 'not full'"
 markers   = [
-  "slow: marks tests that compile JiTCODE/JiTCDDE C code or run long simulations (deselect with: pytest -m 'not slow')",
-  "full: exhaustive sweeps that compile every built-in system; deselected by default, run nightly (select with: pytest -m full)",
+  "slow: marks tests that run long simulations or compile the engine extension (deselect with: pytest -m 'not slow')",
+  "full: exhaustive sweeps over every built-in system; deselected by default, run nightly (select with: pytest -m full)",
   "engine: requires the compiled tsdynamics._rust extension; auto-applied to modules that import it and selected by the engine CI job with -m engine (stream I-XVAL)",
 ]
 filterwarnings = [
   "error",
-  "ignore:.*Generating compiled integrator failed.*:UserWarning",
-  "ignore:.*READ ME FIRST.*:UserWarning",
-  "ignore:.*target time is smaller than the current time.*:UserWarning",
   "ignore:.*License classifiers have been superseded.*:UserWarning",
-  "ignore:.*larger nsteps is needed.*:UserWarning",
-  "ignore:.*step size becomes too small.*:UserWarning",
   "ignore:.*divide by zero encountered in divide.*:RuntimeWarning",
-  # JiTCODE/JiTCDDE leave TemporaryDirectory objects to GC cleanup; harmless on Python 3.14+
-  "ignore:.*Implicitly cleaning up.*TemporaryDirectory.*:ResourceWarning",
 ]

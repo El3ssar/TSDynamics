@@ -1,48 +1,14 @@
-"""ContinuousSystem — ODE base class via JiTCODE."""
+"""ContinuousSystem — ODE base class on the Rust engine."""
 
 from __future__ import annotations
 
-import os
-import pathlib
-import sysconfig
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.utils.grids import make_output_grid
-
 from .base import SystemBase, Trajectory
-
-# Platform-specific compiled extension suffix (e.g. ".cpython-312-x86_64-linux-gnu.so").
-# Used to filter glob results to actual shared libraries only.
-_EXT_SUFFIX: str = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
-
-
-# ---------------------------------------------------------------------------
-# Cache directory
-# ---------------------------------------------------------------------------
-
-_CACHE_DIR = pathlib.Path(
-    os.environ.get("TSDYNAMICS_CACHE", pathlib.Path.home() / ".cache" / "tsdynamics")
-)
-
-# ---------------------------------------------------------------------------
-# Integrator name map (SciPy-style aliases → JiTCODE names)
-# ---------------------------------------------------------------------------
-
-_INTEGRATOR_MAP: dict[str, str] = {
-    "RK45": "dopri5",
-    "dopri5": "dopri5",
-    "DOP853": "dop853",
-    "dop853": "dop853",
-    "LSODA": "lsoda",
-    "lsoda": "lsoda",
-    "VODE": "vode",
-    "vode": "vode",
-}
-_EXPLICIT_METHODS = frozenset({"dopri5", "dop853"})
 
 
 def _resolve_derivative_nodes(expr):
@@ -130,24 +96,22 @@ def _resolve_derivative_nodes(expr):
 
 class ContinuousSystem(SystemBase, ABC):
     """
-    Base class for ODE-based dynamical systems, compiled via JiTCODE.
+    Base class for ODE-based dynamical systems, integrated on the engine.
 
     Subclass contract
     -----------------
     1. Declare ``params = {...}`` and ``dim = N`` at class level.
     2. Implement ``_equations`` as a ``@staticmethod`` returning a
-       length-``dim`` sequence of JiTCODE / SymEngine symbolic expressions.
+       length-``dim`` sequence of SymEngine symbolic expressions.
     3. Optionally mark integer or loop-structural parameters in
-       ``_structural_params`` — these are baked into the compiled C code
+       ``_structural_params`` — these are baked into the lowered tape
        rather than exposed as runtime control parameters.
 
-    Compilation
-    -----------
-    The first call to ``integrate`` or ``lyapunov_spectrum`` triggers JiTCODE
-    compilation. Non-structural parameters become JiTCODE ``control_pars``,
-    meaning the resulting ``.so`` module is compiled **once per class** (or
-    once per structural-param combination) and reused for all subsequent runs
-    and parameter changes, even across process restarts.
+    Lowering
+    --------
+    Each system is lowered once to an in-process IR tape with no warmup; the
+    engine reads non-structural parameters live from the system on every run,
+    so a parameter change never triggers a re-lowering.
 
     Class-level attributes
     ----------------------
@@ -175,46 +139,28 @@ class ContinuousSystem(SystemBase, ABC):
     _default_method: ClassVar[str] = "RK45"
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"jitcode"`` — the v2 compile-to-C path — until the M3 migration flips it
-    #: to a Rust engine backend.
-    _default_backend: ClassVar[str] = "jitcode"
-
-    #: Whether JiTCODE should run SymEngine's ``simplify(ratio=1)`` on each RHS
-    #: expression before emitting C.  ``None`` keeps JiTCODE's own default
-    #: (enabled for ``dim <= 10``).  Set ``False`` on systems whose RHS is a
-    #: large rational expression: the simplify pass is super-linear and can
-    #: effectively hang at compile time, while the C compiler optimises the
-    #: unsimplified code just as well (see ``BlinkingRotlet``).
-    _compile_simplify: ClassVar[bool | None] = None
+    #: ``"interp"`` — the zero-warmup Rust engine interpreter (the sole engine
+    #: since the M3 migration retired the v2 backends).
+    _default_backend: ClassVar[str] = "interp"
 
     #: Parameters whose values affect the symbolic *structure* of _equations
-    #: (e.g. integer loop bounds). These are baked in at compile time.
+    #: (e.g. integer loop bounds). These are baked in at lowering time.
     _structural_params: ClassVar[frozenset[str]] = frozenset()
 
-    # Per-class in-process caches.
-    # _compiled_odes  : cache_key (str) → jitcode object (stateless between
-    #                   set_initial_value calls; safe to reuse).
-    # _compiled_lyap  : lyap_cache_key (str) → absolute path of the saved .so.
-    #                   jitcode_lyap objects are NOT cached (they carry tangent-
-    #                   vector state); we cache the path so each call can create
-    #                   a fresh wrapper without recompiling.
-    # _lambdified     : cache_key (str) → (rhs_fn, jac_fn, control_names) —
-    #                   SymEngine-Lambdified numeric RHS/Jacobian evaluators,
-    #                   keyed like the compile cache (class + dim + structural).
-    _compiled_odes: ClassVar[dict[str, Any]] = {}
-    _compiled_lyap: ClassVar[dict[str, str]] = {}
-    _compiled_so: ClassVar[dict[str, str]] = {}
+    # Per-class in-process cache:
+    # _lambdified : cache_key (str) → (rhs_fn, jac_fn, control_names) —
+    #               SymEngine-Lambdified numeric RHS/Jacobian evaluators
+    #               (used by figures, Poincaré Hermite refinement and analyses),
+    #               keyed by class + dim + structural params.
     _lambdified: ClassVar[dict[str, tuple]] = {}
 
     # Protocol stepping state (instances shadow these class defaults on first
-    # ``reinit``).  Each instance owns a private jitcode wrapper loaded from
-    # a unique copy of the compiled .so, so two live steppers never clobber
-    # each other and module re-initialisation UB cannot occur.
-    _stepper: Any = None
+    # ``reinit``).  The engine lowers the tape once in ``reinit`` and ``step``
+    # reuses it with the current state as the initial condition.
+    _engine_problem: Any = None
     _state_now: np.ndarray | None = None
     _t_now: float = 0.0
     _default_step_dt: ClassVar[float] = 0.01
-    _stepper_counter: ClassVar[int] = 0
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -228,11 +174,11 @@ class ContinuousSystem(SystemBase, ABC):
 
         Parameters
         ----------
-        y : JiTCODE ``y``-accessor — call ``y(i)`` for state component ``i``.
-        t : JiTCODE time symbol.
+        y : symbolic state accessor — call ``y(i)`` for state component ``i``.
+        t : symbolic time variable.
         **params
             Current parameter values.  For non-structural params these are
-            SymEngine symbols during compilation and float values during any
+            SymEngine symbols during lowering and float values during any
             Python-fallback evaluation.
 
         Returns
@@ -274,17 +220,16 @@ class ContinuousSystem(SystemBase, ABC):
         return hashlib.md5(src.encode()).hexdigest()[:8]
 
     def _control_params(self) -> dict[str, Any]:
-        """Return the non-structural parameters (become control_pars)."""
+        """Return the non-structural parameters (the engine's live control parameters)."""
         structural = type(self)._structural_params
         return {k: v for k, v in self.params.items() if k not in structural}
 
-    def _module_path(self) -> pathlib.Path:
-        """
-        Stable filesystem path for the compiled module.
+    def _cache_key(self) -> str:
+        """Stable in-process cache key (class name + dim + structural + RHS hash).
 
-        Based on: class name + dim + hash of structural params.
-        Changing non-structural params does NOT produce a new path because
-        those become runtime control parameters.
+        Keys the per-class numeric-evaluator cache (:meth:`_build_lambdified`).
+        Changing non-structural params does NOT change the key — those become
+        runtime control parameters.
         """
         import hashlib
         import json
@@ -292,147 +237,11 @@ class ContinuousSystem(SystemBase, ABC):
         eq = self._equations_hash()
         struct_vals = self._structural_vals()
         if struct_vals:
-            # 64-bit slice of the MD5 digest matches ParamSet.param_hash so all
-            # cache keys in the project share a single collision budget.
             h = hashlib.md5(
                 json.dumps(sorted(struct_vals.items()), default=str).encode()
             ).hexdigest()[:16]
-            name = f"tsdyn_{type(self).__name__}_{self.dim}_{h}_{eq}"
-        else:
-            name = f"tsdyn_{type(self).__name__}_{self.dim}_{eq}"
-        return _CACHE_DIR / name
-
-    def _ensure_compiled(self, for_lyap: bool = False, n_lyap: int = 0) -> Any:
-        """
-        Return a compiled JiTCODE object, compiling (and caching) if needed.
-
-        ``jitcode`` objects (regular integration) are cached in-process because
-        they are stateless between ``set_initial_value`` calls.
-        ``jitcode_lyap`` objects are **not** cached — they carry tangent-vector
-        state that must start fresh each call.  Instead, the compiled ``.so``
-        path is cached so each call can construct a new wrapper without
-        recompiling.
-
-        Lookup order
-        ------------
-        1. In-process object cache (regular) / path cache (lyap).
-        2. Disk cache (``_CACHE_DIR``).
-        3. Check ``sys.modules``: if a prior interrupted compilation registered
-           the module name but never saved the ``.so`` to disk, recover from the
-           still-live temp dir or fall back to a unique per-process module name
-           so the session keeps working without a kernel restart.
-        4. Fresh compilation.
-        """
-        import shutil
-        import sys
-
-        import symengine
-        from jitcode import jitcode as _jitcode
-        from jitcode import jitcode_lyap as _jitcode_lyap
-        from jitcode import t as t_sym
-        from jitcode import y
-        from jitcxde_common.modules import modulename_from_path
-
-        cls_jitc = _jitcode_lyap if for_lyap else _jitcode
-        lyap_kwargs = {"n_lyap": n_lyap} if for_lyap else {}
-
-        so_suffix = f"_lyap{n_lyap}" if for_lyap else ""
-        saved_path = pathlib.Path(str(self._module_path()) + so_suffix)
-        cache_key = str(saved_path)
-
-        control_syms = {k: symengine.Symbol(k) for k in self._control_params()}
-        control_par_list = list(control_syms.values())
-
-        def _load(path: str | pathlib.Path) -> Any:
-            return cls_jitc(
-                module_location=str(path),
-                n=self.dim,
-                control_pars=control_par_list,
-                verbose=False,
-                **lyap_kwargs,
-            )
-
-        def _find_so(base: pathlib.Path) -> pathlib.Path | None:
-            # save_compiled writes plain "<name>.so"; interrupted-compile
-            # recovery writes the full EXT_SUFFIX form — accept both.
-            hits = [
-                f
-                for f in _CACHE_DIR.glob(f"{base.name}.*")
-                if (f.name.endswith(_EXT_SUFFIX) or f.name.endswith(".so")) and f.stat().st_size > 0
-            ]
-            return hits[0] if hits else None
-
-        # 1. In-process cache
-        if not for_lyap and cache_key in type(self)._compiled_odes:
-            return type(self)._compiled_odes[cache_key]
-        if for_lyap:
-            cached = type(self)._compiled_lyap.get(cache_key)
-            if cached and pathlib.Path(cached).exists():
-                return _load(cached)
-            if cached:
-                del type(self)._compiled_lyap[cache_key]  # stale — clear it
-
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-        # 2. Disk cache
-        so = _find_so(saved_path)
-        if so:
-            ode = _load(so)
-            if for_lyap:
-                type(self)._compiled_lyap[cache_key] = str(so)
-            else:
-                type(self)._compiled_odes[cache_key] = ode
-                type(self)._compiled_so[cache_key] = str(so)
-            return ode
-
-        # 3. Determine compile destination.
-        # JiTCODE registers the module name in sys.modules inside compile_C,
-        # *before* save_compiled copies the .so to its permanent location.
-        # If a prior call was interrupted in that window, the name is already
-        # in sys.modules and a fresh compile_C would raise NameError.
-        # Check upfront and either recover from the still-live temp dir or
-        # redirect to a unique per-process name.
-        dest = saved_path
-        mname = modulename_from_path(str(saved_path))
-        if mname in sys.modules:
-            live_so = getattr(sys.modules[mname], "__file__", None)
-            if live_so and pathlib.Path(live_so).exists():
-                # The interrupted call's temp dir is still alive — copy the
-                # .so to the permanent location and load from there.
-                so = pathlib.Path(str(saved_path) + _EXT_SUFFIX)
-                try:
-                    shutil.copy(live_so, so)
-                except OSError:
-                    so = pathlib.Path(live_so)
-                ode = _load(so)
-                if for_lyap:
-                    type(self)._compiled_lyap[cache_key] = str(so)
-                else:
-                    type(self)._compiled_odes[cache_key] = ode
-                    type(self)._compiled_so[cache_key] = str(so)
-                return ode
-            # Temp dir already cleaned — compile under a unique name so the
-            # session works without a restart.
-            dest = pathlib.Path(f"{saved_path}_{os.getpid()}")
-
-        # 4. Fresh compilation
-        struct_vals = self._structural_vals()
-        f_sym = list(type(self)._equations(y, t_sym, **{**struct_vals, **control_syms}))
-        if len(f_sym) != self.dim:
-            raise ValueError(f"_equations must return {self.dim} expressions, got {len(f_sym)}")
-
-        ode = cls_jitc(
-            f_sym, n=self.dim, control_pars=control_par_list, verbose=False, **lyap_kwargs
-        )
-        ode.generate_f_C(simplify=type(self)._compile_simplify)
-        so = pathlib.Path(ode.save_compiled(destination=str(dest), overwrite=True))
-
-        if for_lyap:
-            type(self)._compiled_lyap[cache_key] = str(so)
-        else:
-            type(self)._compiled_odes[cache_key] = ode
-            type(self)._compiled_so[cache_key] = str(so)
-        return ode
+            return f"tsdyn_{type(self).__name__}_{self.dim}_{h}_{eq}"
+        return f"tsdyn_{type(self).__name__}_{self.dim}_{eq}"
 
     # ------------------------------------------------------------------ #
     # System protocol — incremental stepping
@@ -443,76 +252,6 @@ class ContinuousSystem(SystemBase, ABC):
         """ODEs are continuous-time systems."""
         return False
 
-    def _so_path(self) -> str:
-        """Ensure the non-lyap module is compiled and return its .so path."""
-        cache_key = str(self._module_path())
-        so = type(self)._compiled_so.get(cache_key)
-        if so is not None and not pathlib.Path(so).exists():
-            # Cache directory was wiped while we were running — recompile.
-            so = None
-            type(self)._compiled_so.pop(cache_key, None)
-            type(self)._compiled_odes.pop(cache_key, None)
-        self._ensure_compiled(for_lyap=False)
-        so = type(self)._compiled_so.get(cache_key)
-        if so is None:  # object-cache hit recorded before path tracking
-            hits = [
-                f
-                for f in _CACHE_DIR.glob(f"{self._module_path().name}.*")
-                if (f.name.endswith(_EXT_SUFFIX) or f.name.endswith(".so")) and f.stat().st_size > 0
-            ]
-            if not hits:
-                raise RuntimeError(f"{type(self).__name__}: compiled module not found on disk.")
-            so = str(hits[0])
-            type(self)._compiled_so[cache_key] = so
-        return so
-
-    def _fresh_stepper(self) -> Any:
-        """
-        Build a private jitcode wrapper with genuinely isolated module state.
-
-        Loading the same compiled ``.so`` path twice re-runs its single-phase
-        init on shared static state — undefined behaviour that can segfault
-        once many extension modules are loaded.  Each stepper therefore loads
-        a uniquely named *copy* of the module, giving it its own dlopen
-        handle and namespace.
-        """
-        import shutil
-        import tempfile
-        import weakref
-
-        import symengine
-        from jitcode import jitcode as _jitcode
-
-        so = pathlib.Path(self._so_path())
-        type(self)._stepper_counter += 1
-
-        # Reclaim the previous stepper's copy before making a new one —
-        # parameter sweeps reinit thousands of times and must not accumulate
-        # one temp dir per reinit.
-        old = getattr(self, "_stepper_tmpdir", None)
-        if old:
-            shutil.rmtree(old, ignore_errors=True)
-
-        # Same filename (PyInit_<stem> is baked into the binary), unique
-        # directory → distinct dlopen image per stepper.
-        tmpdir = tempfile.mkdtemp(
-            prefix=f"tsdyn_stepper_{os.getpid()}_{type(self)._stepper_counter}_"
-        )
-        unique = pathlib.Path(tmpdir) / so.name
-        shutil.copy(so, unique)
-        # Keep the temp dir referenced for the stepper's lifetime, and make
-        # sure instance death / interpreter exit removes it.
-        self._stepper_tmpdir = tmpdir
-        weakref.finalize(self, shutil.rmtree, tmpdir, ignore_errors=True)
-
-        control_syms = [symengine.Symbol(k) for k in self._control_params()]
-        return _jitcode(
-            module_location=str(unique),
-            n=self.dim,
-            control_pars=control_syms,
-            verbose=False,
-        )
-
     def reinit(
         self,
         u: Any | None = None,
@@ -522,7 +261,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
-        **integrator_kwargs,
+        backend: str | None = None,
     ) -> None:
         """
         (Re)start the incremental stepper from state ``u`` at time ``t``.
@@ -535,7 +274,7 @@ class ContinuousSystem(SystemBase, ABC):
             Start time (default 0.0).
         params : dict, optional
             Parameter overrides applied (in place) before restarting.
-        method, rtol, atol, **integrator_kwargs
+        method, rtol, atol, backend
             Stepper configuration, as in :meth:`integrate`.
         """
         if params:
@@ -543,14 +282,22 @@ class ContinuousSystem(SystemBase, ABC):
                 self.params[k] = v
         t0 = float(t) if t is not None else 0.0
         ic_arr = self.resolve_ic(u)
+        be = backend if backend is not None else self._default_backend
+        self._step_backend = be if be in ("interp", "jit") else "interp"
 
-        stepper = self._fresh_stepper()
-        m = method or self._default_method
-        stepper.set_integrator(_INTEGRATOR_MAP.get(m, m), rtol=rtol, atol=atol, **integrator_kwargs)
-        stepper.set_parameters(*self._control_params().values())
-        stepper.set_initial_value(ic_arr, t0)
+        from tsdynamics import solvers
+        from tsdynamics.engine.problem import ode_problem
 
-        self._stepper = stepper
+        # Lower the tape ONCE here and reuse it for every step() — a sweep reinits
+        # thousands of times, so re-lowering per step would dominate the cost.
+        # Resolve the step method first so an implicit kernel (bdf/rosenbrock/
+        # trbdf2) gets a Jacobian-carrying tape — step() reuses this exact tape,
+        # so the Jacobian must be baked in here or the engine refuses the step.
+        self._step_method = method or self._default_method
+        jac_kw = solvers.resolve(self._step_method).build_kwargs
+        self._engine_problem = ode_problem(self, ic=ic_arr, t0=t0, **jac_kw)
+        self._step_rtol = float(rtol)
+        self._step_atol = float(atol)
         self._state_now = ic_arr.copy()
         self._t_now = t0
 
@@ -562,15 +309,29 @@ class ContinuousSystem(SystemBase, ABC):
         made after ``reinit`` take effect on the next ``reinit``, not on a
         live stepper.
         """
-        if self._stepper is None:
+        if self._engine_problem is None:
             self.reinit()
         dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
+
+        from tsdynamics.engine.problem import ODEProblem
+        from tsdynamics.engine.run import integrate
+
+        # Reuse the cached tape with the current state as the initial condition.
+        prob = ODEProblem(
+            tape=self._engine_problem.tape, ic=self._state_now, t0=self._t_now, system=self
+        )
+        traj = integrate(
+            prob,
+            final_time=self._t_now + dt,
+            dt=dt,
+            t0=self._t_now,
+            method=self._step_method,
+            rtol=self._step_rtol,
+            atol=self._step_atol,
+            backend=self._step_backend,
+        )
+        state = np.asarray(traj.y[-1], dtype=float)
         self._t_now = self._t_now + dt
-        state = np.asarray(self._stepper.integrate(self._t_now), dtype=float)
-        if not np.isfinite(state).all():
-            raise RuntimeError(
-                f"{type(self).__name__}: ODE diverged at t={self._t_now:.6g} during step()."
-            )
         self._state_now = state.copy()
         return state
 
@@ -583,10 +344,9 @@ class ContinuousSystem(SystemBase, ABC):
     def set_state(self, u: Any) -> None:
         """Overwrite the current state without changing the current time."""
         u_arr = np.asarray(u, dtype=float).reshape(self.dim)
-        if self._stepper is None:
+        if self._engine_problem is None:
             self.reinit(u_arr)
         else:
-            self._stepper.set_initial_value(u_arr, self._t_now)
             self._state_now = u_arr.copy()
 
     def time(self) -> float:
@@ -624,8 +384,10 @@ class ContinuousSystem(SystemBase, ABC):
         list of ``dim`` rows, each a list of ``dim`` SymEngine expressions.
         """
         import symengine
-        from jitcode import t as t_sym
-        from jitcode import y
+
+        from tsdynamics.engine.symbols import state_time_symbols
+
+        y, t_sym = state_time_symbols()
 
         struct_vals = self._structural_vals()
         control_syms = {k: symengine.Symbol(k) for k in self._control_params()}
@@ -645,14 +407,16 @@ class ContinuousSystem(SystemBase, ABC):
         Cached per (class, dim, structural-hash) — parameter value changes
         need no rebuild because control params are call-time arguments.
         """
-        key = str(self._module_path())
+        key = self._cache_key()
         cached = type(self)._lambdified.get(key)
         if cached is not None:
             return cached
 
         import symengine
-        from jitcode import t as t_sym
-        from jitcode import y
+
+        from tsdynamics.engine.symbols import state_time_symbols
+
+        y, t_sym = state_time_symbols()
 
         struct_vals = self._structural_vals()
         control_names = list(self._control_params())
@@ -703,7 +467,7 @@ class ContinuousSystem(SystemBase, ABC):
         Parameter values are captured at call time of this method; build a
         fresh callable after changing parameters.  Used by figure tooling,
         Poincaré crossing refinement, and backend cross-validation — the
-        compiled JiTCODE path remains the integrator of record.
+        engine remains the integrator of record.
         """
         rhs_fn, _, control_names = self._build_lambdified()
         vals = np.array([float(self.params[k]) for k in control_names])
@@ -747,33 +511,21 @@ class ContinuousSystem(SystemBase, ABC):
             Initial state at ``t0``. Falls back to ``self.ic``, then
             ``U[0, 1)^dim``.
         method : str, optional
-            Integrator: ``"RK45"`` / ``"dopri5"`` (default), ``"DOP853"``,
-            ``"LSODA"``, ``"VODE"``.  The diffsol backend maps these onto
-            ``tsit45`` / ``bdf`` / ``tr_bdf2`` / ``esdirk34``.
+            Solver name, resolved by the solver registry (default ``"RK45"``):
+            explicit (``RK45`` / ``DOP853`` / ``tsit5`` / ``dop853``) or implicit
+            / stiff (``bdf`` / ``rosenbrock`` / ``trbdf2``).
         rtol, atol : float
             Solver tolerances (default 1e-6 / 1e-9).
-        backend : {"jitcode", "diffsol", "auto", "interp", "jit", "reference"}, optional
+        backend : {"interp", "jit", "reference"}, optional
             Where the ODE is integrated.  Defaults to ``_default_backend``
-            (``"jitcode"``).
+            (``"interp"``).
 
-            - ``"jitcode"`` — the v2 path: compile the RHS to C.
-            - ``"diffsol"`` — the Rust solver suite via LLVM JIT — no C compiler,
-              prebuilt wheels (``pip install tsdynamics[diffsol]``), ~10× faster on
-              small chaotic systems, validated against JiTCODE across the whole
-              ODE catalogue (see :mod:`tsdynamics.engine.diffsol`).
-            - ``"auto"`` — ``"diffsol"`` when it is installed, else ``"jitcode"``.
-            - ``"interp"`` / ``"jit"`` — the **Rust sole engine** (the SSA-tape
-              interpreter or the Cranelift JIT) via the shared engine seam
-              (:func:`tsdynamics.engine.run.integrate`).  Requires the compiled
-              extension (:mod:`tsdynamics._rust`); until it is built these raise
-              :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
+            - ``"interp"`` / ``"jit"`` — the **Rust engine** (the zero-warmup
+              SSA-tape interpreter or the Cranelift JIT) via the shared engine
+              seam (:func:`tsdynamics.engine.run.integrate`).
             - ``"reference"`` — the dependency-light pure-Python oracle (the
-              lowered tape integrated with SciPy); the engine path's validation
+              lowered tape integrated with SciPy); the engine's validation
               backend, usable without the compiled wheel.
-
-            ``**integrator_kwargs`` apply to the ``"jitcode"`` path only.
-        **integrator_kwargs
-            Forwarded to ``jitcode.set_integrator`` (e.g. ``max_step``).
 
         Returns
         -------
@@ -781,92 +533,15 @@ class ContinuousSystem(SystemBase, ABC):
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
         backend = backend if backend is not None else self._default_backend
-
-        if backend in ("interp", "jit", "reference"):
-            # The Rust sole engine (or its pure-Python reference) via the one
-            # shared engine-dispatch seam — the same path every family routes its
-            # engine run through.
-            return self._dispatch(
-                backend=backend,
-                final_time=final_time,
-                dt=dt,
-                t0=t0,
-                ic=ic,
-                method=method or self._default_method,
-                rtol=rtol,
-                atol=atol,
-            )
-
-        if backend == "auto":
-            # Prefer the zero-compiler Rust path when its optional dependency
-            # is installed; otherwise fall back to the always-available
-            # JiTCODE path. Lets `tsdynamics[diffsol]` users get the fast
-            # backend without naming it, with no surprise for everyone else.
-            from tsdynamics.engine import diffsol as _diffsol
-
-            backend = "diffsol" if _diffsol.available() else "jitcode"
-
-        if backend == "diffsol":
-            from tsdynamics.engine import diffsol as _diffsol
-
-            ic_arr = self.resolve_ic(ic)
-            t_eval, y_out = _diffsol.integrate(
-                self, final_time, dt, t0=t0, ic=ic_arr, method=method, rtol=rtol, atol=atol
-            )
-            return Trajectory(
-                t=t_eval,
-                y=y_out,
-                system=self,
-                meta=self._provenance(
-                    family="ode",
-                    backend="diffsol",
-                    method=method or "tsit45",
-                    dt=dt,
-                    t0=t0,
-                    rtol=rtol,
-                    atol=atol,
-                    ic=ic_arr.copy(),
-                ),
-            )
-        if backend != "jitcode":
-            raise ValueError(
-                f"Unknown backend {backend!r}; use 'jitcode', 'diffsol', 'auto', "
-                f"'interp', 'jit', or 'reference'."
-            )
-
-        method = method or self._default_method
-        integ_name = _INTEGRATOR_MAP.get(method, method)
-        ic_arr = self.resolve_ic(ic)
-        t_eval = make_output_grid(t0, final_time, dt)
-
-        ode = self._ensure_compiled(for_lyap=False)
-        ode.set_integrator(integ_name, rtol=rtol, atol=atol, **integrator_kwargs)
-        ode.set_parameters(*self._control_params().values())
-        ode.set_initial_value(ic_arr, t0)
-
-        y_out = np.empty((t_eval.size, self.dim), dtype=float)
-        for k, tk in enumerate(t_eval):
-            state = ode.integrate(float(tk))
-            if not np.isfinite(state).all():
-                raise RuntimeError(
-                    f"{type(self).__name__}: ODE diverged at t={tk:.6g} — "
-                    f"state contains non-finite values: {state}"
-                )
-            y_out[k] = state
-
-        return Trajectory(
-            t=t_eval,
-            y=y_out,
-            system=self,
-            meta=self._provenance(
-                family="ode",
-                method=integ_name,
-                dt=dt,
-                t0=t0,
-                rtol=rtol,
-                atol=atol,
-                ic=ic_arr.copy(),
-            ),
+        return self._dispatch(
+            backend=backend,
+            final_time=final_time,
+            dt=dt,
+            t0=t0,
+            ic=ic,
+            method=method or self._default_method,
+            rtol=rtol,
+            atol=atol,
         )
 
     # ------------------------------------------------------------------ #
@@ -890,11 +565,9 @@ class ContinuousSystem(SystemBase, ABC):
         Estimate the Lyapunov spectrum of the flow.
 
         Delegates to :class:`~tsdynamics.derived.tangent.TangentSystem`, the one
-        backend-neutral variational/Lyapunov engine shared across families.  The
-        default ``backend="jitcode"`` integrates the compiled variational
-        equations (:func:`jitcode.jitcode_lyap`); ``TangentSystem(self,
-        backend="interp"/"jit"/"reference")`` runs the same estimate on the Rust
-        engine (the successor that survives the JiTCODE removal at M3).
+        backend-neutral variational/Lyapunov engine shared across families: the
+        *extended* variational ODE (state ⊕ ``k`` tangent vectors) is integrated
+        on the Rust engine per dt-chunk and QR-reorthonormalised.
 
         Results are stored in ``self.meta['lyapunov_spectrum']``.
 
@@ -925,7 +598,7 @@ class ContinuousSystem(SystemBase, ABC):
         from tsdynamics.derived.tangent import TangentSystem
 
         k = n_exp if n_exp is not None else self.dim
-        return TangentSystem(self, k=k, backend="jitcode").lyapunov_spectrum(
+        return TangentSystem(self, k=k, backend="interp").lyapunov_spectrum(
             final_time=final_time,
             dt=dt,
             ic=ic,

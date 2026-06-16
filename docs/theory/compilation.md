@@ -1,96 +1,68 @@
 ---
-description: How TSDynamics turns one symbolic method into cached native code — JiTCODE/JiTCDDE for flows, Numba for maps, and symbolic Jacobians for free.
+description: How TSDynamics turns one symbolic method into an engine IR tape — zero warmup, no compiler, with symbolic Jacobians for free.
 ---
 
 <span class="ts-kicker">Theory · 01</span>
 
-# Compilation pipeline
+# Lowering pipeline
 
-## Flows: symbolic → C → cached `.so`
+## Symbolic → IR tape (no compiler, no warmup)
 
-When you first integrate a `ContinuousSystem`, this happens once:
+When you first integrate or iterate a system, its one symbolic method is
+**lowered** to an instruction-tape the Rust engine evaluates directly:
 
 ```text
 _equations(y, t, **params)          your one symbolic method
         │  evaluated with SymEngine symbols
         ▼
 SymEngine expression list           dim expressions, params as symbols
-        │  JiTCODE
+        │  tsdynamics.engine.compile.lower_ode (SSA lowering)
         ▼
-generated C source                  RHS (+ variational eqs for Lyapunov runs)
-        │  your C compiler
+IR tape                             a flat list of SSA instructions (+ the
+        │                           analytic Jacobian when a stiff method needs it)
         ▼
-compiled .so                        saved to the cache directory
-        │
-        ▼
-~/.cache/tsdynamics/tsdyn_<Class>_<dim>[_<hash>].<ext>
+the engine                          interpreted (interp) or Cranelift-JITed (jit)
 ```
 
-Every later call — same session or a fresh process — finds the `.so` on
-disk and loads it in milliseconds. The cache directory is
-`~/.cache/tsdynamics/`, overridable with the `TSDYNAMICS_CACHE`
-environment variable.
+There is **no C/LLVM compilation step and no on-disk cache** — lowering happens
+in-process and is effectively instantaneous, so cold start is flat (sub-second)
+and editing a system's `_equations` simply takes effect on the next run. The
+maps path (`_step`) and the DDE / SDE paths lower the same way
+(`lower_map` / `lower_dde` / `lower_sde`).
 
 ## Structural vs. control parameters
 
-The key design decision: ordinary parameters are **not** baked into the
-binary. They are passed to JiTCODE as *control parameters* — runtime
-arguments of the compiled module — so this costs zero recompiles:
+Ordinary parameters are **not** baked into the tape. The engine reads their
+values live from the system on every run, so a parameter sweep re-lowers
+nothing:
 
 ```python
 lor = ts.Lorenz()
 for rho in np.linspace(0, 50, 200):
-    lor.with_params(rho=rho).integrate(final_time=50.0)   # one .so, 200 runs
+    lor.with_params(rho=rho).integrate(final_time=50.0)   # one tape, 200 runs
 ```
 
-The exception is parameters that change the *symbolic structure* of the
-equations — integer loop bounds like Lorenz-96's `N`, which determine how
-many expressions `_equations` returns. These are declared in
-`_structural_params` and baked in at compile time:
+Two kinds of parameter *do* change the tape's shape and therefore re-lower:
 
-```python
-class Lorenz96(ContinuousSystem):
-    params = {"f": 8.0, "N": 20}
-    _structural_params = frozenset({"N"})   # part of the cache key
-```
+- **Structural parameters** — integer loop bounds like Lorenz-96's `N`, which
+  determine how many expressions `_equations` returns. Declare them in
+  `_structural_params`:
 
-### Cache keys
+  ```python
+  class Lorenz96(ContinuousSystem):
+      params = {"f": 8.0, "N": 20}
+      _structural_params = frozenset({"N"})
+  ```
 
-| Family | Disk cache key | Recompiles when |
-| ------ | -------------- | ---------------- |
-| ODE | `tsdyn_<Class>_<dim>` | never (param changes are free) |
-| ODE, structural | `tsdyn_<Class>_<dim>_<md5-16 of structural params>` | a structural param changes |
-| DDE | `tsdyn_dde_<Class>_<md5-16 of all params>` | **any** param changes |
-| ODE Lyapunov | the above + `_lyap<n>` | a different `n_exp` is requested |
-
-DDEs hash *all* parameters because delay values shape the history-buffer
-structure of the compiled module — they cannot be control parameters.
-This is why [DDE parameter sweeps](../analysis/orbit-diagrams.md#cost-notes)
-recompile per value.
-
-### When to wipe the cache
-
-The cache key does **not** include the body of `_equations`. If you edit
-the equations of an existing class (or upgrade JiTCODE/JiTCDDE across a
-major version), stale binaries will keep loading:
-
-```bash
-rm -rf ~/.cache/tsdynamics/
-```
-
-## Maps: Numba
-
-`DiscreteMap` needs no C toolchain. `@staticjit` applies Numba's `njit` to
-`_step`/`_jacobian`, and on the first `iterate` a compiled loop is built
-with the current parameter values inlined, cached in-process per
-`(class, params-hash)`. A parameter change costs one re-JIT
-(milliseconds); without Numba installed everything still runs, just
-slower, through a pure-Python fallback.
+- **DDE delay values** — a delay shapes the engine's history buffer, so it is
+  baked into the tape rather than read live. This is why
+  [DDE parameter sweeps](../analysis/orbit-diagrams.md#cost-notes) re-lower per
+  value.
 
 ## Jacobians for free
 
-Because the ODE right-hand side exists symbolically, the Jacobian does
-too — no hand-derivation, no finite differences:
+Because the right-hand side exists symbolically, the Jacobian does too — no
+hand-derivation, no finite differences:
 
 ```python
 lor = ts.Lorenz()
@@ -98,45 +70,19 @@ lor.jacobian_sym()              # dim × dim SymEngine expressions, ∂f_i/∂y_
 lor.jacobian([1.0, 1.0, 1.0])   # ndarray (3, 3), evaluated at a state
 ```
 
-`jacobian_sym` differentiates `_equations` with SymEngine; `jacobian`
-evaluates a cached numeric form. The same symbolic differentiation is how
-JiTCODE builds the variational equations for
-[Lyapunov runs](lyapunov.md). Hand-written `_jacobian` methods on system
-classes are never used at runtime — the autogenerated form is the single
-source of truth, and the test suite cross-checks any hand-written ones
-against it.
+`jacobian_sym` differentiates `_equations` with SymEngine; `jacobian` evaluates
+a cached numeric form. The same symbolic differentiation lowers the Jacobian
+into the *same* tape for the implicit (stiff) solver kernels and for the
+extended variational system of [Lyapunov runs](lyapunov.md) (abs/sign
+derivatives resolved a.e.). Hand-written `_jacobian` methods on ODE system
+classes are never used at runtime — the autogenerated form is the single source
+of truth, and the test suite cross-checks any hand-written ones against it.
 
-A related helper, `_rhs_numeric()`, exposes a fast numeric `f(u, t)` used
-by the [Poincaré crossing refinement](../analysis/poincare.md) — the
-compiled JiTCODE path remains the integrator of record.
-
-## The diffsol backend (experimental)
-
-`integrate(backend="diffsol")` skips the C toolchain entirely: the same
-symbolic equations are translated to a small solver DSL, JIT-compiled
-through LLVM at runtime, and integrated by Rust solver kernels (Tsit45 for
-non-stiff work; BDF / TR-BDF2 / ESDIRK34 for stiff problems). Initial
-conditions and parameters are solve-time inputs, so one compiled module per
-system serves every run.
-
-Indicative numbers (Lorenz, 1000 time units, `rtol=1e-9`, 100 000 output
-points, warm caches, one machine):
-
-| backend | wall time | cold start |
-|---|---|---|
-| `jitcode` (dopri5) | 1.72 s | seconds (C compiler) |
-| `diffsol` (tsit45) | **0.16 s** | **0.07 s** (LLVM JIT) |
-
-Cross-validation against the JiTCODE path is part of the test suite
-(`tests/test_diffsol_backend.py`). The backend is experimental: ODEs only,
-and the right-hand side must use functions the DSL provides — unsupported
-constructs raise a clear `DiffSLTranslationError`.
-
-```bash
-pip install "tsdynamics[diffsol]"
-```
+A related helper, `_rhs_numeric()`, exposes a fast numeric `f(u, t)` used by the
+[Poincaré crossing refinement](../analysis/poincare.md) and by the
+`reference`-backend cross-validation.
 
 ## See also
 
-- [Install](../start/install.md) — the C toolchain requirement
+- [Backends](backends.md) — how the lowered tape is evaluated (interp / jit / reference)
 - [Conventions](conventions.md) — what else is keyed on parameter hashes

@@ -58,8 +58,9 @@ def lyapunov_spectrum(sys: Any, **kwargs: Any) -> np.ndarray:
     """
     Lyapunov spectrum of any system — uniform entry point.
 
-    Dispatches to the family implementation (QR tangent dynamics for maps,
-    compiled variational equations for ODEs, ``jitcdde_lyap`` for DDEs).
+    Dispatches to the family implementation (QR tangent dynamics for maps, the
+    extended variational system on the engine for ODEs, the engine
+    function-space estimator for DDEs).
     Keyword arguments are forwarded (``steps=`` for maps; ``final_time=``,
     ``dt=``, ``burn_in=``, ... for flows).
     """
@@ -123,7 +124,7 @@ def max_lyapunov(
     if isinstance(sys, DelaySystem):
         raise NotImplementedError(
             "max_lyapunov needs set_state, which delay systems cannot support — "
-            "use DelaySystem.lyapunov_spectrum (jitcdde_lyap) instead."
+            "use DelaySystem.lyapunov_spectrum (the engine estimator) instead."
         )
     if sys.is_discrete and dt is not None:
         raise ValueError(

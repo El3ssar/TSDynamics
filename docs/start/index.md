@@ -16,8 +16,8 @@ only prerequisites for the rest of the documentation.
 
     ---
 
-    Installation with pip or uv, the C compiler requirement for
-    JIT-compiled integration, and the optional extras.
+    Installation with pip or uv from a prebuilt wheel — no compiler needed —
+    and the optional extras.
 
 - **[First trajectory](first-trajectory.md)**
 

@@ -10,27 +10,14 @@ import numpy as np
 
 from .base import SystemBase, Trajectory
 
-try:
-    from numba import njit as _njit
-
-    _NUMBA = True
-except ImportError:
-
-    def _njit(fn):
-        return fn
-
-    _NUMBA = False
-
-
 # ---------------------------------------------------------------------------
 # Signature validation helpers
 # ---------------------------------------------------------------------------
 
 
 def _unwrap_static(obj: Any) -> Any:
-    """Peel ``staticmethod`` and Numba-dispatcher wrappers off a map method."""
-    fn = getattr(obj, "__func__", obj)  # staticmethod → wrapped callable
-    return getattr(fn, "py_func", fn)  # numba CPUDispatcher → python function
+    """Peel the ``staticmethod`` wrapper off a map method to get the raw callable."""
+    return getattr(obj, "__func__", obj)
 
 
 def _positional_param_names(fn: Any) -> list[str] | None:
@@ -60,7 +47,7 @@ def _positional_param_names(fn: Any) -> list[str] | None:
 
 class DiscreteMap(SystemBase):
     """
-    Base class for discrete maps with Numba-accelerated iteration.
+    Base class for discrete maps iterated on the engine.
 
     Subclass contract
     -----------------
@@ -69,13 +56,12 @@ class DiscreteMap(SystemBase):
        Parameters arrive as **positional arguments** in the order they appear
        in the class-level ``params`` dict.
 
-    Compilation
-    -----------
-    On the first call to ``iterate``, a Numba-compiled loop is built that
-    inlines ``_step`` with the current parameter values baked in.  This
-    eliminates per-step Python overhead.  The compiled loop is cached in
-    ``_iter_cache`` per ``(class, params_hash)``; changing a parameter
-    triggers a fresh compile on the next call.
+    Iteration
+    ---------
+    ``iterate`` lowers ``_step`` to an in-process IR tape and runs the engine's
+    native map loop, with no warmup.  The engine reads the current parameter
+    values live on every run, so a parameter change never triggers a
+    re-lowering.
 
     Lyapunov spectrum
     -----------------
@@ -92,17 +78,14 @@ class DiscreteMap(SystemBase):
     >>> traj2 = h_variant.iterate(steps=10_000)
     """
 
-    # Class-level cache: (class_name, params_hash) → compiled iterate fn
-    _iter_cache: ClassVar[dict[tuple, Any]] = {}
-
     #: Set to False on maps whose orbit visits discontinuities, where the
     #: finite-difference Jacobian validation in the test suite cannot apply.
     _jacobian_fd_check: ClassVar[bool] = True
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"numba"`` — the v2 in-process iterate loop — until the M3 migration flips
-    #: it to the Rust engine's native map loop.
-    _default_backend: ClassVar[str] = "numba"
+    #: ``"interp"`` — the Rust engine's native map loop (the sole map backend
+    #: since the M3 migration retired the v2 backends).
+    _default_backend: ClassVar[str] = "interp"
 
     # Protocol stepping state (instances shadow these class defaults).
     _state_now: np.ndarray | None = None
@@ -218,11 +201,12 @@ class DiscreteMap(SystemBase):
         x = self._state_now
         params = self.params.as_tuple()
 
-        iterate_fn = self._get_iterate_fn() if n > 16 else None
-        if iterate_fn is not None:
-            x = iterate_fn(x.copy(), n)[-1].copy()
-        else:
-            step_fn = type(self)._step
+        step_fn = type(self)._step
+        # A diverging orbit overflows to ``inf`` in pure-Python float64 arithmetic;
+        # that is *expected* and is caught by the finite check below, so silence the
+        # spurious NumPy over/under/invalid FP warnings the loop would otherwise emit
+        # (under ``filterwarnings=error`` they would mask the real divergence signal).
+        with np.errstate(all="ignore"):
             for _ in range(n):
                 x = np.asarray(step_fn(x, *params), dtype=float).ravel()
         if not np.isfinite(x).all():
@@ -262,46 +246,6 @@ class DiscreteMap(SystemBase):
     # Compiled iterate loop
     # ------------------------------------------------------------------ #
 
-    def _get_iterate_fn(self):
-        """
-        Return a Numba-compiled iterate function for the current params.
-
-        The function signature is ``iterate(ic, steps) → (steps, dim) array``.
-
-        When Numba is unavailable, returns ``None`` and the caller falls back
-        to a pure-Python loop.  The compiled function is cached per
-        ``(class_name, params_hash)`` — a param change triggers one re-JIT.
-        """
-        if not _NUMBA:
-            return None
-
-        # Key on the class OBJECT, not its name: a same-named user class (or a
-        # notebook redefinition with edited _step) must never reuse another
-        # definition's compiled loop.
-        cache_key = (type(self), self.params.param_hash())
-        cache = type(self)._iter_cache
-
-        if cache_key in cache:
-            return cache[cache_key]
-
-        step_fn = type(self)._step  # @njit-compiled static method
-        params_tuple = self.params.as_tuple()
-        dim = self.dim
-
-        @_njit
-        def _iterate(ic: np.ndarray, steps: int) -> np.ndarray:
-            out = np.empty((steps, dim))
-            x = ic.copy()
-            for i in range(steps):
-                nxt = step_fn(x, *params_tuple)
-                for j in range(dim):
-                    out[i, j] = nxt[j]
-                    x[j] = nxt[j]
-            return out
-
-        cache[cache_key] = _iterate
-        return _iterate
-
     # ------------------------------------------------------------------ #
     # Iteration
     # ------------------------------------------------------------------ #
@@ -315,11 +259,7 @@ class DiscreteMap(SystemBase):
         backend: str | None = None,
     ) -> Trajectory:
         """
-        Iterate the map for ``steps`` steps.
-
-        Uses a Numba-compiled loop when available (significant speedup for
-        large ``steps`` or high-dim maps).  Falls back to a Python loop
-        when Numba is not installed.
+        Iterate the map for ``steps`` steps on the engine.
 
         Parameters
         ----------
@@ -328,24 +268,22 @@ class DiscreteMap(SystemBase):
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
         max_retries : int
-            Retry with a new random IC if divergence is detected (Numba path
-            only — the engine path raises on divergence instead of retrying).
+            Retry with a new random IC if divergence is detected (only when no
+            explicit ``ic`` was given; an explicit ic that diverges raises).
         backend : str, optional
             Where the iteration runs.  Defaults to ``_default_backend``
-            (``"numba"``).
+            (``"interp"``).
 
-            - ``"numba"`` (default) — the in-process Numba/Python loop described
-              above.
+            - ``"interp"`` (default) / ``"jit"`` — the Rust engine's native
+              map loop (interpreter or Cranelift JIT).  Requires the compiled
+              extension (:mod:`tsdynamics._rust`); until it is built these
+              raise :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
             - ``"reference"`` — the lowered next-state tape, iterated in pure
               Python (the dependency-light oracle the engine is validated
               against).
-            - ``"interp"`` / ``"jit"`` / ``"auto"`` — the Rust engine's native
-              map loop (interpreter or Cranelift JIT).  Requires the compiled
-              extension (:mod:`tsdynamics._rust`, stream E7); until it is built
-              these raise :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
 
-            Any non-``"numba"`` backend lowers ``_step`` to the engine IR, so it
-            requires a map whose step traces symbolically (see
+            Every backend lowers ``_step`` to the engine IR, so it requires a
+            map whose step traces symbolically (see
             :func:`tsdynamics.engine.compile.lower_map`); piecewise or
             ``numpy``-ufunc steps raise
             :class:`~tsdynamics.engine.compile.TapeCompileError`.
@@ -357,32 +295,16 @@ class DiscreteMap(SystemBase):
         """
         backend = backend if backend is not None else self._default_backend
 
-        if backend != "numba":
-            return self._iterate_engine(steps=steps, ic=ic, backend=backend)
-
+        # Iterate on the Rust engine.  Preserve the random-IC retry only when no
+        # explicit ``ic`` was given (a random draw can land off-basin); an
+        # explicit ic that diverges raises loudly, the engine's contract.
+        ic_explicit = ic is not None
         ic_arr = self.resolve_ic(ic)
-        iterate_fn = self._get_iterate_fn()
-
         for attempt in range(max_retries):
             try:
-                if iterate_fn is not None:
-                    out = iterate_fn(ic_arr.copy(), steps)
-                else:
-                    out = self._iterate_python(ic_arr.copy(), steps)
-
-                if not np.all(np.isfinite(out)):
-                    bad = np.argmax(~np.isfinite(out).all(axis=1))
-                    raise ValueError(f"Divergence detected at step {bad}")
-
-                return Trajectory(
-                    t=np.arange(steps),
-                    y=out,
-                    system=self,
-                    meta=self._provenance(family="map", steps=steps, ic=ic_arr.copy()),
-                )
-
-            except ValueError as exc:
-                if attempt == max_retries - 1:
+                return self._iterate_engine(steps=steps, ic=ic_arr, backend=backend)
+            except RuntimeError as exc:
+                if ic_explicit or attempt == max_retries - 1:
                     raise
                 print(f"Warning: {exc}. Retrying with a new random IC.")
                 ic_arr = np.random.rand(self.dim)
@@ -394,14 +316,12 @@ class DiscreteMap(SystemBase):
         Routes through the shared engine-dispatch seam
         (:meth:`SystemBase._dispatch` → :func:`tsdynamics.engine.run.integrate`),
         which lowers ``_step`` to the engine IR and runs the native map loop
-        (stream E-MAP), bypassing the Numba path entirely.  This is the seam that
-        makes a map iterate on the same engine as every other family; the eventual
-        default once the compiled extension ships (the v2 Numba loop is retired
-        with the rest of the legacy backends at migration time).
+        (stream E-MAP).  This is the seam that makes a map iterate on the same
+        engine as every other family.
 
         Divergence is reported (it is not silently returned and there is no
-        random-IC retry — the engine's "diverge loudly" contract); reach for the
-        Numba path if you want the retry behaviour.
+        random-IC retry — the engine's "diverge loudly" contract); the
+        random-IC retry lives in :meth:`iterate` for the implicit-ic case.
         """
         traj = self._dispatch(backend=backend, final_time=steps, ic=ic)
         # Enforce "diverge loudly" at the family boundary so every backend behaves
@@ -415,16 +335,6 @@ class DiscreteMap(SystemBase):
                 f"{type(self).__name__}: map diverged at iteration {bad} (backend={backend!r})."
             )
         return traj
-
-    def _iterate_python(self, ic: np.ndarray, steps: int) -> np.ndarray:
-        """Pure-Python fallback (used when Numba is unavailable)."""
-        params = self.params.as_tuple()
-        out = np.empty((steps, self.dim))
-        x = ic
-        for i in range(steps):
-            x = np.asarray(type(self)._step(x, *params), dtype=float)
-            out[i] = x
-        return out
 
     # ------------------------------------------------------------------ #
     # Lyapunov spectrum

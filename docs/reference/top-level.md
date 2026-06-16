@@ -51,11 +51,14 @@ spec = ts.lyapunov_spectrum(ts.Henon())
 
 ## The 149 built-in systems
 
-Every registered system class is re-exported at the top level, so
-`from tsdynamics import Lorenz` works without remembering submodule
-paths. The classes are documented on their generated pages under
-[Systems](../systems/index.md), and discoverable programmatically through
-the [registry](registry.md).
+Built-in system classes live under [`tsdynamics.systems`](../systems/index.md) —
+the canonical path is `tsdynamics.systems.Lorenz` (flat, no need to remember
+whether a model is `continuous` or `discrete`). They are kept out of the
+top-level namespace so it stays focused on the base classes, wrappers, analysis
+functions, and submodules. For backwards compatibility `tsdynamics.Lorenz` (and
+`from tsdynamics import Lorenz`) still resolve lazily. The classes are documented
+on their generated pages under [Systems](../systems/index.md), and discoverable
+programmatically through the [registry](registry.md).
 
 ## Submodules
 

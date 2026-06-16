@@ -1,5 +1,5 @@
 ---
-description: Install TSDynamics with pip or uv, set up a C compiler for JIT compilation, and choose optional extras.
+description: Install TSDynamics with pip or uv from a prebuilt wheel, and choose optional extras.
 ---
 
 <span class="ts-kicker">Start · 01</span>
@@ -18,59 +18,31 @@ or, with [uv](https://docs.astral.sh/uv/):
 uv add tsdynamics
 ```
 
-## The C compiler requirement
+## No compiler needed
 
-Continuous and delay systems are compiled to native code by JiTCODE /
-JiTCDDE, which generate C from your symbolic equations and build it with
-your platform's compiler. A working C toolchain must be on the path:
+`pip install tsdynamics` pulls a **prebuilt `abi3` wheel** — manylinux,
+musllinux, macOS, and Windows — that bundles the native Rust engine. You need
+no Rust toolchain and no C compiler to install or run the library; every
+family (ODEs, DDEs, maps) lowers its symbolic equations to the engine
+in-process and runs with **zero warmup**. Editing a system's equations simply
+takes effect on the next run — there is no compile step and no on-disk cache.
 
-=== "Linux"
-
-    ```bash
-    sudo apt-get install build-essential python3-dev
-    ```
-
-    (or the equivalent `gcc` + Python headers package for your distribution)
-
-=== "macOS"
-
-    ```bash
-    xcode-select --install
-    ```
-
-=== "Windows"
-
-    Install the MSVC Build Tools (the "Desktop development with C++"
-    workload is sufficient).
-
-Discrete maps do not need the C toolchain — they are JIT-compiled by
-Numba, which ships its own backend.
-
-!!! note "First call is slow, every later call is fast"
-    The first `integrate()` on a system class compiles a shared library
-    and caches it under `~/.cache/tsdynamics/`. Subsequent calls — even in
-    new Python sessions — load the cached binary. See the
-    [compilation pipeline](../theory/compilation.md) for details.
+!!! note "Building from source"
+    Only building *from the source distribution* (the `sdist`, the fallback for
+    platforms outside the wheel matrix) needs a Rust toolchain — the package
+    build backend is [maturin](https://www.maturin.rs/). See
+    [Packaging & distribution](../theory/packaging.md) for the wheel matrix and
+    the build recipe.
 
 ## Optional extras
 
 | Extra | Installs | When you want it |
 | ----- | -------- | ---------------- |
 | `tsdynamics[plot]` | `matplotlib` | Plotting trajectories and diagrams in the examples |
-| `tsdynamics[diffsol]` | `pydiffsol` | **Experimental** Rust-backed ODE solver backend |
 
 ```bash
 pip install "tsdynamics[plot]"
 ```
-
-## The Rust engine accelerator
-
-The zero-warmup Rust engine (`backend="interp"` / `backend="jit"`) ships as a
-separate, optional, **prebuilt** distribution — no compiler needed. It is gated
-during the v2→Rust migration and is built as a cross-platform wheel rather than
-published to the index yet; see [Packaging & distribution](../theory/packaging.md)
-for how it is shaped, why, and the path to folding it into a single `tsdynamics`
-wheel.
 
 ## Verify the install
 
@@ -80,12 +52,12 @@ import tsdynamics as ts
 print(ts.__version__)
 print(ts.registry.families())   # {'ode': 118, 'dde': 5, 'map': 26}
 
-traj = ts.Henon().iterate(steps=100)   # no C compiler needed for maps
+traj = ts.Henon().iterate(steps=100)
 print(traj)                            # Trajectory(n_steps=100, dim=2, ...)
 ```
 
-If `ts.Lorenz().integrate(final_time=1.0)` also succeeds, the C toolchain
-is correctly set up.
+If `ts.Lorenz().integrate(final_time=1.0)` also succeeds, the engine is wired
+up correctly.
 
 ## Next
 

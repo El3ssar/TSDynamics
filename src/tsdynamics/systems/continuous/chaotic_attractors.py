@@ -259,11 +259,12 @@ class KuramotoSivashinsky(ContinuousSystem):
     - Requires N >= 7 (minimum span needed by the ±3 stencil).
     - KS is stiff: the ``u_xxxx`` term gives eigenvalues ∝ (π/dx)^4.  Explicit
       RK methods require dt ≪ (dx/π)^4 and are impractical for fine grids.
-      The default integrator is ``"lsoda"``; override with ``method=`` if needed.
+      The default integrator is the variable-order ``"bdf"``; override with
+      ``method=`` if needed.
     """
 
     # The u_xxxx term makes KS stiff — explicit RK will blow up for any useful grid.
-    _default_method = "lsoda"
+    _default_method = "bdf"
     # N drives the symbolic loop length, so it must be baked in at compile time.
     # L is kept as a runtime control parameter (changing it does not change the
     # number of equations, only the coefficients).
@@ -547,9 +548,9 @@ class MultiChua(ContinuousSystem):
 class Duffing(ContinuousSystem):
     params = {"alpha": 1.0, "beta": -1.0, "delta": 0.1, "gamma": 0.35, "omega": 1.4}
     dim = 3
-    # The explicit default (dopri5) fails to integrate this system; an implicit
+    # The explicit default (rk45) fails to integrate this system; an implicit
     # solver handles it robustly, so make that the default.
-    _default_method = "LSODA"
+    _default_method = "bdf"
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, delta, gamma, omega):
@@ -892,7 +893,7 @@ class SprottK(ContinuousSystem):
 class SprottL(ContinuousSystem):
     params = {"a": 0.9, "b": 3.9}
     dim = 3
-    _default_method = "LSODA"  # explicit default solver fails; use an implicit one
+    _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -979,7 +980,7 @@ class SprottO(ContinuousSystem):
 class SprottP(ContinuousSystem):
     params = {"a": 2.7}
     dim = 3
-    _default_method = "LSODA"  # explicit default solver fails; use an implicit one
+    _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1085,7 +1086,7 @@ class SprottMore(ContinuousSystem):
 class SprottJerk(ContinuousSystem):
     params = {"mu": 2.017}
     dim = 3
-    _default_method = "LSODA"  # explicit default solver fails; use an implicit one
+    _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
     def _equations(Y, t, *, mu):

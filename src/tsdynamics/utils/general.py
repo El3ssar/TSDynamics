@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-try:
-    from numba import njit
-except ImportError:
-
-    def njit(func: Callable) -> Callable:
-        """Return the function unchanged (numba not available)."""
-        return func
-
 
 def staticjit(func: Callable) -> Callable:
-    """Apply numba's ``njit`` and ``staticmethod`` to a map method."""
-    return staticmethod(njit(func))
+    """Mark a map's ``_step`` / ``_jacobian`` as a plain ``staticmethod``.
+
+    Historically this also applied Numba's ``njit``; since the M3 migration the
+    Rust engine lowers ``_step`` to the IR and iterates it natively, so the
+    Python form is just a ``staticmethod`` (also used by the pure-Python
+    reference evaluator and the analytic-Jacobian analyses).  The name is kept
+    for backward compatibility with every built-in map definition.
+    """
+    return staticmethod(func)

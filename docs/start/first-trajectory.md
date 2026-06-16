@@ -20,9 +20,9 @@ traj = lor.integrate(final_time=100.0, dt=0.01)
 traj.t.shape, traj.y.shape                         # ((10001,), (10001, 3))
 ```
 
-The first call compiles the right-hand side to C (a few seconds); every
-later call reuses the cached binary. `dt` is only the *output grid* — the
-internal stepper is adaptive, so a coarse `dt` does not lose accuracy.
+The right-hand side is lowered to the Rust engine in-process and runs with no
+warmup. `dt` is only the *output grid* — the internal stepper is adaptive, so a
+coarse `dt` does not lose accuracy.
 
 `integrate` returns a [`Trajectory`](../analysis/integrate.md#the-trajectory-object).
 Because `Lorenz` declares `variables = ("x", "y", "z")`, components are
@@ -35,7 +35,7 @@ settled = traj.after(20.0)  # drop the transient before t = 20
 t, y = traj                 # tuple-unpacking also works
 ```
 
-The Lyapunov spectrum comes from compiled variational equations:
+The Lyapunov spectrum comes from the variational equations:
 
 ```python
 lor.lyapunov_spectrum()     # ≈ [0.906, 0.0, -14.57]
@@ -46,8 +46,7 @@ negative — the signature of a chaotic attractor.
 
 ## A map: Hénon
 
-Discrete maps iterate instead of integrate, and need no C compiler —
-they are JIT-compiled with Numba:
+Discrete maps iterate instead of integrate, lowering to the same engine:
 
 ```python
 h = ts.Henon()                        # a=1.4, b=0.3

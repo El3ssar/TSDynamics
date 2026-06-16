@@ -132,8 +132,8 @@ def flow_fns(system: object) -> tuple[Callable, Callable]:
 
     Both come from the SymEngine-lambdified numeric forms
     (:meth:`ContinuousSystem._rhs_numeric` / :meth:`ContinuousSystem.jacobian`),
-    so the variational integrator needs no JiTCODE compilation and runs in the
-    fast tier.  Parameters are captured at call time.
+    so the variational integrator is self-contained (no engine tape lowering)
+    and runs in the fast tier.  Parameters are captured at call time.
     """
     rhs = system._rhs_numeric()
 

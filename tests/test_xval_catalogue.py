@@ -254,7 +254,7 @@ def _on_attractor(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -> np
     transient or off-basin escape.
     """
     np.random.seed(0)
-    warm = cls().iterate(steps=n_warm, backend="numba")
+    warm = cls().iterate(steps=n_warm, backend="reference")
     finite = warm.y[np.isfinite(warm.y).all(axis=1)]
     if finite.shape[0] < drop + take:
         pytest.skip(f"{cls.__name__}: too few finite warm-up states for a stable sample")
@@ -334,21 +334,20 @@ def test_dde_engine_path_is_finite(dde_entry) -> None:
 
 @pytest.mark.slow
 @pytest.mark.parametrize("name", INTEGRATION_SAMPLE)
-def test_ode_trajectory_matches_jitcode_early(name) -> None:
-    """A curated ODE sample: the engine tracks the real v2 JiTCODE on an early window.
+def test_ode_trajectory_matches_reference_early(name) -> None:
+    """A curated ODE sample: the engine tracks the trustworthy reference on an early window.
 
-    Leg 4 — confirms the integrate *loop* against the actual compiled v2 backend
-    (not just the symbolic RHS) on representative systems.  The comparison window
-    is short: two correct integrators of a chaotic flow diverge exponentially, so
-    agreement is only expected before Lyapunov amplification dominates (the
-    harness ``window=`` convention).
+    Leg 4 — confirms the integrate *loop* (not just the symbolic RHS) against a
+    tight SciPy integration of the symbolic ``_rhs_numeric`` on representative
+    systems.  The comparison window is short: two correct integrators of a chaotic
+    flow diverge exponentially, so agreement is only expected before Lyapunov
+    amplification dominates (the harness ``window=`` convention).
     """
-    sys = ts.__dict__[name]()
+    sys = getattr(ts, name)()
     ic = _resolve_ic(sys, name)
     t_eval = np.arange(0.0, 3.0 + 1e-9, 0.01)
     engine = RustEngine(backend="interp", rtol=1e-10, atol=1e-12)
 
-    # Against the trustworthy reference (the v2 numeric truth, no compiler).
     rep = crossvalidate(
         sys,
         reference=ScipyReference(method="DOP853", rtol=1e-12, atol=1e-14),
@@ -359,13 +358,6 @@ def test_ode_trajectory_matches_jitcode_early(name) -> None:
         atol=1e-3,
     )
     assert rep.passed, rep.summary()
-
-    # And directly against the actual compiled v2 JiTCODE trajectory.
-    v2 = sys.integrate(backend="jitcode", final_time=3.0, dt=0.01, ic=ic, rtol=1e-9, atol=1e-11)
-    y_engine = engine.integrate_dense(sys, ic, t_eval)
-    early = v2.t <= 1.0
-    diff = float(np.max(np.abs(v2.y[early] - y_engine[early])))
-    assert diff < 1e-3, f"{name}: engine vs JiTCODE early-window diff {diff:.2e}"
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +384,7 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     successor to ``jitcode_lyap``.  ``interp`` and ``jit`` must also agree closely
     (the same lowering, integrated by two numerically-identical evaluators).
     """
-    cls = ts.__dict__[name]
+    cls = getattr(ts, name)
     meta = dict(cls().known_lyapunov)
     expected = np.asarray(meta["spectrum"], dtype=float)
     atol = np.asarray(meta["atol"], dtype=float)
@@ -416,26 +408,26 @@ def test_engine_lyapunov_matches_literature(name) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Leg 6 — engine DDE Lyapunov vs the real v2 JiTCDDE backend (slow)
+# Leg 6 — engine DDE Lyapunov reproduces the literature sign (slow)
 # ---------------------------------------------------------------------------
 #
-# DDE Lyapunov (DelaySystem.lyapunov_spectrum) is the last v2 holdout the M3
-# removal waits on (stream E-DDE-LYAP, #110): jitcdde cannot be deleted until the
-# engine reproduces it.  The full 5-DDE parity sweep lives in
-# tests/test_dde_lyapunov.py (engine-marked); this gate leg pins the canonical
-# Mackey-Glass case so the *removal gate* itself is conditioned on DDE-Lyapunov
-# parity (and on the engine value matching the system's known_lyapunov sign).
+# The engine DDE-Lyapunov estimator (DelaySystem.lyapunov_spectrum, stream
+# E-DDE-LYAP) is the successor to the retired jitcdde_lyap.  Pin the canonical
+# Mackey-Glass case to its known_lyapunov (one positive exponent); the full 5-DDE
+# parity sweep against the legacy values lives in tests/test_dde_lyapunov.py.
 
 
 @pytest.mark.slow
-def test_dde_engine_lyapunov_matches_jitcdde_mackeyglass() -> None:
-    """Mackey-Glass: the engine DDE-Lyapunov λ₁ is positive and tracks JiTCDDE."""
+def test_dde_engine_lyapunov_is_positive_mackeyglass() -> None:
+    """Mackey-Glass: the engine DDE-Lyapunov λ₁ is positive (known_lyapunov n_positive=1)."""
     from _sampling import DDE_HISTORIES
 
     mg = ts.MackeyGlass()
     ic = mg.integrate(final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]).y[-1]
-    common = dict(n_exp=1, burn_in=200.0, final_time=2000.0, ic=ic)
-    ref = mg.lyapunov_spectrum(backend="jitcdde", dt=0.1, rtol=1e-5, atol=1e-5, **common)
-    eng = mg.lyapunov_spectrum(backend="interp", dt=0.05, **common)
+    eng = mg.lyapunov_spectrum(
+        backend="interp", n_exp=1, burn_in=200.0, final_time=2000.0, ic=ic, dt=0.05
+    )
     assert eng[0] > 0.0  # chaotic — matches known_lyapunov n_positive=1
-    assert abs(eng[0] - ref[0]) <= 0.25 * abs(ref[0]) + 5e-4, f"engine {eng[0]} vs jitcdde {ref[0]}"
+    # Mackey-Glass at τ=17 is weakly chaotic: λ₁ ≈ 0.0086 (Farmer 1982). A loose
+    # band keeps the estimator honest without pinning it to the retired jitcdde value.
+    assert eng[0] < 0.05, f"engine MG λ₁ = {eng[0]} (expected ≈ 0.0086)"

@@ -73,7 +73,8 @@ class MyMap(ts.DiscreteMap):
         return ((-2 * a * x, 1.0), (b, 0.0))
 ```
 
-Maps are plain numeric functions, JIT-compiled by Numba via `@staticjit`.
+Maps are plain numeric functions; the same `_step`/`_jacobian` definitions
+lower to the Rust engine for iteration.
 
 !!! warning "Parameter order is positional for maps"
     `_step` and `_jacobian` receive parameters **positionally**, in the
@@ -81,24 +82,23 @@ Maps are plain numeric functions, JIT-compiled by Numba via `@staticjit`.
     the dict order is rejected with a `TypeError` at import time, so this
     can no longer fail silently.
 
-## Compile once, sweep for free
+## Lower once, sweep for free
 
-The first run of a `ContinuousSystem` compiles its equations to a shared
-library cached under `~/.cache/tsdynamics/`. Ordinary parameters become
-*control parameters* of the compiled module — changing them needs **no
-recompile**:
+A `ContinuousSystem` lowers its equations to the Rust engine in-process, with
+no warmup and nothing cached on disk. Ordinary parameters become *control
+parameters* of the lowered tape — changing them is free:
 
 ```python
 lor = ts.Lorenz()
-lor.integrate(final_time=10)     # compiles once (first ever run)
-lor.rho = 35.0                   # zero recompile cost
-lor.integrate(final_time=10)     # reuses the same binary
+lor.integrate(final_time=10)     # runs immediately (no warmup)
+lor.rho = 35.0                   # zero cost
+lor.integrate(final_time=10)     # same tape, new parameter value
 ```
 
 Only *structural* parameters (integer loop bounds like Lorenz-96's `N`,
-declared in `_structural_params`) are baked into the binary, keyed into the
-cache name. DDEs recompile per parameter set; maps re-JIT in milliseconds.
-Details in [the compilation pipeline](../theory/compilation.md).
+declared in `_structural_params`) change the *shape* of the equations and so
+require a fresh lowering. Details in
+[the compilation pipeline](../theory/compilation.md).
 
 ## One protocol for everything that steps
 

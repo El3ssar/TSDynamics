@@ -8,8 +8,8 @@ description: TSDynamics — 149 built-in dynamical systems, compiled integration
 
 TSDynamics is a Python library for studying dynamical systems: continuous
 flows, delay equations, stochastic systems, and discrete maps, all behind one
-interface. You define the math in a single symbolic method; the library
-compiles it to native code, caches the binary, and gives you trajectories,
+interface. You define the math in a single symbolic method; the library lowers
+it to a native Rust engine and gives you trajectories,
 Lyapunov spectra and chaos indicators, fixed and periodic orbits, bifurcation
 diagrams and Poincaré sections, fractal dimensions and delay embeddings,
 recurrence/RQA, entropy and complexity, surrogate tests, and the full
@@ -25,8 +25,8 @@ traj["x"]                  # named component access
 lor.lyapunov_spectrum()    # ≈ [0.906, 0, -14.57]
 ```
 
-The first call compiles the right-hand side to a C extension; every later
-call — in this session or the next — reuses the cached binary.
+The right-hand side is lowered to the Rust engine in-process and runs with no
+warmup — the first call is as fast as every later one.
 
 ---
 
@@ -34,13 +34,13 @@ call — in this session or the next — reuses the cached binary.
 
 <div class="grid cards" markdown>
 
-- **Compiled, not interpreted**
+- **A native engine, zero warmup**
 
     ---
 
-    ODEs and DDEs are compiled to C via JiTCODE / JiTCDDE; discrete maps
-    are JIT-compiled with Numba. Compilation happens once per system class
-    and is cached on disk — parameter changes cost nothing for ODEs.
+    ODEs, DDEs and discrete maps all lower to one Rust engine — an SSA-tape
+    interpreter (the default) with a Cranelift JIT alongside. There is no
+    compile step and no warmup: the first call runs at full speed.
 
 - **149 systems out of the box**
 
@@ -79,6 +79,6 @@ call — in this session or the next — reuses the cached binary.
 | Lyapunov, chaos, dimensions, basins, recurrence, surrogates | [Analysis](analysis/index.md) |
 | Follow an end-to-end walkthrough (equations → basins) | [Tutorials](tutorials/index.md) |
 | Turn trajectories into features (spectra, filters) | [Transforms](transforms/index.md) |
-| Understand the compilation cache and the math | [Theory](theory/index.md) |
+| Understand the engine pipeline and the math | [Theory](theory/index.md) |
 | Look up an exact signature | [Reference](reference/index.md) |
 | Contribute a system | [Project](project/contributing.md) |

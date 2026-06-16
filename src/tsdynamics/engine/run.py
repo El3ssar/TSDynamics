@@ -71,9 +71,8 @@ class EngineNotAvailableError(RuntimeError):
     """The compiled Rust engine (:mod:`tsdynamics._rust`, stream E7) is not available.
 
     Raised when an ``"interp"`` / ``"jit"`` run is requested but the extension
-    module is not importable.  Use ``backend="reference"`` for pure-Python RHS
-    evaluation and small ODE/map runs, or the family's own ``integrate`` for the
-    v2 backends, until the engine wheel is built.
+    module is not importable.  Use ``backend="reference"`` for pure-Python ODE/map
+    runs, or reinstall the compiled wheel (``pip install tsdynamics``).
     """
 
 
@@ -120,9 +119,9 @@ def _engine() -> Any:
         from tsdynamics import _rust
     except ImportError as err:  # pragma: no cover - until E7 builds the wheel
         raise EngineNotAvailableError(
-            "the Rust engine extension (tsdynamics._rust, stream E7) is not built; "
-            "use backend='reference' for pure-Python evaluation, or the family's own "
-            "integrate() for the v2 backends."
+            "the Rust engine extension (tsdynamics._rust) is not built; "
+            "use backend='reference' for pure-Python ODE/map evaluation, or "
+            "reinstall the compiled wheel (`pip install tsdynamics`)."
         ) from err
     return _rust
 
@@ -299,7 +298,32 @@ def integrate(
     from tsdynamics.families import Trajectory
 
     backend = resolve_backend(backend)
+
+    # Resolve the solver name to a canonical engine kernel (the C-SOLV → C-FAM
+    # wiring): this normalises spellings/aliases (e.g. "RK45" → "rk45",
+    # "dopri5" → "rk45") and rejects unknown or v2-only names (e.g. "LSODA") with
+    # a listing error + a stiff hint pointing at "bdf".  Maps ignore `method` and
+    # an SDE problem is refused below, so resolving is harmless in both cases.
+    from tsdynamics import solvers
+
+    resolution = solvers.resolve(method)
+    method = resolution.name
+
     problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
+
+    # The implicit ODE kernels (bdf/rosenbrock/trbdf2) need ∂f/∂u on the tape, or
+    # the engine refuses the step.  Rebuild once with the Jacobian when the
+    # resolved method needs it and the tape lacks it — only for an ODE built from
+    # a system (DDEs drive explicit kernels only; maps fold params in; a pre-built
+    # Problem we cannot re-lower, so the engine raises its clear guard instead).
+    if (
+        resolution.build_kwargs.get("with_jacobian")
+        and isinstance(problem, ODEProblem)
+        and not problem.tape.has_jacobian
+        and "with_jacobian" not in build_kwargs
+        and not isinstance(system_or_problem, ODEProblem)
+    ):
+        problem = _as_problem(system_or_problem, ic=ic, with_jacobian=True, **build_kwargs)
 
     if isinstance(problem, MapProblem):
         steps = int(round(final_time))
@@ -414,8 +438,7 @@ def _run_dde(
     tape over ``dim + n_slots`` inputs whose extra inputs are the delay slots; the
     engine fills those from a history buffer it interpolates with cubic Hermite,
     reusing the explicit solver kernels for each step.  Only constant delays
-    lower; a state-dependent delay raises ``TapeCompileError`` at build time (use
-    the family's ``backend="jitcdde"``).
+    lower; a state-dependent delay raises ``TapeCompileError`` at build time.
 
     Returns ``(y, ic0)`` — the sampled trajectory and the ``t0`` state used (the
     constant past, or ``history(0)`` for a callable past) so the caller can record
@@ -424,17 +447,14 @@ def _run_dde(
     if backend == "reference":
         raise NotImplementedError(
             f"{_name(problem)}: backend='reference' has no DDE integrator; use "
-            f"backend='interp'/'jit' (the Rust engine), or the family's "
-            f"integrate(backend='jitcdde') for the v2 backend."
+            f"backend='interp'/'jit' (the Rust engine)."
         )
     try:
         eng = _engine()
     except EngineNotAvailableError as err:
-        # The generic accessor steers callers to backend='reference', which a DDE
-        # rejects one branch up — give the DDE-correct fallback (jitcdde) instead.
         raise EngineNotAvailableError(
-            f"{_name(problem)}: the Rust DDE engine (tsdynamics._rust, stream E7) is not "
-            f"built; use the family's integrate(backend='jitcdde') for the v2 DDE backend."
+            f"{_name(problem)}: the Rust DDE engine (tsdynamics._rust) is not built; "
+            f"install the compiled wheel (`pip install tsdynamics`) to integrate DDEs."
         ) from err
 
     dim = problem.dim
@@ -978,18 +998,22 @@ def _reference_ensemble(
     return out
 
 
-#: TSDynamics solver name → SciPy ``solve_ivp`` method (reference backend only).
+#: Canonical engine kernel name → SciPy ``solve_ivp`` method (reference backend
+#: only — the pure-Python oracle).  Keys are the names :func:`solvers.resolve`
+#: produces (lower-case), so the reference path sees the same canonical method the
+#: engine does.  SciPy has no Tsitouras / fixed-RK4 / Rosenbrock-W / TR-BDF2
+#: integrator, so those map to the nearest-character SciPy solver (an explicit RK
+#: for the explicit kernels, an implicit one for the implicit kernels) — close
+#: enough for an oracle, since the reference backend validates the *tape*, not the
+#: exact stepper.
 _SCIPY_METHOD: dict[str, str] = {
-    "RK45": "RK45",
-    "dopri5": "RK45",
-    "DOP853": "DOP853",
+    "rk45": "RK45",
+    "tsit5": "RK45",
+    "rk4": "RK45",
     "dop853": "DOP853",
-    "LSODA": "LSODA",
-    "lsoda": "LSODA",
-    "BDF": "BDF",
     "bdf": "BDF",
-    "Radau": "Radau",
-    "radau": "Radau",
+    "rosenbrock": "Radau",
+    "trbdf2": "BDF",
 }
 
 

@@ -38,8 +38,8 @@ class Oregonator(ContinuousSystem):
     }
     dim = 3  # Three variables: X, Y, Z (reduced forms of the chemical species)
     # Classic stiff system (Field–Noyes); an explicit solver cannot integrate
-    # it, so default to an implicit one.
-    _default_method = "LSODA"
+    # it, so default to the engine's variable-order BDF.
+    _default_method = "bdf"
 
     @staticmethod
     def _equations(Y, t, *, q, f, mu, epsilon):

@@ -12,8 +12,9 @@ this page is the short version.
 
 ## Dev setup
 
-You need Python ≥ 3.12, a C compiler (see [Install](../start/install.md)),
-and [uv](https://docs.astral.sh/uv/):
+You need Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/). The native engine
+ships as a prebuilt wheel, so no compiler is needed to install
+(see [Install](../start/install.md)):
 
 ```bash
 git clone https://github.com/El3ssar/TSDynamics.git
@@ -29,8 +30,8 @@ Run before pushing — CI rejects PRs that fail any of these:
 ```bash
 uv run ruff check src/ tests/            # lint (zero errors)
 uv run ruff format --check src/ tests/   # formatting (line length 100)
-uv run pytest -m "not slow" --no-cov     # fast suite, ~2 s — no C compilation
-uv run pytest --no-cov                   # full suite, ~35 s — compiles + Lyapunov
+uv run pytest -m "not slow" --no-cov     # fast suite, ~2 s
+uv run pytest --no-cov                   # full suite, ~35 s — integration + Lyapunov
 ```
 
 Docstrings follow the NumPy convention; commits follow

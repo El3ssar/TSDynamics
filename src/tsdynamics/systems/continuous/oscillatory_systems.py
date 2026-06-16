@@ -132,9 +132,9 @@ class Lissajous3D(ContinuousSystem):
         Parameters
         ----------
         Y : callable
-            JiTCODE state accessor (unused — Lissajous is purely parametric).
+            Symbolic state accessor (unused — Lissajous is purely parametric).
         t : symbol
-            JiTCODE time symbol.
+            Symbolic time variable.
         A, B, C : float
             Amplitudes along x, y, z axes.
         a, b, c : float
@@ -166,9 +166,9 @@ class Lissajous2D(ContinuousSystem):
         Parameters
         ----------
         Y : callable
-            JiTCODE state accessor (unused — Lissajous is purely parametric).
+            Symbolic state accessor (unused — Lissajous is purely parametric).
         t : symbol
-            JiTCODE time symbol.
+            Symbolic time variable.
         A, B : float
             Amplitudes along x and y axes.
         a, b : float

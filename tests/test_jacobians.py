@@ -89,8 +89,10 @@ def _call_handwritten_jacobian(cls, sys, y_sym, t_sym):
 
 def test_ode_handwritten_jacobian_matches_autogen(ode_entry, rng) -> None:
     import symengine
-    from jitcode import t as t_sym
-    from jitcode import y as y_sym
+
+    from tsdynamics.engine.symbols import state_time_symbols
+
+    y_sym, t_sym = state_time_symbols()
 
     cls = ode_entry.cls
     if "_jacobian" not in cls.__dict__:

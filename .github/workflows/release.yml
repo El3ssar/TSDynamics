@@ -1,19 +1,24 @@
-# Release pipeline.
+# Release pipeline (post-M3: one compiled maturin wheel per platform).
 #
-# Automated path (push to main): run the suite, then python-semantic-release
-# decides from the conventional commit messages whether a release is due. If
-# so it bumps __version__, commits, tags vX.Y.Z, creates the GitHub release
-# with the built wheel + sdist attached, and publishes to PyPI via OIDC
-# trusted publishing.
+# Automated path (push to main):
+#   1. test    — build the Rust engine + run the suite (the publish gate).
+#   2. release — python-semantic-release reads the conventional commits, and if a
+#                release is due bumps the version (pyproject + __init__.py),
+#                commits, tags vX.Y.Z, and creates the GitHub Release. It does
+#                NOT build (build_command="") — the wheel is compiled, so it is
+#                built per-platform below, not by PSR.
+#   3. wheels  — build the abi3 wheel for every (platform, arch) + an sdist, from
+#                the tag PSR just created (so the wheel carries the bumped
+#                version, not the pre-bump source the run was triggered on).
+#   4. publish — upload every wheel + the sdist to PyPI via OIDC trusted
+#                publishing, and attach them to the GitHub Release.
 #
-# Manual path (workflow_dispatch with `publish_tag`): re-publish an
-# already-tagged release's built artifacts to PyPI. Use this to ship a tag
-# whose automated publish failed (e.g. the trusted publisher was not yet
-# registered), without re-running PSR — the gate `released == true` is only
-# true for a fresh release, so a plain re-run never re-publishes.
+# Manual path (workflow_dispatch with `publish_tag`): re-publish an already-tagged
+# release's artifacts to PyPI (e.g. a publish that failed when the trusted
+# publisher was not yet registered) without re-running PSR.
 #
-# PyPI trusted publishing is bound to THIS filename and the "pypi"
-# environment — do not rename either without re-registering on PyPI:
+# PyPI trusted publishing is bound to THIS filename and the "pypi" environment —
+# do not rename either without re-registering on PyPI:
 #   owner = El3ssar, repository = TSDynamics,
 #   workflow = release.yml, environment = pypi
 
@@ -25,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_tag:
-        description: "Re-publish an existing tag's artifacts to PyPI (e.g. v2.0.0). Leave blank for a normal release run."
+        description: "Re-publish an existing tag's artifacts to PyPI (e.g. v3.0.0). Leave blank for a normal release run."
         required: false
         default: ""
 
@@ -40,6 +45,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -48,10 +56,9 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install build deps
-        run: sudo apt-get update && sudo apt-get install -y build-essential
-
-      - name: Sync project + dev deps
+      # `uv sync` builds the project with maturin, which compiles the engine
+      # extension into the venv — the suite needs the compiled `tsdynamics._rust`.
+      - name: Sync project + dev deps (builds the engine)
         run: uv sync --group dev
 
       - name: Lint
@@ -66,32 +73,119 @@ jobs:
     needs: test
     if: github.event_name == 'push' && github.repository == 'El3ssar/TSDynamics'
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
       contents: write
-      id-token: write
+    outputs:
+      released: ${{ steps.semrel.outputs.released }}
+      tag: ${{ steps.semrel.outputs.tag }}
+      version: ${{ steps.semrel.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
-          # PSR needs the full tag history AND an attached branch (it commits
-          # the version bump back) — do not pin ref to a sha (detached HEAD).
+          # PSR needs the full tag history AND an attached branch (it commits the
+          # version bump back) — do not pin ref to a sha (detached HEAD).
           fetch-depth: 0
 
-      - name: Semantic release (version, tag, GitHub release, build)
+      - name: Semantic release (version, tag, GitHub release — no build)
         id: semrel
         uses: python-semantic-release/python-semantic-release@v10
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Attach build artifacts to the GitHub release
-        if: steps.semrel.outputs.released == 'true'
-        uses: python-semantic-release/publish-action@v10
+  wheels:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: linux-x86_64, runner: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { label: linux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: auto }
+          - { label: musllinux-x86_64, runner: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
+          - { label: musllinux-aarch64, runner: ubuntu-latest, target: aarch64, manylinux: musllinux_1_2 }
+          - { label: macos-x86_64, runner: macos-13, target: x86_64, manylinux: auto }
+          - { label: macos-aarch64, runner: macos-14, target: aarch64, manylinux: auto }
+          - { label: windows-x64, runner: windows-latest, target: x64, manylinux: auto }
+    steps:
+      # Check out the *tag* PSR created so the built wheel carries the bumped
+      # version (the run's github.sha is the pre-bump commit).
+      - uses: actions/checkout@v6
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.semrel.outputs.tag }}
+          ref: ${{ needs.release.outputs.tag }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Build from the root pyproject ([tool.maturin] points manifest-path at the
+      # engine crate and python-source at src/, so this ships the full
+      # `tsdynamics` package + the `tsdynamics/_rust` abi3 extension as one wheel).
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+          sccache: "false" # clean rebuilds for a release
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-${{ matrix.label }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      # The sdist vendors the sibling path-dependency crates (tsdyn-ir/vm/jit/
+      # solvers/engine), so it is self-contained and buildable from source.
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [release, wheels, sdist]
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: write # attach artifacts to the GitHub Release
+      id-token: write # OIDC trusted publishing
+    steps:
+      - name: Collect every wheel + the sdist
+        uses: actions/download-artifact@v6
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Show what will be published
+        run: ls -l dist
+
+      - name: Attach artifacts to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.release.outputs.tag }}" dist/* --repo "${{ github.repository }}"
 
       - name: Publish to PyPI
-        if: steps.semrel.outputs.released == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
 
   republish:

@@ -51,12 +51,12 @@ maps (`DiscreteMap.lyapunov_spectrum`, `TangentSystem`) with the exact
 
 ## What each family actually solves
 
-- **ODEs** — JiTCODE differentiates the right-hand side symbolically and
-  compiles state + variational equations into one C module
-  (`jitcode_lyap`); the integrator returns *local* exponents per sampling
-  interval. Because the adaptive stepper makes interval lengths uneven,
-  TSDynamics averages them **weighted by interval duration** — an
-  unweighted mean would bias the estimate toward whatever the step
+- **ODEs** — the right-hand side is differentiated symbolically and the
+  *extended* variational system (state ⊕ tangent vectors) is integrated on the
+  Rust engine, QR re-orthonormalizing per chunk; the integrator returns *local*
+  exponents per sampling interval. Because the adaptive stepper makes interval
+  lengths uneven, TSDynamics averages them **weighted by interval duration** —
+  an unweighted mean would bias the estimate toward whatever the step
   controller did. A `burn_in` discards the transient during which the
   deviation frame aligns with the attractor's Oseledets subspaces.
 
@@ -65,12 +65,13 @@ maps (`DiscreteMap.lyapunov_spectrum`, `TangentSystem`) with the exact
 
 - **DDEs** — the tangent space of a delay system is the
   **infinite-dimensional** history space $C([-\tau_{\max}, 0])$; there is
-  a full spectrum of infinitely many exponents. `jitcdde_lyap`
-  approximates the leading few by evolving perturbations of the history
-  spline, with the same weighted averaging (weights come from the
-  solver). This is why `n_exp` must be chosen consciously, why the
-  estimates converge more slowly than ODE ones, and why `TangentSystem`
-  refuses delay systems outright.
+  a full spectrum of infinitely many exponents. `DelaySystem.lyapunov_spectrum`
+  approximates the leading few by building an *extended* delay system — the base
+  state plus deviation states whose dynamics are the symbolic variational
+  equations — and integrating it on the engine in delay-window chunks, with a
+  function-space QR over the deviation history segment. This is why `n_exp` must
+  be chosen consciously, why the estimates converge more slowly than ODE ones,
+  and why `TangentSystem` refuses delay systems outright.
 
 ## The two-trajectory estimator
 

@@ -38,9 +38,10 @@ dynamics is linear, so a linear combination of deviation solutions is a solution
 acting on that sampled representative.  When ``dt`` does not divide ``τ_max`` the
 reseed falls back to off-grid interpolation (a warning is emitted).
 
-Validated against ``jitcdde_lyap`` on the five built-in DDEs (and a 2-D synthetic
-DDE) — the Mackey–Glass leading exponent is positive, matching its
-``known_lyapunov`` ``n_positive=1``; ``interp`` and ``jit`` agree bit-for-bit.
+Validated (reference-free) on the five built-in DDEs (and a 2-D synthetic DDE) —
+the Mackey–Glass leading exponent is positive, matching its ``known_lyapunov``
+``n_positive=1``; ``interp`` and ``jit`` agree bit-for-bit. (The original
+Rust-vs-``jitcdde_lyap`` parity gate ran before JiTCDDE was removed.)
 """
 
 from __future__ import annotations
@@ -62,8 +63,6 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     matching :func:`tsdynamics.engine.compile.lower_dde`.
     """
     import symengine
-    from jitcdde import t as t_sym
-    from jitcdde import y
 
     from tsdynamics.engine.compile import (
         DelaySlot,
@@ -71,7 +70,10 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
         _past_y_component_and_delay,
         lower_expressions,
     )
+    from tsdynamics.engine.symbols import state_time_symbols
     from tsdynamics.families.continuous import _resolve_derivative_nodes
+
+    y, t_sym = state_time_symbols()
 
     dim = system.dim
     exprs = list(type(system)._equations(y, t_sym, **system.params.as_dict()))
@@ -85,11 +87,15 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     base_slots: list[tuple[int, float]] = []
     slot_index: dict[tuple[int, float], int] = {}
     node_to_key: dict[Any, tuple[int, float]] = {}
+    current_subs: dict[Any, Any] = {}  # explicit ``y(i, t)`` current-time accesses
 
     def scan(node: Any) -> None:
         node = symengine.sympify(node)
         if _is_past_y(node):
             comp, delay = _past_y_component_and_delay(node, t_sym, system)
+            if delay == 0.0:
+                current_subs[node] = u[comp]  # ``y(i, t)`` is the current state
+                return
             key = (comp, float(delay))
             if key not in slot_index:
                 slot_index[key] = len(base_slots)
@@ -110,6 +116,7 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     bdel = [symengine.Symbol(f"ud{s}") for s in range(nb)]
     subs = {y(i): u[i] for i in range(dim)}
     subs[t_sym] = t_canon
+    subs.update(current_subs)  # explicit y(i, t) → current state
     for node, key in node_to_key.items():
         subs[node] = bdel[slot_index[key]]
     f = [symengine.sympify(e).subs(subs) for e in exprs]
@@ -255,8 +262,7 @@ def dde_lyapunov_spectrum(
     if backend == "reference":
         raise NotImplementedError(
             "DDE Lyapunov has no pure-Python reference integrator; use "
-            "backend='interp'/'jit' (the Rust engine), or the family's "
-            "lyapunov_spectrum(backend='jitcdde') for the v2 path."
+            "backend='interp'/'jit' (the Rust engine)."
         )
 
     tape, slots, dim = _build_extended_tape(system, n_exp)

@@ -116,10 +116,10 @@ def test_unknown_backend_rejected() -> None:
         TangentSystem(ts.Lorenz(), backend="bogus")
 
 
-def test_engine_deviations_for_jitcode_backend_raise() -> None:
-    tang = TangentSystem(ts.Lorenz(), k=3, backend="jitcode")
-    with pytest.raises(RuntimeError, match="jitcode"):
-        tang.deviations()
+def test_jitcode_backend_is_rejected() -> None:
+    """The retired ``jitcode`` variational backend is no longer a valid choice."""
+    with pytest.raises(ValueError, match="unknown ODE tangent backend"):
+        TangentSystem(ts.Lorenz(), k=3, backend="jitcode")
 
 
 # ---------------------------------------------------------------------------
@@ -152,39 +152,26 @@ def test_tangent_lyapunov_records_meta() -> None:
 
 
 @pytest.mark.slow
-def test_ode_family_delegates_to_tangent_jitcode() -> None:
-    """Family ODE ``lyapunov_spectrum`` is the jitcode TangentSystem path.
+def test_ode_family_delegates_to_tangent_engine() -> None:
+    """Family ODE ``lyapunov_spectrum`` reproduces the literature Lorenz spectrum.
 
-    The family method *is* ``TangentSystem(self, backend="jitcode").lyapunov_spectrum``,
-    so the two agree up to ``jitcode_lyap``'s random initial tangent directions
-    (which make finite-time estimates non-bit-identical across fresh runs).
-    ``final_time`` is long enough that both estimates have converged: a shorter
-    window leaves the two independent maximal-exponent estimates with run-to-run
-    and platform FP spread wider than ``atol`` (observed ~0.057 at
-    ``final_time=80``), so this validates agreement-at-convergence rather than
-    masking it with a looser tolerance.
+    The family method *is* ``TangentSystem(self).lyapunov_spectrum`` on the engine
+    variational path; ``final_time`` is long enough that the finite-time estimate
+    has converged to the canonical Lorenz spectrum ``[0.906, 0, -14.57]``.
     """
-    via_family = ts.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(
-        final_time=240.0, dt=0.1, burn_in=40.0
-    )
-    via_tangent = TangentSystem(
-        ts.Lorenz(ic=[1.0, 1.0, 1.0]), k=3, backend="jitcode"
-    ).lyapunov_spectrum(final_time=240.0, dt=0.1, burn_in=40.0)
-    np.testing.assert_allclose(via_family, via_tangent, atol=0.05)
+    spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(final_time=240.0, dt=0.1, burn_in=40.0)
+    # Leading exponent ≈ 0.906, middle ≈ 0, third ≈ -14.57 (Lorenz 1963 / Sprott).
+    assert abs(spec[0] - 0.906) < 0.06
+    assert abs(spec[1]) < 0.06
+    assert abs(spec[2] + 14.57) < 0.6
 
 
 @pytest.mark.slow
-def test_backend_neutral_matches_jitcode_on_lorenz() -> None:
-    """The engine variational path agrees with jitcode on the Lorenz spectrum."""
-    ic = [1.0, 1.0, 1.0]
-    jit = TangentSystem(ts.Lorenz(ic=ic), k=3, backend="jitcode").lyapunov_spectrum(
+def test_backend_neutral_lorenz_spectrum_reference() -> None:
+    """The engine variational path reproduces the Lorenz spectrum on the reference backend."""
+    ref = TangentSystem(ts.Lorenz(ic=[1.0, 1.0, 1.0]), k=3, backend="reference").lyapunov_spectrum(
         final_time=120.0, dt=0.1, burn_in=40.0
     )
-    ref = TangentSystem(ts.Lorenz(ic=ic), k=3, backend="reference").lyapunov_spectrum(
-        final_time=120.0, dt=0.1, burn_in=40.0
-    )
-    # Finite-time Lyapunov estimates from two integrators converge but are not
-    # bit-identical; the leading exponent and the (large negative) third agree well.
-    assert abs(jit[0] - ref[0]) < 0.15
-    assert abs(jit[1] - ref[1]) < 0.15
-    assert abs(jit[2] - ref[2]) < 1.0
+    assert abs(ref[0] - 0.906) < 0.1
+    assert abs(ref[1]) < 0.1
+    assert abs(ref[2] + 14.57) < 1.0

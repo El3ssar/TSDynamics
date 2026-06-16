@@ -106,8 +106,8 @@ class ParamSet(MutableMapping):
         Uses MD5 over a JSON-serialised representation so the result is
         reproducible across Python process restarts (unlike ``hash()``).
 
-        The hash backs cache keys for compiled JiTCODE / JiTCDDE modules
-        and the Numba-iterate cache.  At 64 bits the birthday-paradox
+        The hash backs cache keys for per-system lowering / lambdify caches.
+        At 64 bits the birthday-paradox
         collision probability reaches 50 % only around ``2^32 ≈ 4·10⁹``
         distinct parameter sets, which is well beyond any realistic
         parameter sweep.  The previous 32-bit width hit the same threshold
@@ -269,13 +269,11 @@ class SystemBase:
     known_lyapunov: ClassVar[dict | None] = None
 
     #: The runtime backend this family's engine-dispatch seam uses when a caller
-    #: does not name one.  Each family sets it to its current default integrator
-    #: — the **v2** backend today (``"jitcode"`` / ``"jitcdde"`` / ``"numba"`` /
-    #: ``"reference"``), so behaviour is unchanged.  It is the single knob the
-    #: migration (M3 / I-XVAL) flips to a Rust engine backend once cross-validation
-    #: gates it; until then every family keeps integrating on its v2 path by
-    #: default.  Read by the family ``integrate`` / ``iterate`` methods and by
-    #: :meth:`_dispatch`, so "the default backend" lives in exactly one place.
+    #: does not name one.  Every concrete family sets it to ``"interp"`` (the Rust
+    #: engine interpreter — the sole integration backend post-M3); the abstract
+    #: base keeps ``"reference"`` (the wheel-free pure-Python oracle).  Read by the
+    #: family ``integrate`` / ``iterate`` methods and by :meth:`_dispatch`, so "the
+    #: default backend" lives in exactly one place.
     _default_backend: ClassVar[str] = "reference"
 
     def __init_subclass__(cls, **kwargs: Any) -> None:

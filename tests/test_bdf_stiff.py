@@ -133,3 +133,33 @@ def test_bdf_interp_equals_jit_bit_for_bit(name, build, ic, ft, dt, rtol, atol):
     a = _engine(system, ic, ft, dt, "bdf", "interp", rtol, atol)
     b = _engine(system, ic, ft, dt, "bdf", "jit", rtol, atol)
     assert np.array_equal(a, b), f"{name}: interp != jit (max {np.max(np.abs(a - b)):.2e})"
+
+
+# ---------------------------------------------------------------------------
+# Protocol stepping over a stiff system (regression for the M3 step()/reinit fix)
+# ---------------------------------------------------------------------------
+#
+# A stiff catalogue system declares ``_default_method = "bdf"``.  ``reinit()``
+# lowers the per-step tape ONCE and ``step()`` reuses it, so the Jacobian the
+# implicit kernel needs must be baked in at ``reinit`` time — otherwise the engine
+# refuses the step with "method 'bdf' needs an analytic Jacobian".  This pins that
+# the stepping protocol (and everything built on it — PoincareMap, orbit_diagram,
+# the variational Lyapunov engine) works on a stiff default method.
+
+
+def test_stiff_default_method_steps_without_jacobian_error():
+    """``reinit()`` + ``step()`` on a ``_default_method="bdf"`` system must not raise."""
+    sys = ts.Oregonator()
+    assert sys._default_method == "bdf"
+    sys.reinit(sys.resolve_ic())
+    for _ in range(5):
+        u = sys.step(0.01)
+    assert np.all(np.isfinite(u))
+
+
+def test_stiff_explicit_step_override_also_works():
+    """Explicitly requesting an implicit method on a non-stiff system steps cleanly too."""
+    lor = ts.Lorenz()
+    lor.reinit([1.0, 1.0, 1.0], method="bdf")
+    u = lor.step(0.01)
+    assert np.all(np.isfinite(u))

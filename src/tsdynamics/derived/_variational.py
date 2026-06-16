@@ -5,14 +5,13 @@ set of deviation (tangent) vectors carried along a trajectory.  The deviation
 vectors obey the *variational equation* ``dW/dt = J(x, t) · W`` alongside the
 base flow ``dx/dt = f(x, t)``.
 
-The v2 engine builds those variational equations with JiTCODE (``jitcode_lyap``),
-which is removed at the M3 migration gate.  This module is the backend-neutral
-replacement: it constructs the **extended** ODE — base state stacked with ``k``
-tangent vectors — symbolically and lowers it to an engine :class:`Tape` through
-the public :func:`tsdynamics.engine.compile.lower_expressions`.  That tape runs
-on any evaluator behind the frozen ``Evaluator`` seam (the zero-warmup
-interpreter, the Cranelift JIT, or the pure-Python reference oracle), so ODE
-Lyapunov survives the JiTCODE removal with the Rust engine as the integrator.
+This module is the engine path for ODE Lyapunov: it constructs the **extended**
+ODE — base state stacked with ``k`` tangent vectors — symbolically and lowers it
+to an engine :class:`Tape` through the public
+:func:`tsdynamics.engine.compile.lower_expressions`.  That tape runs on any
+evaluator behind the frozen ``Evaluator`` seam (the zero-warmup interpreter, the
+Cranelift JIT, or the pure-Python reference oracle), so the Rust engine is the
+variational integrator.
 
 The renormalisation loop that consumes the extended flow (QR every step,
 accumulate ``log|diag R|``) lives in :class:`~tsdynamics.derived.tangent.TangentSystem`,
@@ -60,11 +59,12 @@ def build_variational_tape(system: Any, k: int) -> Any:
         A lowered, validated tape with ``dim·(k+1)`` state inputs and outputs.
     """
     import symengine
-    from jitcode import t as t_sym
-    from jitcode import y
 
     from tsdynamics.engine.compile import lower_expressions
+    from tsdynamics.engine.symbols import state_time_symbols
     from tsdynamics.families.continuous import _resolve_derivative_nodes
+
+    y, t_sym = state_time_symbols()
 
     dim = system.dim
     if not 1 <= int(k) <= dim:
@@ -79,8 +79,8 @@ def build_variational_tape(system: Any, k: int) -> Any:
     if len(f_jitc) != dim:
         raise ValueError(f"_equations must return {dim} expressions, got {len(f_jitc)}")
 
-    # Canonical state/time symbols (the jitcode y(i)/t leaves are not plain
-    # Symbols, so substitute them out before lowering).
+    # Canonical state/time symbols (the y(i)/t function-application leaves are
+    # not plain Symbols, so substitute them out before lowering).
     u_syms = [symengine.Symbol(f"u{j}") for j in range(dim)]
     t_canon = symengine.Symbol("t")
     subs = {y(j): u_syms[j] for j in range(dim)}

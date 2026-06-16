@@ -150,8 +150,8 @@ class WindmiReduced(ContinuousSystem):
 
     Numerical guards (no change to the dynamics)
     --------------------------------------------
-    Two robustness guards let every backend reproduce the same orbit that
-    JiTCODE's explicit dopri5 already handles:
+    Two robustness guards keep the orbit reproducible across the engine's
+    explicit and implicit solver kernels:
 
     * ``abs(p)`` under the fractional power.  On the attractor ``p >= 0``, but
       adaptive and implicit solvers probe trial states with ``p < 0`` where the
@@ -160,11 +160,10 @@ class WindmiReduced(ContinuousSystem):
 
     * The ``tanh`` argument is clamped to ``[-_TANH_CLAMP, _TANH_CLAMP]``.
       ``tanh`` saturates to ``±1`` to machine precision past ``|arg| ≈ 20``, so
-      clamping leaves the switch value unchanged, but it stops the diffsol Rust
+      clamping leaves the switch value unchanged, but it stops the implicit
       kernels' automatic differentiation from overflowing on ``exp`` of an
       enormous ``d1*(i-1)`` (≈ ±1500 on the orbit) — the actual cause of their
-      Newton/error-test failures.  The clamp uses ``abs`` only, which both the
-      JiTCODE and DiffSL paths support.
+      Newton/error-test failures.  The clamp uses ``abs`` only.
     """
 
     reference = "Horton, Weigel & Sprott (2001), Phys. Plasmas 8, 2946-2952"
@@ -181,7 +180,7 @@ class WindmiReduced(ContinuousSystem):
         i, v, p = Y(0), Y(1), Y(2)
         # Clamp d1*(i-1) to [-C, C] via the abs identity
         # clamp(z, -C, C) = (|z + C| - |z - C|) / 2 — smooth-enough (abs only)
-        # and translatable by both the JiTCODE and DiffSL backends.
+        # and lowers cleanly to the engine tape.
         c = WindmiReduced._TANH_CLAMP
         z = d1 * (i - 1)
         z_clamped = (abs(z + c) - abs(z - c)) / 2
