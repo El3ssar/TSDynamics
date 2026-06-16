@@ -86,11 +86,15 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     base_slots: list[tuple[int, float]] = []
     slot_index: dict[tuple[int, float], int] = {}
     node_to_key: dict[Any, tuple[int, float]] = {}
+    current_subs: dict[Any, Any] = {}  # explicit ``y(i, t)`` current-time accesses
 
     def scan(node: Any) -> None:
         node = symengine.sympify(node)
         if _is_past_y(node):
             comp, delay = _past_y_component_and_delay(node, t_sym, system)
+            if delay == 0.0:
+                current_subs[node] = u[comp]  # ``y(i, t)`` is the current state
+                return
             key = (comp, float(delay))
             if key not in slot_index:
                 slot_index[key] = len(base_slots)
@@ -111,6 +115,7 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     bdel = [symengine.Symbol(f"ud{s}") for s in range(nb)]
     subs = {y(i): u[i] for i in range(dim)}
     subs[t_sym] = t_canon
+    subs.update(current_subs)  # explicit y(i, t) → current state
     for node, key in node_to_key.items():
         subs[node] = bdel[slot_index[key]]
     f = [symengine.sympify(e).subs(subs) for e in exprs]

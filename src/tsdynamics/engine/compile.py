@@ -967,6 +967,7 @@ def lower_dde(system: Any) -> tuple[Tape, list[DelaySlot]]:
         unsupported construct.
     """
     import symengine
+
     from tsdynamics.engine.symbols import state_time_symbols
 
     y, t_sym = state_time_symbols()
@@ -994,6 +995,10 @@ def lower_dde(system: Any) -> tuple[Tape, list[DelaySlot]]:
                     f"{type(system).__name__}: delayed access {node} references component "
                     f"{comp}, outside the state range 0..{dim - 1}."
                 )
+            if delay == 0.0:
+                # ``y(i, t)`` is the current state — substitute the real input.
+                delayed_subs[node] = u_syms[comp]
+                return
             key = (comp, delay)
             if key not in slot_key_to_sym:
                 k = len(slots)
@@ -1056,11 +1061,14 @@ def _past_y_component_and_delay(node: Any, t_sym: Any, system: Any) -> tuple[int
             f"(delay time {delay_time}); only constant delays lower to fixed delay slots."
         )
     delay = -float(delay_time.subs({symengine.sympify(t_sym): symengine.Integer(0)}))
-    if not (delay > 0.0):
+    if delay < 0.0:
+        # A negative delay is a *future* access (``y(i, t + τ)``) — not causal.
         raise TapeCompileError(
             f"{type(system).__name__}: delayed access {node} resolves to a "
-            f"non-positive delay {delay}."
+            f"negative (future) delay {delay}."
         )
+    # delay == 0.0 is an explicit current-time access ``y(i, t)`` (== ``y(i)``);
+    # the caller maps it to the current state rather than a delay slot.
     return component, delay
 
 

@@ -34,6 +34,8 @@ from tsdynamics.engine.compile import TapeCompileError
 from tsdynamics.engine.problem import map_problem
 from tsdynamics.families.discrete import _unwrap_static
 
+pytest.importorskip("tsdynamics._rust")
+
 #: Maps that do not lower to the frozen straight-line IR.  Empty since E-OPS:
 #: the non-smooth opcode block plus the symbolic-NumPy tracer cover the whole
 #: built-in catalogue.  Kept as a named guard so a future regression (or a new
@@ -50,7 +52,7 @@ def _attractor_states(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -
     whole buffer is finite) and sit on the orbit rather than in the transient.
     """
     np.random.seed(0)
-    warm = cls().iterate(steps=n_warm, backend="numba")
+    warm = cls().iterate(steps=n_warm, backend="reference")
     finite = warm.y[np.isfinite(warm.y).all(axis=1)]
     # Guard the slice that follows, not just the row count: finite[drop:drop+take]
     # is only non-degenerate when there are at least drop + take finite rows.
@@ -113,13 +115,13 @@ def test_map_short_trajectory_matches_numba(map_entry) -> None:
     cls = map_entry.cls
     ic = _attractor_states(cls, take=1)[0]
     steps = 8
-    numba = cls().iterate(steps=steps, ic=ic, backend="numba")
+    interp = cls().iterate(steps=steps, ic=ic, backend="interp")
     ref = cls().iterate(steps=steps, ic=ic, backend="reference")
 
-    assert ref.y.shape == numba.y.shape == (steps, cls().dim)
-    np.testing.assert_array_equal(ref.t, numba.t)
+    assert ref.y.shape == interp.y.shape == (steps, cls().dim)
+    np.testing.assert_array_equal(ref.t, interp.t)
     np.testing.assert_allclose(
-        ref.y, numba.y, rtol=1e-6, atol=1e-8, err_msg=f"{map_entry.name} trajectory drift"
+        ref.y, interp.y, rtol=1e-6, atol=1e-8, err_msg=f"{map_entry.name} trajectory drift"
     )
 
 

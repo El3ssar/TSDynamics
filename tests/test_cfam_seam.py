@@ -47,31 +47,33 @@ class _SeamGBM(ts.StochasticSystem):
 
 
 def test_default_backend_per_family() -> None:
-    """Each family exposes its current (v2) default backend on the seam knob."""
-    assert ts.ContinuousSystem._default_backend == "jitcode"
-    assert ts.DelaySystem._default_backend == "jitcdde"
-    assert ts.DiscreteMap._default_backend == "numba"
-    assert ts.StochasticSystem._default_backend == "reference"
-    # The base default is the dependency-light oracle.
+    """Post-M3 every family defaults to the Rust engine interpreter (the one knob)."""
+    assert ts.ContinuousSystem._default_backend == "interp"
+    assert ts.DelaySystem._default_backend == "interp"
+    assert ts.DiscreteMap._default_backend == "interp"
+    assert ts.StochasticSystem._default_backend == "interp"
+    # The abstract base keeps the wheel-free oracle as its default; every concrete
+    # family overrides it to the engine interpreter above.
     from tsdynamics.families.base import SystemBase
 
     assert SystemBase._default_backend == "reference"
 
 
 def test_backend_none_resolves_to_family_default_ode() -> None:
-    """``backend=None`` is the same as the family default (no engine routing)."""
+    """``backend=None`` is the same as the family default (the engine seam)."""
+    pytest.importorskip("tsdynamics._rust")
     lor = ts.Lorenz()
     kw = dict(final_time=1.0, dt=0.5, ic=[1.0, 1.0, 1.0])
-    explicit = lor.integrate(backend="jitcode", **kw)
+    explicit = lor.integrate(backend="interp", **kw)
     implicit = lor.integrate(backend=None, **kw)
     np.testing.assert_array_equal(explicit.y, implicit.y)
-    # The v2 default path does not carry the engine-seam provenance.
-    assert implicit.meta.get("engine") != "rust"
+    # The default path now *is* the engine seam.
+    assert implicit.meta.get("engine") == "rust"
 
 
 def test_backend_none_resolves_to_family_default_map() -> None:
     h = ts.Henon()
-    a = h.iterate(steps=20, ic=[0.1, 0.1], backend="numba")
+    a = h.iterate(steps=20, ic=[0.1, 0.1], backend="reference")
     b = h.iterate(steps=20, ic=[0.1, 0.1], backend=None)
     np.testing.assert_array_equal(a.y, b.y)
 
@@ -137,14 +139,25 @@ def test_ode_reference_via_family_carries_engine_provenance_with_ic_t0() -> None
     assert traj.meta["t0"] == 0.0
 
 
-def test_ode_reference_matches_jitcode_on_a_short_window() -> None:
-    """The seam's lowered-tape integration agrees with the v2 jitcode path."""
+def test_ode_reference_matches_scipy_on_a_short_window() -> None:
+    """The seam's lowered-tape integration agrees with an independent SciPy oracle."""
+    from scipy.integrate import solve_ivp
+
     lor = ts.Lorenz()
     kw = dict(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0], rtol=1e-10, atol=1e-12)
-    v2 = lor.integrate(backend="jitcode", method="DOP853", **kw)
     seam = lor.integrate(backend="reference", method="DOP853", **kw)
-    assert seam.y.shape == v2.y.shape
-    np.testing.assert_allclose(seam.y, v2.y, rtol=1e-5, atol=1e-7)
+    rhs = lor._rhs_numeric()
+    sol = solve_ivp(
+        lambda t, y: rhs(y, t),
+        (0.0, 2.0),
+        [1.0, 1.0, 1.0],
+        method="DOP853",
+        t_eval=seam.t,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+    assert seam.y.shape == sol.y.T.shape
+    np.testing.assert_allclose(seam.y, sol.y.T, rtol=1e-5, atol=1e-7)
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +278,11 @@ def test_make_output_grid_is_the_single_definition() -> None:
     assert not hasattr(delay, "_make_t_eval")
     assert not hasattr(stochastic, "_make_t_eval")
     assert not hasattr(run_mod, "_make_t_eval")
-    # The families import the canonical helper.
-    assert continuous.make_output_grid is canonical
+    # Post-M3 the ODE/DDE families delegate their output grid to ``run.integrate``;
+    # the modules that still build a grid directly (the engine seam and the SDE
+    # family) import the one canonical helper.
     assert run_mod.make_output_grid is canonical
+    assert stochastic.make_output_grid is canonical
 
 
 def test_make_output_grid_samples_endpoint_inclusive() -> None:

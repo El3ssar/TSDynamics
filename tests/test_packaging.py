@@ -1,33 +1,26 @@
-"""Packaging-shape invariants for the ``tsdynamics._rust`` engine wheel (I-WHEEL).
+"""Packaging-shape invariants for the single maturin wheel (post-M3, I-XVAL).
 
-These guard the separable-accelerator layout documented in
-``docs/theory/packaging.md``: the engine wheel (``tsdynamics-rust-engine``) must
-ship ONLY ``tsdynamics/_rust.*`` into the ``tsdynamics`` import namespace, so it
-coexists with the pure-Python ``tsdynamics`` wheel without a file collision. A
-regression here — a stray ``__init__.py`` in the namespace mount, a dropped
-``python-source``, or a renamed module — silently splits ``tsdynamics.__path__``
-or makes the built wheel unimportable. The checks read the build config only (no
-compilation), so they run in the fast tier.
+At M3 the two pre-migration distributions (a pure-Python ``tsdynamics`` wheel +
+a separable ``tsdynamics-rust-engine`` engine wheel) converge to **one maturin
+wheel** built from the root ``pyproject.toml``: the Rust engine is now the sole
+integration backend, so the compiled ``tsdynamics._rust`` extension is mandatory
+and ships in the same wheel as the Python package. These checks guard that
+mixed-layout build config (``python-source = "src"`` + ``module-name =
+"tsdynamics._rust"`` + the engine crate as the Cargo manifest) so a regression —
+a dropped ``python-source``, a renamed module, a non-abi3 build — is caught
+before it produces an unimportable or platform-fragmented wheel. They read the
+build config only (no compilation), so they run in the fast tier.
 """
 
 import tomllib
 from pathlib import Path
 
-import pytest
-
 _REPO = Path(__file__).resolve().parents[1]
 _CORE = _REPO / "crates" / "tsdyn-core"
 
-# An installed sdist of `tsdynamics` does not carry the engine crate; only the
-# source checkout does. Skip cleanly elsewhere rather than fail.
-pytestmark = pytest.mark.skipif(
-    not _CORE.exists(),
-    reason="engine crate (crates/tsdyn-core) not present in this checkout",
-)
-
 
 def _pyproject() -> dict:
-    return tomllib.loads((_CORE / "pyproject.toml").read_text())
+    return tomllib.loads((_REPO / "pyproject.toml").read_text())
 
 
 def _cargo() -> dict:
@@ -35,6 +28,7 @@ def _cargo() -> dict:
 
 
 def test_build_backend_is_maturin():
+    # One wheel, built by maturin from the root project (hatchling is gone).
     assert _pyproject()["build-system"]["build-backend"] == "maturin"
 
 
@@ -44,23 +38,27 @@ def test_module_name_is_tsdynamics_rust():
     assert _pyproject()["tool"]["maturin"]["module-name"] == "tsdynamics._rust"
 
 
-def test_mixed_layout_namespace_mount():
-    # `python-source` makes maturin nest the extension under `tsdynamics/`
-    # (mixed layout) instead of emitting a broken top-level `_rust/` package.
+def test_mixed_layout_from_src():
+    # `python-source = "src"` is the mixed layout: maturin ships the pure-Python
+    # `tsdynamics` package from `src/` and drops the compiled extension into it as
+    # `tsdynamics/_rust.*` — one importable namespace, no split `__path__`.
     mat = _pyproject()["tool"]["maturin"]
-    assert mat["python-source"] == "python"
-    assert (_CORE / "python" / "tsdynamics").is_dir(), "namespace mount dir missing"
+    assert mat["python-source"] == "src"
+    assert (_REPO / "src" / "tsdynamics" / "__init__.py").is_file()
 
 
-def test_namespace_mount_ships_nothing_but_the_extension():
-    # An `__init__.py` here would be shipped as `tsdynamics/__init__.py` and
-    # collide with the pure-Python `tsdynamics` wheel -> split __path__. The mount
-    # must hold only the `.gitkeep`, and `.gitkeep` must be excluded from the wheel.
-    mount = _CORE / "python" / "tsdynamics"
-    assert not (mount / "__init__.py").exists()
-    extra = sorted(p.name for p in mount.iterdir() if p.name != ".gitkeep")
-    assert extra == [], f"unexpected files in the namespace mount: {extra}"
-    assert "**/.gitkeep" in _pyproject()["tool"]["maturin"].get("exclude", [])
+def test_manifest_points_at_the_engine_crate():
+    # The wheel's native code is the engine crate; maturin builds it via its
+    # Cargo manifest. (`crates/tsdyn-core` is the PyO3 binding crate.)
+    mat = _pyproject()["tool"]["maturin"]
+    assert mat["manifest-path"] == "crates/tsdyn-core/Cargo.toml"
+    assert (_CORE / "Cargo.toml").is_file()
+
+
+def test_no_separable_engine_pyproject():
+    # The pre-M3 second distribution (`crates/tsdyn-core/pyproject.toml`, the
+    # `tsdynamics-rust-engine` wheel) is gone — folded into the root wheel.
+    assert not (_CORE / "pyproject.toml").exists()
 
 
 def test_extension_module_feature_enabled():

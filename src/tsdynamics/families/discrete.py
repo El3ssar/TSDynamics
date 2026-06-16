@@ -203,8 +203,13 @@ class DiscreteMap(SystemBase):
         params = self.params.as_tuple()
 
         step_fn = type(self)._step
-        for _ in range(n):
-            x = np.asarray(step_fn(x, *params), dtype=float).ravel()
+        # A diverging orbit overflows to ``inf`` in pure-Python float64 arithmetic;
+        # that is *expected* and is caught by the finite check below, so silence the
+        # spurious NumPy over/under/invalid FP warnings the loop would otherwise emit
+        # (under ``filterwarnings=error`` they would mask the real divergence signal).
+        with np.errstate(all="ignore"):
+            for _ in range(n):
+                x = np.asarray(step_fn(x, *params), dtype=float).ravel()
         if not np.isfinite(x).all():
             raise RuntimeError(
                 f"{type(self).__name__}: map diverged at iteration {self._n_now + n}."

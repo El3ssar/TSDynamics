@@ -48,9 +48,7 @@ _ANCHORS = frozenset(
 #: NOT be tagged engine (they need no compiled extension to run).  ``conftest``
 #: itself isn't ``test_*`` so it's excluded from the glob; this module is here
 #: because it documents the import forms in prose but imports nothing.
-_NON_ENGINE = frozenset(
-    {"test_packaging.py", "test_sde.py", "test_map_engine.py", "test_engine_coverage.py"}
-)
+_NON_ENGINE = frozenset({"test_packaging.py", "test_sde.py", "test_engine_coverage.py"})
 
 
 def test_ast_detector_is_backed_by_the_regex_safety_net() -> None:

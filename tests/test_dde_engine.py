@@ -182,9 +182,8 @@ def test_divergence_raises():
         _BlowUp().integrate(backend="interp", final_time=100.0, dt=0.25, ic=[1.0])
 
 
-def test_default_backend_is_jitcdde():
-    """The default backend stays v2 (no engine routing) until the migration gate."""
-    # A constant past on the engine vs the default must agree, but the default
-    # must *not* carry the rust engine provenance.
+def test_default_backend_is_the_engine():
+    """The default DDE backend is the Rust method-of-steps engine (post-M3)."""
     traj = _LinearDDE().integrate(final_time=1.0, dt=0.5, ic=[1.0])
-    assert traj.meta.get("engine") != "rust"
+    assert traj.meta.get("engine") == "rust"
+    assert traj.meta.get("backend") == "interp"

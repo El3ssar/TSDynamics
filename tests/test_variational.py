@@ -116,10 +116,10 @@ def test_unknown_backend_rejected() -> None:
         TangentSystem(ts.Lorenz(), backend="bogus")
 
 
-def test_engine_deviations_for_jitcode_backend_raise() -> None:
-    tang = TangentSystem(ts.Lorenz(), k=3, backend="jitcode")
-    with pytest.raises(RuntimeError, match="jitcode"):
-        tang.deviations()
+def test_jitcode_backend_is_rejected() -> None:
+    """The retired ``jitcode`` variational backend is no longer a valid choice."""
+    with pytest.raises(ValueError, match="unknown ODE tangent backend"):
+        TangentSystem(ts.Lorenz(), k=3, backend="jitcode")
 
 
 # ---------------------------------------------------------------------------
