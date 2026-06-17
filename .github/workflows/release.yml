@@ -112,6 +112,11 @@ jobs:
 
   wheels:
     needs: resolve
+    # Explicit gate keyed off resolve's own result. On the dispatch recovery
+    # path the `release` job is skipped; the implicit `success()` of this job
+    # would inherit that skip transitively (through resolve) and skip the whole
+    # build, so check resolve directly instead.
+    if: ${{ needs.resolve.result == 'success' }}
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -160,6 +165,8 @@ jobs:
 
   sdist:
     needs: resolve
+    # Same transitive-skip guard as `wheels` (see note there).
+    if: ${{ needs.resolve.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -183,6 +190,9 @@ jobs:
 
   publish:
     needs: [resolve, wheels, sdist]
+    # Gate on the direct deps' results (not the implicit transitive `success()`,
+    # which the skipped `release` ancestor would poison on the dispatch path).
+    if: ${{ needs.wheels.result == 'success' && needs.sdist.result == 'success' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
