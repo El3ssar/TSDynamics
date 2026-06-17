@@ -112,6 +112,13 @@ jobs:
 
   wheels:
     needs: resolve
+    # Explicit gate keyed off resolve's own result. On the dispatch recovery
+    # path the `release` job is skipped; without a status function in this `if`
+    # GitHub silently ANDs `success()` onto it, which inherits that skip
+    # transitively (through resolve) and skips the whole build. The leading
+    # `always()` suppresses the implicit `success()`; the result check then
+    # enforces that resolve actually succeeded.
+    if: ${{ always() && needs.resolve.result == 'success' }}
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -160,6 +167,8 @@ jobs:
 
   sdist:
     needs: resolve
+    # Same transitive-skip guard as `wheels` (see note there).
+    if: ${{ always() && needs.resolve.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -183,6 +192,10 @@ jobs:
 
   publish:
     needs: [resolve, wheels, sdist]
+    # Gate on the direct deps' results. The leading `always()` suppresses the
+    # implicit `success()` that the skipped `release` ancestor would otherwise
+    # poison on the dispatch path (see the `wheels` note).
+    if: ${{ always() && needs.wheels.result == 'success' && needs.sdist.result == 'success' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
