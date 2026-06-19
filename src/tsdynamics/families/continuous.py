@@ -154,6 +154,12 @@ class ContinuousSystem(SystemBase, ABC):
     #               keyed by class + dim + structural params.
     _lambdified: ClassVar[dict[str, tuple]] = {}
 
+    # Per-class in-process cache for the sensitivity layer (stream E-SENS):
+    # cache_key (str) → (param_jac_fn | None, hessian_fn, control_names) —
+    #               SymEngine-Lambdified exact ∂f/∂p and ∂²f/∂u² evaluators,
+    #               keyed identically to ``_lambdified``.
+    _sens_lambdified: ClassVar[dict[str, tuple]] = {}
+
     # Protocol stepping state (instances shadow these class defaults on first
     # ``reinit``).  The engine lowers the tape once in ``reinit`` and ``step``
     # reuses it with the current state as the initial condition.
@@ -477,6 +483,247 @@ class ContinuousSystem(SystemBase, ABC):
             return np.asarray(rhs_fn(arg), dtype=float).ravel()
 
         return rhs
+
+    # ------------------------------------------------------------------ #
+    # Exact symbolic parameter sensitivity ∂f/∂p, Hessian ∂²f/∂u², and the
+    # forward trajectory sensitivity ∂u(t)/∂p (stream E-SENS)
+    # ------------------------------------------------------------------ #
+
+    def parameter_jacobian_sym(self) -> list[list[Any]]:
+        """Return the symbolic parameter Jacobian ``∂f_i/∂p_j`` of ``_equations``.
+
+        The exact-symbolic ``∂f/∂p`` over the **control** parameters (the runtime,
+        non-structural ones), the analytic derivative the continuation and
+        gradient-fitting tracks build on (stream E-SENS) — never a finite
+        difference.  Rows follow ``_equations`` order; columns follow
+        ``self._control_params()`` order.  ``abs``/``sign`` derivatives are
+        resolved a.e. (exactly as :meth:`jacobian_sym`).
+
+        Returns
+        -------
+        list of ``dim`` rows, each a list of ``n_param`` SymEngine expressions
+            (an empty inner list when the system has no control parameters).
+        """
+        import symengine
+
+        from tsdynamics.engine.symbols import state_time_symbols
+
+        y, t_sym = state_time_symbols()
+
+        struct_vals = self._structural_vals()
+        control_names = list(self._control_params())
+        control_syms = {k: symengine.Symbol(k) for k in control_names}
+        f_sym = list(type(self)._equations(y, t_sym, **{**struct_vals, **control_syms}))
+        if len(f_sym) != self.dim:
+            raise ValueError(f"_equations must return {self.dim} expressions, got {len(f_sym)}")
+        return [
+            [
+                _resolve_derivative_nodes(symengine.sympify(fi).diff(control_syms[k]))
+                for k in control_names
+            ]
+            for fi in f_sym
+        ]
+
+    def hessian_sym(self) -> list[list[list[Any]]]:
+        """Return the symbolic state Hessian ``∂²f_k/∂y_i∂y_j`` of ``_equations``.
+
+        The second state derivative of each RHS component — the exact symbolic
+        tensor normal-form coefficients build on (stream E-SENS).  ``abs``/``sign``
+        derivatives are resolved a.e. on each differentiation.
+
+        Returns
+        -------
+        list of ``dim`` blocks, each a ``dim × dim`` list-of-lists of SymEngine
+            expressions: entry ``[k][i][j]`` is ``∂²f_k / ∂y_i ∂y_j``.
+        """
+        import symengine
+
+        from tsdynamics.engine.symbols import state_time_symbols
+
+        y, t_sym = state_time_symbols()
+
+        struct_vals = self._structural_vals()
+        control_syms = {k: symengine.Symbol(k) for k in self._control_params()}
+        f_sym = list(type(self)._equations(y, t_sym, **{**struct_vals, **control_syms}))
+        if len(f_sym) != self.dim:
+            raise ValueError(f"_equations must return {self.dim} expressions, got {len(f_sym)}")
+        return [
+            [
+                [
+                    _resolve_derivative_nodes(
+                        _resolve_derivative_nodes(symengine.sympify(fk).diff(y(i))).diff(y(j))
+                    )
+                    for j in range(self.dim)
+                ]
+                for i in range(self.dim)
+            ]
+            for fk in f_sym
+        ]
+
+    def _build_sensitivity_lambdified(self) -> tuple[Any, Any, list[str]]:
+        """Build (and cache) Lambdified ``∂f/∂p`` and ``∂²f/∂u²`` evaluators.
+
+        Both take a flat argument vector ``[y_0..y_{dim-1}, t, *control_params]``
+        — the same convention as :meth:`_build_lambdified`.  Cached per
+        (class, dim, structural-hash); ``param_jac_fn`` is ``None`` for a system
+        with no control parameters (an empty ``∂f/∂p``).
+        """
+        key = self._cache_key()
+        cached = type(self)._sens_lambdified.get(key)
+        if cached is not None:
+            return cached
+
+        import symengine
+
+        from tsdynamics.engine.symbols import state_time_symbols
+
+        y, t_sym = state_time_symbols()
+
+        struct_vals = self._structural_vals()
+        control_names = list(self._control_params())
+        control_syms = {k: symengine.Symbol(k) for k in control_names}
+        f_sym = [
+            symengine.sympify(e)
+            for e in type(self)._equations(y, t_sym, **{**struct_vals, **control_syms})
+        ]
+
+        y_syms = [symengine.Symbol(f"y_{i}") for i in range(self.dim)]
+        subs = {y(i): y_syms[i] for i in range(self.dim)}
+        args = [*y_syms, t_sym, *(control_syms[k] for k in control_names)]
+
+        pjac_exprs = [
+            _resolve_derivative_nodes(fi.diff(control_syms[k])).subs(subs)
+            for fi in f_sym
+            for k in control_names
+        ]
+        param_jac_fn = symengine.Lambdify(args, pjac_exprs) if pjac_exprs else None
+
+        hess_exprs = [
+            _resolve_derivative_nodes(_resolve_derivative_nodes(fk.diff(y(i))).diff(y(j))).subs(
+                subs
+            )
+            for fk in f_sym
+            for i in range(self.dim)
+            for j in range(self.dim)
+        ]
+        hessian_fn = symengine.Lambdify(args, hess_exprs)
+
+        entry = (param_jac_fn, hessian_fn, control_names)
+        type(self)._sens_lambdified[key] = entry
+        return entry
+
+    def parameter_jacobian(self, u: Any, t: float = 0.0) -> np.ndarray:
+        """Evaluate the exact parameter Jacobian ``∂f/∂p`` numerically at state ``u``.
+
+        The analytic ``∂f_k/∂p_i`` over the control parameters (in
+        ``self._control_params()`` order), evaluated at ``(u, t)`` and the
+        current parameter values — the exact-derivative predictor the
+        continuation track consumes (stream E-SENS).
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+            State at which to evaluate.
+        t : float
+            Time (matters only for non-autonomous systems).
+
+        Returns
+        -------
+        ndarray, shape (dim, n_param)
+            ``∂f_k/∂p_i``; shape ``(dim, 0)`` for a system with no control
+            parameters.
+        """
+        param_jac_fn, _, control_names = self._build_sensitivity_lambdified()
+        n_param = len(control_names)
+        if n_param == 0:
+            return np.zeros((self.dim, 0), dtype=float)
+        vals = [float(self.params[k]) for k in control_names]
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+        return np.asarray(param_jac_fn(arg), dtype=float).reshape(self.dim, n_param)
+
+    def hessian(self, u: Any, t: float = 0.0) -> np.ndarray:
+        """Evaluate the state Hessian ``∂²f/∂u²`` numerically at state ``u``.
+
+        The exact second state derivative tensor ``∂²f_k/∂u_i∂u_j``, evaluated at
+        ``(u, t)`` and the current parameter values (stream E-SENS).
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+            State at which to evaluate.
+        t : float
+            Time (matters only for non-autonomous systems).
+
+        Returns
+        -------
+        ndarray, shape (dim, dim, dim)
+            ``H[k, i, j] = ∂²f_k / ∂u_i ∂u_j`` (symmetric in ``i, j``).
+        """
+        _, hessian_fn, control_names = self._build_sensitivity_lambdified()
+        vals = [float(self.params[k]) for k in control_names]
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
+        return np.asarray(hessian_fn(arg), dtype=float).reshape(self.dim, self.dim, self.dim)
+
+    def sensitivity(
+        self,
+        final_time: float = 100.0,
+        dt: float = 0.02,
+        *,
+        t0: float = 0.0,
+        ic: Any | None = None,
+        method: str | None = None,
+        rtol: float = 1e-8,
+        atol: float = 1e-10,
+        backend: str | None = None,
+    ) -> Any:
+        """Integrate the forward parameter sensitivity ``∂u(t)/∂p`` in one engine pass.
+
+        Solves the extended ODE (base state ⊕ the ``dim × n_param`` sensitivity
+        columns) on the engine, so the sensitivity rides the *same* integration
+        as the state with exact analytic ``∂f/∂u`` and ``∂f/∂p`` — no finite
+        differencing of the flow (stream E-SENS).
+
+        Parameters
+        ----------
+        final_time : float
+            End of integration window. Default 100.0.
+        dt : float
+            Output sampling interval (the internal stepper is adaptive).
+        t0 : float
+            Start time. Default 0.0.
+        ic : array-like, optional
+            Initial state at ``t0`` (falls back to ``self.ic``, then random).
+            The sensitivity starts at ``S(t0) = 0`` (a parameter-independent IC).
+        method : str, optional
+            Integrator name (defaults to ``_default_method``). Use an explicit
+            high-order method (``"dop853"``) with tight tolerances for the
+            sharpest sensitivities.
+        rtol, atol : float
+            Solver tolerances (default 1e-8 / 1e-10).
+        backend : {"interp", "jit", "reference"}, optional
+            Where the augmented ODE is integrated (defaults to
+            ``_default_backend``).
+
+        Returns
+        -------
+        Sensitivity
+            Carries ``t``, the base trajectory ``y`` ``(n_t, dim)``, and the
+            sensitivities ``S`` ``(n_t, dim, n_param)``; index it by parameter
+            name (``sens['rho']`` → ``(n_t, dim)``).
+        """
+        from tsdynamics.engine.sensitivity import forward_sensitivity
+
+        return forward_sensitivity(
+            self,
+            final_time=final_time,
+            dt=dt,
+            t0=t0,
+            ic=ic,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            backend=backend if backend is not None else self._default_backend,
+        )
 
     # ------------------------------------------------------------------ #
     # Integration

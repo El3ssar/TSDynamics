@@ -61,6 +61,7 @@ __all__ = [
     "TapeCompileError",
     "eval_tape",
     "eval_tape_jac",
+    "eval_tape_param_jac",
     "lower_dde",
     "lower_expressions",
     "lower_map",
@@ -245,6 +246,17 @@ class Tape:
         Parameter names, in the order the runtime parameter vector must follow
         (``params[control_names[i]]`` feeds ``Param`` leaf ``i``).  Empty when
         all parameters were folded to constants.
+    param_jac_outputs : ndarray of int32, shape (dim*n_param,) or (0,)
+        Registers of the row-major ``dim × n_param`` parameter Jacobian
+        ``∂f_k/∂p_i`` (``param_jac_outputs[k*n_param + i]``), or empty when no
+        parameter Jacobian was emitted (stream E-SENS).  This is a *Python-side*
+        convenience (like :attr:`control_names`): it shares the register file and
+        common subexpressions with the RHS, but is **not** part of the frozen FFI
+        wire payload — :meth:`to_arrays` never emits it, so the Rust evaluators
+        (which only know ``outputs`` / ``jac_outputs``) are untouched.  Evaluate
+        it through the engine by re-exposing it as an RHS-shaped tape's outputs
+        (:meth:`with_param_jac_as_outputs`), or in pure Python via
+        :func:`eval_tape_param_jac`.
     """
 
     ops: np.ndarray
@@ -256,6 +268,7 @@ class Tape:
     n_param: int
     jac_outputs: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     control_names: list[str] = field(default_factory=list)
+    param_jac_outputs: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
 
     # -- derived sizes ------------------------------------------------------
 
@@ -273,6 +286,61 @@ class Tape:
     def has_jacobian(self) -> bool:
         """Whether the tape carries a Jacobian (``jac_outputs`` populated)."""
         return bool(self.jac_outputs.size)
+
+    @property
+    def has_param_jacobian(self) -> bool:
+        """Whether the tape carries a parameter Jacobian (``param_jac_outputs`` populated)."""
+        return bool(self.param_jac_outputs.size)
+
+    @property
+    def n_param_jac(self) -> int:
+        """Number of parameter columns the parameter Jacobian spans (``0`` if none)."""
+        return self.param_jac_outputs.size // self.dim if self.dim else 0
+
+    def with_param_jac_as_outputs(self) -> Tape:
+        """Return an RHS-shaped tape whose ``outputs`` are the flattened ``∂f/∂p``.
+
+        The parameter Jacobian lives in this tape's register file but, like
+        :attr:`jac_outputs`, is not part of the frozen FFI wire payload — so the
+        compiled engine cannot read :attr:`param_jac_outputs` directly.  This
+        helper re-exposes those same registers as an ordinary tape's
+        ``outputs`` (row-major ``dim × n_param``, length ``dim·n_param``), sharing
+        the original ops/operands/immediates with no recompute.  The result is a
+        plain RHS tape the engine evaluates through the existing ``eval_rhs`` FFI
+        — so exact ``∂f/∂p`` *round-trips through* :mod:`tsdynamics._rust` (the
+        interpreter or the JIT) with no Rust-side change.
+
+        Returns
+        -------
+        Tape
+            A tape with ``outputs = self.param_jac_outputs`` and no Jacobians.
+
+        Raises
+        ------
+        TapeCompileError
+            If this tape carries no parameter Jacobian.
+        """
+        if not self.has_param_jacobian:
+            raise TapeCompileError(
+                "with_param_jac_as_outputs requires a tape compiled with a parameter "
+                "Jacobian (lower_expressions(..., param_jacobian=True))"
+            )
+        out = Tape(
+            ops=self.ops,
+            a=self.a,
+            b=self.b,
+            imm=self.imm,
+            outputs=np.ascontiguousarray(self.param_jac_outputs, dtype=np.int32),
+            n_state=self.n_state,
+            n_param=self.n_param,
+            control_names=list(self.control_names),
+        )
+        # Self-defend at the FFI boundary: every tape leaving this module is
+        # validated (matching lower_expressions), so a parent whose
+        # param_jac_outputs skipped validation cannot hand a malformed RHS tape to
+        # the engine.
+        out.validate()
+        return out
 
     # -- FFI / serialization ------------------------------------------------
 
@@ -354,6 +422,17 @@ class Tape:
             if not (0 <= reg < n):
                 raise TapeCompileError(f"jac_outputs[{k}] = {reg} is out of range for n_reg={n}")
 
+        if self.param_jac_outputs.size and self.param_jac_outputs.size != dim * self.n_param:
+            raise TapeCompileError(
+                f"param_jac_outputs length {self.param_jac_outputs.size} is not "
+                f"dim*n_param = {dim}*{self.n_param}"
+            )
+        for k, reg in enumerate(self.param_jac_outputs):
+            if not (0 <= reg < n):
+                raise TapeCompileError(
+                    f"param_jac_outputs[{k}] = {reg} is out of range for n_reg={n}"
+                )
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Tape):
             return NotImplemented
@@ -367,6 +446,7 @@ class Tape:
             and np.array_equal(self.imm, other.imm)
             and np.array_equal(self.outputs, other.outputs)
             and np.array_equal(self.jac_outputs, other.jac_outputs)
+            and np.array_equal(self.param_jac_outputs, other.param_jac_outputs)
         )
 
     __hash__ = None  # type: ignore[assignment]  # mutable arrays → unhashable
@@ -594,6 +674,7 @@ def lower_expressions(
     param_syms: Sequence[Any] = (),
     time_sym: Any = None,
     jacobian: bool = False,
+    param_jacobian: bool = False,
     control_names: Sequence[str] | None = None,
 ) -> Tape:
     """Lower a list of symbolic expressions to a validated :class:`Tape`.
@@ -618,6 +699,13 @@ def lower_expressions(
         If true, also emit the row-major ``dim × dim`` Jacobian
         ``∂exprs_k/∂state_syms_j`` into the same tape (sharing subexpressions
         with the RHS).  ``abs``/``sign`` derivatives are resolved a.e.
+    param_jacobian : bool, default False
+        If true, also emit the row-major ``dim × n_param`` parameter Jacobian
+        ``∂exprs_k/∂param_syms_i`` into the tape's :attr:`Tape.param_jac_outputs`
+        (sharing subexpressions with the RHS), the exact-symbolic ``∂f/∂p`` the
+        continuation and gradient-fitting tracks build on (stream E-SENS).
+        ``abs``/``sign`` derivatives are resolved a.e., exactly as for the state
+        Jacobian.  Empty ``param_syms`` yields an empty parameter Jacobian.
     control_names : sequence of str, optional
         Parameter names in ``param_syms`` order; attached to the tape so the
         runtime parameter vector can be built by name.
@@ -660,6 +748,15 @@ def lower_expressions(
             for s in state_syms:
                 jac_outputs.append(em.emit(_resolve_derivative_nodes(e.diff(s))._sympy_()))
 
+    param_jac_outputs: list[int] = []
+    if param_jacobian:
+        # Row-major dim×n_param: ∂f_k/∂p_i with abs/sign derivatives resolved a.e.
+        # (the exact-symbolic engine moat the FD-based competition cannot match;
+        # the one-loop analogue of the state-Jacobian emit above, over param_syms).
+        for e in rhs:
+            for s in param_syms:
+                param_jac_outputs.append(em.emit(_resolve_derivative_nodes(e.diff(s))._sympy_()))
+
     tape = Tape(
         ops=np.asarray(em.ops, dtype=np.int32),
         a=np.asarray(em.a, dtype=np.int32),
@@ -670,6 +767,7 @@ def lower_expressions(
         n_param=len(param_syms),
         jac_outputs=np.asarray(jac_outputs, dtype=np.int32),
         control_names=list(control_names) if control_names is not None else [],
+        param_jac_outputs=np.asarray(param_jac_outputs, dtype=np.int32),
     )
     tape.validate()
     return tape
@@ -685,14 +783,18 @@ def _sym_name(sym: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
+def lower_ode(
+    system: Any, *, with_jacobian: bool = False, with_param_jacobian: bool = False
+) -> Tape:
     """Lower a :class:`~tsdynamics.families.ContinuousSystem` RHS to a tape.
 
     Structural parameters are folded to constants; control parameters become
     ``Param`` inputs in ``system._control_params()`` order (recorded on the
     tape as ``control_names``).  With ``with_jacobian=True`` the analytic
     Jacobian ``∂f_k/∂u_j`` is emitted into the same tape — the stiff/implicit
-    solver family consumes it.
+    solver family consumes it.  With ``with_param_jacobian=True`` the analytic
+    parameter Jacobian ``∂f_k/∂p_i`` is emitted into
+    :attr:`Tape.param_jac_outputs` (stream E-SENS).
 
     Parameters
     ----------
@@ -700,7 +802,10 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
         The system instance (its current structural-parameter values are baked
         in; control-parameter *values* are not — only their layout).
     with_jacobian : bool, default False
-        Emit the analytic Jacobian alongside the RHS.
+        Emit the analytic state Jacobian ``∂f_k/∂u_j`` alongside the RHS.
+    with_param_jacobian : bool, default False
+        Emit the analytic parameter Jacobian ``∂f_k/∂p_i`` (over the control
+        parameters) into the tape's :attr:`Tape.param_jac_outputs`.
 
     Returns
     -------
@@ -733,6 +838,7 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
         param_syms=[control_syms[k] for k in control_names],
         time_sym=t_canon,
         jacobian=with_jacobian,
+        param_jacobian=with_param_jacobian,
         control_names=control_names,
     )
 
@@ -1403,3 +1509,33 @@ def eval_tape_jac(tape: Tape, u: Any, p: Any = (), t: float = 0.0) -> tuple[np.n
     deriv = regs[tape.outputs]
     jac = regs[tape.jac_outputs].reshape(dim, dim)
     return deriv, jac
+
+
+def eval_tape_param_jac(
+    tape: Tape, u: Any, p: Any = (), t: float = 0.0
+) -> tuple[np.ndarray, np.ndarray]:
+    """Evaluate ``(du/dt, ∂f/∂p)`` in one tape pass via the reference evaluator.
+
+    Requires a tape carrying ``param_jac_outputs`` (see
+    :attr:`Tape.has_param_jacobian`), produced by
+    ``lower_expressions(..., param_jacobian=True)`` (stream E-SENS).  The
+    parameter Jacobian is the exact symbolic ``∂f_k/∂p_i`` — never a finite
+    difference.
+
+    Returns
+    -------
+    (ndarray, ndarray)
+        The derivative ``(dim,)`` and the row-major ``(dim, n_param)`` parameter
+        Jacobian ``∂f_k/∂p_i``.
+
+    Raises
+    ------
+    ValueError
+        If the tape carries no parameter Jacobian.
+    """
+    if not tape.has_param_jacobian:
+        raise ValueError("eval_tape_param_jac requires a tape compiled with a parameter Jacobian")
+    regs = run_tape(tape, u, p, t)
+    deriv = regs[tape.outputs]
+    param_jac = regs[tape.param_jac_outputs].reshape(tape.dim, tape.n_param)
+    return deriv, param_jac

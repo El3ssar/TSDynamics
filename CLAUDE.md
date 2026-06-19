@@ -55,9 +55,10 @@ src/tsdynamics/
 │   └── stochastic.py         # StochasticSystem — diagonal-Itô SDEs (_drift+_diffusion; EM/Milstein)
 ├── engine/                   # Rust-facing engine layer; tsdynamics._rust is the sole backend
 │   ├── symbols.py            # engine-native symbolic frontend: state_time_symbols() → (Function("y"), Symbol("t"))
-│   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator
+│   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator (+ param_jacobian ∂f/∂p mode, E-SENS)
 │   ├── problem.py            # per-family Problem builders bundling a tape + runtime context
-│   └── run.py                # backend select (interp|jit|reference) + integrate/ensemble + solver resolve/with_jacobian wiring
+│   ├── run.py                # backend select (interp|jit|reference) + integrate/ensemble + solver resolve/with_jacobian wiring
+│   └── sensitivity.py        # forward parameter sensitivity ∂u(t)/∂p via the augmented (state ⊕ sensitivity columns) engine pass (E-SENS)
 ├── solvers/                  # F2 registry mechanism + C-SOLV in-tree specs (explicit/implicit/stochastic) + method= resolution/aliases + auto-stiffness (select.py)
 ├── derived/
 │   ├── _base.py              # DerivedSystem (wrapper base, with_params rebuilds)
@@ -276,6 +277,21 @@ All three families + all derived wrappers implement:
   `run.integrate` resolves `method=` through the solver registry and lowers the
   tape `with_jacobian=True` for the implicit stiff kernels (`bdf` /`rosenbrock` /
   `trbdf2`); stiff catalogue systems declare `_default_method = "bdf"`.
+- **Exact symbolic sensitivity (stream E-SENS):** the engine moat for the
+  bifurcation/continuation (B-track) and gradient-fitting (K-track) work.
+  `parameter_jacobian_sym()` / `parameter_jacobian(u, t)` give the analytic
+  `∂f/∂p` over the **control** parameters (cached `Lambdify`, mirrors `jacobian`);
+  `hessian_sym()` / `hessian(u, t)` give the state Hessian `∂²f/∂u²`; all a.e.
+  for `abs`/`sign`. `sensitivity(...)` returns a `Sensitivity` (`engine.sensitivity`)
+  carrying the base trajectory and `S[n,k,i]=∂u_k(t_n)/∂p_i` — integrated as the
+  **extended** ODE (state ⊕ the `dim×n_param` sensitivity columns,
+  `build_sensitivity_tape`) in **one engine pass** through `run.integrate` (the
+  same augmented-tape pattern as the Lyapunov variational core; no new Rust/FFI).
+  The compile layer's `lower_expressions(..., param_jacobian=True)` /
+  `lower_ode(with_param_jacobian=)` emit `∂f/∂p` into `Tape.param_jac_outputs`
+  (Python-side only, like `control_names` — **not** in the FFI wire payload;
+  `Tape.with_param_jac_as_outputs()` re-exposes it as RHS outputs so exact `∂f/∂p`
+  round-trips through `_rust`). `interp`==`jit` bit-for-bit.
 
 ### `DiscreteMap` extras
 

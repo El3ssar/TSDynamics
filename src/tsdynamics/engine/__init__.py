@@ -19,9 +19,12 @@ The E6 seam (symbolic definitions → engine):
   ``reference``) and the ``integrate`` / ``ensemble`` entry points.
 - :mod:`~tsdynamics.engine.symbols` — the engine-native ``y`` / ``t`` symbolic
   state/time provider that ``_equations`` is written against.
+- :mod:`~tsdynamics.engine.sensitivity` — forward parameter sensitivity
+  ``∂u(t)/∂p`` via the extended-tape (state ⊕ sensitivity columns) engine pass
+  (stream E-SENS).
 
 The Rust engine is the sole integration backend (the v2 JiTCODE / JiTCDDE /
 Numba / diffsol backends were retired at milestone M3).
 """
 
-__all__ = ["compile", "problem", "run", "symbols"]
+__all__ = ["compile", "problem", "run", "sensitivity", "symbols"]
