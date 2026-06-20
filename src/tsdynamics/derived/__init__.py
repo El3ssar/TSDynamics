@@ -31,3 +31,8 @@ __all__ = [
     "TangentSystem",
     "WrappedSystem",
 ]
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -654,3 +654,8 @@ def _resolve_seed(seed: int | None) -> int:
     if seed is not None:
         return int(seed) & _U64
     return int(np.random.randint(0, 1 << 63, dtype=np.int64))
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

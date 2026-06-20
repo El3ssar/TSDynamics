@@ -91,3 +91,8 @@ for _name, _fn in {
     "lz76_entropy": lz76_entropy,
 }.items():
     _registry.analyses.register(_name, _fn, needs="series")
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

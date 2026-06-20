@@ -161,3 +161,8 @@ def _embed_single(series: np.ndarray, m: int, tau: int) -> np.ndarray:
         start = j * tau
         out[:, j] = series[start : start + rows]
     return out
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

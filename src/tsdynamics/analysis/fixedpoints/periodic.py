@@ -600,3 +600,8 @@ def _fft_period_lag(y: np.ndarray) -> float:
     if k == 0:
         raise ValueError("estimate_period: no dominant frequency found.")
     return float(n / k)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -402,3 +402,8 @@ def _params_vec(system: Any, tape: Tape) -> np.ndarray:
     if system is None or not tape.control_names:
         return np.empty(0, dtype=np.float64)
     return np.asarray([float(system.params[k]) for k in tape.control_names], dtype=np.float64)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

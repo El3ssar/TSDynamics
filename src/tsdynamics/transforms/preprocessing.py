@@ -187,3 +187,8 @@ def bandpass(x: Any, low: float, high: float, **kwargs: Any) -> Any:
 def bandstop(x: Any, low: float, high: float, **kwargs: Any) -> Any:
     """Zero-phase Butterworth band-stop filter (see :func:`butter_filter`)."""
     return butter_filter(x, (low, high), btype="bandstop", **kwargs)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

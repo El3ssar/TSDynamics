@@ -103,3 +103,8 @@ def _section_from_data(traj: Trajectory, plane: tuple, direction: int) -> Trajec
         "direction": direction,
     }
     return Trajectory(t=times, y=points, system=traj.system, meta=meta)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

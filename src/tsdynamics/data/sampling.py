@@ -268,3 +268,8 @@ def _as_points(x: Any) -> np.ndarray:
     if arr.ndim != 2:
         raise ValueError(f"expected a 2-D point set, got shape {arr.shape}")
     return arr
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

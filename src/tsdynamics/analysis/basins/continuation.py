@@ -270,3 +270,8 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> lis
             )
     events.sort(key=lambda e: (e["value"], e["attractor"]))
     return events
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

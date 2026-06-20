@@ -21,3 +21,12 @@ del _name
 _SYSTEM_NAMES: tuple[str, ...] = (*continuous.__all__, *discrete.__all__)
 
 __all__ = ["continuous", "discrete", *_SYSTEM_NAMES]
+
+
+def __dir__() -> list[str]:
+    """Expose the catalogue surface (``__all__``) to ``dir()`` / autocomplete.
+
+    That is the two category subpackages plus every flat-re-exported model class;
+    private scan helpers (``_SYSTEM_NAMES``) stay hidden.
+    """
+    return sorted(__all__)

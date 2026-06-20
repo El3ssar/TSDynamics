@@ -90,3 +90,8 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
 # fill the registry today; plugin failures are isolated inside
 # `register_entry_points` (warn-and-skip), so a broken backend never breaks import.
 discover_plugins()
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -343,3 +343,8 @@ def _local_extrema(series: Any, times: Any | None, kind: str) -> tuple[np.ndarra
         spacing = np.where(delta >= 0.0, t[idx + 1] - t[idx], t[idx] - t[idx - 1])
         peak_t = t[idx] + delta * spacing
     return peak, peak_t
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

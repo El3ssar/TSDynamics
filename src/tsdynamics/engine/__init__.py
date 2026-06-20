@@ -24,4 +24,14 @@ The Rust engine is the sole integration backend (the v2 JiTCODE / JiTCDDE /
 Numba / diffsol backends were retired at milestone M3).
 """
 
+# Bind the four seam submodules onto the package so the advertised ``__all__``
+# surface actually resolves (``tsdynamics.engine.run`` etc.) without the caller
+# having to import each one separately.
+from . import compile, problem, run, symbols  # noqa: E402, F401
+
 __all__ = ["compile", "problem", "run", "symbols"]
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

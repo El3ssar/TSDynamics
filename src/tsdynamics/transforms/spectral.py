@@ -246,3 +246,8 @@ def dominant_frequency(
         psd = psd[1:]
     peak = freqs[np.argmax(psd, axis=0)]
     return float(peak) if np.ndim(peak) == 0 else peak
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

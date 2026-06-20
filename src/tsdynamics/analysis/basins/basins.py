@@ -353,3 +353,8 @@ def basin_fractions(
     fractions = {k: c / n for k, c in merged_counts.items()}
     attractors = mapper.attractor_set(diverged=diverged, seeds=n, merge=merge)
     return BasinFractions(fractions=fractions, diverged=diverged / n, n=n, attractors=attractors)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -177,6 +177,7 @@ __all__ = [
     "correlation_dimension",
     "correlation_sum",
     "dimension_spectrum",
+    "discover_plugins",
     "dispersion_entropy",
     "embed",
     "embedding_dimension",
@@ -250,3 +251,13 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
 # analyses register themselves from their own subpackages (the analysis streams);
 # plugin failures are isolated inside `register_entry_points`.
 discover_plugins()
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
+
+    The capability subpackages (``basins``, ``chaos``, …) and plugin-wiring
+    helpers are re-exported flat or used internally; they stay importable but are
+    kept off the tab-completion surface so only the public quantifiers show.
+    """
+    return sorted(__all__)

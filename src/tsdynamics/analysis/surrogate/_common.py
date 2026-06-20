@@ -196,3 +196,8 @@ def _gaussian_significance(t_data: float, t_surr: np.ndarray) -> float:
     if sigma == 0.0 or not math.isfinite(sigma):
         return 0.0
     return float((t_data - t_surr.mean()) / sigma)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

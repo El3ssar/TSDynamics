@@ -173,3 +173,8 @@ def _apply_merge(labels: np.ndarray, merge: dict[int, int]) -> np.ndarray:
         if old != new:
             out[labels == old] = new
     return out
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

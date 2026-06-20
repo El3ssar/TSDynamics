@@ -182,3 +182,27 @@ def register_entry_points(
             registry.register(name, obj)
             newly.append(name)
     return newly
+
+
+__all__ = [
+    # The frozen entry-point group contract (what a plugin author declares against).
+    "SYSTEMS_GROUP",
+    "SOLVERS_GROUP",
+    "ANALYSES_GROUP",
+    "TRANSFORMS_GROUP",
+    "ALL_GROUPS",
+    # The generic discovery / loading primitives the consuming subpackages use.
+    "iter_entry_points",
+    "load_plugins",
+    "import_submodules",
+    "register_entry_points",
+]
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
+
+    Hides the re-exported stdlib imports (``importlib``, ``warnings``, ``Any``, …)
+    and the private ``_RegistryLike`` protocol from the tab-completion surface.
+    """
+    return sorted(__all__)

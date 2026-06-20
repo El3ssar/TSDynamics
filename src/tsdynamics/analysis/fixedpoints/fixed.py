@@ -242,3 +242,8 @@ def _stabilising_matrices(method: str, dim: int, max_c: int | None) -> list[np.n
             stacklevel=3,
         )
     return mats
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

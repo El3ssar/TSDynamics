@@ -160,3 +160,8 @@ def windowed_rqa(
     )
     centers = np.array([s + (window - 1) / 2.0 for s in starts], dtype=float)
     return WindowedRQA(centers=centers, results=results, window=window, step=step)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

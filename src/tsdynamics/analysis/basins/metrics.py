@@ -471,3 +471,8 @@ def resilience(result: BasinsResult, attractor_id: int) -> float:
     idx = np.rint((center - grid.lo) / spacing).astype(int)
     idx = np.clip(idx, 0, np.asarray(grid.shape) - 1)
     return float(edt[tuple(idx)])
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

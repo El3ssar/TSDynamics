@@ -255,3 +255,8 @@ def hjorth_parameters(x: Any) -> dict[str, Any]:
         return dict(zip(keys, triples[0], strict=True))
     cols = np.asarray(triples, dtype=float)  # (channels, 3)
     return {k: cols[:, i] for i, k in enumerate(keys)}
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -129,3 +129,8 @@ class ProjectedSystem(DerivedSystem):
         # so ``traj["x"]`` resolves to the right column and an unknown name raises
         # KeyError rather than silently mislabelling or IndexError-ing.
         return Trajectory(traj.t, traj.y[:, list(self.components)], self, meta=meta)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

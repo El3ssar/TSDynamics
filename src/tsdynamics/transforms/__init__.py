@@ -131,3 +131,8 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
 # isolated inside `register_entry_points`.
 _register_intree()
 discover_plugins()
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

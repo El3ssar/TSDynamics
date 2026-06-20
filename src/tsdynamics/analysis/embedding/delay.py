@@ -227,3 +227,8 @@ def optimal_delay(
         return max(int(acf.size) - 1, 1)  # never crosses → longest lag available
 
     raise ValueError(f"unknown method {method!r}; use 'mi', 'acf', or 'acf_zero'.")
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

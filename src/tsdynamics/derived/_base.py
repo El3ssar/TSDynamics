@@ -95,3 +95,8 @@ class DerivedSystem:
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.system!r})"
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

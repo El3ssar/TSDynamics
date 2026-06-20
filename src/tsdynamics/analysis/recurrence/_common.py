@@ -196,3 +196,8 @@ def _threshold_for_rate(
     frac = rate * n * n / (2.0 * total_valid)
     frac = float(np.clip(frac, 0.0, 1.0))
     return float(np.quantile(d, frac))
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

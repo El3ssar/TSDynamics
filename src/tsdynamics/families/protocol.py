@@ -93,3 +93,8 @@ class System(Protocol):
             or map should prefer ``run``.
         """
         ...
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

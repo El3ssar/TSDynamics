@@ -336,3 +336,8 @@ def embedding_dimension(
             data, delay=delay, max_dim=max_dim, component=component, **kwargs
         )
     raise ValueError(f"unknown method {method!r}; use 'cao' or 'fnn'.")
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)
