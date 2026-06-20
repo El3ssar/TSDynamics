@@ -206,6 +206,7 @@ nav:
   - Project:
       - project/index.md
       - Contributing: project/contributing.md
+      - Naming glossary: contributing/glossary.md
       - Citation: project/citation.md
       - Changelog: project/changelog.md
 
