@@ -22,18 +22,48 @@ def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:
     sample would otherwise fall short of it — so the final time is always
     sampled exactly, regardless of whether ``dt`` divides ``tf - t0``.
 
+    This is the one chokepoint every flow family (ODE / DDE / SDE) and the
+    engine run layer build their grid through, so it is also where the two
+    silent-footgun horizons are caught early with a domain message: a
+    non-positive ``dt`` (which used to surface as a bare ``ZeroDivisionError``
+    from this helper) and a window that does not run forward in time (which used
+    to yield a one-sample garbage trajectory).
+
     Parameters
     ----------
     t0, tf : float
         Start and end of the window.
     dt : float
-        Output sampling interval.
+        Output sampling interval.  Must be strictly positive.
 
     Returns
     -------
     ndarray
         The output times, with ``t_arr[0] == t0`` and ``t_arr[-1] == tf``.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If ``dt`` is not strictly positive, or if ``tf`` is not strictly after
+        ``t0`` (an empty / backwards window).  Both subclass :class:`ValueError`,
+        so ``except ValueError`` still catches them.
+
+    Examples
+    --------
+    >>> make_output_grid(0.0, 1.0, 0.5)
+    array([0. , 0.5, 1. ])
     """
+    from tsdynamics.errors import invalid_value
+
+    if not dt > 0:
+        raise invalid_value("dt", dt, rule="must be > 0 (the output sampling interval)")
+    if not tf > t0:
+        raise invalid_value(
+            "final_time",
+            tf,
+            rule=f"must run forward in time (be > the start time {t0!r})",
+            hint="check the sign and that final_time exceeds t0",
+        )
     t_arr = np.arange(t0, tf, dt)
     if t_arr.size == 0 or t_arr[-1] < tf - 1e-12:
         t_arr = np.append(t_arr, tf)

@@ -296,7 +296,9 @@ class SystemBase:
         if params:
             unknown = set(params) - set(defaults)
             if unknown:
-                raise ValueError(
+                from tsdynamics.errors import InvalidParameterError
+
+                raise InvalidParameterError(
                     f"{type(self).__name__}: unknown parameter(s) "
                     f"{sorted(unknown)}. Declared: {sorted(defaults)}"
                 )
@@ -332,7 +334,33 @@ class SystemBase:
                 params[name] = value
                 return
         except AttributeError:
-            pass
+            # No ParamSet yet (mid-construction) — let the assignment through.
+            object.__setattr__(self, name, value)
+            return
+
+        # A public name that is neither a declared parameter, an already-set
+        # instance attribute, nor a class-level attribute/method is almost
+        # always a typo for a parameter (``lor.sigmaa = 99`` for ``sigma``).
+        # ``with_params(sigmaa=99)`` already rejects exactly this — so reject it
+        # here too rather than silently storing a stray attribute while the real
+        # parameter stays unchanged.  Private/dunder names (``self._t_now``, the
+        # families' step state) and anything the class already defines pass
+        # straight through.
+        if not name.startswith("_") and name not in self.__dict__ and not hasattr(type(self), name):
+            from tsdynamics.errors import invalid_value
+
+            declared = list(params)
+            raise invalid_value(
+                f"attribute {name!r} on {type(self).__name__}",
+                value,
+                rule=f"is not a declared parameter {declared}",
+                hint=(
+                    f"check the spelling, or set a known parameter "
+                    f"(e.g. {type(self).__name__.lower()}.{declared[0]} = ...)"
+                    if declared
+                    else "this system declares no parameters"
+                ),
+            )
         object.__setattr__(self, name, value)
 
     # --- cloning ---
