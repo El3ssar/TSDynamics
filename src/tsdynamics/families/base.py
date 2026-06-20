@@ -473,3 +473,231 @@ class SystemBase:
     def __repr__(self) -> str:
         params_str = ", ".join(f"{k}={v}" for k, v in self.params.items())
         return f"{type(self).__name__}({params_str})"
+
+    # --- object-side analysis surface (additive convenience) ------------- #
+    #
+    # The canonical analysis surface is the *free functions* in
+    # ``tsdynamics.analysis``.  The accessors below make that toolkit
+    # *discoverable from a system in hand*: pressing ``<TAB>`` on ``sys.``
+    # reveals a handful of grouped topical namespaces (the xarray accessor
+    # pattern) instead of nothing, and each delegates to the matching free
+    # function with the system bound — adding zero behaviour.  All analysis /
+    # derived imports are function-local (here and in ``_accessors.py``) so this
+    # module stays free of import cycles.
+    #
+    # The accessors cache on the instance (so ``sys.lyap is sys.lyap``) via a
+    # small helper that stows the built accessor in an ``_accessor_cache`` dict
+    # set with ``object.__setattr__`` (the family ``__getattr__`` /
+    # ``__setattr__`` route ordinary attribute access through ``params``, so a
+    # plain ``functools.cached_property`` cannot be used).
+
+    def _topical_accessor(self, name: str, factory: Any) -> Any:
+        """Return the cached topical accessor ``name``, building it once."""
+        cache = self.__dict__.get("_accessor_cache")
+        if cache is None:
+            cache = {}
+            object.__setattr__(self, "_accessor_cache", cache)
+        acc = cache.get(name)
+        if acc is None:
+            acc = factory(self)
+            cache[name] = acc
+        return acc
+
+    @property
+    def lyap(self) -> Any:
+        """Lyapunov-exponent estimators bound to this system.
+
+        A cached :class:`~tsdynamics.families._accessors.LyapunovAccessor`
+        exposing ``.spectrum()`` / ``.maximal()`` / ``.from_data()`` — each
+        delegating to :func:`tsdynamics.analysis.lyapunov_spectrum`,
+        :func:`~tsdynamics.analysis.max_lyapunov` and
+        :func:`~tsdynamics.analysis.lyapunov_from_data` with this system bound.
+        """
+        from tsdynamics.families._accessors import LyapunovAccessor
+
+        return self._topical_accessor("lyap", LyapunovAccessor)
+
+    @property
+    def chaos(self) -> Any:
+        """Chaos indicators bound to this system.
+
+        A cached :class:`~tsdynamics.families._accessors.ChaosAccessor` exposing
+        ``.gali()`` / ``.expansion_entropy()`` / ``.zero_one()`` — delegating to
+        :func:`tsdynamics.analysis.gali`,
+        :func:`~tsdynamics.analysis.expansion_entropy` and
+        :func:`~tsdynamics.analysis.zero_one_test`.
+        """
+        from tsdynamics.families._accessors import ChaosAccessor
+
+        return self._topical_accessor("chaos", ChaosAccessor)
+
+    @property
+    def dims(self) -> Any:
+        """Fractal-dimension estimators bound to this system.
+
+        A cached :class:`~tsdynamics.families._accessors.DimensionsAccessor`
+        (``.correlation()`` / ``.generalized()`` / …) delegating to the
+        ``*_dimension`` free functions.  These consume a point set; omitting the
+        ``data`` argument runs the system first (an implicit integration).
+        """
+        from tsdynamics.families._accessors import DimensionsAccessor
+
+        return self._topical_accessor("dims", DimensionsAccessor)
+
+    @property
+    def recurrence(self) -> Any:
+        """Recurrence-quantification estimators bound to this system.
+
+        A cached :class:`~tsdynamics.families._accessors.RecurrenceAccessor`
+        (``.matrix()`` / ``.rqa()`` / ``.windowed()``) delegating to
+        :func:`tsdynamics.analysis.recurrence_matrix`,
+        :func:`~tsdynamics.analysis.rqa` and
+        :func:`~tsdynamics.analysis.windowed_rqa`.
+        """
+        from tsdynamics.families._accessors import RecurrenceAccessor
+
+        return self._topical_accessor("recurrence", RecurrenceAccessor)
+
+    @property
+    def entropy(self) -> Any:
+        """Entropy / complexity estimators bound to this system.
+
+        A cached :class:`~tsdynamics.families._accessors.EntropyAccessor`
+        (``.permutation()`` / ``.sample()`` / …) delegating to the entropy free
+        functions.  These consume a scalar series; omitting ``data`` runs the
+        system first.
+        """
+        from tsdynamics.families._accessors import EntropyAccessor
+
+        return self._topical_accessor("entropy", EntropyAccessor)
+
+    @property
+    def surrogate(self) -> Any:
+        """Surrogate generators + nonlinearity tests bound to this system.
+
+        A cached :class:`~tsdynamics.families._accessors.SurrogateAccessor`
+        (``.test()`` / ``.generate()`` / …) delegating to
+        :func:`tsdynamics.analysis.surrogate_test`,
+        :func:`~tsdynamics.analysis.surrogates` and the surrogate statistics.
+        """
+        from tsdynamics.families._accessors import SurrogateAccessor
+
+        return self._topical_accessor("surrogate", SurrogateAccessor)
+
+    # --- first-class analysis / derived verbs (additive convenience) ----- #
+
+    def fixed_points(self, **kwargs: Any) -> Any:
+        """Find fixed points / equilibria of this system.
+
+        Delegates to :func:`tsdynamics.analysis.fixed_points` with this system
+        bound — returns the same list of
+        :class:`~tsdynamics.analysis.FixedPoint`.
+        """
+        from tsdynamics.analysis import fixed_points
+
+        return fixed_points(self, **kwargs)
+
+    def poincare(
+        self,
+        section: Any = None,
+        at: float = 0.0,
+        *,
+        plane: tuple | None = None,
+        direction: int = +1,
+        **kwargs: Any,
+    ) -> Any:
+        """Build a :class:`~tsdynamics.derived.PoincareMap` of this flow.
+
+        The friendly ``section=`` (a component index or name) + ``at=`` (the
+        crossing value) spelling is sugar over the wrapper's ``plane`` tuple; an
+        explicit ``plane=(normal, offset)`` may be passed instead for an
+        arbitrary-normal plane.  Calling ``.run(...)`` (or ``.trajectory(...)``)
+        on the returned map collects crossings — the returned object is exactly
+        ``PoincareMap(self, plane, direction=...)``.
+
+        Parameters
+        ----------
+        section : int or str, optional
+            State component whose level set defines the section.  A string is
+            resolved against the system's ``variables``.  Ignored when an
+            explicit ``plane`` is given.
+        at : float, default 0.0
+            The crossing value for ``section`` (the plane offset).
+        plane : tuple, optional
+            The raw ``(component_index, value)`` or ``(normal, offset)`` tuple
+            passed straight to :class:`~tsdynamics.derived.PoincareMap`.  Takes
+            precedence over ``section`` / ``at``.
+        direction : int, default +1
+            Crossing direction (sign).
+        **kwargs
+            Forwarded to :class:`~tsdynamics.derived.PoincareMap` (``dt``,
+            ``max_time``).
+        """
+        from tsdynamics.derived import PoincareMap
+
+        if plane is None:
+            if section is None:
+                raise ValueError(
+                    "poincare() needs either `section=` (with `at=`) or an explicit `plane=`."
+                )
+            comp = section
+            if isinstance(comp, str):
+                names = getattr(type(self), "variables", None)
+                if names is None:
+                    raise ValueError(
+                        f"{type(self).__name__} declares no `variables`; "
+                        f"pass an integer `section=` (component index)."
+                    )
+                comp = names.index(comp)
+            plane = (int(comp), float(at))
+        return PoincareMap(self, plane, direction=direction, **kwargs)
+
+    def stroboscope(self, period: float, **kwargs: Any) -> Any:
+        """Build a :class:`~tsdynamics.derived.StroboscopicMap` of this forced flow.
+
+        ``period`` must be given explicitly (inferring it from a drive frequency
+        is deferred to a later stream).  Equivalent to
+        ``StroboscopicMap(self, period)``.
+        """
+        from tsdynamics.derived import StroboscopicMap
+
+        return StroboscopicMap(self, period, **kwargs)
+
+    def tangent(self, k: int | None = None, **kwargs: Any) -> Any:
+        """Build a :class:`~tsdynamics.derived.TangentSystem` (state plus ``k`` deviation vectors).
+
+        Equivalent to ``TangentSystem(self, k, ...)`` — the Lyapunov engine.
+        """
+        from tsdynamics.derived import TangentSystem
+
+        return TangentSystem(self, k, **kwargs)
+
+    def project(self, *components: Any, **kwargs: Any) -> Any:
+        """Build a :class:`~tsdynamics.derived.ProjectedSystem` onto ``components``.
+
+        Accepts component indices or names (resolved against ``variables``), as
+        positional arguments (``self.project("x", "z")``) or a single sequence
+        (``self.project(["x", "z"])``).  Equivalent to
+        ``ProjectedSystem(self, components)``.
+        """
+        from tsdynamics.derived import ProjectedSystem
+
+        if len(components) == 1 and not isinstance(components[0], (str, bytes)):
+            first = components[0]
+            try:
+                comps = list(first)
+            except TypeError:
+                comps = [first]
+        else:
+            comps = list(components)
+        return ProjectedSystem(self, comps, **kwargs)
+
+    def ensemble(self, states: Any) -> Any:
+        """Build an :class:`~tsdynamics.derived.EnsembleSystem` over ``states``.
+
+        Equivalent to ``EnsembleSystem(self, states)`` — many copies stepped in
+        lockstep.
+        """
+        from tsdynamics.derived import EnsembleSystem
+
+        return EnsembleSystem(self, states)
