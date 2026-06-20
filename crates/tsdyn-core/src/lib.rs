@@ -592,6 +592,103 @@ fn integrate_sde_ensemble_final<'py>(
 }
 
 // ---------------------------------------------------------------------------
+// Event detection (two tapes: right-hand side + event function g)
+// ---------------------------------------------------------------------------
+
+/// Integrate `[t0, t1]` and return the crossings of the event function
+/// `g(u, t) = 0` in `direction` (`+1` rising / `-1` falling / `0` either),
+/// refined with the engine's O(h⁴) cubic-Hermite dense output.
+///
+/// The two tapes are passed back to back — first the right-hand side `f`, then the
+/// single-output event function `g` (`g`'s `outputs.len() == 1`; it reads the full
+/// state and may declare fewer parameters than the system, reading the leading
+/// slice). `first_step` seeds the solver; with the fixed-step `rk4` it *is* the
+/// detection step, so `method="rk4"`, `first_step=dt` reproduces the Python
+/// `PoincareMap` dt-grid march and its refinement (answer-identical). `terminal`
+/// stops the run at the first crossing. Divergence raises `RuntimeError`.
+///
+/// Returns `(times, states, t_final, u_final, terminated)`: the `(K,)` crossing
+/// times, the `(K, dim)` crossing states, the time and state the run stopped at
+/// (to resume the next span exactly), and whether a terminal event stopped it.
+#[pyfunction]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn integrate_events_dense<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    ops_g: PyReadonlyArray1<i32>,
+    a_g: PyReadonlyArray1<i32>,
+    b_g: PyReadonlyArray1<i32>,
+    imm_g: PyReadonlyArray1<f64>,
+    outputs_g: PyReadonlyArray1<i32>,
+    jac_outputs_g: PyReadonlyArray1<i32>,
+    n_state_g: usize,
+    n_param_g: usize,
+    ic: PyReadonlyArray1<f64>,
+    p: PyReadonlyArray1<f64>,
+    t0: f64,
+    t1: f64,
+    first_step: f64,
+    direction: i32,
+    terminal: bool,
+    method: String,
+    rtol: f64,
+    atol: f64,
+    jit: bool,
+) -> PyResult<(
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray2<f64>>,
+    f64,
+    Bound<'py, PyArray1<f64>>,
+    bool,
+)> {
+    let rhs = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let g = OwnedTape::copy_in(
+        &ops_g,
+        &a_g,
+        &b_g,
+        &imm_g,
+        &outputs_g,
+        &jac_outputs_g,
+        n_state_g,
+        n_param_g,
+    )?;
+    let dim = rhs.dim();
+    let ic = vec_f64("ic", &ic)?;
+    let p = vec_f64("p", &p)?;
+    let (times, states, t_final, u_final, terminated) = py
+        .detach(|| {
+            bridge::integrate_events_dense(
+                rhs.build()?,
+                g.build()?,
+                &ic,
+                &p,
+                t0,
+                t1,
+                first_step,
+                direction,
+                terminal,
+                &method,
+                rtol,
+                atol,
+                jit,
+            )
+        })
+        .map_err(to_py_err)?;
+    let n_hits = times.len();
+    let times = PyArray1::from_vec(py, times);
+    let states = PyArray1::from_vec(py, states).reshape([n_hits, dim])?;
+    let u_final = PyArray1::from_vec(py, u_final);
+    Ok((times, states, t_final, u_final, terminated))
+}
+
+// ---------------------------------------------------------------------------
 // Introspection
 // ---------------------------------------------------------------------------
 
@@ -644,6 +741,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(integrate_ensemble_final, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_sde_dense, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_sde_ensemble_final, m)?)?;
+    m.add_function(wrap_pyfunction!(integrate_events_dense, m)?)?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
     m.add_function(wrap_pyfunction!(_version, m)?)?;
     Ok(())
