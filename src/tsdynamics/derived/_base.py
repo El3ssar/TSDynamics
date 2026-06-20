@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tsdynamics.data import Trajectory
 
 __all__ = ["DerivedSystem"]
 
@@ -73,6 +76,22 @@ class DerivedSystem:
 
     def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
         self.system.reinit(u, **kwargs)
+
+    def run(self, *args: Any, **kwargs: Any) -> Trajectory:
+        """Produce the wrapper's trajectory — the alias of :meth:`trajectory`.
+
+        ``run`` is the library's canonical trajectory-producer verb (a flow's
+        ``Lorenz().run(...)``, a map's ``Henon().run(...)``), so a fluent
+        derived view reads left-to-right with the same verb at the end::
+
+            section = Rossler().poincare(section="y", at=0.0).run(steps=500)
+
+        It forwards verbatim to this wrapper's :meth:`trajectory`, so the two are
+        byte-identical and every wrapper-specific keyword (``transient``, ...) is
+        honoured.  ``trajectory`` remains the member the structural ``System``
+        protocol requires; ``run`` is the discoverable spelling.
+        """
+        return self.trajectory(*args, **kwargs)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.system!r})"
