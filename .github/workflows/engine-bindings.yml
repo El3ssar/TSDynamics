@@ -42,7 +42,14 @@ jobs:
     env:
       MANIFEST: crates/tsdyn-core/Cargo.toml
     steps:
+      # Full history + the PR base, so `pytest --changed` can diff against it.
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the PR base for the diff
+        # Fall back to main on workflow_dispatch (no PR context → base.ref empty).
+        run: git fetch --no-tags origin "${{ github.event.pull_request.base.ref || 'main' }}"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -106,6 +113,11 @@ jobs:
       # this is the only job that runs them with the real extension. The slow tier
       # runs too (the Rust-vs-jitcdde comparisons live there); `full` stays
       # deselected. The test_engine_coverage meta-test asserts this stays a marker
-      # selection (no file list can drift out of sync again).
+      # selection (no file list can drift out of sync again). The run is
+      # change-scoped (`--changed`, see tests/_changed_select.py) and parallel:
+      # an engine/crate/foundational change runs the whole engine set, a
+      # one-system change runs just that system's engine cases.
       - name: Run the engine-marked binding + engine-path tests
-        run: uv run pytest -m "engine and not full" --no-cov -q
+        env:
+          TSD_CHANGED_BASE: origin/${{ github.event.pull_request.base.ref || 'main' }}
+        run: uv run pytest --changed -m "engine and not full" --no-cov -n auto -q

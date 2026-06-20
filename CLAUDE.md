@@ -476,11 +476,52 @@ Run before pushing:
 ```bash
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
-uv run pytest -m "not slow" --no-cov   # fast tier
-uv run pytest --no-cov                 # + slow tier (compiles)
-uv run pytest -m full --no-cov         # exhaustive sweep (nightly in CI)
-TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # docs sanity
+make test                              # change-scoped fast tier (the loop — see below)
+make test-slow                         # change-scoped slow tier, if you touched anything heavy
+TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # docs sanity (only if docs/ changed)
 ```
+
+`make test-all` / `make test-full` run the *whole* fast / fast+slow tiers
+(parallel) for a final pre-push sanity check; `uv run pytest -m full --no-cov` is
+the exhaustive nightly sweep. **Do not reach for the full suite as your routine
+inner loop** — see below.
+
+### Change-scoped testing (stream CI-CHANGED) — use this, not the full suite
+
+The bulk suite is registry-driven (every test parametrized over all 149 systems
++ every analysis/transform), so a plain `uv run pytest` is thousands of items and
+takes minutes. **To check your work, run only what your diff touches:**
+
+```bash
+make test            # = uv run pytest --changed -m "not slow and not full" --no-cov -n auto
+make test-slow       # = the slow tier, change-scoped
+uv run pytest --changed -m "not slow and not full" --no-cov -n auto   # equivalent
+uv run pytest --changed --changed-since=HEAD~3 ...                    # custom diff base
+```
+
+`--changed` (implemented in `tests/_changed_select.py`, wired through
+`conftest.py`) diffs the working tree vs `origin/main` (override with
+`--changed-since=REF` or `$TSD_CHANGED_BASE` / `make test BASE=<ref>`) and selects:
+
+- a touched **system module** → only that module's systems in the per-system
+  sweeps (mapped through the live registry by module name);
+- a touched **analysis area** (`analysis/<area>/`) → that area's test files;
+- a touched **test file** → that file; plus cheap registry/layout guard tests.
+
+It is **biased to over-select**: any *foundational* change (the engine / solver /
+family / derived / data / utils layers, the registry or package `__init__`, a
+shared test fixture, `pyproject`/`uv.lock`, **any Rust crate**, or **any CI
+workflow**) — or any path it does not recognise — disables selection and runs the
+full tier. The selector prints exactly what it kept and why (`[changed-select] …`).
+
+This is the same mechanism PR CI uses (`ci.yml` / `engine-bindings.yml` pass
+`--changed`). The **full** suite is *not* skipped forever: it runs on every push
+to `main` (the release gate in `release.yml`, with coverage) and every night
+(`nightly.yml`, `-m full`). So a mis-scoped selection can only delay catching a
+regression to the merge/nightly — it cannot ship one. Add a new analysis area?
+Map it in `_AREA_TESTS` (the guard `tests/test_changed_select.py` fails until you
+do). **CI is fast now — agents and humans alike should iterate with `make test`,
+never the full `uv run pytest`, for routine work.**
 
 ### Test harness (stream I-QA)
 
@@ -531,12 +572,18 @@ reuse `_strategies` and assert a real invariant — never a tautology.
   trusted publishing (`environment: pypi`, bound to the filename `release.yml` —
   don't rename) and attaches them to the Release.
 - CHANGELOG.md is maintained by python-semantic-release; release notes also land on GitHub Releases.
-- Workflows: `ci.yml` (PR gate — installs Rust + builds the engine via
-  `uv sync`, runs the suite), `docs.yml` (build + Pages deploy with figure cache),
-  `release.yml`, `pr-title.yml`, `nightly.yml` (`-m full`), `rust-workspace.yml`
+- Workflows: `ci.yml` (PR gate — **change-scoped**: a `changes` filter skips the
+  Python jobs on out-of-scope PRs; `build-engine` compiles the abi3 wheel ONCE per
+  OS and shares it to the test matrix as an artifact (no per-cell recompile);
+  `test-fast` (os×py matrix) and `test-slow` (one cell) install that wheel and run
+  `pytest --changed … -n auto`, so only the diff's tests run, in parallel),
+  `docs.yml` (build + Pages deploy with figure cache), `release.yml` (the full
+  suite + coverage on every push to main — the un-scoped safety net + publish
+  gate), `pr-title.yml`, `nightly.yml` (`-m full`), `rust-workspace.yml`
   (the pure-Rust tsdyn-* workspace), `engine-bindings.yml` (the focused engine job:
-  tsdyn-core fmt/clippy/cargo-test + the **engine-marked** Python tests, including
-  the catalogue gate `tests/test_xval_catalogue.py`), `wheels.yml` (cross-platform
+  tsdyn-core fmt/clippy/cargo-test + the **engine-marked** Python tests run
+  `--changed`, including the catalogue gate `tests/test_xval_catalogue.py`),
+  `wheels.yml` (cross-platform
   abi3 wheel build smoke on packaging PRs + on-demand full matrix, artifacts only —
   the release build/publish lives in `release.yml`).
 - **The `engine` marker (stream I-XVAL):** any test module that imports the

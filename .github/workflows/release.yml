@@ -68,8 +68,18 @@ jobs:
           uv run ruff check src/ tests/
           uv run ruff format --check src/ tests/
 
-      - name: Tests
-        run: uv run pytest --no-cov -q
+      # The full suite on the authoritative main commit — NOT change-scoped — so
+      # this is where coverage is measured (the PR jobs run a selected subset and
+      # deliberately skip --cov). Codecov upload is best-effort.
+      - name: Tests (full suite + coverage)
+        run: uv run pytest --cov=src/tsdynamics --cov-report=xml -q
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v6
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+        continue-on-error: true
 
   release:
     needs: test
