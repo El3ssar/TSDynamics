@@ -110,6 +110,45 @@ class GALIResult:
         """Whether the final GALI value collapsed below ``threshold`` (chaotic)."""
         return self.final < threshold
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the GALI\ :sub:`k` curve as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``DIAGNOSTIC_CURVE`` of GALI\ :sub:`k` against time (or iteration
+        index for a map) on a **log y-axis** — the recommended scale, since
+        GALI\ :sub:`k` decays exponentially for a chaotic orbit and saturates for
+        a regular one, so a log axis reads the decay rate off as a slope.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"diagnostic_curve"``).  ``None``
+            uses ``DIAGNOSTIC_CURVE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        xlabel = "iteration" if self.is_discrete else "time"
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"GALI$_{self.k}$",
+            x=Axis(label=xlabel),
+            y=Axis(label=f"GALI$_{self.k}$", scale="log"),
+            layers=[
+                Layer(
+                    PlotKind.LINE,
+                    {"x": np.asarray(self.times), "y": np.asarray(self.values)},
+                    label=f"GALI$_{self.k}$",
+                )
+            ],
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         kind = "map" if self.is_discrete else "flow"
         return f"GALIResult(k={self.k}, {kind}, final={self.final:.3g}, n={self.values.size})"

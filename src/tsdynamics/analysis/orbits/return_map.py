@@ -68,6 +68,45 @@ class ReturnMap:
         """Return the scatter-plot arrays ``(current, successor)``."""
         return self.current, self.successor
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe this return map as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``RETURN_MAP`` scatter of :math:`(v_n, v_{n+1})` with the
+        diagonal :math:`v_{n+1} = v_n` drawn as a reference line (its fixed-point
+        locus).  The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec
+        never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"return_map"``).  ``None`` uses
+            ``RETURN_MAP``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.RETURN_MAP
+        cur = np.asarray(self.current, dtype=float)
+        suc = np.asarray(self.successor, dtype=float)
+        layers = [Layer(PlotKind.SCATTER, {"x": cur, "y": suc}, label=r"$v_{n+1}$ vs $v_n$")]
+        if cur.size:
+            both = np.concatenate([cur, suc])
+            diag = np.array([float(both.min()), float(both.max())])
+            layers.append(Layer(PlotKind.LINE, {"x": diag, "y": diag}, label="$v_{n+1}=v_n$"))
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=f"{self.kind} return map",
+            x=Axis(label=r"$v_n$"),
+            y=Axis(label=r"$v_{n+1}$"),
+            layers=layers,
+            meta=dict(self.meta),
+        )
+
     def __repr__(self) -> str:
         return (
             f"ReturnMap(kind={self.kind!r}, observable={self.observable}, "

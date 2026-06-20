@@ -92,6 +92,38 @@ class RQAResult:
     diagonal_lengths: np.ndarray = field(repr=False)
     vertical_lengths: np.ndarray = field(repr=False)
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe the diagonal line-length distribution as a :class:`PlotSpec`.
+
+        Builds a ``DIAGNOSTIC_CURVE`` spec carrying a ``HISTOGRAM`` layer of the
+        diagonal line lengths — the distribution ``DET``, ``L``, ``L_max`` and
+        ``ENTR`` are all read off — with the length on ``x`` and the count on
+        ``y``.  The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec
+        never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"diagnostic_curve"``).  ``None``
+            uses ``DIAGNOSTIC_CURVE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        lengths = np.asarray(self.diagonal_lengths, dtype=float)
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"RQA  DET = {self.determinism:.3g}, ENTR = {self.diagonal_entropy:.3g}",
+            x=Axis(label="diagonal line length"),
+            y=Axis(label="count"),
+            layers=[Layer(PlotKind.HISTOGRAM, {"x": lengths}, label="diagonal lengths")],
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         return (
             f"RQAResult(N={self.size}, RR={self.recurrence_rate:.3g}, "

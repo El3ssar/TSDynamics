@@ -67,6 +67,47 @@ class SurrogateTest:
     tail: str
     alpha: float
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe this surrogate test as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``HISTOGRAM_NULL`` spec — the surrogate-statistic ensemble as a
+        histogram (the null distribution) with the data statistic marked as a
+        vertical reference line — so the rejection reads off as the data lying in
+        a tail.  The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec
+        never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"histogram_null"``).  ``None`` uses
+            ``HISTOGRAM_NULL``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.HISTOGRAM_NULL
+        surrogate = np.asarray(self.surrogate_statistics, dtype=float)
+        verdict = "reject" if self.rejected else "fail to reject"
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"{self.statistic} surrogate test (p = {self.p_value:.3g}, {verdict})",
+            x=Axis(label=self.statistic),
+            y=Axis(label="count"),
+            layers=[Layer(PlotKind.HISTOGRAM, {"x": surrogate}, label=f"{self.method} surrogates")],
+            annotations=[
+                Annotation(
+                    kind="vline",
+                    text="data",
+                    x=float(self.data_statistic),
+                    style={"color": "rose"},
+                )
+            ],
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         verdict = "reject linear null" if self.rejected else "fail to reject"
         return (
