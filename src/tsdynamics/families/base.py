@@ -130,6 +130,30 @@ class ParamSet(MutableMapping):
 # MetaStore
 # ---------------------------------------------------------------------------
 
+#: Maximum length of a single metadata value's repr in :meth:`MetaStore.__repr__`.
+#: Longer reprs (e.g. large Lyapunov spectra) are truncated with a trailing
+#: ``...`` so the store's repr stays a readable single line.
+_MAX_META_VALUE_REPR = 60
+
+
+def _short_value_repr(value: Any, maxlen: int = _MAX_META_VALUE_REPR) -> str:
+    """Return a compact, single-line ``repr`` of a metadata value.
+
+    Internal whitespace is collapsed (so a multi-line array repr renders on one
+    line) and an over-long repr is truncated with a trailing ``...`` so the
+    enclosing :class:`MetaStore` repr remains a readable single line even when a
+    value is a large array or object.
+    """
+    try:
+        text = repr(value)
+    except Exception:
+        # A value whose __repr__ raises must not break the store's repr.
+        return f"<{type(value).__name__}>"
+    text = " ".join(text.split())
+    if len(text) > maxlen:
+        text = text[: maxlen - 3] + "..."
+    return text
+
 
 class MetaStore(MutableMapping):
     """
@@ -197,8 +221,25 @@ class MetaStore(MutableMapping):
         return NotImplemented
 
     def __repr__(self) -> str:
-        keys = {k: len(v) for k, v in self._records.items()}
-        return f"MetaStore({keys})"
+        """Show the latest value per key, annotating overwritten keys with ``(xN)``.
+
+        Examples
+        --------
+        >>> m = MetaStore()
+        >>> m["dt"] = 0.01
+        >>> m["system"] = "lorenz"
+        >>> m["system"] = "lorenz"
+        >>> m
+        MetaStore(dt=0.01, system='lorenz' (x2))
+        """
+        if not self._records:
+            return "MetaStore()"
+        parts = []
+        for key, recs in self._records.items():
+            value_repr = _short_value_repr(recs[-1]["value"])
+            suffix = f" (x{len(recs)})" if len(recs) > 1 else ""
+            parts.append(f"{key}={value_repr}{suffix}")
+        return f"MetaStore({', '.join(parts)})"
 
 
 # ---------------------------------------------------------------------------
