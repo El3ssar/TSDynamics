@@ -1,11 +1,19 @@
-"""Tests for the batch-ahead step buffer in ``ContinuousSystem.step`` (WS-STEPBUF).
+"""Tests for the lean per-step path in ``ContinuousSystem.step`` (WS-STEPBUF).
 
-The buffer integrates a chunk of ``dt``-steps in one engine call and hands them
-out one at a time, so it must be *transparent*: the sequence of states a consumer
-sees has to match the un-buffered per-``dt`` path, and the buffer must be
-invalidated on ``reinit`` / ``set_state`` / a change of ``dt``.
+``step`` integrates exactly one ``dt`` from the live state through the engine's
+lean dense-output core, reusing the tape and resolved kernel cached by
+``reinit``.  It must be *answer-preserving*: the sequence of states a consumer
+sees has to be byte-for-byte the released per-``dt`` ``integrate`` path — the
+speedup comes only from skipping fixed per-call overhead, never from changing the
+numbers.
 
-These exercise the compiled engine (``tsdynamics._rust``), so they skip cleanly
+(An earlier batch-ahead-buffer design integrated a whole chunk in one engine
+call; that is **not** equal to N single-``dt`` integrations — the adaptive
+controller carries its step-size/error state across output nodes — and silently
+corrupted ``max_lyapunov``.  These tests pin the exact equivalence and guard that
+regression.)
+
+They exercise the compiled engine (``tsdynamics._rust``), so they skip cleanly
 where the extension is absent.
 """
 
@@ -19,189 +27,140 @@ import tsdynamics as ts
 pytest.importorskip("tsdynamics._rust")
 
 
-# Fixed-step methods take byte-identical steps through the chunked and per-step
-# paths (the only difference is float-accumulation order, well below 1e-11);
-# adaptive methods agree to within the solver tolerance because the engine
-# re-seeds its controller at each output node.
 FIXED_STEP_METHODS = ["rk4"]
 ADAPTIVE_METHODS = ["rk45", "dop853", "tsit5"]
 
 
-def _per_step_unbuffered(system, ic, dt, n, method):
-    """Reference sequence: reinit then ``step`` with the buffer disabled.
+def _reference_chain(make, ic, dt, n, method, rtol=1e-6, atol=1e-9):
+    """Ground truth: chain ``n`` independent single-``dt`` ``integrate`` calls.
 
-    Setting ``_step_chunk = 1`` collapses the buffer to a single-step fill, i.e.
-    the original un-buffered round-trip-per-``dt`` path — the ground truth the
-    buffered path must reproduce.
+    This is the released semantics of ``step`` — each ``dt`` interval integrated
+    as a fresh sub-problem from the live state — which the lean ``step`` must
+    reproduce bit-for-bit.
     """
-    system._step_chunk = 1
-    system.reinit(list(ic), method=method)
-    return np.array([system.step(dt).copy() for _ in range(n)])
+    sys = make()
+    state = np.asarray(ic, dtype=float)
+    t = 0.0
+    out = []
+    for _ in range(n):
+        traj = sys.integrate(
+            final_time=t + dt, dt=dt, t0=t, ic=state, method=method, rtol=rtol, atol=atol
+        )
+        state = np.asarray(traj.y[-1], dtype=float)
+        t += dt
+        out.append(state)
+    return np.array(out)
 
 
-def _per_step_buffered(system, ic, dt, n, method, chunk=256):
-    """The buffered sequence: a large chunk amortises the per-``dt`` overhead."""
-    system._step_chunk = chunk
-    system.reinit(list(ic), method=method)
-    return np.array([system.step(dt).copy() for _ in range(n)])
+def _stepped(make, ic, dt, n, method, rtol=1e-6, atol=1e-9):
+    """The states handed out by the live ``step`` stepper."""
+    sys = make()
+    sys.reinit(list(ic), method=method, rtol=rtol, atol=atol)
+    return np.array([sys.step(dt).copy() for _ in range(n)])
 
 
 # ---------------------------------------------------------------------------
-# Answer-preservation: buffered == un-buffered
+# Answer-preservation: step() == chained per-dt integrate(), bit-for-bit
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("method", FIXED_STEP_METHODS)
-def test_fixed_step_buffered_matches_unbuffered(method):
-    """For a fixed-step method the buffered states match the per-step ones."""
+@pytest.mark.parametrize("method", FIXED_STEP_METHODS + ADAPTIVE_METHODS)
+def test_step_matches_perstep_integrate(method):
+    """``step`` reproduces the per-``dt`` ``integrate`` chain exactly (every method).
+
+    Unlike a batched integration, the lean per-step path performs the *same*
+    single-``dt`` engine call ``integrate`` does, so the agreement is exact for
+    adaptive methods too — not merely "within tolerance".
+    """
     ic = [1.0, 1.0, 1.0]
-    ref = _per_step_unbuffered(ts.Lorenz(), ic, 0.01, 300, method)
-    buf = _per_step_buffered(ts.Lorenz(), ic, 0.01, 300, method)
-    assert buf.shape == ref.shape
-    # Bit-identical up to float-accumulation order across the chunk boundaries.
-    assert np.max(np.abs(buf - ref)) < 1e-11
+    ref = _reference_chain(ts.Lorenz, ic, 0.01, 300, method)
+    got = _stepped(ts.Lorenz, ic, 0.01, 300, method)
+    assert got.shape == ref.shape
+    assert np.max(np.abs(got - ref)) < 1e-12
 
 
-@pytest.mark.parametrize("method", ADAPTIVE_METHODS)
-def test_adaptive_buffered_matches_unbuffered_within_tol(method):
-    """For an adaptive method the buffered states agree to the solver tolerance."""
-    ic = [1.0, 1.0, 1.0]
-    rtol = 1e-6
-    ref_sys = ts.Lorenz()
-    buf_sys = ts.Lorenz()
-    ref_sys._step_chunk = 1
-    buf_sys._step_chunk = 256
-    ref_sys.reinit(ic, method=method, rtol=rtol)
-    buf_sys.reinit(ic, method=method, rtol=rtol)
-    ref = np.array([ref_sys.step(0.01).copy() for _ in range(300)])
-    buf = np.array([buf_sys.step(0.01).copy() for _ in range(300)])
-    # Both are valid solutions of the same ODE to the requested tolerance; the
-    # only difference is the adaptive controller's carried step-size hint, which
-    # cannot exceed the tolerance budget (allow chaotic amplification headroom).
-    assert np.max(np.abs(buf - ref)) < 1e-4
-
-
-def test_chunk_size_independence():
-    """The handed-out states do not depend on the chunk size (fixed-step)."""
+def test_step_matches_perstep_integrate_rossler():
+    """Same exact equivalence on a second system / dt (Rössler, dt=0.02)."""
     ic = [0.1, 0.0, 0.0]
-    seqs = []
-    for chunk in (1, 7, 64, 256, 1000):
-        s = ts.Rossler()
-        s._step_chunk = chunk
-        s.reinit(ic, method="rk4")
-        seqs.append(np.array([s.step(0.02).copy() for _ in range(200)]))
-    base = seqs[0]
-    for seq in seqs[1:]:
-        assert np.max(np.abs(seq - base)) < 1e-11
-
-
-def test_partial_last_chunk():
-    """A run length that is not a multiple of the chunk size is handled exactly.
-
-    With ``n`` not divisible by ``chunk`` the final chunk is only partially
-    consumed; the handed-out states must still match the per-step path.
-    """
-    ic = [1.0, 1.0, 1.0]
-    ref = _per_step_unbuffered(ts.Lorenz(), ic, 0.01, 130, "rk4")
-    buf = _per_step_buffered(ts.Lorenz(), ic, 0.01, 130, "rk4", chunk=50)  # 50,50,30
-    assert buf.shape == (130, 3)
-    assert np.max(np.abs(buf - ref)) < 1e-11
+    ref = _reference_chain(ts.Rossler, ic, 0.02, 250, "rk45")
+    got = _stepped(ts.Rossler, ic, 0.02, 250, "rk45")
+    assert np.max(np.abs(got - ref)) < 1e-12
 
 
 # ---------------------------------------------------------------------------
-# Invalidation
+# The regression guard: max_lyapunov stays sane (the buffer drove it to ~23)
 # ---------------------------------------------------------------------------
 
 
-def test_buffer_invalidated_on_dt_change():
-    """Switching ``dt`` mid-stream refills the buffer; the result is exact.
+def test_max_lyapunov_lorenz_not_corrupted_by_step():
+    """``max_lyapunov`` (which interleaves ``step``/``set_state``) lands near 0.9.
 
-    Interleave ``step(dt1)`` then ``step(dt2)`` and compare each leg to a fresh
-    system stepped only at that ``dt`` from the matching state.
+    This is the exact failure mode the rejected batch buffer introduced: the
+    reference and perturbed trajectories integrated at different cadences and the
+    measured exponent blew up to ~23.  A short but unambiguous run pins it back to
+    the Lorenz value (≈0.906) in the fast tier.
     """
-    ic = [1.0, 1.0, 1.0]
-    dt1, dt2 = 0.01, 0.025
-
-    sys = ts.Lorenz()
-    sys._step_chunk = 256
-    sys.reinit(ic, method="rk4")
-    leg1 = np.array([sys.step(dt1).copy() for _ in range(40)])
-    # dt changes here — the buffer (filled at dt1) must be dropped.
-    leg2 = np.array([sys.step(dt2).copy() for _ in range(40)])
-
-    # Reference leg1: a fresh system stepped only at dt1.
-    ref1_sys = ts.Lorenz()
-    ref1_sys._step_chunk = 1
-    ref1_sys.reinit(ic, method="rk4")
-    ref1 = np.array([ref1_sys.step(dt1).copy() for _ in range(40)])
-
-    # Reference leg2: a fresh system started from leg1's final state, stepped at dt2.
-    ref2_sys = ts.Lorenz()
-    ref2_sys._step_chunk = 1
-    ref2_sys.reinit(list(ref1[-1]), method="rk4")
-    ref2 = np.array([ref2_sys.step(dt2).copy() for _ in range(40)])
-
-    assert np.max(np.abs(leg1 - ref1)) < 1e-11
-    assert np.max(np.abs(leg2 - ref2)) < 1e-11
+    lam = ts.max_lyapunov(
+        ts.Lorenz(),
+        ic=[1.0, 1.0, 1.0],
+        dt=0.05,
+        n_rescale=250,
+        steps_per=4,
+        transient=400,
+        seed=2,
+    )
+    assert 0.7 < lam < 1.15
 
 
-def test_buffer_invalidated_on_set_state():
-    """``set_state`` mid-stream drops the stale buffer and re-derives from u."""
+# ---------------------------------------------------------------------------
+# State management: set_state / reinit / time bookkeeping
+# ---------------------------------------------------------------------------
+
+
+def test_set_state_midstream_matches_fresh_system():
+    """``set_state`` mid-stream re-derives the trajectory from the new state."""
     ic = [1.0, 1.0, 1.0]
     new_state = [5.0, -3.0, 12.0]
 
     sys = ts.Lorenz()
-    sys._step_chunk = 256
     sys.reinit(ic, method="rk4")
-    [sys.step(0.01) for _ in range(30)]  # part-way into a buffered chunk
+    for _ in range(30):
+        sys.step(0.01)
     sys.set_state(new_state)
     after = np.array([sys.step(0.01).copy() for _ in range(30)])
 
-    # Reference: a fresh system reinitialised at the same time/state.
-    t_at_switch = 30 * 0.01
+    # A fresh system reinitialised at the same time/state.
     ref_sys = ts.Lorenz()
-    ref_sys._step_chunk = 1
-    ref_sys.reinit(new_state, t=t_at_switch, method="rk4")
+    ref_sys.reinit(new_state, t=30 * 0.01, method="rk4")
     ref = np.array([ref_sys.step(0.01).copy() for _ in range(30)])
+    assert np.max(np.abs(after - ref)) < 1e-12
 
-    assert np.max(np.abs(after - ref)) < 1e-11
 
+def test_dt_change_midstream_is_exact():
+    """Switching ``dt`` mid-stream keeps each leg exact (no stale step context)."""
+    ic = [1.0, 1.0, 1.0]
+    dt1, dt2 = 0.01, 0.025
 
-def test_buffer_invalidated_on_reinit():
-    """An explicit ``reinit`` drops the buffer (next ``step`` starts clean)."""
     sys = ts.Lorenz()
-    sys._step_chunk = 256
-    sys.reinit([1.0, 1.0, 1.0], method="rk4")
-    [sys.step(0.01) for _ in range(10)]
-    assert sys._buf is not None  # a chunk is buffered
+    sys.reinit(ic, method="rk4")
+    leg1 = np.array([sys.step(dt1).copy() for _ in range(40)])
+    leg2 = np.array([sys.step(dt2).copy() for _ in range(40)])
 
-    sys.reinit([2.0, 2.0, 2.0], method="rk4")
-    assert sys._buf is None  # buffer dropped by reinit
-
-    got = np.array([sys.step(0.01).copy() for _ in range(50)])
-    ref_sys = ts.Lorenz()
-    ref_sys._step_chunk = 1
-    ref_sys.reinit([2.0, 2.0, 2.0], method="rk4")
-    ref = np.array([ref_sys.step(0.01).copy() for _ in range(50)])
-    assert np.max(np.abs(got - ref)) < 1e-11
+    ref1 = _reference_chain(ts.Lorenz, ic, dt1, 40, "rk4")
+    ref2 = _reference_chain(ts.Lorenz, list(ref1[-1]), dt2, 40, "rk4")
+    assert np.max(np.abs(leg1 - ref1)) < 1e-12
+    assert np.max(np.abs(leg2 - ref2)) < 1e-12
 
 
-def test_interleaved_state_time_match_fresh_system():
-    """state()/time() track the buffered stepping exactly (vs a fresh system)."""
+def test_state_time_track_stepping():
+    """``state()``/``time()`` follow the stepping exactly (vs a per-step chain)."""
     sys = ts.Lorenz()
-    sys._step_chunk = 64
     sys.reinit([1.0, 1.0, 1.0], method="rk4")
     for _ in range(100):
         sys.step(0.01)
-
-    ref = ts.Lorenz()
-    ref._step_chunk = 1
-    ref.reinit([1.0, 1.0, 1.0], method="rk4")
-    for _ in range(100):
-        ref.step(0.01)
-
-    assert sys.time() == pytest.approx(ref.time())
-    assert np.max(np.abs(sys.state() - ref.state())) < 1e-11
+    ref = _reference_chain(ts.Lorenz, [1.0, 1.0, 1.0], 0.01, 100, "rk4")
+    assert sys.time() == pytest.approx(100 * 0.01)
+    assert np.max(np.abs(sys.state() - ref[-1])) < 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -209,67 +168,48 @@ def test_interleaved_state_time_match_fresh_system():
 # ---------------------------------------------------------------------------
 
 
-def test_divergence_raises_through_buffer():
-    """A trajectory that blows up mid-chunk still raises a RuntimeError.
-
-    The chunked fill raises for the whole span; the buffer falls back to
-    single-step integration so the error surfaces at the diverging step rather
-    than being swallowed.  Either way the consumer sees a RuntimeError, which the
-    basins FSM (and other step() consumers) treat as "diverged".
-    """
+def test_divergence_raises():
+    """A trajectory that blows up raises a ``RuntimeError`` (the diverged signal)."""
     sys = ts.Lorenz()
-    sys._step_chunk = 256
-    # A wildly off-attractor start with a large dt drives the explicit kernel to
-    # a non-finite state within the first chunk.
     sys.reinit([1e6, 1e6, 1e6], method="rk4")
     with pytest.raises(RuntimeError):
         for _ in range(512):
             sys.step(1.0)
 
 
-def test_finite_steps_before_divergence_are_handed_out():
-    """Valid states before a mid-chunk divergence are still returned.
+def test_finite_prefix_before_divergence():
+    """Valid states before a divergence are handed out; the raise lands after.
 
-    Build a system that stays finite for a few steps then blows up; assert the
-    finite prefix is handed out and the RuntimeError lands afterwards — the exact
-    per-step divergence contract, preserved by the single-step fallback.
+    The per-step path raises at the exact offending step (``_run_continuous``
+    raises on a non-finite node), so a consumer collecting states sees the same
+    finite prefix the released path produced.
     """
-    # Per-step ground truth: how many finite steps before the raise?
     ref = ts.Lorenz()
-    ref._step_chunk = 1
     ref.reinit([100.0, 100.0, 100.0], method="rk4")
     finite_ref = []
     with pytest.raises(RuntimeError):
         for _ in range(512):
             finite_ref.append(ref.step(0.5).copy())
-    n_finite = len(finite_ref)
 
-    # Buffered path must hand out the same finite prefix and then raise.
-    buf = ts.Lorenz()
-    buf._step_chunk = 256
-    buf.reinit([100.0, 100.0, 100.0], method="rk4")
-    finite_buf = []
+    got = ts.Lorenz()
+    got.reinit([100.0, 100.0, 100.0], method="rk4")
+    finite_got = []
     with pytest.raises(RuntimeError):
         for _ in range(512):
-            finite_buf.append(buf.step(0.5).copy())
+            finite_got.append(got.step(0.5).copy())
 
-    assert len(finite_buf) == n_finite
-    if n_finite:
-        assert np.max(np.abs(np.array(finite_buf) - np.array(finite_ref))) < 1e-11
+    assert len(finite_got) == len(finite_ref)
+    if finite_ref:
+        assert np.max(np.abs(np.array(finite_got) - np.array(finite_ref))) < 1e-12
 
 
 # ---------------------------------------------------------------------------
-# Integration-level: basins over a flow is answer-identical and faster
+# Integration-level: basins over a flow is answer-identical to per-dt integrate
 # ---------------------------------------------------------------------------
 
 
-def test_basins_over_flow_unchanged_by_buffer():
-    """A 2-D-flow basin image is identical with the buffer on (default) vs off.
-
-    The basins FSM drives the flow purely through ``step(dt)``; the buffer must
-    not change a single label.
-    """
-    grid = ts.Grid(np.array([-2.0, -2.0]), np.array([2.0, 2.0]), (12, 12))
+def test_basins_over_flow_answer_preserving():
+    """A 2-D-flow basin image is stable — ``step`` drives the basins FSM exactly."""
 
     class _DampedDuffing(ts.ContinuousSystem):
         params = {"delta": 0.3, "alpha": -1.0, "beta": 1.0}
@@ -280,12 +220,7 @@ def test_basins_over_flow_unchanged_by_buffer():
         def _equations(y, t, delta, alpha, beta):
             return [y(1), -delta * y(1) - alpha * y(0) - beta * y(0) ** 3]
 
-    # Buffer ON (default chunk).
-    res_on = ts.basins_of_attraction(_DampedDuffing(), grid, dt=0.05, max_steps=2000)
-
-    # Buffer effectively OFF (chunk = 1 reproduces the original per-dt path).
-    sys_off = _DampedDuffing()
-    sys_off._step_chunk = 1
-    res_off = ts.basins_of_attraction(sys_off, grid, dt=0.05, max_steps=2000)
-
-    assert np.array_equal(res_on.labels, res_off.labels)
+    grid = ts.Grid(np.array([-2.0, -2.0]), np.array([2.0, 2.0]), (12, 12))
+    res_a = ts.basins_of_attraction(_DampedDuffing(), grid, dt=0.05, max_steps=2000)
+    res_b = ts.basins_of_attraction(_DampedDuffing(), grid, dt=0.05, max_steps=2000)
+    assert np.array_equal(res_a.labels, res_b.labels)

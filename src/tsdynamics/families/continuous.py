@@ -162,23 +162,11 @@ class ContinuousSystem(SystemBase, ABC):
     _t_now: float = 0.0
     _default_step_dt: ClassVar[float] = 0.01
 
-    #: Default number of steps integrated per FFI call by :meth:`step`'s
-    #: batch-ahead buffer (stream WS-STEPBUF).  Repeated constant-``dt`` stepping
-    #: integrates a chunk this size in one engine round-trip and hands the states
-    #: out one at a time, amortising the per-call solver-resolve/grid/marshal/
-    #: provenance overhead over the whole chunk.  Larger wastes work when a
-    #: consumer stops early (e.g. a basin trajectory that diverges or recurs after
-    #: a few steps); smaller pays the per-call tax more often.
-    _step_chunk: ClassVar[int] = 256
-
-    # Batch-ahead step buffer (stream WS-STEPBUF).  ``_buf`` holds the next
-    # chunk's states (shape ``(filled, dim)``), ``_buf_i`` is the index of the
-    # next state to hand out, and ``_buf_dt`` is the ``dt`` the chunk was filled
-    # at.  The buffer is *invalidated* (dropped) by ``reinit`` / ``set_state`` and
-    # whenever ``step`` is called with a different ``dt`` — see :meth:`step`.
-    _buf: np.ndarray | None = None
-    _buf_i: int = 0
-    _buf_dt: float | None = None
+    # Per-step integration context cached by ``reinit`` so a repeated constant-``dt``
+    # stepping loop pays the fixed per-call overhead (solver-registry resolve,
+    # Jacobian decision, output-grid build, provenance, Trajectory wrap) once at
+    # reinit instead of on every ``step`` (stream WS-STEPBUF).
+    _step_method_canonical: str | None = None
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -312,15 +300,15 @@ class ContinuousSystem(SystemBase, ABC):
         # trbdf2) gets a Jacobian-carrying tape — step() reuses this exact tape,
         # so the Jacobian must be baked in here or the engine refuses the step.
         self._step_method = method or self._default_method
-        jac_kw = solvers.resolve(self._step_method).build_kwargs
-        self._engine_problem = ode_problem(self, ic=ic_arr, t0=t0, **jac_kw)
+        resolution = solvers.resolve(self._step_method)
+        # Cache the canonical kernel name (``"RK45"`` → ``"rk45"``) so the per-step
+        # loop hits the engine core directly without re-resolving every call.
+        self._step_method_canonical = resolution.name
+        self._engine_problem = ode_problem(self, ic=ic_arr, t0=t0, **resolution.build_kwargs)
         self._step_rtol = float(rtol)
         self._step_atol = float(atol)
         self._state_now = ic_arr.copy()
         self._t_now = t0
-        # Restarting the stepper invalidates any batch-ahead buffer: it was
-        # filled from a now-stale state / problem (stream WS-STEPBUF).
-        self._invalidate_buffer()
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
@@ -332,128 +320,51 @@ class ContinuousSystem(SystemBase, ABC):
 
         Notes
         -----
-        Repeated constant-``dt`` stepping is served from a **batch-ahead buffer**
-        (stream WS-STEPBUF): the first ``step(dt)`` after a (re)start integrates a
-        whole chunk of :attr:`_step_chunk` steps in one engine round-trip and
-        hands the states out one at a time, so the per-call solver-resolve, output
-        grid build, FFI marshalling and provenance overhead amortise over the
-        chunk instead of being paid every ``dt``.  The buffer is transparent: it
-        returns exactly the states the un-buffered per-``dt`` path returned —
-        bit-for-bit for fixed-step methods and within the solver tolerance for
-        adaptive ones (the engine re-seeds its adaptive controller at each output
-        node, so each ``dt`` interval is integrated as the same fresh
-        sub-problem).  It is dropped on :meth:`reinit`, :meth:`set_state` and any
-        change of ``dt`` — see :meth:`_refill_buffer`.
+        Each call integrates **exactly one** ``dt`` from the live ``(state, t)``,
+        returning byte-for-byte the trajectory the released per-``dt`` path
+        produced — there is no batching, so the numbers are unchanged for every
+        method, adaptive or fixed-step (stream WS-STEPBUF).  The speedup comes
+        only from skipping fixed per-call overhead: ``step`` reuses the tape and
+        canonical kernel name cached by :meth:`reinit` and calls the engine's lean
+        dense-output core (:func:`~tsdynamics.engine.run._run_continuous`)
+        directly, so a constant-``dt`` stepping loop (Poincaré refinement, basins
+        over flows) skips the solver-registry resolve, the implicit-Jacobian
+        decision, provenance assembly and the :class:`Trajectory` wrap that the
+        full :meth:`integrate` entry point pays on every call.
+
+        A batch-ahead variant that integrated a whole chunk in one engine call was
+        rejected: a chunked adaptive integration is *not* equal to N single-``dt``
+        integrations (the adaptive controller carries its step-size/error state
+        across output nodes), which silently corrupted sensitive consumers such as
+        ``max_lyapunov``.  The durable amortisation is the resumable engine stepper
+        (WS-STEPPER), which advances without re-seeding and stays answer-exact.
         """
+        from tsdynamics.engine.problem import ODEProblem
+        from tsdynamics.engine.run import _run_continuous
+        from tsdynamics.utils.grids import make_output_grid
+
         if self._engine_problem is None:
             self.reinit()
         dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
 
-        # Refill when the buffer is empty/exhausted or the caller changed dt
-        # (a different dt means a different chunk; the old one is stale).
-        if self._buf is None or self._buf_i >= len(self._buf) or dt != self._buf_dt:
-            self._refill_buffer(dt)
-
-        state = self._buf[self._buf_i]
-        self._buf_i += 1
-        self._t_now = self._t_now + dt
+        t0 = self._t_now
+        # The same two-node output grid the full ``integrate`` would build for a
+        # single ``dt`` span — so ``step`` is bit-identical to a per-``dt``
+        # ``integrate`` from the live state.
+        t_eval = make_output_grid(t0, t0 + dt, dt)
+        prob = ODEProblem(tape=self._engine_problem.tape, ic=self._state_now, t0=t0, system=self)
+        y = _run_continuous(
+            prob,
+            t_eval,
+            method=self._step_method_canonical,
+            rtol=self._step_rtol,
+            atol=self._step_atol,
+            backend=self._step_backend,
+        )
+        state = np.asarray(y[-1], dtype=float)
+        self._t_now = t0 + dt
         self._state_now = state.copy()
         return state.copy()
-
-    def _invalidate_buffer(self) -> None:
-        """Drop the batch-ahead buffer (forces a refill on the next ``step``)."""
-        self._buf = None
-        self._buf_i = 0
-        self._buf_dt = None
-
-    def _refill_buffer(self, dt: float) -> None:
-        """
-        Integrate the next chunk of ``_step_chunk`` steps of size ``dt`` in one call.
-
-        The chunk runs from the live ``(state, t)`` and the resulting states for
-        ``t0 + dt, t0 + 2·dt, …`` are stashed in ``_buf``.  The cheap path is a
-        single :func:`~tsdynamics.engine.run.integrate` over the whole span; this
-        is answer-identical to calling :meth:`step` ``chunk`` times because the
-        engine re-seeds its adaptive controller at each output node (so a node is
-        integrated as the same fresh sub-problem either way).
-
-        Divergence is handled to preserve the exact per-step contract: if the
-        chunked integration raises (a non-finite state / collapsed step anywhere
-        in the span), the chunk is re-run **one step at a time** so the
-        ``RuntimeError`` surfaces at the precise step that diverged and the valid
-        states before it are still handed out — consumers such as the basins FSM
-        rely on the trajectory stopping at the right step, not on the whole chunk
-        failing.
-        """
-        from tsdynamics.engine.problem import ODEProblem
-        from tsdynamics.engine.run import integrate
-
-        chunk = max(1, int(self._step_chunk))
-        t0 = self._t_now
-        ic = self._state_now
-
-        prob = ODEProblem(tape=self._engine_problem.tape, ic=ic, t0=t0, system=self)
-        try:
-            traj = integrate(
-                prob,
-                final_time=t0 + chunk * dt,
-                dt=dt,
-                t0=t0,
-                method=self._step_method,
-                rtol=self._step_rtol,
-                atol=self._step_atol,
-                backend=self._step_backend,
-            )
-        except RuntimeError:
-            # The whole-chunk integration diverged somewhere in the span. Fall
-            # back to single-step integration so the raise lands at the exact
-            # step, exposing every finite state before it (matching the
-            # un-buffered contract step-for-step).
-            self._buf = self._single_step_chunk(dt, chunk)
-        else:
-            # ``traj.y`` includes the state at ``t0`` as row 0; the handed-out
-            # states are the subsequent nodes (one per ``dt``).
-            self._buf = np.asarray(traj.y[1 : chunk + 1], dtype=float)
-        self._buf_i = 0
-        self._buf_dt = dt
-
-    def _single_step_chunk(self, dt: float, chunk: int) -> np.ndarray:
-        """
-        Integrate up to ``chunk`` steps one ``dt`` at a time from the live state.
-
-        Used only as the divergence fallback in :meth:`_refill_buffer`: each step
-        is a fresh one-``dt`` :func:`~tsdynamics.engine.run.integrate`, so a
-        divergence raises ``RuntimeError`` at the exact offending step.  Returns
-        the finite states accumulated *before* the raise; if the very first step
-        diverges the ``RuntimeError`` propagates (nothing to hand out).
-        """
-        from tsdynamics.engine.problem import ODEProblem
-        from tsdynamics.engine.run import integrate
-
-        out: list[np.ndarray] = []
-        state = self._state_now
-        t = self._t_now
-        for _ in range(chunk):
-            prob = ODEProblem(tape=self._engine_problem.tape, ic=state, t0=t, system=self)
-            try:
-                traj = integrate(
-                    prob,
-                    final_time=t + dt,
-                    dt=dt,
-                    t0=t,
-                    method=self._step_method,
-                    rtol=self._step_rtol,
-                    atol=self._step_atol,
-                    backend=self._step_backend,
-                )
-            except RuntimeError:
-                if out:
-                    return np.asarray(out, dtype=float)
-                raise
-            state = np.asarray(traj.y[-1], dtype=float)
-            t = t + dt
-            out.append(state)
-        return np.asarray(out, dtype=float)
 
     def state(self) -> np.ndarray:
         """Return a copy of the current state (implicit ``reinit`` if cold)."""
@@ -468,9 +379,6 @@ class ContinuousSystem(SystemBase, ABC):
             self.reinit(u_arr)
         else:
             self._state_now = u_arr.copy()
-            # The buffered chunk was integrated from the old state — it no longer
-            # describes the trajectory from ``u`` (stream WS-STEPBUF).
-            self._invalidate_buffer()
 
     def time(self) -> float:
         """Return the current stepper time."""
