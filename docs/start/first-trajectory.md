@@ -9,13 +9,19 @@ description: Integrate the Lorenz system, compute Lyapunov exponents, iterate th
 One example per system family: a continuous flow, a discrete map, and a
 delay equation. Together they cover most of what the library does.
 
+Every family produces a trajectory through the one verb **`run`** — flows,
+maps, DDEs and SDEs all answer the same call, dispatching on whether the
+system is discrete. The family-specific spellings (`integrate` for flows and
+delay equations, `iterate` for maps) and the protocol method `trajectory`
+remain as permanent aliases.
+
 ## A flow: Lorenz
 
 ```python
 import tsdynamics as ts
 
 lor = ts.Lorenz()                                  # sigma=10, rho=28, beta=8/3
-traj = lor.integrate(final_time=100.0, dt=0.01)
+traj = lor.run(final_time=100.0, dt=0.01)          # `integrate` is a permanent alias
 
 traj.t.shape, traj.y.shape                         # ((10001,), (10001, 3))
 ```
@@ -24,7 +30,7 @@ The right-hand side is lowered to the Rust engine in-process and runs with no
 warmup. `dt` is only the *output grid* — the internal stepper is adaptive, so a
 coarse `dt` does not lose accuracy.
 
-`integrate` returns a [`Trajectory`](../analysis/integrate.md#the-trajectory-object).
+`run` returns a [`Trajectory`](../analysis/integrate.md#the-trajectory-object).
 Because `Lorenz` declares `variables = ("x", "y", "z")`, components are
 accessible by name:
 
@@ -46,11 +52,13 @@ negative — the signature of a chaotic attractor.
 
 ## A map: Hénon
 
-Discrete maps iterate instead of integrate, lowering to the same engine:
+Discrete maps iterate instead of integrate, lowering to the same engine. The
+same `run` verb works — a map takes `n` (the number of iterations) instead of
+`final_time`/`dt`:
 
 ```python
 h = ts.Henon()                        # a=1.4, b=0.3
-traj = h.iterate(steps=5000)
+traj = h.run(n=5000)                  # `iterate(steps=5000)` is a permanent alias
 traj.t                                # array([0, 1, 2, ...]) — step indices
 
 h.lyapunov_spectrum(steps=5000)       # ≈ [0.42, -1.62]
