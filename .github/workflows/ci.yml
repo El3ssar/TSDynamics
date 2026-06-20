@@ -1,10 +1,28 @@
 name: CI
 
-# PR gate: lint + tests, but SCOPE-AWARE — the Python lint/test matrix only runs
-# when Python, test, or engine-crate code changes (post-M3 the Rust engine is the
-# sole integration backend, so a `crates/**` change affects the suite). Docs-only
-# PRs skip it. The always-on "CI summary" job is the single stable check to gate
-# merges on: it is green when every required job either passed or was skipped.
+# PR gate: lint + tests, made fast in three ways.
+#
+#  1. SCOPE-AWARE at the workflow level — the Python jobs only run when Python,
+#     test, or engine-crate code changes (post-M3 the Rust engine is the sole
+#     integration backend, so a `crates/**` change affects the suite). Docs-only
+#     PRs skip them entirely.
+#
+#  2. CHANGE-SCOPED at the test level — `pytest --changed` (tests/_changed_select.py)
+#     narrows each run to the tests the PR diff can actually affect: touch one
+#     system → only that system's registry sweep; touch one analysis area → that
+#     area's tests; a FOUNDATIONAL change (engine/solver/family/data/utils layers,
+#     the registry, a lockfile, any crate, any workflow) falls back to the full
+#     tier. The complete suite still runs on every push to main (release.yml) and
+#     nightly (-m full), so a mis-scoped selection can only delay catching a
+#     regression, never ship it.
+#
+#  3. BUILD-ONCE + PARALLEL — the abi3 engine wheel is compiled once per OS (it is
+#     cp312-abi3, so one wheel covers every CPython >= 3.12) and shared to the test
+#     matrix as an artifact, instead of `uv sync` recompiling it in all four cells;
+#     the tests then run under `pytest -n auto` (pytest-xdist).
+#
+# The always-on "CI summary" job is the single stable check to gate merges on: it
+# is green when every required job either passed or was skipped (out-of-scope).
 on:
   pull_request:
     branches: [main]
@@ -19,7 +37,7 @@ permissions:
   pull-requests: read
 
 jobs:
-  # Detect what changed so we can skip out-of-scope work.
+  # Detect what changed so we can skip out-of-scope work entirely.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -40,7 +58,7 @@ jobs:
               - '.github/workflows/ci.yml'
         # Post-M3 the Rust engine IS load-bearing for the Python suite (it is the
         # sole integration backend), so a `crates/**` change must run the Python
-        # tests too — `uv sync` builds the engine via maturin before they run.
+        # tests too — the engine wheel is rebuilt before they run.
 
   lint:
     name: Lint (ruff)
@@ -64,68 +82,159 @@ jobs:
         run: uv sync --no-install-project --group dev
 
       - name: ruff check
-        run: uv run ruff check src/ tests/
+        run: uv run --no-sync ruff check src/ tests/
 
       - name: ruff format --check
-        run: uv run ruff format --check src/ tests/
+        run: uv run --no-sync ruff format --check src/ tests/
 
-  test:
-    name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+  # Compile the abi3 engine wheel ONCE per OS. It is cp312-abi3, so a single wheel
+  # serves both Python 3.12 and 3.13 on that OS — the test matrix below downloads
+  # it instead of every cell recompiling the Rust engine via `uv sync`.
+  build-engine:
+    name: Build engine wheel (${{ matrix.label }})
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.12", "3.13"]
+        include:
+          - { os: ubuntu-latest, label: linux }
+          - { os: macos-latest, label: macos }
     steps:
       - uses: actions/checkout@v6
 
-      # The engine is the sole integration backend post-M3, so the suite needs
-      # the compiled `tsdynamics._rust`. `uv sync` builds it through maturin,
-      # which needs a Rust toolchain.
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Build from the root pyproject ([tool.maturin] points manifest-path at the
+      # engine crate and python-source at src/), exactly as release.yml/wheels.yml
+      # do — so the artifact is the real packaged wheel, not a hand-copied .so.
+      - name: Build abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist
+          manylinux: auto
+          sccache: "true"
+
+      - name: Upload engine wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: engine-wheel-${{ matrix.label }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  test-fast:
+    name: Fast tests (Py ${{ matrix.python }}, ${{ matrix.os }})
+    needs: [changes, build-engine]
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.12", engine: linux }
+          - { os: ubuntu-latest, python: "3.13", engine: linux }
+          - { os: macos-latest, python: "3.12", engine: macos }
+          - { os: macos-latest, python: "3.13", engine: macos }
+    steps:
+      # Full history + the PR base, so `pytest --changed` can diff against it.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the PR base for the diff
+        run: git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
 
-      - name: Sync project + dev deps (builds the engine)
-        run: uv sync --group dev
+      # Install deps + dev tools, but NOT the project (no engine recompile).
+      - name: Sync deps (no engine build)
+        run: uv sync --no-install-project --group dev --python ${{ matrix.python }}
 
-      - name: Run fast tests
-        run: uv run pytest -m "not slow and not full" --no-cov -q
-
-      - name: Run full test suite
-        run: uv run pytest --cov=src/tsdynamics --cov-report=xml
-
-      - name: Upload coverage (Linux + Python 3.12 only)
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v6
+      - name: Download the prebuilt engine wheel
+        uses: actions/download-artifact@v7
         with:
-          files: ./coverage.xml
-          fail_ci_if_error: false
-        continue-on-error: true
+          name: engine-wheel-${{ matrix.engine }}
+          path: dist
 
-  # Single stable status check to require for merge. Green iff every required
-  # job passed OR was skipped (out-of-scope). Fails if any of them failed or was
-  # cancelled. Configure branch protection (if any) to require ONLY this check.
+      - name: Install the engine wheel
+        run: uv pip install --no-deps dist/*.whl
+
+      # Fail loudly if the wheel did not actually load — otherwise the suite would
+      # silently `importorskip` the engine and report green.
+      - name: Assert the engine is importable
+        run: uv run --no-sync python -c "import tsdynamics._rust; print('tsdynamics._rust loaded OK')"
+
+      - name: Change-scoped fast tests (parallel)
+        env:
+          TSD_CHANGED_BASE: origin/${{ github.event.pull_request.base.ref }}
+        run: uv run --no-sync pytest --changed -m "not slow and not full" --no-cov -n auto -q
+
+  test-slow:
+    name: Slow tests (Py 3.12, ubuntu)
+    needs: [changes, build-engine]
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the PR base for the diff
+        run: git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync deps (no engine build)
+        run: uv sync --no-install-project --group dev
+
+      - name: Download the prebuilt engine wheel
+        uses: actions/download-artifact@v7
+        with:
+          name: engine-wheel-linux
+          path: dist
+
+      - name: Install the engine wheel
+        run: uv pip install --no-deps dist/*.whl
+
+      - name: Assert the engine is importable
+        run: uv run --no-sync python -c "import tsdynamics._rust; print('tsdynamics._rust loaded OK')"
+
+      # The slow tier (long simulations + Rust comparisons) runs on ONE cell only,
+      # change-scoped: a foundational change runs all of it, a one-system change
+      # runs just that system's slow cases.
+      - name: Change-scoped slow tests (parallel)
+        env:
+          TSD_CHANGED_BASE: origin/${{ github.event.pull_request.base.ref }}
+        run: uv run --no-sync pytest --changed -m "slow and not full" --no-cov -n auto -q
+
+  # Single stable status check to require for merge. Green iff every required job
+  # passed OR was skipped (out-of-scope). Fails if any failed or was cancelled.
+  # Configure branch protection (if any) to require ONLY this check.
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, lint, test]
+    needs: [changes, lint, build-engine, test-fast, test-slow]
     runs-on: ubuntu-latest
     steps:
       - name: Gate on required jobs
         run: |
-          echo "changes=${{ needs.changes.result }} lint=${{ needs.lint.result }} test=${{ needs.test.result }}"
-          for r in "${{ needs.changes.result }}" "${{ needs.lint.result }}" "${{ needs.test.result }}"; do
+          echo "changes=${{ needs.changes.result }} lint=${{ needs.lint.result }} build-engine=${{ needs.build-engine.result }} test-fast=${{ needs.test-fast.result }} test-slow=${{ needs.test-slow.result }}"
+          for r in "${{ needs.changes.result }}" "${{ needs.lint.result }}" "${{ needs.build-engine.result }}" "${{ needs.test-fast.result }}" "${{ needs.test-slow.result }}"; do
             case "$r" in
               failure|cancelled)
                 echo "::error::a required job did not pass ($r)"

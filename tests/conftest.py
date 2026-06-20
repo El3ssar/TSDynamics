@@ -62,6 +62,35 @@ _REGISTRY_FIXTURES = {
 }
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register the change-scoped selection flags (stream CI-CHANGED).
+
+    ``--changed`` narrows the run to the tests a diff can affect (see
+    ``tests/_changed_select.py``); ``--changed-since`` overrides the diff base
+    (default ``origin/main`` / ``$TSD_CHANGED_BASE``).  Without ``--changed``
+    nothing changes — the full suite collects as before.
+    """
+    import os
+
+    from _changed_select import DEFAULT_BASE
+
+    group = parser.getgroup("change-scoped selection")
+    group.addoption(
+        "--changed",
+        action="store_true",
+        default=False,
+        help="Run only the tests a diff vs the base ref can affect "
+        "(falls back to the full suite on foundational changes).",
+    )
+    group.addoption(
+        "--changed-since",
+        action="store",
+        default=os.environ.get("TSD_CHANGED_BASE", DEFAULT_BASE),
+        metavar="REF",
+        help="Diff base for --changed (default: $TSD_CHANGED_BASE or origin/main).",
+    )
+
+
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     for fixture, family in _FAMILY_FIXTURES.items():
         if fixture in metafunc.fixturenames:
@@ -98,6 +127,62 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             _engine_module_cache[path] = flag
         if flag:
             item.add_marker(pytest.mark.engine)
+
+    # Change-scoped selection runs LAST so it sees the final (marked) item set.
+    # The deselection happens here (on every collecting process, incl. xdist
+    # workers); the human-readable report is emitted by
+    # pytest_report_collectionfinish below, which is the controller-side hook that
+    # reliably reaches the terminal under `-n auto` (worker stdout is swallowed).
+    if config.getoption("changed", default=False):
+        from _changed_select import keep_item
+
+        plan = _changed_plan(config)
+        if plan.full:
+            return
+        kept = [item for item in items if keep_item(item, plan)]
+        kept_set = set(kept)
+        deselected = [item for item in items if item not in kept_set]
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+            items[:] = kept
+
+
+_changed_plan_cache: object | None = None
+
+
+def _changed_plan(config: pytest.Config) -> object:
+    """The selection plan for this run (computed once per process)."""
+    global _changed_plan_cache
+    if _changed_plan_cache is None:
+        from _changed_select import compute_plan
+
+        _changed_plan_cache = compute_plan(config.getoption("changed_since"))
+    return _changed_plan_cache
+
+
+def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
+    """Report what change-scoped selection kept and why (controller-side).
+
+    Runs after collection on the controller (and in serial), so the
+    ``[changed-select]`` summary survives ``pytest -n auto``.
+    """
+    if not config.getoption("changed", default=False):
+        return []
+    plan = _changed_plan(config)
+    base = config.getoption("changed_since")
+    if plan.full:
+        return [
+            f"[changed-select] full run — {plan.reason} "
+            f"({len(plan.changed)} changed file(s) vs {base})"
+        ]
+    lines = [f"[changed-select] scoped to diff vs {base} ({len(plan.changed)} changed file(s))"]
+    if plan.systems:
+        lines.append(
+            f"[changed-select] system sweeps limited to: {', '.join(sorted(plan.systems))}"
+        )
+    if plan.selected_files:
+        lines.append(f"[changed-select] test files: {', '.join(sorted(plan.selected_files))}")
+    return lines
 
 
 @pytest.fixture
