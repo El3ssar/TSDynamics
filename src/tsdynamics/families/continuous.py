@@ -479,6 +479,51 @@ class ContinuousSystem(SystemBase, ABC):
         return rhs
 
     # ------------------------------------------------------------------ #
+    # Trajectory production — the canonical ``run`` verb
+    # ------------------------------------------------------------------ #
+
+    def run(
+        self,
+        final_time: float = 100.0,
+        dt: float = 0.02,
+        **kwargs,
+    ) -> Trajectory:
+        """
+        Produce a trajectory — the one canonical verb for every family.
+
+        ``run`` is the unified trajectory producer: it answers the same call for
+        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
+        continuous-time system (this family) it integrates the flow, so
+        ``run`` is a thin alias of :meth:`integrate` and forwards every keyword
+        to it unchanged.
+
+        Parameters
+        ----------
+        final_time : float
+            End of the integration window. Default 100.0.
+        dt : float
+            Output sampling interval. The internal stepper is adaptive.
+        **kwargs
+            Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
+            ``rtol``, ``atol``, ``backend``, …).
+
+        Returns
+        -------
+        Trajectory
+            Identical to :meth:`integrate` — ``run`` adds no behaviour.
+
+        See Also
+        --------
+        integrate : The family-specific spelling (a permanent alias of ``run``).
+
+        Examples
+        --------
+        >>> traj = Lorenz().run(final_time=100, dt=0.01)
+        >>> Henon().run(n=5000)            # the same verb iterates a map
+        """
+        return self.integrate(final_time=final_time, dt=dt, **kwargs)
+
+    # ------------------------------------------------------------------ #
     # Integration
     # ------------------------------------------------------------------ #
 

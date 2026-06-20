@@ -243,6 +243,49 @@ class DiscreteMap(SystemBase):
         return traj[transient:] if transient > 0 else traj
 
     # ------------------------------------------------------------------ #
+    # Trajectory production — the canonical ``run`` verb
+    # ------------------------------------------------------------------ #
+
+    def run(
+        self,
+        n: int = 1000,
+        **kwargs,
+    ) -> Trajectory:
+        """
+        Produce a trajectory — the one canonical verb for every family.
+
+        ``run`` is the unified trajectory producer: it answers the same call for
+        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
+        discrete map (this family) it iterates the map, so ``run`` is a thin
+        alias of :meth:`iterate`.  The number of iterations is named ``n`` (the
+        canonical step-count keyword), forwarded to :meth:`iterate` as its
+        ``steps`` argument; every other keyword is forwarded unchanged.
+
+        Parameters
+        ----------
+        n : int
+            Number of iterations. Default 1000.
+        **kwargs
+            Forwarded verbatim to :meth:`iterate` (``ic``, ``max_retries``,
+            ``backend``).
+
+        Returns
+        -------
+        Trajectory
+            Identical to :meth:`iterate` — ``run`` adds no behaviour.
+
+        See Also
+        --------
+        iterate : The family-specific spelling (a permanent alias of ``run``).
+
+        Examples
+        --------
+        >>> Henon().run(n=5000)
+        >>> Lorenz().run(final_time=100, dt=0.01)   # the same verb integrates a flow
+        """
+        return self.iterate(steps=n, **kwargs)
+
+    # ------------------------------------------------------------------ #
     # Compiled iterate loop
     # ------------------------------------------------------------------ #
 
