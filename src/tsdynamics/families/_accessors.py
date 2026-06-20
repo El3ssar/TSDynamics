@@ -53,6 +53,7 @@ __all__ = [
     "LyapunovAccessor",
     "RecurrenceAccessor",
     "SurrogateAccessor",
+    "infer_forcing_period",
 ]
 
 
@@ -403,3 +404,99 @@ class SurrogateAccessor(_Accessor):
         return nonlinear_prediction_error(
             self._resolve_data(data, run_kwargs or {}), *args, **kwargs
         )
+
+
+# ---------------------------------------------------------------------------
+# forcing-period inference (the stroboscope builder's period hook)
+# ---------------------------------------------------------------------------
+
+#: Conventional parameter names a forced system uses for its drive *frequency*
+#: (angular, radians per unit time).  The forcing period is then ``2*pi / value``.
+#: ``omega`` is the catalogue convention (e.g. :class:`~tsdynamics.systems.Duffing`,
+#: whose autonomising phase variable obeys ``zdot = omega``).
+_DRIVE_FREQUENCY_PARAMS = ("drive_frequency", "omega")
+
+#: Conventional parameter names a forced system uses for its drive *period*
+#: directly (so no ``2*pi`` conversion is applied).
+_FORCING_PERIOD_PARAMS = ("forcing_period", "drive_period")
+
+
+def infer_forcing_period(system: SystemBase) -> float:
+    """Infer a forced flow's forcing period from the system itself.
+
+    The stroboscopic map samples a forced flow once per forcing period; that
+    period is a property of the *system's* drive, so a user who has already set
+    the drive frequency should not have to re-derive ``2*pi/omega`` by hand
+    (Parlitz & Lauterborn 1985 study the forced oscillator precisely through
+    this once-per-period section).  This helper resolves the period from the
+    system, in priority order:
+
+    1. an explicit **period** hook — a ``forcing_period`` (or ``drive_period``)
+       ClassVar / property / parameter — used verbatim;
+    2. an explicit **frequency** hook — a ``drive_frequency`` ClassVar / property
+       / parameter — taken as the *angular* drive frequency, so the period is
+       ``2*pi / drive_frequency``;
+    3. the catalogue convention — an ``omega`` parameter — likewise angular, so
+       the period is ``2*pi / omega``.
+
+    A system with no such hook cannot have its period inferred; the caller then
+    raises directing the user to pass ``period=`` explicitly.
+
+    Parameters
+    ----------
+    system : SystemBase
+        The forced continuous system to question.
+
+    Returns
+    -------
+    float
+        The inferred forcing period (strictly positive).
+
+    Raises
+    ------
+    KeyError
+        If the system exposes no recognised drive hook.  (Signalled this way so
+        the caller can attach a user-facing message naming the failed
+        ``stroboscope`` call.)
+    InvalidParameterError
+        If a hook is present but its value is non-positive / non-finite.
+
+    References
+    ----------
+    Parlitz, U. & Lauterborn, W. (1985). "Superstructure in the bifurcation set
+    of the Duffing equation." *Physics Letters A*, 107(8), 351-355.
+    """
+    import math
+
+    from tsdynamics.errors import invalid_value
+
+    def _hook(names: tuple[str, ...]) -> tuple[str, float] | None:
+        for name in names:
+            value = getattr(system, name, None)
+            if value is None:
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            return name, numeric
+        return None
+
+    direct = _hook(_FORCING_PERIOD_PARAMS)
+    if direct is not None:
+        name, period = direct
+        if not math.isfinite(period) or period <= 0:
+            raise invalid_value(name, value=period, rule="must be a positive forcing period")
+        return period
+
+    freq = _hook(_DRIVE_FREQUENCY_PARAMS)
+    if freq is not None:
+        name, omega = freq
+        if not math.isfinite(omega) or omega <= 0:
+            raise invalid_value(name, value=omega, rule="must be a positive drive frequency")
+        return 2.0 * math.pi / omega
+
+    raise KeyError(
+        "no forcing period or drive frequency could be inferred (looked for "
+        f"{[*_FORCING_PERIOD_PARAMS, *_DRIVE_FREQUENCY_PARAMS]})"
+    )

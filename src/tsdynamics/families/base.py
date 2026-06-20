@@ -652,15 +652,52 @@ class SystemBase:
             plane = (int(comp), float(at))
         return PoincareMap(self, plane, direction=direction, **kwargs)
 
-    def stroboscope(self, period: float, **kwargs: Any) -> Any:
+    def stroboscope(self, period: float | None = None, **kwargs: Any) -> Any:
         """Build a :class:`~tsdynamics.derived.StroboscopicMap` of this forced flow.
 
-        ``period`` must be given explicitly (inferring it from a drive frequency
-        is deferred to a later stream).  Equivalent to
-        ``StroboscopicMap(self, period)``.
+        When ``period`` is omitted the forcing period is **inferred from the
+        system** — from a ``forcing_period`` / ``drive_period`` hook (used
+        verbatim) or a ``drive_frequency`` / ``omega`` hook (taken as the
+        angular drive frequency, so the period is ``2*pi / omega``).  The
+        catalogue's forced systems (e.g. :class:`~tsdynamics.systems.Duffing`,
+        whose autonomising phase obeys ``zdot = omega``) follow the ``omega``
+        convention, so ``ForcedDuffing().stroboscope()`` just works.  Pass
+        ``period=`` to override the inference (or when no drive hook exists).
+        Equivalent to ``StroboscopicMap(self, period)``.
+
+        Parameters
+        ----------
+        period : float, optional
+            The forcing period.  When ``None`` (the default) it is inferred from
+            the system; a system with no recognised drive hook raises, asking for
+            an explicit ``period=``.
+        **kwargs
+            Forwarded to :class:`~tsdynamics.derived.StroboscopicMap`.
+
+        Raises
+        ------
+        InvalidParameterError
+            When ``period`` is omitted and the system exposes no drive hook to
+            infer it from.
         """
         from tsdynamics.derived import StroboscopicMap
 
+        if period is None:
+            from tsdynamics.errors import invalid_value
+            from tsdynamics.families._accessors import infer_forcing_period
+
+            try:
+                period = infer_forcing_period(self)
+            except KeyError as err:
+                raise invalid_value(
+                    f"period for {type(self).__name__}.stroboscope()",
+                    value=None,
+                    rule="could not be inferred from the system",
+                    hint=(
+                        "pass an explicit `period=` (e.g. `2 * np.pi / omega`), or give "
+                        "the system a `drive_frequency` / `forcing_period` attribute."
+                    ),
+                ) from err
         return StroboscopicMap(self, period, **kwargs)
 
     def tangent(self, k: int | None = None, **kwargs: Any) -> Any:
