@@ -322,3 +322,72 @@ def test_building_specs_imports_no_plot_library():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert "NO_PLOT_LIBS" in out.stdout
+
+
+def test_import_does_not_load_viz_package():
+    """``import tsdynamics`` must not import the viz package at all.
+
+    ``Trajectory`` provides ``to_plot_spec``/``.plot`` but imports
+    :mod:`tsdynamics.viz` lazily, so plain ``import tsdynamics`` never runs the
+    package's renderer-backend discovery (which would eagerly load an installed
+    matplotlib/plotly backend and break the no-backend-on-import contract).
+    """
+    code = (
+        "import sys, tsdynamics;"
+        "assert 'tsdynamics.viz' not in sys.modules, "
+        "sorted(m for m in sys.modules if m.startswith('tsdynamics.viz'));"
+        "print('VIZ_NOT_LOADED')"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert "VIZ_NOT_LOADED" in out.stdout
+
+
+# ---------------------------------------------------------------------------
+# Phase-portrait kind override is schema-consistent
+# ---------------------------------------------------------------------------
+
+
+def test_phase_portrait_2d_override_on_3d_trajectory():
+    """Forcing 2-D on a 3-D trajectory yields a consistent 2-D schema (no z)."""
+    traj = _lorenz_traj()
+    spec = traj.to_plot_spec(kind="phase_portrait_2d")
+    assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
+    assert spec.ndim == 2
+    assert spec.z is None
+    assert set(spec.layers[0].data) == {"x", "y"}  # no stray z channel
+    assert spec.layers[0].kind == PlotKind.LINE  # not LINE3D
+    _assert_roundtrips(spec)
+
+
+def test_phase_portrait_3d_override_on_2d_trajectory_raises():
+    """Forcing a 3-D portrait on a 2-D trajectory is rejected, not mis-built."""
+    from tsdynamics.errors import InvalidParameterError
+
+    t = np.linspace(0.0, 1.0, 16)
+    traj = Trajectory(t=t, y=np.random.default_rng(0).standard_normal((16, 2)), system=None)
+    with pytest.raises(InvalidParameterError):
+        traj.to_plot_spec(kind="phase_portrait_3d")
+
+
+# ---------------------------------------------------------------------------
+# An empty Poincaré section still builds a (degenerate) spec
+# ---------------------------------------------------------------------------
+
+
+def test_empty_poincare_section_builds_spec():
+    """A section with no crossings emits an empty POINCARE_SECTION spec, not a crash.
+
+    The plane may miss the sampled trajectory entirely; the resulting ``(0, dim)``
+    state array must not raise in the spread reduction that picks display axes.
+    """
+    traj = Trajectory(
+        t=np.empty(0),
+        y=np.empty((0, 3)),
+        system=None,
+        meta={"plot_kind": "poincare_section", "plane": (1, 0.0)},
+    )
+    spec = traj.to_plot_spec()
+    assert spec.kind == PlotKind.POINCARE_SECTION
+    assert spec.ndim == 2
+    assert spec.layers[0].data["x"].shape == (0,)
+    _assert_roundtrips(spec)

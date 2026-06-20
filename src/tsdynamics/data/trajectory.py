@@ -25,13 +25,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from tsdynamics.viz.spec import Plottable
-
 if TYPE_CHECKING:
     from tsdynamics.viz.spec import PlotSpec
 
 
-class Trajectory(Plottable):
+class Trajectory:
     """
     The result of integrating or iterating a dynamical system.
 
@@ -210,6 +208,7 @@ class Trajectory(Plottable):
         -------
         PlotSpec
         """
+        from tsdynamics.errors import InvalidParameterError
         from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
 
         names = self.variables or tuple(f"y{i}" for i in range(self.dim))
@@ -243,14 +242,24 @@ class Trajectory(Plottable):
                 meta=meta,
             )
 
+        # Take the 2-D-vs-3-D shape from the (possibly overridden) kind, not the
+        # raw trajectory dim — so forcing ``kind="phase_portrait_2d"`` on a 3-D
+        # trajectory yields a consistent 2-D schema (no stray z channel / LINE3D
+        # layer that a renderer dispatching on the 2-D kind would choke on).
+        want_3d = spec_kind == PlotKind.PHASE_PORTRAIT_3D
+        if want_3d and self.dim < 3:
+            raise InvalidParameterError(
+                f"kind={spec_kind.value!r} needs a 3-D trajectory, but this one has "
+                f"dim={self.dim}; use 'phase_portrait_2d' or 'time_series'."
+            )
         cols: dict[str, np.ndarray] = {"x": self.y[:, 0], "y": self.y[:, 1]}
-        z = Axis(label=names[2]) if self.dim >= 3 else None
-        if self.dim >= 3:
+        z = Axis(label=names[2]) if want_3d else None
+        if want_3d:
             cols["z"] = self.y[:, 2]
-        layer_kind = PlotKind.LINE3D if self.dim >= 3 else PlotKind.LINE
+        layer_kind = PlotKind.LINE3D if want_3d else PlotKind.LINE
         return PlotSpec(
             kind=spec_kind,
-            ndim=min(self.dim, 3),
+            ndim=3 if want_3d else 2,
             aspect="equal",
             title=self._title(),
             x=Axis(label=names[0]),
@@ -259,6 +268,32 @@ class Trajectory(Plottable):
             layers=[Layer(layer_kind, cols)],
             meta=meta,
         )
+
+    def plot(self, backend: str | None = None, **tweaks: Any) -> Any:
+        """Render this trajectory via a visualization backend.
+
+        Sugar over :meth:`to_plot_spec` — see
+        :meth:`tsdynamics.viz.spec.Plottable.plot` for the tweak keywords.  The
+        viz package is imported lazily here (not at module scope) so plain
+        ``import tsdynamics`` never pulls it in — and thus never triggers
+        renderer-backend discovery / a matplotlib import — honouring the
+        no-backend-on-import contract.  Raises
+        :class:`~tsdynamics.viz.spec.VisualizationNotInstalled` until a backend
+        is registered.
+        """
+        from tsdynamics.viz.spec import Plottable
+
+        return Plottable.plot(self, backend, **tweaks)
+
+    def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
+        """Notebook display hook — lazily delegated to ``Plottable`` (see :meth:`plot`).
+
+        No-ops (returns ``None``) until a backend is installed, so a trajectory
+        still reprs as text in a plain console and ``import`` stays backend-free.
+        """
+        from tsdynamics.viz.spec import Plottable
+
+        return Plottable._repr_mimebundle_(self, include, exclude)
 
     def _poincare_section_spec(self, names: tuple[str, ...]) -> PlotSpec:
         """Build the 2-D in-plane scatter spec for a Poincaré-section trajectory.
@@ -301,6 +336,13 @@ class Trajectory(Plottable):
             candidates = list(range(self.dim))[:2]
         if len(candidates) < 2:
             return 0, 0 if self.dim == 1 else 1
+        if self.y.shape[0] == 0:
+            # An empty section (the plane caught no crossings) has no spread to
+            # rank — a reduction over the zero-size axis would raise. Keep the
+            # first two in-plane candidates so the section still yields a valid
+            # (empty) 2-D scatter spec.
+            i, j = candidates[:2]
+            return (i, j) if i < j else (j, i)
         spreads = self.y.max(axis=0) - self.y.min(axis=0)
         i, j = sorted(candidates, key=lambda c: spreads[c], reverse=True)[:2]
         return (i, j) if i < j else (j, i)
