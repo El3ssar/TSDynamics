@@ -9,10 +9,13 @@ what the bulk test-suite and the documentation generator iterate over;
 user-defined classes are registered too but excluded from iteration by
 default.
 
-Alongside the system registry, this module hosts two *reserved* generic name
-registries — :data:`analyses` and :data:`transforms` — :class:`Registry`
-containers (name → object + metadata) for the analysis and transform streams to
-register into.  Solvers are **not** registered here: they live in the richer
+Alongside the system registry, this module hosts three *reserved* generic name
+registries — :data:`analyses`, :data:`transforms` and :data:`renderers` —
+:class:`Registry` containers (name → object + metadata) for the analysis,
+transform and visualization-backend streams to register into.  :data:`renderers`
+ships **empty** (visualization is deferred, decision D6); it is the seam a future
+multi-backend plotting suite registers into.  Solvers are **not** registered
+here: they live in the richer
 :mod:`tsdynamics.solvers` registry (a ``name → SolverSpec`` table carrying
 capability flags, populated by that package's directory scan + the
 :mod:`~tsdynamics.plugins` entry-point loader).
@@ -50,6 +53,7 @@ __all__ = [
     "categories",
     "families",
     "get",
+    "renderers",
     "transforms",
 ]
 
@@ -233,13 +237,13 @@ def categories(family: str | None = None, *, builtin: bool | None = True) -> dic
 
 
 # ---------------------------------------------------------------------------
-# Generic name registries: analyses / transforms
+# Generic name registries: analyses / transforms / renderers
 #
 # The system registry above is deliberately specialised (family detection,
-# builtin shadowing, ``__init_subclass__`` hooks).  The analysis and transform
-# kinds need only a name → object map with metadata, so they share one small
-# generic container.  Discovery (directory scans, entry-point plugins) lives
-# elsewhere and merely calls ``register``.
+# builtin shadowing, ``__init_subclass__`` hooks).  The analysis, transform and
+# renderer kinds need only a name → object map with metadata, so they share one
+# small generic container.  Discovery (directory scans, entry-point plugins)
+# lives elsewhere and merely calls ``register``.
 #
 # Solvers do *not* use this generic container: they have their own richer
 # ``name → SolverSpec`` registry in :mod:`tsdynamics.solvers` (capability flags,
@@ -374,3 +378,11 @@ class Registry:
 analyses = Registry("analysis")
 #: Registered data/signal transforms (spectral, filters, feature extractors).
 transforms = Registry("transform")
+#: Registered visualization renderers (backend name → a callable that consumes a
+#: :class:`~tsdynamics.viz.spec.PlotSpec` and draws it).  Ships **empty**:
+#: visualization is deferred (decision D6), so no backend is registered yet — the
+#: seam exists so a future matplotlib / Plotly / web renderer plugs in by
+#: construction.  :meth:`~tsdynamics.viz.spec.PlotSpec.render` resolves a backend
+#: through this registry; out-of-tree backends are discovered via the
+#: ``tsdynamics.renderers`` entry-point group (see :mod:`tsdynamics.viz`).
+renderers = Registry("renderer")
