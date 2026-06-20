@@ -283,3 +283,8 @@ def orbit_diagram(
     return OrbitDiagram(
         param=param, values=values_arr, points=points, components=tuple(idx), meta=meta
     )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

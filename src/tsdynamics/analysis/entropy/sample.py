@@ -166,3 +166,8 @@ def approximate_entropy(
         return log_sum / n_templates
 
     return float(phi(m) - phi(m + 1))
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

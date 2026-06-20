@@ -386,3 +386,12 @@ transforms = Registry("transform")
 #: through this registry; out-of-tree backends are discovered via the
 #: ``tsdynamics.renderers`` entry-point group (see :mod:`tsdynamics.viz`).
 renderers = Registry("renderer")
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
+
+    Re-exported stdlib helpers (``dataclass``, ``Mapping``, …) and the internal
+    ``register_class`` hook stay importable but off the tab-completion surface.
+    """
+    return sorted(__all__)

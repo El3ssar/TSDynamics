@@ -283,3 +283,8 @@ def _expansion_flow(
         times[s] = s * dt
         ln_e[s] = np.log(e) if e > 0.0 else -np.inf
     return times, ln_e, int(np.count_nonzero(alive))
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

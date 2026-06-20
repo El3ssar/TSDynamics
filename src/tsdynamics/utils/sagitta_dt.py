@@ -421,3 +421,8 @@ def estimate_dt_from_sagitta(
             high_fail = mid
 
     return _make_result(chosen_stride, achieved_percentile, evaluated, "")
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

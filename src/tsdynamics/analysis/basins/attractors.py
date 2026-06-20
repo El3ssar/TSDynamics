@@ -463,3 +463,8 @@ def resolve_merge_tol(cellgrid: _CellGrid, merge_tol: float | None) -> float:
 def _looks_unsupported(system: Any) -> bool:
     """Return True for delay / stochastic systems (no finite-dimensional state)."""
     return hasattr(system, "_drift") or hasattr(system, "history") or hasattr(system, "_delays")
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

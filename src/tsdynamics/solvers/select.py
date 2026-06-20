@@ -492,3 +492,8 @@ def recommend(
     """
     stiff = family in STIFF_METHOD and is_stiff(system, ic=ic, t=t, ratio_threshold=ratio_threshold)
     return resolve(select(family, stiff=stiff), family=family)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

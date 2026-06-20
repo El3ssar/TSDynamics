@@ -82,3 +82,8 @@ class EnsembleSystem:
 
     def __repr__(self) -> str:
         return f"EnsembleSystem({type(self.template).__name__}, size={self.size})"
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

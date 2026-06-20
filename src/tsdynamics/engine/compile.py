@@ -1403,3 +1403,8 @@ def eval_tape_jac(tape: Tape, u: Any, p: Any = (), t: float = 0.0) -> tuple[np.n
     deriv = regs[tape.outputs]
     jac = regs[tape.jac_outputs].reshape(dim, dim)
     return deriv, jac
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

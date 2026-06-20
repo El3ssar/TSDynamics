@@ -131,3 +131,8 @@ def _as_channels(x: Any) -> np.ndarray:
     if not np.all(np.isfinite(arr)):
         raise ValueError("channel data contains non-finite values (nan/inf).")
     return arr
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

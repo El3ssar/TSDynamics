@@ -372,3 +372,8 @@ def lyapunov_from_data(
         n_reference=n_reference,
         method=method,
     )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

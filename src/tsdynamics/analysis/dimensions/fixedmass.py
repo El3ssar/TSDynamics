@@ -162,3 +162,8 @@ def fixed_mass_dimension(
         intercept=fit.intercept,
         q=None,
     )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -122,3 +122,8 @@ def multiscale_entropy(
     for k, s in enumerate(scale_list):
         out[k] = entropy_fn(coarse_grain(series, s), **call_kwargs)
     return out
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

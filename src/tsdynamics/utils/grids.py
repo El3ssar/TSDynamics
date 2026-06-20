@@ -68,3 +68,8 @@ def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:
     if t_arr.size == 0 or t_arr[-1] < tf - 1e-12:
         t_arr = np.append(t_arr, tf)
     return t_arr
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

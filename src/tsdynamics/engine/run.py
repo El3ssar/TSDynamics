@@ -1033,3 +1033,8 @@ def _provenance(problem: Problem, **extra: Any) -> dict:
 def _name(problem: Problem) -> str:
     """Return a readable name for error messages."""
     return type(problem.system).__name__ if problem.system is not None else problem.family
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

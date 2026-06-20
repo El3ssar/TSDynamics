@@ -120,3 +120,8 @@ def zero_one_test(
 
     k = float(np.median(k_c))
     return (k, k_c) if return_distribution else k
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

@@ -500,3 +500,8 @@ def infer_forcing_period(system: SystemBase) -> float:
         "no forcing period or drive frequency could be inferred (looked for "
         f"{[*_FORCING_PERIOD_PARAMS, *_DRIVE_FREQUENCY_PARAMS]})"
     )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

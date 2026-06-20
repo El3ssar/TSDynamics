@@ -173,3 +173,8 @@ STATISTICS = {
     "time_reversal": time_reversal_asymmetry,
     "prediction_error": nonlinear_prediction_error,
 }
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

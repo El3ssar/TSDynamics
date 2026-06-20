@@ -121,3 +121,8 @@ def weighted_permutation_entropy(
         hmax = Shannon(base).maximum(space.cardinality)
         return h / hmax if hmax > 0 else 0.0
     return h
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

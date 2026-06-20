@@ -165,3 +165,8 @@ def invalid_value(
     if hint:
         msg = f"{msg}. {hint}"
     return InvalidParameterError(msg)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

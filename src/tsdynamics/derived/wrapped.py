@@ -157,3 +157,8 @@ class WrappedSystem:
     def __repr__(self) -> str:
         kind = "discrete" if self._is_discrete else "continuous"
         return f"WrappedSystem(dim={self.dim}, {kind})"
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

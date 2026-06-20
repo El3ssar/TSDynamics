@@ -213,3 +213,8 @@ def recurrence_matrix(
     ones = np.ones(rows.size, dtype=bool)
     mat = sparse.csr_matrix((ones, (rows, cols)), shape=(n, n))
     return RecurrenceMatrix(matrix=mat, epsilon=eps, metric=metric, theiler_window=w)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

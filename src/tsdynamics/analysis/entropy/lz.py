@@ -297,3 +297,8 @@ def _lz76_via_lzcomplexity(codes: np.ndarray, k: int) -> int:
     # list[int] → concatenated-decimals gotcha) and pass the resulting string.
     text = "".join(chr(0x30 + int(code)) for code in codes)
     return int(lz.lz76Factorization(text))
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

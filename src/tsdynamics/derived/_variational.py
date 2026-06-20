@@ -132,3 +132,8 @@ def split_extended(z: Any, dim: int, k: int) -> tuple[np.ndarray, np.ndarray]:
     x = z_arr[:dim].copy()
     w = z_arr[dim : dim + dim * k].reshape(k, dim).T.copy()
     return x, w
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

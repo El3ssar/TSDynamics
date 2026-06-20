@@ -300,3 +300,8 @@ class DimensionResult:
             f"dimension={self.dimension:.4g} ± {self.stderr:.2g}, "
             f"n_fit={self.fit_slice[1] - self.fit_slice[0] + 1})"
         )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

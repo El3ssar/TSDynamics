@@ -198,3 +198,8 @@ def correlation_dimension(
         intercept=fit.intercept,
         q=2.0,
     )
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

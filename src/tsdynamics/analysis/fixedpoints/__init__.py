@@ -53,3 +53,8 @@ for _name, _fn, _meta in (
 ):
     _registry.analyses.register(_name, _fn, **_meta)
 del _name, _fn, _meta
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

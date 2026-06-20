@@ -354,3 +354,8 @@ def dde_lyapunov_spectrum(
     avg_time = (n_chunks - n_burn) * chunk
     exps = np.sort(log_sums / avg_time)[::-1]
     return exps
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

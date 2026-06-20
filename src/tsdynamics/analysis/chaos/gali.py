@@ -350,3 +350,8 @@ def _gali_flow(
             values[i] = _c.gali_volume(w)
             times[i] = t
     return times, values
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)

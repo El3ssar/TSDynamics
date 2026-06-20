@@ -182,3 +182,8 @@ def local_slopes(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     if x.size < 2:
         return np.full(x.shape, np.nan)
     return np.gradient(y, x)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    return sorted(__all__)
