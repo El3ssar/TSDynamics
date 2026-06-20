@@ -431,8 +431,14 @@ All three families + all derived wrappers implement:
   or successive Poincaré crossings (`kind="poincare"`) — from a System,
   `Trajectory`, or bare 1-D series. `poincare_section` gives root-refined
   crossings from a system or interpolated crossings from data. The orbits
-  subpackage is backend-free (extrema/sweeps over the standard stepping API) and
-  self-registers into `registry.analyses`.
+  subpackage is mostly backend-free (extrema/sweeps over the standard stepping
+  API) and self-registers into `registry.analyses`. **Exception (stream
+  WS-MAPITER):** when `orbit_diagram` sweeps a genuine `DiscreteMap`, each value's
+  `transient + n` run is a single `iterate` call on the Rust engine (one FFI
+  round-trip, ~9× faster than the per-step loop) — byte-identical where the engine
+  and NumPy agree bit-for-bit (e.g. the logistic map) and same-attractor for a
+  chaotic map. Flow wrappers (`PoincareMap`/`StroboscopicMap`), maps whose `_step`
+  will not lower, and wheel-free environments transparently keep the stepping API.
 - `find_attractors` / `basins_of_attraction` (A-BASIN) drive any map/flow over a
   `CellGrid` tessellation with a recurrence finite-state machine (the
   `AttractorMapper`, Datseris–Wagemakers 2022): a trajectory that recurrently

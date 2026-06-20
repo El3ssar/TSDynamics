@@ -164,6 +164,47 @@ def _count_branches(col: np.ndarray, rtol: float) -> int:
     return 1 + int(np.count_nonzero(np.diff(s) > rtol * span))
 
 
+def _record_via_iterate(
+    current: Any, start: Any, transient: int, n: int, idx: list[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Record one parameter value on the Rust engine, in a single ``iterate`` call.
+
+    Resolve the initial condition explicitly and iterate ``transient + n`` steps
+    in one FFI round-trip, then slice off the transient.  ``max_retries=1`` with an
+    explicit ``ic`` makes a divergent value raise ``RuntimeError`` (no random-IC
+    retry) — the caller turns that into an empty record set, exactly as the
+    per-step path does.  Returns the recorded points and the final state (the
+    carry-over initial condition for the next value).
+    """
+    ic_resolved = current.resolve_ic(start)
+    traj = current.iterate(steps=transient + n, ic=ic_resolved, max_retries=1)
+    y = traj.y
+    rec = np.asarray(y[transient : transient + n][:, idx], dtype=float)
+    # A zero-length run (``transient + n == 0``) yields no rows; the carry-over
+    # final state is then just the resolved initial condition — matching the old
+    # step-loop's ``current.state()`` after taking no steps.
+    last = y[-1].copy() if y.shape[0] else np.asarray(ic_resolved, dtype=float).reshape(current.dim)
+    return rec, last
+
+
+def _record_via_step(
+    current: Any, start: Any, transient: int, n: int, idx: list[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Record one parameter value via the per-step protocol path (a ``step()`` loop).
+
+    The fallback for flow wrappers (``PoincareMap`` / ``StroboscopicMap``), maps
+    whose ``_step`` will not lower to the engine IR, and wheel-free environments.
+    Returns the recorded points and the final state.
+    """
+    current.reinit(start)
+    for _ in range(transient):
+        current.step()
+    rec = np.empty((n, len(idx)))
+    for i in range(n):
+        rec[i] = current.step()[idx]
+    return rec, current.state()
+
+
 def orbit_diagram(
     sys: Any,
     param: str,
@@ -241,21 +282,44 @@ def orbit_diagram(
 
     import warnings
 
+    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics.engine.run import EngineNotAvailableError
+    from tsdynamics.families import DiscreteMap
+
     values_arr = np.asarray(list(values), dtype=float)
     points: list[np.ndarray] = []
     state: np.ndarray | None = None
+
+    # A genuine DiscreteMap iterates on the Rust engine: the whole transient +
+    # record run for one parameter value becomes a single engine call (one FFI
+    # round-trip) rather than ``transient + n`` Python ``step()`` calls — the
+    # per-value bottleneck this stream removes (Logistic 600×120: ~9× faster).
+    # Flow wrappers (PoincareMap / StroboscopicMap) have no ``iterate`` and keep
+    # the per-step protocol path; a map whose ``_step`` will not lower to the IR,
+    # or a wheel-free environment with no compiled engine, falls back to it too
+    # (the decision is taken once and latched for the rest of the sweep).  Both
+    # paths iterate the *same* lowered ``_step``, so a periodic window converges to
+    # the identical cycle and — where the engine and NumPy agree bit-for-bit (e.g.
+    # the logistic map) — the whole diagram is byte-identical; a chaotic window
+    # records the same attractor (the engine ``iterate`` being the canonical map
+    # runner).
+    use_engine = isinstance(sys, DiscreteMap)
 
     for v in values_arr:
         current = sys.with_params(**{param: v})
         start = state if (carry_state and state is not None) else ic
         try:
-            current.reinit(start)
-            for _ in range(transient):
-                current.step()
-            rec = np.empty((n, len(idx)))
-            for i in range(n):
-                u = current.step()
-                rec[i] = u[idx]
+            if use_engine:
+                try:
+                    rec, last = _record_via_iterate(current, start, transient, n, idx)
+                except (TapeCompileError, EngineNotAvailableError):
+                    # This map cannot run on the engine (a non-lowerable step, or
+                    # no compiled wheel): fall back to the protocol path for this
+                    # value and the rest of the sweep.
+                    use_engine = False
+                    rec, last = _record_via_step(current, start, transient, n, idx)
+            else:
+                rec, last = _record_via_step(current, start, transient, n, idx)
         except RuntimeError as exc:
             # One divergent value must not discard the whole sweep: record an
             # empty point set and restart the next value from `ic`.
@@ -270,7 +334,7 @@ def orbit_diagram(
             continue
         points.append(rec)
         if carry_state:
-            state = current.state()
+            state = last
 
     meta = {
         "system": type(sys).__name__,
