@@ -79,12 +79,27 @@ def _section_from_data(traj: Trajectory, plane: tuple, direction: int) -> Trajec
             t=np.empty(0),
             y=np.empty((0, traj.dim)),
             system=traj.system,
-            meta={**traj.meta, "derived": "poincare_section", "plane": plane},
+            meta={
+                **traj.meta,
+                "derived": "poincare_section",
+                # Section intent (viz.PlotKind.POINCARE_SECTION) so a renderer
+                # draws the in-plane scatter, never the source flow.
+                "plot_kind": "poincare_section",
+                "plane": plane,
+            },
         )
 
     s = g[i_hits] / (g[i_hits] - g[i_hits + 1])  # linear interpolation fraction
     points = traj.y[i_hits] + s[:, None] * (traj.y[i_hits + 1] - traj.y[i_hits])
     times = traj.t[i_hits] + s * (traj.t[i_hits + 1] - traj.t[i_hits])
 
-    meta = {**traj.meta, "derived": "poincare_section", "plane": plane, "direction": direction}
+    meta = {
+        **traj.meta,
+        "derived": "poincare_section",
+        # Section intent (viz.PlotKind.POINCARE_SECTION) so a renderer draws the
+        # in-plane scatter, never the source flow.
+        "plot_kind": "poincare_section",
+        "plane": plane,
+        "direction": direction,
+    }
     return Trajectory(t=times, y=points, system=traj.system, meta=meta)

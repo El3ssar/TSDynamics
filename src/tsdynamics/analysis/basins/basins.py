@@ -92,6 +92,58 @@ class BasinsResult:
         """Fraction of cells that diverged / never settled."""
         return float(np.mean(self.labels == DIVERGED))
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe this basin diagram as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``BASINS_IMAGE`` spec — the integer label field as an image on
+        an ``"equal"`` canvas, the grid axes giving the extent, plus a marker
+        layer at the attractor representatives (for a 2-D grid).  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"basins_image"``).  ``None`` uses
+            ``BASINS_IMAGE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.BASINS_IMAGE
+        labels = np.asarray(self.labels)
+        layers = [Layer(PlotKind.IMAGE, {"c": labels}, style={"cmap": "tab10"})]
+
+        # Mark the attractor representatives on a 2-D image (their first two
+        # coordinates).  Higher-/lower-dim grids skip the overlay.
+        if labels.ndim == 2:
+            centers = self.attractors.centers
+            if centers.size and centers.shape[1] >= 2:
+                layers.append(
+                    Layer(
+                        PlotKind.MARKERS,
+                        {"x": centers[:, 0], "y": centers[:, 1]},
+                        label="attractors",
+                        style={"marker": "*", "color": "black"},
+                    )
+                )
+
+        lo, hi = self.grid.lo, self.grid.hi
+        x_axis = Axis(label="x", limits=(float(lo[0]), float(hi[0])) if lo.size else None)
+        y_axis = Axis(label="y", limits=(float(lo[1]), float(hi[1])) if lo.size > 1 else None)
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=f"basins ({self.n_attractors} attractors)",
+            x=x_axis,
+            y=y_axis,
+            layers=layers,
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         return (
             f"BasinsResult(shape={self.shape}, n_attractors={self.n_attractors}, "

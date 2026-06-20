@@ -242,6 +242,57 @@ class DimensionResult:
         lo, hi = self.fit_slice
         return float(self.x[lo]), float(self.x[hi])
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe this dimension estimate as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``SCALING_FIT`` spec — the log--log curve as a scatter layer, the
+        selected scaling region highlighted, and the fitted line drawn from
+        :attr:`intercept` and :attr:`dimension` — the same schema every scaling
+        estimator emits, so a single ``result.plot.scaling()`` renders it.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"scaling_fit"``).  ``None`` uses
+            ``SCALING_FIT``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.SCALING_FIT
+        x = np.asarray(self.x, dtype=float)
+        y = np.asarray(self.y, dtype=float)
+        lo, hi = self.fit_slice
+        layers = [Layer(PlotKind.SCATTER, {"x": x, "y": y}, label=r"$\log C(r)$")]
+        if x.size and hi >= lo:
+            layers.append(
+                Layer(
+                    PlotKind.MARKERS, {"x": x[lo : hi + 1], "y": y[lo : hi + 1]}, label="fit region"
+                )
+            )
+            fit_x = np.array([x[lo], x[hi]], dtype=float)
+            layers.append(
+                Layer(
+                    PlotKind.LINE,
+                    {"x": fit_x, "y": self.intercept + self.dimension * fit_x},
+                    label=f"slope = {self.dimension:.3g}",
+                )
+            )
+        q = "" if self.q is None else f" (q={self.q:g})"
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"{self.kind} dimension{q}  D = {self.dimension:.3f}",
+            x=Axis(label=r"$\log r$"),
+            y=Axis(label=r"$\log C(r)$"),
+            layers=layers,
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         q = "" if self.q is None else f", q={self.q:g}"
         return (

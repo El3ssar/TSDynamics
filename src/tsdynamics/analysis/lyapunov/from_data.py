@@ -27,6 +27,7 @@ calculating largest Lyapunov exponents from small data sets", *Physica D*
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -76,6 +77,56 @@ class LyapunovFromData:
     def __float__(self) -> float:
         """Return the estimated maximal Lyapunov exponent."""
         return float(self.lyapunov)
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the divergence curve as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``SCALING_FIT`` spec — the stretching curve :math:`S(k)` (mean
+        log-divergence) against time as a scatter, the fitted scaling region
+        highlighted, and the line of slope :attr:`lyapunov` drawn over it — the
+        same schema the fractal-dimension estimators emit, so a single
+        ``result.plot.scaling()`` renders it.  The :mod:`tsdynamics.viz.spec`
+        import is lazy, so building a spec never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"scaling_fit"``).  ``None`` uses
+            ``SCALING_FIT``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.SCALING_FIT
+        t = np.asarray(self.times, dtype=float)
+        s = np.asarray(self.divergence, dtype=float)
+        lo, hi = self.fit_region
+        layers = [Layer(PlotKind.SCATTER, {"x": t, "y": s}, label="$S(k)$")]
+        if t.size and hi >= lo:
+            layers.append(
+                Layer(
+                    PlotKind.MARKERS, {"x": t[lo : hi + 1], "y": s[lo : hi + 1]}, label="fit region"
+                )
+            )
+            # The line of slope `lyapunov` anchored to the fit-region centroid.
+            tc = float(np.mean(t[lo : hi + 1]))
+            sc = float(np.mean(s[lo : hi + 1]))
+            fit_x = np.array([t[lo], t[hi]], dtype=float)
+            fit_y = sc + self.lyapunov * (fit_x - tc)
+            layers.append(
+                Layer(PlotKind.LINE, {"x": fit_x, "y": fit_y}, label=f"slope = {self.lyapunov:.3g}")
+            )
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"max. Lyapunov ({self.method}) = {self.lyapunov:.3g}",
+            x=Axis(label="time"),
+            y=Axis(label="mean log divergence $S(k)$"),
+            layers=layers,
+        )
 
     def __repr__(self) -> str:  # noqa: D105
         lo, hi = self.fit_region

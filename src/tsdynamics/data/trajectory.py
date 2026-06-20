@@ -21,12 +21,17 @@ The point-set operations (:meth:`Trajectory.minmax`,
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tsdynamics.viz.spec import Plottable
 
-class Trajectory:
+if TYPE_CHECKING:
+    from tsdynamics.viz.spec import PlotSpec
+
+
+class Trajectory(Plottable):
     """
     The result of integrating or iterating a dynamical system.
 
@@ -168,6 +173,145 @@ class Trajectory:
         """
         mask = self.t >= t0
         return Trajectory(self.t[mask], self.y[mask], self.system, meta=self.meta)
+
+    # --- visualization seam ---
+
+    def to_plot_spec(self, kind: str | None = None) -> PlotSpec:
+        """
+        Describe this trajectory as a backend-agnostic :class:`PlotSpec`.
+
+        The kind is chosen from the trajectory's dimensionality (the dispatch
+        that the docs figure tooling hand-rolls today): a 1-D trajectory is a
+        :data:`~tsdynamics.viz.spec.PlotKind.TIME_SERIES`, a 2-D one a
+        :data:`~tsdynamics.viz.spec.PlotKind.PHASE_PORTRAIT_2D`, and ``dim >= 3``
+        a :data:`~tsdynamics.viz.spec.PlotKind.PHASE_PORTRAIT_3D` (the first three
+        components).  A Poincaré-section trajectory (one carrying a
+        ``meta["plot_kind"]`` of ``"poincare_section"``, set by
+        :func:`~tsdynamics.analysis.poincare_section` /
+        :meth:`~tsdynamics.derived.PoincareMap.trajectory`) is recognised and
+        rendered as the 2-D in-plane scatter instead of a flow line — the section
+        intent a renderer would otherwise have to reverse-engineer from ``meta``.
+
+        The :mod:`tsdynamics.viz.spec` import is at module scope but pulls in no
+        plotting library, so building a spec (or importing :mod:`tsdynamics`)
+        never imports matplotlib / Plotly; the spec itself carries no rendering
+        code.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the auto-dispatched semantic kind with any member of the
+            closed :class:`~tsdynamics.viz.spec.PlotKind` vocabulary (e.g.
+            ``"time_series"`` to force component-vs-time on a 3-D trajectory).
+            ``None`` (the default) auto-dispatches on dimensionality / section
+            intent.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        names = self.variables or tuple(f"y{i}" for i in range(self.dim))
+
+        # A Poincaré section carries its intent in meta; honour it before the
+        # dimensionality dispatch so a section is never mistaken for a flow.
+        if kind is None and str(self.meta.get("plot_kind", "")) == PlotKind.POINCARE_SECTION:
+            return self._poincare_section_spec(names)
+
+        if kind is None:
+            spec_kind = (
+                PlotKind.PHASE_PORTRAIT_3D
+                if self.dim >= 3
+                else PlotKind.PHASE_PORTRAIT_2D
+                if self.dim == 2
+                else PlotKind.TIME_SERIES
+            )
+        else:
+            spec_kind = PlotKind(kind)
+
+        meta = dict(self.meta)
+
+        if spec_kind == PlotKind.TIME_SERIES:
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=1,
+                title=self._title(),
+                x=Axis(label="t"),
+                y=Axis(label=names[0]),
+                layers=[Layer(PlotKind.LINE, {"x": self.t, "y": self.y[:, 0]}, label=names[0])],
+                meta=meta,
+            )
+
+        cols: dict[str, np.ndarray] = {"x": self.y[:, 0], "y": self.y[:, 1]}
+        z = Axis(label=names[2]) if self.dim >= 3 else None
+        if self.dim >= 3:
+            cols["z"] = self.y[:, 2]
+        layer_kind = PlotKind.LINE3D if self.dim >= 3 else PlotKind.LINE
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=min(self.dim, 3),
+            aspect="equal",
+            title=self._title(),
+            x=Axis(label=names[0]),
+            y=Axis(label=names[1]),
+            z=z,
+            layers=[Layer(layer_kind, cols)],
+            meta=meta,
+        )
+
+    def _poincare_section_spec(self, names: tuple[str, ...]) -> PlotSpec:
+        """Build the 2-D in-plane scatter spec for a Poincaré-section trajectory.
+
+        Projects the recorded crossing states onto the section plane (dropping
+        the normal coordinate) and picks the two in-plane axes with the largest
+        spread to display — so the section reads as a 2-D point cloud, not a 3-D
+        flow.  Falls back to the first two components if the plane is unavailable.
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        i, j = self._section_axes()
+        layers = [Layer(PlotKind.SCATTER, {"x": self.y[:, i], "y": self.y[:, j]})]
+        return PlotSpec(
+            kind=PlotKind.POINCARE_SECTION,
+            ndim=2,
+            aspect="equal",
+            title=self._title("Poincaré section"),
+            x=Axis(label=names[i]),
+            y=Axis(label=names[j]),
+            layers=layers,
+            meta=dict(self.meta),
+        )
+
+    def _section_axes(self) -> tuple[int, int]:
+        """Pick the two in-plane display axes for a Poincaré section.
+
+        Drops the coordinate the section plane fixes (read from ``meta["plane"]``
+        as ``(index, value)`` when present) and, of the remaining coordinates,
+        keeps the two with the largest range so the scatter is maximally
+        informative.  Defaults to ``(0, 1)`` when the plane / extra columns are
+        unavailable.
+        """
+        plane = self.meta.get("plane")
+        normal_idx: int | None = None
+        if isinstance(plane, (tuple, list)) and len(plane) == 2 and np.isscalar(plane[0]):
+            normal_idx = int(plane[0])
+        candidates = [c for c in range(self.dim) if c != normal_idx]
+        if len(candidates) < 2:
+            candidates = list(range(self.dim))[:2]
+        if len(candidates) < 2:
+            return 0, 0 if self.dim == 1 else 1
+        spreads = self.y.max(axis=0) - self.y.min(axis=0)
+        i, j = sorted(candidates, key=lambda c: spreads[c], reverse=True)[:2]
+        return (i, j) if i < j else (j, i)
+
+    def _title(self, prefix: str | None = None) -> str:
+        """Compose a title from the originating system name and an optional prefix."""
+        system = self.meta.get("system")
+        name = str(system) if system else ""
+        if prefix and name:
+            return f"{prefix} — {name}"
+        return prefix or name
 
     # --- point-set operations ---
 

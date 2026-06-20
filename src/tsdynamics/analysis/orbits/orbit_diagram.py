@@ -102,6 +102,38 @@ class OrbitDiagram:
         (i,) = np.nonzero(changed)
         return 0.5 * (self.values[i] + self.values[i + 1])
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe this orbit diagram as a backend-agnostic :class:`PlotSpec`.
+
+        Builds an ``ORBIT_DIAGRAM`` scatter of the asymptotic state (first
+        recorded component) against the swept parameter — the bifurcation diagram
+        — via :meth:`flat`.  The :mod:`tsdynamics.viz.spec` import is lazy, so
+        building a spec never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"bifurcation"``).  ``None`` uses
+            ``ORBIT_DIAGRAM``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        x, y = self.flat()
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.ORBIT_DIAGRAM
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title="orbit diagram",
+            x=Axis(label=self.param),
+            y=Axis(label="asymptotic state"),
+            layers=[Layer(PlotKind.SCATTER, {"x": x, "y": y}, style={"s": 1.0})],
+            meta=dict(self.meta),
+        )
+
     def __repr__(self) -> str:
         return (
             f"OrbitDiagram({self.param!r}, {len(self.values)} values, "

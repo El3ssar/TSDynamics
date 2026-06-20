@@ -83,6 +83,39 @@ class RecurrenceMatrix:
         arr = self.toarray()
         return arr.astype(dtype) if dtype is not None else arr
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe this recurrence matrix as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``RECURRENCE_PLOT`` image layer of the dense boolean
+        :math:`N \times N` matrix on a square (``aspect="equal"``) canvas, with
+        both axes labelled by the state index :math:`i`.  The matrix is
+        densified with :meth:`toarray` (``O(N^2)``).  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"recurrence_plot"``).  ``None``
+            uses ``RECURRENCE_PLOT``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.RECURRENCE_PLOT
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=f"recurrence plot (RR = {self.recurrence_rate:.3g})",
+            x=Axis(label="$i$"),
+            y=Axis(label="$j$"),
+            layers=[Layer(PlotKind.IMAGE, {"c": self.toarray()}, style={"cmap": "binary"})],
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         return (
             f"RecurrenceMatrix(N={self.size}, eps={self.epsilon:.4g}, "

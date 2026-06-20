@@ -238,6 +238,10 @@ class PoincareMap(DerivedSystem):
             points[k] = self._u_cross
         meta = {
             "derived": "PoincareMap",
+            # Section intent, so a renderer draws the 2-D in-plane scatter rather
+            # than mistaking the full-dimensional crossing states for a flow line
+            # (the string value of viz.PlotKind.POINCARE_SECTION).
+            "plot_kind": "poincare_section",
             "plane": self.plane,
             "direction": self.direction,
             "dt": self.dt,
