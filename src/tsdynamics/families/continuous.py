@@ -162,6 +162,12 @@ class ContinuousSystem(SystemBase, ABC):
     _t_now: float = 0.0
     _default_step_dt: ClassVar[float] = 0.01
 
+    # Per-step integration context cached by ``reinit`` so a repeated constant-``dt``
+    # stepping loop pays the fixed per-call overhead (solver-registry resolve,
+    # Jacobian decision, output-grid build, provenance, Trajectory wrap) once at
+    # reinit instead of on every ``step`` (stream WS-STEPBUF).
+    _step_method_canonical: str | None = None
+
     # ------------------------------------------------------------------ #
     # Subclass interface
     # ------------------------------------------------------------------ #
@@ -294,8 +300,11 @@ class ContinuousSystem(SystemBase, ABC):
         # trbdf2) gets a Jacobian-carrying tape — step() reuses this exact tape,
         # so the Jacobian must be baked in here or the engine refuses the step.
         self._step_method = method or self._default_method
-        jac_kw = solvers.resolve(self._step_method).build_kwargs
-        self._engine_problem = ode_problem(self, ic=ic_arr, t0=t0, **jac_kw)
+        resolution = solvers.resolve(self._step_method)
+        # Cache the canonical kernel name (``"RK45"`` → ``"rk45"``) so the per-step
+        # loop hits the engine core directly without re-resolving every call.
+        self._step_method_canonical = resolution.name
+        self._engine_problem = ode_problem(self, ic=ic_arr, t0=t0, **resolution.build_kwargs)
         self._step_rtol = float(rtol)
         self._step_atol = float(atol)
         self._state_now = ic_arr.copy()
@@ -308,32 +317,54 @@ class ContinuousSystem(SystemBase, ABC):
         The first call performs an implicit :meth:`reinit`.  Parameter changes
         made after ``reinit`` take effect on the next ``reinit``, not on a
         live stepper.
+
+        Notes
+        -----
+        Each call integrates **exactly one** ``dt`` from the live ``(state, t)``,
+        returning byte-for-byte the trajectory the released per-``dt`` path
+        produced — there is no batching, so the numbers are unchanged for every
+        method, adaptive or fixed-step (stream WS-STEPBUF).  The speedup comes
+        only from skipping fixed per-call overhead: ``step`` reuses the tape and
+        canonical kernel name cached by :meth:`reinit` and calls the engine's lean
+        dense-output core (:func:`~tsdynamics.engine.run._run_continuous`)
+        directly, so a constant-``dt`` stepping loop (Poincaré refinement, basins
+        over flows) skips the solver-registry resolve, the implicit-Jacobian
+        decision, provenance assembly and the :class:`Trajectory` wrap that the
+        full :meth:`integrate` entry point pays on every call.
+
+        A batch-ahead variant that integrated a whole chunk in one engine call was
+        rejected: a chunked adaptive integration is *not* equal to N single-``dt``
+        integrations (the adaptive controller carries its step-size/error state
+        across output nodes), which silently corrupted sensitive consumers such as
+        ``max_lyapunov``.  The durable amortisation is the resumable engine stepper
+        (WS-STEPPER), which advances without re-seeding and stays answer-exact.
         """
+        from tsdynamics.engine.problem import ODEProblem
+        from tsdynamics.engine.run import _run_continuous
+        from tsdynamics.utils.grids import make_output_grid
+
         if self._engine_problem is None:
             self.reinit()
         dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
 
-        from tsdynamics.engine.problem import ODEProblem
-        from tsdynamics.engine.run import integrate
-
-        # Reuse the cached tape with the current state as the initial condition.
-        prob = ODEProblem(
-            tape=self._engine_problem.tape, ic=self._state_now, t0=self._t_now, system=self
-        )
-        traj = integrate(
+        t0 = self._t_now
+        # The same two-node output grid the full ``integrate`` would build for a
+        # single ``dt`` span — so ``step`` is bit-identical to a per-``dt``
+        # ``integrate`` from the live state.
+        t_eval = make_output_grid(t0, t0 + dt, dt)
+        prob = ODEProblem(tape=self._engine_problem.tape, ic=self._state_now, t0=t0, system=self)
+        y = _run_continuous(
             prob,
-            final_time=self._t_now + dt,
-            dt=dt,
-            t0=self._t_now,
-            method=self._step_method,
+            t_eval,
+            method=self._step_method_canonical,
             rtol=self._step_rtol,
             atol=self._step_atol,
             backend=self._step_backend,
         )
-        state = np.asarray(traj.y[-1], dtype=float)
-        self._t_now = self._t_now + dt
+        state = np.asarray(y[-1], dtype=float)
+        self._t_now = t0 + dt
         self._state_now = state.copy()
-        return state
+        return state.copy()
 
     def state(self) -> np.ndarray:
         """Return a copy of the current state (implicit ``reinit`` if cold)."""
