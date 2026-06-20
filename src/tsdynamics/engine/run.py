@@ -526,13 +526,89 @@ def _run_continuous(
 
     eng = _engine()
     y = _engine_integrate_dense(
-        eng, problem, t_eval, method=method, rtol=rtol, atol=atol, jit=(backend == "jit")
+        eng,
+        _primary_tape(problem).to_arrays(),
+        problem.ic,
+        problem.params_vec(),
+        t_eval,
+        method=method,
+        rtol=rtol,
+        atol=atol,
+        jit=(backend == "jit"),
     )
     y = np.asarray(y, dtype=np.float64)
     if not np.all(np.isfinite(y)):
         raise RuntimeError(
             f"{_name(problem)}: integration diverged or the step collapsed before "
             f"reaching the final time."
+        )
+    return y
+
+
+def _step_continuous(
+    tape_arrays: tuple,
+    ic: np.ndarray,
+    params_vec: np.ndarray,
+    t_eval: np.ndarray,
+    *,
+    method: str,
+    rtol: float,
+    atol: float,
+    jit: bool,
+    name: str,
+) -> np.ndarray:
+    """Integrate one dense ODE span from pre-marshalled tape arrays — the per-step seam.
+
+    The lean inner core of
+    :meth:`~tsdynamics.families.continuous.ContinuousSystem.step`: it performs
+    exactly the engine call and finiteness guard :func:`_run_continuous` does for an
+    ODE on the compiled engine, but takes the already-marshalled tape wire arrays
+    (cached once at ``reinit`` — they are loop-invariant) plus the live parameter
+    vector, skipping the per-call tape re-marshalling, ``Problem`` construction and
+    output-grid build that the full :func:`integrate` entry point pays.  It is
+    therefore **answer-identical** to :func:`_run_continuous` over the same inputs
+    (stream WS-INVHOIST); it serves only the constant-/small-``dt`` stepping loops
+    (Poincaré refinement, basins over flows, the streaming protocol), never a
+    user-facing :class:`~tsdynamics.families.Trajectory` (which keeps its
+    provenance via :func:`integrate`).
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The RHS tape's engine wire arrays (:meth:`Tape.to_arrays`), marshalled once
+        by the caller and reused across the loop.
+    ic : ndarray, shape (dim,)
+        The state to start this span from.
+    params_vec : ndarray
+        Live control-parameter values, read per step so a mid-loop parameter change
+        still takes effect — identical to the pre-hoist path.
+    t_eval : ndarray
+        The (two-node) output grid for this span.
+    method, rtol, atol, jit : str, float, float, bool
+        Solver configuration, resolved once by ``reinit``.
+    name : str
+        System name, for the divergence error message.
+
+    Returns
+    -------
+    ndarray, shape (len(t_eval), dim)
+
+    Raises
+    ------
+    RuntimeError
+        If the integration diverged or the step collapsed (non-finite output) —
+        the same loud-divergence contract as :func:`_run_continuous`.
+    """
+    eng = _engine()
+    y = np.asarray(
+        _engine_integrate_dense(
+            eng, tape_arrays, ic, params_vec, t_eval, method=method, rtol=rtol, atol=atol, jit=jit
+        ),
+        dtype=np.float64,
+    )
+    if not np.isfinite(y).all():
+        raise RuntimeError(
+            f"{name}: integration diverged or the step collapsed before reaching the final time."
         )
     return y
 
@@ -917,7 +993,9 @@ def sde_ensemble_final(
 
 def _engine_integrate_dense(
     eng: Any,
-    problem: Problem,
+    tape_arrays: tuple,
+    ic: np.ndarray,
+    params_vec: np.ndarray,
     t_eval: np.ndarray,
     *,
     method: str,
@@ -925,11 +1003,19 @@ def _engine_integrate_dense(
     atol: float,
     jit: bool,
 ) -> np.ndarray:
-    """Dispatch a dense single-trajectory integration to the engine."""
+    """Dispatch a dense single-trajectory integration to the engine.
+
+    ``tape_arrays`` is the RHS tape's wire tuple (:meth:`Tape.to_arrays` — the
+    drift tape for an SDE).  Taking the marshalled arrays as an argument rather than
+    deriving them here lets a hot stepping loop pass arrays it marshalled once
+    (:func:`_step_continuous`) instead of rebuilding the tuple per step (stream
+    WS-INVHOIST), while the single-shot :func:`integrate` path marshals them inline
+    at the call site.
+    """
     return eng.integrate_dense(
-        *_primary_tape(problem).to_arrays(),
-        np.ascontiguousarray(problem.ic, dtype=np.float64),
-        problem.params_vec(),
+        *tape_arrays,
+        np.ascontiguousarray(ic, dtype=np.float64),
+        params_vec,
         np.ascontiguousarray(t_eval, dtype=np.float64),
         method,
         float(rtol),
