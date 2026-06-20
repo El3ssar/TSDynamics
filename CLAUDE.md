@@ -340,6 +340,27 @@ All three families + all derived wrappers implement:
   caching keeps sweeps cheap; DDE sweeps recompile per value).
 - `PoincareMap` refines crossings with cubic Hermite using `_rhs_numeric`
   (O(dt⁴)); falls back to linear interpolation for DDEs.
+- **`PoincareMap.trajectory` is engine-native (stream WS-CROSSKERNEL):** the bulk
+  crossing collection wires the Rust event engine
+  (`integrate_events` → FFI `integrate_events_dense` → `engine.run.crossings` →
+  `derived/_crossings.py::section_crossings`), marching the whole attractor and
+  refining every crossing in **one engine call** instead of the per-`dt`
+  `step()` loop — ~80–100× faster (the named "Poincaré is slow" culprit).
+  `poincare_section` and `return_map(kind="poincare")` (which call `trajectory`)
+  inherit it; `orbit_diagram` over a `PoincareMap` drives the wrapper with `step()`
+  and so is **not** accelerated here (that needs a resumable `step()` — WS-STEPPER —
+  or `orbit_diagram` to call `trajectory` — WS-MAPITER). The engine march uses the
+  **fixed-step `rk4` kernel
+  at the detection `dt`** (the engine's adaptive kernels carry no step ceiling, so
+  an adaptive march would grow the step, skip crossings and degrade the O(h⁴)
+  Hermite refinement); it is answer-identical to the Python loop driven at the
+  same `rk4`/`dt` discretisation (the engine event refinement reproduces
+  `PoincareMap._refine` to ~machine precision per crossing; over many crossings of
+  a chaotic flow the two float-distinct computations diverge by roundoff, as any
+  two would — the section is the same attractor). DDEs (no `_rhs_numeric`), stiff
+  defaults (an implicit `_default_method`), and `backend="reference"` keep the
+  Python loop. Divergence / no-crossing-within-`max_time` still raises
+  `RuntimeError`. (The unwired `integrate_events` was the dead E-EVENT code.)
 - **`TangentSystem` is the one Lyapunov engine** (stream C-DERIV): the
   variational/QR machinery lives here, and `DiscreteMap.lyapunov_spectrum` /
   `ContinuousSystem.lyapunov_spectrum` are thin delegations to it. Modes:

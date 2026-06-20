@@ -8,6 +8,7 @@ import numpy as np
 
 from tsdynamics.families import Trajectory
 
+from . import _crossings
 from ._base import DerivedSystem
 
 __all__ = ["PoincareMap"]
@@ -219,15 +220,8 @@ class PoincareMap(DerivedSystem):
         self._t_cross = None
         self._n_cross = 0
 
-    def trajectory(self, steps: int = 100, *, transient: int = 0, **kwargs: Any) -> Trajectory:
-        """
-        Collect crossings as a trajectory.
-
-        ``t`` holds the continuous crossing times; ``y`` the full-dimensional
-        crossing states.  ``transient`` crossings are discarded first.
-        """
-        if kwargs:
-            self.reinit(kwargs.pop("ic", None), **kwargs)
+    def _python_trajectory(self, steps: int, transient: int) -> tuple[np.ndarray, np.ndarray]:
+        """Collect crossings with the per-``dt`` Python march (DDE / no-RHS path)."""
         for _ in range(transient):
             self._advance_to_crossing()
         times = np.empty(steps)
@@ -236,6 +230,83 @@ class PoincareMap(DerivedSystem):
             self._advance_to_crossing()
             times[k] = self._t_cross
             points[k] = self._u_cross
+        return times, points
+
+    def _engine_trajectory(
+        self, steps: int, transient: int, backend: str | None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Collect crossings with the wired Rust event engine (one call)."""
+        be = backend if backend is not None else getattr(self.system, "_default_backend", "interp")
+        ic = self.system.state()
+        t0 = self.system.time()
+        times, points, t_final, u_final = _crossings.section_crossings(
+            self.system,
+            self._normal,
+            self._offset,
+            direction=self.direction,
+            n_crossings=steps,
+            transient=transient,
+            dt=self.dt,
+            max_time=self.max_time,
+            backend=be,
+            ic=ic,
+            t0=t0,
+        )
+        # Advance the inner flow past the marched crossings so a subsequent
+        # ``step()`` continues forward (the per-``dt`` loop advanced it too); the
+        # cursor is the span end, just past the collected crossings.
+        self.system.reinit(u_final, t=t_final)
+        if steps:
+            self._u_cross = np.asarray(points[-1], dtype=float).copy()
+            self._t_cross = float(times[-1])
+            self._n_cross += transient + steps
+        return times, points
+
+    def trajectory(
+        self,
+        steps: int = 100,
+        *,
+        transient: int = 0,
+        backend: str | None = None,
+        **kwargs: Any,
+    ) -> Trajectory:
+        """
+        Collect crossings as a trajectory.
+
+        ``t`` holds the continuous crossing times; ``y`` the full-dimensional
+        crossing states.  ``transient`` crossings are discarded first.
+
+        For an ordinary (non-stiff) ODE on the compiled engine this marches the
+        whole attractor and refines every crossing in **one engine call** (the
+        wired Rust ``integrate_events``, stream WS-CROSSKERNEL) — ~100× faster than
+        the per-``dt`` Python loop it replaces.  DDEs, systems without a numeric
+        RHS, stiff defaults, and ``backend="reference"`` keep the Python loop.  The
+        engine path is answer-identical to that loop's fixed-step (``rk4``)
+        refinement; see :mod:`tsdynamics.derived._crossings`.
+
+        Parameters
+        ----------
+        steps : int
+            Number of crossings to collect.
+        transient : int
+            Number of leading crossings to discard.
+        backend : {"interp", "jit", "reference"}, optional
+            Engine evaluator for the fast path; defaults to the inner system's
+            backend.  ``"reference"`` forces the pure-Python loop.
+        """
+        if kwargs:
+            self.reinit(kwargs.pop("ic", None), **kwargs)
+
+        if _crossings.engine_eligible(self.system, backend):
+            from tsdynamics.engine.run import EngineNotAvailableError
+
+            try:
+                times, points = self._engine_trajectory(steps, transient, backend)
+            except EngineNotAvailableError:
+                times, points = self._python_trajectory(steps, transient)
+        else:
+            times, points = self._python_trajectory(steps, transient)
+
         meta = {
             "derived": "PoincareMap",
             # Section intent, so a renderer draws the 2-D in-plane scatter rather

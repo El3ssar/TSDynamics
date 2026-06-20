@@ -53,6 +53,7 @@ from .problem import (
 __all__ = [
     "BACKENDS",
     "EngineNotAvailableError",
+    "crossings",
     "ensemble",
     "eval_jac",
     "eval_rhs",
@@ -375,6 +376,121 @@ def integrate(
             )
 
     return Trajectory(t=t_arr, y=y, system=problem.system, meta=meta)
+
+
+def crossings(
+    problem: Problem,
+    g_tape: Any,
+    *,
+    t0: float,
+    t1: float,
+    first_step: float,
+    direction: int,
+    method: str,
+    rtol: float,
+    atol: float,
+    backend: str,
+    terminal: bool = False,
+) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, bool]:
+    """Detect crossings of an event function on the Rust engine (one span).
+
+    Marches an ODE problem from ``t0`` to ``t1`` and returns every crossing of the
+    single-output event tape ``g_tape`` (``g(u, t) = 0``) in ``direction``, refined
+    by the engine's O(h⁴) cubic-Hermite dense output — the wired
+    :func:`tsdyn_engine::integrate_events`, the native analogue of
+    :meth:`~tsdynamics.derived.poincare.PoincareMap._refine` (stream
+    WS-CROSSKERNEL).
+
+    This is the low-level *engine seam* — geometry-free and span-at-a-time. The
+    :func:`tsdynamics.derived._crossings.section_crossings` driver builds the plane
+    tape, sizes the spans and accumulates the requested number of crossings on top
+    of it; :class:`~tsdynamics.derived.poincare.PoincareMap` is its consumer.
+
+    Parameters
+    ----------
+    problem : Problem
+        An :class:`~tsdynamics.engine.problem.ODEProblem` whose ``ic`` is the
+        state to start this span from (resume by rebuilding the problem with the
+        previous ``u_final``).
+    g_tape : Tape
+        A single-output event tape over the full state, e.g. built by
+        :func:`tsdynamics.engine.compile.lower_expressions` from
+        ``normal · u - offset``.
+    t0, t1 : float
+        The integration span (forward only, ``t1 >= t0``).
+    first_step : float
+        The solver's first step.  With the fixed-step ``method="rk4"`` it *is* the
+        detection step ``dt`` — the engine then marches a ``dt`` grid exactly like
+        the Python :class:`PoincareMap`, so the crossings are answer-identical.
+    direction : {+1, -1, 0}
+        Count rising (``+1``), falling (``-1``) or either (``0``) crossings.
+    method, rtol, atol : str, float, float
+        Solver configuration, resolved as in :func:`integrate`.
+    backend : {"interp", "jit"}
+        The engine evaluator.  ``"reference"`` is rejected — the crossing engine is
+        compiled-only; callers fall back to the Python loop for the no-engine case.
+    terminal : bool, default False
+        Stop at the first crossing (a terminal event) instead of collecting all.
+
+    Returns
+    -------
+    times : ndarray, shape (K,)
+        Refined crossing times, increasing.
+    states : ndarray, shape (K, dim)
+        Full-dimensional crossing states.
+    t_final : float
+        Time the run stopped (``t1`` or the terminal crossing).
+    u_final : ndarray, shape (dim,)
+        State at ``t_final`` — the resume point for the next span.
+    terminated : bool
+        Whether a terminal event stopped the run before ``t1``.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If the compiled engine is not importable.
+    NotImplementedError
+        For ``backend="reference"`` or a non-ODE problem.
+    RuntimeError
+        If the integration diverged or the step collapsed.
+    """
+    name = resolve_backend(backend)
+    if name == "reference":
+        raise NotImplementedError(
+            "the crossing engine is compiled-only (no reference backend); the "
+            "Python PoincareMap loop is the fallback for DDE / no-RHS / reference "
+            "systems."
+        )
+    if not isinstance(problem, ODEProblem):
+        raise NotImplementedError(
+            f"crossings() integrates ODE problems only, not {problem.family!r}; "
+            f"DDEs and SDEs use the Python crossing fallback."
+        )
+    eng = _engine()
+    times, states, t_final, u_final, terminated = eng.integrate_events_dense(
+        *_primary_tape(problem).to_arrays(),
+        *g_tape.to_arrays(),
+        np.ascontiguousarray(problem.ic, dtype=np.float64),
+        problem.params_vec(),
+        float(t0),
+        float(t1),
+        float(first_step),
+        int(direction),
+        bool(terminal),
+        method,
+        float(rtol),
+        float(atol),
+        name == "jit",
+    )
+    times = np.asarray(times, dtype=np.float64)
+    states = np.asarray(states, dtype=np.float64)
+    u_final = np.asarray(u_final, dtype=np.float64)
+    if not (np.all(np.isfinite(times)) and np.all(np.isfinite(states))):
+        raise RuntimeError(
+            f"{_name(problem)}: crossing detection diverged or produced non-finite "
+            f"values before reaching the span end."
+        )
+    return times, states, float(t_final), u_final, bool(terminated)
 
 
 def _run_continuous(
