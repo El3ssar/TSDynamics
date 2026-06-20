@@ -97,7 +97,28 @@ def as_series(x: Any, component: int | str | None = None) -> np.ndarray:
             )
         return np.asarray(x.component(component), dtype=float).ravel()
 
-    arr = np.asarray(x, dtype=float)
+    # A System (something that steps but is not yet data) is the common mistake
+    # here.  Coercing it with ``np.asarray(..., dtype=float)`` would leak a bare
+    # ``TypeError: float() argument must be ... not 'Lorenz'`` with no domain
+    # framing — name what was passed and how to fix it instead.
+    if hasattr(x, "step") and hasattr(x, "reinit") and not isinstance(x, np.ndarray):
+        from tsdynamics.errors import InvalidInputError
+
+        raise InvalidInputError(
+            f"expected a measured series (1-D/2-D array or Trajectory), "
+            f"got a System ({type(x).__name__}); run it first, e.g. "
+            f"`series = {type(x).__name__.lower()}.run(...)['x']`."
+        )
+
+    try:
+        arr = np.asarray(x, dtype=float)
+    except (TypeError, ValueError) as err:
+        from tsdynamics.errors import InvalidInputError
+
+        raise InvalidInputError(
+            f"could not read {type(x).__name__} as a numeric series; "
+            f"expected a 1-D/2-D array-like or a Trajectory."
+        ) from err
     if arr.ndim == 1:
         if component not in (None, 0):
             raise ValueError("component= is meaningless for a 1-D series.")
