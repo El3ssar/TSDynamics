@@ -240,13 +240,11 @@ class TangentSystem(DerivedSystem):
         """Return a copy of the current base-system state."""
         if self._mode == "map":
             return self.system.state()
-        if self._backend in _ENGINE_BACKENDS:
-            if self._z is None:
-                self.reinit()
-            return self._z[: self.system.dim].copy()
-        if self._ode_lyap is None:
+        # ODE mode: the constructor guarantees an engine backend, so the extended
+        # state ``self._z`` always carries the base state in its leading slots.
+        if self._z is None:
             self.reinit()
-        return np.asarray(self._ode_lyap.y[: self.system.dim], dtype=float).copy()
+        return self._z[: self.system.dim].copy()
 
     def set_state(self, u: Any) -> None:
         """Overwrite the base state (map mode only — ODE tangent vectors would desync)."""
