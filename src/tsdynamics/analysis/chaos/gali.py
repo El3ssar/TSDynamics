@@ -158,7 +158,7 @@ def gali(
     system: Any,
     k: int = 2,
     *,
-    steps: int | None = None,
+    n: int | None = None,
     final_time: float | None = None,
     dt: float | None = None,
     ic: Any | None = None,
@@ -176,7 +176,7 @@ def gali(
     k : int, default 2
         Number of deviation vectors, ``2 <= k <= system.dim``.  (``k = 1`` is
         trivially ``1``.)
-    steps : int, optional
+    n : int, optional
         Number of iterations (maps).  Default 1000.
     final_time : float, optional
         Integration time (flows).  Default 100.0.
@@ -202,13 +202,13 @@ def gali(
         If ``system`` is neither a discrete map nor a continuous flow.
     ValueError
         If ``k`` is outside ``[2, dim]``; if ``dt`` is passed for a map (or
-        ``steps`` for a flow); or if the orbit diverges to a non-finite state
+        ``n`` for a flow); or if the orbit diverges to a non-finite state
         from every tried initial condition after the retry budget — in which
         case pass an ``ic`` from a known basin point (or shorten ``transient``).
 
     Examples
     --------
-    >>> gali(Henon(), k=2, steps=60).is_chaotic()      # exponential collapse
+    >>> gali(Henon(), k=2, n=60).is_chaotic()          # exponential collapse
     True
     >>> float(gali(Lorenz(), k=2, final_time=25.0))    # ~0: Lorenz is chaotic
     0.0...
@@ -239,13 +239,13 @@ def gali(
     if mode == "map":
         if dt is not None:
             raise ValueError("dt has no meaning for a discrete map — omit it.")
-        n_steps = 1000 if steps is None else int(steps)
+        n_steps = 1000 if n is None else int(n)
         n_burn = 500 if transient is None else int(transient)
         run_args: tuple = (n_steps, n_burn)
         discrete = True
     else:
-        if steps is not None:
-            raise ValueError("steps applies to maps; use final_time/dt for a flow.")
+        if n is not None:
+            raise ValueError("n applies to maps; use final_time/dt for a flow.")
         t_end = 100.0 if final_time is None else float(final_time)
         step_dt = 0.1 if dt is None else float(dt)
         t_burn = 20.0 if transient is None else float(transient)

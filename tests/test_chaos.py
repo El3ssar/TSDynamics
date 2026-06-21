@@ -59,7 +59,7 @@ class _Harmonic(ContinuousSystem):
 
 def test_gali_henon_chaotic_collapses():
     """Hénon GALI₂ collapses exponentially; the rate is near λ₁-λ₂ ≈ 2.04."""
-    g = gali(ts.Henon(), k=2, ic=[0.1, 0.1], steps=70, seed=0)
+    g = gali(ts.Henon(), k=2, ic=[0.1, 0.1], n=70, seed=0)
     assert isinstance(g, GALIResult)
     assert g.is_chaotic()
     assert g.final < 1e-8
@@ -97,8 +97,8 @@ def test_gali_input_validation():
         gali(ts.Henon(), k=3)  # dim is 2
     with pytest.raises(ValueError, match="dt has no meaning"):
         gali(ts.Henon(), k=2, dt=0.1)
-    with pytest.raises(ValueError, match="steps applies to maps"):
-        gali(ts.Lorenz(), k=2, steps=100)
+    with pytest.raises(ValueError, match="n applies to maps"):
+        gali(ts.Lorenz(), k=2, n=100)
     with pytest.raises(NotImplementedError):
         gali(ts.MackeyGlass(), k=2)  # DDE: no finite tangent space here
 
@@ -130,9 +130,13 @@ def test_zero_one_distribution_and_errors():
     k, k_c = zero_one_test(x, n_c=20, seed=0, return_distribution=True)
     assert k_c.shape == (20,)
     assert k == pytest.approx(float(np.median(k_c)))
+    # The system overload integrates/iterates internally (like gali): a chaotic
+    # map handed straight to the test scores K ≈ 1.
+    assert zero_one_test(ts.Logistic(params={"r": 4.0}), n=2500, ic=[0.3]) > 0.9
     with pytest.raises(ValueError, match="long series"):
         zero_one_test(np.zeros(50))
-    with pytest.raises(TypeError, match="live system"):
+    # A multi-component system needs a component selection.
+    with pytest.raises(ValueError, match="component"):
         zero_one_test(ts.Lorenz())
 
 
@@ -141,7 +145,7 @@ def test_zero_one_distribution_and_errors():
 
 def test_expansion_entropy_tent_is_ln2():
     """Unit-height tent map: |f'| ≡ 2 ⇒ E(t)=2ᵗ ⇒ H = ln 2 (exact)."""
-    h = expansion_entropy(ts.Tent(params={"mu": 1.0}), Box([0.0], [1.0]), n_samples=200, steps=18)
+    h = expansion_entropy(ts.Tent(params={"mu": 1.0}), Box([0.0], [1.0]), n_samples=200, n=18)
     assert isinstance(h, ExpansionEntropyResult)
     assert float(h) == pytest.approx(LN2, abs=0.02)
     assert h.n_survivors == h.n_samples  # nothing leaves [0, 1]
@@ -150,14 +154,14 @@ def test_expansion_entropy_tent_is_ln2():
 def test_expansion_entropy_henon_topological():
     """Hénon expansion entropy reproduces its topological entropy ≈ 0.465."""
     box = Box([-1.6, -0.5], [1.6, 0.5])
-    h = expansion_entropy(ts.Henon(), box, n_samples=400, steps=12, seed=0)
+    h = expansion_entropy(ts.Henon(), box, n_samples=400, n=12, seed=0)
     assert float(h) == pytest.approx(HENON_HTOP, abs=0.1)
 
 
 def test_expansion_entropy_circle_quasiperiodic_is_zero():
     """A sub-critical circle map is quasi-periodic (λ=0) → H ≈ 0."""
     h = expansion_entropy(
-        ts.Circle(params={"omega": 0.3333, "k": 0.5}), Box([0.0], [1.0]), n_samples=200, steps=18
+        ts.Circle(params={"omega": 0.3333, "k": 0.5}), Box([0.0], [1.0]), n_samples=200, n=18
     )
     assert abs(float(h)) < 0.05
 
@@ -182,10 +186,10 @@ def test_expansion_entropy_input_validation():
 
 
 def test_result_repr_and_float():
-    g = gali(ts.Henon(), k=2, ic=[0.1, 0.1], steps=30, seed=0)
+    g = gali(ts.Henon(), k=2, ic=[0.1, 0.1], n=30, seed=0)
     assert "GALIResult" in repr(g)
     assert float(g) == g.final
-    h = expansion_entropy(ts.Tent(params={"mu": 1.0}), Box([0.0], [1.0]), n_samples=50, steps=10)
+    h = expansion_entropy(ts.Tent(params={"mu": 1.0}), Box([0.0], [1.0]), n_samples=50, n=10)
     assert "ExpansionEntropyResult" in repr(h)
     assert float(h) == h.entropy
 
@@ -208,7 +212,7 @@ def test_gali_random_ic_henon_never_crashes():
     ``gali`` must retry onto the attractor and return a chaotic result every time.
     """
     for _ in range(20):
-        g = gali(ts.Henon(), k=2, steps=1500)
+        g = gali(ts.Henon(), k=2, n=1500)
         assert isinstance(g, GALIResult)
         assert np.all(np.isfinite(g.values))
         assert g.is_chaotic()  # Hénon is chaotic → GALI₂ collapses to ~0
@@ -216,7 +220,7 @@ def test_gali_random_ic_henon_never_crashes():
 
 def test_gali_offbasin_ic_retries_onto_attractor():
     """An explicit IC that escapes the basin is recovered by the random-IC retry."""
-    g = gali(ts.Henon(), k=2, ic=[10.0, 10.0], steps=80, seed=0)
+    g = gali(ts.Henon(), k=2, ic=[10.0, 10.0], n=80, seed=0)
     assert isinstance(g, GALIResult)
     assert np.all(np.isfinite(g.values))
     assert g.is_chaotic()
@@ -244,6 +248,6 @@ def test_expansion_volume_overflow_returns_inf():
 def test_expansion_entropy_long_horizon_no_crash():
     """A long un-renormalised horizon overflows the tangent product but must not crash."""
     box = Box([-1.6, -0.5], [1.6, 0.5])
-    h = expansion_entropy(ts.Henon(), box, n_samples=60, steps=300, seed=0)
+    h = expansion_entropy(ts.Henon(), box, n_samples=60, n=300, seed=0)
     assert isinstance(h, ExpansionEntropyResult)
     assert np.isfinite(float(h))

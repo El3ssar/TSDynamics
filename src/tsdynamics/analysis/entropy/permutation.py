@@ -23,9 +23,9 @@ __all__ = ["permutation_entropy", "weighted_permutation_entropy"]
 
 
 def permutation_entropy(
-    x: Any,
-    m: int = 3,
-    tau: int = 1,
+    data: Any,
+    dimension: int = 3,
+    delay: int = 1,
     *,
     base: float = 2.0,
     normalize: bool = True,
@@ -35,25 +35,26 @@ def permutation_entropy(
     Permutation entropy of a time series (Bandt & Pompe 2002).
 
     The Shannon entropy of the distribution of *ordinal patterns* — the relative
-    rankings within every length-``m`` embedded window.  It is invariant under
-    any strictly monotonic transform of the data and needs no amplitude
+    rankings within every length-``dimension`` embedded window.  It is invariant
+    under any strictly monotonic transform of the data and needs no amplitude
     thresholds, which makes it a robust complexity measure for noisy
     experimental series.
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         Scalar time series (or a component of a multivariate one).
-    m : int, default 3
-        Ordinal (embedding) order.  Typical choices are ``3 ≤ m ≤ 7``; the
-        series should satisfy ``n ≫ m!`` for the estimate to be meaningful.
-    tau : int, default 1
+    dimension : int, default 3
+        Ordinal (embedding) order.  Typical choices are ``3 ≤ dimension ≤ 7``;
+        the series should satisfy ``n ≫ dimension!`` for the estimate to be
+        meaningful.
+    delay : int, default 1
         Embedding delay.
     base : float, default 2.0
         Logarithm base (``2`` → bits).
     normalize : bool, default True
-        Divide by ``log_base(m!)`` so the result lies in ``[0, 1]`` (``0`` for a
-        perfectly ordered signal, ``1`` for uniform pattern usage).
+        Divide by ``log_base(dimension!)`` so the result lies in ``[0, 1]``
+        (``0`` for a perfectly ordered signal, ``1`` for uniform pattern usage).
     component : int or str, optional
         Component selector for multi-component input.
 
@@ -71,8 +72,8 @@ def permutation_entropy(
     0.99...
     """
     return entropy(
-        x,
-        outcomes=OrdinalPatterns(m, tau),
+        data,
+        outcomes=OrdinalPatterns(dimension, delay),
         measure=Shannon(base),
         normalize=normalize,
         component=component,
@@ -80,9 +81,9 @@ def permutation_entropy(
 
 
 def weighted_permutation_entropy(
-    x: Any,
-    m: int = 3,
-    tau: int = 1,
+    data: Any,
+    dimension: int = 3,
+    delay: int = 1,
     *,
     base: float = 2.0,
     normalize: bool = True,
@@ -99,7 +100,7 @@ def weighted_permutation_entropy(
 
     Parameters
     ----------
-    x, m, tau, base, normalize, component
+    data, dimension, delay, base, normalize, component
         As in :func:`permutation_entropy`.
 
     Returns
@@ -107,8 +108,8 @@ def weighted_permutation_entropy(
     float
         Weighted permutation entropy.
     """
-    series = as_series(x, component)
-    space = OrdinalPatterns(m, tau)
+    series = as_series(data, component)
+    space = OrdinalPatterns(dimension, delay)
     labels, weights = space.window_variance(series)
     weighted = np.bincount(labels, weights=weights, minlength=space.cardinality)
     total = weighted.sum()

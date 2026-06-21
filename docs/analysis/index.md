@@ -27,7 +27,7 @@ K    = ts.zero_one_test(ts.Logistic().with_params(r=4.0).iterate(2000).y[:, 0]) 
 
 # Orbit / bifurcation diagrams, Poincaré sections, fixed points
 od = ts.orbit_diagram(ts.Logistic(), "r", np.linspace(2.5, 4.0, 600))
-section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), steps=500)
+section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=500)
 fps = ts.fixed_points(ts.Henon())
 
 # Quantify a measured series — dimension, recurrence, nonlinearity test

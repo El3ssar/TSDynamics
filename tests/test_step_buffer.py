@@ -104,7 +104,7 @@ def test_max_lyapunov_lorenz_not_corrupted_by_step():
         ts.Lorenz(),
         ic=[1.0, 1.0, 1.0],
         dt=0.05,
-        n_rescale=250,
+        n=250,
         steps_per=4,
         transient=400,
         seed=2,

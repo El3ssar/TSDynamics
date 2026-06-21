@@ -105,7 +105,7 @@ class TestMapFixedPoints:
 
     def test_logistic_fixed_points(self) -> None:
         m = ts.Logistic(params={"r": 2.5})
-        fps = fixed_points(m, box=([-0.5], [1.5]), seed=0)
+        fps = fixed_points(m, region=([-0.5], [1.5]), seed=0)
         xs = sorted(fp.x[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 1 - 1 / 2.5], atol=1e-9)
         stable = {round(fp.x[0], 6): fp.stable for fp in fps}
@@ -114,7 +114,9 @@ class TestMapFixedPoints:
 
     def test_logistic_r4_unstable_fixed_points(self) -> None:
         # at r=4 both fixed points {0, 0.75} are unstable; DL must still find them
-        fps = fixed_points(ts.Logistic(params={"r": 4.0}), box=([-0.2], [1.2]), method="dl", seed=2)
+        fps = fixed_points(
+            ts.Logistic(params={"r": 4.0}), region=([-0.2], [1.2]), method="dl", seed=2
+        )
         xs = sorted(fp.x[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 0.75], atol=1e-8)
         assert all(not fp.stable for fp in fps)
@@ -129,7 +131,7 @@ class TestMapFixedPoints:
 
 class TestFlowEquilibria:
     def test_lorenz_equilibria(self) -> None:
-        fps = fixed_points(ts.Lorenz(), box=([-30, -30, -5], [30, 30, 55]), n_seeds=300, seed=1)
+        fps = fixed_points(ts.Lorenz(), region=([-30, -30, -5], [30, 30, 55]), n_seeds=300, seed=1)
         c = np.sqrt(8 / 3 * (28 - 1))  # ±√72 = 8.48528…
         assert len(fps) == 3
         for fp in fps:
@@ -142,7 +144,7 @@ class TestFlowEquilibria:
         assert origin.eigenvalues.real.max() == pytest.approx(11.8277, abs=1e-3)
 
     def test_rossler_equilibria(self) -> None:
-        fps = fixed_points(ts.Rossler(), box=([-1, -30, -1], [8, 1, 30]), n_seeds=500, seed=2)
+        fps = fixed_points(ts.Rossler(), region=([-1, -30, -1], [8, 1, 30]), n_seeds=500, seed=2)
         a, c = 0.2, 5.7
         d = np.sqrt(c * c - 4 * a * a)
         for x in ((c + d) / 2, (c - d) / 2):
@@ -185,7 +187,7 @@ class TestMapPeriodicOrbits:
         assert {o.stable for o in orbs} == {True, False}
 
     def test_period1_returns_fixed_points(self) -> None:
-        orbs = periodic_orbits(ts.Logistic(params={"r": 2.5}), 1, box=([-0.5], [1.5]), seed=5)
+        orbs = periodic_orbits(ts.Logistic(params={"r": 2.5}), 1, region=([-0.5], [1.5]), seed=5)
         xs = sorted(float(o.points[0, 0]) for o in orbs)
         np.testing.assert_allclose(xs, [0.0, 0.6], atol=1e-8)
         assert all(o.period == 1 for o in orbs)
@@ -208,7 +210,7 @@ class TestMapPeriodicOrbits:
 class TestFlowShooting:
     def test_vanderpol_mu1(self) -> None:
         orb = periodic_orbit(
-            _VanDerPol(params={"mu": 1.0}), ic=[2.0, 0.0], period_guess=6.0, burn_in=20.0
+            _VanDerPol(params={"mu": 1.0}), ic=[2.0, 0.0], period_guess=6.0, transient=20.0
         )
         assert orb.period == pytest.approx(6.6632869, abs=2e-3)
         assert orb.residual < 1e-8 and orb.continuous and orb.stable
@@ -217,13 +219,13 @@ class TestFlowShooting:
 
     def test_vanderpol_mu05(self) -> None:
         orb = periodic_orbit(
-            _VanDerPol(params={"mu": 0.5}), ic=[2.0, 0.0], period_guess=6.3, burn_in=30.0
+            _VanDerPol(params={"mu": 0.5}), ic=[2.0, 0.0], period_guess=6.3, transient=30.0
         )
         assert orb.period == pytest.approx(6.3806758, abs=2e-3)
         assert orb.stable
 
     def test_auto_period_guess(self) -> None:
-        orb = periodic_orbit(_VanDerPol(params={"mu": 1.0}), ic=[0.5, 0.5], burn_in=20.0)
+        orb = periodic_orbit(_VanDerPol(params={"mu": 1.0}), ic=[0.5, 0.5], transient=20.0)
         assert orb.period == pytest.approx(6.6632869, abs=5e-2)
 
     def test_center_is_rejected(self) -> None:

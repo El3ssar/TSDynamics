@@ -62,20 +62,20 @@ The radius $\varepsilon$ is set one of two ways:
     scale-free choice when sweeping parameters or systems.
 
 `metric` selects the norm (`"euclidean"` default, `"chebyshev"`, or a numeric
-$p$ for Minkowski). `theiler_window=w` blanks the central $\pm w$ diagonals so
+$p$ for Minkowski). `theiler=w` blanks the central $\pm w$ diagonals so
 that temporally-correlated neighbours along the line of identity are not
-mistaken for genuine recurrences (Theiler 1986); use `theiler_window=1` as a
+mistaken for genuine recurrences (Theiler 1986); use `theiler=1` as a
 sensible minimum for a sampled flow.
 
 ## Quantification: `rqa`
 
 `rqa` builds the matrix (same `threshold` / `recurrence_rate` / `metric` /
-`theiler_window` arguments) and reduces its **diagonal** and **vertical** line
+`theiler` arguments) and reduces its **diagonal** and **vertical** line
 distributions to the standard measures.
 
 ```python
 x = ts.Logistic(params={"r": 4.0}).iterate(steps=2000, ic=[0.4]).y[:, 0]
-res = ts.rqa(x, recurrence_rate=0.05, theiler_window=1)
+res = ts.rqa(x, recurrence_rate=0.05, theiler=1)
 
 res.determinism          # ≈ 0.652   fraction of points on diagonals ≥ 2
 res.laminarity           # ≈ 0.175   fraction of points on verticals ≥ 2
@@ -118,7 +118,7 @@ steps up or down as the dynamics cross between periodic and chaotic regimes.
 ```python
 x = ts.Logistic(params={"r": 4.0}).iterate(steps=3000, ic=[0.4]).y[:, 0]
 wr = ts.windowed_rqa(x, window=400, step=200,
-                     recurrence_rate=0.05, theiler_window=1)
+                     recurrence_rate=0.05, theiler=1)
 
 wr.centers                              # window mid-points (time axis)
 det = [r.determinism for r in wr.results]   # DET(t)

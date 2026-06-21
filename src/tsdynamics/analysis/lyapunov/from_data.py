@@ -187,15 +187,15 @@ def _auto_fit_region(divergence: np.ndarray, *, min_len: int) -> tuple[int, int]
 
 
 def lyapunov_from_data(
-    series: np.ndarray,
+    data: np.ndarray,
     *,
     dt: float = 1.0,
-    m: int = 3,
-    tau: int = 1,
+    dimension: int = 3,
+    delay: int = 1,
     theiler: int | None = None,
     k_max: int = 20,
     eps: float | None = None,
-    min_neighbors: int = 1,
+    n_neighbors: int = 1,
     method: str = "kantz",
     fit: tuple[int, int] | None = None,
 ) -> LyapunovFromData:
@@ -207,24 +207,24 @@ def lyapunov_from_data(
 
     Parameters
     ----------
-    series : array_like
+    data : array_like
         1-D scalar series, or 2-D ``(n_samples, n_channels)`` for a multivariate
         recording.
     dt : float, default 1.0
         Sampling interval (time between consecutive samples).  Use ``1.0`` for a
         map (the exponent is then per iteration).
-    m : int, default 3
+    dimension : int, default 3
         Embedding dimension.  Choose it from the data — large enough to unfold
         the attractor (e.g. a false-nearest-neighbour estimate); too small
         underestimates the exponent.
-    tau : int, default 1
+    delay : int, default 1
         Embedding delay, in samples.  For oversampled flows pick it near the
         first minimum of the mutual information / first zero of the
         autocorrelation.
     theiler : int, optional
         Theiler window (Theiler 1986): neighbours with ``|n - j| <= theiler`` are
         rejected so temporally-correlated points are not mistaken for dynamical
-        neighbours.  Defaults to ``(m - 1) * tau`` (the embedding span).
+        neighbours.  Defaults to ``(dimension - 1) * delay`` (the embedding span).
     k_max : int, default 20
         Number of forward samples over which divergence is tracked; the curve
         spans ``k = 0 … k_max``.
@@ -232,7 +232,7 @@ def lyapunov_from_data(
         Neighbour-ball radius for ``method="kantz"``.  Defaults to ``0.1`` times
         the standard deviation of the embedded coordinates.  Ignored by
         ``"rosenstein"`` (which uses the single nearest neighbour).
-    min_neighbors : int, default 1
+    n_neighbors : int, default 1
         Minimum neighbours a reference point needs to contribute (Kantz only).
     method : {"kantz", "rosenstein"}, default "kantz"
         Divergence estimator (see module docstring).
@@ -257,41 +257,41 @@ def lyapunov_from_data(
     --------
     >>> import tsdynamics as ts
     >>> traj = ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1])
-    >>> res = ts.lyapunov_from_data(traj.y[:, 0], m=4, k_max=12, fit=(0, 6))
+    >>> res = ts.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
     >>> 0.30 < float(res) < 0.55      # ≈ 0.42
     True
     """
-    m = int(m)
-    tau = int(tau)
+    dimension = int(dimension)
+    delay = int(delay)
     k_max = int(k_max)
-    min_neighbors = int(min_neighbors)
+    n_neighbors = int(n_neighbors)
     dt = float(dt)
     method = method.lower()
-    if m < 1:
-        raise ValueError("m (embedding dimension) must be >= 1.")
-    if tau < 1:
-        raise ValueError("tau (embedding delay) must be >= 1.")
+    if dimension < 1:
+        raise ValueError("dimension (embedding dimension) must be >= 1.")
+    if delay < 1:
+        raise ValueError("delay (embedding delay) must be >= 1.")
     if k_max < 2:
         raise ValueError("k_max must be >= 2 to fit a slope.")
-    if min_neighbors < 1:
-        raise ValueError("min_neighbors must be >= 1.")
+    if n_neighbors < 1:
+        raise ValueError("n_neighbors must be >= 1.")
     if dt <= 0.0:
         raise ValueError("dt must be positive.")
     if method not in {"kantz", "rosenstein"}:
         raise ValueError(f"method must be 'kantz' or 'rosenstein', got {method!r}.")
-    theiler = (m - 1) * tau if theiler is None else int(theiler)
+    theiler = (dimension - 1) * delay if theiler is None else int(theiler)
     if theiler < 0:
         raise ValueError("theiler must be >= 0.")
 
     from scipy.spatial import cKDTree
 
-    emb = _delay_embed(series, m, tau)
+    emb = _delay_embed(data, dimension, delay)
     n_rows = emb.shape[0]
     last = n_rows - 1 - k_max  # references/neighbours need their k-ahead image to exist
     if last < 1:
         raise ValueError(
             "k_max is too large for the embedded series: no forward images remain. "
-            "Use a longer series or reduce k_max, m, or tau."
+            "Use a longer series or reduce k_max, dimension, or delay."
         )
     tree = cKDTree(emb)
 
@@ -306,13 +306,13 @@ def lyapunov_from_data(
         for n in range(last + 1):
             cand = tree.query_ball_point(emb[n], eps)
             neigh = [j for j in cand if j <= last and abs(j - n) > theiler]
-            if len(neigh) >= min_neighbors:
+            if len(neigh) >= n_neighbors:
                 ref_idx.append(n)
                 neigh_of.append(np.asarray(neigh, dtype=int))
         if not ref_idx:
             raise ValueError(
                 "no reference point has a neighbour within eps outside the Theiler "
-                "window; increase eps, lower m, or shorten the Theiler window."
+                "window; increase eps, lower dimension, or shorten the Theiler window."
             )
         divergence = np.empty(k_max + 1)
         for k in range(k_max + 1):
@@ -366,8 +366,8 @@ def lyapunov_from_data(
         times=times,
         divergence=divergence,
         fit_region=(lo, hi),
-        embedding_dim=m,
-        delay=tau,
+        embedding_dim=dimension,
+        delay=delay,
         theiler=theiler,
         n_reference=n_reference,
         method=method,

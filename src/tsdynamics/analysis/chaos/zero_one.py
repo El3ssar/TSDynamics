@@ -33,26 +33,96 @@ from . import _common as _c
 __all__ = ["zero_one_test"]
 
 
+def _observable(
+    system: Any,
+    component: int | None,
+    *,
+    final_time: float | None,
+    n: int | None,
+    dt: float | None,
+    transient: float | None,
+    ic: Any | None,
+) -> np.ndarray:
+    """Resolve the scalar observable from a System (integrate/iterate it) or data.
+
+    A System produces its own decorrelated series — every iteration for a map or
+    discrete view (Poincaré / stroboscopic), the ``dt``-grid for a flow.  A
+    measured :class:`~tsdynamics.data.Trajectory` / ``ndarray`` is read directly
+    (the ``data`` overload); the horizon keywords then do not apply.
+    """
+    is_system = hasattr(system, "is_discrete") and (
+        hasattr(system, "trajectory")
+        or hasattr(system, "iterate")
+        or hasattr(system, "integrate")
+        or hasattr(system, "_step")
+    )
+    if not is_system:
+        if any(v is not None for v in (final_time, n, dt, transient, ic)):
+            raise ValueError(
+                "zero_one_test: final_time/n/dt/transient/ic apply only when the first "
+                "argument is a System; a measured series / Trajectory is used as-is."
+            )
+        return _c._as_observable(system, component)
+    if system.is_discrete:
+        skip = int(transient) if transient is not None else 0
+        count = int(n) if n is not None else 5000
+        kw: dict[str, Any] = {"transient": skip}
+        if ic is not None and hasattr(system, "iterate"):
+            kw["ic"] = ic
+        return _c._as_observable(system.trajectory(count, **kw), component)
+    # continuous flow — sample on the dt grid (successive samples must be
+    # decorrelated for the test to be meaningful; a coarse dt, or a Poincaré /
+    # stroboscopic view passed as ``system``, gives the cleanest K).
+    if n is not None:
+        raise ValueError("zero_one_test: n is for maps/discrete views; a flow uses final_time.")
+    horizon = float(final_time) if final_time is not None else 1000.0
+    burn = float(transient) if transient is not None else 0.0
+    step = float(dt) if dt is not None else 0.1
+    traj = system.integrate(final_time=horizon + burn, dt=step, ic=ic)
+    if burn:
+        traj = traj.after(burn)
+    return _c._as_observable(traj, component)
+
+
 def zero_one_test(
-    observable: Any,
+    system: Any,
     *,
     component: int | None = None,
+    final_time: float | None = None,
+    n: int | None = None,
+    dt: float | None = None,
+    transient: float | None = None,
+    ic: Any | None = None,
     n_c: int = 100,
     c_range: tuple[float, float] = (np.pi / 5.0, 4.0 * np.pi / 5.0),
     n_cut: int | None = None,
     seed: int | None = 0,
     return_distribution: bool = False,
 ) -> float | tuple[float, np.ndarray]:
-    r"""Run the 0--1 test for chaos on a scalar observable.
+    r"""Run the 0--1 test for chaos on a system or a measured observable.
 
     Parameters
     ----------
-    observable : array-like or Trajectory
-        A 1-D series, or a :class:`~tsdynamics.data.Trajectory` (pass
-        ``component`` to select a column of a multi-component trajectory).  A
-        live system is rejected — integrate/iterate it first.
+    system : System, Trajectory, or array-like
+        A dynamical system (integrated / iterated internally to produce the
+        observable, like :func:`~tsdynamics.analysis.chaos.gali`), or a measured
+        1-D series / :class:`~tsdynamics.data.Trajectory` used directly (the
+        ``data`` overload).  For a flow pass a coarse ``dt`` — or a Poincaré /
+        stroboscopic view as ``system`` — so successive samples are decorrelated.
     component : int, optional
-        Column to use when a multi-component trajectory is passed.
+        Column to use when a multi-component system / trajectory is passed.
+    final_time : float, optional
+        Integration horizon for a flow (system input).  Default 1000.0.
+    n : int, optional
+        Number of iterations for a map / discrete view (system input).
+        Default 5000.
+    dt : float, optional
+        Sampling / integration step for a flow (system input).  Default 0.1.
+    transient : float, optional
+        Discarded before recording — a flow burn-in **time**, a map / discrete
+        burn-in in **steps** (system input).
+    ic : array-like, optional
+        Initial condition (system input).
     n_c : int, default 100
         Number of random frequencies :math:`c` drawn from ``c_range``.
     c_range : (float, float), default ``(pi/5, 4*pi/5)``
@@ -74,8 +144,10 @@ def zero_one_test(
 
     Examples
     --------
+    >>> zero_one_test(Logistic(params={"r": 4.0}), n=5000) > 0.9     # chaotic
+    True
     >>> x = Logistic(params={"r": 4.0}).iterate(steps=5000).component("x")
-    >>> zero_one_test(x) > 0.9          # chaotic
+    >>> zero_one_test(x) > 0.9          # the data overload
     True
 
     References
@@ -83,22 +155,24 @@ def zero_one_test(
     Gottwald & Melbourne (2004), *Proc. R. Soc. A* 460, 603--611.
     Gottwald & Melbourne (2009), *SIAM J. Appl. Dyn. Syst.* 8, 129--145.
     """
-    phi = _c._as_observable(observable, component)
-    n = phi.size
-    if n < 200:
+    phi = _observable(
+        system, component, final_time=final_time, n=n, dt=dt, transient=transient, ic=ic
+    )
+    n_pts = phi.size
+    if n_pts < 200:
         raise ValueError(
-            f"the 0-1 test needs a long series to be meaningful; got {n} points (need >= 200)."
+            f"the 0-1 test needs a long series to be meaningful; got {n_pts} points (need >= 200)."
         )
     if n_cut is None:
-        n_cut = n // 10
-    n_cut = int(max(1, min(n_cut, n - 1)))
+        n_cut = n_pts // 10
+    n_cut = int(max(1, min(n_cut, n_pts - 1)))
     if n_c < 1:
         raise ValueError(f"n_c must be >= 1, got {n_c}.")
 
     rng = np.random.default_rng(seed)
     c_values = rng.uniform(c_range[0], c_range[1], size=int(n_c))
 
-    j = np.arange(1, n + 1, dtype=float)
+    j = np.arange(1, n_pts + 1, dtype=float)
     lags = np.arange(1, n_cut + 1, dtype=float)
     mean_phi_sq = float(np.mean(phi)) ** 2
 

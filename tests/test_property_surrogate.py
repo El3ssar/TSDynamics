@@ -304,8 +304,8 @@ def test_time_reversal_is_scale_and_offset_invariant(
 def test_time_reversal_is_finite_and_sign_flips(x: np.ndarray, lag: int) -> None:
     """The statistic is finite and antisymmetric under time reversal."""
     assume(x.size > lag + 1)
-    trev = ts.time_reversal_asymmetry(x, lag=lag)
-    trev_rev = ts.time_reversal_asymmetry(x[::-1], lag=lag)
+    trev = ts.time_reversal_asymmetry(x, delay=lag)
+    trev_rev = ts.time_reversal_asymmetry(x[::-1], delay=lag)
     assert np.isfinite(trev)
     assert np.isfinite(trev_rev)
     # Reversing time negates the increments' odd (third) moment → sign flip.
@@ -354,8 +354,8 @@ def test_prediction_error_smaller_for_deterministic(seed: int) -> None:
 
     det = logistic_series(1024, r=4.0, x0=0.3 + 1e-3 * (seed % 7))
     rand = white_noise(1024, seed=seed % 9999)
-    err_det = ts.nonlinear_prediction_error(det, m=3, tau=1)
-    err_rand = ts.nonlinear_prediction_error(rand, m=3, tau=1)
+    err_det = ts.nonlinear_prediction_error(det, dimension=3, delay=1)
+    err_rand = ts.nonlinear_prediction_error(rand, dimension=3, delay=1)
     assert err_det < err_rand
     # Determinism should buy a real margin, not a coin-flip difference.
     assert err_det < 0.5 * err_rand

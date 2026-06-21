@@ -361,16 +361,19 @@ def dedup_points(points: list[np.ndarray], tol: float) -> list[np.ndarray]:
 
 
 def resolve_box(
-    system: object, box: tuple | None, dim: int, rng: np.random.Generator
+    system: object, region: object, dim: int, rng: np.random.Generator
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Resolve the search box to ``(lo, hi)`` arrays of length ``dim``.
+    """Resolve the search ``region`` to ``(lo, hi)`` arrays of length ``dim``.
 
-    ``None`` uses a burn-in orbit's bounding box padded by 50 % (falling back to
-    ``[-2, 2]^dim`` if the orbit diverges or cannot be sampled).
+    Accepts a :class:`~tsdynamics.data.Box` / :class:`~tsdynamics.data.Grid`
+    (reads its ``lo`` / ``hi``), a ``(lo, hi)`` tuple, or ``None`` — which uses a
+    burn-in orbit's bounding box padded by 50 % (falling back to ``[-2, 2]^dim``
+    if the orbit diverges or cannot be sampled).
     """
-    if box is not None:
-        lo = np.asarray(box[0], dtype=float).reshape(dim)
-        hi = np.asarray(box[1], dtype=float).reshape(dim)
+    if region is not None:
+        lo_src, hi_src = (region.lo, region.hi) if hasattr(region, "lo") else (region[0], region[1])
+        lo = np.asarray(lo_src, dtype=float).reshape(dim)
+        hi = np.asarray(hi_src, dtype=float).reshape(dim)
         return lo, hi
     orbit = sample_orbit_box(system, dim)
     if orbit.size:

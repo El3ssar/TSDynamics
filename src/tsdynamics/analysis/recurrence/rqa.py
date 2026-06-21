@@ -187,7 +187,7 @@ def rqa(
     threshold: float | None = None,
     recurrence_rate: float | None = None,
     metric: str | float = "euclidean",
-    theiler_window: int = 0,
+    theiler: int = 0,
     min_diagonal: int = 2,
     min_vertical: int = 2,
 ) -> RQAResult:
@@ -205,7 +205,7 @@ def rqa(
         ``data`` is a :class:`~tsdynamics.analysis.RecurrenceMatrix`.
     metric : str or float, default "euclidean"
         Distance metric (ignored when ``data`` is a recurrence matrix).
-    theiler_window : int, default 0
+    theiler : int, default 0
         Excluded near-diagonal band (ignored when ``data`` is a recurrence
         matrix).
     min_diagonal : int, default 2
@@ -244,7 +244,7 @@ def rqa(
             threshold=threshold,
             recurrence_rate=recurrence_rate,
             metric=metric,
-            theiler_window=theiler_window,
+            theiler=theiler,
         )
 
     diag = _diagonal_lengths(rm.matrix)

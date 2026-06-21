@@ -57,7 +57,7 @@ def _ranks(x: np.ndarray) -> np.ndarray:
     return np.argsort(np.argsort(x, kind="stable"), kind="stable")
 
 
-def random_shuffle(x: Any, n: int = 1, *, seed: int | None = None, component: int | None = None):
+def random_shuffle(data: Any, n: int = 1, *, seed: int | None = None, component: int | None = None):
     """Random-permutation surrogates (the constrained-realisation i.i.d. null).
 
     Each surrogate is an independent random permutation of the samples, so it
@@ -66,7 +66,7 @@ def random_shuffle(x: Any, n: int = 1, *, seed: int | None = None, component: in
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         The source series (see :func:`~tsdynamics.analysis.surrogate._common._as_series`).
     n : int, default 1
         Number of surrogates to draw.
@@ -80,7 +80,7 @@ def random_shuffle(x: Any, n: int = 1, *, seed: int | None = None, component: in
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
     """
-    series = _as_series(x, component)
+    series = _as_series(data, component)
     rng = np.random.default_rng(seed)
     N = series.size
     out = np.empty((int(n), N), dtype=float)
@@ -89,18 +89,20 @@ def random_shuffle(x: Any, n: int = 1, *, seed: int | None = None, component: in
     return out
 
 
-def fourier_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component: int | None = None):
+def fourier_surrogate(
+    data: Any, n: int = 1, *, seed: int | None = None, component: int | None = None
+):
     """Phase-randomised (Fourier transform) surrogates of a linear Gaussian null.
 
     Keeps the magnitude spectrum — and therefore the power spectrum and the linear
-    autocorrelation — of ``x`` exactly while randomising the Fourier phases
+    autocorrelation — of ``data`` exactly while randomising the Fourier phases
     (Theiler et al., 1992).  The surrogate amplitude distribution drifts toward
     Gaussian; use :func:`aaft_surrogate` / :func:`iaaft_surrogate` when the
     distribution must be preserved too.
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         The source series.
     n : int, default 1
         Number of surrogates to draw.
@@ -114,12 +116,12 @@ def fourier_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component:
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
     """
-    series = _as_series(x, component)
+    series = _as_series(data, component)
     rng = np.random.default_rng(seed)
     return _phase_randomize(series, int(n), rng)
 
 
-def aaft_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component: int | None = None):
+def aaft_surrogate(data: Any, n: int = 1, *, seed: int | None = None, component: int | None = None):
     """Amplitude-adjusted Fourier-transform surrogates (Theiler et al., 1992).
 
     Tests the null of a *static monotonic nonlinearity acting on a linear Gaussian
@@ -130,7 +132,7 @@ def aaft_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component: in
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         The source series.
     n : int, default 1
         Number of surrogates to draw.
@@ -144,7 +146,7 @@ def aaft_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component: in
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
     """
-    series = _as_series(x, component)
+    series = _as_series(data, component)
     rng = np.random.default_rng(seed)
     N = series.size
     ranks_x = _ranks(series)
@@ -152,16 +154,16 @@ def aaft_surrogate(x: Any, n: int = 1, *, seed: int | None = None, component: in
 
     out = np.empty((int(n), N), dtype=float)
     for i in range(int(n)):
-        # Gaussian series sharing x's rank order, then phase-randomised.
+        # Gaussian series sharing data's rank order, then phase-randomised.
         gaussian = np.sort(rng.standard_normal(N))[ranks_x]
         gaussian_surrogate = _phase_randomize(gaussian, 1, rng)[0]
-        # Re-impose x's amplitude distribution by matching ranks.
+        # Re-impose data's amplitude distribution by matching ranks.
         out[i] = sorted_x[_ranks(gaussian_surrogate)]
     return out
 
 
 def iaaft_surrogate(
-    x: Any,
+    data: Any,
     n: int = 1,
     *,
     seed: int | None = None,
@@ -171,15 +173,15 @@ def iaaft_surrogate(
     r"""Refine AAFT surrogates iteratively (IAAFT; Schreiber & Schmitz, 1996).
 
     Alternates two projections until the sample ordering stops changing: a
-    *spectral* step that restores the exact magnitude spectrum of ``x`` (keeping
-    the current phases), and an *amplitude* step that restores ``x``'s exact sorted
-    values by rank.  Because it ends on the amplitude step, the surrogate's
+    *spectral* step that restores the exact magnitude spectrum of ``data`` (keeping
+    the current phases), and an *amplitude* step that restores ``data``'s exact
+    sorted values by rank.  Because it ends on the amplitude step, the surrogate's
     amplitude distribution is exact and its power spectrum matches to high accuracy
     — the standard improvement over plain :func:`aaft_surrogate`.
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         The source series.
     n : int, default 1
         Number of surrogates to draw.
@@ -196,7 +198,7 @@ def iaaft_surrogate(
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
     """
-    series = _as_series(x, component)
+    series = _as_series(data, component)
     rng = np.random.default_rng(seed)
     N = series.size
     target_magnitude = np.abs(np.fft.rfft(series))
@@ -210,7 +212,7 @@ def iaaft_surrogate(
             # Spectral projection: keep phases, impose the target magnitudes.
             phases = np.angle(np.fft.rfft(s))
             s = np.fft.irfft(target_magnitude * np.exp(1j * phases), n=N)
-            # Amplitude projection: impose x's exact values by rank order.
+            # Amplitude projection: impose data's exact values by rank order.
             ranks = _ranks(s)
             s = sorted_x[ranks]
             if prev_ranks is not None and np.array_equal(ranks, prev_ranks):
@@ -229,7 +231,7 @@ _GENERATORS = {
 
 
 def surrogates(
-    x: Any,
+    data: Any,
     method: str = "iaaft",
     n: int = 1,
     *,
@@ -241,7 +243,7 @@ def surrogates(
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         The source series.
     method : str, default "iaaft"
         One of ``"shuffle"`` (aliases ``"random"``/``"permutation"``), ``"ft"``
@@ -270,7 +272,7 @@ def surrogates(
         raise ValueError(
             f"unknown surrogate method {method!r}; use 'shuffle', 'ft', 'aaft' or 'iaaft'."
         )
-    return _GENERATORS[key](x, n, seed=seed, component=component, **kwargs)
+    return _GENERATORS[key](data, n, seed=seed, component=component, **kwargs)
 
 
 def __dir__() -> list[str]:

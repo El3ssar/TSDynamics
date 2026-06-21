@@ -138,7 +138,7 @@ def test_embed_accepts_trajectory(rossler):
 
 def test_autocorrelation_properties(rossler):
     _, y = rossler
-    acf = emb.autocorrelation(y[:, 0], max_lag=40)
+    acf = emb.autocorrelation(y[:, 0], max_delay=40)
     assert acf.shape == (41,)
     assert acf[0] == pytest.approx(1.0)
     assert np.all(np.abs(acf) <= 1.0 + 1e-9)
@@ -146,12 +146,12 @@ def test_autocorrelation_properties(rossler):
 
 def test_autocorrelation_constant_raises():
     with pytest.raises(ValueError, match="constant"):
-        emb.autocorrelation(np.ones(100), max_lag=10)
+        emb.autocorrelation(np.ones(100), max_delay=10)
 
 
 def test_mutual_information_self_is_max(rossler):
     _, y = rossler
-    mi = emb.mutual_information(y[:, 0], max_lag=40, bins=32)
+    mi = emb.mutual_information(y[:, 0], max_delay=40, bins=32)
     assert mi.shape == (41,)
     # I(0) is the series' self-information — the largest value of the curve.
     assert mi[0] == pytest.approx(mi.max())
@@ -161,12 +161,12 @@ def test_mutual_information_self_is_max(rossler):
 
 def test_optimal_delay_rossler_reasonable(rossler):
     _, y = rossler
-    tau_mi = emb.optimal_delay(y[:, 0], method="mi", max_lag=80)
-    tau_acf = emb.optimal_delay(y[:, 0], method="acf", max_lag=80)
+    tau_mi = emb.optimal_delay(y[:, 0], method="mi", max_delay=80)
+    tau_acf = emb.optimal_delay(y[:, 0], method="acf", max_delay=80)
     # dt = 0.05; a delay of ~0.5–2.5 time units (10–50 samples) is the usual band.
     assert 8 <= tau_mi <= 55
     assert 8 <= tau_acf <= 55
-    assert emb.optimal_delay(y[:, 0], method="acf_zero", max_lag=80) >= 1
+    assert emb.optimal_delay(y[:, 0], method="acf_zero", max_delay=80) >= 1
 
 
 def test_optimal_delay_unknown_method(rossler):
@@ -181,8 +181,8 @@ def test_optimal_delay_unknown_method(rossler):
 def test_fnn_rossler_is_three(rossler):
     _, y = rossler
     x = y[:, 0]
-    tau = emb.optimal_delay(x, method="mi", max_lag=80)
-    fnn = emb.false_nearest_neighbors(x, delay=tau, max_dim=8, theiler_window=tau)
+    tau = emb.optimal_delay(x, method="mi", max_delay=80)
+    fnn = emb.false_nearest_neighbors(x, delay=tau, max_dim=8, theiler=tau)
     assert fnn.method == "fnn"
     assert int(fnn) == 3, f"FNN dim = {int(fnn)} (E={fnn.fnn_fraction})"
     # The fraction has effectively vanished by d = 3 and stays there.
@@ -192,21 +192,21 @@ def test_fnn_rossler_is_three(rossler):
 
 def test_fnn_lorenz_is_three(lorenz):
     x = lorenz[:, 0]
-    tau = emb.optimal_delay(x, method="mi", max_lag=60)
-    fnn = emb.false_nearest_neighbors(x, delay=tau, max_dim=8, theiler_window=tau)
+    tau = emb.optimal_delay(x, method="mi", max_delay=60)
+    fnn = emb.false_nearest_neighbors(x, delay=tau, max_dim=8, theiler=tau)
     assert int(fnn) == 3, f"FNN dim = {int(fnn)} (E={fnn.fnn_fraction})"
 
 
 def test_fnn_sine_is_two(sine):
-    tau = emb.optimal_delay(sine, method="mi", max_lag=80)
-    fnn = emb.false_nearest_neighbors(sine, delay=tau, max_dim=6, theiler_window=tau)
+    tau = emb.optimal_delay(sine, method="mi", max_delay=80)
+    fnn = emb.false_nearest_neighbors(sine, delay=tau, max_dim=6, theiler=tau)
     assert int(fnn) == 2, f"FNN dim = {int(fnn)} (E={fnn.fnn_fraction})"
 
 
 def test_cao_lorenz_saturates_at_three(lorenz):
     x = lorenz[:, 0]
-    tau = emb.optimal_delay(x, method="mi", max_lag=60)
-    cao = emb.cao_dimension(x, delay=tau, max_dim=8, theiler_window=tau)
+    tau = emb.optimal_delay(x, method="mi", max_delay=60)
+    cao = emb.cao_dimension(x, delay=tau, max_dim=8, theiler=tau)
     assert cao.method == "cao"
     # E1 saturates to ~1; Cao's estimate is the literature value (or one above on
     # borderline samples — it errs toward over-embedding, never under).
@@ -231,9 +231,9 @@ def test_cao_e2_discriminates_noise_from_determinism(rossler):
 def test_embedding_dimension_dispatch(rossler):
     _, y = rossler
     x = y[:, 0]
-    tau = emb.optimal_delay(x, method="mi", max_lag=80)
-    by_cao = emb.embedding_dimension(x, method="cao", delay=tau, max_dim=8, theiler_window=tau)
-    by_fnn = emb.embedding_dimension(x, method="fnn", delay=tau, max_dim=8, theiler_window=tau)
+    tau = emb.optimal_delay(x, method="mi", max_delay=80)
+    by_cao = emb.embedding_dimension(x, method="cao", delay=tau, max_dim=8, theiler=tau)
+    by_fnn = emb.embedding_dimension(x, method="fnn", delay=tau, max_dim=8, theiler=tau)
     assert by_cao.method == "cao" and by_fnn.method == "fnn"
     with pytest.raises(ValueError, match="unknown method"):
         emb.embedding_dimension(x, method="nope")
@@ -259,14 +259,14 @@ def test_reconstruct_rossler_from_x_only(rossler):
     _, y = rossler
     x = y[:, 0]
 
-    tau = emb.optimal_delay(x, method="mi", max_lag=80)
-    m = int(emb.false_nearest_neighbors(x, delay=tau, max_dim=8, theiler_window=tau))
+    tau = emb.optimal_delay(x, method="mi", max_delay=80)
+    m = int(emb.false_nearest_neighbors(x, delay=tau, max_dim=8, theiler=tau))
     assert m == 3
 
     reconstructed = emb.embed(x, dimension=m, delay=tau)
     assert reconstructed.shape[1] == 3
 
-    d2 = correlation_dimension(reconstructed, theiler_window=2 * tau)
+    d2 = correlation_dimension(reconstructed, theiler=2 * tau)
     assert 1.75 < float(d2) < 2.25, f"reconstructed Rössler D2 = {float(d2):.3f}, expected ~2.0"
 
 

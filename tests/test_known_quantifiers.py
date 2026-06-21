@@ -157,7 +157,7 @@ def _periodic_signal() -> np.ndarray:
 def _det(signal: np.ndarray) -> float:
     """RQA determinism of a delay-embedding of ``signal`` at fixed recurrence rate."""
     emb = ts.embed(signal, dimension=_EMB_M, delay=_EMB_TAU)
-    return ts.rqa(emb, recurrence_rate=_RR, theiler_window=_THEILER).determinism
+    return ts.rqa(emb, recurrence_rate=_RR, theiler=_THEILER).determinism
 
 
 def _entropy_quantifiers(signal: np.ndarray) -> dict[str, float]:

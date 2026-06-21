@@ -178,7 +178,7 @@ def lz76_factors(
 
 
 def lz76_complexity(
-    x: Any,
+    data: Any,
     *,
     symbolize: Any = "auto",
     threshold: str | float = "median",
@@ -191,7 +191,7 @@ def lz76_complexity(
 
     Parameters
     ----------
-    x : array-like, str, or Trajectory
+    data : array-like, str, or Trajectory
         The sequence.  Strings and integer arrays are treated as already
         symbolic; a real-valued series is symbolised first (see ``symbolize``).
     symbolize : {"auto", "median", "mean", None} or callable, default "auto"
@@ -224,7 +224,7 @@ def lz76_complexity(
     >>> lz76_complexity("aaaaaaaa", symbolize=None)            # constant → 2
     2.0
     """
-    codes = _to_codes(x, symbolize, threshold, component)
+    codes = _to_codes(data, symbolize, threshold, component)
     n = codes.size
     k = int(np.unique(codes).size) if n else 0
 
@@ -241,7 +241,7 @@ def lz76_complexity(
 
 
 def lz76_entropy(
-    x: Any,
+    data: Any,
     *,
     symbolize: Any = "auto",
     threshold: str | float = "median",
@@ -263,7 +263,7 @@ def lz76_entropy(
         a ``k``-symbol source).
     """
     return lz76_complexity(
-        x,
+        data,
         symbolize=symbolize,
         threshold=threshold,
         normalize=True,

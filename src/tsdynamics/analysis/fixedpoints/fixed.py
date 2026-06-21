@@ -67,7 +67,7 @@ class FixedPoint:
 def fixed_points(
     system: Any,
     *,
-    box: tuple | None = None,
+    region: Any = None,
     n_seeds: int = 200,
     tol: float = 1e-12,
     max_iter: int = 60,
@@ -81,9 +81,9 @@ def fixed_points(
     r"""
     Find fixed points of a map (``f(x) = x``) or equilibria of a flow (``f(x) = 0``).
 
-    Seeds are drawn uniformly from ``box`` plus points sampled from a short orbit;
-    each runs the chosen root finder, and converged roots are deduplicated and
-    classified by the Jacobian spectrum (maps: ``|lambda| < 1``; flows:
+    Seeds are drawn uniformly from ``region`` plus points sampled from a short
+    orbit; each runs the chosen root finder, and converged roots are deduplicated
+    and classified by the Jacobian spectrum (maps: ``|lambda| < 1``; flows:
     ``Re lambda < 0``).
 
     Parameters
@@ -91,8 +91,8 @@ def fixed_points(
     system : DiscreteMap or ContinuousSystem
         A discrete map (fixed points) or a continuous flow (equilibria).  Delay
         and stochastic systems are not supported.
-    box : ((lo...), (hi...)), optional
-        Search box; defaults to a burn-in orbit's bounding box padded by 50 %,
+    region : Box, Grid, (lo, hi) tuple, optional
+        Search region; defaults to a burn-in orbit's bounding box padded by 50 %,
         or ``[-2, 2]^dim`` if the orbit diverges.
     n_seeds : int
         Random seeds (orbit points are added on top).
@@ -186,7 +186,7 @@ def fixed_points(
                 x=r, eigenvalues=eig, stable=bool(np.all(np.abs(eig) < 1.0)), continuous=False
             )
 
-    lo, hi = _c.resolve_box(system, box, dim, rng)
+    lo, hi = _c.resolve_box(system, region, dim, rng)
     seeds = _build_seeds(system, dim, lo, hi, n_seeds, rng)
     c_mats = _stabilising_matrices(method, dim, max_c)
 

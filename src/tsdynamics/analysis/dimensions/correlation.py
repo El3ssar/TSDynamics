@@ -46,7 +46,7 @@ def correlation_sum(
     data: Any,
     radii: np.ndarray | None = None,
     *,
-    theiler_window: int = 0,
+    theiler: int = 0,
     metric: str | float = "euclidean",
     n_radii: int = 24,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -60,7 +60,7 @@ def correlation_sum(
     radii : ndarray, optional
         Radii at which to evaluate :math:`C(r)`.  Default: a data-adaptive
         log-spaced grid (:func:`~tsdynamics.analysis.dimensions._common._default_radii`).
-    theiler_window : int, default 0
+    theiler : int, default 0
         Exclude pairs with :math:`|i - j| \le w`.  Use a few autocorrelation
         times for densely sampled flows; 0 for already-decorrelated point sets.
     metric : str or float, default "euclidean"
@@ -84,9 +84,9 @@ def correlation_sum(
 
     points = _as_points(data)
     n = points.shape[0]
-    w = int(theiler_window)
+    w = int(theiler)
     if w < 0:
-        raise ValueError("theiler_window must be non-negative.")
+        raise ValueError("theiler must be non-negative.")
     p = _metric_p(metric)
     if radii is None:
         radii = _default_radii(points, p=p, n_radii=n_radii)
@@ -123,7 +123,7 @@ def correlation_sum(
 def correlation_dimension(
     data: Any,
     *,
-    theiler_window: int = 0,
+    theiler: int = 0,
     metric: str | float = "euclidean",
     radii: np.ndarray | None = None,
     n_radii: int = 24,
@@ -140,7 +140,7 @@ def correlation_dimension(
     ----------
     data : Trajectory or array-like, shape (N, dim)
         The point set.
-    theiler_window : int, default 0
+    theiler : int, default 0
         Theiler window — exclude pairs with :math:`|i - j| \le w` (see
         :func:`correlation_sum`).  Set this for densely sampled flows.
     metric : str or float, default "euclidean"
@@ -168,14 +168,14 @@ def correlation_dimension(
 
     Examples
     --------
-    >>> d = correlation_dimension(lorenz_traj, theiler_window=50)   # doctest: +SKIP
+    >>> d = correlation_dimension(lorenz_traj, theiler=50)   # doctest: +SKIP
     >>> float(d)                                                    # doctest: +SKIP
     2.05...
     """
     radii, c = correlation_sum(
         data,
         radii=radii,
-        theiler_window=theiler_window,
+        theiler=theiler,
         metric=metric,
         n_radii=n_radii,
     )

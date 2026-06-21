@@ -40,13 +40,13 @@ import numpy as np
 import tsdynamics as ts
 
 t = np.linspace(0, 8 * np.pi, 4000)
-ts.permutation_entropy(np.sin(t), m=3)                  # ≈ 0.396  (smooth, low)
-ts.permutation_entropy(np.random.default_rng(0).standard_normal(4000), m=3)
+ts.permutation_entropy(np.sin(t), dimension=3)          # ≈ 0.396  (smooth, low)
+ts.permutation_entropy(np.random.default_rng(0).standard_normal(4000), dimension=3)
 #                                                       # ≈ 1.000  (white noise)
 
 log = ts.Logistic(params={"r": 4.0})
 x = log.trajectory(3000, transient=500, ic=[0.1234]).y[:, 0]
-ts.permutation_entropy(x, m=3)                          # ≈ 0.833  (chaos)
+ts.permutation_entropy(x, dimension=3)                  # ≈ 0.833  (chaos)
 ```
 
 The value tracks predictability: a **constant / fixed-point** signal uses one
@@ -55,7 +55,7 @@ saturates near $1$.
 
 ```python
 fp = ts.Logistic(params={"r": 2.8}).trajectory(2000, transient=1500).y[:, 0]
-ts.permutation_entropy(fp, m=3)                         # ≈ 0.0  (stable fixed point)
+ts.permutation_entropy(fp, dimension=3)                 # ≈ 0.0  (stable fixed point)
 ```
 
 `weighted_permutation_entropy` weights each pattern by the window's variance,
@@ -64,7 +64,7 @@ near-flat noise — useful when a spiky signal sits on a noisy baseline.
 
 !!! note "Pattern resolution needs samples"
     Estimating $m!$ pattern probabilities reliably wants $N \gg m!$ points.
-    Use `m=3`–`5` for typical records; the embedding delay `tau` (default `1`)
+    Use `dimension=3`–`5` for typical records; the embedding `delay` (default `1`)
     can be raised for oversampled flows.
 
 ## Amplitude and regularity entropies
@@ -79,7 +79,7 @@ Three estimators that read amplitude structure directly:
     unlike the rank-only permutation entropy.
 
     ```python
-    ts.dispersion_entropy(x, c=6, m=2)        # ≈ 0.719  (logistic r=4)
+    ts.dispersion_entropy(x, c=6, dimension=2)   # ≈ 0.719  (logistic r=4)
     ```
 
 === "Sample"
@@ -91,7 +91,7 @@ Three estimators that read amplitude structure directly:
     $0.2\,\sigma$ of the series.
 
     ```python
-    ts.sample_entropy(x, m=2)                 # ≈ 0.644  (logistic r=4)
+    ts.sample_entropy(x, dimension=2)         # ≈ 0.644  (logistic r=4)
     ```
 
 === "Approximate"
@@ -101,7 +101,7 @@ Three estimators that read amplitude structure directly:
     records. Kept for comparability with the historical literature.
 
     ```python
-    ts.approximate_entropy(x, m=2)            # ≈ 0.660  (logistic r=4)
+    ts.approximate_entropy(x, dimension=2)    # ≈ 0.660  (logistic r=4)
     ```
 
 ## Multiscale entropy
@@ -161,7 +161,7 @@ under a non-Shannon measure, and so on.
 ```python
 from tsdynamics.analysis.entropy.core import OrdinalPatterns, Renyi, Shannon
 
-# permutation_entropy(x, m=3) is exactly this preset:
+# permutation_entropy(x, dimension=3) is exactly this preset:
 ts.entropy(x, outcomes=OrdinalPatterns(m=3), measure=Shannon(base=2.0),
            normalize=True)                    # ≈ 0.833
 
@@ -177,7 +177,7 @@ symbolisation or measure.
 
 ## What it measures
 
-| Signal | Permutation entropy (`m=3`) | Note |
+| Signal | Permutation entropy (`dimension=3`) | Note |
 |---|---|---|
 | Stable fixed point | `≈ 0.0` | one ordinal pattern |
 | Smooth sine | `≈ 0.40` | a few patterns, low |

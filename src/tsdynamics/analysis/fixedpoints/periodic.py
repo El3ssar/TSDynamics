@@ -81,10 +81,10 @@ class PeriodicOrbit:
 
 
 def periodic_orbits(
-    map_sys: Any,
+    system: Any,
     period: int,
     *,
-    box: tuple | None = None,
+    region: Any = None,
     n_seeds: int = 300,
     method: str = "dl",
     lam: float = 0.05,
@@ -107,11 +107,11 @@ def periodic_orbits(
 
     Parameters
     ----------
-    map_sys : DiscreteMap
+    system : DiscreteMap
         The map.
     period : int
         The period ``p`` (``p=1`` returns the fixed points as one-point orbits).
-    box, n_seeds, dedup_tol, seed
+    region, n_seeds, dedup_tol, seed
         Seeding controls (see :func:`~tsdynamics.analysis.fixedpoints.fixed_points`).
     method : {"dl", "sd", "newton"}
         Root finder.  ``"dl"`` (default) = Davidchack--Lai; ``"sd"`` =
@@ -135,7 +135,7 @@ def periodic_orbits(
     >>> periodic_orbits(Logistic(params={"r": 3.2}), 2)   # the stable 2-cycle
     >>> periodic_orbits(Logistic(params={"r": 3.83}), 3)  # stable node + saddle
     """
-    if not isinstance(map_sys, DiscreteMap):
+    if not isinstance(system, DiscreteMap):
         raise TypeError("periodic_orbits is for DiscreteMap systems; use periodic_orbit for flows.")
     period = int(period)
     if period < 1:
@@ -144,9 +144,9 @@ def periodic_orbits(
     if method not in ("newton", "sd", "dl"):
         raise ValueError(f"method must be 'newton', 'sd', or 'dl', got {method!r}.")
 
-    dim = int(map_sys.dim)
+    dim = int(system.dim)
     rng = np.random.default_rng(seed)
-    step, jac = _c.map_fns(map_sys)
+    step, jac = _c.map_fns(system)
     eye = np.eye(dim)
 
     def residual(x: np.ndarray) -> np.ndarray:
@@ -155,8 +155,8 @@ def periodic_orbits(
     def jac_resid(x: np.ndarray) -> np.ndarray:
         return _c.map_orbit_monodromy(step, jac, x, period, dim)[1] - eye
 
-    lo, hi = _c.resolve_box(map_sys, box, dim, rng)
-    seeds = _build_seeds(map_sys, dim, lo, hi, n_seeds, rng)
+    lo, hi = _c.resolve_box(system, region, dim, rng)
+    seeds = _build_seeds(system, dim, lo, hi, n_seeds, rng)
     c_mats = _stabilising_matrices(method, dim, max_c)
 
     # Do not box-clip: an unstable orbit may sit outside the attractor's hull; the
@@ -237,7 +237,7 @@ def periodic_orbit(
     ic: Any | None = None,
     period_guess: float | None = None,
     steps_per_period: int = 2000,
-    burn_in: float = 0.0,
+    transient: float = 0.0,
     tol: float = 1e-10,
     max_iter: int = 50,
     n_points: int = 400,
@@ -265,7 +265,7 @@ def periodic_orbit(
         burn-in trajectory via :func:`estimate_period`.
     steps_per_period : int
         Fixed RK4 sub-steps used to integrate one period (state + monodromy).
-    burn_in : float
+    transient : float
         Time to forward-integrate ``ic`` before shooting (default ``0``).  A few
         periods of burn-in lands a guess near a *stable* limit cycle, widening the
         Newton basin; leave it ``0`` when targeting an unstable orbit from a
@@ -320,9 +320,9 @@ def periodic_orbit(
     if t_period <= 0.0:
         raise ValueError("period_guess must be positive.")
 
-    if burn_in > 0.0:  # land near a stable cycle to widen the Newton basin
-        n_burn = max(1, int(round(burn_in / 0.01)))
-        x0 = _c.flow_state(rhs, x0, float(burn_in), n_burn)
+    if transient > 0.0:  # land near a stable cycle to widen the Newton basin
+        n_burn = max(1, int(round(transient / 0.01)))
+        x0 = _c.flow_state(rhs, x0, float(transient), n_burn)
 
     eye = np.eye(dim)
     converged = False
@@ -476,7 +476,7 @@ def estimate_period(
     dt: float | None = None,
     component: int | str | None = None,
     method: str = "autocorrelation",
-    max_lag: int | None = None,
+    max_delay: int | None = None,
     detrend: bool = True,
 ) -> float:
     r"""
@@ -501,7 +501,7 @@ def estimate_period(
         ``"autocorrelation"`` — first autocorrelation peak after the first
         zero-crossing (parabolically refined).  ``"fft"`` — reciprocal of the
         dominant spectral frequency.
-    max_lag : int, optional
+    max_delay : int, optional
         Largest lag considered (``"autocorrelation"`` only); default ``len // 2``.
     detrend : bool
         Subtract the mean before estimating (default ``True``).
@@ -529,7 +529,7 @@ def estimate_period(
 
     method = method.lower()
     if method == "autocorrelation":
-        lag = _autocorr_period_lag(y, max_lag)
+        lag = _autocorr_period_lag(y, max_delay)
     elif method == "fft":
         lag = _fft_period_lag(y)
     else:

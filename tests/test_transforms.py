@@ -139,20 +139,20 @@ def test_unknown_psd_method_raises(two_tone: np.ndarray) -> None:
 def test_detrend_linear_removes_ramp(time: np.ndarray, two_tone: np.ndarray) -> None:
     """A linear ramp is removed; the residual has ~zero slope and mean."""
     ramped = two_tone + 0.3 * time
-    out = tx.detrend(ramped, kind="linear")
+    out = tx.detrend(ramped, method="linear")
     slope = np.polyfit(time, out, 1)[0]
     assert abs(slope) < 1e-9
     assert abs(float(out.mean())) < 1e-9
 
 
 def test_detrend_constant_removes_mean(two_tone: np.ndarray) -> None:
-    out = tx.detrend(two_tone + 7.0, kind="constant")
+    out = tx.detrend(two_tone + 7.0, method="constant")
     assert abs(float(out.mean())) < 1e-9
 
 
 def test_detrend_bad_kind_raises(two_tone: np.ndarray) -> None:
-    with pytest.raises(ValueError, match="detrend kind"):
-        tx.detrend(two_tone, kind="quadratic")
+    with pytest.raises(ValueError, match="detrend method"):
+        tx.detrend(two_tone, method="quadratic")
 
 
 def test_normalize_zscore(two_tone: np.ndarray) -> None:

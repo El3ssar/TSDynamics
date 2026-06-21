@@ -101,7 +101,7 @@ def windowed_rqa(
     threshold: float | None = None,
     recurrence_rate: float | None = None,
     metric: str | float = "euclidean",
-    theiler_window: int = 0,
+    theiler: int = 0,
     min_diagonal: int = 2,
     min_vertical: int = 2,
 ) -> WindowedRQA:
@@ -120,7 +120,7 @@ def windowed_rqa(
         :func:`~tsdynamics.analysis.recurrence_matrix`).
     metric : str or float, default "euclidean"
         Distance metric.
-    theiler_window : int, default 0
+    theiler : int, default 0
         Excluded near-diagonal band, applied within each window.
     min_diagonal, min_vertical : int
         Minimum line lengths (see :func:`~tsdynamics.analysis.rqa`).
@@ -152,7 +152,7 @@ def windowed_rqa(
             threshold=threshold,
             recurrence_rate=recurrence_rate,
             metric=metric,
-            theiler_window=theiler_window,
+            theiler=theiler,
             min_diagonal=min_diagonal,
             min_vertical=min_vertical,
         )

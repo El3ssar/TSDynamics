@@ -105,8 +105,8 @@ def test_accessor_holds_its_system():
 def test_lyap_spectrum_identical():
     """``sys.lyap.spectrum`` == ``ts.lyapunov_spectrum(sys)`` (byte-identical)."""
     h = Henon()
-    viaaccessor = np.asarray(h.lyap.spectrum(steps=2000, ic=[0.1, 0.1]))
-    viafree = np.asarray(ts.lyapunov_spectrum(h, steps=2000, ic=[0.1, 0.1]))
+    viaaccessor = np.asarray(h.lyap.spectrum(n=2000, ic=[0.1, 0.1]))
+    viafree = np.asarray(ts.lyapunov_spectrum(h, n=2000, ic=[0.1, 0.1]))
     assert np.array_equal(viaaccessor, viafree)
 
 

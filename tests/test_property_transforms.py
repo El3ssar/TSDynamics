@@ -34,7 +34,7 @@ _ATOL = 1.0e-6  # exact algebraic identities (detrend/normalize closed forms)
 def test_detrend_preserves_shape(x: np.ndarray) -> None:
     """detrend (both kinds) returns an array of the identical shape."""
     for kind in ("linear", "constant"):
-        out = tx.detrend(x, kind=kind)
+        out = tx.detrend(x, method=kind)
         assert out.shape == x.shape
 
 
@@ -65,7 +65,7 @@ def test_filters_preserve_shape(x: np.ndarray) -> None:
 @given(x=finite_signals(min_size=64, max_size=512))
 def test_detrend_linear_kills_mean_and_slope(x: np.ndarray) -> None:
     """detrend(kind='linear') leaves a zero-mean, zero-slope residual."""
-    out = tx.detrend(x, kind="linear")
+    out = tx.detrend(x, method="linear")
     # Mean removed.
     assert abs(float(out.mean())) <= _ATOL * (1.0 + abs(float(x.mean())))
     # Least-squares slope of the residual against sample index is ~0: refit a
@@ -83,7 +83,7 @@ def test_detrend_linear_kills_mean_and_slope(x: np.ndarray) -> None:
 @given(x=finite_signals(min_size=64, max_size=512))
 def test_detrend_constant_kills_mean(x: np.ndarray) -> None:
     """detrend(kind='constant') leaves a zero-mean residual."""
-    out = tx.detrend(x, kind="constant")
+    out = tx.detrend(x, method="constant")
     assert abs(float(out.mean())) <= _ATOL * (1.0 + abs(float(x.mean())))
 
 

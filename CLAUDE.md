@@ -683,7 +683,7 @@ u = lor.step(0.01)
 # Derived systems → analysis composition
 pmap = ts.PoincareMap(ts.Rossler(), plane=(1, 0.0))
 section = pmap.trajectory(500)
-od = ts.orbit_diagram(pmap, "c", np.linspace(2, 6, 50), components=0)
+od = ts.orbit_diagram(pmap, "c", np.linspace(2, 6, 50), component=0)
 
 # Maps
 h = ts.Henon()

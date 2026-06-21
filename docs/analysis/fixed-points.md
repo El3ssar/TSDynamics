@@ -76,7 +76,7 @@ explicit step $x_{k+1} = x_k + \lambda\,C\,g(x_k)$.
 
 ```python
 # at r = 4 both logistic fixed points {0, 0.75} are unstable
-ts.fixed_points(ts.Logistic(params={"r": 4.0}), box=([-0.2], [1.2]), method="dl")
+ts.fixed_points(ts.Logistic(params={"r": 4.0}), region=([-0.2], [1.2]), method="dl")
 ```
 
 ## Periodic orbits of maps
@@ -122,7 +122,7 @@ class VanDerPol(ts.ContinuousSystem):          # autonomous van der Pol oscillat
         return [y(1), mu * (1 - y(0) * y(0)) * y(1) - y(0)]
 
 orb = ts.periodic_orbit(VanDerPol(params={"mu": 1.0}),
-                        ic=[2.0, 0.0], period_guess=6.0, burn_in=20.0)
+                        ic=[2.0, 0.0], period_guess=6.0, transient=20.0)
 orb.period          # ≈ 6.6633  (the μ = 1 Van der Pol limit-cycle period)
 orb.multipliers     # one trivial multiplier ≈ 1 (the flow direction) …
 orb.stable          # … and the other inside the unit circle → stable

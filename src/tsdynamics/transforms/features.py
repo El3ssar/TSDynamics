@@ -163,7 +163,7 @@ def _per_channel(sig: np.ndarray, fn: Callable[[np.ndarray, float], float], fs: 
 
 
 def extract_features(
-    x: Any,
+    data: Any,
     *,
     fs: float | None = None,
     dt: float | None = None,
@@ -174,7 +174,7 @@ def extract_features(
 
     Parameters
     ----------
-    x : Trajectory or array-like
+    data : Trajectory or array-like
         Signal with time along axis 0; a multi-channel ``(T, channels)`` signal
         is summarised channel-by-channel.
     fs, dt : float, optional
@@ -197,8 +197,8 @@ def extract_features(
     >>> round(feats["mean"], 1)
     0.0
     """
-    sig = to_signal(x)
-    rate = resolve_fs(x, fs=fs, dt=dt)
+    sig = to_signal(data)
+    rate = resolve_fs(data, fs=fs, dt=dt)
     names = feature_names() if features is None else list(features)
     out: dict[str, Any] = {}
     for name in names:

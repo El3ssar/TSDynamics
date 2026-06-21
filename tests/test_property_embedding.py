@@ -134,7 +134,7 @@ def test_autocorrelation_is_normalised_and_bounded(x: np.ndarray, max_lag: int) 
     regression that forgot to divide by the zero-lag variance would break the
     first two, a windowing bug the third.  ``max_lag`` is clamped to ``N-1``.
     """
-    acf = ts.autocorrelation(x, max_lag=max_lag)
+    acf = ts.autocorrelation(x, max_delay=max_lag)
 
     expected_len = min(max_lag, x.size - 1) + 1
     assert acf.shape == (expected_len,)
@@ -155,7 +155,7 @@ def test_autocorrelation_known_sinusoid_is_periodic() -> None:
     period = int(round(1.0 / freq))  # 20 samples
     x = sinusoid(2048, freq=freq)
 
-    acf = ts.autocorrelation(x, max_lag=2 * period)
+    acf = ts.autocorrelation(x, max_delay=2 * period)
 
     # One full period later the ACF is close to its lag-0 value of 1.
     assert acf[period] > 0.9
@@ -177,7 +177,7 @@ def test_mutual_information_is_nonnegative(x: np.ndarray, max_lag: int) -> None:
     can only dip a hair below zero through float round-off, hence the ``-1e-12``
     floor.  ``max_lag`` is clamped to ``N-2``.
     """
-    mi = ts.mutual_information(x, max_lag=max_lag)
+    mi = ts.mutual_information(x, max_delay=max_lag)
 
     expected_len = min(max_lag, x.size - 2) + 1
     assert mi.shape == (expected_len,)
@@ -191,7 +191,7 @@ def test_mutual_information_self_lag_dominates() -> None:
     information upper-bounds every lagged value — a real ordering invariant.
     """
     x = logistic_series(2000, r=4.0)
-    mi = ts.mutual_information(x, max_lag=40)
+    mi = ts.mutual_information(x, max_delay=40)
     assert np.argmax(mi) == 0
     assert np.all(mi[1:] <= mi[0] + 1e-9)
 
@@ -210,7 +210,7 @@ def test_optimal_delay_in_range(method: str) -> None:
     """
     x = henon_series(2000)
     max_lag = 50
-    tau = ts.optimal_delay(x, method=method, max_lag=max_lag)
+    tau = ts.optimal_delay(x, method=method, max_delay=max_lag)
 
     assert isinstance(tau, int)
     assert 1 <= tau <= max_lag
@@ -232,7 +232,7 @@ def test_optimal_delay_mi_lands_in_the_first_minimum_valley() -> None:
     half = period / 2.0  # 25 samples
     x = sinusoid(4096, freq=freq)
 
-    tau = ts.optimal_delay(x, method="mi", max_lag=int(period))
+    tau = ts.optimal_delay(x, method="mi", max_delay=int(period))
 
     # Inside the descending first-minimum valley: past the redundant short lags,
     # before the half-period MI peak where the signal becomes anti-correlated.

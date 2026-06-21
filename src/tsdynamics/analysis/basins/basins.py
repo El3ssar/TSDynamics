@@ -198,42 +198,48 @@ class BasinFractions:
 
 def basins_of_attraction(
     system: Any,
-    grid: Grid,
+    region: Grid,
     *,
     recurrence: Box | Grid | None = None,
     recurrence_resolution: int | tuple[int, ...] = 100,
+    seed: int | None = 0,
     dt: float = 1.0,
     max_steps: int = 10000,
     merge_tol: float | None = None,
     **fsm: Any,
 ) -> BasinsResult:
     r"""
-    Classify every point of a grid by the attractor it converges to.
+    Classify every point of a grid region by the attractor it converges to.
 
     Each lattice point is followed until it settles into a recurrent cell set
-    (Datseris & Wagemakers, 2022); by default the grid doubles as the recurrence
+    (Datseris & Wagemakers, 2022); by default the region doubles as the recurrence
     tessellation, so labels accumulate and most points settle cheaply by reaching
     an already-labelled cell.
 
     For a higher-dimensional flow whose basins are viewed on a slice (e.g. a
     position grid of a system that also carries velocities), pass a full-dimension
-    ``recurrence`` box covering the whole trajectory range and let ``grid`` be the
+    ``recurrence`` box covering the whole trajectory range and let ``region`` be the
     thin slice of initial conditions (free axes pinned with ``counts == 1``).
 
     Parameters
     ----------
     system : System
         A discrete map or continuous flow.
-    grid : Grid
+    region : Grid
         The lattice of initial conditions (full state dimension; a slice pins free
-        axes with ``counts == 1``).  Its ``counts`` set the recurrence resolution
-        when ``recurrence`` is not given.
+        axes with ``counts == 1``).  Build one with
+        :func:`tsdynamics.data.region`.  Its ``counts`` set the recurrence
+        resolution when ``recurrence`` is not given.
     recurrence : Box or Grid, optional
         Full-dimension region whose tessellation recurrences are detected on.
-        Defaults to ``grid`` itself (correct for maps and full grids; required when
-        ``grid`` is a degenerate slice).
+        Defaults to ``region`` itself (correct for maps and full grids; required
+        when ``region`` is a degenerate slice).
     recurrence_resolution : int or tuple of int, default 100
         Recurrence cells per axis when ``recurrence`` is a Box.
+    seed : int, optional
+        Accepted for signature uniformity with :func:`find_attractors` /
+        :func:`basin_fractions`; the full-grid scan is deterministic, so ``seed``
+        does not change the labelling (it is recorded in provenance).
     dt : float, default 1.0
         Integration step between cell checks for a flow (ignored for a map).
     max_steps : int, default 10000
@@ -256,12 +262,12 @@ def basins_of_attraction(
     attraction", *Chaos* **32**, 023104 (2022).
     """
     if recurrence is None:
-        cellgrid = _recurrence_grid(grid, grid.counts)
+        cellgrid = _recurrence_grid(region, region.counts)
     else:
         cellgrid = _recurrence_grid(recurrence, recurrence_resolution)
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
 
-    points = grid_points(grid)
+    points = grid_points(region)
     labels = np.empty(points.shape[0], dtype=np.int64)
     diverged = 0
     for i, p in enumerate(points):
@@ -271,9 +277,9 @@ def basins_of_attraction(
             diverged += 1
 
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
-    labels = _apply_merge(labels.reshape(grid.shape), merge)
+    labels = _apply_merge(labels.reshape(region.shape), merge)
     attractors = mapper.attractor_set(diverged=diverged, seeds=points.shape[0], merge=merge)
-    return BasinsResult(labels=labels, grid=grid, attractors=attractors)
+    return BasinsResult(labels=labels, grid=region, attractors=attractors)
 
 
 def basin_fractions(
