@@ -1,5 +1,10 @@
 """The Python solver registry — the discovery half of the pluggable engine (D4).
 
+.. note::
+   **Advanced / internal.**  Reachable as :mod:`tsdynamics.solvers` to inspect or
+   extend the available integrators, but most users only ever pass a solver by
+   name (``integrate(method="rk45")``) rather than importing this package.
+
 This package is the Python-side mirror of the Rust link-time solver registry in
 the ``tsdyn-solvers`` crate.  It holds a ``name -> SolverSpec`` table of solver
 *metadata* (capabilities + the name of the Rust kernel that does the work) and

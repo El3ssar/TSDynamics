@@ -52,7 +52,8 @@ src/tsdynamics/
 │   ├── continuous.py         # ContinuousSystem (engine integrate + jacobian autogen)
 │   ├── delay.py              # DelaySystem (engine method-of-steps, forward-only)
 │   ├── discrete.py           # DiscreteMap (engine iterate + signature validation)
-│   └── stochastic.py         # StochasticSystem — diagonal-Itô SDEs (_drift+_diffusion; EM/Milstein)
+│   ├── stochastic.py         # StochasticSystem — diagonal-Itô SDEs (_drift+_diffusion; EM/Milstein)
+│   └── wrapped.py            # WrappedSystem (canonical home; adapt an external stepper — re-exported via derived)
 ├── engine/                   # Rust-facing engine layer; tsdynamics._rust is the sole backend
 │   ├── symbols.py            # engine-native symbolic frontend: state_time_symbols() → (Function("y"), Symbol("t"))
 │   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator
@@ -65,7 +66,8 @@ src/tsdynamics/
 │   ├── stroboscopic.py       # StroboscopicMap
 │   ├── tangent.py            # TangentSystem (Lyapunov engine)
 │   ├── ensemble.py           # EnsembleSystem
-│   └── projected.py          # ProjectedSystem
+│   ├── projected.py          # ProjectedSystem
+│   └── wrapped.py            # back-compat shim → re-exports WrappedSystem from families.wrapped
 ├── data/                     # state-space geometry + trajectory lingua franca (was sampling.py)
 │   ├── trajectory.py         # Trajectory (canonical home; re-exported via families + top level)
 │   └── sampling.py           # Box/Ball/Grid, sampler, grid_points, set_distance
@@ -142,19 +144,28 @@ module's `__all__`), so a new system needs no manual edit there.
   `uncertainty_exponent`, `wada_property`, `continuation`, `tipping_points`,
   `resilience`, `Attractor`, `AttractorSet`, `BasinsResult`, `BasinFractions`,
   `BasinEntropy`, `UncertaintyExponent`, `WadaResult`, `ContinuationResult`
-- Derived: `WrappedSystem` (adapt any external stepper to the protocol)
+- Adapter base: `WrappedSystem` (adapt any external stepper to the protocol).
+  Canonical home is `tsdynamics.families` (it sits with the family bases users
+  subclass); re-exported from `tsdynamics.derived` for back-compat.
 - State-space geometry (`data`): `Box`, `Ball`, `Grid`, `sampler`,
   `grid_points`, `set_distance` — the primitives the basin/attractor layer
-  builds on (Monte-Carlo + full-grid sampling, attractor-matching distances)
+  builds on (Monte-Carlo + full-grid sampling, attractor-matching distances).
+  `Trajectory`/`Box`/`Ball`/`Grid` are *defined* in `tsdynamics.data` (the one
+  canonical home); the top-level names are convenience re-exports.
 - Submodules: `analysis`, `data`, `derived`, `families`, `registry`,
-  `systems`, `utils`
+  `systems`, `transforms`, `utils` (the eight headline submodules) plus the
+  advanced/internal `engine` and `solvers` (reachable, docstring-flagged
+  internal).
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.families`; `staticjit` via `tsdynamics.utils`.
-The engine layer (`tsdynamics.engine`) and the `transforms` / skeleton `viz`
-packages are importable (`from tsdynamics import transforms`) but not advertised
-in the top-level `__all__`; `transforms` carries its own flat public surface
-(`tsdynamics.transforms.__all__`).
+The `transforms`, `engine` and `solvers` submodules are now bound on the
+top-level namespace and in `__all__` (stream WS-REACH), so `ts.transforms`,
+`ts.engine` and `ts.solvers` resolve after a plain `import tsdynamics`
+(`engine`/`solvers` are flagged advanced/internal in their module docstrings;
+`transforms` is a headline capability carrying its own flat public surface,
+`tsdynamics.transforms.__all__`). The skeleton `viz` package stays a deferred
+stub and is not bound here.
 
 ---
 

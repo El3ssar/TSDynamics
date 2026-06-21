@@ -1,6 +1,11 @@
 """
 The Rust-facing engine layer.
 
+.. note::
+   **Advanced / internal.**  Reachable as :mod:`tsdynamics.engine` for inspection
+   and extension, but most users never import it directly — the family classes
+   (:class:`~tsdynamics.ContinuousSystem` &c.) drive it for you.
+
 This package is the seam between the symbolic system definitions and the
 compiled Rust engine (the ``tsdyn-*`` Cargo workspace).  It hosts the
 symbolic→IR compiler, problem builders, and the integrate/run entry points
