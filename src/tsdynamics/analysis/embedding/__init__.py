@@ -34,9 +34,10 @@ from .dimension import (
     embedding_dimension,
     false_nearest_neighbors,
 )
-from .embed import embed
+from .embed import Embedding, embed
 
 __all__ = [
+    "Embedding",
     "EmbeddingDimension",
     "autocorrelation",
     "cao_dimension",

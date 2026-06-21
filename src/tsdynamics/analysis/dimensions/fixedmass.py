@@ -153,14 +153,15 @@ def fixed_mass_dimension(
     x, y = x[order], y[order]
     fit = fit_scaling_region(x, y, min_window=min_window, tol=tol)
     return DimensionResult(
-        dimension=fit.slope,
+        estimate=fit.slope,
         stderr=fit.stderr,
         kind="fixed_mass",
-        x=x,
-        y=y,
-        fit_slice=(fit.lo, fit.hi),
+        abscissa=x,
+        ordinate=y,
+        fit_region=(fit.lo, fit.hi),
         intercept=fit.intercept,
         q=None,
+        meta={"analysis": "fixed_mass_dimension", "kind": "fixed_mass", "q": None},
     )
 
 

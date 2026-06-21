@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import ScalarResult
 from .core import as_series
 
 __all__ = ["approximate_entropy", "sample_entropy"]
@@ -45,7 +46,7 @@ def sample_entropy(
     delay: int = 1,
     *,
     component: int | str | None = None,
-) -> float:
+) -> ScalarResult:
     r"""
     Sample entropy (Richman & Moorman 2000).
 
@@ -83,7 +84,7 @@ def sample_entropy(
     Examples
     --------
     >>> rng = np.random.default_rng(0)
-    >>> sample_entropy(rng.random(2000))   # white noise → high
+    >>> float(sample_entropy(rng.random(2000)))   # white noise → high
     2.2...
     """
     series = as_series(data, component)
@@ -112,9 +113,11 @@ def sample_entropy(
 
     if b_count == 0:
         raise ValueError("no length-m template matches — increase r or lengthen the series.")
-    if a_count == 0:
-        return float("inf")
-    return -np.log(a_count / b_count)
+    value = float("inf") if a_count == 0 else float(-np.log(a_count / b_count))
+    return ScalarResult(
+        value=value,
+        meta={"analysis": "sample_entropy", "dimension": dimension, "delay": delay},
+    )
 
 
 def approximate_entropy(
@@ -124,7 +127,7 @@ def approximate_entropy(
     delay: int = 1,
     *,
     component: int | str | None = None,
-) -> float:
+) -> ScalarResult:
     r"""
     Approximate entropy (Pincus 1991).
 
@@ -168,7 +171,11 @@ def approximate_entropy(
             log_sum += np.log(c / n_templates)
         return log_sum / n_templates
 
-    return float(phi(dimension) - phi(dimension + 1))
+    value = float(phi(dimension) - phi(dimension + 1))
+    return ScalarResult(
+        value=value,
+        meta={"analysis": "approximate_entropy", "dimension": dimension, "delay": delay},
+    )
 
 
 def __dir__() -> list[str]:

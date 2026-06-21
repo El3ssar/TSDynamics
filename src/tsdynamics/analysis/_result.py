@@ -72,7 +72,15 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-__all__ = ["AnalysisResult", "ScalingResult", "VisualizationNotInstalled"]
+__all__ = [
+    "AnalysisResult",
+    "ArrayResult",
+    "CollectionResult",
+    "CountResult",
+    "ScalarResult",
+    "ScalingResult",
+    "VisualizationNotInstalled",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +693,401 @@ class ScalingResult(AnalysisResult):
             layers=layers,
             meta=dict(self.meta) if self.meta else {},
         )
+
+
+# ---------------------------------------------------------------------------
+# ScalarResult — a single number that behaves like the number
+# ---------------------------------------------------------------------------
+
+
+def _coerce_float(value: Any) -> float:
+    """Return ``float(value)`` or raise — the gate for numeric dunder forwarding."""
+    return float(value)
+
+
+class _NumericOps:
+    """Mixin giving a result the full numeric protocol of ``float(self)``.
+
+    A :class:`ScalarResult` wraps a bare ``float``/``int`` return so it can carry
+    ``.meta`` and the result surface, but it must stay a *drop-in* for the number
+    it replaces: ``result > 0.9``, ``result == pytest.approx(x)``, ``abs(result)``
+    and ``2 * result`` all have to keep working without callers unwrapping it.
+
+    Dunder methods are resolved on the *type*, never via ``__getattr__``, so the
+    operators are spelled out here.  Each forwards to ``float(self)`` and coerces
+    the other operand with :func:`_coerce_float`; an operand that is not
+    float-convertible (an ``ndarray``, a ``pytest.approx`` sentinel) yields
+    :data:`NotImplemented` so Python falls back to *its* reflected operator — which
+    is exactly how ``result == pytest.approx(x)`` resolves (approx then calls
+    ``float(self)`` itself).
+    """
+
+    def __float__(self) -> float:  # noqa: D105
+        return _coerce_float(self.value)  # type: ignore[attr-defined]
+
+    def __int__(self) -> int:  # noqa: D105
+        return int(_coerce_float(self.value))  # type: ignore[attr-defined]
+
+    def __bool__(self) -> bool:  # noqa: D105
+        return bool(_coerce_float(self.value))  # type: ignore[attr-defined]
+
+    def __round__(self, ndigits: int | None = None):  # noqa: D105
+        return round(float(self), ndigits) if ndigits is not None else round(float(self))
+
+    def __array__(self, dtype: Any = None) -> np.ndarray:  # noqa: D105
+        arr = np.asarray(float(self))
+        return arr.astype(dtype) if dtype is not None else arr
+
+    # -- comparisons (NotImplemented → reflected op, e.g. pytest.approx) ------
+
+    def __eq__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) == _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __ne__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) != _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __lt__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) < _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __le__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) <= _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __gt__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) > _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __ge__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) >= _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __hash__(self) -> int:  # noqa: D105
+        return hash(float(self))
+
+    # -- arithmetic ----------------------------------------------------------
+
+    def __add__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) + _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    __radd__ = __add__
+
+    def __sub__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) - _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __rsub__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return _coerce_float(other) - float(self)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __mul__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) * _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    __rmul__ = __mul__
+
+    def __truediv__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return float(self) / _coerce_float(other)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __rtruediv__(self, other: Any) -> Any:  # noqa: D105
+        try:
+            return _coerce_float(other) / float(self)
+        except (TypeError, ValueError):
+            return NotImplemented
+
+    def __neg__(self) -> float:  # noqa: D105
+        return -float(self)
+
+    def __pos__(self) -> float:  # noqa: D105
+        return +float(self)
+
+    def __abs__(self) -> float:  # noqa: D105
+        return abs(float(self))
+
+
+@dataclass(frozen=True, eq=False)
+class ScalarResult(_NumericOps, AnalysisResult):
+    """A single scalar measurement that still behaves like its number.
+
+    Wraps a bare ``float`` return (a maximal Lyapunov exponent, an entropy, a
+    0--1-test ``K``, …) so it carries the :class:`AnalysisResult` surface —
+    ``.meta``, ``.summary()``, ``.to_dict()``, the ``.plot`` seam — while
+    ``float(result)`` and every comparison / arithmetic operator keep working via
+    :class:`_NumericOps`, so it is a drop-in for the value it replaces.
+
+    Subclasses may add domain context fields (e.g. ``base``, ``normalized``);
+    they must re-apply ``@dataclass(frozen=True, eq=False)`` so the numeric
+    ``__eq__`` / ``__hash__`` are not regenerated by the dataclass machinery.
+
+    Attributes
+    ----------
+    value : float
+        The measured number.  ``float(result)`` returns it.
+    """
+
+    _repr_fields: ClassVar[tuple[str, ...]] = ("value",)
+
+    value: float = 0.0
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe the scalar as a one-point :class:`PlotSpec` (rarely plotted).
+
+        A lone number has no natural figure; this emits a minimal
+        ``DIAGNOSTIC_CURVE`` carrying the value so the ``.plot`` seam resolves
+        uniformly.  The :mod:`tsdynamics.viz.spec` import is lazy.
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=type(self).__name__,
+            x=Axis(label="index"),
+            y=Axis(label="value"),
+            layers=[Layer(PlotKind.MARKERS, {"x": np.array([0.0]), "y": np.array([float(self)])})],
+            meta=dict(self.meta) if self.meta else {},
+        )
+
+
+class CountResult(int, AnalysisResult):
+    """A scalar *integer* result that genuinely **is** an ``int``.
+
+    Subclasses ``int`` (rather than wrapping one) so a count read off the data —
+    an estimated delay from ``optimal_delay``, a dimension — is a complete drop-in
+    for the bare integer it replaces: ``isinstance(result, int)`` holds, it indexes
+    and slices arrays, it survives ``delay=result`` round-trips into estimators
+    that type-check their arguments, and all integer arithmetic / comparisons work
+    natively.  It *also* carries the :class:`AnalysisResult` surface — ``.meta`` /
+    ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.
+
+    Attributes
+    ----------
+    value : int
+        The measured count (an alias for the integer itself).
+    """
+
+    _repr_fields: ClassVar[tuple[str, ...]] = ("value",)
+
+    def __new__(cls, value: Any = 0, *, meta: Mapping[str, Any] | None = None) -> CountResult:
+        """Construct the integer (``int.__new__``); ``meta`` is set in ``__init__``."""
+        return super().__new__(cls, int(value))
+
+    def __init__(self, value: Any = 0, *, meta: Mapping[str, Any] | None = None) -> None:
+        """Attach provenance; ``AnalysisResult`` is frozen, so set it via ``object``."""
+        object.__setattr__(self, "meta", dict(meta) if meta else {})
+
+    @property
+    def value(self) -> int:
+        """The measured count (the integer value itself)."""
+        return int(self)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"{type(self).__name__}({int(self)})"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of the value and provenance."""
+        return {"value": int(self), "meta": _jsonify(self.meta)}
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe the count as a one-point :class:`PlotSpec` (rarely plotted)."""
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=type(self).__name__,
+            x=Axis(label="index"),
+            y=Axis(label="value"),
+            layers=[Layer(PlotKind.MARKERS, {"x": np.array([0.0]), "y": np.array([float(self)])})],
+            meta=dict(self.meta) if self.meta else {},
+        )
+
+
+# ---------------------------------------------------------------------------
+# ArrayResult — an ndarray-valued result that behaves like the array
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, eq=False)
+class ArrayResult(AnalysisResult):
+    """An array-valued measurement that stays a drop-in for its ``ndarray``.
+
+    Wraps a bare ``ndarray`` return (a Lyapunov spectrum, a delay-embedded point
+    cloud, a mutual-information-vs-lag curve, a surrogate ensemble) so it carries
+    the result surface while ``np.asarray(result)``, indexing/slicing, ``len`` /
+    iteration, elementwise comparisons (``result >= 0``) and attribute access
+    (``result.shape``, ``result.max()``) all defer to the underlying array.
+
+    Indexing and slicing return the *raw* array element/sub-array (never another
+    wrapper), so ``result[:, 0]`` flows straight into NumPy as before.  Operators
+    are resolved on the type (``__getattr__`` cannot intercept them), so the
+    comparison/arithmetic dunders are spelled out and return raw arrays.
+
+    Attributes
+    ----------
+    values : numpy.ndarray
+        The wrapped array.  ``np.asarray(result)`` returns it.
+    """
+
+    _repr_fields: ClassVar[tuple[str, ...]] = ()
+
+    values: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"{type(self).__name__}({_fmt(np.asarray(self.values))})"
+
+    # -- ndarray protocol ----------------------------------------------------
+
+    def __array__(self, dtype: Any = None) -> np.ndarray:  # noqa: D105
+        arr = np.asarray(self.values)
+        return arr.astype(dtype) if dtype is not None else arr
+
+    def __getitem__(self, key: Any) -> Any:  # noqa: D105
+        return self.values[key]
+
+    def __len__(self) -> int:  # noqa: D105
+        return len(self.values)
+
+    def __iter__(self) -> Any:  # noqa: D105
+        return iter(self.values)
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward unknown public attributes to the wrapped array (``.shape``, ``.max``)."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+        try:
+            values = object.__getattribute__(self, "values")
+        except AttributeError as exc:  # pragma: no cover - during unpickling
+            raise AttributeError(name) from exc
+        return getattr(values, name)
+
+    # -- elementwise comparisons / arithmetic (return raw arrays) ------------
+
+    def __eq__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) == other
+
+    def __ne__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) != other
+
+    def __lt__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) < other
+
+    def __le__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) <= other
+
+    def __gt__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) > other
+
+    def __ge__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) >= other
+
+    __hash__ = None  # type: ignore[assignment]  # array-valued → unhashable, like ndarray
+
+    def __add__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) + other
+
+    __radd__ = __add__
+
+    def __sub__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) - other
+
+    def __mul__(self, other: Any) -> Any:  # noqa: D105
+        return np.asarray(self) * other
+
+    __rmul__ = __mul__
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly mapping (the array as a nested list + ``meta``)."""
+        return {"values": _jsonify(self.values), "meta": _jsonify(self.meta)}
+
+
+# ---------------------------------------------------------------------------
+# CollectionResult — a sequence of sub-results (fixed points, periodic orbits)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, eq=False)
+class CollectionResult(AnalysisResult):
+    """A homogeneous collection of result items that behaves like a ``list``.
+
+    Wraps a bare ``list`` return (``fixed_points`` → fixed points,
+    ``periodic_orbits`` → orbits) so it carries the result surface while
+    ``for item in result``, ``result[0]`` and ``len(result)`` keep working.
+    Indexing with an ``int`` returns the item; slicing returns a plain ``list``
+    of items, matching list semantics.
+
+    Subclasses add domain selectors (``.stable`` / ``.unstable``) and a tidy
+    :meth:`to_frame`.
+
+    Attributes
+    ----------
+    items : tuple
+        The collected result items, in order.
+    """
+
+    _repr_fields: ClassVar[tuple[str, ...]] = ()
+
+    items: tuple[Any, ...] = ()
+
+    def __iter__(self) -> Any:  # noqa: D105
+        return iter(self.items)
+
+    def __len__(self) -> int:  # noqa: D105
+        return len(self.items)
+
+    def __getitem__(self, key: Any) -> Any:  # noqa: D105
+        if isinstance(key, slice):
+            return list(self.items[key])
+        return self.items[key]
+
+    def __bool__(self) -> bool:  # noqa: D105
+        return bool(self.items)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"{type(self).__name__}({len(self.items)} items)"
+
+    def summary(self) -> str:
+        """Return a header naming the collection size, then each item's repr."""
+        label = self._system_label()
+        header = f"{type(self).__name__} — {len(self.items)} items" + (
+            f"  ({label})" if label else ""
+        )
+        return "\n".join([header, *(f"  {item!r}" for item in self.items)])
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly mapping: each item's ``to_dict`` (or repr) + ``meta``."""
+        items = [
+            item.to_dict() if hasattr(item, "to_dict") else _jsonify(item) for item in self.items
+        ]
+        return {"items": items, "meta": _jsonify(self.meta)}
 
 
 def __dir__() -> list[str]:

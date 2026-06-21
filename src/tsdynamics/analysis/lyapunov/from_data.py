@@ -27,9 +27,11 @@ calculating largest Lyapunov exponents from small data sets", *Physica D*
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
+
+from .._result import ScalingResult
 
 __all__ = ["LyapunovFromData", "lyapunov_from_data"]
 
@@ -37,46 +39,62 @@ _TINY = float(np.finfo(float).tiny)
 
 
 @dataclass(frozen=True)
-class LyapunovFromData:
+class LyapunovFromData(ScalingResult):
     """Outcome of :func:`lyapunov_from_data`: the divergence curve and its slope.
+
+    A :class:`~tsdynamics.analysis._result.ScalingResult` — the maximal Lyapunov
+    exponent is read off the slope of the stretching curve, the same shape every
+    fractal dimension and embedding diagnostic share — so it inherits the canonical
+    ``estimate`` / ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result
+    surface (``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam) and
+    ``float(result)`` (the exponent).  Domain-named ``@property`` aliases
+    (:attr:`lyapunov`, :attr:`times`, :attr:`divergence`) preserve the original
+    field names.
 
     Attributes
     ----------
-    lyapunov : float
+    estimate : float
         Estimated maximal Lyapunov exponent (per unit time), the slope of
-        ``divergence`` against ``times`` over ``fit_region``.
-    times : numpy.ndarray
-        Relative times ``k * dt`` for ``k = 0 … k_max``.
-    divergence : numpy.ndarray
+        ``ordinate`` against ``abscissa`` over ``fit_region``.  Aliased
+        :attr:`lyapunov`.  ``float(result)`` returns it.
+    abscissa : numpy.ndarray
+        Relative times ``k * dt`` for ``k = 0 … k_max``.  Aliased :attr:`times`.
+    ordinate : numpy.ndarray
         The stretching curve ``S(k)`` — mean log divergence after ``k`` samples.
-        Inspect ``times`` vs ``divergence`` to choose a scaling region and refine
-        the estimate with an explicit ``fit=(lo, hi)``.
+        Aliased :attr:`divergence`.  Inspect ``abscissa`` vs ``ordinate`` to
+        choose a scaling region and refine with an explicit ``fit=(lo, hi)``.
     fit_region : tuple[int, int]
-        Inclusive index range into ``times``/``divergence`` used for the slope.
+        Inclusive index range into the curve used for the slope.
     embedding_dim, delay, theiler : int
         Reconstruction parameters actually used.
     n_reference : int
         Number of reference points that contributed (had a usable neighbour).
     method : str
         ``"kantz"`` or ``"rosenstein"``.
-
-    A :class:`LyapunovFromData` casts to ``float`` as its ``lyapunov`` value, so
-    ``float(lyapunov_from_data(x))`` returns the exponent directly.
     """
 
-    lyapunov: float
-    times: np.ndarray
-    divergence: np.ndarray
-    fit_region: tuple[int, int]
-    embedding_dim: int
-    delay: int
-    theiler: int
-    n_reference: int
-    method: str
+    _repr_fields: ClassVar[tuple[str, ...]] = ("lyapunov", "method")
 
-    def __float__(self) -> float:
-        """Return the estimated maximal Lyapunov exponent."""
-        return float(self.lyapunov)
+    embedding_dim: int = 0
+    delay: int = 0
+    theiler: int = 0
+    n_reference: int = 0
+    method: str = "kantz"
+
+    @property
+    def lyapunov(self) -> float:
+        """The estimated maximal Lyapunov exponent (alias of :attr:`estimate`)."""
+        return float(self.estimate)
+
+    @property
+    def times(self) -> np.ndarray:
+        """Relative times of the stretching curve (alias of :attr:`abscissa`)."""
+        return self.abscissa
+
+    @property
+    def divergence(self) -> np.ndarray:
+        """The stretching curve ``S(k)`` (alias of :attr:`ordinate`)."""
+        return self.ordinate
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe the divergence curve as a backend-agnostic :class:`PlotSpec`.
@@ -161,6 +179,25 @@ def _delay_embed(series: np.ndarray, m: int, tau: int) -> np.ndarray:
     for j in range(m):
         emb[:, j * d : (j + 1) * d] = x[j * tau : j * tau + rows]
     return emb
+
+
+def _slope_stderr(x: np.ndarray, y: np.ndarray, slope: float, intercept: float) -> float:
+    """Return the standard error of a least-squares slope (0 when undefined).
+
+    The textbook ``s_slope = sqrt( SSE / (n-2) / Sxx )``; returns ``0.0`` for
+    fewer than three points or a degenerate abscissa, computed directly (no
+    ``polyfit(cov=True)``) so it never raises a rank warning under
+    ``filterwarnings=error``.
+    """
+    n = x.size
+    if n < 3:
+        return 0.0
+    sxx = float(np.sum((x - x.mean()) ** 2))
+    if sxx <= 0.0:
+        return 0.0
+    resid = y - (slope * x + intercept)
+    sse = float(np.sum(resid**2))
+    return float(np.sqrt(sse / (n - 2) / sxx))
 
 
 def _auto_fit_region(divergence: np.ndarray, *, min_len: int) -> tuple[int, int]:
@@ -359,18 +396,30 @@ def lyapunov_from_data(
         lo, hi = int(fit[0]), int(fit[1])
         if not (0 <= lo < hi <= k_max):
             raise ValueError(f"fit region {fit!r} must satisfy 0 <= lo < hi <= k_max ({k_max}).")
-    slope = float(np.polyfit(times[lo : hi + 1], divergence[lo : hi + 1], 1)[0])
+    xfit = times[lo : hi + 1]
+    yfit = divergence[lo : hi + 1]
+    slope, intercept = (float(c) for c in np.polyfit(xfit, yfit, 1))
+    stderr = _slope_stderr(xfit, yfit, slope, intercept)
 
     return LyapunovFromData(
-        lyapunov=slope,
-        times=times,
-        divergence=divergence,
+        estimate=slope,
+        stderr=stderr,
+        abscissa=times,
+        ordinate=divergence,
         fit_region=(lo, hi),
+        intercept=intercept,
         embedding_dim=dimension,
         delay=delay,
         theiler=theiler,
         n_reference=n_reference,
         method=method,
+        meta={
+            "method": method,
+            "dimension": dimension,
+            "delay": delay,
+            "theiler": theiler,
+            "n_reference": n_reference,
+        },
     )
 
 

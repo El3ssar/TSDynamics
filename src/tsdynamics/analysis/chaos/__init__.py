@@ -45,7 +45,7 @@ __all__ = [
 # own subpackage).  Idempotent across re-imports.
 for _name, _fn, _meta in (
     ("gali", gali, {"needs": "system", "family": "chaos"}),
-    ("zero_one_test", zero_one_test, {"needs": "series", "family": "chaos"}),
+    ("zero_one_test", zero_one_test, {"needs": "system", "family": "chaos"}),
     ("expansion_entropy", expansion_entropy, {"needs": "system", "family": "chaos"}),
 ):
     _registry.analyses.register(_name, _fn, **_meta)

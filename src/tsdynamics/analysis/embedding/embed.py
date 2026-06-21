@@ -24,13 +24,32 @@ and ``delay`` are allowed).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from .._result import ArrayResult
 from ._common import _as_channels, _as_series, _is_trajectory
 
-__all__ = ["embed"]
+__all__ = ["Embedding", "embed"]
+
+
+@dataclass(frozen=True, eq=False)
+class Embedding(ArrayResult):
+    """A delay-coordinate reconstruction — the embedded matrix and its provenance.
+
+    An :class:`~tsdynamics.analysis._result.ArrayResult`, so it is a drop-in for
+    the bare ``(N - (m-1)·τ, m)`` matrix: ``np.asarray(result)``, indexing,
+    slicing (``result[:, 0]``), ``result.shape`` and iteration all defer to the
+    wrapped array, while it also carries ``.meta`` / ``.summary()`` / the ``.plot``
+    seam.
+
+    Attributes
+    ----------
+    values : numpy.ndarray
+        The embedded delay-vector matrix.  ``np.asarray(result)`` returns it.
+    """
 
 
 def _as_per_channel(value: int | Sequence[int], n_channels: int, name: str) -> list[int]:
@@ -50,7 +69,7 @@ def embed(
     delay: int | Sequence[int],
     *,
     component: int | str | None = None,
-) -> np.ndarray:
+) -> Embedding:
     r"""Time-delay embedding of a scalar series (or a multivariate bundle).
 
     Parameters
@@ -110,7 +129,8 @@ def embed(
         if not isinstance(delay, (int, np.integer)):
             raise ValueError("a per-channel `delay` sequence needs a multivariate input.")
         series = _as_series(data, component=component)
-        return _embed_single(series, int(dimension), int(delay))
+        embedded = _embed_single(series, int(dimension), int(delay))
+        return Embedding(values=embedded, meta=_embed_meta(dimension, delay))
 
     channels = _as_channels(data)
     n_channels = channels.shape[1]
@@ -123,7 +143,24 @@ def embed(
     rows = n - max(spans)
 
     blocks = [_embed_single(channels[:, c], dims[c], delays[c])[:rows] for c in range(n_channels)]
-    return np.ascontiguousarray(np.hstack(blocks))
+    embedded = np.ascontiguousarray(np.hstack(blocks))
+    return Embedding(values=embedded, meta=_embed_meta(dimension, delay))
+
+
+def _as_json_int(value: int | Sequence[int]) -> int | list[int]:
+    """Coerce an int or int sequence to a JSON-friendly int / list of ints."""
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    return [int(v) for v in value]
+
+
+def _embed_meta(dimension: int | Sequence[int], delay: int | Sequence[int]) -> dict[str, Any]:
+    """Build the provenance mapping for an :class:`Embedding` (JSON-friendly)."""
+    return {
+        "analysis": "embed",
+        "dimension": _as_json_int(dimension),
+        "delay": _as_json_int(delay),
+    }
 
 
 def _looks_univariate(data: Any) -> bool:

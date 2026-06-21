@@ -41,6 +41,8 @@ from typing import Any
 import numpy as np
 from scipy.stats import norm
 
+from .._result import ScalarResult
+
 __all__ = [
     "AddConstant",
     "AmplitudeBinning",
@@ -506,7 +508,7 @@ def entropy(
     measure: InformationMeasure | None = None,
     normalize: bool = False,
     component: int | str | None = None,
-) -> float:
+) -> ScalarResult:
     """
     Entropy of ``data`` — the composable entry point.
 
@@ -539,7 +541,7 @@ def entropy(
     --------
     >>> import numpy as np
     >>> rng = np.random.default_rng(0)
-    >>> entropy(rng.random(5000), outcomes=OrdinalPatterns(3), normalize=True)  # ≈ 1
+    >>> float(entropy(rng.random(5000), outcomes=OrdinalPatterns(3), normalize=True))  # ≈ 1
     0.99...
     """
     series = as_series(data, component)
@@ -550,8 +552,13 @@ def entropy(
     h = measure.apply(p)
     if normalize:
         hmax = measure.maximum(outcomes.cardinality)
-        return h / hmax if hmax > 0 else 0.0
-    return h
+        value = h / hmax if hmax > 0 else 0.0
+    else:
+        value = h
+    return ScalarResult(
+        value=float(value),
+        meta={"analysis": "entropy", "normalize": bool(normalize)},
+    )
 
 
 def __dir__() -> list[str]:
