@@ -21,6 +21,17 @@ region.
 Occupied boxes are found by integer-flooring the (shifted) coordinates and
 taking unique rows, so cost scales with the number of *occupied* boxes, never
 the exponential full-grid size.
+
+**Grid-origin debiasing.**  A box count at a single, fixed grid origin is biased
+by where the box boundaries happen to fall relative to the point set: a cluster
+straddling a boundary is split across two boxes, inflating :math:`N(\epsilon)`
+and, with it, the apparent dimension.  Following the standard minimal-cover
+prescription, for every scale the partition is evaluated over several grid-origin
+offsets and the one yielding the **fewest occupied boxes** — the offset closest
+to the true covering number :math:`N(\epsilon)` — is kept, and that winning
+cover's box counts feed every :math:`D_q`.  This removes the alignment bias and
+flattens the :math:`D_q` spectrum of a self-similar monofractal (e.g. the
+middle-thirds Cantor set, :math:`D_q = \log 2/\log 3` for all :math:`q`).
 """
 
 from __future__ import annotations
@@ -40,11 +51,48 @@ __all__ = [
 ]
 
 
-def _occupancy(points: np.ndarray, eps: float, mins: np.ndarray) -> np.ndarray:
-    """Point counts of the occupied boxes of side ``eps`` (origin at ``mins``)."""
-    coords = np.floor((points - mins) / eps).astype(np.int64)
+#: Default grid-origin offsets (as fractions of the box side ``eps``) swept to
+#: debias the box count.  ``0.0`` is the naive origin-at-``mins`` partition; the
+#: remaining shifts move the box boundaries so a boundary-straddling cluster is
+#: not split.  Five offsets keep the per-scale cost bounded while reliably
+#: finding a near-minimal cover.
+_DEFAULT_OFFSETS: tuple[float, ...] = (0.0, 0.2, 0.4, 0.6, 0.8)
+
+
+def _occupancy(points: np.ndarray, eps: float, mins: np.ndarray, offset: float = 0.0) -> np.ndarray:
+    """Point counts of the occupied boxes of side ``eps``.
+
+    The grid origin sits at ``mins - offset * eps`` — i.e. the box boundaries are
+    shifted *down* by ``offset`` box widths.  ``offset=0.0`` recovers the naive
+    origin-at-``mins`` partition.
+    """
+    coords = np.floor((points - mins) / eps + offset).astype(np.int64)
     _, counts = np.unique(coords, axis=0, return_counts=True)
     return counts
+
+
+def _min_cover_occupancy(
+    points: np.ndarray,
+    eps: float,
+    mins: np.ndarray,
+    offsets: tuple[float, ...] = _DEFAULT_OFFSETS,
+) -> np.ndarray:
+    r"""Occupancy of the alignment-debiased (minimal-cover) box partition.
+
+    Sweeps the grid origin over ``offsets`` (fractions of ``eps``) and returns the
+    occupied-box point counts of the offset with the **fewest occupied boxes** —
+    the cover closest to the true covering number :math:`N(\epsilon)`, removing
+    the bias of any single fixed grid origin.  The winning cover's counts are
+    returned whole, so every :math:`D_q` is read from one consistent partition
+    per scale.
+    """
+    best: np.ndarray | None = None
+    for off in offsets:
+        counts = _occupancy(points, eps, mins, off)
+        if best is None or counts.size < best.size:
+            best = counts
+    assert best is not None  # offsets is non-empty
+    return best
 
 
 def _informative_mask(occ: list[np.ndarray], n: int, sat_frac: float) -> np.ndarray:
@@ -94,6 +142,7 @@ def generalized_dimension(
     sat_frac: float = 0.85,
     min_window: int = 5,
     tol: float = 1.5,
+    offsets: tuple[float, ...] = _DEFAULT_OFFSETS,
 ) -> DimensionResult:
     r"""Generalized (Rényi) dimension :math:`D_q` by box counting.
 
@@ -118,6 +167,11 @@ def generalized_dimension(
         Minimum number of box sizes in the fitted scaling region.
     tol : float, default 1.5
         Scaling-region residual tolerance.
+    offsets : tuple of float, default ``(0.0, 0.2, 0.4, 0.6, 0.8)``
+        Grid-origin offsets (as fractions of each box side) swept per scale; the
+        offset with the fewest occupied boxes (the minimal cover) is kept, which
+        removes the alignment bias of a single fixed grid origin.  Pass
+        ``(0.0,)`` to recover the naive origin-at-minimum partition.
 
     Returns
     -------
@@ -141,7 +195,7 @@ def generalized_dimension(
 
     order = np.argsort(scales)
     scales = scales[order]
-    occ = [_occupancy(points, e, mins) for e in scales]
+    occ = [_min_cover_occupancy(points, e, mins, offsets) for e in scales]
     x = np.log(scales)
     y = np.array([_partition_ordinate(c, n, q) for c in occ])
     mask = _informative_mask(occ, n, sat_frac)
@@ -188,6 +242,7 @@ def dimension_spectrum(
     sat_frac: float = 0.85,
     min_window: int = 5,
     tol: float = 1.5,
+    offsets: tuple[float, ...] = _DEFAULT_OFFSETS,
 ) -> dict[float, DimensionResult]:
     r"""Compute the :math:`D_q` spectrum over several Rényi orders.
 
@@ -204,8 +259,10 @@ def dimension_spectrum(
         Rényi orders.  Default: ``[0, 1, 2, 3, 4, 5]``.
     scales : ndarray, optional
         Box sizes; default as in :func:`generalized_dimension`.
-    n_scales, sat_frac, min_window, tol
-        As in :func:`generalized_dimension`.
+    n_scales, sat_frac, min_window, tol, offsets
+        As in :func:`generalized_dimension`.  The minimal-cover grid origin is
+        chosen once per scale and shared across every ``q``, so the spectrum is
+        read from one consistent, alignment-debiased partition per scale.
 
     Returns
     -------
@@ -224,7 +281,7 @@ def dimension_spectrum(
 
     order = np.argsort(scales)
     scales = scales[order]
-    occ = [_occupancy(points, e, mins) for e in scales]
+    occ = [_min_cover_occupancy(points, e, mins, offsets) for e in scales]
     x = np.log(scales)
     mask = _informative_mask(occ, n, sat_frac)
     where = np.nonzero(mask)[0]
