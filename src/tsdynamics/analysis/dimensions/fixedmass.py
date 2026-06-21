@@ -9,10 +9,19 @@ fractal, :math:`k/N \sim r_k^{D}`, so averaging over reference points,
 
 .. math::
 
-    \langle \log r_k \rangle \approx \frac{1}{D}\,\log k + \text{const},
+    \langle \log r_k \rangle \approx \frac{1}{D}\,\psi(k) + \text{const},
 
-and :math:`D` is the slope of :math:`\log k` against
-:math:`\langle \log r_k \rangle` in the scaling region.
+and :math:`D` is the slope of :math:`\psi(k)` against
+:math:`\langle \log r_k \rangle` in the scaling region.  The digamma function
+:math:`\psi(k)` — *not* :math:`\log k` — is the bias-free abscissa: for a fixed
+mass :math:`k` the enclosing radius is a random order statistic, and Grassberger
+(1985) showed that :math:`\langle \log r_k \rangle = D^{-1}\psi(k) + \text{const}`
+exactly (the same digamma correction that makes the Kozachenko–Leonenko / KSG
+nearest-neighbour estimators unbiased).  Since
+:math:`\psi(k) = \log k - \tfrac{1}{2k} + O(k^{-2})`, the two abscissae coincide
+for large :math:`k`, but using :math:`\log k` systematically biases the slope at
+the small-:math:`k` end of the scaling region, where the fixed-mass method earns
+its signal-to-noise advantage.
 
 Because it adapts the radius to the local density, the fixed-mass estimator
 keeps a usable signal-to-noise ratio into the sparse tails of an attractor where
@@ -94,14 +103,28 @@ def fixed_mass_dimension(
     -------
     DimensionResult
         ``float(result)`` is the dimension; ``x`` is :math:`\langle\log r_k\rangle`
-        and ``y`` is :math:`\log k`.
+        and ``y`` is the digamma :math:`\psi(k)` (the unbiased abscissa, *not*
+        :math:`\log k`).
+
+    Notes
+    -----
+    The ordinate is the digamma :math:`\psi(k)` rather than :math:`\log k`.  For
+    a fixed mass the enclosing radius :math:`r_k` is a random order statistic, and
+    :math:`\langle\log r_k\rangle = D^{-1}\psi(k) + \text{const}` holds without the
+    :math:`O(1/k)` bias that :math:`\log k` carries at small :math:`k` (Grassberger
+    1985; the digamma correction of the Kozachenko–Leonenko nearest-neighbour
+    estimators).
 
     References
     ----------
     R. Badii and A. Politi, "Statistical description of chaotic attractors: The
     dimension function", *J. Stat. Phys.* **40**, 725 (1985).
+
+    P. Grassberger, "Generalizations of the Hausdorff dimension of fractal
+    measures", *Phys. Lett. A* **107**, 101 (1985).
     """
     from scipy.spatial import cKDTree
+    from scipy.special import digamma
 
     points = _as_points(data)
     n = points.shape[0]
@@ -145,10 +168,12 @@ def fixed_mass_dimension(
             )
         mean_log_r[m] = float(np.mean(np.log(rk)))
 
-    # D is the slope of log(k) vs <log r_k>; <log r_k> increases with k, so it is
+    # D is the slope of psi(k) vs <log r_k>; <log r_k> increases with k, so it is
     # the (sorted-ascending) abscissa and the index windows are contiguous in scale.
+    # The digamma psi(k) is the unbiased ordinate: <log r_k> = (1/D) psi(k) + const
+    # exactly, so log(k) would bias the slope at small k (Grassberger 1985).
     x = mean_log_r
-    y = np.log(ks.astype(float))
+    y = digamma(ks.astype(float))
     order = np.argsort(x)
     x, y = x[order], y[order]
     fit = fit_scaling_region(x, y, min_window=min_window, tol=tol)
