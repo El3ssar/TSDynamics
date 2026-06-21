@@ -165,7 +165,9 @@ class WadaResult(AnalysisResult):
 # ---------------------------------------------------------------------------
 
 
-def basin_entropy(basins: Any, *, box_size: int = 5, base: float = np.e) -> BasinEntropy:
+def basin_entropy(
+    basins: Any, *, box_size: int = 5, base: float = np.e, include_diverged: bool = False
+) -> BasinEntropy:
     r"""
     Basin entropy :math:`S_b` and boundary basin entropy :math:`S_{bb}`.
 
@@ -180,12 +182,17 @@ def basin_entropy(basins: Any, *, box_size: int = 5, base: float = np.e) -> Basi
     Parameters
     ----------
     basins : BasinsResult or array-like of int
-        The basin image (attractor ids; ``-1`` = diverged is treated as a colour).
+        The basin image (attractor ids ``>= 1``; ``-1`` marks diverged / escape).
     box_size : int, default 5
         Box side length in cells.
     base : float, default e
         Logarithm base.  With the default natural log the fractal threshold is
         :math:`\log 2 \approx 0.693`.
+    include_diverged : bool, default False
+        If ``False`` (the default), diverged cells (``-1``) are dropped before the
+        per-box colour count — escape is not a basin, so it must not inflate the
+        entropy as a spurious extra colour.  Set ``True`` to count ``-1`` as its
+        own colour (the legacy behaviour).
 
     Returns
     -------
@@ -206,6 +213,8 @@ def basin_entropy(basins: Any, *, box_size: int = 5, base: float = np.e) -> Basi
     n_boundary = 0
     for block in _iter_blocks(labels, box_size):
         flat = block.reshape(-1)
+        if not include_diverged:
+            flat = flat[flat != -1]  # escape is not a colour
         if flat.size == 0:
             continue
         _, counts = np.unique(flat, return_counts=True)
@@ -256,6 +265,7 @@ def uncertainty_exponent(
     *,
     radii: tuple[int, ...] = (1, 2, 3, 4, 5),
     cell_size: float | np.ndarray = 1.0,
+    include_diverged: bool = False,
 ) -> UncertaintyExponent:
     r"""
     Estimate the uncertainty exponent of a basin boundary.
@@ -275,6 +285,12 @@ def uncertainty_exponent(
     cell_size : float or array-like, default 1.0
         Physical cell spacing (a scalar or per-axis); rescales ``epsilons`` only —
         the exponent is invariant to it.
+    include_diverged : bool, default False
+        If ``False`` (the default), diverged cells (``-1``) are excluded: a cell is
+        :math:`\varepsilon`-uncertain only when a same-distance neighbour carries a
+        *different settled basin*, and the fraction is taken over settled cells.
+        Escape is not a basin, so a basin/escape interface is not a final-state
+        boundary.  Set ``True`` to treat ``-1`` as just another label.
 
     Returns
     -------
@@ -290,7 +306,8 @@ def uncertainty_exponent(
     if len(radii) < 2:
         raise ValueError("need at least two radii to fit a slope.")
 
-    fractions = np.array([float(np.mean(_neighbor_differs(labels, m))) for m in radii])
+    valid = None if include_diverged else (labels != -1)  # -1 == DIVERGED/escape
+    fractions = np.array([_uncertain_fraction(labels, m, valid) for m in radii])
     spacing = float(np.mean(np.atleast_1d(cell_size)))
     epsilons = np.asarray(radii, dtype=float) * spacing
 
@@ -319,8 +336,13 @@ def uncertainty_exponent(
     )
 
 
-def _neighbor_differs(labels: np.ndarray, m: int) -> np.ndarray:
-    """Boolean array: an axis-neighbour at distance ``m`` carries a different label."""
+def _neighbor_differs(labels: np.ndarray, m: int, *, valid: np.ndarray | None = None) -> np.ndarray:
+    """Boolean array: an axis-neighbour at distance ``m`` carries a different label.
+
+    When ``valid`` (a boolean mask) is supplied, a pair only counts as differing if
+    *both* cells are valid — so diverged / escape cells (``valid=False``) never
+    create a spurious boundary against a settled basin.
+    """
     out = np.zeros(labels.shape, dtype=bool)
     nd = labels.ndim
     for axis in range(nd):
@@ -333,9 +355,25 @@ def _neighbor_differs(labels: np.ndarray, m: int) -> np.ndarray:
         hi[axis] = slice(m, n)
         lo_t, hi_t = tuple(lo), tuple(hi)
         diff = labels[lo_t] != labels[hi_t]
+        if valid is not None:
+            diff &= valid[lo_t] & valid[hi_t]
         out[lo_t] |= diff
         out[hi_t] |= diff
     return out
+
+
+def _uncertain_fraction(labels: np.ndarray, m: int, valid: np.ndarray | None) -> float:
+    r"""Fraction of :math:`\varepsilon`-uncertain cells at radius ``m``.
+
+    With ``valid`` given (diverged excluded), the fraction is over *settled* cells
+    only; otherwise over every cell (legacy behaviour).
+    """
+    differs = _neighbor_differs(labels, m, valid=valid)
+    if valid is None:
+        return float(np.mean(differs))
+    if not valid.any():
+        return 0.0
+    return float(np.mean(differs[valid]))
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +386,7 @@ def wada_property(
     *,
     radii: tuple[int, ...] = (1, 2, 3, 4, 5),
     threshold: float = 0.9,
+    include_diverged: bool = False,
 ) -> WadaResult:
     r"""
     Test a basin diagram for the Wada property on a grid.
@@ -367,6 +406,11 @@ def wada_property(
         Chebyshev radii (in cells) at which to grow the neighbourhood.
     threshold : float, default 0.9
         Minimum :math:`W` at the largest radius to call the boundary Wada.
+    include_diverged : bool, default False
+        If ``False`` (the default), a basin/escape (``-1``) interface is not
+        counted as a boundary cell — escape is not a basin.  Set ``True`` to let a
+        cell bordering ``-1`` count as boundary.  Wada colours are always the
+        settled basins (``>= 1``) regardless.
 
     Returns
     -------
@@ -382,7 +426,8 @@ def wada_property(
     labels = _as_label_array(basins)
     colors = [int(c) for c in np.unique(labels) if c >= 1]
     radii = tuple(int(r) for r in radii)
-    boundary = _neighbor_differs(labels, 1)
+    valid = None if include_diverged else (labels != -1)  # -1 == DIVERGED/escape
+    boundary = _neighbor_differs(labels, 1, valid=valid)
     n_boundary = int(boundary.sum())
 
     if len(colors) < 3 or n_boundary == 0:
@@ -472,13 +517,37 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     span = grid.hi - grid.lo
     spacing = np.where(counts > 1, span / np.maximum(counts - 1, 1), 1.0)
 
-    edt = distance_transform_edt(mask, sampling=spacing)
+    # Pad the basin mask with a one-cell False border so the computational-domain
+    # edge is itself a boundary.  Without this, a basin that runs to the grid edge
+    # has no nearby background there and the EDT reports the (large) distance to
+    # the far interior boundary instead — *overestimating* the minimal fatal shock
+    # (the domain simply ends; we cannot claim resilience past what was computed).
+    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    edt = distance_transform_edt(padded, sampling=spacing)
+    shape = np.asarray(grid.shape)
 
-    center = result.attractors[int(attractor_id)].center
-    idx = np.rint((center - grid.lo) / spacing).astype(int)
-    idx = np.clip(idx, 0, np.asarray(grid.shape) - 1)
+    def _edt_at(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(distance-to-boundary, clipped cell index) for each state in ``points``."""
+        idx = np.clip(np.rint((points - grid.lo) / spacing).astype(int), 0, shape - 1)
+        return edt[tuple((idx + 1).T)], idx
+
+    # Minimal fatal shock = the closest approach of the attractor to its basin
+    # boundary, i.e. the MINIMUM distance-to-boundary over the attractor's spatial
+    # extent (its sampled point cloud) — an extended attractor (limit cycle /
+    # strange set) can graze the boundary far from its single representative.
+    att = result.attractors[int(attractor_id)]
+    pts = np.atleast_2d(np.asarray(att.points, dtype=float))
+    if pts.size:
+        dists, idx = _edt_at(pts)
+        on_basin = mask[tuple(idx.T)]  # ignore stray points outside the basin
+        value = float(np.min(dists[on_basin])) if np.any(on_basin) else float("nan")
+    else:
+        value = float("nan")
+    if not np.isfinite(value):  # empty / off-basin cloud → fall back to the centre
+        dist, _ = _edt_at(np.atleast_2d(att.center))
+        value = float(dist[0])
     return ScalarResult(
-        value=float(edt[tuple(idx)]),
+        value=value,
         meta={"analysis": "resilience", "attractor_id": int(attractor_id)},
     )
 
