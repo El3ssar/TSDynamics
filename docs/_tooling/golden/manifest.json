@@ -1,0 +1,30 @@
+{
+  "default_tolerance": 0.06,
+  "figures": {
+    "Henon": {
+      "ahash": "ffff87ffe0fffc3fff0fffc3ffe1ffe5ffe5ffcdff9bfe27f99ffc7fe3ffffff",
+      "family": "map"
+    },
+    "Logistic": {
+      "ahash": "9ffefc1ff9df9beff3e7f7f787f76ffbaffb8ffbfffd9ffdfffdd5b4e496ff7f",
+      "family": "map"
+    },
+    "Lorenz": {
+      "ahash": "fffffffffffffffffbffe0e3e003e607e007f01ff8ffffffffffffffffffffff",
+      "family": "ode"
+    },
+    "Lorenz96": {
+      "ahash": "ffffc001c000c001c000c001c001c000c000c000c001c000c000ffffffffffff",
+      "family": "ode"
+    },
+    "MackeyGlass": {
+      "ahash": "fffffdcfadc78cc141c942c40aa4a3b0b371b779b77bf7fbffff0041e673ffff",
+      "family": "dde"
+    },
+    "Rossler": {
+      "ahash": "ffffffffffffffffffdfff8fffafff0ff80ff00ff18ff00ff80ffe3fffffffff",
+      "family": "ode"
+    }
+  },
+  "hash_side": 16
+}
