@@ -739,6 +739,19 @@ class ContinuousSystem(SystemBase, ABC):
         Trajectory
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
+        if integrator_kwargs:
+            # Anything left in **integrator_kwargs is an unrecognised keyword (every
+            # valid argument is bound to an explicit parameter above). Reject it
+            # instead of silently dropping a typo'd keyword (the WS-ERRADOPT footgun).
+            from tsdynamics.errors import invalid_value
+
+            bad = sorted(integrator_kwargs)[0]
+            raise invalid_value(
+                bad,
+                integrator_kwargs[bad],
+                rule="is not a valid integrate()/run() keyword",
+                hint="check the keyword spelling (e.g. final_time, dt, t0, ic, method, rtol, atol).",
+            )
         if events is not None:
             return self._run_events(
                 final_time=final_time,

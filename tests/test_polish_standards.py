@@ -1107,6 +1107,23 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
         ("System", "Lorenz"),
         InvalidInputError,
     ),
+    # Closed by FINISH-ERRADOPT — promoted out of the tier-3 strict-xfail table.
+    _ValueNamingCase(
+        "short-data-correlation-dimension",
+        _ERRGATE_SHORT_DATA,
+        lambda: ts.correlation_dimension(_ERRGATE_DEGENERATE_SERIES),
+        ValueError,
+        ("data length",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "unknown-keyword-run",
+        _ERRGATE_UNKNOWN_KWARG,
+        lambda: ts.Lorenz().run(final_time=5.0, dt=0.5, backend="reference", nonsense=5),
+        ValueError,
+        ("nonsense",),
+        InvalidParameterError,
+    ),
     # Curated exemplars — already-excellent value-naming messages (stock stdlib
     # types) that WS-ERRORS set out to make the law rather than the exception.
     _ValueNamingCase(
@@ -1192,27 +1209,9 @@ _ERRGATE_NO_SILENT: list[_RaisesCase] = [
 
 
 # ── tier 3: still-open footguns, tracked under a strict xfail ───────────────
+# (FINISH-ERRADOPT closed `open-short-data-correlation-dimension` and
+# `open-unknown-keyword-run`; both were promoted into the value-naming table above.)
 _ERRGATE_OPEN_FOOTGUNS: list[_OpenFootgun] = [
-    _OpenFootgun(
-        "open-short-data-correlation-dimension",
-        _ERRGATE_SHORT_DATA,
-        lambda: ts.correlation_dimension(_ERRGATE_DEGENERATE_SERIES),
-        "WS-ERRORS deferred too-short-data normalization to the WS-WRAP/WS-CONV "
-        "lane: correlation_dimension still returns a degenerate dimension ~= 0 "
-        "(no raise) for a handful of points instead of rejecting the input.",
-        TSDynamicsError,
-        (),
-    ),
-    _OpenFootgun(
-        "open-unknown-keyword-run",
-        _ERRGATE_UNKNOWN_KWARG,
-        lambda: ts.Lorenz().run(final_time=5.0, dt=0.5, backend="reference", nonsense=5),
-        "run()/integrate() still forward **kwargs; WS-CONV normalized only the "
-        "analysis signatures, so a typo'd keyword on the trajectory verb is "
-        "silently swallowed rather than rejected.",
-        (TSDynamicsError, TypeError),
-        (),
-    ),
     # The same wrong-ic input is asserted at tier 2 (`wrong-ic-dimension`, "it
     # raises") and here at tier 3 ("it should raise a TSDynamicsError naming the
     # ic") — a deliberate dual standard for one input, not a copy-paste duplicate.

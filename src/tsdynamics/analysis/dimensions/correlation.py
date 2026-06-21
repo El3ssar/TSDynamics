@@ -29,10 +29,19 @@ from typing import Any
 
 import numpy as np
 
+from ...errors import invalid_value
 from ._common import DimensionResult, _as_points, _default_radii, _metric_p, _pnorm
 from ._scaling import fit_scaling_region
 
 __all__ = ["correlation_dimension", "correlation_sum"]
+
+#: Absolute floor on the number of points a Grassberger--Procaccia estimate needs.
+#: Below this the correlation sum is dominated by its handful of pairs and the
+#: scaling-region fit collapses to a spurious near-zero slope (it silently
+#: returned ``D_2 ~= 0`` for, e.g., eight points).  Not a sufficiency guarantee —
+#: a reliable estimate wants far more — just the floor below which the answer is
+#: meaningless, so the input is rejected rather than fabricated.
+_MIN_CORR_POINTS = 32
 
 
 def _near_diagonal_distances(points: np.ndarray, w: int, p: float) -> np.ndarray:
@@ -171,7 +180,26 @@ def correlation_dimension(
     >>> d = correlation_dimension(lorenz_traj, theiler=50)   # doctest: +SKIP
     >>> float(d)                                                    # doctest: +SKIP
     2.05...
+
+    Raises
+    ------
+    InvalidParameterError
+        If fewer than :data:`_MIN_CORR_POINTS` points are given — too few to
+        resolve a scaling region (it previously returned a spurious ``D_2 ~= 0``).
     """
+    # ``_as_points`` rejects <2 points / non-finite first (keeping those messages);
+    # then reject a too-short-but-finite handful rather than fabricating a slope.
+    n = _as_points(data).shape[0]
+    if n < _MIN_CORR_POINTS:
+        raise invalid_value(
+            "data length",
+            n,
+            rule=f"must be >= {_MIN_CORR_POINTS} points for a correlation-dimension estimate",
+            hint=(
+                "the Grassberger-Procaccia correlation sum cannot resolve a scaling "
+                "region from so few points; pass a longer trajectory / series."
+            ),
+        )
     radii, c = correlation_sum(
         data,
         radii=radii,
