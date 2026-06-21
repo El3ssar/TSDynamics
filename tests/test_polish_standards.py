@@ -27,6 +27,7 @@ gate — append their own sections to this file.)
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import types as _types
 import typing
@@ -513,4 +514,338 @@ def test_runtime_sweep_covers_every_result_kind():
             continue
         assert cls in covered, (
             f"{cls.__name__} (a ScalingResult subclass) has no runtime contract case"
+        )
+
+
+# ===========================================================================
+# Naming gate (stream WS-NAMEGATE)
+# ===========================================================================
+#
+# The registry-driven enforcement of the *frozen* naming glossary
+# (``docs/contributing/glossary.md``, stream WS-VOCAB) over the whole public
+# callable surface — every function in ``registry.analyses`` *and*
+# ``registry.transforms``.  Two rules are decidable from ``inspect.signature``
+# alone (glossary §7) and so are CI-enforced here:
+#
+#   1. the **first positional argument** of every public callable is ``system``
+#      (a System it integrates/iterates) or ``data`` (a measured series it
+#      consumes), unless the ``(function, first-arg)`` pair names a *prior result*
+#      on the §5 whitelist; and
+#   2. **no parameter** uses a banned spelling from glossary §2 — built straight
+#      from the §2 "Bans" column — unless the ``(function, parameter)`` pair is a
+#      §5 homonym carve-out.
+#
+# ``tests/test_calling_convention.py`` (stream WS-CONV) is the *focused
+# precursor* this gate generalises; both read from the same glossary, so a banned
+# spelling can never re-enter a public signature.  This module is the **forever
+# home** the new-analysis checklist (glossary §8) points at: it carries the full
+# §2 ban set (including the ``method``-selector row — ``kind``/``mode``/
+# ``estimator``/``scheme``), and it *self-validates* its own tables against the
+# live registry (the whitelists can never silently go stale and mask a
+# regression).  The sweep is pure introspection — no engine, fast tier.
+
+# ── glossary §1: the two canonical first-argument roles ────────────────────
+_NAMEGATE_FIRST_ARGS = frozenset({"system", "data"})
+
+# Banned first-arg spellings (glossary §1) — every one collapses to system/data.
+_NAMEGATE_BANNED_FIRST_ARGS = frozenset(
+    {"sys", "sys_or_traj", "map_sys", "observable", "source", "x", "series"}
+)
+
+# §1 / §5: the first argument of a function that consumes a *prior result* is
+# named by the *kind* of result, not unified onto system/data.  Whitelisted as
+# exact ``(function, first-arg)`` pairs; liveness is asserted below so a rename
+# cannot leave a stale entry masking a real first-arg regression.
+_NAMEGATE_PRIOR_RESULT_FIRST_ARG = {
+    "kaplan_yorke_dimension": "spectrum",  # a Lyapunov spectrum
+    "uncertainty_exponent": "basins",  # a BasinsResult
+    "wada_property": "basins",
+    "basin_entropy": "basins",
+    "resilience": "result",  # a BasinsResult / ContinuationResult
+    "tipping_points": "result",
+}
+
+# ── glossary §2: banned parameter spellings → their canonical concept ───────
+# Built straight from the §2 "Bans" column (incl. the pre-emptive † spellings,
+# kept so a concept can never drift into them).  A parameter whose name is a key
+# here fails unless its ``(function, parameter)`` pair is on the §5 whitelist.
+# ``method`` (the canonical variant/kernel selector) is *never* a key — it is the
+# allowed spelling, so it needs no per-site whitelist.
+_NAMEGATE_BANNED_PARAMS: dict[str, str] = {
+    # initial condition → ic
+    "x0": "ic",
+    "initial": "ic",
+    "u0": "ic",
+    "y0": "ic",
+    # RNG seed → seed
+    "random_state": "seed",
+    "rng": "seed",
+    # discard-transient amount → transient
+    "burn_in": "transient",
+    "n_transient": "transient",
+    "warmup": "transient",
+    # integration horizon (flows) → final_time
+    "T": "final_time",
+    "t_final": "final_time",
+    "tmax": "final_time",
+    # iteration / sampling horizon → n
+    "steps": "n",
+    "n_rescale": "n",
+    # step size → dt
+    "h": "dt",
+    # observed component → component
+    "components": "component",
+    "observable": "component",
+    "coord": "component",
+    "col": "component",
+    # embedding dimension → dimension
+    "m": "dimension",
+    "emb_dim": "dimension",
+    "dim": "dimension",
+    # embedding delay → delay; the delay-search ceiling → max_delay
+    "tau": "delay",
+    "lag": "delay",
+    "max_lag": "max_delay",
+    # Theiler window → theiler
+    "theiler_window": "theiler",
+    "w": "theiler",
+    # nearest-neighbour count → n_neighbors
+    "min_neighbors": "n_neighbors",
+    "num_neighbors": "n_neighbors",
+    # spatial region → region
+    "grid": "region",
+    "box": "region",
+    "domain": "region",
+    "bounds": "region",
+    # algorithm / kernel selector → method  (method itself is never banned)
+    "kind": "method",
+    "mode": "method",
+    "estimator": "method",
+    "scheme": "method",
+}
+
+# §5 homonym carve-outs: exact ``(function, parameter)`` pairs that may use a
+# token banned elsewhere.  None of the canonical homonym tokens (``k``/``k_max``/
+# ``step``/``horizon``/``max_steps``/``max_delay``/``fs``) collide with a §2 ban
+# under exact-name matching (``step`` ≠ ``steps``, ``max_delay`` ≠ ``max_lag``,
+# ``max_steps`` ≠ ``steps``), so this whitelist is empty today — kept as the
+# documented extension point.  ``test_naming_gate_homonym_whitelist_is_sound``
+# guards that any future entry references a real banned token on a real function.
+_NAMEGATE_HOMONYM_WHITELIST: frozenset[tuple[str, str]] = frozenset()
+
+# §5 / §6: the homonym tokens, with the functions that legitimately carry them.
+# Each token names a *different* concept here (a GALI order, a stride, a search
+# ceiling, …), so the gate must never ban it — asserted below.  Functions that
+# are not registered (so the gate never sweeps them) are listed for completeness;
+# their liveness is checked only when they are present in the registry.
+_NAMEGATE_HOMONYM_CARVE_OUTS: dict[str, tuple[str, ...]] = {
+    "k": ("gali", "lyapunov_spectrum"),  # GALI order / count of exponents
+    "k_max": ("lyapunov_from_data",),  # scaling-curve abscissa horizon
+    "step": ("windowed_rqa",),  # window stride (not the time step dt)
+    "horizon": ("nonlinear_prediction_error",),  # prediction lead-time
+    "max_steps": (  # integration safety cap (not the run length n)
+        "find_attractors",
+        "basins_of_attraction",
+        "continuation",
+        "basin_fractions",
+    ),
+    "max_delay": (  # delay-search ceiling (supersedes max_lag)
+        "optimal_delay",
+        "mutual_information",
+        "estimate_period",
+        "autocorrelation",
+    ),
+    "fs": (  # sampling frequency (Hz), alongside dt
+        "power_spectral_density",
+        "spectral_entropy",
+        "spectral_centroid",
+        "dominant_frequency",
+        "butter_filter",
+        "extract_features",
+    ),
+    "skip_crossings": ("poincare_section", "return_map"),  # discarded crossings
+}
+
+# §5 / §6: ``n_cut`` (``zero_one_test``) is a domain-owned mean-square-displacement
+# *lag ceiling* (default ``N // 10``) — explicitly **not** a transient and
+# **neither renamed nor banned** (glossary §6 note).  It must never enter the ban
+# set; the roadmap's older "n_cut beyond canonical" sketch is superseded by the
+# frozen glossary.
+_NAMEGATE_DOMAIN_OWNED = {"zero_one_test": "n_cut"}
+
+
+def _namegate_public_callables() -> list[tuple[str, object]]:
+    """Every registered analysis + transform as sorted ``(name, callable)`` pairs.
+
+    Sweeps **both** ``registry.analyses`` and ``registry.transforms`` (glossary
+    §7 rule 4).  Evaluated at import time over the live registries, so a new
+    analysis/transform joins the gate with zero test edits.
+    """
+    pairs: list[tuple[str, object]] = []
+    for reg in (registry.analyses, registry.transforms):
+        for entry in reg.all():
+            pairs.append((entry.name, entry.obj))
+    return sorted(pairs, key=lambda p: p[0])
+
+
+_NAMEGATE_CALLABLES = _namegate_public_callables()
+_NAMEGATE_BY_NAME = dict(_NAMEGATE_CALLABLES)
+
+
+def _namegate_positional(fn: object) -> list[inspect.Parameter]:
+    """The positional parameters of ``fn`` (positional-only or positional-or-keyword)."""
+    return [
+        p
+        for p in inspect.signature(fn).parameters.values()
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+
+
+def _namegate_first_arg(fn: object) -> str | None:
+    """Name of ``fn``'s first positional argument, or ``None`` if it is keyword-only."""
+    positional = _namegate_positional(fn)
+    return positional[0].name if positional else None
+
+
+@pytest.mark.parametrize("name,fn", _NAMEGATE_CALLABLES, ids=[n for n, _ in _NAMEGATE_CALLABLES])
+def test_naming_gate_first_argument_is_canonical(name: str, fn: object) -> None:
+    """First positional arg is ``system`` / ``data`` (or a §5 prior-result).
+
+    Registry-driven over both ``registry.analyses`` and ``registry.transforms``;
+    a pure keyword-only consumer (no positional parameter) has no first-arg role
+    and is skipped.
+    """
+    first = _namegate_first_arg(fn)
+    if first is None:
+        return
+    if name in _NAMEGATE_PRIOR_RESULT_FIRST_ARG:
+        expected = _NAMEGATE_PRIOR_RESULT_FIRST_ARG[name]
+        assert first == expected, (
+            f"{name}: prior-result first arg should be {expected!r}, got {first!r}."
+        )
+        return
+    assert first not in _NAMEGATE_BANNED_FIRST_ARGS, (
+        f"{name}: first argument {first!r} is a banned spelling (glossary §1) — "
+        f"use 'system' (a System) or 'data' (a measured series)."
+    )
+    assert first in _NAMEGATE_FIRST_ARGS, (
+        f"{name}: first argument {first!r} is neither 'system' nor 'data' (and is "
+        f"not a whitelisted prior-result consumer)."
+    )
+
+
+@pytest.mark.parametrize("name,fn", _NAMEGATE_CALLABLES, ids=[n for n, _ in _NAMEGATE_CALLABLES])
+def test_naming_gate_no_banned_parameter_spellings(name: str, fn: object) -> None:
+    """No parameter uses a glossary §2 banned spelling (outside §5 carve-outs).
+
+    Registry-driven over both registries.  Reports every offender on a function
+    at once, each with its canonical replacement, so a regression names the fix.
+    """
+    offenders = [
+        f"{p.name!r} (use {_NAMEGATE_BANNED_PARAMS[p.name]!r})"
+        for p in inspect.signature(fn).parameters.values()
+        if p.name in _NAMEGATE_BANNED_PARAMS and (name, p.name) not in _NAMEGATE_HOMONYM_WHITELIST
+    ]
+    assert not offenders, f"{name}: banned parameter spelling(s): {', '.join(offenders)}."
+
+
+def test_naming_gate_tables_are_glossary_faithful() -> None:
+    """The gate's own ban/canonical tables are internally consistent.
+
+    A corrupted table could silently neuter the gate (e.g. a canonical concept
+    accidentally added to the ban set, or ``method`` banned).  These invariants
+    fail loudly if the glossary-derived constants ever drift into nonsense.
+    """
+    # The two first-arg roles are never themselves banned first-args.
+    assert _NAMEGATE_FIRST_ARGS.isdisjoint(_NAMEGATE_BANNED_FIRST_ARGS)
+    # No banned token maps onto another banned token — every canonical target is
+    # a clean landing spelling.
+    for banned, canonical in _NAMEGATE_BANNED_PARAMS.items():
+        assert canonical not in _NAMEGATE_BANNED_PARAMS, (
+            f"canonical target {canonical!r} (for banned {banned!r}) is itself banned."
+        )
+    # The locked / always-allowed spellings can never be banned: the two input
+    # roles, the universal seed/ic, and the method selector (glossary §2 note).
+    for locked in ("system", "data", "ic", "seed", "method"):
+        assert locked not in _NAMEGATE_BANNED_PARAMS, f"{locked!r} must never be banned."
+    # Every homonym carve-out token is kept out of the ban set, so the gate can
+    # never over-ban a legitimate different-concept use (glossary §5).
+    for token in (*_NAMEGATE_HOMONYM_CARVE_OUTS, *_NAMEGATE_DOMAIN_OWNED.values()):
+        assert token not in _NAMEGATE_BANNED_PARAMS, (
+            f"homonym/domain token {token!r} must not be in the ban set (glossary §5/§6)."
+        )
+
+
+def test_naming_gate_prior_result_whitelist_is_live() -> None:
+    """Every §5 prior-result whitelist entry matches a registered function's real first arg.
+
+    A stale whitelist entry (a renamed function, or a first-arg that changed)
+    would silently mask a genuine first-arg violation, so each pair is checked
+    against the live signature.
+    """
+    for fn_name, expected in _NAMEGATE_PRIOR_RESULT_FIRST_ARG.items():
+        fn = _NAMEGATE_BY_NAME.get(fn_name)
+        assert fn is not None, (
+            f"prior-result whitelist names {fn_name!r}, which is not a registered analysis."
+        )
+        first = _namegate_first_arg(fn)
+        assert first == expected, (
+            f"{fn_name}: whitelist expects first arg {expected!r} but the live "
+            f"signature has {first!r} — update the whitelist or the signature."
+        )
+
+
+def test_naming_gate_homonym_carve_outs_are_honored() -> None:
+    """The §5 homonym carve-outs are honored: never banned, and live where registered.
+
+    For every carve-out token the gate must (a) keep it out of the ban set — so a
+    legitimate ``gali.k`` / ``windowed_rqa.step`` / ``optimal_delay.max_delay``
+    never trips the gate — and (b) where the named function is *registered* (and
+    thus actually swept), carry the documented parameter, so the §5 table stays a
+    faithful description of the live surface rather than dead documentation.
+    """
+    for token, functions in _NAMEGATE_HOMONYM_CARVE_OUTS.items():
+        assert token not in _NAMEGATE_BANNED_PARAMS, (
+            f"carve-out token {token!r} must never be banned (glossary §5)."
+        )
+        for fn_name in functions:
+            fn = _NAMEGATE_BY_NAME.get(fn_name)
+            if fn is None:
+                continue  # not registered → outside the gate's sweep; nothing to honor
+            params = set(inspect.signature(fn).parameters)
+            assert token in params, (
+                f"{fn_name}: §5 documents a {token!r} parameter, but the live "
+                f"signature has none — the carve-out is stale."
+            )
+    # The domain-owned non-transient (zero_one_test.n_cut) is likewise un-banned
+    # and present (glossary §5/§6).
+    for fn_name, token in _NAMEGATE_DOMAIN_OWNED.items():
+        fn = _NAMEGATE_BY_NAME.get(fn_name)
+        if fn is None:
+            continue
+        assert token not in _NAMEGATE_BANNED_PARAMS
+        assert token in set(inspect.signature(fn).parameters), (
+            f"{fn_name}: §5 documents a {token!r} parameter that is absent from the signature."
+        )
+
+
+def test_naming_gate_homonym_whitelist_is_sound() -> None:
+    """Any §5 homonym whitelist entry references a real banned token on a real function.
+
+    The whitelist is empty today (no canonical homonym collides with a §2 ban),
+    but this keeps it honest as an extension point: a future ``(function,
+    parameter)`` entry must name a *registered* function that actually has the
+    parameter and whose parameter is a *banned* token — otherwise the entry is
+    dead and should be removed rather than silently doing nothing.
+    """
+    for fn_name, param in _NAMEGATE_HOMONYM_WHITELIST:
+        assert param in _NAMEGATE_BANNED_PARAMS, (
+            f"whitelist pair ({fn_name!r}, {param!r}) is pointless: {param!r} is not banned."
+        )
+        fn = _NAMEGATE_BY_NAME.get(fn_name)
+        assert fn is not None, (
+            f"whitelist names {fn_name!r}, which is not a registered analysis/transform."
+        )
+        assert param in set(inspect.signature(fn).parameters), (
+            f"{fn_name}: whitelist carves out {param!r}, absent from the live signature."
         )
