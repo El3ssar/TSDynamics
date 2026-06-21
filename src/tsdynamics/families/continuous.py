@@ -552,6 +552,8 @@ class ContinuousSystem(SystemBase, ABC):
         self,
         final_time: float = 100.0,
         dt: float = 0.02,
+        *,
+        events: Any = None,
         **kwargs,
     ) -> Trajectory:
         """
@@ -569,6 +571,18 @@ class ContinuousSystem(SystemBase, ABC):
             End of the integration window. Default 100.0.
         dt : float
             Output sampling interval. The internal stepper is adaptive.
+        events : sequence, optional
+            Detect events along the flow (a SciPy-shaped ``events=`` API).  Each
+            element is an :class:`~tsdynamics.engine.run.Event`, a bare
+            ``g(y, t)`` callable carrying ``.direction`` / ``.terminal``
+            attributes (the SciPy convention), or a plane tuple
+            (``("y", 0.0, "up")``).  A **terminal** event stops the integration at
+            its first crossing (arbitrary stopping).  The returned trajectory
+            carries each event's crossings in ``meta["t_events"]`` /
+            ``meta["y_events"]`` (one array per event, aligned with ``events``),
+            plus ``meta["terminated"]``.  This wires the same compiled event
+            engine :class:`~tsdynamics.derived.poincare.PoincareMap` uses;
+            ``PoincareMap.as_events()`` shows the section as one such event.
         **kwargs
             Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
             ``rtol``, ``atol``, ``backend``, …).
@@ -576,7 +590,10 @@ class ContinuousSystem(SystemBase, ABC):
         Returns
         -------
         Trajectory
-            Identical to :meth:`integrate` — ``run`` adds no behaviour.
+            Identical to :meth:`integrate` when ``events`` is ``None`` — ``run``
+            adds no behaviour.  With ``events`` set, the dense trajectory
+            (truncated at the first terminal crossing) plus the per-event
+            crossings in ``meta``.
 
         See Also
         --------
@@ -586,8 +603,70 @@ class ContinuousSystem(SystemBase, ABC):
         --------
         >>> traj = Lorenz().run(final_time=100, dt=0.01)
         >>> Henon().run(n=5000)            # the same verb iterates a map
+        >>> sol = Lorenz().run(final_time=50, events=[("z", 27.0, "up")])
+        >>> sol.meta["t_events"][0].shape    # times z=27 was crossed upward
+        (... ,)
         """
-        return self.integrate(final_time=final_time, dt=dt, **kwargs)
+        return self.integrate(final_time=final_time, dt=dt, events=events, **kwargs)
+
+    def _run_events(
+        self,
+        *,
+        final_time: float,
+        dt: float,
+        events: Any,
+        t0: float = 0.0,
+        ic: Any | None = None,
+        method: str | None = None,
+        rtol: float = 1e-6,
+        atol: float = 1e-9,
+        backend: str | None = None,
+    ) -> Trajectory:
+        """Integrate with event detection and wrap the result as a Trajectory.
+
+        Builds the ODE problem, hands it to the engine event seam
+        (:func:`tsdynamics.engine.run.integrate_events`), and attaches the
+        per-event crossings to ``meta`` (the SciPy-shaped ``t_events`` /
+        ``y_events``).
+        """
+        from tsdynamics.engine import run as engine_run
+        from tsdynamics.engine.problem import ode_problem
+
+        be = backend if backend is not None else self._default_backend
+        meth = method or self._default_method
+        ic_arr = self.resolve_ic(ic)
+        prob = ode_problem(self, ic=ic_arr, t0=float(t0))
+        sol = engine_run.integrate_events(
+            prob,
+            events,
+            final_time=final_time,
+            dt=dt,
+            t0=float(t0),
+            method=meth,
+            rtol=rtol,
+            atol=atol,
+            backend=be,
+        )
+        meta = self._provenance(
+            family="ode",
+            engine="rust" if be in ("interp", "jit") else "reference",
+            backend=be,
+            method=meth,
+            dt=dt,
+            t0=float(t0),
+            rtol=rtol,
+            atol=atol,
+            ic=np.asarray(ic_arr, dtype=float).copy(),
+            n_events=len(sol.events),
+            terminated=sol.terminated,
+            events=[
+                {"name": e.name, "direction": e.direction, "terminal": e.terminal}
+                for e in sol.events
+            ],
+            t_events=sol.t_events,
+            y_events=sol.y_events,
+        )
+        return Trajectory(t=sol.t, y=sol.y, system=self, meta=meta)
 
     # ------------------------------------------------------------------ #
     # Integration
@@ -604,6 +683,7 @@ class ContinuousSystem(SystemBase, ABC):
         rtol: float = 1e-6,
         atol: float = 1e-9,
         backend: str | None = None,
+        events: Any = None,
         **integrator_kwargs,
     ) -> Trajectory:
         """
@@ -637,12 +717,33 @@ class ContinuousSystem(SystemBase, ABC):
             - ``"reference"`` — the dependency-light pure-Python oracle (the
               lowered tape integrated with SciPy); the engine's validation
               backend, usable without the compiled wheel.
+        events : sequence, optional
+            Detect events along the flow (the SciPy-shaped ``events=`` API; see
+            :meth:`run`).  Each element is an
+            :class:`~tsdynamics.engine.run.Event`, a bare ``g(y, t)`` callable
+            carrying ``.direction`` / ``.terminal`` attributes, or a plane tuple
+            (``("y", 0.0, "up")``).  A **terminal** event stops the integration at
+            its first crossing; the returned trajectory carries each event's
+            crossings in ``meta["t_events"]`` / ``meta["y_events"]`` (aligned with
+            ``events``) plus ``meta["terminated"]``.
 
         Returns
         -------
         Trajectory
             Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
         """
+        if events is not None:
+            return self._run_events(
+                final_time=final_time,
+                dt=dt,
+                events=events,
+                t0=t0,
+                ic=ic,
+                method=method,
+                rtol=rtol,
+                atol=atol,
+                backend=backend,
+            )
         backend = backend if backend is not None else self._default_backend
         return self._dispatch(
             backend=backend,

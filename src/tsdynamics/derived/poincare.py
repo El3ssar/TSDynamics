@@ -388,6 +388,31 @@ class PoincareMap(DerivedSystem):
         """Return the number of crossings recorded so far."""
         return self._n_cross
 
+    def as_events(self) -> list:
+        """Return the section as a one-element ``[Event]`` for ``system.run(events=...)``.
+
+        A Poincaré section *is* an event: the crossing of ``g(u) = normal·u −
+        offset`` in the map's :attr:`direction`.  This exposes it as an
+        :class:`~tsdynamics.engine.run.Event` so the general ``events=`` API
+        reproduces the section — ``PoincareMap`` is one consumer of the same
+        wired engine seam (stream WS-EVENTSAPI / WS-CROSSKERNEL).  Driven at the
+        same fixed-step march (``method="rk4"`` at this map's ``dt``) from the
+        same initial condition, the crossings of
+        ``inner.run(events=pmap.as_events(), ...)`` match
+        :meth:`trajectory` to the engine's refinement accuracy.
+
+        Examples
+        --------
+        >>> pmap = PoincareMap(Rossler(), plane=("y", 0.0, "up"), dt=0.01)
+        >>> sol = Rossler().run(final_time=400, dt=0.01, method="rk4",
+        ...                     events=pmap.as_events())
+        >>> sol.meta["y_events"][0][:5].shape      # the same crossing states
+        (5, 3)
+        """
+        from tsdynamics.engine.run import Event
+
+        return [Event((self._normal.copy(), self._offset), direction=self.direction)]
+
     def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
         """Restart the inner flow and clear crossing bookkeeping."""
         self.system.reinit(u, **kwargs)

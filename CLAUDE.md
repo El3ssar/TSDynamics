@@ -401,6 +401,25 @@ All three families + all derived wrappers implement:
   defaults (an implicit `_default_method`), and `backend="reference"` keep the
   Python loop. Divergence / no-crossing-within-`max_time` still raises
   `RuntimeError`. (The unwired `integrate_events` was the dead E-EVENT code.)
+- **General events API (stream WS-EVENTSAPI):** `ContinuousSystem.run(events=[...])`
+  exposes the same wired event engine generally — a scipy-shaped `events=` surface
+  for arbitrary stopping (A-RQA / A-BASIN / custom). An **`Event`**
+  (`tsdynamics.engine.run.Event`) is a *symbolic* scalar condition `g(u, t) = 0`
+  so one spec drives both paths: a callable `g(y, t)`/`g(y, t, **params)` over the
+  engine state accessor (returning one SymEngine expr, optionally with scipy-style
+  `.direction`/`.terminal` attributes), or a plane tuple (`("z", 27.0, "up")` /
+  `(normal, offset)`, the WS-POINCARE-API spelling). `run(events=)` returns the
+  dense `Trajectory` (truncated at the first **terminal** crossing) with each
+  event's crossings in `meta["t_events"]`/`meta["y_events"]` (one array per event,
+  scipy-named) plus `meta["terminated"]`. The seam is `engine.run.integrate_events`
+  (returns an `EventSolution`): the compiled engine runs one `crossings()`
+  per event (explicit methods) and coordinates terminal stop; an implicit/stiff
+  method or `backend="reference"` routes to `scipy.integrate.solve_ivp(events=)` —
+  an independent oracle the tests cross-check (early Lorenz crossings agree to
+  ~1e-8; a non-chaotic oscillator to ~1e-6, plus an analytic `cos t` zero-crossing
+  check). `PoincareMap.as_events()` returns the section as one `Event`, so the
+  section is reproduced through this seam (`PoincareMap` is one consumer).
+  Restricted to ODEs (maps have no continuous crossings; DDE/SDE raise).
 - **`TangentSystem` is the one Lyapunov engine** (stream C-DERIV): the
   variational/QR machinery lives here, and `DiscreteMap.lyapunov_spectrum` /
   `ContinuousSystem.lyapunov_spectrum` are thin delegations to it. Modes:
@@ -725,6 +744,13 @@ pmap = ts.PoincareMap(ts.Rossler(), plane=("y", 0.0, "up"))   # named axis + dir
 section = pmap.trajectory(500)                                 # → PoincareSection
 sec = ts.poincare_section(ts.Rossler(), plane=("y", 0.0, "up"), n=500, seed=0)
 od = ts.orbit_diagram(pmap, "c", np.linspace(2, 6, 50), component=0)
+
+# Event detection / arbitrary stopping (scipy-shaped events=)
+sol = ts.Lorenz().run(final_time=100, dt=0.01, events=[("z", 27.0, "up")])
+sol.meta["t_events"][0]                       # times z=27 was crossed upward
+stop = lambda y, t: y(0)**2 + y(1)**2 + y(2)**2 - 50.0**2  # leave a ball → stop
+stop.terminal = True
+ts.Lorenz().run(final_time=1e3, events=[stop])            # truncates at the crossing
 
 # Maps
 h = ts.Henon()
