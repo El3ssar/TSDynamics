@@ -27,7 +27,7 @@ import tsdynamics as ts
 import tsdynamics.transforms as tx  # noqa: F401  (import populates registry.transforms)
 from tsdynamics import registry
 from tsdynamics.analysis._result import AnalysisResult
-from tsdynamics.data import Trajectory
+from tsdynamics.derived import PoincareSection
 
 # ---------------------------------------------------------------------------
 # Parametrized contract: analyses (one run per registered analysis)
@@ -227,11 +227,12 @@ def test_registry_names_match_entry_names():
 
 #: Registered analyses that legitimately return something other than an
 #: ``AnalysisResult``, with the type they DO return.  ``poincare_section`` returns
-#: a :class:`~tsdynamics.data.Trajectory` carrying provenance; the named,
-#: viz-ready ``PoincareSection`` result is delivered by stream WS-POINCARE-API
-#: (issue #209), which owns ``analysis/orbits/poincare.py``.
+#: a :class:`~tsdynamics.derived.PoincareSection` — a :class:`~tsdynamics.data.Trajectory`
+#: subclass carrying section intent + the ``.summary()`` / ``.to_dict()`` / ``.plot``
+#: result surface (stream WS-POINCARE-API, issue #209) — rather than an
+#: ``AnalysisResult`` proper, so the section keeps all the trajectory affordances.
 _RESULT_CARVE_OUTS: dict[str, type] = {
-    "poincare_section": Trajectory,
+    "poincare_section": PoincareSection,
 }
 
 

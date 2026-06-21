@@ -20,11 +20,12 @@ are discoverable by name alongside out-of-tree analysis plugins.
 
 from ... import registry as _registry
 from .orbit_diagram import OrbitDiagram, orbit_diagram
-from .poincare import poincare_section
+from .poincare import PoincareSection, poincare_section
 from .return_map import ReturnMap, return_map
 
 __all__ = [
     "OrbitDiagram",
+    "PoincareSection",
     "ReturnMap",
     "orbit_diagram",
     "poincare_section",

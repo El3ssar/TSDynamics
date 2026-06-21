@@ -2,16 +2,188 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 
+from tsdynamics.errors import invalid_value
 from tsdynamics.families import Trajectory
 
 from . import _crossings
 from ._base import DerivedSystem
 
-__all__ = ["PoincareMap"]
+__all__ = ["PoincareMap", "PoincareSection"]
+
+
+# ---------------------------------------------------------------------------
+# Friendly section spelling — named axes + direction words
+# ---------------------------------------------------------------------------
+
+#: Friendly spellings for the crossing-direction filter.  ``"up"`` keeps only
+#: crossings where the section function ``g(u) = normal·u - offset`` is
+#: *increasing* (the trajectory pierces the plane in the ``+normal`` sense),
+#: ``"down"`` only the decreasing ones, and ``"both"`` keeps either.
+_DIRECTION_WORDS: dict[str, int] = {
+    "up": +1,
+    "increasing": +1,
+    "positive": +1,
+    "+": +1,
+    "down": -1,
+    "decreasing": -1,
+    "negative": -1,
+    "-": -1,
+    "both": 0,
+    "either": 0,
+    "all": 0,
+}
+
+
+def _normalize_direction(direction: Any) -> int:
+    """Coerce a crossing-direction spec to one of ``{+1, 0, -1}``.
+
+    Accepts the friendly words ``"up"`` / ``"down"`` / ``"both"`` (and a few
+    synonyms) as well as any signed number — its sign is taken, so ``+1`` /
+    ``-1`` / ``0`` and larger magnitudes all map into ``{+1, 0, -1}``.
+    """
+    if isinstance(direction, str):
+        key = direction.strip().lower()
+        if key not in _DIRECTION_WORDS:
+            raise invalid_value(
+                "direction",
+                value=direction,
+                rule="must be 'up', 'down', or 'both'",
+                hint="or pass a signed number: +1 (up), -1 (down), 0 (both).",
+            )
+        return _DIRECTION_WORDS[key]
+    return int(np.sign(direction))
+
+
+def _resolve_section_plane(system: Any, plane: Any, direction: Any) -> tuple[tuple, int]:
+    """Resolve a friendly ``plane`` spelling to the raw ``(axis, offset)`` form.
+
+    Normalizes the accepted spellings to the ``(component_index, value)`` /
+    ``(normal, offset)`` tuple :meth:`PoincareMap._parse_plane` consumes, and
+    resolves the crossing direction:
+
+    - ``(axis, offset)`` — ``axis`` is a component **name** (resolved against the
+      system's ``variables``) or an integer index;
+    - ``(axis, offset, direction)`` — the same, with the crossing direction as
+      the third element (``"up"`` / ``"down"`` / ``"both"`` or a sign), which
+      then **overrides** the ``direction`` argument;
+    - ``(normal, offset)`` — an arbitrary normal **vector** (first element a
+      sequence), passed through untouched.
+
+    Returns the resolved ``(axis_or_normal, offset)`` tuple and the integer
+    direction in ``{+1, 0, -1}``.  A name on a system without ``variables``, an
+    unknown component name, a bad direction word, or a malformed ``plane`` raises
+    :class:`~tsdynamics.errors.InvalidParameterError`.
+    """
+    if not isinstance(plane, (tuple, list)) or len(plane) not in (2, 3):
+        raise invalid_value(
+            "plane",
+            value=plane,
+            rule="must be (axis, offset), (axis, offset, direction), or (normal, offset)",
+            hint="e.g. plane=('y', 0.0, 'up'), plane=(1, 0.0), or plane=([1, 0, 0], 0.0).",
+        )
+    axis, offset = plane[0], plane[1]
+    if len(plane) == 3:
+        direction = plane[2]
+    if isinstance(axis, str):
+        names = getattr(system, "variables", None)
+        if names is None:
+            raise invalid_value(
+                "plane",
+                value=axis,
+                rule=f"names a component but {type(system).__name__} declares no `variables`",
+                hint="pass an integer component index instead, e.g. plane=(1, 0.0).",
+            )
+        if axis not in names:
+            raise invalid_value(
+                "plane",
+                value=axis,
+                rule=f"is not a declared component of {type(system).__name__}",
+                hint=f"choose one of {tuple(names)}.",
+            )
+        axis = names.index(axis)
+    elif np.isscalar(axis):
+        # A scalar index (incl. a numpy integer) → plain int, so the resolved
+        # ``meta["plane"]`` carries built-in types on every path.  A normal
+        # *vector* (a non-scalar sequence) is left untouched for _parse_plane.
+        axis = int(axis)
+    return (axis, offset), _normalize_direction(direction)
+
+
+def _section_jsonable(obj: Any) -> Any:
+    """Coerce a value to JSON-friendly types (arrays → lists), for ``to_dict``."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, Mapping):
+        return {str(k): _section_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set, frozenset)):
+        return [_section_jsonable(v) for v in obj]
+    return obj
+
+
+#: Human labels for the resolved crossing direction, shown in :meth:`summary`.
+_DIRECTION_LABELS = {1: "up (+)", -1: "down (−)", 0: "both"}
+
+
+class PoincareSection(Trajectory):
+    """A Poincaré surface of section — the crossing states, viz-ready.
+
+    A thin :class:`~tsdynamics.data.Trajectory` subclass returned by
+    :func:`~tsdynamics.analysis.poincare_section` and
+    :meth:`PoincareMap.trajectory`.  It carries the **section intent**
+    (:data:`~tsdynamics.viz.spec.PlotKind.POINCARE_SECTION`, in
+    ``meta["plot_kind"]``) so a renderer draws the in-plane scatter rather than
+    mistaking the full-dimensional crossing states for a flow line, and adds the
+    self-describing result surface (:meth:`summary` / :meth:`to_dict`) on top of
+    the ordinary trajectory affordances (``.t`` / ``.y`` / named components /
+    :meth:`~tsdynamics.data.Trajectory.plot` / ``to_plot_spec``).
+
+    ``t`` holds the continuous crossing times and ``y`` the full-dimensional
+    crossing states; the section plane and direction live in ``meta["plane"]`` /
+    ``meta["direction"]``.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"PoincareSection(crossings={self.n_steps}, dim={self.dim})"
+
+    def summary(self) -> str:
+        """Return a human-readable readout: crossing count, dimension, plane, direction."""
+        system = self.meta.get("system")
+        header = "PoincareSection" + (f"  ({system})" if system else "")
+        lines = [
+            header,
+            f"  crossings = {self.n_steps}",
+            f"  dim = {self.dim}",
+            f"  plane = {self.meta.get('plane')}",
+        ]
+        word = _DIRECTION_LABELS.get(self.meta.get("direction"))
+        if word is not None:
+            lines.append(f"  direction = {word}")
+        return "\n".join(lines)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of the section (standard library only).
+
+        Carries the crossing times / states, the crossing count, the section
+        plane and direction, and the provenance ``meta`` — every value coerced to
+        plain ``list`` / ``float`` / ``str`` so :func:`json.dumps` round-trips it.
+        """
+        return {
+            "t": self.t.tolist(),
+            "y": self.y.tolist(),
+            "n_crossings": int(self.n_steps),
+            "plane": _section_jsonable(self.meta.get("plane")),
+            "direction": self.meta.get("direction"),
+            "meta": _section_jsonable(self.meta),
+        }
 
 
 class PoincareMap(DerivedSystem):
@@ -33,12 +205,18 @@ class PoincareMap(DerivedSystem):
     system : System
         A continuous-time system (ODE or DDE).
     plane : tuple
-        Either ``(i, c)`` — the section ``y_i = c`` — or
-        ``(normal, offset)`` with an arbitrary normal vector, for the
-        section ``normal · y = offset``.
-    direction : {+1, -1, 0}
-        Count only crossings with ``d(normal·y)/dt > 0`` (+1, default),
-        ``< 0`` (-1), or both (0).
+        The section, in any of three spellings: ``(axis, c)`` where ``axis`` is
+        a component **name** (resolved against the system's ``variables``) or an
+        integer index, for the section ``y_axis = c``; ``(axis, c, direction)``,
+        the same with the crossing direction (``"up"`` / ``"down"`` / ``"both"``)
+        as a third element; or ``(normal, offset)`` with an arbitrary normal
+        vector, for the section ``normal · y = offset``.  Examples:
+        ``plane=("y", 0.0)``, ``plane=("y", 0.0, "up")``, ``plane=(1, 0.0)``,
+        ``plane=([1, 0, 0], 0.0)``.
+    direction : {+1, -1, 0} or {"up", "down", "both"}
+        Count only crossings with ``d(normal·y)/dt > 0`` (``+1`` / ``"up"``,
+        default), ``< 0`` (``-1`` / ``"down"``), or both (``0`` / ``"both"``).
+        A direction given inside ``plane`` (its third element) overrides this.
     dt : float
         March step used for crossing detection.  The refinement makes the
         crossing itself far more accurate than ``dt``; this only needs to be
@@ -49,8 +227,8 @@ class PoincareMap(DerivedSystem):
 
     Examples
     --------
-    >>> pmap = PoincareMap(Rossler(), plane=(0, 0.0), direction=+1)
-    >>> section = pmap.trajectory(500)         # 500 crossings
+    >>> pmap = PoincareMap(Rossler(), plane=("x", 0.0, "up"))
+    >>> section = pmap.trajectory(500)         # 500 crossings → PoincareSection
     >>> section.y.shape
     (500, 3)
     """
@@ -60,16 +238,17 @@ class PoincareMap(DerivedSystem):
         system: Any,
         plane: tuple,
         *,
-        direction: int = +1,
+        direction: int | str = +1,
         dt: float = 0.01,
         max_time: float = 1e4,
     ) -> None:
         super().__init__(system)
+        plane, direction = _resolve_section_plane(system, plane, direction)
         normal, offset = self._parse_plane(system.dim, plane)
         self.plane = plane
         self._normal = normal
         self._offset = offset
-        self.direction = int(np.sign(direction))
+        self.direction = direction
         self.dt = float(dt)
         self.max_time = float(max_time)
 
@@ -269,12 +448,15 @@ class PoincareMap(DerivedSystem):
         transient: int = 0,
         backend: str | None = None,
         **kwargs: Any,
-    ) -> Trajectory:
+    ) -> PoincareSection:
         """
-        Collect crossings as a trajectory.
+        Collect crossings as a :class:`PoincareSection`.
 
         ``t`` holds the continuous crossing times; ``y`` the full-dimensional
-        crossing states.  ``transient`` crossings are discarded first.
+        crossing states.  ``transient`` crossings are discarded first.  The
+        returned :class:`PoincareSection` is a :class:`~tsdynamics.data.Trajectory`
+        carrying section intent (so a renderer draws the in-plane scatter) plus a
+        ``.summary()`` / ``.to_dict()`` readout.
 
         For an ordinary (non-stiff) ODE on the compiled engine this marches the
         whole attractor and refines every crossing in **one engine call** (the
@@ -319,7 +501,7 @@ class PoincareMap(DerivedSystem):
             "system": type(self.system).__name__,
             "params": self.params.as_dict(),
         }
-        return Trajectory(t=times, y=points, system=self.system, meta=meta)
+        return PoincareSection(t=times, y=points, system=self.system, meta=meta)
 
 
 def __dir__() -> list[str]:

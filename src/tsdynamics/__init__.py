@@ -116,6 +116,9 @@ from .analysis import (
     PeriodicOrbit as PeriodicOrbit,
 )
 from .analysis import (
+    PoincareSection as PoincareSection,
+)
+from .analysis import (
     RecurrenceMatrix as RecurrenceMatrix,
 )
 from .analysis import (

@@ -160,7 +160,14 @@ from .lyapunov import (
     lyapunov_spectrum,
     max_lyapunov,
 )
-from .orbits import OrbitDiagram, ReturnMap, orbit_diagram, poincare_section, return_map
+from .orbits import (
+    OrbitDiagram,
+    PoincareSection,
+    ReturnMap,
+    orbit_diagram,
+    poincare_section,
+    return_map,
+)
 from .recurrence import (
     RecurrenceMatrix,
     RQAResult,
@@ -222,6 +229,7 @@ __all__ = [
     "OrbitDiagram",
     "OrbitSet",
     "PeriodicOrbit",
+    "PoincareSection",
     "RQAResult",
     "RecurrenceMatrix",
     "ReturnMap",

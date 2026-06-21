@@ -7,9 +7,10 @@ from typing import Any
 import numpy as np
 
 from tsdynamics.derived import PoincareMap
+from tsdynamics.derived.poincare import PoincareSection, _resolve_section_plane
 from tsdynamics.families import Trajectory
 
-__all__ = ["poincare_section"]
+__all__ = ["PoincareSection", "poincare_section"]
 
 
 def _seeded_ic(system: Any, ic: Any | None, seed: int | None) -> np.ndarray | None:
@@ -33,20 +34,21 @@ def poincare_section(
     system: Any,
     plane: tuple,
     *,
-    direction: int = +1,
+    direction: int | str = +1,
     n: int = 1000,
     skip_crossings: int = 0,
     dt: float = 0.01,
     max_time: float = 1e4,
     seed: int | None = None,
-) -> Trajectory:
+) -> PoincareSection:
     """
     Poincaré surface of section.
 
     Two input modes:
 
     - **System** → wraps it in a :class:`~tsdynamics.derived.PoincareMap`
-      and collects ``n`` root-refined crossings (accurate).
+      and collects ``n`` root-refined crossings on the fast Rust event engine
+      (stream WS-CROSSKERNEL).
     - **Trajectory** → finds the plane crossings between consecutive samples
       by linear interpolation (pure data path; accuracy limited by the
       trajectory's sampling interval).
@@ -56,13 +58,29 @@ def poincare_section(
     system : System or Trajectory
         A flow to section, or measured trajectory data (the ``data`` overload).
     plane : tuple
-        ``(i, c)`` for the section ``y_i = c``, or ``(normal, offset)``.
-    direction : {+1, -1, 0}
-        Crossing direction filter.
+        The section, in any of three spellings:
+
+        - ``(axis, c)`` — ``axis`` a component **name** (resolved against the
+          system's ``variables``, e.g. ``"y"``) or an integer index, for the
+          section ``y_axis = c``;
+        - ``(axis, c, direction)`` — the same, with the crossing direction
+          (``"up"`` / ``"down"`` / ``"both"``) as a third element, which
+          overrides the ``direction`` argument;
+        - ``(normal, offset)`` — an arbitrary normal **vector**, for the section
+          ``normal · y = offset``.
+
+        For example ``plane=("y", 0.0, "up")``, ``plane=(1, 0.0)``, or
+        ``plane=([1, 0, 0], 0.0)``.
+    direction : {+1, -1, 0} or {"up", "down", "both"}, default +1
+        Crossing direction filter (``+1`` / ``"up"`` keeps only crossings where
+        the section function is increasing).  Ignored when ``plane`` carries its
+        own direction (third element).
     n : int, default 1000
         Number of crossings to collect (system mode).
     skip_crossings : int, default 0
-        Number of leading crossings to discard before recording (system mode).
+        Number of leading crossings to discard before recording.  (A *section*
+        transient is a count of crossings, deliberately distinct from the
+        time/step ``transient`` of other analyses.)
     dt, max_time : float
         Detection step and integration ceiling (system mode) — see
         :class:`~tsdynamics.derived.PoincareMap`.
@@ -72,13 +90,16 @@ def poincare_section(
 
     Returns
     -------
-    Trajectory
-        ``t`` = crossing times, ``y`` = full-dimensional crossing states.
+    PoincareSection
+        A :class:`~tsdynamics.data.Trajectory` of the crossings (``t`` = crossing
+        times, ``y`` = full-dimensional crossing states) carrying
+        ``POINCARE_SECTION`` plot intent and a ``.summary()`` / ``.to_dict()`` /
+        ``.plot`` result surface.
 
     Examples
     --------
-    >>> section = poincare_section(Rossler(), plane=(0, 0.0), n=500)
-    >>> section = poincare_section(traj, plane=(2, 25.0))     # from data
+    >>> section = poincare_section(Rossler(), plane=("y", 0.0, "up"), n=500)
+    >>> section = poincare_section(traj, plane=("z", 25.0))     # from data
     """
     if isinstance(system, Trajectory):
         return _section_from_data(system, plane, direction)
@@ -90,8 +111,9 @@ def poincare_section(
     return pmap.trajectory(n, transient=skip_crossings)
 
 
-def _section_from_data(traj: Trajectory, plane: tuple, direction: int) -> Trajectory:
-    normal, offset = PoincareMap._parse_plane(traj.dim, plane)
+def _section_from_data(traj: Trajectory, plane: tuple, direction: int | str) -> PoincareSection:
+    resolved_plane, direction = _resolve_section_plane(traj, plane, direction)
+    normal, offset = PoincareMap._parse_plane(traj.dim, resolved_plane)
     g = traj.y @ normal - offset
     g_prev, g_next = g[:-1], g[1:]
 
@@ -105,35 +127,29 @@ def _section_from_data(traj: Trajectory, plane: tuple, direction: int) -> Trajec
         hits = up | down
     (i_hits,) = np.nonzero(hits)
 
+    # Section intent (viz.PlotKind.POINCARE_SECTION) so a renderer draws the
+    # in-plane scatter, never the source flow.  ``plane`` is the resolved
+    # (index, offset) form so Trajectory._section_axes can drop the normal axis.
+    meta = {
+        **traj.meta,
+        "derived": "poincare_section",
+        "plot_kind": "poincare_section",
+        "plane": resolved_plane,
+        "direction": direction,
+    }
     if i_hits.size == 0:
-        return Trajectory(
+        return PoincareSection(
             t=np.empty(0),
             y=np.empty((0, traj.dim)),
             system=traj.system,
-            meta={
-                **traj.meta,
-                "derived": "poincare_section",
-                # Section intent (viz.PlotKind.POINCARE_SECTION) so a renderer
-                # draws the in-plane scatter, never the source flow.
-                "plot_kind": "poincare_section",
-                "plane": plane,
-            },
+            meta=meta,
         )
 
     s = g[i_hits] / (g[i_hits] - g[i_hits + 1])  # linear interpolation fraction
     points = traj.y[i_hits] + s[:, None] * (traj.y[i_hits + 1] - traj.y[i_hits])
     times = traj.t[i_hits] + s * (traj.t[i_hits + 1] - traj.t[i_hits])
 
-    meta = {
-        **traj.meta,
-        "derived": "poincare_section",
-        # Section intent (viz.PlotKind.POINCARE_SECTION) so a renderer draws the
-        # in-plane scatter, never the source flow.
-        "plot_kind": "poincare_section",
-        "plane": plane,
-        "direction": direction,
-    }
-    return Trajectory(t=times, y=points, system=traj.system, meta=meta)
+    return PoincareSection(t=times, y=points, system=traj.system, meta=meta)
 
 
 def __dir__() -> list[str]:

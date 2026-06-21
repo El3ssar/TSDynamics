@@ -7,6 +7,8 @@ works on wrapped systems too.  A :class:`PoincareMap` of a flow *is* a
 discrete map; an orbit diagram over it is a bifurcation diagram of the flow.
 
 - :class:`PoincareMap` — hyperplane crossings of a flow as a discrete map.
+- :class:`PoincareSection` — the crossing states it collects: a thin
+  :class:`~tsdynamics.data.Trajectory` subclass carrying section (viz) intent.
 - :class:`StroboscopicMap` — once-per-period samples of a forced flow.
 - :class:`TangentSystem` — state + deviation vectors (Lyapunov engine).
 - :class:`EnsembleSystem` — many copies stepped in lockstep.
@@ -18,7 +20,7 @@ discrete map; an orbit diagram over it is a bifurcation diagram of the flow.
 
 from ._base import DerivedSystem
 from .ensemble import EnsembleSystem
-from .poincare import PoincareMap
+from .poincare import PoincareMap, PoincareSection
 from .projected import ProjectedSystem
 from .stroboscopic import StroboscopicMap
 from .tangent import TangentSystem
@@ -28,6 +30,7 @@ __all__ = [
     "DerivedSystem",
     "EnsembleSystem",
     "PoincareMap",
+    "PoincareSection",
     "ProjectedSystem",
     "StroboscopicMap",
     "TangentSystem",

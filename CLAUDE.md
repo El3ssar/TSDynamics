@@ -368,6 +368,18 @@ All three families + all derived wrappers implement:
   caching keeps sweeps cheap; DDE sweeps recompile per value).
 - `PoincareMap` refines crossings with cubic Hermite using `_rhs_numeric`
   (O(dt⁴)); falls back to linear interpolation for DDEs.
+- **The section API is named (stream WS-POINCARE-API):** `PoincareMap` and
+  `poincare_section` accept the friendly `plane` spelling — `(axis, c)` with
+  `axis` a component **name** (resolved against `variables`, e.g. `("y", 0.0)`)
+  or an index, `(axis, c, direction)` with a `"up"`/`"down"`/`"both"` word that
+  overrides `direction=`, or `(normal, offset)` for an arbitrary normal
+  (resolution + direction-word parsing in `derived/poincare.py::_resolve_section_plane`;
+  `PoincareMap.plane` is stored as the resolved `(index, offset)`). Both
+  `poincare_section` and `PoincareMap.trajectory` return a **`PoincareSection`** —
+  a thin `Trajectory` subclass carrying `POINCARE_SECTION` plot intent plus a
+  `.summary()`/`.to_dict()`/`.plot` result surface (the WS-WRAP carve-out home).
+  The crossing-transient keyword stays the dedicated `skip_crossings` (glossary
+  §5: `transient` never counts section crossings).
 - **`PoincareMap.trajectory` is engine-native (stream WS-CROSSKERNEL):** the bulk
   crossing collection wires the Rust event engine
   (`integrate_events` → FFI `integrate_events_dense` → `engine.run.crossings` →
@@ -709,8 +721,9 @@ lor.reinit([1.0, 1.0, 1.0])
 u = lor.step(0.01)
 
 # Derived systems → analysis composition
-pmap = ts.PoincareMap(ts.Rossler(), plane=(1, 0.0))
-section = pmap.trajectory(500)
+pmap = ts.PoincareMap(ts.Rossler(), plane=("y", 0.0, "up"))   # named axis + direction
+section = pmap.trajectory(500)                                 # → PoincareSection
+sec = ts.poincare_section(ts.Rossler(), plane=("y", 0.0, "up"), n=500, seed=0)
 od = ts.orbit_diagram(pmap, "c", np.linspace(2, 6, 50), component=0)
 
 # Maps
