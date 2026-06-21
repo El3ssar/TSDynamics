@@ -32,6 +32,7 @@ import numpy as np
 
 from tsdynamics.families import Trajectory
 
+from .._result import AnalysisResult
 from .poincare import _seeded_ic, poincare_section
 
 __all__ = ["ReturnMap", "return_map"]
@@ -39,24 +40,25 @@ __all__ = ["ReturnMap", "return_map"]
 _KINDS = ("max", "min", "poincare")
 
 
-@dataclass
-class ReturnMap:
+@dataclass(frozen=True)
+class ReturnMap(AnalysisResult):
     """
     Result of :func:`return_map`.
 
-    The recorded observable values are :attr:`values`; the return map itself is
-    the pair (:attr:`current`, :attr:`successor`) = :math:`(v_n, v_{n+1})`.
-    Iterate for ``(current, successor)`` pairs, or use :meth:`flat` for the
-    scatter-ready arrays.
+    An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
+    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.  The recorded
+    observable values are :attr:`values`; the return map itself is the pair
+    (:attr:`current`, :attr:`successor`) = :math:`(v_n, v_{n+1})`.  Iterate for
+    ``(current, successor)`` pairs, or use :meth:`flat` for the scatter-ready
+    arrays.
     """
 
-    current: np.ndarray  # (m-1,) v_n
-    successor: np.ndarray  # (m-1,) v_{n+1}
-    values: np.ndarray  # (m,) the recurring observable (extrema / crossings)
-    times: np.ndarray  # (m,) times of those values
-    observable: int  # which state component was recorded
-    kind: str  # "max" | "min" | "poincare"
-    meta: dict = field(default_factory=dict)
+    current: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # v_n
+    successor: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # v_{n+1}
+    values: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # observable
+    times: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # times
+    observable: int = 0  # which state component was recorded
+    kind: str = "max"  # "max" | "min" | "poincare"
 
     def __iter__(self):
         return iter(zip(self.current, self.successor, strict=True))

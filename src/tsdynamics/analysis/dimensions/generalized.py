@@ -149,14 +149,15 @@ def generalized_dimension(
     where = np.nonzero(mask)[0]
     lo, hi = int(where[fit.lo]), int(where[fit.hi])
     return DimensionResult(
-        dimension=fit.slope,
+        estimate=fit.slope,
         stderr=fit.stderr,
         kind="generalized",
-        x=x,
-        y=y,
-        fit_slice=(lo, hi),
+        abscissa=x,
+        ordinate=y,
+        fit_region=(lo, hi),
         intercept=fit.intercept,
         q=float(q),
+        meta={"analysis": "generalized_dimension", "kind": "generalized", "q": float(q)},
     )
 
 
@@ -233,14 +234,15 @@ def dimension_spectrum(
         y = np.array([_partition_ordinate(c, n, q) for c in occ])
         fit = _fit_masked(x, y, mask, min_window=min_window, tol=tol, what=f"D_{q:g}")
         out[q] = DimensionResult(
-            dimension=fit.slope,
+            estimate=fit.slope,
             stderr=fit.stderr,
             kind="generalized",
-            x=x,
-            y=y,
-            fit_slice=(int(where[fit.lo]), int(where[fit.hi])),
+            abscissa=x,
+            ordinate=y,
+            fit_region=(int(where[fit.lo]), int(where[fit.hi])),
             intercept=fit.intercept,
             q=q,
+            meta={"analysis": "dimension_spectrum", "kind": "generalized", "q": float(q)},
         )
     return out
 

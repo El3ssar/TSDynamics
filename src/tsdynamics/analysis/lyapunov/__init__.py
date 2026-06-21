@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 import numpy as np
 
 from tsdynamics.families import DelaySystem
 
 from ... import registry as _registry
+from .._result import AnalysisResult, ArrayResult, ScalarResult
 from .from_data import LyapunovFromData, lyapunov_from_data
 
 __all__ = [
     "LyapunovFromData",
+    "LyapunovSpectrum",
     "kaplan_yorke_dimension",
     "lyapunov_from_data",
     "lyapunov_spectrum",
@@ -20,7 +23,55 @@ __all__ = [
 ]
 
 
-def kaplan_yorke_dimension(spectrum: Any) -> float:
+@dataclass(frozen=True, eq=False)
+class LyapunovSpectrum(ArrayResult):
+    """The Lyapunov spectrum of a system — the exponents and the result surface.
+
+    An :class:`~tsdynamics.analysis._result.ArrayResult`, so it is a drop-in for
+    the bare exponent array: ``np.asarray(result)``, indexing, iteration and
+    ``result.shape`` all defer to the wrapped exponents, while it also carries
+    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.
+
+    Attributes
+    ----------
+    exponents : numpy.ndarray
+        The Lyapunov exponents, largest first.  Alias of the wrapped
+        :attr:`~tsdynamics.analysis._result.ArrayResult.values`;
+        ``np.asarray(result)`` returns them.
+    """
+
+    _repr_fields: ClassVar[tuple[str, ...]] = ("exponents",)
+
+    @property
+    def exponents(self) -> np.ndarray:
+        """The Lyapunov exponents (alias of the wrapped array)."""
+        return np.asarray(self.values)
+
+    @property
+    def kaplan_yorke(self) -> float:
+        """The Kaplan--Yorke (Lyapunov) dimension implied by this spectrum."""
+        return float(kaplan_yorke_dimension(self.values))
+
+    def _interpretation(self) -> str | None:
+        """Name the dynamics from the count of *positive* exponents.
+
+        A flow's zero exponent is only numerically near zero, so "positive" is
+        thresholded relative to the spectrum's scale (``1e-3`` of the largest
+        magnitude) rather than at an absolute floor.
+        """
+        exps = np.asarray(self.values, dtype=float)
+        if exps.size == 0:
+            return None
+        tol = max(1e-6, 1e-3 * float(np.max(np.abs(exps))))
+        n_pos = int((exps > tol).sum())
+        if n_pos >= 2:
+            return f"hyperchaotic: {n_pos} positive exponents"
+        if n_pos == 1:
+            return "chaotic: 1 positive exponent"
+        return "regular: no positive exponent"
+
+
+def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
     """
     Kaplan–Yorke (Lyapunov) dimension from a Lyapunov spectrum.
 
@@ -34,24 +85,28 @@ def kaplan_yorke_dimension(spectrum: Any) -> float:
 
     Returns
     -------
-    float
-        0.0 when every exponent is negative; ``len(spectrum)`` when the
-        cumulative sum never turns negative (spectrum incomplete).
+    ScalarResult
+        The dimension, a drop-in for its ``float`` value (``float(result)`` /
+        comparisons work): ``0.0`` when every exponent is negative;
+        ``len(spectrum)`` when the cumulative sum never turns negative (spectrum
+        incomplete).
 
     Examples
     --------
-    >>> kaplan_yorke_dimension([0.906, 0.0, -14.57])   # Lorenz
+    >>> float(kaplan_yorke_dimension([0.906, 0.0, -14.57]))   # Lorenz
     2.062...
     """
     s = np.sort(np.asarray(spectrum, dtype=float))[::-1]
     if s.size == 0 or s[0] < 0.0:
-        return 0.0
-    cum = np.cumsum(s)
-    nonneg = np.nonzero(cum >= 0.0)[0]
-    j = int(nonneg[-1])
-    if j == s.size - 1:
-        return float(s.size)  # spectrum doesn't close — dimension saturates
-    return float(j + 1 + cum[j] / abs(s[j + 1]))
+        dky = 0.0
+    else:
+        cum = np.cumsum(s)
+        j = int(np.nonzero(cum >= 0.0)[0][-1])
+        # spectrum doesn't close (j is the last index) -> dimension saturates at len
+        dky = float(s.size) if j == s.size - 1 else float(j + 1 + cum[j] / abs(s[j + 1]))
+    return ScalarResult(
+        value=dky, meta={"analysis": "kaplan_yorke_dimension", "n_exp": int(s.size)}
+    )
 
 
 def lyapunov_spectrum(
@@ -64,7 +119,7 @@ def lyapunov_spectrum(
     dt: float | None = None,
     ic: Any | None = None,
     method: str | None = None,
-) -> np.ndarray:
+) -> LyapunovSpectrum:
     """
     Lyapunov spectrum of any system — the uniform, documented entry point.
 
@@ -99,8 +154,10 @@ def lyapunov_spectrum(
 
     Returns
     -------
-    ndarray, shape ``(k,)``
-        Lyapunov exponents ordered from largest to smallest.
+    LyapunovSpectrum
+        The exponents (largest first), a drop-in for the bare ``(k,)`` array —
+        ``np.asarray(result)``, indexing and iteration work — that also carries
+        ``.meta``, ``.summary()`` and the ``.kaplan_yorke`` dimension.
 
     Examples
     --------
@@ -153,7 +210,16 @@ def lyapunov_spectrum(
                     "lyapunov_spectrum: a DDE selects its engine via backend, not method."
                 )
             fwd["method"] = method
-    return method_fn(**fwd)
+    exponents = np.asarray(method_fn(**fwd), dtype=float)
+    meta = AnalysisResult.build_meta(
+        system,
+        analysis="lyapunov_spectrum",
+        k=int(exponents.size),
+        final_time=final_time,
+        n=n,
+        transient=transient,
+    )
+    return LyapunovSpectrum(values=exponents, meta=meta)
 
 
 def max_lyapunov(
@@ -166,7 +232,7 @@ def max_lyapunov(
     transient: int = 500,
     ic: Any | None = None,
     seed: int | None = None,
-) -> float:
+) -> ScalarResult:
     """
     Maximal Lyapunov exponent by two-trajectory rescaling (Benettin et al. 1976).
 
@@ -197,8 +263,9 @@ def max_lyapunov(
 
     Returns
     -------
-    float
-        Estimated maximal exponent (per unit time / per iteration).
+    ScalarResult
+        Estimated maximal exponent (per unit time / per iteration), a drop-in for
+        its ``float`` value that also carries ``.meta`` / ``.summary()``.
 
     Examples
     --------
@@ -256,7 +323,9 @@ def max_lyapunov(
                 "max_lyapunov: the reference clock did not advance — a continuous "
                 "system must report elapsed time through time(); pass an explicit dt."
             )
-    return log_sum / elapsed
+    mle = float(log_sum / elapsed)
+    meta = AnalysisResult.build_meta(system, analysis="max_lyapunov", n=n, transient=transient)
+    return ScalarResult(value=mle, meta=meta)
 
 
 # Self-register the headline Lyapunov quantifiers (D4 / §4e: in-tree analyses

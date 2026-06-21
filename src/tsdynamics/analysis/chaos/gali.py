@@ -30,21 +30,24 @@ changing the directions GALI reads.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
+from .._result import AnalysisResult
 from . import _common as _c
 
 __all__ = ["GALIResult", "gali"]
 
 
 @dataclass(frozen=True)
-class GALIResult:
+class GALIResult(AnalysisResult):
     r"""A GALI\ :sub:`k` time series with the tools to read order vs chaos off it.
 
+    An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
+    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.
     ``float(result)`` is the final value — :math:`\approx 1` for a regular orbit,
     :math:`\to 0` for a chaotic one — so the result drops straight into a
     threshold test.
@@ -61,10 +64,12 @@ class GALIResult:
         Whether the underlying system is a map.
     """
 
-    k: int
-    times: np.ndarray = field(repr=False)
-    values: np.ndarray = field(repr=False)
-    is_discrete: bool
+    _repr_fields: ClassVar[tuple[str, ...]] = ("k", "final")
+
+    k: int = 0
+    times: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    values: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    is_discrete: bool = False
 
     def __float__(self) -> float:
         """Return the final GALI value (the order/chaos summary)."""
@@ -273,7 +278,13 @@ def gali(
         )
         if result is not None:
             times, values = result
-            return GALIResult(k=k, times=times, values=values, is_discrete=discrete)
+            return GALIResult(
+                k=k,
+                times=times,
+                values=values,
+                is_discrete=discrete,
+                meta=AnalysisResult.build_meta(system, analysis="gali", k=k),
+            )
 
     raise ValueError(
         f"gali: {type(system).__name__} orbit diverges from every tried IC after "

@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import ArrayResult, CountResult
 from ._common import _as_series
 
 __all__ = ["autocorrelation", "mutual_information", "optimal_delay"]
@@ -87,7 +88,7 @@ def mutual_information(
     bins: int | None = None,
     base: float = np.e,
     component: int | str | None = None,
-) -> np.ndarray:
+) -> ArrayResult:
     r"""Time-delayed mutual information :math:`I(\tau)` up to ``max_delay``.
 
     The histogram estimator of
@@ -159,7 +160,7 @@ def mutual_information(
         mask = joint > 0.0
         outer = p_a[:, None] * p_b[None, :]
         mi[tau] = float(np.sum(joint[mask] * log(joint[mask] / outer[mask])))
-    return mi
+    return ArrayResult(values=mi, meta={"analysis": "mutual_information", "max_delay": max_delay})
 
 
 def _first_local_min(curve: np.ndarray) -> int | None:
@@ -177,7 +178,7 @@ def optimal_delay(
     max_delay: int = 50,
     bins: int | None = None,
     component: int | str | None = None,
-) -> int:
+) -> CountResult:
     r"""Recommend an embedding delay :math:`\tau` (in samples).
 
     Parameters
@@ -210,23 +211,25 @@ def optimal_delay(
     """
     method = method.lower()
     if method == "mi":
-        mi = mutual_information(data, max_delay=max_delay, bins=bins, component=component)
+        mi = np.asarray(
+            mutual_information(data, max_delay=max_delay, bins=bins, component=component)
+        )
         k = _first_local_min(mi)
         if k is None:  # monotone / no interior dip: fall back to the global minimum
             k = int(np.argmin(mi[1:])) + 1 if mi.size > 1 else 1
-        return max(int(k), 1)
-
-    if method in ("acf", "acf_zero"):
+        tau = max(int(k), 1)
+    elif method in ("acf", "acf_zero"):
         acf = autocorrelation(data, max_delay=max_delay, component=component)
         if method == "acf":
             below = np.flatnonzero(acf[1:] <= 1.0 / np.e)
         else:
             below = np.flatnonzero(acf[1:] <= 0.0)
-        if below.size:
-            return int(below[0]) + 1
-        return max(int(acf.size) - 1, 1)  # never crosses → longest lag available
+        # never crosses → longest lag available
+        tau = int(below[0]) + 1 if below.size else max(int(acf.size) - 1, 1)
+    else:
+        raise ValueError(f"unknown method {method!r}; use 'mi', 'acf', or 'acf_zero'.")
 
-    raise ValueError(f"unknown method {method!r}; use 'mi', 'acf', or 'acf_zero'.")
+    return CountResult(value=int(tau), meta={"analysis": "optimal_delay", "method": method})
 
 
 def __dir__() -> list[str]:

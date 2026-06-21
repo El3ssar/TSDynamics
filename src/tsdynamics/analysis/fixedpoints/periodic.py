@@ -32,14 +32,15 @@ import numpy as np
 
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
+from .._result import AnalysisResult, CollectionResult, ScalarResult
 from . import _common as _c
 from .fixed import _build_seeds, _stabilising_matrices
 
-__all__ = ["PeriodicOrbit", "estimate_period", "periodic_orbit", "periodic_orbits"]
+__all__ = ["OrbitSet", "PeriodicOrbit", "estimate_period", "periodic_orbit", "periodic_orbits"]
 
 
 @dataclass(frozen=True)
-class PeriodicOrbit:
+class PeriodicOrbit(AnalysisResult):
     r"""A periodic orbit with its Floquet/multiplier stability data.
 
     Attributes
@@ -63,10 +64,10 @@ class PeriodicOrbit:
         Closure residual ``‖f^p(x) − x‖`` (map) or ``‖φ_T(x0) − x0‖`` (flow).
     """
 
-    points: np.ndarray = field(repr=False)
-    period: int | float
-    multipliers: np.ndarray = field(repr=False)
-    stable: bool
+    points: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    period: int | float = 0
+    multipliers: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    stable: bool = False
     continuous: bool = False
     residual: float = 0.0
 
@@ -75,6 +76,27 @@ class PeriodicOrbit:
         mu = np.abs(self.multipliers).max() if self.multipliers.size else float("nan")
         per = f"T={self.period:.6g}" if self.continuous else f"p={int(self.period)}"
         return f"PeriodicOrbit({per}, {kind}, |μ|max={mu:.4f}, n={len(self.points)})"
+
+
+@dataclass(frozen=True, eq=False)
+class OrbitSet(CollectionResult):
+    """The set of periodic orbits found, behaving like a ``list``.
+
+    A :class:`~tsdynamics.analysis._result.CollectionResult`: iterate it, index it
+    (``orbits[0]`` is a :class:`PeriodicOrbit`), take its ``len``, and read
+    :attr:`stable` / :attr:`unstable` sublists — while it carries ``.meta`` /
+    ``.summary()`` / ``.to_frame()`` / the ``.plot`` seam.
+    """
+
+    @property
+    def stable(self) -> list[PeriodicOrbit]:
+        """The stable orbits in the set."""
+        return [o for o in self.items if o.stable]
+
+    @property
+    def unstable(self) -> list[PeriodicOrbit]:
+        """The unstable orbits in the set."""
+        return [o for o in self.items if not o.stable]
 
 
 # ── periodic orbits of maps ───────────────────────────────────────────────────
@@ -95,7 +117,7 @@ def periodic_orbits(
     prime: bool = True,
     max_c: int | None = None,
     seed: int | None = None,
-) -> list[PeriodicOrbit]:
+) -> OrbitSet:
     r"""
     Find period-``period`` orbits of a discrete map.
 
@@ -205,7 +227,12 @@ def periodic_orbits(
             )
         )
     orbits.sort(key=lambda o: tuple(np.asarray(o.points)[0]))
-    return orbits
+    return OrbitSet(
+        items=tuple(orbits),
+        meta=AnalysisResult.build_meta(
+            system, analysis="periodic_orbits", period=int(period), method=method
+        ),
+    )
 
 
 def _minimal_period(
@@ -394,6 +421,7 @@ def periodic_orbit(
         stable=stable,
         continuous=True,
         residual=residual,
+        meta=AnalysisResult.build_meta(system, analysis="periodic_orbit", period=float(t_period)),
     )
 
 
@@ -453,7 +481,7 @@ def _guess_period(system: Any, x0: np.ndarray, dim: int, t_run: float = 200.0) -
         series[i] = x[var_col]
         x = _c.rk4_state(rhs, x, t, h)
         t += h
-    return estimate_period(series, dt=h)
+    return float(estimate_period(series, dt=h))
 
 
 def _component_variance(rhs: Any, x0: np.ndarray, h: float, comp: int, n: int = 400) -> float:
@@ -478,7 +506,7 @@ def estimate_period(
     method: str = "autocorrelation",
     max_delay: int | None = None,
     detrend: bool = True,
-) -> float:
+) -> ScalarResult:
     r"""
     Estimate the dominant period of a sampled signal.
 
@@ -534,7 +562,9 @@ def estimate_period(
         lag = _fft_period_lag(y)
     else:
         raise ValueError(f"method must be 'autocorrelation' or 'fft', got {method!r}.")
-    return float(lag * step)
+    return ScalarResult(
+        value=float(lag * step), meta={"analysis": "estimate_period", "method": method}
+    )
 
 
 def _coerce_signal(

@@ -10,11 +10,12 @@ lives in :mod:`._scaling`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 import numpy as np
 
+from .._result import ScalingResult
 from ._scaling import local_slopes
 
 __all__ = ["DimensionResult"]
@@ -187,30 +188,35 @@ def _default_scales(
 
 
 @dataclass(frozen=True)
-class DimensionResult:
+class DimensionResult(ScalingResult):
     r"""A fractal-dimension estimate with the log--log curve it was read from.
 
-    Returned by every estimator in this subpackage.  It behaves as the
-    dimension number in arithmetic (``float(result)`` and comparisons), while
-    carrying the full curve so the scaling region and local slopes can be
-    inspected or plotted.
+    Returned by every estimator in this subpackage.  A
+    :class:`~tsdynamics.analysis._result.ScalingResult` — the dimension is the
+    fitted slope of a log--log curve — so it inherits the canonical ``estimate`` /
+    ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result surface
+    (``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam) and behaves
+    as the dimension number (``float(result)`` and comparisons).  Domain-named
+    ``@property`` aliases (:attr:`dimension`, :attr:`x`, :attr:`y`,
+    :attr:`fit_slice`) preserve the original field names.
 
     Attributes
     ----------
-    dimension : float
-        The estimated dimension (the fitted slope).
+    estimate : float
+        The estimated dimension (the fitted slope).  Aliased :attr:`dimension`.
     stderr : float
         Standard error of the slope over the selected scaling region.
     kind : str
         Which estimator produced it (``"correlation"``, ``"generalized"``,
         ``"fixed_mass"``).
-    x, y : ndarray
+    abscissa, ordinate : ndarray
         The log--log curve the slope was fitted to (log-radius vs log-C for the
         correlation sum; log-scale vs partition ordinate for the generalized
-        dimensions; mean-log-radius vs log-mass for fixed mass).
-    fit_slice : tuple[int, int]
-        Inclusive ``(lo, hi)`` indices of the selected scaling region in
-        ``x``/``y``.
+        dimensions; mean-log-radius vs log-mass for fixed mass).  Aliased
+        :attr:`x`, :attr:`y`.
+    fit_region : tuple[int, int]
+        Inclusive ``(lo, hi)`` indices of the selected scaling region.  Aliased
+        :attr:`fit_slice`.
     intercept : float
         Intercept of the fitted line.
     q : float or None
@@ -218,18 +224,30 @@ class DimensionResult:
         sum, ``None`` for fixed mass).
     """
 
-    dimension: float
-    stderr: float
-    kind: str
-    x: np.ndarray = field(repr=False)
-    y: np.ndarray = field(repr=False)
-    fit_slice: tuple[int, int]
-    intercept: float
+    _repr_fields: ClassVar[tuple[str, ...]] = ("kind", "dimension", "stderr", "q")
+
+    kind: str = ""
     q: float | None = None
 
-    def __float__(self) -> float:
-        """Return the dimension number, so the result drops into arithmetic."""
-        return float(self.dimension)
+    @property
+    def dimension(self) -> float:
+        """The estimated dimension (alias of :attr:`estimate`)."""
+        return float(self.estimate)
+
+    @property
+    def x(self) -> np.ndarray:
+        """The log-scale abscissa of the curve (alias of :attr:`abscissa`)."""
+        return self.abscissa
+
+    @property
+    def y(self) -> np.ndarray:
+        """The log-count ordinate of the curve (alias of :attr:`ordinate`)."""
+        return self.ordinate
+
+    @property
+    def fit_slice(self) -> tuple[int, int]:
+        """The selected scaling region (alias of :attr:`fit_region`)."""
+        return self.fit_region
 
     @property
     def local_slopes(self) -> np.ndarray:

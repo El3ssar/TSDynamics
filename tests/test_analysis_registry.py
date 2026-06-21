@@ -16,11 +16,18 @@ registered analysis/transform.
 
 from __future__ import annotations
 
+import types as _types
+import typing
 from collections.abc import Mapping
+
+import numpy as np
+import pytest
 
 import tsdynamics as ts
 import tsdynamics.transforms as tx  # noqa: F401  (import populates registry.transforms)
 from tsdynamics import registry
+from tsdynamics.analysis._result import AnalysisResult
+from tsdynamics.data import Trajectory
 
 # ---------------------------------------------------------------------------
 # Parametrized contract: analyses (one run per registered analysis)
@@ -207,3 +214,126 @@ def test_registry_names_match_entry_names():
     """``names()`` and ``all()`` agree element-for-element (no stale/aliased keys)."""
     for reg in (registry.analyses, registry.transforms):
         assert reg.names() == [e.name for e in reg.all()]
+
+
+# ---------------------------------------------------------------------------
+# Result-object contract (stream WS-WRAP)
+#
+# Every registered analysis returns a self-describing AnalysisResult (carrying
+# .meta), never a bare float/ndarray/list — the v4 result-model invariant.  The
+# sweep below is registry-driven, so a new analysis joins it with zero edits; a
+# function that forgets to wrap its return fails loudly here.
+# ---------------------------------------------------------------------------
+
+#: Registered analyses that legitimately return something other than an
+#: ``AnalysisResult``, with the type they DO return.  ``poincare_section`` returns
+#: a :class:`~tsdynamics.data.Trajectory` carrying provenance; the named,
+#: viz-ready ``PoincareSection`` result is delivered by stream WS-POINCARE-API
+#: (issue #209), which owns ``analysis/orbits/poincare.py``.
+_RESULT_CARVE_OUTS: dict[str, type] = {
+    "poincare_section": Trajectory,
+}
+
+
+def _return_annotation_types(fn: object) -> tuple[object, ...]:
+    """Flatten a callable's resolved return annotation into its component types.
+
+    Unwraps ``Optional`` / ``X | Y`` unions so an annotation like
+    ``ScalarResult | tuple[ScalarResult, ndarray]`` yields the ``ScalarResult``
+    member.  Returns an empty tuple when there is no return annotation.
+    """
+    hints = typing.get_type_hints(fn)
+    annotation = hints.get("return")
+    if annotation is None:
+        return ()
+    flat: list[object] = []
+
+    def _walk(node: object) -> None:
+        origin = typing.get_origin(node)
+        if origin in (typing.Union, _types.UnionType):
+            for arg in typing.get_args(node):
+                _walk(arg)
+        else:
+            flat.append(node)
+
+    _walk(annotation)
+    return tuple(flat)
+
+
+def test_analysis_returns_analysis_result(analysis_entry):
+    """Every registered analysis declares an ``AnalysisResult`` return (or a carve-out).
+
+    Freezes the v4 result-model invariant: bare ``float``/``ndarray``/``list``
+    returns are gone.  The check reads the (resolved) return annotation, so it
+    runs without constructing inputs for all 48 analyses — the per-area test
+    modules verify the *runtime* objects.
+    """
+    name = analysis_entry.name
+    types = _return_annotation_types(analysis_entry.obj)
+
+    if name in _RESULT_CARVE_OUTS:
+        expected = _RESULT_CARVE_OUTS[name]
+        assert expected in types, (
+            f"carve-out {name!r} should return {expected.__name__}, got annotation {types}"
+        )
+        return
+
+    assert any(isinstance(t, type) and issubclass(t, AnalysisResult) for t in types), (
+        f"analysis {name!r} must return an AnalysisResult subclass "
+        f"(got return annotation {types or 'none'})"
+    )
+
+
+def _henon():
+    """A small Hénon map for runtime result-contract smoke checks."""
+    return ts.systems.Henon()
+
+
+def _logistic_series() -> np.ndarray:
+    """A deterministic chaotic series (logistic, r=3.9) for data-consuming analyses."""
+    x = np.empty(600)
+    x[0] = 0.4
+    for i in range(1, x.size):
+        x[i] = 3.9 * x[i - 1] * (1.0 - x[i - 1])
+    return x
+
+
+# (name, thunk) covering every result-wrapper KIND at runtime: scalar, count,
+# array, scaling, collection, and the rich per-stream result dataclasses.  Proves
+# the wrapping actually fires (isinstance + a populated .meta), complementing the
+# annotation sweep above.
+def _runtime_cases() -> list[tuple[str, object]]:
+    series = _logistic_series()
+    traj = _henon().iterate(steps=600, ic=[0.1, 0.1])
+    spectrum = [0.42, -1.62]
+    return [
+        ("lyapunov_spectrum", lambda: ts.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1])),
+        ("max_lyapunov", lambda: ts.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
+        ("kaplan_yorke_dimension", lambda: ts.kaplan_yorke_dimension(spectrum)),
+        ("zero_one_test", lambda: ts.zero_one_test(series)),
+        ("permutation_entropy", lambda: ts.permutation_entropy(series)),
+        ("lz76_complexity", lambda: ts.lz76_complexity(series)),
+        ("correlation_dimension", lambda: ts.correlation_dimension(traj)),
+        ("embed", lambda: ts.embed(series, 3, 1)),
+        ("optimal_delay", lambda: ts.optimal_delay(series, max_delay=20)),
+        ("mutual_information", lambda: ts.mutual_information(series, max_delay=20)),
+        ("surrogates", lambda: ts.surrogates(series, "shuffle", 4, seed=0)),
+        ("surrogate_test", lambda: ts.surrogate_test(series, n=19, seed=0)),
+        ("recurrence_matrix", lambda: ts.recurrence_matrix(traj, recurrence_rate=0.05)),
+        ("fixed_points", lambda: ts.fixed_points(_henon(), seed=0)),
+    ]
+
+
+_RUNTIME_CASES = _runtime_cases()
+
+
+@pytest.mark.parametrize("name,thunk", _RUNTIME_CASES, ids=[c[0] for c in _RUNTIME_CASES])
+def test_analysis_runtime_result_contract(name, thunk):
+    """A representative analysis of each result kind returns a live AnalysisResult.
+
+    Asserts the wrapping fires at runtime: the value is an ``AnalysisResult`` and
+    carries a mapping ``.meta``.  Complements the annotation sweep, which is static.
+    """
+    result = thunk()
+    assert isinstance(result, AnalysisResult), f"{name} returned {type(result).__name__}"
+    assert isinstance(result.meta, Mapping) and result.meta, f"{name} has no provenance .meta"

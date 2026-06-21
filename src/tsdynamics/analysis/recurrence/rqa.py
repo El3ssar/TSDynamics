@@ -29,6 +29,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import AnalysisResult
 from ._common import _run_lengths, _runs_from_sorted
 from .matrix import RecurrenceMatrix, recurrence_matrix
 
@@ -36,7 +37,7 @@ __all__ = ["RQAResult", "rqa"]
 
 
 @dataclass(frozen=True)
-class RQAResult:
+class RQAResult(AnalysisResult):
     r"""Recurrence-quantification measures of one recurrence matrix.
 
     Attributes
@@ -89,8 +90,8 @@ class RQAResult:
     theiler_window: int
     min_diagonal: int
     min_vertical: int
-    diagonal_lengths: np.ndarray = field(repr=False)
-    vertical_lengths: np.ndarray = field(repr=False)
+    diagonal_lengths: np.ndarray = field(repr=False, compare=False)
+    vertical_lengths: np.ndarray = field(repr=False, compare=False)
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe the diagonal line-length distribution as a :class:`PlotSpec`.
@@ -272,6 +273,12 @@ def rqa(
         min_vertical=vmin,
         diagonal_lengths=diag,
         vertical_lengths=vert,
+        meta={
+            "analysis": "rqa",
+            "size": int(rm.size),
+            "epsilon": float(rm.epsilon),
+            "theiler": int(rm.theiler_window),
+        },
     )
 
 

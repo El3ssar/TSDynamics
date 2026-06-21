@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from ...data import Ball, Box, Grid, set_distance
+from .._result import AnalysisResult, CollectionResult
 from .attractors import Attractor
 from .basins import basin_fractions
 
@@ -32,7 +33,7 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class ContinuationResult:
+class ContinuationResult(AnalysisResult):
     """
     Attractors and basin fractions tracked across a parameter sweep.
 
@@ -51,18 +52,18 @@ class ContinuationResult:
         Diverged fraction at each value.
     """
 
-    param: str
-    values: np.ndarray
-    fractions: dict[int, np.ndarray]
-    attractors: list[dict[int, Attractor]] = field(repr=False)
-    diverged: np.ndarray = field(repr=False)
+    param: str = ""
+    values: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)
+    fractions: dict[int, np.ndarray] = field(default_factory=dict, compare=False)
+    attractors: list[dict[int, Attractor]] = field(default_factory=list, repr=False, compare=False)
+    diverged: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
 
     @property
     def ids(self) -> list[int]:
         """Sorted global attractor ids seen anywhere in the sweep."""
         return sorted(self.fractions)
 
-    def tipping_points(self, *, threshold: float = 0.0) -> list[dict[str, Any]]:
+    def tipping_points(self, *, threshold: float = 0.0) -> CollectionResult:
         """Tipping events along this continuation (see :func:`tipping_points`)."""
         return tipping_points(self, threshold=threshold)
 
@@ -181,6 +182,7 @@ def continuation(
         fractions=frac_arrays,
         attractors=per_value,
         diverged=np.asarray(diverged),
+        meta=AnalysisResult.build_meta(system, analysis="continuation", param=param),
     )
 
 
@@ -223,7 +225,7 @@ def _match(
     return mapping, next_global
 
 
-def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> list[dict[str, Any]]:
+def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> CollectionResult:
     r"""
     Read tipping events off a continuation.
 
@@ -269,7 +271,10 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> lis
                 }
             )
     events.sort(key=lambda e: (e["value"], e["attractor"]))
-    return events
+    return CollectionResult(
+        items=tuple(events),
+        meta={"analysis": "tipping_points", "threshold": float(threshold)},
+    )
 
 
 def __dir__() -> list[str]:

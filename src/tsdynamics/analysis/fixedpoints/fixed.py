@@ -19,21 +19,26 @@ turn each instability type into a contracting one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
+from .._result import AnalysisResult, CollectionResult
 from . import _common as _c
 
-__all__ = ["FixedPoint", "fixed_points"]
+__all__ = ["FixedPoint", "FixedPointSet", "fixed_points"]
 
 
 @dataclass(frozen=True)
-class FixedPoint:
+class FixedPoint(AnalysisResult):
     """A fixed point (map) or equilibrium (flow) with its linear stability data.
+
+    An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
+    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam alongside its
+    point and stability data.
 
     Attributes
     ----------
@@ -50,9 +55,9 @@ class FixedPoint:
         which stability convention ``stable`` uses.
     """
 
-    x: np.ndarray
-    eigenvalues: np.ndarray
-    stable: bool
+    x: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)
+    eigenvalues: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    stable: bool = False
     continuous: bool = False
 
     def __repr__(self) -> str:  # noqa: D105
@@ -62,6 +67,27 @@ class FixedPoint:
         else:
             gauge = f"|λ|max={np.abs(self.eigenvalues).max():.4f}"
         return f"FixedPoint({np.round(self.x, 6)}, {kind}, {gauge})"
+
+
+@dataclass(frozen=True, eq=False)
+class FixedPointSet(CollectionResult):
+    """The set of fixed points / equilibria found, behaving like a ``list``.
+
+    A :class:`~tsdynamics.analysis._result.CollectionResult`: iterate it, index it
+    (``fps[0]`` is a :class:`FixedPoint`), take its ``len``, and read
+    :attr:`stable` / :attr:`unstable` sublists — while it carries ``.meta`` /
+    ``.summary()`` / ``.to_frame()`` / the ``.plot`` seam.
+    """
+
+    @property
+    def stable(self) -> list[FixedPoint]:
+        """The stable fixed points / equilibria in the set."""
+        return [fp for fp in self.items if fp.stable]
+
+    @property
+    def unstable(self) -> list[FixedPoint]:
+        """The unstable fixed points / equilibria in the set."""
+        return [fp for fp in self.items if not fp.stable]
 
 
 def fixed_points(
@@ -77,7 +103,7 @@ def fixed_points(
     beta: float = 1.0,
     max_c: int | None = None,
     seed: int | None = None,
-) -> list[FixedPoint]:
+) -> FixedPointSet:
     r"""
     Find fixed points of a map (``f(x) = x``) or equilibria of a flow (``f(x) = 0``).
 
@@ -206,7 +232,10 @@ def fixed_points(
     )
     out = [classify(r) for r in roots]
     out.sort(key=lambda fp: tuple(fp.x))
-    return out
+    return FixedPointSet(
+        items=tuple(out),
+        meta=AnalysisResult.build_meta(system, analysis="fixed_points", method=method),
+    )
 
 
 def _build_seeds(

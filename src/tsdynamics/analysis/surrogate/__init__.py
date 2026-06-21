@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from ... import registry as _registry
 from .generators import (
+    SurrogateEnsemble,
     aaft_surrogate,
     fourier_surrogate,
     iaaft_surrogate,
@@ -37,6 +38,7 @@ from .hypothesis import SurrogateTest, surrogate_test
 from .statistics import nonlinear_prediction_error, time_reversal_asymmetry
 
 __all__ = [
+    "SurrogateEnsemble",
     "SurrogateTest",
     "aaft_surrogate",
     "fourier_surrogate",

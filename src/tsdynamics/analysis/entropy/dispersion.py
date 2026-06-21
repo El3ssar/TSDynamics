@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .._result import ScalarResult
 from .core import Dispersion, Shannon, entropy
 
 __all__ = ["dispersion_entropy"]
@@ -25,7 +26,7 @@ def dispersion_entropy(
     base: float = 2.0,
     normalize: bool = True,
     component: int | str | None = None,
-) -> float:
+) -> ScalarResult:
     r"""
     Dispersion entropy of a time series (Rostaghi & Azami 2016).
 
@@ -61,15 +62,25 @@ def dispersion_entropy(
     Examples
     --------
     >>> rng = np.random.default_rng(0)
-    >>> dispersion_entropy(rng.random(10000))         # white noise → ≈ 1
+    >>> float(dispersion_entropy(rng.random(10000)))         # white noise → ≈ 1
     0.99...
     """
-    return entropy(
+    h = entropy(
         data,
         outcomes=Dispersion(c, dimension, delay),
         measure=Shannon(base),
         normalize=normalize,
         component=component,
+    )
+    return ScalarResult(
+        value=float(h),
+        meta={
+            "analysis": "dispersion_entropy",
+            "c": c,
+            "dimension": dimension,
+            "delay": delay,
+            "normalize": bool(normalize),
+        },
     )
 
 

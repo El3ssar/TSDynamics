@@ -25,59 +25,74 @@ variational fundamental matrix).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 import numpy as np
 
 from tsdynamics.data import Box, sampler
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
+from .._result import AnalysisResult, ScalingResult
 from . import _common as _c
 
 __all__ = ["ExpansionEntropyResult", "expansion_entropy"]
 
 
 @dataclass(frozen=True)
-class ExpansionEntropyResult:
+class ExpansionEntropyResult(ScalingResult):
     r"""An expansion-entropy estimate with the growth curve it was read from.
 
-    ``float(result)`` is the entropy :math:`H` (the fitted slope), so the result
-    drops straight into arithmetic and thresholds.
+    A :class:`~tsdynamics.analysis._result.ScalingResult` — the entropy is the
+    slope of :math:`\ln E(t)` against :math:`t` — so it inherits the canonical
+    ``estimate`` / ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result
+    surface (``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam) and
+    ``float(result)`` (the entropy :math:`H`).  Domain-named ``@property`` aliases
+    (:attr:`entropy`, :attr:`times`, :attr:`log_growth`, :attr:`fit_slice`)
+    preserve the original field names.
 
     Attributes
     ----------
-    entropy : float
-        The estimated expansion entropy :math:`H` (slope of :math:`\ln E` vs
-        :math:`t`).
-    stderr : float
-        Standard error of the slope over the fitted range.
-    times : ndarray
-        The :math:`t` grid (iterations for maps, time for flows).
-    log_growth : ndarray
-        :math:`\ln E(t)` at each :math:`t`.
+    estimate : float
+        The estimated expansion entropy :math:`H`.  Aliased :attr:`entropy`.
+    abscissa : ndarray
+        The :math:`t` grid (iterations for maps, time for flows).  Aliased
+        :attr:`times`.
+    ordinate : ndarray
+        :math:`\ln E(t)` at each :math:`t`.  Aliased :attr:`log_growth`.
+    fit_region : tuple[int, int]
+        Inclusive ``(lo, hi)`` indices of the fitted range.  Aliased
+        :attr:`fit_slice`.
     n_samples : int
         Number of initial conditions sampled in the region.
     n_survivors : int
         How many of them stayed in the region for the whole run.
-    fit_slice : tuple[int, int]
-        Inclusive ``(lo, hi)`` indices of the fitted range in ``times``.
-    intercept : float
-        Intercept of the fitted line.
     """
 
-    entropy: float
-    stderr: float
-    times: np.ndarray = field(repr=False)
-    log_growth: np.ndarray = field(repr=False)
-    n_samples: int
-    n_survivors: int
-    fit_slice: tuple[int, int]
-    intercept: float
+    _repr_fields: ClassVar[tuple[str, ...]] = ("entropy", "stderr", "n_survivors", "n_samples")
 
-    def __float__(self) -> float:
-        """Return the entropy number, so the result drops into arithmetic."""
-        return float(self.entropy)
+    n_samples: int = 0
+    n_survivors: int = 0
+
+    @property
+    def entropy(self) -> float:
+        """The estimated expansion entropy (alias of :attr:`estimate`)."""
+        return float(self.estimate)
+
+    @property
+    def times(self) -> np.ndarray:
+        """The :math:`t` grid (alias of :attr:`abscissa`)."""
+        return self.abscissa
+
+    @property
+    def log_growth(self) -> np.ndarray:
+        r"""The :math:`\ln E(t)` curve (alias of :attr:`ordinate`)."""
+        return self.ordinate
+
+    @property
+    def fit_slice(self) -> tuple[int, int]:
+        """The fitted index range (alias of :attr:`fit_region`)."""
+        return self.fit_region
 
     def __repr__(self) -> str:  # noqa: D105
         return (
@@ -182,14 +197,17 @@ def expansion_entropy(
         )
     slope, intercept, stderr = _c._linfit(t_fit[finite], y_fit[finite])
     return ExpansionEntropyResult(
-        entropy=slope,
+        estimate=slope,
         stderr=stderr,
-        times=times,
-        log_growth=log_growth,
+        abscissa=times,
+        ordinate=log_growth,
+        fit_region=(lo, hi),
+        intercept=intercept,
         n_samples=int(n_samples),
         n_survivors=int(survivors),
-        fit_slice=(lo, hi),
-        intercept=intercept,
+        meta=AnalysisResult.build_meta(
+            system, analysis="expansion_entropy", n_samples=int(n_samples)
+        ),
     )
 
 

@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import ScalarResult
 from .core import as_series
 
 __all__ = ["binarize", "lz76_complexity", "lz76_entropy", "lz76_factors"]
@@ -185,7 +186,7 @@ def lz76_complexity(
     normalize: bool = False,
     provider: str = "native",
     component: int | str | None = None,
-) -> float:
+) -> ScalarResult:
     r"""
     Lempel–Ziv (LZ76) complexity of a sequence.
 
@@ -219,9 +220,9 @@ def lz76_complexity(
 
     Examples
     --------
-    >>> lz76_complexity("0001101001000101", symbolize=None)   # Kaspar–Schuster
+    >>> float(lz76_complexity("0001101001000101", symbolize=None))   # Kaspar–Schuster
     6.0
-    >>> lz76_complexity("aaaaaaaa", symbolize=None)            # constant → 2
+    >>> float(lz76_complexity("aaaaaaaa", symbolize=None))            # constant → 2
     2.0
     """
     codes = _to_codes(data, symbolize, threshold, component)
@@ -235,9 +236,11 @@ def lz76_complexity(
     else:
         raise ValueError(f"unknown provider {provider!r}; use 'native' or 'lzcomplexity'.")
 
-    if normalize:
-        return _normalized_density(c, n, k)
-    return float(c)
+    value = _normalized_density(c, n, k) if normalize else float(c)
+    return ScalarResult(
+        value=float(value),
+        meta={"analysis": "lz76_complexity", "normalize": bool(normalize), "n_symbols": k},
+    )
 
 
 def lz76_entropy(
@@ -247,7 +250,7 @@ def lz76_entropy(
     threshold: str | float = "median",
     provider: str = "native",
     component: int | str | None = None,
-) -> float:
+) -> ScalarResult:
     r"""
     LZ76 entropy-rate estimate ``h ≈ c(S)·log_k(n)/n``.
 
@@ -262,14 +265,17 @@ def lz76_entropy(
         Entropy density in units of ``log_k`` (i.e. normalised to ``[0, ~1]`` for
         a ``k``-symbol source).
     """
-    return lz76_complexity(
-        data,
-        symbolize=symbolize,
-        threshold=threshold,
-        normalize=True,
-        provider=provider,
-        component=component,
+    value = float(
+        lz76_complexity(
+            data,
+            symbolize=symbolize,
+            threshold=threshold,
+            normalize=True,
+            provider=provider,
+            component=component,
+        )
     )
+    return ScalarResult(value=value, meta={"analysis": "lz76_entropy"})
 
 
 def _normalized_density(c: int, n: int, k: int) -> float:

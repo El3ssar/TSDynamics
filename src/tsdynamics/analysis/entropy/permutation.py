@@ -17,6 +17,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import ScalarResult
 from .core import OrdinalPatterns, Shannon, as_series, entropy
 
 __all__ = ["permutation_entropy", "weighted_permutation_entropy"]
@@ -30,7 +31,7 @@ def permutation_entropy(
     base: float = 2.0,
     normalize: bool = True,
     component: int | str | None = None,
-) -> float:
+) -> ScalarResult:
     r"""
     Permutation entropy of a time series (Bandt & Pompe 2002).
 
@@ -68,15 +69,24 @@ def permutation_entropy(
     >>> permutation_entropy(np.arange(1000))          # monotone → 0
     0.0
     >>> rng = np.random.default_rng(0)
-    >>> permutation_entropy(rng.random(10000))        # white noise → ≈ 1
+    >>> float(permutation_entropy(rng.random(10000)))        # white noise → ≈ 1
     0.99...
     """
-    return entropy(
+    h = entropy(
         data,
         outcomes=OrdinalPatterns(dimension, delay),
         measure=Shannon(base),
         normalize=normalize,
         component=component,
+    )
+    return ScalarResult(
+        value=float(h),
+        meta={
+            "analysis": "permutation_entropy",
+            "dimension": dimension,
+            "delay": delay,
+            "normalize": bool(normalize),
+        },
     )
 
 
@@ -88,7 +98,7 @@ def weighted_permutation_entropy(
     base: float = 2.0,
     normalize: bool = True,
     component: int | str | None = None,
-) -> float:
+) -> ScalarResult:
     r"""
     Weighted permutation entropy (Fadlallah et al. 2013).
 
@@ -115,13 +125,24 @@ def weighted_permutation_entropy(
     total = weighted.sum()
     if total == 0:
         # All windows are flat (zero variance) → no amplitude information.
-        return 0.0
-    p = weighted / total
-    h = Shannon(base).apply(p)
-    if normalize:
-        hmax = Shannon(base).maximum(space.cardinality)
-        return h / hmax if hmax > 0 else 0.0
-    return h
+        value = 0.0
+    else:
+        p = weighted / total
+        h = Shannon(base).apply(p)
+        if normalize:
+            hmax = Shannon(base).maximum(space.cardinality)
+            value = h / hmax if hmax > 0 else 0.0
+        else:
+            value = h
+    return ScalarResult(
+        value=float(value),
+        meta={
+            "analysis": "weighted_permutation_entropy",
+            "dimension": dimension,
+            "delay": delay,
+            "normalize": bool(normalize),
+        },
+    )
 
 
 def __dir__() -> list[str]:

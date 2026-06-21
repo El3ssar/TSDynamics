@@ -28,6 +28,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import AnalysisResult, ScalarResult
 from . import _common as _c
 
 __all__ = ["zero_one_test"]
@@ -98,7 +99,7 @@ def zero_one_test(
     n_cut: int | None = None,
     seed: int | None = 0,
     return_distribution: bool = False,
-) -> float | tuple[float, np.ndarray]:
+) -> ScalarResult | tuple[ScalarResult, np.ndarray]:
     r"""Run the 0--1 test for chaos on a system or a measured observable.
 
     Parameters
@@ -138,9 +139,11 @@ def zero_one_test(
 
     Returns
     -------
-    float or (float, ndarray)
+    ScalarResult or (ScalarResult, ndarray)
         The median growth rate :math:`K \in [0, 1]` (``~0`` regular, ``~1``
-        chaotic); with ``return_distribution`` also the ``K_c`` values.
+        chaotic) as a drop-in for its ``float`` value (``result > 0.9`` and
+        ``float(result)`` work) carrying ``.meta``; with ``return_distribution``
+        also the ``K_c`` values.
 
     Examples
     --------
@@ -193,7 +196,8 @@ def zero_one_test(
         k_c[idx] = _c._pearson(lags, d)
 
     k = float(np.median(k_c))
-    return (k, k_c) if return_distribution else k
+    result = ScalarResult(value=k, meta=AnalysisResult.build_meta(system, analysis="zero_one_test"))
+    return (result, k_c) if return_distribution else result
 
 
 def __dir__() -> list[str]:

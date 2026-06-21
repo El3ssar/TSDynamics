@@ -7,25 +7,27 @@ from typing import Any
 
 import numpy as np
 
+from .._result import AnalysisResult
 from .poincare import _seeded_ic
 
 __all__ = ["OrbitDiagram", "orbit_diagram"]
 
 
-@dataclass
-class OrbitDiagram:
+@dataclass(frozen=True)
+class OrbitDiagram(AnalysisResult):
     """
     Result of :func:`orbit_diagram`.
 
-    Iterate to get ``(value, points)`` pairs, or use :meth:`flat` for the
-    scatter-ready arrays.
+    An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
+    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.  Iterate to
+    get ``(value, points)`` pairs, or use :meth:`flat` for the scatter-ready
+    arrays.
     """
 
-    param: str
-    values: np.ndarray  # (V,)
-    points: list[np.ndarray]  # per value: (n, k) recorded components
-    components: tuple[int, ...]
-    meta: dict = field(default_factory=dict)
+    param: str = ""
+    values: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)  # (V,)
+    points: list[np.ndarray] = field(default_factory=list, compare=False)  # per value (n, k)
+    components: tuple[int, ...] = ()
 
     def __iter__(self):
         return iter(zip(self.values, self.points, strict=True))

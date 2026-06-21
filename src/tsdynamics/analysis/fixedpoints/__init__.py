@@ -31,11 +31,13 @@ Davidchack & Lai (1999), *Phys. Rev. E* 60, 6172.
 from __future__ import annotations
 
 from ... import registry as _registry
-from .fixed import FixedPoint, fixed_points
-from .periodic import PeriodicOrbit, estimate_period, periodic_orbit, periodic_orbits
+from .fixed import FixedPoint, FixedPointSet, fixed_points
+from .periodic import OrbitSet, PeriodicOrbit, estimate_period, periodic_orbit, periodic_orbits
 
 __all__ = [
     "FixedPoint",
+    "FixedPointSet",
+    "OrbitSet",
     "PeriodicOrbit",
     "estimate_period",
     "fixed_points",

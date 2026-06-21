@@ -24,10 +24,11 @@ Both read a single scalar series and a fixed delay (use
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
+from .._result import AnalysisResult
 from ._common import _as_series
 
 __all__ = [
@@ -39,12 +40,14 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class EmbeddingDimension:
+class EmbeddingDimension(AnalysisResult):
     r"""A minimum-embedding-dimension estimate with the curve it was read from.
 
-    Behaves as the dimension integer in arithmetic (``int(result)``), while
-    carrying the per-dimension diagnostic so the saturation/decay can be
-    inspected or plotted.
+    An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
+    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.  It also
+    behaves as the dimension integer (``int(result)`` drops it straight into
+    :func:`~tsdynamics.analysis.embedding.embed.embed`), while carrying the
+    per-dimension diagnostic so the saturation/decay can be inspected.
 
     Attributes
     ----------
@@ -64,13 +67,15 @@ class EmbeddingDimension:
         ``None`` for Cao.
     """
 
-    dimension: int
-    dims: np.ndarray = field(repr=False)
-    method: str
-    delay: int
-    afn_e1: np.ndarray | None = field(default=None, repr=False)
-    afn_e2: np.ndarray | None = field(default=None, repr=False)
-    fnn_fraction: np.ndarray | None = field(default=None, repr=False)
+    _repr_fields: ClassVar[tuple[str, ...]] = ("method", "dimension", "delay")
+
+    dimension: int = 0
+    dims: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    method: str = ""
+    delay: int = 0
+    afn_e1: np.ndarray | None = field(default=None, repr=False, compare=False)
+    afn_e2: np.ndarray | None = field(default=None, repr=False, compare=False)
+    fnn_fraction: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     def __int__(self) -> int:
         """Return the recommended embedding dimension, so it drops into ``embed``."""
@@ -201,7 +206,13 @@ def cao_dimension(
     reached = np.flatnonzero(e1 >= threshold)
     m_star = int(dims[reached[0]]) if reached.size else int(dims[int(np.argmax(e1))])
     return EmbeddingDimension(
-        dimension=m_star, dims=dims, method="cao", delay=tau, afn_e1=e1, afn_e2=e2
+        dimension=m_star,
+        dims=dims,
+        method="cao",
+        delay=tau,
+        afn_e1=e1,
+        afn_e2=e2,
+        meta={"analysis": "cao_dimension", "method": "cao", "delay": int(tau)},
     )
 
 
@@ -293,7 +304,12 @@ def false_nearest_neighbors(
     reached = np.flatnonzero(fractions <= threshold)
     m_star = int(dims[reached[0]]) if reached.size else int(dims[int(np.argmin(fractions))])
     return EmbeddingDimension(
-        dimension=m_star, dims=dims, method="fnn", delay=tau, fnn_fraction=fractions
+        dimension=m_star,
+        dims=dims,
+        method="fnn",
+        delay=tau,
+        fnn_fraction=fractions,
+        meta={"analysis": "false_nearest_neighbors", "method": "fnn", "delay": int(tau)},
     )
 
 

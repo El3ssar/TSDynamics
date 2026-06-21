@@ -15,6 +15,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import ArrayResult
 from .core import as_series
 from .sample import sample_entropy
 
@@ -63,7 +64,7 @@ def multiscale_entropy(
     r_factor: float = 0.15,
     component: int | str | None = None,
     **kwargs: Any,
-) -> np.ndarray:
+) -> ArrayResult:
     r"""
     Multiscale entropy: an entropy measured on coarse-grained copies of a series.
 
@@ -99,8 +100,10 @@ def multiscale_entropy(
 
     Returns
     -------
-    numpy.ndarray
-        Entropy at each requested scale (same order as ``scales``).
+    ArrayResult
+        Entropy at each requested scale (same order as ``scales``), a drop-in for
+        the bare array (``mse[0]``, ``mse.shape``, ``np.asarray(mse)``) that also
+        carries ``.meta``.
 
     Examples
     --------
@@ -120,8 +123,11 @@ def multiscale_entropy(
 
     out = np.empty(len(scale_list), dtype=float)
     for k, s in enumerate(scale_list):
-        out[k] = entropy_fn(coarse_grain(series, s), **call_kwargs)
-    return out
+        out[k] = float(entropy_fn(coarse_grain(series, s), **call_kwargs))
+    return ArrayResult(
+        values=out,
+        meta={"analysis": "multiscale_entropy", "scales": [int(s) for s in scale_list]},
+    )
 
 
 def __dir__() -> list[str]:
