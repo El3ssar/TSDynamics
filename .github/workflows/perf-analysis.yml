@@ -39,6 +39,10 @@ jobs:
   perf-analysis:
     name: Analysis perf regression (advisory)
     runs-on: ubuntu-latest
+    # Advisory: a perf hiccup (noisy runner / infra flake) must never block a PR.
+    # The slowdown signal is surfaced in the step summary; the merge gate is the
+    # test jobs, not this one.
+    continue-on-error: true
     env:
       MANIFEST: crates/tsdyn-core/Cargo.toml
       TOLERANCE: "0.5" # flag a case > 50% slower than baseline
@@ -89,19 +93,26 @@ jobs:
       # ---- baseline run (merge target) ----
       # Restore only the Python analysis sources + the bench script to their
       # origin/main state, keeping the compiled engine in place, then re-measure.
-      - name: Restore analysis sources from origin/main
+      - name: Restore analysis sources from the merge target (baseline)
         run: |
-          git checkout origin/${{ github.base_ref }} -- \
-            src/tsdynamics/analysis src/tsdynamics/transforms benches/analysis_bench.py
+          # Swap ONLY the analysis/transforms sources to the merge target. The
+          # bench harness (benches/analysis_bench.py) is the measurement tool and
+          # stays at the PR-head version for both halves — it is new on this PR, so
+          # it does not exist on the base branch and must not be checked out there.
+          git checkout "origin/${{ github.base_ref || 'main' }}" -- \
+            src/tsdynamics/analysis src/tsdynamics/transforms
 
       - name: Benchmark the merge target (baseline)
         run: uv run python benches/analysis_bench.py --quick --out perf-baseline.json | tee perf-baseline.md
 
       # ---- compare ----
-      # Restore the PR-head bench script so the comparison uses the current
-      # harness (the case set the PR ships) against the baseline timings.
-      - name: Restore PR-head bench harness
-        run: git checkout HEAD -- benches/analysis_bench.py
+      # Restore the PR-head sources so the "current" measurement in the compare
+      # step reflects this PR's analysis code (the baseline restore above left the
+      # tree on the merge target). The harness is already at PR head.
+      - name: Restore PR-head sources
+        run: |
+          git checkout HEAD -- \
+            src/tsdynamics/analysis src/tsdynamics/transforms benches/analysis_bench.py
 
       - name: Compare and report (advisory)
         run: |
