@@ -87,7 +87,7 @@ class WrappedSystem:
         u: Any | None = None,
         *,
         t: float | None = None,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         """Restart from state ``u`` (falls back to ``initial``, then zeros)."""
         if u is not None:
@@ -102,8 +102,9 @@ class WrappedSystem:
         """Advance by ``n_or_dt`` (default ``default_dt``) and return the new state."""
         if self._state is None:
             self.reinit()
+        assert self._state is not None
         amount = self._default_dt if n_or_dt is None else n_or_dt
-        new = np.asarray(self._step_fn(self._state, amount), dtype=float).reshape(self.dim)
+        new = np.asarray(self._step_fn(self._state, amount), dtype=np.float64).reshape(self.dim)
         if not np.all(np.isfinite(new)):
             raise RuntimeError("WrappedSystem.step produced non-finite state")
         self._state = new
@@ -114,6 +115,7 @@ class WrappedSystem:
         """Return a copy of the current state."""
         if self._state is None:
             self.reinit()
+        assert self._state is not None
         return self._state.copy()
 
     def set_state(self, u: Any) -> None:

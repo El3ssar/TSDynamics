@@ -33,7 +33,9 @@ from .core import as_series
 __all__ = ["binarize", "lz76_complexity", "lz76_entropy", "lz76_factors"]
 
 
-def binarize(x: Any, threshold: str | float = "median", *, component: int | str | None = None):
+def binarize(
+    x: Any, threshold: str | float = "median", *, component: int | str | None = None
+) -> np.ndarray:
     r"""
     Map a real-valued series to a binary symbol sequence.
 
@@ -63,7 +65,9 @@ def binarize(x: Any, threshold: str | float = "median", *, component: int | str 
     return (series > thr).astype(np.intp)
 
 
-def _symbols(x: Any, symbolize: Any, threshold: str | float, component: int | str | None):
+def _symbols(
+    x: Any, symbolize: Any, threshold: str | float, component: int | str | None
+) -> np.ndarray:
     """Resolve arbitrary input to a 1-D symbol array (no code densification yet)."""
     if isinstance(x, str):  # already symbolic; component is meaningless
         return np.frombuffer(x.encode("utf-8", "surrogatepass"), dtype=np.uint8)

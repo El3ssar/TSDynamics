@@ -27,6 +27,9 @@ so they are discoverable by name alongside out-of-tree analysis plugins.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 from ... import registry as _registry
 from ._common import DimensionResult
 from ._scaling import ScalingFit, fit_scaling_region, local_slopes
@@ -56,7 +59,7 @@ __all__ = [
 # Self-register the headline estimators (D4 / §4e: in-tree analyses register from
 # their own subpackage).  Idempotent across re-imports — `register` keeps the
 # same object under the same name.
-for _name, _fn, _meta in (
+_registrations: tuple[tuple[str, Callable[..., Any], dict[str, Any]], ...] = (
     (
         "correlation_dimension",
         correlation_dimension,
@@ -78,9 +81,10 @@ for _name, _fn, _meta in (
         {"needs": "trajectory", "family": "dimensions"},
     ),
     ("fixed_mass_dimension", fixed_mass_dimension, {"needs": "trajectory", "family": "dimensions"}),
-):
+)
+for _name, _fn, _meta in _registrations:
     _registry.analyses.register(_name, _fn, **_meta)
-del _name, _fn, _meta
+del _name, _fn, _meta, _registrations
 
 
 def __dir__() -> list[str]:

@@ -25,6 +25,8 @@ Both reduce a 1-D series to a single float; pass either (by value or by the name
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -69,7 +71,7 @@ def time_reversal_asymmetry(data: np.ndarray, delay: int = 1) -> float:
     if second == 0.0:
         return 0.0
     third = float(np.mean(increments**3))
-    return third / second**1.5
+    return float(third / second**1.5)
 
 
 def nonlinear_prediction_error(
@@ -173,7 +175,7 @@ def nonlinear_prediction_error(
 
 
 #: Statistic name → callable, resolved by ``surrogate_test``.
-STATISTICS = {
+STATISTICS: dict[str, Callable[..., float]] = {
     "time_reversal": time_reversal_asymmetry,
     "prediction_error": nonlinear_prediction_error,
 }

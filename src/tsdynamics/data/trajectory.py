@@ -21,11 +21,15 @@ The point-set operations (:meth:`Trajectory.minmax`,
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from scipy.spatial import cKDTree
+
     from tsdynamics.viz.spec import PlotSpec
 
 
@@ -67,21 +71,21 @@ class Trajectory:
         t: np.ndarray,
         y: np.ndarray,
         system: Any,
-        meta: dict | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         self.t = np.asarray(t)
         self.y = np.asarray(y)
         self.system = system
         self.meta = dict(meta) if meta else {}
-        self._kdtree = None
+        self._kdtree: cKDTree | None = None
 
     # --- compatibility / convenience ---
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[np.ndarray]:
         """Allow ``t, y = trajectory``."""
         return iter((self.t, self.y))
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: Any) -> Any:
         """
         Component access by name, or joint row slicing.
 
@@ -131,7 +135,7 @@ class Trajectory:
     @property
     def dim(self) -> int:
         """State-space dimension."""
-        return self.y.shape[1]
+        return int(self.y.shape[1])
 
     @property
     def n_steps(self) -> int:
@@ -283,7 +287,7 @@ class Trajectory:
         """
         from tsdynamics.viz.spec import Plottable
 
-        return Plottable.plot(self, backend, **tweaks)
+        return Plottable.plot(cast("Plottable", self), backend, **tweaks)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Notebook display hook — lazily delegated to ``Plottable`` (see :meth:`plot`).
@@ -293,7 +297,7 @@ class Trajectory:
         """
         from tsdynamics.viz.spec import Plottable
 
-        return Plottable._repr_mimebundle_(self, include, exclude)
+        return Plottable._repr_mimebundle_(cast("Plottable", self), include, exclude)
 
     def _poincare_section_spec(self, names: tuple[str, ...]) -> PlotSpec:
         """Build the 2-D in-plane scatter spec for a Poincaré-section trajectory.
@@ -330,7 +334,7 @@ class Trajectory:
         plane = self.meta.get("plane")
         normal_idx: int | None = None
         if isinstance(plane, (tuple, list)) and len(plane) == 2 and np.isscalar(plane[0]):
-            normal_idx = int(plane[0])
+            normal_idx = int(cast(Any, plane[0]))
         candidates = [c for c in range(self.dim) if c != normal_idx]
         if len(candidates) < 2:
             candidates = list(range(self.dim))[:2]
@@ -400,7 +404,10 @@ class Trajectory:
 
         if self._kdtree is None:
             self._kdtree = cKDTree(self.y)
-        return self._kdtree.query(np.asarray(q, dtype=float), k=k)
+        return cast(
+            "tuple[np.ndarray, np.ndarray]",
+            self._kdtree.query(np.asarray(q, dtype=float), k=k),
+        )
 
     def set_distance(self, other: Any, *, method: str = "centroid") -> float:
         """
@@ -412,7 +419,9 @@ class Trajectory:
         """
         from tsdynamics.data import set_distance
 
-        return set_distance(self, other, method=method)
+        return set_distance(
+            self, other, method=cast('Literal["centroid", "hausdorff", "minimum"]', method)
+        )
 
     def __repr__(self) -> str:
         return (

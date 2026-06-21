@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 
 from ._common import DimensionResult, _as_points, _default_scales
-from ._scaling import fit_scaling_region
+from ._scaling import ScalingFit, fit_scaling_region
 
 __all__ = [
     "box_counting_dimension",
@@ -75,7 +75,7 @@ def _partition_ordinate(counts: np.ndarray, n: int, q: float) -> float:
 
 def _fit_masked(
     x: np.ndarray, y: np.ndarray, mask: np.ndarray, *, min_window: int, tol: float, what: str
-):
+) -> ScalingFit:
     """Fit a scaling region on the informative (masked) sub-range of a curve."""
     if int(mask.sum()) < min_window:
         raise ValueError(

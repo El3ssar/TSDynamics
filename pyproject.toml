@@ -165,6 +165,27 @@ ignore_missing_imports = true
 module = ["symengine.*"]
 ignore_missing_imports = true
 
+# The system *catalogue* — every built-in ODE/DDE/SDE/map — defines its dynamics
+# through framework-contract kernels (`_equations` / `_step` / `_jacobian` /
+# `_drift` / `_diffusion`) that mypy cannot model:
+#   * parameters arrive *positionally* in the class-level `params` dict order
+#     (each system's signature is deliberately system-specific, so every override
+#     is "incompatible" with the generic base — `__init_subclass__` enforces the
+#     real contract at import time, and the analytic Jacobians are cross-checked
+#     against SymEngine autogen in the test suite);
+#   * the bodies build SymEngine/NumPy expressions, so annotating the scalar state
+#     components adds no safety.
+# We therefore relax exactly the codes inherent to that contract for the
+# catalogue only — `override` (system-specific signatures), `no-untyped-def` (the
+# math kernels themselves) and `no-untyped-call` (calls between those untyped
+# kernels and their nested helpers). Every other check (and the entire core
+# library) stays strict. `staticjit` is aliased to `staticmethod` for the type
+# checker (see `utils/general.py`), which clears the spurious self-binding errors
+# so this list need not grow.
+[[tool.mypy.overrides]]
+module = ["tsdynamics.systems.*"]
+disable_error_code = ["override", "no-untyped-def", "no-untyped-call"]
+
 # ── Coverage ───────────────────────────────────────────────────────────────────
 
 [tool.coverage.run]

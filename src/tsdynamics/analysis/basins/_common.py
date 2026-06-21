@@ -21,7 +21,7 @@ works uniformly across every system family.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -94,7 +94,7 @@ class _CellGrid:
 
     def center(self, key: tuple[int, ...]) -> np.ndarray:
         """Return the centre point of the cell with index ``key``."""
-        return self.lo + (np.asarray(key, dtype=float) + 0.5) * self.delta
+        return cast(np.ndarray, self.lo + (np.asarray(key, dtype=float) + 0.5) * self.delta)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +127,11 @@ def _recurrence_grid(region: Box | Ball | Grid, resolution: int | tuple[int, ...
     else:
         raise TypeError(f"unsupported region type {type(region).__name__}")
     dim = lo.size
-    counts = (resolution,) * dim if np.isscalar(resolution) else tuple(resolution)
+    counts: tuple[int, ...]
+    if np.isscalar(resolution):
+        counts = (cast(int, resolution),) * dim
+    else:
+        counts = tuple(cast("tuple[int, ...]", resolution))
     return _CellGrid(lo, hi, counts)
 
 
@@ -161,7 +165,7 @@ def _as_label_array(basins: Any) -> np.ndarray:
 def _representative(points: np.ndarray) -> np.ndarray:
     """Return a single representative point (the centroid) of an attractor cloud."""
     pts = np.atleast_2d(np.asarray(points, dtype=float))
-    return pts.mean(axis=0)
+    return cast(np.ndarray, pts.mean(axis=0))
 
 
 def _apply_merge(labels: np.ndarray, merge: dict[int, int]) -> np.ndarray:

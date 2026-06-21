@@ -62,6 +62,8 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     per ``(deviation, base-slot)`` pair.  Parameters are folded to constants,
     matching :func:`tsdynamics.engine.compile.lower_dde`.
     """
+    from collections.abc import Callable
+
     import symengine
 
     from tsdynamics.engine.compile import (
@@ -71,7 +73,13 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
         lower_expressions,
     )
     from tsdynamics.engine.symbols import state_time_symbols
-    from tsdynamics.families.continuous import _resolve_derivative_nodes
+    from tsdynamics.families.continuous import (
+        _resolve_derivative_nodes as _resolve_derivative_nodes_untyped,
+    )
+
+    # ``_resolve_derivative_nodes`` lives in another module without a public type
+    # annotation; bind it through a typed local so the calls below are typed.
+    resolve_derivative_nodes: Callable[[Any], Any] = _resolve_derivative_nodes_untyped
 
     y, t_sym = state_time_symbols()
 
@@ -123,11 +131,11 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
 
     # Jacobians (a.e.-resolved abs/sign): wrt current state and wrt each delay slot.
     df_du = [
-        [_resolve_derivative_nodes(symengine.sympify(f[i]).diff(u[j])) for j in range(dim)]
+        [resolve_derivative_nodes(symengine.sympify(f[i]).diff(u[j])) for j in range(dim)]
         for i in range(dim)
     ]
     df_dd = [
-        [_resolve_derivative_nodes(symengine.sympify(f[i]).diff(bdel[s])) for s in range(nb)]
+        [resolve_derivative_nodes(symengine.sympify(f[i]).diff(bdel[s])) for s in range(nb)]
         for i in range(dim)
     ]
 
@@ -310,7 +318,11 @@ def dde_lyapunov_spectrum(
         spl_base = [CubicSpline(grid, base_seg[:, d]) for d in range(dim)]
         spl_dev = [[CubicSpline(grid, dev_seg[:, m, d]) for d in range(dim)] for m in range(n_exp)]
 
-        def history(s: float, spl_base=spl_base, spl_dev=spl_dev) -> np.ndarray:
+        def history(
+            s: float,
+            spl_base: list[Any] = spl_base,
+            spl_dev: list[list[Any]] = spl_dev,
+        ) -> np.ndarray:
             out = np.empty(n_ext)
             for d in range(dim):
                 out[d] = spl_base[d](s)

@@ -246,7 +246,7 @@ def gali(
             raise ValueError("dt has no meaning for a discrete map — omit it.")
         n_steps = 1000 if n is None else int(n)
         n_burn = 500 if transient is None else int(transient)
-        run_args: tuple = (n_steps, n_burn)
+        run_args: tuple[Any, ...] = (n_steps, n_burn)
         discrete = True
     else:
         if n is not None:

@@ -28,6 +28,9 @@ are discoverable by name alongside out-of-tree analysis plugins.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 from ... import registry as _registry
 from .expansion import ExpansionEntropyResult, expansion_entropy
 from .gali import GALIResult, gali
@@ -43,11 +46,12 @@ __all__ = [
 
 # Self-register the indicators (D4 / §4e: in-tree analyses register from their
 # own subpackage).  Idempotent across re-imports.
-for _name, _fn, _meta in (
+_REGISTRATIONS: tuple[tuple[str, Callable[..., Any], dict[str, Any]], ...] = (
     ("gali", gali, {"needs": "system", "family": "chaos"}),
     ("zero_one_test", zero_one_test, {"needs": "system", "family": "chaos"}),
     ("expansion_entropy", expansion_entropy, {"needs": "system", "family": "chaos"}),
-):
+)
+for _name, _fn, _meta in _REGISTRATIONS:
     _registry.analyses.register(_name, _fn, **_meta)
 del _name, _fn, _meta
 

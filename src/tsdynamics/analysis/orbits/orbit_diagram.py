@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -29,7 +30,7 @@ class OrbitDiagram(AnalysisResult):
     points: list[np.ndarray] = field(default_factory=list, compare=False)  # per value (n, k)
     components: tuple[int, ...] = ()
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[tuple[Any, np.ndarray]]:
         return iter(zip(self.values, self.points, strict=True))
 
     def __len__(self) -> int:
@@ -104,7 +105,7 @@ class OrbitDiagram(AnalysisResult):
         p = self.periods(component=component, max_period=max_period, rtol=rtol)
         changed = (p[:-1] != p[1:]) & (p[:-1] != -1) & (p[1:] != -1)
         (i,) = np.nonzero(changed)
-        return 0.5 * (self.values[i] + self.values[i + 1])
+        return cast(np.ndarray, 0.5 * (self.values[i] + self.values[i + 1]))
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe this orbit diagram as a backend-agnostic :class:`PlotSpec`.
@@ -217,7 +218,7 @@ def orbit_diagram(
     n: int = 200,
     transient: int = 500,
     carry_state: bool = True,
-    component: int | str | tuple = 0,
+    component: int | str | tuple[Any, ...] = 0,
     ic: Any | None = None,
     seed: int | None = None,
 ) -> OrbitDiagram:

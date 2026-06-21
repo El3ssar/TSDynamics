@@ -26,13 +26,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from ...data import Ball, Box, Grid, sampler, set_distance
 from .._result import AnalysisResult
 from ._common import _CellGrid, _recurrence_grid, _representative
+
+if TYPE_CHECKING:
+    from ...data.sampling import _SetMethod
 
 __all__ = [
     "Attractor",
@@ -77,7 +80,7 @@ class Attractor(AnalysisResult):
     @property
     def dim(self) -> int:
         """State-space dimension."""
-        return self.points.shape[1]
+        return int(self.points.shape[1])
 
     def __repr__(self) -> str:  # noqa: D105
         c = np.round(self.center, 4)
@@ -132,8 +135,11 @@ class AttractorSet(AnalysisResult):
         if not self.attractors:
             return None
         pts = np.atleast_2d(np.asarray(point, dtype=float))  # a single state -> (1, dim)
-        dists = {k: set_distance(self.attractors[k].points, pts, method=method) for k in self.ids}
-        return min(dists, key=dists.get)
+        dists = {
+            k: set_distance(self.attractors[k].points, pts, method=cast("_SetMethod", method))
+            for k in self.ids
+        }
+        return min(dists, key=dists.__getitem__)
 
     def __repr__(self) -> str:  # noqa: D105
         return f"AttractorSet({len(self)} attractors, {self.diverged}/{self.seeds} diverged)"

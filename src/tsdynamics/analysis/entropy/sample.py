@@ -30,7 +30,7 @@ __all__ = ["approximate_entropy", "sample_entropy"]
 def _embed(x: np.ndarray, m: int, tau: int, n_templates: int) -> np.ndarray:
     """First ``n_templates`` length-``m`` delay vectors of ``x``."""
     idx = np.arange(n_templates)[:, None] + np.arange(m)[None, :] * tau
-    return x[idx]
+    return np.asarray(x[idx])
 
 
 def _resolve_r(x: np.ndarray, r: float | None) -> float:

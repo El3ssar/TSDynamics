@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -88,11 +88,11 @@ class ProjectedSystem(DerivedSystem):
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
         """Advance the full system; return the projected new state."""
-        return self.system.step(n_or_dt)[list(self.components)]
+        return cast(np.ndarray, self.system.step(n_or_dt)[list(self.components)])
 
     def state(self) -> np.ndarray:
         """Return the projected current state."""
-        return self.system.state()[list(self.components)]
+        return cast(np.ndarray, self.system.state()[list(self.components)])
 
     def set_state(self, u: Any) -> None:
         """Overwrite the state (projected inputs need a ``complete`` callable)."""

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
 from .base import SystemBase, Trajectory
+
+if TYPE_CHECKING:
+    from .base import ParamSet
 
 __all__ = ["DelaySystem"]
 
@@ -93,7 +96,7 @@ class DelaySystem(SystemBase, ABC):
 
     @staticmethod
     @abstractmethod
-    def _equations(y, t, **params) -> Sequence:
+    def _equations(y: Any, t: Any, **params: Any) -> Sequence[Any]:
         """
         Build the symbolic DDE RHS.
 
@@ -126,9 +129,10 @@ class DelaySystem(SystemBase, ABC):
         try:
             src = inspect.getsource(fn)
         except (OSError, TypeError):
-            src = repr(getattr(fn, "__code__", fn).co_code)
+            code = getattr(fn, "__code__", None)
+            src = repr(code.co_code) if code is not None else repr(fn)
         eq = hashlib.md5(src.encode()).hexdigest()[:8]
-        return f"{type(self).__name__}_{self.params.param_hash():016x}_{eq}"
+        return f"{type(self).__name__}_{cast('ParamSet', self.params).param_hash():016x}_{eq}"
 
     def _delays(self) -> list[float]:
         """
@@ -191,10 +195,10 @@ class DelaySystem(SystemBase, ABC):
         u: Any | None = None,
         *,
         t: float | None = None,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
         rtol: float | None = None,
         atol: float | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         (Re)start the incremental stepper from a constant past equal to ``u``.
@@ -247,6 +251,7 @@ class DelaySystem(SystemBase, ABC):
         """Return a copy of the current state (implicit ``reinit`` if cold)."""
         if self._state_now is None:
             self.reinit()
+        assert self._state_now is not None
         return self._state_now.copy()
 
     def set_state(self, u: Any) -> None:
@@ -268,7 +273,7 @@ class DelaySystem(SystemBase, ABC):
         *,
         dt: float = 0.02,
         transient: float = 0.0,
-        **kwargs,
+        **kwargs: Any,
     ) -> Trajectory:
         """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
         traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
@@ -289,7 +294,7 @@ class DelaySystem(SystemBase, ABC):
         atol: float | None = None,
         backend: str | None = None,
         method: str = "rk45",
-        **kwargs,
+        **kwargs: Any,
     ) -> Trajectory:
         """
         Integrate the DDE and return a :class:`~tsdynamics.families.Trajectory`.
@@ -399,7 +404,7 @@ class DelaySystem(SystemBase, ABC):
         rtol: float | None = None,
         atol: float | None = None,
         backend: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> np.ndarray:
         """
         Estimate the ``n_exp`` leading Lyapunov exponents of the delay system.

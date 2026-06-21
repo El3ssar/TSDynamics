@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tsdynamics.engine.run import Event
 
 from tsdynamics.errors import invalid_value
 from tsdynamics.families import Trajectory
@@ -59,7 +62,7 @@ def _normalize_direction(direction: Any) -> int:
     return int(np.sign(direction))
 
 
-def _resolve_section_plane(system: Any, plane: Any, direction: Any) -> tuple[tuple, int]:
+def _resolve_section_plane(system: Any, plane: Any, direction: Any) -> tuple[tuple[Any, Any], int]:
     """Resolve a friendly ``plane`` spelling to the raw ``(axis, offset)`` form.
 
     Normalizes the accepted spellings to the ``(component_index, value)`` /
@@ -110,7 +113,7 @@ def _resolve_section_plane(system: Any, plane: Any, direction: Any) -> tuple[tup
         # A scalar index (incl. a numpy integer) → plain int, so the resolved
         # ``meta["plane"]`` carries built-in types on every path.  A normal
         # *vector* (a non-scalar sequence) is left untouched for _parse_plane.
-        axis = int(axis)
+        axis = int(axis)  # type: ignore[arg-type]  # np.isscalar guarantees int-able
     return (axis, offset), _normalize_direction(direction)
 
 
@@ -128,7 +131,7 @@ def _section_jsonable(obj: Any) -> Any:
 
 
 #: Human labels for the resolved crossing direction, shown in :meth:`summary`.
-_DIRECTION_LABELS = {1: "up (+)", -1: "down (−)", 0: "both"}
+_DIRECTION_LABELS: dict[int, str] = {1: "up (+)", -1: "down (−)", 0: "both"}
 
 
 class PoincareSection(Trajectory):
@@ -164,7 +167,8 @@ class PoincareSection(Trajectory):
             f"  dim = {self.dim}",
             f"  plane = {self.meta.get('plane')}",
         ]
-        word = _DIRECTION_LABELS.get(self.meta.get("direction"))
+        direction = self.meta.get("direction")
+        word = _DIRECTION_LABELS.get(direction) if direction is not None else None
         if word is not None:
             lines.append(f"  direction = {word}")
         return "\n".join(lines)
@@ -236,7 +240,7 @@ class PoincareMap(DerivedSystem):
     def __init__(
         self,
         system: Any,
-        plane: tuple,
+        plane: tuple[Any, ...],
         *,
         direction: int | str = +1,
         dt: float = 0.01,
@@ -261,12 +265,12 @@ class PoincareMap(DerivedSystem):
         self._n_cross = 0
 
     @staticmethod
-    def _parse_plane(dim: int, plane: tuple) -> tuple[np.ndarray, float]:
+    def _parse_plane(dim: int, plane: tuple[Any, ...]) -> tuple[np.ndarray, float]:
         if len(plane) != 2:
             raise ValueError("plane must be (component_index, value) or (normal, offset)")
         first, second = plane
         if np.isscalar(first):
-            i = int(first)
+            i = int(first)  # type: ignore[arg-type]  # np.isscalar guarantees int-able
             if not 0 <= i < dim:
                 raise ValueError(f"plane component index {i} out of range for dim={dim}")
             normal = np.zeros(dim)
@@ -276,7 +280,7 @@ class PoincareMap(DerivedSystem):
         norm = np.linalg.norm(normal)
         if norm == 0.0:
             raise ValueError("plane normal must be non-zero")
-        return normal / norm, float(second) / norm
+        return normal / norm, float(float(second) / norm)
 
     def _rebuild(self, inner: Any) -> PoincareMap:
         return PoincareMap(
@@ -321,11 +325,12 @@ class PoincareMap(DerivedSystem):
 
         def u_at(s: float) -> np.ndarray:
             s2, s3 = s * s, s * s * s
-            return (
+            return cast(
+                np.ndarray,
                 (2 * s3 - 3 * s2 + 1) * u0
                 + (s3 - 2 * s2 + s) * h * f0
                 + (-2 * s3 + 3 * s2) * u1
-                + (s3 - s2) * h * f1
+                + (s3 - s2) * h * f1,
             )
 
         s_star = brentq(lambda s: self._g(u_at(s)), 0.0, 1.0, xtol=1e-14)
@@ -365,13 +370,14 @@ class PoincareMap(DerivedSystem):
         n = int(n_or_dt) if n_or_dt is not None else 1
         for _ in range(n):
             self._advance_to_crossing()
+        assert self._u_cross is not None  # set by _advance_to_crossing (n >= 1)
         return self._u_cross.copy()
 
     def state(self) -> np.ndarray:
         """Return the last crossing point (or the inner state before any crossing)."""
         if self._u_cross is not None:
             return self._u_cross.copy()
-        return self.system.state()
+        return cast(np.ndarray, self.system.state())
 
     def set_state(self, u: Any) -> None:
         """Overwrite the inner flow state and reset crossing bookkeeping."""
@@ -388,7 +394,7 @@ class PoincareMap(DerivedSystem):
         """Return the number of crossings recorded so far."""
         return self._n_cross
 
-    def as_events(self) -> list:
+    def as_events(self) -> list[Event]:
         """Return the section as a one-element ``[Event]`` for ``system.run(events=...)``.
 
         A Poincaré section *is* an event: the crossing of ``g(u) = normal·u −

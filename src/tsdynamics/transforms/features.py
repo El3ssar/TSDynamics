@@ -69,7 +69,7 @@ def _skewness(sig: np.ndarray, fs: float) -> float:
     m2 = _central_moment(sig, 2)
     if m2 <= 0.0:  # constant channel — no shape
         return 0.0
-    return _central_moment(sig, 3) / m2**1.5
+    return float(_central_moment(sig, 3) / m2**1.5)
 
 
 def _kurtosis(sig: np.ndarray, fs: float) -> float:

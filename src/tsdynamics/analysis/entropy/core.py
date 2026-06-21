@@ -258,7 +258,7 @@ class Dispersion(OutcomeSpace):
 
     @property
     def cardinality(self) -> int:  # noqa: D102
-        return self.c**self.m
+        return int(self.c**self.m)
 
     def _classes(self, x: np.ndarray) -> np.ndarray:
         std = x.std()
@@ -269,7 +269,7 @@ class Dispersion(OutcomeSpace):
         # Map (0,1) onto equal-width classes 1..c: round(c·y + 0.5) ≡ ⌊c·y⌋ + 1
         # (Rostaghi & Azami 2016, eq. 3), so class k ⟺ c·y ∈ [k-1, k).
         z = np.floor(self.c * y).astype(np.intp) + 1
-        return np.clip(z, 1, self.c)
+        return np.asarray(np.clip(z, 1, self.c))
 
     def counts(self, x: np.ndarray) -> np.ndarray:  # noqa: D102
         z = self._classes(x)
@@ -358,7 +358,7 @@ class MLE(ProbabilityEstimator):
         total = counts.sum()
         if total == 0:
             raise ValueError("no outcomes observed — series too short for this outcome space.")
-        return counts / total
+        return np.asarray(counts / total)
 
 
 class AddConstant(ProbabilityEstimator):
@@ -382,7 +382,7 @@ class AddConstant(ProbabilityEstimator):
 
     def probabilities(self, counts: np.ndarray) -> np.ndarray:  # noqa: D102
         k = counts.size
-        return (counts + self.a) / (counts.sum() + self.a * k)
+        return np.asarray((counts + self.a) / (counts.sum() + self.a * k))
 
 
 # ---------------------------------------------------------------------------

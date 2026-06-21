@@ -29,7 +29,7 @@ of identity).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -68,7 +68,7 @@ class RecurrenceMatrix(AnalysisResult):
     @property
     def size(self) -> int:
         """Number of states ``N`` (the matrix is ``N x N``)."""
-        return self.matrix.shape[0]
+        return int(self.matrix.shape[0])
 
     @property
     def recurrence_rate(self) -> float:
@@ -78,7 +78,7 @@ class RecurrenceMatrix(AnalysisResult):
 
     def toarray(self) -> np.ndarray:
         """Return the dense boolean ``(N, N)`` matrix (materialises ``O(N^2)``)."""
-        return self.matrix.toarray().astype(bool)
+        return cast(np.ndarray, self.matrix.toarray().astype(bool))
 
     def __array__(self, dtype: Any = None) -> np.ndarray:  # noqa: D105
         arr = self.toarray()
@@ -194,6 +194,7 @@ def recurrence_matrix(
         if not (eps > 0.0):
             raise ValueError(f"threshold must be positive, got {threshold!r}.")
     else:
+        assert recurrence_rate is not None  # guaranteed by the exactly-one guard above
         rate = float(recurrence_rate)
         if not (0.0 < rate < 1.0):
             raise ValueError(f"recurrence_rate must be in (0, 1), got {recurrence_rate!r}.")

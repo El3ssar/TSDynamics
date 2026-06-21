@@ -8,8 +8,8 @@ import sites keep resolving ``Trajectory`` to the one canonical object.
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
-from typing import Any, ClassVar
+from collections.abc import Iterator, MutableMapping
+from typing import Any, ClassVar, cast
 
 import numpy as np
 
@@ -26,7 +26,7 @@ __all__ = ["MetaStore", "ParamSet", "SystemBase", "Trajectory"]
 # ---------------------------------------------------------------------------
 
 
-class ParamSet(MutableMapping):
+class ParamSet(MutableMapping[str, Any]):
     """
     Ordered, fixed-key parameter container.
 
@@ -83,7 +83,7 @@ class ParamSet(MutableMapping):
     def __delitem__(self, key: str) -> None:
         raise TypeError("Parameters are fixed-key — cannot delete.")
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self._data)
 
     def __len__(self) -> int:
@@ -91,11 +91,11 @@ class ParamSet(MutableMapping):
 
     # --- helpers ---
 
-    def as_tuple(self) -> tuple:
+    def as_tuple(self) -> tuple[Any, ...]:
         """Return parameter values as a tuple (insertion order)."""
         return tuple(self._data.values())
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         """Return a shallow copy as a plain dict."""
         return dict(self._data)
 
@@ -155,7 +155,7 @@ def _short_value_repr(value: Any, maxlen: int = _MAX_META_VALUE_REPR) -> str:
     return text
 
 
-class MetaStore(MutableMapping):
+class MetaStore(MutableMapping[str, Any]):
     """
     Append-with-history metadata store for computed results.
 
@@ -174,7 +174,7 @@ class MetaStore(MutableMapping):
     __slots__ = ("_records",)
 
     def __init__(self) -> None:
-        self._records: dict[str, list[dict]] = {}
+        self._records: dict[str, list[dict[str, Any]]] = {}
 
     def record(self, key: str, value: Any, **context: Any) -> Any:
         """Append ``value`` under ``key`` with optional context kwargs."""
@@ -185,7 +185,7 @@ class MetaStore(MutableMapping):
         )
         return value
 
-    def history(self, key: str) -> list[dict]:
+    def history(self, key: str) -> list[dict[str, Any]]:
         """Return every record for ``key`` (oldest first), with context."""
         return list(self._records.get(key, []))
 
@@ -207,7 +207,7 @@ class MetaStore(MutableMapping):
     def __delitem__(self, key: str) -> None:
         del self._records[key]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self._records)
 
     def __len__(self) -> int:
@@ -279,7 +279,7 @@ class SystemBase:
 
     #: Class-level parameter defaults.  Keys are frozen once the instance
     #: is created — only values may change.
-    params: ClassVar[dict] = {}
+    params: ClassVar[dict[str, Any]] = {}
 
     #: State-space dimension.  Set at class level for fixed-dim systems;
     #: override in ``__init__`` for variable-dim systems (e.g. Lorenz96).
@@ -307,7 +307,7 @@ class SystemBase:
     #:         "kwargs": {"final_time": 300.0},    # forwarded to lyapunov_spectrum
     #:         "source": "Sprott (2003)",
     #:     }
-    known_lyapunov: ClassVar[dict | None] = None
+    known_lyapunov: ClassVar[dict[str, Any] | None] = None
 
     #: The runtime backend this family's engine-dispatch seam uses when a caller
     #: does not name one.  Every concrete family sets it to ``"interp"`` (the Rust
@@ -328,7 +328,7 @@ class SystemBase:
 
     def __init__(
         self,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
         ic: Any | None = None,
         dim: int | None = None,
     ) -> None:
@@ -413,11 +413,11 @@ class SystemBase:
         The copy has its own independent ``params`` and ``meta`` stores.
         """
         return type(self)(
-            params=self.params.as_dict(),
+            params=cast(ParamSet, self.params).as_dict(),
             ic=self.ic.copy() if self.ic is not None else None,
         )
 
-    def with_params(self, **overrides) -> SystemBase:
+    def with_params(self, **overrides: Any) -> SystemBase:
         """
         Return a **new** system with some parameters overridden.
 
@@ -436,7 +436,7 @@ class SystemBase:
         SystemBase
             New instance of the same subclass.
         """
-        new_p = {**self.params.as_dict(), **overrides}
+        new_p = {**cast(ParamSet, self.params).as_dict(), **overrides}
         return type(self)(params=new_p, ic=self.ic)
 
     # --- IC resolution ---
@@ -470,7 +470,7 @@ class SystemBase:
         elif type(self).default_ic is not None:
             arr = np.asarray(type(self).default_ic, dtype=float).reshape(self.dim)
         else:
-            arr = np.random.rand(self.dim)
+            arr = np.random.rand(cast(int, self.dim))
         object.__setattr__(self, "ic", arr.copy())
         return arr
 
@@ -500,13 +500,13 @@ class SystemBase:
 
     # --- misc ---
 
-    def _provenance(self, **extra: Any) -> dict:
+    def _provenance(self, **extra: Any) -> dict[str, Any]:
         """Build the provenance dict attached to trajectories as ``traj.meta``."""
         from tsdynamics import __version__
 
         return {
             "system": type(self).__name__,
-            "params": self.params.as_dict(),
+            "params": cast(ParamSet, self.params).as_dict(),
             "tsdynamics": __version__,
             **extra,
         }
@@ -643,7 +643,7 @@ class SystemBase:
         section: Any = None,
         at: float = 0.0,
         *,
-        plane: tuple | None = None,
+        plane: tuple[Any, ...] | None = None,
         direction: int = +1,
         **kwargs: Any,
     ) -> Any:

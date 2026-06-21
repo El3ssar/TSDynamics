@@ -26,7 +26,7 @@ Davidchack & Lai (1999), *Phys. Rev. E* 60, 6172.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -166,13 +166,13 @@ def periodic_orbits(
     if method not in ("newton", "sd", "dl"):
         raise ValueError(f"method must be 'newton', 'sd', or 'dl', got {method!r}.")
 
-    dim = int(system.dim)
+    dim = int(system.dim)  # type: ignore[arg-type]  # dim resolved at construction
     rng = np.random.default_rng(seed)
     step, jac = _c.map_fns(system)
     eye = np.eye(dim)
 
     def residual(x: np.ndarray) -> np.ndarray:
-        return _c.map_orbit_monodromy(step, jac, x, period, dim)[0] - x
+        return cast("np.ndarray", _c.map_orbit_monodromy(step, jac, x, period, dim)[0] - x)
 
     def jac_resid(x: np.ndarray) -> np.ndarray:
         return _c.map_orbit_monodromy(step, jac, x, period, dim)[1] - eye
@@ -335,7 +335,7 @@ def periodic_orbit(
             f"periodic_orbit (shooting) is for continuous flows, not {type(system).__name__}; "
             f"use periodic_orbits for maps."
         )
-    dim = int(system.dim)
+    dim = int(system.dim)  # type: ignore[arg-type]  # dim resolved at construction
     rhs, jac = _c.flow_fns(system)
 
     x0 = (

@@ -65,7 +65,7 @@ class BasinsResult(AnalysisResult):
     labels: np.ndarray = field(
         default_factory=lambda: np.empty(0, dtype=int), repr=False, compare=False
     )
-    grid: Grid = field(default=None, compare=False)
+    grid: Grid | None = field(default=None, compare=False)
     attractors: AttractorSet = field(default_factory=AttractorSet, compare=False)
 
     @property
@@ -134,6 +134,7 @@ class BasinsResult(AnalysisResult):
                     )
                 )
 
+        assert self.grid is not None  # a populated basin image always carries its grid
         lo, hi = self.grid.lo, self.grid.hi
         x_axis = Axis(label="x", limits=(float(lo[0]), float(hi[0])) if lo.size else None)
         y_axis = Axis(label="y", limits=(float(lo[1]), float(hi[1])) if lo.size > 1 else None)
@@ -184,7 +185,7 @@ class BasinFractions(AnalysisResult):
     @property
     def dominant(self) -> int | None:
         """Id of the attractor with the largest basin (``None`` if all diverged)."""
-        return max(self.fractions, key=self.fractions.get) if self.fractions else None
+        return max(self.fractions, key=self.fractions.__getitem__) if self.fractions else None
 
     def __getitem__(self, key: int) -> float:  # noqa: D105
         return self.fractions[key]

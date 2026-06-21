@@ -72,7 +72,9 @@ def _ranks(x: np.ndarray) -> np.ndarray:
     return np.argsort(np.argsort(x, kind="stable"), kind="stable")
 
 
-def random_shuffle(data: Any, n: int = 1, *, seed: int | None = None, component: int | None = None):
+def random_shuffle(
+    data: Any, n: int = 1, *, seed: int | None = None, component: int | None = None
+) -> np.ndarray:
     """Random-permutation surrogates (the constrained-realisation i.i.d. null).
 
     Each surrogate is an independent random permutation of the samples, so it
@@ -106,7 +108,7 @@ def random_shuffle(data: Any, n: int = 1, *, seed: int | None = None, component:
 
 def fourier_surrogate(
     data: Any, n: int = 1, *, seed: int | None = None, component: int | None = None
-):
+) -> np.ndarray:
     """Phase-randomised (Fourier transform) surrogates of a linear Gaussian null.
 
     Keeps the magnitude spectrum — and therefore the power spectrum and the linear
@@ -136,7 +138,9 @@ def fourier_surrogate(
     return _phase_randomize(series, int(n), rng)
 
 
-def aaft_surrogate(data: Any, n: int = 1, *, seed: int | None = None, component: int | None = None):
+def aaft_surrogate(
+    data: Any, n: int = 1, *, seed: int | None = None, component: int | None = None
+) -> np.ndarray:
     """Amplitude-adjusted Fourier-transform surrogates (Theiler et al., 1992).
 
     Tests the null of a *static monotonic nonlinearity acting on a linear Gaussian
@@ -184,7 +188,7 @@ def iaaft_surrogate(
     seed: int | None = None,
     component: int | None = None,
     max_iter: int = 1000,
-):
+) -> np.ndarray:
     r"""Refine AAFT surrogates iteratively (IAAFT; Schreiber & Schmitz, 1996).
 
     Alternates two projections until the sample ordering stops changing: a

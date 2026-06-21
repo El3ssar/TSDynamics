@@ -30,6 +30,8 @@ Davidchack & Lai (1999), *Phys. Rev. E* 60, 6172.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ... import registry as _registry
 from .fixed import FixedPoint, FixedPointSet, fixed_points
 from .periodic import OrbitSet, PeriodicOrbit, estimate_period, periodic_orbit, periodic_orbits
@@ -47,12 +49,13 @@ __all__ = [
 
 # Self-register the fixed-point / periodic-orbit finders (D4 / §4e: in-tree
 # analyses register from their own subpackage).  Idempotent across re-imports.
-for _name, _fn, _meta in (
+_registrations: tuple[tuple[str, Any, dict[str, Any]], ...] = (
     ("fixed_points", fixed_points, {"needs": "system", "family": "fixedpoints"}),
     ("periodic_orbits", periodic_orbits, {"needs": "system", "family": "fixedpoints"}),
     ("periodic_orbit", periodic_orbit, {"needs": "system", "family": "fixedpoints"}),
     ("estimate_period", estimate_period, {"needs": "series", "family": "fixedpoints"}),
-):
+)
+for _name, _fn, _meta in _registrations:
     _registry.analyses.register(_name, _fn, **_meta)
 del _name, _fn, _meta
 

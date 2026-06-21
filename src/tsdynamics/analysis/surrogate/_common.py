@@ -65,8 +65,9 @@ def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
     else:
         arr = np.asarray(x, dtype=float)
         if arr.ndim == 2:
+            shape: tuple[int, ...] = arr.shape
             if component is None:
-                if arr.shape[1] == 1:
+                if shape[1] == 1:
                     arr = arr[:, 0]
                 else:
                     raise ValueError(

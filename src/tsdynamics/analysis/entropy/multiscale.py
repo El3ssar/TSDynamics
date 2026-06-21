@@ -52,14 +52,14 @@ def coarse_grain(x: Any, scale: int, *, component: int | str | None = None) -> n
     n_windows = series.size // scale
     if n_windows == 0:
         raise ValueError(f"series of length {series.size} too short for scale {scale}.")
-    return series[: n_windows * scale].reshape(n_windows, scale).mean(axis=1)
+    return np.asarray(series[: n_windows * scale].reshape(n_windows, scale).mean(axis=1))
 
 
 def multiscale_entropy(
     data: Any,
     scales: int | Iterable[int] = 20,
     *,
-    entropy_fn: Callable[..., float] = sample_entropy,
+    entropy_fn: Callable[..., Any] = sample_entropy,
     r: float | None = None,
     r_factor: float = 0.15,
     component: int | str | None = None,

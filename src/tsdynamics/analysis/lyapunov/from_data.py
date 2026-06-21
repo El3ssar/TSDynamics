@@ -342,10 +342,10 @@ def lyapunov_from_data(
         neigh_of: list[np.ndarray] = []
         for n in range(last + 1):
             cand = tree.query_ball_point(emb[n], eps)
-            neigh = [j for j in cand if j <= last and abs(j - n) > theiler]
-            if len(neigh) >= n_neighbors:
+            neigh_list = [j for j in cand if j <= last and abs(j - n) > theiler]
+            if len(neigh_list) >= n_neighbors:
                 ref_idx.append(n)
-                neigh_of.append(np.asarray(neigh, dtype=int))
+                neigh_of.append(np.asarray(neigh_list, dtype=int))
         if not ref_idx:
             raise ValueError(
                 "no reference point has a neighbour within eps outside the Theiler "

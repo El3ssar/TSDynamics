@@ -68,7 +68,7 @@ from __future__ import annotations
 import html
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import numpy as np
 
@@ -136,53 +136,55 @@ class _PlotAccessor:
     def __init__(self, result: AnalysisResult) -> None:
         self._result = result
 
-    def __call__(self, backend: str | None = None, *, kind: str | None = None, **tweaks: Any):
+    def __call__(
+        self, backend: str | None = None, *, kind: str | None = None, **tweaks: Any
+    ) -> Any:
         """Render the result's default view (see :meth:`_render`)."""
         return self._render(kind=kind, backend=backend, **tweaks)
 
     # -- typed kind methods (the closed plot vocabulary; see viz.PlotKind) --
 
-    def scaling(self, **kw: Any):
+    def scaling(self, **kw: Any) -> Any:
         """Plot as a log--log scaling fit (dimensions / Lyapunov-from-data)."""
         return self._render(kind="scaling_fit", **kw)
 
-    def diagnostic(self, **kw: Any):
+    def diagnostic(self, **kw: Any) -> Any:
         """Plot as a diagnostic growth/decay curve (GALI, divergence)."""
         return self._render(kind="diagnostic_curve", **kw)
 
-    def time_series(self, **kw: Any):
+    def time_series(self, **kw: Any) -> Any:
         """Plot as a one-dimensional time series."""
         return self._render(kind="time_series", **kw)
 
-    def phase(self, **kw: Any):
+    def phase(self, **kw: Any) -> Any:
         """Plot as a 2-D / 3-D phase portrait."""
         return self._render(kind="phase_portrait", **kw)
 
-    def image(self, **kw: Any):
+    def image(self, **kw: Any) -> Any:
         """Plot as a 2-D image (recurrence matrix, basins)."""
         return self._render(kind="image", **kw)
 
-    def bifurcation(self, **kw: Any):
+    def bifurcation(self, **kw: Any) -> Any:
         """Plot as a bifurcation / orbit diagram."""
         return self._render(kind="bifurcation", **kw)
 
-    def return_map(self, **kw: Any):
+    def return_map(self, **kw: Any) -> Any:
         """Plot as a first-return / next-amplitude map."""
         return self._render(kind="return_map", **kw)
 
-    def histogram(self, **kw: Any):
+    def histogram(self, **kw: Any) -> Any:
         """Plot as a null-distribution histogram (surrogate tests)."""
         return self._render(kind="histogram_null", **kw)
 
-    def spectrum(self, **kw: Any):
+    def spectrum(self, **kw: Any) -> Any:
         """Plot as a power spectrum."""
         return self._render(kind="power_spectrum", **kw)
 
-    def section(self, **kw: Any):
+    def section(self, **kw: Any) -> Any:
         """Plot as a Poincaré section."""
         return self._render(kind="poincare_section", **kw)
 
-    def _render(self, *, kind: str | None = None, backend: str | None = None, **tweaks: Any):
+    def _render(self, *, kind: str | None = None, backend: str | None = None, **tweaks: Any) -> Any:
         """Resolve a backend and render, or raise :class:`VisualizationNotInstalled`.
 
         The ``kind`` requested by a typed method routes into ``to_plot_spec`` (so
@@ -634,7 +636,7 @@ class ScalingResult(AnalysisResult):
         y = np.asarray(self.ordinate, dtype=float)
         if x.size < 2:
             return np.full(x.shape, np.nan)
-        return np.gradient(y, x)
+        return cast("np.ndarray", np.gradient(y, x))
 
     @property
     def scaling_window(self) -> tuple[float, float]:
@@ -757,7 +759,7 @@ class _NumericOps:
     def __bool__(self) -> bool:  # noqa: D105
         return bool(_coerce_float(self.value))  # type: ignore[attr-defined]
 
-    def __round__(self, ndigits: int | None = None):  # noqa: D105
+    def __round__(self, ndigits: int | None = None) -> float | int:  # noqa: D105
         return round(float(self), ndigits) if ndigits is not None else round(float(self))
 
     def __array__(self, dtype: Any = None) -> np.ndarray:  # noqa: D105

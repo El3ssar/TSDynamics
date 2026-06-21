@@ -99,12 +99,12 @@ def _pnorm(diff: np.ndarray, p: float) -> np.ndarray:
     """Row-wise Minkowski-``p`` norm of a ``(M, dim)`` array of differences."""
     a = np.abs(diff)
     if p == float("inf"):
-        return a.max(axis=1)
+        return np.asarray(a.max(axis=1))
     if p == 1.0:
-        return a.sum(axis=1)
+        return np.asarray(a.sum(axis=1))
     if p == 2.0:
-        return np.sqrt(np.einsum("ij,ij->i", diff, diff))
-    return np.power(np.power(a, p).sum(axis=1), 1.0 / p)
+        return np.asarray(np.sqrt(np.einsum("ij,ij->i", diff, diff)))
+    return np.asarray(np.power(np.power(a, p).sum(axis=1), 1.0 / p))
 
 
 def _diameter(points: np.ndarray) -> float:
