@@ -1071,6 +1071,20 @@ class CollectionResult(AnalysisResult):
     def __bool__(self) -> bool:  # noqa: D105
         return bool(self.items)
 
+    def __eq__(self, other: Any) -> Any:
+        """Compare element-wise — also equal to a plain ``list``/``tuple`` of items.
+
+        Keeps ``result == [...]`` working for callers that treated the old bare
+        ``list`` return as a list (e.g. ``tipping_points(...) == []``).
+        """
+        if isinstance(other, CollectionResult):
+            return list(self.items) == list(other.items)
+        if isinstance(other, (list, tuple)):
+            return list(self.items) == list(other)
+        return NotImplemented
+
+    __hash__ = None  # type: ignore[assignment]  # mutable-sequence-like → unhashable, like list
+
     def __repr__(self) -> str:  # noqa: D105
         return f"{type(self).__name__}({len(self.items)} items)"
 

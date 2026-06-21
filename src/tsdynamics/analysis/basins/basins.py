@@ -29,6 +29,7 @@ from typing import Any
 import numpy as np
 
 from ...data import Ball, Box, Grid, grid_points, sampler
+from .._result import AnalysisResult
 from ._common import _apply_merge, _recurrence_grid
 from .attractors import DIVERGED, AttractorSet, _AttractorMapper, resolve_merge_tol
 
@@ -46,7 +47,7 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class BasinsResult:
+class BasinsResult(AnalysisResult):
     """
     A basin diagram: every grid cell labelled by the attractor it reaches.
 
@@ -61,9 +62,11 @@ class BasinsResult:
         The attractors the labels refer to.
     """
 
-    labels: np.ndarray = field(repr=False)
-    grid: Grid
-    attractors: AttractorSet
+    labels: np.ndarray = field(
+        default_factory=lambda: np.empty(0, dtype=int), repr=False, compare=False
+    )
+    grid: Grid = field(default=None, compare=False)
+    attractors: AttractorSet = field(default_factory=AttractorSet, compare=False)
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -152,7 +155,7 @@ class BasinsResult:
 
 
 @dataclass(frozen=True)
-class BasinFractions:
+class BasinFractions(AnalysisResult):
     """
     Monte-Carlo basin stability: each attractor's share of a sampled region.
 
@@ -168,10 +171,10 @@ class BasinFractions:
         The attractors the ids refer to.
     """
 
-    fractions: dict[int, float]
-    diverged: float
-    n: int
-    attractors: AttractorSet
+    fractions: dict[int, float] = field(default_factory=dict, compare=False)
+    diverged: float = 0.0
+    n: int = 0
+    attractors: AttractorSet = field(default_factory=AttractorSet, compare=False)
 
     @property
     def standard_error(self) -> dict[int, float]:
@@ -279,7 +282,12 @@ def basins_of_attraction(
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
     labels = _apply_merge(labels.reshape(region.shape), merge)
     attractors = mapper.attractor_set(diverged=diverged, seeds=points.shape[0], merge=merge)
-    return BasinsResult(labels=labels, grid=region, attractors=attractors)
+    return BasinsResult(
+        labels=labels,
+        grid=region,
+        attractors=attractors,
+        meta=AnalysisResult.build_meta(system, analysis="basins_of_attraction"),
+    )
 
 
 def basin_fractions(
@@ -358,7 +366,13 @@ def basin_fractions(
 
     fractions = {k: c / n for k, c in merged_counts.items()}
     attractors = mapper.attractor_set(diverged=diverged, seeds=n, merge=merge)
-    return BasinFractions(fractions=fractions, diverged=diverged / n, n=n, attractors=attractors)
+    return BasinFractions(
+        fractions=fractions,
+        diverged=diverged / n,
+        n=n,
+        attractors=attractors,
+        meta=AnalysisResult.build_meta(system, analysis="basin_fractions"),
+    )
 
 
 def __dir__() -> list[str]:

@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import AnalysisResult, ScalarResult
 from ._common import _as_label_array
 from .basins import BasinsResult
 
@@ -46,7 +47,7 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class BasinEntropy:
+class BasinEntropy(AnalysisResult):
     r"""
     Basin entropy and boundary basin entropy of a basin diagram.
 
@@ -70,13 +71,13 @@ class BasinEntropy:
         criterion of Daza et al. (2016).
     """
 
-    sb: float
-    sbb: float
-    n_boxes: int
-    n_boundary_boxes: int
-    box_size: int
-    log_base: float
-    fractal_boundary: bool
+    sb: float = 0.0
+    sbb: float = 0.0
+    n_boxes: int = 0
+    n_boundary_boxes: int = 0
+    box_size: int = 0
+    log_base: float = 0.0
+    fractal_boundary: bool = False
 
     def __repr__(self) -> str:  # noqa: D105
         return (
@@ -86,7 +87,7 @@ class BasinEntropy:
 
 
 @dataclass(frozen=True)
-class UncertaintyExponent:
+class UncertaintyExponent(AnalysisResult):
     r"""
     The uncertainty exponent of a basin boundary.
 
@@ -108,12 +109,12 @@ class UncertaintyExponent:
         Coefficient of determination of the log-log fit.
     """
 
-    alpha: float
-    boundary_dimension: float
-    state_dimension: int
-    epsilons: np.ndarray = field(repr=False)
-    f: np.ndarray = field(repr=False)
-    r_squared: float
+    alpha: float = 0.0
+    boundary_dimension: float = 0.0
+    state_dimension: int = 0
+    epsilons: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    f: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    r_squared: float = 0.0
 
     def __repr__(self) -> str:  # noqa: D105
         return (
@@ -123,7 +124,7 @@ class UncertaintyExponent:
 
 
 @dataclass(frozen=True)
-class WadaResult:
+class WadaResult(AnalysisResult):
     r"""
     A grid test for the Wada property of a basin diagram.
 
@@ -146,12 +147,12 @@ class WadaResult:
         Acceptance fraction at the largest radius.
     """
 
-    is_wada: bool
-    n_basins: int
-    radii: np.ndarray
-    fractions: np.ndarray = field(repr=False)
-    n_boundary_cells: int
-    threshold: float
+    is_wada: bool = False
+    n_basins: int = 0
+    radii: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)
+    fractions: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    n_boundary_cells: int = 0
+    threshold: float = 0.0
 
     def __repr__(self) -> str:  # noqa: D105
         w = self.fractions[-1] if self.fractions.size else float("nan")
@@ -230,6 +231,7 @@ def basin_entropy(basins: Any, *, box_size: int = 5, base: float = np.e) -> Basi
         box_size=int(box_size),
         log_base=float(base),
         fractal_boundary=fractal,
+        meta={"analysis": "basin_entropy", "box_size": int(box_size)},
     )
 
 
@@ -312,6 +314,7 @@ def uncertainty_exponent(
         epsilons=epsilons,
         f=fractions,
         r_squared=float(r2),
+        meta={"analysis": "uncertainty_exponent", "state_dimension": int(dim)},
     )
 
 
@@ -389,6 +392,7 @@ def wada_property(
             fractions=np.zeros(len(radii)),
             n_boundary_cells=n_boundary,
             threshold=float(threshold),
+            meta={"analysis": "wada_property"},
         )
 
     presence = {c: (labels == c) for c in colors}
@@ -410,6 +414,7 @@ def wada_property(
         fractions=frac_arr,
         n_boundary_cells=n_boundary,
         threshold=float(threshold),
+        meta={"analysis": "wada_property"},
     )
 
 
@@ -418,7 +423,7 @@ def wada_property(
 # ---------------------------------------------------------------------------
 
 
-def resilience(result: BasinsResult, attractor_id: int) -> float:
+def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     r"""
     Minimal-fatal-shock resilience of an attractor: its distance to the boundary.
 
@@ -470,7 +475,10 @@ def resilience(result: BasinsResult, attractor_id: int) -> float:
     center = result.attractors[int(attractor_id)].center
     idx = np.rint((center - grid.lo) / spacing).astype(int)
     idx = np.clip(idx, 0, np.asarray(grid.shape) - 1)
-    return float(edt[tuple(idx)])
+    return ScalarResult(
+        value=float(edt[tuple(idx)]),
+        meta={"analysis": "resilience", "attractor_id": int(attractor_id)},
+    )
 
 
 def __dir__() -> list[str]:

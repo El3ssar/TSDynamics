@@ -232,7 +232,7 @@ def max_lyapunov(
     transient: int = 500,
     ic: Any | None = None,
     seed: int | None = None,
-) -> float:
+) -> ScalarResult:
     """
     Maximal Lyapunov exponent by two-trajectory rescaling (Benettin et al. 1976).
 

@@ -50,6 +50,17 @@ group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
 
 from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
+# The shared result-object model (stream WS-RESULT/WS-SCALING/WS-WRAP): every
+# analysis returns an :class:`AnalysisResult` subclass, never a bare value.
+from ._result import (
+    AnalysisResult,
+    ArrayResult,
+    CollectionResult,
+    CountResult,
+    ScalarResult,
+    ScalingResult,
+    VisualizationNotInstalled,
+)
 
 # Bind the capability subpackages as public sub-namespaces so ``ts.analysis.<TAB>``
 # surfaces the ~10 categories (scipy-style), each listing its own estimators,
@@ -109,6 +120,7 @@ from .dimensions import (
     information_dimension,
 )
 from .embedding import (
+    Embedding,
     EmbeddingDimension,
     autocorrelation,
     cao_dimension,
@@ -131,6 +143,8 @@ from .entropy import (
 )
 from .fixedpoints import (
     FixedPoint,
+    FixedPointSet,
+    OrbitSet,
     PeriodicOrbit,
     estimate_period,
     fixed_points,
@@ -139,6 +153,7 @@ from .fixedpoints import (
 )
 from .lyapunov import (
     LyapunovFromData,
+    LyapunovSpectrum,
     kaplan_yorke_dimension,
     lyapunov_from_data,
     lyapunov_spectrum,
@@ -154,6 +169,7 @@ from .recurrence import (
     windowed_rqa,
 )
 from .surrogate import (
+    SurrogateEnsemble,
     SurrogateTest,
     aaft_surrogate,
     fourier_surrogate,
@@ -183,25 +199,37 @@ _CATEGORY_SUBPACKAGES = (
 )
 
 __all__ = [
+    "AnalysisResult",
+    "ArrayResult",
     "Attractor",
     "AttractorSet",
     "BasinEntropy",
     "BasinFractions",
     "BasinsResult",
+    "CollectionResult",
     "ContinuationResult",
+    "CountResult",
     "DimensionResult",
+    "Embedding",
     "EmbeddingDimension",
     "ExpansionEntropyResult",
     "FixedPoint",
+    "FixedPointSet",
     "GALIResult",
     "LyapunovFromData",
+    "LyapunovSpectrum",
     "OrbitDiagram",
+    "OrbitSet",
     "PeriodicOrbit",
     "RQAResult",
     "RecurrenceMatrix",
     "ReturnMap",
+    "ScalarResult",
+    "ScalingResult",
+    "SurrogateEnsemble",
     "SurrogateTest",
     "UncertaintyExponent",
+    "VisualizationNotInstalled",
     "WadaResult",
     "WindowedRQA",
     "aaft_surrogate",

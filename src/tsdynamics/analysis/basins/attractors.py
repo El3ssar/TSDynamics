@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 
 from ...data import Ball, Box, Grid, sampler, set_distance
+from .._result import AnalysisResult
 from ._common import _CellGrid, _recurrence_grid, _representative
 
 __all__ = [
@@ -49,7 +50,7 @@ DIVERGED = -1
 
 
 @dataclass(frozen=True)
-class Attractor:
+class Attractor(AnalysisResult):
     """
     One located attractor: a point cloud of states sampled on it.
 
@@ -64,9 +65,9 @@ class Attractor:
         Number of distinct grid cells the attractor occupies (a coarse size).
     """
 
-    id: int
-    points: np.ndarray = field(repr=False)
-    cells: int
+    id: int = 0
+    points: np.ndarray = field(default_factory=lambda: np.empty((0, 0)), repr=False, compare=False)
+    cells: int = 0
 
     @property
     def center(self) -> np.ndarray:
@@ -84,7 +85,7 @@ class Attractor:
 
 
 @dataclass(frozen=True)
-class AttractorSet:
+class AttractorSet(AnalysisResult):
     """
     The attractors found in a region, keyed by integer id.
 
@@ -98,9 +99,9 @@ class AttractorSet:
         How many seeds were classified in total.
     """
 
-    attractors: dict[int, Attractor]
-    diverged: int
-    seeds: int
+    attractors: dict[int, Attractor] = field(default_factory=dict, compare=False)
+    diverged: int = 0
+    seeds: int = 0
 
     def __len__(self) -> int:  # noqa: D105
         return len(self.attractors)
@@ -450,7 +451,13 @@ def find_attractors(
         if mapper.map_ic(draw()) == DIVERGED:
             diverged += 1
     merge = mapper.merge_map(resolve_merge_tol(grid, merge_tol))
-    return mapper.attractor_set(diverged=diverged, seeds=int(n_seeds), merge=merge)
+    found = mapper.attractor_set(diverged=diverged, seeds=int(n_seeds), merge=merge)
+    return AttractorSet(
+        attractors=found.attractors,
+        diverged=found.diverged,
+        seeds=found.seeds,
+        meta=AnalysisResult.build_meta(system, analysis="find_attractors"),
+    )
 
 
 def resolve_merge_tol(cellgrid: _CellGrid, merge_tol: float | None) -> float:
