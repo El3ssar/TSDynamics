@@ -38,7 +38,7 @@ Examples
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
@@ -364,7 +364,7 @@ class Registry:
     def __contains__(self, name: object) -> bool:  # noqa: D105
         return name in self._entries
 
-    def __iter__(self):  # noqa: D105
+    def __iter__(self) -> Iterator[RegistryEntry]:  # noqa: D105
         return iter(self._entries.values())
 
     def __len__(self) -> int:  # noqa: D105

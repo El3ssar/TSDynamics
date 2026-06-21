@@ -20,7 +20,7 @@ turn each instability type into a contracting one.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -201,7 +201,7 @@ def fixed_points(
         eye = np.eye(dim)
 
         def residual(x: np.ndarray) -> np.ndarray:
-            return step(x) - x
+            return cast("np.ndarray", step(x) - x)
 
         def jac_resid(x: np.ndarray) -> np.ndarray:
             return jac(x) - eye

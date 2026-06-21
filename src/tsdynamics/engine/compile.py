@@ -276,7 +276,9 @@ class Tape:
 
     # -- FFI / serialization ------------------------------------------------
 
-    def to_arrays(self) -> tuple:
+    def to_arrays(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, int]:
         """Return the wire arrays the Rust ``Tape::from_arrays`` ingests.
 
         The tuple is ``(ops, a, b, imm, outputs, jac_outputs, n_state,
@@ -491,13 +493,13 @@ class _Emitter:
                 raise TapeCompileError(f"Mod expects 2 arguments, got {len(expr.args)}")
             return self._push(OP_MOD, a=self.emit(expr.args[0]), b=self.emit(expr.args[1]))
 
-        op = _FUNC_OPS.get(name)
-        if op is not None:
+        func_op = _FUNC_OPS.get(name)
+        if func_op is not None:
             if len(expr.args) != 1:
                 raise TapeCompileError(
                     f"function {name!r} expects 1 argument, got {len(expr.args)}"
                 )
-            return self._push(op, a=self.emit(expr.args[0]))
+            return self._push(func_op, a=self.emit(expr.args[0]))
 
         raise TapeCompileError(f"the instruction tape has no equivalent for {name!r}.")
 
@@ -1378,7 +1380,7 @@ def eval_tape(tape: Tape, u: Any, p: Any = (), t: float = 0.0) -> np.ndarray:
     ndarray, shape (dim,)
     """
     regs = run_tape(tape, u, p, t)
-    return regs[tape.outputs]
+    return np.asarray(regs[tape.outputs])
 
 
 def eval_tape_jac(tape: Tape, u: Any, p: Any = (), t: float = 0.0) -> tuple[np.ndarray, np.ndarray]:

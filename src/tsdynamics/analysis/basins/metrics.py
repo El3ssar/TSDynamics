@@ -21,6 +21,7 @@ synthetic label grid:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -235,7 +236,7 @@ def basin_entropy(basins: Any, *, box_size: int = 5, base: float = np.e) -> Basi
     )
 
 
-def _iter_blocks(labels: np.ndarray, box_size: int):
+def _iter_blocks(labels: np.ndarray, box_size: int) -> Iterator[np.ndarray]:
     """Yield every (possibly partial) ``box_size``-cell block of ``labels``."""
     from itertools import product
 
@@ -457,6 +458,7 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
         raise TypeError("resilience needs a BasinsResult (it requires the grid + attractors).")
     labels = result.labels
     grid = result.grid
+    assert grid is not None  # a BasinsResult fed to resilience always carries its grid
     if labels.shape != tuple(grid.shape):
         raise ValueError(
             f"resilience needs labels laid out on the grid: labels {labels.shape} vs "

@@ -524,6 +524,15 @@ All three families + all derived wrappers implement:
 ## Code conventions
 
 - **Formatter/Linter:** `ruff format` / `ruff check` (line length 100; D rules on)
+- **Types:** `mypy --strict src/tsdynamics` is **green and CI-gated** (the
+  `typecheck` job in `ci.yml`). The core library is fully strict; the system
+  *catalogue* (`tsdynamics.systems.*`) relaxes exactly the three codes inherent to
+  its framework-contract kernels — `override`/`no-untyped-def`/`no-untyped-call`
+  (the `_equations`/`_step`/`_jacobian`/`_drift`/`_diffusion` math bodies, whose
+  parameters arrive positionally by `params`-dict order) — via a documented
+  `[tool.mypy.overrides]` block. `staticjit` aliases to `staticmethod` under
+  `TYPE_CHECKING` so a map's `_step(x, y, a, b)` is read with `x` as a parameter,
+  not `self`.
 - **Docstrings:** NumPy convention; cite original papers, never competitor software
 - **Never reference the Julia dynamical-systems ecosystem** in code, docs, or
   comments — ideas may be absorbed, citations go to the original literature.
@@ -535,6 +544,7 @@ Run before pushing:
 ```bash
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
+uv run mypy --strict src/tsdynamics     # type gate (CI-blocking; must be clean)
 make test                              # change-scoped fast tier (the loop — see below)
 make test-slow                         # change-scoped slow tier, if you touched anything heavy
 TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # docs sanity (only if docs/ changed)

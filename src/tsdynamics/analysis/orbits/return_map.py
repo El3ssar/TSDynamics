@@ -25,6 +25,7 @@ J. Atmos. Sci. 20, 130--141.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,7 +61,7 @@ class ReturnMap(AnalysisResult):
     observable: int = 0  # which state component was recorded
     kind: str = "max"  # "max" | "min" | "poincare"
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[tuple[Any, Any]]:
         return iter(zip(self.current, self.successor, strict=True))
 
     def __len__(self) -> int:
@@ -121,7 +122,7 @@ def return_map(
     component: int | str = 0,
     *,
     method: str = "max",
-    plane: tuple | None = None,
+    plane: tuple[Any, ...] | None = None,
     direction: int = +1,
     n: int = 2000,
     final_time: float = 200.0,
@@ -254,7 +255,7 @@ def _extremum_observable(
     transient: float,
     ic: Any | None,
     seed: int | None,
-    integrate_kwargs: dict,
+    integrate_kwargs: dict[str, Any],
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Extract the observable series (+ times) for extremum mode, from any input type."""
     if isinstance(system, Trajectory):
@@ -287,7 +288,7 @@ def _extremum_observable(
 def _poincare_observable(
     system: Any,
     component: int | str,
-    plane: tuple | None,
+    plane: tuple[Any, ...] | None,
     direction: int,
     n: int,
     skip_crossings: int,

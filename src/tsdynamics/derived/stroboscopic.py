@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -52,11 +52,11 @@ class StroboscopicMap(DerivedSystem):
     def step(self, n_or_dt: int | None = None) -> np.ndarray:
         """Advance ``n`` periods (default 1) and return the new state."""
         n = int(n_or_dt) if n_or_dt is not None else 1
-        return self.system.step(n * self.period)
+        return cast(np.ndarray, self.system.step(n * self.period))
 
     def time(self) -> float:
         """Return the inner flow time."""
-        return self.system.time()
+        return cast(float, self.system.time())
 
     def trajectory(self, steps: int = 100, *, transient: int = 0, **kwargs: Any) -> Trajectory:
         """Collect ``steps`` once-per-period samples (after ``transient`` periods)."""

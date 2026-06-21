@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from typing import Any, ClassVar
+from collections.abc import Callable, Sequence
+from typing import Any, ClassVar, cast
 
 import numpy as np
 
 from .base import SystemBase, Trajectory
 
 
-def _resolve_derivative_nodes(expr):
+def _resolve_derivative_nodes(expr: Any) -> Any:
     """
     Replace unevaluated SymEngine ``Derivative`` nodes with a.e. derivatives.
 
@@ -32,7 +32,7 @@ def _resolve_derivative_nodes(expr):
     if "Derivative" not in s and "Subs" not in s:
         return expr
 
-    def walk(e):
+    def walk(e: Any) -> Any:
         name = type(e).__name__
         if name == "Derivative":
             target = e.args[0]
@@ -152,7 +152,7 @@ class ContinuousSystem(SystemBase, ABC):
     #               SymEngine-Lambdified numeric RHS/Jacobian evaluators
     #               (used by figures, Poincaré Hermite refinement and analyses),
     #               keyed by class + dim + structural params.
-    _lambdified: ClassVar[dict[str, tuple]] = {}
+    _lambdified: ClassVar[dict[str, tuple[Any, Any, list[str]]]] = {}
 
     # Protocol stepping state (instances shadow these class defaults on first
     # ``reinit``).  The engine lowers the tape once in ``reinit`` and ``step``
@@ -177,7 +177,7 @@ class ContinuousSystem(SystemBase, ABC):
 
     @staticmethod
     @abstractmethod
-    def _equations(y, t, **params) -> Sequence:
+    def _equations(y: Any, t: Any, **params: Any) -> Sequence[Any]:
         """
         Build the symbolic RHS.
 
@@ -225,7 +225,8 @@ class ContinuousSystem(SystemBase, ABC):
         try:
             src = inspect.getsource(fn)
         except (OSError, TypeError):  # dynamically defined without source
-            src = repr(getattr(fn, "__code__", fn).co_code)
+            code = getattr(fn, "__code__", None)
+            src = repr(code.co_code) if code is not None else repr(fn)
         return hashlib.md5(src.encode()).hexdigest()[:8]
 
     def _control_params(self) -> dict[str, Any]:
@@ -266,7 +267,7 @@ class ContinuousSystem(SystemBase, ABC):
         u: Any | None = None,
         *,
         t: float | None = None,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
@@ -359,6 +360,10 @@ class ContinuousSystem(SystemBase, ABC):
 
         if self._engine_problem is None:
             self.reinit()
+        # After ``reinit`` (run above when cold) these stepping-state attributes are
+        # always populated; narrow them for the typed engine call below.
+        assert self._state_now is not None
+        assert self._step_method_canonical is not None
         dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
 
         t0 = self._t_now
@@ -405,6 +410,7 @@ class ContinuousSystem(SystemBase, ABC):
         """Return a copy of the current state (implicit ``reinit`` if cold)."""
         if self._state_now is None:
             self.reinit()
+        assert self._state_now is not None  # set by reinit above
         return self._state_now.copy()
 
     def set_state(self, u: Any) -> None:
@@ -425,7 +431,7 @@ class ContinuousSystem(SystemBase, ABC):
         *,
         dt: float = 0.02,
         transient: float = 0.0,
-        **kwargs,
+        **kwargs: Any,
     ) -> Trajectory:
         """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
         traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
@@ -455,13 +461,14 @@ class ContinuousSystem(SystemBase, ABC):
 
         y, t_sym = state_time_symbols()
 
+        dim = cast(int, self.dim)
         struct_vals = self._structural_vals()
         control_syms = {k: symengine.Symbol(k) for k in self._control_params()}
         f_sym = list(type(self)._equations(y, t_sym, **{**struct_vals, **control_syms}))
-        if len(f_sym) != self.dim:
-            raise ValueError(f"_equations must return {self.dim} expressions, got {len(f_sym)}")
+        if len(f_sym) != dim:
+            raise ValueError(f"_equations must return {dim} expressions, got {len(f_sym)}")
         return [
-            [_resolve_derivative_nodes(symengine.sympify(fi).diff(y(j))) for j in range(self.dim)]
+            [_resolve_derivative_nodes(symengine.sympify(fi).diff(y(j))) for j in range(dim)]
             for fi in f_sym
         ]
 
@@ -484,6 +491,7 @@ class ContinuousSystem(SystemBase, ABC):
 
         y, t_sym = state_time_symbols()
 
+        dim = cast(int, self.dim)
         struct_vals = self._structural_vals()
         control_names = list(self._control_params())
         control_syms = {k: symengine.Symbol(k) for k in control_names}
@@ -491,13 +499,11 @@ class ContinuousSystem(SystemBase, ABC):
             symengine.sympify(e)
             for e in type(self)._equations(y, t_sym, **{**struct_vals, **control_syms})
         ]
-        jac_rows = [
-            [_resolve_derivative_nodes(fi.diff(y(j))) for j in range(self.dim)] for fi in f_sym
-        ]
+        jac_rows = [[_resolve_derivative_nodes(fi.diff(y(j))) for j in range(dim)] for fi in f_sym]
 
         # Lambdify needs plain symbols — swap the y(i) function applications out.
-        y_syms = [symengine.Symbol(f"y_{i}") for i in range(self.dim)]
-        subs = {y(i): y_syms[i] for i in range(self.dim)}
+        y_syms = [symengine.Symbol(f"y_{i}") for i in range(dim)]
+        subs = {y(i): y_syms[i] for i in range(dim)}
         args = [*y_syms, t_sym, *(control_syms[k] for k in control_names)]
         rhs_fn = symengine.Lambdify(args, [e.subs(subs) for e in f_sym])
         jac_fn = symengine.Lambdify(args, [e.subs(subs) for row in jac_rows for e in row])
@@ -521,12 +527,13 @@ class ContinuousSystem(SystemBase, ABC):
         -------
         ndarray, shape (dim, dim)
         """
+        dim = cast(int, self.dim)
         _, jac_fn, control_names = self._build_lambdified()
         vals = [float(self.params[k]) for k in control_names]
         arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
-        return np.asarray(jac_fn(arg), dtype=float).reshape(self.dim, self.dim)
+        return np.asarray(jac_fn(arg), dtype=float).reshape(dim, dim)
 
-    def _rhs_numeric(self):
+    def _rhs_numeric(self) -> Callable[..., np.ndarray]:
         """
         Return a fast numeric RHS callable ``f(u, t) -> ndarray``.
 
@@ -554,7 +561,7 @@ class ContinuousSystem(SystemBase, ABC):
         dt: float = 0.02,
         *,
         events: Any = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Trajectory:
         """
         Produce a trajectory — the one canonical verb for every family.
@@ -684,7 +691,7 @@ class ContinuousSystem(SystemBase, ABC):
         atol: float = 1e-9,
         backend: str | None = None,
         events: Any = None,
-        **integrator_kwargs,
+        **integrator_kwargs: Any,
     ) -> Trajectory:
         """
         Integrate the ODE and return a :class:`~tsdynamics.families.Trajectory`.
@@ -771,7 +778,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
-        **integrator_kwargs,
+        **integrator_kwargs: Any,
     ) -> np.ndarray:
         """
         Estimate the Lyapunov spectrum of the flow.

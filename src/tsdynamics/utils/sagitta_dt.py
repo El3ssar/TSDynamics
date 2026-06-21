@@ -82,11 +82,11 @@ def _estimate_lag_ami(y: np.ndarray, max_lag: int | None = None, n_bins: int = 1
             mi = np.nansum(p_joint * log_term)
         ami_values.append(max(mi, 0.0))
 
-    ami_values = np.asarray(ami_values, float)
-    for i in range(1, len(ami_values) - 1):
-        if ami_values[i - 1] > ami_values[i] < ami_values[i + 1]:
+    ami_arr = np.asarray(ami_values, float)
+    for i in range(1, len(ami_arr) - 1):
+        if ami_arr[i - 1] > ami_arr[i] < ami_arr[i + 1]:
             return i + 1
-    return int(np.argmin(ami_values)) + 1
+    return int(np.argmin(ami_arr)) + 1
 
 
 def _estimate_embedding_dim_fnn(
@@ -336,7 +336,9 @@ def estimate_dt_from_sagitta(
     while max_span > 1 and (n_samples - 2 * max_span) < min_points_per_segment:
         max_span -= 1
 
-    def _make_result(stride: int, achieved: float, searched: list, extra_note: str) -> SagittaDt:
+    def _make_result(
+        stride: int, achieved: float, searched: list[tuple[int, float]], extra_note: str
+    ) -> SagittaDt:
         idx = np.arange(0, n_samples, stride, dtype=int)
         if idx[-1] != (n_samples - 1):
             idx = np.concatenate([idx, np.array([n_samples - 1], dtype=int)])

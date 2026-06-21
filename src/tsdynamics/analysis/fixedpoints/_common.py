@@ -28,13 +28,18 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from tsdynamics.families import ContinuousSystem, DiscreteMap, SystemBase
+    from tsdynamics.families.base import ParamSet
 
 # ── state coercion ────────────────────────────────────────────────────────────
 
 
-def to_native(x: np.ndarray, dim: int) -> object:
+def to_native(x: np.ndarray, dim: int) -> float | np.ndarray:
     """Present the state to a compiled ``_step``/``_jacobian`` in its native form.
 
     One-dimensional maps are written for a scalar argument (``x = X``);
@@ -47,7 +52,9 @@ def to_native(x: np.ndarray, dim: int) -> object:
 # ── tangent dynamics: maps ───────────────────────────────────────────────────
 
 
-def map_fns(system: object) -> tuple[Callable, Callable]:
+def map_fns(
+    system: DiscreteMap,
+) -> tuple[Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]]:
     """Return ``(step, jac)`` callables for a discrete map.
 
     ``step(x) -> ndarray (dim,)`` advances one iteration; ``jac(x) -> ndarray
@@ -57,10 +64,12 @@ def map_fns(system: object) -> tuple[Callable, Callable]:
     ``_jacobian`` falls back to a forward finite difference of ``_step``.
     """
     cls = type(system)
-    dim = int(system.dim)
-    step_raw = cls._step
-    jac_raw = getattr(cls, "_jacobian", None)
-    params = tuple(system.params.as_tuple())
+    dim = int(system.dim)  # type: ignore[arg-type]  # dim resolved at construction
+    # ``_step`` / ``_jacobian`` accept the native scalar-or-array form from
+    # ``to_native`` (1-D maps take a float); treat them as untyped callables.
+    step_raw: Callable[..., Any] = cls._step
+    jac_raw: Callable[..., Any] | None = getattr(cls, "_jacobian", None)
+    params = tuple(cast("ParamSet", system.params).as_tuple())
 
     def step(x: np.ndarray) -> np.ndarray:
         return np.asarray(step_raw(to_native(x, dim), *params), dtype=float).ravel()
@@ -79,7 +88,9 @@ def map_fns(system: object) -> tuple[Callable, Callable]:
     return step, jac
 
 
-def finite_diff_jac(step: Callable, x: np.ndarray, dim: int, eps: float = 1e-7) -> np.ndarray:
+def finite_diff_jac(
+    step: Callable[[np.ndarray], np.ndarray], x: np.ndarray, dim: int, eps: float = 1e-7
+) -> np.ndarray:
     """Forward finite-difference Jacobian of a map step (fallback only)."""
     x = np.asarray(x, dtype=float).ravel()
     base = step(x)
@@ -93,7 +104,11 @@ def finite_diff_jac(step: Callable, x: np.ndarray, dim: int, eps: float = 1e-7) 
 
 
 def map_orbit_monodromy(
-    step: Callable, jac: Callable, x0: np.ndarray, period: int, dim: int
+    step: Callable[[np.ndarray], np.ndarray],
+    jac: Callable[[np.ndarray], np.ndarray],
+    x0: np.ndarray,
+    period: int,
+    dim: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     r"""Orbit and chain-rule Jacobian of the ``period``-fold composition.
 
@@ -115,7 +130,9 @@ def map_orbit_monodromy(
 # ── tangent dynamics: flows ──────────────────────────────────────────────────
 
 
-def flow_fns(system: object) -> tuple[Callable, Callable]:
+def flow_fns(
+    system: ContinuousSystem,
+) -> tuple[Callable[..., np.ndarray], Callable[..., np.ndarray]]:
     """Return ``(rhs, jac)`` for a flow: ``rhs(u, t)`` and ``jac(u, t)``.
 
     Both come from the SymEngine-lambdified numeric forms
@@ -131,17 +148,22 @@ def flow_fns(system: object) -> tuple[Callable, Callable]:
     return rhs, jac
 
 
-def rk4_state(rhs: Callable, x: np.ndarray, t: float, h: float) -> np.ndarray:
+def rk4_state(rhs: Callable[..., np.ndarray], x: np.ndarray, t: float, h: float) -> np.ndarray:
     """One classic RK4 step of ``dx/dt = rhs(x, t)`` (state only)."""
     k1 = rhs(x, t)
     k2 = rhs(x + 0.5 * h * k1, t + 0.5 * h)
     k3 = rhs(x + 0.5 * h * k2, t + 0.5 * h)
     k4 = rhs(x + h * k3, t + h)
-    return x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    return cast("np.ndarray", x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4))
 
 
 def rk4_variational(
-    rhs: Callable, jac: Callable, x: np.ndarray, m: np.ndarray, t: float, h: float
+    rhs: Callable[..., np.ndarray],
+    jac: Callable[..., np.ndarray],
+    x: np.ndarray,
+    m: np.ndarray,
+    t: float,
+    h: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     r"""One RK4 step of the augmented system ``dx/dt = f``, ``dM/dt = J(x) M``.
 
@@ -164,7 +186,9 @@ def rk4_variational(
     return x_new, m_new
 
 
-def flow_state(rhs: Callable, x0: np.ndarray, period: float, n_steps: int) -> np.ndarray:
+def flow_state(
+    rhs: Callable[..., np.ndarray], x0: np.ndarray, period: float, n_steps: int
+) -> np.ndarray:
     """Integrate the state only over ``period`` with ``n_steps`` RK4 steps.
 
     Used by the shooting line search, where the monodromy is not needed to test a
@@ -180,7 +204,11 @@ def flow_state(rhs: Callable, x0: np.ndarray, period: float, n_steps: int) -> np
 
 
 def flow_monodromy(
-    rhs: Callable, jac: Callable, x0: np.ndarray, period: float, n_steps: int
+    rhs: Callable[..., np.ndarray],
+    jac: Callable[..., np.ndarray],
+    x0: np.ndarray,
+    period: float,
+    n_steps: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     r"""Integrate state + fundamental matrix over one period.
 
@@ -251,8 +279,8 @@ def _signed_perm_rank(c: np.ndarray) -> int:
 
 
 def converge_root(
-    residual: Callable,
-    jac_resid: Callable,
+    residual: Callable[[np.ndarray], np.ndarray],
+    jac_resid: Callable[[np.ndarray], np.ndarray],
     x0: np.ndarray,
     *,
     method: str,
@@ -287,8 +315,10 @@ def converge_root(
             if use_newton:
                 dx = np.linalg.solve(jac_resid(x), -g)
             elif method == "sd":
+                assert c_mat is not None
                 dx = lam * (c_mat @ g)
             elif method == "dl":
+                assert c_mat is not None
                 a = beta * ng * c_mat.T - jac_resid(x)
                 dx = np.linalg.solve(a, g)
             else:  # pragma: no cover - guarded by the public entry points
@@ -302,8 +332,8 @@ def converge_root(
 
 
 def solve_roots(
-    residual: Callable,
-    jac_resid: Callable,
+    residual: Callable[[np.ndarray], np.ndarray],
+    jac_resid: Callable[[np.ndarray], np.ndarray],
     dim: int,
     seeds: np.ndarray,
     *,
@@ -324,7 +354,6 @@ def solve_roots(
     """
     mats: list[np.ndarray | None] = [None] if method == "newton" else list(c_mats)
     roots: list[np.ndarray] = []
-    lo, hi = bounds if bounds is not None else (None, None)
     for c_mat in mats:
         for seed in seeds:
             x = converge_root(
@@ -340,8 +369,10 @@ def solve_roots(
             )
             if x is None:
                 continue
-            if lo is not None and not np.all((x >= lo - 1e-6) & (x <= hi + 1e-6)):
-                continue
+            if bounds is not None:
+                lo, hi = bounds
+                if not np.all((x >= lo - 1e-6) & (x <= hi + 1e-6)):
+                    continue
             if any(np.linalg.norm(x - r) < dedup_tol for r in roots):
                 continue
             roots.append(x)
@@ -361,7 +392,7 @@ def dedup_points(points: list[np.ndarray], tol: float) -> list[np.ndarray]:
 
 
 def resolve_box(
-    system: object, region: object, dim: int, rng: np.random.Generator
+    system: SystemBase, region: Any, dim: int, rng: np.random.Generator
 ) -> tuple[np.ndarray, np.ndarray]:
     """Resolve the search ``region`` to ``(lo, hi)`` arrays of length ``dim``.
 
@@ -383,7 +414,7 @@ def resolve_box(
     return -2.0 * np.ones(dim), 2.0 * np.ones(dim)
 
 
-def sample_orbit_box(system: object, dim: int, n: int = 200, transient: int = 50) -> np.ndarray:
+def sample_orbit_box(system: SystemBase, dim: int, n: int = 200, transient: int = 50) -> np.ndarray:
     """Collect a short burn-in orbit to bound an auto search box (backend-free).
 
     Returns an empty array if the orbit cannot be produced (e.g. it diverges);

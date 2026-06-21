@@ -166,7 +166,7 @@ def _embed_meta(dimension: int | Sequence[int], delay: int | Sequence[int]) -> d
 def _looks_univariate(data: Any) -> bool:
     """Whether ``data`` is a single scalar series (1-D, or a 1-column 2-D / trajectory)."""
     if _is_trajectory(data):
-        return data.y.ndim == 1 or data.y.shape[1] == 1
+        return bool(data.y.ndim == 1 or data.y.shape[1] == 1)
     if isinstance(data, (list, tuple)):
         # A list of 1-D series is multivariate; a flat numeric list is univariate.
         return not (len(data) > 0 and all(np.ndim(c) == 1 for c in data))

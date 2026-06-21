@@ -130,7 +130,7 @@ class Lorenz96(ContinuousSystem):
         N: int | None = None,
         f: float | None = None,
         *,
-        params: dict | None = None,
+        params: dict[str, float] | None = None,
         ic=None,
     ):
         p = dict(type(self).params)
@@ -281,7 +281,7 @@ class KuramotoSivashinsky(ContinuousSystem):
         N: int | None = None,
         L: float | None = None,
         *,
-        params: dict | None = None,
+        params: dict[str, float] | None = None,
         ic=None,
     ):
         p = dict(type(self).params)
@@ -489,7 +489,7 @@ class MultiChua(ContinuousSystem):
         self,
         n_circuits: int | None = None,
         *,
-        params: dict | None = None,
+        params: dict[str, float] | None = None,
         ic=None,
     ):
         p = dict(type(self).params)

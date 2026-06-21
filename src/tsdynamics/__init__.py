@@ -60,6 +60,8 @@ the rest are convenience re-exports): :class:`Trajectory`, :class:`Box`,
 lives with the family bases in :mod:`tsdynamics.families`.
 """
 
+from typing import Any
+
 from . import (
     analysis,
     data,
@@ -411,7 +413,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazily resolve the ``viz`` submodule and built-in system classes.
 
     Two lazy resolutions live here:

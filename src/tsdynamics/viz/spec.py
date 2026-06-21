@@ -175,7 +175,7 @@ class Axis:
         return cls(
             label=d.get("label", ""),
             scale=d.get("scale", "linear"),
-            limits=tuple(limits) if limits is not None else None,  # type: ignore[arg-type]
+            limits=tuple(limits) if limits is not None else None,
             ticks=list(ticks) if ticks is not None else None,
             tickformat=d.get("tickformat"),
         )
@@ -241,7 +241,7 @@ class Annotation:
             text=d.get("text", ""),
             x=d.get("x"),
             y=d.get("y"),
-            span=tuple(span) if span is not None else None,  # type: ignore[arg-type]
+            span=tuple(span) if span is not None else None,
             axis=d.get("axis", "x"),
             style=dict(d.get("style", {})),
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -331,14 +332,15 @@ def max_lyapunov(
 # Self-register the headline Lyapunov quantifiers (D4 / §4e: in-tree analyses
 # register from their own subpackage).  Idempotent across re-imports — `register`
 # keeps the same object under the same name.
-for _name, _fn, _meta in (
+_registrations: tuple[tuple[str, Callable[..., Any], dict[str, Any]], ...] = (
     ("lyapunov_spectrum", lyapunov_spectrum, {"needs": "system", "family": "lyapunov"}),
     ("max_lyapunov", max_lyapunov, {"needs": "system", "family": "lyapunov"}),
     ("lyapunov_from_data", lyapunov_from_data, {"needs": "series", "family": "lyapunov"}),
     ("kaplan_yorke_dimension", kaplan_yorke_dimension, {"needs": "spectrum", "family": "lyapunov"}),
-):
+)
+for _name, _fn, _meta in _registrations:
     _registry.analyses.register(_name, _fn, **_meta)
-del _name, _fn, _meta
+del _name, _fn, _meta, _registrations
 
 
 def __dir__() -> list[str]:

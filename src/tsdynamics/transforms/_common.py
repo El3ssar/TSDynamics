@@ -21,6 +21,7 @@ it went through, mirroring :meth:`tsdynamics.data.Trajectory.standardize`.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -166,7 +167,7 @@ def wrap_like(x: Any, y: np.ndarray, **meta_update: Any) -> Any:
     return np.asarray(y)
 
 
-def channel_iter(sig: np.ndarray):
+def channel_iter(sig: np.ndarray) -> Iterator[tuple[int, np.ndarray]]:
     """
     Iterate ``(index, column)`` over the channels of a 1-D or 2-D signal.
 

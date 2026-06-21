@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import numpy as np
 
@@ -138,7 +138,7 @@ class TangentSystem(DerivedSystem):
         u: Any | None = None,
         *,
         t: float | None = None,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Restart state, deviation vectors, and accumulated growth sums."""
@@ -175,7 +175,7 @@ class TangentSystem(DerivedSystem):
     @property
     def is_discrete(self) -> bool:
         """Match the wrapped system's time semantics."""
-        return self.system.is_discrete
+        return cast(bool, self.system.is_discrete)
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
@@ -205,11 +205,12 @@ class TangentSystem(DerivedSystem):
             self._last_growths = growths
             self._sum_growths += growths
             self._elapsed += 1.0
-        return sys.state()
+        return cast(np.ndarray, sys.state())
 
     def _step_ode_engine(self, dt: float) -> np.ndarray:
         if self._z is None:
             self.reinit()
+        assert self._z is not None  # reinit() seeds the extended state in ODE mode
         from tsdynamics.engine import run
         from tsdynamics.engine.problem import ODEProblem
 
@@ -239,11 +240,12 @@ class TangentSystem(DerivedSystem):
     def state(self) -> np.ndarray:
         """Return a copy of the current base-system state."""
         if self._mode == "map":
-            return self.system.state()
+            return cast(np.ndarray, self.system.state())
         # ODE mode: the constructor guarantees an engine backend, so the extended
         # state ``self._z`` always carries the base state in its leading slots.
         if self._z is None:
             self.reinit()
+        assert self._z is not None  # reinit() seeds the extended state in ODE mode
         return self._z[: self.system.dim].copy()
 
     def set_state(self, u: Any) -> None:

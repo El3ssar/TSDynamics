@@ -87,6 +87,31 @@ jobs:
       - name: ruff format --check
         run: uv run --no-sync ruff format --check src/ tests/
 
+  typecheck:
+    name: Typecheck (mypy --strict)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # mypy is static: it reads src/ directly and resolves third-party stubs from
+      # the installed deps — no engine build (the abi3 wheel) is needed, so skip
+      # installing the project itself (as the lint job does).
+      - name: Sync deps (no engine build)
+        run: uv sync --no-install-project --group dev
+
+      - name: mypy --strict
+        run: uv run --no-sync mypy --strict src/tsdynamics
+
   # Compile the abi3 engine wheel ONCE per OS. It is cp312-abi3, so a single wheel
   # serves both Python 3.12 and 3.13 on that OS — the test matrix below downloads
   # it instead of every cell recompiling the Rust engine via `uv sync`.
@@ -228,13 +253,13 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [changes, lint, build-engine, test-fast, test-slow]
+    needs: [changes, lint, typecheck, build-engine, test-fast, test-slow]
     runs-on: ubuntu-latest
     steps:
       - name: Gate on required jobs
         run: |
-          echo "changes=${{ needs.changes.result }} lint=${{ needs.lint.result }} build-engine=${{ needs.build-engine.result }} test-fast=${{ needs.test-fast.result }} test-slow=${{ needs.test-slow.result }}"
-          for r in "${{ needs.changes.result }}" "${{ needs.lint.result }}" "${{ needs.build-engine.result }}" "${{ needs.test-fast.result }}" "${{ needs.test-slow.result }}"; do
+          echo "changes=${{ needs.changes.result }} lint=${{ needs.lint.result }} typecheck=${{ needs.typecheck.result }} build-engine=${{ needs.build-engine.result }} test-fast=${{ needs.test-fast.result }} test-slow=${{ needs.test-slow.result }}"
+          for r in "${{ needs.changes.result }}" "${{ needs.lint.result }}" "${{ needs.typecheck.result }}" "${{ needs.build-engine.result }}" "${{ needs.test-fast.result }}" "${{ needs.test-slow.result }}"; do
             case "$r" in
               failure|cancelled)
                 echo "::error::a required job did not pass ($r)"

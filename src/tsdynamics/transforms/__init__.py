@@ -25,6 +25,9 @@ through the ``tsdynamics.transforms`` entry-point group (see
 registry, leaving in-tree names untouched.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 from .. import registry as _registry
 from ..plugins import TRANSFORMS_GROUP, register_entry_points
 from .features import (
@@ -75,7 +78,7 @@ __all__ = [
 #: ``kind`` groups them; ``produces`` flags what a downstream consumer gets back
 #: (``"signal"`` is shape-preserving, ``"spectrum"`` a frequency-domain pair,
 #: ``"scalar"`` a per-channel number, ``"features"`` a named bag).
-_INTREE_TRANSFORMS = {
+_INTREE_TRANSFORMS: dict[str, tuple[Callable[..., Any], dict[str, Any]]] = {
     "power_spectral_density": (
         power_spectral_density,
         {"kind": "spectral", "produces": "spectrum"},

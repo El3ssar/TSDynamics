@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -27,12 +27,12 @@ def _seeded_ic(system: Any, ic: Any | None, seed: int | None) -> np.ndarray | No
         return None
     if getattr(type(system), "default_ic", None) is not None:
         return None
-    return np.random.default_rng(seed).random(system.dim)
+    return cast(np.ndarray, np.random.default_rng(seed).random(system.dim))
 
 
 def poincare_section(
     system: Any,
-    plane: tuple,
+    plane: tuple[Any, ...],
     *,
     direction: int | str = +1,
     n: int = 1000,
@@ -111,7 +111,9 @@ def poincare_section(
     return pmap.trajectory(n, transient=skip_crossings)
 
 
-def _section_from_data(traj: Trajectory, plane: tuple, direction: int | str) -> PoincareSection:
+def _section_from_data(
+    traj: Trajectory, plane: tuple[Any, ...], direction: int | str
+) -> PoincareSection:
     resolved_plane, direction = _resolve_section_plane(traj, plane, direction)
     normal, offset = PoincareMap._parse_plane(traj.dim, resolved_plane)
     g = traj.y @ normal - offset

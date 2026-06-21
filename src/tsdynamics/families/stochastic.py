@@ -44,13 +44,16 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
 from tsdynamics.utils.grids import make_output_grid
 
 from .base import SystemBase, Trajectory
+
+if TYPE_CHECKING:
+    from tsdynamics.engine.problem import SDEProblem
 
 __all__ = ["StochasticSystem"]
 
@@ -168,9 +171,9 @@ def _sde_step(
     if method == "milstein":
         g, gjac = eval_tape_jac(diffusion, u, p, t)
         gprime = np.diagonal(gjac)
-        return u + f * h + g * dw + 0.5 * g * gprime * (dw * dw - h)
+        return cast(np.ndarray, u + f * h + g * dw + 0.5 * g * gprime * (dw * dw - h))
     g = eval_tape(diffusion, u, p, t)
-    return u + f * h + g * dw
+    return cast(np.ndarray, u + f * h + g * dw)
 
 
 def _advance_to(
@@ -274,7 +277,7 @@ class StochasticSystem(SystemBase, ABC):
     # Protocol stepping state (instances shadow these on first ``reinit``).
     _state_now: np.ndarray | None = None
     _t_now: float = 0.0
-    _stepper: dict | None = None
+    _stepper: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------ #
     # Subclass interface
@@ -282,13 +285,13 @@ class StochasticSystem(SystemBase, ABC):
 
     @staticmethod
     @abstractmethod
-    def _drift(y, t, **params) -> Sequence:
+    def _drift(y: Any, t: Any, **params: Any) -> Sequence[Any]:
         """Return the ``dim`` symbolic drift expressions ``f_k(y, t)``."""
         ...
 
     @staticmethod
     @abstractmethod
-    def _diffusion(y, t, **params) -> Sequence:
+    def _diffusion(y: Any, t: Any, **params: Any) -> Sequence[Any]:
         """Return the ``dim`` symbolic diagonal diffusion expressions ``g_k(y, t)``."""
         ...
 
@@ -319,7 +322,7 @@ class StochasticSystem(SystemBase, ABC):
         u: Any | None = None,
         *,
         t: float | None = None,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
         method: str | None = None,
         seed: int | None = None,
         dt: float | None = None,
@@ -375,6 +378,7 @@ class StochasticSystem(SystemBase, ABC):
         """
         if self._stepper is None:
             self.reinit()
+        assert self._stepper is not None
         s = self._stepper
         dt = float(n_or_dt) if n_or_dt is not None else s["dt"]
         u = np.asarray(self._state_now, dtype=float)
@@ -392,6 +396,7 @@ class StochasticSystem(SystemBase, ABC):
         """Return a copy of the current state (implicit ``reinit`` if cold)."""
         if self._state_now is None:
             self.reinit()
+        assert self._state_now is not None
         return self._state_now.copy()
 
     def set_state(self, u: Any) -> None:
@@ -416,7 +421,7 @@ class StochasticSystem(SystemBase, ABC):
         *,
         dt: float = 0.02,
         transient: float = 0.0,
-        **kwargs,
+        **kwargs: Any,
     ) -> Trajectory:
         """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
         traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
@@ -592,13 +597,13 @@ class StochasticSystem(SystemBase, ABC):
                 out[i] = u
             except RuntimeError:
                 out[i] = np.nan
-        return out
+        return cast(np.ndarray, out)
 
     # ------------------------------------------------------------------ #
     # Internal
     # ------------------------------------------------------------------ #
 
-    def _problem(self, *, ic: np.ndarray, t0: float, method: str):
+    def _problem(self, *, ic: np.ndarray, t0: float, method: str) -> SDEProblem:
         """Build the :class:`~tsdynamics.engine.problem.SDEProblem` for ``method``."""
         from tsdynamics.engine.problem import sde_problem
 
@@ -615,7 +620,7 @@ class StochasticSystem(SystemBase, ABC):
         """Integrate the lowered drift/diffusion tapes on a grid (pure Python)."""
         drift, diffusion = problem.drift, problem.diffusion
         p = problem.params_vec()
-        y = np.empty((t_eval.size, self.dim), dtype=np.float64)
+        y = np.empty((t_eval.size, cast(int, self.dim)), dtype=np.float64)
         u = np.asarray(problem.ic, dtype=float).reshape(self.dim)
         y[0] = u
         t = float(t_eval[0])

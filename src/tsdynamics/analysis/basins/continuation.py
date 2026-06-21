@@ -16,7 +16,7 @@ the continuation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -24,6 +24,9 @@ from ...data import Ball, Box, Grid, set_distance
 from .._result import AnalysisResult, CollectionResult
 from .attractors import Attractor
 from .basins import basin_fractions
+
+if TYPE_CHECKING:
+    from ...data.sampling import _SetMethod
 
 __all__ = [
     "ContinuationResult",
@@ -196,13 +199,12 @@ def _match(
 ) -> tuple[dict[int, int], int]:
     """Greedily match current (local) attractors to the previous global ids."""
     if not prev_global:
-        mapping = {lid: next_global + i for i, lid in enumerate(current)}
-        return mapping, next_global + len(current)
+        return {lid: next_global + i for i, lid in enumerate(current)}, next_global + len(current)
 
     pairs = []
     for gid, pa in prev_global.items():
         for lid, ca in current.items():
-            d = set_distance(pa.points, ca.points, method=method)
+            d = set_distance(pa.points, ca.points, method=cast("_SetMethod", method))
             pairs.append((d, gid, lid))
     pairs.sort(key=lambda t: t[0])
 

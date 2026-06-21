@@ -187,7 +187,7 @@ def surrogate_test(
     stat_kw = statistic_kwargs or {}
 
     if callable(statistic):
-        stat_fn: Callable[..., float] = statistic
+        stat_fn: Callable[..., Any] = statistic
         stat_name = getattr(statistic, "__name__", "<callable>")
     else:
         key = statistic.lower()

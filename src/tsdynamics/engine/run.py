@@ -35,11 +35,14 @@ wrapping the engine's output as a :class:`~tsdynamics.families.Trajectory`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from tsdynamics.utils.grids import make_output_grid
+
+if TYPE_CHECKING:
+    from tsdynamics.families import Trajectory
 
 from .compile import eval_tape, eval_tape_jac
 from .problem import (
@@ -251,7 +254,7 @@ def integrate(
     backend: str = "interp",
     history: Any = None,
     **build_kwargs: Any,
-):
+) -> Trajectory:
     """Integrate a system on the engine and return a :class:`~tsdynamics.families.Trajectory`.
 
     The single family-polymorphic engine entry point: every family's engine path
@@ -1073,7 +1076,7 @@ def _run_continuous(
 
 
 def _step_continuous(
-    tape_arrays: tuple,
+    tape_arrays: tuple[Any, ...],
     ic: np.ndarray,
     params_vec: np.ndarray,
     t_eval: np.ndarray,
@@ -1520,7 +1523,7 @@ def sde_ensemble_final(
 
 def _engine_integrate_dense(
     eng: Any,
-    tape_arrays: tuple,
+    tape_arrays: tuple[Any, ...],
     ic: np.ndarray,
     params_vec: np.ndarray,
     t_eval: np.ndarray,
@@ -1539,15 +1542,17 @@ def _engine_integrate_dense(
     WS-INVHOIST), while the single-shot :func:`integrate` path marshals them inline
     at the call site.
     """
-    return eng.integrate_dense(
-        *tape_arrays,
-        np.ascontiguousarray(ic, dtype=np.float64),
-        params_vec,
-        np.ascontiguousarray(t_eval, dtype=np.float64),
-        method,
-        float(rtol),
-        float(atol),
-        bool(jit),
+    return np.asarray(
+        eng.integrate_dense(
+            *tape_arrays,
+            np.ascontiguousarray(ic, dtype=np.float64),
+            params_vec,
+            np.ascontiguousarray(t_eval, dtype=np.float64),
+            method,
+            float(rtol),
+            float(atol),
+            bool(jit),
+        )
     )
 
 
@@ -1571,17 +1576,19 @@ def _engine_ensemble_final(
     fixed-step ``rk4`` — so the ensemble and dense (:func:`integrate`) paths take
     identical steps for fixed-step methods.
     """
-    return eng.integrate_ensemble_final(
-        *_primary_tape(problem).to_arrays(),
-        ics,
-        problem.params_vec(),
-        float(t0),
-        float(t1),
-        float(first_step),
-        method,
-        float(rtol),
-        float(atol),
-        bool(jit),
+    return np.asarray(
+        eng.integrate_ensemble_final(
+            *_primary_tape(problem).to_arrays(),
+            ics,
+            problem.params_vec(),
+            float(t0),
+            float(t1),
+            float(first_step),
+            method,
+            float(rtol),
+            float(atol),
+            bool(jit),
+        )
     )
 
 
@@ -1595,11 +1602,13 @@ def _engine_map_ensemble_final(
     ``jit`` picks the native-code evaluator over the interpreter (bit-for-bit
     identical results).
     """
-    return eng.iterate_ensemble_final(
-        *problem.tape.to_arrays(),
-        np.ascontiguousarray(ics, dtype=np.float64),
-        int(steps),
-        bool(jit),
+    return np.asarray(
+        eng.iterate_ensemble_final(
+            *problem.tape.to_arrays(),
+            np.ascontiguousarray(ics, dtype=np.float64),
+            int(steps),
+            bool(jit),
+        )
     )
 
 
@@ -1751,11 +1760,12 @@ _SCIPY_METHOD: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _provenance(problem: Problem, **extra: Any) -> dict:
+def _provenance(problem: Problem, **extra: Any) -> dict[str, Any]:
     """Build the provenance dict attached to an engine-produced Trajectory."""
     system = problem.system
     if system is not None and hasattr(system, "_provenance"):
-        return system._provenance(family=problem.family, engine="rust", **extra)
+        prov = system._provenance(family=problem.family, engine="rust", **extra)
+        return cast("dict[str, Any]", prov)
     return {"family": problem.family, "engine": "rust", **extra}
 
 

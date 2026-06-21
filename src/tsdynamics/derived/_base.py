@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.data import Trajectory
+    from tsdynamics.families.base import MetaStore, ParamSet
 
 __all__ = ["DerivedSystem"]
 
@@ -33,18 +34,18 @@ class DerivedSystem:
 
     @property
     def dim(self) -> int:
-        return self.system.dim
+        return cast(int, self.system.dim)
 
     @property
-    def params(self):
-        return self.system.params
+    def params(self) -> ParamSet:
+        return cast("ParamSet", self.system.params)
 
     @property
-    def meta(self):
-        return self.system.meta
+    def meta(self) -> MetaStore:
+        return cast("MetaStore", self.system.meta)
 
     @property
-    def variables(self):
+    def variables(self) -> tuple[str, ...] | None:
         return getattr(type(self.system), "variables", None)
 
     def with_params(self, **overrides: Any) -> DerivedSystem:
@@ -63,19 +64,23 @@ class DerivedSystem:
 
     @property
     def is_discrete(self) -> bool:
-        return self.system.is_discrete
+        return cast(bool, self.system.is_discrete)
 
     def state(self) -> np.ndarray:
-        return self.system.state()
+        return cast(np.ndarray, self.system.state())
 
     def set_state(self, u: Any) -> None:
         self.system.set_state(u)
 
     def time(self) -> float:
-        return self.system.time()
+        return cast(float, self.system.time())
 
     def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
         self.system.reinit(u, **kwargs)
+
+    def trajectory(self, *args: Any, **kwargs: Any) -> Trajectory:
+        """Produce the wrapper's trajectory — subclasses implement the lens-specific collection."""
+        raise NotImplementedError
 
     def run(self, *args: Any, **kwargs: Any) -> Trajectory:
         """Produce the wrapper's trajectory — the alias of :meth:`trajectory`.

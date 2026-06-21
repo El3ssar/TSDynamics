@@ -17,10 +17,16 @@ entry points.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from tsdynamics.data import Box
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
+
+    from tsdynamics.families import ContinuousSystem, DiscreteMap, ParamSet, SystemBase
 
 # ── observable coercion (0--1 test) ──────────────────────────────────────────
 
@@ -60,7 +66,8 @@ def _as_observable(data: object, component: int | None = None) -> np.ndarray:
             )
     arr = np.ravel(arr)
     if arr.ndim != 1:
-        raise ValueError(f"observable must be one-dimensional, got shape {np.shape(data)}.")
+        shape = np.shape(cast("npt.ArrayLike", data))
+        raise ValueError(f"observable must be one-dimensional, got shape {shape}.")
     if not np.all(np.isfinite(arr)):
         raise ValueError("observable contains non-finite values (nan/inf).")
     return arr
@@ -69,7 +76,7 @@ def _as_observable(data: object, component: int | None = None) -> np.ndarray:
 # ── tangent dynamics: maps ───────────────────────────────────────────────────
 
 
-def _unwrap(x: np.ndarray, dim: int) -> object:
+def _unwrap(x: np.ndarray, dim: int) -> Any:
     """Present the state to a compiled ``_step``/``_jacobian`` in its native form.
 
     One-dimensional maps are written for a scalar argument (``x = X``);
@@ -79,7 +86,9 @@ def _unwrap(x: np.ndarray, dim: int) -> object:
     return float(a[0]) if dim == 1 else a
 
 
-def _map_fns(system: object) -> tuple[Callable, Callable]:
+def _map_fns(
+    system: DiscreteMap,
+) -> tuple[Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]]:
     """Return ``(step, jac)`` callables for a discrete map.
 
     ``step(x) -> ndarray (dim,)`` advances one iteration; ``jac(x) -> ndarray
@@ -89,10 +98,10 @@ def _map_fns(system: object) -> tuple[Callable, Callable]:
     ``_jacobian`` falls back to a forward finite difference of ``_step``.
     """
     cls = type(system)
-    dim = int(system.dim)
+    dim = int(cast("int", system.dim))
     step_raw = cls._step
     jac_raw = getattr(cls, "_jacobian", None)
-    params = tuple(system.params.as_tuple())
+    params = tuple(cast("ParamSet", system.params).as_tuple())
 
     def step(x: np.ndarray) -> np.ndarray:
         return np.asarray(step_raw(_unwrap(x, dim), *params), dtype=float).ravel()
@@ -111,7 +120,9 @@ def _map_fns(system: object) -> tuple[Callable, Callable]:
     return step, jac
 
 
-def _finite_diff_jac(step: Callable, x: np.ndarray, dim: int, eps: float = 1e-7) -> np.ndarray:
+def _finite_diff_jac(
+    step: Callable[[np.ndarray], np.ndarray], x: np.ndarray, dim: int, eps: float = 1e-7
+) -> np.ndarray:
     """Forward finite-difference Jacobian of a map step (fallback only)."""
     x = np.asarray(x, dtype=float).ravel()
     base = step(x)
@@ -127,7 +138,9 @@ def _finite_diff_jac(step: Callable, x: np.ndarray, dim: int, eps: float = 1e-7)
 # ── tangent dynamics: flows ──────────────────────────────────────────────────
 
 
-def _flow_fns(system: object) -> tuple[Callable, Callable]:
+def _flow_fns(
+    system: ContinuousSystem,
+) -> tuple[Callable[[np.ndarray, float], np.ndarray], Callable[[np.ndarray, float], np.ndarray]]:
     """Return ``(rhs, jac)`` for a flow: ``rhs(u, t)`` and ``jac(u, t)``.
 
     Both come from the SymEngine-lambdified numeric forms
@@ -143,17 +156,24 @@ def _flow_fns(system: object) -> tuple[Callable, Callable]:
     return rhs, jac
 
 
-def _rk4_state(rhs: Callable, x: np.ndarray, t: float, h: float) -> np.ndarray:
+def _rk4_state(
+    rhs: Callable[[np.ndarray, float], np.ndarray], x: np.ndarray, t: float, h: float
+) -> np.ndarray:
     """One classic RK4 step of ``dx/dt = rhs(x, t)`` (state only; for burn-in)."""
     k1 = rhs(x, t)
     k2 = rhs(x + 0.5 * h * k1, t + 0.5 * h)
     k3 = rhs(x + 0.5 * h * k2, t + 0.5 * h)
     k4 = rhs(x + h * k3, t + h)
-    return x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    return cast("np.ndarray", x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4))
 
 
 def _rk4_variational(
-    rhs: Callable, jac: Callable, x: np.ndarray, m: np.ndarray, t: float, h: float
+    rhs: Callable[[np.ndarray, float], np.ndarray],
+    jac: Callable[[np.ndarray, float], np.ndarray],
+    x: np.ndarray,
+    m: np.ndarray,
+    t: float,
+    h: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     r"""One RK4 step of the augmented system ``dx/dt = f``, ``dM/dt = J(x) M``.
 
@@ -273,7 +293,7 @@ def _pearson(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.sum(xm * ym) / denom)
 
 
-def _resolve_region(system: object, region: object, *, margin: float = 0.1) -> Box:
+def _resolve_region(system: SystemBase, region: object, *, margin: float = 0.1) -> Box:
     """Coerce a region argument to a :class:`~tsdynamics.data.Box`.
 
     Accepts a ``Box``, an ``(lo, hi)`` pair, or ``None`` — in which case the box
@@ -282,7 +302,7 @@ def _resolve_region(system: object, region: object, *, margin: float = 0.1) -> B
     if isinstance(region, Box):
         return region
     if region is not None:
-        lo, hi = region
+        lo, hi = cast("tuple[npt.ArrayLike, npt.ArrayLike]", region)
         return Box(np.asarray(lo, dtype=float), np.asarray(hi, dtype=float))
     pts = _sample_orbit_box(system)
     lo, hi = pts.min(axis=0), pts.max(axis=0)
@@ -291,7 +311,7 @@ def _resolve_region(system: object, region: object, *, margin: float = 0.1) -> B
     return Box(lo - pad, hi + pad)
 
 
-def _sample_orbit_box(system: object, n: int = 2000, transient: int = 500) -> np.ndarray:
+def _sample_orbit_box(system: SystemBase, n: int = 2000, transient: int = 500) -> np.ndarray:
     """Collect a burn-in orbit to bound an auto-region (backend-free)."""
     from tsdynamics.families import ContinuousSystem, DiscreteMap
 

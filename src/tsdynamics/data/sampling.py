@@ -178,7 +178,7 @@ def sampler(region: Region, *, seed: int | None = None) -> Callable[[], np.ndarr
             v = rng.standard_normal(d)
             v /= np.linalg.norm(v)
             radius = r * rng.uniform() ** (1.0 / d)  # uniform-in-volume
-            return c + radius * v
+            return np.asarray(c + radius * v)
 
         return draw_ball
 

@@ -74,7 +74,7 @@ class System(Protocol):
         u: Any | None = None,
         *,
         t: float | None = None,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         """Restart the stepper from state ``u`` at time ``t``."""
         ...

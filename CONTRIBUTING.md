@@ -107,11 +107,16 @@ Release notes land on [GitHub Releases](https://github.com/El3ssar/TSDynamics/re
 |---|---|---|
 | `ruff check` | Lint (E, F, I, N, UP, B, SIM, D rules) | `pyproject.toml [tool.ruff]` |
 | `ruff format` | Formatter (line length 100) | `pyproject.toml [tool.ruff.format]` |
-| `mypy` | Optional type checking | `pyproject.toml [tool.mypy]` |
+| `mypy --strict` | Static type checking (**required**) | `pyproject.toml [tool.mypy]` |
 | `pr-title.yml` | Conventional-commit PR titles | `.github/workflows/pr-title.yml` |
 | Docstrings | NumPy convention | `pyproject.toml [tool.ruff.lint.pydocstyle]` |
 
-CI will reject a PR with any `ruff` error. Type errors are advisory for now.
+CI will reject a PR with any `ruff` error **or any `mypy --strict` error**: run
+`uv run mypy --strict src/tsdynamics` before pushing (the `typecheck` job in
+`ci.yml` gates it). The system *catalogue* (`tsdynamics.systems.*`) relaxes exactly
+the codes inherent to its framework-contract kernels — `override`, `no-untyped-def`,
+`no-untyped-call` (see the documented `[tool.mypy.overrides]` block); the core
+library is fully strict.
 
 ---
 

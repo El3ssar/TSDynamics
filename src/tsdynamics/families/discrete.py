@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import inspect
 from abc import abstractmethod
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
 from .base import SystemBase, Trajectory
+
+if TYPE_CHECKING:
+    from .base import ParamSet
 
 # ---------------------------------------------------------------------------
 # Signature validation helpers
@@ -125,7 +128,7 @@ class DiscreteMap(SystemBase):
 
     @staticmethod
     @abstractmethod
-    def _step(X: np.ndarray, *params) -> Any:
+    def _step(X: np.ndarray, *params: Any) -> Any:
         """
         Evaluate the map at state ``X``.
 
@@ -147,7 +150,7 @@ class DiscreteMap(SystemBase):
 
     @staticmethod
     @abstractmethod
-    def _jacobian(X: np.ndarray, *params) -> Any:
+    def _jacobian(X: np.ndarray, *params: Any) -> Any:
         """
         Return the (dim × dim) Jacobian at state ``X``.
 
@@ -174,7 +177,7 @@ class DiscreteMap(SystemBase):
         u: Any | None = None,
         *,
         t: float | None = None,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         """(Re)start stepping from state ``u`` at iteration count ``t``."""
         if params:
@@ -198,8 +201,9 @@ class DiscreteMap(SystemBase):
                     f"meaning for discrete maps)."
                 )
             n = int(nf)
+        assert self._state_now is not None
         x = self._state_now
-        params = self.params.as_tuple()
+        params = cast("ParamSet", self.params).as_tuple()
 
         step_fn = type(self)._step
         # A diverging orbit overflows to ``inf`` in pure-Python float64 arithmetic;
@@ -208,7 +212,7 @@ class DiscreteMap(SystemBase):
         # (under ``filterwarnings=error`` they would mask the real divergence signal).
         with np.errstate(all="ignore"):
             for _ in range(n):
-                x = np.asarray(step_fn(x, *params), dtype=float).ravel()
+                x = np.asarray(step_fn(x, *params), dtype=np.float64).ravel()
         if not np.isfinite(x).all():
             raise RuntimeError(
                 f"{type(self).__name__}: map diverged at iteration {self._n_now + n}."
@@ -221,6 +225,7 @@ class DiscreteMap(SystemBase):
         """Return a copy of the current state (implicit ``reinit`` if cold)."""
         if self._state_now is None:
             self.reinit()
+        assert self._state_now is not None
         return self._state_now.copy()
 
     def set_state(self, u: Any) -> None:
@@ -236,7 +241,7 @@ class DiscreteMap(SystemBase):
         steps: int = 1000,
         *,
         transient: int = 0,
-        **kwargs,
+        **kwargs: Any,
     ) -> Trajectory:
         """Protocol-uniform trajectory: ``iterate`` plus optional transient drop."""
         traj = self.iterate(steps=transient + steps, **kwargs)
@@ -249,7 +254,7 @@ class DiscreteMap(SystemBase):
     def run(
         self,
         n: int = 1000,
-        **kwargs,
+        **kwargs: Any,
     ) -> Trajectory:
         """
         Produce a trajectory — the one canonical verb for every family.
@@ -350,8 +355,12 @@ class DiscreteMap(SystemBase):
                 if ic_explicit or attempt == max_retries - 1:
                     raise
                 print(f"Warning: {exc}. Retrying with a new random IC.")
-                ic_arr = np.random.rand(self.dim)
+                ic_arr = np.random.rand(cast(int, self.dim))
                 object.__setattr__(self, "ic", ic_arr.copy())
+        raise RuntimeError(
+            f"{type(self).__name__}.iterate exhausted {max_retries} "
+            f"retries without a finite trajectory."
+        )
 
     def _iterate_engine(self, *, steps: int, ic: Any | None, backend: str) -> Trajectory:
         """Iterate on the Rust engine (or its pure-Python reference evaluator).

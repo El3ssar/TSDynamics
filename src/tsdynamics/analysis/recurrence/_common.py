@@ -14,7 +14,7 @@ import cycle through :mod:`tsdynamics.families` / :mod:`tsdynamics.data`.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -141,12 +141,12 @@ def _sample_valid_distances(
     def _dist(i: np.ndarray, j: np.ndarray) -> np.ndarray:
         diff = points[i] - points[j]
         if p == float("inf"):
-            return np.abs(diff).max(axis=1)
+            return cast(np.ndarray, np.abs(diff).max(axis=1))
         if p == 1.0:
-            return np.abs(diff).sum(axis=1)
+            return cast(np.ndarray, np.abs(diff).sum(axis=1))
         if p == 2.0:
-            return np.sqrt(np.einsum("ij,ij->i", diff, diff))
-        return np.power(np.power(np.abs(diff), p).sum(axis=1), 1.0 / p)
+            return cast(np.ndarray, np.sqrt(np.einsum("ij,ij->i", diff, diff)))
+        return cast(np.ndarray, np.power(np.power(np.abs(diff), p).sum(axis=1), 1.0 / p))
 
     if total_pairs <= max_pairs:
         i, j = np.triu_indices(n, k=1)

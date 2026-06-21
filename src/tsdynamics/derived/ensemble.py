@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -50,12 +50,12 @@ class EnsembleSystem:
     @property
     def dim(self) -> int:
         """State-space dimension of each member."""
-        return self.template.dim
+        return cast(int, self.template.dim)
 
     @property
     def is_discrete(self) -> bool:
         """Match the template system's time semantics."""
-        return self.template.is_discrete
+        return cast(bool, self.template.is_discrete)
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
         """Advance every member and return the stacked states, shape (m, dim)."""
