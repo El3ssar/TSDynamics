@@ -104,7 +104,12 @@ jobs:
           python -m pip install --upgrade pip pytest
           wheel=$(ls dist/tsdynamics-*.whl | head -n1)
           echo "Inspecting $wheel"
-          TSD_WHEEL="$wheel" python -m pytest tests/test_packaging.py -p no:cacheprovider -o addopts="" -q
+          # The wheel-content checks read the zip only — no numpy/tsdynamics import.
+          # `--noconftest` skips tests/conftest.py (it imports numpy + tsdynamics at
+          # collection; neither is installed in this build-only env), and `-k wheel`
+          # selects exactly the three `test_wheel_*` content invariants.
+          TSD_WHEEL="$wheel" python -m pytest tests/test_packaging.py \
+            -k wheel --noconftest -p no:cacheprovider -o addopts="" -q
 
       # Install the freshly built wheel and import it. Only on native runners: a
       # cross-compiled aarch64 wheel (or a musl wheel on a glibc host) cannot run
