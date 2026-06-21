@@ -215,8 +215,10 @@ def test_public_api_identity():
     assert ts.correlation_dimension is dim.correlation_dimension
     assert ts.fixed_mass_dimension is dim.fixed_mass_dimension
     assert ts.DimensionResult is dim.DimensionResult
+    # v4 (WS-NAMESPACE): the curated top-level ``__all__`` carries only headline
+    # names; demoted analysis names stay reachable as flat re-exports.
     for name in ("correlation_dimension", "fixed_mass_dimension", "DimensionResult"):
-        assert name in ts.__all__
+        assert hasattr(ts, name)
 
 
 # ── scaling-region fit ──────────────────────────────────────────────────────────

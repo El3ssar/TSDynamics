@@ -152,20 +152,37 @@ module's `__all__`), so a new system needs no manual edit there.
   builds on (Monte-Carlo + full-grid sampling, attractor-matching distances).
   `Trajectory`/`Box`/`Ball`/`Grid` are *defined* in `tsdynamics.data` (the one
   canonical home); the top-level names are convenience re-exports.
-- Submodules: `analysis`, `data`, `derived`, `families`, `registry`,
-  `systems`, `transforms`, `utils` (the eight headline submodules) plus the
-  advanced/internal `engine` and `solvers` (reachable, docstring-flagged
-  internal).
+- Submodules: `analysis`, `transforms`, `data`, `derived`, `families`,
+  `registry`, `systems`, `utils`, `errors` plus the lazily-resolved `viz` and the
+  advanced/internal `engine` / `solvers` (reachable, docstring-flagged internal).
+
+**Curated top level (stream WS-NAMESPACE).** As of v4, `tsdynamics.__all__` is
+**curated to ~30 headline names** — the five family bases + `WrappedSystem`,
+`Trajectory`, the five derived wrappers, the **six promoted analyses**
+(`lyapunov_spectrum`, `bifurcation_diagram` [alias of `orbit_diagram`],
+`poincare_section`, `recurrence_matrix`, `basins` [alias of
+`basins_of_attraction`], `fixed_points`), and the navigable submodules. Every
+other analysis function / result class / state-space primitive listed above is
+**demoted from `__all__` but stays fully reachable**: `ts.correlation_dimension`
+and `from tsdynamics import correlation_dimension` both resolve (the flat
+re-export bindings are retained), and the qualified path
+`ts.analysis.dimensions.correlation_dimension` works too. `__dir__` mirrors the
+curated `__all__`, so autocomplete shows the mental model, not a flat dump.
+`ts.analysis.<TAB>` likewise surfaces the **~10 capability subpackages**
+(`lyapunov`/`dimensions`/`chaos`/…) rather than ~75 flat names, while the flat
+re-exports stay importable (`entropy` the subpackage is shadowed by `entropy` the
+function, so `ts.analysis.entropy` is the function — reach the estimators via
+`from tsdynamics.analysis.entropy import permutation_entropy` or
+`importlib.import_module("tsdynamics.analysis.entropy")`).
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.families`; `staticjit` via `tsdynamics.utils`.
-The `transforms`, `engine` and `solvers` submodules are now bound on the
-top-level namespace and in `__all__` (stream WS-REACH), so `ts.transforms`,
-`ts.engine` and `ts.solvers` resolve after a plain `import tsdynamics`
-(`engine`/`solvers` are flagged advanced/internal in their module docstrings;
-`transforms` is a headline capability carrying its own flat public surface,
-`tsdynamics.transforms.__all__`). The skeleton `viz` package stays a deferred
-stub and is not bound here.
+The `transforms`, `engine`, `solvers` and `errors` submodules are bound eagerly
+on the top-level namespace and in `__all__` (`transforms`/`errors` headline,
+`engine`/`solvers` flagged internal in their docstrings). The `viz` package
+(`PlotSpec` IR; no renderer ships yet) is bound **lazily** via the module
+`__getattr__`, so a plain `import tsdynamics` pulls in no plotting/IR machinery —
+`ts.viz` resolves (and caches) on first access and shows in `__all__`/`dir()`.
 
 ---
 
