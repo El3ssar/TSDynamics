@@ -50,17 +50,6 @@ group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
 
 from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
-# The shared result-object model (stream WS-RESULT/WS-SCALING/WS-WRAP): every
-# analysis returns an :class:`AnalysisResult` subclass, never a bare value.
-from ._result import (
-    AnalysisResult,
-    ArrayResult,
-    CollectionResult,
-    CountResult,
-    ScalarResult,
-    ScalingResult,
-    VisualizationNotInstalled,
-)
 
 # Bind the capability subpackages as public sub-namespaces so ``ts.analysis.<TAB>``
 # surfaces the ~10 categories (scipy-style), each listing its own estimators,
@@ -82,6 +71,18 @@ from . import (
     orbits,
     recurrence,
     surrogate,
+)
+
+# The shared result-object model (stream WS-RESULT/WS-SCALING/WS-WRAP): every
+# analysis returns an :class:`AnalysisResult` subclass, never a bare value.
+from ._result import (
+    AnalysisResult,
+    ArrayResult,
+    CollectionResult,
+    CountResult,
+    ScalarResult,
+    ScalingResult,
+    VisualizationNotInstalled,
 )
 from .basins import (
     Attractor,
