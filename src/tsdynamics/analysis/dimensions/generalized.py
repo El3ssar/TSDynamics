@@ -40,8 +40,20 @@ from typing import Any
 
 import numpy as np
 
+from ...errors import invalid_value
 from ._common import DimensionResult, _as_points, _default_scales
 from ._scaling import ScalingFit, fit_scaling_region
+
+#: Rationale shared by the ``q < 0`` guards: a box-counting :math:`D_q` for
+#: negative order is dominated by the rarely-visited, under-sampled boxes (small
+#: :math:`p_i` raised to a negative power blows up), so the partition-function
+#: estimate is unreliable and divergent in practice — the regime the fixed-mass
+#: estimators were designed for instead (Badii & Politi 1985).
+_NEGATIVE_Q_RULE = "must be >= 0 for the box-counting estimator"
+_NEGATIVE_Q_HINT = (
+    "Negative-order Renyi dimensions are dominated by rarely-visited boxes, where "
+    "the box-counting partition function is unreliable; restrict to q >= 0."
+)
 
 __all__ = [
     "box_counting_dimension",
@@ -152,7 +164,8 @@ def generalized_dimension(
         The point set.
     q : float, default 2.0
         Rényi order.  ``q=0`` is box-counting, ``q=1`` information, ``q=2``
-        correlation; non-integer ``q`` is allowed.
+        correlation; non-integer ``q`` is allowed.  Must be ``>= 0`` — negative
+        orders are rejected (the box-counting estimator is unreliable there).
     scales : ndarray, optional
         Box sizes :math:`\epsilon`.  Default: a log-spaced grid spanning the
         attractor diameter
@@ -183,7 +196,15 @@ def generalized_dimension(
     H. G. E. Hentschel and I. Procaccia, "The infinite number of generalized
     dimensions of fractals and strange attractors", *Physica D* **8**, 435
     (1983).
+
+    Raises
+    ------
+    InvalidParameterError
+        If ``q < 0``: the box-counting partition function is unreliable for
+        negative orders (the rarely-visited boxes dominate).
     """
+    if q < 0.0:
+        raise invalid_value("q", q, rule=_NEGATIVE_Q_RULE, hint=_NEGATIVE_Q_HINT)
     points = _as_points(data)
     n = points.shape[0]
     mins = points.min(axis=0)
@@ -275,6 +296,9 @@ def dimension_spectrum(
     if qs is None:
         qs = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
     qs = [float(q) for q in np.atleast_1d(qs)]
+    bad = [q for q in qs if q < 0.0]
+    if bad:
+        raise invalid_value("q", bad[0], rule=_NEGATIVE_Q_RULE, hint=_NEGATIVE_Q_HINT)
     if scales is None:
         scales = _default_scales(points, n_scales=n_scales)
     scales = np.asarray(scales, dtype=float)
