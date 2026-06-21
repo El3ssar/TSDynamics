@@ -143,7 +143,9 @@ _PUBLIC_CLASSES = [
 def test_public_api_reexported(name):
     assert getattr(ts, name) is getattr(bas, name)
     assert name in ts.analysis.__all__
-    assert name in ts.__all__
+    # v4 (WS-NAMESPACE): the curated top-level ``__all__`` carries only headline
+    # names; demoted analysis names stay reachable as flat re-exports.
+    assert hasattr(ts, name)
 
 
 @pytest.mark.parametrize("name", _PUBLIC_FUNCS)

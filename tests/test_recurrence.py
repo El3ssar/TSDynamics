@@ -304,4 +304,6 @@ def test_estimators_self_register(name):
 def test_public_api_reexported(name):
     assert getattr(ts, name) is getattr(rec, name)
     assert name in ts.analysis.__all__
-    assert name in ts.__all__
+    # v4 (WS-NAMESPACE): the curated top-level ``__all__`` carries only headline
+    # names; demoted analysis names stay reachable as flat re-exports.
+    assert hasattr(ts, name)

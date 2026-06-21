@@ -50,6 +50,28 @@ group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
 
 from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
+
+# Bind the capability subpackages as public sub-namespaces so ``ts.analysis.<TAB>``
+# surfaces the ~10 categories (scipy-style), each listing its own estimators,
+# instead of one flat dump of ~75 functions.  ``entropy`` is intentionally absent
+# from this list: that name is shadowed by the :func:`entropy` *function* (a
+# documented, griffe-safe collision), so ``ts.analysis.entropy`` is the function,
+# not the module.  Reach the entropy estimators by name —
+# ``from tsdynamics.analysis.entropy import permutation_entropy`` — or grab the
+# module with ``importlib.import_module("tsdynamics.analysis.entropy")``.  The flat
+# re-exports above are retained, so ``from tsdynamics.analysis import
+# correlation_dimension`` still works.
+from . import (
+    basins,
+    chaos,
+    dimensions,
+    embedding,
+    fixedpoints,
+    lyapunov,
+    orbits,
+    recurrence,
+    surrogate,
+)
 from .basins import (
     Attractor,
     AttractorSet,
@@ -143,6 +165,23 @@ from .surrogate import (
     time_reversal_asymmetry,
 )
 
+#: The capability subpackages, in canonical order — the decluttered
+#: ``ts.analysis.<TAB>`` surface (see :func:`__dir__`).  ``entropy`` resolves to
+#: the function of the same name; reach the entropy estimators via
+#: ``from tsdynamics.analysis.entropy import …`` or ``importlib.import_module``.
+_CATEGORY_SUBPACKAGES = (
+    "lyapunov",
+    "dimensions",
+    "chaos",
+    "recurrence",
+    "entropy",
+    "embedding",
+    "surrogate",
+    "orbits",
+    "fixedpoints",
+    "basins",
+)
+
 __all__ = [
     "Attractor",
     "AttractorSet",
@@ -223,6 +262,17 @@ __all__ = [
     "weighted_permutation_entropy",
     "windowed_rqa",
     "zero_one_test",
+    # Capability subpackages (the navigable categories; ``entropy`` is the
+    # function-shadowed name already listed above).
+    "basins",
+    "chaos",
+    "dimensions",
+    "embedding",
+    "fixedpoints",
+    "lyapunov",
+    "orbits",
+    "recurrence",
+    "surrogate",
 ]
 
 
@@ -254,10 +304,15 @@ discover_plugins()
 
 
 def __dir__() -> list[str]:
-    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
+    """Show the ~10 capability categories to ``dir()`` / autocomplete (scipy-style).
 
-    The capability subpackages (``basins``, ``chaos``, …) and plugin-wiring
-    helpers are re-exported flat or used internally; they stay importable but are
-    kept off the tab-completion surface so only the public quantifiers show.
+    ``ts.analysis.<TAB>`` surfaces the navigable category subpackages
+    (``lyapunov``, ``dimensions``, ``chaos``, …) plus :func:`discover_plugins`,
+    not the ~75 flat quantifier names.  Those flat names stay fully reachable —
+    ``from tsdynamics.analysis import correlation_dimension`` and
+    ``ts.analysis.correlation_dimension`` both resolve, and ``__all__`` still
+    carries them for ``from tsdynamics.analysis import *`` — they are simply kept
+    off the tab surface so the structure, not the dump, is what you see.  Drill in
+    with ``ts.analysis.dimensions.<TAB>`` to reach the estimators.
     """
-    return sorted(__all__)
+    return sorted((*_CATEGORY_SUBPACKAGES, "discover_plugins"))
