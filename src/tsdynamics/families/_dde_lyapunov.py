@@ -210,7 +210,15 @@ def _qr_segments(dev: np.ndarray, n_exp: int, dim: int) -> tuple[np.ndarray, np.
     n_pts = dev.shape[0]
     mat = dev.transpose(0, 2, 1).reshape(n_pts * dim, n_exp)
     q, r = np.linalg.qr(mat)
-    log_growth = np.log(np.abs(np.diag(r)))
+    # Floor the per-deviation growth at the smallest positive normal float before
+    # the log: a rank-deficient or collapsed deviation gives a (near-)zero ``R``
+    # diagonal, and ``log(0) = -inf`` both poisons the time-average and raises a
+    # ``divide by zero`` RuntimeWarning that is *fatal* under
+    # ``filterwarnings=error`` (the test profile).  The floor is a guard only — a
+    # healthy renormalisation has ``|R_ii| >> tiny``, so it never perturbs a
+    # converged spectrum (``interp == jit`` stays bit-for-bit).
+    diag = np.maximum(np.abs(np.diag(r)), np.finfo(np.float64).tiny)
+    log_growth = np.log(diag)
     return q.reshape(n_pts, dim, n_exp).transpose(0, 2, 1), log_growth
 
 
@@ -241,8 +249,12 @@ def dde_lyapunov_spectrum(
         Number of leading exponents (may exceed ``dim`` — the tangent space is
         infinite-dimensional).
     final_time, dt, burn_in : float
-        Averaging window, output/renormalisation step, and discarded transient.
-        ``dt`` should divide the maximum delay for an exact base-history reuse.
+        Post-burn-in averaging window, output/renormalisation step, and discarded
+        transient.  ``final_time`` is the window over which ``log|diag R|`` is
+        time-averaged *after* ``burn_in`` — the total integration is
+        ``burn_in + final_time`` — so growing ``burn_in`` discards more transient
+        without shrinking the average.  ``dt`` should divide the maximum delay for
+        an exact base-history reuse.
     ic : array-like, optional
         Base initial state; pass the end state of a prior ``integrate`` so the
         run starts on the attractor (strongly recommended).
@@ -307,8 +319,17 @@ def dde_lyapunov_spectrum(
     base_seg = np.tile(base_ic, (n_seg + 1, 1))
     dev_seg = _seed_deviations(n_seg, n_exp, dim, grid)
 
-    n_chunks = max(1, int(round(final_time / chunk)))
-    n_burn = min(n_chunks - 1, int(round(burn_in / chunk)))
+    # ``final_time`` is the post-burn-in AVERAGING WINDOW (the documented
+    # contract), so the total integration is ``burn_in + final_time``: discard
+    # ``n_burn`` chunks of transient, then average over a *full* ``final_time``
+    # window of ``n_avg`` chunks.  (The previous code treated ``final_time`` as
+    # the total length and carved ``burn_in`` out of it — a large ``burn_in``
+    # then collapsed the average to a single delay-window FTLE, which fluctuates
+    # in sign and reported a negative leading exponent for the chaotic
+    # Mackey–Glass attractor.)
+    n_avg = max(1, int(round(final_time / chunk)))
+    n_burn = int(round(burn_in / chunk))
+    n_chunks = n_burn + n_avg
     log_sums = np.zeros(n_exp)
     seg_t = chunk + grid  # absolute times of the next past window within [0, chunk]
 
@@ -363,7 +384,7 @@ def dde_lyapunov_spectrum(
         if c >= n_burn:
             log_sums += log_growth
 
-    avg_time = (n_chunks - n_burn) * chunk
+    avg_time = n_avg * chunk  # == (n_chunks - n_burn) * chunk, the full final_time window
     exps = np.sort(log_sums / avg_time)[::-1]
     return exps
 
