@@ -1089,6 +1089,38 @@ class CollectionResult(AnalysisResult):
         ]
         return {"items": items, "meta": _jsonify(self.meta)}
 
+    def to_frame(self) -> Any:
+        """Return a :class:`pandas.DataFrame` with one row per item.
+
+        Each row carries that item's scalar display fields (when the item is an
+        :class:`AnalysisResult`), so a fixed-point / orbit set tabulates cleanly;
+        ``meta`` rides on ``frame.attrs["meta"]``.  ``pandas`` is a soft
+        dependency, imported lazily.
+
+        Returns
+        -------
+        pandas.DataFrame
+        """
+        pd = self._require_pandas()
+        rows: list[dict[str, Any]] = []
+        for item in self.items:
+            display = getattr(item, "_display_fields", None)
+            if callable(display):
+                row: dict[str, Any] = {}
+                for name in display():
+                    try:
+                        value = getattr(item, name)
+                    except AttributeError:
+                        continue
+                    if _is_frame_scalar(value):
+                        row[name] = _jsonify(value)
+                rows.append(row)
+            else:
+                rows.append({"value": _jsonify(item)})
+        frame = pd.DataFrame(rows)
+        frame.attrs["meta"] = dict(self.meta) if self.meta else {}
+        return frame
+
 
 def __dir__() -> list[str]:
     """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""

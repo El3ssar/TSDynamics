@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import AnalysisResult
 from ._common import _as_points
 from .rqa import RQAResult, rqa
 
@@ -40,7 +41,7 @@ _MEASURES = (
 
 
 @dataclass(frozen=True)
-class WindowedRQA:
+class WindowedRQA(AnalysisResult):
     r"""RQA measures over a sliding window.
 
     Each scalar measure of :class:`~tsdynamics.analysis.RQAResult` is available as
@@ -60,10 +61,10 @@ class WindowedRQA:
         Stride between consecutive windows in samples.
     """
 
-    centers: np.ndarray
-    results: tuple[RQAResult, ...] = field(repr=False)
-    window: int
-    step: int
+    centers: np.ndarray = field(default_factory=lambda: np.empty(0), compare=False)
+    results: tuple[RQAResult, ...] = field(default=(), repr=False, compare=False)
+    window: int = 0
+    step: int = 0
 
     def __len__(self) -> int:  # noqa: D105
         return len(self.results)
@@ -159,7 +160,13 @@ def windowed_rqa(
         for s in starts
     )
     centers = np.array([s + (window - 1) / 2.0 for s in starts], dtype=float)
-    return WindowedRQA(centers=centers, results=results, window=window, step=step)
+    return WindowedRQA(
+        centers=centers,
+        results=results,
+        window=window,
+        step=step,
+        meta={"analysis": "windowed_rqa", "window": int(window), "step": int(step)},
+    )
 
 
 def __dir__() -> list[str]:

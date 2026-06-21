@@ -33,13 +33,14 @@ from typing import Any
 
 import numpy as np
 
+from .._result import AnalysisResult
 from ._common import _as_points, _metric_p, _threshold_for_rate
 
 __all__ = ["RecurrenceMatrix", "recurrence_matrix"]
 
 
 @dataclass(frozen=True)
-class RecurrenceMatrix:
+class RecurrenceMatrix(AnalysisResult):
     r"""A binary recurrence matrix with the parameters it was built from.
 
     The matrix is symmetric, sparse and excludes the line of identity (plus the
@@ -59,10 +60,10 @@ class RecurrenceMatrix:
         Excluded near-diagonal band :math:`|i-j| \le w`.
     """
 
-    matrix: Any = field(repr=False)
-    epsilon: float
-    metric: str | float
-    theiler_window: int
+    matrix: Any = field(default=None, repr=False, compare=False)
+    epsilon: float = 0.0
+    metric: str | float = "euclidean"
+    theiler_window: int = 0
 
     @property
     def size(self) -> int:
@@ -212,7 +213,13 @@ def recurrence_matrix(
     cols = np.concatenate([j, i])
     ones = np.ones(rows.size, dtype=bool)
     mat = sparse.csr_matrix((ones, (rows, cols)), shape=(n, n))
-    return RecurrenceMatrix(matrix=mat, epsilon=eps, metric=metric, theiler_window=w)
+    return RecurrenceMatrix(
+        matrix=mat,
+        epsilon=eps,
+        metric=metric,
+        theiler_window=w,
+        meta={"analysis": "recurrence_matrix", "epsilon": float(eps), "theiler": int(w)},
+    )
 
 
 def __dir__() -> list[str]:
