@@ -216,6 +216,15 @@ def fixed_points(
     seeds = _build_seeds(system, dim, lo, hi, n_seeds, rng)
     c_mats = _stabilising_matrices(method, dim, max_c)
 
+    # The box only *seeds* the search.  An explicit ``region`` is also a hard
+    # search domain, so converged roots outside it are clipped; but when the box
+    # is the auto burn-in bounding box (``region is None``) it must not filter
+    # results — a flow's equilibria are saddles the on-attractor orbit never
+    # visits (e.g. the Lorenz origin and the C± centres sit outside the chaotic
+    # attractor's hull), so clipping to that box would silently drop genuine
+    # equilibria (the FIX-FPFLOW defect).
+    bounds = (lo, hi) if region is not None else None
+
     roots = _c.solve_roots(
         residual,
         jac_resid,
@@ -228,7 +237,7 @@ def fixed_points(
         tol=tol,
         max_iter=max_iter,
         dedup_tol=dedup_tol,
-        bounds=(lo, hi),
+        bounds=bounds,
     )
     out = [classify(r) for r in roots]
     out.sort(key=lambda fp: tuple(fp.x))
