@@ -1,0 +1,135 @@
+name: Perf (analysis layer)
+
+# Performance-regression gate for the TSDynamics *analysis* layer
+# (ticket HARDEN-PERFGATE). It times a representative spread of analyses on
+# fixed, deterministic inputs (benches/analysis_bench.py) and flags any routine
+# that got materially slower than the baseline.
+#
+# Baseline & comparison. On a pull request we measure the analyses on the PR
+# head (the "current" run) and on the merge target (origin/main, the
+# "baseline"), in the SAME job on the SAME runner, then diff them. Measuring
+# both on one machine cancels the runner-to-runner variance that makes absolute
+# wall-clock numbers meaningless across jobs. The compiled engine extension is
+# reused for both halves (the analysis Python code is what changes between
+# them), so we pay the cargo build only once.
+#
+# Advisory, not blocking (initially). The job ALWAYS succeeds: a flagged
+# slowdown is surfaced in the step summary and the PR log, not enforced. CI
+# wall-clock numbers on shared GitHub runners are too noisy to gate a merge on.
+# Flip the final step to `exit 1` once a quieter runner or a statistical gate
+# makes the signal trustworthy.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/tsdynamics/analysis/**"
+      - "src/tsdynamics/transforms/**"
+      - "benches/analysis_bench.py"
+      - ".github/workflows/perf-analysis.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: perf-analysis-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  perf-analysis:
+    name: Analysis perf regression (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: a perf hiccup (noisy runner / infra flake) must never block a PR.
+    # The slowdown signal is surfaced in the step summary; the merge gate is the
+    # test jobs, not this one.
+    continue-on-error: true
+    env:
+      MANIFEST: crates/tsdyn-core/Cargo.toml
+      TOLERANCE: "0.5" # flag a case > 50% slower than baseline
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need history so we can check out the merge target as the baseline.
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/tsdyn-core/target
+          key: cargo-tsdyn-core-${{ runner.os }}-${{ hashFiles('crates/tsdyn-core/Cargo.lock') }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync project + dev deps
+        run: uv sync --group dev
+
+      # Build the engine extension into the source tree (same recipe as
+      # engine-bindings.yml). The analysis layer runs on it where applicable.
+      - name: Build the engine extension
+        run: cargo build --release --features extension-module --manifest-path "$MANIFEST" --locked
+
+      - name: Install the extension into the source tree
+        run: cp crates/tsdyn-core/target/release/lib_rust.so src/tsdynamics/_rust.abi3.so
+
+      - name: Assert the engine extension is importable
+        run: uv run python -c "import tsdynamics._rust; print('engine', tsdynamics._rust._version())"
+
+      # ---- current run (PR head) ----
+      - name: Benchmark the PR head (current)
+        run: uv run python benches/analysis_bench.py --quick --out perf-current.json | tee perf-current.md
+
+      # ---- baseline run (merge target) ----
+      # Restore only the Python analysis sources + the bench script to their
+      # origin/main state, keeping the compiled engine in place, then re-measure.
+      - name: Restore analysis sources from the merge target (baseline)
+        run: |
+          # Swap ONLY the analysis/transforms sources to the merge target. The
+          # bench harness (benches/analysis_bench.py) is the measurement tool and
+          # stays at the PR-head version for both halves — it is new on this PR, so
+          # it does not exist on the base branch and must not be checked out there.
+          git checkout "origin/${{ github.base_ref || 'main' }}" -- \
+            src/tsdynamics/analysis src/tsdynamics/transforms
+
+      - name: Benchmark the merge target (baseline)
+        run: uv run python benches/analysis_bench.py --quick --out perf-baseline.json | tee perf-baseline.md
+
+      # ---- compare ----
+      # Restore the PR-head sources so the "current" measurement in the compare
+      # step reflects this PR's analysis code (the baseline restore above left the
+      # tree on the merge target). The harness is already at PR head.
+      - name: Restore PR-head sources
+        run: |
+          git checkout HEAD -- \
+            src/tsdynamics/analysis src/tsdynamics/transforms benches/analysis_bench.py
+
+      - name: Compare and report (advisory)
+        run: |
+          uv run python benches/analysis_bench.py \
+            --quick --baseline perf-baseline.json --tolerance "$TOLERANCE" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+        # Advisory: never fail the job on a slowdown. Flip to a hard gate later
+        # by inspecting the JSON and exiting non-zero on a "regressed" status.
+
+      - name: Upload raw perf results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-analysis-results
+          path: |
+            perf-current.json
+            perf-baseline.json
+            perf-current.md
+            perf-baseline.md
+          if-no-files-found: warn
