@@ -20,13 +20,27 @@ Sections (one per P4 ``POLISH`` gate stream):
   every result kind (so the surface is proven to actually fire), and a
   *foundation* check on the base/wrapper classes the rest inherit from.
 
-(The sibling P4 gates — WS-NAMEGATE's naming gate and WS-ERRGATE's error-message
-gate — append their own sections to this file.)
+- **Naming gate** (stream WS-NAMEGATE) — the registry-driven enforcement of the
+  *frozen* naming glossary (``docs/contributing/glossary.md``) over every public
+  callable's signature: a decidable check that the first positional argument is
+  ``system``/``data`` and that no parameter uses a banned spelling.
+
+- **Error-message gate** (stream WS-ERRGATE) — a *curated* table of the headline
+  wrong-input footguns the v4 audit named (``final_time<=0`` · ``dt<=0`` ·
+  too-short data · unknown keyword · unknown attribute · wrong-dimension ``ic``).
+  Error quality is not decidable from a signature, so this gate feeds each wrong
+  input and asserts the two halves of the ``tsdynamics.errors`` value-naming
+  standard — the message *names the offending value* (and, for the migrated
+  sites, raises a ``TSDynamicsError`` subclass) and the input *raises* rather
+  than silently returning garbage.  Footguns WS-ERRORS explicitly deferred to
+  later lanes are tracked with a strict ``xfail`` so they trip the moment a
+  future stream closes them.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import inspect
 import json
 import types as _types
@@ -49,6 +63,7 @@ from tsdynamics.analysis._result import (
     VisualizationNotInstalled,
 )
 from tsdynamics.derived.poincare import PoincareSection
+from tsdynamics.errors import InvalidInputError, InvalidParameterError, TSDynamicsError
 from tsdynamics.viz.spec import PlotKind
 
 # ===========================================================================
@@ -848,4 +863,469 @@ def test_naming_gate_homonym_whitelist_is_sound() -> None:
         )
         assert param in set(inspect.signature(fn).parameters), (
             f"{fn_name}: whitelist carves out {param!r}, absent from the live signature."
+        )
+
+
+# ===========================================================================
+# Error-message gate (stream WS-ERRGATE)
+# ===========================================================================
+#
+# The curated counterpart to the registry-driven gates above.  Error *quality*
+# is not decidable from a signature — it is decidable only by feeding a wrong
+# input and inspecting what comes back — so this gate is a hand-curated table of
+# the headline footguns the v4 audit named (``tsdynamics.errors``, the
+# value-naming standard), one row per wrong-input case:
+#
+#   final_time<=0 · dt<=0 · too-short data · unknown keyword · unknown attribute
+#   · wrong-dimension initial condition
+#
+# Two orthogonal properties are enforced, mirroring the two halves of the
+# WS-ERRORS standard — "name the offending value, list the rule/options, suggest
+# the fix" *and* "validate early; never silently produce garbage":
+#
+#   1. the **good-error shape** — the message names the offending value, and for
+#      the sites WS-ERRORS migrated the exception is the right ``TSDynamicsError``
+#      subclass (so ``except ts.TSDynamicsError`` works) while its stdlib base
+#      keeps ``except ValueError`` / ``except TypeError`` working; and
+#   2. **no silent footgun** — the wrong input *raises* rather than returning a
+#      1-step ``Trajectory`` / a ``0 ± 0`` dimension / a swallowed keyword.
+#
+# Reality is tiered, and the gate is honest about it — every assertion below
+# passes on ``main`` today:
+#
+#   * **closed footguns** (``final_time``/``dt``/unknown-attribute/unknown-param,
+#     plus the entropy wrong-type leak) raise the right ``TSDynamicsError``
+#     subclass with a value-naming message — asserted in full by
+#     :func:`test_errgate_value_naming_error`, alongside the already-excellent
+#     curated messages (``method=``/``backend=``/component/``set_state``) the
+#     standard set out to *generalise*;
+#   * **partially handled** cases (too-short data for the dimension/embedding
+#     estimators, a typo'd keyword on an explicit-signature analysis, a
+#     wrong-length ``ic``) at least *raise* — asserted to never silently return
+#     by :func:`test_errgate_no_silent_garbage`; and
+#   * **still-open footguns** WS-ERRORS *explicitly deferred* to the engine /
+#     ``WS-WRAP`` / ``WS-CONV`` lanes (``correlation_dimension`` returning a
+#     degenerate dimension for a handful of points, ``run()`` swallowing an
+#     unknown keyword, a wrong-``ic`` leaking a raw NumPy reshape message) are
+#     tracked by :func:`test_errgate_open_footgun_is_tracked` with a *strict*
+#     ``xfail`` asserting the standard they should meet, so they trip
+#     (xpass → fail) the instant a future stream closes them.
+#
+# The table is engine-free by construction — every system call routes through the
+# wheel-free ``backend="reference"`` oracle, and every footgun that involves a
+# system is validated in pure Python before any backend dispatch — so the section
+# stays in the fast tier and the module is not auto-tagged ``engine``.
+
+# ── the six headline footgun categories (the v4 audit's wrong-input table) ──
+_ERRGATE_FINAL_TIME = "final_time<=0"
+_ERRGATE_DT = "dt<=0"
+_ERRGATE_SHORT_DATA = "too-short data"
+_ERRGATE_UNKNOWN_KWARG = "unknown keyword"
+_ERRGATE_UNKNOWN_ATTR = "unknown attribute/parameter"
+_ERRGATE_WRONG_IC = "wrong-dimension ic"
+# extra witnesses (not part of the six-category coverage requirement):
+_ERRGATE_WRONG_TYPE = "wrong-type input"  # a System where a measured series is required
+_ERRGATE_CURATED = "curated exemplar"  # already-excellent messages, the standard to generalise
+
+_ERRGATE_HEADLINE_CATEGORIES = frozenset(
+    {
+        _ERRGATE_FINAL_TIME,
+        _ERRGATE_DT,
+        _ERRGATE_SHORT_DATA,
+        _ERRGATE_UNKNOWN_KWARG,
+        _ERRGATE_UNKNOWN_ATTR,
+        _ERRGATE_WRONG_IC,
+    }
+)
+
+# ── deterministic probe inputs ─────────────────────────────────────────────
+# Three points: below every estimator's minimum embedding/box window, so the
+# length-validating estimators reject it loudly.
+_ERRGATE_SHORT_SERIES = np.array([0.1, 0.2, 0.3])
+# Long enough that the *only* fault is the typo'd keyword.
+_ERRGATE_VALID_SERIES = np.sin(np.linspace(0.0, 50.0, 2000))
+# Eight points: enough to clear correlation_dimension's internal guards yet
+# degenerate, so it returns dimension ~= 0 with no error — the open footgun.
+_ERRGATE_DEGENERATE_SERIES = np.linspace(0.0, 1.0, 8)
+
+
+def _errgate_set_unknown_attribute() -> None:
+    """Trigger the typo'd-attribute footgun (``lor.sigmaa = 99`` for ``sigma``)."""
+    system = ts.Lorenz()
+    system.sigmaa = 99
+
+
+def _errgate_unknown_component() -> object:
+    """Index a Trajectory by a component name the system does not declare."""
+    traj = ts.Lorenz().run(final_time=1.0, dt=0.5, backend="reference")
+    return traj["nonexistent"]
+
+
+def _errgate_permutation_entropy_on_system() -> object:
+    """Feed a System where a measured series is required (the type-leak footgun).
+
+    ``entropy`` the function shadows ``entropy`` the subpackage at
+    ``tsdynamics.analysis`` (WS-NAMESPACE), so the estimator is reached through
+    :func:`importlib.import_module`.
+    """
+    entropy = importlib.import_module("tsdynamics.analysis.entropy")
+    return entropy.permutation_entropy(ts.Lorenz())
+
+
+@dataclasses.dataclass(frozen=True)
+class _ValueNamingCase:
+    """A wrong input that must raise with a value-naming message.
+
+    ``raises`` is the *guaranteed stdlib base* the exception must be an instance
+    of (so the row keeps passing if the site is later promoted to a
+    ``TSDynamicsError`` subclass of that base); ``names`` are substrings the
+    message must contain — the offending value or its name; ``tsdclass`` is the
+    specific ``TSDynamicsError`` subclass for the sites WS-ERRORS migrated, or
+    ``None`` for a curated exemplar that still raises a stock stdlib type.
+    """
+
+    cid: str
+    category: str
+    thunk: object
+    raises: type
+    names: tuple[str, ...]
+    tsdclass: type | None
+
+
+@dataclasses.dataclass(frozen=True)
+class _RaisesCase:
+    """A wrong input that must *raise* (never silently return), with a token.
+
+    These satisfy the "validate early; never silently produce garbage" half of
+    the standard but are not yet a ``TSDynamicsError`` / fully domain-framed.
+    ``token`` is an optional substring the message must mention.
+    """
+
+    cid: str
+    category: str
+    thunk: object
+    raises: type
+    token: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class _OpenFootgun:
+    """A footgun WS-ERRORS explicitly deferred to a later lane.
+
+    The gate asserts the standard it *should* meet (``expect`` raised, the
+    message containing every entry of ``names``) under a strict ``xfail``;
+    ``reason`` names the lane that owns closing it.
+
+    Closure is detected by the *exception type* (``expect``): the strict ``xfail``
+    trips (xpass → fail) only once the site raises ``expect``.  A *half*-fix that
+    raises a different type (e.g. a bare ``ValueError`` rather than a
+    ``TSDynamicsError``) leaves the case xfailed — by design, since the standard
+    being tracked is the ``TSDynamicsError`` bar, not merely "raises something".
+    When a case trips, promote it into the value-naming table above (adding the
+    message-token assertion there) and delete the row here.
+    """
+
+    cid: str
+    category: str
+    thunk: object
+    reason: str
+    expect: type | tuple[type, ...]
+    names: tuple[str, ...]
+
+
+# ── tier 1: closed footguns + curated exemplars (value-naming message) ──────
+_ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
+    _ValueNamingCase(
+        "final_time-negative",
+        _ERRGATE_FINAL_TIME,
+        lambda: ts.Lorenz().run(final_time=-5.0, dt=0.1, backend="reference"),
+        ValueError,
+        ("final_time",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "final_time-zero",
+        _ERRGATE_FINAL_TIME,
+        lambda: ts.Lorenz().run(final_time=0.0, dt=0.1, backend="reference"),
+        ValueError,
+        ("final_time",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "final_time-negative-integrate-alias",
+        _ERRGATE_FINAL_TIME,
+        lambda: ts.Lorenz().integrate(final_time=-5.0, dt=0.1, backend="reference"),
+        ValueError,
+        ("final_time",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "dt-zero",
+        _ERRGATE_DT,
+        lambda: ts.Lorenz().run(final_time=5.0, dt=0.0, backend="reference"),
+        ValueError,
+        ("dt",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "dt-negative",
+        _ERRGATE_DT,
+        lambda: ts.Lorenz().run(final_time=5.0, dt=-0.1, backend="reference"),
+        ValueError,
+        ("dt",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "unknown-attribute-set",
+        _ERRGATE_UNKNOWN_ATTR,
+        _errgate_set_unknown_attribute,
+        ValueError,
+        ("sigmaa",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "unknown-parameter-with_params",
+        _ERRGATE_UNKNOWN_ATTR,
+        lambda: ts.Lorenz().with_params(nonexistent=5),
+        ValueError,
+        ("nonexistent",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "unknown-parameter-constructor",
+        _ERRGATE_UNKNOWN_ATTR,
+        lambda: ts.Lorenz(params={"sigmaa": 9}),
+        ValueError,
+        ("sigmaa",),
+        InvalidParameterError,
+    ),
+    _ValueNamingCase(
+        "wrong-type-input-entropy",
+        _ERRGATE_WRONG_TYPE,
+        _errgate_permutation_entropy_on_system,
+        TypeError,
+        ("System", "Lorenz"),
+        InvalidInputError,
+    ),
+    # Curated exemplars — already-excellent value-naming messages (stock stdlib
+    # types) that WS-ERRORS set out to make the law rather than the exception.
+    _ValueNamingCase(
+        "curated-solver-method",
+        _ERRGATE_CURATED,
+        lambda: ts.Lorenz().run(final_time=5.0, dt=0.1, method="LSODA", backend="reference"),
+        ValueError,
+        ("LSODA", "available"),
+        None,
+    ),
+    _ValueNamingCase(
+        "curated-backend",
+        _ERRGATE_CURATED,
+        lambda: ts.Lorenz().run(final_time=5.0, dt=0.1, backend="gpu"),
+        ValueError,
+        ("gpu", "choose from"),
+        None,
+    ),
+    _ValueNamingCase(
+        "curated-trajectory-component",
+        _ERRGATE_CURATED,
+        _errgate_unknown_component,
+        KeyError,
+        ("nonexistent",),
+        None,
+    ),
+    _ValueNamingCase(
+        "curated-dde-set-state",
+        _ERRGATE_CURATED,
+        lambda: ts.MackeyGlass().set_state([1.0]),
+        NotImplementedError,
+        ("set_state",),
+        None,
+    ),
+]
+
+
+# ── tier 2: partially handled — must raise (no silent garbage) ──────────────
+_ERRGATE_NO_SILENT: list[_RaisesCase] = [
+    _RaisesCase(
+        "short-data-embed",
+        _ERRGATE_SHORT_DATA,
+        lambda: ts.analysis.embedding.embed(_ERRGATE_SHORT_SERIES, dimension=5, delay=3),
+        ValueError,
+        "too short",
+    ),
+    _RaisesCase(
+        "short-data-box-counting",
+        _ERRGATE_SHORT_DATA,
+        lambda: ts.box_counting_dimension(_ERRGATE_SHORT_SERIES),
+        ValueError,
+        None,
+    ),
+    _RaisesCase(
+        "short-data-lyapunov-from-data",
+        _ERRGATE_SHORT_DATA,
+        lambda: ts.lyapunov_from_data(_ERRGATE_SHORT_SERIES),
+        ValueError,
+        "longer series",
+    ),
+    _RaisesCase(
+        "unknown-keyword-lyapunov-spectrum",
+        _ERRGATE_UNKNOWN_KWARG,
+        lambda: ts.lyapunov_spectrum(ts.Lorenz(), nonsense=5),
+        TypeError,
+        "nonsense",
+    ),
+    _RaisesCase(
+        "unknown-keyword-correlation-dimension",
+        _ERRGATE_UNKNOWN_KWARG,
+        lambda: ts.correlation_dimension(_ERRGATE_VALID_SERIES, nonsense=5),
+        TypeError,
+        "nonsense",
+    ),
+    _RaisesCase(
+        "wrong-ic-dimension",
+        _ERRGATE_WRONG_IC,
+        lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
+        ValueError,
+        None,
+    ),
+]
+
+
+# ── tier 3: still-open footguns, tracked under a strict xfail ───────────────
+_ERRGATE_OPEN_FOOTGUNS: list[_OpenFootgun] = [
+    _OpenFootgun(
+        "open-short-data-correlation-dimension",
+        _ERRGATE_SHORT_DATA,
+        lambda: ts.correlation_dimension(_ERRGATE_DEGENERATE_SERIES),
+        "WS-ERRORS deferred too-short-data normalization to the WS-WRAP/WS-CONV "
+        "lane: correlation_dimension still returns a degenerate dimension ~= 0 "
+        "(no raise) for a handful of points instead of rejecting the input.",
+        TSDynamicsError,
+        (),
+    ),
+    _OpenFootgun(
+        "open-unknown-keyword-run",
+        _ERRGATE_UNKNOWN_KWARG,
+        lambda: ts.Lorenz().run(final_time=5.0, dt=0.5, backend="reference", nonsense=5),
+        "run()/integrate() still forward **kwargs; WS-CONV normalized only the "
+        "analysis signatures, so a typo'd keyword on the trajectory verb is "
+        "silently swallowed rather than rejected.",
+        (TSDynamicsError, TypeError),
+        (),
+    ),
+    # The same wrong-ic input is asserted at tier 2 (`wrong-ic-dimension`, "it
+    # raises") and here at tier 3 ("it should raise a TSDynamicsError naming the
+    # ic") — a deliberate dual standard for one input, not a copy-paste duplicate.
+    _OpenFootgun(
+        "open-wrong-ic-message",
+        _ERRGATE_WRONG_IC,
+        lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
+        "WS-ERRORS left initial-condition normalization to a later lane: a "
+        "wrong-length ic leaks a raw NumPy 'cannot reshape array' ValueError "
+        "instead of a TSDynamicsError naming the initial condition.",
+        TSDynamicsError,
+        (),
+    ),
+]
+
+_ERRGATE_OPEN_PARAMS = [
+    pytest.param(case, id=case.cid, marks=pytest.mark.xfail(reason=case.reason, strict=True))
+    for case in _ERRGATE_OPEN_FOOTGUNS
+]
+
+
+@pytest.mark.parametrize("case", _ERRGATE_VALUE_NAMING, ids=lambda c: c.cid)
+def test_errgate_value_naming_error(case: _ValueNamingCase) -> None:
+    """A wrong input raises with a message that names the offending value.
+
+    For the sites WS-ERRORS migrated onto the hierarchy (``case.tsdclass`` set),
+    the raised exception is additionally that specific ``TSDynamicsError``
+    subclass — so a caller can ``except ts.TSDynamicsError`` — while the stdlib
+    base in ``case.raises`` keeps ``except ValueError`` / ``except TypeError``
+    working.  Asserting the stdlib base (not the subclass) keeps the curated
+    exemplars forward-compatible if they are later promoted onto the hierarchy.
+    """
+    with pytest.raises(case.raises) as excinfo:
+        case.thunk()
+    message = str(excinfo.value)
+    for token in case.names:
+        assert token in message, f"{case.cid}: message does not name {token!r}: {message!r}"
+    if case.tsdclass is not None:
+        assert isinstance(excinfo.value, case.tsdclass), (
+            f"{case.cid}: expected a {case.tsdclass.__name__} (a TSDynamicsError), "
+            f"got {type(excinfo.value).__name__}."
+        )
+
+
+@pytest.mark.parametrize("case", _ERRGATE_NO_SILENT, ids=lambda c: c.cid)
+def test_errgate_no_silent_garbage(case: _RaisesCase) -> None:
+    """A partially-handled wrong input *raises* — it never silently returns garbage.
+
+    These cases do not yet raise a ``TSDynamicsError`` (too-short data leaks a
+    domain ``ValueError`` from the estimator; a typo'd keyword on an
+    explicit-signature analysis is a stock ``TypeError``; a wrong-length ``ic``
+    leaks a NumPy reshape ``ValueError``), but they satisfy the *other* half of
+    the standard: the input is rejected loudly rather than turned into a 1-step
+    trajectory / a ``0 ± 0`` dimension / a swallowed keyword.
+    """
+    with pytest.raises(case.raises) as excinfo:
+        case.thunk()
+    if case.token is not None:
+        assert case.token in str(excinfo.value), (
+            f"{case.cid}: message does not mention {case.token!r}: {str(excinfo.value)!r}"
+        )
+
+
+@pytest.mark.parametrize("case", _ERRGATE_OPEN_PARAMS)
+def test_errgate_open_footgun_is_tracked(case: _OpenFootgun) -> None:
+    """A footgun WS-ERRORS deferred: assert the standard it *should* meet.
+
+    Every case currently fails this assertion (it returns garbage, or raises a
+    bare/leaky error), so each is a *strict* ``xfail``: the gate records the open
+    gap executably and turns red (an unexpected pass) the instant a future stream
+    — the lane named in ``case.reason`` — closes the footgun, forcing the marker
+    to be removed and the case promoted into one of the tables above.
+    """
+    with pytest.raises(case.expect) as excinfo:
+        case.thunk()
+    for token in case.names:
+        assert token in str(excinfo.value), (
+            f"{case.cid}: a fixed error should name {token!r}: {str(excinfo.value)!r}"
+        )
+
+
+def test_errgate_table_covers_every_headline_footgun() -> None:
+    """Every headline wrong-input category from the v4 audit is exercised by the gate.
+
+    Coverage is required twice: every category appears *somewhere*, and every
+    category has at least one *live* (non-``xfail``) case — so demoting a
+    category's only executing case into the tracked-open ``xfail`` table (which
+    would quietly stop exercising it) fails this gate loudly.
+    """
+    everywhere = (*_ERRGATE_VALUE_NAMING, *_ERRGATE_NO_SILENT, *_ERRGATE_OPEN_FOOTGUNS)
+    missing = _ERRGATE_HEADLINE_CATEGORIES - {case.category for case in everywhere}
+    assert not missing, f"headline footgun categories not gated: {sorted(missing)}"
+
+    live = {case.category for case in (*_ERRGATE_VALUE_NAMING, *_ERRGATE_NO_SILENT)}
+    untested = _ERRGATE_HEADLINE_CATEGORIES - live
+    assert not untested, (
+        f"headline categories with no live (non-xfail) case: {sorted(untested)}; "
+        f"a strict-xfail-only category exercises no executing assertion."
+    )
+
+
+def test_errgate_case_ids_are_unique() -> None:
+    """No two curated cases share an id, so a failure is unambiguously located."""
+    ids = [
+        case.cid for case in (*_ERRGATE_VALUE_NAMING, *_ERRGATE_NO_SILENT, *_ERRGATE_OPEN_FOOTGUNS)
+    ]
+    duplicates = sorted({i for i in ids if ids.count(i) > 1})
+    assert not duplicates, f"duplicate case ids: {duplicates}"
+
+
+def test_errgate_open_footgun_reasons_cite_a_lane() -> None:
+    """Each tracked-open footgun documents the stream/lane that owns closing it."""
+    for case in _ERRGATE_OPEN_FOOTGUNS:
+        assert "WS-" in case.reason or "defer" in case.reason.lower(), (
+            f"{case.cid}: an open-footgun reason must cite the deferring lane."
         )
