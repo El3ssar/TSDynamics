@@ -81,7 +81,7 @@ def test_threshold_mode_density_increases_with_eps(noise):
 
 def test_theiler_window_removes_near_diagonal(sine):
     emb = ts.embed(sine, dimension=2, delay=10)
-    rm = rec.recurrence_matrix(emb, threshold=0.3, theiler_window=15)
+    rm = rec.recurrence_matrix(emb, threshold=0.3, theiler=15)
     arr = rm.toarray()
     # every recurrence sits outside the |i - j| <= 15 band.
     i, j = np.nonzero(arr)
@@ -116,9 +116,9 @@ def test_recurrence_matrix_guards(noise):
     with pytest.raises(ValueError, match=r"\(0, 1\)"):
         rec.recurrence_matrix(noise, recurrence_rate=1.5)
     with pytest.raises(ValueError, match="non-negative"):
-        rec.recurrence_matrix(noise, threshold=0.5, theiler_window=-1)
+        rec.recurrence_matrix(noise, threshold=0.5, theiler=-1)
     with pytest.raises(ValueError, match="every pair"):
-        rec.recurrence_matrix(noise[:10], threshold=0.5, theiler_window=20)
+        rec.recurrence_matrix(noise[:10], threshold=0.5, theiler=20)
     with pytest.raises(ValueError, match="unknown metric"):
         rec.recurrence_matrix(noise, threshold=0.5, metric="nope")
     with pytest.raises(ValueError, match="at least two"):
@@ -134,15 +134,15 @@ def test_recurrence_matrix_guards(noise):
 def test_rqa_periodic_logistic_is_fully_deterministic(r):
     """A periodic orbit recurs on perfect diagonals → DET = 1, long L_max."""
     x = _logistic(r)
-    res = rec.rqa(x, recurrence_rate=0.05, theiler_window=1)
+    res = rec.rqa(x, recurrence_rate=0.05, theiler=1)
     assert res.determinism == pytest.approx(1.0, abs=1e-9)
     assert res.max_diagonal_length > 100  # diagonals span the whole orbit
 
 
 def test_rqa_chaotic_logistic_is_less_deterministic():
     """The fully chaotic logistic orbit (r=4) has DET < 1 and short diagonals."""
-    chaotic = rec.rqa(_logistic(4.0), recurrence_rate=0.05, theiler_window=1)
-    periodic = rec.rqa(_logistic(3.5), recurrence_rate=0.05, theiler_window=1)
+    chaotic = rec.rqa(_logistic(4.0), recurrence_rate=0.05, theiler=1)
+    periodic = rec.rqa(_logistic(3.5), recurrence_rate=0.05, theiler=1)
     assert chaotic.determinism < 0.9
     assert chaotic.determinism < periodic.determinism
     assert chaotic.max_diagonal_length < periodic.max_diagonal_length
@@ -159,9 +159,9 @@ def test_rqa_sine_vs_noise(sine, noise):
 
 
 def test_rqa_accepts_prebuilt_matrix(noise):
-    rm = rec.recurrence_matrix(noise[:800], recurrence_rate=0.05, theiler_window=1)
+    rm = rec.recurrence_matrix(noise[:800], recurrence_rate=0.05, theiler=1)
     from_matrix = rec.rqa(rm)
-    from_data = rec.rqa(noise[:800], recurrence_rate=0.05, theiler_window=1)
+    from_data = rec.rqa(noise[:800], recurrence_rate=0.05, theiler=1)
     assert from_matrix.determinism == pytest.approx(from_data.determinism)
     assert from_matrix.recurrence_rate == pytest.approx(from_data.recurrence_rate)
     assert from_matrix.epsilon == rm.epsilon
@@ -203,7 +203,7 @@ def test_rqa_empty_matrix_is_well_defined():
 
 def test_rqa_diagonal_entropy_periodic_below_random(noise):
     """A single dominant line length (periodic) is lower-entropy than noise's spread."""
-    periodic = rec.rqa(_logistic(3.5), recurrence_rate=0.05, theiler_window=1)
+    periodic = rec.rqa(_logistic(3.5), recurrence_rate=0.05, theiler=1)
     rnd = rec.rqa(noise, recurrence_rate=0.05)
     # periodic: lengths concentrate; the line-length histograms differ in spread.
     assert periodic.diagonal_lengths.size > 0
@@ -225,7 +225,7 @@ def transition_embedding():
 
 def test_windowed_rqa_detects_transition(transition_embedding):
     w = rec.windowed_rqa(
-        transition_embedding, window=200, step=100, recurrence_rate=0.05, theiler_window=10
+        transition_embedding, window=200, step=100, recurrence_rate=0.05, theiler=10
     )
     det = w.determinism
     assert len(w) == len(det) == len(w.centers)

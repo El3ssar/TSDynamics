@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from .poincare import _seeded_ic
+
 __all__ = ["OrbitDiagram", "orbit_diagram"]
 
 
@@ -206,15 +208,16 @@ def _record_via_step(
 
 
 def orbit_diagram(
-    sys: Any,
+    system: Any,
     param: str,
     values: Any,
     *,
     n: int = 200,
     transient: int = 500,
     carry_state: bool = True,
-    components: int | str | tuple = 0,
+    component: int | str | tuple = 0,
     ic: Any | None = None,
+    seed: int | None = None,
 ) -> OrbitDiagram:
     """
     Sweep a parameter and record the asymptotic orbit at each value.
@@ -229,7 +232,7 @@ def orbit_diagram(
 
     Parameters
     ----------
-    sys : System (discrete)
+    system : System (discrete)
         The system to sweep.  Never mutated — each value gets a fresh
         ``with_params`` copy.
     param : str
@@ -244,12 +247,15 @@ def orbit_diagram(
         Start each value from the previous value's final state (follows the
         attractor branch; the classic way to draw clean diagrams).  When
         False, every value starts from ``ic`` / the system default.
-    components : int, str, or tuple
-        Which state components to record (names allowed when the system
+    component : int, str, or tuple
+        Which state component(s) to record (names allowed when the system
         declares ``variables``).
     ic : array-like, optional
         Initial state for the first value (and every value when
         ``carry_state=False``).
+    seed : int, optional
+        Seed for the random initial condition when the system has none; makes
+        the diagram reproducible.
 
     Examples
     --------
@@ -258,19 +264,19 @@ def orbit_diagram(
     >>> # bifurcation diagram of a flow:
     >>> od = orbit_diagram(PoincareMap(Rossler(), (1, 0.0)), "c", np.linspace(2, 6, 80))
     """
-    if not sys.is_discrete:
+    if not system.is_discrete:
         raise TypeError(
             "orbit_diagram needs a discrete-time view: a DiscreteMap, or a flow wrapped "
             "in PoincareMap / StroboscopicMap."
         )
 
-    comp = (components,) if isinstance(components, int | str) else tuple(components)
+    comp = (component,) if isinstance(component, int | str) else tuple(component)
     # Resolve names via the *instance* (not ``type(sys)``): a derived wrapper
     # exposes ``variables`` as a property, so ``type(sys).variables`` returns the
     # descriptor object (truthy) and short-circuits — breaking named components
     # over a PoincareMap/StroboscopicMap.  Instance lookup returns the ClassVar
     # for families and the resolved names for wrappers alike.
-    names = getattr(sys, "variables", None)
+    names = getattr(system, "variables", None)
     idx: list[int] = []
     for c in comp:
         if isinstance(c, str):
@@ -279,6 +285,10 @@ def orbit_diagram(
             idx.append(names.index(c))
         else:
             idx.append(int(c))
+
+    resolved_ic = _seeded_ic(system, ic, seed)
+    if resolved_ic is not None:
+        ic = resolved_ic
 
     import warnings
 
@@ -303,10 +313,10 @@ def orbit_diagram(
     # the logistic map) — the whole diagram is byte-identical; a chaotic window
     # records the same attractor (the engine ``iterate`` being the canonical map
     # runner).
-    use_engine = isinstance(sys, DiscreteMap)
+    use_engine = isinstance(system, DiscreteMap)
 
     for v in values_arr:
-        current = sys.with_params(**{param: v})
+        current = system.with_params(**{param: v})
         start = state if (carry_state and state is not None) else ic
         try:
             if use_engine:
@@ -337,7 +347,7 @@ def orbit_diagram(
             state = last
 
     meta = {
-        "system": type(sys).__name__,
+        "system": type(system).__name__,
         "param": param,
         "n": n,
         "transient": transient,

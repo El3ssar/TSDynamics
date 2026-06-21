@@ -41,7 +41,7 @@ __all__ = [
 
 
 def power_spectral_density(
-    x: Any,
+    data: Any,
     *,
     fs: float | None = None,
     dt: float | None = None,
@@ -56,13 +56,13 @@ def power_spectral_density(
 
     Parameters
     ----------
-    x : Trajectory or array-like
+    data : Trajectory or array-like
         Signal with time along axis 0; a multi-channel ``(T, channels)`` signal
         is transformed channel-by-channel.
     fs, dt : float, optional
         Sampling frequency or spacing.  At most one; if neither is given and
-        ``x`` is a :class:`~tsdynamics.data.Trajectory`, the rate is read off its
-        time vector, otherwise ``fs = 1.0``.
+        ``data`` is a :class:`~tsdynamics.data.Trajectory`, the rate is read off
+        its time vector, otherwise ``fs = 1.0``.
     method : {"welch", "periodogram"}, default "welch"
         Welch's averaged-periodogram estimator (lower variance) or a single raw
         periodogram (full frequency resolution, higher variance).
@@ -94,8 +94,8 @@ def power_spectral_density(
     >>> round(float(f[np.argmax(p)]))    # dominant line at 5 Hz
     5
     """
-    sig = to_signal(x)
-    rate = resolve_fs(x, fs=fs, dt=dt)
+    sig = to_signal(data)
+    rate = resolve_fs(data, fs=fs, dt=dt)
     n = sig.shape[0]
 
     if method == "welch":
@@ -125,7 +125,7 @@ def power_spectral_density(
 
 
 def spectral_entropy(
-    x: Any,
+    data: Any,
     *,
     fs: float | None = None,
     dt: float | None = None,
@@ -144,7 +144,7 @@ def spectral_entropy(
 
     Parameters
     ----------
-    x : Trajectory or array-like
+    data : Trajectory or array-like
         Signal with time along axis 0.
     fs, dt : float, optional
         Sampling frequency / spacing (see :func:`power_spectral_density`).
@@ -160,7 +160,7 @@ def spectral_entropy(
     float or ndarray
         Spectral entropy; scalar for a single channel, ``(channels,)`` otherwise.
     """
-    _, psd = power_spectral_density(x, fs=fs, dt=dt, **psd_kwargs)
+    _, psd = power_spectral_density(data, fs=fs, dt=dt, **psd_kwargs)
     psd = np.asarray(psd, dtype=float)
     total = psd.sum(axis=0)
     # A constant (zero-power) channel has no spectral content → entropy 0.
@@ -176,7 +176,7 @@ def spectral_entropy(
 
 
 def spectral_centroid(
-    x: Any,
+    data: Any,
     *,
     fs: float | None = None,
     dt: float | None = None,
@@ -190,7 +190,7 @@ def spectral_centroid(
 
     Parameters
     ----------
-    x : Trajectory or array-like
+    data : Trajectory or array-like
         Signal with time along axis 0.
     fs, dt : float, optional
         Sampling frequency / spacing (see :func:`power_spectral_density`).
@@ -202,7 +202,7 @@ def spectral_centroid(
     float or ndarray
         Centroid frequency; scalar for a single channel, ``(channels,)`` otherwise.
     """
-    freqs, psd = power_spectral_density(x, fs=fs, dt=dt, **psd_kwargs)
+    freqs, psd = power_spectral_density(data, fs=fs, dt=dt, **psd_kwargs)
     psd = np.asarray(psd, dtype=float)
     total = psd.sum(axis=0)
     weighted = (freqs[:, None] * psd if psd.ndim == 2 else freqs * psd).sum(axis=0)
@@ -212,7 +212,7 @@ def spectral_centroid(
 
 
 def dominant_frequency(
-    x: Any,
+    data: Any,
     *,
     fs: float | None = None,
     dt: float | None = None,
@@ -224,7 +224,7 @@ def dominant_frequency(
 
     Parameters
     ----------
-    x : Trajectory or array-like
+    data : Trajectory or array-like
         Signal with time along axis 0.
     fs, dt : float, optional
         Sampling frequency / spacing (see :func:`power_spectral_density`).
@@ -239,7 +239,7 @@ def dominant_frequency(
     float or ndarray
         Peak frequency; scalar for a single channel, ``(channels,)`` otherwise.
     """
-    freqs, psd = power_spectral_density(x, fs=fs, dt=dt, **psd_kwargs)
+    freqs, psd = power_spectral_density(data, fs=fs, dt=dt, **psd_kwargs)
     psd = np.asarray(psd, dtype=float)
     if exclude_dc and freqs.size > 1 and freqs[0] == 0.0:
         freqs = freqs[1:]

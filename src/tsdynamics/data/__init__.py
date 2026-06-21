@@ -12,6 +12,7 @@ Home of the primitives every analysis consumes:
 - :func:`sampler` — reproducible Monte-Carlo draws of initial conditions from
   a region.
 - :func:`grid_points` — full-grid enumeration of a region.
+- :func:`region` — terse ``[(lo, hi, n), ...]`` builder for a grid region.
 - :func:`set_distance` — distance between two point sets (the matching
   primitive behind attractor deduplication and continuation).
 
@@ -21,7 +22,7 @@ re-exports through :mod:`tsdynamics.families` and the top-level namespace, so
 ``from tsdynamics import Trajectory`` resolves to the same object defined here.
 """
 
-from .sampling import Ball, Box, Grid, Region, grid_points, sampler, set_distance
+from .sampling import Ball, Box, Grid, Region, grid_points, region, sampler, set_distance
 from .trajectory import Trajectory
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "Region",
     "Trajectory",
     "grid_points",
+    "region",
     "sampler",
     "set_distance",
 ]

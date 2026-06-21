@@ -111,7 +111,7 @@ def fig_orbit_diagram(plt, out_path):
     rs = np.linspace(2.5, 4.0, 1400)
     od = ts.orbit_diagram(
         ts.systems.Logistic(), "r", rs,
-        n=180, transient=600, components=0,
+        n=180, transient=600, component=0,
     )
     x, y = od.flat()
 
@@ -148,11 +148,11 @@ def fig_recurrence(plt, out_path):
 
     # Periodic: logistic at r=3.5 (a period-4 cycle) -> diagonal-line texture.
     per = ts.Logistic(params={"r": 3.5}).iterate(steps=N + burn, ic=[0.31]).y[burn:, 0]
-    rm_per = ts.recurrence_matrix(per, recurrence_rate=rate, theiler_window=1)
+    rm_per = ts.recurrence_matrix(per, recurrence_rate=rate, theiler=1)
 
     # Chaotic: logistic at r=4.0 -> broken-up, speckled structure.
     cha = ts.Logistic(params={"r": 4.0}).iterate(steps=N + burn, ic=[0.4]).y[burn:, 0]
-    rm_cha = ts.recurrence_matrix(cha, recurrence_rate=rate, theiler_window=1)
+    rm_cha = ts.recurrence_matrix(cha, recurrence_rate=rate, theiler=1)
 
     # Binary colormap: transparent for 0, INDIGO for a recurrent point.
     cmap = ListedColormap([(0, 0, 0, 0), INDIGO])
@@ -242,7 +242,7 @@ def fig_embedding(plt, out_path):
     yt = traj.y[n0:, 1]
 
     # Pick a delay from x(t) ALONE via mutual information.
-    tau = ts.optimal_delay(xt, method="mi", max_lag=120)
+    tau = ts.optimal_delay(xt, method="mi", max_delay=120)
 
     # Takens embedding of the single observable into 3D.
     emb = ts.embed(xt, dimension=3, delay=tau)
@@ -495,11 +495,11 @@ def fig_fixed_points(plt, out_path):
     sys = VanDerPol(params={"mu": 1.0})
 
     # The limit cycle, found by single shooting (thick TEAL closed curve).
-    orb = ts.periodic_orbit(sys, ic=[2.0, 0.0], period_guess=6.0, burn_in=20.0)
+    orb = ts.periodic_orbit(sys, ic=[2.0, 0.0], period_guess=6.0, transient=20.0)
     cyc = np.asarray(orb.points)
 
     # The unstable equilibrium at the origin (ROSE x) via multi-start Newton.
-    fps = ts.fixed_points(sys, box=([-3.0, -4.0], [3.0, 4.0]))
+    fps = ts.fixed_points(sys, region=([-3.0, -4.0], [3.0, 4.0]))
 
     # A few trajectories spiralling onto the cycle (thin INDIGO): from near the
     # unstable origin outward, and from far outside inward.

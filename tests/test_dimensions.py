@@ -71,13 +71,13 @@ def uniform_sets():
 
 
 def test_lorenz_correlation_dimension(lorenz):
-    d = dim.correlation_dimension(lorenz, theiler_window=50)
+    d = dim.correlation_dimension(lorenz, theiler=50)
     assert d.kind == "correlation" and d.q == 2.0
     assert abs(float(d) - 2.05) < 0.12, f"Lorenz D2 = {float(d):.3f}, expected ~2.05"
 
 
 def test_lorenz_fixed_mass_dimension(lorenz):
-    d = dim.fixed_mass_dimension(lorenz, theiler_window=50)
+    d = dim.fixed_mass_dimension(lorenz, theiler=50)
     assert 1.9 < float(d) < 2.2, f"Lorenz fixed-mass D = {float(d):.3f}"
 
 
@@ -146,8 +146,8 @@ def test_correlation_sum_is_a_cdf(uniform_sets):
 
 def test_theiler_window_reduces_pair_count(uniform_sets):
     big_r = np.array([1e9])  # encloses every pair
-    _, c0 = dim.correlation_sum(uniform_sets["square"], radii=big_r, theiler_window=0)
-    _, cw = dim.correlation_sum(uniform_sets["square"], radii=big_r, theiler_window=20)
+    _, c0 = dim.correlation_sum(uniform_sets["square"], radii=big_r, theiler=0)
+    _, cw = dim.correlation_sum(uniform_sets["square"], radii=big_r, theiler=20)
     # Both normalise to 1 at r→∞ (all *valid* pairs), confirming the normalisation
     # accounts for the excluded near-diagonal pairs.
     assert c0[0] == pytest.approx(1.0)
@@ -275,8 +275,8 @@ def test_sub_metric_exponent_raises():
 
 
 def test_negative_theiler_raises(uniform_sets):
-    with pytest.raises(ValueError, match="theiler_window"):
-        dim.correlation_sum(uniform_sets["square"], theiler_window=-1)
+    with pytest.raises(ValueError, match="theiler"):
+        dim.correlation_sum(uniform_sets["square"], theiler=-1)
 
 
 def test_too_few_points_raises():

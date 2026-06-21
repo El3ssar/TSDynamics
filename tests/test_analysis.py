@@ -100,7 +100,7 @@ class TestFixedPoints:
 
     def test_logistic_fixed_points(self) -> None:
         m = ts.Logistic(params={"r": 2.5})
-        fps = ts.fixed_points(m, box=([-0.5], [1.5]), seed=0)
+        fps = ts.fixed_points(m, region=([-0.5], [1.5]), seed=0)
         xs = sorted(fp.x[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 1 - 1 / 2.5], atol=1e-9)
         stable = {round(fp.x[0], 6): fp.stable for fp in fps}
@@ -116,11 +116,11 @@ class TestFixedPoints:
 class TestMaxLyapunov:
     def test_logistic_r4_ln2(self) -> None:
         m = ts.Logistic(params={"r": 4.0})
-        lam = ts.max_lyapunov(m, ic=[0.3], n_rescale=600, steps_per=3, seed=1)
+        lam = ts.max_lyapunov(m, ic=[0.3], n=600, steps_per=3, seed=1)
         assert lam == pytest.approx(np.log(2), abs=0.1)
 
     def test_henon(self) -> None:
-        lam = ts.max_lyapunov(ts.Henon(), ic=[0.1, 0.1], n_rescale=600, steps_per=3, seed=1)
+        lam = ts.max_lyapunov(ts.Henon(), ic=[0.1, 0.1], n=600, steps_per=3, seed=1)
         assert lam == pytest.approx(0.42, abs=0.12)
 
     def test_dde_raises(self) -> None:
@@ -139,7 +139,7 @@ def test_max_lyapunov_lorenz() -> None:
         ts.Lorenz(),
         ic=[1.0, 1.0, 1.0],
         dt=0.05,
-        n_rescale=600,
+        n=600,
         steps_per=4,
         transient=1000,
         seed=2,
@@ -150,7 +150,7 @@ def test_max_lyapunov_lorenz() -> None:
 @pytest.mark.slow
 def test_poincare_section_from_system_thin_set() -> None:
     section = ts.poincare_section(
-        ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), steps=100, transient=10, dt=0.05
+        ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), n=100, skip_crossings=10, dt=0.05
     )
     assert section.y.shape == (100, 3)
     assert np.max(np.abs(section.y[:, 0])) < 1e-6
@@ -179,7 +179,7 @@ def test_bifurcation_diagram_of_flow_via_poincare() -> None:
     """The composition acceptance test: orbit diagram over a PoincareMap."""
     pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
     od = ts.orbit_diagram(
-        pmap, "c", [4.0, 5.7], n=15, transient=10, components=1, ic=[1.0, 1.0, 0.0]
+        pmap, "c", [4.0, 5.7], n=15, transient=10, component=1, ic=[1.0, 1.0, 0.0]
     )
     assert len(od) == 2
     for _, pts in od:
@@ -193,7 +193,7 @@ def test_orbit_diagram_named_component_over_poincare() -> None:
     instance, not ``type(sys).variables`` — which leaks the property descriptor
     and raised ``AttributeError: 'property' object has no attribute 'index'``."""
     pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
-    od = ts.orbit_diagram(pmap, "c", [5.7], n=10, transient=10, components="y", ic=[1.0, 1.0, 0.0])
+    od = ts.orbit_diagram(pmap, "c", [5.7], n=10, transient=10, component="y", ic=[1.0, 1.0, 0.0])
     assert len(od) == 1
     ((_, pts),) = list(od)
     assert pts.shape == (10, 1)

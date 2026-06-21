@@ -17,10 +17,10 @@ __all__ = ["dispersion_entropy"]
 
 
 def dispersion_entropy(
-    x: Any,
+    data: Any,
     c: int = 6,
-    m: int = 2,
-    tau: int = 1,
+    dimension: int = 2,
+    delay: int = 1,
     *,
     base: float = 2.0,
     normalize: bool = True,
@@ -30,26 +30,26 @@ def dispersion_entropy(
     Dispersion entropy of a time series (Rostaghi & Azami 2016).
 
     The series is mapped through the normal CDF onto ``c`` amplitude classes,
-    embedded with order ``m`` and delay ``τ``, and the Shannon entropy of the
-    resulting *dispersion patterns* is returned.  Unlike permutation entropy it
-    keeps amplitude information and is markedly faster than sample entropy, while
-    remaining robust to noise.
+    embedded with order ``dimension`` and delay ``τ``, and the Shannon entropy of
+    the resulting *dispersion patterns* is returned.  Unlike permutation entropy
+    it keeps amplitude information and is markedly faster than sample entropy,
+    while remaining robust to noise.
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         Scalar time series (or a component of a multivariate one).
     c : int, default 6
-        Number of amplitude classes.  ``4 ≤ c ≤ 8`` is typical; ``n ≫ c**m`` is
-        recommended.
-    m : int, default 2
+        Number of amplitude classes.  ``4 ≤ c ≤ 8`` is typical; ``n ≫
+        c**dimension`` is recommended.
+    dimension : int, default 2
         Embedding order.
-    tau : int, default 1
+    delay : int, default 1
         Embedding delay.
     base : float, default 2.0
         Logarithm base (``2`` → bits).
     normalize : bool, default True
-        Divide by ``log_base(c**m)`` so the result lies in ``[0, 1]``.
+        Divide by ``log_base(c**dimension)`` so the result lies in ``[0, 1]``.
     component : int or str, optional
         Component selector for multi-component input.
 
@@ -65,8 +65,8 @@ def dispersion_entropy(
     0.99...
     """
     return entropy(
-        x,
-        outcomes=Dispersion(c, m, tau),
+        data,
+        outcomes=Dispersion(c, dimension, delay),
         measure=Shannon(base),
         normalize=normalize,
         component=component,

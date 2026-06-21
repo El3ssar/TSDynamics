@@ -21,7 +21,7 @@ series without forming the dense :math:`N \times N` array.  The **line of
 identity** (:math:`i=j`) and the **Theiler band** (:math:`|i-j| \le w`) carry no
 recurrences here — the diagonal is trivially recurrent and a few neighbouring
 samples of a densely sampled flow are spuriously close, biasing every line-based
-statistic (Theiler, *Phys. Rev. A* **34**, 2427, 1986); ``theiler_window`` sets
+statistic (Theiler, *Phys. Rev. A* **34**, 2427, 1986); ``theiler`` sets
 ``w`` (default ``0`` keeps the off-diagonal recurrences and drops only the line
 of identity).
 """
@@ -130,7 +130,7 @@ def recurrence_matrix(
     threshold: float | None = None,
     recurrence_rate: float | None = None,
     metric: str | float = "euclidean",
-    theiler_window: int = 0,
+    theiler: int = 0,
 ) -> RecurrenceMatrix:
     r"""Build a recurrence matrix from a trajectory or point set.
 
@@ -154,7 +154,7 @@ def recurrence_matrix(
         Distance metric (``"euclidean"``, ``"manhattan"``, ``"chebyshev"``, or a
         numeric Minkowski exponent).  ``"chebyshev"`` (the maximum norm) is the
         common RQA choice.
-    theiler_window : int, default 0
+    theiler : int, default 0
         Exclude the near-diagonal band :math:`|i-j| \le w`.  ``0`` keeps every
         off-diagonal recurrence and drops only the line of identity; raise it to
         a few autocorrelation times for densely sampled flows.
@@ -182,11 +182,11 @@ def recurrence_matrix(
     points = _as_points(data)
     n = points.shape[0]
     p = _metric_p(metric)
-    w = int(theiler_window)
+    w = int(theiler)
     if w < 0:
-        raise ValueError("theiler_window must be non-negative.")
+        raise ValueError("theiler must be non-negative.")
     if w >= n - 1:
-        raise ValueError(f"theiler_window={w} excludes every pair for N={n}; reduce it.")
+        raise ValueError(f"theiler={w} excludes every pair for N={n}; reduce it.")
 
     if threshold is not None:
         eps = float(threshold)

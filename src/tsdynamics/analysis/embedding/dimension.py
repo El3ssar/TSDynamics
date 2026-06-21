@@ -132,7 +132,7 @@ def cao_dimension(
     delay: int = 1,
     max_dim: int = 10,
     threshold: float = 0.9,
-    theiler_window: int = 0,
+    theiler: int = 0,
     component: int | str | None = None,
 ) -> EmbeddingDimension:
     r"""Cao's averaged-false-neighbour minimum embedding dimension.
@@ -149,7 +149,7 @@ def cao_dimension(
     threshold : float, default 0.9
         Saturation threshold: the estimate is the smallest :math:`d` with
         :math:`E_1(d) \ge` ``threshold`` (the onset of the plateau at 1).
-    theiler_window : int, default 0
+    theiler : int, default 0
         Exclude temporally-close neighbours with :math:`|i-j| \le w`.  Set a few
         autocorrelation times for densely sampled flows.
     component : int or str, optional
@@ -172,7 +172,7 @@ def cao_dimension(
         raise ValueError("delay must be >= 1.")
     if max_dim < 2:
         raise ValueError("max_dim must be >= 2 (E1 compares consecutive dimensions).")
-    w = int(theiler_window)
+    w = int(theiler)
 
     big = max_dim + 1  # need E up to d = max_dim + 1 to form E1(max_dim)
     rows = x.size - big * tau
@@ -213,7 +213,7 @@ def false_nearest_neighbors(
     rtol: float = 15.0,
     atol: float = 2.0,
     threshold: float = 0.01,
-    theiler_window: int = 0,
+    theiler: int = 0,
     component: int | str | None = None,
 ) -> EmbeddingDimension:
     r"""Kennel's false-nearest-neighbour minimum embedding dimension.
@@ -240,7 +240,7 @@ def false_nearest_neighbors(
     threshold : float, default 0.01
         The estimate is the smallest :math:`d` whose false-neighbour fraction is
         ``<= threshold``.
-    theiler_window : int, default 0
+    theiler : int, default 0
         Exclude temporally-close neighbours with :math:`|i-j| \le w`.
     component : int or str, optional
         Component selector for a multi-component input.
@@ -263,7 +263,7 @@ def false_nearest_neighbors(
         raise ValueError("delay must be >= 1.")
     if max_dim < 1:
         raise ValueError("max_dim must be >= 1.")
-    w = int(theiler_window)
+    w = int(theiler)
 
     r_attractor = float(np.std(x))
     if r_attractor == 0.0:
@@ -321,7 +321,7 @@ def embedding_dimension(
     component : int or str, optional
         Component selector for a multi-component input.
     **kwargs
-        Forwarded to the selected estimator (``threshold``, ``theiler_window``,
+        Forwarded to the selected estimator (``threshold``, ``theiler``,
         and for FNN ``rtol`` / ``atol``).
 
     Returns

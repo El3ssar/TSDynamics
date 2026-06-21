@@ -109,7 +109,7 @@ def test_theiler_window_excludes_near_diagonal(seed, n, w):
     # recurrences (adjacent samples of a flow are spuriously close).
     x = sinusoid(n, freq=0.02)
     pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
-    rm = ts.recurrence_matrix(pts, recurrence_rate=0.15, theiler_window=w)
+    rm = ts.recurrence_matrix(pts, recurrence_rate=0.15, theiler=w)
     rows, cols = _coords(rm)
     if rows.size:
         assert int(np.abs(rows - cols).min()) > w
@@ -120,7 +120,7 @@ def test_theiler_window_zero_still_drops_line_of_identity():
     """theiler_window=0 keeps off-diagonal recurrences but never the diagonal."""
     x = sinusoid(300, freq=0.03)
     pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
-    rm = ts.recurrence_matrix(pts, recurrence_rate=0.2, theiler_window=0)
+    rm = ts.recurrence_matrix(pts, recurrence_rate=0.2, theiler=0)
     rows, cols = _coords(rm)
     # The diagonal i == j is never stored.
     assert not np.any(rows == cols)

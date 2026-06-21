@@ -55,7 +55,7 @@ def coarse_grain(x: Any, scale: int, *, component: int | str | None = None) -> n
 
 
 def multiscale_entropy(
-    x: Any,
+    data: Any,
     scales: int | Iterable[int] = 20,
     *,
     entropy_fn: Callable[..., float] = sample_entropy,
@@ -80,7 +80,7 @@ def multiscale_entropy(
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         Scalar time series.
     scales : int or iterable of int, default 20
         An ``int`` ``S`` expands to ``1, 2, …, S``; an iterable is used verbatim.
@@ -95,7 +95,7 @@ def multiscale_entropy(
     component : int or str, optional
         Component selector for multi-component input.
     **kwargs
-        Forwarded to ``entropy_fn`` (e.g. ``m=``, ``tau=``).
+        Forwarded to ``entropy_fn`` (e.g. ``dimension=``, ``delay=``).
 
     Returns
     -------
@@ -109,7 +109,7 @@ def multiscale_entropy(
     >>> bool(mse[0] > mse[-1])    # white noise decays with scale
     True
     """
-    series = as_series(x, component)
+    series = as_series(data, component)
     scale_list = list(range(1, int(scales) + 1)) if isinstance(scales, int) else list(scales)
 
     # Fix the tolerance from the original series if the entropy uses one.

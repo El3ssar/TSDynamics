@@ -54,17 +54,21 @@ class TestDelayEmbed:
 class TestHenon:
     @pytest.mark.parametrize("m", [2, 4])
     def test_kantz_recovers_mlle(self, henon_x: np.ndarray, m: int) -> None:
-        res = lyapunov_from_data(henon_x, m=m, tau=1, k_max=12, method="kantz", fit=(0, 6))
+        res = lyapunov_from_data(
+            henon_x, dimension=m, delay=1, k_max=12, method="kantz", fit=(0, 6)
+        )
         assert float(res) == pytest.approx(0.419, abs=0.06)
 
     def test_rosenstein_recovers_mlle(self, henon_x: np.ndarray) -> None:
-        res = lyapunov_from_data(henon_x, m=4, tau=1, k_max=12, method="rosenstein", fit=(0, 8))
+        res = lyapunov_from_data(
+            henon_x, dimension=4, delay=1, k_max=12, method="rosenstein", fit=(0, 8)
+        )
         assert float(res) == pytest.approx(0.419, abs=0.08)
 
     def test_auto_fit_is_sensible(self, henon_x: np.ndarray) -> None:
         # The default (no explicit fit) must land near the true value for a
         # clean, monotone divergence curve like the Hénon map's.
-        res = lyapunov_from_data(henon_x, m=2, tau=1, k_max=12)
+        res = lyapunov_from_data(henon_x, dimension=2, delay=1, k_max=12)
         assert 0.30 < float(res) < 0.55
         lo, hi = res.fit_region
         assert 0 <= lo < hi <= 12
@@ -72,7 +76,7 @@ class TestHenon:
     def test_multivariate_input(self, henon_x: np.ndarray) -> None:
         traj = ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1])
         res = lyapunov_from_data(
-            traj.y, m=2, tau=1, theiler=2, k_max=12, method="kantz", fit=(0, 6)
+            traj.y, dimension=2, delay=1, theiler=2, k_max=12, method="kantz", fit=(0, 6)
         )
         assert float(res) == pytest.approx(0.419, abs=0.08)
 
@@ -84,7 +88,7 @@ class TestHenon:
 
 class TestResult:
     def test_fields_and_float(self, henon_x: np.ndarray) -> None:
-        res = lyapunov_from_data(henon_x, m=3, tau=1, k_max=15, dt=1.0, fit=(0, 7))
+        res = lyapunov_from_data(henon_x, dimension=3, delay=1, k_max=15, dt=1.0, fit=(0, 7))
         assert isinstance(res, LyapunovFromData)
         assert res.embedding_dim == 3
         assert res.delay == 1
@@ -98,8 +102,8 @@ class TestResult:
 
     def test_dt_scales_exponent(self, henon_x: np.ndarray) -> None:
         # Per-time exponent halves when each sample spans twice the time.
-        a = lyapunov_from_data(henon_x, m=3, k_max=12, dt=1.0, fit=(0, 6))
-        b = lyapunov_from_data(henon_x, m=3, k_max=12, dt=2.0, fit=(0, 6))
+        a = lyapunov_from_data(henon_x, dimension=3, k_max=12, dt=1.0, fit=(0, 6))
+        b = lyapunov_from_data(henon_x, dimension=3, k_max=12, dt=2.0, fit=(0, 6))
         assert float(b) == pytest.approx(0.5 * float(a), rel=1e-12)
 
 
@@ -112,10 +116,10 @@ class TestValidation:
     @pytest.mark.parametrize(
         ("kwargs", "match"),
         [
-            ({"m": 0}, "embedding dimension"),
-            ({"tau": 0}, "embedding delay"),
+            ({"dimension": 0}, "embedding dimension"),
+            ({"delay": 0}, "embedding delay"),
             ({"k_max": 1}, "k_max"),
-            ({"min_neighbors": 0}, "min_neighbors"),
+            ({"n_neighbors": 0}, "n_neighbors"),
             ({"dt": 0.0}, "dt"),
             ({"method": "nope"}, "method"),
             ({"theiler": -1}, "theiler"),
@@ -130,12 +134,14 @@ class TestValidation:
 
     def test_constant_series_raises(self) -> None:
         with pytest.raises(ValueError, match="eps must be positive"):
-            lyapunov_from_data(np.ones(500), m=2, k_max=10, method="kantz")
+            lyapunov_from_data(np.ones(500), dimension=2, k_max=10, method="kantz")
 
     def test_k_max_too_large_for_series(self) -> None:
         # n_rows = 40 - (3-1)*2 = 36; k_max=40 leaves no forward images.
         with pytest.raises(ValueError, match="too large"):
-            lyapunov_from_data(np.random.default_rng(0).normal(size=40), m=3, tau=2, k_max=40)
+            lyapunov_from_data(
+                np.random.default_rng(0).normal(size=40), dimension=3, delay=2, k_max=40
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -151,5 +157,7 @@ def test_lorenz_from_x_series(method: str) -> None:
     xs = traj.y[1000:, 0]  # drop the initial transient
     # Fit the settled linear scaling region (t ≈ 0.8–1.9), past the early
     # overshoot and before saturation.
-    res = lyapunov_from_data(xs, dt=0.05, m=5, tau=3, k_max=60, method=method, fit=(16, 38))
+    res = lyapunov_from_data(
+        xs, dt=0.05, dimension=5, delay=3, k_max=60, method=method, fit=(16, 38)
+    )
     assert float(res) == pytest.approx(0.906, abs=0.15)

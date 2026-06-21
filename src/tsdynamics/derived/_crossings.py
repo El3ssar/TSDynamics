@@ -11,7 +11,7 @@ the plane event tape ``g(u) = normal · u − offset`` once, sizes the integrati
 spans, and accumulates the requested number of crossings.
 :class:`~tsdynamics.derived.poincare.PoincareMap` consumes it through
 ``trajectory``, so the ``trajectory``-driven consumers — ``poincare_section`` and
-``return_map(kind="poincare")`` — inherit the speedup with no change.
+``return_map(method="poincare")`` — inherit the speedup with no change.
 (``orbit_diagram`` drives the wrapper with ``step()`` rather than ``trajectory``,
 so a bifurcation diagram over a ``PoincareMap`` is *not* accelerated here — that
 awaits a resumable ``PoincareMap.step()`` (WS-STEPPER) or routing

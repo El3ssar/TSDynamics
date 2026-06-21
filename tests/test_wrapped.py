@@ -53,7 +53,7 @@ def test_wrapped_named_components() -> None:
 def test_wrapped_max_lyapunov_chaotic() -> None:
     # logistic at r=3.9 is chaotic ⇒ positive MLLE, via the protocol only
     w = ts.WrappedSystem(_logistic_step, dim=1, is_discrete=True, initial=[0.5])
-    lam = ts.max_lyapunov(w, ic=[0.3], n_rescale=500, steps_per=2, seed=0)
+    lam = ts.max_lyapunov(w, ic=[0.3], n=500, steps_per=2, seed=0)
     assert lam > 0.3
 
 
@@ -72,7 +72,7 @@ def test_wrapped_continuous_max_lyapunov_dt_normalization() -> None:
     # d0 is large (1e-4) on purpose: the flow is exactly linear, so the growth
     # rate is independent of the perturbation size, and a small d0 against a
     # growing reference would lose it to floating-point cancellation.
-    kw = {"n_rescale": 100, "steps_per": 2, "transient": 10, "d0": 1e-4, "seed": 0}
+    kw = {"n": 100, "steps_per": 2, "transient": 10, "d0": 1e-4, "seed": 0}
     w = ts.WrappedSystem(_expanding_flow, dim=1, is_discrete=False, initial=[1.0], default_dt=0.05)
     lam_default = ts.max_lyapunov(w, ic=[1.0], **kw)  # dt=None → steps by 0.05
     lam_explicit = ts.max_lyapunov(w, ic=[1.0], dt=0.05, **kw)

@@ -42,37 +42,37 @@ __all__ = [
 _TINY = np.finfo(float).tiny
 
 
-def detrend(x: Any, *, kind: str = "linear") -> Any:
+def detrend(data: Any, *, method: str = "linear") -> Any:
     """
     Remove a constant or linear trend from each channel.
 
     Parameters
     ----------
-    x : Trajectory or array-like
+    data : Trajectory or array-like
         Signal with time along axis 0.
-    kind : {"linear", "constant"}, default "linear"
+    method : {"linear", "constant"}, default "linear"
         ``"linear"`` subtracts a least-squares straight line; ``"constant"``
         subtracts the mean.
 
     Returns
     -------
     Trajectory or ndarray
-        Same type and shape as ``x``, detrended.
+        Same type and shape as ``data``, detrended.
     """
-    if kind not in ("linear", "constant"):
-        raise ValueError(f"detrend kind must be 'linear' or 'constant', got {kind!r}.")
-    sig = to_signal(x)
-    out = _sig.detrend(sig, axis=0, type=kind)
-    return wrap_like(x, out, detrended=kind)
+    if method not in ("linear", "constant"):
+        raise ValueError(f"detrend method must be 'linear' or 'constant', got {method!r}.")
+    sig = to_signal(data)
+    out = _sig.detrend(sig, axis=0, type=method)
+    return wrap_like(data, out, detrended=method)
 
 
-def normalize(x: Any, *, method: str = "zscore") -> Any:
+def normalize(data: Any, *, method: str = "zscore") -> Any:
     """
     Rescale each channel by a per-channel statistic.
 
     Parameters
     ----------
-    x : Trajectory or array-like
+    data : Trajectory or array-like
         Signal with time along axis 0.
     method : {"zscore", "minmax", "l2", "demean"}, default "zscore"
         - ``"zscore"`` — subtract the mean, divide by the standard deviation.
@@ -86,9 +86,9 @@ def normalize(x: Any, *, method: str = "zscore") -> Any:
     Returns
     -------
     Trajectory or ndarray
-        Same type and shape as ``x``, normalised.
+        Same type and shape as ``data``, normalised.
     """
-    sig = to_signal(x)
+    sig = to_signal(data)
     if method == "zscore":
         loc = sig.mean(axis=0)
         scale = sig.std(axis=0)
@@ -107,7 +107,7 @@ def normalize(x: Any, *, method: str = "zscore") -> Any:
         )
     scale = np.where(np.abs(scale) < _TINY, 1.0, scale)
     out = (sig - loc) / scale
-    return wrap_like(x, out, normalized=method)
+    return wrap_like(data, out, normalized=method)
 
 
 def butter_filter(
@@ -169,24 +169,24 @@ def butter_filter(
     return wrap_like(x, out, filtered={"btype": btype, "cutoff": cutoff, "order": order})
 
 
-def lowpass(x: Any, cutoff: float, **kwargs: Any) -> Any:
+def lowpass(data: Any, cutoff: float, **kwargs: Any) -> Any:
     """Zero-phase Butterworth low-pass filter (see :func:`butter_filter`)."""
-    return butter_filter(x, cutoff, btype="lowpass", **kwargs)
+    return butter_filter(data, cutoff, btype="lowpass", **kwargs)
 
 
-def highpass(x: Any, cutoff: float, **kwargs: Any) -> Any:
+def highpass(data: Any, cutoff: float, **kwargs: Any) -> Any:
     """Zero-phase Butterworth high-pass filter (see :func:`butter_filter`)."""
-    return butter_filter(x, cutoff, btype="highpass", **kwargs)
+    return butter_filter(data, cutoff, btype="highpass", **kwargs)
 
 
-def bandpass(x: Any, low: float, high: float, **kwargs: Any) -> Any:
+def bandpass(data: Any, low: float, high: float, **kwargs: Any) -> Any:
     """Zero-phase Butterworth band-pass filter (see :func:`butter_filter`)."""
-    return butter_filter(x, (low, high), btype="bandpass", **kwargs)
+    return butter_filter(data, (low, high), btype="bandpass", **kwargs)
 
 
-def bandstop(x: Any, low: float, high: float, **kwargs: Any) -> Any:
+def bandstop(data: Any, low: float, high: float, **kwargs: Any) -> Any:
     """Zero-phase Butterworth band-stop filter (see :func:`butter_filter`)."""
-    return butter_filter(x, (low, high), btype="bandstop", **kwargs)
+    return butter_filter(data, (low, high), btype="bandstop", **kwargs)
 
 
 def __dir__() -> list[str]:

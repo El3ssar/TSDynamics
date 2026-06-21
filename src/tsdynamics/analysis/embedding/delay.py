@@ -32,22 +32,22 @@ __all__ = ["autocorrelation", "mutual_information", "optimal_delay"]
 
 
 def autocorrelation(
-    data: Any, *, max_lag: int = 50, component: int | str | None = None
+    data: Any, *, max_delay: int = 50, component: int | str | None = None
 ) -> np.ndarray:
-    r"""Normalised autocorrelation function up to ``max_lag``.
+    r"""Normalised autocorrelation function up to ``max_delay``.
 
     Parameters
     ----------
     data : array-like or Trajectory
         The scalar series (or a selected ``component``).
-    max_lag : int, default 50
+    max_delay : int, default 50
         Largest lag returned.  Clamped to ``N - 1``.
     component : int or str, optional
         Component selector for a multi-component input.
 
     Returns
     -------
-    ndarray, shape (max_lag + 1,)
+    ndarray, shape (max_delay + 1,)
         ``acf[k]`` is the autocorrelation at lag ``k`` (``acf[0] == 1``).
 
     Notes
@@ -58,10 +58,10 @@ def autocorrelation(
     """
     x = _as_series(data, component=component)
     n = x.size
-    max_lag = int(max_lag)
-    if max_lag < 0:
-        raise ValueError("max_lag must be non-negative.")
-    max_lag = min(max_lag, n - 1)
+    max_delay = int(max_delay)
+    if max_delay < 0:
+        raise ValueError("max_delay must be non-negative.")
+    max_delay = min(max_delay, n - 1)
 
     x = x - x.mean()
     var = float(x @ x)
@@ -71,7 +71,7 @@ def autocorrelation(
     # Linear (non-circular) autocorrelation via zero-padded FFT.
     size = int(2 ** np.ceil(np.log2(2 * n - 1)))
     f = np.fft.rfft(x, size)
-    acf_full = np.fft.irfft(f * np.conj(f), size)[: max_lag + 1]
+    acf_full = np.fft.irfft(f * np.conj(f), size)[: max_delay + 1]
     return acf_full / var
 
 
@@ -83,12 +83,12 @@ def _auto_bins(n: int) -> int:
 def mutual_information(
     data: Any,
     *,
-    max_lag: int = 50,
+    max_delay: int = 50,
     bins: int | None = None,
     base: float = np.e,
     component: int | str | None = None,
 ) -> np.ndarray:
-    r"""Time-delayed mutual information :math:`I(\tau)` up to ``max_lag``.
+    r"""Time-delayed mutual information :math:`I(\tau)` up to ``max_delay``.
 
     The histogram estimator of
 
@@ -104,7 +104,7 @@ def mutual_information(
     ----------
     data : array-like or Trajectory
         The scalar series (or a selected ``component``).
-    max_lag : int, default 50
+    max_delay : int, default 50
         Largest lag returned.  Clamped to ``N - 2``.
     bins : int, optional
         Number of histogram bins per axis.  Default: a sample-size-dependent
@@ -117,7 +117,7 @@ def mutual_information(
 
     Returns
     -------
-    ndarray, shape (max_lag + 1,)
+    ndarray, shape (max_delay + 1,)
         ``mi[k]`` is :math:`I(k)`; ``mi[0]`` is the entropy of the (binned)
         series itself (its self-information).
 
@@ -128,10 +128,10 @@ def mutual_information(
     """
     x = _as_series(data, component=component)
     n = x.size
-    max_lag = int(max_lag)
-    if max_lag < 0:
-        raise ValueError("max_lag must be non-negative.")
-    max_lag = min(max_lag, n - 2)
+    max_delay = int(max_delay)
+    if max_delay < 0:
+        raise ValueError("max_delay must be non-negative.")
+    max_delay = min(max_delay, n - 2)
     nbins = int(bins) if bins is not None else _auto_bins(n)
     if nbins < 2:
         raise ValueError("bins must be >= 2.")
@@ -146,8 +146,8 @@ def mutual_information(
     # Pre-bin every sample once; the lagged pair (a, b) just indexes shifted views.
     codes = np.clip(np.digitize(x, edges[1:-1]), 0, nbins - 1)
 
-    mi = np.empty(max_lag + 1, dtype=float)
-    for tau in range(max_lag + 1):
+    mi = np.empty(max_delay + 1, dtype=float)
+    for tau in range(max_delay + 1):
         a = codes[: n - tau]
         b = codes[tau:] if tau > 0 else codes
         joint = np.zeros((nbins, nbins), dtype=float)
@@ -174,7 +174,7 @@ def optimal_delay(
     data: Any,
     *,
     method: str = "mi",
-    max_lag: int = 50,
+    max_delay: int = 50,
     bins: int | None = None,
     component: int | str | None = None,
 ) -> int:
@@ -189,7 +189,7 @@ def optimal_delay(
           (Fraser & Swinney); the recommended nonlinear criterion.
         - ``"acf"`` — first lag where the autocorrelation falls to ``1/e``.
         - ``"acf_zero"`` — first lag where the autocorrelation crosses zero.
-    max_lag : int, default 50
+    max_delay : int, default 50
         Largest lag considered.
     bins : int, optional
         Histogram bins for the mutual-information estimate (``method="mi"``).
@@ -203,21 +203,21 @@ def optimal_delay(
 
     Notes
     -----
-    If no first minimum / crossing is found within ``max_lag`` (e.g. a
+    If no first minimum / crossing is found within ``max_delay`` (e.g. a
     slowly-decaying curve), the criterion's global fallback is used — the
-    location of the smallest mutual information, or ``max_lag`` for the
+    location of the smallest mutual information, or ``max_delay`` for the
     autocorrelation rules — so a usable delay is always returned.
     """
     method = method.lower()
     if method == "mi":
-        mi = mutual_information(data, max_lag=max_lag, bins=bins, component=component)
+        mi = mutual_information(data, max_delay=max_delay, bins=bins, component=component)
         k = _first_local_min(mi)
         if k is None:  # monotone / no interior dip: fall back to the global minimum
             k = int(np.argmin(mi[1:])) + 1 if mi.size > 1 else 1
         return max(int(k), 1)
 
     if method in ("acf", "acf_zero"):
-        acf = autocorrelation(data, max_lag=max_lag, component=component)
+        acf = autocorrelation(data, max_delay=max_delay, component=component)
         if method == "acf":
             below = np.flatnonzero(acf[1:] <= 1.0 / np.e)
         else:

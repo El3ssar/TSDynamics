@@ -33,7 +33,7 @@ def _functionality(cur: np.ndarray, suc: np.ndarray) -> float:
 class TestReturnMapSeries:
     def test_known_maxima(self) -> None:
         s = np.array([0, 1, 0, 2, 0, 3, 0, 2.5, 0], dtype=float)
-        rm = return_map(s, kind="max")
+        rm = return_map(s, method="max")
         np.testing.assert_allclose(rm.values, [1.0, 2.0, 3.0, 2.5])
         np.testing.assert_allclose(rm.current, [1.0, 2.0, 3.0])
         np.testing.assert_allclose(rm.successor, [2.0, 3.0, 2.5])
@@ -42,7 +42,7 @@ class TestReturnMapSeries:
 
     def test_minima(self) -> None:
         s = np.array([0, -1, 0, -2, 0, -3, 0], dtype=float)
-        rm = return_map(s, kind="min")
+        rm = return_map(s, method="min")
         np.testing.assert_allclose(rm.values, [-1.0, -2.0, -3.0])
 
     def test_parabolic_refinement_sharpens_peak(self) -> None:
@@ -50,13 +50,13 @@ class TestReturnMapSeries:
         # samples, so the parabolic-refined value beats the raw sample max.
         t = np.linspace(-0.37, 2 * np.pi - 0.37, 64)  # peak of cos at t=0 is off-grid
         s = np.cos(t)
-        rm = return_map(s, kind="max")
+        rm = return_map(s, method="max")
         assert rm.values.size == 1
         assert s.max() < rm.values[0] <= 1.0 + 1e-9
 
     def test_flat_and_iter(self) -> None:
         s = np.array([0, 1, 0, 2, 0, 3, 0], dtype=float)
-        rm = return_map(s, kind="max")
+        rm = return_map(s, method="max")
         cur, suc = rm.flat()
         assert cur.shape == suc.shape == (2,)
         pairs = list(rm)
@@ -66,13 +66,13 @@ class TestReturnMapSeries:
         # A pure sine: every maximum is equal → the return map is one point on
         # the diagonal (current == successor).
         t = np.linspace(0, 60, 6000)
-        rm = return_map(np.sin(2 * np.pi * t), kind="max")
+        rm = return_map(np.sin(2 * np.pi * t), method="max")
         assert rm.values.size > 5
         np.testing.assert_allclose(rm.current, rm.successor, atol=1e-6)
         np.testing.assert_allclose(rm.values, rm.values[0], atol=1e-6)
 
     def test_too_short_series_is_empty(self) -> None:
-        rm = return_map(np.array([1.0, 2.0]), kind="max")
+        rm = return_map(np.array([1.0, 2.0]), method="max")
         assert rm.values.size == 0
         assert len(rm) == 0
 
@@ -84,29 +84,29 @@ class TestReturnMapSeries:
 
 class TestReturnMapValidation:
     def test_bad_kind(self) -> None:
-        with pytest.raises(ValueError, match="kind must be"):
-            return_map(np.zeros(10), kind="bogus")
+        with pytest.raises(ValueError, match="method must be"):
+            return_map(np.zeros(10), method="bogus")
 
     def test_2d_raw_series_rejected(self) -> None:
         with pytest.raises(ValueError, match="1-D"):
-            return_map(np.zeros((10, 2)), kind="max")
+            return_map(np.zeros((10, 2)), method="max")
 
     def test_poincare_needs_plane(self) -> None:
         with pytest.raises(ValueError, match="plane"):
-            return_map(ts.Rossler(), kind="poincare")
+            return_map(ts.Rossler(), method="poincare")
 
     def test_poincare_rejects_raw_series(self) -> None:
         with pytest.raises(TypeError, match="System or Trajectory"):
-            return_map(np.zeros(10), kind="poincare", plane=(0, 0.0))
+            return_map(np.zeros(10), method="poincare", plane=(0, 0.0))
 
     def test_discrete_map_rejected_for_extrema(self) -> None:
         with pytest.raises(TypeError, match="continuous flow"):
-            return_map(ts.Henon(), kind="max")
+            return_map(ts.Henon(), method="max")
 
     def test_unknown_named_observable(self) -> None:
         traj = ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
-        with pytest.raises(ValueError, match="unknown observable"):
-            return_map(traj, "nope", kind="max")
+        with pytest.raises(ValueError, match="unknown component"):
+            return_map(traj, "nope", method="max")
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TestReturnMapPoincareData:
         return ts.Trajectory(t, y, None)
 
     def test_crossings_from_data(self) -> None:
-        rm = return_map(self._circle_traj(), 1, kind="poincare", plane=(0, 0.0), direction=1)
+        rm = return_map(self._circle_traj(), 1, method="poincare", plane=(0, 0.0), direction=1)
         assert rm.kind == "poincare"
         assert rm.values.size > 2
         # y = cos at the up-crossings of sin is ≈ +1 each period → a fixed point
@@ -131,8 +131,10 @@ class TestReturnMapPoincareData:
 
     def test_transient_drops_leading_crossings(self) -> None:
         traj = self._circle_traj()
-        full = return_map(traj, 1, kind="poincare", plane=(0, 0.0), direction=1)
-        skipped = return_map(traj, 1, kind="poincare", plane=(0, 0.0), direction=1, transient=2)
+        full = return_map(traj, 1, method="poincare", plane=(0, 0.0), direction=1)
+        skipped = return_map(
+            traj, 1, method="poincare", plane=(0, 0.0), direction=1, skip_crossings=2
+        )
         assert skipped.values.size == full.values.size - 2
         np.testing.assert_array_equal(skipped.values, full.values[2:])
 
@@ -200,7 +202,7 @@ def test_orbit_analyses_self_register() -> None:
 def test_lorenz_z_maxima_cusp_map() -> None:
     """Lorenz (1963): successive maxima of z form a near-1-D cusp map."""
     rm = ts.return_map(
-        ts.Lorenz(ic=[1.0, 1.0, 1.0]), "z", kind="max", final_time=400.0, dt=0.01, transient=40.0
+        ts.Lorenz(ic=[1.0, 1.0, 1.0]), "z", method="max", final_time=400.0, dt=0.01, transient=40.0
     )
     cur, suc = rm.flat()
     assert len(rm) > 100
@@ -217,10 +219,10 @@ def test_rossler_poincare_return_map_is_1d() -> None:
     rm = ts.return_map(
         ts.Rossler(ic=[1.0, 1.0, 0.0]),
         "y",
-        kind="poincare",
+        method="poincare",
         plane=(0, 0.0),
-        steps=400,
-        transient=20,
+        n=400,
+        skip_crossings=20,
         dt=0.03,
     )
     assert rm.kind == "poincare"
@@ -239,7 +241,7 @@ def test_periods_on_flow_bifurcation_diagram() -> None:
     found = {}
     for c in (2.6, 3.5, 5.7):
         pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.03)
-        od = ts.orbit_diagram(pmap, "c", [c], n=80, transient=100, components=1, ic=[3.0, 3.0, 0.0])
+        od = ts.orbit_diagram(pmap, "c", [c], n=80, transient=100, component=1, ic=[3.0, 3.0, 0.0])
         found[c] = int(od.periods()[0])
     assert found[2.6] == 1  # period-1 limit cycle
     assert found[3.5] == 2  # period-2
@@ -252,8 +254,8 @@ def test_system_and_trajectory_paths_agree() -> None:
     ic = [1.0, 1.0, 1.0]
     transient = 30.0
     rm_sys = ts.return_map(
-        ts.Lorenz(ic=ic), "z", kind="max", final_time=200.0, dt=0.01, transient=transient
+        ts.Lorenz(ic=ic), "z", method="max", final_time=200.0, dt=0.01, transient=transient
     )
     traj = ts.Lorenz(ic=ic).integrate(final_time=200.0, dt=0.01, ic=ic)
-    rm_traj = ts.return_map(traj.after(transient), "z", kind="max")
+    rm_traj = ts.return_map(traj.after(transient), "z", method="max")
     np.testing.assert_allclose(rm_sys.values, rm_traj.values)

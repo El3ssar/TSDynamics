@@ -98,7 +98,7 @@ preserved linear structure; both shipped choices are:
 
 ```python
 ts.time_reversal_asymmetry(x)              # ≈ -0.724 for logistic r=4
-ts.nonlinear_prediction_error(x, m=3, tau=1, horizon=1, n_neighbors=4)
+ts.nonlinear_prediction_error(x, dimension=3, delay=1, horizon=1, n_neighbors=4)
 ```
 
 - **`time_reversal_asymmetry`** — the dimensionless third-moment ratio of the

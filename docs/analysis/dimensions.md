@@ -41,12 +41,12 @@ pairs closer than $\varepsilon$ scales as $C(\varepsilon)\sim
 import tsdynamics as ts
 
 traj = ts.Henon().trajectory(8000, transient=500, ic=[0.1, 0.1])
-res = ts.correlation_dimension(traj, theiler_window=10)
+res = ts.correlation_dimension(traj, theiler=10)
 float(res)            # ≈ 1.27   (Hénon attractor)
 res.stderr            # slope uncertainty of the fit
 ```
 
-The `theiler_window` excludes pairs closer than `w` samples in time, which
+The `theiler` window excludes pairs closer than `w` samples in time, which
 would otherwise inflate $C$ from mere temporal continuity rather than
 geometric proximity (Theiler 1986) — always set it for a measured series.
 `correlation_sum` exposes the raw curve $(\varepsilon, C(\varepsilon))$ if
@@ -116,7 +116,7 @@ two helpers in `tsdynamics.analysis.dimensions` let you audit or refit it:
 ```python
 from tsdynamics.analysis.dimensions import local_slopes, fit_scaling_region
 
-res = ts.correlation_dimension(traj, theiler_window=10)
+res = ts.correlation_dimension(traj, theiler=10)
 res.x, res.y           # log ε , log C(ε)  — the scaling curve
 res.fit_slice          # (lo, hi) indices the dimension was fit over
 

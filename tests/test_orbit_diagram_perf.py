@@ -123,9 +123,13 @@ def test_multidim_convergent_window_agrees():
     so they agree to a tight tolerance on every platform.
     """
     vals = np.linspace(0.05, 0.2, 40)  # stable fixed point across this range (b=0.3)
-    kw = dict(n=60, transient=400, components=(0, 1))
-    new = ts.orbit_diagram(Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], **kw)
-    old = _old_orbit_diagram(Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], **kw)
+    kw = dict(n=60, transient=400)
+    new = ts.orbit_diagram(
+        Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], component=(0, 1), **kw
+    )
+    old = _old_orbit_diagram(
+        Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], components=(0, 1), **kw
+    )
     _assert_points_equal(new.points, old, exact=False)
 
 
@@ -174,7 +178,7 @@ def test_chaotic_map_same_attractor():
     invariant set — the support and the occupied region of state space.
     """
     ic = [0.1, 0.2]
-    new = ts.orbit_diagram(Henon(), "a", [1.4], n=4000, transient=2000, ic=ic, components=(0, 1))
+    new = ts.orbit_diagram(Henon(), "a", [1.4], n=4000, transient=2000, ic=ic, component=(0, 1))
     old = _old_orbit_diagram(Henon(), "a", [1.4], n=4000, transient=2000, ic=ic, components=(0, 1))
     a, b = new.points[0], old[0]
     # Same support: matching min/max on each coordinate.
@@ -219,7 +223,7 @@ def test_flow_wrapper_keeps_step_path(monkeypatch):
 
     monkeypatch.setattr(ts.StroboscopicMap, "step", counting_step)
     strobo = ts.StroboscopicMap(ts.Rossler(), period=2 * np.pi)
-    ts.orbit_diagram(strobo, "c", [5.7], n=10, transient=10, components=0, ic=[1.0, 1.0, 0.0])
+    ts.orbit_diagram(strobo, "c", [5.7], n=10, transient=10, component=0, ic=[1.0, 1.0, 0.0])
     assert calls["n"] > 0
 
 

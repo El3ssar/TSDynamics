@@ -56,7 +56,7 @@ def _result_builders() -> dict[str, object]:
         "RecurrenceMatrix": rm,
         "RQAResult": ts.rqa(rm),
         "GALIResult": ts.gali(ts.Lorenz(), k=2, final_time=20.0, dt=0.05),
-        "ReturnMap": ts.return_map(traj, observable=2, kind="max"),
+        "ReturnMap": ts.return_map(traj, component=2, method="max"),
         "LyapunovFromData": ts.lyapunov_from_data(traj.y[:1000, 0], dt=0.02),
         "SurrogateTest": ts.surrogate_test(traj.y[:500, 2], n=9, seed=0),
         "BasinsResult": _synthetic_basins(),
@@ -160,7 +160,7 @@ def test_trajectory_plot_raises_without_backend():
 
 
 def test_poincare_section_carries_intent_from_system():
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), steps=80)
+    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
     assert section.meta.get("plot_kind") == "poincare_section"
     spec = section.to_plot_spec()
     assert spec.kind == PlotKind.POINCARE_SECTION
@@ -186,7 +186,7 @@ def test_poincare_section_from_data_carries_intent():
 
 def test_poincare_section_drops_the_normal_coordinate():
     # plane (1, 0.0) fixes component 1; the in-plane axes must be the other two.
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), steps=80)
+    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
     i, j = section._section_axes()
     assert 1 not in (i, j)
     assert i != j
@@ -306,12 +306,12 @@ def test_building_specs_imports_no_plot_library():
         "from tsdynamics.data import Grid;"
         "traj = ts.Lorenz().integrate(final_time=20.0, dt=0.05).after(5.0);"
         "traj.to_plot_spec(); traj.to_plot_spec(kind='time_series');"
-        "ts.poincare_section(ts.Rossler(), plane=(1, 0.0), steps=40).to_plot_spec();"
+        "ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=40).to_plot_spec();"
         "rm = ts.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.to_plot_spec();"
         "ts.rqa(rm).to_plot_spec();"
         "ts.correlation_dimension(traj).to_plot_spec();"
         "ts.gali(ts.Lorenz(), k=2, final_time=15.0, dt=0.05).to_plot_spec();"
-        "ts.return_map(traj, observable=2, kind='max').to_plot_spec();"
+        "ts.return_map(traj, component=2, method='max').to_plot_spec();"
         "ts.lyapunov_from_data(traj.y[:800, 0], dt=0.02).to_plot_spec();"
         "ts.surrogate_test(traj.y[:400, 2], n=9, seed=0).to_plot_spec();"
         "a = AttractorSet({1: Attractor(1, np.array([[0.0, 0.0]]), 1)}, 0, 1);"

@@ -91,7 +91,7 @@ def expansion_entropy(
     region: Any = None,
     *,
     n_samples: int = 1000,
-    steps: int | None = None,
+    n: int | None = None,
     final_time: float | None = None,
     dt: float | None = None,
     fit_range: tuple[int, int] | None = None,
@@ -109,7 +109,7 @@ def expansion_entropy(
         bounding box of a burn-in orbit.
     n_samples : int, default 1000
         Number of initial conditions sampled uniformly in the region.
-    steps : int, optional
+    n : int, optional
         Number of iterations (maps).  Default 15.  (Kept modest: the raw tangent
         product is not renormalised, so very long horizons overflow.)
     final_time : float, optional
@@ -158,11 +158,11 @@ def expansion_entropy(
     if mode == "map":
         if dt is not None:
             raise ValueError("dt has no meaning for a discrete map — omit it.")
-        n_steps = 15 if steps is None else int(steps)
+        n_steps = 15 if n is None else int(n)
         times, log_growth, survivors = _expansion_map(system, ics, box, n_steps)
     else:
-        if steps is not None:
-            raise ValueError("steps applies to maps; use final_time/dt for a flow.")
+        if n is not None:
+            raise ValueError("n applies to maps; use final_time/dt for a flow.")
         t_end = 5.0 if final_time is None else float(final_time)
         step_dt = 0.1 if dt is None else float(dt)
         times, log_growth, survivors = _expansion_flow(

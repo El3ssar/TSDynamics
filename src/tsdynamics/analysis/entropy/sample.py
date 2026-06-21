@@ -39,10 +39,10 @@ def _resolve_r(x: np.ndarray, r: float | None) -> float:
 
 
 def sample_entropy(
-    x: Any,
-    m: int = 2,
+    data: Any,
+    dimension: int = 2,
     r: float | None = None,
-    tau: int = 1,
+    delay: int = 1,
     *,
     component: int | str | None = None,
 ) -> float:
@@ -51,19 +51,19 @@ def sample_entropy(
 
     ``SampEn = -ln(A / B)``, where ``B`` and ``A`` count template pairs (excluding
     self-matches) that stay within Chebyshev tolerance ``r`` over windows of
-    length ``m`` and ``m+1`` respectively.  Excluding self-matches removes the
-    bias of approximate entropy, making the statistic largely independent of
-    series length.  Larger values mean less regularity.
+    length ``dimension`` and ``dimension+1`` respectively.  Excluding self-matches
+    removes the bias of approximate entropy, making the statistic largely
+    independent of series length.  Larger values mean less regularity.
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         Scalar time series (or a component of a multivariate one).
-    m : int, default 2
+    dimension : int, default 2
         Template length.
     r : float, optional
-        Tolerance (Chebyshev radius).  Defaults to ``0.2 · std(x)``.
-    tau : int, default 1
+        Tolerance (Chebyshev radius).  Defaults to ``0.2 · std(data)``.
+    delay : int, default 1
         Embedding delay.
     component : int or str, optional
         Component selector for multi-component input.
@@ -71,14 +71,14 @@ def sample_entropy(
     Returns
     -------
     float
-        Sample entropy in nats.  Returns ``inf`` when no length-``m+1`` template
-        pair matches (no regularity detected at that scale).
+        Sample entropy in nats.  Returns ``inf`` when no length-``dimension+1``
+        template pair matches (no regularity detected at that scale).
 
     Raises
     ------
     ValueError
-        If the series is too short or no length-``m`` template pair matches
-        (``r`` too small).
+        If the series is too short or no length-``dimension`` template pair
+        matches (``r`` too small).
 
     Examples
     --------
@@ -86,15 +86,18 @@ def sample_entropy(
     >>> sample_entropy(rng.random(2000))   # white noise → high
     2.2...
     """
-    series = as_series(x, component)
+    series = as_series(data, component)
     n = series.size
-    n_templates = n - m * tau  # common index set for m and m+1
+    n_templates = n - dimension * delay  # common index set for dimension and dimension+1
     if n_templates <= 1:
-        raise ValueError(f"series too short: need > {m * tau + 1} samples for m={m}, tau={tau}.")
+        raise ValueError(
+            f"series too short: need > {dimension * delay + 1} samples "
+            f"for dimension={dimension}, delay={delay}."
+        )
     rad = _resolve_r(series, r)
 
-    emb_m = _embed(series, m, tau, n_templates)
-    emb_m1 = _embed(series, m + 1, tau, n_templates)
+    emb_m = _embed(series, dimension, delay, n_templates)
+    emb_m1 = _embed(series, dimension + 1, delay, n_templates)
 
     b_count = 0  # length-m matches (ordered, self excluded)
     a_count = 0  # length-(m+1) matches
@@ -115,10 +118,10 @@ def sample_entropy(
 
 
 def approximate_entropy(
-    x: Any,
-    m: int = 2,
+    data: Any,
+    dimension: int = 2,
     r: float | None = None,
-    tau: int = 1,
+    delay: int = 1,
     *,
     component: int | str | None = None,
 ) -> float:
@@ -126,20 +129,20 @@ def approximate_entropy(
     Approximate entropy (Pincus 1991).
 
     ``ApEn = Φ^m(r) − Φ^{m+1}(r)``, where ``Φ^m`` averages ``ln C_i^m`` and
-    ``C_i^m`` is the fraction of length-``m`` templates within tolerance ``r`` of
-    template ``i`` (*including* the self-match).  Self-matching keeps the
+    ``C_i^m`` is the fraction of length-``dimension`` templates within tolerance
+    ``r`` of template ``i`` (*including* the self-match).  Self-matching keeps the
     logarithms finite but biases the estimate downward for short series — prefer
     :func:`sample_entropy` when that bias matters.
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         Scalar time series (or a component of a multivariate one).
-    m : int, default 2
+    dimension : int, default 2
         Template length.
     r : float, optional
-        Tolerance (Chebyshev radius).  Defaults to ``0.2 · std(x)``.
-    tau : int, default 1
+        Tolerance (Chebyshev radius).  Defaults to ``0.2 · std(data)``.
+    delay : int, default 1
         Embedding delay.
     component : int or str, optional
         Component selector for multi-component input.
@@ -149,15 +152,15 @@ def approximate_entropy(
     float
         Approximate entropy in nats.
     """
-    series = as_series(x, component)
+    series = as_series(data, component)
     n = series.size
     rad = _resolve_r(series, r)
 
     def phi(mm: int) -> float:
-        n_templates = n - (mm - 1) * tau
+        n_templates = n - (mm - 1) * delay
         if n_templates <= 0:
-            raise ValueError(f"series too short for m={mm}, tau={tau}.")
-        emb = _embed(series, mm, tau, n_templates)
+            raise ValueError(f"series too short for dimension={mm}, delay={delay}.")
+        emb = _embed(series, mm, delay, n_templates)
         log_sum = 0.0
         for i in range(n_templates):
             dist = np.max(np.abs(emb - emb[i]), axis=1)
@@ -165,7 +168,7 @@ def approximate_entropy(
             log_sum += np.log(c / n_templates)
         return log_sum / n_templates
 
-    return float(phi(m) - phi(m + 1))
+    return float(phi(dimension) - phi(dimension + 1))
 
 
 def __dir__() -> list[str]:

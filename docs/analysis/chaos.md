@@ -96,17 +96,17 @@ from tsdynamics import Box
 
 # Unit-height tent map: |f'| ≡ 2 everywhere ⇒ H = ln 2, exactly
 ts.expansion_entropy(ts.Tent(params={"mu": 1.0}),
-                     Box([0.0], [1.0]), n_samples=200, steps=18).entropy
+                     Box([0.0], [1.0]), n_samples=200, n=18).entropy
 # ≈ 0.6931  ( = ln 2 )
 
 # Hénon map: reproduces its topological entropy
 h = ts.expansion_entropy(ts.Henon(), Box([-1.6, -0.5], [1.6, 0.5]),
-                         n_samples=400, steps=12)
+                         n_samples=400, n=12)
 float(h)          # ≈ 0.447   (h_top ≈ 0.465, Newhouse–Pignataro)
 ```
 
 The region **must** match the system dimension. For a **flow** pass
-`final_time=` and `dt=` instead of `steps=`; passing `dt=` to a map raises
+`final_time=` and `dt=` instead of `n=`; passing `dt=` to a map raises
 (it has no meaning there). `ExpansionEntropyResult` carries `entropy`,
 `stderr`, the `times` / `log_growth` curve, `n_samples`, `n_survivors`,
 `fit_slice` and `intercept` — inspect the curve and pass `fit_range=(lo, hi)`

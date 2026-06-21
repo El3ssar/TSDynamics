@@ -86,7 +86,7 @@ lam = ts.max_lyapunov(ts.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)   # ≈ 0.91
 The classic two-trajectory method (Benettin, Galgani & Strelcyn 1976): run
 a reference and a copy perturbed by `d0`, let them separate for
 `steps_per` protocol steps, log the growth, rescale the perturbation back
-to `d0`, repeat `n_rescale` times. Because it only uses `step`/`state`/
+to `d0`, repeat `n` times. Because it only uses `step`/`state`/
 `set_state`, it works for any ODE or map — including non-smooth
 right-hand sides where no Jacobian exists. Not available for DDEs
 (no `set_state`); use `DelaySystem.lyapunov_spectrum` there.
@@ -98,12 +98,12 @@ estimated from neighbour divergence in a delay embedding:
 
 ```python
 traj = ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1])
-res = ts.lyapunov_from_data(traj.y[:, 0], m=4, k_max=12, fit=(0, 6))
+res = ts.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
 float(res)            # ≈ 0.42  (Hénon, per iteration)
 ```
 
-The signal is reconstructed in an `m`-dimensional delay embedding (delay
-`tau`); for each point its neighbours are found and the **mean log distance
+The signal is reconstructed in a `dimension`-dimensional delay embedding (delay
+`delay`); for each point its neighbours are found and the **mean log distance
 between their forward images** is tracked as a function of look-ahead `k`.
 Two estimators are available via `method=`:
 
@@ -117,7 +117,7 @@ The result carries the full **stretching curve** `res.times` vs
 `res.divergence`; the exponent is the slope of its linear scaling region:
 
 ```python
-res = ts.lyapunov_from_data(x, dt=0.05, m=5, tau=3, k_max=60)
+res = ts.lyapunov_from_data(x, dt=0.05, dimension=5, delay=3, k_max=60)
 res.times, res.divergence       # inspect, then set fit=(lo, hi)
 ```
 

@@ -57,7 +57,7 @@ def fixed_mass_dimension(
     data: Any,
     *,
     ks: np.ndarray | None = None,
-    theiler_window: int = 0,
+    theiler: int = 0,
     metric: str | float = "euclidean",
     n_ref: int | None = 1500,
     n_ks: int = 16,
@@ -74,7 +74,7 @@ def fixed_mass_dimension(
     ks : array-like of int, optional
         Neighbour counts (masses) to probe.  Default: a log-spaced integer grid
         from 1 to ``N // 10``.
-    theiler_window : int, default 0
+    theiler : int, default 0
         Exclude neighbours with :math:`|i - j| \le w` (set for dense flows).
     metric : str or float, default "euclidean"
         Distance metric.
@@ -105,9 +105,9 @@ def fixed_mass_dimension(
 
     points = _as_points(data)
     n = points.shape[0]
-    w = int(theiler_window)
+    w = int(theiler)
     if w < 0:
-        raise ValueError("theiler_window must be non-negative.")
+        raise ValueError("theiler must be non-negative.")
     p = _metric_p(metric)
 
     if ks is None:

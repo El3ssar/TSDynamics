@@ -141,27 +141,27 @@ class TestPermutationEntropy:
 
     def test_white_noise_approaches_one(self):
         rng = np.random.default_rng(0)
-        assert ts.permutation_entropy(rng.random(20000), m=4) > 0.99
+        assert ts.permutation_entropy(rng.random(20000), dimension=4) > 0.99
 
     def test_bandt_pompe_hand_example(self):
         # Bandt & Pompe (2002): x = (4,7,9,10,6,11,3), m=3, tau=1
         # ordinal patterns → {(0,1,2):2, (2,0,1):2, (1,0,2):1}
         x = np.array([4, 7, 9, 10, 6, 11, 3], dtype=float)
-        h = ts.permutation_entropy(x, m=3, tau=1, normalize=False)
+        h = ts.permutation_entropy(x, dimension=3, delay=1, normalize=False)
         assert h == pytest.approx(1.521928, abs=1e-5)
-        hn = ts.permutation_entropy(x, m=3, tau=1, normalize=True)
+        hn = ts.permutation_entropy(x, dimension=3, delay=1, normalize=True)
         assert hn == pytest.approx(1.521928 / np.log2(6), abs=1e-5)
 
     def test_invariant_under_monotone_transform(self):
         rng = np.random.default_rng(2)
         x = rng.standard_normal(3000)
-        pe_x = ts.permutation_entropy(x, m=4)
-        pe_fx = ts.permutation_entropy(np.exp(x), m=4)  # strictly increasing map
+        pe_x = ts.permutation_entropy(x, dimension=4)
+        pe_fx = ts.permutation_entropy(np.exp(x), dimension=4)  # strictly increasing map
         assert pe_x == pytest.approx(pe_fx, abs=1e-12)
 
     def test_too_short_raises(self):
         with pytest.raises(ValueError, match="too short"):
-            ts.permutation_entropy(np.arange(2), m=4)
+            ts.permutation_entropy(np.arange(2), dimension=4)
 
     def test_weighted_monotone_is_zero(self):
         assert ts.weighted_permutation_entropy(np.arange(1000)) == pytest.approx(0.0)
@@ -185,7 +185,7 @@ class TestDispersionEntropy:
 
     def test_white_noise_high(self):
         rng = np.random.default_rng(0)
-        assert ts.dispersion_entropy(rng.standard_normal(20000), c=6, m=2) > 0.9
+        assert ts.dispersion_entropy(rng.standard_normal(20000), c=6, dimension=2) > 0.9
 
     def test_noise_exceeds_sine(self):
         rng = np.random.default_rng(1)
@@ -236,7 +236,7 @@ class TestDispersionEntropy:
         p = np.bincount(labels, minlength=c**m)
         p = p[p > 0] / p.sum()
         h_ref = -np.sum(p * np.log2(p)) / np.log2(c**m)
-        assert ts.dispersion_entropy(x, c=c, m=m) == pytest.approx(h_ref)
+        assert ts.dispersion_entropy(x, c=c, dimension=m) == pytest.approx(h_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -281,12 +281,14 @@ class TestSampleEntropy:
         rng = np.random.default_rng(4)
         x = rng.standard_normal(80)
         r = 0.2 * x.std()
-        assert ts.sample_entropy(x, m=2, r=r) == pytest.approx(_ref_sampen(x, 2, r), abs=1e-12)
+        assert ts.sample_entropy(x, dimension=2, r=r) == pytest.approx(
+            _ref_sampen(x, 2, r), abs=1e-12
+        )
 
     def test_default_r_is_explicit_fraction(self):
         rng = np.random.default_rng(4)
         x = rng.standard_normal(80)
-        assert ts.sample_entropy(x, m=2) == pytest.approx(
+        assert ts.sample_entropy(x, dimension=2) == pytest.approx(
             _ref_sampen(x, 2, 0.2 * x.std()), abs=1e-12
         )
 
@@ -301,11 +303,11 @@ class TestSampleEntropy:
     def test_no_m_match_raises(self):
         # strictly increasing → every length-2 template is unique; r too small
         with pytest.raises(ValueError, match="no length-m"):
-            ts.sample_entropy(np.arange(7.0), m=2, r=1e-9)
+            ts.sample_entropy(np.arange(7.0), dimension=2, r=1e-9)
 
     def test_too_short_raises(self):
         with pytest.raises(ValueError, match="too short"):
-            ts.sample_entropy(np.array([1.0, 2.0]), m=2)
+            ts.sample_entropy(np.array([1.0, 2.0]), dimension=2)
 
 
 class TestApproximateEntropy:
@@ -313,7 +315,9 @@ class TestApproximateEntropy:
         rng = np.random.default_rng(6)
         x = rng.standard_normal(80)
         r = 0.2 * x.std()
-        assert ts.approximate_entropy(x, m=2, r=r) == pytest.approx(_ref_apen(x, 2, r), abs=1e-12)
+        assert ts.approximate_entropy(x, dimension=2, r=r) == pytest.approx(
+            _ref_apen(x, 2, r), abs=1e-12
+        )
 
     def test_noise_exceeds_sine(self):
         rng = np.random.default_rng(1)
@@ -349,7 +353,7 @@ class TestMultiscale:
         rng = np.random.default_rng(0)
         # permutation entropy takes no r — multiscale must not inject one
         mpe = ts.multiscale_entropy(
-            rng.standard_normal(4000), scales=3, entropy_fn=ts.permutation_entropy, m=3
+            rng.standard_normal(4000), scales=3, entropy_fn=ts.permutation_entropy, dimension=3
         )
         assert mpe.size == 3 and np.all(np.isfinite(mpe))
 

@@ -499,7 +499,7 @@ def probabilities(
 
 
 def entropy(
-    x: Any,
+    data: Any,
     *,
     outcomes: OutcomeSpace,
     prob: ProbabilityEstimator | None = None,
@@ -508,7 +508,7 @@ def entropy(
     component: int | str | None = None,
 ) -> float:
     """
-    Entropy of ``x`` — the composable entry point.
+    Entropy of ``data`` — the composable entry point.
 
     Symbolise with ``outcomes``, estimate probabilities with ``prob``, then
     apply the information ``measure``.  With ``normalize=True`` the result is
@@ -517,7 +517,7 @@ def entropy(
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         The series (see :func:`as_series`).
     outcomes : OutcomeSpace
         Symbolisation scheme (e.g. :class:`OrdinalPatterns`, :class:`Dispersion`).
@@ -542,7 +542,7 @@ def entropy(
     >>> entropy(rng.random(5000), outcomes=OrdinalPatterns(3), normalize=True)  # ≈ 1
     0.99...
     """
-    series = as_series(x, component)
+    series = as_series(data, component)
     prob = prob if prob is not None else MLE()
     measure = measure if measure is not None else Shannon()
     counts = outcomes.counts(series)

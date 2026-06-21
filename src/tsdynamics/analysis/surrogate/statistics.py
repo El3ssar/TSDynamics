@@ -31,7 +31,7 @@ from scipy.spatial import cKDTree
 __all__ = ["nonlinear_prediction_error", "time_reversal_asymmetry"]
 
 
-def time_reversal_asymmetry(x: np.ndarray, lag: int = 1) -> float:
+def time_reversal_asymmetry(data: np.ndarray, delay: int = 1) -> float:
     r"""Time-reversal asymmetry statistic of a scalar series.
 
     Computes the dimensionless third-moment ratio of the lagged increments,
@@ -49,9 +49,9 @@ def time_reversal_asymmetry(x: np.ndarray, lag: int = 1) -> float:
 
     Parameters
     ----------
-    x : numpy.ndarray
+    data : numpy.ndarray
         The 1-D series.
-    lag : int, default 1
+    delay : int, default 1
         The increment lag :math:`\ell` (in samples), ``>= 1``.
 
     Returns
@@ -59,12 +59,12 @@ def time_reversal_asymmetry(x: np.ndarray, lag: int = 1) -> float:
     float
         The asymmetry ratio (``0.0`` for a constant series).
     """
-    x = np.asarray(x, dtype=float)
-    if lag < 1:
-        raise ValueError(f"lag must be >= 1, got {lag}.")
-    if x.size <= lag:
-        raise ValueError(f"series too short: need > {lag} samples, got {x.size}.")
-    increments = x[lag:] - x[:-lag]
+    data = np.asarray(data, dtype=float)
+    if delay < 1:
+        raise ValueError(f"delay must be >= 1, got {delay}.")
+    if data.size <= delay:
+        raise ValueError(f"series too short: need > {delay} samples, got {data.size}.")
+    increments = data[delay:] - data[:-delay]
     second = float(np.mean(increments**2))
     if second == 0.0:
         return 0.0
@@ -73,9 +73,9 @@ def time_reversal_asymmetry(x: np.ndarray, lag: int = 1) -> float:
 
 
 def nonlinear_prediction_error(
-    x: np.ndarray,
-    m: int = 3,
-    tau: int = 1,
+    data: np.ndarray,
+    dimension: int = 3,
+    delay: int = 1,
     *,
     horizon: int = 1,
     n_neighbors: int = 4,
@@ -83,13 +83,14 @@ def nonlinear_prediction_error(
 ) -> float:
     r"""Out-of-sample error of a locally-constant phase-space predictor.
 
-    Reconstructs the series in ``m`` delay coordinates (delay ``tau``) and, for each
-    point, predicts the value ``horizon`` steps ahead as the mean of the futures of
-    its ``n_neighbors`` nearest phase-space neighbours, excluding temporal
-    neighbours within a Theiler window.  The returned error is the root-mean-square
-    prediction residual normalised by the standard deviation of the series, so a
-    perfectly unpredictable series scores :math:`\approx 1` and a deterministic one
-    scores well below it (Sugihara & May, 1990; Kantz & Schreiber, 2004).
+    Reconstructs the series in ``dimension`` delay coordinates (delay ``delay``)
+    and, for each point, predicts the value ``horizon`` steps ahead as the mean of
+    the futures of its ``n_neighbors`` nearest phase-space neighbours, excluding
+    temporal neighbours within a Theiler window.  The returned error is the
+    root-mean-square prediction residual normalised by the standard deviation of the
+    series, so a perfectly unpredictable series scores :math:`\approx 1` and a
+    deterministic one scores well below it (Sugihara & May, 1990; Kantz &
+    Schreiber, 2004).
 
     Because determinism is exactly what the linear surrogates lack, a *small* error
     relative to the surrogate ensemble is evidence of nonlinear determinism (use a
@@ -97,11 +98,11 @@ def nonlinear_prediction_error(
 
     Parameters
     ----------
-    x : numpy.ndarray
+    data : numpy.ndarray
         The 1-D series.
-    m : int, default 3
+    dimension : int, default 3
         Embedding dimension, ``>= 1``.
-    tau : int, default 1
+    delay : int, default 1
         Embedding delay in samples, ``>= 1``.
     horizon : int, default 1
         Prediction horizon in samples, ``>= 1``.
@@ -123,27 +124,28 @@ def nonlinear_prediction_error(
         If the parameters are out of range or the series is too short to embed and
         find the requested neighbours.
     """
-    x = np.asarray(x, dtype=float)
-    if m < 1 or tau < 1 or horizon < 1:
-        raise ValueError("m, tau and horizon must all be >= 1.")
+    data = np.asarray(data, dtype=float)
+    if dimension < 1 or delay < 1 or horizon < 1:
+        raise ValueError("dimension, delay and horizon must all be >= 1.")
     if n_neighbors < 1:
         raise ValueError("n_neighbors must be >= 1.")
     if theiler < 0:
         raise ValueError("theiler must be >= 0.")
-    span = (m - 1) * tau
-    n_points = x.size - span - horizon
+    span = (dimension - 1) * delay
+    n_points = data.size - span - horizon
     if n_points <= n_neighbors + 2 * theiler + 1:
         raise ValueError(
             f"series too short: need more than {n_neighbors + 2 * theiler + 1 + span + horizon} "
-            f"samples for m={m}, tau={tau}, horizon={horizon}, got {x.size}."
+            f"samples for dimension={dimension}, delay={delay}, horizon={horizon}, "
+            f"got {data.size}."
         )
 
     # Delay-coordinate vectors that all have a valid `horizon`-ahead target.
     base = np.arange(n_points)
-    embed = x[base[:, None] + np.arange(m)[None, :] * tau]
-    targets = x[base + span + horizon]
+    embed = data[base[:, None] + np.arange(dimension)[None, :] * delay]
+    targets = data[base + span + horizon]
 
-    std = float(x.std())
+    std = float(data.std())
     if std == 0.0:
         return 0.0
 
@@ -163,7 +165,9 @@ def nonlinear_prediction_error(
         valid[i] = True
 
     if not np.any(valid):
-        raise ValueError("no point retained enough non-Theiler neighbours; relax theiler/m/tau.")
+        raise ValueError(
+            "no point retained enough non-Theiler neighbours; relax theiler/dimension/delay."
+        )
     residual = predictions[valid] - targets[valid]
     return float(np.sqrt(np.mean(residual**2)) / std)
 

@@ -21,7 +21,7 @@ either a live system or an already-computed trajectory.
 ```python
 import tsdynamics as ts
 
-section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), steps=500)
+section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=500)
 section.t      # crossing times
 section.y      # full-dimensional crossing states, shape (500, 3)
 ```
@@ -91,7 +91,7 @@ The classic construction (Lorenz, 1963) records successive **local maxima** of
 a coordinate:
 
 ```python
-rm = ts.return_map(ts.Lorenz(), "z", kind="max", final_time=400.0, transient=40.0)
+rm = ts.return_map(ts.Lorenz(), "z", method="max", final_time=400.0, transient=40.0)
 x, y = rm.flat()
 # plt.plot(x, y, ".")   # the famous single-humped z-maxima cusp map
 ```
@@ -105,7 +105,7 @@ The other construction records an observable at successive **section
 crossings** — the section's own return map:
 
 ```python
-rm = ts.return_map(ts.Rossler(), "y", kind="poincare", plane=(0, 0.0), steps=400)
+rm = ts.return_map(ts.Rossler(), "y", method="poincare", plane=(0, 0.0), n=400)
 ```
 
 Either source can be a live system (integrated for you) or an existing

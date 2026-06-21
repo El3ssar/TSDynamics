@@ -207,8 +207,8 @@ def test_time_reversal_asymmetry_constant_series_is_zero():
 def test_prediction_error_low_for_deterministic_high_for_noise():
     logistic = _logistic()
     noise = np.random.default_rng(0).standard_normal(3000)
-    det_err = sur.nonlinear_prediction_error(logistic, m=2, tau=1)
-    noise_err = sur.nonlinear_prediction_error(noise, m=2, tau=1)
+    det_err = sur.nonlinear_prediction_error(logistic, dimension=2, delay=1)
+    noise_err = sur.nonlinear_prediction_error(noise, dimension=2, delay=1)
     assert det_err < 0.1  # near-perfect local prediction of a deterministic map
     assert noise_err > 0.8  # white noise is essentially unpredictable
     assert det_err < noise_err
@@ -233,7 +233,12 @@ def test_surrogate_test_rejects_linearity_for_lorenz(lorenz_z, ar1):
 def test_surrogate_test_prediction_error_detects_determinism_in_lorenz(lorenz_x):
     # determinism makes the flow far more predictable than its linear surrogates
     res = sur.surrogate_test(
-        lorenz_x, "prediction_error", method="iaaft", n=19, seed=0, statistic_kwargs={"m": 3}
+        lorenz_x,
+        "prediction_error",
+        method="iaaft",
+        n=19,
+        seed=0,
+        statistic_kwargs={"dimension": 3},
     )
     assert res.rejected
     assert res.z_score < -5.0
@@ -246,13 +251,18 @@ def test_prediction_error_validates_parameters():
     with pytest.raises(ValueError, match="n_neighbors must be"):
         sur.nonlinear_prediction_error(x, n_neighbors=0)
     with pytest.raises(ValueError, match=">= 1"):
-        sur.nonlinear_prediction_error(x, m=0)
+        sur.nonlinear_prediction_error(x, dimension=0)
 
 
 def test_surrogate_test_prediction_error_detects_determinism():
     logistic = _logistic()
     res = sur.surrogate_test(
-        logistic, "prediction_error", method="iaaft", n=19, seed=1, statistic_kwargs={"m": 2}
+        logistic,
+        "prediction_error",
+        method="iaaft",
+        n=19,
+        seed=1,
+        statistic_kwargs={"dimension": 2},
     )
     assert res.tail == "less"  # auto-resolved for prediction error
     assert res.rejected

@@ -30,6 +30,7 @@ __all__ = [
     "Grid",
     "Region",
     "grid_points",
+    "region",
     "sampler",
     "set_distance",
 ]
@@ -207,6 +208,43 @@ def grid_points(grid: Grid) -> np.ndarray:
         return axes[0][:, None]
     mesh = np.meshgrid(*axes, indexing="ij")
     return np.stack([m.ravel() for m in mesh], axis=-1)
+
+
+def region(spec: Any) -> Grid:
+    """
+    Build a :class:`Grid` from per-axis ``(lo, hi, n)`` triples.
+
+    A terse constructor for the most common region — a regular lattice of
+    initial conditions — so a basin / attractor scan reads
+    ``region([(-2, 2, 200), (-2, 2, 200)])`` instead of the three-parallel-array
+    ``Grid([-2, -2], [2, 2], (200, 200))``.
+
+    Parameters
+    ----------
+    spec : sequence of (float, float, int)
+        One ``(lo, hi, n)`` triple per state-space axis: the axis spans
+        ``[lo, hi]`` with ``n`` evenly spaced grid points.
+
+    Returns
+    -------
+    Grid
+
+    Examples
+    --------
+    >>> g = region([(-2.0, 2.0, 200), (-2.0, 2.0, 200)])   # a 200x200 IC box
+    >>> g.shape
+    (200, 200)
+    """
+    triples = [tuple(axis) for axis in spec]
+    if not triples or any(len(t) != 3 for t in triples):
+        raise ValueError(
+            "region() takes a non-empty sequence of (lo, hi, n) triples, one per "
+            f"axis; got {spec!r}."
+        )
+    lo = np.array([float(t[0]) for t in triples], dtype=float)
+    hi = np.array([float(t[1]) for t in triples], dtype=float)
+    counts = tuple(int(t[2]) for t in triples)
+    return Grid(lo=lo, hi=hi, counts=counts)
 
 
 # ---------------------------------------------------------------------------

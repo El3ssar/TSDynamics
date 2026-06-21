@@ -118,7 +118,7 @@ class SurrogateTest:
 
 
 def surrogate_test(
-    x: Any,
+    data: Any,
     statistic: str | Callable[..., float] = "time_reversal",
     method: str = "iaaft",
     n: int = 39,
@@ -132,15 +132,15 @@ def surrogate_test(
 ) -> SurrogateTest:
     r"""Test a series for nonlinearity against linear surrogates.
 
-    Evaluates ``statistic`` on ``x`` and on ``n`` surrogates drawn by ``method``,
-    then reports the rank p-value and significance of the data statistic within the
-    surrogate ensemble.  The default — time-reversal asymmetry against IAAFT
-    surrogates — rejects the linear-Gaussian null for a dissipative chaotic flow
-    such as Lorenz.
+    Evaluates ``statistic`` on ``data`` and on ``n`` surrogates drawn by
+    ``method``, then reports the rank p-value and significance of the data
+    statistic within the surrogate ensemble.  The default — time-reversal asymmetry
+    against IAAFT surrogates — rejects the linear-Gaussian null for a dissipative
+    chaotic flow such as Lorenz.
 
     Parameters
     ----------
-    x : array-like or Trajectory
+    data : array-like or Trajectory
         The series under test (a component of a multi-component input is selected
         with ``component=``).
     statistic : str or callable, default "time_reversal"
@@ -176,7 +176,7 @@ def surrogate_test(
     ValueError
         If ``statistic``, ``method`` or ``tail`` is unknown.
     """
-    series = _as_series(x, component)
+    series = _as_series(data, component)
     stat_kw = statistic_kwargs or {}
 
     if callable(statistic):

@@ -154,13 +154,13 @@ def test_full_section_is_the_same_attractor_as_the_python_path() -> None:
 
 
 def test_poincare_section_routes_through_the_engine() -> None:
-    sec = ts.poincare_section(ts.Rossler(), (0, 0.0), steps=300, transient=10, dt=0.05)
+    sec = ts.poincare_section(ts.Rossler(), (0, 0.0), n=300, skip_crossings=10, dt=0.05)
     assert sec.y.shape == (300, 3)
     assert np.max(np.abs(sec.y[:, 0])) < 1e-10
 
 
 def test_return_map_poincare_routes_through_the_engine() -> None:
-    rm = ts.return_map(ts.Rossler(), 1, kind="poincare", plane=(0, 0.0), steps=200)
+    rm = ts.return_map(ts.Rossler(), 1, method="poincare", plane=(0, 0.0), n=200)
     assert rm.current.shape == rm.successor.shape
     assert rm.current.size >= 150
 
