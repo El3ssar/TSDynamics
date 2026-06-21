@@ -4,12 +4,12 @@ How one or many Claude (or human) sessions take a ticket from the board to an op
 **in parallel, without colliding** — and how to know which tickets need extra care.
 
 This is the canonical, durable protocol. It formalizes and extends the proven v3/v4 stream
-protocol ([STREAMS.md](../../STREAMS.md), `scripts/claim-stream.sh`, the GitHub-issues claim
+protocol ([STREAMS.md](https://github.com/El3ssar/TSDynamics/blob/main/STREAMS.md), `scripts/claim-stream.sh`, the GitHub-issues claim
 board). It is written for **future sessions** — read it before dispatching work.
 
 > **One source of truth.** The live claim state is **GitHub issues** (one `stream`-labelled
 > issue per ticket). The work *plan* is a `tickets.tsv` under `planning/<program>/` (e.g.
-> [`planning/production/tickets.tsv`](../../planning/production/tickets.tsv)). Never keep a
+> `planning/<program>/tickets.tsv` (git-excluded, local — like `ROADMAP-v4.md`)). Never keep a
 > second copy of claim state in a checked-in file — it would merge-conflict and lie.
 
 ---
@@ -71,7 +71,7 @@ orchestrator never writes product code — it **selects, dispatches, collects, a
    Cap at ≈6 tickets so one session can supervise. Print the chosen batch **and** the
    deferred-because-overlap list.
 2. **Fan out** with the template at
-   [`scripts/workflows/dispatch-batch.mjs`](../../scripts/workflows/dispatch-batch.mjs)
+   [`scripts/workflows/dispatch-batch.mjs`](https://github.com/El3ssar/TSDynamics/blob/main/scripts/workflows/dispatch-batch.mjs)
    (`Workflow({ scriptPath, args: ["<ID1>", "<ID2>", …] })`). Per ticket, in its worktree:
    - **Stage 1 — Implement:** read acceptance + `verify` + `owns`; implement **only** within
      `owns`; follow CLAUDE.md (ruff, NumPy docstrings, no `.jl` refs, one-file-per-thing).
@@ -210,4 +210,4 @@ a slow maturin rebuild per worktree. Mode-B Rust tickets must rebuild the extens
   via `args` and run `Workflow({ scriptPath, args })`.
 - **`make test` / `make test-slow`** — the scoped inner loop (never the full `uv run pytest`).
 
-*This page belongs in the docs `Project → Contributing` nav; `DOCS-NAV-SKELETON` wires it in.*
+*This page lives in the docs `Project → Contributing` nav; `DOCS-NAV-SKELETON` (#263) folds it into the broader nav restructure.*
