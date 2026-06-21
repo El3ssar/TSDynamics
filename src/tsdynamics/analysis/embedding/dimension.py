@@ -102,24 +102,60 @@ def _nearest_neighbor(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Nearest neighbour of every point under Minkowski-``p``, with a Theiler window.
 
-    Returns ``(nn_index, nn_distance, valid)``.  A point with no neighbour outside
-    the temporal window ``|i - j| > theiler`` is marked invalid (``valid[i] ==
-    False``); its ``nn_index`` is ``-1`` and ``nn_distance`` is ``nan``.
+    Returns ``(nn_index, nn_distance, valid)``.  For each point the nearest
+    neighbour *outside* the temporal window ``|i - j| > theiler`` is returned; a
+    point with no such neighbour at all is marked invalid (``valid[i] == False``),
+    its ``nn_index`` is ``-1`` and ``nn_distance`` is ``nan``.
+
+    The query depth ``k`` is grown geometrically until every point either has a
+    valid out-of-window neighbour or has exhausted the whole set (``k == m``).  A
+    fixed ``k`` (e.g. ``theiler + 2``) silently *drops* points whenever more than
+    ``k`` of a point's spatial near-neighbours fall inside its Theiler window —
+    the in-window cluster crowds the query and the true out-of-window neighbour,
+    ranked further down, is never seen.  This bites densely-sampled / quasi-
+    periodic series hardest, where long runs of temporally-adjacent samples are
+    spatially nearly coincident.
     """
     from scipy.spatial import cKDTree
 
     m = points.shape[0]
-    tree = cKDTree(points)
-    k = min(m, theiler + 2)
-    dist, idx = tree.query(points, k=k, p=p)
-    if dist.ndim == 1:  # k == 1 (degenerate, m == 1): no neighbour exists
+    if m < 2:  # no neighbour can exist
         return np.full(m, -1), np.full(m, np.nan), np.zeros(m, dtype=bool)
+
+    tree = cKDTree(points)
     rows = np.arange(m)
-    allowed = np.abs(idx - rows[:, None]) > theiler
-    valid = allowed.any(axis=1)
-    first = np.argmax(allowed, axis=1)  # first True column per row (0 where none → masked)
-    nn = np.where(valid, idx[rows, first], -1)
-    nn_dist = np.where(valid, dist[rows, first], np.nan)
+    nn = np.full(m, -1)
+    nn_dist = np.full(m, np.nan)
+    valid = np.zeros(m, dtype=bool)
+    pending = np.ones(m, dtype=bool)  # points still without an out-of-window neighbour
+
+    # Grow k until every still-pending point is resolved or the query is exhausted.
+    # The worst case for a single window is 2*theiler+1 in-window points, but dense
+    # clusters can push the true neighbour arbitrarily far down the ranking, so we
+    # iterate rather than guess a single safe k.
+    k = min(m, theiler + 2)
+    while True:
+        query_pts = points[pending]
+        dist, idx = tree.query(query_pts, k=k, p=p)
+        if dist.ndim == 1:  # k == 1 (only when m == 1, already handled above)
+            dist = dist[:, None]
+            idx = idx[:, None]
+        pend_rows = rows[pending]
+        allowed = np.abs(idx - pend_rows[:, None]) > theiler
+        found = allowed.any(axis=1)
+        first = np.argmax(allowed, axis=1)  # first True column (0 where none → masked out)
+        resolved_rows = pend_rows[found]
+        if resolved_rows.size:
+            sel = np.flatnonzero(found)
+            nn[resolved_rows] = idx[sel, first[found]]
+            nn_dist[resolved_rows] = dist[sel, first[found]]
+            valid[resolved_rows] = True
+            pending[resolved_rows] = False
+
+        if not pending.any() or k >= m:
+            break
+        k = min(m, k * 2)
+
     return nn, nn_dist, valid
 
 
