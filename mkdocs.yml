@@ -207,6 +207,7 @@ nav:
       - project/index.md
       - Contributing: project/contributing.md
       - Naming glossary: contributing/glossary.md
+      - Agent dispatch: contributing/agent-dispatch-playbook.md
       - Citation: project/citation.md
       - Changelog: project/changelog.md
 
