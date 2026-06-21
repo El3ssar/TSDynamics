@@ -23,19 +23,34 @@ generator returns an ``(n, N)`` ensemble and takes a ``seed`` for reproducibilit
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from .._result import ArrayResult
 from ._common import _as_series, _phase_randomize
 
 __all__ = [
+    "SurrogateEnsemble",
     "aaft_surrogate",
     "fourier_surrogate",
     "iaaft_surrogate",
     "random_shuffle",
     "surrogates",
 ]
+
+
+@dataclass(frozen=True, eq=False)
+class SurrogateEnsemble(ArrayResult):
+    """A drawn surrogate ensemble — the ``(n, N)`` array with the result surface.
+
+    An :class:`~tsdynamics.analysis._result.ArrayResult`, so it is a drop-in for
+    the bare ``(n_surrogates, N)`` matrix: ``np.asarray(result)``,
+    ``for row in result`` (each surrogate series), indexing and ``result.shape``
+    all defer to the wrapped array, while it also carries ``.meta``.
+    """
+
 
 #: Canonical method name → alias set, resolved by :func:`surrogates`.
 _METHOD_ALIASES: dict[str, str] = {
@@ -238,7 +253,7 @@ def surrogates(
     seed: int | None = None,
     component: int | None = None,
     **kwargs: Any,
-):
+) -> SurrogateEnsemble:
     """Generate surrogate series by name — the dispatcher every test goes through.
 
     Parameters
@@ -272,7 +287,11 @@ def surrogates(
         raise ValueError(
             f"unknown surrogate method {method!r}; use 'shuffle', 'ft', 'aaft' or 'iaaft'."
         )
-    return _GENERATORS[key](data, n, seed=seed, component=component, **kwargs)
+    ensemble = _GENERATORS[key](data, n, seed=seed, component=component, **kwargs)
+    return SurrogateEnsemble(
+        values=np.asarray(ensemble),
+        meta={"analysis": "surrogates", "method": key, "n": int(n)},
+    )
 
 
 def __dir__() -> list[str]:

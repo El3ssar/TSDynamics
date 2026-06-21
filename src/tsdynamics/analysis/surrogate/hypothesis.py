@@ -18,6 +18,7 @@ from typing import Any
 
 import numpy as np
 
+from .._result import AnalysisResult
 from ._common import _as_series, _gaussian_significance, empirical_pvalue
 from .generators import surrogates
 from .statistics import STATISTICS
@@ -26,8 +27,12 @@ __all__ = ["SurrogateTest", "surrogate_test"]
 
 
 @dataclass(frozen=True)
-class SurrogateTest:
+class SurrogateTest(AnalysisResult):
     r"""Outcome of a surrogate-data nonlinearity test.
+
+    An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
+    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam alongside the
+    test outcome.
 
     Attributes
     ----------
@@ -56,16 +61,18 @@ class SurrogateTest:
         The significance level the rejection decision used.
     """
 
-    data_statistic: float
-    surrogate_statistics: np.ndarray = field(repr=False)
-    p_value: float
-    z_score: float
-    rejected: bool
-    statistic: str
-    method: str
-    n_surrogates: int
-    tail: str
-    alpha: float
+    data_statistic: float = 0.0
+    surrogate_statistics: np.ndarray = field(
+        default_factory=lambda: np.empty(0), repr=False, compare=False
+    )
+    p_value: float = 1.0
+    z_score: float = 0.0
+    rejected: bool = False
+    statistic: str = ""
+    method: str = ""
+    n_surrogates: int = 0
+    tail: str = "two"
+    alpha: float = 0.05
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe this surrogate test as a backend-agnostic :class:`PlotSpec`.
@@ -211,6 +218,12 @@ def surrogate_test(
         n_surrogates=int(n),
         tail=tail,
         alpha=alpha,
+        meta={
+            "analysis": "surrogate_test",
+            "statistic": stat_name,
+            "method": method,
+            "n_surrogates": int(n),
+        },
     )
 
 
