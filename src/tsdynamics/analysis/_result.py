@@ -67,7 +67,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any, ClassVar
 
 import numpy as np
@@ -222,7 +222,10 @@ def _jsonify(obj: Any) -> Any:
     """Coerce ``obj`` into a JSON-serializable form (arrays → lists).
 
     Handles the value shapes analysis results actually carry: NumPy arrays and
-    scalars, mappings, and ``list``/``tuple``/``set`` containers (recursively).
+    scalars, mappings, ``list``/``tuple``/``set`` containers (recursively), nested
+    result objects (an ``Attractor`` inside an ``AttractorSet``, an ``RQAResult``
+    inside a ``WindowedRQA``), SciPy sparse matrices (a recurrence matrix), and the
+    plain state-space dataclasses (``Box``/``Ball``/``Grid``) a result may embed.
     Plain Python scalars pass through unchanged; anything else is returned as-is
     (the caller owns exotic payloads).
     """
@@ -234,6 +237,29 @@ def _jsonify(obj: Any) -> Any:
         return {str(k): _jsonify(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple, set, frozenset)):
         return [_jsonify(v) for v in obj]
+    # A nested result object (e.g. an ``Attractor`` inside an ``AttractorSet``):
+    # serialize it through its own JSON-friendly ``to_dict`` rather than leaving a
+    # non-serializable object behind.  ``int``-backed results (``CountResult`` *is*
+    # an ``int``) are excluded so they stay native JSON scalars.
+    if isinstance(obj, AnalysisResult) and not isinstance(obj, (int, float, str)):
+        return obj.to_dict()
+    # A SciPy sparse matrix (the recurrence matrix): emit a COO triplet so it
+    # round-trips without densifying to ``O(N^2)``.
+    if hasattr(obj, "tocoo") and hasattr(obj, "shape") and hasattr(obj, "nnz"):
+        coo = obj.tocoo()
+        return {
+            "format": "coo",
+            "shape": list(coo.shape),
+            "row": coo.row.tolist(),
+            "col": coo.col.tolist(),
+            "data": _jsonify(coo.data),
+        }
+    # A plain data-carrying dataclass embedded in a result (``Box``/``Ball``/
+    # ``Grid``): serialize its fields recursively.  ``AnalysisResult`` is handled
+    # above (its curated ``to_dict``); the scalar/class guard keeps int-backed
+    # results native and never expands a dataclass *type*.
+    if is_dataclass(obj) and not isinstance(obj, (int, float, str, type)):
+        return {f.name: _jsonify(getattr(obj, f.name)) for f in fields(obj)}
     return obj
 
 
