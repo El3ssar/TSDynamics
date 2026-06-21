@@ -23,9 +23,35 @@ compatibility ``tsdynamics.Lorenz`` (and ``from tsdynamics import Lorenz``) stil
 resolve lazily.  See :mod:`tsdynamics.registry` for programmatic access.  Internal
 helpers (``ParamSet``, ``SystemBase``, ``staticjit``) live under
 ``tsdynamics.families`` / ``tsdynamics.utils``.
+
+Reachable submodules (all bound on the top-level namespace, so they show up in
+``tsdynamics.<TAB>``):
+
+- :mod:`~tsdynamics.transforms` — signal/feature transforms that feed the
+  analysis layer (``ts.transforms.power_spectral_density``); a headline user
+  capability.
+- :mod:`~tsdynamics.engine`, :mod:`~tsdynamics.solvers` — advanced/internal: the
+  Rust-facing compile/run seam and the solver registry.  Reachable for inspection
+  but rarely imported directly.
+
+Canonical homes for the data primitives (each has exactly one defining module;
+the rest are convenience re-exports): :class:`Trajectory`, :class:`Box`,
+:class:`Ball`, :class:`Grid` live in :mod:`tsdynamics.data`; :class:`WrappedSystem`
+lives with the family bases in :mod:`tsdynamics.families`.
 """
 
-from . import analysis, data, derived, families, registry, systems, utils
+from . import (
+    analysis,
+    data,
+    derived,
+    engine,
+    families,
+    registry,
+    solvers,
+    systems,
+    transforms,
+    utils,
+)
 from .analysis import (
     Attractor,
     AttractorSet,
@@ -113,7 +139,6 @@ from .derived import (
     ProjectedSystem,
     StroboscopicMap,
     TangentSystem,
-    WrappedSystem,
 )
 from .families import (
     ContinuousSystem,
@@ -121,6 +146,7 @@ from .families import (
     DiscreteMap,
     StochasticSystem,
     Trajectory,
+    WrappedSystem,
 )
 
 # Single source of truth for the package version; rewritten by python-semantic-release.
@@ -249,7 +275,11 @@ __all__ = [
     "families",
     "registry",
     "systems",
+    "transforms",
     "utils",
+    # Advanced / internal submodules (reachable but rarely imported directly).
+    "engine",
+    "solvers",
 ]
 
 

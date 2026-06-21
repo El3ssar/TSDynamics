@@ -8,7 +8,13 @@ Public, intended for subclassing:
 - :class:`DiscreteMap` (``families/discrete.py``) — iterated maps.
 - :class:`StochasticSystem` (``families/stochastic.py``) — diagonal-Itô SDEs
   (``_drift`` + ``_diffusion``; Euler–Maruyama / Milstein).
-- :class:`Trajectory` — the result type returned by ``integrate`` / ``iterate``.
+- :class:`WrappedSystem` (``families/wrapped.py``) — adapt any external stepper
+  to the :class:`System` protocol (canonical home; re-exported from
+  :mod:`tsdynamics.derived` for back-compat).
+- :class:`Trajectory` — the result type returned by ``integrate`` / ``iterate``;
+  its canonical home is the data layer (:class:`tsdynamics.data.Trajectory`),
+  re-exported here so the family modules and ``from tsdynamics import Trajectory``
+  resolve to the one object.
 
 Internal but accessible for advanced use:
 
@@ -24,6 +30,7 @@ from .delay import DelaySystem
 from .discrete import DiscreteMap
 from .protocol import System
 from .stochastic import StochasticSystem
+from .wrapped import WrappedSystem
 
 __all__ = [
     # The classes users subclass.
@@ -31,6 +38,8 @@ __all__ = [
     "DelaySystem",
     "DiscreteMap",
     "StochasticSystem",
+    # Adapter base for an external stepper (canonical home; re-exported via derived).
+    "WrappedSystem",
     # Return type.
     "Trajectory",
     # The runtime protocol all analysis functions consume.
