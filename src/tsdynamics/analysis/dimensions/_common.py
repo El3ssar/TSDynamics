@@ -236,12 +236,12 @@ class DimensionResult(ScalingResult):
 
     @property
     def x(self) -> np.ndarray:
-        """The log-scale abscissa of the curve (alias of :attr:`abscissa`)."""
+        """The abscissa of the scaling curve (alias of :attr:`abscissa`; see :attr:`kind`)."""
         return self.abscissa
 
     @property
     def y(self) -> np.ndarray:
-        """The log-count ordinate of the curve (alias of :attr:`ordinate`)."""
+        """The ordinate of the scaling curve (alias of :attr:`ordinate`; see :attr:`kind`)."""
         return self.ordinate
 
     @property
@@ -286,7 +286,16 @@ class DimensionResult(ScalingResult):
         x = np.asarray(self.x, dtype=float)
         y = np.asarray(self.y, dtype=float)
         lo, hi = self.fit_slice
-        layers = [Layer(PlotKind.SCATTER, {"x": x, "y": y}, label=r"$\log C(r)$")]
+        # Axis/series labels differ by estimator kind (see the abscissa/ordinate
+        # field docstring): correlation = log-radius vs log-C(r); generalized =
+        # log-scale vs partition ordinate; fixed_mass = mean-log-radius vs the
+        # digamma log-mass.  Unknown kinds fall back to neutral labels.
+        xlabel, ylabel = {
+            "correlation": (r"$\log r$", r"$\log C(r)$"),
+            "generalized": (r"$\log \epsilon$", r"partition ordinate"),
+            "fixed_mass": (r"$\langle \log r_k \rangle$", r"$\psi(k)$"),
+        }.get(self.kind, (r"$\log$ scale", r"$\log$ measure"))
+        layers = [Layer(PlotKind.SCATTER, {"x": x, "y": y}, label=ylabel)]
         if x.size and hi >= lo:
             layers.append(
                 Layer(
@@ -306,8 +315,8 @@ class DimensionResult(ScalingResult):
             kind=spec_kind,
             ndim=2,
             title=f"{self.kind} dimension{q}  D = {self.dimension:.3f}",
-            x=Axis(label=r"$\log r$"),
-            y=Axis(label=r"$\log C(r)$"),
+            x=Axis(label=xlabel),
+            y=Axis(label=ylabel),
             layers=layers,
         )
 

@@ -89,9 +89,27 @@ def correlation_sum(
     ValueError
         If the Theiler window leaves no valid pairs.
     """
+    return _correlation_sum_from_points(
+        _as_points(data), radii, theiler=theiler, metric=metric, n_radii=n_radii
+    )
+
+
+def _correlation_sum_from_points(
+    points: np.ndarray,
+    radii: np.ndarray | None = None,
+    *,
+    theiler: int = 0,
+    metric: str | float = "euclidean",
+    n_radii: int = 24,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Correlation sum :math:`C(r)` for an already-coerced ``(N, dim)`` point set.
+
+    The shared core of :func:`correlation_sum` (which coerces ``data`` first) and
+    :func:`correlation_dimension` (which coerces once and reuses the array), so
+    the point set is validated/copied a single time per estimate.
+    """
     from scipy.spatial import cKDTree
 
-    points = _as_points(data)
     n = points.shape[0]
     w = int(theiler)
     if w < 0:
@@ -189,7 +207,9 @@ def correlation_dimension(
     """
     # ``_as_points`` rejects <2 points / non-finite first (keeping those messages);
     # then reject a too-short-but-finite handful rather than fabricating a slope.
-    n = _as_points(data).shape[0]
+    # Coerce once and reuse the array for the correlation sum (no double scan).
+    points = _as_points(data)
+    n = points.shape[0]
     if n < _MIN_CORR_POINTS:
         raise invalid_value(
             "data length",
@@ -200,8 +220,8 @@ def correlation_dimension(
                 "region from so few points; pass a longer trajectory / series."
             ),
         )
-    radii, c = correlation_sum(
-        data,
+    radii, c = _correlation_sum_from_points(
+        points,
         radii=radii,
         theiler=theiler,
         metric=metric,
