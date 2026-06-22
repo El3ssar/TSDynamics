@@ -344,8 +344,18 @@ All three families + all derived wrappers implement:
   (`integrate_sde_dense` / `integrate_sde_ensemble_final` in `tsdyn-core`) is
   wired (stream E-WIRE): `backend="interp"/"jit"` (the default) dispatches the
   drift+diffusion call to the engine (interpreter or Cranelift JIT). The
-  pure-Python **reference** integrator (a faithful `SplitMix64` port) reproduces
-  it bit-for-bit under a fixed seed and stays available as the wheel-free oracle.
+  pure-Python **reference** integrator (a faithful `SplitMix64` port, sharing the
+  engine's tolerant fixed-step landing) reproduces the engine **to floating-point
+  tolerance** under a fixed seed — the integer RNG stream and draw order are
+  identical; the only residual difference is the Box–Muller normal (Python libm
+  `sin`/`cos` vs Rust `sin_cos`, ≤1 ULP/draw), so it is *not* bit-for-bit — and
+  stays available as the wheel-free oracle. **Fixed-step landing (stream
+  FIX-SDE-WIENER):** the output grid is uniform in `dt`, but float roundoff makes
+  a nominally `dt`-wide segment compute `remaining = t_end − t` a few ULP above
+  `dt`; the landing step absorbs that into one canonical `dt` step
+  (`_LANDING_REL_TOL` / Rust `LANDING_REL_TOL`, kept in lock-step) instead of
+  taking a full `dt` step plus a spurious sub-ULP sliver — so `integrate` and the
+  `step()` loop trace the same path and `interp == jit` bit-for-bit.
 - **Registry-detected (stream C-FAM):** a concrete `StochasticSystem` subclass
   registers with family `sde` (`_drift` is the concrete-rhs marker, and
   `StochasticSystem` is in the family-base table), so it appears in
