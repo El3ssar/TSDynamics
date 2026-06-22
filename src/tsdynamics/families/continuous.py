@@ -711,7 +711,11 @@ class ContinuousSystem(SystemBase, ABC):
         method : str, optional
             Solver name, resolved by the solver registry (default ``"RK45"``):
             explicit (``RK45`` / ``DOP853`` / ``tsit5`` / ``dop853``) or implicit
-            / stiff (``bdf`` / ``rosenbrock`` / ``trbdf2``).
+            / stiff (``bdf`` / ``rosenbrock`` / ``trbdf2``).  Pass ``"auto"`` to
+            select a kernel by a-priori auto-stiffness — the Jacobian spectrum at
+            the start state is probed and ``bdf`` chosen on a stiff RHS, ``rk45``
+            otherwise (:func:`tsdynamics.solvers.recommend`; a one-point heuristic,
+            so a reliably-stiff system should still declare ``_default_method``).
         rtol, atol : float
             Solver tolerances (default 1e-6 / 1e-9).
         backend : {"interp", "jit", "reference"}, optional
