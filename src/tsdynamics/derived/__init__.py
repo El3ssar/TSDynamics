@@ -1,10 +1,15 @@
 """
 Derived systems — wrappers that present an existing system through a new lens.
 
-The composition layer of the library: every wrapper implements the
+The composition layer of the library: the single-state wrappers
+(:class:`PoincareMap`, :class:`StroboscopicMap`, :class:`TangentSystem`,
+:class:`ProjectedSystem`) implement the
 :class:`~tsdynamics.families.System` protocol, so anything written for systems
 works on wrapped systems too.  A :class:`PoincareMap` of a flow *is* a
 discrete map; an orbit diagram over it is a bifurcation diagram of the flow.
+:class:`EnsembleSystem` is the batch exception: it advances many copies in
+lockstep and exposes ``states()`` / ``set_states()`` rather than the
+single-state ``System`` protocol.
 
 - :class:`PoincareMap` — hyperplane crossings of a flow as a discrete map.
 - :class:`PoincareSection` — the crossing states it collects: a thin

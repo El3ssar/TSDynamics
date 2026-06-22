@@ -29,14 +29,12 @@ fixed seed; it is the wheel-free oracle.
 
 Registry note
 -------------
-The runtime registry's family detection keys off ``_equations`` / ``_step`` and
-a fixed table of family bases (:mod:`tsdynamics.registry`); neither covers SDEs
-yet, so concrete ``StochasticSystem`` subclasses are **not** auto-registered.
-That is deliberate — adding the ``stochastic`` family tag is stream **C-FAM**'s
-acceptance. SDE systems still integrate and lower today (the engine's
-:func:`~tsdynamics.engine.problem.build_problem` detects them by duck-typing
-``_drift`` / ``_diffusion``); they simply do not yet appear in
-``registry.all_systems()``.
+Concrete ``StochasticSystem`` subclasses auto-register with family ``sde``
+(stream **C-FAM**): the registry's family detection has ``_drift`` in its
+concrete-rhs markers and ``StochasticSystem`` in its family-base table
+(:mod:`tsdynamics.registry`), so a user SDE appears in
+``registry.all_systems(family="sde")``.  There are no built-in SDE systems in
+the catalogue yet, so ``registry.families()`` (builtin-only) is unchanged.
 """
 
 from __future__ import annotations
@@ -220,7 +218,7 @@ class StochasticSystem(SystemBase, ABC):
     -----------------
     1. Declare ``params = {...}`` and ``dim = N`` at class level.
     2. Implement ``_drift`` and ``_diffusion`` as ``@staticmethod``s, each
-       returning a length-``dim`` sequence of JiTCODE / SymEngine symbolic
+       returning a length-``dim`` sequence of SymEngine symbolic
        expressions (use ``y(i)`` for component ``i`` and ``t`` for time — no
        NumPy, no ``math``, no Python ``if``):
 
@@ -426,6 +424,47 @@ class StochasticSystem(SystemBase, ABC):
         """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
         traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
         return traj.after(transient) if transient > 0 else traj
+
+    # ------------------------------------------------------------------ #
+    # Trajectory production — the canonical ``run`` verb
+    # ------------------------------------------------------------------ #
+
+    def run(
+        self,
+        final_time: float = 100.0,
+        dt: float = 0.02,
+        **kwargs: Any,
+    ) -> Trajectory:
+        """
+        Produce a trajectory — the one canonical verb for every family.
+
+        ``run`` is the unified trajectory producer: it answers the same call for
+        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
+        stochastic system (this family) it integrates the SDE, so ``run`` is a
+        thin alias of :meth:`integrate` and forwards every keyword to it
+        unchanged.
+
+        Parameters
+        ----------
+        final_time : float
+            End of the integration window. Default 100.0.
+        dt : float
+            Fixed step size *and* output sampling interval (for an SDE the step
+            is the noise scale).
+        **kwargs
+            Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
+            ``seed``, ``backend``).
+
+        Returns
+        -------
+        Trajectory
+            Identical to :meth:`integrate` — ``run`` adds no behaviour.
+
+        See Also
+        --------
+        integrate : The family-specific spelling (a permanent alias of ``run``).
+        """
+        return self.integrate(final_time=final_time, dt=dt, **kwargs)
 
     # ------------------------------------------------------------------ #
     # Integration
@@ -640,11 +679,11 @@ class StochasticSystem(SystemBase, ABC):
             y[k] = u
         return y
 
-    @staticmethod
-    def _resolve_method(method: str | None) -> str:
+    @classmethod
+    def _resolve_method(cls, method: str | None) -> str:
         """Canonicalise a scheme name; raise on an unknown one."""
         if method is None:
-            return StochasticSystem._default_method
+            return cls._default_method
         canon = _METHODS.get(str(method).lower())
         if canon is None:
             raise ValueError(

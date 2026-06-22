@@ -55,7 +55,7 @@ class DiscreteMap(SystemBase):
     Subclass contract
     -----------------
     1. Declare ``params = {...}`` and ``dim = N``.
-    2. Implement ``_step`` and ``_jacobian`` as ``@staticjit`` static methods.
+    2. Implement ``_step`` and ``_jacobian`` as ``@staticmethod`` static methods.
        Parameters arrive as **positional arguments** in the order they appear
        in the class-level ``params`` dict.
 
@@ -132,7 +132,7 @@ class DiscreteMap(SystemBase):
         """
         Evaluate the map at state ``X``.
 
-        Decorate with ``@staticjit``.  Parameters arrive positionally in
+        Decorate with ``@staticmethod``.  Parameters arrive positionally in
         the order they appear in the class-level ``params`` dict.
 
         Parameters
@@ -154,7 +154,7 @@ class DiscreteMap(SystemBase):
         """
         Return the (dim × dim) Jacobian at state ``X``.
 
-        Decorate with ``@staticjit``.  Parameters positional, same order as
+        Decorate with ``@staticmethod``.  Parameters positional, same order as
         the class-level ``params`` dict.
 
         Returns
@@ -291,10 +291,6 @@ class DiscreteMap(SystemBase):
         return self.iterate(steps=n, **kwargs)
 
     # ------------------------------------------------------------------ #
-    # Compiled iterate loop
-    # ------------------------------------------------------------------ #
-
-    # ------------------------------------------------------------------ #
     # Iteration
     # ------------------------------------------------------------------ #
 
@@ -351,10 +347,11 @@ class DiscreteMap(SystemBase):
         for attempt in range(max_retries):
             try:
                 return self._iterate_engine(steps=steps, ic=ic_arr, backend=backend)
-            except RuntimeError as exc:
+            except RuntimeError:
                 if ic_explicit or attempt == max_retries - 1:
                     raise
-                print(f"Warning: {exc}. Retrying with a new random IC.")
+                # Silent retry from a fresh random IC; the off-basin draw is an
+                # internal detail and final exhaustion raises loudly below.
                 ic_arr = np.random.rand(cast(int, self.dim))
                 object.__setattr__(self, "ic", ic_arr.copy())
         raise RuntimeError(
