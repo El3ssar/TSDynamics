@@ -171,6 +171,15 @@ class ContinuousSystem(SystemBase, ABC):
     _step_method_canonical: str | None = None
     _step_tape_arrays: Any = None
 
+    # The durable resumable engine stepper handle (stream WS-STEPPER): an opaque
+    # ``tsdynamics._rust.OdeStepper`` that owns the built tape evaluator + solver
+    # once and carries the live integration point across ``step`` calls, so a
+    # per-``dt`` loop never re-marshals the tape into the engine.  Built lazily on
+    # the first ``step`` after a ``reinit`` (so a cold ``state()`` / ``time()`` —
+    # or a ``reference``-backed flow — never forces the compiled engine), and
+    # discarded by ``reinit`` so a re-lowered tape / new state is always picked up.
+    _ode_stepper: Any = None
+
     # ------------------------------------------------------------------ #
     # Subclass interface
     # ------------------------------------------------------------------ #
@@ -322,6 +331,12 @@ class ContinuousSystem(SystemBase, ABC):
         self._step_atol = float(atol)
         self._state_now = ic_arr.copy()
         self._t_now = t0
+        # Drop any prior durable stepper handle: the next ``step`` rebuilds it from
+        # the freshly lowered tape + new live state (WS-STEPPER).  Built lazily so a
+        # cold ``state()``/``time()`` (or a ``reference`` flow) never forces the
+        # compiled engine here — exactly as the pre-handle path reached the engine
+        # only inside ``step``.
+        self._ode_stepper = None
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
@@ -333,30 +348,37 @@ class ContinuousSystem(SystemBase, ABC):
 
         Notes
         -----
-        Each call integrates **exactly one** ``dt`` from the live ``(state, t)``,
+        Each call advances **exactly one** ``dt`` from the live ``(state, t)``,
         returning byte-for-byte the trajectory the released per-``dt`` path
         produced — there is no batching, so the numbers are unchanged for every
-        method, adaptive or fixed-step (streams WS-STEPBUF, WS-INVHOIST).  The
-        speedup comes only from hoisting fixed per-call overhead out of the loop:
-        ``step`` reuses the tape, its canonical kernel name and its marshalled
-        engine wire arrays — all cached by :meth:`reinit` — and calls the engine's
-        lean dense-output core (:func:`~tsdynamics.engine.run._step_continuous`)
-        directly.  So a constant-``dt`` stepping loop (Poincaré refinement, basins
-        over flows) skips the solver-registry resolve, the implicit-Jacobian
-        decision, the tape re-marshalling, the output-grid ``arange``/append,
-        provenance assembly and the :class:`Trajectory` wrap that the full
-        :meth:`integrate` entry point pays on every call.  The control-parameter
-        vector is still read live each step, so the live-stepper semantics are
-        unchanged.
+        method, adaptive or fixed-step (streams WS-STEPBUF, WS-INVHOIST,
+        WS-STEPPER).  The amortisation is durable: the first ``step`` after a
+        :meth:`reinit` builds an opaque resumable engine handle
+        (:class:`tsdynamics._rust.OdeStepper`, via
+        :func:`~tsdynamics.engine.run.make_ode_stepper`) that owns the built tape
+        evaluator + solver once and carries the live ``(u, t)`` across calls; every
+        later ``step`` is one :func:`~tsdynamics.engine.run.step_advance` on that
+        handle — the tape is **never re-marshalled into the engine again**.  So a
+        constant-``dt`` stepping loop (Poincaré refinement, basins over flows) skips
+        not only the solver-registry resolve, the implicit-Jacobian decision, the
+        output-grid build, provenance assembly and the :class:`Trajectory` wrap that
+        the full :meth:`integrate` entry point pays, but also the per-step tape
+        re-marshalling and tape *rebuild* the pre-handle stepping core paid.  The
+        control-parameter vector is still read live each step, so the live-stepper
+        semantics are unchanged.
 
-        A batch-ahead variant that integrated a whole chunk in one engine call was
-        rejected: a chunked adaptive integration is *not* equal to N single-``dt``
-        integrations (the adaptive controller carries its step-size/error state
-        across output nodes), which silently corrupted sensitive consumers such as
-        ``max_lyapunov``.  The durable amortisation is the resumable engine stepper
-        (WS-STEPPER), which advances without re-seeding and stays answer-exact.
+        Why this stays answer-exact: the engine handle's ``advance(dt)`` re-seeds a
+        *fresh* solver and state for each ``dt`` segment (the adaptive controller is
+        re-seeded each step, exactly as the released per-``dt`` ``integrate_dense``
+        did), so the numbers are bit-for-bit identical to that path — verified in
+        the engine's own test.  A batch-ahead variant that integrated a whole chunk
+        in one engine call was rejected (WS-STEPBUF): a chunked adaptive integration
+        is *not* equal to N single-``dt`` integrations (the controller would carry
+        its step/error state across output nodes), which silently corrupted
+        sensitive consumers such as ``max_lyapunov``.  The durable handle amortises
+        the *build/marshalling*, never the numerics.
         """
-        from tsdynamics.engine.run import _step_continuous
+        from tsdynamics.engine.run import make_ode_stepper, step_advance
 
         if self._engine_problem is None:
             self.reinit()
@@ -368,41 +390,72 @@ class ContinuousSystem(SystemBase, ABC):
 
         t0 = self._t_now
         tf = t0 + dt
-        # The two-node grid ``make_output_grid(t0, tf, dt)`` builds for a single ``dt``
-        # span, assembled directly to skip its ``arange``/append (WS-INVHOIST).  When the
-        # span clears ``1e-9`` the helper is byte-for-byte exactly ``[t0, tf]``: that sits
-        # a thousandfold above its ``1e-12`` append tolerance (``t_arr[-1] < tf - 1e-12``)
-        # and above the float-subtraction rounding even at large ``t0``, and a single
-        # ``dt`` span never yields more than two nodes — so the shortcut is identical
-        # there (the regime of every real step; verified bit-for-bit over a wide
-        # ``t0``/``dt`` fuzz).  The rare remainder — a sub-``1e-9`` step (whose helper grid
-        # may degenerate to a single un-advanced node) or a non-forward / non-positive
-        # ``dt`` (which must raise the canonical
-        # :class:`~tsdynamics.errors.InvalidParameterError`) — defers to the helper so
-        # ``step`` stays byte-identical to the pre-hoist path for *every* input.
-        if tf - t0 > 1e-9:
-            t_eval = np.array([t0, tf], dtype=np.float64)
-        else:
+        # Preserve the released ``step`` span contract exactly: a non-positive ``dt``
+        # or a non-forward window (``t0 + dt == t0`` at a large ``t0``) must raise the
+        # canonical :class:`~tsdynamics.errors.InvalidParameterError` (a
+        # ``ValueError``), not silently no-op on the engine handle.  When the span
+        # clears ``1e-9`` the regime is unambiguously forward+positive, so the happy
+        # path goes straight to the handle (never touching ``make_output_grid``);
+        # only the sub-``1e-9`` remainder defers to the helper for that identical
+        # loud-footgun error (and the byte-identical degenerate-grid behaviour).
+        if not tf - t0 > 1e-9:
             from tsdynamics.utils.grids import make_output_grid
 
+            # Raises InvalidParameterError for dt <= 0 / a non-forward window; for a
+            # valid-but-tiny span it returns the (possibly single-node) grid, which
+            # the per-``dt`` engine core integrated identically — reproduce that here
+            # via the same lean core to stay byte-identical for the rare small step.
             t_eval = make_output_grid(t0, tf, dt)
-        y = _step_continuous(
-            self._step_tape_arrays,
-            self._state_now,
+            from tsdynamics.engine.run import _step_continuous
+
+            y = _step_continuous(
+                self._step_tape_arrays,
+                self._state_now,
+                self._engine_problem.params_vec(),
+                t_eval,
+                method=self._step_method_canonical,
+                rtol=self._step_rtol,
+                atol=self._step_atol,
+                jit=self._step_backend == "jit",
+                name=type(self).__name__,
+            )
+            state = np.asarray(y[-1], dtype=float)
+            # The handle (if already built) no longer mirrors the live point after
+            # this off-handle advance; drop it so the next ``step`` rebuilds from the
+            # synced ``_state_now``/``_t_now``.
+            object.__setattr__(self, "_ode_stepper", None)
+            object.__setattr__(self, "_t_now", tf)
+            object.__setattr__(self, "_state_now", state.copy())
+            return state.copy()
+
+        # Build the durable resumable handle lazily on the first ``step`` after a
+        # ``reinit`` (so a cold ``state()``/``time()`` never forces the engine), from
+        # the live state + the tape arrays + the solver config ``reinit`` cached.
+        if self._ode_stepper is None:
+            stepper = make_ode_stepper(
+                self._step_tape_arrays,
+                self._state_now,
+                self._t_now,
+                method=self._step_method_canonical,
+                rtol=self._step_rtol,
+                atol=self._step_atol,
+                jit=self._step_backend == "jit",
+            )
+            object.__setattr__(self, "_ode_stepper", stepper)
+
+        state = step_advance(
+            self._ode_stepper,
+            dt,
             self._engine_problem.params_vec(),
-            t_eval,
-            method=self._step_method_canonical,
-            rtol=self._step_rtol,
-            atol=self._step_atol,
-            jit=self._step_backend == "jit",
             name=type(self).__name__,
         )
-        state = np.asarray(y[-1], dtype=float)
         # The state/time advance writes private framework attributes that always pass
         # straight through ``SystemBase.__setattr__`` (underscore-prefixed) — go direct
         # to ``object.__setattr__`` so the hot loop skips the param-typo guard's
-        # ``params`` membership check on every step (WS-INVHOIST).
-        object.__setattr__(self, "_t_now", tf)
+        # ``params`` membership check on every step (WS-INVHOIST).  The engine handle
+        # is the live-state authority; ``_state_now``/``_t_now`` mirror it so
+        # ``state()``/``time()`` and ``set_state`` stay consistent.
+        object.__setattr__(self, "_t_now", self._t_now + dt)
         object.__setattr__(self, "_state_now", state.copy())
         return state.copy()
 
@@ -420,6 +473,11 @@ class ContinuousSystem(SystemBase, ABC):
             self.reinit(u_arr)
         else:
             self._state_now = u_arr.copy()
+            # Drop the durable stepper handle: its live point no longer mirrors the
+            # reseated state, so the next ``step`` rebuilds it from ``_state_now`` /
+            # ``_t_now`` (WS-STEPPER).  Cheaper and less error-prone than reseating
+            # the handle in place, and ``set_state`` is not on the hot stepping path.
+            self._ode_stepper = None
 
     def time(self) -> float:
         """Return the current stepper time."""

@@ -308,6 +308,189 @@ fn eval_event(g: &dyn Evaluator, u: &[f64], p: &[f64], t: f64, scratch: &mut [f6
     out[0]
 }
 
+/// Resumably advance `st` toward `t1`, stopping at the **first** refined crossing
+/// of the single event `g(u, t) = 0` in `direction` (the durable analogue of
+/// [`integrate_events`] for a stepper handle — stream WS-STEPPER).
+///
+/// Unlike [`integrate_events`], the [`SolverState`] and step size `h` are
+/// **borrowed**, not built afresh: the caller owns them across calls, so an
+/// adaptive kernel keeps its learned step and a flow can be marched crossing by
+/// crossing without re-seeding the integration each time. On return:
+///
+/// - `Ok(Some(hit))` — a crossing was found; the **refined** crossing time/state
+///   are in `hit`. `st` is left at the **end of the bracketing step** (one
+///   marching step *past* the crossing, where the sign change was detected), so
+///   the next call resumes with a clean, strictly-non-zero `g_prev` and never
+///   re-detects the same crossing. `h` carries the kernel's natural step there
+///   (the forced short landing step never shrinks it). This mirrors how the batch
+///   [`integrate_events`] continues marching after a hit — it is the durable,
+///   re-detection-free analogue.
+/// - `Ok(None)` — no crossing in `direction` occurred before `t1`; `st` is left at
+///   `t1` (its state there), ready to continue the search on a later span.
+///
+/// The crossing is detected by a sign change at the step endpoints (the same
+/// limitation as [`integrate_events`]: an even number of crossings inside one step
+/// is missed — march at a small enough `h`) and refined with the kernel's dense
+/// output (native if [`Caps::dense`](tsdyn_solvers::Caps::dense), else the endpoint
+/// cubic-Hermite fallback) plus a [`bracketed_root`] solve — O(h⁴), identical to
+/// [`integrate_events`]. Forward only (`t1 ≥ st.t`); the "diverge loudly"
+/// [`IntegrateError`] contract is preserved.
+#[allow(clippy::too_many_arguments)]
+pub fn advance_to_event(
+    ev: &dyn Evaluator,
+    solver: &mut dyn Solver,
+    st: &mut SolverState,
+    h: &mut f64,
+    t1: f64,
+    g: &dyn Evaluator,
+    direction: EventDirection,
+    cfg: &IntegrateConfig,
+) -> Result<Option<EventHit>, IntegrateError> {
+    let dim = ev.dim();
+    debug_assert_eq!(
+        st.u.len(),
+        dim,
+        "state length must equal the system dimension"
+    );
+    debug_assert_eq!(g.dim(), 1, "an event function must have a single output");
+    debug_assert!(
+        t1 >= st.t,
+        "advance_to_event is forward only: need t1 >= st.t"
+    );
+    assert!(
+        h.is_finite() && *h > 0.0,
+        "step size must be finite and positive, got {h}"
+    );
+
+    let use_native = solver.caps().dense;
+    let mut g_scratch = vec![0.0; g.n_scratch()];
+    let mut g_prev = eval_event(g, &st.u, &st.p, st.t, &mut g_scratch);
+
+    // Hermite endpoint derivatives, only when there is no native interpolant.
+    let (mut f_prev, mut f_now) = if use_native {
+        (Vec::new(), Vec::new())
+    } else {
+        let mut f0 = vec![0.0; dim];
+        ev.eval(&st.u, &st.p, st.t, &mut st.scratch, &mut f0);
+        (f0, vec![0.0; dim])
+    };
+
+    let mut u0_local = vec![0.0; dim];
+    let mut ubuf = vec![0.0; dim];
+    let mut steps = 0usize;
+
+    while st.t < t1 {
+        if steps >= cfg.max_steps {
+            return Err(IntegrateError::StepLimit { t: st.t, steps });
+        }
+        let t0_local = st.t;
+        u0_local.copy_from_slice(&st.u);
+        let remaining = t1 - st.t;
+        let landing = *h >= remaining;
+        let h_try = if landing { remaining } else { *h };
+        steps += 1;
+
+        match solver.step(ev, st, h_try) {
+            StepOutcome::Accepted { h_next } => {
+                if !st.u.iter().all(|x| x.is_finite()) || !st.t.is_finite() {
+                    return Err(IntegrateError::NonFinite { t: st.t });
+                }
+                if landing {
+                    st.t = t1;
+                } else if h_next.is_finite() && h_next > 0.0 {
+                    *h = h_next;
+                }
+                let t1_local = st.t;
+                // The interpolant spans the step the kernel actually took (`h_try`);
+                // its cached stage data is keyed to that size (mirrors the grid /
+                // `integrate_events` landing-snap reasoning).
+                let h_step = h_try;
+
+                if !use_native {
+                    ev.eval(&st.u, &st.p, t1_local, &mut st.scratch, &mut f_now);
+                }
+
+                let g1 = eval_event(g, &st.u, &st.p, t1_local, &mut g_scratch);
+                if let Some(dir) = direction.crosses(g_prev, g1) {
+                    let g0 = g_prev;
+                    let mut u_cross = vec![0.0; dim];
+                    let s_star = if use_native {
+                        let s = bracketed_root(
+                            |s| {
+                                solver.interpolate(&u0_local, h_step, s, &mut ubuf);
+                                eval_event(g, &ubuf, &st.p, t0_local + s * h_step, &mut g_scratch)
+                            },
+                            0.0,
+                            1.0,
+                            g0,
+                            g1,
+                            ROOT_XTOL,
+                        );
+                        let ok = solver.interpolate(&u0_local, h_step, s, &mut u_cross);
+                        debug_assert!(
+                            ok,
+                            "kernel advertises Caps::dense but interpolate() returned false"
+                        );
+                        s
+                    } else {
+                        let hermite = HermiteStep::new(&u0_local, &f_prev, &st.u, &f_now, h_step);
+                        let s = bracketed_root(
+                            |s| {
+                                hermite.eval(s, &mut ubuf);
+                                eval_event(g, &ubuf, &st.p, t0_local + s * h_step, &mut g_scratch)
+                            },
+                            0.0,
+                            1.0,
+                            g0,
+                            g1,
+                            ROOT_XTOL,
+                        );
+                        hermite.eval(s, &mut u_cross);
+                        s
+                    };
+                    let t_cross = t0_local + s_star * h_step;
+                    let g_cross = eval_event(g, &u_cross, &st.p, t_cross, &mut g_scratch);
+                    if !(s_star.is_finite()
+                        && g_cross.is_finite()
+                        && u_cross.iter().all(|x| x.is_finite()))
+                    {
+                        return Err(IntegrateError::NonFinite { t: t0_local });
+                    }
+                    // Leave `st` at the END of the bracketing step (it already is —
+                    // `solver.step` advanced it there), NOT at the crossing: the
+                    // post-step `g1` is strictly non-zero, so the next call resumes
+                    // with a clean `g_prev` and cannot re-detect this same crossing.
+                    // The refined crossing travels in the returned hit.
+                    return Ok(Some(EventHit {
+                        event: 0,
+                        t: t_cross,
+                        u: u_cross,
+                        direction: dir,
+                    }));
+                }
+                g_prev = g1;
+
+                if !use_native {
+                    std::mem::swap(&mut f_prev, &mut f_now);
+                }
+            }
+            StepOutcome::Rejected { h_next } => {
+                debug_assert!(
+                    st.u == u0_local && st.t == t0_local,
+                    "a Rejected step must leave SolverState unchanged"
+                );
+                if !(h_next.is_finite() && h_next > 0.0) || h_next < cfg.min_step {
+                    return Err(IntegrateError::StepCollapsed { t: st.t, h: h_next });
+                }
+                *h = h_next;
+            }
+            StepOutcome::Failed => return Err(IntegrateError::NonFinite { t: st.t }),
+        }
+    }
+
+    Ok(None)
+}
+
 /// Integrate from `t0` to `t1`, detecting and refining crossings of each event's
 /// `g(u, t) = 0`.
 ///
@@ -1226,5 +1409,188 @@ mod tests {
             matches!(err, IntegrateError::StepLimit { steps: 5, .. }),
             "got {err:?}"
         );
+    }
+
+    // --- resumable advance_to_event (WS-STEPPER) ------------------------------
+
+    #[test]
+    fn advance_to_event_lands_on_the_first_crossing_and_resumes() {
+        // x(t) = cos t; the plane x = 0 is crossed falling at π/2, rising at 3π/2,
+        // falling at 5π/2. Marching "Either" crossing by crossing must land on each
+        // in turn — and resuming must NOT re-detect the just-found crossing (the
+        // state is left one marching step past it, with a clean non-zero g_prev).
+        let ev = oscillator();
+        let g = plane_event(2, 0, 0.0);
+        let mut s = Rk4::new();
+        let conf = cfg(0.01);
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+        let mut h = conf.first_step;
+        let span = 10.0;
+
+        let want = [
+            core::f64::consts::FRAC_PI_2,       // π/2 falling
+            3.0 * core::f64::consts::FRAC_PI_2, // 3π/2 rising
+            5.0 * core::f64::consts::FRAC_PI_2, // 5π/2 falling
+        ];
+        let want_dir = [-1i8, 1, -1];
+        for (k, (&t_want, &d_want)) in want.iter().zip(want_dir.iter()).enumerate() {
+            let hit = advance_to_event(
+                &ev,
+                &mut s,
+                &mut st,
+                &mut h,
+                span,
+                &g,
+                EventDirection::Either,
+                &conf,
+            )
+            .unwrap()
+            .unwrap_or_else(|| panic!("crossing {k} should be found"));
+            assert_eq!(hit.direction, d_want, "crossing {k} direction");
+            assert!((hit.t - t_want).abs() < 1e-6, "crossing {k}: t = {}", hit.t);
+            // The refined crossing state lies on the plane x = 0.
+            assert!(hit.u[0].abs() < 1e-6, "x at crossing {k} = {}", hit.u[0]);
+            // The live state has advanced strictly past the refined crossing (it is
+            // left at the end of the bracketing step), so the next call cannot
+            // re-detect this crossing.
+            assert!(st.t > hit.t, "state must resume past the crossing");
+        }
+    }
+
+    #[test]
+    fn advance_to_event_returns_none_when_no_crossing_before_t1() {
+        // x = cos t never reaches the plane x = 5 → no crossing; the state is left
+        // at t1 (ready to continue searching on a later span).
+        let ev = oscillator();
+        let g = plane_event(2, 0, 5.0);
+        let mut s = Rk4::new();
+        let conf = cfg(0.01);
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+        let mut h = conf.first_step;
+        let out = advance_to_event(
+            &ev,
+            &mut s,
+            &mut st,
+            &mut h,
+            1.0,
+            &g,
+            EventDirection::Either,
+            &conf,
+        )
+        .unwrap();
+        assert!(out.is_none(), "no crossing expected");
+        assert!((st.t - 1.0).abs() < 1e-12, "state left at t1, got {}", st.t);
+        assert!((st.u[0] - 1.0_f64.cos()).abs() < 1e-7);
+    }
+
+    #[test]
+    fn advance_to_event_direction_filter_skips_unwanted_crossings() {
+        // Rising-only: from (1, 0) the first *rising* crossing of x = 0 is at 3π/2
+        // (the π/2 crossing is falling and must be skipped).
+        let ev = oscillator();
+        let g = plane_event(2, 0, 0.0);
+        let mut s = Rk4::new();
+        let conf = cfg(0.01);
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+        let mut h = conf.first_step;
+        let hit = advance_to_event(
+            &ev,
+            &mut s,
+            &mut st,
+            &mut h,
+            10.0,
+            &g,
+            EventDirection::Rising,
+            &conf,
+        )
+        .unwrap()
+        .expect("a rising crossing exists");
+        assert_eq!(hit.direction, 1);
+        assert!(
+            (hit.t - 3.0 * core::f64::consts::FRAC_PI_2).abs() < 1e-5,
+            "t = {}",
+            hit.t
+        );
+    }
+
+    #[test]
+    fn advance_to_event_reports_divergence() {
+        // dx/dt = x² blows up at t = 1; searching past it must error, not silently
+        // return a plausible crossing.
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let dx = b.mul(x, x);
+        let ev = VmEval::new(Interpreter::new(b.finish(&[dx], &[], 1, 0).unwrap()));
+        // A FALLING plane the rising blow-up never crosses, so the run marches into
+        // the t = 1 singularity and must error rather than report a spurious hit.
+        let g = plane_event(1, 0, -1.0);
+        let mut s = Rk4::new();
+        let conf = cfg(0.01);
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0], 0.0, vec![]);
+        let mut h = conf.first_step;
+        let err = advance_to_event(
+            &ev,
+            &mut s,
+            &mut st,
+            &mut h,
+            2.0,
+            &g,
+            EventDirection::Falling,
+            &conf,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, IntegrateError::NonFinite { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn advance_to_event_matches_integrate_events_first_terminal_crossing() {
+        // The resumable primitive must agree with the batch `integrate_events`
+        // (terminal) on the first crossing's refined time/state — they share the
+        // refinement, so the two float-distinct paths land on the same crossing.
+        let ev = oscillator();
+        let g = plane_event(2, 0, 0.0);
+        let conf = cfg(0.01);
+
+        let mut s1 = Rk4::new();
+        let batch = integrate_events(
+            &ev,
+            &mut s1,
+            &[1.0, 0.0],
+            &[],
+            0.0,
+            3.0,
+            &[EventSpec::terminal(&g, EventDirection::Falling)],
+            &conf,
+        )
+        .unwrap();
+        assert!(batch.terminated);
+
+        let mut s2 = Rk4::new();
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+        let mut h = conf.first_step;
+        let hit = advance_to_event(
+            &ev,
+            &mut s2,
+            &mut st,
+            &mut h,
+            3.0,
+            &g,
+            EventDirection::Falling,
+            &conf,
+        )
+        .unwrap()
+        .expect("a falling crossing exists");
+        assert!(
+            (hit.t - batch.hits[0].t).abs() < 1e-12,
+            "{} vs {}",
+            hit.t,
+            batch.hits[0].t
+        );
+        for (a, b) in hit.u.iter().zip(batch.hits[0].u.iter()) {
+            assert!((a - b).abs() < 1e-12, "{a} vs {b}");
+        }
     }
 }

@@ -25,7 +25,16 @@
 //! | [`integrate_ensemble_final`] | `(n_ic, dim)` | parallel ODE batch → final states |
 //! | [`integrate_sde_dense`] | `(n_t, dim)` | one SDE trajectory (drift + diffusion) |
 //! | [`integrate_sde_ensemble_final`] | `(n_ic, dim)` | parallel SDE batch → final states |
+//! | [`integrate_events_dense`] | `(K,), (K, dim), …` | crossings of one event over a span |
+//! | [`PyOdeStepper`] (`OdeStepper`) | handle | resumable per-`dt` ODE stepper (stream WS-STEPPER) |
 //! | [`solvers`] | `list[str]` | registered `method=` names (introspection) |
+//!
+//! Unlike the stateless free functions above, [`OdeStepper`](PyOdeStepper) is a
+//! durable *handle*: it builds the tape/evaluator + solver once and carries the
+//! live integration point across `advance(dt)` / `advance_to_event(g)` calls, so a
+//! per-`dt` stepping loop never re-marshals the tape. It backs
+//! `ContinuousSystem.step()` and is GIL/lifetime-safe (owns its data, releases the
+//! GIL during compute, `Send` so Python may finalize it on any thread).
 //!
 //! Each leading call passes the tape wire arrays
 //! `(ops, a, b, imm, outputs, jac_outputs, n_state, n_param)` — exactly the tuple
@@ -689,6 +698,168 @@ fn integrate_events_dense<'py>(
 }
 
 // ---------------------------------------------------------------------------
+// Resumable ODE stepper handle (stream WS-STEPPER)
+// ---------------------------------------------------------------------------
+
+/// A durable, resumable ODE stepper handle over the compiled engine.
+///
+/// Owns a built tape evaluator (interpreter or JIT) + the resolved solver/tolerances
+/// once, and carries the live integration point `(u, t)` across calls — so a
+/// per-`dt` stepping loop (`ContinuousSystem.step()`, Poincaré refinement, basins
+/// over flows) never rebuilds or re-marshals the tape, only threads the live state.
+///
+/// `advance(dt, p)` is **byte-for-byte identical** to the batch
+/// `integrate_dense([t, t+dt])` the released `step()` runs — a fresh solver and
+/// state are built per call (the adaptive controller re-seeds each `dt`, by
+/// design), so the multistep / stiff kernels stay answer-exact while the build /
+/// marshalling cost is amortised. `advance_to_event(...)` is the resumable
+/// crossing primitive (it *does* carry the adaptive step within one event search).
+///
+/// # GIL / lifetime safety
+///
+/// The handle owns all its data (the boxed `Send` evaluator, the live state
+/// vectors) — it borrows nothing across the FFI boundary, so there is no dangling
+/// reference risk. Each method copies its NumPy inputs into owned `Vec`s, then
+/// releases the GIL ([`Python::detach`]) around the pure-Rust compute, holding no
+/// `Bound`/`Py` reference inside. The class is `Send` (its boxed evaluator and
+/// state vectors are all `Send`), so pyo3 may move or drop the handle on any
+/// thread: concurrent access is serialized by the GIL and pyo3's runtime borrow
+/// check, and `advance` mutates owned data while the GIL is released. It is
+/// deliberately *not* `unsendable` — Python may finalize the owning object on a
+/// GC/finalizer thread, and an `unsendable` handle raises when dropped off its
+/// creating thread (observed under the parallel test runner).
+#[pyclass(name = "OdeStepper", module = "tsdynamics._rust")]
+struct PyOdeStepper {
+    inner: bridge::OdeStepper,
+}
+
+#[pymethods]
+impl PyOdeStepper {
+    /// Build a stepper over an ODE tape, starting from `(ic, t0)`.
+    ///
+    /// The leading tape arrays are the usual `Tape.to_arrays()` tuple; `method`
+    /// resolves through the solver registry; an implicit kernel needs a tape
+    /// compiled `with_jacobian=True` (rejected here, at construction). `jit`
+    /// selects the Cranelift evaluator (numerically identical to the interpreter).
+    #[new]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        py: Python<'_>,
+        ops: PyReadonlyArray1<i32>,
+        a: PyReadonlyArray1<i32>,
+        b: PyReadonlyArray1<i32>,
+        imm: PyReadonlyArray1<f64>,
+        outputs: PyReadonlyArray1<i32>,
+        jac_outputs: PyReadonlyArray1<i32>,
+        n_state: usize,
+        n_param: usize,
+        ic: PyReadonlyArray1<f64>,
+        t0: f64,
+        method: String,
+        rtol: f64,
+        atol: f64,
+        jit: bool,
+    ) -> PyResult<Self> {
+        let tape =
+            OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+        let ic = vec_f64("ic", &ic)?;
+        let inner = py
+            .detach(|| bridge::OdeStepper::new(tape.build()?, &ic, t0, &method, rtol, atol, jit))
+            .map_err(to_py_err)?;
+        Ok(PyOdeStepper { inner })
+    }
+
+    /// The current state, as a `(dim,)` array (a copy).
+    fn state<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.state().into_pyarray(py)
+    }
+
+    /// The current integration time.
+    fn time(&self) -> f64 {
+        self.inner.time()
+    }
+
+    /// The system dimension.
+    fn dim(&self) -> usize {
+        self.inner.dim()
+    }
+
+    /// Reseat the live point to `(u, t)` without rebuilding the evaluator.
+    fn set_state(&mut self, py: Python<'_>, u: PyReadonlyArray1<f64>, t: f64) -> PyResult<()> {
+        let u = vec_f64("u", &u)?;
+        py.detach(|| self.inner.set_state(&u, t)).map_err(to_py_err)
+    }
+
+    /// Advance the live point by one `dt` segment; return the new `(dim,)` state.
+    ///
+    /// `p` is the live control-parameter vector, read each call so a mid-loop
+    /// parameter change still takes effect (mirroring `ContinuousSystem.step()`).
+    /// Byte-identical to the batch `integrate_dense([t, t+dt])`. Divergence raises
+    /// `RuntimeError`.
+    fn advance<'py>(
+        &mut self,
+        py: Python<'py>,
+        dt: f64,
+        p: PyReadonlyArray1<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let p = vec_f64("p", &p)?;
+        let u = py
+            .detach(|| self.inner.advance(dt, &p))
+            .map_err(to_py_err)?;
+        Ok(u.into_pyarray(py))
+    }
+
+    /// Resumably march up to `max_span` ahead, stopping at the first refined
+    /// crossing of the single-output event tape `g(u, t) = 0` in `direction`
+    /// (`+1` rising / `-1` falling / `0` either).
+    ///
+    /// The `g` tape arrays follow the constructor's tape convention; `first_step`
+    /// seeds the solver (with `method="rk4"` it *is* the detection step `dt`, so the
+    /// crossing reproduces the Python `PoincareMap` dt-grid march). Returns
+    /// `(found, t_cross, u_cross, direction)`: on a hit the refined crossing and its
+    /// sign, with the live point advanced one marching step *past* it (so a repeated
+    /// call finds the *next* crossing); with no hit `found` is `False`, the live
+    /// point is advanced to `t + max_span`, and `u_cross` is a zero placeholder.
+    /// Divergence raises `RuntimeError`.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn advance_to_event<'py>(
+        &mut self,
+        py: Python<'py>,
+        ops_g: PyReadonlyArray1<i32>,
+        a_g: PyReadonlyArray1<i32>,
+        b_g: PyReadonlyArray1<i32>,
+        imm_g: PyReadonlyArray1<f64>,
+        outputs_g: PyReadonlyArray1<i32>,
+        jac_outputs_g: PyReadonlyArray1<i32>,
+        n_state_g: usize,
+        n_param_g: usize,
+        max_span: f64,
+        first_step: f64,
+        direction: i32,
+        p: PyReadonlyArray1<f64>,
+    ) -> PyResult<(bool, f64, Bound<'py, PyArray1<f64>>, i32)> {
+        let g = OwnedTape::copy_in(
+            &ops_g,
+            &a_g,
+            &b_g,
+            &imm_g,
+            &outputs_g,
+            &jac_outputs_g,
+            n_state_g,
+            n_param_g,
+        )?;
+        let p = vec_f64("p", &p)?;
+        let (found, t_cross, u_cross, dir) = py
+            .detach(|| {
+                self.inner
+                    .advance_to_event(g.build()?, max_span, first_step, direction, &p)
+            })
+            .map_err(to_py_err)?;
+        Ok((found, t_cross, u_cross.into_pyarray(py), dir))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Introspection
 // ---------------------------------------------------------------------------
 
@@ -742,6 +913,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(integrate_sde_dense, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_sde_ensemble_final, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_events_dense, m)?)?;
+    m.add_class::<PyOdeStepper>()?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
     m.add_function(wrap_pyfunction!(_version, m)?)?;
     Ok(())
