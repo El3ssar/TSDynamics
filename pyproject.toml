@@ -203,6 +203,7 @@ markers   = [
   "slow: marks tests that run long simulations or compile the engine extension (deselect with: pytest -m 'not slow')",
   "full: exhaustive sweeps over every built-in system; deselected by default, run nightly (select with: pytest -m full)",
   "engine: requires the compiled tsdynamics._rust extension; auto-applied to modules that import it and selected by the engine CI job with -m engine (stream I-XVAL)",
+  "doctest: the executable-documentation gate — docstring doctests + doc-page python fences (stream DOCS-DOCTEST-GATE); curated-fast by default, broad sweep under -m full",
 ]
 filterwarnings = [
   "error",
