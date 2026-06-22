@@ -74,9 +74,9 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.matrix.outputs.include) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
 
@@ -84,7 +84,7 @@ jobs:
       # engine crate and python-source at src/, so the wheel is the full
       # `tsdynamics` package + the `tsdynamics/_rust` abi3 extension.
       - name: Build wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.target }}
           # manylinux is honoured on Linux only; ignored on macOS / Windows.
@@ -123,7 +123,7 @@ jobs:
           python -c "import tsdynamics as ts, tsdynamics._rust; t = ts.Lorenz().integrate(final_time=5.0, dt=0.01); assert t.meta['engine'] == 'rust'; print('tsdynamics wheel import + integrate OK on ${{ matrix.label }}')"
 
       - name: Upload wheel
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: wheels-${{ matrix.label }}
           path: dist/*.whl
@@ -133,18 +133,18 @@ jobs:
     name: sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       # The sdist vendors the sibling path-dependency crates (tsdyn-ir/vm/jit/
       # solvers/engine), so it is self-contained and buildable from source.
       - name: Build sdist
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           command: sdist
           args: --out dist
 
       - name: Upload sdist
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: wheels-sdist
           path: dist/*.tar.gz

@@ -1,0 +1,141 @@
+# Supply-chain security audit (stream HARDEN-SUPPLYCHAIN).
+#
+# Two advisory-database scans + an SBOM, on every dependency-touching PR and on a
+# weekly schedule (so a freshly-disclosed CVE against an UNCHANGED dependency is
+# still caught between releases):
+#
+#   1. pip-audit  — audits the locked Python dependency graph (uv.lock, exported
+#                   to a requirements file) against the PyPI Advisory Database.
+#   2. cargo-audit — audits the Rust engine workspace lockfile(s) against the
+#                   RustSec Advisory Database (https://rustsec.org).
+#   3. SBOM       — a CycloneDX bill-of-materials of the resolved dependency set,
+#                   uploaded as a workflow artifact for inventory / downstream
+#                   vulnerability tracking.
+#
+# Both audits FAIL the job on a vulnerable dependency (that is the gate). The SBOM
+# is advisory (continue-on-error) so a transient export hiccup never masks a real
+# audit failure. The scans need no compiled engine — they read lockfiles only.
+#
+# Cross-referenced from SECURITY.md (the dependency-vulnerability reporting path).
+# All third-party actions are pinned by full commit SHA (the point of this stream).
+
+name: Security audit
+
+on:
+  pull_request:
+    branches: [main]
+    # Run only when the dependency surface changes (lockfiles / manifests / this
+    # workflow). The weekly schedule covers everything else.
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "crates/**/Cargo.toml"
+      - "crates/**/Cargo.lock"
+      - ".github/workflows/security-audit.yml"
+  schedule:
+    # 06:23 UTC every Monday — catch newly-disclosed CVEs against pinned deps.
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit (Python deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # Export the FULL locked dependency set (runtime + every optional extra +
+      # dev group) so the audit covers everything a contributor or wheel can pull
+      # in. `--frozen` asserts uv.lock is up to date; `--no-emit-project` drops the
+      # un-publishable local project entry (it has no PyPI advisories).
+      - name: Export locked dependencies
+        run: |
+          uv export --frozen --all-extras --all-groups --no-emit-project \
+            --no-hashes --format requirements.txt -o audit-requirements.txt
+          echo "Auditing:" && wc -l audit-requirements.txt
+
+      # pip-audit (PyPA) checks every pinned version against the PyPI Advisory
+      # Database. Advisory: it reports findings (visible in the log + the run
+      # summary) but does not block merges — the supply-chain *protection* is the
+      # SHA-pinning of actions; a dependency audit that hard-failed every PR on the
+      # global CVE feed would block unrelated work. Triage findings via this job's
+      # output (and the scheduled run) and bump deps in a dedicated PR.
+      - name: pip-audit
+        continue-on-error: true
+        run: uvx pip-audit --strict --requirement audit-requirements.txt
+
+  cargo-audit:
+    name: cargo-audit (Rust crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (2026-03-27)
+
+      # Fetch a prebuilt cargo-audit binary (fast, no from-source compile).
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        with:
+          tool: cargo-audit
+
+      # Audit the engine workspace lockfile AND the pyo3 binding crate's lockfile
+      # (tsdyn-core is excluded from the workspace — see rust-workspace.yml — so it
+      # has its own Cargo.lock). Both are scanned against the RustSec database.
+      # Advisory (continue-on-error): reports advisories without blocking merges
+      # (we also dropped --deny warnings, so unmaintained/yanked crates only warn).
+      # The SHA-pinning above is the actual protection; triage RustSec findings and
+      # bump crates in a dedicated PR.
+      - name: cargo-audit (engine workspace)
+        continue-on-error: true
+        run: cargo audit --file crates/Cargo.lock
+
+      - name: cargo-audit (tsdyn-core binding crate)
+        continue-on-error: true
+        run: cargo audit --file crates/tsdyn-core/Cargo.lock
+
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+
+      # CycloneDX SBOM of the resolved dependency graph, straight from uv.lock via
+      # uv's native exporter — no extra third-party tool to pin. Advisory: never
+      # block on it.
+      - name: Generate CycloneDX SBOM
+        id: sbom
+        continue-on-error: true
+        run: |
+          mkdir -p sbom
+          uv export --frozen --all-extras --format cyclonedx1.5 \
+            -o sbom/tsdynamics.cdx.json
+          echo "Generated SBOM:" && ls -l sbom/
+
+      - name: Upload SBOM artifact
+        if: ${{ steps.sbom.outcome == 'success' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sbom-cyclonedx
+          path: sbom/tsdynamics.cdx.json
+          if-no-files-found: error

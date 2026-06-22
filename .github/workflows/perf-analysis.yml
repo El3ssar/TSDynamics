@@ -47,7 +47,7 @@ jobs:
       MANIFEST: crates/tsdyn-core/Cargo.toml
       TOLERANCE: "0.5" # flag a case > 50% slower than baseline
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           # Need history so we can check out the merge target as the baseline.
           fetch-depth: 0
@@ -56,7 +56,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -65,7 +65,7 @@ jobs:
           key: cargo-tsdyn-core-${{ runner.os }}-${{ hashFiles('crates/tsdyn-core/Cargo.lock') }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
 
@@ -124,7 +124,7 @@ jobs:
 
       - name: Upload raw perf results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: perf-analysis-results
           path: |
