@@ -445,7 +445,7 @@ board with the maintainer's `gh`-based bootstrap — one issue per row.)*
 |----|--------|------|---------|------------|
 | **I-WHEEL** | Cross-platform wheels + packaging | maturin-action CI; decide one-wheel vs accelerator (§11) | E7 | manylinux + macOS(arm64/x86_64) + Windows wheels; `pip install tsdynamics` needs **no compiler**. 🟡 **active:** packaging shape **decided** (§11: separable accelerator now → one wheel at M3) + `wheels.yml` maturin matrix (manylinux/musllinux/macOS/Windows, abi3) + fixed the `tsdynamics._rust` mixed-layout so the wheel is importable. PyPI publish of the engine deferred to M3 (gated by I-XVAL). |
 | **I-BENCH** | Benchmarks + perf tracking | `benches/**`, CI perf job | E5 | vs SciPy + (internally) the Julia baseline on Lorenz/Rössler/MackeyGlass/Lorenz-96 N=128/Robertson; time-to-first-result tracked. |
-| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP, E-WIRE | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** 🟡 **gate MERGED (#109):** the catalogue cross-validation gate targets the **real `tsdynamics._rust`** (`tests/test_xval_catalogue.py`: RHS lowering 1e-9 + interp==jit bit-exact + reference==engine incl. bit-exact OP_POWI + curated trajectory-vs-JiTCODE + engine literature Lyapunov), `cross-validation.yml` rebuilt around it, and the `engine`-marker auto-tag + `test_engine_coverage.py` close the #72 engine-test blind spot. **Removal DEFERRED — blocked on [E-DDE-LYAP #110]:** deleting jitcdde would regress DDE Lyapunov (no Rust replacement; would break MackeyGlass `known_lyapunov`). jitcode/numba/diffsol are removal-ready and wait on #110. |
+| **I-XVAL** | Migration cross-validation + **removal** of v2 backends | the xval suite; delete JiTCODE/JiTCDDE/diffsol/Numba paths once gated | C-FAM, E-DDE, E-MAP, E-WIRE | every system: Rust vs v2 within tol; Lyapunov vs literature; then old backends removed, C-compiler dep gone, `~/.cache/tsdynamics` retired. **Gated — runs last.** 🟡 **gate MERGED (#109):** the catalogue cross-validation gate targets the **real `tsdynamics._rust`** (`tests/test_xval_catalogue.py`: RHS lowering 1e-9 + interp==jit bit-exact + reference==engine incl. bit-exact OP_POWI + curated trajectory-vs-JiTCODE + engine literature Lyapunov), `engine-bindings.yml` (renamed from `cross-validation.yml`) rebuilt around it, and the `engine`-marker auto-tag + `test_engine_coverage.py` close the #72 engine-test blind spot. **Removal DEFERRED — blocked on [E-DDE-LYAP #110]:** deleting jitcdde would regress DDE Lyapunov (no Rust replacement; would break MackeyGlass `known_lyapunov`). jitcode/numba/diffsol are removal-ready and wait on #110. |
 | **I-DOCS** | Docs restructure (NOT viz) | `docs/**`, autogen hook updated to new layout | F3 | site builds `--strict`; per-system pages; tutorial "equations → basins"; citation lint rule. |
 | **I-QA** | Test/property/known-value harness | `tests/**` shared fixtures, hypothesis tests, known-value catalogue | F3 | registry-driven sweeps over new families; property tests for embeddings/dimensions. |
 
@@ -667,8 +667,9 @@ independent sessions continue cleanly.
   sweeps the **registry catalogue** — RHS lowering (1e-9), **interp==jit**
   (bit-for-bit), **reference==engine** (incl. bit-exact `OP_POWI` on a synthetic
   tape), a curated trajectory-vs-JiTCODE early-window leg, and engine literature
-  Lyapunov (Lorenz/Rössler). `cross-validation.yml` is rebuilt to compile the real
-  engine and run that gate. `engine-bindings.yml`'s hand-maintained file list is
+  Lyapunov (Lorenz/Rössler). `engine-bindings.yml` (renamed from the migration-era
+  `cross-validation.yml`) compiles the real engine and runs that gate. Its
+  hand-maintained file list is
   replaced by an auto-applied `engine` marker (`tests/_engine_marker.py` +
   `conftest` hook) selected with `-m "engine and not full"`, and
   `tests/test_engine_coverage.py` is the meta-test asserting every

@@ -63,8 +63,10 @@ src/tsdynamics/
 ├── derived/
 │   ├── _base.py              # DerivedSystem (wrapper base, with_params rebuilds)
 │   ├── poincare.py           # PoincareMap (Hermite-refined crossings)
+│   ├── _crossings.py         # WS-CROSSKERNEL engine-event crossing collector (section_crossings)
 │   ├── stroboscopic.py       # StroboscopicMap
 │   ├── tangent.py            # TangentSystem (Lyapunov engine)
+│   ├── _variational.py       # backend-neutral extended variational lowering (ODE Lyapunov)
 │   ├── ensemble.py           # EnsembleSystem
 │   ├── projected.py          # ProjectedSystem
 │   └── wrapped.py            # back-compat shim → re-exports WrappedSystem from families.wrapped
@@ -84,12 +86,12 @@ src/tsdynamics/
 │   ├── basins/              # A-BASIN: find_attractors/basins_of_attraction (recurrence-FSM AttractorMapper) + basin_fractions (basin stability) + basin_entropy/uncertainty_exponent/wada_property (boundary structure) + continuation/tipping_points + resilience; cell tessellation in _common.py; self-registers into registry.analyses
 │   └── embedding/           # owned by A-EMBED
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
-├── viz/                      # DEFERRED stub only (decision D6)
+├── viz/                      # PlotSpec IR seam (backend-agnostic; no renderer ships yet — decision D6)
 ├── systems/
 │   ├── continuous/           # 8 ODE category modules + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
 └── utils/
-    ├── general.py            # staticjit decorator
+    ├── general.py            # small shared utilities
     └── sagitta_dt.py         # estimate_dt_from_sagitta
 
 hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures at build time
@@ -530,9 +532,9 @@ All three families + all derived wrappers implement:
   its framework-contract kernels — `override`/`no-untyped-def`/`no-untyped-call`
   (the `_equations`/`_step`/`_jacobian`/`_drift`/`_diffusion` math bodies, whose
   parameters arrive positionally by `params`-dict order) — via a documented
-  `[tool.mypy.overrides]` block. `staticjit` aliases to `staticmethod` under
-  `TYPE_CHECKING` so a map's `_step(x, y, a, b)` is read with `x` as a parameter,
-  not `self`.
+  `[tool.mypy.overrides]` block. Map kernels are plain `@staticmethod`, so the
+  type checker reads a map's `_step(x, y, a, b)` first argument as state, not
+  `self`.
 - **Docstrings:** NumPy convention; cite original papers, never competitor software
 - **Never reference the Julia dynamical-systems ecosystem** in code, docs, or
   comments — ideas may be absorbed, citations go to the original literature.

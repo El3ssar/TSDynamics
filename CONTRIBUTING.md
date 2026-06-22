@@ -7,10 +7,10 @@ Clear math, minimal API, no hacks. Thanks for helping.
 ## Prerequisites
 
 - Python **≥ 3.12**
-- A C/C++ compiler (needed because JiTCODE / JiTCDDE compile RHS bodies to C):
-  - Linux: `sudo apt-get install build-essential python3-dev`
-  - macOS: `xcode-select --install`
-  - Windows: MSVC Build Tools
+- The native Rust engine ships as a prebuilt `abi3` wheel, so **no compiler is
+  needed** to install or run TSDynamics. Only building from the sdist needs a
+  [Rust toolchain](https://rustup.rs/) (the build backend is
+  [maturin](https://www.maturin.rs/)).
 - [uv](https://docs.astral.sh/uv/) is the recommended package manager (pip / conda also work).
 
 ---
@@ -50,10 +50,10 @@ Use the [Conventional Commits](https://www.conventionalcommits.org/) prefix as y
 uv run ruff check --fix src/ tests/
 uv run ruff format src/ tests/
 
-# Fast tests — these don't compile any C code (≈ 2 s for the full fast suite)
+# Fast tests — the engine lowers in-process, no compile step (≈ 2 s for the full fast suite)
 uv run pytest -m "not slow" --no-cov
 
-# Full suite — exercises JiTCODE/JiTCDDE compilation + Lyapunov spectra (≈ 35 s)
+# Full suite — engine integration + Lyapunov spectra (≈ 35 s)
 uv run pytest --no-cov
 ```
 
@@ -191,11 +191,11 @@ class MyMap(DiscreteMap):
         return ((-2*a*x, 1.0), (b, 0.0))
 ```
 
-Keep the function signature order in sync with the `params` dict insertion order; that's how Numba feeds parameters in.
+Keep the function signature order in sync with the `params` dict insertion order; the engine feeds the parameters positionally when it lowers `_step` to its IR (`__init_subclass__` validates the match at import time).
 
 ### Variable-dimension systems
 
-Anything whose `_equations` has a loop length or list comprehension driven by a parameter (e.g. `range(N)` in Lorenz-96, `KuramotoSivashinsky`, or `MultiChua`) must declare the dimension-controlling parameter as **structural** so it gets baked into the compiled C code:
+Anything whose `_equations` has a loop length or list comprehension driven by a parameter (e.g. `range(N)` in Lorenz-96, `KuramotoSivashinsky`, or `MultiChua`) must declare the dimension-controlling parameter as **structural** so it gets baked into the engine IR tape:
 
 ```python
 class Lorenz96(ContinuousSystem):
@@ -203,7 +203,7 @@ class Lorenz96(ContinuousSystem):
     _structural_params = frozenset({"N"})
 ```
 
-Non-structural parameters become JiTCODE `control_pars` and can be changed at runtime without recompiling. Structural ones force a recompile (cached on disk).
+Non-structural parameters are read live from the system on every run, so they can be changed at runtime without re-lowering. Structural ones are baked into the tape, so changing one re-lowers (there is no on-disk cache).
 
 ### Initial conditions for tough basins
 
@@ -225,7 +225,7 @@ Open an issue with:
 
 - Minimal reproducer (Python script + expected vs observed)
 - OS, architecture, Python version, `uv` / `pip` version
-- `uv pip list | grep -iE "jitcode|jitcdde|symengine|numba"` output
+- `uv pip list | grep -iE "tsdynamics|symengine|sympy|numpy|scipy"` output
 - Full traceback / warning text
 
 ---
@@ -237,4 +237,4 @@ Open an issue with:
 - [ ] `ruff check` and `ruff format --check` are clean.
 - [ ] Public API changes documented in docstrings and `README.md`.
 - [ ] Conventional Commit messages.
-- [ ] If a new system is added: row in `tests/test_ode_systems.py` / equivalent.
+- [ ] If a new system is added: it's in the module/category `__all__` (the registry sweeps it automatically); a new DDE also has a history in `tests/_sampling.py::DDE_HISTORIES`.
