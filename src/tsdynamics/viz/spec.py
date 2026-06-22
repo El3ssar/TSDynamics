@@ -901,36 +901,34 @@ class PlotSpec:
     def render(self, backend: str | None = None, **backend_kw: Any) -> Any:
         """Render this spec through a registered backend.
 
-        Backends are renderers registered in ``tsdynamics.registry.renderers``
-        (added by a later visualization stream) and discovered the same way as
-        analyses and transforms.  Until a backend registers, this raises
+        Delegates to :func:`tsdynamics.viz.render.render_spec` (stream
+        VIZ-DISPATCH), which registers the installed in-tree backends on first
+        use, selects one by name or by capability — falling back to the
+        matplotlib reference renderer when the requested backend declines this
+        spec's kind — and calls it.  Until any backend is registered this raises
         :class:`VisualizationNotInstalled`.
 
         Parameters
         ----------
         backend : str, optional
-            The renderer name (e.g. ``"matplotlib"``).  If ``None``, the first
-            registered backend is used.
+            The renderer name (e.g. ``"matplotlib"``).  If ``None``, the default
+            capable backend is used.
         **backend_kw
             Forwarded to the renderer callable.
 
         Returns
         -------
         Any
-            Whatever the backend returns (e.g. a figure handle).
+            Whatever the backend returns (e.g. a figure handle or export payload).
 
         Raises
         ------
         VisualizationNotInstalled
             If no rendering backend is registered.
         """
-        renderers = _resolve_renderers()
-        if renderers is None:
-            raise _visualization_not_installed()
-        if backend is None:
-            backend = renderers.names()[0]
-        renderer = renderers.get(backend)
-        return renderer(self, **backend_kw)
+        from tsdynamics.viz.render import render_spec
+
+        return render_spec(self, backend, **backend_kw)
 
     # -- serialization -----------------------------------------------------
 
