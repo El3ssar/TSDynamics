@@ -36,11 +36,20 @@
 
 mod control;
 mod linalg;
+mod newton;
 
+pub mod backward_euler;
 pub mod bdf;
+pub mod implicit_midpoint;
 pub mod rosenbrock;
+pub mod sdirk2;
+pub mod trapezoid;
 pub mod trbdf2;
 
+pub use backward_euler::BackwardEuler;
 pub use bdf::Bdf;
+pub use implicit_midpoint::ImplicitMidpoint;
 pub use rosenbrock::RosenbrockW;
+pub use sdirk2::Sdirk2;
+pub use trapezoid::Trapezoid;
 pub use trbdf2::TrBdf2;

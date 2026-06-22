@@ -30,13 +30,35 @@ from tsdynamics.solvers import SolverCaps, SolverSpec
 # The kernels C-SOLV mirrors, with the caps facts the resolver keys on.
 # (name, kind, adaptive, needs_jacobian, family)
 _EXPECTED_BUILTINS = {
+    # explicit — fixed step
+    "euler": ("explicit", False, False, "ode"),
+    "midpoint": ("explicit", False, False, "ode"),
+    "heun": ("explicit", False, False, "ode"),
+    "ralston": ("explicit", False, False, "ode"),
     "rk4": ("explicit", False, False, "ode"),
+    "rk4_38": ("explicit", False, False, "ode"),
+    "ssprk3": ("explicit", False, False, "ode"),
+    # explicit — linear-multistep (Adams)
+    "ab3": ("explicit", False, False, "ode"),
+    "ab4": ("explicit", False, False, "ode"),
+    "abm4": ("explicit", False, False, "ode"),
+    # explicit — adaptive embedded pairs
+    "heun_euler": ("explicit", True, False, "ode"),
+    "bs3": ("explicit", True, False, "ode"),
     "rk45": ("explicit", True, False, "ode"),
+    "rkf45": ("explicit", True, False, "ode"),
+    "cashkarp": ("explicit", True, False, "ode"),
     "tsit5": ("explicit", True, False, "ode"),
     "dop853": ("explicit", True, False, "ode"),
+    # implicit / stiff
+    "backward_euler": ("implicit", True, True, "ode"),
+    "implicit_midpoint": ("implicit", True, True, "ode"),
+    "trapezoid": ("implicit", True, True, "ode"),
+    "sdirk2": ("implicit", True, True, "ode"),
     "rosenbrock": ("implicit", True, True, "ode"),
     "trbdf2": ("implicit", True, True, "ode"),
     "bdf": ("implicit", True, True, "ode"),
+    # SDE
     "euler_maruyama": ("explicit", False, False, "sde"),
     "milstein": ("explicit", False, True, "sde"),
 }
@@ -87,19 +109,19 @@ def test_builtin_caps_match_expected(name):
 
 
 def test_available_for_filters_by_family():
-    assert set(solvers.available_for("ode")) == {
-        "rk4",
-        "rk45",
-        "tsit5",
-        "dop853",
-        "rosenbrock",
-        "trbdf2",
-        "bdf",
-    }
-    assert set(solvers.available_for("sde")) == {"euler_maruyama", "milstein"}
+    # Derive the expected sets from the single source of truth (_EXPECTED_BUILTINS)
+    # so adding a solver needs no edit here — only the table above.
+    ode = {n for n, (_k, _a, _j, fam) in _EXPECTED_BUILTINS.items() if fam == "ode"}
+    sde = {n for n, (_k, _a, _j, fam) in _EXPECTED_BUILTINS.items() if fam == "sde"}
     # DDE reuses the explicit ODE stage integrators (method-of-steps), so the
     # implicit kernels are excluded.
-    assert set(solvers.available_for("dde")) == {"rk4", "rk45", "tsit5", "dop853"}
+    dde = {
+        n for n, (k, _a, _j, fam) in _EXPECTED_BUILTINS.items() if fam == "ode" and k == "explicit"
+    }
+
+    assert set(solvers.available_for("ode")) == ode
+    assert set(solvers.available_for("sde")) == sde
+    assert set(solvers.available_for("dde")) == dde
     # Maps iterate on the engine's own loop — no solver kernel.
     assert solvers.available_for("map") == []
 
@@ -132,7 +154,7 @@ def _parse_rust_kernels() -> dict[str, tuple[str, bool]]:
     if not src.is_dir():
         pytest.skip("Rust crate source not present (sdist build); skipping parity check")
 
-    kernels: dict[str, tuple[str, bool]] = {}
+    kernels: dict[str, tuple[str, bool, bool]] = {}
     # Require an actual invocation `register_*!(` and strip line comments first,
     # so doc-comment examples / intra-doc links are not mistaken for real calls.
     macro = re.compile(r"register_(?:solver|sde_kernel)!\s*\(")
@@ -152,23 +174,29 @@ def _parse_rust_kernels() -> dict[str, tuple[str, bool]]:
                 "needs_jacobian: true" in call
             )
             kind = "implicit" if implicit else "explicit"
-            kernels[name] = (kind, needs_jac)
+            # `.adaptive()` in the caps builder marks an adaptive (own error
+            # control) kernel; its absence is a fixed-step / multistep kernel.
+            adaptive = ".adaptive()" in call
+            kernels[name] = (kind, needs_jac, adaptive)
     return kernels
 
 
 def test_python_specs_mirror_rust_register_macros():
     rust = _parse_rust_kernels()
-    # Every Rust kernel must have a Python builtin spec with matching kind +
-    # Jacobian need; and the Python builtins must not invent kernels.
+    # Every Rust kernel must have a Python builtin spec with matching kind,
+    # Jacobian need, and adaptivity; and the Python builtins must not invent kernels.
     builtins = {
         name: spec for name, spec in solvers.all_specs().items() if spec.origin == "builtin"
     }
     assert set(builtins) == set(rust), (
         f"Python builtin specs {sorted(builtins)} != Rust kernels {sorted(rust)}"
     )
-    for name, (kind, needs_jac) in rust.items():
+    for name, (kind, needs_jac, adaptive) in rust.items():
         spec = builtins[name]
         assert spec.caps.kind == kind, f"{name}: kind {spec.caps.kind!r} != Rust {kind!r}"
+        assert spec.caps.adaptive is adaptive, (
+            f"{name}: adaptive {spec.caps.adaptive} != Rust {adaptive}"
+        )
         assert spec.caps.needs_jacobian is needs_jac, (
             f"{name}: needs_jacobian {spec.caps.needs_jacobian} != Rust {needs_jac}"
         )

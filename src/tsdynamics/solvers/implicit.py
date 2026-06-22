@@ -24,6 +24,10 @@ _ODE = frozenset({"ode"})
 #: Richardson; ``bdf`` is the variable-order multistep kernel with its own
 #: order/step controller.
 _IMPLICIT: dict[str, str] = {
+    "backward_euler": "implicit (backward) Euler (order 1, L-stable)",
+    "implicit_midpoint": "implicit midpoint rule / 1-stage Gauss (order 2, A-stable)",
+    "trapezoid": "implicit trapezoidal rule / Crank–Nicolson (order 2, A-stable)",
+    "sdirk2": "2-stage L-stable SDIRK (Alexander, order 2)",
     "rosenbrock": "linearly-implicit Rosenbrock-W (one linear solve per step)",
     "trbdf2": "TR-BDF2 composite ESDIRK (trapezoidal + BDF2)",
     "bdf": "variable-order (1-5) fixed-leading-coefficient BDF",

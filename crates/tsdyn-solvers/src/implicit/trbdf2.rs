@@ -25,33 +25,11 @@
 //! "Analysis and implementation of TR-BDF2", Appl. Numer. Math. 20, 1996.
 
 use super::control::{BaseOutcome, BaseStep, DoublingWork, Tolerances};
-use super::linalg::{build_shifted, lu_factor, lu_solve};
+use super::newton::newton_substage;
 use crate::caps::{Caps, ProblemKind, ProblemKinds};
 use crate::register_solver;
 use crate::solver::{Solver, SolverState, StepOutcome};
 use tsdyn_ir::Evaluator;
-
-/// Maximum modified-Newton iterations per substage before the step is declared
-/// non-convergent (recoverable — the controller retries with a smaller `h`, which
-/// improves both the Newton conditioning and the initial guess).
-const NEWTON_MAX_ITERS: usize = 20;
-/// Newton convergence threshold on the weighted-RMS norm of the increment.
-/// Tight relative to the integration tolerance so the residual Newton error stays
-/// well below the truncation error the step-doubling estimate measures.
-const NEWTON_TOL: f64 = 1e-3;
-
-/// Weighted-RMS norm `sqrt(mean( (v_i / (atol + rtol·|ref_i|))² ))` — the scaled
-/// size of an increment relative to the solution magnitude.
-fn wrms(v: &[f64], reference: &[f64], rtol: f64, atol: f64) -> f64 {
-    let n = v.len();
-    let mut acc = 0.0;
-    for i in 0..n {
-        let sc = atol + rtol * reference[i].abs();
-        let e = v[i] / sc;
-        acc += e * e;
-    }
-    (acc / n as f64).sqrt()
-}
 
 /// Stage scratch for TR-BDF2: the start derivative, both stage bases, Newton work
 /// (RHS, Jacobian, iteration matrix, pivots, increment), and the first stage's
@@ -82,64 +60,6 @@ impl TrBdf2Base {
             self.delta = vec![0.0; n];
         }
     }
-}
-
-/// Solve one implicit substage `y = base + coef·h·f(t, y)` by modified Newton.
-///
-/// `y` carries the initial guess in and the solution out. The iteration matrix
-/// `I − coef·h·J` is factored once at the guess and reused across iterations (the
-/// standard stiff-solver economy). All buffers are caller-owned (disjoint struct
-/// fields), so this is a free function to keep the borrows simple.
-#[allow(clippy::too_many_arguments)]
-fn newton_substage(
-    ev: &dyn Evaluator,
-    t: f64,
-    p: &[f64],
-    coef: f64,
-    h: f64,
-    base: &[f64],
-    y: &mut [f64],
-    fy: &mut [f64],
-    jac: &mut [f64],
-    mat: &mut [f64],
-    piv: &mut [usize],
-    delta: &mut [f64],
-    scratch: &mut [f64],
-    tol: Tolerances,
-) -> BaseOutcome {
-    let n = y.len();
-
-    // Freeze J at the initial guess and factor (I − coef·h·J) once.
-    ev.eval_jac(y, p, t, scratch, fy, jac);
-    if !jac.iter().all(|x| x.is_finite()) {
-        return BaseOutcome::Recoverable;
-    }
-    build_shifted(mat, jac, n, coef * h);
-    if !lu_factor(mat, n, piv) {
-        return BaseOutcome::Recoverable; // singular ⇒ shrink h and retry
-    }
-
-    for _ in 0..NEWTON_MAX_ITERS {
-        ev.eval(y, p, t, scratch, fy);
-        if !fy.iter().all(|x| x.is_finite()) {
-            return BaseOutcome::Recoverable;
-        }
-        // Residual R(y) = y − base − coef·h·f(t,y); Newton step (I − coef·h·J) Δ = R.
-        for i in 0..n {
-            delta[i] = y[i] - base[i] - coef * h * fy[i];
-        }
-        lu_solve(mat, n, piv, delta);
-        for i in 0..n {
-            y[i] -= delta[i];
-        }
-        if !y.iter().all(|x| x.is_finite()) {
-            return BaseOutcome::Recoverable;
-        }
-        if wrms(delta, y, tol.rtol, tol.atol) <= NEWTON_TOL {
-            return BaseOutcome::Ok;
-        }
-    }
-    BaseOutcome::Recoverable // did not converge in the iteration budget
 }
 
 impl BaseStep for TrBdf2Base {
@@ -215,7 +135,8 @@ impl BaseStep for TrBdf2Base {
             piv,
             delta,
             scratch,
-            *tol,
+            tol.rtol,
+            tol.atol,
         ) {
             BaseOutcome::Ok => {}
             other => return other,
@@ -251,7 +172,8 @@ impl BaseStep for TrBdf2Base {
             piv,
             delta,
             scratch,
-            *tol,
+            tol.rtol,
+            tol.atol,
         ) {
             BaseOutcome::Ok => {}
             other => return other,

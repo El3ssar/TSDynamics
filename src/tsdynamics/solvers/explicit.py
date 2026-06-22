@@ -26,8 +26,24 @@ _ODE = frozenset({"ode"})
 #: ``name -> (description, adaptive)`` for the explicit family.  Order/precision
 #: documented in ``crates/tsdyn-solvers/src/explicit/mod.rs``.
 _EXPLICIT: dict[str, tuple[str, bool]] = {
+    # Fixed-step kernels (no embedded error estimate; the user controls the step).
+    "euler": ("forward (explicit) Euler (order 1, fixed step)", False),
+    "midpoint": ("explicit midpoint / modified Euler (order 2, fixed step)", False),
+    "heun": ("Heun's method / explicit trapezoid (order 2, fixed step)", False),
+    "ralston": ("Ralston's minimum-error-bound RK2 (order 2, fixed step)", False),
     "rk4": ("classic 4th-order Runge–Kutta (fixed step)", False),
+    "rk4_38": ("the 3/8-rule 4th-order Runge–Kutta (fixed step)", False),
+    "ssprk3": ("3rd-order strong-stability-preserving RK (Shu–Osher, fixed step)", False),
+    # Explicit linear-multistep (Adams) kernels — fixed step, RK4 self-start.
+    "ab3": ("Adams–Bashforth 3-step explicit multistep (order 3)", False),
+    "ab4": ("Adams–Bashforth 4-step explicit multistep (order 4)", False),
+    "abm4": ("Adams–Bashforth–Moulton predictor–corrector (PECE, order 4)", False),
+    # Adaptive embedded pairs (own error control + step adaption).
+    "heun_euler": ("Heun–Euler 2(1) adaptive", True),
+    "bs3": ("Bogacki–Shampine 3(2) adaptive (ode23)", True),
     "rk45": ("Dormand–Prince 5(4) adaptive (dopri5)", True),
+    "rkf45": ("Runge–Kutta–Fehlberg 4(5) adaptive", True),
+    "cashkarp": ("Cash–Karp 5(4) adaptive", True),
     "tsit5": ("Tsitouras 5(4) adaptive", True),
     "dop853": ("Dormand–Prince 8(5,3) adaptive", True),
 }

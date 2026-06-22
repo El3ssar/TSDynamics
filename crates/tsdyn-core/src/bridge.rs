@@ -35,8 +35,10 @@ use tsdyn_engine::{
 };
 use tsdyn_ir::{Evaluator, Tape};
 use tsdyn_jit::JitEvaluator;
-use tsdyn_solvers::explicit::{Dop853, Rk45, Tsit5};
-use tsdyn_solvers::implicit::{Bdf, RosenbrockW, TrBdf2};
+use tsdyn_solvers::explicit::{Bs3, CashKarp, Dop853, HeunEuler, Rk45, Rkf45, Tsit5};
+use tsdyn_solvers::implicit::{
+    BackwardEuler, Bdf, ImplicitMidpoint, RosenbrockW, Sdirk2, TrBdf2, Trapezoid,
+};
 use tsdyn_solvers::sde::{self, SdeKernel};
 use tsdyn_solvers::{Solver, SolverKind};
 use tsdyn_vm::Interpreter;
@@ -224,11 +226,21 @@ pub fn build_solver(name: &'static str, rtol: f64, atol: f64) -> Box<dyn Solver>
         "rk45" => Box::new(Rk45::with_tolerances(rtol, atol)),
         "tsit5" => Box::new(Tsit5::with_tolerances(rtol, atol)),
         "dop853" => Box::new(Dop853::with_tolerances(rtol, atol)),
+        "heun_euler" => Box::new(HeunEuler::with_tolerances(rtol, atol)),
+        "bs3" => Box::new(Bs3::with_tolerances(rtol, atol)),
+        "rkf45" => Box::new(Rkf45::with_tolerances(rtol, atol)),
+        "cashkarp" => Box::new(CashKarp::with_tolerances(rtol, atol)),
         "rosenbrock" => Box::new(RosenbrockW::with_tolerances(rtol, atol)),
         "trbdf2" => Box::new(TrBdf2::with_tolerances(rtol, atol)),
         "bdf" => Box::new(Bdf::with_tolerances(rtol, atol)),
-        // The fixed-step `rk4` (no tolerances) and any out-of-tree plugin kernel
-        // build through the registry factory. `name` came from the registry
+        "backward_euler" => Box::new(BackwardEuler::with_tolerances(rtol, atol)),
+        "implicit_midpoint" => Box::new(ImplicitMidpoint::with_tolerances(rtol, atol)),
+        "trapezoid" => Box::new(Trapezoid::with_tolerances(rtol, atol)),
+        "sdirk2" => Box::new(Sdirk2::with_tolerances(rtol, atol)),
+        // The fixed-step kernels (`euler`/`midpoint`/`heun`/`ralston`/`rk4`/
+        // `rk4_38`/`ssprk3`), the Adams multistep kernels (`ab3`/`ab4`/`abm4`,
+        // which take no tolerances), and any out-of-tree plugin kernel build
+        // through the registry factory. `name` came from the registry
         // (via `resolve_solver`), so `make` is guaranteed `Some`.
         other => tsdyn_solvers::make(other)
             .expect("a name returned by resolve_solver is always registered"),
