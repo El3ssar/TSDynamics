@@ -194,10 +194,10 @@ class Trajectory:
         rendered as the 2-D in-plane scatter instead of a flow line — the section
         intent a renderer would otherwise have to reverse-engineer from ``meta``.
 
-        The :mod:`tsdynamics.viz.spec` import is at module scope but pulls in no
-        plotting library, so building a spec (or importing :mod:`tsdynamics`)
-        never imports matplotlib / Plotly; the spec itself carries no rendering
-        code.
+        The :mod:`tsdynamics.viz.spec` import is local to this method (lazy, not
+        at module scope), and :mod:`tsdynamics.viz.spec` pulls in no plotting
+        library, so building a spec (or importing :mod:`tsdynamics`) never imports
+        matplotlib / Plotly; the spec itself carries no rendering code.
 
         Parameters
         ----------
@@ -255,6 +255,11 @@ class Trajectory:
             raise InvalidParameterError(
                 f"kind={spec_kind.value!r} needs a 3-D trajectory, but this one has "
                 f"dim={self.dim}; use 'phase_portrait_2d' or 'time_series'."
+            )
+        if self.dim < 2:
+            raise InvalidParameterError(
+                f"kind={spec_kind.value!r} needs a >=2-D trajectory, but this one has "
+                f"dim={self.dim}; use 'time_series'."
             )
         cols: dict[str, np.ndarray] = {"x": self.y[:, 0], "y": self.y[:, 1]}
         z = Axis(label=names[2]) if want_3d else None
