@@ -71,6 +71,46 @@ class LyapunovSpectrum(ArrayResult):
             return "chaotic: 1 positive exponent"
         return "regular: no positive exponent"
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the Lyapunov spectrum as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``DIAGNOSTIC_CURVE`` of the exponents :math:`\lambda_i` against
+        their index :math:`i` — a stem-style ``MARKERS`` layer (largest first) —
+        with the :math:`\lambda = 0` line drawn as a horizontal reference: the
+        sign of each exponent (above or below it) is what separates the expanding
+        from the contracting directions, so chaos reads off as marks lying above
+        the zero line.  The :mod:`tsdynamics.viz.spec` import is lazy, so building
+        a spec never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"diagnostic_curve"``).  ``None``
+            uses ``DIAGNOSTIC_CURVE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        exps = np.asarray(self.values, dtype=float)
+        index = np.arange(exps.size, dtype=float)
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"Lyapunov spectrum ($D_{{KY}}$ = {self.kaplan_yorke:.3g})"
+            if exps.size
+            else "Lyapunov spectrum",
+            x=Axis(label="index $i$"),
+            y=Axis(label=r"$\lambda_i$"),
+            layers=[
+                Layer(PlotKind.MARKERS, {"x": index, "y": exps}, label=r"$\lambda_i$"),
+            ],
+            annotations=[Annotation(kind="hline", text=r"$\lambda = 0$", y=0.0)],
+        )
+
 
 def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
     """

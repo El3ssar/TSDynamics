@@ -82,6 +82,38 @@ class WindowedRQA(AnalysisResult):
             raise ValueError(f"unknown RQA measure {name!r}; choose from {_MEASURES}.")
         return np.array([getattr(r, name) for r in self.results], dtype=float)
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the windowed RQA as a :class:`PlotSpec`.
+
+        Builds a ``DIAGNOSTIC_CURVE`` carrying a ``LINE`` of the **determinism**
+        measure against the window-centre index — the canonical sliding-RQA view
+        for spotting dynamical regime transitions (a drop in determinism flags a
+        shift away from deterministic/periodic behaviour).  Read any other measure
+        off :meth:`measure`.  The :mod:`tsdynamics.viz.spec` import is lazy.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` uses ``DIAGNOSTIC_CURVE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        centers = np.asarray(self.centers, dtype=float)
+        det = np.asarray(self.measure("determinism"), dtype=float)
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title="Windowed RQA (determinism)",
+            x=Axis(label="window centre"),
+            y=Axis(label="determinism"),
+            layers=[Layer(PlotKind.LINE, {"x": centers, "y": det}, label="DET")],
+        )
+
     def __getattr__(self, name: str) -> np.ndarray:
         # Expose each measure as an attribute without storing nine arrays. Only
         # consulted for names missing on the instance, so the dataclass fields are

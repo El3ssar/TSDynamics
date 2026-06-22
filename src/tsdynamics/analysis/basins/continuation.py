@@ -70,6 +70,50 @@ class ContinuationResult(AnalysisResult):
         """Tipping events along this continuation (see :func:`tipping_points`)."""
         return tipping_points(self, threshold=threshold)
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the continuation as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``LINE_FAMILY`` of each attractor's basin fraction against the
+        swept parameter — one labelled ``LINE`` per global attractor id — so a
+        line dropping to zero marks a tipping (annihilation) event and a line
+        rising from zero a newly-born basin.  A :class:`~tsdynamics.viz.spec.Legend`
+        is attached when more than one attractor is tracked.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"line_family"``).  ``None`` uses
+            ``LINE_FAMILY``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.LINE_FAMILY
+        values = np.asarray(self.values, dtype=float)
+        ids = self.ids
+        layers = [
+            Layer(
+                PlotKind.LINE,
+                {"x": values, "y": np.asarray(self.fractions[gid], dtype=float)},
+                label=f"attractor {gid}",
+            )
+            for gid in ids
+        ]
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"continuation over {self.param!r}",
+            x=Axis(label=self.param or "parameter"),
+            y=Axis(label="basin fraction", limits=(0.0, 1.0)),
+            layers=layers,
+            legend=Legend() if len(ids) > 1 else None,
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         return (
             f"ContinuationResult(param={self.param!r}, "

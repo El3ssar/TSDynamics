@@ -51,6 +51,45 @@ class SurrogateEnsemble(ArrayResult):
     all defer to the wrapped array, while it also carries ``.meta``.
     """
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe the surrogate ensemble as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``LINE_FAMILY`` overlaying every surrogate series as its own
+        ``LINE`` layer against the sample index — the visual sanity check that the
+        surrogates share the data's gross structure while differing in detail.  A
+        1-D ensemble (a single surrogate) is drawn as the one line.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"line_family"``).  ``None`` uses
+            ``LINE_FAMILY``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.LINE_FAMILY
+        arr = np.atleast_2d(np.asarray(self.values, dtype=float))
+        idx = np.arange(arr.shape[1], dtype=float)
+        method = self.meta.get("method", "surrogate") if self.meta else "surrogate"
+        layers = [
+            Layer(PlotKind.LINE, {"x": idx, "y": arr[i]}, label=f"surrogate {i}")
+            for i in range(arr.shape[0])
+        ]
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"{method} surrogates ($n$ = {arr.shape[0]})",
+            x=Axis(label="sample"),
+            y=Axis(label="value"),
+            layers=layers,
+        )
+
 
 #: Canonical method name → alias set, resolved by :func:`surrogates`.
 _METHOD_ALIASES: dict[str, str] = {
