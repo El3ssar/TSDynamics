@@ -69,7 +69,7 @@ The figure itself is **generated, not hand-drawn**. The figure-generation seam
 is the result type's **`to_plot_spec()`** method (stream DOCS-ENG-PLOTSEAM): the
 golden-figure generator calls `result.to_plot_spec()` to obtain the renderer-
 neutral `PlotSpec` IR, renders it, and the output is validated against the
-committed [golden corpus](../../docs/_tooling/golden/README.md). When you add a
+committed [golden corpus](https://github.com/El3ssar/TSDynamics/blob/main/docs/_tooling/golden/README.md). When you add a
 new capability whose result needs a showcase figure, give its result class a
 `to_plot_spec()` and name the placeholder image `analysis/<page>.png`; do not
 commit a hand-made PNG.
