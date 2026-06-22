@@ -37,6 +37,7 @@ import numpy as np
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._result import AnalysisResult
+from .._tangent import flow_fns, map_fns, rk4_state, rk4_variational
 from . import _common as _c
 
 __all__ = ["GALIResult", "gali"]
@@ -301,7 +302,7 @@ def _gali_map(
     Returns ``None`` (soft failure) if the orbit or the tangent frame diverges to
     a non-finite value, so the caller can retry from a fresh IC.
     """
-    step, jac = _c._map_fns(system)
+    step, jac = map_fns(system)
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         for _ in range(n_burn):
             x = step(x)
@@ -336,13 +337,13 @@ def _gali_flow(
     Returns ``None`` (soft failure) on a non-finite (diverged) orbit or frame, so
     the caller can retry from a fresh IC.
     """
-    rhs, jac = _c._flow_fns(system)
+    rhs, jac = flow_fns(system)
     h_burn = dt / max(1, n_internal)
     t = 0.0
     n_burn = int(round(max(0.0, transient) / h_burn))
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         for _ in range(n_burn):
-            x = _c._rk4_state(rhs, x, t, h_burn)
+            x = rk4_state(rhs, x, t, h_burn)
             t += h_burn
             if not np.all(np.isfinite(x)):
                 return None
@@ -353,7 +354,7 @@ def _gali_flow(
         times = np.empty(n_steps)
         for i in range(n_steps):
             for _ in range(n_internal):
-                x, w = _c._rk4_variational(rhs, jac, x, w, t, h)
+                x, w = rk4_variational(rhs, jac, x, w, t, h)
                 t += h
             if not np.all(np.isfinite(x)) or not np.all(np.isfinite(w)):
                 return None
