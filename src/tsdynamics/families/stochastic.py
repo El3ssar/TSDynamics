@@ -23,9 +23,14 @@ to the compiled Rust engine (``tsdynamics._rust``, the FFI surface in
 ``backend="reference"`` runs a dependency-light **pure-Python reference
 integrator** that mirrors the engine's semantics — the same drift/diffusion
 tapes, the same diagonal Wiener substrate (a faithful port of the engine's
-``SplitMix64`` / ``seed_for`` / ``fill_wiener``), and the same
-per-trajectory-index seeding — reproducing the engine path bit-for-bit under a
-fixed seed; it is the wheel-free oracle.
+``SplitMix64`` / ``seed_for`` / ``fill_wiener``), the same tolerant fixed-step
+landing, and the same per-trajectory-index seeding — so under a fixed seed it
+reproduces the engine path **to floating-point tolerance**: the integer RNG
+stream and the draw *order* are identical, and the only residual difference is
+the Box–Muller normal itself (Python's libm ``sin``/``cos`` vs the engine's
+Rust ``sin_cos`` differ by at most one ULP per draw), which an
+Euler–Maruyama/Milstein step accumulates to a small floating-point — not
+bit-for-bit — agreement. It is the wheel-free oracle.
 
 Registry note
 -------------
@@ -148,6 +153,21 @@ def _wiener(rng: _SplitMix64, dt: float, dim: int) -> np.ndarray:
 # Reference SDE kernels (pure Python; mirror the Rust kernels' update formulas)
 # ---------------------------------------------------------------------------
 
+#: Relative tolerance for the fixed-step *landing* decision (mirror of
+#: ``LANDING_REL_TOL`` in ``crates/tsdyn-engine/src/sde.rs`` — keep the two in
+#: lock-step).  Output grids are uniform in ``dt`` (``make_output_grid`` →
+#: ``np.arange``), but floating-point roundoff makes a nominally ``dt``-wide
+#: segment compute a ``remaining = t_end - t`` that is ``dt`` plus a few ULP.  The
+#: old ``dt >= remaining`` test then took a full ``dt`` step and a **spurious
+#: sub-ULP sliver step** — drawing an extra Wiener increment (desyncing the noise
+#: stream and adding a meaningless ``N(0, ~ULP)`` kick).  Absorbing that roundoff
+#: into a single canonical ``dt`` step makes the discretisation exactly "one
+#: ``N(0, dt)`` increment per step", so ``integrate`` and the ``step`` loop trace
+#: the *same* path bit-for-bit and the reference matches the engine to a clean
+#: floating-point tolerance (the only residual difference being the Box–Muller
+#: trig — see the module docstring).
+_LANDING_REL_TOL = 1e-9
+
 
 def _sde_step(
     method: str,
@@ -189,15 +209,26 @@ def _advance_to(
 ) -> tuple[np.ndarray, float]:
     """Step ``(u, t)`` to ``t_end`` with fixed step ``dt``; raise on divergence.
 
-    Mirrors the Rust ``sde_advance_to``: a landing step is shortened to the
-    remaining span (its increment drawn ``~ N(0, h)``) and the time pinned to
-    ``t_end``. A non-finite state raises rather than returning silent garbage.
+    Mirrors the Rust ``sde_advance_to``. The landing (final) step of the span
+    reuses the canonical ``dt`` when ``remaining`` is within
+    :data:`_LANDING_REL_TOL` of it — so a uniform-``dt`` grid takes exactly one
+    ``N(0, dt)`` increment per segment and never a spurious sub-ULP sliver — and
+    only a genuinely shorter span draws its increment ``~ N(0, remaining)``. The
+    time is pinned to ``t_end`` so grid points never drift. A non-finite state
+    raises rather than returning silent garbage.
     """
     dim = u.size
     while t < t_end:
         remaining = t_end - t
-        landing = dt >= remaining
-        h = remaining if landing else dt
+        landing = remaining <= dt * (1.0 + _LANDING_REL_TOL)
+        if not landing:
+            h = dt
+        elif remaining >= dt * (1.0 - _LANDING_REL_TOL):
+            # Absorb a roundoff-scale overshoot into one canonical dt step.
+            h = dt
+        else:
+            # A genuinely shorter final span draws its increment over that width.
+            h = remaining
         dw = _wiener(rng, h, dim)
         u = _sde_step(method, drift, diffusion, u, p, t, dw, h)
         if not np.all(np.isfinite(u)):
@@ -508,7 +539,8 @@ class StochasticSystem(SystemBase, ABC):
             ``"jit"`` dispatch the two-tape
             SDE call to the compiled Rust engine (:mod:`tsdynamics._rust`) via the
             dedicated ``run.sde_integrate_dense`` seam.  The engine path reproduces
-            the reference under a fixed seed and raises
+            the reference to floating-point tolerance under a fixed seed (see the
+            module docstring on the Box–Muller ULP) and raises
             :class:`~tsdynamics.engine.run.EngineNotAvailableError` if the
             extension is not built.
 

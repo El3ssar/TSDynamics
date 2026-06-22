@@ -27,12 +27,15 @@
 //! # Fixed step, sub-stepping to the grid
 //!
 //! These schemes are fixed-step: the step size *is* `dt`, and `dt` sets the noise
-//! scale `√dt`. Output at a requested time that is not on the `dt` lattice is
-//! produced by a shorter final sub-step whose increment is drawn `~ N(0, h)` for
-//! that `h` — a valid Euler–Maruyama/Milstein step on a non-uniform partition
+//! scale `√dt`. Output at a requested time that is genuinely off the `dt` lattice
+//! is produced by a shorter final sub-step whose increment is drawn `~ N(0, h)`
+//! for that `h` — a valid Euler–Maruyama/Milstein step on a non-uniform partition
 //! (Brownian increments over sub-intervals are independent and sum correctly), so
-//! the discretization stays consistent. As with the ODE driver, a non-finite
-//! state is reported, never returned as plausible data ([`SdeError`]).
+//! the discretization stays consistent. A nominally `dt`-wide segment whose width
+//! only *appears* to exceed `dt` by floating-point roundoff is absorbed into one
+//! canonical `dt` step (a tolerant landing, [`LANDING_REL_TOL`]) rather than
+//! spawning a spurious sub-ULP sliver. As with the ODE driver, a non-finite state
+//! is reported, never returned as plausible data ([`SdeError`]).
 
 use rayon::prelude::*;
 use tsdyn_ir::Evaluator;
@@ -41,6 +44,20 @@ use tsdyn_solvers::{SolverState, StepOutcome};
 
 use crate::integrate::DEFAULT_MAX_STEPS;
 use crate::rng::{fill_wiener, seed_for, SplitMix64};
+
+/// Relative tolerance for the fixed-step *landing* decision (mirror of
+/// `_LANDING_REL_TOL` in `src/tsdynamics/families/stochastic.py` — keep the two
+/// in lock-step so the engine and the pure-Python reference draw their Wiener
+/// streams in identical order).
+///
+/// Output grids are uniform in `dt`, but floating-point roundoff makes a
+/// nominally `dt`-wide segment compute a `remaining = t_end - t` that is `dt`
+/// plus a few ULP. The naive `dt >= remaining` test then takes a full `dt` step
+/// and a **spurious sub-ULP sliver step** — drawing an extra Wiener increment
+/// (desyncing the noise stream) and adding a meaningless `N(0, ~ULP)` kick.
+/// Absorbing that roundoff into a single canonical `dt` step makes the
+/// discretisation exactly "one `N(0, dt)` increment per step".
+const LANDING_REL_TOL: f64 = 1e-9;
 
 /// Knobs for the fixed-step SDE loop.
 ///
@@ -111,10 +128,13 @@ impl std::error::Error for SdeError {}
 /// Advance `st` from its current time to `t_end` with fixed step `cfg.dt`,
 /// drawing one diagonal Wiener increment per step from `rng` into `dw`.
 ///
-/// A landing step (when `dt` would reach/pass `t_end`) is shortened to the
-/// remaining span and its increment drawn `~ N(0, h)` for that `h`; the time is
-/// then pinned exactly to `t_end` so grid points never drift. `dw` is a caller-
-/// owned scratch of length `dim`, reused across steps.
+/// The landing (final) step of the span reuses the canonical `cfg.dt` when
+/// `remaining` is within [`LANDING_REL_TOL`] of it (so a uniform-`dt` grid takes
+/// exactly one `N(0, dt)` increment per segment and never a spurious sub-ULP
+/// sliver), and only a genuinely shorter span draws its increment `~ N(0, h)`
+/// for that smaller `h`; the time is then pinned exactly to `t_end` so grid
+/// points never drift. `dw` is a caller-owned scratch of length `dim`, reused
+/// across steps.
 #[allow(clippy::too_many_arguments)] // drift + diffusion + the state/rng/dw/time/cfg the loop threads.
 fn sde_advance_to(
     drift: &dyn Evaluator,
@@ -139,8 +159,21 @@ fn sde_advance_to(
             return Err(SdeError::StepLimit { t: st.t, steps });
         }
         let remaining = t_end - st.t;
-        let landing = cfg.dt >= remaining;
-        let h = if landing { remaining } else { cfg.dt };
+        // Tolerant landing: absorb a roundoff-scale overshoot so a uniform-dt grid
+        // takes exactly one canonical dt step per segment (no spurious sub-ULP
+        // sliver step). Only a genuinely shorter final span uses `remaining`. See
+        // LANDING_REL_TOL; the Python reference mirrors this predicate so the two
+        // draw their Wiener streams in identical order.
+        let landing = remaining <= cfg.dt * (1.0 + LANDING_REL_TOL);
+        let h = if landing {
+            if remaining >= cfg.dt * (1.0 - LANDING_REL_TOL) {
+                cfg.dt
+            } else {
+                remaining
+            }
+        } else {
+            cfg.dt
+        };
         steps += 1;
 
         fill_wiener(rng, h, dw);
@@ -898,6 +931,63 @@ mod tests {
         assert_eq!(out.len(), 4);
         assert_eq!(out[0], 0.7, "first grid row must be the initial condition");
         assert!(out.iter().all(|x| x.is_finite()));
+    }
+
+    #[test]
+    fn tolerant_landing_kills_the_spurious_substep_on_a_roundoff_grid() {
+        // FIX-SDE-WIENER regression. A uniform grid t_eval[k] = k·dt built the way
+        // NumPy's arange does (k as f64 * dt) makes many segments compute a width a
+        // few ULP above dt. The old `dt >= remaining` landing then took a full dt
+        // step *plus a spurious sub-ULP sliver* — an extra Wiener draw that desynced
+        // the stream. With the tolerant landing the grid takes exactly one clean dt
+        // step per segment, so marching the grid and marching the whole span in one
+        // shot draw the identical N increments and reach the SAME final state
+        // bit-for-bit (GBM is autonomous, so the pinned-vs-accumulated time is moot).
+        let drift = gbm_drift(0.12);
+        let diffusion = gbm_diffusion(0.3);
+        let dt = 0.02;
+        let n = 50usize;
+        let cfg = SdeConfig::new(dt);
+        let t_eval: Vec<f64> = (0..=n).map(|k| k as f64 * dt).collect();
+        // At least one segment must actually overshoot dt, else the test is vacuous.
+        let overshoot = (1..=n).filter(|&k| t_eval[k] - t_eval[k - 1] > dt).count();
+        assert!(overshoot > 0, "grid did not provoke the roundoff overshoot");
+
+        let mut kernel_g = EulerMaruyama::new();
+        let mut rng_g = SplitMix64::new(20240614);
+        let grid = sde_integrate_grid(
+            &drift,
+            &diffusion,
+            &mut kernel_g,
+            &mut rng_g,
+            &[1.0],
+            &[],
+            &t_eval,
+            &cfg,
+        )
+        .unwrap();
+        let grid_final = grid[grid.len() - 1];
+
+        let mut kernel_f = EulerMaruyama::new();
+        let mut rng_f = SplitMix64::new(20240614);
+        let one_shot = sde_integrate_final(
+            &drift,
+            &diffusion,
+            &mut kernel_f,
+            &mut rng_f,
+            &[1.0],
+            &[],
+            0.0,
+            t_eval[n],
+            &cfg,
+        )
+        .unwrap();
+
+        assert_eq!(
+            grid_final.to_bits(),
+            one_shot[0].to_bits(),
+            "grid march != one-shot march — a spurious sliver desynced the noise stream"
+        );
     }
 
     #[test]
