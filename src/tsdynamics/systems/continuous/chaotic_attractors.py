@@ -442,6 +442,26 @@ class Halvorsen(ContinuousSystem):
 class Chua(ContinuousSystem):
     params = {"alpha": 15.6, "beta": 28.0, "m0": -1.142857, "m1": -0.71429}
     dim = 3
+    reference = "Matsumoto, Chua & Komuro (1985), IEEE Trans. Circuits Syst. 32, 798-818"
+    # Classic double-scroll Chua circuit (α=15.6, β=28, m0=-8/7, m1=-5/7). The
+    # piecewise-linear nonlinearity makes the *exact* leading exponent sensitive
+    # to the breakpoint handling, so only the robust sign structure is asserted:
+    # one positive, one ~zero and one strongly negative exponent (largest LE
+    # ≈0.4-0.5 for this canonical double-scroll set, matching the engine estimate).
+    # A small off-origin IC reliably lands on the double-scroll attractor.
+    known_lyapunov = {
+        "n_positive": 1,
+        "ic": (0.1, 0.0, 0.0),
+        "kwargs": {
+            "dt": 0.02,
+            "burn_in": 100.0,
+            "final_time": 400.0,
+            "method": "dop853",
+            "rtol": 1e-8,
+            "atol": 1e-11,
+        },
+        "source": "Matsumoto, Chua & Komuro (1985), IEEE Trans. Circuits Syst. 32, 798-818",
+    }
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, m0, m1):

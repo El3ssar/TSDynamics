@@ -162,6 +162,25 @@ class BurkeShaw(ContinuousSystem):
 class Chen(ContinuousSystem):
     params = {"a": 35, "b": 3, "c": 28}
     dim = 3
+    reference = "Chen & Ueta (1999), Int. J. Bifurcation Chaos 9, 1465-1466"
+    # Canonical Chen attractor (a=35, b=3, c=28). The Lyapunov spectrum is
+    # widely reported as (≈2.03, 0, ≈-12.03); the negative exponent is pinned by
+    # the constant divergence trace(J) = -a + c - b = -10, so the spectrum must
+    # sum to -10 — a hard analytic constraint the finite-time estimate respects.
+    known_lyapunov = {
+        "spectrum": (2.03, 0.0, -12.03),
+        "atol": (0.5, 0.2, 0.6),
+        "ic": (-0.1, 0.5, -0.6),
+        "kwargs": {
+            "dt": 0.02,
+            "burn_in": 50.0,
+            "final_time": 300.0,
+            "method": "dop853",
+            "rtol": 1e-9,
+            "atol": 1e-12,
+        },
+        "source": "Lü, Chen, Cheng & Čelikovský (2002), Int. J. Bifurcation Chaos 12, 2917-2926",
+    }
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
