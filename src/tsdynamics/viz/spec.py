@@ -109,11 +109,26 @@ class PlotKind(StrEnum):
     BASINS_IMAGE = "basins_image"
     RECURRENCE_PLOT = "recurrence_plot"
     POWER_SPECTRUM = "power_spectrum"
+    SPECTROGRAM = "spectrogram"
     SCALING_FIT = "scaling_fit"
+    DIMENSION_SPECTRUM = "dimension_spectrum"
     DIAGNOSTIC_CURVE = "diagnostic_curve"
+    COMPLEXITY_CURVE = "complexity_curve"
     LINE_FAMILY = "line_family"
+    ENSEMBLE_FAN = "ensemble_fan"
     HISTOGRAM_NULL = "histogram_null"
-    # animation kinds are the same spec + a leading ``frame`` axis on the data:
+    LYAPUNOV_SPECTRUM = "lyapunov_spectrum"
+    EIGENVALUE_PLANE = "eigenvalue_plane"
+    FIXED_POINTS_OVERLAY = "fixed_points_overlay"
+    VECTOR_FIELD = "vector_field"
+    PHASE_PORTRAIT_FIELD = "phase_portrait_field"
+    CONTINUATION = "continuation"
+    CATEGORICAL_BAR = "categorical_bar"
+    FEATURE_BARS = "feature_bars"
+    # animation kinds are the same spec + a leading ``frame`` axis on the data
+    # (animation rendering is deferred; a non-animating backend draws the final
+    # frame — these members stay in the frozen vocabulary so such a spec still
+    # round-trips, even though no shipped backend animates):
     TRAJECTORY_ANIMATION = "trajectory_animation"
     ENSEMBLE_ANIMATION = "ensemble_animation"
 
@@ -126,10 +141,74 @@ class PlotKind(StrEnum):
     QUIVER = "quiver"
     SURFACE3D = "surface3d"
     HISTOGRAM = "histogram"
+    BAR = "bar"
+    AREA = "area"
+    ERRORBAR = "errorbar"
+
+    # ── governance: the closed vocabulary partitions into semantic kinds +
+    #    layer marks (frozen — adding/removing a member is a reviewed contract
+    #    change gated by tests/test_viz_vocab.py). ──────────────────────────
+    @classmethod
+    def semantic_kinds(cls) -> frozenset[PlotKind]:
+        """Return the closed set of *semantic* kinds a :class:`PlotSpec` can be.
+
+        These name what a plot *means* (a renderer dispatches on
+        :attr:`PlotSpec.kind`).  Disjoint from :meth:`layer_marks`; together they
+        exhaust the enum (frozen by ``tests/test_viz_vocab.py``).
+        """
+        return _SEMANTIC_KINDS
+
+    @classmethod
+    def layer_marks(cls) -> frozenset[PlotKind]:
+        """Return the closed set of layer *marks* a single :class:`Layer` draws.
+
+        These name *how* one layer is drawn (a renderer dispatches on
+        :attr:`Layer.kind`).  Disjoint from :meth:`semantic_kinds`.
+        """
+        return _LAYER_MARKS
+
+    @classmethod
+    def is_semantic(cls, kind: PlotKind | str) -> bool:
+        """Whether ``kind`` is a semantic spec kind (vs. a layer mark)."""
+        return PlotKind(kind) in _SEMANTIC_KINDS
+
+    @classmethod
+    def is_mark(cls, kind: PlotKind | str) -> bool:
+        """Whether ``kind`` is a layer mark (vs. a semantic spec kind)."""
+        return PlotKind(kind) in _LAYER_MARKS
 
 
-# Type aliases for the public tweak API (one spelling each).
-_Scale = Literal["linear", "log", "symlog"]
+#: The frozen set of **layer marks** — how a single :class:`Layer` is drawn.
+#: A renderer maps each of these to a drawing primitive.  Closed: extending it is
+#: a reviewed contract change (the membership guard in ``tests/test_viz_vocab.py``
+#: pins the exact set).
+_LAYER_MARKS: frozenset[PlotKind] = frozenset(
+    {
+        PlotKind.LINE,
+        PlotKind.LINE3D,
+        PlotKind.SCATTER,
+        PlotKind.MARKERS,
+        PlotKind.IMAGE,
+        PlotKind.QUIVER,
+        PlotKind.SURFACE3D,
+        PlotKind.HISTOGRAM,
+        PlotKind.BAR,
+        PlotKind.AREA,
+        PlotKind.ERRORBAR,
+    }
+)
+
+#: The frozen set of **semantic kinds** — what a whole :class:`PlotSpec` means.
+#: Every enum member that is not a layer mark; the two sets partition the enum.
+_SEMANTIC_KINDS: frozenset[PlotKind] = frozenset(set(PlotKind) - _LAYER_MARKS)
+
+
+# Type aliases for the public tweak API (one spelling each).  ``"categorical"``
+# joins the numeric scales for a categorical axis (a CATEGORICAL_BAR / FEATURE_BARS
+# x-axis whose tick positions index :attr:`Axis.categories`).
+_Scale = Literal["linear", "log", "symlog", "categorical"]
+# A colour *norm* is numeric only (categorical colour is :attr:`Colorbar.discrete`).
+_Norm = Literal["linear", "log", "symlog"]
 _Aspect = Literal["auto", "equal"]
 _Ndim = Literal[1, 2, 3]
 _CbarLoc = Literal["right", "left", "top", "bottom"]
@@ -170,14 +249,20 @@ class Axis:
     label : str, optional
         Axis label.  May carry LaTeX (e.g. ``r"$\log r$"``); renderers decide
         how to typeset it.
-    scale : {"linear", "log", "symlog"}, optional
-        The axis scale.  Default ``"linear"``.
+    scale : {"linear", "log", "symlog", "categorical"}, optional
+        The axis scale.  Default ``"linear"``.  ``"categorical"`` marks an axis
+        whose integer tick positions index :attr:`categories` (a
+        ``CATEGORICAL_BAR`` / ``FEATURE_BARS`` category axis).
     limits : tuple of float, optional
         ``(lo, hi)`` view limits, or ``None`` to auto-scale.
     ticks : sequence of float, optional
         Explicit tick locations, or ``None`` to auto-tick.
     tickformat : str, optional
         A backend-neutral format string for tick labels, or ``None``.
+    categories : sequence of str, optional
+        Category labels for a ``"categorical"`` axis — the tick label at integer
+        position ``i`` is ``categories[i]`` (basin ids, feature names, …).
+        ``None`` for a numeric axis.
     """
 
     label: str = ""
@@ -185,6 +270,7 @@ class Axis:
     limits: tuple[float, float] | None = None
     ticks: Sequence[float] | None = None
     tickformat: str | None = None
+    categories: Sequence[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this axis."""
@@ -194,6 +280,7 @@ class Axis:
             "limits": list(self.limits) if self.limits is not None else None,
             "ticks": [float(t) for t in self.ticks] if self.ticks is not None else None,
             "tickformat": self.tickformat,
+            "categories": list(self.categories) if self.categories is not None else None,
         }
 
     @classmethod
@@ -201,12 +288,14 @@ class Axis:
         """Rebuild an :class:`Axis` from :meth:`to_dict` output."""
         limits = d.get("limits")
         ticks = d.get("ticks")
+        categories = d.get("categories")
         return cls(
             label=d.get("label", ""),
             scale=d.get("scale", "linear"),
             limits=tuple(limits) if limits is not None else None,
             ticks=list(ticks) if ticks is not None else None,
             tickformat=d.get("tickformat"),
+            categories=list(categories) if categories is not None else None,
         )
 
 
@@ -310,6 +399,17 @@ class Colorbar:
         :class:`Colorbar` only exists on a spec when there *is* a color channel
         to legend, so its presence is the "draw a colorbar" signal; ``show`` lets
         a caller suppress it without dropping the (label-carrying) object.
+    cmap : str, optional
+        A backend-neutral colormap name for the color channel (e.g.
+        ``"viridis"``, ``"tab20"`` for a categorical basin image), or ``None``
+        to let the backend pick its default.
+    norm : {"linear", "log", "symlog"}, optional
+        How the color *data* maps onto the colormap (a log norm for a power
+        spectrogram, say).  ``None`` is a linear norm.
+    discrete : bool, optional
+        Whether the color channel is categorical (discrete swatches, one per
+        label — a basin / attractor index image) rather than a continuous ramp.
+        Default ``False``.
     """
 
     label: str = ""
@@ -317,6 +417,9 @@ class Colorbar:
     ticks: Sequence[float] | None = None
     tickformat: str | None = None
     show: bool = True
+    cmap: str | None = None
+    norm: _Norm | None = None
+    discrete: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this colorbar."""
@@ -326,6 +429,9 @@ class Colorbar:
             "ticks": [float(t) for t in self.ticks] if self.ticks is not None else None,
             "tickformat": self.tickformat,
             "show": bool(self.show),
+            "cmap": self.cmap,
+            "norm": self.norm,
+            "discrete": bool(self.discrete),
         }
 
     @classmethod
@@ -338,6 +444,9 @@ class Colorbar:
             ticks=list(ticks) if ticks is not None else None,
             tickformat=d.get("tickformat"),
             show=bool(d.get("show", True)),
+            cmap=d.get("cmap"),
+            norm=d.get("norm"),
+            discrete=bool(d.get("discrete", False)),
         )
 
 
@@ -404,10 +513,22 @@ class Layer:
         ``IMAGE``, ``QUIVER``, ``MARKERS``, ``LINE3D``, ``SURFACE3D``,
         ``HISTOGRAM``).
     data : dict of str to ndarray
-        Channel name → array.  Conventional channels are ``"x"``, ``"y"``,
-        ``"z"`` (coordinates), ``"c"`` (a color/scalar field), ``"u"`` / ``"v"``
-        (vector components for ``QUIVER``), and ``"frame"`` (a leading animation
-        axis).  Inputs are coerced to :class:`numpy.ndarray` on construction.
+        Channel name → array.  Inputs are coerced to :class:`numpy.ndarray` on
+        construction.  The closed channel vocabulary (a renderer ignores a
+        channel it does not consume):
+
+        - ``"x"`` / ``"y"`` / ``"z"`` — coordinates (``"z"`` for 3-D marks).
+        - ``"c"`` — a per-vertex color / scalar field; valid on a ``LINE`` or
+          ``SCATTER`` too (color-by-time / color-by-speed), not only ``IMAGE``.
+        - ``"u"`` / ``"v"`` — vector components for a ``QUIVER`` / ``VECTOR_FIELD``.
+        - ``"lo"`` / ``"hi"`` — lower / upper band edges for an ``AREA`` /
+          ``ENSEMBLE_FAN`` (a shaded ``lo <= hi`` envelope around ``y``).
+        - ``"err"`` — symmetric error magnitudes for an ``ERRORBAR`` (the error
+          bars on a ``DIMENSION_SPECTRUM`` ``D(q)``).
+        - ``"cat"`` — integer category indices pairing with the categorical
+          :attr:`Axis.categories` (a ``BAR`` / ``CATEGORICAL_BAR`` / ``FEATURE_BARS``).
+        - ``"size"`` — per-point marker size for a ``SCATTER``.
+        - ``"frame"`` — a leading animation axis (deferred rendering).
     label : str, optional
         Legend entry for this layer, or ``None``.
     style : dict, optional
@@ -711,6 +832,7 @@ class PlotSpec:
             PlotKind.BASINS_IMAGE,
             PlotKind.RECURRENCE_PLOT,
             PlotKind.SPACETIME,
+            PlotKind.SPECTROGRAM,
         }
     )
 
