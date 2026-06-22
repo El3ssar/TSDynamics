@@ -487,8 +487,9 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
 
     Returns
     -------
-    float
-        Distance from the attractor to its basin boundary, in state-space units.
+    ScalarResult
+        Distance from the attractor to its basin boundary (behaves as a
+        ``float``), in state-space units.
 
     References
     ----------

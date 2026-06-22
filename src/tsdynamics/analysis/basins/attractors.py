@@ -228,8 +228,9 @@ class _AttractorMapper:
         """Advance one step; ``None`` if the trajectory blew up (raised / non-finite)."""
         try:
             state = np.asarray(self.system.step(self._step_arg), dtype=float).reshape(-1)
-        except (RuntimeError, FloatingPointError, OverflowError, ArithmeticError):
+        except (RuntimeError, ArithmeticError):
             # maps raise on divergence; flows may overflow — both mean "gone".
+            # (ArithmeticError covers FloatingPointError and OverflowError.)
             return None
         return state if np.all(np.isfinite(state)) else None
 
@@ -445,8 +446,7 @@ def find_attractors(
     G. Datseris and A. Wagemakers, "Effortless estimation of basins of
     attraction", *Chaos* **32**, 023104 (2022).
     """
-    if getattr(system, "is_discrete", False) is False and _looks_unsupported(system):
-        raise TypeError("find_attractors supports maps and flows, not delay/stochastic systems.")
+    _reject_unsupported(system, "find_attractors")
 
     grid = _recurrence_grid(region, resolution)
     mapper = _AttractorMapper(system, grid, dt=dt, max_steps=max_steps, **fsm)
@@ -476,6 +476,18 @@ def resolve_merge_tol(cellgrid: _CellGrid, merge_tol: float | None) -> float:
 def _looks_unsupported(system: Any) -> bool:
     """Return True for delay / stochastic systems (no finite-dimensional state)."""
     return hasattr(system, "_drift") or hasattr(system, "history") or hasattr(system, "_delays")
+
+
+def _reject_unsupported(system: Any, fn_name: str) -> None:
+    """Raise a uniform ``TypeError`` for delay / stochastic systems.
+
+    Shared by the basin entry points (``find_attractors``,
+    ``basins_of_attraction``, ``basin_fractions``, ``continuation``) so an
+    unsupported system fails early with one clear message instead of opaquely
+    inside the step loop.
+    """
+    if getattr(system, "is_discrete", False) is False and _looks_unsupported(system):
+        raise TypeError(f"{fn_name} supports maps and flows, not delay/stochastic systems.")
 
 
 def __dir__() -> list[str]:

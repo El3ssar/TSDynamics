@@ -157,10 +157,6 @@ class OutcomeSpace(ABC):
     def counts(self, x: np.ndarray) -> np.ndarray:
         """Return the integer count of every outcome for series ``x``."""
 
-    def encode(self, x: np.ndarray) -> np.ndarray:  # noqa: D401
-        """Return the integer outcome label of each window (override if cheap)."""
-        raise NotImplementedError
-
 
 class OrdinalPatterns(OutcomeSpace):
     r"""

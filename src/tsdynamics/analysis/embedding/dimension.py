@@ -29,7 +29,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from .._result import AnalysisResult
-from ._common import _as_series
+from ._common import _as_series, _delay_columns
 
 __all__ = [
     "EmbeddingDimension",
@@ -86,15 +86,6 @@ class EmbeddingDimension(AnalysisResult):
             f"EmbeddingDimension(method={self.method!r}, dimension={self.dimension}, "
             f"delay={self.delay}, dims={self.dims[0]}..{self.dims[-1]})"
         )
-
-
-def _delay_columns(x: np.ndarray, n_cols: int, tau: int, rows: int) -> np.ndarray:
-    """``(rows, n_cols)`` matrix whose column ``j`` is ``x[j*tau : j*tau + rows]``."""
-    out = np.empty((rows, n_cols), dtype=float)
-    for j in range(n_cols):
-        start = j * tau
-        out[:, j] = x[start : start + rows]
-    return out
 
 
 def _nearest_neighbor(
