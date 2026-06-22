@@ -68,9 +68,12 @@ from __future__ import annotations
 import html
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from tsdynamics.viz.spec import PlotSpec
 
 __all__ = [
     "AnalysisResult",
@@ -559,6 +562,11 @@ class AnalysisResult:
         -------
         PlotSpec
 
+        See Also
+        --------
+        _overlay_on : the ``base=`` overlay convention a result with a host view
+            (fixed points over a phase portrait) uses in its own ``to_plot_spec``.
+
         Raises
         ------
         VisualizationNotInstalled
@@ -615,6 +623,48 @@ class AnalysisResult:
             layers=layers,
             meta=dict(self.meta) if self.meta else {},
         )
+
+    def overlay_on(self, base: PlotSpec, *, kind: str | None = None) -> PlotSpec:
+        """Overlay this result's figure onto a host ``base`` spec (host drawn first).
+
+        The ``base=`` overlay convention, as a method that does not perturb the
+        uniform ``to_plot_spec(self, kind=None)`` signature: build this result's
+        spec and append its layers / annotations *after* the host's, so e.g.
+        fixed-point markers land over a phase portrait or an attractor scatter
+        over a basin image.  The merged ``base`` is mutated and returned.
+
+        Parameters
+        ----------
+        base : PlotSpec
+            The host spec to draw under this result.
+        kind : str, optional
+            Forwarded to :meth:`to_plot_spec`.
+
+        Returns
+        -------
+        PlotSpec
+            ``base``, with this result's layers / annotations appended.
+        """
+        return self._overlay_on(self.to_plot_spec(kind=kind), base)
+
+    @staticmethod
+    def _overlay_on(spec: PlotSpec, base: PlotSpec | None) -> PlotSpec:
+        """Overlay ``spec``'s layers/annotations onto ``base`` (host first), or pass through.
+
+        The ``base=`` overlay convention: when a host ``base`` spec is given, its
+        layers are drawn first and ``spec``'s layers/annotations are appended, so
+        e.g. fixed-point markers land *over* a phase portrait.  Returns ``spec``
+        unchanged when ``base`` is ``None``.
+        """
+        if base is None:
+            return spec
+        base.layers = list(base.layers) + list(spec.layers)
+        base.annotations = list(base.annotations) + list(spec.annotations)
+        if base.legend is None and len(base.layers) > 1:
+            from tsdynamics.viz.spec import Legend
+
+            base.legend = Legend()
+        return base
 
     def _plottable_fields(
         self,
@@ -1177,6 +1227,94 @@ class ArrayResult(AnalysisResult):
         """Return a JSON-friendly mapping (the array as a nested list + ``meta``)."""
         return {"values": _jsonify(self.values), "meta": _jsonify(self.meta)}
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe the wrapped array as a :class:`PlotSpec` (safe generic view).
+
+        A 1-D array becomes a ``DIAGNOSTIC_CURVE`` ``LINE`` against its index; a
+        2-column / 3-column array becomes a phase-portrait point cloud (2-D
+        ``SCATTER`` / 3-D ``LINE3D``); any other 2-D array becomes a
+        ``LINE_FAMILY`` (one line per column).  Subclasses with a natural figure
+        (a Lyapunov spectrum, a mutual-information curve) override this.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` picks the natural kind above.
+
+        Raises
+        ------
+        VisualizationNotInstalled
+            If the array is empty or higher-than-2-D (nothing generic to draw).
+        """
+        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+
+        arr = np.asarray(self.values, dtype=float)
+        title = type(self).__name__
+        meta = dict(self.meta) if self.meta else {}
+
+        if arr.ndim == 1 and arr.size:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+            layer = Layer(PlotKind.LINE, {"x": np.arange(arr.size, dtype=float), "y": arr})
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=2,
+                title=title,
+                x=Axis(label="index"),
+                y=Axis(label="value"),
+                layers=[layer],
+                meta=meta,
+            )
+
+        if arr.ndim == 2 and arr.shape[0] and arr.shape[1] in (2, 3):
+            if arr.shape[1] == 3:
+                spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_3D
+                layer = Layer(PlotKind.LINE3D, {"x": arr[:, 0], "y": arr[:, 1], "z": arr[:, 2]})
+                return PlotSpec(
+                    kind=spec_kind,
+                    ndim=3,
+                    title=title,
+                    x=Axis(label="x1"),
+                    y=Axis(label="x2"),
+                    z=Axis(label="x3"),
+                    layers=[layer],
+                    meta=meta,
+                )
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
+            layer = Layer(PlotKind.SCATTER, {"x": arr[:, 0], "y": arr[:, 1]})
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=2,
+                aspect="equal",
+                title=title,
+                x=Axis(label="x1"),
+                y=Axis(label="x2"),
+                layers=[layer],
+                meta=meta,
+            )
+
+        if arr.ndim == 2 and arr.shape[0]:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.LINE_FAMILY
+            idx = np.arange(arr.shape[0], dtype=float)
+            layers = [
+                Layer(PlotKind.LINE, {"x": idx, "y": arr[:, j]}, label=f"[{j}]")
+                for j in range(min(arr.shape[1], 12))
+            ]
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=2,
+                title=title,
+                x=Axis(label="index"),
+                y=Axis(label="value"),
+                layers=layers,
+                legend=Legend(),
+                meta=meta,
+            )
+
+        raise VisualizationNotInstalled(
+            f"{title} wraps an empty or higher-than-2-D array, so the generic ArrayResult "
+            "to_plot_spec() has nothing to draw; export it with .to_dict() instead."
+        )
+
 
 # ---------------------------------------------------------------------------
 # CollectionResult — a sequence of sub-results (fixed points, periodic orbits)
@@ -1251,6 +1389,82 @@ class CollectionResult(AnalysisResult):
             item.to_dict() if hasattr(item, "to_dict") else _jsonify(item) for item in self.items
         ]
         return {"items": items, "meta": _jsonify(self.meta)}
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe the collection as a :class:`PlotSpec` (safe generic scatter).
+
+        Each item contributes one representative point (its ``x`` attribute, the
+        mean of its ``points``, or the item itself if it is a 1-D array); the
+        points become a ``SCATTER`` phase portrait (first two coordinates) or, in
+        1-D, ``MARKERS`` against their index.  Subclasses with a richer figure (a
+        fixed-point overlay with eigenvalue markers) override this.  To draw the
+        collection *over* a host figure, use :meth:`AnalysisResult.overlay_on`.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.
+
+        Raises
+        ------
+        VisualizationNotInstalled
+            If no item yields a numeric point (nothing generic to scatter).
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        raw = [self._item_point(item) for item in self.items]
+        points = [p for p in raw if p is not None and p.size]
+        if not points:
+            raise VisualizationNotInstalled(
+                f"{type(self).__name__} has no item with a numeric point to scatter, so the "
+                "generic CollectionResult to_plot_spec() has nothing to draw; export it with "
+                ".to_dict() instead."
+            )
+        dim = min(p.size for p in points)
+        pts = np.asarray([p[:dim] for p in points], dtype=float)
+        title = type(self).__name__
+        meta = dict(self.meta) if self.meta else {}
+
+        if dim == 1:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+            layer = Layer(PlotKind.MARKERS, {"x": np.arange(len(pts), dtype=float), "y": pts[:, 0]})
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=2,
+                title=title,
+                x=Axis(label="index"),
+                y=Axis(label="value"),
+                layers=[layer],
+                meta=meta,
+            )
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
+        layer = Layer(PlotKind.SCATTER, {"x": pts[:, 0], "y": pts[:, 1]}, label=title)
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=title,
+            x=Axis(label="x1"),
+            y=Axis(label="x2"),
+            layers=[layer],
+            meta=meta,
+        )
+
+    @staticmethod
+    def _item_point(item: Any) -> np.ndarray | None:
+        """Return a 1-D representative point for ``item``, or ``None`` if it has none."""
+        x = getattr(item, "x", None)
+        if x is not None and np.ndim(x) == 1:
+            point: np.ndarray = np.asarray(x, dtype=float)
+            return point
+        pts = getattr(item, "points", None)
+        if pts is not None and np.ndim(pts) == 2:
+            centroid: np.ndarray = np.asarray(pts, dtype=float).mean(axis=0)
+            return centroid
+        if isinstance(item, np.ndarray) and item.ndim == 1:
+            arr: np.ndarray = np.asarray(item, dtype=float)
+            return arr
+        return None
 
     def to_frame(self) -> Any:
         """Return a :class:`pandas.DataFrame` with one row per item.
