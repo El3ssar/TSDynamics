@@ -26,12 +26,13 @@
 //! Errors surface as [`EngineError`], a Python-free enum the binding layer maps
 //! onto the right Python exception type.
 
+use tsdyn_engine::event::advance_to_event;
 use tsdyn_engine::rng::SplitMix64;
 use tsdyn_engine::{
     ensemble_final as engine_ensemble, integrate_dde_grid, integrate_events, integrate_grid,
     iterate_dense, iterate_ensemble_final as engine_iterate_ensemble,
     sde_ensemble_final as engine_sde_ensemble, sde_integrate_grid, DelaySlot, EventDirection,
-    EventSpec, IntegrateConfig, IntegrateError, MapError, SdeConfig, SdeError,
+    EventHit, EventSpec, IntegrateConfig, IntegrateError, MapError, SdeConfig, SdeError,
 };
 use tsdyn_ir::{Evaluator, Tape};
 use tsdyn_jit::JitEvaluator;
@@ -40,7 +41,7 @@ use tsdyn_solvers::implicit::{
     BackwardEuler, Bdf, ImplicitMidpoint, RosenbrockW, Sdirk2, TrBdf2, Trapezoid,
 };
 use tsdyn_solvers::sde::{self, SdeKernel};
-use tsdyn_solvers::{Solver, SolverKind};
+use tsdyn_solvers::{Solver, SolverKind, SolverState};
 use tsdyn_vm::Interpreter;
 
 /// Why an engine call could not be served.
@@ -149,6 +150,24 @@ impl Evaluator for VmEvaluator {
 /// / codegen) surfaces as [`EngineError::JitCompile`]; the interpreter never
 /// fails to build.
 fn build_evaluator(tape: Tape, jit: bool) -> Result<Box<dyn Evaluator>, EngineError> {
+    if jit {
+        let ev = JitEvaluator::new(&tape).map_err(|e| EngineError::JitCompile(e.to_string()))?;
+        Ok(Box::new(ev))
+    } else {
+        Ok(Box::new(VmEvaluator::new(tape)))
+    }
+}
+
+/// Build an evaluator as a `Box<dyn Evaluator + Send>` — the variant the durable
+/// [`OdeStepper`] handle owns so it (and an `&mut` to it) can cross the
+/// `Python::detach` GIL-release boundary (which requires `Send`).
+///
+/// Both concrete evaluators are `Send` (the interpreter is plain data; the JIT's
+/// `JITModule` and `fn` pointers are `Send` — see `tsdyn_jit`'s safety note), so
+/// erasing them to `dyn Evaluator + Send` is sound. The batch entry points keep
+/// the `Sync`-only [`build_evaluator`] because they only ever *share* `&dyn
+/// Evaluator` across rayon workers (which needs `Sync`, not `Send`).
+fn build_evaluator_send(tape: Tape, jit: bool) -> Result<Box<dyn Evaluator + Send>, EngineError> {
     if jit {
         let ev = JitEvaluator::new(&tape).map_err(|e| EngineError::JitCompile(e.to_string()))?;
         Ok(Box::new(ev))
@@ -1090,6 +1109,295 @@ pub fn integrate_events_dense(
         outcome.u_final,
         outcome.terminated,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Resumable ODE stepper handle (stream WS-STEPPER)
+// ---------------------------------------------------------------------------
+
+/// A durable, resumable single-trajectory ODE stepper — the Python-free core of
+/// the `tsdynamics._rust.OdeStepper` handle (stream WS-STEPPER).
+///
+/// It owns the built [`Evaluator`] (the interpreter or the Cranelift JIT — the
+/// expensive-to-build artefact) and the resolved solver name/tolerances once, and
+/// carries the live integration point `(u, t)` across calls. Marching a flow with
+/// repeated [`advance`](OdeStepper::advance) / [`advance_to_event`](OdeStepper::advance_to_event)
+/// calls therefore never rebuilds or re-marshals the tape — only the live state is
+/// threaded — which is what makes a per-`dt` stepping loop (Poincaré refinement,
+/// basins over flows) cheap.
+///
+/// # Why a fresh solver per `advance`
+///
+/// [`advance`](OdeStepper::advance) builds a **fresh** [`Box<dyn Solver>`] and a
+/// **fresh** [`SolverState`] for each call, then runs the *single-segment* grid
+/// integration `[t, t + dt]` with the first step set to `dt` — exactly what the
+/// batch [`integrate_dense`] path does for one `dt` span. This is deliberate: it
+/// makes `advance(dt)` **byte-for-byte identical** to the per-`dt` `integrate_dense`
+/// the released `ContinuousSystem.step()` runs, including for the multistep / stiff
+/// kernels (`bdf`, the Adams family) whose `Solver` carries history *across* steps —
+/// a reused solver would accumulate that history and silently diverge from the
+/// per-`dt` path. Building a kernel is cheap (it only allocates its stage buffers);
+/// the costly artefact is the evaluator, which is built once and reused. So the
+/// handle amortises the real per-step cost (tape build / JIT compile / FFI tape
+/// marshalling) while staying answer-exact.
+///
+/// (Carrying the adaptive step `h` across `advance` calls would be faster still,
+/// but a chunked adaptive integration is *not* equal to N single-`dt` integrations
+/// — the controller carries its step/error state across nodes — which is exactly
+/// the WS-STEPBUF batch-ahead error that broke sensitive consumers such as
+/// `max_lyapunov`. The resumable `h` *is* used inside one
+/// [`advance_to_event`](OdeStepper::advance_to_event) span, where there is no
+/// per-`dt` numerics to preserve.)
+pub struct OdeStepper {
+    /// The built evaluator (interpreter or JIT), owning its tape — `'static` and
+    /// `Send` so the handle (and an `&mut` to it) can cross `Python::detach`.
+    ev: Box<dyn Evaluator + Send>,
+    /// The resolved registry solver name (from [`resolve_solver`]).
+    method: &'static str,
+    /// User-requested tolerances for the adaptive kernels.
+    rtol: f64,
+    atol: f64,
+    /// The live integration point, advanced in place by each accepted segment.
+    u: Vec<f64>,
+    t: f64,
+}
+
+impl OdeStepper {
+    /// Build a stepper over a validated ODE tape, starting from `(ic, t0)`.
+    ///
+    /// `method` is resolved through the solver registry (so `"RK45"` reaches
+    /// `"rk45"`); an implicit kernel needs a tape compiled `with_jacobian=True` (the
+    /// same guard the batch path applies, checked up front so a misbuilt stepper
+    /// fails at construction, not mid-march). `jit` selects the Cranelift evaluator.
+    pub fn new(
+        tape: Tape,
+        ic: &[f64],
+        t0: f64,
+        method: &str,
+        rtol: f64,
+        atol: f64,
+        jit: bool,
+    ) -> Result<Self, EngineError> {
+        guard_continuous(&tape)?;
+        let dim = tape.dim();
+        if dim == 0 {
+            return Err(EngineError::BadShape(
+                "system dimension is zero (the tape has no outputs)".to_string(),
+            ));
+        }
+        if ic.len() < dim {
+            return Err(EngineError::BadShape(format!(
+                "initial state has length {}, need dim = {dim}",
+                ic.len()
+            )));
+        }
+        if let Some(&bad) = ic.iter().take(dim).find(|x| !x.is_finite()) {
+            return Err(EngineError::BadShape(format!(
+                "initial state must be finite, found {bad}"
+            )));
+        }
+        if !t0.is_finite() {
+            return Err(EngineError::BadShape(format!(
+                "initial time must be finite, got {t0}"
+            )));
+        }
+        let name = resolve_solver(method)?;
+        require_jacobian_if_needed(&tape, name)?;
+        let ev = build_evaluator_send(tape, jit)?;
+        Ok(OdeStepper {
+            ev,
+            method: name,
+            rtol,
+            atol,
+            u: ic[..dim].to_vec(),
+            t: t0,
+        })
+    }
+
+    /// System dimension.
+    pub fn dim(&self) -> usize {
+        self.ev.dim()
+    }
+
+    /// The current state (a copy).
+    pub fn state(&self) -> Vec<f64> {
+        self.u.clone()
+    }
+
+    /// The current time.
+    pub fn time(&self) -> f64 {
+        self.t
+    }
+
+    /// Reset the live point to `(u, t)` without rebuilding the evaluator.
+    ///
+    /// The resume / reseat primitive: a derived stepper (e.g. a Poincaré map
+    /// restarting from a refined crossing) reseats the live state cheaply, keeping
+    /// the built evaluator and solver configuration.
+    pub fn set_state(&mut self, u: &[f64], t: f64) -> Result<(), EngineError> {
+        let dim = self.ev.dim();
+        if u.len() < dim {
+            return Err(EngineError::BadShape(format!(
+                "state has length {}, need dim = {dim}",
+                u.len()
+            )));
+        }
+        if let Some(&bad) = u.iter().take(dim).find(|x| !x.is_finite()) {
+            return Err(EngineError::BadShape(format!(
+                "state must be finite, found {bad}"
+            )));
+        }
+        if !t.is_finite() {
+            return Err(EngineError::BadShape(format!(
+                "time must be finite, got {t}"
+            )));
+        }
+        self.u[..dim].copy_from_slice(&u[..dim]);
+        self.t = t;
+        Ok(())
+    }
+
+    /// Validate the live parameter vector against the evaluator's `n_param`.
+    ///
+    /// Parameters are passed in per call (not stored) so a live parameter change on
+    /// the Python side takes effect on the next `advance`, exactly as the released
+    /// `ContinuousSystem.step()` reads `params_vec()` each step.
+    fn check_params(&self, p: &[f64]) -> Result<(), EngineError> {
+        if p.len() < self.ev.n_param() {
+            return Err(EngineError::BadShape(format!(
+                "parameter vector has length {}, need n_param = {}",
+                p.len(),
+                self.ev.n_param()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Advance the live point by one `dt` segment and return the new state.
+    ///
+    /// **Byte-for-byte identical** to the batch [`integrate_dense`] over the
+    /// two-node grid `[t, t + dt]` (last row): a fresh solver and fresh
+    /// [`SolverState`] are built, the first step is set to `(t + dt) − t` (the
+    /// grid-derived step the batch path uses), and the single segment is integrated.
+    /// The live `(u, t)` is then advanced. `p` is read live each call so a
+    /// mid-march parameter change still takes effect. Divergence raises
+    /// ([`EngineError::Diverged`]).
+    pub fn advance(&mut self, dt: f64, p: &[f64]) -> Result<Vec<f64>, EngineError> {
+        self.check_params(p)?;
+        if !(dt.is_finite() && dt > 0.0) {
+            return Err(EngineError::BadShape(format!(
+                "advance step dt must be finite and positive, got {dt}"
+            )));
+        }
+        let tf = self.t + dt;
+        // Mirror the batch path exactly: the two-node grid is `[t, tf]` and the
+        // first step is `first_step_from_grid([t, tf]) = tf - t` (NOT the raw `dt` —
+        // the subtraction recovers the same float the grid path sees).
+        let t_eval = [self.t, tf];
+        let dim = self.ev.dim();
+        let mut solver = build_solver(self.method, self.rtol, self.atol);
+        let cfg = IntegrateConfig::new(first_step_from_grid(&t_eval));
+        let out = integrate_grid(&*self.ev, &mut *solver, &self.u[..dim], p, &t_eval, &cfg)
+            .map_err(|e| EngineError::Diverged(diverge_msg(&e)))?;
+        // `out` is the flat `(2, dim)` buffer; the last row is the advanced state.
+        let last = &out[dim..2 * dim];
+        self.u[..dim].copy_from_slice(last);
+        self.t = tf;
+        Ok(self.u.clone())
+    }
+
+    /// Resumably march toward `t + max_span`, stopping at the first refined crossing
+    /// of the event function `g(u, t) = 0` in `direction`.
+    ///
+    /// The durable analogue of [`integrate_events_dense`] for one event, threaded
+    /// through the engine's [`advance_to_event`]: the live point and the adaptive
+    /// step are carried across the *whole* event search (one resumable integration,
+    /// not a re-seeded segment per `dt`), so a Poincaré map marches crossing by
+    /// crossing without rebuilding the integration. `first_step` seeds the solver
+    /// (with the fixed-step `rk4` it *is* the detection step `dt`, reproducing the
+    /// Python `PoincareMap` dt-grid march). `g` is a single-output tape over the
+    /// full state.
+    ///
+    /// Returns `(found, t_cross, u_cross, dir)`: `found` is whether a crossing
+    /// occurred before `t + max_span`; on a hit `(t_cross, u_cross)` is the refined
+    /// crossing and `dir` its sign (`+1`/`-1`), and the live point is advanced one
+    /// marching step *past* the crossing (so a repeated call finds the *next*
+    /// crossing, never the same one); with no hit the live point is advanced to
+    /// `t + max_span` and `found` is `false`. Divergence raises
+    /// ([`EngineError::Diverged`]).
+    pub fn advance_to_event(
+        &mut self,
+        g: Tape,
+        max_span: f64,
+        first_step: f64,
+        direction: i32,
+        p: &[f64],
+    ) -> Result<(bool, f64, Vec<f64>, i32), EngineError> {
+        self.check_params(p)?;
+        let dim = self.ev.dim();
+        if g.dim() != 1 {
+            return Err(EngineError::BadShape(format!(
+                "event function must have a single output, got {}",
+                g.dim()
+            )));
+        }
+        if g.n_state() > dim {
+            return Err(EngineError::BadShape(format!(
+                "event function reads {} state inputs but the system has dim = {dim}",
+                g.n_state()
+            )));
+        }
+        if g.n_param() > p.len() {
+            return Err(EngineError::BadShape(format!(
+                "event function declares {} parameters but the system has {}",
+                g.n_param(),
+                p.len()
+            )));
+        }
+        if !(max_span.is_finite() && max_span > 0.0) {
+            return Err(EngineError::BadShape(format!(
+                "max_span must be finite and positive, got {max_span}"
+            )));
+        }
+        if !(first_step.is_finite() && first_step > 0.0) {
+            return Err(EngineError::BadShape(format!(
+                "first step (the detection dt) must be finite and positive, got {first_step}"
+            )));
+        }
+        let dir = event_direction(direction)?;
+        let g_ev = build_evaluator(g, false)?;
+        let mut solver = build_solver(self.method, self.rtol, self.atol);
+        let cfg = IntegrateConfig::new(first_step);
+
+        // Build a resumable SolverState seeded from the live point, march it, then
+        // copy the advanced live point back. The adaptive step is carried *within*
+        // this one event search (its own integration), which is correct: there is no
+        // per-`dt` numerics to preserve for the event search (unlike `advance`).
+        let mut st =
+            SolverState::for_evaluator(&*self.ev, self.u[..dim].to_vec(), self.t, p.to_vec());
+        let mut h = cfg.first_step;
+        let t1 = self.t + max_span;
+        let hit: Option<EventHit> = advance_to_event(
+            &*self.ev,
+            &mut *solver,
+            &mut st,
+            &mut h,
+            t1,
+            &*g_ev,
+            dir,
+            &cfg,
+        )
+        .map_err(|e| EngineError::Diverged(diverge_msg(&e)))?;
+
+        // Commit the advanced live point (one step past the crossing, or `t1`).
+        self.u[..dim].copy_from_slice(&st.u[..dim]);
+        self.t = st.t;
+
+        match hit {
+            Some(h) => Ok((true, h.t, h.u, h.direction as i32)),
+            None => Ok((false, self.t, vec![0.0; dim], 0)),
+        }
+    }
 }
 
 /// Prefix the engine's diverge message so the Python `RuntimeError` reads clearly.
@@ -2283,5 +2591,336 @@ mod tests {
                 "row elem {k}: interp {i} != jit {j}"
             );
         }
+    }
+
+    // -- Resumable ODE stepper handle (WS-STEPPER) ---------------------------
+
+    /// Event `g(u) = u[component] - c` as a one-output tape over `dim` inputs.
+    fn plane_tape(dim: usize, component: usize, c: f64) -> Tape {
+        let mut b = TapeBuilder::new();
+        let x = b.state(component);
+        // Touch every state input so n_state == dim (the engine's event contract
+        // reads the full state); add 0·u_i for the untouched components.
+        let off = b.constant(c);
+        let mut g = b.sub(x, off);
+        for i in 0..dim {
+            if i != component {
+                let ui = b.state(i);
+                let z = b.constant(0.0);
+                let zui = b.mul(z, ui);
+                g = b.add(g, zui);
+            }
+        }
+        b.finish(&[g], &[], dim, 0).unwrap()
+    }
+
+    #[test]
+    fn stepper_advance_reproduces_per_dt_integrate_dense_bit_for_bit() {
+        // The byte-identity contract the handle must hold: `advance(dt)` reproduces
+        // the released `ContinuousSystem.step()` numerics, which integrate a *fresh*
+        // two-node grid `[t, t+dt]` per step (the adaptive controller is re-seeded
+        // each `dt`, by design — that is exactly why the WS-STEPBUF batch-ahead was
+        // wrong). So the reference is a *sequence of two-node `integrate_dense`
+        // calls*, each re-built from the previous final state — NOT one long
+        // multi-node grid (which would carry the controller across nodes and differ
+        // by ~1 ULP). The handle amortises the build/marshalling, not the numerics.
+        let dt = 0.01_f64;
+        let n = 50usize;
+        let p = [10.0, 28.0, 8.0 / 3.0];
+        let dim = 3;
+
+        let mut ref_state = vec![1.0, 1.0, 1.0];
+        let mut t = 0.0_f64;
+        let mut stepper = OdeStepper::new(
+            lorenz_tape(),
+            &[1.0, 1.0, 1.0],
+            0.0,
+            "rk45",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap();
+        for k in 1..=n {
+            // The per-`dt` batch reference: a fresh two-node `integrate_dense` from
+            // the live state, exactly what `_step_continuous` runs.
+            let tf = t + dt;
+            let seg = integrate_dense(
+                lorenz_tape(),
+                &ref_state,
+                &p,
+                &[t, tf],
+                "rk45",
+                1e-6,
+                1e-9,
+                false,
+            )
+            .unwrap();
+            ref_state = seg[dim..2 * dim].to_vec();
+            t = tf;
+
+            let u = stepper.advance(dt, &p).unwrap();
+            for (d, (a, b)) in u.iter().zip(ref_state.iter()).enumerate() {
+                assert_eq!(
+                    a.to_bits(),
+                    b.to_bits(),
+                    "step {k} comp {d}: stepper {a} != per-dt integrate_dense {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stepper_advance_over_segments_matches_one_longer_integrate() {
+        // Advancing several `dt` segments lands (to tolerance) where a single longer
+        // integrate of the same span does — the headline resumability acceptance.
+        let dt = 0.05_f64;
+        let n = 40usize;
+        let (t0, t1) = (0.0, n as f64 * dt);
+        // One longer integrate over `[t0, t1]` (two-node grid → final state).
+        let one = integrate_dense(
+            oscillator_tape(),
+            &[1.0, 0.0],
+            &[],
+            &[t0, t1],
+            "dop853",
+            1e-10,
+            1e-12,
+            false,
+        )
+        .unwrap();
+        let one_final = &one[2..4];
+
+        let mut stepper = OdeStepper::new(
+            oscillator_tape(),
+            &[1.0, 0.0],
+            t0,
+            "dop853",
+            1e-10,
+            1e-12,
+            false,
+        )
+        .unwrap();
+        let mut last = vec![0.0; 2];
+        for _ in 0..n {
+            last = stepper.advance(dt, &[]).unwrap();
+        }
+        assert!(
+            (stepper.time() - t1).abs() < 1e-12,
+            "t = {}",
+            stepper.time()
+        );
+        // The two march different paths (n re-seeded segments vs one shot) but track
+        // the same smooth solution (cos t, -sin t) to well within step accuracy.
+        assert!(
+            (last[0] - t1.cos()).abs() < 1e-6,
+            "x: {} vs {}",
+            last[0],
+            t1.cos()
+        );
+        assert!(
+            (last[1] + t1.sin()).abs() < 1e-6,
+            "v: {} vs {}",
+            last[1],
+            -t1.sin()
+        );
+        assert!(
+            (last[0] - one_final[0]).abs() < 1e-6 && (last[1] - one_final[1]).abs() < 1e-6,
+            "segmented vs one-shot disagree: {last:?} vs {one_final:?}"
+        );
+    }
+
+    #[test]
+    fn stepper_advance_jit_matches_interp_bit_for_bit() {
+        // The handle drives both evaluators; jit==interp bit-for-bit, the same
+        // invariant the batch paths hold.
+        let dt = 0.02_f64;
+        let p = [10.0, 28.0, 8.0 / 3.0];
+        let run = |jit| {
+            let mut s = OdeStepper::new(
+                lorenz_tape(),
+                &[1.0, 2.0, 3.0],
+                0.0,
+                "dop853",
+                1e-9,
+                1e-11,
+                jit,
+            )
+            .unwrap();
+            let mut out = Vec::new();
+            for _ in 0..30 {
+                out.extend(s.advance(dt, &p).unwrap());
+            }
+            out
+        };
+        let interp = run(false);
+        let jit = run(true);
+        assert_eq!(interp.len(), jit.len());
+        for (i, (a, b)) in interp.iter().zip(jit.iter()).enumerate() {
+            assert_eq!(a.to_bits(), b.to_bits(), "elem {i}: jit {b} != interp {a}");
+        }
+    }
+
+    #[test]
+    fn stepper_advance_to_event_lands_on_a_known_crossing() {
+        // x(t) = cos t falls through x = 0 at t = π/2 (v = -1 there). The handle's
+        // event search must land on that crossing (rk4 + Hermite, refined).
+        let g = plane_tape(2, 0, 0.0);
+        let mut s = OdeStepper::new(
+            oscillator_tape(),
+            &[1.0, 0.0],
+            0.0,
+            "rk4",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap();
+        let (found, t_cross, u_cross, dir) = s.advance_to_event(g, 3.0, 0.01, -1, &[]).unwrap();
+        assert!(found, "a falling crossing exists in [0, 3]");
+        assert_eq!(dir, -1);
+        assert!(
+            (t_cross - core::f64::consts::FRAC_PI_2).abs() < 1e-6,
+            "t = {t_cross}"
+        );
+        assert!(u_cross[0].abs() < 1e-6, "x at crossing = {}", u_cross[0]);
+        assert!(
+            (u_cross[1] + 1.0).abs() < 1e-6,
+            "v at crossing = {}",
+            u_cross[1]
+        );
+        // The live point advanced strictly past the crossing.
+        assert!(s.time() > t_cross, "state resumes past the crossing");
+    }
+
+    #[test]
+    fn stepper_advance_to_event_marches_successive_crossings() {
+        // Repeated event calls collect successive crossings of x = cos t through 0
+        // without re-finding the same one — the Poincaré-map use case.
+        let mut s = OdeStepper::new(
+            oscillator_tape(),
+            &[1.0, 0.0],
+            0.0,
+            "rk4",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap();
+        let mut times = Vec::new();
+        for _ in 0..4 {
+            let (found, t_cross, _u, _d) = s
+                .advance_to_event(plane_tape(2, 0, 0.0), 10.0, 0.01, 0, &[])
+                .unwrap();
+            assert!(found);
+            times.push(t_cross);
+        }
+        // π/2, 3π/2, 5π/2, 7π/2 — strictly increasing, spaced ~π.
+        for w in times.windows(2) {
+            assert!(w[1] > w[0], "crossings must be increasing: {times:?}");
+            assert!(
+                (w[1] - w[0] - core::f64::consts::PI).abs() < 1e-3,
+                "spacing ~ π: {times:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stepper_advance_to_event_reports_no_crossing() {
+        // The plane x = 5 is never reached → found = false, the live point advances
+        // to t + max_span (ready to keep searching).
+        let g = plane_tape(2, 0, 5.0);
+        let mut s = OdeStepper::new(
+            oscillator_tape(),
+            &[1.0, 0.0],
+            0.0,
+            "rk4",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .unwrap();
+        let (found, _t, _u, _d) = s.advance_to_event(g, 1.0, 0.01, 0, &[]).unwrap();
+        assert!(!found, "no crossing expected");
+        assert!(
+            (s.time() - 1.0).abs() < 1e-12,
+            "advanced to t1, got {}",
+            s.time()
+        );
+    }
+
+    #[test]
+    fn stepper_advance_diverges_loudly() {
+        // dx/dt = x² blows up at t = 1 from x0 = 1; advancing past it must raise.
+        let mut s =
+            OdeStepper::new(blowup_tape(), &[1.0], 0.0, "rk45", 1e-8, 1e-10, false).unwrap();
+        // March up to the singularity; one of these segments must report divergence.
+        let mut diverged = false;
+        for _ in 0..200 {
+            match s.advance(0.01, &[]) {
+                Ok(_) => {}
+                Err(EngineError::Diverged(_)) => {
+                    diverged = true;
+                    break;
+                }
+                Err(e) => panic!("unexpected error: {e:?}"),
+            }
+        }
+        assert!(diverged, "the blow-up must surface as a Diverged error");
+    }
+
+    #[test]
+    fn stepper_reads_live_parameters_each_advance() {
+        // Changing the parameter between advances must take effect on the next step,
+        // mirroring the live-stepper semantics of ContinuousSystem.step().
+        // dx/dt = -k x: a larger k decays faster.
+        let mut slow =
+            OdeStepper::new(decay_tape(), &[1.0], 0.0, "rk45", 1e-9, 1e-11, false).unwrap();
+        let a = slow.advance(0.5, &[1.0]).unwrap()[0]; // k = 1 for this segment
+        let b = slow.advance(0.5, &[5.0]).unwrap()[0]; // k = 5 for the next segment
+                                                       // After [0,0.5] at k=1 then [0.5,1.0] at k=5: x = e^{-0.5} · e^{-2.5}.
+        let want = (-0.5_f64).exp() * (-2.5_f64).exp();
+        assert!((b - want).abs() < 1e-7, "live-param decay: {b} vs {want}");
+        assert!(a > b, "second (faster) segment decays further: {a} -> {b}");
+    }
+
+    #[test]
+    fn stepper_new_rejects_implicit_without_jacobian() {
+        // The same guard the batch path applies: an implicit kernel over a tape with
+        // no Jacobian is rejected at construction (not mid-march). `OdeStepper` is
+        // not `Debug` (it boxes an evaluator), so match the error rather than
+        // `unwrap_err`.
+        match OdeStepper::new(decay_tape(), &[1.0], 0.0, "bdf", 1e-6, 1e-9, false) {
+            Err(EngineError::BadShape(_)) => {}
+            other => panic!("expected BadShape, got {:?}", other.err()),
+        }
+        // With the Jacobian present, the implicit stepper builds and advances.
+        let mut ok =
+            OdeStepper::new(decay_tape_jac(), &[1.0], 0.0, "bdf", 1e-9, 1e-11, false).unwrap();
+        let x = ok.advance(0.4, &[2.0]).unwrap()[0];
+        assert!((x - (-0.8_f64).exp()).abs() < 1e-6, "bdf decay: {x}");
+    }
+
+    #[test]
+    fn stepper_set_state_reseats_the_live_point() {
+        let mut s = OdeStepper::new(
+            oscillator_tape(),
+            &[1.0, 0.0],
+            0.0,
+            "rk45",
+            1e-9,
+            1e-11,
+            false,
+        )
+        .unwrap();
+        s.advance(0.3, &[]).unwrap();
+        s.set_state(&[0.5, -0.5], 2.0).unwrap();
+        assert_eq!(s.state(), vec![0.5, -0.5]);
+        assert_eq!(s.time(), 2.0);
+        // Rejects a non-finite reseat.
+        assert!(matches!(
+            s.set_state(&[f64::NAN, 0.0], 0.0).unwrap_err(),
+            EngineError::BadShape(_)
+        ));
     }
 }
