@@ -9,22 +9,20 @@ description: The 26 built-in discrete maps — native-engine iteration and QR-ba
 **26 iterated maps**, subclasses of
 [`DiscreteMap`](../../reference/base.md). A map is defined by two plain
 numeric static methods — `_step` and `_jacobian` — decorated with
-`@staticjit` (a `staticmethod` marker); the Rust engine lowers `_step` to its
+`@staticmethod`; the Rust engine lowers `_step` to its
 IR and iterates it natively:
 
 ```python
-from tsdynamics.utils import staticjit
-
 class Henon(DiscreteMap):
     params = {"a": 1.4, "b": 0.3}
     dim = 2
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):
         x, y = X[0], X[1]
         return (1.0 - a * x**2 + y, b * x)
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         ...
 ```

@@ -178,7 +178,7 @@ function, so `ts.analysis.entropy` is the function — reach the estimators via
 `importlib.import_module("tsdynamics.analysis.entropy")`).
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
-(protocol) via `tsdynamics.families`; `staticjit` via `tsdynamics.utils`.
+(protocol) via `tsdynamics.families`.
 The `transforms`, `engine`, `solvers` and `errors` submodules are bound eagerly
 on the top-level namespace and in `__all__` (`transforms`/`errors` headline,
 `engine`/`solvers` flagged internal in their docstrings). The `viz` package

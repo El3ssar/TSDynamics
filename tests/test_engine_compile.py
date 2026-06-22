@@ -391,20 +391,19 @@ def test_python_branch_on_state_raises_tape_compile_error() -> None:
     forces a Boolean truth value of a symbolic Relational.
     """
     from tsdynamics.families import DiscreteMap
-    from tsdynamics.utils import staticjit
 
     class _PyBranchMap(DiscreteMap):
         params = {"a": 0.5}
         dim = 1
 
-        @staticjit
+        @staticmethod
         def _step(X, a):
             x = X
             if x < a:  # Python branch on the state — unrepresentable
                 return a * x
             return a * (1.0 - x)
 
-        @staticjit
+        @staticmethod
         def _jacobian(X, a):
             return [a]
 

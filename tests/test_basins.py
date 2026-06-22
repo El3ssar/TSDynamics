@@ -28,7 +28,6 @@ from tsdynamics.analysis.basins.attractors import Attractor, AttractorSet
 from tsdynamics.analysis.basins.basins import BasinsResult
 from tsdynamics.analysis.basins.continuation import ContinuationResult
 from tsdynamics.data import Ball, Box, Grid
-from tsdynamics.utils import staticjit
 
 LN2 = float(np.log(2.0))
 
@@ -46,7 +45,7 @@ class NewtonMap(ts.DiscreteMap):
     variables = ("re", "im")
     _jacobian_fd_check = False
 
-    @staticjit
+    @staticmethod
     def _step(X):
         # explicit complex multiplication (not z**3) so numba avoids transcendental
         # cpow — keeps the chaotic Julia-set boundary as reproducible as the
@@ -57,7 +56,7 @@ class NewtonMap(ts.DiscreteMap):
         z = (2.0 * z3 + 1.0) / (3.0 * z2)
         return (z.real, z.imag)
 
-    @staticjit
+    @staticmethod
     def _jacobian(X):
         return ((0.0, 0.0), (0.0, 0.0))
 
@@ -68,11 +67,11 @@ class CubicMap(ts.DiscreteMap):
     params = {"a": 1.5}
     dim = 1
 
-    @staticjit
+    @staticmethod
     def _step(X, a):
         return (a * X[0] - X[0] ** 3,)
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a):
         return ((a - 3.0 * X[0] ** 2,),)
 

@@ -174,18 +174,17 @@ class MyDDE(DelaySystem):
 
 ```python
 from tsdynamics import DiscreteMap
-from tsdynamics.utils import staticjit
 
 class MyMap(DiscreteMap):
     params = {"a": 1.4, "b": 0.3}
     dim = 2
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):              # ⚠ params arrive POSITIONALLY in params-dict order
         x, y = X
         return (1 - a*x**2 + y, b*x)
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         x, y = X
         return ((-2*a*x, 1.0), (b, 0.0))
