@@ -208,4 +208,7 @@ filterwarnings = [
   "error",
   "ignore:.*License classifiers have been superseded.*:UserWarning",
   "ignore:.*divide by zero encountered in divide.*:RuntimeWarning",
+  # DiscreteMap.iterate warns when an off-basin random IC diverges and it retries
+  # — expected, benign resilience; do not let it trip the `error` filter.
+  "ignore:.*Retrying from a new random initial condition.*:RuntimeWarning",
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import warnings
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -347,11 +348,17 @@ class DiscreteMap(SystemBase):
         for attempt in range(max_retries):
             try:
                 return self._iterate_engine(steps=steps, ic=ic_arr, backend=backend)
-            except RuntimeError:
+            except RuntimeError as exc:
                 if ic_explicit or attempt == max_retries - 1:
                     raise
-                # Silent retry from a fresh random IC; the off-basin draw is an
-                # internal detail and final exhaustion raises loudly below.
+                # Off-basin random draw diverged; warn (not stdout) and retry from
+                # a fresh random IC. Final exhaustion raises loudly below.
+                warnings.warn(
+                    f"{type(self).__name__}.iterate: {exc} "
+                    "Retrying from a new random initial condition.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
                 ic_arr = np.random.rand(cast(int, self.dim))
                 object.__setattr__(self, "ic", ic_arr.copy())
         raise RuntimeError(
