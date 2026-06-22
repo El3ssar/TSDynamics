@@ -192,6 +192,11 @@ source = ["src/tsdynamics"]
 
 [tool.coverage.report]
 show_missing = true
+# Coverage floor (stream HARDEN-COVERAGE). Measured ~92% on the full (fast+slow)
+# tier; the floor sits a couple of points below so a real regression fails the
+# release coverage run (release.yml: `pytest --cov`) without tripping on noise.
+# PR jobs run `--no-cov`, so this gates the push-to-main coverage run, not PRs.
+fail_under = 90
 
 # ── Pytest ─────────────────────────────────────────────────────────────────────
 
