@@ -17,11 +17,16 @@ The pieces
   tickformat).
 - :class:`Annotation` — a reference line or text overlay (e.g. the logistic
   onset ``r1 = 3``).
+- :class:`Colorbar` — a typed description of the color legend for a scalar /
+  image color channel (label / location / ticks / tickformat / visibility).
+- :class:`Legend` — a typed description of the per-layer legend
+  (visibility / location / title).
 - :class:`Layer` — one drawable layer: a :class:`PlotKind` *mark* + a
   channel-name → :class:`numpy.ndarray` data mapping + neutral style keys.
 - :class:`PlotSpec` — the top-level spec: a semantic :class:`PlotKind`, a list of
-  :class:`Layer`, typed ``x`` / ``y`` / optional ``z`` axes, title, ndim,
-  aspect, annotations, and provenance ``meta``.  Tweak methods
+  :class:`Layer`, typed ``x`` / ``y`` / optional ``z`` axes, an optional
+  ``clim`` color range, an optional :class:`Colorbar` and :class:`Legend`,
+  title, ndim, aspect, annotations, and provenance ``meta``.  Tweak methods
   (:meth:`~PlotSpec.relabel`, :meth:`~PlotSpec.rescale`, :meth:`~PlotSpec.limits`,
   :meth:`~PlotSpec.ticks`, :meth:`~PlotSpec.style`) **mutate the spec and return
   it** so they chain, and because they touch the spec — not a renderer — a tweak
@@ -52,14 +57,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 
 __all__ = [
     "Annotation",
     "Axis",
+    "Colorbar",
     "Layer",
+    "Legend",
     "PlotKind",
     "PlotSpec",
     "Plottable",
@@ -125,6 +132,28 @@ class PlotKind(StrEnum):
 _Scale = Literal["linear", "log", "symlog"]
 _Aspect = Literal["auto", "equal"]
 _Ndim = Literal[1, 2, 3]
+_CbarLoc = Literal["right", "left", "top", "bottom"]
+_LegendLoc = Literal[
+    "best",
+    "upper right",
+    "upper left",
+    "lower left",
+    "lower right",
+    "right",
+    "center left",
+    "center right",
+    "lower center",
+    "upper center",
+    "center",
+]
+
+
+def _as_pair(value: Any) -> tuple[float, float] | None:
+    """Coerce a 2-sequence to a ``(float, float)`` tuple, or pass ``None`` through."""
+    if value is None:
+        return None
+    lo, hi = value
+    return (float(lo), float(hi))
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +277,118 @@ class Annotation:
 
 
 # ---------------------------------------------------------------------------
+# Colorbar
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Colorbar:
+    r"""A typed description of the color legend for a scalar / image color channel.
+
+    A :class:`Colorbar` is the presentation of the *color* dimension — the
+    counterpart of an :class:`Axis` for a layer's ``"c"`` channel or an
+    ``IMAGE`` mark.  It is backend-neutral: it carries *what* to show, never
+    *how* a particular renderer draws it.  The numeric color range it maps lives
+    on the owning :class:`PlotSpec` as :attr:`PlotSpec.clim` (a single source of
+    truth shared by every layer), so this dataclass holds only label / location /
+    ticks / format / visibility.
+
+    Parameters
+    ----------
+    label : str, optional
+        Colorbar label (e.g. ``r"$|\nabla|$"`` or a basin index).  May carry
+        LaTeX; renderers decide how to typeset it.
+    location : {"right", "left", "top", "bottom"}, optional
+        Where the colorbar sits relative to the plot.  Default ``"right"``.
+    ticks : sequence of float, optional
+        Explicit colorbar tick locations, or ``None`` to auto-tick.
+    tickformat : str, optional
+        A backend-neutral format string for the colorbar tick labels, or
+        ``None``.
+    show : bool, optional
+        Whether to draw the colorbar at all.  Default ``True`` — a
+        :class:`Colorbar` only exists on a spec when there *is* a color channel
+        to legend, so its presence is the "draw a colorbar" signal; ``show`` lets
+        a caller suppress it without dropping the (label-carrying) object.
+    """
+
+    label: str = ""
+    location: _CbarLoc = "right"
+    ticks: Sequence[float] | None = None
+    tickformat: str | None = None
+    show: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of this colorbar."""
+        return {
+            "label": self.label,
+            "location": self.location,
+            "ticks": [float(t) for t in self.ticks] if self.ticks is not None else None,
+            "tickformat": self.tickformat,
+            "show": bool(self.show),
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> Colorbar:
+        """Rebuild a :class:`Colorbar` from :meth:`to_dict` output."""
+        ticks = d.get("ticks")
+        return cls(
+            label=d.get("label", ""),
+            location=d.get("location", "right"),
+            ticks=list(ticks) if ticks is not None else None,
+            tickformat=d.get("tickformat"),
+            show=bool(d.get("show", True)),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Legend
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Legend:
+    """A typed description of the per-layer legend.
+
+    A :class:`Legend` keys off each :attr:`Layer.label`; it carries only the
+    legend's presentation (visibility / placement / title), never the entries
+    themselves (those *are* the layer labels).
+
+    Parameters
+    ----------
+    show : bool, optional
+        Whether to draw the legend.  Default ``True`` — a :class:`Legend` only
+        exists on a spec when labelled layers warrant one.
+    location : str, optional
+        Legend placement.  One of the backend-neutral spellings
+        (``"best"``, ``"upper right"``, …).  Default ``"best"``.
+    title : str, optional
+        Legend title, or ``""`` for none.
+    """
+
+    show: bool = True
+    location: _LegendLoc = "best"
+    title: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of this legend."""
+        return {
+            "show": bool(self.show),
+            "location": self.location,
+            "title": self.title,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> Legend:
+        """Rebuild a :class:`Legend` from :meth:`to_dict` output."""
+        return cls(
+            show=bool(d.get("show", True)),
+            location=d.get("location", "best"),
+            title=d.get("title", ""),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Layer
 # ---------------------------------------------------------------------------
 
@@ -330,6 +471,18 @@ class PlotSpec:
         The horizontal / vertical axes.  Default empty :class:`Axis`.
     z : Axis, optional
         The depth axis; present iff the plot is 3D, else ``None``.
+    clim : tuple of float, optional
+        ``(vmin, vmax)`` range for the color channel (a layer's ``"c"`` field or
+        an ``IMAGE`` mark).  ``None`` auto-scales the color mapping.  This is the
+        single source of truth for the color range; a :class:`Colorbar` legends
+        it.
+    colorbar : Colorbar, optional
+        The color legend, present iff the plot has a color dimension to legend
+        (a scalar ``"c"`` channel, an ``IMAGE`` / ``SURFACE3D`` mark, or a
+        semantic image kind), else ``None``.
+    legend : Legend, optional
+        The per-layer legend, present iff a legend is wanted (typically when
+        ≥ 2 layers carry labels), else ``None``.
     title : str, optional
         Plot title.
     ndim : {1, 2, 3}, optional
@@ -360,6 +513,9 @@ class PlotSpec:
     x: Axis = field(default_factory=Axis)
     y: Axis = field(default_factory=Axis)
     z: Axis | None = None
+    clim: tuple[float, float] | None = None
+    colorbar: Colorbar | None = None
+    legend: Legend | None = None
     title: str = ""
     ndim: _Ndim = 2
     aspect: _Aspect = "auto"
@@ -367,8 +523,9 @@ class PlotSpec:
     meta: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Normalize ``kind`` to a :class:`PlotKind` member."""
+        """Normalize ``kind`` and the optional ``clim`` color range."""
         self.kind = PlotKind(self.kind)
+        self.clim = _as_pair(self.clim)
 
     # -- uniform, backend-independent tweaks (mutate + return self) ---------
 
@@ -507,6 +664,116 @@ class PlotSpec:
             lyr.style.update(kw)
         return self
 
+    def colorize(
+        self,
+        *,
+        clim: tuple[float, float] | None = None,
+        colorbar: Colorbar | bool | None = None,
+        legend: Legend | bool | None = None,
+    ) -> PlotSpec:
+        """Set the color range, colorbar, and/or legend (only the args you pass).
+
+        Like the other tweaks this mutates the spec and returns ``self`` so it
+        chains.  Each keyword defaults to the sentinel "leave unchanged".
+
+        Parameters
+        ----------
+        clim : tuple of float, optional
+            ``(vmin, vmax)`` color range, coerced to floats.  Leaves
+            :attr:`clim` unchanged when omitted.
+        colorbar : Colorbar or bool, optional
+            A :class:`Colorbar` to attach, or ``True`` to attach a default one /
+            ``False`` to drop it.  Omitting it leaves :attr:`colorbar`
+            unchanged.
+        legend : Legend or bool, optional
+            A :class:`Legend` to attach, or ``True`` to attach a default one /
+            ``False`` to drop it.  Omitting it leaves :attr:`legend` unchanged.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        if clim is not None:
+            self.clim = _as_pair(clim)
+        if colorbar is not None:
+            self.colorbar = Colorbar() if colorbar is True else (colorbar or None)
+        if legend is not None:
+            self.legend = Legend() if legend is True else (legend or None)
+        return self
+
+    # -- color / legend completeness ---------------------------------------
+
+    _COLOR_KINDS: ClassVar[frozenset[PlotKind]] = frozenset(
+        {
+            PlotKind.IMAGE,
+            PlotKind.SURFACE3D,
+            PlotKind.BASINS_IMAGE,
+            PlotKind.RECURRENCE_PLOT,
+            PlotKind.SPACETIME,
+        }
+    )
+
+    def has_color_channel(self) -> bool:
+        """Whether this spec has a color dimension to legend with a colorbar.
+
+        ``True`` when the semantic :attr:`kind` is an image-like kind
+        (``IMAGE`` / ``BASINS_IMAGE`` / ``RECURRENCE_PLOT`` / ``SPACETIME`` /
+        ``SURFACE3D``) or any :class:`Layer` is a color-mapped mark
+        (``IMAGE`` / ``SURFACE3D``) or carries a scalar ``"c"`` channel.
+        """
+        if self.kind in self._COLOR_KINDS:
+            return True
+        for lyr in self.layers:
+            if lyr.kind in (PlotKind.IMAGE, PlotKind.SURFACE3D) or "c" in lyr.data:
+                return True
+        return False
+
+    def autocolor(self) -> PlotSpec:
+        """Attach a :class:`Colorbar` and infer :attr:`clim` for a colored spec.
+
+        This is the "image / colored kinds express a colorbar + range" contract:
+        a :class:`PlotSpec` that :meth:`has_color_channel` gains a default
+        :class:`Colorbar` (if it has none) and, when its color range is not
+        already set, a :attr:`clim` computed from the finite extent of the color
+        data — the ``"c"`` channel of each layer, or the layer ``"z"`` /
+        spec-level ``z`` data for an ``IMAGE`` mark.
+
+        The method is a no-op on a spec with no color channel, never overwrites a
+        :attr:`clim` / :attr:`colorbar` the caller already set, and (like the
+        other tweaks) mutates and returns ``self`` so it chains.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        if not self.has_color_channel():
+            return self
+        if self.colorbar is None:
+            self.colorbar = Colorbar()
+        if self.clim is None:
+            self.clim = self._infer_clim()
+        return self
+
+    def _infer_clim(self) -> tuple[float, float] | None:
+        """Compute ``(vmin, vmax)`` from the finite color data, or ``None``."""
+        lo = np.inf
+        hi = -np.inf
+        for lyr in self.layers:
+            for chan in ("c", "z"):
+                arr = lyr.data.get(chan)
+                if arr is None:
+                    continue
+                finite = np.asarray(arr, dtype=float)
+                finite = finite[np.isfinite(finite)]
+                if finite.size:
+                    lo = min(lo, float(finite.min()))
+                    hi = max(hi, float(finite.max()))
+        if np.isfinite(lo) and np.isfinite(hi):
+            return (lo, hi)
+        return None
+
     # -- rendering ---------------------------------------------------------
 
     def render(self, backend: str | None = None, **backend_kw: Any) -> Any:
@@ -563,6 +830,9 @@ class PlotSpec:
             "x": self.x.to_dict(),
             "y": self.y.to_dict(),
             "z": self.z.to_dict() if self.z is not None else None,
+            "clim": list(self.clim) if self.clim is not None else None,
+            "colorbar": self.colorbar.to_dict() if self.colorbar is not None else None,
+            "legend": self.legend.to_dict() if self.legend is not None else None,
             "title": self.title,
             "ndim": self.ndim,
             "aspect": self.aspect,
@@ -588,12 +858,18 @@ class PlotSpec:
         PlotSpec
         """
         z = d.get("z")
+        clim = d.get("clim")
+        colorbar = d.get("colorbar")
+        legend = d.get("legend")
         return cls(
             kind=PlotKind(d["kind"]),
             layers=[Layer.from_dict(lyr) for lyr in d.get("layers", [])],
             x=Axis.from_dict(d["x"]) if d.get("x") is not None else Axis(),
             y=Axis.from_dict(d["y"]) if d.get("y") is not None else Axis(),
             z=Axis.from_dict(z) if z is not None else None,
+            clim=tuple(clim) if clim is not None else None,
+            colorbar=Colorbar.from_dict(colorbar) if colorbar is not None else None,
+            legend=Legend.from_dict(legend) if legend is not None else None,
             title=d.get("title", ""),
             ndim=d.get("ndim", 2),
             aspect=d.get("aspect", "auto"),
@@ -641,9 +917,9 @@ class Plottable:
 
         Tweak keywords matching a :class:`PlotSpec` tweak method
         (``xscale`` / ``yscale`` / ``zscale``, ``xlabel`` / ``ylabel`` /
-        ``zlabel`` / ``title``, ``xlim`` / ``ylim`` / ``zlim``) are applied to
-        the spec before rendering; any remaining keywords are forwarded to the
-        backend.
+        ``zlabel`` / ``title``, ``xlim`` / ``ylim`` / ``zlim``,
+        ``clim`` / ``colorbar`` / ``legend``) are applied to the spec before
+        rendering; any remaining keywords are forwarded to the backend.
 
         Parameters
         ----------
@@ -702,6 +978,9 @@ _INLINE_TWEAKS: dict[str, tuple[str, str | None]] = {
     "zticks": ("ticks", "z"),
 }
 
+# Inline ``.plot(...)`` keywords routed through :meth:`PlotSpec.colorize`.
+_COLORIZE_TWEAKS = frozenset({"clim", "colorbar", "legend"})
+
 
 def _apply_inline_tweaks(spec: PlotSpec, tweaks: dict[str, Any]) -> dict[str, Any]:
     """Apply recognized inline tweaks to ``spec``; return the leftover kwargs.
@@ -711,6 +990,9 @@ def _apply_inline_tweaks(spec: PlotSpec, tweaks: dict[str, Any]) -> dict[str, An
     """
     backend_kw: dict[str, Any] = {}
     for key, value in tweaks.items():
+        if key in _COLORIZE_TWEAKS:
+            spec.colorize(**{key: value})
+            continue
         spec_key = _INLINE_TWEAKS.get(key)
         if spec_key is None:
             backend_kw[key] = value
