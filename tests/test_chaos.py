@@ -36,6 +36,7 @@ from tsdynamics import (
     registry,
     zero_one_test,
 )
+from tsdynamics.errors import InvalidInputError
 
 LN2 = float(np.log(2.0))
 LORENZ_GAP = 0.9056  # λ₁ - λ₂ for the classic Lorenz attractor (λ₂ = 0)
@@ -218,12 +219,17 @@ def test_gali_random_ic_henon_never_crashes():
         assert g.is_chaotic()  # Hénon is chaotic → GALI₂ collapses to ~0
 
 
-def test_gali_offbasin_ic_retries_onto_attractor():
-    """An explicit IC that escapes the basin is recovered by the random-IC retry."""
-    g = gali(ts.Henon(), k=2, ic=[10.0, 10.0], n=80, seed=0)
-    assert isinstance(g, GALIResult)
-    assert np.all(np.isfinite(g.values))
-    assert g.is_chaotic()
+def test_gali_offbasin_explicit_ic_raises():
+    """An explicit IC that escapes the basin must raise, not be silently re-rolled.
+
+    GALI characterises a *specific* orbit, so a pinned ``ic`` that diverges is a
+    user error to surface (``InvalidInputError``) — never a cue to substitute a
+    different (random) orbit and hand back a result for an orbit the caller never
+    asked about (the FIX-GALI-IC contract).  The off-basin re-roll survives only
+    for the ``ic=None`` default-draw case (covered separately).
+    """
+    with pytest.raises(InvalidInputError):
+        gali(ts.Henon(), k=2, ic=[10.0, 10.0], n=80, seed=0)
 
 
 def test_gali_volume_degenerate_returns_zero():

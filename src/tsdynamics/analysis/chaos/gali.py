@@ -34,6 +34,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from tsdynamics.errors import InvalidInputError
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._result import AnalysisResult
@@ -206,11 +207,18 @@ def gali(
     ------
     NotImplementedError
         If ``system`` is neither a discrete map nor a continuous flow.
+    InvalidInputError
+        If an **explicit** ``ic`` diverges to a non-finite state (it escapes the
+        attractor's basin).  GALI characterises a *specific* orbit, so a pinned
+        ``ic`` is never silently swapped for a random one — pass an ``ic`` from a
+        known basin point, shorten ``transient``, or omit ``ic`` to roll a random
+        one.
     ValueError
         If ``k`` is outside ``[2, dim]``; if ``dt`` is passed for a map (or
-        ``n`` for a flow); or if the orbit diverges to a non-finite state
-        from every tried initial condition after the retry budget — in which
-        case pass an ``ic`` from a known basin point (or shorten ``transient``).
+        ``n`` for a flow); or, **only when ``ic`` is omitted**, if a random
+        initial condition diverges to a non-finite state from every draw after
+        the retry budget — in which case pass an ``ic`` from a known basin point
+        (or shorten ``transient``).
 
     Examples
     --------
@@ -258,37 +266,62 @@ def gali(
         run_args = (t_end, step_dt, t_burn, int(n_internal))
         discrete = False
 
-    # Track the tangent dynamics from a point that stays on the attractor.  An
-    # orbit that escapes the basin (common when the IC is random — many systems
-    # carry no ``default_ic``) blows up to a non-finite state and frame, so the
-    # runner soft-fails and we retry from a fresh seeded random IC, matching the
-    # map convention in :class:`~tsdynamics.derived.TangentSystem` (the seed
-    # keeps the retries reproducible).
+    def _run(x0: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+        """Track the tangent dynamics from ``x0``; ``None`` on a diverged orbit/frame."""
+        w = w0.copy()
+        return (
+            _gali_map(system, x0, w, *run_args)
+            if mode == "map"
+            else _gali_flow(system, x0, w, *run_args)
+        )
+
+    def _wrap(result: tuple[np.ndarray, np.ndarray]) -> GALIResult:
+        times, values = result
+        return GALIResult(
+            k=k,
+            times=times,
+            values=values,
+            is_discrete=discrete,
+            meta=AnalysisResult.build_meta(system, analysis="gali", k=k),
+        )
+
+    # GALI characterises a *specific* orbit.  When the caller pins the initial
+    # condition with an explicit ``ic`` we honour it exactly: if that orbit
+    # escapes the basin and blows up to a non-finite state/frame we must NOT
+    # silently substitute a different (random) orbit — that would hand back a
+    # result for an orbit the caller never asked about.  Raise instead, so the
+    # caller learns their ``ic`` does not stay on the attractor.
+    if ic is not None:
+        x = np.asarray(system.resolve_ic(ic), dtype=float).ravel()
+        result = _run(x)
+        if result is not None:
+            return _wrap(result)
+        raise InvalidInputError(
+            f"gali: the explicit ic {x.tolist()!r} diverges to a non-finite state for "
+            f"{type(system).__name__} (it escapes the attractor's basin), so GALI cannot "
+            "be measured for that orbit. Pass an `ic` from a known basin point, shorten "
+            "the burn-in via `transient`, or omit `ic` to roll a random one."
+        )
+
+    # With ``ic=None`` the initial condition is the system's own resolution (its
+    # ``self.ic`` / ``default_ic`` if any, else a random draw — many systems carry
+    # no ``default_ic``), so a first attempt landing outside the basin is expected.
+    # Retry from a fresh *seeded* random IC, matching the map convention in
+    # :class:`~tsdynamics.derived.TangentSystem` (the seed keeps the retries
+    # reproducible).  Only the off-basin *default-draw* case re-rolls.
     max_retries = 10
     for attempt in range(max_retries):
         x = (
-            np.asarray(system.resolve_ic(ic), dtype=float).ravel()
+            np.asarray(system.resolve_ic(None), dtype=float).ravel()
             if attempt == 0
             else rng.random(dim)
         )
-        w = w0.copy()
-        result = (
-            _gali_map(system, x, w, *run_args)
-            if mode == "map"
-            else _gali_flow(system, x, w, *run_args)
-        )
+        result = _run(x)
         if result is not None:
-            times, values = result
-            return GALIResult(
-                k=k,
-                times=times,
-                values=values,
-                is_discrete=discrete,
-                meta=AnalysisResult.build_meta(system, analysis="gali", k=k),
-            )
+            return _wrap(result)
 
     raise ValueError(
-        f"gali: {type(system).__name__} orbit diverges from every tried IC after "
+        f"gali: {type(system).__name__} orbit diverges from every tried random IC after "
         f"{max_retries} attempts — pass an `ic` from a known basin point, or shorten "
         "the burn-in via `transient`."
     )
