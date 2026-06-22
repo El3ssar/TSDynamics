@@ -95,7 +95,7 @@ class HyperXu(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, *, a=10, b=40, c=2.5, d=2, e=16):
+    def _equations(Y, t, *, a, b, c, d, e):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + w
         ydot = b * x + e * x * z
@@ -109,7 +109,7 @@ class HyperWang(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, *, a=10, b=40, c=2.5, d=10.6, e=4):
+    def _equations(Y, t, *, a, b, c, d, e):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = -x * z + b * x + w
@@ -123,7 +123,7 @@ class HyperPang(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, *, a=36, b=3, c=20, d=2):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = -x * z + c * y + w
@@ -137,7 +137,7 @@ class HyperLu(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, *, a=36, b=3, c=20, d=1.3):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x + w
         ydot = -x * z + c * y
@@ -204,8 +204,6 @@ class NewtonLiepnik(ContinuousSystem):
 
 
 class Robinson(ContinuousSystem):
-    # params = {"a": 0.5, "b": 0.2, "c": 0.1, "d": 0.3, "v": 0.05}
-    # params = {"a": -0.5, "b": -1.0, "c": 3.0, "d": 1.0, "v": -1.0}
     params = {"a": -0.42, "b": -1.1, "c": 0.5, "d": 0.3, "v": -1.0}
 
     dim = 3

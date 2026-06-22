@@ -85,9 +85,6 @@ class StickSlipOscillator(ContinuousSystem):
     }
     dim = 3
 
-    def _t(self, v):
-        return self.t0 * sign(v) - self.alpha * v + self.beta * v**3
-
     @staticmethod
     def _equations(Y, t, *, a, alpha, b, beta, eps, gamma, t0, vs, w):
         x, v, th = Y(0), Y(1), Y(2)
