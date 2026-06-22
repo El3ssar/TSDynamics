@@ -307,6 +307,13 @@ All three families + all derived wrappers implement:
   `run.integrate` resolves `method=` through the solver registry and lowers the
   tape `with_jacobian=True` for the implicit stiff kernels (`bdf` /`rosenbrock` /
   `trbdf2`); stiff catalogue systems declare `_default_method = "bdf"`.
+  **`method="auto"`** (stream FIX-AUTOSTIFF) is wired into `run.integrate`: it
+  lowers the problem, probes the Jacobian spectrum at the start state via
+  `solvers.recommend` (the one-point `solvers.is_stiff` heuristic) and selects
+  `bdf` on a stiff RHS / `rk45` otherwise — the resolved kernel is recorded in
+  `traj.meta["method"]`. It is a *heuristic* (IC-dependent), so a reliably-stiff
+  system should still declare `_default_method`; maps (no solver kernel) treat
+  `"auto"` as a no-op.
 
 ### `DiscreteMap` extras
 
@@ -725,7 +732,7 @@ run; nothing to wipe.
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |
 | Tight tolerances on DDE | `rtol=atol=1e-3` is the safe start. |
 | `set_state` on a DDE | Raises by design — use `reinit(u)`. |
-| Stiff ODE: which method? | `"bdf"` is the **variable-order (1–5) BDF** and the right default for stiff ODEs (far faster than the fixed-order `rosenbrock`/`trbdf2`, which stay selectable). `run.integrate` auto-builds the Jacobian-carrying tape for the implicit kernels, so `integrate(method="bdf")` "just works". The legacy SciPy name `"LSODA"` is no longer a method — declare `_default_method = "bdf"`. |
+| Stiff ODE: which method? | `"bdf"` is the **variable-order (1–5) BDF** and the right default for stiff ODEs (far faster than the fixed-order `rosenbrock`/`trbdf2`, which stay selectable). `run.integrate` auto-builds the Jacobian-carrying tape for the implicit kernels, so `integrate(method="bdf")` "just works". The legacy SciPy name `"LSODA"` is no longer a method — declare `_default_method = "bdf"`. Pass `method="auto"` to let `solvers.recommend` probe stiffness and pick `bdf`/`rk45` — a one-point heuristic, so prefer `_default_method` for a system known to be stiff. |
 | Param change ignored by a live stepper | `reinit()` after parameter changes (or use `with_params`). |
 | Orbit diagram over a DDE wrapper | Re-lowers the tape per parameter value — slow by design, document it. |
 | New DDE fails `test_dde_histories_complete` | Add its history to `tests/_sampling.py`. |

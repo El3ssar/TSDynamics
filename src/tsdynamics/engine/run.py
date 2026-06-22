@@ -246,6 +246,44 @@ def _primary_tape(problem: Problem) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _recommend_method(problem: Problem) -> Any:
+    """Resolve ``method="auto"`` to a kernel by a-priori auto-stiffness selection.
+
+    The auto-stiffness wiring (ticket FIX-AUTOSTIFF): probe the problem's Jacobian
+    spectrum at its start state and let the solver registry recommend an implicit
+    kernel (``bdf``) on a stiff RHS or the explicit default (``rk45``) otherwise
+    (:func:`tsdynamics.solvers.recommend`).  The probe is the one-point heuristic
+    :func:`tsdynamics.solvers.is_stiff` — useful but not a guarantee (see its
+    docstring): the verdict is read at the integration's *own* start state
+    (``problem.ic``), so a system declares a stiff default via ``_default_method``
+    when the heuristic is too coarse for it.
+
+    Maps iterate without a solver kernel, so ``"auto"`` is a no-op there: it
+    resolves to the explicit ODE default the map branch ignores (keeping a literal
+    ``method="auto"`` from raising on a map rather than meaning anything).
+
+    Parameters
+    ----------
+    problem : Problem
+        The already-lowered problem (built once by :func:`integrate`).
+
+    Returns
+    -------
+    solvers.Resolution
+        The recommended kernel, carrying its ``build_kwargs``.
+    """
+    from tsdynamics import solvers
+
+    if isinstance(problem, MapProblem):
+        return solvers.resolve(solvers.DEFAULT_METHOD["ode"])
+    return solvers.recommend(
+        problem.system,
+        family=problem.family,
+        ic=problem.ic,
+        t=getattr(problem, "t0", 0.0),
+    )
+
+
 def integrate(
     system_or_problem: Any,
     *,
@@ -285,7 +323,11 @@ def integrate(
     ic : array-like, optional
         Initial state (only used when building a Problem from a system).
     method : str, default "RK45"
-        Solver name, resolved by the solver registry (stream C-SOLV).
+        Solver name, resolved by the solver registry (stream C-SOLV).  The
+        special value ``"auto"`` selects a kernel by a-priori auto-stiffness:
+        the Jacobian spectrum at the start state is probed and an implicit
+        kernel (``bdf``) is used on a stiff RHS, the explicit default (``rk45``)
+        otherwise (:func:`tsdynamics.solvers.recommend`; a one-point heuristic).
     rtol, atol : float
         Solver tolerances.
     backend : str, default "interp"
@@ -313,16 +355,23 @@ def integrate(
     backend = resolve_backend(backend)
 
     # Resolve the solver name to a canonical engine kernel (the C-SOLV → C-FAM
-    # wiring): this normalises spellings/aliases (e.g. "RK45" → "rk45",
-    # "dopri5" → "rk45") and rejects unknown or v2-only names (e.g. "LSODA") with
-    # a listing error + a stiff hint pointing at "bdf".  Maps ignore `method` and
-    # an SDE problem is refused below, so resolving is harmless in both cases.
+    # wiring).  A literal ``method="auto"`` triggers a-priori **auto-stiffness**
+    # selection: the problem is lowered first so the Jacobian spectrum at the start
+    # state can be probed (``solvers.recommend`` → ``_recommend_method``), picking
+    # the implicit ``bdf`` kernel on a stiff RHS and the explicit ``rk45``
+    # otherwise.  Every other name normalises spellings/aliases (e.g. "RK45" →
+    # "rk45", "dopri5" → "rk45") and rejects unknown or v2-only names (e.g.
+    # "LSODA") with a listing error + a stiff hint pointing at "bdf".  Maps ignore
+    # `method` and an SDE problem is refused below, so resolving is harmless there.
     from tsdynamics import solvers
 
-    resolution = solvers.resolve(method)
+    if solvers.normalize(method) == "auto":
+        problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
+        resolution = _recommend_method(problem)
+    else:
+        resolution = solvers.resolve(method)
+        problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
     method = resolution.name
-
-    problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
 
     # The implicit ODE kernels (bdf/rosenbrock/trbdf2) need ∂f/∂u on the tape, or
     # the engine refuses the step.  Rebuild once with the Jacobian when the
