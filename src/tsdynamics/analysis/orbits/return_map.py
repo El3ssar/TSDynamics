@@ -168,7 +168,10 @@ def return_map(
         Integration horizon and detection / output step used when ``system`` is
         a flow.  In extremum mode ``dt`` only needs to resolve the peaks; the
         recorded value is sharpened by parabolic interpolation, so a coarse grid
-        still gives accurate extrema.
+        still gives accurate extrema.  In ``method="poincare"`` mode only ``dt``
+        is used (the section is marched until ``n`` crossings); ``final_time``,
+        ``ic``, ``transient`` and ``**integrate_kwargs`` apply to extremum mode
+        and are ignored.
     transient : float, default 0.0
         Elapsed **time** discarded before recording extrema (``method="max"`` /
         ``"min"``, system input).

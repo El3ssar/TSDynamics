@@ -146,8 +146,9 @@ def fixed_points(
 
     Returns
     -------
-    list[FixedPoint]
-        Sorted by coordinate.
+    FixedPointSet
+        A list-like ``CollectionResult`` of :class:`FixedPoint`, sorted by
+        coordinate.
 
     Examples
     --------
@@ -183,7 +184,6 @@ def fixed_points(
 
     if continuous:
         rhs, jac = _c.flow_fns(system)
-        eye = np.eye(dim)
 
         def residual(x: np.ndarray) -> np.ndarray:
             return rhs(x, 0.0)

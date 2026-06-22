@@ -22,7 +22,7 @@ import numpy as np
 
 from ...data import Ball, Box, Grid, set_distance
 from .._result import AnalysisResult, CollectionResult
-from .attractors import Attractor
+from .attractors import Attractor, _reject_unsupported
 from .basins import basin_fractions
 
 if TYPE_CHECKING:
@@ -145,6 +145,7 @@ def continuation(
     G. Datseris, K. L. Rossi and A. Wagemakers, "Framework for global stability
     analysis of dynamical systems", *Chaos* **33**, 073151 (2023).
     """
+    _reject_unsupported(system, "continuation")
     values = np.asarray(values, dtype=float)
     fractions: dict[int, list[float]] = {}
     per_value: list[dict[int, Attractor]] = []
@@ -247,9 +248,10 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> Col
 
     Returns
     -------
-    list of dict
-        Each event is ``{"value", "attractor", "kind", "before", "after"}`` with
-        ``kind`` in ``{"appear", "disappear"}``, sorted by parameter value.
+    CollectionResult
+        Behaves as a ``list of dict``; each event is
+        ``{"value", "attractor", "kind", "before", "after"}`` with ``kind`` in
+        ``{"appear", "disappear"}``, sorted by parameter value.
     """
     events: list[dict[str, Any]] = []
     vals = result.values

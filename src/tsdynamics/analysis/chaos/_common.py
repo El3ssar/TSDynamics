@@ -1,11 +1,12 @@
 r"""
 Shared plumbing for the chaos indicators.
 
-Holds the observable coercion the 0--1 test consumes, the tangent-dynamics
-primitives GALI and expansion entropy share (a map Jacobian/step pair and an
-RK4 variational step for flows), and the small linear-algebra helpers
-(``_orthonormal`` initial frame, the wedge/expansion volumes, a least-squares
-line fit).
+Holds the observable coercion the 0--1 test consumes and the small
+linear-algebra helpers (``_orthonormal`` initial frame, the wedge/expansion
+volumes, a least-squares line fit).  The tangent-dynamics primitives GALI and
+expansion entropy share (a map Jacobian/step pair and the RK4 variational step
+for flows) live once in :mod:`tsdynamics.analysis._tangent` and are re-exported
+here under the private names the indicators use.
 
 Only :class:`~tsdynamics.families.DiscreteMap` (via its compiled ``_step`` /
 ``_jacobian``) and :class:`~tsdynamics.families.ContinuousSystem` (via its
@@ -16,17 +17,23 @@ entry points.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
+# The family-agnostic tangent-dynamics primitives are shared with the A-FP
+# stream (one home in ``analysis._tangent``); re-exported here under the private
+# names the A-CHAOS indicators (gali / expansion) consume via ``_c.<name>``.
+from tsdynamics.analysis._tangent import flow_fns as _flow_fns  # noqa: F401
+from tsdynamics.analysis._tangent import map_fns as _map_fns  # noqa: F401
+from tsdynamics.analysis._tangent import rk4_state as _rk4_state  # noqa: F401
+from tsdynamics.analysis._tangent import rk4_variational as _rk4_variational  # noqa: F401
 from tsdynamics.data import Box
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    from tsdynamics.families import ContinuousSystem, DiscreteMap, ParamSet, SystemBase
+    from tsdynamics.families import SystemBase
 
 # ── observable coercion (0--1 test) ──────────────────────────────────────────
 
@@ -73,128 +80,10 @@ def _as_observable(data: object, component: int | None = None) -> np.ndarray:
     return arr
 
 
-# ── tangent dynamics: maps ───────────────────────────────────────────────────
-
-
-def _unwrap(x: np.ndarray, dim: int) -> Any:
-    """Present the state to a compiled ``_step``/``_jacobian`` in its native form.
-
-    One-dimensional maps are written for a scalar argument (``x = X``);
-    higher-dimensional maps unpack an array (``x, y = X[0], X[1]``).
-    """
-    a = np.asarray(x, dtype=float).ravel()
-    return float(a[0]) if dim == 1 else a
-
-
-def _map_fns(
-    system: DiscreteMap,
-) -> tuple[Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray]]:
-    """Return ``(step, jac)`` callables for a discrete map.
-
-    ``step(x) -> ndarray (dim,)`` advances one iteration; ``jac(x) -> ndarray
-    (dim, dim)`` is the Jacobian at ``x``.  Both wrap the class's compiled
-    ``_step`` / ``_jacobian`` (the same convention
-    :class:`~tsdynamics.derived.TangentSystem` uses).  A map without an analytic
-    ``_jacobian`` falls back to a forward finite difference of ``_step``.
-    """
-    cls = type(system)
-    dim = int(cast("int", system.dim))
-    step_raw = cls._step
-    jac_raw = getattr(cls, "_jacobian", None)
-    params = tuple(cast("ParamSet", system.params).as_tuple())
-
-    def step(x: np.ndarray) -> np.ndarray:
-        return np.asarray(step_raw(_unwrap(x, dim), *params), dtype=float).ravel()
-
-    if jac_raw is not None:
-
-        def jac(x: np.ndarray) -> np.ndarray:
-            j = np.asarray(jac_raw(_unwrap(x, dim), *params), dtype=float)
-            return np.atleast_2d(j).reshape(dim, dim)
-
-    else:
-
-        def jac(x: np.ndarray) -> np.ndarray:
-            return _finite_diff_jac(step, x, dim)
-
-    return step, jac
-
-
-def _finite_diff_jac(
-    step: Callable[[np.ndarray], np.ndarray], x: np.ndarray, dim: int, eps: float = 1e-7
-) -> np.ndarray:
-    """Forward finite-difference Jacobian of a map step (fallback only)."""
-    x = np.asarray(x, dtype=float).ravel()
-    base = step(x)
-    out = np.empty((dim, dim))
-    for j in range(dim):
-        xp = x.copy()
-        h = eps * (1.0 + abs(xp[j]))
-        xp[j] += h
-        out[:, j] = (step(xp) - base) / h
-    return out
-
-
-# ── tangent dynamics: flows ──────────────────────────────────────────────────
-
-
-def _flow_fns(
-    system: ContinuousSystem,
-) -> tuple[Callable[[np.ndarray, float], np.ndarray], Callable[[np.ndarray, float], np.ndarray]]:
-    """Return ``(rhs, jac)`` for a flow: ``rhs(u, t)`` and ``jac(u, t)``.
-
-    Both come from the SymEngine-lambdified numeric forms
-    (:meth:`ContinuousSystem._rhs_numeric` / :meth:`ContinuousSystem.jacobian`),
-    so the variational integrator is self-contained (no engine tape lowering)
-    and runs in the fast tier.  Parameters are captured at call time.
-    """
-    rhs = system._rhs_numeric()
-
-    def jac(u: np.ndarray, t: float) -> np.ndarray:
-        return system.jacobian(u, t)
-
-    return rhs, jac
-
-
-def _rk4_state(
-    rhs: Callable[[np.ndarray, float], np.ndarray], x: np.ndarray, t: float, h: float
-) -> np.ndarray:
-    """One classic RK4 step of ``dx/dt = rhs(x, t)`` (state only; for burn-in)."""
-    k1 = rhs(x, t)
-    k2 = rhs(x + 0.5 * h * k1, t + 0.5 * h)
-    k3 = rhs(x + 0.5 * h * k2, t + 0.5 * h)
-    k4 = rhs(x + h * k3, t + h)
-    return cast("np.ndarray", x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4))
-
-
-def _rk4_variational(
-    rhs: Callable[[np.ndarray, float], np.ndarray],
-    jac: Callable[[np.ndarray, float], np.ndarray],
-    x: np.ndarray,
-    m: np.ndarray,
-    t: float,
-    h: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    r"""One RK4 step of the augmented system ``dx/dt = f``, ``dM/dt = J(x) M``.
-
-    ``M`` holds the tangent vectors as columns (shape ``(dim, ncol)``); the same
-    fundamental-matrix flow drives GALI (``ncol = k``) and expansion entropy
-    (``ncol = dim``).
-    """
-    k1x = rhs(x, t)
-    k1m = jac(x, t) @ m
-    x2, m2, t2 = x + 0.5 * h * k1x, m + 0.5 * h * k1m, t + 0.5 * h
-    k2x = rhs(x2, t2)
-    k2m = jac(x2, t2) @ m2
-    x3, m3 = x + 0.5 * h * k2x, m + 0.5 * h * k2m
-    k3x = rhs(x3, t2)
-    k3m = jac(x3, t2) @ m3
-    x4, m4, t4 = x + h * k3x, m + h * k3m, t + h
-    k4x = rhs(x4, t4)
-    k4m = jac(x4, t4) @ m4
-    x_new = x + (h / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x)
-    m_new = m + (h / 6.0) * (k1m + 2.0 * k2m + 2.0 * k3m + k4m)
-    return x_new, m_new
+# ── tangent dynamics ─────────────────────────────────────────────────────────
+# ``_unwrap`` / ``_map_fns`` / ``_finite_diff_jac`` / ``_flow_fns`` /
+# ``_rk4_state`` / ``_rk4_variational`` are re-exported from
+# ``analysis._tangent`` (the shared home) at the top of this module.
 
 
 # ── linear algebra ───────────────────────────────────────────────────────────

@@ -124,7 +124,7 @@ class TestEnsemble:
 
 
 # ---------------------------------------------------------------------------
-# TangentSystem on maps (fast — numba only)
+# TangentSystem on maps (fast — pure-NumPy variational iteration)
 # ---------------------------------------------------------------------------
 
 
@@ -153,7 +153,7 @@ class TestTangentMap:
 
 
 # ---------------------------------------------------------------------------
-# Flow wrappers (slow — JiTCODE compile)
+# Flow wrappers (slow — engine integration runtime)
 # ---------------------------------------------------------------------------
 
 

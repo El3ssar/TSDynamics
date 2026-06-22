@@ -136,7 +136,8 @@ class DDEProblem:
     The tape is an ordinary RHS over ``dim + len(delay_slots)`` inputs; the
     engine fills inputs ``dim … dim + n_slots - 1`` each step from the history
     buffer, as directed by :attr:`delay_slots`.  Parameters are folded into the
-    tape (``tape.n_param == 0``), matching the v2 DDE compile path.
+    tape (``tape.n_param == 0``): a delay value bakes into the tape, so a DDE
+    re-lowers on any parameter change and carries no runtime parameter vector.
 
     Attributes
     ----------
@@ -326,7 +327,9 @@ def sde_problem(
     ----------
     system : object
         Anything exposing ``_drift`` / ``_diffusion`` staticmethods plus
-        ``dim`` / ``params`` (the SDE family base class, stream E-SDE).
+        ``dim`` / ``params`` — the
+        :class:`~tsdynamics.families.stochastic.StochasticSystem` contract
+        (duck-typed so the engine layer stays below ``families``).
     ic : array-like, optional
         Initial state; resolved via ``system.resolve_ic``.
     t0 : float, default 0.0
@@ -390,8 +393,10 @@ def build_problem(system: Any, **kwargs: Any) -> Problem:
 def _is_sde(system: Any) -> bool:
     """Whether ``system`` is a diagonal-Itô SDE (defines ``_drift`` + ``_diffusion``).
 
-    The SDE family base class is not yet imported here (it lands with stream
-    E-SDE), so detection is duck-typed on the contract methods.
+    Detection is duck-typed on the contract methods rather than an
+    ``isinstance(system, StochasticSystem)`` check, a deliberate layering choice:
+    the engine sits below ``families`` in the import graph, so it must not import
+    the family base class.
     """
     cls = type(system)
     return hasattr(cls, "_drift") and hasattr(cls, "_diffusion")

@@ -93,7 +93,7 @@ od = ts.orbit_diagram(ts.Logistic(), "r", np.linspace(2.5, 4.0, 600))
 x, y = od.flat()
 
 # Poincaré section of the Rössler attractor (root-refined crossings)
-section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), steps=500)
+section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=500)
 
 # Fixed points of the Hénon map, with stability
 ts.fixed_points(ts.Henon())

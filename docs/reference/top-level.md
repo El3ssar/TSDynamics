@@ -66,7 +66,7 @@ programmatically through the [registry](registry.md).
 `tsdynamics.analysis`, `tsdynamics.registry`, and `tsdynamics.utils` are
 importable as attributes. Lower-level surface that is deliberately *not*
 re-exported at the top level — `SystemBase`, `ParamSet`, `MetaStore`, the
-`System` protocol, `staticjit` — lives under `tsdynamics.families` and
-`tsdynamics.utils`; see [Base classes](base.md) and [Utilities](utils.md).
+`System` protocol — lives under `tsdynamics.families`; see
+[Base classes](base.md) and [Utilities](utils.md).
 
 `tsdynamics.__version__` is the installed package version.

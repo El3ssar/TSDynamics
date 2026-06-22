@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 
 from .._result import ArrayResult
-from ._common import _as_channels, _as_series, _is_trajectory
+from ._common import _as_channels, _as_series, _delay_columns, _is_trajectory
 
 __all__ = ["Embedding", "embed"]
 
@@ -95,8 +95,9 @@ def embed(
 
     Returns
     -------
-    ndarray, shape (M, sum(dimension))
-        The delay-coordinate matrix, one reconstructed state per row, in temporal
+    Embedding
+        The delay-coordinate matrix (behaves as an ``(M, sum(dimension))``
+        ``ndarray``), one reconstructed state per row, in temporal
         order.  ``M = N - max_c (m_c - 1) * tau_c`` is the number of rows for which
         every channel's full delay window is in range.  The columns are grouped by
         channel: channel ``c`` contributes ``m_c`` consecutive columns
@@ -191,13 +192,7 @@ def _embed_single(series: np.ndarray, m: int, tau: int) -> np.ndarray:
     n = series.size
     span = (m - 1) * tau
     _validate([m], [tau], n, span)
-    rows = n - span
-    # Column j is the series shifted by j*tau; build without a Python loop over rows.
-    out = np.empty((rows, m), dtype=float)
-    for j in range(m):
-        start = j * tau
-        out[:, j] = series[start : start + rows]
-    return out
+    return _delay_columns(series, m, tau, n - span)
 
 
 def __dir__() -> list[str]:

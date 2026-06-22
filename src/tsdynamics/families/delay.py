@@ -280,6 +280,45 @@ class DelaySystem(SystemBase, ABC):
         return traj.after(transient) if transient > 0 else traj
 
     # ------------------------------------------------------------------ #
+    # Trajectory production — the canonical ``run`` verb
+    # ------------------------------------------------------------------ #
+
+    def run(
+        self,
+        final_time: float = 100.0,
+        dt: float = 0.02,
+        **kwargs: Any,
+    ) -> Trajectory:
+        """
+        Produce a trajectory — the one canonical verb for every family.
+
+        ``run`` is the unified trajectory producer: it answers the same call for
+        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
+        delay system (this family) it integrates the DDE, so ``run`` is a thin
+        alias of :meth:`integrate` and forwards every keyword to it unchanged.
+
+        Parameters
+        ----------
+        final_time : float
+            Integration end time. Default 100.0.
+        dt : float
+            Output sampling interval.
+        **kwargs
+            Forwarded verbatim to :meth:`integrate` (``ic``, ``history``,
+            ``rtol``, ``atol``, ``backend``, ``method``).
+
+        Returns
+        -------
+        Trajectory
+            Identical to :meth:`integrate` — ``run`` adds no behaviour.
+
+        See Also
+        --------
+        integrate : The family-specific spelling (a permanent alias of ``run``).
+        """
+        return self.integrate(final_time=final_time, dt=dt, **kwargs)
+
+    # ------------------------------------------------------------------ #
     # Integration
     # ------------------------------------------------------------------ #
 

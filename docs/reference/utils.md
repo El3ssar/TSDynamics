@@ -1,14 +1,10 @@
 ---
-description: API reference for tsdynamics.utils — the staticjit decorator and sagitta-based timestep estimation.
+description: API reference for tsdynamics.utils — sagitta-based timestep estimation.
 ---
 
 <span class="ts-kicker">Reference</span>
 
 # Utilities
-
-## JIT decorator
-
-::: tsdynamics.utils.general.staticjit
 
 ## Timestep estimation
 

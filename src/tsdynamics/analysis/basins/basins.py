@@ -31,7 +31,13 @@ import numpy as np
 from ...data import Ball, Box, Grid, grid_points, sampler
 from .._result import AnalysisResult
 from ._common import _apply_merge, _recurrence_grid
-from .attractors import DIVERGED, AttractorSet, _AttractorMapper, resolve_merge_tol
+from .attractors import (
+    DIVERGED,
+    AttractorSet,
+    _AttractorMapper,
+    _reject_unsupported,
+    resolve_merge_tol,
+)
 
 __all__ = [
     "BasinFractions",
@@ -265,8 +271,10 @@ def basins_of_attraction(
     G. Datseris and A. Wagemakers, "Effortless estimation of basins of
     attraction", *Chaos* **32**, 023104 (2022).
     """
+    _reject_unsupported(system, "basins_of_attraction")
     if recurrence is None:
-        cellgrid = _recurrence_grid(region, region.counts)
+        # region is a Grid → keeps its own counts (resolution arg is ignored).
+        cellgrid = _recurrence_grid(region)
     else:
         cellgrid = _recurrence_grid(recurrence, recurrence_resolution)
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
@@ -287,7 +295,7 @@ def basins_of_attraction(
         labels=labels,
         grid=region,
         attractors=attractors,
-        meta=AnalysisResult.build_meta(system, analysis="basins_of_attraction"),
+        meta=AnalysisResult.build_meta(system, analysis="basins_of_attraction", seed=seed),
     )
 
 
@@ -345,6 +353,7 @@ def basin_fractions(
     P. J. Menck, J. Heitzig, N. Marwan and J. Kurths, "How basin stability
     complements the linear-stability paradigm", *Nature Physics* **9**, 89 (2013).
     """
+    _reject_unsupported(system, "basin_fractions")
     cellgrid = _recurrence_grid(region, resolution)
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
     draw = sampler(region, seed=seed)

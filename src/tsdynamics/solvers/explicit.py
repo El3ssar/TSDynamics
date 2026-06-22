@@ -9,8 +9,8 @@ names the Rust kernel the engine dispatches to (here, the kernel name *is* the
 
 Importing this module registers the specs (the F2 directory scan imports it),
 so dropping a kernel here makes it resolvable by ``method=`` with no central
-table to edit (ROADMAP §4d).  The :func:`tests.test_solvers` registry-parity
-test asserts these stay in lock-step with the Rust ``register_solver!`` lines.
+table to edit (ROADMAP §4d).  The registry-parity test in ``tests/test_solvers.py``
+asserts these stay in lock-step with the Rust ``register_solver!`` lines.
 """
 
 from __future__ import annotations

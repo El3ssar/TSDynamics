@@ -1,7 +1,6 @@
 import numpy as np
 
 from tsdynamics.families import DiscreteMap
-from tsdynamics.utils import staticjit
 
 
 class Henon(DiscreteMap):
@@ -28,12 +27,12 @@ class Henon(DiscreteMap):
         "source": "Sprott (2003), Chaos and Time-Series Analysis",
     }
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):
         x, y = X[0], X[1]
         return (1.0 - a * x**2 + y, b * x)
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         x, y = X[0], X[1]
         return ((-2.0 * a * x, 1.0), (b, 0.0))
@@ -43,12 +42,12 @@ class Ulam(DiscreteMap):
     params = {"a": 1.0, "b": 2.0}
     dim = 1
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):
         x = X
         return a - b * x**2
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         x = X
         return [-2 * b * x]
@@ -67,8 +66,9 @@ class Ikeda(DiscreteMap):
 
     params = {"a": 0.4, "b": 6.0, "u": 0.9}
     dim = 2
+    reference = "Ikeda (1979), Opt. Commun. 30, 257-261"
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b, u):
         x, y = X
         t = a - b / (1 + x**2 + y**2)
@@ -76,12 +76,12 @@ class Ikeda(DiscreteMap):
         yp = u * (x * np.sin(t) + y * np.cos(t))
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b, u):
         x, y = X
         denom = 1.0 + x**2 + y**2
         t = a - b / denom
-        # ∂t/∂x = 2bx / (1+x²+y²)²    (positive sign — earlier code had this wrong)
+        # ∂t/∂x = 2bx / (1+x²+y²)²    (positive sign)
         dt_dx = 2.0 * b * x / denom**2
         dt_dy = 2.0 * b * y / denom**2
 
@@ -117,14 +117,14 @@ class Tinkerbell(DiscreteMap):
         "source": "chaotic at default parameters",
     }
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b, c, d):
         x, y = X
         xp = x**2 - y**2 + a * x + b * y
         yp = 2 * x * y + c * x + d * y
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b, c, d):
         x, y = X
         row1 = [2 * x + a, -2 * y + b]
@@ -135,15 +135,16 @@ class Tinkerbell(DiscreteMap):
 class Gingerbreadman(DiscreteMap):
     params = {}
     dim = 2
+    reference = "Devaney (1984), Physica D 10, 387-393"
 
-    @staticjit
+    @staticmethod
     def _step(X):
         x, y = X
         xp = 1 - y + np.abs(x)
         yp = x
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X):
         x, y = X
         row1 = [np.sign(x), -1]
@@ -154,17 +155,20 @@ class Gingerbreadman(DiscreteMap):
 class Zaslavskii(DiscreteMap):
     params = {"eps": 5.0, "nu": 0.2, "r": 2.0}
     dim = 2
+    reference = "Zaslavsky (1978), Phys. Lett. A 69, 145-147"
 
-    @staticjit
+    @staticmethod
     def _step(X, eps, nu, r):
         x, y = X
         mu = (1 - np.exp(-r)) / r
         xp = x + nu * (1 + mu * y) + eps * nu * mu * np.cos(2 * np.pi * x)
+        # Wrap with a modulus just below 1 (not exactly 1.0) so the result stays
+        # strictly inside [0, 1) and never lands on the periodic boundary.
         xp = xp % 0.99999995
         yp = np.exp(-r) * (y + eps * np.cos(2 * np.pi * x))
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, eps, nu, r):
         x, y = X
         mu = (1 - np.exp(-r)) / r
@@ -183,15 +187,16 @@ class Zaslavskii(DiscreteMap):
 class Chirikov(DiscreteMap):
     params = {"k": 0.971635}
     dim = 2
+    reference = "Chirikov (1979), Phys. Rep. 52, 263-379"
 
-    @staticjit
+    @staticmethod
     def _step(X, k):
         p, x = X
         pp = p + k * np.sin(x)
         xp = x + pp
         return pp, xp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, k):
         # x' = x + p' inherits the p'-row derivatives
         p, x = X
@@ -211,7 +216,7 @@ class FoldedTowel(DiscreteMap):
         "source": "hyperchaotic map: two positive exponents",
     }
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b, c, d, e, f, g):
         x, y, z = X
         xp = a * x * (1 - x) - b * (y + c) * (1 - 2 * z)
@@ -219,7 +224,7 @@ class FoldedTowel(DiscreteMap):
         zp = f * z * (1 - z) + g * y
         return xp, yp, zp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b, c, d, e, f, g):
         x, y, z = X
         row1 = [a * (1 - 2 * x), -b * (1 - 2 * z), 2 * b * (y + c)]
@@ -242,7 +247,7 @@ class GeneralizedHenon(DiscreteMap):
     }
     dim = 3
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):
         x, y, z = X
         xp = a - y**2 - b * z
@@ -250,7 +255,7 @@ class GeneralizedHenon(DiscreteMap):
         zp = y
         return xp, yp, zp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         x, y, z = X
         row1 = [0, -2 * y, -b]

@@ -1,7 +1,8 @@
 """Coverage for the symbolic→IR compiler (:mod:`tsdynamics.engine.compile`).
 
 Runs without the compiled Rust engine: lowering needs only SymEngine + the
-jitcode/jitcdde symbols, and the reference evaluator is pure Python.  This is the
+engine-native symbols (``engine.symbols.state_time_symbols``), and the reference
+evaluator is pure Python.  This is the
 fast-tier guard that the whole ODE catalogue lowers to a well-formed tape whose
 reference evaluation reproduces the symbolic RHS (and analytic Jacobian) to
 machine precision — the F1/E6 correctness contract — plus the map/DDE/SDE
@@ -390,20 +391,19 @@ def test_python_branch_on_state_raises_tape_compile_error() -> None:
     forces a Boolean truth value of a symbolic Relational.
     """
     from tsdynamics.families import DiscreteMap
-    from tsdynamics.utils import staticjit
 
     class _PyBranchMap(DiscreteMap):
         params = {"a": 0.5}
         dim = 1
 
-        @staticjit
+        @staticmethod
         def _step(X, a):
             x = X
             if x < a:  # Python branch on the state — unrepresentable
                 return a * x
             return a * (1.0 - x)
 
-        @staticjit
+        @staticmethod
         def _jacobian(X, a):
             return [a]
 

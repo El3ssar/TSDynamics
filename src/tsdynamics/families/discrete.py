@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import warnings
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -55,7 +56,7 @@ class DiscreteMap(SystemBase):
     Subclass contract
     -----------------
     1. Declare ``params = {...}`` and ``dim = N``.
-    2. Implement ``_step`` and ``_jacobian`` as ``@staticjit`` static methods.
+    2. Implement ``_step`` and ``_jacobian`` as ``@staticmethod`` static methods.
        Parameters arrive as **positional arguments** in the order they appear
        in the class-level ``params`` dict.
 
@@ -132,7 +133,7 @@ class DiscreteMap(SystemBase):
         """
         Evaluate the map at state ``X``.
 
-        Decorate with ``@staticjit``.  Parameters arrive positionally in
+        Decorate with ``@staticmethod``.  Parameters arrive positionally in
         the order they appear in the class-level ``params`` dict.
 
         Parameters
@@ -154,7 +155,7 @@ class DiscreteMap(SystemBase):
         """
         Return the (dim × dim) Jacobian at state ``X``.
 
-        Decorate with ``@staticjit``.  Parameters positional, same order as
+        Decorate with ``@staticmethod``.  Parameters positional, same order as
         the class-level ``params`` dict.
 
         Returns
@@ -291,10 +292,6 @@ class DiscreteMap(SystemBase):
         return self.iterate(steps=n, **kwargs)
 
     # ------------------------------------------------------------------ #
-    # Compiled iterate loop
-    # ------------------------------------------------------------------ #
-
-    # ------------------------------------------------------------------ #
     # Iteration
     # ------------------------------------------------------------------ #
 
@@ -354,7 +351,14 @@ class DiscreteMap(SystemBase):
             except RuntimeError as exc:
                 if ic_explicit or attempt == max_retries - 1:
                     raise
-                print(f"Warning: {exc}. Retrying with a new random IC.")
+                # Off-basin random draw diverged; warn (not stdout) and retry from
+                # a fresh random IC. Final exhaustion raises loudly below.
+                warnings.warn(
+                    f"{type(self).__name__}.iterate: {exc} "
+                    "Retrying from a new random initial condition.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
                 ic_arr = np.random.rand(cast(int, self.dim))
                 object.__setattr__(self, "ic", ic_arr.copy())
         raise RuntimeError(

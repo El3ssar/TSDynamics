@@ -22,10 +22,10 @@ signal is:
    engine to ``~1e-12`` (1-ULP transcendental differences aside), and the
    square-and-multiply ``OP_POWI`` path matches **bit-for-bit** (consolidation
    note, PR #74).
-4. **trajectory vs v2** — on a curated sample the engine's early-window
-   trajectory tracks the *actual* v2 JiTCODE backend (slow: compiles C).  The
+4. **trajectory vs reference** — on a curated sample the engine's early-window
+   trajectory tracks a tight SciPy integration of the symbolic RHS (slow).  The
    catalogue-wide per-system proof is leg 1; this confirms the integrate loop
-   against the real compiled v2 path on representative systems.
+   against a trustworthy independent integrator on representative systems.
 5. **literature Lyapunov** — the engine variational backend (the successor to
    ``jitcode_lyap`` at M3) reproduces the published Lyapunov spectrum on a
    curated set of chaotic flows, with ``interp`` and ``jit`` agreeing (slow).
@@ -33,8 +33,8 @@ signal is:
    ``jitcdde_lyap``, stream E-DDE-LYAP) reproduces JiTCDDE on Mackey–Glass; the
    full 5-DDE parity sweep is in ``test_dde_lyapunov.py`` (slow).
 
-Maps get legs 1–2 as a one-step lowering check (engine next-state vs the v2
-Numba ``_step``, then interp vs jit).  DDEs are gated for finiteness + engine
+Maps get legs 1–2 as a one-step lowering check (engine next-state vs the
+pure-Python ``_step``, then interp vs jit).  DDEs are gated for finiteness + engine
 provenance here; their tight JiTCDDE early-window parity (the E-DDE literature
 bar) lives in ``test_dde_engine.py`` and now runs in the same engine CI job via
 the ``engine`` marker.
@@ -74,7 +74,7 @@ _RHS_RTOL = 1e-9  # engine RHS vs symbolic truth (leg 1) — relative, scale-inv
 _RHS_ATOL = 1e-9  # leg 1 near-zero floor
 _REF_RTOL = 1e-12  # reference vs engine, transcendental 1-ULP slack (leg 3)
 _REF_ATOL = 1e-12
-_MAP_RTOL = 1e-9  # engine next-state vs Numba _step (leg 1, maps)
+_MAP_RTOL = 1e-9  # engine next-state vs pure-Python _step (leg 1, maps)
 _MAP_ATOL = 1e-12
 
 _RNG_STATES = 8  # random states per system for the pointwise legs
@@ -242,14 +242,14 @@ def test_op_powi_is_exercised_by_the_catalogue() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Maps — one-step lowering vs the v2 Numba step, and interp == jit
+# Maps — one-step lowering vs the pure-Python step, and interp == jit
 # ---------------------------------------------------------------------------
 
 
 def _on_attractor(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -> np.ndarray:
-    """A few finite, on-attractor states for ``cls`` (deterministic, via Numba).
+    """A few finite, on-attractor states for ``cls`` (deterministic, via reference).
 
-    Mirrors ``test_map_engine``: the Numba path only returns once the whole
+    Mirrors ``test_map_engine``: the reference path only returns once the whole
     buffer is finite, so the tail slice sits on the orbit rather than in a
     transient or off-basin escape.
     """
@@ -261,8 +261,8 @@ def _on_attractor(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -> np
     return np.ascontiguousarray(finite[drop : drop + take])
 
 
-def test_map_engine_step_matches_numba(map_entry) -> None:
-    """Every lowerable map: the engine next-state matches the v2 Numba ``_step``.
+def test_map_engine_step_matches_step(map_entry) -> None:
+    """Every lowerable map: the engine next-state matches the pure-Python ``_step``.
 
     The chaos-free, tolerance-tight map analogue of leg 1 — but through the
     *compiled* interpreter (``backend="interp"``), not the pure-Python reference
@@ -328,7 +328,7 @@ def test_dde_engine_path_is_finite(dde_entry) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Leg 4 — trajectory vs the actual v2 JiTCODE backend (slow: compiles C)
+# Leg 4 — trajectory vs a tight SciPy integration of the symbolic RHS (slow)
 # ---------------------------------------------------------------------------
 
 

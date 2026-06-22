@@ -104,10 +104,13 @@ class ConvergenceError(TSDynamicsError, RuntimeError):
 class BackendError(TSDynamicsError, RuntimeError):
     """A compute backend (the Rust engine, a solver kernel) failed or is absent.
 
-    The parent of :class:`tsdynamics.engine.run.EngineNotAvailableError`-style
-    conditions: an engine that is not built, a kernel that refused a problem, or
-    an FFI-boundary failure surfaced with domain framing rather than a raw
-    extension traceback.  Subclasses :class:`RuntimeError`.
+    A base for backend-side failures — an engine that is not built, a kernel that
+    refused a problem, or an FFI-boundary failure surfaced with domain framing
+    rather than a raw extension traceback.  Its concrete leaf
+    :class:`tsdynamics.engine.run.EngineNotAvailableError` is raised when the
+    compiled ``tsdynamics._rust`` extension is missing, so
+    ``isinstance(err, BackendError)`` catches it.  Subclasses
+    :class:`RuntimeError`, so legacy ``except RuntimeError`` handlers still apply.
     """
 
 

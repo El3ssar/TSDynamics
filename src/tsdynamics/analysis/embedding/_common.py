@@ -133,6 +133,20 @@ def _as_channels(x: Any) -> np.ndarray:
     return arr
 
 
+def _delay_columns(x: np.ndarray, n_cols: int, tau: int, rows: int) -> np.ndarray:
+    """``(rows, n_cols)`` matrix whose column ``j`` is ``x[j*tau : j*tau + rows]``.
+
+    The shared delay-coordinate column builder: the caller computes ``rows`` (and
+    validates the window fits) and this fills the matrix without a Python loop
+    over rows.
+    """
+    out = np.empty((rows, n_cols), dtype=float)
+    for j in range(n_cols):
+        start = j * tau
+        out[:, j] = x[start : start + rows]
+    return out
+
+
 def __dir__() -> list[str]:
     """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
     return sorted(__all__)

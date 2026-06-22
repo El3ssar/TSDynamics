@@ -52,7 +52,7 @@ def test_qr_floor_keeps_log_growth_finite_under_warnings_error() -> None:
     n_exp, dim = dev.shape[1], dev.shape[2]
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # any RuntimeWarning -> test failure
-        seg, log_growth = _qr_segments(dev, n_exp, dim)
+        _, log_growth = _qr_segments(dev, n_exp, dim)
     assert log_growth.shape == (n_exp,)
     assert np.all(np.isfinite(log_growth)), log_growth
     # The collapsed deviation is floored at log(tiny), not -inf.
@@ -70,7 +70,7 @@ def test_qr_floor_is_answer_preserving_for_a_healthy_segment() -> None:
     rng = np.random.default_rng(0)
     n_seg, n_exp, dim = 12, 3, 2
     dev = rng.standard_normal((n_seg + 1, n_exp, dim))  # full-rank, well-conditioned
-    seg, log_growth = _qr_segments(dev, n_exp, dim)
+    _, log_growth = _qr_segments(dev, n_exp, dim)
     # Recompute the raw (unfloored) growth from the same QR to compare.
     mat = dev.transpose(0, 2, 1).reshape((n_seg + 1) * dim, n_exp)
     _, r = np.linalg.qr(mat)

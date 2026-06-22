@@ -5,33 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tsdynamics.utils import SagittaDt, estimate_dt_from_sagitta, staticjit
-
-# ---------------------------------------------------------------------------
-# staticjit decorator
-# ---------------------------------------------------------------------------
-
-
-class TestStaticjit:
-    def test_callable_returned(self) -> None:
-        @staticjit
-        def f(x: float, a: float) -> float:
-            return a * x
-
-        assert callable(f)
-
-    def test_runs_correctly_when_called_unbound(self) -> None:
-        @staticjit
-        def f(x: float, a: float) -> float:
-            return a * x
-
-        # staticjit returns a staticmethod-wrapped njit; reading it off a
-        # class strips the descriptor.
-        class Holder:
-            g = f
-
-        assert Holder.g(2.0, 3.0) == pytest.approx(6.0)
-
+from tsdynamics.utils import SagittaDt, estimate_dt_from_sagitta
 
 # ---------------------------------------------------------------------------
 # estimate_dt_from_sagitta

@@ -15,9 +15,9 @@ well-established:
   entropy ``≈ 0.465`` (Newhouse–Pignataro); a quasi-periodic circle map gives
   ``H ≈ 0``.
 
-The map indicators run on Numba-compiled steps; the flow indicators use a
-self-contained RK4 variational integrator over the SymEngine-lambdified RHS and
-Jacobian, so none of these tests need the compile backends or the Rust engine.
+The map indicators run on the pure-Python ``_step``/``_jacobian``; the flow
+indicators use a self-contained RK4 variational integrator over the
+SymEngine-lambdified RHS and Jacobian, so none of these tests need the Rust engine.
 """
 
 from __future__ import annotations

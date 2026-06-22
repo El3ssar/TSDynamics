@@ -1,4 +1,3 @@
-# import numpy as np
 from symengine import cos, exp, pi, sin
 
 from tsdynamics.families import ContinuousSystem
@@ -129,8 +128,11 @@ class CircadianRhythm(ContinuousSystem):
         vs,
     ):
         m, fc, fs, fn, th = Y(0), Y(1), Y(2), Y(3), Y(4)
-        vs = 2.5 * ((0.5 + 0.5 * cos(th)) + vmin) * (vmax - vmin)
-        mdot = vs * (Ki**n) / (Ki**n + fn**n) - vm * m / (km + m)
+        # The transcription rate is driven by the circadian phase ``th``; the
+        # scalar ``vs`` parameter is overridden here and has no effect on the
+        # dynamics (kept in ``params`` for catalogue-contract stability).
+        vs_t = 2.5 * ((0.5 + 0.5 * cos(th)) + vmin) * (vmax - vmin)
+        mdot = vs_t * (Ki**n) / (Ki**n + fn**n) - vm * m / (km + m)
         fcdot = ks * m - k1 * fc + k2 * fn - k * fc
         fsdot = k * fc - vd * fs / (kd + fs)
         fndot = k1 * fc - k2 * fn - vdn * fn / (kdn + fn)

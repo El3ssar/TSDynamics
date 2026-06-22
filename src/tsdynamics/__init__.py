@@ -21,8 +21,7 @@ so the top-level namespace stays focused on the base classes, the derived-system
 wrappers, the analysis functions, and the submodules.  For backwards
 compatibility ``tsdynamics.Lorenz`` (and ``from tsdynamics import Lorenz``) still
 resolve lazily.  See :mod:`tsdynamics.registry` for programmatic access.  Internal
-helpers (``ParamSet``, ``SystemBase``, ``staticjit``) live under
-``tsdynamics.families`` / ``tsdynamics.utils``.
+helpers (``ParamSet``, ``SystemBase``) live under ``tsdynamics.families``.
 
 Curated top level (stream WS-NAMESPACE)
 ---------------------------------------
@@ -106,13 +105,22 @@ from .analysis import (
     FixedPoint as FixedPoint,
 )
 from .analysis import (
+    FixedPointSet as FixedPointSet,
+)
+from .analysis import (
     GALIResult as GALIResult,
 )
 from .analysis import (
     LyapunovFromData as LyapunovFromData,
 )
 from .analysis import (
+    LyapunovSpectrum as LyapunovSpectrum,
+)
+from .analysis import (
     OrbitDiagram as OrbitDiagram,
+)
+from .analysis import (
+    OrbitSet as OrbitSet,
 )
 from .analysis import (
     PeriodicOrbit as PeriodicOrbit,

@@ -75,9 +75,9 @@ def build_variational_tape(system: Any, k: int) -> Any:
     control_names = list(system._control_params())
     control_syms = {name: symengine.Symbol(f"p{i}") for i, name in enumerate(control_names)}
 
-    f_jitc = list(type(system)._equations(y, t_sym, **{**struct_vals, **control_syms}))
-    if len(f_jitc) != dim:
-        raise ValueError(f"_equations must return {dim} expressions, got {len(f_jitc)}")
+    f_raw = list(type(system)._equations(y, t_sym, **{**struct_vals, **control_syms}))
+    if len(f_raw) != dim:
+        raise ValueError(f"_equations must return {dim} expressions, got {len(f_raw)}")
 
     # Canonical state/time symbols (the y(i)/t function-application leaves are
     # not plain Symbols, so substitute them out before lowering).
@@ -85,7 +85,7 @@ def build_variational_tape(system: Any, k: int) -> Any:
     t_canon = symengine.Symbol("t")
     subs = {y(j): u_syms[j] for j in range(dim)}
     subs[t_sym] = t_canon
-    f = [symengine.sympify(e).subs(subs) for e in f_jitc]
+    f = [symengine.sympify(e).subs(subs) for e in f_raw]
 
     # Jacobian jac[j][c] = ∂f_j/∂u_c, derivatives of abs/sign resolved a.e.
     jac = [

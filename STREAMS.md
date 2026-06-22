@@ -63,35 +63,28 @@ check in `ci.yml`.
 |---|---|---|
 | `ci.yml` (**python job**) | `src/**`, `tests/**`, `pyproject.toml`, `uv.lock` | ruff lint/format + the pytest matrix (3.12/3.13 × Linux/macOS). |
 | `rust-workspace.yml` | `crates/tsdyn-*/**`, `crates/Cargo.*` | `cargo build`/`fmt`/`clippy`/`test` over the v3 `tsdyn-*` engine workspace. |
-| `cross-validation.yml` | `tests/xval_harness.py`, `tests/test_xval*.py`, `crates/tsdynamics-core/**`, `rustcore.py` | Builds the v2-seed accelerator and runs the **Rust-vs-v2 xval** scaffold on Lorenz. |
-| `rust-core.yml` | `crates/tsdynamics-core/**`, `rustcore.py`, `tests/test_rustcore*.py` | Builds the v2 accelerator + its numeric kernel tests. |
+| `engine-bindings.yml` | `crates/tsdyn-core/**`, `tests/xval_harness.py`, `tests/test_xval*.py` | `tsdyn-core` fmt/clippy/cargo-test + the engine-marked Python tests (incl. the catalogue cross-validation gate `tests/test_xval_catalogue.py`). |
 | `pr-title.yml` | every PR | Enforces the `<type>: …` title. |
 | `docs.yml` / `nightly.yml` / `release.yml` | docs / schedule / push-to-`main` | Pages deploy / full sweep / semantic-release. |
 
-The three engine-era jobs (**rust-workspace + python + cross-validation**) are
-the F4 matrix split; `rust-core.yml` stays scoped to the v2 accelerator until
-I-XVAL retires it (ROADMAP §9, milestone M3).
+The three engine-era jobs (**rust-workspace + python + engine-bindings**) are
+the F4 matrix split.
 
 ---
 
 ## The cross-validation scaffold
 
-Before any v2 backend is deleted (D1), every system's Rust trajectory must match
-its v2 trajectory within tolerance. The reusable harness lives in
-[`tests/xval_harness.py`](tests/xval_harness.py); [`tests/test_xval.py`](tests/test_xval.py)
-demonstrates it on Lorenz.
-
-```bash
-make xval         # runs the scaffold; the Rust path skips if the accelerator isn't installed
-make xval-build   # builds+installs the v2-seed accelerator first, so the Rust path runs too
-```
+The migration's removal gate (D1 / I-XVAL) has landed: cross-validation now
+targets the real `tsdynamics._rust` engine. The reusable harness lives in
+[`tests/xval_harness.py`](tests/xval_harness.py) and the catalogue gate is
+[`tests/test_xval_catalogue.py`](tests/test_xval_catalogue.py) — RHS lowering
+within tolerance, `interp`==`jit` bit-exact, `reference`==engine, and engine
+Lyapunov against the literature. It runs in `engine-bindings.yml`.
 
 The harness is **backend-agnostic**: a backend is anything with `name`,
-`available()`, and `integrate_dense(system, ic, t_eval)`. Two ship today —
-`ScipyReference` (the v2 numeric truth, always available) and `RustCore` (the
-accelerator). When the new engine lands (streams E1–E7) it plugs in as one more
-backend with no new plumbing; **I-XVAL** sweeps the harness over the whole
-catalogue to build the removal gate.
+`available()`, and `integrate_dense(system, ic, t_eval)`. `ScipyReference` (the
+pure-Python numeric oracle, always available) and the compiled engine plug in
+through the same interface.
 
 ---
 

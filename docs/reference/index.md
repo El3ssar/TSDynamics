@@ -22,7 +22,7 @@ trust your installed version.
 | `Box`, `Ball`, `Grid`, `sampler`, `grid_points`, `set_distance` | [Data & state-space](data.md) |
 | `method=` resolution, `SolverSpec`, auto-stiffness, registering a solver | [Solvers](solvers.md) |
 | Programmatic access to the built-in system catalogue | [Registry](registry.md) |
-| `staticjit`, timestep estimation | [Utilities](utils.md) |
+| timestep estimation | [Utilities](utils.md) |
 | A specific built-in system (equations, defaults, figures) | [Systems](../systems/index.md) |
 
 ## Scope

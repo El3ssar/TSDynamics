@@ -102,7 +102,9 @@ class _CellGrid:
 # ---------------------------------------------------------------------------
 
 
-def _recurrence_grid(region: Box | Ball | Grid, resolution: int | tuple[int, ...]) -> _CellGrid:
+def _recurrence_grid(
+    region: Box | Ball | Grid, resolution: int | tuple[int, ...] = 100
+) -> _CellGrid:
     """
     Build the recurrence :class:`_CellGrid` covering ``region``.
 
@@ -113,9 +115,9 @@ def _recurrence_grid(region: Box | Ball | Grid, resolution: int | tuple[int, ...
     Parameters
     ----------
     region : Box, Ball, or Grid
-    resolution : int or tuple of int
+    resolution : int or tuple of int, default 100
         Cells per axis for a Box/Ball region (ignored for a Grid, which carries
-        its own ``counts``).
+        its own ``counts`` — so the default is never consulted for a Grid).
     """
     if isinstance(region, Grid):
         return _CellGrid.from_grid(region)

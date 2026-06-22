@@ -303,8 +303,9 @@ def _lz76_via_lzcomplexity(codes: np.ndarray, k: int) -> int:
             "the lzcomplexity bridge supports alphabets up to 90 symbols; "
             "use provider='native' for larger alphabets."
         )
-    # Map dense codes to distinct printable ASCII characters (avoids the library's
-    # list[int] → concatenated-decimals gotcha) and pass the resulting string.
+    # Map dense codes to distinct characters (offset from "0"; for large alphabets
+    # these run past printable ASCII, which is fine — only distinctness matters),
+    # avoiding the library's list[int] → concatenated-decimals gotcha.
     text = "".join(chr(0x30 + int(code)) for code in codes)
     return int(lz.lz76Factorization(text))
 

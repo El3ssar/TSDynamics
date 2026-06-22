@@ -63,8 +63,10 @@ src/tsdynamics/
 ├── derived/
 │   ├── _base.py              # DerivedSystem (wrapper base, with_params rebuilds)
 │   ├── poincare.py           # PoincareMap (Hermite-refined crossings)
+│   ├── _crossings.py         # WS-CROSSKERNEL engine-event crossing collector (section_crossings)
 │   ├── stroboscopic.py       # StroboscopicMap
 │   ├── tangent.py            # TangentSystem (Lyapunov engine)
+│   ├── _variational.py       # backend-neutral extended variational lowering (ODE Lyapunov)
 │   ├── ensemble.py           # EnsembleSystem
 │   ├── projected.py          # ProjectedSystem
 │   └── wrapped.py            # back-compat shim → re-exports WrappedSystem from families.wrapped
@@ -84,12 +86,12 @@ src/tsdynamics/
 │   ├── basins/              # A-BASIN: find_attractors/basins_of_attraction (recurrence-FSM AttractorMapper) + basin_fractions (basin stability) + basin_entropy/uncertainty_exponent/wada_property (boundary structure) + continuation/tipping_points + resilience; cell tessellation in _common.py; self-registers into registry.analyses
 │   └── embedding/           # owned by A-EMBED
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
-├── viz/                      # DEFERRED stub only (decision D6)
+├── viz/                      # PlotSpec IR seam (backend-agnostic; no renderer ships yet — decision D6)
 ├── systems/
 │   ├── continuous/           # 8 ODE category modules + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
 └── utils/
-    ├── general.py            # staticjit decorator
+    ├── grids.py              # make_output_grid (hoisted output-grid builder)
     └── sagitta_dt.py         # estimate_dt_from_sagitta
 
 hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures at build time
@@ -147,8 +149,8 @@ module's `__all__`), so a new system needs no manual edit there.
 - Adapter base: `WrappedSystem` (adapt any external stepper to the protocol).
   Canonical home is `tsdynamics.families` (it sits with the family bases users
   subclass); re-exported from `tsdynamics.derived` for back-compat.
-- State-space geometry (`data`): `Box`, `Ball`, `Grid`, `sampler`,
-  `grid_points`, `set_distance` — the primitives the basin/attractor layer
+- State-space geometry (`data`): `Box`, `Ball`, `Grid`, `Region`, `sampler`,
+  `grid_points`, `region`, `set_distance` — the primitives the basin/attractor layer
   builds on (Monte-Carlo + full-grid sampling, attractor-matching distances).
   `Trajectory`/`Box`/`Ball`/`Grid` are *defined* in `tsdynamics.data` (the one
   canonical home); the top-level names are convenience re-exports.
@@ -176,7 +178,7 @@ function, so `ts.analysis.entropy` is the function — reach the estimators via
 `importlib.import_module("tsdynamics.analysis.entropy")`).
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
-(protocol) via `tsdynamics.families`; `staticjit` via `tsdynamics.utils`.
+(protocol) via `tsdynamics.families`.
 The `transforms`, `engine`, `solvers` and `errors` submodules are bound eagerly
 on the top-level namespace and in `__all__` (`transforms`/`errors` headline,
 `engine`/`solvers` flagged internal in their docstrings). The `viz` package
@@ -188,9 +190,10 @@ on the top-level namespace and in `__all__` (`transforms`/`errors` headline,
 
 ## The registry (load-bearing!)
 
-`registry.py` hosts the specialised *system* registry (below) plus two
-generic name→object `Registry` containers — `registry.analyses` and
-`registry.transforms` — for the analysis/transform streams to register into.
+`registry.py` hosts the specialised *system* registry (below) plus three
+generic name→object `Registry` containers — `registry.analyses`,
+`registry.transforms` and `registry.renderers` — for the analysis/transform/
+visualization-backend streams to register into.
 Out-of-tree plugins are wired in (A-LAYOUT): `tsdynamics.analysis`/
 `tsdynamics.transforms` call `plugins.register_entry_points` at import to load
 the `tsdynamics.analyses`/`tsdynamics.transforms` entry-point groups; in-tree
@@ -530,9 +533,9 @@ All three families + all derived wrappers implement:
   its framework-contract kernels — `override`/`no-untyped-def`/`no-untyped-call`
   (the `_equations`/`_step`/`_jacobian`/`_drift`/`_diffusion` math bodies, whose
   parameters arrive positionally by `params`-dict order) — via a documented
-  `[tool.mypy.overrides]` block. `staticjit` aliases to `staticmethod` under
-  `TYPE_CHECKING` so a map's `_step(x, y, a, b)` is read with `x` as a parameter,
-  not `self`.
+  `[tool.mypy.overrides]` block. Map kernels are plain `@staticmethod`, so the
+  type checker reads a map's `_step(x, y, a, b)` first argument as state, not
+  `self`.
 - **Docstrings:** NumPy convention; cite original papers, never competitor software
 - **Never reference the Julia dynamical-systems ecosystem** in code, docs, or
   comments — ideas may be absorbed, citations go to the original literature.

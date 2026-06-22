@@ -1006,7 +1006,13 @@ def _apply_inline_tweaks(spec: PlotSpec, tweaks: dict[str, Any]) -> dict[str, An
 
 
 def _jsonify(value: Any) -> Any:
-    """Recursively coerce a value to JSON-friendly types (arrays → lists)."""
+    """Recursively coerce a value to JSON-friendly types (arrays → lists).
+
+    Deliberately not shared with :func:`tsdynamics.analysis._result._jsonify`
+    (a strict superset that also handles sets, nested ``AnalysisResult`` /
+    dataclasses, and SciPy sparse): viz is the lower layer in the IR seam and
+    must not import the analysis layer, so this minimal copy stays here.
+    """
     if isinstance(value, np.ndarray):
         return value.tolist()
     if isinstance(value, np.generic):

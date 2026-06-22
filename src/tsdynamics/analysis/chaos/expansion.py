@@ -34,6 +34,7 @@ from tsdynamics.data import Box, sampler
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._result import AnalysisResult, ScalingResult
+from .._tangent import flow_fns, map_fns, rk4_variational
 from . import _common as _c
 
 __all__ = ["ExpansionEntropyResult", "expansion_entropy"]
@@ -235,7 +236,7 @@ def _expansion_map(
     system: Any, ics: np.ndarray, box: Box, n_steps: int
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Accumulate ``G(DF^t)`` for a map; ``DF^t = J(x_{t-1})...J(x_0)`` per sample."""
-    step, jac = _c._map_fns(system)
+    step, jac = map_fns(system)
     dim = int(system.dim)
     n = ics.shape[0]
     eye = np.eye(dim)
@@ -268,7 +269,7 @@ def _expansion_flow(
     system: Any, ics: np.ndarray, box: Box, final_time: float, dt: float, n_internal: int
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Accumulate ``G(Phi(t))`` for a flow; ``Phi`` is the RK4 fundamental matrix per sample."""
-    rhs, jac = _c._flow_fns(system)
+    rhs, jac = flow_fns(system)
     dim = int(system.dim)
     n = ics.shape[0]
     n_steps = int(round(final_time / dt))
@@ -290,7 +291,7 @@ def _expansion_flow(
                 continue
             x, m, t = states[i], mats[i], t_local[i]
             for _ in range(n_internal):
-                x, m = _c._rk4_variational(rhs, jac, x, m, t, h)
+                x, m = rk4_variational(rhs, jac, x, m, t, h)
                 t += h
             states[i], mats[i], t_local[i] = x, m, t
             if not box.contains(x):

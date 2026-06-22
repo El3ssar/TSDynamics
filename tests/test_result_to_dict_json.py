@@ -34,7 +34,7 @@ def _assert_json_roundtrips(result) -> dict:
     data = result.to_dict()
     assert isinstance(data, dict)
     text = json.dumps(data)  # raises TypeError if a non-serializable object leaks
-    assert json.loads(text) is not None or True  # round-trip parses back
+    assert json.dumps(json.loads(text)) == text  # round-trips back to identical JSON
     return data
 
 

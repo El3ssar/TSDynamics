@@ -54,12 +54,12 @@ __all__ += [
 
 # exotic_maps
 __all__ += [
-    "Bogdanov",
     "Bedhead",
-    "Svensson",
+    "Bogdanov",
     "GumowskiMira",
     "Hopalong",
     "Pickover",
+    "Svensson",
     "ZeraouliaSprott",
 ]
 

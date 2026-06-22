@@ -88,12 +88,13 @@ def test_subpackage_importable(pkg):
     assert isinstance(mod.__all__, list)
 
 
-@pytest.mark.parametrize("pkg", [])
-def test_placeholder_subpackages_are_empty(pkg):
+@pytest.mark.parametrize("pkg", _SUBPACKAGES)
+def test_subpackages_are_filled(pkg):
     # Every A-* subpackage is now filled — ``basins`` (A-BASIN) was the last
-    # placeholder.  Kept as a parametrized guard so a future empty stub trips it.
+    # placeholder.  A real guard (sweeping the actual subpackages) so a future
+    # empty stub trips it, unlike an empty-parametrize no-op.
     mod = importlib.import_module(f"tsdynamics.analysis.{pkg}")
-    assert mod.__all__ == []
+    assert mod.__all__, f"tsdynamics.analysis.{pkg} regressed to an empty placeholder"
 
 
 @pytest.mark.parametrize(

@@ -118,9 +118,10 @@ def mutual_information(
 
     Returns
     -------
-    ndarray, shape (max_delay + 1,)
-        ``mi[k]`` is :math:`I(k)`; ``mi[0]`` is the entropy of the (binned)
-        series itself (its self-information).
+    ArrayResult
+        Behaves as an ``(max_delay + 1,)`` ``ndarray``: ``mi[k]`` is
+        :math:`I(k)`; ``mi[0]`` is the entropy of the (binned) series itself
+        (its self-information).
 
     References
     ----------
@@ -199,8 +200,8 @@ def optimal_delay(
 
     Returns
     -------
-    int
-        The recommended delay, always ``>= 1``.
+    CountResult
+        The recommended delay (behaves as an ``int``), always ``>= 1``.
 
     Notes
     -----

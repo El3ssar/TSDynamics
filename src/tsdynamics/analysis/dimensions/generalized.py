@@ -302,6 +302,8 @@ def dimension_spectrum(
     if scales is None:
         scales = _default_scales(points, n_scales=n_scales)
     scales = np.asarray(scales, dtype=float)
+    if np.any(scales <= 0.0):
+        raise ValueError("box sizes (scales) must be positive.")
 
     order = np.argsort(scales)
     scales = scales[order]

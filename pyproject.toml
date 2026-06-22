@@ -88,7 +88,6 @@ module-name = "tsdynamics._rust"
 python-source = "src"
 manifest-path = "crates/tsdyn-core/Cargo.toml"
 features = ["extension-module"]
-exclude = ["src/tsdynamics/_native/**"]
 
 # ── Release automation — python-semantic-release ───────────────────────────────
 # Version bumps are computed from conventional commit messages on main:
@@ -128,7 +127,7 @@ ignore = [
   "B008",    # do not perform function calls in default args
   # ── Math-notation conventions (intentional) ─────────────────────────────
   "N803",    # argument name should be lowercase — Y, N, L are standard math notation
-  "N805",    # first argument should be 'self' — false positive on @staticmethod/@staticjit
+  "N805",    # first argument should be 'self' — false positive on @staticmethod
   "N806",    # variable in function should be lowercase — X, Y, N, L are math convention
   # ── Module/package docstrings (optional for math-system collections) ────
   "D100",    # missing docstring in public module
@@ -179,9 +178,9 @@ ignore_missing_imports = true
 # catalogue only — `override` (system-specific signatures), `no-untyped-def` (the
 # math kernels themselves) and `no-untyped-call` (calls between those untyped
 # kernels and their nested helpers). Every other check (and the entire core
-# library) stays strict. `staticjit` is aliased to `staticmethod` for the type
-# checker (see `utils/general.py`), which clears the spurious self-binding errors
-# so this list need not grow.
+# library) stays strict. Map kernels are plain `@staticmethod`, so the type
+# checker reads their first parameter as state (not `self`) and this list need
+# not grow.
 [[tool.mypy.overrides]]
 module = ["tsdynamics.systems.*"]
 disable_error_code = ["override", "no-untyped-def", "no-untyped-call"]
@@ -209,4 +208,7 @@ filterwarnings = [
   "error",
   "ignore:.*License classifiers have been superseded.*:UserWarning",
   "ignore:.*divide by zero encountered in divide.*:RuntimeWarning",
+  # DiscreteMap.iterate warns when an off-basin random IC diverges and it retries
+  # — expected, benign resilience; do not let it trip the `error` filter.
+  "ignore:.*Retrying from a new random initial condition.*:RuntimeWarning",
 ]

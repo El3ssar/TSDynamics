@@ -388,7 +388,6 @@ def fig_basins(plt, out_path):
     import tsdynamics as ts
     from tsdynamics import Grid
     from tsdynamics.analysis import basins as bas
-    from tsdynamics.utils import staticjit
     from matplotlib.colors import ListedColormap
 
     INDIGO = "#4f46e5"
@@ -403,7 +402,7 @@ def fig_basins(plt, out_path):
         variables = ("re", "im")
         _jacobian_fd_check = False
 
-        @staticjit
+        @staticmethod
         def _step(X):
             z = complex(X[0], X[1])
             z2 = z * z
@@ -411,7 +410,7 @@ def fig_basins(plt, out_path):
             z = (2.0 * z3 + 1.0) / (3.0 * z2)
             return (z.real, z.imag)
 
-        @staticjit
+        @staticmethod
         def _jacobian(X):
             return ((0.0, 0.0), (0.0, 0.0))
 

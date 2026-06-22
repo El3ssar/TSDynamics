@@ -133,7 +133,7 @@ def surrogate_test(
     tail: str = "auto",
     alpha: float = 0.05,
     seed: int | None = None,
-    component: int | None = None,
+    component: int | str | None = None,
     statistic_kwargs: dict[str, Any] | None = None,
     **surrogate_kwargs: Any,
 ) -> SurrogateTest:

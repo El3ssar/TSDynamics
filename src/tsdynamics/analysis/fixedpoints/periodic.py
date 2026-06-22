@@ -149,8 +149,9 @@ def periodic_orbits(
 
     Returns
     -------
-    list[PeriodicOrbit]
-        Sorted by the orbit's lexicographically smallest point.
+    OrbitSet
+        A list-like ``CollectionResult`` of :class:`PeriodicOrbit`, sorted by
+        the orbit's lexicographically smallest point.
 
     Examples
     --------
@@ -536,8 +537,9 @@ def estimate_period(
 
     Returns
     -------
-    float
-        The estimated period in time units (``dt`` units).
+    ScalarResult
+        The estimated period in time units (``dt`` units); ``float(result)``
+        returns the number.
 
     Examples
     --------

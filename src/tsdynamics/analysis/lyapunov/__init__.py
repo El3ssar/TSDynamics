@@ -105,9 +105,7 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
         j = int(np.nonzero(cum >= 0.0)[0][-1])
         # spectrum doesn't close (j is the last index) -> dimension saturates at len
         dky = float(s.size) if j == s.size - 1 else float(j + 1 + cum[j] / abs(s[j + 1]))
-    return ScalarResult(
-        value=dky, meta={"analysis": "kaplan_yorke_dimension", "n_exp": int(s.size)}
-    )
+    return ScalarResult(value=dky, meta={"analysis": "kaplan_yorke_dimension", "k": int(s.size)})
 
 
 def lyapunov_spectrum(

@@ -2,8 +2,8 @@
 Tests for discrete map systems (``DiscreteMap`` subclasses).
 
 All sweeps are registry-driven: a new map is covered automatically.
-Iteration is fast (Numba JIT); the first call per class triggers a one-shot
-compile, so iterate/Lyapunov sweeps are marked ``slow``.
+Iteration runs on the engine; the longer iterate/Lyapunov sweeps are marked
+``slow`` on runtime grounds.
 """
 
 from __future__ import annotations

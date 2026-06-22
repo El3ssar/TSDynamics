@@ -63,18 +63,8 @@ INTEGRATION_SAMPLE: list[str] = [
 # --- ODE systems excluded from the exhaustive integration sweeps ------------
 # Systems that cannot be integrated by adaptive solvers in bounded time would
 # hang the nightly full sweep rather than fail it, so they are skipped here.
-# Currently empty: ``BlinkingRotlet`` (the former entry) only *looked*
-# un-integrable because JiTCODE's simplify(ratio=1) codegen pass hangs on its
-# large rational RHS — fixed with ``_compile_simplify = False`` on the class.
+# An extension hook: currently empty (the whole catalogue integrates).
 HARD_TO_INTEGRATE: dict[str, str] = {}
-
-# Systems the diffsol backend specifically can't integrate (the default JiTCODE
-# backend handles them fine). Excluded from the diffsol full-catalogue sweep.
-# Currently empty: ``WindmiReduced`` (the former entry) now integrates on every
-# diffsol solver after guarding the fractional power with ``abs(p)`` and
-# clamping the steep ``tanh`` argument (autodiff-safe) — both no-ops on the
-# physical trajectory.
-DIFFSOL_SKIP: dict[str, str] = {}
 
 # --- Maps excluded from Lyapunov-spectrum shape tests -----------------------
 MAP_LYAPUNOV_EXCLUDE: dict[str, str] = {

@@ -3,6 +3,7 @@ from typing import ClassVar
 import numpy as np
 from symengine import cos, exp, sign, sin
 
+from tsdynamics.errors import InvalidParameterError
 from tsdynamics.families import ContinuousSystem
 
 
@@ -135,11 +136,7 @@ class Lorenz96(ContinuousSystem):
     ):
         p = dict(type(self).params)
         if params:
-            unknown = set(params) - set(p)
-            if unknown:
-                raise ValueError(
-                    f"Lorenz96: unknown parameter(s) {sorted(unknown)}. Declared: {sorted(p)}"
-                )
+            # super().__init__ validates unknown parameters (InvalidParameterError).
             p.update(params)
         if N is not None:
             p["N"] = int(N)
@@ -286,9 +283,13 @@ class KuramotoSivashinsky(ContinuousSystem):
     ):
         p = dict(type(self).params)
         if params:
+            # Validate before the N>=7 / IC-build steps below so an unknown
+            # parameter surfaces first (super().__init__ would also reject it,
+            # but only after those steps). Raise the project error type to match
+            # SystemBase.__init__ (InvalidParameterError, a ValueError subclass).
             unknown = set(params) - set(p)
             if unknown:
-                raise ValueError(
+                raise InvalidParameterError(
                     f"KuramotoSivashinsky: unknown parameter(s) {sorted(unknown)}. "
                     f"Declared: {sorted(p)}"
                 )
@@ -494,11 +495,7 @@ class MultiChua(ContinuousSystem):
     ):
         p = dict(type(self).params)
         if params:
-            unknown = set(params) - set(p)
-            if unknown:
-                raise ValueError(
-                    f"MultiChua: unknown parameter(s) {sorted(unknown)}. Declared: {sorted(p)}"
-                )
+            # super().__init__ validates unknown parameters (InvalidParameterError).
             p.update(params)
         if n_circuits is not None:
             p["n_circuits"] = int(n_circuits)
@@ -583,7 +580,7 @@ class RabinovichFabrikant(ContinuousSystem):
         return (xdot, ydot, zdot)
 
     @staticmethod
-    def _jacobian(Y, t, *, a, g):
+    def _jacobian(Y, t, a, g):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [2 * x * y + g, z - 1 + x**2, y]
         row2 = [3 * z + 1 - 3 * x**2, g, 3 * x]
@@ -1193,7 +1190,7 @@ class HyperYangChen(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, *, a=30, b=3, c=35, d=8):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = c * x - x * z + w
@@ -1207,7 +1204,7 @@ class HyperYan(ContinuousSystem):
     dim = 4
 
     @staticmethod
-    def _equations(Y, t, *, a=37, b=3, c=26, d=38):
+    def _equations(Y, t, *, a, b, c, d):
         x, y, z, w = Y(0), Y(1), Y(2), Y(3)
         xdot = a * y - a * x
         ydot = (c - a) * x - x * z + c * y

@@ -93,15 +93,13 @@ def test_utils_public_surface() -> None:
     from tsdynamics.utils import (  # noqa: F401
         SagittaDt,
         estimate_dt_from_sagitta,
-        staticjit,
     )
 
 
 def test_internals_not_in_top_level_all() -> None:
-    """``staticjit`` and ``ParamSet`` are reachable but not advertised at top level."""
+    """``ParamSet`` and ``SystemBase`` are reachable but not advertised at top level."""
     import tsdynamics as ts
 
-    assert "staticjit" not in ts.__all__
     assert "ParamSet" not in ts.__all__
     assert "SystemBase" not in ts.__all__
 
