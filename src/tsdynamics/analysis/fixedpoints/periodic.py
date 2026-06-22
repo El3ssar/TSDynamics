@@ -71,6 +71,73 @@ class PeriodicOrbit(AnalysisResult):
     continuous: bool = False
     residual: float = 0.0
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe this periodic orbit as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a phase portrait of the orbit :attr:`points`: a closed ``LINE3D``
+        loop for a 3-D-or-higher flow cycle (first three coordinates), a 2-D
+        ``LINE`` (flow) / ``SCATTER`` (the discrete map cycle's distinct points)
+        for two coordinates, and a 1-D index plot for a scalar map.  A flow loop
+        is drawn as a line (the continuous cycle); a map orbit as markers (its
+        ``period`` distinct points).  The :mod:`tsdynamics.viz.spec` import is
+        lazy, so building a spec never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
+            value).  ``None`` picks ``PHASE_PORTRAIT_3D`` / ``PHASE_PORTRAIT_2D``
+            / ``TIME_SERIES`` from the orbit's dimensionality.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        pts = np.atleast_2d(np.asarray(self.points, dtype=float))
+        dim = pts.shape[1] if pts.ndim == 2 and pts.size else 1
+        per = f"T = {self.period:.4g}" if self.continuous else f"p = {int(self.period)}"
+        title = f"{'stable' if self.stable else 'unstable'} orbit ({per})"
+        mark = PlotKind.LINE if self.continuous else PlotKind.SCATTER
+
+        if dim >= 3:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_3D
+            loop = PlotKind.LINE3D if self.continuous else PlotKind.MARKERS
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=3,
+                aspect="equal",
+                title=title,
+                x=Axis(label="$x_0$"),
+                y=Axis(label="$x_1$"),
+                z=Axis(label="$x_2$"),
+                layers=[
+                    Layer(loop, {"x": pts[:, 0], "y": pts[:, 1], "z": pts[:, 2]}, label="orbit")
+                ],
+            )
+        if dim == 2:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=2,
+                aspect="equal",
+                title=title,
+                x=Axis(label="$x_0$"),
+                y=Axis(label="$x_1$"),
+                layers=[Layer(mark, {"x": pts[:, 0], "y": pts[:, 1]}, label="orbit")],
+            )
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.TIME_SERIES
+        y = pts[:, 0] if pts.ndim == 2 else np.ravel(pts).astype(float)
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=title,
+            x=Axis(label="index"),
+            y=Axis(label="$x$"),
+            layers=[Layer(mark, {"x": np.arange(y.size, dtype=float), "y": y}, label="orbit")],
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         kind = "stable" if self.stable else "unstable"
         mu = np.abs(self.multipliers).max() if self.multipliers.size else float("nan")
@@ -97,6 +164,66 @@ class OrbitSet(CollectionResult):
     def unstable(self) -> list[PeriodicOrbit]:
         """The unstable orbits in the set."""
         return [o for o in self.items if not o.stable]
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the whole orbit set as one backend-agnostic phase portrait.
+
+        Overlays every orbit's points in one spec — one labelled layer per orbit
+        (a ``SCATTER`` of a map cycle's distinct points, a ``LINE`` of a flow
+        loop) — so the family of period-``p`` orbits is drawn together.  The
+        canvas dimensionality follows the orbits' state dimension (3-D, 2-D, or a
+        1-D index plot for a scalar map), and a :class:`~tsdynamics.viz.spec.Legend`
+        is attached when more than one orbit is present.  An empty set yields a
+        valid (layer-less) ``PHASE_PORTRAIT_2D``.  The :mod:`tsdynamics.viz.spec`
+        import is lazy, so building a spec never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
+            value).  ``None`` picks the kind from the orbits' dimensionality.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+
+        orbits = list(self.items)
+        if not orbits:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
+            return PlotSpec(kind=spec_kind, ndim=2, title="periodic orbits (none found)", layers=[])
+
+        # Build each orbit's own spec (it owns the per-dim layering logic) and
+        # gather the layers, relabelling each by its period/stability.
+        sub = [(o, o.to_plot_spec()) for o in orbits]
+        ndim = max(int(s.ndim) for _, s in sub)
+        spec_kind = (
+            PlotKind(kind)
+            if kind is not None
+            else PlotKind.PHASE_PORTRAIT_3D
+            if ndim == 3
+            else PlotKind.PHASE_PORTRAIT_2D
+        )
+        layers: list[Layer] = []
+        for o, s in sub:
+            per = f"T={o.period:.4g}" if o.continuous else f"p={int(o.period)}"
+            label = f"{'stable' if o.stable else 'unstable'} {per}"
+            for lyr in s.layers:
+                layers.append(Layer(lyr.kind, dict(lyr.data), label=label, style=dict(lyr.style)))
+
+        z = Axis(label="$x_2$") if ndim == 3 else None
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=3 if ndim == 3 else 2,
+            aspect="equal",
+            title=f"periodic orbits ({len(orbits)} found)",
+            x=Axis(label="$x_0$"),
+            y=Axis(label="$x_1$"),
+            z=z,
+            layers=layers,
+            legend=Legend() if len(orbits) > 1 else None,
+        )
 
 
 # ── periodic orbits of maps ───────────────────────────────────────────────────

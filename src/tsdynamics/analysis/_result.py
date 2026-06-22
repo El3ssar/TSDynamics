@@ -157,8 +157,8 @@ class _PlotAccessor:
         return self._render(kind="time_series", **kw)
 
     def phase(self, **kw: Any) -> Any:
-        """Plot as a 2-D / 3-D phase portrait."""
-        return self._render(kind="phase_portrait", **kw)
+        """Plot as a 2-D phase portrait (3-D results pass ``kind="phase_portrait_3d"``)."""
+        return self._render(kind="phase_portrait_2d", **kw)
 
     def image(self, **kw: Any) -> Any:
         """Plot as a 2-D image (recurrence matrix, basins)."""
@@ -525,6 +525,127 @@ class AnalysisResult:
         return frame
 
     # -- visualization seam ----------------------------------------------
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe this result as a backend-agnostic :class:`PlotSpec` (generic fallback).
+
+        Result types with a *natural* figure override this with a bespoke spec
+        (a scaling fit, a recurrence image, a phase portrait, …).  This base
+        provides the **fallback** every other result inherits, so the ``.plot``
+        seam and any registered renderer resolve uniformly across the whole
+        analysis layer rather than tripping over a result that never grew a
+        bespoke method.
+
+        The fallback inspects the result's display fields (see
+        :meth:`_display_fields`) and builds a ``DIAGNOSTIC_CURVE``:
+
+        - the first pair of equal-length 1-D numeric arrays becomes an ``(x, y)``
+          ``LINE`` (e.g. a basin-metric's :math:`f(\\varepsilon)` curve);
+        - failing that, the first 1-D numeric array becomes a ``LINE`` against
+          its index;
+        - failing that, the numeric scalar fields become ``MARKERS`` at one point
+          per field (e.g. a basin entropy's :math:`S_b` / :math:`S_{bb}`).
+
+        The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
+        pulls a plotting library and the spec itself carries no rendering code.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
+            value).  ``None`` uses ``DIAGNOSTIC_CURVE``.
+
+        Returns
+        -------
+        PlotSpec
+
+        Raises
+        ------
+        VisualizationNotInstalled
+            If the result carries **no** plottable numeric field (no array and no
+            scalar) — there is nothing for a generic fallback to draw, so a
+            bespoke ``to_plot_spec`` is required.  Subclasses with such a result
+            override this method.
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        arrays, scalars = self._plottable_fields()
+
+        layers: list[Layer] = []
+        xlabel, ylabel = "index", "value"
+        if len(arrays) >= 2 and arrays[0][1].size == arrays[1][1].size:
+            (xname, x), (yname, y) = arrays[0], arrays[1]
+            layers.append(Layer(PlotKind.LINE, {"x": x, "y": y}, label=yname))
+            xlabel, ylabel = xname, yname
+        elif arrays:
+            yname, y = arrays[0]
+            layers.append(
+                Layer(PlotKind.LINE, {"x": np.arange(y.size, dtype=float), "y": y}, label=yname)
+            )
+            ylabel = yname
+        elif scalars:
+            names = [n for n, _ in scalars]
+            vals = np.array([v for _, v in scalars], dtype=float)
+            layers.append(
+                Layer(PlotKind.MARKERS, {"x": np.arange(vals.size, dtype=float), "y": vals})
+            )
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=2,
+                title=type(self).__name__,
+                x=Axis(label="field", ticks=list(range(len(names)))),
+                y=Axis(label="value"),
+                layers=layers,
+                meta=dict(self.meta) if self.meta else {},
+            )
+        else:
+            raise VisualizationNotInstalled(
+                f"{type(self).__name__} carries no plottable numeric field, so the generic "
+                "to_plot_spec() fallback has nothing to draw. A result of this kind needs a "
+                "bespoke to_plot_spec(); export it with .to_dict() meanwhile."
+            )
+
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=type(self).__name__,
+            x=Axis(label=xlabel),
+            y=Axis(label=ylabel),
+            layers=layers,
+            meta=dict(self.meta) if self.meta else {},
+        )
+
+    def _plottable_fields(
+        self,
+    ) -> tuple[list[tuple[str, np.ndarray]], list[tuple[str, float]]]:
+        """Split the display fields into ``(1-D numeric arrays, numeric scalars)``.
+
+        Used by the generic :meth:`to_plot_spec` fallback.  Booleans are treated
+        as scalars (``0`` / ``1``); non-numeric and higher-dimensional fields are
+        skipped.  ``meta`` is never included (it is provenance, not plot data).
+        """
+        arrays: list[tuple[str, np.ndarray]] = []
+        scalars: list[tuple[str, float]] = []
+        for name in self._display_fields():
+            try:
+                value = getattr(self, name)
+            except AttributeError:
+                continue
+            if isinstance(value, (bool, np.bool_)):
+                scalars.append((name, float(value)))
+                continue
+            if isinstance(value, (int, float, np.integer, np.floating)):
+                scalars.append((name, float(value)))
+                continue
+            if (
+                isinstance(value, np.ndarray)
+                and value.ndim == 1
+                and value.size
+                and np.issubdtype(value.dtype, np.number)
+            ):
+                arrays.append((name, np.asarray(value, dtype=float)))
+        return arrays, scalars
 
     @property
     def plot(self) -> _PlotAccessor:

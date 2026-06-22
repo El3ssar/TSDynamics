@@ -51,6 +51,73 @@ class Embedding(ArrayResult):
         The embedded delay-vector matrix.  ``np.asarray(result)`` returns it.
     """
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the reconstructed attractor as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a phase portrait of the delay-coordinate trajectory: a 3-D
+        ``LINE3D`` of the first three coordinates :math:`(x_i, x_{i+\tau},
+        x_{i+2\tau})` for an embedding of dimension :math:`m \ge 3`, a 2-D
+        ``LINE`` of the first two for :math:`m = 2`, and a 1-D ``LINE`` against
+        the row index for :math:`m = 1`.  The :mod:`tsdynamics.viz.spec` import is
+        lazy, so building a spec never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
+            value).  ``None`` picks ``PHASE_PORTRAIT_3D`` / ``PHASE_PORTRAIT_2D``
+            / ``TIME_SERIES`` from the embedding dimension.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        mat = np.atleast_2d(np.asarray(self.values, dtype=float))
+        m = mat.shape[1] if mat.size else 1
+        if m >= 3:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_3D
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=3,
+                aspect="equal",
+                title="delay embedding",
+                x=Axis(label="$x_i$"),
+                y=Axis(label=r"$x_{i+\tau}$"),
+                z=Axis(label=r"$x_{i+2\tau}$"),
+                layers=[
+                    Layer(
+                        PlotKind.LINE3D,
+                        {"x": mat[:, 0], "y": mat[:, 1], "z": mat[:, 2]},
+                        label="reconstruction",
+                    )
+                ],
+            )
+        if m == 2:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=2,
+                aspect="equal",
+                title="delay embedding",
+                x=Axis(label="$x_i$"),
+                y=Axis(label=r"$x_{i+\tau}$"),
+                layers=[
+                    Layer(PlotKind.LINE, {"x": mat[:, 0], "y": mat[:, 1]}, label="reconstruction")
+                ],
+            )
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.TIME_SERIES
+        series = mat[:, 0] if mat.ndim == 2 and mat.size else np.ravel(mat).astype(float)
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title="delay embedding",
+            x=Axis(label="index"),
+            y=Axis(label="$x_i$"),
+            layers=[Layer(PlotKind.LINE, {"x": np.arange(series.size, dtype=float), "y": series})],
+        )
+
 
 def _as_per_channel(value: int | Sequence[int], n_channels: int, name: str) -> list[int]:
     """Broadcast an int (or validate a per-channel sequence) to a length-``n_channels`` list."""
