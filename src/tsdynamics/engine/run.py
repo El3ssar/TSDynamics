@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tsdynamics.errors import BackendError, ConvergenceError
 from tsdynamics.utils.grids import make_output_grid
 
 if TYPE_CHECKING:
@@ -75,12 +76,16 @@ __all__ = [
 BACKENDS: frozenset[str] = frozenset({"interp", "jit", "reference"})
 
 
-class EngineNotAvailableError(RuntimeError):
+class EngineNotAvailableError(BackendError):
     """The compiled Rust engine (:mod:`tsdynamics._rust`, stream E7) is not available.
 
     Raised when an ``"interp"`` / ``"jit"`` run is requested but the extension
     module is not importable.  Use ``backend="reference"`` for pure-Python ODE/map
     runs, or reinstall the compiled wheel (``pip install tsdynamics``).
+
+    Subclasses :class:`~tsdynamics.errors.BackendError` (itself a
+    :class:`RuntimeError`), so it joins the documented ``TSDynamicsError``
+    hierarchy while existing ``except RuntimeError`` handlers keep catching it.
     """
 
 
@@ -493,7 +498,7 @@ def crossings(
     states = np.asarray(states, dtype=np.float64)
     u_final = np.asarray(u_final, dtype=np.float64)
     if not (np.all(np.isfinite(times)) and np.all(np.isfinite(states))):
-        raise RuntimeError(
+        raise ConvergenceError(
             f"{_name(problem)}: crossing detection diverged or produced non-finite "
             f"values before reaching the span end."
         )
@@ -972,8 +977,6 @@ def _reference_events(
     """
     from scipy.integrate import solve_ivp
 
-    from tsdynamics.errors import ConvergenceError
-
     dim = int(problem.dim)
     tape = problem.tape
     p = problem.params_vec()
@@ -1068,7 +1071,7 @@ def _run_continuous(
     )
     y = np.asarray(y, dtype=np.float64)
     if not np.all(np.isfinite(y)):
-        raise RuntimeError(
+        raise ConvergenceError(
             f"{_name(problem)}: integration diverged or the step collapsed before "
             f"reaching the final time."
         )
@@ -1125,9 +1128,11 @@ def _step_continuous(
 
     Raises
     ------
-    RuntimeError
+    ConvergenceError
         If the integration diverged or the step collapsed (non-finite output) —
-        the same loud-divergence contract as :func:`_run_continuous`.
+        the same loud-divergence contract as :func:`_run_continuous`.  Subclasses
+        :class:`RuntimeError`, so existing ``except RuntimeError`` handlers (the
+        divergence convention) keep catching it.
     """
     eng = _engine()
     y = np.asarray(
@@ -1137,7 +1142,7 @@ def _step_continuous(
         dtype=np.float64,
     )
     if not np.isfinite(y).all():
-        raise RuntimeError(
+        raise ConvergenceError(
             f"{name}: integration diverged or the step collapsed before reaching the final time."
         )
     return y
@@ -1205,7 +1210,7 @@ def _run_dde(
         dtype=np.float64,
     )
     if not np.all(np.isfinite(y)):
-        raise RuntimeError(
+        raise ConvergenceError(
             f"{_name(problem)}: DDE integration diverged or the step collapsed before "
             f"reaching the final time (backend={backend!r}, method={method!r})."
         )
@@ -1276,11 +1281,11 @@ def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray,
             # numerical blow-up.
             if "diverg" not in str(exc).lower():
                 raise
-            raise RuntimeError(diverged_msg) from exc
+            raise ConvergenceError(diverged_msg) from exc
         # Defense-in-depth: should the binding ever return NaN instead of raising,
         # still refuse to hand back a silently poisoned trajectory.
         if not np.all(np.isfinite(y)):
-            raise RuntimeError(diverged_msg)
+            raise ConvergenceError(diverged_msg)
     return np.arange(problem.n0, problem.n0 + steps), y
 
 
@@ -1326,6 +1331,15 @@ def ensemble(
         Final states (rows of ``NaN`` for diverged trajectories).
     """
     backend = resolve_backend(backend)
+
+    # Canonicalise the solver name exactly as :func:`integrate` /
+    # :func:`integrate_events` do, so an alias ("dopri5" → "rk45") or a v2-only
+    # name ("LSODA") is normalised/rejected uniformly across the three engine
+    # entry points. Maps and SDEs ignore `method`, so resolving is harmless.
+    from tsdynamics import solvers
+
+    method = solvers.resolve(method).name
+
     problem = _as_problem(system_or_problem, **build_kwargs)
     ics = np.ascontiguousarray(ics, dtype=np.float64)
     if ics.ndim != 2 or ics.shape[1] != problem.dim:
@@ -1654,7 +1668,7 @@ def _reference_ode(
         atol=atol,
     )
     if not sol.success:
-        raise RuntimeError(f"reference ODE integration failed: {sol.message}")
+        raise ConvergenceError(f"reference ODE integration failed: {sol.message}")
     return np.ascontiguousarray(sol.y.T)
 
 

@@ -867,7 +867,7 @@ def _trace_step(step_fn: Any) -> Any:
 def lower_map(system: Any, *, with_jacobian: bool = False) -> Tape:
     """Lower a :class:`~tsdynamics.families.DiscreteMap` step to a tape.
 
-    A map's ``_step`` is a numeric (``staticjit``) function, so it is *traced*
+    A map's ``_step`` is a numeric (``staticmethod``) function, so it is *traced*
     symbolically — evaluated on a symbolic state vector — to recover the
     straight-line next-state expression, which is then lowered.  With
     ``with_jacobian=True`` the map Jacobian ``∂step_k/∂u_j`` is the symbolic
@@ -947,9 +947,11 @@ def lower_dde(system: Any) -> tuple[Tape, list[DelaySlot]]:
     input, which component is delayed and by how much, so the DDE engine
     (history buffer + dense interpolation) can fill those inputs each step.
 
-    Parameters are folded to constants (matching the v2 DDE compile path), so
-    the tape has ``n_param = 0``.  Only constant delays are supported — a
-    state-dependent delay (``τ`` depending on ``y``) raises.
+    Parameters are folded to constants, so the tape has ``n_param = 0``: a delay
+    value bakes into the tape, so a DDE re-lowers on any parameter change and
+    carries no runtime parameter vector (see the "No compilation cache" section
+    of ``CLAUDE.md``).  Only constant delays are supported — a state-dependent
+    delay (``τ`` depending on ``y``) raises.
 
     Parameters
     ----------
@@ -1117,8 +1119,10 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
     ----------
     system : object
         Anything exposing ``_drift`` and ``_diffusion`` staticmethods with the
-        ``(y, t, **params)`` signature, plus ``dim`` / ``params`` (the SDE
-        family base class, stream E-SDE).
+        ``(y, t, **params)`` signature, plus ``dim`` / ``params`` — the
+        :class:`~tsdynamics.families.stochastic.StochasticSystem` contract
+        (duck-typed here so the engine layer stays below ``families`` in the
+        import graph).
     with_diffusion_jacobian : bool, default False
         Emit ``∂g_k/∂u_j`` as the diffusion tape's Jacobian (for Milstein).
 
@@ -1134,6 +1138,7 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
     import symengine
 
     from tsdynamics.engine.symbols import state_time_symbols
+    from tsdynamics.families.discrete import _unwrap_static
 
     y, t_sym = state_time_symbols()
 
@@ -1155,8 +1160,8 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
     control_syms = {k: symengine.Symbol(f"p{i}") for i, k in enumerate(control_names)}
     call_kwargs = {**struct_vals, **control_syms}
 
-    drift_exprs = list(_unwrap_static_callable(drift_fn)(y, t_sym, **call_kwargs))
-    diff_exprs = list(_unwrap_static_callable(diff_fn)(y, t_sym, **call_kwargs))
+    drift_exprs = list(_unwrap_static(drift_fn)(y, t_sym, **call_kwargs))
+    diff_exprs = list(_unwrap_static(diff_fn)(y, t_sym, **call_kwargs))
     if len(drift_exprs) != dim:
         raise TapeCompileError(f"_drift must return {dim} expressions, got {len(drift_exprs)}")
     if len(diff_exprs) != dim:
@@ -1184,11 +1189,6 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
         control_names=control_names,
     )
     return LoweredSDE(drift=drift, diffusion=diffusion)
-
-
-def _unwrap_static_callable(fn: Any) -> Any:
-    """Peel the ``staticmethod`` wrapper off a method, returning the raw callable."""
-    return getattr(fn, "__func__", fn)
 
 
 # ---------------------------------------------------------------------------
