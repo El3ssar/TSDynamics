@@ -3,9 +3,16 @@ Build-time figure rendering for the per-system documentation pages.
 
 Strategy
 --------
-- **ODE** figures integrate with ``scipy.solve_ivp`` over the system's
-  SymEngine-lambdified numeric RHS (``_rhs_numeric``) — no engine needed, no
-  warmup, ~0.1–1 s per system.
+- **ODE** figures integrate with the **shipped Rust engine** (the same
+  ``integrate(backend="interp")`` path the library exposes) for every
+  non-stiff, non-discontinuous system — so the docs picture is rendered by the
+  code that ships, not an out-of-band SciPy reimplementation.  The handful of
+  **stiff** systems (those declaring a ``_default_method``, e.g. ``"bdf"``) and
+  **discontinuous** systems (a ``sign``/``abs`` right-hand side, flagged with a
+  ``"method"`` override in :data:`FIG_OVERRIDES`) fall back to the local
+  ``scipy.solve_ivp`` path over the SymEngine-lambdified numeric RHS
+  (``_rhs_numeric``) — the implicit/event handling the explicit engine kernels
+  used for figures do not cover.
 - **DDE** figures use the real ``integrate`` (the Rust engine; only 5 systems).
 - **Map** figures iterate via the family API (the Rust engine).
 
@@ -76,7 +83,7 @@ def _style():
     return plt
 
 
-RENDERER_VERSION = "3"  # bump manually when rendering output materially changes
+RENDERER_VERSION = "4"  # bump manually when rendering output materially changes
 
 
 def cache_key(entry) -> str:
@@ -98,7 +105,80 @@ def _resolve_ic(sys_obj, override):
     return None  # family default resolution (random U[0,1)^dim, with retries)
 
 
-def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
+def _use_engine_for_ode(entry, opts) -> bool:
+    """Whether ``entry`` renders through the shipped engine vs the SciPy fallback.
+
+    The engine ODE path used here drives the explicit, fixed/adaptive RK
+    kernels.  It does **not** cover the two cases the docs build needs SciPy
+    for, which therefore route to the commented :func:`_ode_trajectory_scipy`
+    fallback below:
+
+    - **stiff** systems — their ``_default_method`` resolves to an implicit
+      (needs-Jacobian) kernel (e.g. ``"bdf"``), i.e. an explicit integration
+      blows up;
+    - **discontinuous** right-hand sides (``sign``/``abs``) — flagged by a
+      ``"method"`` (``"RK45"``) override in :data:`FIG_OVERRIDES`, where the
+      step controller must walk carefully across the jumps.
+    """
+    if opts.get("method") is not None:  # discontinuous (sign/abs) RHS
+        return False
+    # Stiff systems declare an implicit ``_default_method`` (the base default is
+    # the explicit "RK45").  Ask the solver registry whether that kernel needs a
+    # Jacobian — robust to any implicit name (bdf / rosenbrock / trbdf2).
+    method = getattr(entry.cls, "_default_method", "RK45")
+    try:
+        from tsdynamics.solvers import resolve
+
+        if resolve(method).spec.caps.needs_jacobian:
+            return False
+    except Exception:  # noqa: BLE001 — unknown name → be conservative, use SciPy
+        return False
+    return True
+
+
+def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
+    """Integrate a non-stiff ODE through the shipped engine (``backend="interp"``).
+
+    Mirrors the renderer's IC-retry contract: the engine raises on divergence
+    (it does not re-roll the IC itself), so off-basin random starts are caught
+    and retried here, exactly as the SciPy fallback does.
+    """
+    final_time = opts.get("final_time", 100.0)
+    dt = opts.get("dt", 0.01)
+    rng = np.random.default_rng(42)
+
+    sys_obj = entry.cls()
+    ic = _resolve_ic(sys_obj, opts.get("ic"))
+    for attempt in range(4):
+        if ic is None or attempt > 0:
+            ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
+        try:
+            traj = sys_obj.integrate(
+                final_time=final_time,
+                dt=dt,
+                ic=np.asarray(ic, dtype=float),
+                backend="interp",
+            )
+        except (RuntimeError, ValueError):  # divergence / off-basin start
+            ic = None
+            continue
+        t, y = traj.t, traj.y
+        if len(y) > 50 and np.all(np.isfinite(y)) and np.max(np.abs(y)) < 1e6:
+            drop = int(opts.get("transient_frac", 0.15) * len(y))
+            return t[drop:], y[drop:]
+        ic = None
+    raise RuntimeError("no bounded trajectory found")
+
+
+def _ode_trajectory_scipy(entry, opts) -> tuple[np.ndarray, np.ndarray]:
+    """SciPy ``solve_ivp`` fallback for stiff / discontinuous ODE figures.
+
+    Retained as the renderer fallback for the systems the explicit engine
+    kernels used for figures do not cover (see :func:`_use_engine_for_ode`):
+    LSODA auto-switches for stiffness, and RK45 walks discontinuous (sign/abs)
+    right-hand sides.  Integrates the system's SymEngine-lambdified numeric RHS
+    (``_rhs_numeric``).
+    """
     final_time = opts.get("final_time", 100.0)
     dt = opts.get("dt", 0.01)
     rng = np.random.default_rng(42)
@@ -154,6 +234,19 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
             return sol.t[drop:], y[drop:]
         ic = None
     raise RuntimeError("no bounded trajectory found")
+
+
+def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
+    """Render-time ODE trajectory: shipped engine for the common case, else SciPy.
+
+    Non-stiff, non-discontinuous systems integrate through the shipped Rust
+    engine (``integrate(backend="interp")``) so the docs figure is produced by
+    the code that ships.  Stiff / discontinuous systems use the commented
+    SciPy ``solve_ivp`` fallback (:func:`_ode_trajectory_scipy`).
+    """
+    if _use_engine_for_ode(entry, opts):
+        return _ode_trajectory_engine(entry, opts)
+    return _ode_trajectory_scipy(entry, opts)
 
 
 def _render_ode(entry, plt, opts):
