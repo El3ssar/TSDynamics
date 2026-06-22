@@ -1,9 +1,23 @@
+"""Sagitta-based Δt selector for time-ordered samples.
+
+A derivative-free, scale-invariant, idempotent heuristic for choosing an output
+sampling step Δt* from a sampled trajectory.  It decimates the series and, for a
+range of candidate strides, measures the *sagitta* — the perpendicular bow of the
+midpoint of each (i−span, i, i+span) triple off its chord — at a robust
+percentile, then picks the largest stride whose sagitta stays within a geometric
+tolerance.  One-dimensional input is first delay-embedded (lag via AMI, dimension
+via FNN) so the geometric criterion lives in a reconstructed state space.  The
+public surface is :func:`estimate_dt_from_sagitta` returning a :class:`SagittaDt`.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.spatial.distance import cdist  # fix #3: module-level import
+from scipy.spatial.distance import cdist
+
+from tsdynamics.errors import InvalidInputError, invalid_value
 
 __all__ = ["SagittaDt", "estimate_dt_from_sagitta"]
 
@@ -26,7 +40,6 @@ def _compute_sagitta_stats(
     samples: np.ndarray, span: int, percentile_p: float
 ) -> tuple[float, float]:
     """Return (sagitta_percentile, chord_median) for triples at a given span."""
-    # fix #5: removed _compute_sagitta_percentile duplicate; all callers use this
     n = samples.shape[0]
     centers = np.arange(span, n - span, span)
 
@@ -135,7 +148,7 @@ def _estimate_embedding_dim_fnn(
         if test_idx.size == 0:
             break
 
-        Dm = cdist(Xm[test_idx], Xm[pool_idx], metric="euclidean")  # fix #3: no local import
+        Dm = cdist(Xm[test_idx], Xm[pool_idx], metric="euclidean")
 
         for r, ti in enumerate(test_idx):
             mask_bad = np.abs(pool_idx - ti) <= theiler
@@ -266,7 +279,7 @@ def estimate_dt_from_sagitta(
     """
     # -------- input validation and dimensionality handling --------
     if not isinstance(y, np.ndarray):
-        raise ValueError("y must be a numpy array.")
+        raise InvalidInputError("y must be a numpy array.")
 
     needs_embedding = False
 
@@ -275,25 +288,24 @@ def estimate_dt_from_sagitta(
         y_original = y.copy()
         n_samples_original = len(y)
     elif y.ndim == 2:
-        n_samples_original_unused, n_dim = y.shape
+        _, n_dim = y.shape
         if n_dim == 1:
             needs_embedding = True
             y_original = y.squeeze()
             n_samples_original = len(y_original)
     else:
-        raise ValueError("y must be 1D or 2D array.")
+        raise invalid_value("y", y.ndim, rule="must be a 1D or 2D array (got y.ndim)")
 
     embedding_notes = ""
     if needs_embedding:
         if n_samples_original < 50:
-            raise ValueError(
-                f"Need at least 50 samples for 1D embedding, got {n_samples_original}."
+            raise invalid_value(
+                "y",
+                n_samples_original,
+                rule="must have at least 50 samples for 1D embedding (got len(y))",
             )
 
-        print("Estimating lag...")
         embedding_lag = _estimate_lag_ami(y_original)
-
-        print("Estimating embedding dimension...")
         embedding_dim = _estimate_embedding_dim_fnn(y_original, embedding_lag)
 
         y = _takens_embedding(y_original, embedding_lag, embedding_dim)
@@ -304,19 +316,21 @@ def estimate_dt_from_sagitta(
         n_samples, n_dim = y.shape
 
     if n_samples < 5:
-        raise ValueError("Need at least n_samples >= 5 after embedding.")
+        raise invalid_value(
+            "y", n_samples, rule="must have at least 5 samples after embedding (got n_samples)"
+        )
     if not (dt0 > 0):
-        raise ValueError("dt0 must be > 0.")
+        raise invalid_value("dt0", dt0, rule="must be > 0")
     if not (epsilon > 0):
-        raise ValueError("epsilon must be > 0.")
+        raise invalid_value("epsilon", epsilon, rule="must be > 0")
     if not (0.0 < percentile <= 100.0):
-        raise ValueError("percentile must be in (0, 100].")
+        raise invalid_value("percentile", percentile, rule="must be in (0, 100]")
     if search_growth <= 1.0:
-        raise ValueError("search_growth must be > 1.0.")
+        raise invalid_value("search_growth", search_growth, rule="must be > 1.0")
     if min_points_per_segment < 1:
-        raise ValueError("min_points_per_segment must be >= 1.")
+        raise invalid_value("min_points_per_segment", min_points_per_segment, rule="must be >= 1")
 
-    # fix #2: use_relative is now an explicit parameter, not silently tied to needs_embedding
+    # use_relative is an explicit parameter, not silently tied to needs_embedding
     if use_relative is None:
         use_relative = needs_embedding
 
