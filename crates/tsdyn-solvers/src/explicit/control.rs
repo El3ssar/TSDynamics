@@ -89,6 +89,7 @@ pub(crate) fn step_factor(err: f64, exponent: f64) -> f64 {
 /// Held in the kernel's `&mut self` (not in [`SolverState`](crate::SolverState),
 /// whose `scratch` is the *evaluator's* register file): the `Solver` contract
 /// keeps per-method stage buffers private to the kernel.
+#[derive(Default)]
 pub(crate) struct RkWork {
     /// Stage derivatives `k_0..k_{s-1}`, each length `dim`.
     pub k: Vec<Vec<f64>>,

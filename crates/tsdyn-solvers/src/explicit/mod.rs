@@ -26,16 +26,38 @@
 //! C-SOLV); the `Solver` trait deliberately stays minimal and is **not** widened
 //! here.
 
+mod adams;
+mod bs3;
+mod cashkarp;
 mod control;
 mod dop853;
+mod euler;
+mod heun;
+mod heun_euler;
+mod midpoint;
+mod ralston;
 mod rk4;
 mod rk45;
+mod rk4_38;
+mod rkf45;
+mod ssprk3;
 mod tsit5;
 
 #[cfg(test)]
 mod testkit;
 
+pub use adams::{Ab3, Ab4, Abm4};
+pub use bs3::Bs3;
+pub use cashkarp::CashKarp;
 pub use dop853::Dop853;
+pub use euler::Euler;
+pub use heun::Heun;
+pub use heun_euler::HeunEuler;
+pub use midpoint::Midpoint;
+pub use ralston::Ralston;
 pub use rk4::Rk4;
 pub use rk45::Rk45;
+pub use rk4_38::Rk438;
+pub use rkf45::Rkf45;
+pub use ssprk3::SspRk3;
 pub use tsit5::Tsit5;

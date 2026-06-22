@@ -382,6 +382,42 @@ fn stiff_linear_matches_exact_solution() {
     }
 }
 
+/// Registry-driven L-stability / accuracy sweep: EVERY registered implicit ODE
+/// kernel reproduces the stiff-linear exact solution, started from a step (`0.01`)
+/// five times the explicit stability limit (`2/1000`). A new stiff kernel joins
+/// this sweep automatically — no edit here. The exact closed-form solution is the
+/// absolute reference, so a wrong kernel cannot hide behind cross-method agreement.
+#[test]
+fn every_implicit_kernel_matches_the_stiff_linear_exact_solution() {
+    use tsdyn_solvers::{available, find, ProblemKind, SolverKind};
+    let ev = stiff_linear();
+    let p = [-500.5, 499.5];
+    let u0 = [1.0, 0.0];
+    let t1 = 0.1;
+    let exact = stiff_linear_exact(t1);
+
+    let mut tested = 0;
+    for name in available() {
+        let reg = find(name).expect("registered name resolves");
+        if reg.caps.kind != SolverKind::Implicit || !reg.caps.supports(ProblemKind::Ode) {
+            continue;
+        }
+        let mut solver = make(name).unwrap();
+        let got = integrate_to(&ev, solver.as_mut(), &u0, &p, 0.0, t1, 0.01)
+            .unwrap_or_else(|e| panic!("{name} failed on stiff_linear: {e}"));
+        let err = max_diff(&got, &exact);
+        assert!(
+            err < 1e-3,
+            "{name}: stiff_linear err {err:e} (got {got:?}, exact {exact:?})"
+        );
+        tested += 1;
+    }
+    assert!(
+        tested >= 6,
+        "expected ≥6 implicit ODE kernels, tested {tested}"
+    );
+}
+
 /// Tightening the tolerance reduces the error against the exact solution — the
 /// error controller actually controls error (checked on `rosenbrock`).
 #[test]

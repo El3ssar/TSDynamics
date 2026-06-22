@@ -41,15 +41,37 @@ against a registry before the engine runs it. For the programmatic registry API
 
 | `method=` | Family | Kind | Order | Adaptive | Needs Jacobian | Use when |
 |---|---|---|---|:--:|:--:|---|
-| `rk4`            | ode, dde | explicit RK | 4      | — | — | a fixed-step march; teaching; debugging step effects |
-| `rk45`           | ode, dde | explicit RK | 5(4)   | ✓ | — | **the default** — non-stiff smooth problems |
-| `tsit5`          | ode, dde | explicit RK | 5(4)   | ✓ | — | non-stiff, often fewer evaluations than `rk45` |
-| `dop853`         | ode, dde | explicit RK | 8(5,3) | ✓ | — | high accuracy / tight tolerances; reference runs |
+| `euler`          | ode, dde | explicit RK (fixed) | 1 | — | — | the simplest baseline; teaching |
+| `midpoint`       | ode, dde | explicit RK (fixed) | 2 | — | — | a cheap fixed-step march |
+| `heun`           | ode, dde | explicit RK (fixed) | 2 | — | — | explicit trapezoid / improved Euler |
+| `ralston`        | ode, dde | explicit RK (fixed) | 2 | — | — | min-error-bound order-2 fixed step |
+| `ssprk3`         | ode, dde | explicit SSP RK (fixed) | 3 | — | — | TVD/SSP march for hyperbolic MOL discretisations |
+| `rk4`            | ode, dde | explicit RK (fixed) | 4 | — | — | a fixed-step march; teaching; debugging step effects |
+| `rk4_38`         | ode, dde | explicit RK (fixed) | 4 | — | — | the 3/8-rule RK4 (smaller error constant) |
+| `ab3` / `ab4`    | ode, dde | explicit Adams–Bashforth (multistep) | 3 / 4 | — | — | non-stiff with an **expensive RHS** (1 eval/step); MOL/spectral systems |
+| `abm4`           | ode, dde | Adams–Bashforth–Moulton (PECE) | 4 | — | — | non-stiff, more accuracy/stability than `ab4` (2 evals/step) |
+| `heun_euler`     | ode, dde | explicit RK (embedded) | 2(1)   | ✓ | — | the cheapest adaptive kernel; coarse tolerances |
+| `bs3`            | ode, dde | explicit RK (embedded) | 3(2)   | ✓ | — | crude–moderate tolerances (the `ode23` pair) |
+| `rk45`           | ode, dde | explicit RK (embedded) | 5(4)   | ✓ | — | **the default** — non-stiff smooth problems |
+| `rkf45`          | ode, dde | explicit RK (embedded) | 5(4)   | ✓ | — | the classic Runge–Kutta–Fehlberg pair |
+| `cashkarp`       | ode, dde | explicit RK (embedded) | 5(4)   | ✓ | — | non-stiff; rapidly-varying RHS |
+| `tsit5`          | ode, dde | explicit RK (embedded) | 5(4)   | ✓ | — | non-stiff, often fewer evaluations than `rk45` |
+| `dop853`         | ode, dde | explicit RK (embedded) | 8(5,3) | ✓ | — | high accuracy / tight tolerances; reference runs |
 | `bdf`            | ode      | implicit (multistep) | 1–5 var. | ✓ | ✓ | **the stiff default** — smooth stiff RHS |
+| `backward_euler` | ode      | implicit (backward Euler) | 1 | ✓ | ✓ | the canonical L-stable stiff baseline |
+| `implicit_midpoint` | ode   | implicit (1-stage Gauss) | 2 | ✓ | ✓ | A-stable order-2 (base step symplectic; see note below) |
+| `trapezoid`      | ode      | implicit (Crank–Nicolson) | 2 | ✓ | ✓ | mildly-stiff oscillatory problems (A-stable) |
+| `sdirk2`         | ode      | implicit (SDIRK) | 2 | ✓ | ✓ | stiff, L-stable 2-stage SDIRK |
 | `rosenbrock`     | ode      | implicit (Rosenbrock-W) | fixed | ✓ | ✓ | stiff, one linear solve per step |
 | `trbdf2`         | ode      | implicit (ESDIRK) | 2 | ✓ | ✓ | stiff, L-stable composite step |
 | `euler_maruyama` | sde      | explicit | 0.5 (strong) | — | — | **the SDE default** — diagonal-Itô noise |
 | `milstein`       | sde      | explicit | 1.0 (strong) | — | ✓ (∂g/∂u) | SDE, higher strong order |
+
+All names are case- and punctuation-insensitive and carry common aliases (e.g.
+`dopri5`/`RK45` → `rk45`, `ode23` → `bs3`, `cash_karp` → `cashkarp`,
+`crank_nicolson` → `trapezoid`, `implicit_euler` → `backward_euler`,
+`adams_bashforth`/`ab` → `ab4`). The list is open: new kernels register
+themselves (see [Programmatic registry](#programmatic-registry)).
 
 <figure markdown>
 ![Work–precision diagram for the explicit family and a stiff-problem wall-time comparison](../assets/figures/analysis/solvers.png){ loading=lazy }
@@ -60,12 +82,32 @@ against a registry before the engine runs it. For the programmatic registry API
 
 These are the workhorses for **smooth, non-stiff** problems, and the same
 kernels drive the [DDE](../systems/delay/index.md) families through the method of
-steps. Four are available.
+steps. The family spans fixed-step methods from order 1 (`euler`) through the
+order-4 `rk4`/`rk4_38`, the SSP order-3 `ssprk3`, the embedded adaptive pairs
+(`heun_euler`, `bs3`, `rk45`, `rkf45`, `cashkarp`, `tsit5`, `dop853`), and the
+explicit Adams–Bashforth multistep methods (`ab3`, `ab4`, `abm4`). Pick a
+fixed-step method when you want a deterministic step count, a low-order one for
+teaching, and an adaptive pair for production non-stiff integration.
 
 `rk4` is the classic four-stage, fourth-order Runge–Kutta with a **fixed** step
 (Kutta 1901): no embedded error estimate, no adaption. Pass it when you want a
 deterministic step count or to study how step size affects a result — for
-production integration prefer an adaptive method.
+production integration prefer an adaptive method. The low-order fixed kernels
+`euler` (Euler 1768), `midpoint`/`heun`/`ralston` (order 2) and the SSP `ssprk3`
+(Shu & Osher 1988, the standard time integrator for hyperbolic PDE
+discretisations) round out the fixed-step set.
+
+The **Adams–Bashforth** multistep kernels (`ab3`/`ab4`) and the
+Adams–Bashforth–Moulton predictor–corrector (`abm4`) reuse right-hand-side values
+from previous steps, so they advance with only one (`ab*`) or two (`abm4`) new
+RHS evaluations per step regardless of order — efficient when `f` is expensive,
+as in the large ODE systems from method-of-lines/spectral discretisations of PDEs
+(Adams 1883; Hairer, Nørsett & Wanner 1993, §III.1). They are fixed-step and
+self-start with `rk4`. (For genuinely *stiff* semilinear PDEs such as
+Kuramoto–Sivashinsky, an explicit Adams method is stability-bound; the efficient
+route is an implicit/IMEX or exponential-integrator split of the linear and
+nonlinear operators — a future seam, since the present engine takes a single
+combined `f(u, t)`.)
 
 ```python
 # Fixed-step march: dt IS the integrator step here.
@@ -113,7 +155,7 @@ A- or L-stable), so the step size is bounded by accuracy alone. The right panel
 of the figure makes the cost concrete: on stiff van der Pol every kernel reaches
 the *same* final state, but the explicit methods run hundreds of times slower.
 
-All three implicit kernels are adaptive and require the **analytic Jacobian**
+Every implicit kernel is adaptive and requires the **analytic Jacobian**
 $\partial f/\partial u$. You never build it: the engine differentiates your
 `_equations` symbolically and lowers a Jacobian-carrying tape automatically
 whenever the resolved method needs one, so `method="bdf"` simply works.
@@ -131,6 +173,24 @@ extrapolation for error control. `trbdf2` is the TR-BDF2 composite single-step
 ESDIRK (Bank et al. 1985) — a trapezoidal sub-step followed by a BDF2 sub-step,
 L-stable, also step-doubling controlled. Both stay selectable by name when you
 want a one-step kernel instead of the multistep `bdf`.
+
+The one-step stiff family is rounded out by `backward_euler` (implicit Euler,
+order 1, L-stable — the canonical stiff baseline), `sdirk2` (a 2-stage L-stable
+singly-diagonally-implicit Runge–Kutta, Alexander 1977), and two A-stable
+methods: `trapezoid` (the Crank–Nicolson rule, Crank & Nicolson 1947) and
+`implicit_midpoint` (the one-stage Gauss collocation method, A-stable order 2;
+its *base* step is symplectic, but the adaptive integrator delivered here drives
+it through Richardson step-doubling, which is not symplectic, so it does not carry
+the long-time energy-conservation guarantee of a fixed-step symplectic method;
+Hairer, Lubich & Wanner 2006). All four solve their implicit stage(s) by a modified-Newton
+iteration reusing the analytic Jacobian, and share the step-doubling error
+controller. The A-stable (non-L-stable) `trapezoid`/`implicit_midpoint` can ring
+on the very stiffest transients — prefer an L-stable kernel (`bdf`,
+`backward_euler`, `sdirk2`, `rosenbrock`, `trbdf2`) there.
+
+A higher-order stiff Radau IIA collocation kernel and the Verner/Feagin
+high-order explicit pairs are natural follow-ups; they slot in behind the same
+`Solver` seam.
 
 Mark a system stiff once and forget it — declare the default method on the class:
 

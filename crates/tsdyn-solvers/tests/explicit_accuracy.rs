@@ -87,12 +87,16 @@ fn integrate_adaptive(
 
 /// Build a tolerance-configured adaptive kernel through its public constructor.
 fn build_adaptive(name: &str, rtol: f64, atol: f64) -> Box<dyn tsdyn_solvers::Solver> {
-    use tsdyn_solvers::explicit::{Dop853, Rk45, Tsit5};
+    use tsdyn_solvers::explicit::{Bs3, CashKarp, Dop853, HeunEuler, Rk45, Rkf45, Tsit5};
     match name {
         "rk45" => Box::new(Rk45::with_tolerances(rtol, atol)),
         "tsit5" => Box::new(Tsit5::with_tolerances(rtol, atol)),
         "dop853" => Box::new(Dop853::with_tolerances(rtol, atol)),
-        other => panic!("not an adaptive kernel: {other}"),
+        "bs3" => Box::new(Bs3::with_tolerances(rtol, atol)),
+        "rkf45" => Box::new(Rkf45::with_tolerances(rtol, atol)),
+        "cashkarp" => Box::new(CashKarp::with_tolerances(rtol, atol)),
+        "heun_euler" => Box::new(HeunEuler::with_tolerances(rtol, atol)),
+        other => panic!("not a known adaptive kernel: {other}"),
     }
 }
 
@@ -198,4 +202,38 @@ fn tighter_tolerance_reduces_error_against_a_high_accuracy_reference() {
         "tightening tolerance did not help: tight {e_tight} > loose {e_loose}"
     );
     assert!(e_tight < 1e-7, "tight DP45 error {e_tight} too large");
+}
+
+#[test]
+fn every_adaptive_explicit_kernel_agrees_with_dop853_on_lorenz() {
+    // Registry-driven gold-standard tableau check: drive EVERY registered
+    // adaptive explicit ODE kernel along the chaotic Lorenz trajectory at a tight
+    // tolerance and demand it converge to the same final state as the
+    // independently-coded DOP853 reference. Lorenz's positive Lyapunov exponent
+    // amplifies any tableau transcription error into a visible disagreement, so a
+    // single wrong coefficient fails here — and a *new* adaptive kernel joins this
+    // sweep automatically (only its `build_adaptive` arm must be added).
+    let ev = Lorenz;
+    let u0 = vec![1.0, 1.0, 1.0];
+    let t_final = 1.0;
+    let reference = integrate_adaptive("dop853", &ev, u0.clone(), t_final, 1e-12, 1e-14);
+
+    let mut checked = 0;
+    for name in available() {
+        let reg = find(name).expect("registered name resolves");
+        if !reg.caps.adaptive || reg.caps.needs_jacobian || !reg.caps.supports(ProblemKind::Ode) {
+            continue; // fixed-step / implicit / non-ODE kernels are checked elsewhere
+        }
+        let got = integrate_adaptive(name, &ev, u0.clone(), t_final, 1e-10, 1e-12);
+        let d = max_abs_diff(&got, &reference);
+        assert!(
+            d < 1e-5,
+            "{name} disagrees with dop853 on Lorenz by {d}: {got:?}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 6,
+        "expected ≥6 adaptive explicit kernels, checked {checked}"
+    );
 }
