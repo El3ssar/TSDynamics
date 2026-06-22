@@ -10,11 +10,11 @@
       "family": "map"
     },
     "Lorenz": {
-      "ahash": "fffffffffffffffffbffe0e3e003e607e007f01ff8ffffffffffffffffffffff",
+      "ahash": "fffffffffffffffff1ffe0e3e403e607e20fe01ff0ffffffffffffffffffffff",
       "family": "ode"
     },
     "Lorenz96": {
-      "ahash": "ffffc001c000c001c000c001c001c000c000c000c001c000c000ffffffffffff",
+      "ahash": "ffffc001c001c001c001c001c001c001c001c001c001c001c001ffffffffffff",
       "family": "ode"
     },
     "MackeyGlass": {
