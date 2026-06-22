@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError
 from tsdynamics.utils.grids import make_output_grid
 
 from .base import SystemBase, Trajectory
@@ -200,7 +201,7 @@ def _advance_to(
         dw = _wiener(rng, h, dim)
         u = _sde_step(method, drift, diffusion, u, p, t, dw, h)
         if not np.all(np.isfinite(u)):
-            raise RuntimeError(f"{name}: SDE diverged — non-finite state at t={t + h:.6g}.")
+            raise ConvergenceError(f"{name}: SDE diverged — non-finite state at t={t + h:.6g}.")
         t = t_end if landing else t + h
     return u, t
 

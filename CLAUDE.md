@@ -91,7 +91,7 @@ src/tsdynamics/
 │   ├── continuous/           # 8 ODE category modules + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
 └── utils/
-    ├── general.py            # small shared utilities
+    ├── grids.py              # make_output_grid (hoisted output-grid builder)
     └── sagitta_dt.py         # estimate_dt_from_sagitta
 
 hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures at build time

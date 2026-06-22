@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.spatial.distance import cdist
 
-from tsdynamics.errors import InvalidInputError, invalid_value
+from tsdynamics.errors import invalid_value
 
 __all__ = ["SagittaDt", "estimate_dt_from_sagitta"]
 
@@ -279,7 +279,7 @@ def estimate_dt_from_sagitta(
     """
     # -------- input validation and dimensionality handling --------
     if not isinstance(y, np.ndarray):
-        raise InvalidInputError("y must be a numpy array.")
+        raise invalid_value("y", type(y).__name__, rule="must be a numpy array")
 
     needs_embedding = False
 
