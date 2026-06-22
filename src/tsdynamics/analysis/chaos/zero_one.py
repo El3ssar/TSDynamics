@@ -140,10 +140,13 @@ def zero_one_test(
     Returns
     -------
     ScalarResult or (ScalarResult, ndarray)
-        The median growth rate :math:`K \in [0, 1]` (``~0`` regular, ``~1``
+        The median correlation growth indicator :math:`K` (``~0`` regular, ``~1``
         chaotic) as a drop-in for its ``float`` value (``result > 0.9`` and
         ``float(result)`` work) carrying ``.meta``; with ``return_distribution``
-        also the ``K_c`` values.
+        also the ``K_c`` values.  The correlation method returns a Pearson
+        coefficient, so :math:`K \in [-1, 1]` in principle (a regular orbit can
+        give a small negative :math:`K`); it concentrates near ``0`` (regular) or
+        ``1`` (chaotic), so ``K > 0.5`` is the usual chaos threshold.
 
     Examples
     --------
