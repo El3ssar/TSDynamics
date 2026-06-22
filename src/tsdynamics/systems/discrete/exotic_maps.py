@@ -1,21 +1,21 @@
 import numpy as np
 
 from tsdynamics.families import DiscreteMap
-from tsdynamics.utils import staticjit
 
 
 class Bogdanov(DiscreteMap):
     params = {"eps": 0.0, "k": 1.2, "mu": 0.0}
     dim = 2
+    reference = "Arrowsmith et al. (1993), Int. J. Bifurcation Chaos 3, 803-842"
 
-    @staticjit
+    @staticmethod
     def _step(X, eps, k, mu):
         x, y = X
         yp = (1 + eps) * y + k * x * (x - 1) + mu * x * y
         xp = x + yp
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, eps, k, mu):
         # x' = x + y' inherits the y'-row derivatives
         x, y = X
@@ -30,14 +30,14 @@ class Svensson(DiscreteMap):
     params = {"a": 1.5, "b": -1.8, "c": 1.6, "d": 0.9}
     dim = 2
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b, c, d):
         x, y = X
         xp = d * np.sin(a * x) - np.sin(b * y)
         yp = c * np.cos(a * x) + np.cos(b * y)
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b, c, d):
         x, y = X
         row1 = [a * d * np.cos(a * x), -b * np.cos(b * y)]
@@ -49,14 +49,14 @@ class Bedhead(DiscreteMap):
     params = {"a": -0.67, "b": 0.83}
     dim = 2
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):
         x, y = X
         xp = np.sin(x * y / b) * y + np.cos(a * x - y)
         yp = x + np.sin(y) / b
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         x, y = X
         row1 = [
@@ -71,14 +71,14 @@ class ZeraouliaSprott(DiscreteMap):
     params = {"a": 2.7, "b": 0.35}
     dim = 2
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):
         x, y = X
         xp = (-a * x) / (1 + y**2)
         yp = x + b * y
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         x, y = X
         # Partial derivatives for the rational map
@@ -94,8 +94,9 @@ class ZeraouliaSprott(DiscreteMap):
 class GumowskiMira(DiscreteMap):
     params = {"a": -1.1, "b": -0.2}
     dim = 2
+    reference = "Gumowski & Mira (1980), Recurrences and Discrete Dynamic Systems"
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):
         x, y = X
         fx = a * x + 2 * (1 - a) * x**2 / (1 + x**2)
@@ -104,7 +105,7 @@ class GumowskiMira(DiscreteMap):
         yp = fx1 - x
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         x, y = X
 
@@ -128,17 +129,28 @@ class GumowskiMira(DiscreteMap):
 
 
 class Hopalong(DiscreteMap):
+    """
+    Hopalong (Martin) attractor map.
+
+    This is a shifted variant of Barry Martin's "Hopalong" map: the step carries
+    several ``- 1`` offsets and a ``sign(x - 1)`` / ``b*x - 1 - c`` argument
+    rather than the bare canonical ``x' = y - sign(x)*sqrt(|b*x - c|)``,
+    ``y' = a - x``. The offsets are intentional and self-consistent (the hand
+    Jacobian matches ``_step``).
+    """
+
     params = {"a": 3.1, "b": 2.5, "c": 4.2}
     dim = 2
+    reference = "Dewdney (1986), Scientific American 255(3), 14-20"
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b, c):
         x, y = X
         xp = y - 1 - np.sqrt(np.abs(b * x - 1 - c)) * np.sign(x - 1)
         yp = a - x - 1
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b, c):
         x, y = X
         eps = 1e-30
@@ -153,14 +165,14 @@ class Pickover(DiscreteMap):
     params = {"a": -1.4, "b": 1.6, "c": 1.0, "d": 0.7}
     dim = 2
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b, c, d):
         x, y = X
         xp = np.sin(a * y) + c * np.cos(a * x)
         yp = np.sin(b * x) + d * np.cos(b * y)
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b, c, d):
         x, y = X
         row1 = [-a * c * np.sin(a * x), a * np.cos(a * y)]

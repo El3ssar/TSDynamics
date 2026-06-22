@@ -1,19 +1,18 @@
 import numpy as np
 
 from tsdynamics.families import DiscreteMap
-from tsdynamics.utils import staticjit
 
 
 class Tent(DiscreteMap):
     params = {"mu": 0.95}
     dim = 1
 
-    @staticjit
+    @staticmethod
     def _step(X, mu):
         x = X
         return mu * (1 - 2 * np.abs(x - 0.5))
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, mu):
         x = X
         if x < 0.5:
@@ -29,7 +28,7 @@ class Baker(DiscreteMap):
     # ~53 iterations, so finite differences always straddle the jump there.
     _jacobian_fd_check = False
 
-    @staticjit
+    @staticmethod
     def _step(X, alpha):
         """
         Right-hand side of the Baker map.
@@ -48,7 +47,7 @@ class Baker(DiscreteMap):
         yp = np.where(lower, y / alpha, (y - alpha) / (1 - alpha))  # fold in y
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, alpha):
         x, y = X
         # Same branch test as ``_step`` (``y < alpha``, equivalent to
@@ -67,21 +66,21 @@ class Circle(DiscreteMap):
     """
     Arnold's circle map.
 
-    Parameter order matches ``params`` insertion order (``omega`` then ``k``);
-    the previous implementation had the two swapped in the function signature,
-    silently using ``omega`` as ``k`` and vice versa.
+    Parameters ``omega`` (winding number) and ``k`` (nonlinearity strength), in
+    that order (matching ``params`` insertion order).
     """
 
     params = {"omega": 0.333, "k": 5.7}
     dim = 1
+    reference = "Arnold (1965), Amer. Math. Soc. Transl. 46, 213-284"
 
-    @staticjit
+    @staticmethod
     def _step(X, omega, k):
         theta = X
         thetap = theta + omega + (k / (2 * np.pi)) * np.sin(2 * np.pi * theta)
         return thetap % 1
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, omega, k):
         theta = X
         return [1 + k * np.cos(2 * np.pi * theta)]
@@ -91,12 +90,12 @@ class Chebyshev(DiscreteMap):
     params = {"a": 6.0}
     dim = 1
 
-    @staticjit
+    @staticmethod
     def _step(X, a):
         x = X
         return np.cos(a * np.arccos(x))
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a):
         # chain rule: d/dx arccos(x) = -1/sqrt(1-x^2), the two minuses cancel
         x = X

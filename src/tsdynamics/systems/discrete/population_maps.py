@@ -1,7 +1,6 @@
 import numpy as np
 
 from tsdynamics.families import DiscreteMap
-from tsdynamics.utils import staticjit
 
 
 class Logistic(DiscreteMap):
@@ -17,12 +16,12 @@ class Logistic(DiscreteMap):
         "source": "exact result at r = 4",
     }
 
-    @staticjit
+    @staticmethod
     def _step(X, r):
         x = X
         return r * x * (1 - x)
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, r):
         x = X
         return [r - 2 * r * x]
@@ -31,13 +30,14 @@ class Logistic(DiscreteMap):
 class Ricker(DiscreteMap):
     params = {"a": 3.3}
     dim = 1
+    reference = "Ricker (1954), J. Fish. Res. Board Can. 11, 559-623"
 
-    @staticjit
+    @staticmethod
     def _step(X, a):
         x = X
         return x * np.exp(a - x)
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a):
         x = X
         return [np.exp(a - x) - x * np.exp(a - x)]
@@ -47,14 +47,14 @@ class MaynardSmith(DiscreteMap):
     params = {"a": 0.87, "b": 0.75}
     dim = 2
 
-    @staticjit
+    @staticmethod
     def _step(X, a, b):
         x, y = X
         xp = y
         yp = a * y + b - x**2
         return xp, yp
 
-    @staticjit
+    @staticmethod
     def _jacobian(X, a, b):
         x, y = X
         row1 = [0, 1]
