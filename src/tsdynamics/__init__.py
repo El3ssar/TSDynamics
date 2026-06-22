@@ -105,13 +105,22 @@ from .analysis import (
     FixedPoint as FixedPoint,
 )
 from .analysis import (
+    FixedPointSet as FixedPointSet,
+)
+from .analysis import (
     GALIResult as GALIResult,
 )
 from .analysis import (
     LyapunovFromData as LyapunovFromData,
 )
 from .analysis import (
+    LyapunovSpectrum as LyapunovSpectrum,
+)
+from .analysis import (
     OrbitDiagram as OrbitDiagram,
+)
+from .analysis import (
+    OrbitSet as OrbitSet,
 )
 from .analysis import (
     PeriodicOrbit as PeriodicOrbit,

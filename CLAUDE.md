@@ -149,8 +149,8 @@ module's `__all__`), so a new system needs no manual edit there.
 - Adapter base: `WrappedSystem` (adapt any external stepper to the protocol).
   Canonical home is `tsdynamics.families` (it sits with the family bases users
   subclass); re-exported from `tsdynamics.derived` for back-compat.
-- State-space geometry (`data`): `Box`, `Ball`, `Grid`, `sampler`,
-  `grid_points`, `set_distance` — the primitives the basin/attractor layer
+- State-space geometry (`data`): `Box`, `Ball`, `Grid`, `Region`, `sampler`,
+  `grid_points`, `region`, `set_distance` — the primitives the basin/attractor layer
   builds on (Monte-Carlo + full-grid sampling, attractor-matching distances).
   `Trajectory`/`Box`/`Ball`/`Grid` are *defined* in `tsdynamics.data` (the one
   canonical home); the top-level names are convenience re-exports.
@@ -190,9 +190,10 @@ on the top-level namespace and in `__all__` (`transforms`/`errors` headline,
 
 ## The registry (load-bearing!)
 
-`registry.py` hosts the specialised *system* registry (below) plus two
-generic name→object `Registry` containers — `registry.analyses` and
-`registry.transforms` — for the analysis/transform streams to register into.
+`registry.py` hosts the specialised *system* registry (below) plus three
+generic name→object `Registry` containers — `registry.analyses`,
+`registry.transforms` and `registry.renderers` — for the analysis/transform/
+visualization-backend streams to register into.
 Out-of-tree plugins are wired in (A-LAYOUT): `tsdynamics.analysis`/
 `tsdynamics.transforms` call `plugins.register_entry_points` at import to load
 the `tsdynamics.analyses`/`tsdynamics.transforms` entry-point groups; in-tree
