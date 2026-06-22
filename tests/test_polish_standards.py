@@ -245,11 +245,9 @@ def _henon():
 
 def _logistic_series(n: int = 600) -> np.ndarray:
     """A deterministic chaotic series (logistic, r=3.9) for data-consuming analyses."""
-    x = np.empty(n)
-    x[0] = 0.4
-    for i in range(1, n):
-        x[i] = 3.9 * x[i - 1] * (1.0 - x[i - 1])
-    return x
+    from _strategies import logistic_series
+
+    return logistic_series(n, r=3.9, x0=0.4, burn=0)
 
 
 def _synthetic_basin_labels() -> np.ndarray:

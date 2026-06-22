@@ -1,7 +1,8 @@
 """Coverage for the symbolic→IR compiler (:mod:`tsdynamics.engine.compile`).
 
 Runs without the compiled Rust engine: lowering needs only SymEngine + the
-jitcode/jitcdde symbols, and the reference evaluator is pure Python.  This is the
+engine-native symbols (``engine.symbols.state_time_symbols``), and the reference
+evaluator is pure Python.  This is the
 fast-tier guard that the whole ODE catalogue lowers to a well-formed tape whose
 reference evaluation reproduces the symbolic RHS (and analytic Jacobian) to
 machine precision — the F1/E6 correctness contract — plus the map/DDE/SDE

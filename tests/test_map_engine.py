@@ -6,10 +6,11 @@ Since stream **E-OPS** added the non-smooth / piecewise opcodes (comparison,
 NumPy array math symbolically, **every** built-in map now lowers to a
 straight-line tape and iterates on the engine:
 
-* the lowered next-state map equals the v2 Numba ``_step`` *pointwise* to a tight
-  tolerance (the chaos-free signal that the lowering is arithmetically faithful);
-* a short engine-iterated trajectory tracks the Numba trajectory (the loop's
-  bookkeeping — ordering, shape, step-index axis).
+* the lowered next-state map equals the pure-Python ``_step`` *pointwise* to a
+  tight tolerance (the chaos-free signal that the lowering is arithmetically
+  faithful);
+* a short engine-iterated trajectory tracks the reference-backend trajectory (the
+  loop's bookkeeping — ordering, shape, step-index axis).
 
 Two earlier obstacles are now handled: NumPy ufuncs on the symbolic state (the
 tracer rebinds ``np`` to a SymEngine-backed shim) and genuine discontinuities —
@@ -20,8 +21,8 @@ The engine's native loop (the Rust ``tsdyn-engine`` map iterator, stream E-MAP)
 is exercised here through the ``reference`` backend: it iterates the *same*
 lowered tape the interpreter/JIT evaluate, in pure Python, so these checks hold
 today without the compiled wheel (stream E7).  The interpreter already matches
-the reference evaluator to ~1e-15 (stream E1), so reference-vs-Numba agreement is
-native-vs-Numba agreement up to that bound.
+the reference evaluator to ~1e-15 (stream E1), so reference-vs-``_step`` agreement
+is native-vs-``_step`` agreement up to that bound.
 """
 
 from __future__ import annotations
@@ -47,8 +48,8 @@ NON_LOWERABLE: frozenset[str] = frozenset()
 def _attractor_states(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -> np.ndarray:
     """Return a few finite, on-attractor states for ``cls`` (deterministically).
 
-    Iterates the Numba path from a seeded initial condition and keeps a tail
-    slice, so the test points are finite (the Numba path only returns once the
+    Iterates the reference path from a seeded initial condition and keeps a tail
+    slice, so the test points are finite (the reference path only returns once the
     whole buffer is finite) and sit on the orbit rather than in the transient.
     """
     np.random.seed(0)
@@ -76,11 +77,11 @@ def test_map_lowering_boundary(map_entry) -> None:
         assert prob.dim == cls().dim
 
 
-def test_map_pointwise_matches_numba(map_entry) -> None:
-    """The lowered next-state map equals the v2 Numba ``_step`` pointwise.
+def test_map_pointwise_matches_step(map_entry) -> None:
+    """The lowered next-state map equals the pure-Python ``_step`` pointwise.
 
     The tight, chaos-free check: evaluated at the *same* on-attractor states, the
-    engine's reference next-state and the Numba ``_step`` agree to a small
+    engine's reference next-state and the pure-Python ``_step`` agree to a small
     tolerance.  Differences here are pure lowering errors, not sensitivity to
     initial conditions.
     """
@@ -99,12 +100,12 @@ def test_map_pointwise_matches_numba(map_entry) -> None:
         )
 
 
-def test_map_short_trajectory_matches_numba(map_entry) -> None:
-    """A short engine-iterated trajectory tracks the Numba trajectory.
+def test_map_short_trajectory_matches_step(map_entry) -> None:
+    """A short engine-iterated trajectory tracks the reference-backend trajectory.
 
     Validates the iterate *loop* (output ordering, shape, the step-index time
     axis) rather than per-step arithmetic — that is covered tightly by
-    :func:`test_map_pointwise_matches_numba`.  The horizon is deliberately short:
+    :func:`test_map_pointwise_matches_step`.  The horizon is deliberately short:
     a chaotic map amplifies the ~1e-15 per-step lowering difference exponentially,
     so this only asks that the two trajectories stay close over a few steps (a
     structurally wrong loop diverges immediately and is caught).

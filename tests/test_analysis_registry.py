@@ -292,11 +292,9 @@ def _henon():
 
 def _logistic_series() -> np.ndarray:
     """A deterministic chaotic series (logistic, r=3.9) for data-consuming analyses."""
-    x = np.empty(600)
-    x[0] = 0.4
-    for i in range(1, x.size):
-        x[i] = 3.9 * x[i - 1] * (1.0 - x[i - 1])
-    return x
+    from _strategies import logistic_series
+
+    return logistic_series(600, r=3.9, x0=0.4, burn=0)
 
 
 # (name, thunk) covering every result-wrapper KIND at runtime: scalar, count,

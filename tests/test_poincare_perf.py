@@ -242,8 +242,11 @@ def test_engine_path_is_far_faster_than_the_python_loop() -> None:
     """A 500-crossing section finishes in well under the old per-``dt`` wall time.
 
     The Python per-``dt`` loop took ~10 s+ for this; the engine call is sub-second.
-    A loose ceiling (3 s) catches a regression to the slow path without being a
-    flaky micro-benchmark.
+    A loose ceiling (5 s) catches a regression to the slow path while leaving a
+    wide margin below the ~10 s slow-path line, so a loaded/slow CI runner does
+    not flake this into a false failure (this is a slow-path *regression* guard,
+    not a micro-benchmark — see ``test_perf_regression.py`` on why we avoid tight
+    wall-clock budgets).
     """
     ros = ts.Rossler()
     pmap = ts.PoincareMap(ros, plane=(0, 0.0), direction=+1, dt=0.05)
@@ -251,4 +254,4 @@ def test_engine_path_is_far_faster_than_the_python_loop() -> None:
     sec = pmap.trajectory(500)
     elapsed = time.perf_counter() - t0
     assert sec.y.shape == (500, 3)
-    assert elapsed < 3.0, f"engine Poincaré path took {elapsed:.2f}s (>3s ⇒ slow-path regression)"
+    assert elapsed < 5.0, f"engine Poincaré path took {elapsed:.2f}s (>5s ⇒ slow-path regression)"

@@ -99,12 +99,18 @@ _FOUNDATIONAL_FILES: frozenset[str] = frozenset(
 #: ``tests/test_changed_select.py`` flags the omission).
 _AREA_TESTS: dict[str, tuple[str, ...]] = {
     "entropy": ("test_entropy.py", "test_property_entropy.py"),
-    "dimensions": ("test_dimensions.py", "test_property_dimensions.py"),
-    "embedding": ("test_embedding.py", "test_property_embedding.py"),
+    "dimensions": (
+        "test_dimensions.py",
+        "test_property_dimensions.py",
+        "test_boxcount_origin.py",
+        "test_fixedmass_digamma.py",
+        "test_gendim_negative_q.py",
+    ),
+    "embedding": ("test_embedding.py", "test_property_embedding.py", "test_embedding_theiler.py"),
     "recurrence": ("test_recurrence.py", "test_property_recurrence.py"),
     "surrogate": ("test_surrogate.py", "test_property_surrogate.py"),
     "chaos": ("test_chaos.py",),
-    "fixedpoints": ("test_fixed_points.py",),
+    "fixedpoints": ("test_fixed_points.py", "test_fixed_points_flow_region.py"),
     "orbits": ("test_orbits.py", "test_orbit_diagram_perf.py", "test_poincare_perf.py"),
     "basins": ("test_basins.py",),
     # Lyapunov is cross-cutting (the spectrum feeds the known-value catalogue),

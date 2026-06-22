@@ -2,8 +2,8 @@
 Tests for DDE systems (``DelaySystem`` subclasses).
 
 Registry-driven; per-system non-equilibrium histories live in
-``tests/_sampling.py`` (a guard test asserts completeness).  DDE compilation
-via JiTCDDE is slow, so integration tests are marked ``slow``.
+``tests/_sampling.py`` (a guard test asserts completeness).  DDE integration
+(the engine method-of-steps) is slow, so integration tests are marked ``slow``.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def test_dde_delay_params_resolve(dde_entry) -> None:
 
 
 def test_dde_zero_delay_raises() -> None:
-    """A zero or negative delay parameter must raise rather than silently break JiTCDDE."""
+    """A zero or negative delay parameter must raise rather than silently break the engine."""
     import tsdynamics as ts
 
     mg = ts.MackeyGlass(params={"tau": 0.0})
@@ -47,7 +47,7 @@ def test_dde_zero_delay_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Integration — slow (JiTCDDE C compile)
+# Integration — slow (engine method-of-steps runtime)
 # ---------------------------------------------------------------------------
 
 

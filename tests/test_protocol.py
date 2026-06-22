@@ -35,7 +35,7 @@ def test_dde_set_state_raises_helpfully() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Map stepping (fast — Numba compile only on batch path)
+# Map stepping (fast — pure-Python _step loop)
 # ---------------------------------------------------------------------------
 
 
@@ -87,7 +87,7 @@ class TestMapStepping:
 
 
 # ---------------------------------------------------------------------------
-# ODE stepping (slow — JiTCODE compile)
+# ODE stepping (slow — engine integration runtime)
 # ---------------------------------------------------------------------------
 
 
@@ -142,7 +142,7 @@ class TestODEStepping:
 
 
 # ---------------------------------------------------------------------------
-# DDE stepping (slow — JiTCDDE compile)
+# DDE stepping (slow — engine method-of-steps runtime)
 # ---------------------------------------------------------------------------
 
 

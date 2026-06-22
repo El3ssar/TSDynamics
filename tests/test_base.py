@@ -155,7 +155,7 @@ class TestSystemBase:
         assert _Stub(dim=7).dim == 7
 
     # IC resolution priority: kwarg > self.ic > default_ic > random
-    def test_ic_none_falls_back_to_random(self, rng: np.random.Generator) -> None:
+    def test_ic_none_falls_back_to_random(self) -> None:
         # We re-seed numpy directly because resolve_ic uses np.random
         np.random.seed(123)
         s = _Stub()
