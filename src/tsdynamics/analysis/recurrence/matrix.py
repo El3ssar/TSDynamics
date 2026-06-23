@@ -87,10 +87,14 @@ class RecurrenceMatrix(AnalysisResult):
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe this recurrence matrix as a backend-agnostic :class:`PlotSpec`.
 
-        Builds a ``RECURRENCE_PLOT`` image layer of the dense boolean
-        :math:`N \times N` matrix on a square (``aspect="equal"``) canvas, with
-        both axes labelled by the state index :math:`i`.  The matrix is
-        densified with :meth:`toarray` (``O(N^2)``).  The
+        Builds a ``RECURRENCE_PLOT`` as a **sparse** ``SCATTER`` of the recurrent
+        pairs: the stored COO row / column indices become the ``(i, j)`` point
+        cloud, one marker per recurrence, on a square (``aspect="equal"``) canvas
+        with both axes labelled by the state index.  The matrix is **never
+        densified** — the coordinate arrays have length equal to the number of
+        stored recurrences (``nnz``), so a recurrence plot of a long, sparse
+        series stays :math:`O(\#\text{recurrences})` in memory rather than the
+        :math:`O(N^2)` a dense image would cost.  The
         :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
         plotting library.
 
@@ -107,14 +111,27 @@ class RecurrenceMatrix(AnalysisResult):
         from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
 
         spec_kind = PlotKind(kind) if kind is not None else PlotKind.RECURRENCE_PLOT
+        # Read the COO triplet directly — row/col are the recurrent (i, j) pairs.
+        # `.tocoo()` only repackages the already-stored indices (no densification);
+        # the coordinate arrays are exactly `nnz` long.
+        coo = self.matrix.tocoo()
+        i = np.asarray(coo.row, dtype=float)
+        j = np.asarray(coo.col, dtype=float)
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
             aspect="equal",
-            title=f"recurrence plot (RR = {self.recurrence_rate:.3g})",
-            x=Axis(label="$i$"),
-            y=Axis(label="$j$"),
-            layers=[Layer(PlotKind.IMAGE, {"c": self.toarray()}, style={"cmap": "binary"})],
+            title=f"recurrence plot (RR = {self.recurrence_rate:.3g}, {i.size} pts)",
+            x=Axis(label="$i$", limits=(0.0, float(self.size))),
+            y=Axis(label="$j$", limits=(0.0, float(self.size))),
+            layers=[
+                Layer(
+                    PlotKind.SCATTER,
+                    {"x": i, "y": j},
+                    label="recurrence",
+                    style={"color": "black", "s": 1, "marker": "s"},
+                )
+            ],
         )
 
     def __repr__(self) -> str:  # noqa: D105
