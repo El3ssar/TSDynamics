@@ -72,11 +72,12 @@ jobs:
       # this is where coverage is measured (the PR jobs run a selected subset and
       # deliberately skip --cov). Codecov upload is best-effort.
       - name: Tests (full suite + coverage)
-        run: uv run pytest --cov=src/tsdynamics --cov-report=xml -q
+        run: uv run pytest --cov=src/tsdynamics --cov-branch --cov-report=xml -q
 
-      - name: Upload coverage
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
         continue-on-error: true
