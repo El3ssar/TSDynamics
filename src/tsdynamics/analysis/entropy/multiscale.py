@@ -19,7 +19,7 @@ from .._result import ArrayResult
 from .core import as_series
 from .sample import sample_entropy
 
-__all__ = ["coarse_grain", "multiscale_entropy"]
+__all__ = ["coarse_grain", "multiscale_entropy", "multiscale_entropy_plot_spec"]
 
 
 def coarse_grain(x: Any, scale: int, *, component: int | str | None = None) -> np.ndarray:
@@ -127,6 +127,71 @@ def multiscale_entropy(
     return ArrayResult(
         values=out,
         meta={"analysis": "multiscale_entropy", "scales": [int(s) for s in scale_list]},
+    )
+
+
+def multiscale_entropy_plot_spec(result: ArrayResult, kind: str | None = None) -> Any:
+    r"""Describe a multiscale-entropy profile as a backend-agnostic :class:`PlotSpec`.
+
+    Renders the result of :func:`multiscale_entropy` as a *complexity curve* —
+    the entropy measured at each temporal scale factor against that scale
+    (Costa et al. 2002).  The scale factors are read from the result's
+    ``meta["scales"]`` when present (the order :func:`multiscale_entropy`
+    records), else taken as ``1, 2, …`` against the entropy index.  The shape of
+    this curve is the discriminating feature: a flat / rising profile signals
+    long-range correlation, a profile that decays with scale signals
+    uncorrelated noise.
+
+    The spec carries a ``LINE`` plus a ``MARKERS`` layer over the same
+    ``(scale, entropy)`` points, under the ``COMPLEXITY_CURVE`` semantic kind.
+    The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls
+    a plotting library; this is a pure viz adapter and does not touch the
+    estimator.
+
+    Parameters
+    ----------
+    result : ArrayResult
+        The profile returned by :func:`multiscale_entropy` — entropy at each
+        requested scale, with ``meta["scales"]`` carrying the scale factors.
+    kind : str, optional
+        Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
+        value).  ``None`` uses ``COMPLEXITY_CURVE``.
+
+    Returns
+    -------
+    PlotSpec
+        A ``COMPLEXITY_CURVE`` spec of entropy against scale factor.
+
+    Raises
+    ------
+    ValueError
+        If the result carries no entropy values (nothing to plot).
+    """
+    from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+
+    spec_kind = PlotKind(kind) if kind is not None else PlotKind.COMPLEXITY_CURVE
+    y = np.asarray(result.values, dtype=float).ravel()
+    if y.size == 0:
+        raise ValueError("multiscale-entropy profile is empty: nothing to plot.")
+    meta = dict(result.meta) if result.meta else {}
+    scales = meta.get("scales")
+    if scales is not None and len(scales) == y.size:
+        x = np.asarray(scales, dtype=float)
+    else:
+        x = np.arange(1.0, y.size + 1.0)
+    layers = [
+        Layer(PlotKind.LINE, {"x": x, "y": y}, label="entropy"),
+        Layer(PlotKind.MARKERS, {"x": x, "y": y}, label="scales"),
+    ]
+    return PlotSpec(
+        kind=spec_kind,
+        ndim=2,
+        title="Multiscale entropy",
+        x=Axis(label="scale factor"),
+        y=Axis(label="entropy"),
+        layers=layers,
+        legend=Legend(),
+        meta=meta,
     )
 
 
