@@ -195,7 +195,10 @@ def _normalize_changed_exitstatus(
     reports that as ``NO_TESTS_COLLECTED`` / exit code 5, but for a scoped shard
     that means "not applicable", not "failed".
     """
-    if config.getoption("changed", default=False) and exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED:
+    if (
+        config.getoption("changed", default=False)
+        and exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED
+    ):
         return pytest.ExitCode.OK
     return exitstatus
 
