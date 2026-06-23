@@ -181,6 +181,8 @@ nav:
       - Attractors & basins: analysis/basins.md
   - Transforms:
       - transforms/index.md
+  - Visualization:
+      - three.js export: visualization/threejs-export.md
   - Tutorials:
       - tutorials/index.md
       - From equations to basins: tutorials/equations-to-basins.md
