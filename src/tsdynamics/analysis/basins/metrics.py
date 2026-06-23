@@ -117,6 +117,65 @@ class UncertaintyExponent(AnalysisResult):
     f: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
     r_squared: float = 0.0
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the uncertainty exponent as its log--log scaling fit.
+
+        The uncertainty exponent *is* a scaling estimate:
+        :math:`f(\varepsilon)\sim\varepsilon^{\alpha}` (Grebogi et al., 1983), so
+        the natural figure is the ``SCALING_FIT`` of :math:`\log f` against
+        :math:`\log\varepsilon` with the fitted slope :math:`\alpha`.  This builds
+        that spec directly — a ``SCATTER`` of the curve, the fit region marked,
+        and the fit line drawn from the slope :math:`\alpha` and an intercept
+        recovered from the curve mean — so a single ``result.plot.scaling()``
+        renders it like every other dimension / Lyapunov-from-data scaling result.
+        The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
+        pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` uses ``SCALING_FIT``; the
+            ``.plot.scaling()`` seam passes ``"scaling_fit"`` explicitly, which
+            resolves to the same kind.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.SCALING_FIT
+        eps = np.asarray(self.epsilons, dtype=float)
+        f = np.asarray(self.f, dtype=float)
+        positive = (eps > 0.0) & (f > 0.0)
+        log_eps = np.log(eps[positive])
+        log_f = np.log(f[positive])
+
+        layers = [Layer(PlotKind.SCATTER, {"x": log_eps, "y": log_f}, label="curve")]
+        if log_eps.size:
+            # The fitted line: slope alpha, intercept recovered so it passes
+            # through the curve's centroid (log_f ≈ intercept + alpha * log_eps).
+            intercept = float(np.mean(log_f) - self.alpha * np.mean(log_eps))
+            fit_x = np.array([log_eps.min(), log_eps.max()], dtype=float)
+            layers.append(
+                Layer(
+                    PlotKind.LINE,
+                    {"x": fit_x, "y": intercept + self.alpha * fit_x},
+                    label=f"slope = {self.alpha:.3g}",
+                )
+            )
+
+        meta = dict(self.meta) if self.meta else {}
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=type(self).__name__,
+            x=Axis(label=r"$\log\varepsilon$"),
+            y=Axis(label=r"$\log f$"),
+            layers=layers,
+            meta=meta,
+        )
+
     def __repr__(self) -> str:  # noqa: D105
         return (
             f"UncertaintyExponent(alpha={self.alpha:.4g}, "
