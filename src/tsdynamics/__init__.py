@@ -362,7 +362,7 @@ bifurcation_diagram = orbit_diagram  #: discoverable spelling of :func:`orbit_di
 basins = basins_of_attraction  #: short alias of :func:`basins_of_attraction`
 
 # Single source of truth for the package version; rewritten by python-semantic-release.
-__version__ = "4.0.0"
+__version__ = "4.0.1"
 
 # Built-in system classes are NOT bound into this namespace — that would bury the
 # submodules (``analysis``, ``data``, ``systems``, …) under ~149 model names in
