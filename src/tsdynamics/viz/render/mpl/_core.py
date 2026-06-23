@@ -593,16 +593,17 @@ def render(spec: PlotSpec, *, figsize: tuple[float, float] | None = None, **_kw:
     Returns
     -------
     matplotlib.figure.Figure
-        The rendered figure (a single axes), ready to ``savefig`` / embed.
-
-    Raises
-    ------
-    NotImplementedError
-        For a 3-D mark (``LINE3D`` / ``SURFACE3D``) — drawn by the VIZ-MPL-3D
-        follow-up; this core is 2-D only.
+        The rendered figure (a single axes), ready to ``savefig`` / embed.  A
+        3-D spec (``ndim == 3`` / a ``z`` axis / a ``LINE3D`` / ``SURFACE3D``
+        mark) is dispatched to the :mod:`._threed` renderer.
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
+
+    from . import _threed
+
+    if _threed.is_three_d(spec):
+        return _threed.render_3d(spec, figsize=figsize)
 
     kind = normalize_kind(spec.kind)
     preset = _preset_for(kind)
