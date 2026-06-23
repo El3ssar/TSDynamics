@@ -182,17 +182,29 @@ class Trajectory:
         """
         Describe this trajectory as a backend-agnostic :class:`PlotSpec`.
 
-        The kind is chosen from the trajectory's dimensionality (the dispatch
-        that the docs figure tooling hand-rolls today): a 1-D trajectory is a
-        :data:`~tsdynamics.viz.spec.PlotKind.TIME_SERIES`, a 2-D one a
-        :data:`~tsdynamics.viz.spec.PlotKind.PHASE_PORTRAIT_2D`, and ``dim >= 3``
-        a :data:`~tsdynamics.viz.spec.PlotKind.PHASE_PORTRAIT_3D` (the first three
-        components).  A Poincaré-section trajectory (one carrying a
-        ``meta["plot_kind"]`` of ``"poincare_section"``, set by
+        The kind is auto-dispatched from the trajectory's dimensionality **and**
+        its discreteness (``is_discrete`` on the producing system): a 1-D
+        trajectory is a :data:`~tsdynamics.viz.spec.PlotKind.TIME_SERIES`, a 2-D
+        one a :data:`~tsdynamics.viz.spec.PlotKind.PHASE_PORTRAIT_2D`, and
+        ``dim >= 3`` a :data:`~tsdynamics.viz.spec.PlotKind.PHASE_PORTRAIT_3D`
+        (the first three components).  A **discrete-map** orbit is drawn with a
+        :data:`~tsdynamics.viz.spec.PlotKind.SCATTER` mark (its orbit is a point
+        sequence, not a connected curve) rather than a :data:`LINE` / :data:`LINE3D`.
+        A Poincaré-section trajectory (one carrying a ``meta["plot_kind"]`` of
+        ``"poincare_section"``, set by
         :func:`~tsdynamics.analysis.poincare_section` /
         :meth:`~tsdynamics.derived.PoincareMap.trajectory`) is recognised and
         rendered as the 2-D in-plane scatter instead of a flow line — the section
         intent a renderer would otherwise have to reverse-engineer from ``meta``.
+
+        Forcing ``kind="time_series"`` on a multi-component trajectory overlays
+        **one layer per component** with a legend (the multi-component overlay);
+        ``kind="spacetime"`` images component index vs time as an
+        :data:`~tsdynamics.viz.spec.PlotKind.IMAGE` (a Lorenz-96-style field).
+        Richer parameterised draw-views — an arbitrary component triple, a
+        delay-embedding, a vector field, a cobweb, colour-by-time / -speed — live
+        in :mod:`tsdynamics.viz.producers` (they take the extra parameters this
+        uniform ``to_plot_spec(self, kind=None)`` signature deliberately cannot).
 
         The :mod:`tsdynamics.viz.spec` import is local to this method (lazy, not
         at module scope), and :mod:`tsdynamics.viz.spec` pulls in no plotting
@@ -204,8 +216,9 @@ class Trajectory:
         kind : str, optional
             Override the auto-dispatched semantic kind with any member of the
             closed :class:`~tsdynamics.viz.spec.PlotKind` vocabulary (e.g.
-            ``"time_series"`` to force component-vs-time on a 3-D trajectory).
-            ``None`` (the default) auto-dispatches on dimensionality / section
+            ``"time_series"`` to force component-vs-time on a 3-D trajectory, or
+            ``"spacetime"`` to image a high-dimensional state).  ``None`` (the
+            default) auto-dispatches on dimensionality, discreteness, and section
             intent.
 
         Returns
@@ -213,7 +226,7 @@ class Trajectory:
         PlotSpec
         """
         from tsdynamics.errors import InvalidParameterError
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
 
         names = self.variables or tuple(f"y{i}" for i in range(self.dim))
 
@@ -234,15 +247,27 @@ class Trajectory:
             spec_kind = PlotKind(kind)
 
         meta = dict(self.meta)
+        discrete = self._is_discrete()
+
+        if spec_kind == PlotKind.SPACETIME:
+            return self._spacetime_spec(names)
 
         if spec_kind == PlotKind.TIME_SERIES:
+            # Overlay one layer per component (a discrete orbit scatters, a flow
+            # draws a line) with a legend when there is more than one component.
+            mark = PlotKind.SCATTER if discrete else PlotKind.LINE
+            layers = [
+                Layer(mark, {"x": self.t, "y": self.y[:, i]}, label=names[i])
+                for i in range(self.dim)
+            ]
             return PlotSpec(
                 kind=spec_kind,
                 ndim=1,
                 title=self._title(),
                 x=Axis(label="t"),
                 y=Axis(label=names[0]),
-                layers=[Layer(PlotKind.LINE, {"x": self.t, "y": self.y[:, 0]}, label=names[0])],
+                layers=layers,
+                legend=Legend() if self.dim > 1 else None,
                 meta=meta,
             )
 
@@ -265,7 +290,10 @@ class Trajectory:
         z = Axis(label=names[2]) if want_3d else None
         if want_3d:
             cols["z"] = self.y[:, 2]
-        layer_kind = PlotKind.LINE3D if want_3d else PlotKind.LINE
+        # A discrete-map orbit is a point cloud (SCATTER); a flow is a connected
+        # curve (LINE / LINE3D).
+        flow_mark = PlotKind.LINE3D if want_3d else PlotKind.LINE
+        layer_kind = PlotKind.SCATTER if discrete else flow_mark
         return PlotSpec(
             kind=spec_kind,
             ndim=3 if want_3d else 2,
@@ -277,6 +305,51 @@ class Trajectory:
             layers=[Layer(layer_kind, cols)],
             meta=meta,
         )
+
+    def _is_discrete(self) -> bool:
+        """Whether the producing system is a discrete map (default ``False``).
+
+        Reads ``self.system.is_discrete`` defensively — a synthetic trajectory
+        with no system, or one whose system does not expose the flag, is treated
+        as a flow.
+        """
+        flag = getattr(self.system, "is_discrete", False)
+        try:
+            return bool(flag)
+        except Exception:  # pragma: no cover - defensive
+            return False
+
+    def _spacetime_spec(self, names: tuple[str, ...]) -> PlotSpec:
+        """Build the component-index vs time ``IMAGE`` spec (``SPACETIME``).
+
+        The spatiotemporal field view of a high-dimensional flow (a Lorenz-96
+        lattice): the state array is drawn as a single color-mapped ``IMAGE``
+        with time along ``x`` and component index along ``y``, the colorbar /
+        ``clim`` inferred from the field.
+        """
+        from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
+
+        img = self.y.T
+        layer = Layer(
+            PlotKind.IMAGE,
+            {
+                "x": self.t,
+                "y": np.arange(self.dim, dtype=float),
+                "c": img.ravel(),
+                "z": img,
+            },
+        )
+        spec = PlotSpec(
+            kind=PlotKind.SPACETIME,
+            ndim=2,
+            title=self._title(),
+            x=Axis(label="t"),
+            y=Axis(label="component"),
+            layers=[layer],
+            colorbar=Colorbar(label="state"),
+            meta={**dict(self.meta), "component_names": list(names)},
+        )
+        return spec.autocolor()
 
     def plot(self, backend: str | None = None, **tweaks: Any) -> Any:
         """Render this trajectory via a visualization backend.

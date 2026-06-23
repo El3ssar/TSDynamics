@@ -5,7 +5,7 @@ packaging **entry points**.  On import, TSDynamics walks the relevant groups and
 loads whatever it finds, so an installed plugin's systems, solvers, analyses or
 transforms register themselves automatically.
 
-The four group names below are the frozen contract a plugin author declares
+The five group names below are the frozen contract a plugin author declares
 against in their own ``pyproject.toml``::
 
     [project.entry-points."tsdynamics.solvers"]
@@ -35,6 +35,7 @@ SYSTEMS_GROUP = "tsdynamics.systems"
 SOLVERS_GROUP = "tsdynamics.solvers"
 ANALYSES_GROUP = "tsdynamics.analyses"
 TRANSFORMS_GROUP = "tsdynamics.transforms"
+RENDERERS_GROUP = "tsdynamics.renderers"
 
 #: Every plugin group TSDynamics recognises.
 ALL_GROUPS: tuple[str, ...] = (
@@ -42,6 +43,7 @@ ALL_GROUPS: tuple[str, ...] = (
     SOLVERS_GROUP,
     ANALYSES_GROUP,
     TRANSFORMS_GROUP,
+    RENDERERS_GROUP,
 )
 
 
@@ -190,6 +192,7 @@ __all__ = [
     "SOLVERS_GROUP",
     "ANALYSES_GROUP",
     "TRANSFORMS_GROUP",
+    "RENDERERS_GROUP",
     "ALL_GROUPS",
     # The generic discovery / loading primitives the consuming subpackages use.
     "iter_entry_points",

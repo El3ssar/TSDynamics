@@ -19,6 +19,11 @@ import numpy as np
 # is cycle-safe.
 from tsdynamics.data.trajectory import Trajectory
 
+# The Plottable mixin (stream VIZ-SYSTEM-PLOT) gives every system a ``.plot()`` /
+# ``to_plot_spec()``.  It imports tsdynamics.viz only lazily (inside its methods),
+# so importing the family bases here keeps ``import tsdynamics`` visualization-free.
+from ._plottable import SystemPlottable
+
 __all__ = ["MetaStore", "ParamSet", "SystemBase", "Trajectory"]
 
 # ---------------------------------------------------------------------------
@@ -247,7 +252,7 @@ class MetaStore(MutableMapping[str, Any]):
 # ---------------------------------------------------------------------------
 
 
-class SystemBase:
+class SystemBase(SystemPlottable):
     """
     Abstract base class for all dynamical systems.
 
