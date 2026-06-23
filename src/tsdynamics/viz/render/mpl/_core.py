@@ -294,7 +294,7 @@ def _make_discrete_cmap_norm(
 
     meta: dict[str, Any] = dict(spec.meta) if spec.meta else {}
     palette_index: dict[int, int] = meta.get("palette_index", {})
-    diverged_color: str | None = meta.get("diverged_color", None)
+    diverged_color: str | None = meta.get("diverged_color")
 
     base_name = _resolve_cmap(spec, layer, preset) or "tab20"
     base_cmap = mpl.colormaps[base_name]
@@ -313,9 +313,7 @@ def _make_discrete_cmap_norm(
             colors.append(base_cmap(i / max(n, 1)))
 
     listed_cmap = mcolors.ListedColormap(colors)
-    boundaries = np.concatenate(
-        [[float(unique_vals[0]) - 0.5], unique_vals.astype(float) + 0.5]
-    )
+    boundaries = np.concatenate([[float(unique_vals[0]) - 0.5], unique_vals.astype(float) + 0.5])
     norm = mcolors.BoundaryNorm(boundaries, n)
     return listed_cmap, norm
 
