@@ -34,7 +34,14 @@ from typing import Any
 
 from ... import registry as _registry
 from .fixed import FixedPoint, FixedPointSet, fixed_points
-from .periodic import OrbitSet, PeriodicOrbit, estimate_period, periodic_orbit, periodic_orbits
+from .periodic import (
+    OrbitSet,
+    PeriodicOrbit,
+    estimate_period,
+    period_diagnostic,
+    periodic_orbit,
+    periodic_orbits,
+)
 
 __all__ = [
     "FixedPoint",
@@ -42,6 +49,7 @@ __all__ = [
     "OrbitSet",
     "PeriodicOrbit",
     "estimate_period",
+    "period_diagnostic",
     "fixed_points",
     "periodic_orbit",
     "periodic_orbits",
