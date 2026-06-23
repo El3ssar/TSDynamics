@@ -225,7 +225,8 @@ def test_result_specs_have_expected_kinds(built_results):
         "OrbitDiagram": PlotKind.ORBIT_DIAGRAM,
         "DimensionResult": PlotKind.SCALING_FIT,
         "RecurrenceMatrix": PlotKind.RECURRENCE_PLOT,
-        "RQAResult": PlotKind.DIAGNOSTIC_CURVE,
+        # GAPFILL-F: the RQA scalar measures now read out as a categorical bar.
+        "RQAResult": PlotKind.CATEGORICAL_BAR,
         "GALIResult": PlotKind.DIAGNOSTIC_CURVE,
         "ReturnMap": PlotKind.RETURN_MAP,
         "LyapunovFromData": PlotKind.SCALING_FIT,
@@ -255,13 +256,22 @@ def test_dimension_spec_carries_the_loglog_curve(built_results):
     assert spec.layers[-1].kind == PlotKind.LINE
 
 
-def test_recurrence_spec_is_a_square_image(built_results):
+def test_recurrence_spec_is_a_sparse_recurrence_plot(built_results):
+    # GAPFILL-F: the recurrence plot is a SPARSE (i, j) scatter of the recurrent
+    # pairs — it is NEVER densified to an (N, N) image (anti-OOM at large N).
     res = built_results["RecurrenceMatrix"]
     spec = res.to_plot_spec()
+    assert spec.kind == PlotKind.RECURRENCE_PLOT
     assert spec.aspect == "equal"
-    image = spec.layers[0]
-    assert image.kind == PlotKind.IMAGE
-    assert image.data["c"].shape == (res.size, res.size)
+    layer = spec.layers[0]
+    assert layer.kind == PlotKind.SCATTER
+    nnz = res.matrix.tocoo().nnz
+    assert layer.data["x"].shape == (nnz,)
+    assert layer.data["y"].shape == (nnz,)
+    # No layer carries a dense 2-D (densified) array.
+    for lyr in spec.layers:
+        for arr in lyr.data.values():
+            assert arr.ndim == 1, "recurrence spec must not densify the matrix"
 
 
 def test_gali_spec_uses_log_y(built_results):
