@@ -5,6 +5,7 @@
 [![Release](https://github.com/El3ssar/TSDynamics/actions/workflows/release.yml/badge.svg)](https://github.com/El3ssar/TSDynamics/actions/workflows/release.yml)
 [![Docs](https://github.com/El3ssar/TSDynamics/actions/workflows/docs.yml/badge.svg)](https://el3ssar.github.io/TSDynamics/)
 [![PyPI](https://img.shields.io/pypi/v/tsdynamics)](https://pypi.org/project/tsdynamics/)
+[![codecov](https://codecov.io/gh/El3ssar/TSDynamics/graph/badge.svg)](https://codecov.io/gh/El3ssar/TSDynamics)
 
 **Dynamical systems in Python: 149 built-in systems, a native Rust integration
 engine, and chaos analysis — with the simplest system-definition contract
