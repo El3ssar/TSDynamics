@@ -27,7 +27,7 @@ functions self-register into :data:`tsdynamics.registry.analyses`.
 from __future__ import annotations
 
 from ... import registry as _registry
-from .delay import autocorrelation, mutual_information, optimal_delay
+from .delay import MutualInformation, autocorrelation, mutual_information, optimal_delay
 from .dimension import (
     EmbeddingDimension,
     cao_dimension,
@@ -39,6 +39,7 @@ from .embed import Embedding, embed
 __all__ = [
     "Embedding",
     "EmbeddingDimension",
+    "MutualInformation",
     "autocorrelation",
     "cao_dimension",
     "embed",

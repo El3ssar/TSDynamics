@@ -54,7 +54,9 @@ from tsdynamics.analysis.basins.continuation import ContinuationResult
 from tsdynamics.analysis.basins.metrics import BasinEntropy, UncertaintyExponent, WadaResult
 from tsdynamics.analysis.chaos.expansion import ExpansionEntropyResult
 from tsdynamics.analysis.chaos.gali import GALIResult
+from tsdynamics.analysis.chaos.zero_one import ZeroOneResult
 from tsdynamics.analysis.dimensions._common import DimensionResult
+from tsdynamics.analysis.embedding.delay import MutualInformation
 from tsdynamics.analysis.embedding.dimension import EmbeddingDimension
 from tsdynamics.analysis.embedding.embed import Embedding
 from tsdynamics.analysis.fixedpoints.fixed import FixedPoint, FixedPointSet
@@ -219,7 +221,16 @@ def _builders() -> dict[type, object]:
             meta={"method": "iaaft"},
         ),
         Embedding: lambda: Embedding(values=np.random.default_rng(0).random((20, 3))),
+        # delay-selection diagnostic (mutual information first-minimum)
+        MutualInformation: lambda: MutualInformation(
+            values=np.array([1.5, 0.9, 0.6, 0.4, 0.5, 0.7]), meta={"analysis": "mutual_information"}
+        ),
         # chaos / recurrence / surrogate dataclasses
+        ZeroOneResult: lambda: ZeroOneResult(
+            value=0.97,
+            p=np.cumsum(np.random.default_rng(1).standard_normal(50)),
+            q=np.cumsum(np.random.default_rng(2).standard_normal(50)),
+        ),
         GALIResult: lambda: GALIResult(
             k=2, times=np.arange(1.0, 6.0), values=np.array([1.0, 0.6, 0.3, 0.1, 0.02])
         ),
