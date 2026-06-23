@@ -29,6 +29,7 @@ The pieces
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -574,7 +575,15 @@ def _span_shape(axis: str, span: tuple[float, float], style: dict[str, Any]) -> 
 # ---------------------------------------------------------------------------
 
 
-def render(spec: PlotSpec, **_kw: Any) -> go.Figure:
+def render(
+    spec: PlotSpec,
+    *,
+    html: bool = False,
+    path: str | os.PathLike[str] | None = None,
+    full_html: bool | None = None,
+    include_plotlyjs: str | bool = "cdn",
+    **_kw: Any,
+) -> Any:
     """Render a 2-D :class:`~tsdynamics.viz.spec.PlotSpec` to a plotly Figure.
 
     Builds a :class:`plotly.graph_objects.Figure`, adds every
@@ -592,15 +601,37 @@ def render(spec: PlotSpec, **_kw: Any) -> go.Figure:
         The backend-agnostic spec to draw.  Its per-call tweaks
         (relabel / rescale / limits / ticks / colorize) are already baked into the
         typed axes / colorbar, so honouring those honours the tweaks.
+    html : bool, optional
+        When ``True`` return the self-contained interactive **HTML string**
+        instead of the live figure (the embeddable fragment from
+        :func:`tsdynamics.viz.render.plotly._html.to_html`) — so
+        ``result.plot(backend="plotly", html=True)`` yields HTML ready to drop
+        into a web page.  Default ``False`` (return the figure).
+    path : str or os.PathLike, optional
+        When given, **write** the self-contained interactive HTML to this file
+        (UTF-8) and return the :class:`pathlib.Path` — so
+        ``result.plot(backend="plotly", path="fig.html")`` saves a standalone
+        page.  Implies HTML export regardless of ``html``.
+    full_html : bool, optional
+        Whether the exported HTML is a standalone document (``<html>`` wrapper)
+        or a bare embeddable fragment.  Default ``False`` for ``html=True`` (a
+        fragment) and ``True`` for ``path=`` (a standalone file); pass it
+        explicitly to override.  Ignored when neither ``html`` nor ``path`` is
+        set.
+    include_plotlyjs : str or bool, optional
+        How the exported HTML provides the plotly bundle; ``"cdn"`` (the default)
+        references it from a CDN so the fragment stays small.  See
+        :func:`tsdynamics.viz.render.plotly._html.to_html`.  Ignored when neither
+        ``html`` nor ``path`` is set.
     **_kw
         Forwarded but unused backend keywords (kept for a uniform renderer
         signature).
 
     Returns
     -------
-    plotly.graph_objects.Figure
-        The interactive figure (pan / zoom / hover), ready to ``show`` / embed /
-        export to HTML.
+    plotly.graph_objects.Figure or str or pathlib.Path
+        The interactive figure by default; the HTML **string** when ``html`` is
+        set; the written :class:`pathlib.Path` when ``path`` is given.
 
     Notes
     -----
@@ -649,4 +680,24 @@ def render(spec: PlotSpec, **_kw: Any) -> go.Figure:
         layout["annotations"] = texts
 
     fig.update_layout(**layout)
+
+    if path is not None:
+        # Write a self-contained interactive HTML file (standalone by default).
+        from ._html import write_html
+
+        return write_html(
+            fig,
+            path,
+            full_html=True if full_html is None else full_html,
+            include_plotlyjs=include_plotlyjs,
+        )
+    if html:
+        # Return the embeddable HTML fragment (no kernel needed to render it).
+        from ._html import to_html
+
+        return to_html(
+            fig,
+            full_html=False if full_html is None else full_html,
+            include_plotlyjs=include_plotlyjs,
+        )
     return fig

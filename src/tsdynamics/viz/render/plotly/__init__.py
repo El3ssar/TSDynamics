@@ -22,6 +22,13 @@ imports plotly only **lazily** — on first render, via the drawing core in
 :mod:`._core` — never at ``import tsdynamics``; if plotly is absent the hook is a
 no-op so dispatch degrades to whatever backends are present.  The renderer uses
 plotly's ``graph_objects`` API only (no ``plotly.express``, no ``kaleido``).
+
+Self-contained HTML export (stream PLOTLY-HTML) rides on the same hook: the
+renderer's :func:`._core.render` accepts ``html=True`` (return the embeddable
+interactive HTML fragment) or ``path=`` (write a standalone HTML file), built in
+:mod:`._html` (``include_plotlyjs="cdn"`` so the artifact needs no Python kernel
+and stays small).  So ``result.plot(backend="plotly", html=True)`` yields HTML
+ready for an mkdocs page / web frontend.
 """
 
 from __future__ import annotations
