@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "tsdynamics"
-version = "3.2.1"
+version = "4.0.0"
 description = "Zero-warmup Rust-engine ODE/DDE/SDE integration, discrete maps, and chaos analysis for dynamical systems."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
@@ -200,6 +200,13 @@ disable_error_code = ["override", "no-untyped-def", "no-untyped-call"]
 
 [tool.coverage.run]
 source = ["src/tsdynamics"]
+# The mpl and plotly renderer backends require optional packages that are not
+# installed in CI.  Their test modules already skip via pytest.importorskip, so
+# excluding them from measurement avoids an artificial coverage gap.
+omit = [
+  "*/viz/render/mpl/*",
+  "*/viz/render/plotly/*",
+]
 
 [tool.coverage.report]
 show_missing = true
