@@ -185,6 +185,26 @@ def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
     return lines
 
 
+def _normalize_changed_exitstatus(
+    config: pytest.Config, exitstatus: int | pytest.ExitCode
+) -> int | pytest.ExitCode:
+    """Treat an empty ``--changed`` shard as success.
+
+    In change-scoped CI a narrow diff can legitimately leave a marker-restricted
+    shard (for example ``-m slow`` or ``-m engine``) with nothing to run. Pytest
+    reports that as ``NO_TESTS_COLLECTED`` / exit code 5, but for a scoped shard
+    that means "not applicable", not "failed".
+    """
+    if config.getoption("changed", default=False) and exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED:
+        return pytest.ExitCode.OK
+    return exitstatus
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int | pytest.ExitCode) -> None:
+    """Normalize the exit code for change-scoped empty shards."""
+    session.exitstatus = _normalize_changed_exitstatus(session.config, exitstatus)
+
+
 @pytest.fixture
 def rng() -> np.random.Generator:
     """A reproducible NumPy ``Generator`` seeded at 42."""

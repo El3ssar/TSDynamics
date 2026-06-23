@@ -9,10 +9,12 @@ escalation rules — the cases that must fall back to the full suite.
 
 from __future__ import annotations
 
+import importlib.util
 import types
 from pathlib import Path
 
 import _changed_select as cs
+import pytest
 
 import tsdynamics.analysis
 from tsdynamics import registry
@@ -204,6 +206,31 @@ def test_keep_item_handwritten_per_system_test_in_sweep_file() -> None:
     assert not cs.keep_item(
         _fake_item("test_smoke.py"), cs.Plan(full=False, reason="t", systems={"Lorenz"})
     )
+
+
+def _load_tests_conftest() -> object:
+    path = Path(__file__).with_name("conftest.py")
+    spec = importlib.util.spec_from_file_location("tests_conftest_under_test", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_changed_no_tests_exitstatus_becomes_success() -> None:
+    module = _load_tests_conftest()
+    config = types.SimpleNamespace(getoption=lambda name, default=False: name == "changed")
+    session = types.SimpleNamespace(config=config, exitstatus=pytest.ExitCode.NO_TESTS_COLLECTED)
+    module.pytest_sessionfinish(session, pytest.ExitCode.NO_TESTS_COLLECTED)
+    assert session.exitstatus == pytest.ExitCode.OK
+
+
+def test_plain_no_tests_exitstatus_stays_failure() -> None:
+    module = _load_tests_conftest()
+    config = types.SimpleNamespace(getoption=lambda name, default=False: default)
+    session = types.SimpleNamespace(config=config, exitstatus=pytest.ExitCode.NO_TESTS_COLLECTED)
+    module.pytest_sessionfinish(session, pytest.ExitCode.NO_TESTS_COLLECTED)
+    assert session.exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED
 
 
 # ---------------------------------------------------------------------------
