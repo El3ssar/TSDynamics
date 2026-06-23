@@ -110,11 +110,85 @@ class ReturnMap(AnalysisResult):
             meta=dict(self.meta),
         )
 
+    def cobweb(self, kind: str | None = None) -> Any:
+        r"""Describe the return map's cobweb (staircase) as a :class:`PlotSpec`.
+
+        The cobweb diagram traces the iteration :math:`v_{n+1} = F(v_n)` as a
+        staircase: from a point on the diagonal it steps vertically to the return
+        curve, then horizontally back to the diagonal, and repeats.  This emits a
+        ``COBWEB`` spec carrying the scatter of the return points
+        :math:`(v_n, v_{n+1})`, the diagonal :math:`v_{n+1} = v_n`, and the
+        staircase ``LINE`` itself built from the recorded sequence.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls
+        a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` uses ``COBWEB``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.COBWEB
+        cur = np.asarray(self.current, dtype=float)
+        suc = np.asarray(self.successor, dtype=float)
+        layers = [
+            Layer(PlotKind.SCATTER, {"x": cur, "y": suc}, label=r"$v_{n+1}$ vs $v_n$"),
+        ]
+        if cur.size:
+            both = np.concatenate([cur, suc])
+            diag = np.array([float(both.min()), float(both.max())])
+            layers.append(Layer(PlotKind.LINE, {"x": diag, "y": diag}, label="$v_{n+1}=v_n$"))
+            stair_x, stair_y = _cobweb_path(cur, suc)
+            layers.append(
+                Layer(
+                    PlotKind.LINE,
+                    {"x": stair_x, "y": stair_y},
+                    label="cobweb",
+                    style={"lw": 0.8, "alpha": 0.8},
+                )
+            )
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=f"{self.kind} cobweb",
+            x=Axis(label=r"$v_n$"),
+            y=Axis(label=r"$v_{n+1}$"),
+            layers=layers,
+            legend=Legend() if len(layers) > 1 else None,
+            meta=dict(self.meta),
+        )
+
     def __repr__(self) -> str:
         return (
             f"ReturnMap(kind={self.kind!r}, observable={self.observable}, "
             f"{self.values.size} values)"
         )
+
+
+def _cobweb_path(current: np.ndarray, successor: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    r"""Build the staircase polyline of the iteration from the return pairs.
+
+    For each return pair :math:`(v_n, v_{n+1})` the cobweb steps vertically from
+    the diagonal point :math:`(v_n, v_n)` up to the curve :math:`(v_n, v_{n+1})`,
+    then horizontally to the next diagonal point :math:`(v_{n+1}, v_{n+1})`.
+    Returns the concatenated ``(x, y)`` vertices of that polyline.
+    """
+    cur = np.asarray(current, dtype=float)
+    suc = np.asarray(successor, dtype=float)
+    xs: list[float] = []
+    ys: list[float] = []
+    for vn, vn1 in zip(cur, suc, strict=True):
+        xs.extend((vn, vn))  # vertical: (vn, vn) -> (vn, vn1)
+        ys.extend((vn, vn1))
+        xs.append(vn1)  # horizontal: (vn, vn1) -> (vn1, vn1)
+        ys.append(vn1)
+    return np.asarray(xs, dtype=float), np.asarray(ys, dtype=float)
 
 
 def return_map(

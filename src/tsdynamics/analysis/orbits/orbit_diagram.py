@@ -112,8 +112,12 @@ class OrbitDiagram(AnalysisResult):
 
         Builds an ``ORBIT_DIAGRAM`` scatter of the asymptotic state (first
         recorded component) against the swept parameter — the bifurcation diagram
-        — via :meth:`flat`.  The :mod:`tsdynamics.viz.spec` import is lazy, so
-        building a spec never pulls a plotting library.
+        — via :meth:`flat`.  The cascade onsets that :meth:`bifurcation_points`
+        detects are carried as ``"vline"``
+        :class:`~tsdynamics.viz.spec.Annotation` reference lines (each labelled
+        with the period it opens onto), so a renderer draws the period-doubling
+        boundaries over the diagram.  The :mod:`tsdynamics.viz.spec` import is
+        lazy, so building a spec never pulls a plotting library.
 
         Parameters
         ----------
@@ -125,10 +129,21 @@ class OrbitDiagram(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
 
         x, y = self.flat()
         spec_kind = PlotKind(kind) if kind is not None else PlotKind.ORBIT_DIAGRAM
+        annotations: list[Annotation] = []
+        if len(self.values) > 1:
+            onsets = self.bifurcation_points()
+            periods = self.periods()
+            for onset in np.asarray(onsets, dtype=float).ravel():
+                # Label the line with the period the cascade opens *onto* (the
+                # period just to the right of the onset).
+                j = int(np.searchsorted(self.values, onset))
+                p = int(periods[j]) if 0 <= j < periods.size else 0
+                text = f"period {p}" if p > 0 else "bifurcation"
+                annotations.append(Annotation(kind="vline", x=float(onset), text=text))
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
@@ -136,6 +151,7 @@ class OrbitDiagram(AnalysisResult):
             x=Axis(label=self.param),
             y=Axis(label="asymptotic state"),
             layers=[Layer(PlotKind.SCATTER, {"x": x, "y": y}, style={"s": 1.0})],
+            annotations=annotations,
             meta=dict(self.meta),
         )
 

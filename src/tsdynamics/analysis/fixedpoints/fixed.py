@@ -68,6 +68,86 @@ class FixedPoint(AnalysisResult):
             gauge = f"|λ|max={np.abs(self.eigenvalues).max():.4f}"
         return f"FixedPoint({np.round(self.x, 6)}, {kind}, {gauge})"
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe this fixed point as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``FIXED_POINTS_OVERLAY``: a single ``SCATTER`` point at the first
+        two coordinates of :attr:`x`, styled by stability (a filled marker for a
+        stable point, an open marker for an unstable one).  Designed to be drawn
+        *over* a phase portrait via :meth:`AnalysisResult.overlay_on`, which keeps
+        the host layers first.  For the eigenvalue/multiplier picture use
+        :meth:`eigenvalue_plane`.  The :mod:`tsdynamics.viz.spec` import is lazy,
+        so building a spec never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
+            value).  ``None`` uses ``FIXED_POINTS_OVERLAY``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.FIXED_POINTS_OVERLAY
+        x = np.asarray(self.x, dtype=float).ravel()
+        label = "stable" if self.stable else "unstable"
+        style = _fixed_point_style(self.stable)
+        if x.size >= 2:
+            layer = Layer(
+                PlotKind.SCATTER,
+                {"x": np.array([x[0]]), "y": np.array([x[1]])},
+                label=label,
+                style=style,
+            )
+            ylabel = "$x_1$"
+        else:
+            layer = Layer(
+                PlotKind.SCATTER,
+                {"x": np.array([0.0]), "y": np.array([x[0] if x.size else 0.0])},
+                label=label,
+                style=style,
+            )
+            ylabel = "$x$"
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=f"{label} fixed point",
+            x=Axis(label="$x_0$"),
+            y=Axis(label=ylabel),
+            layers=[layer],
+            meta=dict(self.meta) if self.meta else {},
+        )
+
+    def eigenvalue_plane(self, kind: str | None = None) -> Any:
+        r"""Describe the Jacobian spectrum as an :class:`EIGENVALUE_PLANE` spec.
+
+        Plots the eigenvalues / multipliers of :attr:`eigenvalues` in the complex
+        plane.  The stability boundary is drawn as a reference geometry: the unit
+        circle for a **map** (``|λ| = 1``) or the imaginary axis for a **flow**
+        (``Re λ = 0``), per :attr:`continuous`.  The :mod:`tsdynamics.viz.spec`
+        import is lazy, so building a spec never pulls a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` uses ``EIGENVALUE_PLANE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        return _eigenvalue_plane_spec(
+            np.asarray(self.eigenvalues),
+            continuous=self.continuous,
+            title="fixed-point spectrum",
+            meta=dict(self.meta) if self.meta else {},
+            kind=kind,
+        )
+
 
 @dataclass(frozen=True, eq=False)
 class FixedPointSet(CollectionResult):
@@ -88,6 +168,91 @@ class FixedPointSet(CollectionResult):
     def unstable(self) -> list[FixedPoint]:
         """The unstable fixed points / equilibria in the set."""
         return [fp for fp in self.items if not fp.stable]
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the whole set as one ``FIXED_POINTS_OVERLAY`` :class:`PlotSpec`.
+
+        Draws the stable and the unstable fixed points as two separately styled
+        ``SCATTER`` layers (filled vs open markers) at the first two coordinates,
+        so the set reads at a glance — the overlay a phase portrait hosts via
+        :meth:`AnalysisResult.overlay_on` (host layers first).  A 1-D set scatters
+        against a zero baseline.  An empty set yields a valid layer-less spec.
+        For the spectrum picture use :meth:`eigenvalue_plane`.  The
+        :mod:`tsdynamics.viz.spec` import is lazy.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` uses ``FIXED_POINTS_OVERLAY``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.FIXED_POINTS_OVERLAY
+        layers: list[Layer] = []
+        for stable, label in ((True, "stable"), (False, "unstable")):
+            pts = [
+                np.asarray(fp.x, dtype=float).ravel() for fp in self.items if fp.stable is stable
+            ]
+            if not pts:
+                continue
+            dim = min(p.size for p in pts)
+            arr = np.asarray([p[:dim] for p in pts], dtype=float)
+            xs = arr[:, 0]
+            ys = arr[:, 1] if dim >= 2 else np.zeros(arr.shape[0])
+            layers.append(
+                Layer(
+                    PlotKind.SCATTER,
+                    {"x": xs, "y": ys},
+                    label=label,
+                    style=_fixed_point_style(stable),
+                )
+            )
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=f"fixed points ({len(self.items)} found)",
+            x=Axis(label="$x_0$"),
+            y=Axis(label="$x_1$"),
+            layers=layers,
+            legend=Legend() if len(layers) > 1 else None,
+            meta=dict(self.meta) if self.meta else {},
+        )
+
+    def eigenvalue_plane(self, kind: str | None = None) -> Any:
+        r"""Describe every member's spectrum in one :class:`EIGENVALUE_PLANE` spec.
+
+        Pools the eigenvalues / multipliers of all fixed points and plots them in
+        the complex plane against the stability boundary (the unit circle for
+        maps, the imaginary axis for flows).  The :mod:`tsdynamics.viz.spec` import
+        is lazy.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` uses ``EIGENVALUE_PLANE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        eigs = (
+            np.concatenate([np.asarray(fp.eigenvalues).ravel() for fp in self.items])
+            if self.items
+            else np.empty(0, dtype=complex)
+        )
+        continuous = bool(self.items[0].continuous) if self.items else False
+        return _eigenvalue_plane_spec(
+            eigs,
+            continuous=continuous,
+            title="fixed-point spectra",
+            meta=dict(self.meta) if self.meta else {},
+            kind=kind,
+        )
 
 
 def fixed_points(
@@ -280,6 +445,101 @@ def _stabilising_matrices(method: str, dim: int, max_c: int | None) -> list[np.n
             stacklevel=3,
         )
     return mats
+
+
+# ── visualization helpers (shared with periodic.py) ──────────────────────────
+
+
+def _fixed_point_style(stable: bool) -> dict[str, Any]:
+    """Backend-neutral marker style distinguishing a stable from an unstable point.
+
+    A stable point gets a filled disc; an unstable one an open circle — the
+    convention a renderer maps to its own marker idioms (unknown keys are
+    ignored, per the :class:`~tsdynamics.viz.spec.Layer` contract).
+    """
+    if stable:
+        return {"marker": "o", "filled": True, "s": 40.0}
+    return {"marker": "o", "filled": False, "s": 40.0}
+
+
+def _eigenvalue_plane_spec(
+    eigenvalues: np.ndarray,
+    *,
+    continuous: bool,
+    title: str,
+    meta: dict[str, Any],
+    kind: str | None = None,
+    trivial_index: int | None = None,
+) -> Any:
+    r"""Build an ``EIGENVALUE_PLANE`` :class:`PlotSpec` for a spectrum.
+
+    Scatters ``eigenvalues`` in the complex plane (real part on ``x``, imaginary
+    part on ``y``) against the stability boundary: the unit circle ``|λ| = 1`` for
+    a map (``continuous=False``), or the imaginary axis ``Re λ = 0`` for a flow
+    (``continuous=True``).  When ``trivial_index`` is given (a flow's trivial
+    Floquet multiplier ``≈ 1``), that eigenvalue is split into its own
+    distinctly-styled layer.  The :mod:`tsdynamics.viz.spec` import is lazy.
+    """
+    from tsdynamics.viz.spec import Annotation, Axis, Layer, Legend, PlotKind, PlotSpec
+
+    spec_kind = PlotKind(kind) if kind is not None else PlotKind.EIGENVALUE_PLANE
+    eig = np.asarray(eigenvalues).ravel().astype(complex)
+    n = eig.size
+
+    layers: list[Layer] = []
+    annotations: list[Annotation] = []
+
+    # The stability-boundary reference geometry.
+    if continuous:
+        annotations.append(Annotation(kind="vline", x=0.0, text=r"$\mathrm{Re}\,\lambda = 0$"))
+    else:
+        theta = np.linspace(0.0, 2.0 * np.pi, 200)
+        layers.append(
+            Layer(
+                PlotKind.LINE,
+                {"x": np.cos(theta), "y": np.sin(theta)},
+                label=r"$|\lambda| = 1$",
+                style={"color": "gray", "lw": 1.0, "alpha": 0.6},
+            )
+        )
+
+    if n:
+        keep = np.ones(n, dtype=bool)
+        if trivial_index is not None and 0 <= trivial_index < n:
+            keep[trivial_index] = False
+            tv = eig[trivial_index]
+            layers.append(
+                Layer(
+                    PlotKind.SCATTER,
+                    {"x": np.array([tv.real]), "y": np.array([tv.imag])},
+                    label=r"trivial $\mu \approx 1$",
+                    style={"marker": "x", "s": 60.0},
+                )
+            )
+        rest = eig[keep]
+        if rest.size:
+            layers.append(
+                Layer(
+                    PlotKind.SCATTER,
+                    {"x": rest.real.astype(float), "y": rest.imag.astype(float)},
+                    label="multipliers" if not continuous else "eigenvalues",
+                    style={"marker": "o", "s": 40.0},
+                )
+            )
+
+    legend = Legend() if len(layers) > 1 else None
+    return PlotSpec(
+        kind=spec_kind,
+        ndim=2,
+        aspect="equal",
+        title=title,
+        x=Axis(label=r"$\mathrm{Re}\,\lambda$"),
+        y=Axis(label=r"$\mathrm{Im}\,\lambda$"),
+        layers=layers,
+        legend=legend,
+        annotations=annotations,
+        meta=meta,
+    )
 
 
 def __dir__() -> list[str]:
