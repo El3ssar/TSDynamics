@@ -182,7 +182,11 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
         renderer = renderers.get(backend)  # KeyError (naming) if unknown
         if _can_render(renderer, spec):
             return backend, renderer
-        fallback = _first_capable(spec, renderers, exclude=backend)
+        # The named backend declines: prefer a *drawing* fallback over a
+        # data-export one (the caller asked to draw, not to serialize).
+        fallback = _first_capable(spec, renderers, exclude=backend, skip_data_export=True)
+        if fallback is None:
+            fallback = _first_capable(spec, renderers, exclude=backend)
         if fallback is None:
             return backend, renderer  # nothing better; let the backend try / error clearly
         warnings.warn(
@@ -193,7 +197,13 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
         )
         return fallback
 
-    chosen = _first_capable(spec, renderers)
+    # Default (no-backend) selection: a data-export backend (``json`` / ``threejs``
+    # — ``data_export=True``) returns a payload, not a figure, so it must never be
+    # the default for ``result.plot()`` / ``spec.render()``.  Prefer a *drawing*
+    # backend first; fall to a data-export one only if nothing else can render.
+    chosen = _first_capable(spec, renderers, skip_data_export=True)
+    if chosen is None:
+        chosen = _first_capable(spec, renderers)
     if chosen is not None:
         return chosen
     # No backend declares it can draw this; use the first registered and let it
@@ -203,13 +213,24 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
 
 
 def _first_capable(
-    spec: PlotSpec, renderers: Any, *, exclude: str | None = None
+    spec: PlotSpec, renderers: Any, *, exclude: str | None = None, skip_data_export: bool = False
 ) -> tuple[str, Any] | None:
-    """Return the first ``(name, renderer)`` that can draw ``spec``, else ``None``."""
+    """Return the first ``(name, renderer)`` that can draw ``spec``, else ``None``.
+
+    When ``skip_data_export`` is set, a backend that declares
+    ``data_export=True`` in its :class:`~tsdynamics.viz.render.caps.RendererCapabilities`
+    (a serializer such as ``json`` / ``threejs``, which returns a payload rather
+    than a figure) is skipped — so default selection prefers a real drawing
+    backend.  A capability-less renderer (no descriptor) is never skipped.
+    """
     for name in renderers.names():
         if name == exclude:
             continue
         renderer = renderers.get(name)
+        if skip_data_export:
+            caps = _capabilities_of(renderer)
+            if caps is not None and caps.data_export:
+                continue
         if _can_render(renderer, spec):
             return name, renderer
     return None
