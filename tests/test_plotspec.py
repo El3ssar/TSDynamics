@@ -199,13 +199,36 @@ def test_style_targets_a_single_layer_by_index():
 # ---------------------------------------------------------------------------
 
 
-def test_render_raises_without_a_backend():
+@pytest.fixture
+def _no_backend(monkeypatch):
+    """Force a genuinely empty renderers registry (stub builtin registration).
+
+    Since stream VIZ-MPL-CORE the matplotlib backend auto-registers on first
+    render, so the "no backend installed" behaviour is exercised by clearing the
+    registry and stubbing :func:`register_builtin_renderers` to a no-op for the
+    test, then restoring it.
+    """
+    from tsdynamics import registry
+    from tsdynamics.viz import render as render_mod
+
+    saved = registry.renderers.all()
+    registry.renderers.clear()
+    monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
+    try:
+        yield
+    finally:
+        registry.renderers.clear()
+        for entry in saved:
+            registry.renderers.register(entry.name, entry.obj, replace=True)
+
+
+def test_render_raises_without_a_backend(_no_backend):
     spec = _sample_spec()
     with pytest.raises(ImportError):  # VisualizationNotInstalled subclasses ImportError
         spec.render()
 
 
-def test_plottable_mixin_plot_raises_without_backend():
+def test_plottable_mixin_plot_raises_without_backend(_no_backend):
     class _Thing(Plottable):
         def to_plot_spec(self):
             return PlotSpec(kind=PlotKind.TIME_SERIES)
@@ -219,7 +242,7 @@ def test_plottable_base_to_plot_spec_raises():
         Plottable().to_plot_spec()
 
 
-def test_plottable_mimebundle_is_noop_without_backend():
+def test_plottable_mimebundle_is_noop_without_backend(_no_backend):
     class _Thing(Plottable):
         def to_plot_spec(self):
             return PlotSpec(kind=PlotKind.TIME_SERIES)

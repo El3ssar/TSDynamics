@@ -120,10 +120,23 @@ def test_section_has_populated_provenance_meta() -> None:
     assert sec.meta.get("system") == "Rossler"
 
 
-def test_section_plot_seam_raises_until_a_backend_ships() -> None:
-    sec = ts.poincare_section(_rossler(), plane=("y", 0.0), n=15, dt=0.05)
-    with pytest.raises(VisualizationNotInstalled):
-        sec.plot()
+def test_section_plot_seam_raises_without_a_backend(monkeypatch) -> None:
+    # The matplotlib backend auto-registers on render as of stream VIZ-MPL-CORE;
+    # force an empty registry to keep testing the genuine no-backend path.
+    from tsdynamics import registry
+    from tsdynamics.viz import render as render_mod
+
+    saved = registry.renderers.all()
+    registry.renderers.clear()
+    monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
+    try:
+        sec = ts.poincare_section(_rossler(), plane=("y", 0.0), n=15, dt=0.05)
+        with pytest.raises(VisualizationNotInstalled):
+            sec.plot()
+    finally:
+        registry.renderers.clear()
+        for entry in saved:
+            registry.renderers.register(entry.name, entry.obj, replace=True)
 
 
 # ---------------------------------------------------------------------------
