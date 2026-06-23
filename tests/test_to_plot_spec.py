@@ -147,11 +147,23 @@ def test_trajectory_time_series_uses_named_variable():
     assert spec.y.label == "x"  # Lorenz declares variables = ("x", "y", "z")
 
 
-def test_trajectory_plot_raises_without_backend():
+def test_trajectory_plot_raises_without_backend(monkeypatch):
+    # The matplotlib backend auto-registers on render as of stream VIZ-MPL-CORE;
+    # force an empty registry to keep testing the genuine no-backend path.
+    from tsdynamics import registry
     from tsdynamics.analysis._result import VisualizationNotInstalled
+    from tsdynamics.viz import render as render_mod
 
-    with pytest.raises(VisualizationNotInstalled):
-        _lorenz_traj().plot()
+    saved = registry.renderers.all()
+    registry.renderers.clear()
+    monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
+    try:
+        with pytest.raises(VisualizationNotInstalled):
+            _lorenz_traj().plot()
+    finally:
+        registry.renderers.clear()
+        for entry in saved:
+            registry.renderers.register(entry.name, entry.obj, replace=True)
 
 
 # ---------------------------------------------------------------------------

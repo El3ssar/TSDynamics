@@ -13,8 +13,6 @@ itself stays plot-free).
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 from tsdynamics import registry
@@ -100,18 +98,24 @@ def test_normalize_kind_rejects_garbage():
 
 
 # ---------------------------------------------------------------------------
-# register_builtin_renderers (no in-tree backend modules → no-op here)
+# register_builtin_renderers (the matplotlib backend ships as of VIZ-MPL-CORE)
 # ---------------------------------------------------------------------------
 
 
-def test_register_builtin_renderers_is_a_noop_without_backends(clean_renderers):
-    """With no backend submodule installed, registration adds nothing and is safe."""
+def test_register_builtin_renderers_registers_matplotlib(clean_renderers):
+    """The installed matplotlib backend is discovered and registered (stream VIZ-MPL-CORE).
+
+    Registration is *lazy* in its plot import: it adds the matplotlib backend to
+    the registry but the matplotlib library is imported only on the first actual
+    render — registration itself stays side-effect-light — and re-running is
+    idempotent.
+    """
+    pytest.importorskip("matplotlib")
     newly = register_builtin_renderers()
-    assert newly == []
-    assert len(clean_renderers) == 0
-    # No plotting library was imported as a side effect.
-    for banned in ("matplotlib", "plotly"):
-        assert banned not in sys.modules
+    assert "matplotlib" in newly
+    assert "matplotlib" in clean_renderers
+    # Re-running is idempotent: matplotlib is not registered twice.
+    assert register_builtin_renderers() == []
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +171,12 @@ def test_capability_less_callable_is_a_universal_fallback(clean_renderers):
 # ---------------------------------------------------------------------------
 
 
-def test_render_with_no_backend_raises_not_installed(clean_renderers):
+def test_render_with_no_backend_raises_not_installed(clean_renderers, monkeypatch):
+    # The matplotlib backend now auto-registers on render; stub that out to keep
+    # exercising the genuine "no backend installed" path faithfully.
+    from tsdynamics.viz import render as render_mod
+
+    monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
     with pytest.raises(VisualizationNotInstalled):
         render_spec(_line_spec())
 

@@ -255,16 +255,39 @@ def test_different_estimate_compares_unequal():
 
 
 # ---------------------------------------------------------------------------
-# The .plot.scaling() seam — raises until a backend registers
+# The .plot.scaling() seam — raises when no backend is registered
 # ---------------------------------------------------------------------------
 
 
-def test_plot_scaling_raises_until_backend():
+@pytest.fixture
+def _no_backend(monkeypatch):
+    """Force an empty renderers registry (the matplotlib backend now auto-registers).
+
+    As of stream VIZ-MPL-CORE :meth:`PlotSpec.render` lazily registers matplotlib,
+    so the genuine "no backend installed" path is exercised by clearing the
+    registry and stubbing :func:`register_builtin_renderers` to a no-op, then
+    restoring it.
+    """
+    from tsdynamics import registry
+    from tsdynamics.viz import render as render_mod
+
+    saved = registry.renderers.all()
+    registry.renderers.clear()
+    monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
+    try:
+        yield
+    finally:
+        registry.renderers.clear()
+        for entry in saved:
+            registry.renderers.register(entry.name, entry.obj, replace=True)
+
+
+def test_plot_scaling_raises_without_backend(_no_backend):
     with pytest.raises(VisualizationNotInstalled):
         _scaling().plot.scaling()
 
 
-def test_plot_call_raises_until_backend():
+def test_plot_call_raises_without_backend(_no_backend):
     with pytest.raises(VisualizationNotInstalled):
         _scaling().plot()
 

@@ -58,22 +58,37 @@ def test_to_plot_spec_forwards_trajectory_kwargs():
     assert isinstance(spec, PlotSpec)
 
 
-def test_plot_raises_without_a_backend():
-    """`.plot()` resolves end-to-end to the render seam (no backend → documented error)."""
-    from tsdynamics import registry
+@pytest.fixture
+def _no_backend(monkeypatch):
+    """Force an empty renderers registry so the ``.plot`` seam raises.
 
-    if len(registry.renderers):  # pragma: no cover - defensive if a backend leaked in
-        pytest.skip("a renderer backend is registered in this session")
+    The matplotlib backend lazily auto-registers on first render as of stream
+    VIZ-MPL-CORE, so the genuine no-backend path is exercised by clearing the
+    registry and stubbing :func:`register_builtin_renderers` to a no-op, then
+    restoring it.
+    """
+    from tsdynamics import registry
+    from tsdynamics.viz import render as render_mod
+
+    saved = registry.renderers.all()
+    registry.renderers.clear()
+    monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
+    try:
+        yield
+    finally:
+        registry.renderers.clear()
+        for entry in saved:
+            registry.renderers.register(entry.name, entry.obj, replace=True)
+
+
+def test_plot_raises_without_a_backend(_no_backend):
+    """`.plot()` resolves end-to-end to the render seam (no backend → documented error)."""
     with pytest.raises(VisualizationNotInstalled):
         ts.Lorenz().plot()
 
 
-def test_repr_mimebundle_is_noop_without_backend():
+def test_repr_mimebundle_is_noop_without_backend(_no_backend):
     """The notebook hook no-ops (returns None) until a backend registers."""
-    from tsdynamics import registry
-
-    if len(registry.renderers):  # pragma: no cover
-        pytest.skip("a renderer backend is registered in this session")
     assert ts.Lorenz()._repr_mimebundle_() is None
 
 

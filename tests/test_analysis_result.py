@@ -194,7 +194,29 @@ def test_visualization_not_installed_is_importerror():
     assert issubclass(VisualizationNotInstalled, ImportError)
 
 
-def test_plot_call_raises_until_backend():
+@pytest.fixture
+def _no_backend(monkeypatch):
+    """Force an empty renderers registry so the ``.plot`` seam raises.
+
+    The matplotlib backend lazily auto-registers on first render as of stream
+    VIZ-MPL-CORE, so the no-backend path is exercised by clearing the registry
+    and stubbing :func:`register_builtin_renderers` to a no-op, then restoring it.
+    """
+    from tsdynamics import registry
+    from tsdynamics.viz import render as render_mod
+
+    saved = registry.renderers.all()
+    registry.renderers.clear()
+    monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
+    try:
+        yield
+    finally:
+        registry.renderers.clear()
+        for entry in saved:
+            registry.renderers.register(entry.name, entry.obj, replace=True)
+
+
+def test_plot_call_raises_without_backend(_no_backend):
     with pytest.raises(VisualizationNotInstalled):
         _spectrum().plot()
 
@@ -214,7 +236,7 @@ def test_plot_call_raises_until_backend():
         "section",
     ],
 )
-def test_plot_typed_methods_raise_until_backend(method):
+def test_plot_typed_methods_raise_without_backend(method, _no_backend):
     accessor = _spectrum().plot
     assert hasattr(accessor, method)
     with pytest.raises(VisualizationNotInstalled):

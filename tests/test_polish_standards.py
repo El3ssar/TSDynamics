@@ -66,6 +66,29 @@ from tsdynamics.derived.poincare import PoincareSection
 from tsdynamics.errors import InvalidInputError, InvalidParameterError, TSDynamicsError
 from tsdynamics.viz.spec import PlotKind
 
+
+@pytest.fixture
+def _no_render_backend(monkeypatch):
+    """Force an empty renderers registry so the ``.plot`` seam raises.
+
+    As of stream VIZ-MPL-CORE the matplotlib backend lazily auto-registers on the
+    first render, so the deferred-seam ``VisualizationNotInstalled`` path is
+    exercised by clearing the registry and stubbing
+    :func:`register_builtin_renderers` to a no-op for the test, then restoring it.
+    """
+    from tsdynamics.viz import render as render_mod
+
+    saved = registry.renderers.all()
+    registry.renderers.clear()
+    monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
+    try:
+        yield
+    finally:
+        registry.renderers.clear()
+        for entry in saved:
+            registry.renderers.register(entry.name, entry.obj, replace=True)
+
+
 # ===========================================================================
 # Result-object contract gate (stream WS-RESULT-GATE)
 # ===========================================================================
@@ -174,8 +197,8 @@ def test_base_result_classes_expose_contract(cls):
     assert not missing, f"{cls.__name__} is missing contract affordances: {missing}"
 
 
-def test_analysis_result_plot_seam_raises_until_a_backend_lands():
-    """The ``.plot`` seam exists on every result but raises until a backend ships.
+def test_analysis_result_plot_seam_raises_until_a_backend_lands(_no_render_backend):
+    """The ``.plot`` seam exists on every result but raises when no backend is registered.
 
     Visualization is deferred in v4: ``result.plot`` resolves to the accessor
     (callable *and* a namespace of typed kind methods), but every entry point —
@@ -351,7 +374,7 @@ _RUNTIME_CASES = _runtime_cases()
 
 
 @pytest.mark.parametrize("name,thunk", _RUNTIME_CASES, ids=[c[0] for c in _RUNTIME_CASES])
-def test_runtime_result_contract(name, thunk):
+def test_runtime_result_contract(name, thunk, _no_render_backend):
     """A representative analysis of each result class fires the full contract live.
 
     Asserts on the returned object: it is an ``AnalysisResult`` (or the
