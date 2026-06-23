@@ -277,26 +277,91 @@ def _draw_scatter(
     return None
 
 
+def _make_discrete_cmap_norm(
+    img: np.ndarray, spec: PlotSpec, layer: Layer, preset: _KindPreset
+) -> tuple[Any, Any]:
+    """Build a ``ListedColormap`` + ``BoundaryNorm`` for integer-label images.
+
+    Reads ``spec.meta["palette_index"]`` (``{attractor_id: swatch_index}``) and
+    ``spec.meta["diverged_color"]`` for basin diagrams; falls back to evenly
+    sampling the base colormap for generic discrete images.
+    """
+    import matplotlib as mpl
+    import matplotlib.colors as mcolors
+
+    unique_vals = np.unique(img.ravel().astype(int))
+    n = len(unique_vals)
+
+    meta: dict[str, Any] = dict(spec.meta) if spec.meta else {}
+    palette_index: dict[int, int] = meta.get("palette_index", {})
+    diverged_color: str | None = meta.get("diverged_color", None)
+
+    base_name = _resolve_cmap(spec, layer, preset) or "tab20"
+    base_cmap = mpl.colormaps[base_name]
+    _tab20_size = 20  # tab20: swatch i centres at (2i+1)/40
+
+    colors: list[Any] = []
+    for v in unique_vals:
+        v_int = int(v)
+        if diverged_color is not None and v_int == -1:
+            colors.append(mcolors.to_rgba(diverged_color))
+        elif v_int in palette_index:
+            swatch = palette_index[v_int]
+            colors.append(base_cmap((2 * swatch + 1) / (2 * _tab20_size)))
+        else:
+            i = int(np.searchsorted(unique_vals, v))
+            colors.append(base_cmap(i / max(n, 1)))
+
+    listed_cmap = mcolors.ListedColormap(colors)
+    boundaries = np.concatenate(
+        [[float(unique_vals[0]) - 0.5], unique_vals.astype(float) + 0.5]
+    )
+    norm = mcolors.BoundaryNorm(boundaries, n)
+    return listed_cmap, norm
+
+
 def _draw_image(
     ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
 ) -> ScalarMappable | None:
     """Draw an ``IMAGE`` mark from a 2-D ``z`` (or ``c``) channel.
 
     The image data is the ``"z"`` channel (falling back to ``"c"``); ``"x"`` /
-    ``"y"`` channels, when 1-D, set the pixel-edge extent.  Origin is lower-left
-    so row 0 sits at the bottom (the array's natural orientation for a
-    state-space image).
+    ``"y"`` channels, when 1-D, set the pixel-edge extent.  When neither is
+    present the spec's axis limits are used as the extent, so a grid-backed
+    image (e.g. basin diagrams) is placed at the correct physical coordinates.
+    Origin is lower-left so row 0 sits at the bottom.
+
+    When the spec's colorbar carries ``discrete=True`` (e.g. basin diagrams),
+    a :class:`~matplotlib.colors.ListedColormap` and
+    :class:`~matplotlib.colors.BoundaryNorm` are built so each unique integer
+    label maps to exactly one discrete colour swatch.
     """
     z = layer.data.get("z")
     if z is None:
         z = layer.data.get("c")
     if z is None:
         return None
-    img = np.asarray(z, dtype=float)
-    extent = _image_extent(layer)
+    raw = np.asarray(z)
+    extent = _image_extent(layer, spec)
+    interp = layer.style.get("interpolation", "nearest")
+
+    discrete = spec.colorbar is not None and getattr(spec.colorbar, "discrete", False)
+    if discrete:
+        cmap, norm = _make_discrete_cmap_norm(raw, spec, layer, preset)
+        im = ax.imshow(
+            raw.astype(float),
+            origin="lower",
+            aspect="auto",
+            extent=extent,
+            cmap=cmap,
+            norm=norm,
+            interpolation=interp,
+        )
+        return im
+
+    img = raw.astype(float)
     cmap = _resolve_cmap(spec, layer, preset)
     norm = _make_norm(_resolve_norm(spec, preset), spec.clim)
-    interp = layer.style.get("interpolation", "nearest")
     im = ax.imshow(
         img,
         origin="lower",
@@ -309,17 +374,27 @@ def _draw_image(
     return im
 
 
-def _image_extent(layer: Layer) -> tuple[float, float, float, float] | None:
-    """Return an ``(x0, x1, y0, y1)`` imshow extent from 1-D ``x`` / ``y`` edges."""
+def _image_extent(
+    layer: Layer, spec: PlotSpec | None = None
+) -> tuple[float, float, float, float] | None:
+    """Return an ``(x0, x1, y0, y1)`` imshow extent.
+
+    Priority: layer ``x``/``y`` channel edges → spec axis limits → ``None``
+    (matplotlib default pixel-index placement).
+    """
     x = layer.data.get("x")
     y = layer.data.get("y")
-    if x is None or y is None:
-        return None
-    xa = np.asarray(x, dtype=float)
-    ya = np.asarray(y, dtype=float)
-    if xa.ndim != 1 or ya.ndim != 1 or xa.size < 2 or ya.size < 2:
-        return None
-    return (float(xa[0]), float(xa[-1]), float(ya[0]), float(ya[-1]))
+    if x is not None and y is not None:
+        xa = np.asarray(x, dtype=float)
+        ya = np.asarray(y, dtype=float)
+        if xa.ndim == 1 and ya.ndim == 1 and xa.size >= 2 and ya.size >= 2:
+            return (float(xa[0]), float(xa[-1]), float(ya[0]), float(ya[-1]))
+    if spec is not None and spec.x is not None and spec.y is not None:
+        x_lim = spec.x.limits
+        y_lim = spec.y.limits
+        if x_lim is not None and y_lim is not None:
+            return (float(x_lim[0]), float(x_lim[1]), float(y_lim[0]), float(y_lim[1]))
+    return None
 
 
 def _draw_histogram(
