@@ -409,13 +409,16 @@ def test_render_result_envelope_wraps_the_figure():
     result.figure.clear()
 
 
-def test_3d_mark_raises_clear_not_implemented():
-    """A 3-D mark raises a clear NotImplementedError (drawn by VIZ-MPL-3D)."""
+def test_3d_mark_renders_on_a_3d_axes():
+    """A 3-D mark renders on an mplot3d Axes3D (drawn by VIZ-MPL-3D)."""
     pytest.importorskip("matplotlib")
     import numpy as np
+    from matplotlib.figure import Figure
 
+    from tsdynamics.viz.render import register_builtin_renderers
     from tsdynamics.viz.spec import Axis
 
+    register_builtin_renderers()
     xyz = {"x": np.arange(3.0), "y": np.arange(3.0), "z": np.arange(3.0)}
     spec = PlotSpec(
         kind=PlotKind.PHASE_PORTRAIT_3D,
@@ -423,8 +426,9 @@ def test_3d_mark_raises_clear_not_implemented():
         z=Axis(),
         ndim=3,
     )
-    with pytest.raises(NotImplementedError):
-        spec.render("matplotlib")
+    fig = spec.render("matplotlib")
+    assert isinstance(fig, Figure)
+    assert getattr(fig.axes[0], "name", "") == "3d"
 
 
 def test_matplotlib_is_kept_last_so_an_explicit_backend_wins_by_default():
