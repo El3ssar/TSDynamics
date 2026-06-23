@@ -74,14 +74,50 @@ class SurrogateTest(AnalysisResult):
     tail: str = "two"
     alpha: float = 0.05
 
+    def _rejection_tail(self) -> list[Any]:
+        """Build the shaded rejection-tail ``"span"`` annotation(s) for the plot.
+
+        The rejection region is the ``alpha``-quantile tail(s) of the surrogate
+        null at the test's :attr:`tail`: the upper tail (``"greater"``), the lower
+        tail (``"less"``), or both half-``alpha`` tails (``"two"``).  The data
+        statistic falls inside one of these spans exactly when the null is
+        rejected — the visual read of the test.  Empty when there are no
+        surrogates to quantile.
+        """
+        from tsdynamics.viz.spec import Annotation
+
+        surrogate = np.asarray(self.surrogate_statistics, dtype=float)
+        surrogate = surrogate[np.isfinite(surrogate)]
+        if surrogate.size == 0:
+            return []
+        lo, hi = float(surrogate.min()), float(surrogate.max())
+        pad = (hi - lo) * 0.05 + (abs(hi) + abs(lo)) * 1e-3 + 1.0
+        style = {"color": "lightcoral", "alpha": 0.2}
+
+        def _span(span: tuple[float, float]) -> Annotation:
+            return Annotation(kind="span", text="reject", span=span, axis="x", style=style)
+
+        if self.tail == "greater":
+            return [_span((float(np.quantile(surrogate, 1.0 - self.alpha)), hi + pad))]
+        if self.tail == "less":
+            return [_span((lo - pad, float(np.quantile(surrogate, self.alpha))))]
+        # two-sided: a half-alpha tail at each end.
+        half = self.alpha / 2.0
+        return [
+            _span((lo - pad, float(np.quantile(surrogate, half)))),
+            _span((float(np.quantile(surrogate, 1.0 - half)), hi + pad)),
+        ]
+
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe this surrogate test as a backend-agnostic :class:`PlotSpec`.
 
         Builds a ``HISTOGRAM_NULL`` spec — the surrogate-statistic ensemble as a
         histogram (the null distribution) with the data statistic marked as a
-        vertical reference line — so the rejection reads off as the data lying in
-        a tail.  The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec
-        never pulls a plotting library.
+        vertical reference line and the ``alpha``-quantile **rejection tail(s)
+        shaded** (a ``"span"`` annotation per tail, picked by :attr:`tail`) — so
+        the rejection reads off as the data line landing inside a shaded tail.
+        The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
+        pulls a plotting library.
 
         Parameters
         ----------
@@ -98,6 +134,15 @@ class SurrogateTest(AnalysisResult):
         spec_kind = PlotKind(kind) if kind is not None else PlotKind.HISTOGRAM_NULL
         surrogate = np.asarray(self.surrogate_statistics, dtype=float)
         verdict = "reject" if self.rejected else "fail to reject"
+        annotations: list[Annotation] = [
+            Annotation(
+                kind="vline",
+                text="data",
+                x=float(self.data_statistic),
+                style={"color": "lightcoral"},
+            )
+        ]
+        annotations.extend(self._rejection_tail())
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
@@ -105,14 +150,7 @@ class SurrogateTest(AnalysisResult):
             x=Axis(label=self.statistic),
             y=Axis(label="count"),
             layers=[Layer(PlotKind.HISTOGRAM, {"x": surrogate}, label=f"{self.method} surrogates")],
-            annotations=[
-                Annotation(
-                    kind="vline",
-                    text="data",
-                    x=float(self.data_statistic),
-                    style={"color": "rose"},
-                )
-            ],
+            annotations=annotations,
         )
 
     def __repr__(self) -> str:  # noqa: D105
