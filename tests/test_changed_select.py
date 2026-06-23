@@ -16,6 +16,7 @@ from pathlib import Path
 import _changed_select as cs
 import pytest
 
+import conftest
 import tsdynamics.analysis
 from tsdynamics import registry
 
@@ -208,28 +209,25 @@ def test_keep_item_handwritten_per_system_test_in_sweep_file() -> None:
     )
 
 
-def _load_tests_conftest() -> object:
-    path = Path(__file__).with_name("conftest.py")
-    spec = importlib.util.spec_from_file_location("tests_conftest_under_test", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_changed_no_tests_exitstatus_becomes_success() -> None:
-    module = _load_tests_conftest()
-    config = types.SimpleNamespace(getoption=lambda name, default=False: name == "changed")
-    session = types.SimpleNamespace(config=config, exitstatus=pytest.ExitCode.NO_TESTS_COLLECTED)
-    module.pytest_sessionfinish(session, pytest.ExitCode.NO_TESTS_COLLECTED)
+def test_changed_no_tests_collected_exits_success() -> None:
+    exitstatus = pytest.ExitCode.NO_TESTS_COLLECTED
+    session = types.SimpleNamespace(
+        config=types.SimpleNamespace(getoption=lambda name, default=False: name == "changed"),
+        exitstatus=exitstatus,
+    )
+    conftest.pytest_sessionfinish(session, exitstatus)
+    assert exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED
     assert session.exitstatus == pytest.ExitCode.OK
 
 
-def test_plain_no_tests_exitstatus_stays_failure() -> None:
-    module = _load_tests_conftest()
-    config = types.SimpleNamespace(getoption=lambda name, default=False: default)
-    session = types.SimpleNamespace(config=config, exitstatus=pytest.ExitCode.NO_TESTS_COLLECTED)
-    module.pytest_sessionfinish(session, pytest.ExitCode.NO_TESTS_COLLECTED)
+def test_plain_no_tests_collected_stays_nonzero() -> None:
+    exitstatus = pytest.ExitCode.NO_TESTS_COLLECTED
+    session = types.SimpleNamespace(
+        config=types.SimpleNamespace(getoption=lambda name, default=False: False),
+        exitstatus=exitstatus,
+    )
+    conftest.pytest_sessionfinish(session, exitstatus)
+    assert exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED
     assert session.exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED
 
 
