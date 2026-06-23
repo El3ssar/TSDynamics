@@ -39,11 +39,12 @@ from .core import (
     UniqueValues,
     as_series,
     entropy,
+    outcome_distribution_plot_spec,
     probabilities,
 )
 from .dispersion import dispersion_entropy
 from .lz import binarize, lz76_complexity, lz76_entropy, lz76_factors
-from .multiscale import coarse_grain, multiscale_entropy
+from .multiscale import coarse_grain, multiscale_entropy, multiscale_entropy_plot_spec
 from .permutation import permutation_entropy, weighted_permutation_entropy
 from .sample import approximate_entropy, sample_entropy
 
@@ -70,6 +71,8 @@ __all__ = [
     "lz76_entropy",
     "lz76_factors",
     "multiscale_entropy",
+    "multiscale_entropy_plot_spec",
+    "outcome_distribution_plot_spec",
     "permutation_entropy",
     "probabilities",
     "sample_entropy",

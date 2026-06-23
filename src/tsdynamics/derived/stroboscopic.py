@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from tsdynamics.families import Trajectory
 
 from ._base import DerivedSystem
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tsdynamics.viz.spec import PlotSpec
 
 __all__ = ["StroboscopicMap"]
 
@@ -76,6 +79,78 @@ class StroboscopicMap(DerivedSystem):
             "params": self.params.as_dict(),
         }
         return Trajectory(t=times, y=points, system=self.system, meta=meta)
+
+    def to_plot_spec(self, kind: str | None = None, *, steps: int = 300) -> PlotSpec:
+        """Describe the strobe sampling as a **scatter** of sampled states.
+
+        A stroboscopic map is a *discrete* sampling — once per forcing period —
+        so the natural picture is a cloud of sampled points (the strobed orbit /
+        attractor), **not** a connected flow line.  This collects ``steps``
+        samples and builds a 2-D / 3-D ``SCATTER`` spec over the first two / three
+        components (a 1-D system is a sample-index time series of dots).
+
+        The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
+        pulls in a plotting backend.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the auto-dispatched semantic kind (e.g.
+            ``"phase_portrait_2d"``).  ``None`` (the default) dispatches on the
+            sampled dimensionality.
+        steps : int, optional
+            Number of once-per-period samples to collect.  Default ``300``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        section = self.trajectory(steps)
+        names = self.variables or tuple(f"y{i}" for i in range(self.system.dim))
+        title = f"Stroboscopic map — {type(self.system).__name__}"
+
+        if self.system.dim == 1:
+            spec_kind = PlotKind(kind) if kind is not None else PlotKind.TIME_SERIES
+            return PlotSpec(
+                kind=spec_kind,
+                ndim=1,
+                title=title,
+                x=Axis(label="sample"),
+                y=Axis(label=names[0]),
+                layers=[
+                    Layer(
+                        PlotKind.SCATTER,
+                        {"x": np.arange(section.y.shape[0], dtype=float), "y": section.y[:, 0]},
+                    )
+                ],
+            )
+
+        if kind is None:
+            want_3d = self.system.dim >= 3
+        else:
+            want_3d = PlotKind(kind) == PlotKind.PHASE_PORTRAIT_3D
+        spec_kind = (
+            PlotKind(kind)
+            if kind is not None
+            else (PlotKind.PHASE_PORTRAIT_3D if want_3d else PlotKind.PHASE_PORTRAIT_2D)
+        )
+        cols: dict[str, np.ndarray] = {"x": section.y[:, 0], "y": section.y[:, 1]}
+        z = None
+        if want_3d:
+            cols["z"] = section.y[:, 2]
+            z = Axis(label=names[2])
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=3 if want_3d else 2,
+            aspect="equal",
+            title=title,
+            x=Axis(label=names[0]),
+            y=Axis(label=names[1]),
+            z=z,
+            layers=[Layer(PlotKind.SCATTER, cols)],
+        )
 
 
 def __dir__() -> list[str]:

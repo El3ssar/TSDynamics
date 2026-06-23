@@ -34,11 +34,12 @@ from typing import Any
 from ... import registry as _registry
 from .expansion import ExpansionEntropyResult, expansion_entropy
 from .gali import GALIResult, gali
-from .zero_one import zero_one_test
+from .zero_one import ZeroOneResult, zero_one_test
 
 __all__ = [
     "ExpansionEntropyResult",
     "GALIResult",
+    "ZeroOneResult",
     "expansion_entropy",
     "gali",
     "zero_one_test",

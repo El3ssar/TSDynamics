@@ -34,9 +34,16 @@ from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._result import AnalysisResult, CollectionResult, ScalarResult
 from . import _common as _c
-from .fixed import _build_seeds, _stabilising_matrices
+from .fixed import _build_seeds, _eigenvalue_plane_spec, _stabilising_matrices
 
-__all__ = ["OrbitSet", "PeriodicOrbit", "estimate_period", "periodic_orbit", "periodic_orbits"]
+__all__ = [
+    "OrbitSet",
+    "PeriodicOrbit",
+    "estimate_period",
+    "period_diagnostic",
+    "periodic_orbit",
+    "periodic_orbits",
+]
 
 
 @dataclass(frozen=True)
@@ -136,6 +143,40 @@ class PeriodicOrbit(AnalysisResult):
             x=Axis(label="index"),
             y=Axis(label="$x$"),
             layers=[Layer(mark, {"x": np.arange(y.size, dtype=float), "y": y}, label="orbit")],
+        )
+
+    def eigenvalue_plane(self, kind: str | None = None) -> Any:
+        r"""Describe the multiplier spectrum as an :class:`EIGENVALUE_PLANE` spec.
+
+        Plots the stability multipliers in the complex plane against the unit
+        circle (a map's eigenvalues of :math:`Df^{p}`, or a flow's Floquet
+        multipliers, both judged by ``|μ| < 1``).  For a **flow** the trivial
+        multiplier ``≈ 1`` along the flow direction is split into its own
+        distinctly-marked layer — located here for the plot by ``argmin|μ − 1|``
+        (a presentation heuristic; the stability flag itself uses the more robust
+        eigenvector-alignment test).  The :mod:`tsdynamics.viz.spec` import is
+        lazy.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` uses ``EIGENVALUE_PLANE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        mu = np.asarray(self.multipliers).ravel().astype(complex)
+        trivial = int(np.argmin(np.abs(mu - 1.0))) if (self.continuous and mu.size) else None
+        per = f"T = {self.period:.4g}" if self.continuous else f"p = {int(self.period)}"
+        title = f"Floquet multipliers ({per})" if self.continuous else f"multipliers ({per})"
+        return _eigenvalue_plane_spec(
+            mu,
+            continuous=False,  # multipliers live on the unit-circle convention (maps + flows)
+            title=title,
+            meta=dict(self.meta) if self.meta else {},
+            kind=kind,
+            trivial_index=trivial,
         )
 
     def __repr__(self) -> str:  # noqa: D105
@@ -686,13 +727,82 @@ def estimate_period(
 
     method = method.lower()
     if method == "autocorrelation":
-        lag = _autocorr_period_lag(y, max_delay)
+        lag, abscissa, ordinate, curve_label = _autocorr_period_lag(y, max_delay, step)
     elif method == "fft":
-        lag = _fft_period_lag(y)
+        lag, abscissa, ordinate, curve_label = _fft_period_lag(y, step)
     else:
         raise ValueError(f"method must be 'autocorrelation' or 'fft', got {method!r}.")
+    # The diagnostic curve (autocorrelation function or power spectrum) rides on
+    # ``meta`` so :func:`period_diagnostic` can draw a ``DIAGNOSTIC_CURVE`` of how
+    # the estimate was read off, without changing the result *type* (it stays a
+    # plain :class:`ScalarResult`).
     return ScalarResult(
-        value=float(lag * step), meta={"analysis": "estimate_period", "method": method}
+        value=float(lag * step),
+        meta={
+            "analysis": "estimate_period",
+            "method": method,
+            "period": float(lag * step),
+            "curve_abscissa": abscissa,
+            "curve_ordinate": ordinate,
+            "curve_xlabel": curve_label[0],
+            "curve_ylabel": curve_label[1],
+        },
+    )
+
+
+def period_diagnostic(data: Any, **kwargs: Any) -> Any:
+    r"""Build the period-estimation diagnostic curve as a :class:`PlotSpec`.
+
+    Runs :func:`estimate_period` on ``data`` (forwarding any keyword arguments)
+    and renders *how* the period was read off as a ``DIAGNOSTIC_CURVE``: the
+    autocorrelation function (``method="autocorrelation"``) or the power spectrum
+    (``method="fft"``) as a ``LINE``, with a ``"vline"`` annotation marking the
+    detected period (its lag, or its frequency).  The
+    :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+    plotting library.
+
+    Parameters
+    ----------
+    data : Trajectory or array-like
+        The signal — passed straight to :func:`estimate_period`.
+    **kwargs
+        Forwarded to :func:`estimate_period` (``dt`` / ``component`` / ``method``
+        / ``max_delay`` / ``detrend``).
+
+    Returns
+    -------
+    PlotSpec
+        A ``DIAGNOSTIC_CURVE`` of the autocorrelation / spectral diagnostic.
+
+    Examples
+    --------
+    >>> spec = period_diagnostic(VanDerPol().integrate(final_time=200, dt=0.01))
+    """
+    from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+
+    result = estimate_period(data, **kwargs)
+    meta = dict(result.meta)
+    abscissa = np.asarray(meta.get("curve_abscissa", np.empty(0)), dtype=float)
+    ordinate = np.asarray(meta.get("curve_ordinate", np.empty(0)), dtype=float)
+    method = str(meta.get("method", "autocorrelation"))
+    xlabel = str(meta.get("curve_xlabel", "lag"))
+    ylabel = str(meta.get("curve_ylabel", "value"))
+    period = float(result)
+
+    layers = [Layer(PlotKind.LINE, {"x": abscissa, "y": ordinate}, label=ylabel)]
+    # Mark the detected period: at its lag (autocorrelation) or its frequency 1/T
+    # (the spectral peak the FFT picked).
+    mark_x = period if method == "autocorrelation" else (1.0 / period if period else 0.0)
+    annotations = [Annotation(kind="vline", x=mark_x, text=f"period = {period:.4g}")]
+    return PlotSpec(
+        kind=PlotKind.DIAGNOSTIC_CURVE,
+        ndim=2,
+        title=f"period estimate ({method})",
+        x=Axis(label=xlabel),
+        y=Axis(label=ylabel),
+        layers=layers,
+        annotations=annotations,
+        meta={"analysis": "period_diagnostic", "method": method, "period": period},
     )
 
 
@@ -723,8 +833,15 @@ def _coerce_signal(
     return arr, (1.0 if dt is None else float(dt))
 
 
-def _autocorr_period_lag(y: np.ndarray, max_lag: int | None) -> float:
-    """Lag of the first autocorrelation peak past the first zero-crossing."""
+def _autocorr_period_lag(
+    y: np.ndarray, max_lag: int | None, step: float
+) -> tuple[float, np.ndarray, np.ndarray, tuple[str, str]]:
+    """Lag of the first autocorrelation peak past the first zero-crossing.
+
+    Returns ``(lag, abscissa, ordinate, (xlabel, ylabel))`` — the lag (in
+    samples) plus the autocorrelation diagnostic curve (lag in time units against
+    the normalised autocorrelation) for :func:`period_diagnostic`.
+    """
     n = y.size
     nfft = 1 << int(np.ceil(np.log2(2 * n)))
     f = np.fft.rfft(y, nfft)
@@ -733,6 +850,9 @@ def _autocorr_period_lag(y: np.ndarray, max_lag: int | None) -> float:
         raise ValueError("estimate_period: degenerate autocorrelation.")
     acf = acf / acf[0]
     hi = n // 2 if max_lag is None else min(int(max_lag), n - 2)
+    abscissa = np.arange(hi, dtype=float) * step
+    ordinate = acf[:hi].astype(float)
+    curve_label = ("lag", "autocorrelation")
     # first lag where the autocorrelation has come back up after dipping below 0
     zero = next((k for k in range(1, hi) if acf[k] < 0.0), None)
     if zero is None:
@@ -742,23 +862,31 @@ def _autocorr_period_lag(y: np.ndarray, max_lag: int | None) -> float:
         )
     peak = zero + int(np.argmax(acf[zero:hi]))
     if peak <= 0 or peak >= hi - 1:
-        return float(peak)
+        return float(peak), abscissa, ordinate, curve_label
     # parabolic sub-sample refinement around the peak
     a, b, c = acf[peak - 1], acf[peak], acf[peak + 1]
     denom = a - 2.0 * b + c
     shift = 0.5 * (a - c) / denom if denom != 0.0 else 0.0
-    return float(peak + shift)
+    return float(peak + shift), abscissa, ordinate, curve_label
 
 
-def _fft_period_lag(y: np.ndarray) -> float:
-    """Lag (in samples) of the dominant spectral frequency."""
+def _fft_period_lag(
+    y: np.ndarray, step: float
+) -> tuple[float, np.ndarray, np.ndarray, tuple[str, str]]:
+    """Lag (in samples) of the dominant spectral frequency.
+
+    Returns ``(lag, abscissa, ordinate, (xlabel, ylabel))`` — the period (in
+    samples) plus the power spectrum diagnostic curve (frequency in ``1/step``
+    units against spectral power) for :func:`period_diagnostic`.
+    """
     n = y.size
     spec = np.abs(np.fft.rfft(y)) ** 2
     spec[0] = 0.0  # drop the DC component
+    freqs = np.fft.rfftfreq(n, d=step)
     k = int(np.argmax(spec))
     if k == 0:
         raise ValueError("estimate_period: no dominant frequency found.")
-    return float(n / k)
+    return float(n / k), freqs.astype(float), spec.astype(float), ("frequency", "power")
 
 
 def __dir__() -> list[str]:

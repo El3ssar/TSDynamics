@@ -25,7 +25,7 @@ and length is unchanged by the doubling).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -93,20 +93,37 @@ class RQAResult(AnalysisResult):
     diagonal_lengths: np.ndarray = field(repr=False, compare=False)
     vertical_lengths: np.ndarray = field(repr=False, compare=False)
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
-        """Describe the diagonal line-length distribution as a :class:`PlotSpec`.
+    #: The scalar RQA measures shown on the ``CATEGORICAL_BAR`` readout, as
+    #: ``(short label, attribute name)`` pairs.  These are the headline
+    #: structure quantifiers that share the ``[0, 1]`` / small-number range a
+    #: bar chart reads cleanly (the unbounded ``L_max`` / ``V_max`` / ``DIV``
+    #: stay off the bars — they are in :meth:`summary` and ``to_dict``).
+    _BAR_MEASURES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("RR", "recurrence_rate"),
+        ("DET", "determinism"),
+        ("LAM", "laminarity"),
+        ("ENTR", "diagonal_entropy"),
+    )
 
-        Builds a ``DIAGNOSTIC_CURVE`` spec carrying a ``HISTOGRAM`` layer of the
-        diagonal line lengths — the distribution ``DET``, ``L``, ``L_max`` and
-        ``ENTR`` are all read off — with the length on ``x`` and the count on
-        ``y``.  The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec
-        never pulls a plotting library.
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        """Describe the scalar RQA measures as a :class:`PlotSpec` bar readout.
+
+        Builds a ``CATEGORICAL_BAR`` whose bars are the headline structure
+        quantifiers — ``RR`` (recurrence rate), ``DET`` (determinism), ``LAM``
+        (laminarity) and ``ENTR`` (diagonal-line entropy) — one bar per measure,
+        the category axis carrying the measure labels.  This is the at-a-glance
+        readout of "how deterministic / laminar is this trajectory"; the
+        unbounded measures (``L_max`` / ``V_max`` / ``DIV``) stay in
+        :meth:`summary` rather than crushing the bar scale.  No line-length
+        histogram is walked — the values are the already-computed scalar fields.
+        The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
+        pulls a plotting library.
 
         Parameters
         ----------
         kind : str, optional
-            Override the semantic kind (e.g. ``"diagnostic_curve"``).  ``None``
-            uses ``DIAGNOSTIC_CURVE``.
+            Override the semantic kind (e.g. ``"categorical_bar"``).  ``None``
+            uses ``CATEGORICAL_BAR``.
 
         Returns
         -------
@@ -114,15 +131,17 @@ class RQAResult(AnalysisResult):
         """
         from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
-        lengths = np.asarray(self.diagonal_lengths, dtype=float)
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.CATEGORICAL_BAR
+        labels = [lbl for lbl, _ in self._BAR_MEASURES]
+        cat = np.arange(len(labels), dtype=float)
+        values = np.array([float(getattr(self, attr)) for _, attr in self._BAR_MEASURES])
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
-            title=f"RQA  DET = {self.determinism:.3g}, ENTR = {self.diagonal_entropy:.3g}",
-            x=Axis(label="diagonal line length"),
-            y=Axis(label="count"),
-            layers=[Layer(PlotKind.HISTOGRAM, {"x": lengths}, label="diagonal lengths")],
+            title=f"RQA  DET = {self.determinism:.3g}, LAM = {self.laminarity:.3g}",
+            x=Axis(label="measure", scale="categorical", categories=labels),
+            y=Axis(label="value", limits=(0.0, 1.0)),
+            layers=[Layer(PlotKind.BAR, {"cat": cat, "y": values}, label="RQA measures")],
         )
 
     def __repr__(self) -> str:  # noqa: D105

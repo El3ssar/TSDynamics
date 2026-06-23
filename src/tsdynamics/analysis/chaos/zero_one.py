@@ -24,14 +24,83 @@ correlated (every iterate for a map; a suitable stride for a flow).
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
 
 import numpy as np
 
 from .._result import AnalysisResult, ScalarResult
 from . import _common as _c
 
-__all__ = ["zero_one_test"]
+__all__ = ["ZeroOneResult", "zero_one_test"]
+
+
+@dataclass(frozen=True, eq=False)
+class ZeroOneResult(ScalarResult):
+    r"""The 0--1-test indicator :math:`K`, carrying the translation plane it was read from.
+
+    A :class:`~tsdynamics.analysis._result.ScalarResult`, so it is a drop-in for
+    the bare ``K`` value — ``float(result)`` is :math:`K`, and ``result > 0.9``
+    and every arithmetic / comparison operator work — while it also carries the
+    skew-translation variables :math:`(p_c, q_c)` at a representative frequency
+    :math:`c`.  Those variables stay **bounded** for regular dynamics and
+    **diffuse** like a random walk for chaotic dynamics (Gottwald & Melbourne
+    2004), so their plane is the test's diagnostic figure; :meth:`to_plot_spec`
+    renders it as a phase portrait.
+
+    Attributes
+    ----------
+    value : float
+        The median growth indicator :math:`K` (``~0`` regular, ``~1`` chaotic).
+    p, q : numpy.ndarray
+        The cumulative translation components :math:`p_c(n)` / :math:`q_c(n)` at a
+        representative frequency — a bounded blob (regular) or a diffusing cloud
+        (chaotic).  Empty when the plane was not captured.
+    """
+
+    _repr_fields: ClassVar[tuple[str, ...]] = ("value",)
+
+    p: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+    q: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the translation plane :math:`(p_c, q_c)` as a :class:`PlotSpec`.
+
+        Builds a ``PHASE_PORTRAIT_2D`` of the skew-translation trajectory: a
+        ``LINE`` through :math:`(p_c(n), q_c(n))`, equal-aspect so the bounded
+        (regular) vs diffusive (chaotic) geometry reads off directly.  Falls back
+        to the one-point scalar spec when no plane was captured.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"phase_portrait_2d"``).  ``None``
+            uses ``PHASE_PORTRAIT_2D``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        p = np.asarray(self.p, dtype=float)
+        q = np.asarray(self.q, dtype=float)
+        if p.size == 0 or q.size == 0:
+            return super().to_plot_spec(kind=kind)
+
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=f"0--1 test translation plane ($K$ = {float(self):.3g})",
+            x=Axis(label="$p_c$"),
+            y=Axis(label="$q_c$"),
+            layers=[Layer(PlotKind.LINE, {"x": p, "y": q}, label="$(p_c, q_c)$")],
+            meta=dict(self.meta) if self.meta else {},
+        )
 
 
 def _observable(
@@ -99,7 +168,7 @@ def zero_one_test(
     n_cut: int | None = None,
     seed: int | None = 0,
     return_distribution: bool = False,
-) -> ScalarResult | tuple[ScalarResult, np.ndarray]:
+) -> ZeroOneResult | tuple[ZeroOneResult, np.ndarray]:
     r"""Run the 0--1 test for chaos on a system or a measured observable.
 
     Parameters
@@ -139,11 +208,13 @@ def zero_one_test(
 
     Returns
     -------
-    ScalarResult or (ScalarResult, ndarray)
+    ZeroOneResult or (ZeroOneResult, ndarray)
         The median correlation growth indicator :math:`K` (``~0`` regular, ``~1``
         chaotic) as a drop-in for its ``float`` value (``result > 0.9`` and
-        ``float(result)`` work) carrying ``.meta``; with ``return_distribution``
-        also the ``K_c`` values.  The correlation method returns a Pearson
+        ``float(result)`` work) carrying ``.meta`` and the translation plane
+        :math:`(p_c, q_c)` (``result.plot()`` renders it); with
+        ``return_distribution`` also the ``K_c`` values.  The correlation method
+        returns a Pearson
         coefficient, so :math:`K \in [-1, 1]` in principle (a regular orbit can
         give a small negative :math:`K`); it concentrates near ``0`` (regular) or
         ``1`` (chaotic), so ``K > 0.5`` is the usual chaos threshold.
@@ -199,7 +270,19 @@ def zero_one_test(
         k_c[idx] = _c._pearson(lags, d)
 
     k = float(np.median(k_c))
-    result = ScalarResult(value=k, meta=AnalysisResult.build_meta(system, analysis="zero_one_test"))
+    # Capture the skew-translation plane (p_c, q_c) at the most representative
+    # frequency — the one whose K_c is closest to the reported median K — purely
+    # for the diagnostic figure (it does not enter K).  Recomputing the two
+    # cumulative sums for that single c leaves the K computation above untouched.
+    c_rep = float(c_values[int(np.argmin(np.abs(k_c - k)))])
+    p_rep = np.cumsum(phi * np.cos(j * c_rep))
+    q_rep = np.cumsum(phi * np.sin(j * c_rep))
+    result = ZeroOneResult(
+        value=k,
+        p=p_rep,
+        q=q_rep,
+        meta=AnalysisResult.build_meta(system, analysis="zero_one_test"),
+    )
     return (result, k_c) if return_distribution else result
 
 
