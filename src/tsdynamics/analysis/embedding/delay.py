@@ -22,14 +22,91 @@ curves for inspection.
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 import numpy as np
 
 from .._result import ArrayResult, CountResult
 from ._common import _as_series
 
-__all__ = ["autocorrelation", "mutual_information", "optimal_delay"]
+__all__ = ["MutualInformation", "autocorrelation", "mutual_information", "optimal_delay"]
+
+
+@dataclass(frozen=True, eq=False)
+class MutualInformation(ArrayResult):
+    r"""A time-delayed mutual-information curve :math:`I(\tau)` with its first minimum.
+
+    An :class:`~tsdynamics.analysis._result.ArrayResult`, so it is a drop-in for
+    the bare ``(max_delay + 1,)`` curve array (``np.asarray(result)``, indexing
+    and iteration defer to it) while it also carries ``.meta`` / ``.summary()`` /
+    the ``.plot`` seam.  The curve's **first local minimum** is the recommended
+    embedding delay (Fraser & Swinney 1986); :attr:`optimal_lag` reads it off and
+    :meth:`to_plot_spec` annotates it, so the delay-selection diagnostic plots as
+    one figure.
+
+    Attributes
+    ----------
+    values : numpy.ndarray
+        The mutual information :math:`I(\tau)` at lags :math:`\tau = 0, 1, \dots`.
+        ``np.asarray(result)`` returns it.
+    """
+
+    _repr_fields: ClassVar[tuple[str, ...]] = ("optimal_lag",)
+
+    @property
+    def optimal_lag(self) -> int:
+        r"""The recommended delay — the first local minimum of :math:`I(\tau)`.
+
+        The first interior lag whose value is no greater than its left neighbour
+        and strictly less than its right (the Fraser--Swinney rule).  Falls back
+        to the global minimum lag (``>= 1``) when the curve has no interior dip.
+        """
+        curve = np.asarray(self.values, dtype=float)
+        k = _first_local_min(curve)
+        if k is None:
+            k = int(np.argmin(curve[1:])) + 1 if curve.size > 1 else 1
+        return max(int(k), 1)
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the mutual-information diagnostic as a :class:`PlotSpec`.
+
+        Builds a ``DIAGNOSTIC_CURVE``: the curve :math:`I(\tau)` as a ``LINE``
+        against the lag :math:`\tau`, with the chosen delay :attr:`optimal_lag`
+        marked by a vertical reference line (the first-minimum criterion).  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"diagnostic_curve"``).  ``None``
+            uses ``DIAGNOSTIC_CURVE``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        curve = np.asarray(self.values, dtype=float)
+        lags = np.arange(curve.size, dtype=float)
+        lag = self.optimal_lag if curve.size else 0
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"mutual information (first min at $\\tau$ = {lag})"
+            if curve.size
+            else "mutual information",
+            x=Axis(label=r"delay $\tau$"),
+            y=Axis(label=r"$I(\tau)$"),
+            layers=[Layer(PlotKind.LINE, {"x": lags, "y": curve}, label=r"$I(\tau)$")],
+            annotations=[Annotation(kind="vline", text=rf"$\tau$ = {lag}", x=float(lag))]
+            if curve.size
+            else [],
+            meta=dict(self.meta) if self.meta else {},
+        )
 
 
 def autocorrelation(
@@ -88,7 +165,7 @@ def mutual_information(
     bins: int | None = None,
     base: float = np.e,
     component: int | str | None = None,
-) -> ArrayResult:
+) -> MutualInformation:
     r"""Time-delayed mutual information :math:`I(\tau)` up to ``max_delay``.
 
     The histogram estimator of
@@ -118,10 +195,11 @@ def mutual_information(
 
     Returns
     -------
-    ArrayResult
+    MutualInformation
         Behaves as an ``(max_delay + 1,)`` ``ndarray``: ``mi[k]`` is
         :math:`I(k)`; ``mi[0]`` is the entropy of the (binned) series itself
-        (its self-information).
+        (its self-information).  ``result.optimal_lag`` reads off the
+        first-minimum delay and ``result.plot()`` renders the diagnostic.
 
     References
     ----------
@@ -161,7 +239,9 @@ def mutual_information(
         mask = joint > 0.0
         outer = p_a[:, None] * p_b[None, :]
         mi[tau] = float(np.sum(joint[mask] * log(joint[mask] / outer[mask])))
-    return ArrayResult(values=mi, meta={"analysis": "mutual_information", "max_delay": max_delay})
+    return MutualInformation(
+        values=mi, meta={"analysis": "mutual_information", "max_delay": max_delay}
+    )
 
 
 def _first_local_min(curve: np.ndarray) -> int | None:
