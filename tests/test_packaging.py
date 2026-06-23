@@ -181,3 +181,17 @@ def test_wheel_is_cp312_abi3_tagged():
     ]
     assert tags, wheel_meta
     assert all("cp312-abi3" in t for t in tags), tags
+
+
+def test_viz_extras_declare_pinned_backends():
+    """The optional viz / interactive extras pin the plot backends (VIZ-PACKAGING).
+
+    ``pip install tsdynamics[viz]`` pulls in matplotlib (the reference renderer);
+    ``[interactive]`` pulls in plotly.  ``json`` / ``threejs`` export need no extra
+    (stdlib JSON over ``PlotSpec.to_dict``).  Core stays plot-free regardless.
+    """
+    extras = _pyproject()["project"]["optional-dependencies"]
+    assert "viz" in extras, "the [viz] extra (matplotlib) must exist"
+    assert "interactive" in extras, "the [interactive] extra (plotly) must exist"
+    assert any(d.startswith("matplotlib") and "<5" in d for d in extras["viz"]), extras["viz"]
+    assert any(d.startswith("plotly") for d in extras["interactive"]), extras["interactive"]
