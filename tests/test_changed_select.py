@@ -9,7 +9,6 @@ escalation rules — the cases that must fall back to the full suite.
 
 from __future__ import annotations
 
-import importlib.util
 import types
 from pathlib import Path
 
