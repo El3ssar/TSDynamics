@@ -604,13 +604,18 @@ def render(spec: PlotSpec, **_kw: Any) -> go.Figure:
 
     Notes
     -----
-    Restricted to 2-D: a 3-D mark (``LINE3D`` / ``SURFACE3D``) never reaches here
-    because the backend's :class:`~tsdynamics.viz.render.caps.RendererCapabilities`
-    decline it, so dispatch falls back to the matplotlib reference renderer.
+    A 3-D spec (``ndim == 3`` / a ``z`` axis / a ``LINE3D`` / ``SURFACE3D`` mark)
+    is dispatched to the :mod:`._threed` renderer, which draws orbitable
+    ``go.Scatter3d`` / ``go.Surface`` traces on a 3-D ``scene``.
     """
     import plotly.graph_objects as go
 
+    from . import _threed
+
     normalize_kind(spec.kind)  # validate / canonicalise the semantic kind
+
+    if _threed.is_three_d(spec):
+        return _threed.render_3d(spec, **_kw)
 
     fig = go.Figure()
     for layer in spec.layers:
