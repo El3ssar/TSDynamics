@@ -7,12 +7,12 @@ suitable for notebooks and the web.  It uses plotly's ``graph_objects`` API
 not need) and no ``kaleido`` (static-image export is the JSON / image exporters'
 concern, not this live-figure renderer).
 
-The plotly backend is *partial*: it draws the 2-D marks (``LINE`` / ``SCATTER`` /
-``MARKERS`` / ``IMAGE`` / ``HISTOGRAM`` / ``BAR`` / ``AREA`` / ``ERRORBAR``) and
-the 2-D semantic kinds, and **declines** the 3-D marks (``LINE3D`` /
-``SURFACE3D``) so dispatch falls back to the matplotlib reference renderer.  Its
-:class:`~tsdynamics.viz.render.caps.RendererCapabilities` (built in the package
-``register`` hook) advertise exactly that set.
+The plotly backend draws the 2-D marks (``LINE`` / ``SCATTER`` / ``MARKERS`` /
+``IMAGE`` / ``HISTOGRAM`` / ``BAR`` / ``AREA`` / ``ERRORBAR``) here, dispatches
+3-D specs to :mod:`._threed`, and optionally exports the interactive figure as
+self-contained HTML for web / mkdocs embedding.  Only the animation kinds are
+still declined; the package-level
+:class:`~tsdynamics.viz.render.caps.RendererCapabilities` advertise that set.
 
 The pieces
 ----------
@@ -647,7 +647,6 @@ def render(
 
     if _threed.is_three_d(spec):
         return _threed.render_3d(spec, **_kw)
-
     fig = go.Figure()
     for layer in spec.layers:
         builder = MARK_DISPATCH.get(PlotKind(layer.kind))
@@ -680,7 +679,6 @@ def render(
         layout["annotations"] = texts
 
     fig.update_layout(**layout)
-
     if path is not None:
         # Write a self-contained interactive HTML file (standalone by default).
         from ._html import write_html
