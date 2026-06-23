@@ -185,6 +185,21 @@ def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
     return lines
 
 
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int | pytest.ExitCode) -> None:
+    """Treat an empty change-scoped shard as success.
+
+    ``pytest --changed`` intentionally scopes each shard (fast / slow / engine) to
+    the diff, so one marker slice may legitimately collect nothing. Pytest exits 5
+    for that case by default; in change-scoped mode that means "nothing to run",
+    not a failure.
+    """
+    if (
+        session.config.getoption("changed", default=False)
+        and exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED
+    ):
+        session.exitstatus = pytest.ExitCode.OK
+
+
 @pytest.fixture
 def rng() -> np.random.Generator:
     """A reproducible NumPy ``Generator`` seeded at 42."""
