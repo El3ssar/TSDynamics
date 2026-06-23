@@ -32,7 +32,14 @@ import numpy as np
 
 from ...data import Ball, Box, Grid, sampler, set_distance
 from .._result import AnalysisResult
-from ._common import _CellGrid, _recurrence_grid, _representative
+from ._common import (
+    DIVERGED_COLOR,
+    PALETTE,
+    _CellGrid,
+    _palette_indices,
+    _recurrence_grid,
+    _representative,
+)
 
 if TYPE_CHECKING:
     from ...data.sampling import _SetMethod
@@ -140,6 +147,87 @@ class AttractorSet(AnalysisResult):
             for k in self.ids
         }
         return min(dists, key=dists.__getitem__)
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the located attractors as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``PHASE_PORTRAIT_2D`` of every attractor's point cloud as one
+        ``SCATTER`` layer (the first two state coordinates).  Each point carries
+        a ``"cat"`` channel — the attractor id's swatch index in the shared
+        categorical palette (``tab20``) — so the same id is drawn the same colour
+        here and on the basin image (:meth:`BasinsResult.to_plot_spec`).  The
+        palette name and the fixed diverged colour are recorded in ``meta`` so a
+        renderer can reproduce the mapping; the colorbar is marked
+        :attr:`~tsdynamics.viz.spec.Colorbar.discrete`.
+
+        Each id's representative also seeds a category label, so the colour key
+        reads as ``attractor 1``, ``attractor 2``, ….  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls
+        a plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"phase_portrait_2d"``).  ``None``
+            uses ``PHASE_PORTRAIT_2D``.
+
+        Returns
+        -------
+        PlotSpec
+
+        Raises
+        ------
+        VisualizationNotInstalled
+            If the set holds no attractor with a ≥ 2-D point cloud to scatter.
+        """
+        from tsdynamics.analysis._result import VisualizationNotInstalled
+        from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
+        ids = self.ids
+        swatch = _palette_indices(ids)
+
+        xs: list[np.ndarray] = []
+        ys: list[np.ndarray] = []
+        cats: list[np.ndarray] = []
+        for aid in ids:
+            pts = np.atleast_2d(np.asarray(self.attractors[aid].points, dtype=float))
+            if pts.shape[1] < 2 or pts.shape[0] == 0:
+                continue
+            xs.append(pts[:, 0])
+            ys.append(pts[:, 1])
+            cats.append(np.full(pts.shape[0], swatch[aid], dtype=int))
+
+        if not xs:
+            raise VisualizationNotInstalled(
+                "AttractorSet holds no attractor with a 2-D point cloud to scatter; "
+                "export it with .to_dict() instead."
+            )
+
+        layer = Layer(
+            PlotKind.SCATTER,
+            {"x": np.concatenate(xs), "y": np.concatenate(ys), "cat": np.concatenate(cats)},
+            label="attractors",
+            style={"cmap": PALETTE},
+        )
+        meta = dict(self.meta) if self.meta else {}
+        meta.update(
+            palette=PALETTE,
+            diverged_color=DIVERGED_COLOR,
+            palette_index=swatch,
+            palette_labels=[f"attractor {aid}" for aid in ids],
+        )
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            aspect="equal",
+            title=f"attractors ({len(self)})",
+            x=Axis(label="x1"),
+            y=Axis(label="x2"),
+            layers=[layer],
+            colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
+            meta=meta,
+        )
 
     def __repr__(self) -> str:  # noqa: D105
         return f"AttractorSet({len(self)} attractors, {self.diverged}/{self.seeds} diverged)"

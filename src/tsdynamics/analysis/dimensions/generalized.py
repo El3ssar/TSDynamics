@@ -58,6 +58,7 @@ _NEGATIVE_Q_HINT = (
 __all__ = [
     "box_counting_dimension",
     "dimension_spectrum",
+    "dimension_spectrum_plot_spec",
     "generalized_dimension",
     "information_dimension",
 ]
@@ -328,6 +329,67 @@ def dimension_spectrum(
             meta={"analysis": "dimension_spectrum", "kind": "generalized", "q": float(q)},
         )
     return out
+
+
+def dimension_spectrum_plot_spec(
+    spectrum: dict[float, DimensionResult], kind: str | None = None
+) -> Any:
+    r"""Describe a :math:`D_q` spectrum as a backend-agnostic :class:`PlotSpec`.
+
+    Renders the Rényi dimension spectrum returned by :func:`dimension_spectrum`
+    — the estimated dimension :math:`D_q` against its Rényi order :math:`q` —
+    rather than the per-order log--log scaling curves a single
+    :class:`DimensionResult` plots.  The spec carries two layers:
+
+    - a ``LINE`` of :math:`D_q` against :math:`q` (the spectrum profile: flat for
+      a monofractal, monotonically decreasing for a multifractal);
+    - an ``ERRORBAR`` over the same points whose ``"err"`` channel holds each
+      :math:`D_q`'s standard error (:attr:`DimensionResult.stderr`).
+
+    A backend draws the line and overlays the error bars at each :math:`q`.  The
+    :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+    plotting library; this is a pure viz adapter and does not touch the
+    estimator.
+
+    Parameters
+    ----------
+    spectrum : dict of float to DimensionResult
+        The ``{q: DimensionResult}`` mapping returned by
+        :func:`dimension_spectrum`.  Iterated in ascending :math:`q`.
+    kind : str, optional
+        Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
+        value).  ``None`` uses ``DIMENSION_SPECTRUM``.
+
+    Returns
+    -------
+    PlotSpec
+        A ``DIMENSION_SPECTRUM`` spec with a ``LINE`` and an ``ERRORBAR`` layer.
+
+    Raises
+    ------
+    ValueError
+        If ``spectrum`` is empty (no orders to plot).
+    """
+    from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+    if not spectrum:
+        raise ValueError("dimension spectrum is empty: nothing to plot.")
+    spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIMENSION_SPECTRUM
+    qs = np.array(sorted(spectrum), dtype=float)
+    dq = np.array([float(spectrum[q].dimension) for q in qs], dtype=float)
+    err = np.array([float(spectrum[q].stderr) for q in qs], dtype=float)
+    layers = [
+        Layer(PlotKind.LINE, {"x": qs, "y": dq}, label=r"$D_q$"),
+        Layer(PlotKind.ERRORBAR, {"x": qs, "y": dq, "err": err}, label="std. error"),
+    ]
+    return PlotSpec(
+        kind=spec_kind,
+        ndim=2,
+        title=r"Rényi dimension spectrum $D_q$",
+        x=Axis(label=r"$q$"),
+        y=Axis(label=r"$D_q$"),
+        layers=layers,
+    )
 
 
 def __dir__() -> list[str]:

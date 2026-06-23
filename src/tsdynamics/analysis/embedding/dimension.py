@@ -87,6 +87,97 @@ class EmbeddingDimension(AnalysisResult):
             f"delay={self.delay}, dims={self.dims[0]}..{self.dims[-1]})"
         )
 
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the embedding-dimension diagnostic as a :class:`PlotSpec`.
+
+        Builds a ``DIAGNOSTIC_CURVE`` of the per-dimension diagnostic against the
+        embedding dimension :math:`d`, with the **selected** dimension :math:`m`
+        annotated as a vertical reference line:
+
+        - for Cao's method, both :math:`E_1(d)` (saturates to 1 at the right
+          dimension) and :math:`E_2(d)` (stays near 1 for stochastic data) are
+          drawn, with a reference line at the saturation level :math:`1`;
+        - for Kennel's FNN, the false-nearest-neighbour fraction (decays to 0) is
+          drawn.
+
+        The selected :math:`m` is read straight off :attr:`dimension`, so the
+        vertical line marks where the curve has saturated/decayed.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"diagnostic_curve"``).  ``None``
+            uses ``DIAGNOSTIC_CURVE``.
+
+        Returns
+        -------
+        PlotSpec
+
+        Raises
+        ------
+        VisualizationNotInstalled
+            If neither the Cao curves nor the FNN fraction is present (nothing to
+            draw) — the generic-fallback contract.
+        """
+        from tsdynamics.viz.spec import Annotation, Axis, Layer, Legend, PlotKind, PlotSpec
+
+        from .._result import VisualizationNotInstalled
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        dims = np.asarray(self.dims, dtype=float)
+
+        layers: list[Layer] = []
+        annotations: list[Annotation] = []
+        if self.afn_e1 is not None:
+            layers.append(
+                Layer(
+                    PlotKind.LINE,
+                    {"x": dims, "y": np.asarray(self.afn_e1, dtype=float)},
+                    label="$E_1(d)$",
+                )
+            )
+            if self.afn_e2 is not None:
+                layers.append(
+                    Layer(
+                        PlotKind.LINE,
+                        {"x": dims, "y": np.asarray(self.afn_e2, dtype=float)},
+                        label="$E_2(d)$",
+                    )
+                )
+            annotations.append(Annotation(kind="hline", text="saturation = 1", y=1.0))
+            ylabel = r"$E_1$, $E_2$"
+        elif self.fnn_fraction is not None:
+            layers.append(
+                Layer(
+                    PlotKind.LINE,
+                    {"x": dims, "y": np.asarray(self.fnn_fraction, dtype=float)},
+                    label="FNN fraction",
+                )
+            )
+            ylabel = "false-neighbour fraction"
+        else:  # pragma: no cover - both curves absent is a malformed result
+            raise VisualizationNotInstalled(
+                "EmbeddingDimension carries neither Cao (E1/E2) nor FNN curves, so there is "
+                "nothing to draw; export it with .to_dict() instead."
+            )
+
+        annotations.append(
+            Annotation(kind="vline", text=f"$m$ = {int(self.dimension)}", x=float(self.dimension))
+        )
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"embedding dimension ({self.method}, $m$ = {int(self.dimension)})",
+            x=Axis(label="dimension $d$"),
+            y=Axis(label=ylabel),
+            layers=layers,
+            legend=Legend() if len(layers) > 1 else None,
+            annotations=annotations,
+            meta=dict(self.meta) if self.meta else {},
+        )
+
 
 def _nearest_neighbor(
     points: np.ndarray, *, p: float, theiler: int

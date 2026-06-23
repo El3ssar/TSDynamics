@@ -170,6 +170,42 @@ def _representative(points: np.ndarray) -> np.ndarray:
     return cast(np.ndarray, pts.mean(axis=0))
 
 
+# ---------------------------------------------------------------------------
+# Shared visualization palette
+# ---------------------------------------------------------------------------
+
+#: The categorical colormap the attractor/basin views share.  A 20-swatch
+#: qualitative map gives every attractor id a distinct, repeatable colour.
+PALETTE: str = "tab20"
+
+#: The fixed colour the diverged / escape set (``DIVERGED == -1``) is drawn in,
+#: kept out of the cyclic attractor palette so escape never aliases an attractor.
+DIVERGED_COLOR: str = "lightgray"
+
+#: Number of distinct swatches in :data:`PALETTE` (``tab20`` has 20).
+_PALETTE_SIZE: int = 20
+
+
+def _palette_index(attractor_id: int) -> int:
+    """Map an attractor id (``>= 1``) to its swatch index in :data:`PALETTE`.
+
+    Deterministic and shared by every basin-layer view, so the *same* attractor
+    id maps to the *same* swatch across the :class:`AttractorSet` scatter and the
+    basin image.  Ids are 1-based; the swatch index is ``(id - 1) mod 20``.
+    """
+    return (int(attractor_id) - 1) % _PALETTE_SIZE
+
+
+def _palette_indices(ids: Any) -> dict[int, int]:
+    """Return ``{attractor_id: palette swatch index}`` for a set of ids.
+
+    The intra-result palette contract: a single source of truth both the
+    :class:`AttractorSet` scatter and the :class:`BasinsResult` image key off, so
+    a given id paints the same colour in both.
+    """
+    return {int(k): _palette_index(k) for k in ids}
+
+
 def _apply_merge(labels: np.ndarray, merge: dict[int, int]) -> np.ndarray:
     """Remap a label array through ``{old_id: canonical_id}`` (others unchanged)."""
     if not merge:

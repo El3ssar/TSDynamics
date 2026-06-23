@@ -51,7 +51,18 @@ Issues = "https://github.com/El3ssar/TSDynamics/issues"
 Changelog = "https://github.com/El3ssar/TSDynamics/releases"
 
 [project.optional-dependencies]
-plot = ["matplotlib>=3.9"]
+# ── Visualization backends ─────────────────────────────────────────────────────
+# `import tsdynamics` pulls in NO plot library; a backend self-registers lazily on
+# the first render iff it is installed (see tsdynamics.viz.render). `pip install
+# tsdynamics[viz]` therefore makes the matplotlib reference renderer available.
+# The `json` / `threejs` export renderers need NO extra (stdlib JSON over
+# PlotSpec.to_dict). An out-of-tree backend declares against the
+# `tsdynamics.renderers` entry-point group:
+#     [project.entry-points."tsdynamics.renderers"]
+#     my_backend = "my_pkg.backend:render"
+viz = ["matplotlib>=3.9,<5"]          # the matplotlib reference renderer (static 2-D + 3-D)
+interactive = ["plotly>=6,<7"]        # the interactive backend + self-contained HTML export
+plot = ["matplotlib>=3.9,<5"]         # back-compat alias of `viz`
 # Optional fast LZ76 provider for analysis.entropy (provider="lzcomplexity").
 # The built-in native parser is the default and needs no extra.
 lz = ["lzcomplexity>=0.9"]

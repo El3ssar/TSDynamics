@@ -58,6 +58,7 @@ __all__ = [
     "UniqueValues",
     "as_series",
     "entropy",
+    "outcome_distribution_plot_spec",
     "probabilities",
 ]
 
@@ -207,6 +208,24 @@ class OrdinalPatterns(OutcomeSpace):
             (self._index[tuple(row)] for row in patterns), dtype=np.intp, count=patterns.shape[0]
         )
         return np.bincount(labels, minlength=self.cardinality)
+
+    def labels(self) -> list[str]:
+        """Return a readable label per ordinal pattern, in dense-index order.
+
+        Each label is the rank tuple that sorts a window, rendered compactly
+        (e.g. ``"012"`` for the increasing pattern, ``"210"`` for decreasing) —
+        the category names for a :func:`outcome_distribution_plot_spec` bar plot.
+        Falls back to comma separation when the order is ``m > 9`` (ranks become
+        multi-digit).
+
+        Returns
+        -------
+        list of str
+            One label per outcome, length :attr:`cardinality`.
+        """
+        ordered = sorted(self._index, key=lambda p: self._index[p])
+        sep = "" if self.m <= 9 else ","
+        return [sep.join(str(r) for r in pattern) for pattern in ordered]
 
     def window_variance(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Return ``(labels, per-window variance)`` — the weighting for WPE."""
@@ -554,6 +573,87 @@ def entropy(
     return ScalarResult(
         value=float(value),
         meta={"analysis": "entropy", "normalize": bool(normalize)},
+    )
+
+
+def outcome_distribution_plot_spec(
+    probs: Any,
+    labels: Any = None,
+    *,
+    outcomes: OutcomeSpace | None = None,
+    kind: str | None = None,
+    title: str = "Outcome distribution",
+) -> Any:
+    r"""Describe an entropy outcome distribution as a backend-agnostic :class:`PlotSpec`.
+
+    Renders a probability vector over a finite outcome alphabet — e.g. the
+    ordinal-pattern probabilities of :func:`probabilities` with an
+    :class:`OrdinalPatterns` outcome space (Bandt & Pompe 2002), or the
+    amplitude-class probabilities of a :class:`Dispersion` / :class:`AmplitudeBinning`
+    space — as a labelled bar chart under the ``CATEGORICAL_BAR`` semantic kind.
+
+    The single ``BAR`` layer carries the probabilities on its ``"y"`` channel and
+    the integer category indices on its ``"cat"`` channel; the category labels
+    ride on a categorical :class:`~tsdynamics.viz.spec.Axis` (``scale="categorical"``,
+    ``categories=…``), so a renderer ticks the bars by outcome name rather than by
+    position.  The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec
+    never pulls a plotting library; this is a pure viz adapter.
+
+    Parameters
+    ----------
+    probs : array-like
+        The probability (or count) vector over the outcome alphabet, one entry
+        per outcome.
+    labels : sequence of str, optional
+        Category labels, one per outcome.  When omitted they are taken from
+        ``outcomes.labels()`` if the outcome space provides them (e.g.
+        :class:`OrdinalPatterns`), else the integer indices ``"0", "1", …``.
+    outcomes : OutcomeSpace, optional
+        The outcome space the probabilities were measured over; used to source
+        ``labels`` when they are not given explicitly.
+    kind : str, optional
+        Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
+        value).  ``None`` uses ``CATEGORICAL_BAR``.
+    title : str, default "Outcome distribution"
+        Plot title.
+
+    Returns
+    -------
+    PlotSpec
+        A ``CATEGORICAL_BAR`` spec: a ``BAR`` layer over a categorical axis.
+
+    Raises
+    ------
+    ValueError
+        If ``probs`` is empty, or ``labels`` has a length other than ``len(probs)``.
+    """
+    from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+    spec_kind = PlotKind(kind) if kind is not None else PlotKind.CATEGORICAL_BAR
+    p = np.asarray(probs, dtype=float).ravel()
+    if p.size == 0:
+        raise ValueError("outcome distribution is empty: nothing to plot.")
+    if labels is None and outcomes is not None:
+        getter = getattr(outcomes, "labels", None)
+        if callable(getter):
+            labels = getter()
+    if labels is None:
+        category_labels = [str(i) for i in range(p.size)]
+    else:
+        category_labels = [str(label) for label in labels]
+        if len(category_labels) != p.size:
+            raise ValueError(
+                f"labels length {len(category_labels)} != number of outcomes {p.size}."
+            )
+    cat = np.arange(p.size, dtype=float)
+    layer = Layer(PlotKind.BAR, {"y": p, "cat": cat}, label="probability")
+    return PlotSpec(
+        kind=spec_kind,
+        ndim=2,
+        title=title,
+        x=Axis(label="outcome", scale="categorical", categories=category_labels),
+        y=Axis(label="probability"),
+        layers=[layer],
     )
 
 

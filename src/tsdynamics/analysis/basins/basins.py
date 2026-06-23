@@ -30,7 +30,13 @@ import numpy as np
 
 from ...data import Ball, Box, Grid, grid_points, sampler
 from .._result import AnalysisResult
-from ._common import _apply_merge, _recurrence_grid
+from ._common import (
+    DIVERGED_COLOR,
+    PALETTE,
+    _apply_merge,
+    _palette_indices,
+    _recurrence_grid,
+)
 from .attractors import (
     DIVERGED,
     AttractorSet,
@@ -106,9 +112,20 @@ class BasinsResult(AnalysisResult):
 
         Builds a ``BASINS_IMAGE`` spec — the integer label field as an image on
         an ``"equal"`` canvas, the grid axes giving the extent, plus a marker
-        layer at the attractor representatives (for a 2-D grid).  The
-        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
-        plotting library.
+        layer at the attractor representatives (for a 2-D image).  A **3-D slice**
+        (a label cube with one degenerate ``counts == 1`` axis, as
+        :func:`basins_of_attraction` paints when imaging a slice of a
+        higher-dimensional flow) is squeezed to its two non-degenerate axes so it
+        renders as a 2-D image; a genuinely 3-D label cube keeps all three axes
+        on the spec.
+
+        The image shares the attractor palette (``tab20``) with
+        :meth:`AttractorSet.to_plot_spec`: the explicit ``{id: swatch index}``
+        mapping is recorded in ``meta["palette_index"]`` (identical to the one the
+        scatter carries), so a given attractor id is the same colour in both
+        views; ``meta["palette"]`` / ``meta["diverged_color"]`` name the colormap
+        and the fixed escape colour.  The :mod:`tsdynamics.viz.spec` import is
+        lazy, so building a spec never pulls a plotting library.
 
         Parameters
         ----------
@@ -120,30 +137,52 @@ class BasinsResult(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
 
         spec_kind = PlotKind(kind) if kind is not None else PlotKind.BASINS_IMAGE
         labels = np.asarray(self.labels)
-        layers = [Layer(PlotKind.IMAGE, {"c": labels}, style={"cmap": "tab10"})]
 
-        # Mark the attractor representatives on a 2-D image (their first two
-        # coordinates).  Higher-/lower-dim grids skip the overlay.
+        assert self.grid is not None  # a populated basin image always carries its grid
+        lo, hi = self.grid.lo, self.grid.hi
+
+        # Pick the two axes the image spans.  A degenerate (``counts == 1``) grid
+        # axis is a pinned slice coordinate — drop it so a 3-D slice paints as a
+        # plain 2-D image on its two free axes.
+        axes = [a for a in range(labels.ndim) if labels.shape[a] > 1]
+        if labels.ndim == 3 and len(axes) == 2:
+            labels = np.squeeze(labels, axis=tuple(a for a in range(labels.ndim) if a not in axes))
+        else:
+            axes = list(range(min(labels.ndim, 2)))
+
+        layers = [Layer(PlotKind.IMAGE, {"c": labels}, style={"cmap": PALETTE})]
+
+        # Mark the attractor representatives on a 2-D image, projected onto the
+        # two free axes.  Lower-dim grids skip the overlay.
         if labels.ndim == 2:
             centers = self.attractors.centers
-            if centers.size and centers.shape[1] >= 2:
+            ax0, ax1 = (axes + [0, 1])[:2]
+            if centers.size and centers.shape[1] > max(ax0, ax1):
                 layers.append(
                     Layer(
                         PlotKind.MARKERS,
-                        {"x": centers[:, 0], "y": centers[:, 1]},
+                        {"x": centers[:, ax0], "y": centers[:, ax1]},
                         label="attractors",
                         style={"marker": "*", "color": "black"},
                     )
                 )
 
-        assert self.grid is not None  # a populated basin image always carries its grid
-        lo, hi = self.grid.lo, self.grid.hi
-        x_axis = Axis(label="x", limits=(float(lo[0]), float(hi[0])) if lo.size else None)
-        y_axis = Axis(label="y", limits=(float(lo[1]), float(hi[1])) if lo.size > 1 else None)
+        ax0, ax1 = (axes + [0, 1])[:2]
+        x_lim = (float(lo[ax0]), float(hi[ax0])) if lo.size > ax0 else None
+        y_lim = (float(lo[ax1]), float(hi[ax1])) if lo.size > ax1 else None
+        x_axis = Axis(label=f"x{ax0 + 1}", limits=x_lim)
+        y_axis = Axis(label=f"x{ax1 + 1}", limits=y_lim)
+
+        meta = dict(self.meta) if self.meta else {}
+        meta.update(
+            palette=PALETTE,
+            diverged_color=DIVERGED_COLOR,
+            palette_index=_palette_indices(self.attractors.ids),
+        )
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
@@ -152,6 +191,8 @@ class BasinsResult(AnalysisResult):
             x=x_axis,
             y=y_axis,
             layers=layers,
+            colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
+            meta=meta,
         )
 
     def __repr__(self) -> str:  # noqa: D105
@@ -195,6 +236,67 @@ class BasinFractions(AnalysisResult):
 
     def __getitem__(self, key: int) -> float:  # noqa: D105
         return self.fractions[key]
+
+    def to_plot_spec(self, kind: str | None = None) -> Any:
+        r"""Describe the basin fractions as a backend-agnostic :class:`PlotSpec`.
+
+        Builds a ``CATEGORICAL_BAR`` — one ``BAR`` per attractor id (plus a final
+        bar for the diverged share when it is non-zero) over a categorical x-axis
+        whose :attr:`~tsdynamics.viz.spec.Axis.categories` carry the labels
+        (``attractor 1``, …, ``diverged``).  The ``"cat"`` channel holds the
+        integer category index for each bar and ``"y"`` its basin fraction.  The
+        bars are coloured from the shared attractor palette (``tab20``, recorded
+        in ``meta["palette"]``), the diverged bar in the fixed diverged colour, so
+        an id keeps its colour across the basin views.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind (e.g. ``"categorical_bar"``).  ``None`` uses
+            ``CATEGORICAL_BAR``.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
+
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.CATEGORICAL_BAR
+        ids = sorted(self.fractions)
+        swatch = _palette_indices(ids)
+
+        categories = [f"attractor {aid}" for aid in ids]
+        heights = [float(self.fractions[aid]) for aid in ids]
+        if self.diverged > 0.0:
+            categories.append("diverged")
+            heights.append(float(self.diverged))
+
+        ticks = [float(i) for i in range(len(categories))]
+        positions = np.asarray(ticks, dtype=float)
+        layer = Layer(
+            PlotKind.BAR,
+            {"cat": positions, "y": np.asarray(heights, dtype=float)},
+            label="basin fraction",
+            style={"cmap": PALETTE},
+        )
+        meta = dict(self.meta) if self.meta else {}
+        meta.update(
+            palette=PALETTE,
+            diverged_color=DIVERGED_COLOR,
+            palette_index=swatch,
+        )
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title="basin stability",
+            x=Axis(label="attractor", scale="categorical", categories=categories, ticks=ticks),
+            y=Axis(label="basin fraction", limits=(0.0, 1.0)),
+            layers=[layer],
+            colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
+            meta=meta,
+        )
 
     def __repr__(self) -> str:  # noqa: D105
         body = ", ".join(f"{k}:{v:.3g}" for k, v in sorted(self.fractions.items()))

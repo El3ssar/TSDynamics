@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
@@ -10,6 +10,9 @@ from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap
 
 from ._base import DerivedSystem
 from ._variational import build_variational_tape, embed_extended, split_extended
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tsdynamics.viz.spec import PlotSpec
 
 __all__ = ["TangentSystem"]
 
@@ -289,6 +292,128 @@ class TangentSystem(DerivedSystem):
         if self._elapsed == 0.0:
             return np.zeros(self.k)
         return self._sum_growths / self._elapsed
+
+    # --- convergence history (the Lyapunov estimates settling over time) ---
+
+    def convergence(
+        self,
+        steps: int = 2000,
+        n_or_dt: float | None = None,
+        *,
+        ic: Any | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Record the running Lyapunov estimates as they converge.
+
+        Reinitialises the tangent frame and steps it ``steps`` times, capturing
+        the running :meth:`exponents` estimate after every step.  The estimates
+        settle as the time-average accumulates — the curve a user inspects to
+        judge whether a Lyapunov run has converged.
+
+        Parameters
+        ----------
+        steps : int, optional
+            Number of tangent steps to record.  Default ``2000``.
+        n_or_dt : float, optional
+            Per-step increment (iterations for a map, ``dt`` for an ODE).
+            ``None`` uses the family default.
+        ic : array-like, optional
+            Initial condition; ``None`` resolves the system's default.
+
+        Returns
+        -------
+        (times, estimates)
+            ``times`` shape ``(steps,)``; ``estimates`` shape ``(steps, k)`` —
+            the running estimate of each of the ``k`` exponents after each step.
+        """
+        if steps <= 0:
+            raise ValueError(f"steps must be positive, got {steps}")
+        # Random-IC retry on divergence, mirroring the map Lyapunov path
+        # (:meth:`_map_spectrum`): when called without an explicit ``ic`` the
+        # system resolves a random one, which for a small-basin map (Hénon) can
+        # land off-attractor and diverge.  Re-draw a fresh IC and retry; an
+        # explicitly supplied ``ic`` that diverges is the caller's, so re-raise.
+        max_retries = 10
+        for attempt in range(max_retries):
+            use_ic = ic if attempt == 0 else None
+            times = np.empty(steps)
+            estimates = np.empty((steps, self.k))
+            try:
+                self.reinit(use_ic)
+                for s in range(steps):
+                    self.step(n_or_dt)
+                    times[s] = self.time()
+                    estimates[s] = self.exponents()
+            except RuntimeError:
+                if ic is not None or attempt == max_retries - 1:
+                    raise
+                # Force a fresh random IC on the next attempt.
+                object.__setattr__(self.system, "ic", None)
+                continue
+            return times, estimates
+        # Unreachable: the loop returns on success or re-raises on the last
+        # attempt; this satisfies the type checker that all paths are covered.
+        raise RuntimeError(  # pragma: no cover
+            f"{type(self.system).__name__}: tangent convergence diverged from every IC."
+        )
+
+    # --- visualization seam ---
+
+    def to_plot_spec(
+        self,
+        kind: str | None = None,
+        *,
+        steps: int = 2000,
+        n_or_dt: float | None = None,
+        ic: Any | None = None,
+    ) -> PlotSpec:
+        """Describe the Lyapunov-estimate convergence as a :class:`PlotSpec`.
+
+        Builds a :data:`~tsdynamics.viz.spec.PlotKind.DIAGNOSTIC_CURVE` of each
+        exponent's running estimate against time — a labelled family of lines
+        (one ``LINE`` layer per exponent, legended), the standard read-out for
+        "has the Lyapunov spectrum settled?".  The estimates are collected via
+        :meth:`convergence`.
+
+        The :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never
+        pulls in a plotting backend.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the semantic kind.  ``None`` (the default) uses
+            ``DIAGNOSTIC_CURVE``.
+        steps : int, optional
+            Number of tangent steps to record.  Default ``2000``.
+        n_or_dt : float, optional
+            Per-step increment (iterations for a map, ``dt`` for an ODE).
+        ic : array-like, optional
+            Initial condition; ``None`` resolves the system's default.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+
+        times, estimates = self.convergence(steps, n_or_dt, ic=ic)
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
+        layers = [
+            Layer(
+                PlotKind.LINE,
+                {"x": times, "y": estimates[:, i]},
+                label=f"$\\lambda_{{{i + 1}}}$",
+            )
+            for i in range(self.k)
+        ]
+        return PlotSpec(
+            kind=spec_kind,
+            ndim=2,
+            title=f"Lyapunov convergence — {type(self.system).__name__}",
+            x=Axis(label="iteration" if self.is_discrete else "time"),
+            y=Axis(label="Lyapunov estimate"),
+            layers=layers,
+            legend=Legend(),
+        )
 
     # --- the one Lyapunov engine: burn-in + time-averaged spectrum ---
 

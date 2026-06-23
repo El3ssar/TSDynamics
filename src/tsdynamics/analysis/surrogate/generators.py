@@ -51,13 +51,21 @@ class SurrogateEnsemble(ArrayResult):
     all defer to the wrapped array, while it also carries ``.meta``.
     """
 
+    #: Cap on how many individual surrogate lines are drawn before the view
+    #: collapses to the ``AREA`` envelope alone — keeps a large ensemble's spec
+    #: (and its JSON round-trip) bounded rather than emitting hundreds of layers.
+    _MAX_LINES: int = 25
+
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe the surrogate ensemble as a backend-agnostic :class:`PlotSpec`.
 
-        Builds a ``LINE_FAMILY`` overlaying every surrogate series as its own
-        ``LINE`` layer against the sample index — the visual sanity check that the
-        surrogates share the data's gross structure while differing in detail.  A
-        1-D ensemble (a single surrogate) is drawn as the one line.  The
+        Builds a ``LINE_FAMILY``: a shaded ``AREA`` band spanning the ensemble's
+        per-sample ``[min, max]`` envelope, with each surrogate series overlaid as
+        its own faint ``LINE`` against the sample index — the visual sanity check
+        that the surrogates share the data's gross structure while differing in
+        detail.  A large ensemble draws only the band (capped at
+        :attr:`_MAX_LINES` individual lines) so the spec stays bounded; a 1-D
+        ensemble (a single surrogate) is the one line with no band.  The
         :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
         plotting library.
 
@@ -77,10 +85,31 @@ class SurrogateEnsemble(ArrayResult):
         arr = np.atleast_2d(np.asarray(self.values, dtype=float))
         idx = np.arange(arr.shape[1], dtype=float)
         method = self.meta.get("method", "surrogate") if self.meta else "surrogate"
-        layers = [
-            Layer(PlotKind.LINE, {"x": idx, "y": arr[i]}, label=f"surrogate {i}")
-            for i in range(arr.shape[0])
-        ]
+
+        layers: list[Layer] = []
+        # The shaded min/max envelope of the whole ensemble (skipped for a single
+        # surrogate, where the band would collapse onto the line).
+        if arr.shape[0] >= 2:
+            lo = arr.min(axis=0)
+            hi = arr.max(axis=0)
+            layers.append(
+                Layer(
+                    PlotKind.AREA,
+                    {"x": idx, "y": (lo + hi) / 2.0, "lo": lo, "hi": hi},
+                    label="ensemble range",
+                    style={"alpha": 0.2},
+                )
+            )
+        n_lines = min(arr.shape[0], self._MAX_LINES)
+        layers.extend(
+            Layer(
+                PlotKind.LINE,
+                {"x": idx, "y": arr[i]},
+                label=f"surrogate {i}",
+                style={"alpha": 0.35, "lw": 0.5},
+            )
+            for i in range(n_lines)
+        )
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
