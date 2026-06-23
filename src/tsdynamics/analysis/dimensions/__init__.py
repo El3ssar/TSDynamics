@@ -38,6 +38,7 @@ from .fixedmass import fixed_mass_dimension
 from .generalized import (
     box_counting_dimension,
     dimension_spectrum,
+    dimension_spectrum_plot_spec,
     generalized_dimension,
     information_dimension,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "correlation_dimension",
     "correlation_sum",
     "dimension_spectrum",
+    "dimension_spectrum_plot_spec",
     "fit_scaling_region",
     "fixed_mass_dimension",
     "generalized_dimension",
