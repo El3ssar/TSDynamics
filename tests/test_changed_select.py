@@ -13,7 +13,9 @@ import types
 from pathlib import Path
 
 import _changed_select as cs
+import pytest
 
+import conftest
 import tsdynamics.analysis
 from tsdynamics import registry
 
@@ -204,6 +206,24 @@ def test_keep_item_handwritten_per_system_test_in_sweep_file() -> None:
     assert not cs.keep_item(
         _fake_item("test_smoke.py"), cs.Plan(full=False, reason="t", systems={"Lorenz"})
     )
+
+
+def test_changed_no_tests_collected_exits_success() -> None:
+    session = types.SimpleNamespace(
+        config=types.SimpleNamespace(getoption=lambda name, default=False: name == "changed"),
+        exitstatus=pytest.ExitCode.NO_TESTS_COLLECTED,
+    )
+    conftest.pytest_sessionfinish(session, pytest.ExitCode.NO_TESTS_COLLECTED)
+    assert session.exitstatus == pytest.ExitCode.OK
+
+
+def test_plain_no_tests_collected_stays_nonzero() -> None:
+    session = types.SimpleNamespace(
+        config=types.SimpleNamespace(getoption=lambda name, default=False: False),
+        exitstatus=pytest.ExitCode.NO_TESTS_COLLECTED,
+    )
+    conftest.pytest_sessionfinish(session, pytest.ExitCode.NO_TESTS_COLLECTED)
+    assert session.exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED
 
 
 # ---------------------------------------------------------------------------
