@@ -9,6 +9,7 @@ import numpy as np
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.data import Trajectory
     from tsdynamics.families.base import MetaStore, ParamSet
+    from tsdynamics.viz.spec import PlotSpec
 
 __all__ = ["DerivedSystem"]
 
@@ -97,6 +98,35 @@ class DerivedSystem:
         protocol requires; ``run`` is the discoverable spelling.
         """
         return self.trajectory(*args, **kwargs)
+
+    # --- visualization seam ---
+
+    def to_plot_spec(self, kind: str | None = None) -> PlotSpec:
+        """Describe this derived view as a backend-agnostic :class:`PlotSpec`.
+
+        The default delegates to the wrapper's own :meth:`trajectory`: it
+        collects the lens-specific trajectory (Poincaré crossings, projected
+        columns, ...) and forwards to that trajectory's
+        :meth:`~tsdynamics.data.Trajectory.to_plot_spec`.  Subclasses whose
+        natural picture is *not* a single trajectory line — a stroboscopic
+        scatter, an ensemble fan, a Lyapunov convergence curve — override this
+        with their own spec builder.
+
+        The :mod:`tsdynamics.viz.spec` import stays inside the trajectory method
+        (lazy), so building a spec never pulls in a plotting backend.
+
+        Parameters
+        ----------
+        kind : str, optional
+            Override the auto-dispatched semantic kind with any member of the
+            closed :class:`~tsdynamics.viz.spec.PlotKind` vocabulary.  ``None``
+            (the default) lets the underlying trajectory auto-dispatch.
+
+        Returns
+        -------
+        PlotSpec
+        """
+        return self.trajectory().to_plot_spec(kind=kind)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.system!r})"
