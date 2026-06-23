@@ -22,6 +22,7 @@ import numpy as np
 
 from ...data import Ball, Box, Grid, set_distance
 from .._result import AnalysisResult, CollectionResult
+from ._common import DIVERGED_COLOR, PALETTE, _palette_indices
 from .attractors import Attractor, _reject_unsupported
 from .basins import basin_fractions
 
@@ -73,37 +74,71 @@ class ContinuationResult(AnalysisResult):
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe the continuation as a backend-agnostic :class:`PlotSpec`.
 
-        Builds a ``LINE_FAMILY`` of each attractor's basin fraction against the
-        swept parameter — one labelled ``LINE`` per global attractor id — so a
-        line dropping to zero marks a tipping (annihilation) event and a line
-        rising from zero a newly-born basin.  A :class:`~tsdynamics.viz.spec.Legend`
-        is attached when more than one attractor is tracked.  The
-        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
-        plotting library.
+        Builds a ``CONTINUATION`` spec — the basin fractions **stacked** against
+        the swept parameter, one filled ``AREA`` band per global attractor id (its
+        ``"lo"`` / ``"hi"`` channels are the cumulative fraction below and above
+        the band, so the bands tile ``[0, 1]``).  Each **tipping** event from
+        :meth:`tipping_points` — a basin annihilating (``"disappear"``) or being
+        born (``"appear"``) — is drawn as a vertical
+        :class:`~tsdynamics.viz.spec.Annotation` at the parameter value where it
+        happens.  The bands share the attractor palette (``tab20``, recorded in
+        ``meta["palette"]``) so an id keeps its colour across the basin views.  A
+        :class:`~tsdynamics.viz.spec.Legend` is attached when more than one
+        attractor is tracked.  The :mod:`tsdynamics.viz.spec` import is lazy, so
+        building a spec never pulls a plotting library.
 
         Parameters
         ----------
         kind : str, optional
-            Override the semantic kind (e.g. ``"line_family"``).  ``None`` uses
-            ``LINE_FAMILY``.
+            Override the semantic kind (e.g. ``"continuation"``).  ``None`` uses
+            ``CONTINUATION``.
 
         Returns
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import (
+            Annotation,
+            Axis,
+            Colorbar,
+            Layer,
+            Legend,
+            PlotKind,
+            PlotSpec,
+        )
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.LINE_FAMILY
+        spec_kind = PlotKind(kind) if kind is not None else PlotKind.CONTINUATION
         values = np.asarray(self.values, dtype=float)
         ids = self.ids
-        layers = [
-            Layer(
-                PlotKind.LINE,
-                {"x": values, "y": np.asarray(self.fractions[gid], dtype=float)},
-                label=f"attractor {gid}",
+        swatch = _palette_indices(ids)
+
+        # Stack the (nan-as-zero) fractions so the bands tile [0, 1] per value.
+        cumulative = np.zeros(values.size, dtype=float)
+        layers: list[Layer] = []
+        for gid in ids:
+            frac = np.nan_to_num(np.asarray(self.fractions[gid], dtype=float), nan=0.0)
+            lo = cumulative.copy()
+            cumulative = cumulative + frac
+            layers.append(
+                Layer(
+                    PlotKind.AREA,
+                    {"x": values, "y": cumulative.copy(), "lo": lo, "hi": cumulative.copy()},
+                    label=f"attractor {gid}",
+                    style={"cmap": PALETTE},
+                )
             )
-            for gid in ids
+
+        annotations = [
+            Annotation(
+                kind="vline",
+                x=float(event["value"]),
+                text=f"{event['kind']} (attractor {event['attractor']})",
+                axis="x",
+            )
+            for event in self.tipping_points()
         ]
+        meta = dict(self.meta) if self.meta else {}
+        meta.update(palette=PALETTE, diverged_color=DIVERGED_COLOR, palette_index=swatch)
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
@@ -112,6 +147,9 @@ class ContinuationResult(AnalysisResult):
             y=Axis(label="basin fraction", limits=(0.0, 1.0)),
             layers=layers,
             legend=Legend() if len(ids) > 1 else None,
+            colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
+            annotations=annotations,
+            meta=meta,
         )
 
     def __repr__(self) -> str:  # noqa: D105
