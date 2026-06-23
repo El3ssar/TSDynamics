@@ -26,12 +26,15 @@ from typing import Any
 import numpy as np
 
 from ._common import channel_iter, resolve_fs, to_signal
+from ._result import FeatureSet
 from .spectral import dominant_frequency, spectral_centroid, spectral_entropy
 
 __all__ = [
     "FEATURE_FUNCTIONS",
+    "FeatureSet",
     "extract_features",
     "feature_names",
+    "feature_set",
     "hjorth_parameters",
     "zero_crossing_rate",
 ]
@@ -208,6 +211,60 @@ def extract_features(
             raise KeyError(f"unknown feature {name!r}; available: {feature_names()}.") from None
         out[name] = _per_channel(sig, fn, rate)
     return out
+
+
+def feature_set(
+    data: Any,
+    *,
+    fs: float | None = None,
+    dt: float | None = None,
+    features: Sequence[str] | None = None,
+    variant: str = "bar",
+) -> FeatureSet:
+    """Compute the feature vector as a self-describing, plottable :class:`FeatureSet`.
+
+    A result-typed wrapper over :func:`extract_features`: it computes the same
+    named bag of scalar features and returns a
+    :class:`~tsdynamics.transforms.FeatureSet` carrying them, so the vector can
+    ``.plot()`` (a ``FEATURE_BARS`` chart over a categorical feature-name axis)
+    or ``.to_dict()``.  Use :func:`extract_features` directly for the bare
+    ``{name: value}`` dict.
+
+    Parameters
+    ----------
+    data : Trajectory or array-like
+        Signal with time along axis 0; a multi-channel ``(T, channels)`` signal
+        is summarised channel-by-channel.
+    fs, dt : float, optional
+        Sampling frequency / spacing, needed by the frequency-domain features
+        (see :func:`power_spectral_density`).
+    features : sequence of str, optional
+        Which features to compute (names from :data:`FEATURE_FUNCTIONS`).
+        Defaults to all of them, in catalogue order.
+    variant : {"bar", "radar", "parallel"}, default "bar"
+        The plot variant, recorded in ``meta["variant"]``: ``"bar"`` draws a bar
+        per feature, ``"radar"`` / ``"parallel"`` a line over the same
+        categorical feature axis (polar / parallel-coordinate layout).
+
+    Returns
+    -------
+    FeatureSet
+        The named feature bag, plottable as a feature-bar chart.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> fset = feature_set(np.random.default_rng(0).standard_normal(2000))
+    >>> round(fset.features["mean"], 1)
+    0.0
+    """
+    feats = extract_features(data, fs=fs, dt=dt, features=features)
+    meta = {
+        "transform": "feature_set",
+        "fs": resolve_fs(data, fs=fs, dt=dt),
+        "variant": variant,
+    }
+    return FeatureSet(features=feats, meta=meta)
 
 
 def zero_crossing_rate(x: Any) -> Any:

@@ -31,12 +31,17 @@ import numpy as np
 from scipy import signal as _sig
 
 from ._common import resolve_fs, to_signal
+from ._result import Spectrogram, Spectrum
 
 __all__ = [
+    "Spectrogram",
+    "Spectrum",
     "dominant_frequency",
     "power_spectral_density",
+    "power_spectrum",
     "spectral_centroid",
     "spectral_entropy",
+    "spectrogram",
 ]
 
 
@@ -246,6 +251,162 @@ def dominant_frequency(
         psd = psd[1:]
     peak = freqs[np.argmax(psd, axis=0)]
     return float(peak) if np.ndim(peak) == 0 else peak
+
+
+def power_spectrum(
+    data: Any,
+    *,
+    fs: float | None = None,
+    dt: float | None = None,
+    markers: bool = True,
+    **psd_kwargs: Any,
+) -> Spectrum:
+    """One-sided power spectrum as a self-describing, plottable :class:`Spectrum`.
+
+    A thin result-typed wrapper over :func:`power_spectral_density`: it computes
+    the same PSD and, by default, the dominant frequency and spectral centroid,
+    and returns a :class:`~tsdynamics.transforms.Spectrum` carrying them — so the
+    spectrum can ``.plot()`` (a ``POWER_SPECTRUM`` with the two features as
+    reference lines) or ``.to_dict()``.  Use :func:`power_spectral_density`
+    directly for the bare ``(freqs, psd)`` arrays.
+
+    Parameters
+    ----------
+    data : Trajectory or array-like
+        Signal with time along axis 0.
+    fs, dt : float, optional
+        Sampling frequency / spacing (see :func:`power_spectral_density`).
+    markers : bool, default True
+        Compute the dominant frequency and spectral centroid markers.  Pass
+        ``False`` to skip the two extra PSD reductions.
+    **psd_kwargs
+        Forwarded to :func:`power_spectral_density` (``method``, ``window``,
+        ``nperseg``, ``detrend``, ``scaling``).
+
+    Returns
+    -------
+    Spectrum
+        The PSD plus its spectral-feature markers.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0, 10, 2000, endpoint=False)
+    >>> spec = power_spectrum(np.sin(2 * np.pi * 5 * t), fs=200.0)
+    >>> round(spec.dominant_frequency)
+    5
+    """
+    freqs, psd = power_spectral_density(data, fs=fs, dt=dt, **psd_kwargs)
+    dom: Any = None
+    cen: Any = None
+    if markers:
+        dom = dominant_frequency(data, fs=fs, dt=dt, **psd_kwargs)
+        cen = spectral_centroid(data, fs=fs, dt=dt, **psd_kwargs)
+    scaling = str(psd_kwargs.get("scaling", "density"))
+    meta = {
+        "transform": "power_spectrum",
+        "method": psd_kwargs.get("method", "welch"),
+        "fs": resolve_fs(data, fs=fs, dt=dt),
+        "scaling": scaling,
+    }
+    return Spectrum(
+        frequencies=freqs,
+        psd=psd,
+        dominant_frequency=dom,
+        spectral_centroid=cen,
+        scaling=scaling,
+        meta=meta,
+    )
+
+
+def spectrogram(
+    data: Any,
+    *,
+    fs: float | None = None,
+    dt: float | None = None,
+    window: str = "hann",
+    nperseg: int | None = None,
+    noverlap: int | None = None,
+    detrend: str | bool = "constant",
+    scaling: str = "density",
+) -> Spectrogram:
+    """Short-time Fourier power spectrogram (time x frequency x power).
+
+    Slides a window over the signal and computes a PSD per segment (a
+    short-time Fourier transform), the standard view of how spectral content
+    evolves in time.  A multi-channel signal is reduced to its **first** channel
+    (a spectrogram is a single time--frequency image); transform each channel
+    separately for a per-channel image.
+
+    Parameters
+    ----------
+    data : Trajectory or array-like
+        Signal with time along axis 0.  A ``(T, channels)`` signal uses its
+        first channel.
+    fs, dt : float, optional
+        Sampling frequency or spacing.  At most one; if neither is given and
+        ``data`` is a :class:`~tsdynamics.data.Trajectory`, the rate is read off
+        its time vector, otherwise ``fs = 1.0`` (cycles per sample).
+    window : str, default "hann"
+        Segment window (any :func:`scipy.signal.get_window` name).
+    nperseg : int, optional
+        Segment length.  Defaults to ``min(256, n_samples)`` so short signals do
+        not trigger a segment-length warning.
+    noverlap : int, optional
+        Samples of overlap between adjacent segments.  Defaults to
+        ``nperseg // 8`` (SciPy's spectrogram default).
+    detrend : str or False, default "constant"
+        Per-segment detrending (``"constant"`` / ``"linear"`` / ``False``).
+    scaling : {"density", "spectrum"}, default "density"
+        ``"density"`` gives a PSD (units²/Hz), ``"spectrum"`` a power spectrum.
+
+    Returns
+    -------
+    Spectrogram
+        ``times`` (segment centres), ``frequencies``, and ``power`` of shape
+        ``(n_freqs, n_times)`` — a plottable ``SPECTROGRAM`` image.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0, 10, 4000, endpoint=False)
+    >>> sg = spectrogram(np.sin(2 * np.pi * 5 * t), fs=400.0)
+    >>> sg.power.shape == (sg.frequencies.size, sg.times.size)
+    True
+
+    References
+    ----------
+    Welch, P. D. (1967). The use of fast Fourier transform for the estimation of
+    power spectra: a method based on time averaging over short, modified
+    periodograms. *IEEE Transactions on Audio and Electroacoustics*, 15(2),
+    70-73.
+    """
+    sig = to_signal(data)
+    rate = resolve_fs(data, fs=fs, dt=dt)
+    channel = sig if sig.ndim == 1 else sig[:, 0]
+    n = channel.shape[0]
+    seg = min(256, n) if nperseg is None else int(nperseg)
+
+    freqs, times, power = _sig.spectrogram(
+        channel,
+        fs=rate,
+        window=window,
+        nperseg=seg,
+        noverlap=noverlap,
+        detrend=detrend,
+        scaling=scaling,
+        mode="psd",
+    )
+
+    meta = {
+        "transform": "spectrogram",
+        "window": window,
+        "nperseg": seg,
+        "noverlap": seg // 8 if noverlap is None else int(noverlap),
+        "fs": rate,
+        "scaling": scaling,
+    }
+    return Spectrogram(times=times, frequencies=freqs, power=power, meta=meta)
 
 
 def __dir__() -> list[str]:

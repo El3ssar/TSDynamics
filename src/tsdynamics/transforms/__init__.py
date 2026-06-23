@@ -6,13 +6,16 @@ into the inputs the :mod:`~tsdynamics.analysis` quantifiers consume:
 
 - **Spectral** (:mod:`~tsdynamics.transforms.spectral`) —
   :func:`power_spectral_density`, :func:`spectral_entropy`,
-  :func:`spectral_centroid`, :func:`dominant_frequency`.
+  :func:`spectral_centroid`, :func:`dominant_frequency`, plus the
+  result-typed, plottable :func:`power_spectrum` (a :class:`Spectrum`) and
+  :func:`spectrogram` (a :class:`Spectrogram` time--frequency image).
 - **Preprocessing** (:mod:`~tsdynamics.transforms.preprocessing`) —
   :func:`detrend`, :func:`normalize`, and zero-phase Butterworth
   :func:`lowpass` / :func:`highpass` / :func:`bandpass` / :func:`bandstop`
   (shape-preserving: ``Trajectory`` in → ``Trajectory`` out).
 - **Features** (:mod:`~tsdynamics.transforms.features`) —
-  :func:`extract_features` over the named :data:`FEATURE_FUNCTIONS` catalogue,
+  :func:`extract_features` over the named :data:`FEATURE_FUNCTIONS` catalogue
+  (and the result-typed, plottable :func:`feature_set` → a :class:`FeatureSet`),
   plus :func:`hjorth_parameters` and :func:`zero_crossing_rate`.
 
 Every transform takes time along axis 0 and works channel-by-channel, so a single
@@ -30,10 +33,12 @@ from typing import Any
 
 from .. import registry as _registry
 from ..plugins import TRANSFORMS_GROUP, register_entry_points
+from ._result import FeatureSet, Spectrogram, Spectrum
 from .features import (
     FEATURE_FUNCTIONS,
     extract_features,
     feature_names,
+    feature_set,
     hjorth_parameters,
     zero_crossing_rate,
 )
@@ -49,12 +54,17 @@ from .preprocessing import (
 from .spectral import (
     dominant_frequency,
     power_spectral_density,
+    power_spectrum,
     spectral_centroid,
     spectral_entropy,
+    spectrogram,
 )
 
 __all__ = [
     "FEATURE_FUNCTIONS",
+    "FeatureSet",
+    "Spectrogram",
+    "Spectrum",
     "bandpass",
     "bandstop",
     "butter_filter",
@@ -63,13 +73,16 @@ __all__ = [
     "dominant_frequency",
     "extract_features",
     "feature_names",
+    "feature_set",
     "highpass",
     "hjorth_parameters",
     "lowpass",
     "normalize",
     "power_spectral_density",
+    "power_spectrum",
     "spectral_centroid",
     "spectral_entropy",
+    "spectrogram",
     "zero_crossing_rate",
 ]
 
@@ -77,12 +90,16 @@ __all__ = [
 #: In-tree transforms registered at import: ``name -> (callable, metadata)``.
 #: ``kind`` groups them; ``produces`` flags what a downstream consumer gets back
 #: (``"signal"`` is shape-preserving, ``"spectrum"`` a frequency-domain pair,
-#: ``"scalar"`` a per-channel number, ``"features"`` a named bag).
+#: ``"scalar"`` a per-channel number, ``"features"`` a named bag, ``"result"`` a
+#: self-describing, plottable result object — a :class:`Spectrum` /
+#: :class:`Spectrogram` / :class:`FeatureSet`).
 _INTREE_TRANSFORMS: dict[str, tuple[Callable[..., Any], dict[str, Any]]] = {
     "power_spectral_density": (
         power_spectral_density,
         {"kind": "spectral", "produces": "spectrum"},
     ),
+    "power_spectrum": (power_spectrum, {"kind": "spectral", "produces": "result"}),
+    "spectrogram": (spectrogram, {"kind": "spectral", "produces": "result"}),
     "spectral_entropy": (spectral_entropy, {"kind": "spectral", "produces": "scalar"}),
     "spectral_centroid": (spectral_centroid, {"kind": "spectral", "produces": "scalar"}),
     "dominant_frequency": (dominant_frequency, {"kind": "spectral", "produces": "scalar"}),
@@ -93,6 +110,7 @@ _INTREE_TRANSFORMS: dict[str, tuple[Callable[..., Any], dict[str, Any]]] = {
     "bandpass": (bandpass, {"kind": "preprocessing", "produces": "signal"}),
     "bandstop": (bandstop, {"kind": "preprocessing", "produces": "signal"}),
     "extract_features": (extract_features, {"kind": "features", "produces": "features"}),
+    "feature_set": (feature_set, {"kind": "features", "produces": "result"}),
 }
 
 
