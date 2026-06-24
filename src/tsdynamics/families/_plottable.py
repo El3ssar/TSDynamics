@@ -44,37 +44,47 @@ class SystemPlottable:
         # this mixin is combined with; declared for the type checker only.
         def trajectory(self, *args: Any, **kwargs: Any) -> Trajectory: ...
 
-    def to_plot_spec(self, kind: str | None = None, **trajectory_kwargs: Any) -> PlotSpec:
+    def to_plot_spec(self, kind: str | None = None, **kwargs: Any) -> PlotSpec:
         """Describe this system as a :class:`PlotSpec` via a default trajectory.
 
-        Integrates the system with its family's :meth:`trajectory` defaults (or
-        the ``trajectory_kwargs`` you pass — ``final_time`` / ``dt`` / ``steps`` /
-        ``ic`` / …) and delegates to the trajectory's own ``to_plot_spec``, which
-        dispatches on ``is_discrete`` (map orbit → scatter, flow → time series /
-        phase portrait).
+        Integrates the system with its family's :meth:`trajectory` (defaults, or
+        the integration keywords you pass — ``final_time`` / ``dt`` / ``steps`` /
+        ``ic`` / …) and delegates to the trajectory's own ``to_plot_spec``.  The
+        plot-shaping keywords (``components`` and the per-kind options ``tau`` /
+        ``color_by`` / ``transpose``) are split out and forwarded to the
+        trajectory's ``to_plot_spec``; every other keyword goes to
+        :meth:`trajectory`.  This split keys off the **closed** set of plot
+        keywords (``tsdynamics.data.trajectory._PLOT_SPEC_KEYS``), so a system's
+        own — possibly heterogeneous — ``trajectory`` signature stays open-ended.
 
         Parameters
         ----------
         kind : str, optional
-            Override the semantic kind, forwarded to the trajectory's
-            ``to_plot_spec``.
-        **trajectory_kwargs
-            Forwarded to the family's :meth:`trajectory` (e.g. ``final_time``,
-            ``dt``, ``steps``, ``ic``).
+            Override / select the semantic kind, forwarded to the trajectory's
+            ``to_plot_spec`` (a ``PlotKind`` value or the ``"delay"`` recipe).
+        **kwargs
+            Plot-shaping keywords (``components`` / ``tau`` / ``color_by`` /
+            ``transpose``) forwarded to the trajectory's ``to_plot_spec``; all
+            other keywords forwarded to :meth:`trajectory` (``final_time``,
+            ``dt``, ``steps``, ``ic``, …).
 
         Returns
         -------
         PlotSpec
         """
-        traj = self.trajectory(**trajectory_kwargs)
-        return traj.to_plot_spec(kind=kind)
+        from tsdynamics.data.trajectory import _PLOT_SPEC_KEYS
 
-    def plot(self, backend: str | None = None, **tweaks: Any) -> Any:
+        plot_kw = {k: kwargs.pop(k) for k in list(kwargs) if k in _PLOT_SPEC_KEYS}
+        traj = self.trajectory(**kwargs)
+        return traj.to_plot_spec(kind=kind, **plot_kw)
+
+    def plot(self, backend: str | None = None, **kwargs: Any) -> Any:
         """Render this system via a backend, applying inline tweaks first.
 
-        Builds the default :meth:`to_plot_spec`, applies any recognised inline
-        tweaks (``xlabel`` / ``yscale`` / ``title`` / …), and renders through the
-        backend dispatch.  Raises
+        Peels off the plot-shaping keywords (``kind`` / ``components`` and the
+        per-kind options), forwards them to :meth:`to_plot_spec`, applies any
+        recognised inline tweaks (``xlabel`` / ``yscale`` / ``title`` / …) to the
+        spec, and renders through the backend dispatch.  Raises
         :class:`~tsdynamics.analysis._result.VisualizationNotInstalled` until a
         rendering backend is registered.
 
@@ -82,18 +92,21 @@ class SystemPlottable:
         ----------
         backend : str, optional
             Renderer name; ``None`` uses the default capable backend.
-        **tweaks
-            Inline spec tweaks and/or backend keyword arguments.
+        **kwargs
+            Plot-shaping keywords (``kind`` / ``components`` / per-kind options),
+            inline spec tweaks, and/or backend keyword arguments.
 
         Returns
         -------
         Any
             Whatever the backend returns.
         """
+        from tsdynamics.data.trajectory import _PLOT_SPEC_KEYS
         from tsdynamics.viz.spec import _apply_inline_tweaks
 
-        spec = self.to_plot_spec()
-        backend_kw = _apply_inline_tweaks(spec, tweaks)
+        spec_kw = {k: kwargs.pop(k) for k in list(kwargs) if k in _PLOT_SPEC_KEYS}
+        spec = self.to_plot_spec(**spec_kw)
+        backend_kw = _apply_inline_tweaks(spec, kwargs)
         return spec.render(backend, **backend_kw)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:

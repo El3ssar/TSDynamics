@@ -276,6 +276,26 @@ import Trajectory` are the same object.
 - Point-set ops: `minmax()`, `standardize()`, `neighbors(q, k)` (lazy KD-tree).
 - `meta` carries provenance (system, params, solver, dt, tolerances, ic,
   version); preserved through slicing/`after()`.
+- **Plotting front door — `to_plot_spec(kind=None, *, components=None, **kind_kw)`:**
+  the one entry point for trajectory plots (the parameterised `viz.producers`
+  builders stay an internal detail). Auto-dispatches on the number of *selected*
+  components — 1 → `TIME_SERIES`, 2 → `PHASE_PORTRAIT_2D`, 3 → `PHASE_PORTRAIT_3D`,
+  **4+ → `SPACETIME`** (a field image, never a misleading 3-D portrait of the
+  first three coords). `components=` (a name / index / sequence) picks the
+  channels; `kind=` forces any `PlotKind`, plus the `"delay"` *recipe* (an `x(t)`
+  vs `x(t-τ)` embedding — `"delay"` is not a `PlotKind`, it routes via
+  `_KIND_ALIASES` to a producer emitting `PHASE_PORTRAIT_2D`; `tau` is in **time
+  units**, converted to a sample lag via `meta["dt"]`). Per-kind options ride on
+  `**kind_kw` (deliberately off the signature, since each is valid for one kind
+  only): `tau` (delay, required), `color_by` (time series / portraits),
+  `transpose` (spacetime). The routing tables — `_KIND_ALIASES`, `_KIND_KW`
+  (per-kind allow-list, validated), and `_PLOT_SPEC_KEYS` (derived from them) —
+  live at the top of `data/trajectory.py`; extending a kind's options is a
+  one-line edit there. `Trajectory.plot()` / `SystemPlottable.plot()` peel the
+  spec-shaping kwargs (the closed `_PLOT_SPEC_KEYS` set) and forward them to
+  `to_plot_spec`; the remainder are inline tweaks / backend kwargs.
+  `SystemPlottable.to_plot_spec` likewise splits plot kwargs from integration
+  kwargs (`final_time`/`dt`/`steps`/`ic`/…) on that same closed set.
 
 ### The `System` protocol (`families/protocol.py`)
 
