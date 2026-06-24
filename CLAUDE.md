@@ -86,7 +86,7 @@ src/tsdynamics/
 │   ├── basins/              # A-BASIN: find_attractors/basins_of_attraction (recurrence-FSM AttractorMapper) + basin_fractions (basin stability) + basin_entropy/uncertainty_exponent/wada_property (boundary structure) + continuation/tipping_points + resilience; cell tessellation in _common.py; self-registers into registry.analyses
 │   └── embedding/           # owned by A-EMBED
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
-├── viz/                      # PlotSpec IR seam (backend-agnostic; no renderer ships yet — decision D6)
+├── viz/                      # PlotSpec IR seam + renderers (mpl/plotly/json/threejs) + compose.py (ts.viz.plot)
 ├── systems/
 │   ├── continuous/           # 8 ODE category modules + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
@@ -558,6 +558,48 @@ All three families + all derived wrappers implement:
   (Newton z³ map ⅓-basins, two-well Duffing ½-basins, magnetic pendulum) live in
   `tests/test_basins.py` — they are TEST-LOCAL, not catalogue systems.
   Self-registers into `registry.analyses` (family `basins`).
+
+---
+
+## Visualization (the `viz` seam)
+
+`tsdynamics.viz` is the **backend-agnostic** plotting layer. `import tsdynamics`
+pulls in **no** plotting library — `ts.viz` is bound lazily, and every renderer
+import is deferred to first render.
+
+- **`PlotSpec` IR (`viz/spec.py`):** a JSON-serializable description of a plot —
+  a semantic `PlotKind`, drawable `Layer`s, typed `Axis`/`Colorbar`/`Legend`,
+  and `to_dict`/`from_dict` round-trip. The `PlotKind` enum is a **frozen,
+  reviewed contract** (governance gate `tests/test_viz_vocab.py` pins the exact
+  membership; adding a kind edits that gate deliberately).
+- **Renderers (`viz/render/`):** in-tree backends `mpl` (the universal reference
+  renderer — `kinds=None`, draws everything, the fallback), `plotly`
+  (interactive 2-D + 3-D + HTML), `json` and `threejs` (data-export). Dispatch
+  (`viz/render/__init__.py`) selects by name or capability and falls back to mpl
+  with a `VisualizationDegraded` warning when a backend declines a spec.
+- **Single-panel front door:** `Trajectory.to_plot_spec(...)` / `.plot(...)` (see
+  the `Trajectory` section) builds **one panel**.
+- **Composition — `tsdynamics.viz.plot(*things, layout="overlay", **build_kw)`
+  (`viz/compose.py`):** the figure-level front door. It converts each thing (a
+  `Trajectory` / system / result / `PlotSpec`) to a spec — forwarding `build_kw`
+  (`components` / `kind` / per-kind options) to each — and returns a **`PlotSpec`**:
+  - `layout="overlay"` (default) merges overlay-compatible single-panel specs
+    (`TIME_SERIES` / `PHASE_PORTRAIT_2D` / `PHASE_PORTRAIT_3D`) onto **one** set of
+    axes, disambiguating legend labels by source; incompatible kinds (an image vs
+    a portrait, or 2-D vs 3-D) raise — use a panelled layout instead.
+  - `layout="stack"/"row"/"grid"` builds a `PlotKind.COMPOSITE` spec carrying
+    child `panels` (each a single-panel `PlotSpec`) and a `Layout` (`mode` +
+    `rows`/`cols`/`share_x`/`share_y`). Composite inputs are **flattened** one
+    level, so `plot(plot(...), plot(...), layout="stack")` composes (input type ==
+    output type == `PlotSpec` → fully recursive).
+  The returned spec **renders itself**: `PlotSpec` has `.plot()` (inline-tweak +
+  render), `.render(backend=)`, `.save(path)` (raster/vector → matplotlib, `.html`
+  → plotly, by extension), and a notebook `_repr_mimebundle_`.
+  - **Composite rendering:** the **matplotlib** renderer tiles `panels` into a
+    subplot grid (`_render_composite` / per-panel `_draw_2d_panel` /
+    `_threed._draw_3d_panel`; 2-D panels optionally share axes). Plotly **declines**
+    `COMPOSITE` (multi-panel tiling is an mpl-only follow-up) and dispatch falls
+    back to mpl; an *overlay* single-panel spec still renders in plotly natively.
 
 ---
 

@@ -160,11 +160,20 @@ def render_3d(spec: PlotSpec, *, figsize: tuple[float, float] | None = None) -> 
     from matplotlib.figure import Figure
     from mpl_toolkits import mplot3d  # noqa: F401 — registers the "3d" projection
 
-    from ._core import _apply_colorbar, _apply_legend
-
     fig = Figure(figsize=figsize)
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(1, 1, 1, projection="3d")
+    _draw_3d_panel(fig, ax, spec)
+    return fig
+
+
+def _draw_3d_panel(fig: Any, ax: Any, spec: PlotSpec) -> None:
+    """Draw one 3-D spec's marks + axes/colorbar/legend onto an ``mplot3d`` ``ax``.
+
+    The single-panel body of :func:`render_3d`, factored out so the composite
+    renderer can draw a 3-D panel into its own axes of a shared figure.
+    """
+    from ._core import _apply_colorbar, _apply_legend
 
     mappable = None
     for layer in spec.layers:
@@ -178,4 +187,3 @@ def render_3d(spec: PlotSpec, *, figsize: tuple[float, float] | None = None) -> 
     _apply_3d_axes(ax, spec)
     _apply_colorbar(fig, ax, mappable, spec.colorbar)
     _apply_legend(ax, spec)
-    return fig

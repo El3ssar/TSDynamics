@@ -71,12 +71,15 @@ _KINDS_3D: frozenset[PlotKind] = frozenset(
     }
 )
 
-#: The **animation** semantic kinds plotly still declines (deferred everywhere),
-#: so a spec of these kinds falls back to matplotlib.
+#: The semantic kinds plotly declines, so a spec of these kinds falls back to
+#: matplotlib: the animation kinds (deferred everywhere) and ``COMPOSITE`` (the
+#: multi-panel figure — its subplot tiling is the matplotlib reference renderer's
+#: job for now; an overlay single-panel spec still renders here natively).
 _DECLINED_KINDS: frozenset[PlotKind] = frozenset(
     {
         PlotKind.TRAJECTORY_ANIMATION,
         PlotKind.ENSEMBLE_ANIMATION,
+        PlotKind.COMPOSITE,
     }
 )
 
