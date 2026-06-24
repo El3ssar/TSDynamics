@@ -181,6 +181,7 @@ def test_list_argument_is_unwrapped():
 
 
 def test_render_stacked_time_series_has_one_axes_per_panel():
+    pytest.importorskip("matplotlib")
     px = viz.plot(_lorenz(), components="x")
     py = viz.plot(_lorenz(), components="y")
     fig = viz.plot(px, py, layout="stack").render(backend="matplotlib")
@@ -189,18 +190,21 @@ def test_render_stacked_time_series_has_one_axes_per_panel():
 
 
 def test_render_stacked_spacetime_has_a_panel_axes_each():
+    pytest.importorskip("matplotlib")
     fig = viz.plot(_l96(), _l96(ic=np.full(8, 0.5)), layout="stack").render(backend="matplotlib")
     # each spacetime panel adds its own colorbar axes, so >= 2 panel axes
     assert len(fig.axes) >= 2
 
 
 def test_render_composite_with_3d_panels():
+    pytest.importorskip("matplotlib")
     fig = viz.plot(_lorenz(), _lorenz([1.1, 1.0, 1.0]), layout="row").render(backend="matplotlib")
     assert type(fig).__name__ == "Figure"
     assert len(fig.axes) == 2
 
 
 def test_render_composite_mixed_2d_and_3d_panels():
+    pytest.importorskip("matplotlib")
     ts_panel = viz.plot(_lorenz(), components="x")  # 2-D
     portrait = viz.plot(_lorenz())  # 3-D
     fig = viz.plot(ts_panel, portrait, layout="stack").render(backend="matplotlib")
@@ -208,6 +212,7 @@ def test_render_composite_mixed_2d_and_3d_panels():
 
 
 def test_spec_saves_itself_to_png(tmp_path):
+    pytest.importorskip("matplotlib")
     out = tmp_path / "composite.png"
     returned = viz.plot(
         viz.plot(_lorenz(), components="x"),
@@ -219,6 +224,7 @@ def test_spec_saves_itself_to_png(tmp_path):
 
 
 def test_spec_plot_returns_a_figure():
+    pytest.importorskip("matplotlib")
     fig = viz.plot(_lorenz(), _lorenz([1.1, 1.0, 1.0]), layout="stack").plot(backend="matplotlib")
     assert type(fig).__name__ == "Figure"
 
@@ -276,6 +282,7 @@ def test_save_json_writes_the_ir(tmp_path):
 
 def test_composite_render_with_plotly_backend_falls_back_to_matplotlib():
     pytest.importorskip("plotly")
+    pytest.importorskip("matplotlib")  # the fallback target tiles the composite
     from tsdynamics.viz.render.caps import VisualizationDegraded
 
     comp = viz.plot(
