@@ -34,10 +34,12 @@ this registry seam live here today.
 
 from .. import registry as _registry
 from ..plugins import register_entry_points
+from .compose import plot
 from .spec import (
     Annotation,
     Axis,
     Layer,
+    Layout,
     PlotKind,
     PlotSpec,
     Plottable,
@@ -56,10 +58,12 @@ __all__ = [
     "Annotation",
     "Axis",
     "Layer",
+    "Layout",
     "PlotKind",
     "PlotSpec",
     "Plottable",
     "discover_plugins",
+    "plot",
 ]
 
 

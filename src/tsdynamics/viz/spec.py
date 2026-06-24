@@ -66,6 +66,7 @@ __all__ = [
     "Axis",
     "Colorbar",
     "Layer",
+    "Layout",
     "Legend",
     "PlotKind",
     "PlotSpec",
@@ -101,6 +102,9 @@ class PlotKind(StrEnum):
     PHASE_PORTRAIT_2D = "phase_portrait_2d"
     PHASE_PORTRAIT_3D = "phase_portrait_3d"
     SPACETIME = "spacetime"
+    # a multi-panel figure: an arrangement of sub-:class:`PlotSpec` ``panels``
+    # under a :class:`Layout` (the composition seam — ``tsdynamics.viz.plot``)
+    COMPOSITE = "composite"
     BIFURCATION = "bifurcation"
     ORBIT_DIAGRAM = "orbit_diagram"
     COBWEB = "cobweb"
@@ -498,6 +502,63 @@ class Legend:
 
 
 # ---------------------------------------------------------------------------
+# Layout (composite figures)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Layout:
+    """How a :data:`PlotKind.COMPOSITE` spec arranges its ``panels`` into a figure.
+
+    A composite :class:`PlotSpec` carries a list of sub-spec :attr:`PlotSpec.panels`
+    and one :class:`Layout` saying how to tile them.  Like every other piece of the
+    IR it is backend-neutral data: a renderer maps ``mode`` to its own subplot grid.
+
+    Parameters
+    ----------
+    mode : {"stack", "row", "grid"}, optional
+        The arrangement.  ``"stack"`` is one column of stacked panels (the
+        default), ``"row"`` one row side-by-side, ``"grid"`` a 2-D grid sized from
+        :attr:`rows` / :attr:`cols` (or made near-square when both are ``None``).
+        New arrangements (picture-in-picture, …) are added here as new modes —
+        the structure (``panels`` + ``Layout``) does not change.
+    rows, cols : int, optional
+        Explicit grid shape for ``mode="grid"``; ``None`` lets the renderer pick.
+    share_x, share_y : bool, optional
+        Whether the panels share an x / y axis (a stacked time-series column
+        typically shares x).  Defaults: ``share_x`` follows the mode (stack → True),
+        ``share_y`` ``False``.
+    """
+
+    mode: Literal["stack", "row", "grid"] = "stack"
+    rows: int | None = None
+    cols: int | None = None
+    share_x: bool = False
+    share_y: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of this layout."""
+        return {
+            "mode": self.mode,
+            "rows": self.rows,
+            "cols": self.cols,
+            "share_x": bool(self.share_x),
+            "share_y": bool(self.share_y),
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> Layout:
+        """Rebuild a :class:`Layout` from :meth:`to_dict` output."""
+        return cls(
+            mode=d.get("mode", "stack"),
+            rows=d.get("rows"),
+            cols=d.get("cols"),
+            share_x=bool(d.get("share_x", False)),
+            share_y=bool(d.get("share_y", False)),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Layer
 # ---------------------------------------------------------------------------
 
@@ -642,11 +703,22 @@ class PlotSpec:
     aspect: _Aspect = "auto"
     annotations: list[Annotation] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
+    # Composition: a :data:`PlotKind.COMPOSITE` spec carries child ``panels`` (each
+    # a single-panel :class:`PlotSpec`) and a :class:`Layout`; a single-panel spec
+    # leaves these empty.  ``tsdynamics.viz.plot`` builds composites; the renderers
+    # tile ``panels`` per ``layout``.
+    panels: list[PlotSpec] = field(default_factory=list)
+    layout: Layout | None = None
 
     def __post_init__(self) -> None:
         """Normalize ``kind`` and the optional ``clim`` color range."""
         self.kind = PlotKind(self.kind)
         self.clim = _as_pair(self.clim)
+
+    @property
+    def is_composite(self) -> bool:
+        """Whether this spec is a multi-panel composite (has child ``panels``)."""
+        return bool(self.panels) or self.kind == PlotKind.COMPOSITE
 
     # -- uniform, backend-independent tweaks (mutate + return self) ---------
 
@@ -930,6 +1002,100 @@ class PlotSpec:
 
         return render_spec(self, backend, **backend_kw)
 
+    def plot(self, backend: str | None = None, **tweaks: Any) -> Any:
+        """Render this spec, applying inline tweaks first (the ``.plot`` sugar).
+
+        A :class:`PlotSpec` *is* the thing :func:`tsdynamics.viz.plot` returns, so
+        it carries the same ``.plot`` convenience as the data types: recognised
+        inline tweaks (``xlabel`` / ``yscale`` / ``title`` / …) are applied to the
+        spec, then it is rendered through the backend dispatch.
+        """
+        backend_kw = _apply_inline_tweaks(self, tweaks)
+        return self.render(backend, **backend_kw)
+
+    def save(self, path: str, *, backend: str | None = None, **backend_kw: Any) -> str:
+        """Render and write the figure to ``path``; return the path.
+
+        When ``backend`` is not given, one is chosen from the file extension: a
+        raster / vector image (``.png`` / ``.pdf`` / ``.svg`` / ``.jpg``) prefers
+        the always-present matplotlib reference renderer, ``.html`` prefers plotly
+        (a self-contained interactive page), and ``.json`` prefers the json data
+        exporter — so ``spec.save("fig.png")`` does not depend on an interactive
+        backend's image-export extra, and ``spec.save("fig.json")`` writes the IR
+        rather than a mislabelled image.  A data-export backend (``json`` /
+        ``threejs``) writes the file itself via its ``path=`` argument; a figure
+        backend is written with whatever the figure offers (matplotlib
+        ``savefig``, plotly ``write_html`` / ``write_image``).  Raises
+        :class:`TypeError` if the produced result is neither a savable figure nor a
+        data-export write.
+        """
+        if backend is None:
+            backend = self._preferred_save_backend(path)
+        if backend in ("json", "threejs"):
+            # The data-export backends write the file themselves (and return the path).
+            self.render(backend, path=path, **backend_kw)
+            return path
+        result = self.render(backend, **backend_kw)
+        figure = getattr(result, "figure", result)
+        savefig = getattr(figure, "savefig", None)
+        if callable(savefig):
+            savefig(path)
+            return path
+        if str(path).endswith((".html", ".htm")):
+            write_html = getattr(figure, "write_html", None)
+            if callable(write_html):
+                write_html(path)
+                return path
+        write_image = getattr(figure, "write_image", None)
+        if callable(write_image):
+            write_image(path)
+            return path
+        raise TypeError(
+            f"the {backend or 'selected'} backend produced a non-savable result "
+            f"({type(figure).__name__}); use .to_dict() to serialize it instead."
+        )
+
+    @staticmethod
+    def _preferred_save_backend(path: str) -> str | None:
+        """Pick a save backend from ``path``'s extension (``None`` = dispatch default).
+
+        ``.json`` prefers the json data exporter, ``.html`` prefers plotly (a
+        self-contained interactive page), and every other extension prefers the
+        matplotlib reference renderer (it writes png / pdf / svg natively, needs no
+        image-export extra, and is the only backend that tiles composites).  Falls
+        back to the dispatch default when the preferred backend is not registered.
+        """
+        try:
+            from tsdynamics import registry
+            from tsdynamics.viz.render import register_builtin_renderers
+
+            register_builtin_renderers()
+            names = set(registry.renderers.names())
+        except Exception:  # pragma: no cover - defensive
+            return None
+        p = str(path).lower()
+        if p.endswith(".json") and "json" in names:
+            return "json"
+        if p.endswith((".html", ".htm")) and "plotly" in names:
+            return "plotly"
+        if "matplotlib" in names:
+            return "matplotlib"
+        return None
+
+    def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
+        """Notebook display hook — render inline once a backend is installed.
+
+        Mirrors :meth:`Plottable._repr_mimebundle_`: returns ``None`` (so the
+        console falls back to ``repr``) until a rendering backend is registered,
+        keeping a plain ``import`` plot-library-free.
+        """
+        if _resolve_renderers() is None:
+            return None
+        try:  # pragma: no cover - exercised only once a backend is installed
+            return self.plot()
+        except Exception:  # pragma: no cover - never break repr on a render error
+            return None
+
     # -- serialization -----------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
@@ -958,6 +1124,8 @@ class PlotSpec:
             "aspect": self.aspect,
             "annotations": [a.to_dict() for a in self.annotations],
             "meta": _jsonify(self.meta),
+            "panels": [p.to_dict() for p in self.panels],
+            "layout": self.layout.to_dict() if self.layout is not None else None,
         }
 
     @classmethod
@@ -995,6 +1163,8 @@ class PlotSpec:
             aspect=d.get("aspect", "auto"),
             annotations=[Annotation.from_dict(a) for a in d.get("annotations", [])],
             meta=dict(d.get("meta", {})),
+            panels=[cls.from_dict(p) for p in d.get("panels", [])],
+            layout=Layout.from_dict(d["layout"]) if d.get("layout") is not None else None,
         )
 
 
