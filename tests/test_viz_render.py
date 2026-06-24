@@ -112,6 +112,12 @@ def _spec_for_kind(kind: PlotKind) -> PlotSpec:
     if kind in (PlotKind.TRAJECTORY_ANIMATION, PlotKind.ENSEMBLE_ANIMATION):
         # Animation kinds render their final frame (no animation backend ships).
         return PlotSpec(kind=kind, layers=[_layer_for_mark(PlotKind.LINE)])
+    if kind == PlotKind.COMPOSITE:
+        # A composite is a multi-panel figure: it tiles ``panels``, not ``layers``.
+        from tsdynamics.viz.spec import Layout
+
+        panel = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)])
+        return PlotSpec(kind=kind, panels=[panel, panel], layout=Layout(mode="stack"))
     return PlotSpec(kind=kind, layers=[_layer_for_mark(PlotKind.LINE)])
 
 

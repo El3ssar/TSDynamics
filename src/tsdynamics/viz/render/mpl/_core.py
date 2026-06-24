@@ -675,16 +675,26 @@ def render(spec: PlotSpec, *, figsize: tuple[float, float] | None = None, **_kw:
 
     from . import _threed
 
+    if spec.is_composite:
+        return _render_composite(spec, figsize=figsize)
+
     if _threed.is_three_d(spec):
         return _threed.render_3d(spec, figsize=figsize)
-
-    kind = normalize_kind(spec.kind)
-    preset = _preset_for(kind)
 
     fig = Figure(figsize=figsize)
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(1, 1, 1)
+    _draw_2d_panel(fig, ax, spec)
+    return fig
 
+
+def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec) -> None:
+    """Draw one 2-D spec's layers + axes/colorbar/legend/annotations onto ``ax``.
+
+    The single-panel body of :func:`render`, factored out so the composite
+    renderer can draw each panel into its own axes of a shared figure.
+    """
+    preset = _preset_for(normalize_kind(spec.kind))
     mappable: ScalarMappable | None = None
     for layer in spec.layers:
         drawer = MARK_DISPATCH.get(PlotKind(layer.kind))
@@ -693,12 +703,75 @@ def render(spec: PlotSpec, *, figsize: tuple[float, float] | None = None, **_kw:
         produced = drawer(ax, layer, spec, preset)
         if produced is not None:
             mappable = produced
-
     _apply_axes(ax, spec, preset)
     _apply_colorbar(fig, ax, mappable, spec.colorbar)
     _apply_legend(ax, spec)
     _apply_annotations(ax, spec.annotations)
 
+
+def _composite_grid(layout: Any, n: int) -> tuple[int, int]:
+    """Return the ``(rows, cols)`` subplot grid for a composite's :class:`Layout`."""
+    mode = getattr(layout, "mode", "stack")
+    if mode == "row":
+        return 1, n
+    if mode == "grid":
+        rows = getattr(layout, "rows", None)
+        cols = getattr(layout, "cols", None)
+        if rows and cols:
+            return int(rows), int(cols)
+        c = int(np.ceil(np.sqrt(n)))
+        r = int(np.ceil(n / c))
+        return r, c
+    return n, 1  # "stack" (default): one column
+
+
+def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) -> Figure:
+    """Tile a ``COMPOSITE`` spec's ``panels`` into one figure per its ``layout``.
+
+    Each panel is a single-panel :class:`~tsdynamics.viz.spec.PlotSpec` drawn into
+    its own axes (a 3-D panel gets an ``mplot3d`` axes); 2-D panels optionally
+    share x / y per the :class:`~tsdynamics.viz.spec.Layout`.
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from mpl_toolkits import mplot3d  # noqa: F401 — registers the "3d" projection
+
+    from . import _threed
+
+    panels = spec.panels
+    layout = spec.layout
+    if not panels:
+        # A composite with no panels is degenerate; emit a valid (empty) figure.
+        fig = Figure(figsize=figsize)
+        FigureCanvasAgg(fig)
+        fig.add_subplot(1, 1, 1)
+        return fig
+    rows, cols = _composite_grid(layout, len(panels))
+    if figsize is None:
+        figsize = (cols * 5.0, rows * 3.2)
+    fig = Figure(figsize=figsize)
+    FigureCanvasAgg(fig)
+
+    share_x = bool(getattr(layout, "share_x", False))
+    share_y = bool(getattr(layout, "share_y", False))
+    anchor: Axes | None = None
+    for i, panel in enumerate(panels):
+        threed = _threed.is_three_d(panel)
+        sub_kw: dict[str, Any] = {}
+        if not threed and anchor is not None:
+            if share_x:
+                sub_kw["sharex"] = anchor
+            if share_y:
+                sub_kw["sharey"] = anchor
+        ax = fig.add_subplot(rows, cols, i + 1, projection=("3d" if threed else None), **sub_kw)
+        if threed:
+            _threed._draw_3d_panel(fig, ax, panel)
+        else:
+            _draw_2d_panel(fig, ax, panel)
+            if anchor is None:
+                anchor = ax
+    if spec.title:
+        fig.suptitle(spec.title)
     return fig
 
 

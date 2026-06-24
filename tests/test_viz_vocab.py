@@ -38,6 +38,7 @@ EXPECTED_SEMANTIC_KINDS: frozenset[str] = frozenset(
         "phase_portrait_2d",
         "phase_portrait_3d",
         "spacetime",
+        "composite",
         "bifurcation",
         "orbit_diagram",
         "cobweb",
