@@ -26,11 +26,60 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
     from scipy.spatial import cKDTree
 
     from tsdynamics.viz.spec import PlotSpec
+
+
+# ---------------------------------------------------------------------------
+# to_plot_spec routing tables (the single-panel front door)
+# ---------------------------------------------------------------------------
+
+#: Friendly ``kind=`` spellings → the internal routing key.  A *recipe* like
+#: ``"delay"`` is **not** a :class:`~tsdynamics.viz.spec.PlotKind` member (the
+#: enum is frozen); it routes to a producer that emits a real semantic kind
+#: (a delay embedding is a ``PHASE_PORTRAIT_2D``).  Every other ``kind=`` value
+#: passes through unchanged and is resolved against ``PlotKind`` directly.
+_KIND_ALIASES: dict[str, str] = {
+    "delay": "delay_embedding",
+    "delay_embedding": "delay_embedding",
+}
+
+#: Per-route allow-list of the extra keyword(s) accepted via ``**kind_kw`` — kept
+#: off the ``to_plot_spec`` signature because each is valid for one kind only.
+#: This table is the one place the per-kind options live; extending a kind's
+#: options is a one-line edit here (the validation + ``plot()`` forwarding both
+#: read it), so the surface grows without reshaping the signature.
+_KIND_KW: dict[str, frozenset[str]] = {
+    "delay_embedding": frozenset({"tau"}),
+    "time_series": frozenset({"color_by"}),
+    "phase_portrait_2d": frozenset({"color_by"}),
+    "phase_portrait_3d": frozenset({"color_by"}),
+    "spacetime": frozenset({"transpose"}),
+}
+
+#: The keywords ``plot()`` peels off and forwards to :meth:`Trajectory.to_plot_spec`
+#: (rather than leaking them to the renderer).  Derived from the routing tables so
+#: it can never drift out of sync with the per-kind options above.
+_PLOT_SPEC_KEYS: frozenset[str] = frozenset({"kind", "components"}).union(*_KIND_KW.values())
+
+
+def _auto_route(n_components: int) -> str:
+    """Pick the default routing key from the number of selected components.
+
+    1 → time series, 2 → 2-D portrait, 3 → 3-D portrait, **4+ → spacetime image**
+    (a high-dimensional field reads as a spacetime plot, never a bogus 3-D
+    portrait of its first three coordinates).
+    """
+    if n_components > 3:
+        return "spacetime"
+    if n_components == 3:
+        return "phase_portrait_3d"
+    if n_components == 2:
+        return "phase_portrait_2d"
+    return "time_series"
 
 
 class Trajectory:
@@ -178,120 +227,267 @@ class Trajectory:
 
     # --- visualization seam ---
 
-    def to_plot_spec(self, kind: str | None = None) -> PlotSpec:
+    def to_plot_spec(
+        self,
+        kind: str | None = None,
+        *,
+        components: int | str | Sequence[int | str] | None = None,
+        **kind_kw: Any,
+    ) -> PlotSpec:
         """
         Describe this trajectory as a backend-agnostic :class:`PlotSpec`.
 
-        The kind is auto-dispatched from the trajectory's dimensionality **and**
-        its discreteness (``is_discrete`` on the producing system): a 1-D
-        trajectory is a :data:`~tsdynamics.viz.spec.PlotKind.TIME_SERIES`, a 2-D
-        one a :data:`~tsdynamics.viz.spec.PlotKind.PHASE_PORTRAIT_2D`, and
-        ``dim >= 3`` a :data:`~tsdynamics.viz.spec.PlotKind.PHASE_PORTRAIT_3D`
-        (the first three components).  A **discrete-map** orbit is drawn with a
-        :data:`~tsdynamics.viz.spec.PlotKind.SCATTER` mark (its orbit is a point
-        sequence, not a connected curve) rather than a :data:`LINE` / :data:`LINE3D`.
-        A Poincaré-section trajectory (one carrying a ``meta["plot_kind"]`` of
-        ``"poincare_section"``, set by
-        :func:`~tsdynamics.analysis.poincare_section` /
-        :meth:`~tsdynamics.derived.PoincareMap.trajectory`) is recognised and
-        rendered as the 2-D in-plane scatter instead of a flow line — the section
-        intent a renderer would otherwise have to reverse-engineer from ``meta``.
+        This is the **one front door** for trajectory plotting — every common
+        view goes through here, so the parameterised ``viz.producers`` builders
+        stay an internal detail.
 
-        Forcing ``kind="time_series"`` on a multi-component trajectory overlays
-        **one layer per component** with a legend (the multi-component overlay);
-        ``kind="spacetime"`` images component index vs time as an
-        :data:`~tsdynamics.viz.spec.PlotKind.IMAGE` (a Lorenz-96-style field).
-        Richer parameterised draw-views — an arbitrary component triple, a
-        delay-embedding, a vector field, a cobweb, colour-by-time / -speed — live
-        in :mod:`tsdynamics.viz.producers` (they take the extra parameters this
-        uniform ``to_plot_spec(self, kind=None)`` signature deliberately cannot).
+        Auto-dispatch
+            With ``kind=None`` the semantic kind follows the number of selected
+            components (after applying ``components=``): 1 → ``TIME_SERIES``,
+            2 → ``PHASE_PORTRAIT_2D``, 3 → ``PHASE_PORTRAIT_3D``, and **4+ →
+            ``SPACETIME``** (a Lorenz-96-style field image, *not* a misleading
+            3-D portrait of the first three coordinates).  A discrete-map orbit
+            draws with a ``SCATTER`` mark (a point sequence) rather than a line.
+            A Poincaré-section trajectory (carrying ``meta["plot_kind"]`` of
+            ``"poincare_section"``) is recognised and drawn as its in-plane
+            scatter.
 
-        The :mod:`tsdynamics.viz.spec` import is local to this method (lazy, not
-        at module scope), and :mod:`tsdynamics.viz.spec` pulls in no plotting
-        library, so building a spec (or importing :mod:`tsdynamics`) never imports
-        matplotlib / Plotly; the spec itself carries no rendering code.
+        Selecting components
+            ``components=`` picks what to draw — a name, an index, or a sequence
+            of them: ``components="x"`` (a single time series), ``components=
+            ["y0", "y1", "y2"]`` (a 3-D portrait of three chosen channels).  The
+            auto-dispatch then keys off how many you selected.
+
+        Overriding the kind
+            ``kind=`` forces any member of the closed
+            :class:`~tsdynamics.viz.spec.PlotKind` vocabulary — e.g.
+            ``kind="time_series"`` to overlay component-vs-time on a 3-D
+            trajectory, or ``kind="spacetime"`` to image it.  The recipe
+            ``kind="delay"`` builds a delay-coordinate embedding ``x(t)`` vs
+            ``x(t - tau)``; pass ``tau`` (in **time units**) via ``**kind_kw``.
+
+        Per-kind options (``**kind_kw``)
+            Options valid for one kind only are accepted as keywords rather than
+            cluttering the signature — ``tau`` (required for ``kind="delay"``,
+            converted from time units to samples via ``meta["dt"]``),
+            ``color_by={"time", "speed"}`` (time series / phase portraits),
+            ``transpose`` (spacetime).  Passing one to the wrong kind raises
+            :class:`~tsdynamics.errors.InvalidParameterError`.
+
+        The :mod:`tsdynamics.viz` import is local to this method (lazy), and the
+        spec carries no rendering code, so building a spec (or importing
+        :mod:`tsdynamics`) never imports matplotlib / Plotly.
 
         Parameters
         ----------
         kind : str, optional
-            Override the auto-dispatched semantic kind with any member of the
-            closed :class:`~tsdynamics.viz.spec.PlotKind` vocabulary (e.g.
-            ``"time_series"`` to force component-vs-time on a 3-D trajectory, or
-            ``"spacetime"`` to image a high-dimensional state).  ``None`` (the
-            default) auto-dispatches on dimensionality, discreteness, and section
-            intent.
+            Override the auto-dispatched kind (a ``PlotKind`` value, or the
+            ``"delay"`` recipe).  ``None`` auto-dispatches.
+        components : int or str or sequence of int/str, optional
+            Which state components to draw (names or indices).  ``None`` uses all.
+        **kind_kw
+            Per-kind options (see above).
 
         Returns
         -------
         PlotSpec
         """
-        from tsdynamics.errors import InvalidParameterError
-        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import PlotKind
 
-        names = self.variables or tuple(f"y{i}" for i in range(self.dim))
+        all_names = self.variables or tuple(f"y{i}" for i in range(self.dim))
 
         # A Poincaré section carries its intent in meta; honour it before the
-        # dimensionality dispatch so a section is never mistaken for a flow.
-        if kind is None and str(self.meta.get("plot_kind", "")) == PlotKind.POINCARE_SECTION:
-            return self._poincare_section_spec(names)
+        # dimensionality dispatch (only for the unmodified default view).
+        if (
+            kind is None
+            and components is None
+            and not kind_kw
+            and str(self.meta.get("plot_kind", "")) == PlotKind.POINCARE_SECTION
+        ):
+            return self._poincare_section_spec(all_names)
 
-        if kind is None:
-            spec_kind = (
-                PlotKind.PHASE_PORTRAIT_3D
-                if self.dim >= 3
-                else PlotKind.PHASE_PORTRAIT_2D
-                if self.dim == 2
-                else PlotKind.TIME_SERIES
-            )
-        else:
-            spec_kind = PlotKind(kind)
-
-        meta = dict(self.meta)
+        sel = self._resolve_components(components, all_names)
+        sel_names = tuple(all_names[i] for i in sel)
+        n_sel = len(sel)
         discrete = self._is_discrete()
 
+        # Resolve the routing key: a friendly alias (``"delay"``) first, else the
+        # auto kind from the number of selected components.
+        route = _KIND_ALIASES.get(kind, kind) if kind is not None else _auto_route(n_sel)
+        self._validate_kind_kw(route, kind_kw)
+
+        if route == "delay_embedding":
+            return self._delay_spec(sel, sel_names, kind_kw, explicit=components is not None)
+
+        spec_kind = PlotKind(route)  # "delay" never reaches here (aliased above)
+        ys = self.y[:, sel]
+
         if spec_kind == PlotKind.SPACETIME:
-            return self._spacetime_spec(names)
+            return self._spacetime_spec(ys, sel_names, transpose=bool(kind_kw.get("transpose")))
 
+        color_by = kind_kw.get("color_by")
         if spec_kind == PlotKind.TIME_SERIES:
-            # Overlay one layer per component (a discrete orbit scatters, a flow
-            # draws a line) with a legend when there is more than one component.
-            mark = PlotKind.SCATTER if discrete else PlotKind.LINE
-            layers = [
-                Layer(mark, {"x": self.t, "y": self.y[:, i]}, label=names[i])
-                for i in range(self.dim)
-            ]
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=1,
-                title=self._title(),
-                x=Axis(label="t"),
-                y=Axis(label=names[0]),
-                layers=layers,
-                legend=Legend() if self.dim > 1 else None,
-                meta=meta,
-            )
+            return self._time_series_spec(sel, ys, sel_names, discrete, color_by)
 
-        # Take the 2-D-vs-3-D shape from the (possibly overridden) kind, not the
-        # raw trajectory dim — so forcing ``kind="phase_portrait_2d"`` on a 3-D
-        # trajectory yields a consistent 2-D schema (no stray z channel / LINE3D
-        # layer that a renderer dispatching on the 2-D kind would choke on).
+        return self._phase_portrait_spec(spec_kind, sel, ys, sel_names, discrete, color_by)
+
+    def _resolve_components(
+        self, components: int | str | Sequence[int | str] | None, names: tuple[str, ...]
+    ) -> list[int]:
+        """Resolve a ``components=`` selector to a list of column indices.
+
+        ``None`` selects every component; a lone name/index is wrapped; names
+        resolve against ``names`` (the declared or generated ``y0…`` labels).
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        if components is None:
+            return list(range(self.dim))
+        items: Sequence[int | str]
+        items = (components,) if isinstance(components, (int, str, np.integer)) else components
+        out: list[int] = []
+        for c in items:
+            if isinstance(c, str):
+                if c not in names:
+                    raise InvalidParameterError(
+                        f"unknown component {c!r}; available components: {list(names)}"
+                    )
+                out.append(names.index(c))
+            else:
+                idx = int(c)
+                if not -self.dim <= idx < self.dim:
+                    raise InvalidParameterError(
+                        f"component index {idx} out of range for a {self.dim}-D trajectory"
+                    )
+                out.append(idx % self.dim)
+        if not out:
+            raise InvalidParameterError("components= selected no channels; pass at least one.")
+        return out
+
+    @staticmethod
+    def _validate_kind_kw(route: str | None, kind_kw: dict[str, Any]) -> None:
+        """Reject per-kind options passed to the wrong kind (and require ``tau``)."""
+        from tsdynamics.errors import InvalidParameterError
+
+        allowed = _KIND_KW.get(route or "", frozenset())
+        unknown = set(kind_kw) - allowed
+        if unknown:
+            raise InvalidParameterError(
+                f"kind={route!r} does not accept keyword(s) {sorted(unknown)}; "
+                f"allowed here: {sorted(allowed) or '(none)'}"
+            )
+        if route == "delay_embedding" and "tau" not in kind_kw:
+            raise InvalidParameterError("kind='delay' requires tau=<delay in time units>")
+
+    def _delay_tau_samples(self, tau: float) -> int:
+        """Convert a delay ``tau`` in **time units** to an integer sample lag."""
+        from tsdynamics.errors import InvalidParameterError
+
+        if not np.isfinite(float(tau)) or float(tau) <= 0:
+            raise InvalidParameterError(f"delay tau must be a positive, finite time, got {tau!r}.")
+        dt = self.meta.get("dt")
+        dt_f = float(dt) if dt is not None else None
+        if dt_f is None or not np.isfinite(dt_f) or dt_f <= 0:
+            diffs = np.diff(self.t)
+            dt_f = float(np.median(diffs)) if diffs.size else None
+        if dt_f is None or dt_f <= 0:
+            raise InvalidParameterError(
+                "cannot convert delay tau to samples: the trajectory carries no "
+                "'dt' in meta and its time grid is degenerate."
+            )
+        samples = max(1, int(round(float(tau) / dt_f)))
+        if samples >= self.n_steps:
+            raise InvalidParameterError(
+                f"delay tau={tau} (→ {samples} samples at dt={dt_f:g}) must be shorter "
+                f"than the series length {self.n_steps}."
+            )
+        return samples
+
+    def _delay_spec(
+        self,
+        sel: list[int],
+        sel_names: tuple[str, ...],
+        kind_kw: dict[str, Any],
+        *,
+        explicit: bool,
+    ) -> PlotSpec:
+        """Build the ``x(t)`` vs ``x(t - tau)`` delay embedding (a ``PHASE_PORTRAIT_2D``).
+
+        A delay embedding reconstructs **one** scalar observable; with no
+        ``components=`` it embeds the first component, but an explicit
+        multi-component selection is rejected rather than silently dropped.
+        """
+        from tsdynamics.errors import InvalidParameterError
+        from tsdynamics.viz import producers
+
+        if explicit and len(sel) != 1:
+            raise InvalidParameterError(
+                "kind='delay' embeds a single component; select exactly one via "
+                f"components= (got {len(sel)})."
+            )
+        samples = self._delay_tau_samples(kind_kw["tau"])
+        return producers.delay_embedding(self, tau=samples, component=sel[0], label=sel_names[0])
+
+    def _time_series_spec(
+        self,
+        sel: list[int],
+        ys: np.ndarray,
+        sel_names: tuple[str, ...],
+        discrete: bool,
+        color_by: Any,
+    ) -> PlotSpec:
+        """Overlay one component-vs-time layer per selected component."""
+        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+
+        if color_by is not None:
+            from tsdynamics.viz import producers
+
+            return producers.time_series(self, components=sel, color_by=color_by)
+        mark = PlotKind.SCATTER if discrete else PlotKind.LINE
+        layers = [
+            Layer(mark, {"x": self.t, "y": ys[:, k]}, label=sel_names[k]) for k in range(len(sel))
+        ]
+        return PlotSpec(
+            kind=PlotKind.TIME_SERIES,
+            ndim=1,
+            title=self._title(),
+            x=Axis(label="t"),
+            y=Axis(label=sel_names[0]),
+            layers=layers,
+            legend=Legend() if len(sel) > 1 else None,
+            meta=dict(self.meta),
+        )
+
+    def _phase_portrait_spec(
+        self,
+        spec_kind: Any,
+        sel: list[int],
+        ys: np.ndarray,
+        sel_names: tuple[str, ...],
+        discrete: bool,
+        color_by: Any,
+    ) -> PlotSpec:
+        """Build a 2-D / 3-D phase portrait over the selected components."""
+        from tsdynamics.errors import InvalidParameterError
+        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+        # Shape (2-D vs 3-D) follows the resolved kind, not the raw selection —
+        # forcing ``kind="phase_portrait_2d"`` yields a clean 2-D schema (no z).
         want_3d = spec_kind == PlotKind.PHASE_PORTRAIT_3D
-        if want_3d and self.dim < 3:
+        need = 3 if want_3d else 2
+        if len(sel) < need:
             raise InvalidParameterError(
-                f"kind={spec_kind.value!r} needs a 3-D trajectory, but this one has "
-                f"dim={self.dim}; use 'phase_portrait_2d' or 'time_series'."
+                f"kind={spec_kind.value!r} needs at least {need} components, but "
+                f"{len(sel)} were selected; use 'time_series' or select more."
             )
-        if self.dim < 2:
-            raise InvalidParameterError(
-                f"kind={spec_kind.value!r} needs a >=2-D trajectory, but this one has "
-                f"dim={self.dim}; use 'time_series'."
-            )
-        cols: dict[str, np.ndarray] = {"x": self.y[:, 0], "y": self.y[:, 1]}
-        z = Axis(label=names[2]) if want_3d else None
+        if color_by is not None:
+            from tsdynamics.viz import producers
+
+            return producers.phase_portrait(self, components=sel[:need], color_by=color_by)
+        cols: dict[str, np.ndarray] = {"x": ys[:, 0], "y": ys[:, 1]}
+        z = Axis(label=sel_names[2]) if want_3d else None
         if want_3d:
-            cols["z"] = self.y[:, 2]
-        # A discrete-map orbit is a point cloud (SCATTER); a flow is a connected
-        # curve (LINE / LINE3D).
+            cols["z"] = ys[:, 2]
         flow_mark = PlotKind.LINE3D if want_3d else PlotKind.LINE
         layer_kind = PlotKind.SCATTER if discrete else flow_mark
         return PlotSpec(
@@ -299,11 +495,11 @@ class Trajectory:
             ndim=3 if want_3d else 2,
             aspect="equal",
             title=self._title(),
-            x=Axis(label=names[0]),
-            y=Axis(label=names[1]),
+            x=Axis(label=sel_names[0]),
+            y=Axis(label=sel_names[1]),
             z=z,
             layers=[Layer(layer_kind, cols)],
-            meta=meta,
+            meta=dict(self.meta),
         )
 
     def _is_discrete(self) -> bool:
@@ -319,53 +515,63 @@ class Trajectory:
         except Exception:  # pragma: no cover - defensive
             return False
 
-    def _spacetime_spec(self, names: tuple[str, ...]) -> PlotSpec:
+    def _spacetime_spec(
+        self, ys: np.ndarray, names: tuple[str, ...], *, transpose: bool = False
+    ) -> PlotSpec:
         """Build the component-index vs time ``IMAGE`` spec (``SPACETIME``).
 
         The spatiotemporal field view of a high-dimensional flow (a Lorenz-96
-        lattice): the state array is drawn as a single color-mapped ``IMAGE``
-        with time along ``x`` and component index along ``y``, the colorbar /
-        ``clim`` inferred from the field.
+        lattice): the selected columns are drawn as a single color-mapped
+        ``IMAGE`` with time along ``x`` and component index along ``y`` (or the
+        axes swapped when ``transpose=True``); the colorbar / ``clim`` are
+        inferred from the field.
         """
         from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
 
-        img = self.y.T
-        layer = Layer(
-            PlotKind.IMAGE,
-            {
-                "x": self.t,
-                "y": np.arange(self.dim, dtype=float),
-                "c": img.ravel(),
-                "z": img,
-            },
-        )
+        comp_idx = np.arange(ys.shape[1], dtype=float)
+        if transpose:
+            img = ys
+            x_axis, y_axis = Axis(label="component"), Axis(label="t")
+            x_data, y_data = comp_idx, self.t
+        else:
+            img = ys.T
+            x_axis, y_axis = Axis(label="t"), Axis(label="component")
+            x_data, y_data = self.t, comp_idx
+        layer = Layer(PlotKind.IMAGE, {"x": x_data, "y": y_data, "c": img.ravel(), "z": img})
         spec = PlotSpec(
             kind=PlotKind.SPACETIME,
             ndim=2,
             title=self._title(),
-            x=Axis(label="t"),
-            y=Axis(label="component"),
+            x=x_axis,
+            y=y_axis,
             layers=[layer],
             colorbar=Colorbar(label="state"),
             meta={**dict(self.meta), "component_names": list(names)},
         )
         return spec.autocolor()
 
-    def plot(self, backend: str | None = None, **tweaks: Any) -> Any:
+    def plot(self, backend: str | None = None, **kwargs: Any) -> Any:
         """Render this trajectory via a visualization backend.
 
-        Sugar over :meth:`to_plot_spec` — see
-        :meth:`tsdynamics.viz.spec.Plottable.plot` for the tweak keywords.  The
-        viz package is imported lazily here (not at module scope) so plain
-        ``import tsdynamics`` never pulls it in — and thus never triggers
-        renderer-backend discovery / a matplotlib import — honouring the
+        Sugar over :meth:`to_plot_spec`: the spec-shaping keywords (``kind``,
+        ``components``, and the per-kind options ``tau`` / ``color_by`` /
+        ``transpose``) are peeled off and passed to :meth:`to_plot_spec`; the
+        remaining keywords are inline spec tweaks (``xlabel`` / ``yscale`` /
+        ``title`` / …) or backend keyword arguments (see
+        :meth:`tsdynamics.viz.spec.Plottable.plot`).
+
+        The viz package is imported lazily here (not at module scope) so plain
+        ``import tsdynamics`` never pulls it in — honouring the
         no-backend-on-import contract.  Raises
         :class:`~tsdynamics.viz.spec.VisualizationNotInstalled` until a backend
         is registered.
         """
-        from tsdynamics.viz.spec import Plottable
+        from tsdynamics.viz.spec import _apply_inline_tweaks
 
-        return Plottable.plot(cast("Plottable", self), backend, **tweaks)
+        spec_kw = {k: kwargs.pop(k) for k in list(kwargs) if k in _PLOT_SPEC_KEYS}
+        spec = self.to_plot_spec(**spec_kw)
+        backend_kw = _apply_inline_tweaks(spec, kwargs)
+        return spec.render(backend, **backend_kw)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Notebook display hook — lazily delegated to ``Plottable`` (see :meth:`plot`).

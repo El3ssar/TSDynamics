@@ -113,7 +113,10 @@ def _assert_roundtrips(spec: PlotSpec) -> None:
         (1, PlotKind.TIME_SERIES),
         (2, PlotKind.PHASE_PORTRAIT_2D),
         (3, PlotKind.PHASE_PORTRAIT_3D),
-        (5, PlotKind.PHASE_PORTRAIT_3D),
+        # dim > 3 auto-dispatches to a spacetime image, NOT a misleading 3-D
+        # portrait of the first three coordinates (front-door dispatch).
+        (4, PlotKind.SPACETIME),
+        (8, PlotKind.SPACETIME),
     ],
 )
 def test_trajectory_kind_dispatches_on_dimensionality(dim, expected):
@@ -122,10 +125,13 @@ def test_trajectory_kind_dispatches_on_dimensionality(dim, expected):
     traj = Trajectory(t=t, y=y, system=None)
     spec = traj.to_plot_spec()
     assert spec.kind == expected
-    # A 3-D (or higher) phase portrait draws three coordinate channels.
+    # A 3-D phase portrait draws three coordinate channels.
     if expected == PlotKind.PHASE_PORTRAIT_3D:
         assert set(spec.layers[0].data) == {"x", "y", "z"}
         assert spec.z is not None
+    # A spacetime image draws a single IMAGE layer of the whole field.
+    if expected == PlotKind.SPACETIME:
+        assert spec.layers[0].kind == PlotKind.IMAGE
     _assert_roundtrips(spec)
 
 
@@ -145,6 +151,239 @@ def test_trajectory_time_series_uses_named_variable():
     spec = traj.to_plot_spec(kind="time_series")
     assert spec.x.label == "t"
     assert spec.y.label == "x"  # Lorenz declares variables = ("x", "y", "z")
+
+
+# ---------------------------------------------------------------------------
+# Front door: components= selection + per-kind options + plot() forwarding
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("components", "expected"),
+    [
+        ("x", PlotKind.TIME_SERIES),
+        (["x", "y"], PlotKind.PHASE_PORTRAIT_2D),
+        (["x", "y", "z"], PlotKind.PHASE_PORTRAIT_3D),
+        ([0, 2], PlotKind.PHASE_PORTRAIT_2D),
+    ],
+)
+def test_components_selection_drives_dispatch(components, expected):
+    """``components=`` selects channels and the auto kind keys off how many."""
+    spec = _lorenz_traj().to_plot_spec(components=components)
+    assert spec.kind == expected
+    _assert_roundtrips(spec)
+
+
+def test_components_single_name_is_time_series_of_that_channel():
+    traj = _lorenz_traj()
+    spec = traj.to_plot_spec(components="z")
+    assert spec.kind == PlotKind.TIME_SERIES
+    assert spec.y.label == "z"
+    np.testing.assert_allclose(spec.layers[0].data["y"], traj.component("z"))
+
+
+def test_unknown_component_raises():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(components="nope")
+
+
+def test_high_dim_components_triple_is_3d_portrait():
+    """Selecting three channels of a high-dim flow yields a 3-D portrait."""
+    tr = ts.Lorenz96(N=8).trajectory(final_time=10.0, dt=0.1)
+    spec = tr.to_plot_spec(components=["y0", "y1", "y2"])
+    assert spec.kind == PlotKind.PHASE_PORTRAIT_3D
+    _assert_roundtrips(spec)
+
+
+def test_delay_kind_builds_2d_embedding_with_time_units_tau():
+    """kind='delay' builds an x(t) vs x(t - tau) embedding; tau is in time units."""
+    tr = ts.MackeyGlass().integrate(
+        final_time=200.0, dt=0.2, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
+    )
+    spec = tr.to_plot_spec(kind="delay", tau=17.0)  # 17 time units → 85 samples at dt=0.2
+    assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
+    # 85 samples dropped off each end of the embedded series.
+    assert spec.layers[0].data["x"].shape[0] == tr.n_steps - 85
+    _assert_roundtrips(spec)
+
+
+def test_delay_requires_tau():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(kind="delay")
+
+
+def test_kind_kw_rejected_for_wrong_kind():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(kind="spacetime", tau=1.0)
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(kind="phase_portrait_3d", transpose=True)
+
+
+def test_spacetime_transpose_swaps_axes():
+    tr = ts.Lorenz96(N=6).trajectory(final_time=8.0, dt=0.1)
+    normal = tr.to_plot_spec(kind="spacetime")
+    swapped = tr.to_plot_spec(kind="spacetime", transpose=True)
+    assert (normal.x.label, normal.y.label) == ("t", "component")
+    assert (swapped.x.label, swapped.y.label) == ("component", "t")
+
+
+def test_plot_forwards_spec_shaping_kwargs(monkeypatch):
+    """``plot()`` peels spec-shaping kwargs to to_plot_spec; the rest go to the backend."""
+    captured: dict[str, object] = {}
+
+    def fake_render(self, backend=None, **backend_kw):
+        captured["kind"] = self.kind
+        captured["backend_kw"] = backend_kw
+        return self
+
+    monkeypatch.setattr(PlotSpec, "render", fake_render)
+    _lorenz_traj().plot(kind="time_series", components="x", figsize=(4, 3))
+    assert captured["kind"] == PlotKind.TIME_SERIES
+    assert captured["backend_kw"] == {"figsize": (4, 3)}
+
+
+def test_system_to_plot_spec_splits_plot_and_integration_kwargs():
+    """A system splits plot kwargs (components) from integration kwargs (final_time/dt)."""
+    spec = ts.Lorenz().to_plot_spec(components="x", final_time=10.0, dt=0.05)
+    assert spec.kind == PlotKind.TIME_SERIES
+    assert spec.y.label == "x"
+
+
+# ---------------------------------------------------------------------------
+# Front door: input-validation guards (no silently-wrong specs)
+# ---------------------------------------------------------------------------
+
+
+def test_empty_components_selection_raises():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(components=[])
+
+
+def test_delay_default_embeds_first_component_of_multidim():
+    """With no components=, kind='delay' embeds the first component (not an error)."""
+    spec = _lorenz_traj().to_plot_spec(kind="delay", tau=0.5)
+    assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
+
+
+def test_delay_rejects_explicit_multiple_components():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(kind="delay", tau=0.5, components=["x", "y"])
+
+
+@pytest.mark.parametrize("bad_tau", [0.0, -1.0, float("inf"), float("nan")])
+def test_delay_rejects_nonpositive_or_nonfinite_tau(bad_tau):
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(kind="delay", tau=bad_tau)
+
+
+def test_delay_tau_uses_time_grid_when_meta_dt_absent():
+    """Without meta['dt'], the time-unit→sample conversion falls back to the grid."""
+    t = np.linspace(0.0, 10.0, 501)  # dt = 0.02
+    y = np.sin(t)[:, None]
+    traj = Trajectory(t=t, y=y, system=None)  # no meta["dt"]
+    spec = traj.to_plot_spec(kind="delay", tau=0.2)  # 0.2 / 0.02 = 10 samples
+    assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
+    assert spec.layers[0].data["x"].shape[0] == t.size - 10
+
+
+# The full wrong-kind / wrong-option rejection matrix (drives the _KIND_KW table).
+@pytest.mark.parametrize(
+    ("kind", "bad_kw"),
+    [
+        ("time_series", {"tau": 1.0}),
+        ("time_series", {"transpose": True}),
+        ("phase_portrait_2d", {"tau": 1.0}),
+        ("phase_portrait_2d", {"transpose": True}),
+        ("phase_portrait_3d", {"transpose": True}),
+        ("spacetime", {"tau": 1.0}),
+        ("spacetime", {"color_by": "time"}),
+        ("delay", {"color_by": "time"}),
+        ("delay", {"transpose": True}),
+    ],
+)
+def test_kind_kw_rejection_matrix(kind, bad_kw):
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(kind=kind, **bad_kw)
+
+
+# ---------------------------------------------------------------------------
+# Front door: component selectors (indices, negatives, numpy ints, gen names)
+# ---------------------------------------------------------------------------
+
+
+def test_negative_and_numpy_int_component_selectors():
+    traj = _lorenz_traj()
+    spec = traj.to_plot_spec(components=[-1, np.int64(0)])  # z, x
+    assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
+    assert (spec.x.label, spec.y.label) == ("z", "x")
+
+
+def test_out_of_range_component_index_raises():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
+        _lorenz_traj().to_plot_spec(components=[0, 7])
+
+
+def test_generated_y_names_resolve_for_unnamed_high_dim():
+    """An unnamed high-dim trajectory exposes y0… names usable in components=."""
+    t = np.linspace(0.0, 1.0, 40)
+    y = np.random.default_rng(0).standard_normal((40, 6))
+    traj = Trajectory(t=t, y=y, system=None)  # no variables
+    spec = traj.to_plot_spec(components=["y0", "y2"])
+    assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
+    assert (spec.x.label, spec.y.label) == ("y0", "y2")
+
+
+# ---------------------------------------------------------------------------
+# Front door: color_by delegation + Poincaré short-circuit override
+# ---------------------------------------------------------------------------
+
+
+def test_color_by_time_attaches_colorbar_channel():
+    spec = _lorenz_traj().to_plot_spec(kind="time_series", components="x", color_by="time")
+    assert spec.kind == PlotKind.TIME_SERIES
+    assert "c" in spec.layers[0].data
+    assert spec.colorbar is not None
+
+
+def test_poincare_short_circuit_is_overridden_by_components_or_kind():
+    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
+    # Default view honours the section intent…
+    assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
+    # …but selecting components or forcing a kind opts out of the short-circuit.
+    assert section.to_plot_spec(components=["x", "z"]).kind == PlotKind.PHASE_PORTRAIT_2D
+    assert section.to_plot_spec(kind="time_series").kind == PlotKind.TIME_SERIES
+
+
+def test_system_plot_forwards_delay_recipe(monkeypatch):
+    """A system's plot()/to_plot_spec route the delay recipe + tau through the split."""
+    spec = ts.Lorenz().to_plot_spec(kind="delay", tau=0.5, final_time=10.0, dt=0.05)
+    assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
+
+    captured: dict[str, object] = {}
+
+    def fake_render(self, backend=None, **backend_kw):
+        captured["kind"] = self.kind
+        return self
+
+    monkeypatch.setattr(PlotSpec, "render", fake_render)
+    ts.Lorenz().plot(kind="delay", tau=0.5, final_time=10.0, dt=0.05)
+    assert captured["kind"] == PlotKind.PHASE_PORTRAIT_2D
 
 
 def test_trajectory_plot_raises_without_backend(monkeypatch):
