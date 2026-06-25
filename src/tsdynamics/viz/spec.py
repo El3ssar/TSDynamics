@@ -62,6 +62,7 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 
 __all__ = [
+    "Animation",
     "Annotation",
     "Axis",
     "Colorbar",
@@ -559,6 +560,191 @@ class Layout:
 
 
 # ---------------------------------------------------------------------------
+# Animation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Animation:
+    """How an animated :class:`PlotSpec` plays — a backend-neutral directive.
+
+    Animation is an **orthogonal modifier**: any spec of any :class:`PlotKind`
+    becomes a movie by carrying an :class:`Animation` (``PlotSpec.animation``);
+    the semantic kind is unchanged, and a backend that cannot animate draws the
+    final frame.  The directive is plain data — it round-trips through
+    :meth:`PlotSpec.to_dict` and ships to a web frontend untouched.
+
+    Frame model (``mode``)
+    ----------------------
+    - ``"reveal"`` (the default, and all this release ships): the layer keeps its
+      full static data and each frame shows a *slice* of it — a comet whose head
+      is the current sample and whose tail reaches back :attr:`trail_length`
+      (``None`` ⇒ the whole curve persists).  Covers trajectories, phase
+      portraits, delay embeddings, time series, spacetime.  Memory ``O(data)``.
+    - ``"frames"`` (reserved, not yet rendered): genuinely different data per
+      frame (an evolving field such as a 2-D Kuramoto–Sivashinsky heatmap); the
+      layer channels carry a leading ``frame`` axis.  Memory ``O(frames × data)``.
+
+    Parameters
+    ----------
+    fps : float, optional
+        Playback frames per second.  Default ``30``.
+    duration : float, optional
+        Total wall-clock seconds; with :attr:`fps` this fixes the frame count
+        (``n_frames = round(duration * fps)``).  ``None`` lets the renderer pick a
+        frame count from the data length.
+    n_frames : int, optional
+        Explicit frame count; overrides the :attr:`duration`/:attr:`fps` estimate.
+    loop : bool, optional
+        Whether the animation repeats.  Default ``True``.
+    pingpong : bool, optional
+        Play forward then in reverse each loop (implies looping).  Default
+        ``False``.
+    mode : {"reveal", "frames"}, optional
+        The frame model (see above).  Default ``"reveal"``.
+    trail_kind : {"time", "steps"}, optional
+        Units of the comet tail length: physical ``"time"`` or sample ``"steps"``.
+        ``None`` (with ``trail_length=None``) means a **persistent** trail (the
+        curve never erases — the classic "orbit draws itself in").
+    trail_length : float, optional
+        Tail length in the chosen units; ``None`` ⇒ persistent.
+    trail_fade : bool, optional
+        Fade the tail's opacity from head to tail.  Default ``False``.
+    head : bool, optional
+        Draw the moving "current state" marker (a point on a curve, a sweep line
+        on a spacetime image).  Default ``True``.
+    head_size : float, optional
+        Head marker size.  Default ``6``.
+    head_color : str, optional
+        Head marker color; ``None`` inherits the layer color.
+    head_symbol : str, optional
+        Head marker symbol (backend-neutral, e.g. ``"o"``).  Default ``"o"``.
+    spin : float, optional
+        Camera revolutions over the whole animation for a 3-D spec (the azimuth
+        sweeps ``spin`` full turns).  ``0`` holds the camera still.  Default ``0``.
+    clock : bool, optional
+        Draw a live time readout that updates each frame.  Default ``False``.
+    clock_format : str, optional
+        Format for the clock label; ``{t}`` is the current time.  Default
+        ``"t = {t:.2f}"``.
+    """
+
+    fps: float = 30.0
+    duration: float | None = None
+    n_frames: int | None = None
+    loop: bool = True
+    pingpong: bool = False
+    mode: Literal["reveal", "frames"] = "reveal"
+    trail_kind: Literal["time", "steps"] | None = None
+    trail_length: float | None = None
+    trail_fade: bool = False
+    head: bool = True
+    head_size: float = 6.0
+    head_color: str | None = None
+    head_symbol: str = "o"
+    spin: float = 0.0
+    clock: bool = False
+    clock_format: str = "t = {t:.2f}"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of this animation directive."""
+        return {
+            "fps": float(self.fps),
+            "duration": None if self.duration is None else float(self.duration),
+            "n_frames": None if self.n_frames is None else int(self.n_frames),
+            "loop": bool(self.loop),
+            "pingpong": bool(self.pingpong),
+            "mode": self.mode,
+            "trail_kind": self.trail_kind,
+            "trail_length": None if self.trail_length is None else float(self.trail_length),
+            "trail_fade": bool(self.trail_fade),
+            "head": bool(self.head),
+            "head_size": float(self.head_size),
+            "head_color": self.head_color,
+            "head_symbol": self.head_symbol,
+            "spin": float(self.spin),
+            "clock": bool(self.clock),
+            "clock_format": self.clock_format,
+        }
+
+    #: Default frame count when neither ``n_frames`` nor ``duration`` is set —
+    #: high enough to read as continuous motion, capped so the artifact stays light
+    #: (the comet renderers keep per-frame data tiny, so this can be generous).
+    DEFAULT_FRAMES: ClassVar[int] = 360
+
+    def frame_count(self, n_samples: int) -> int:
+        """Resolve the number of playback frames from the directive + data length.
+
+        ``n_frames`` wins; else ``round(duration * fps)``; else a capped default.
+        Always at least 2 and at most ``n_samples`` (you cannot reveal more
+        distinct samples than exist).
+        """
+        if self.n_frames is not None:
+            n = int(self.n_frames)
+        elif self.duration is not None:
+            n = int(round(self.duration * self.fps))
+        else:
+            n = min(n_samples, self.DEFAULT_FRAMES)
+        return max(2, min(n, n_samples))
+
+    def head_indices(self, n_samples: int) -> list[int]:
+        """Map each playback frame to a sample index (the comet head).
+
+        Frame 0 → sample 0, the last forward frame → ``n_samples - 1``; with
+        :attr:`pingpong` the sequence then mirrors back (forward, then reverse).
+        """
+        n_frames = self.frame_count(n_samples)
+        fwd = [round(k * (n_samples - 1) / (n_frames - 1)) for k in range(n_frames)]
+        if self.pingpong and n_frames > 2:
+            fwd = fwd + fwd[-2:0:-1]
+        return fwd
+
+    def tail_samples(self, dt: float | None) -> int | None:
+        """Convert the trail length to a sample count (``None`` ⇒ persistent trail).
+
+        ``"steps"`` is used directly; ``"time"`` divides by ``dt`` (falling back to
+        treating the value as steps when no ``dt`` is available).
+        """
+        if self.trail_kind is None or self.trail_length is None:
+            return None
+        if self.trail_kind == "steps":
+            return max(1, int(round(self.trail_length)))
+        if dt and dt > 0:  # "time" → samples
+            return max(1, int(round(self.trail_length / dt)))
+        return max(1, int(round(self.trail_length)))
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> Animation:
+        """Rebuild an :class:`Animation` from :meth:`to_dict` output."""
+        dur = d.get("duration")
+        n = d.get("n_frames")
+        tl = d.get("trail_length")
+        return cls(
+            fps=float(d.get("fps", 30.0)),
+            duration=None if dur is None else float(dur),
+            n_frames=None if n is None else int(n),
+            loop=bool(d.get("loop", True)),
+            pingpong=bool(d.get("pingpong", False)),
+            mode=d.get("mode", "reveal"),
+            trail_kind=d.get("trail_kind"),
+            trail_length=None if tl is None else float(tl),
+            trail_fade=bool(d.get("trail_fade", False)),
+            head=bool(d.get("head", True)),
+            head_size=float(d.get("head_size", 6.0)),
+            head_color=d.get("head_color"),
+            head_symbol=d.get("head_symbol", "o"),
+            spin=float(d.get("spin", 0.0)),
+            clock=bool(d.get("clock", False)),
+            clock_format=d.get("clock_format", "t = {t:.2f}"),
+        )
+
+
+#: Sentinel for animation tweaks where ``None`` is itself a meaningful value
+#: (e.g. ``trail(length=None)`` = a persistent trail vs. omitting ``length``).
+_UNSET: Any = object()
+
+
+# ---------------------------------------------------------------------------
 # Layer
 # ---------------------------------------------------------------------------
 
@@ -709,6 +895,10 @@ class PlotSpec:
     # tile ``panels`` per ``layout``.
     panels: list[PlotSpec] = field(default_factory=list)
     layout: Layout | None = None
+    # Animation: an orthogonal modifier — any spec (any kind, single-panel or a
+    # composite) becomes a movie by carrying an :class:`Animation`.  The semantic
+    # ``kind`` is unchanged; a backend that cannot animate draws the final frame.
+    animation: Animation | None = None
 
     def __post_init__(self) -> None:
         """Normalize ``kind`` and the optional ``clim`` color range."""
@@ -719,6 +909,11 @@ class PlotSpec:
     def is_composite(self) -> bool:
         """Whether this spec is a multi-panel composite (has child ``panels``)."""
         return bool(self.panels) or self.kind == PlotKind.COMPOSITE
+
+    @property
+    def is_animated(self) -> bool:
+        """Whether this spec carries an :class:`Animation` directive."""
+        return self.animation is not None
 
     # -- uniform, backend-independent tweaks (mutate + return self) ---------
 
@@ -835,7 +1030,7 @@ class PlotSpec:
             self.z.ticks = list(z)
         return self
 
-    def style(self, *, layer: int | None = None, **kw: Any) -> PlotSpec:
+    def style(self, *, layer: int | None = None, axes: bool | None = None, **kw: Any) -> PlotSpec:
         """Merge backend-neutral style keys into one layer or every layer.
 
         Parameters
@@ -843,8 +1038,13 @@ class PlotSpec:
         layer : int, optional
             Index of the layer to style.  If ``None`` (default), the style is
             merged into *every* layer.
+        axes : bool, optional
+            Figure-level (not per-layer): set ``False`` to hide the axes entirely
+            — ticks, labels, gridlines, and (in 3-D) the grey background panes —
+            for a clean "object floating in space" look (e.g. an attractor or its
+            animation).  ``None`` leaves axis visibility unchanged.
         **kw
-            Style keys to set (``color``, ``cmap``, ``lw``, ``alpha``,
+            Per-layer style keys to set (``color``, ``cmap``, ``lw``, ``alpha``,
             ``marker``, …).
 
         Returns
@@ -852,10 +1052,16 @@ class PlotSpec:
         PlotSpec
             ``self``, for chaining.
         """
+        if axes is not None:
+            self.meta["axes_visible"] = bool(axes)
         targets = self.layers if layer is None else [self.layers[layer]]
         for lyr in targets:
             lyr.style.update(kw)
         return self
+
+    def _axes_hidden(self) -> bool:
+        """Whether ``style(axes=False)`` asked to hide the axes (renderer helper)."""
+        return isinstance(self.meta, dict) and self.meta.get("axes_visible") is False
 
     def colorize(
         self,
@@ -893,6 +1099,192 @@ class PlotSpec:
             self.colorbar = Colorbar() if colorbar is True else (colorbar or None)
         if legend is not None:
             self.legend = Legend() if legend is True else (legend or None)
+        return self
+
+    # -- animation tweaks (mutate + return self; also turn animation on) ----
+
+    def _ensure_animation(self) -> Animation:
+        """Return this spec's :class:`Animation`, creating a default if absent."""
+        if self.animation is None:
+            self.animation = Animation()
+        return self.animation
+
+    def animate(
+        self,
+        *,
+        fps: float | None = None,
+        duration: float | None = None,
+        n_frames: int | None = None,
+        loop: bool | None = None,
+        pingpong: bool | None = None,
+        mode: Literal["reveal", "frames"] | None = None,
+    ) -> PlotSpec:
+        """Turn this spec into an animation and/or set its timeline.
+
+        Calling ``animate()`` on a static spec makes it animated (with defaults);
+        the keyword arguments set the playback timeline.  Like every tweak it
+        mutates the spec and returns ``self`` so it chains.
+
+        Parameters
+        ----------
+        fps : float, optional
+            Playback frames per second.
+        duration : float, optional
+            Total seconds (with ``fps`` this fixes the frame count).
+        n_frames : int, optional
+            Explicit frame count (overrides ``duration``/``fps``).
+        loop : bool, optional
+            Whether the animation repeats.
+        pingpong : bool, optional
+            Play forward then reverse each loop.
+        mode : {"reveal", "frames"}, optional
+            The frame model.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        a = self._ensure_animation()
+        if fps is not None:
+            a.fps = float(fps)
+        if duration is not None:
+            a.duration = float(duration)
+        if n_frames is not None:
+            a.n_frames = int(n_frames)
+        if loop is not None:
+            a.loop = bool(loop)
+        if pingpong is not None:
+            a.pingpong = bool(pingpong)
+        if mode is not None:
+            a.mode = mode
+        return self
+
+    def trail(
+        self,
+        length: tuple[Literal["time", "steps"], float] | None = _UNSET,
+        *,
+        fade: bool | None = None,
+    ) -> PlotSpec:
+        """Set the comet tail behind the animation's moving head.
+
+        Parameters
+        ----------
+        length : ``("time", t)`` or ``("steps", n)`` or ``None``, optional
+            The tail length — in physical ``"time"`` units or sample ``"steps"``,
+            or ``None`` for a **persistent** trail (the curve never erases).
+            Omitting the argument leaves the current trail unchanged.
+        fade : bool, optional
+            Fade the tail opacity from head to tail.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        a = self._ensure_animation()
+        if length is not _UNSET:
+            if length is None:
+                a.trail_kind, a.trail_length = None, None
+            else:
+                kind, value = length
+                a.trail_kind, a.trail_length = kind, float(value)
+        if fade is not None:
+            a.trail_fade = bool(fade)
+        return self
+
+    def head(
+        self,
+        show: bool | None = None,
+        *,
+        size: float | None = None,
+        color: str | None = None,
+        symbol: str | None = None,
+    ) -> PlotSpec:
+        """Configure the moving "current state" marker.
+
+        Parameters
+        ----------
+        show : bool, optional
+            Whether to draw the head marker.
+        size : float, optional
+            Marker size.
+        color : str, optional
+            Marker color (``None`` inherits the layer color).
+        symbol : str, optional
+            Marker symbol.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        a = self._ensure_animation()
+        if show is not None:
+            a.head = bool(show)
+        if size is not None:
+            a.head_size = float(size)
+        if color is not None:
+            a.head_color = color
+        if symbol is not None:
+            a.head_symbol = symbol
+        return self
+
+    def camera(
+        self,
+        *,
+        elev: float | None = None,
+        azim: float | None = None,
+        spin: float | None = None,
+    ) -> PlotSpec:
+        """Set the 3-D camera angle and/or its animated spin.
+
+        ``elev`` / ``azim`` set a fixed viewing angle (a static tweak, recorded in
+        ``meta["camera"]``); ``spin`` makes the camera revolve ``spin`` full turns
+        over an animation (and turns animation on).
+
+        Parameters
+        ----------
+        elev, azim : float, optional
+            Fixed elevation / azimuth in degrees.
+        spin : float, optional
+            Camera revolutions over the whole animation (0 holds it still).
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        if elev is not None or azim is not None:
+            camera = dict(self.meta.get("camera", {}))
+            if elev is not None:
+                camera["elev"] = float(elev)
+            if azim is not None:
+                camera["azim"] = float(azim)
+            self.meta["camera"] = camera
+        if spin is not None:
+            self._ensure_animation().spin = float(spin)
+        return self
+
+    def clock(self, show: bool = True, *, fmt: str | None = None) -> PlotSpec:
+        """Show (or hide) a live time readout that updates each frame.
+
+        Parameters
+        ----------
+        show : bool, optional
+            Whether to draw the clock.  Default ``True``.
+        fmt : str, optional
+            Label format; ``{t}`` is the current time (e.g. ``"t = {t:.2f}"``).
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        a = self._ensure_animation()
+        a.clock = bool(show)
+        if fmt is not None:
+            a.clock_format = fmt
         return self
 
     # -- color / legend completeness ---------------------------------------
@@ -1013,21 +1405,49 @@ class PlotSpec:
         backend_kw = _apply_inline_tweaks(self, tweaks)
         return self.render(backend, **backend_kw)
 
-    def save(self, path: str, *, backend: str | None = None, **backend_kw: Any) -> str:
-        """Render and write the figure to ``path``; return the path.
+    def save(
+        self,
+        path: str,
+        *,
+        backend: str | None = None,
+        fps: float | None = None,
+        dpi: float | None = None,
+        size: tuple[float, float] | None = None,
+        **backend_kw: Any,
+    ) -> str:
+        """Render and write the figure (or animation) to ``path``; return the path.
 
-        When ``backend`` is not given, one is chosen from the file extension: a
-        raster / vector image (``.png`` / ``.pdf`` / ``.svg`` / ``.jpg``) prefers
-        the always-present matplotlib reference renderer, ``.html`` prefers plotly
-        (a self-contained interactive page), and ``.json`` prefers the json data
-        exporter — so ``spec.save("fig.png")`` does not depend on an interactive
-        backend's image-export extra, and ``spec.save("fig.json")`` writes the IR
-        rather than a mislabelled image.  A data-export backend (``json`` /
-        ``threejs``) writes the file itself via its ``path=`` argument; a figure
-        backend is written with whatever the figure offers (matplotlib
-        ``savefig``, plotly ``write_html`` / ``write_image``).  Raises
-        :class:`TypeError` if the produced result is neither a savable figure nor a
-        data-export write.
+        When ``backend`` is not given, one is chosen from the file extension. For a
+        **static** spec: a raster / vector image (``.png`` / ``.pdf`` / ``.svg`` /
+        ``.jpg``) prefers the always-present matplotlib reference renderer,
+        ``.html`` prefers plotly (a self-contained interactive page), and ``.json``
+        prefers the json data exporter.  For an **animated** spec (``is_animated``):
+        ``.html`` prefers plotly (an interactive scrubber), while ``.mp4`` / ``.gif``
+        go to matplotlib (its :class:`~matplotlib.animation.FuncAnimation` writes
+        them via ffmpeg / pillow); a still image renders the final frame.
+
+        Parameters
+        ----------
+        path : str
+            Output path; its extension selects the format / default backend.
+        backend : str, optional
+            Force a backend instead of choosing by extension.
+        fps : float, optional
+            Frames per second for a video / gif export (overrides the spec's
+            :attr:`Animation.fps` for this write only).
+        dpi : float, optional
+            Output resolution in dots per inch (video, image).
+        size : tuple of float, optional
+            Output size ``(width, height)`` in **pixels** (converted to a
+            matplotlib figure size via ``dpi``).
+        **backend_kw
+            Forwarded to the renderer.
+
+        Raises
+        ------
+        TypeError
+            If the produced result is neither a savable figure / animation nor a
+            data-export write.
         """
         if backend is None:
             backend = self._preferred_save_backend(path)
@@ -1035,11 +1455,41 @@ class PlotSpec:
             # The data-export backends write the file themselves (and return the path).
             self.render(backend, path=path, **backend_kw)
             return path
+        _lower = str(path).lower()
+        _movie = (".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng")
+        if self.is_animated and backend == "plotly" and _lower.endswith((".html", ".htm")):
+            # Animated HTML → the plotly backend's real-time (rAF + restyle) export,
+            # which writes the file itself (a smooth, rotatable-while-playing page).
+            self.render("plotly", path=path, **backend_kw)
+            return path
+        if (
+            self.is_animated
+            and not _lower.endswith(_movie)
+            and not _lower.endswith((".html", ".htm"))
+        ):
+            # A still image (.png / .pdf / .svg / …) of an animated spec is its
+            # final, fully-revealed frame: render the static spec and write that.
+            static = PlotSpec.from_dict({**self.to_dict(), "animation": None})
+            return static.save(path, backend=backend, dpi=dpi, size=size, **backend_kw)
+        if size is not None and "figsize" not in backend_kw:
+            w, h = size
+            scale = float(dpi) if dpi else 100.0
+            backend_kw["figsize"] = (float(w) / scale, float(h) / scale)
         result = self.render(backend, **backend_kw)
+        # A matplotlib animation (FuncAnimation — uniquely carries ``to_jshtml``)
+        # writes mp4 / gif via its own ``.save`` (writer inferred from the extension).
+        if hasattr(result, "to_jshtml") and callable(getattr(result, "save", None)):
+            anim_kw: dict[str, Any] = {}
+            if fps is not None:
+                anim_kw["fps"] = float(fps)
+            if dpi is not None:
+                anim_kw["dpi"] = float(dpi)
+            result.save(path, **anim_kw)
+            return path
         figure = getattr(result, "figure", result)
         savefig = getattr(figure, "savefig", None)
         if callable(savefig):
-            savefig(path)
+            savefig(path, **({"dpi": float(dpi)} if dpi is not None else {}))
             return path
         if str(path).endswith((".html", ".htm")):
             write_html = getattr(figure, "write_html", None)
@@ -1055,15 +1505,14 @@ class PlotSpec:
             f"({type(figure).__name__}); use .to_dict() to serialize it instead."
         )
 
-    @staticmethod
-    def _preferred_save_backend(path: str) -> str | None:
+    def _preferred_save_backend(self, path: str) -> str | None:
         """Pick a save backend from ``path``'s extension (``None`` = dispatch default).
 
-        ``.json`` prefers the json data exporter, ``.html`` prefers plotly (a
-        self-contained interactive page), and every other extension prefers the
-        matplotlib reference renderer (it writes png / pdf / svg natively, needs no
-        image-export extra, and is the only backend that tiles composites).  Falls
-        back to the dispatch default when the preferred backend is not registered.
+        Static specs: ``.json`` → json exporter, ``.html`` → plotly, everything else
+        → the matplotlib reference renderer.  Animated specs: ``.html`` → plotly (an
+        interactive scrubber), everything else (``.mp4`` / ``.gif`` / a still frame)
+        → matplotlib.  Falls back to the dispatch default when the preferred backend
+        is not registered.
         """
         try:
             from tsdynamics import registry
@@ -1074,6 +1523,10 @@ class PlotSpec:
         except Exception:  # pragma: no cover - defensive
             return None
         p = str(path).lower()
+        if self.is_animated:
+            if p.endswith((".html", ".htm")) and "plotly" in names:
+                return "plotly"
+            return "matplotlib" if "matplotlib" in names else None
         if p.endswith(".json") and "json" in names:
             return "json"
         if p.endswith((".html", ".htm")) and "plotly" in names:
@@ -1126,6 +1579,7 @@ class PlotSpec:
             "meta": _jsonify(self.meta),
             "panels": [p.to_dict() for p in self.panels],
             "layout": self.layout.to_dict() if self.layout is not None else None,
+            "animation": self.animation.to_dict() if self.animation is not None else None,
         }
 
     @classmethod
@@ -1165,6 +1619,9 @@ class PlotSpec:
             meta=dict(d.get("meta", {})),
             panels=[cls.from_dict(p) for p in d.get("panels", [])],
             layout=Layout.from_dict(d["layout"]) if d.get("layout") is not None else None,
+            animation=Animation.from_dict(d["animation"])
+            if d.get("animation") is not None
+            else None,
         )
 
 

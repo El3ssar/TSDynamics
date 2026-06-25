@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .spec import Layer, Layout, Legend, PlotKind, PlotSpec
+from .spec import Animation, Layer, Layout, Legend, PlotKind, PlotSpec
 
 __all__ = ["plot"]
 
@@ -44,7 +44,12 @@ _OVERLAYABLE: frozenset[PlotKind] = frozenset(
 _COMPOSITE_MODES: frozenset[str] = frozenset({"stack", "row", "grid"})
 
 
-def plot(*things: Any, layout: str = "overlay", **build_kw: Any) -> PlotSpec:
+def plot(
+    *things: Any,
+    layout: str = "overlay",
+    animate: bool | dict[str, Any] | Animation = False,
+    **build_kw: Any,
+) -> PlotSpec:
     """Compose one or more things into a single (possibly multi-panel) spec.
 
     Parameters
@@ -59,6 +64,12 @@ def plot(*things: Any, layout: str = "overlay", **build_kw: Any) -> PlotSpec:
         ``"overlay"`` (default) draws everything on one set of axes (a single
         panel); ``"stack"`` / ``"row"`` / ``"grid"`` give each thing its own panel
         in a :data:`~tsdynamics.viz.spec.PlotKind.COMPOSITE` figure.
+    animate : bool or dict or Animation, optional
+        Animate the **whole figure**.  A composite plays every panel in lockstep on
+        one shared clock (each panel keeps its own per-kind head default); an
+        overlay animates the merged panel.  ``True`` uses defaults, a dict / an
+        :class:`~tsdynamics.viz.spec.Animation` configures it.  Tweak further with
+        the chainable ``.animate()`` / ``.trail()`` / … methods on the result.
     **build_kw
         Forwarded to each non-spec thing's ``to_plot_spec`` (``components`` /
         ``kind`` / the per-kind options), so ``plot(a, b, components="x")``
@@ -84,12 +95,44 @@ def plot(*things: Any, layout: str = "overlay", **build_kw: Any) -> PlotSpec:
     specs = [_to_spec(item, build_kw) for item in items]
 
     if layout == "overlay":
-        return _overlay(specs)
-    if layout in _COMPOSITE_MODES:
-        return _composite(specs, layout)
-    raise InvalidParameterError(
-        f"unknown layout {layout!r}; use 'overlay', 'stack', 'row', or 'grid'."
-    )
+        result = _overlay(specs)
+    elif layout in _COMPOSITE_MODES:
+        result = _composite(specs, layout)
+    else:
+        raise InvalidParameterError(
+            f"unknown layout {layout!r}; use 'overlay', 'stack', 'row', or 'grid'."
+        )
+    if animate is not False and animate is not None:
+        _apply_figure_animation(result, animate)
+    return result
+
+
+def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | Animation) -> None:
+    """Stamp a figure-level animation: lockstep master on a composite, else the panel.
+
+    A composite gets the master clock on itself and a per-panel animation (the
+    master's timeline, with the head default following each panel's kind) on every
+    panel that is not already animated.  A single-panel (overlay) result is
+    animated directly with a head default following its kind.
+    """
+    from dataclasses import replace
+
+    def _make(kind: PlotKind) -> Animation:
+        head_default = kind != PlotKind.TIME_SERIES
+        if isinstance(animate, Animation):
+            return replace(animate, head=animate.head)
+        if isinstance(animate, dict):
+            return Animation(**{"head": head_default, **animate})
+        return Animation(head=head_default)
+
+    if result.is_composite:
+        master = _make(PlotKind.COMPOSITE)
+        result.animation = master
+        for panel in result.panels:
+            if panel.animation is None:
+                panel.animation = replace(master, head=panel.kind != PlotKind.TIME_SERIES)
+    else:
+        result.animation = _make(result.kind)
 
 
 def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:

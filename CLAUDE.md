@@ -600,6 +600,45 @@ import is deferred to first render.
     `_threed._draw_3d_panel`; 2-D panels optionally share axes). Plotly **declines**
     `COMPOSITE` (multi-panel tiling is an mpl-only follow-up) and dispatch falls
     back to mpl; an *overlay* single-panel spec still renders in plotly natively.
+- **Animation — an orthogonal modifier (`viz/spec.py::Animation`,
+  `PlotSpec.animation`):** any spec of any `PlotKind` (single-panel or composite)
+  becomes a movie by carrying an `Animation`; the semantic `kind` is unchanged and
+  a backend that cannot animate draws the final frame. Built via
+  `to_plot_spec(animate=True | dict | Animation)` / `ts.viz.plot(..., animate=...)`,
+  then tuned with the chainable spec methods `.animate(fps/duration/loop/pingpong)`
+  / `.trail(length=("time"|"steps", v) | None, fade)` / `.head(show/size/color/symbol)`
+  / `.camera(elev/azim/spin)` / `.clock(fmt)` (all mutate-and-return-self, composing
+  with the static `.relabel`/`.rescale`/`.limits`/`.style(…)`/… tweaks — including
+  `.style(axes=False)`, which records `meta["axes_visible"]=False` and every
+  renderer honors it: mpl `ax.set_axis_off()`, plotly axis/scene `visible=False`,
+  for a clean "attractor floating in space" still or animation). The frame model is
+  **reveal** (this release): the layer keeps its full static data and each frame
+  shows a comet — head at the current sample, tail reaching back `trail_length`
+  (`None` ⇒ persistent); the frame math lives on `Animation`
+  (`head_indices`/`tail_samples`/`frame_count`). Per-kind head default: on for
+  portraits / spacetime, off for a plain time series; a composite plays panels in
+  **lockstep** on one master clock (each panel keeps its own per-kind head). The
+  `frames` mode (materialized per-frame data, e.g. an evolving 2-D field) is
+  reserved, not yet rendered (issue #461). Rendering: **matplotlib** →
+  `viz/render/mpl/_anim.py` builds a `FuncAnimation` (`.save("x.mp4"/"x.gif")` via
+  ffmpeg/pillow); **plotly** → `viz/render/plotly/_anim.py`: HTML export
+  (`.save("x.html")`, the zero-extra-dep default) is a **real-time** animation — the
+  full attractor is drawn once (static, rotatable) and a `requestAnimationFrame`
+  loop advances a comet via `Plotly.react` (which redraws gl3d — `restyle` does
+  **not**, and must never be used here). Each tick hands `react` a **fresh array
+  with fresh comet/head trace objects** (`gd.data.slice()` + `Object.assign`) — its
+  immutable diff treats an unchanged array *reference* as unchanged data, so reusing
+  `gd.data` silently no-ops; the static context trace keeps its original object, so
+  `react` diffs it away and only the small comet re-renders. The layout (hence the
+  camera) is never touched and `uirevision` is constant, so the camera is
+  **preserved — orbit while it plays**. A minimal **play/pause + restart overlay**
+  (bottom-left, with a % readout) makes it obviously alive without devtools.
+  A returned live figure (notebooks) instead uses a plotly frames + play/slider
+  player (`build_animated_figure`). Camera-spin/clock are mpl-only for now.
+  `PlotSpec.save` picks the
+  backend by extension (animated: `.html`→plotly, `.mp4`/`.gif`→matplotlib) and
+  takes `fps`/`dpi`/`size`. The `Animation` directive round-trips through
+  `to_dict`/`from_dict` and adds no `PlotKind` (the frozen vocab is untouched).
 
 ---
 
