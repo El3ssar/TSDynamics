@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from scipy.spatial import cKDTree
 
-    from tsdynamics.viz.spec import PlotSpec
+    from tsdynamics.viz.spec import Animation, PlotSpec
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,9 @@ _KIND_KW: dict[str, frozenset[str]] = {
 #: The keywords ``plot()`` peels off and forwards to :meth:`Trajectory.to_plot_spec`
 #: (rather than leaking them to the renderer).  Derived from the routing tables so
 #: it can never drift out of sync with the per-kind options above.
-_PLOT_SPEC_KEYS: frozenset[str] = frozenset({"kind", "components"}).union(*_KIND_KW.values())
+_PLOT_SPEC_KEYS: frozenset[str] = frozenset({"kind", "components", "animate"}).union(
+    *_KIND_KW.values()
+)
 
 
 def _auto_route(n_components: int) -> str:
@@ -232,6 +234,7 @@ class Trajectory:
         kind: str | None = None,
         *,
         components: int | str | Sequence[int | str] | None = None,
+        animate: bool | dict[str, Any] | Animation = False,
         **kind_kw: Any,
     ) -> PlotSpec:
         """
@@ -285,6 +288,14 @@ class Trajectory:
             ``"delay"`` recipe).  ``None`` auto-dispatches.
         components : int or str or sequence of int/str, optional
             Which state components to draw (names or indices).  ``None`` uses all.
+        animate : bool or dict or Animation, optional
+            Turn the spec into a reveal animation.  ``True`` uses sensible per-kind
+            defaults (a moving head on portraits / spacetime, off for a plain time
+            series); a dict overrides individual
+            :class:`~tsdynamics.viz.spec.Animation` fields; an
+            :class:`~tsdynamics.viz.spec.Animation` is used as-is.  Tweak further
+            with the chainable ``spec.animate()`` / ``.trail()`` / ``.head()`` /
+            ``.camera()`` / ``.clock()`` methods.
         **kind_kw
             Per-kind options (see above).
 
@@ -304,7 +315,7 @@ class Trajectory:
             and not kind_kw
             and str(self.meta.get("plot_kind", "")) == PlotKind.POINCARE_SECTION
         ):
-            return self._poincare_section_spec(all_names)
+            return self._with_animation(self._poincare_section_spec(all_names), animate)
 
         sel = self._resolve_components(components, all_names)
         sel_names = tuple(all_names[i] for i in sel)
@@ -317,19 +328,57 @@ class Trajectory:
         self._validate_kind_kw(route, kind_kw)
 
         if route == "delay_embedding":
-            return self._delay_spec(sel, sel_names, kind_kw, explicit=components is not None)
+            delay = self._delay_spec(sel, sel_names, kind_kw, explicit=components is not None)
+            return self._with_animation(delay, animate)
 
         spec_kind = PlotKind(route)  # "delay" never reaches here (aliased above)
         ys = self.y[:, sel]
 
         if spec_kind == PlotKind.SPACETIME:
-            return self._spacetime_spec(ys, sel_names, transpose=bool(kind_kw.get("transpose")))
+            image = self._spacetime_spec(ys, sel_names, transpose=bool(kind_kw.get("transpose")))
+            return self._with_animation(image, animate)
 
         color_by = kind_kw.get("color_by")
         if spec_kind == PlotKind.TIME_SERIES:
-            return self._time_series_spec(sel, ys, sel_names, discrete, color_by)
+            series = self._time_series_spec(sel, ys, sel_names, discrete, color_by)
+            return self._with_animation(series, animate)
 
-        return self._phase_portrait_spec(spec_kind, sel, ys, sel_names, discrete, color_by)
+        portrait = self._phase_portrait_spec(spec_kind, sel, ys, sel_names, discrete, color_by)
+        return self._with_animation(portrait, animate)
+
+    def _with_animation(
+        self, spec: PlotSpec, animate: bool | dict[str, Any] | Animation
+    ) -> PlotSpec:
+        """Stamp an :class:`Animation` onto ``spec`` per the ``animate`` request.
+
+        ``False``/``None`` leaves the spec static.  ``True`` uses per-kind defaults
+        (head on except for a plain time series); a dict overrides individual
+        :class:`~tsdynamics.viz.spec.Animation` fields; an ``Animation`` is used
+        verbatim.  The spec carries ``meta["dt"]``, so time-unit trails / the clock
+        resolve at render time.
+        """
+        if animate is False or animate is None:
+            return spec
+        from tsdynamics.viz.spec import Animation as _Animation
+        from tsdynamics.viz.spec import PlotKind
+
+        head_default = spec.kind != PlotKind.TIME_SERIES
+        # Default to a *windowed* comet (a moving trail + head over the full faint
+        # curve) — smooth, small, and rotatable in plotly; a persistent "draw-it-in"
+        # is one ``.trail(length=None)`` away.  A tight window (≈ 1/10 of the series,
+        # capped) keeps the comet crisp and the exported HTML small.
+        defaults: dict[str, Any] = {
+            "head": head_default,
+            "trail_kind": "steps",
+            "trail_length": float(max(2, min(self.n_steps // 10, 200))),
+        }
+        if isinstance(animate, _Animation):
+            spec.animation = animate
+        elif isinstance(animate, dict):
+            spec.animation = _Animation(**{**defaults, **animate})
+        else:  # truthy (e.g. ``True``)
+            spec.animation = _Animation(**defaults)
+        return spec
 
     def _resolve_components(
         self, components: int | str | Sequence[int | str] | None, names: tuple[str, ...]

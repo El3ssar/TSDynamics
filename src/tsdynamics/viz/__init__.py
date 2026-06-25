@@ -36,6 +36,7 @@ from .. import registry as _registry
 from ..plugins import register_entry_points
 from .compose import plot
 from .spec import (
+    Animation,
     Annotation,
     Axis,
     Layer,
@@ -55,6 +56,7 @@ from .spec import (
 RENDERERS_GROUP = "tsdynamics.renderers"
 
 __all__ = [
+    "Animation",
     "Annotation",
     "Axis",
     "Layer",

@@ -254,6 +254,10 @@ def _scene(spec: PlotSpec) -> dict[str, Any]:
             cam["center"] = {k: float(center[k]) for k in ("x", "y", "z") if k in center}
         if cam:
             scene["camera"] = cam
+    if spec._axes_hidden():
+        for k in ("xaxis", "yaxis", "zaxis"):
+            if k in scene:
+                scene[k] = {**scene[k], "visible": False}
     return scene
 
 

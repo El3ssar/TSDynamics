@@ -645,40 +645,59 @@ def render(
 
     normalize_kind(spec.kind)  # validate / canonicalise the semantic kind
 
+    if spec.is_animated:
+        from ._anim import animated_html, build_animated_figure
+
+        # HTML export → the smooth, rotatable real-time (requestAnimationFrame +
+        # restyle) animation; a live figure (notebook) → the frames player.
+        if path is not None or html:
+            return animated_html(
+                spec,
+                path=path,
+                html=html,
+                full_html=full_html,
+                include_plotlyjs=include_plotlyjs,
+            )
+        return build_animated_figure(spec)
     if _threed.is_three_d(spec):
         return _threed.render_3d(spec, **_kw)
-    fig = go.Figure()
-    for layer in spec.layers:
-        builder = MARK_DISPATCH.get(PlotKind(layer.kind))
-        if builder is None:
-            continue
-        for trace in builder(layer, spec):
-            fig.add_trace(trace)
+    else:
+        fig = go.Figure()
+        for layer in spec.layers:
+            builder = MARK_DISPATCH.get(PlotKind(layer.kind))
+            if builder is None:
+                continue
+            for trace in builder(layer, spec):
+                fig.add_trace(trace)
 
-    xaxis = _axis_layout(spec.x)
-    yaxis = _axis_layout(spec.y)
-    if spec.aspect == "equal":
-        yaxis["scaleanchor"] = "x"
-        yaxis["scaleratio"] = 1
+        xaxis = _axis_layout(spec.x)
+        yaxis = _axis_layout(spec.y)
+        if spec.aspect == "equal":
+            yaxis["scaleanchor"] = "x"
+            yaxis["scaleratio"] = 1
+        if spec._axes_hidden():
+            xaxis["visible"] = False
+            yaxis["visible"] = False
 
-    show_legend = spec.legend is not None and spec.legend.show
-    layout: dict[str, Any] = {
-        "xaxis": xaxis,
-        "yaxis": yaxis,
-        "showlegend": show_legend,
-    }
-    if spec.title:
-        layout["title"] = {"text": spec.title}
-    if show_legend and spec.legend is not None and spec.legend.title:
-        layout["legend"] = {"title": {"text": spec.legend.title}}
+        show_legend = spec.legend is not None and spec.legend.show
+        layout: dict[str, Any] = {
+            "xaxis": xaxis,
+            "yaxis": yaxis,
+            "showlegend": show_legend,
+        }
+        if spec.title:
+            layout["title"] = {"text": spec.title}
+        if show_legend and spec.legend is not None and spec.legend.title:
+            layout["legend"] = {"title": {"text": spec.legend.title}}
 
-    shapes, texts = _annotation_shapes(spec.annotations)
-    if shapes:
-        layout["shapes"] = shapes
-    if texts:
-        layout["annotations"] = texts
+        shapes, texts = _annotation_shapes(spec.annotations)
+        if shapes:
+            layout["shapes"] = shapes
+        if texts:
+            layout["annotations"] = texts
 
-    fig.update_layout(**layout)
+        fig.update_layout(**layout)
+
     if path is not None:
         # Write a self-contained interactive HTML file (standalone by default).
         from ._html import write_html

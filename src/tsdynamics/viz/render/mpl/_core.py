@@ -44,6 +44,7 @@ from .. import normalize_kind
 from ..caps import RenderResult
 
 if TYPE_CHECKING:
+    from matplotlib.animation import FuncAnimation
     from matplotlib.axes import Axes
     from matplotlib.cm import ScalarMappable
     from matplotlib.figure import Figure
@@ -592,6 +593,8 @@ def _apply_axes(ax: Axes, spec: PlotSpec, preset: _KindPreset) -> None:
     aspect = spec.aspect if spec.aspect != "auto" else preset.aspect
     if aspect == "equal":
         ax.set_aspect("equal", adjustable="box")
+    if spec._axes_hidden():
+        ax.set_axis_off()
 
 
 def _apply_colorbar(
@@ -641,7 +644,9 @@ def _apply_annotations(ax: Axes, annotations: list[Annotation]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def render(spec: PlotSpec, *, figsize: tuple[float, float] | None = None, **_kw: Any) -> Figure:
+def render(
+    spec: PlotSpec, *, figsize: tuple[float, float] | None = None, **_kw: Any
+) -> Figure | FuncAnimation:
     """Render a 2-D :class:`~tsdynamics.viz.spec.PlotSpec` to a matplotlib Figure.
 
     Builds a :class:`~matplotlib.figure.Figure` with the Agg canvas (no
@@ -674,6 +679,11 @@ def render(spec: PlotSpec, *, figsize: tuple[float, float] | None = None, **_kw:
     from matplotlib.figure import Figure
 
     from . import _threed
+
+    if spec.is_animated:
+        from . import _anim
+
+        return _anim.render_animation(spec, figsize=figsize)
 
     if spec.is_composite:
         return _render_composite(spec, figsize=figsize)

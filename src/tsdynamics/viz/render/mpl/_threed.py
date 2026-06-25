@@ -136,6 +136,8 @@ def _apply_3d_axes(ax: Any, spec: PlotSpec) -> None:
         elev = float(camera.get("elev", elev))
         azim = float(camera.get("azim", azim))
     ax.view_init(elev=elev, azim=azim)
+    if spec._axes_hidden():
+        ax.set_axis_off()
 
 
 def render_3d(spec: PlotSpec, *, figsize: tuple[float, float] | None = None) -> Figure:

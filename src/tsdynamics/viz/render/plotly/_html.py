@@ -59,6 +59,7 @@ def to_html(
     *,
     full_html: bool = False,
     include_plotlyjs: str | bool = "cdn",
+    post_script: str | None = None,
 ) -> str:
     """Export a spec / plotly figure to a self-contained interactive HTML string.
 
@@ -94,7 +95,9 @@ def to_html(
     static-image rendering is involved.
     """
     figure = _as_figure(figure_or_spec)
-    html = figure.to_html(full_html=full_html, include_plotlyjs=include_plotlyjs)
+    html = figure.to_html(
+        full_html=full_html, include_plotlyjs=include_plotlyjs, post_script=post_script
+    )
     return str(html)
 
 
@@ -104,6 +107,7 @@ def write_html(
     *,
     full_html: bool = True,
     include_plotlyjs: str | bool = "cdn",
+    post_script: str | None = None,
 ) -> Path:
     """Write the self-contained interactive HTML for a spec / figure to ``path``.
 
@@ -130,7 +134,12 @@ def write_html(
     pathlib.Path
         The path written to.
     """
-    text = to_html(figure_or_spec, full_html=full_html, include_plotlyjs=include_plotlyjs)
+    text = to_html(
+        figure_or_spec,
+        full_html=full_html,
+        include_plotlyjs=include_plotlyjs,
+        post_script=post_script,
+    )
     out = Path(path)
     out.write_text(text, encoding="utf-8")
     return out
