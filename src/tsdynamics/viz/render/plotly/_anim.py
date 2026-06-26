@@ -72,7 +72,10 @@ _REALTIME_JS = """
       try { return Plotly.dataArray(v); } catch (e) { /* fall through */ }
     }
     var a = Array.from(v);
-    return a.length ? a : v;
+    if (a.length) { return a; }
+    // Never hand back an unsliceable {bdata} spec — an empty realisation of one
+    // becomes [] so no downstream .slice / index can throw.
+    return v.bdata != null ? [] : v;
   }
   var decoded = gd._fullData || gd.data;
   var full = LAYERS.map(function(m) {
