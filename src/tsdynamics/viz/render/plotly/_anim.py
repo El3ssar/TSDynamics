@@ -56,7 +56,35 @@ _REALTIME_JS = """
   var IS3D = __IS3D__, N = __N__;
   var layout = gd.layout;
   // Cache the full curve + the comet/head trace templates from the initial figure.
-  var full = LAYERS.map(function(m) { var c = gd.data[m.ctx]; return {x:c.x, y:c.y, z:c.z}; });
+  // Read the curve from plotly's DECODED data (gd._fullData): plotly serialises a
+  // numpy array into a base64 typed-array *spec* object ({dtype, bdata}) and stores
+  // THAT in gd.data[i].x — which has no .slice — while gd._fullData[i].x is the
+  // decoded Float64Array.  Normalise each axis once into a real array so the
+  // per-frame .slice(lo, hi+1) (and the head index read) always works regardless of
+  // plotly's storage format.  (Without this the loop throws on frame 0 and the
+  // curve stays static — issue #464.)
+  function asArray(v) {
+    if (v == null) { return []; }
+    // A real Array / typed array (Float64Array …) already slices.
+    if (typeof v.slice === 'function' && typeof v.length === 'number') { return v; }
+    // A plotly base64 typed-array spec ({dtype, bdata}) or any iterable → realise it.
+    if (v.bdata != null && typeof Plotly.dataArray === 'function') {
+      try { return Plotly.dataArray(v); } catch (e) { /* fall through */ }
+    }
+    var a = Array.from(v);
+    return a.length ? a : v;
+  }
+  var decoded = gd._fullData || gd.data;
+  var full = LAYERS.map(function(m) {
+    // Prefer plotly's decoded data (Float64Array); fall back to the raw figure data.
+    var d = (decoded && decoded[m.ctx] != null) ? decoded[m.ctx] : gd.data[m.ctx];
+    var raw = gd.data[m.ctx];
+    return {
+      x: asArray(d.x != null ? d.x : raw.x),
+      y: asArray(d.y != null ? d.y : raw.y),
+      z: asArray(d.z != null ? d.z : raw.z),
+    };
+  });
   var cometProto = LAYERS.map(function(m) { return gd.data[m.comet]; });
   var headProto = LAYERS.map(function(m) { return m.head >= 0 ? gd.data[m.head] : null; });
   var ctxTrace = LAYERS.map(function(m) { return gd.data[m.ctx]; });

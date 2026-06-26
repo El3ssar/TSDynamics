@@ -629,7 +629,12 @@ import is deferred to first render.
   with fresh comet/head trace objects** (`gd.data.slice()` + `Object.assign`) — its
   immutable diff treats an unchanged array *reference* as unchanged data, so reusing
   `gd.data` silently no-ops; the static context trace keeps its original object, so
-  `react` diffs it away and only the small comet re-renders. The layout (hence the
+  `react` diffs it away and only the small comet re-renders. The full-curve cache is
+  read from plotly's **decoded** data (`gd._fullData`, a `Float64Array`), not raw
+  `gd.data` — plotly 6 stores a base64 typed-array *spec* (`{dtype, bdata}`, no
+  `.slice`) in `gd.data[i].x`, so the loop normalises each axis up front (`asArray`)
+  or the per-frame `.slice` throws on frame 0 and the curve stays static (issue
+  #464). The layout (hence the
   camera) is never touched and `uirevision` is constant, so the camera is
   **preserved — orbit while it plays**. A minimal **play/pause + restart overlay**
   (bottom-left, with a % readout) makes it obviously alive without devtools.
