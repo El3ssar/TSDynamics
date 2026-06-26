@@ -52,7 +52,19 @@ A 2-D phase portrait exports just the same (its `LINE` / `SCATTER` layers are li
     "labels": {"x": "x", "y": "y", "z": "z"},
     "units":  {"x": "", "y": "", "z": ""},
     "bounds": {"x": [min, max], "y": [min, max], "z": [min, max]},
-    "camera": {"position": [x, y, z], "target": [x, y, z], "up": [x, y, z]}
+    "camera": {"position": [x, y, z], "target": [x, y, z], "up": [x, y, z]},
+    "animation": {                              // ONLY when the spec is animated
+      "fps": 30.0,
+      "duration": null,                         // wall-clock seconds, or null
+      "n_frames": null,
+      "loop": true,
+      "pingpong": false,
+      "trail_length_samples": 400,              // comet tail length; null = persistent
+      "head": true,
+      "head_size": 6.0,
+      "head_color": [r, g, b],                  // or null (inherit the line colour)
+      "n_samples": 3701                         // vertices on the longest animated line
+    }
   }
 }
 ```
@@ -61,12 +73,20 @@ A web frontend reads each geometry's flat `positions` into a `Float32Array`, the
 into a second `Float32Array` (vertex colours), and `indices` into the draw-index buffer — exactly the
 three inputs a `THREE.BufferGeometry` wants. `metadata.camera` seeds the initial view.
 
+`metadata.animation` is present **only** for an animated spec (e.g.
+`tr.to_plot_spec(animate=True)`); a static export omits it and the geometry buffers are byte-for-byte
+the non-animated payload. When it is present, the loader plays a **reveal comet** — a faint full-curve
+backdrop with a bright windowed trail and a head marker sweeping the line — by advancing
+`geometry.setDrawRange(start, count)` per frame (no buffer re-upload). Because `OrbitControls` is
+independent of that draw-range update, you can **orbit the attractor with the mouse while it plays**.
+
 ## The reference loader
 
 [`tsdyn-threejs-loader.js`](../_static/tsdyn-threejs-loader.js) is a tiny reference ES module that
 does the whole conversion — `BufferGeometry` for `line` (`LineSegments`), `points` (`Points`) and
-`surface` (a normals-computed `Mesh`), per-vertex colours, a camera from `metadata.camera`, and
-`OrbitControls`:
+`surface` (a normals-computed `Mesh`), per-vertex colours, a camera from `metadata.camera`,
+`OrbitControls`, and (when `metadata.animation` is set) a `setDrawRange`-driven reveal comet with a
+play/pause overlay:
 
 ```javascript
 import { renderThreejsPayload } from "./tsdyn-threejs-loader.js";

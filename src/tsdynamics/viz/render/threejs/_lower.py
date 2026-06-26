@@ -28,9 +28,28 @@ The payload is a JSON object::
                 "position": [<x>, <y>, <z>],
                 "target":   [<x>, <y>, <z>],
                 "up":       [<x>, <y>, <z>]
+            },
+            "animation": {                       # ONLY when spec.animation is set
+                "fps": <float>,
+                "duration": <float | null>,
+                "n_frames": <int | null>,
+                "loop": <bool>,
+                "pingpong": <bool>,
+                "trail_length_samples": <int | null>,   # null ⇒ persistent trail
+                "head": <bool>,
+                "head_size": <float>,
+                "head_color": [<r>, <g>, <b>] | null,
+                "n_samples": <int>               # vertices on the longest animated line
             }
         }
     }
+
+A static (non-animated) spec carries **no** ``animation`` key in ``metadata`` —
+the export is byte-for-byte the pre-animation payload.  When ``spec.animation`` is
+present the geometry buffers are unchanged: the loader animates by **draw-range**
+(``geometry.setDrawRange``) over a faint full-curve backdrop, so no positions /
+colors are re-uploaded and no per-vertex time attribute is needed (the line
+vertices are already the natural reveal order).
 
 Each ``geometry`` is::
 
@@ -67,7 +86,7 @@ from ...export import SCHEMA_VERSION
 from ...spec import PlotKind
 
 if TYPE_CHECKING:
-    from ...spec import Axis, Layer, PlotSpec
+    from ...spec import Animation, Axis, Layer, PlotSpec
 
 __all__ = ["lower_spec"]
 
@@ -82,6 +101,14 @@ _GEOMETRY_TYPE: dict[PlotKind, str] = {
     PlotKind.SURFACE3D: "surface",
 }
 
+#: Layer marks the reveal animation drives — the curve / points marks whose
+#: vertices are a natural sweep order.  A ``SURFACE3D`` mesh has no comet reveal
+#: (the loader animates only line / points geometries by draw-range), so it is
+#: not counted when sizing the animation.
+_ANIMATED_MARKS: frozenset[PlotKind] = frozenset(
+    {PlotKind.LINE, PlotKind.LINE3D, PlotKind.SCATTER, PlotKind.MARKERS}
+)
+
 
 def lower_spec(spec: PlotSpec) -> dict[str, Any]:
     """Lower ``spec`` to a three.js BufferGeometry-ready JSON-able payload.
@@ -90,7 +117,11 @@ def lower_spec(spec: PlotSpec) -> dict[str, Any]:
     line / points / surface (other marks — images, bars, quivers — have no
     BufferGeometry analogue and are skipped) into a flat-positions geometry, then
     derives the top-level ``metadata`` (labels / units / bounds / camera) from the
-    axes and the lowered vertices.
+    axes and the lowered vertices.  When ``spec.animation`` is set, an
+    ``animation`` block is added to ``metadata`` (the reveal directive — fps /
+    duration / trail length in samples / head) so the reference loader plays a
+    comet reveal via ``geometry.setDrawRange``; the geometry buffers are
+    unchanged, and a static spec's payload is byte-for-byte the pre-animation one.
 
     Parameters
     ----------
@@ -110,13 +141,16 @@ def lower_spec(spec: PlotSpec) -> dict[str, Any]:
             geometries.append(geom)
 
     bounds = _bounds(geometries)
-    metadata = {
+    metadata: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "labels": _axis_labels(spec),
         "units": _axis_units(spec),
         "bounds": bounds,
         "camera": _camera(spec, bounds),
     }
+    animation = _animation_metadata(spec)
+    if animation is not None:
+        metadata["animation"] = animation
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": spec.kind.value,
@@ -458,6 +492,84 @@ def _vec3(value: Any, *, default: tuple[float, float, float]) -> list[float]:
         except (TypeError, ValueError):
             return list(default)
     return list(default)
+
+
+# ---------------------------------------------------------------------------
+# animation (the reveal directive — draw-range driven on the frontend)
+# ---------------------------------------------------------------------------
+
+
+def _animation_metadata(spec: PlotSpec) -> dict[str, Any] | None:
+    """Build the ``metadata["animation"]`` block, or ``None`` for a static spec.
+
+    Mirrors the matplotlib / plotly reveal model so the three.js loader plays the
+    same comet (a windowed trail + a head marker sweeping the curve over a faint
+    full-curve backdrop).  The geometry buffers are **not** touched — the loader
+    advances ``geometry.setDrawRange`` over the line vertices, so all the block
+    carries is the directive plus ``n_samples`` (the longest animated line's
+    vertex count) for the loop to size its window / stride against.
+
+    Returns ``None`` when ``spec.animation`` is absent (so a static export is
+    byte-identical to the pre-animation payload) or when the spec has no
+    animatable line / points layer (a draw-range reveal needs one).
+    """
+    anim = spec.animation
+    if anim is None:
+        return None
+    n_samples = _animated_sample_count(spec)
+    if n_samples < 2:
+        return None
+    trail = _trail_length_samples(spec, anim)
+    return {
+        "fps": float(anim.fps),
+        "duration": None if anim.duration is None else float(anim.duration),
+        "n_frames": None if anim.n_frames is None else int(anim.n_frames),
+        "loop": bool(anim.loop),
+        "pingpong": bool(anim.pingpong),
+        "trail_length_samples": trail,
+        "head": bool(anim.head),
+        "head_size": float(anim.head_size),
+        "head_color": _head_color(anim.head_color),
+        "n_samples": int(n_samples),
+    }
+
+
+def _head_color(color: Any) -> list[float] | None:
+    """Coerce the head color to a plain ``[r, g, b]`` list, or ``None``.
+
+    Reuses :func:`_parse_rgb` (an RGB / RGBA sequence → a triple; a named-color
+    string / ``None`` → ``None``) but returns a JSON-friendly ``list`` so the
+    animation block stays plain-list / plain-float like the rest of the payload.
+    """
+    rgb = _parse_rgb(color)
+    return None if rgb is None else [rgb[0], rgb[1], rgb[2]]
+
+
+def _animated_sample_count(spec: PlotSpec) -> int:
+    """Vertices on the longest animated (line / points) layer — the reveal length."""
+    n = 0
+    for layer in spec.layers:
+        if PlotKind(layer.kind) not in _ANIMATED_MARKS:
+            continue
+        arr = layer.data.get("x", layer.data.get("y"))
+        if arr is not None:
+            n = max(n, int(np.asarray(arr).reshape(-1).shape[0]))
+    return n
+
+
+def _trail_length_samples(spec: PlotSpec, anim: Animation) -> int | None:
+    """Resolve the comet tail length to a vertex count (``None`` ⇒ persistent).
+
+    Reuses :meth:`~tsdynamics.viz.spec.Animation.tail_samples` (the same
+    ``"time"`` ÷ ``dt`` / ``"steps"`` rule the other backends use), reading the
+    sample spacing from ``spec.meta["dt"]`` for a time-unit trail.
+    """
+    dt = spec.meta.get("dt") if isinstance(spec.meta, dict) else None
+    try:
+        dt_f = float(dt) if dt is not None and float(dt) > 0 else None
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        dt_f = None
+    return anim.tail_samples(dt_f)
 
 
 # ---------------------------------------------------------------------------
