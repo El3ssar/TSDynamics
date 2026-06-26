@@ -142,7 +142,7 @@ time — built-ins and your own classes alike:
 ```python
 from tsdynamics import registry
 
-registry.families()        # {'ode': 118, 'dde': 5, 'map': 26}
+registry.families()        # {'ode': 120, 'dde': 5, 'map': 26}
 registry.get("Lorenz")     # SystemEntry('Lorenz', family='ode', ...)
 ```
 
@@ -156,6 +156,6 @@ its docs and tests.
 
 ## See also
 
-- [Systems](../systems/index.md) — the catalogue of 149 built-ins
+- [Systems](../systems/index.md) — the catalogue of 151 built-ins
 - [Analysis](../analysis/index.md) — what to do with a system once you have one
 - [Theory](../theory/index.md) — compilation and the Lyapunov math, precisely

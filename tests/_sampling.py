@@ -5,7 +5,7 @@ The bulk suite is registry-driven (see ``conftest.py``); this module holds the
 hand-picked subsets and inputs that cannot be derived from the registry:
 
 - ``INTEGRATION_SAMPLE`` — representative ODE systems compiled + integrated in
-  the regular ``slow`` tier.  The full 118-system sweep runs nightly under
+  the regular ``slow`` tier.  The full 120-system sweep runs nightly under
   ``-m full``.  A guard test in ``test_registry.py`` enforces that every ODE
   category keeps at least two representatives here.
 - ``MAP_LYAPUNOV_EXCLUDE`` — maps whose Jacobian is singular or undefined

@@ -80,7 +80,9 @@ def test_every_ode_lowers_to_valid_tape(ode_entry) -> None:
     from _sampling import HEAVY_FIELD_CATEGORIES
 
     if ode_entry.category in HEAVY_FIELD_CATEGORIES:
-        pytest.skip(f"{ode_entry.name}: high-dim PDE field — dense dim² analytic Jacobian intractable")
+        pytest.skip(
+            f"{ode_entry.name}: high-dim PDE field — dense dim² analytic Jacobian intractable"
+        )
     system = ode_entry.cls()
     tape = lower_ode(system, with_jacobian=True)
     tape.validate()  # mirrors tsdyn-ir Tape::validate
@@ -118,7 +120,9 @@ def test_every_ode_jacobian_matches_symbolic(ode_entry, rng) -> None:
     from _sampling import HEAVY_FIELD_CATEGORIES
 
     if ode_entry.category in HEAVY_FIELD_CATEGORIES:
-        pytest.skip(f"{ode_entry.name}: high-dim PDE field — dense dim² analytic Jacobian intractable")
+        pytest.skip(
+            f"{ode_entry.name}: high-dim PDE field — dense dim² analytic Jacobian intractable"
+        )
     system = ode_entry.cls()
     tape = lower_ode(system, with_jacobian=True)
     p = np.array([float(system.params[k]) for k in tape.control_names])

@@ -35,7 +35,7 @@ def test_registry_matches_top_level_namespace() -> None:
 
 def test_family_counts() -> None:
     counts = registry.families()
-    assert counts["ode"] >= 118
+    assert counts["ode"] >= 120
     assert counts["dde"] >= 5
     assert counts["map"] >= 26
 

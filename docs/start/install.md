@@ -50,7 +50,7 @@ pip install "tsdynamics[plot]"
 import tsdynamics as ts
 
 print(ts.__version__)
-print(ts.registry.families())   # {'ode': 118, 'dde': 5, 'map': 26}
+print(ts.registry.families())   # {'ode': 120, 'dde': 5, 'map': 26}
 
 traj = ts.Henon().iterate(steps=100)
 print(traj)                            # Trajectory(n_steps=100, dim=2, ...)

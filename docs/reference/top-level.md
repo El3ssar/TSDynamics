@@ -49,7 +49,7 @@ spec = ts.lyapunov_spectrum(ts.Henon())
 | [`fixed_points`][tsdynamics.analysis.fixedpoints.fixed_points] | `tsdynamics.analysis.fixedpoints` |
 | [`FixedPoint`][tsdynamics.analysis.fixedpoints.FixedPoint] | `tsdynamics.analysis.fixedpoints` |
 
-## The 149 built-in systems
+## The 151 built-in systems
 
 Built-in system classes live under [`tsdynamics.systems`](../systems/index.md) —
 the canonical path is `tsdynamics.systems.Lorenz` (flat, no need to remember

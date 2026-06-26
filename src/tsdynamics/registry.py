@@ -28,7 +28,7 @@ Examples
 --------
 >>> from tsdynamics import registry
 >>> registry.families()
-{'ode': 118, 'dde': 5, 'map': 26}
+{'ode': 120, 'dde': 5, 'map': 26}
 >>> lorenz = registry.get("Lorenz")
 >>> lorenz.family, lorenz.category
 ('ode', 'chaotic_attractors')
