@@ -42,9 +42,12 @@ _ACCENT_2 = "#0d9488"  # teal — secondary / delay-embedding view
 FIG_OVERRIDES: dict[str, dict] = {
     "Lorenz96": {"kind": "spacetime", "final_time": 60.0, "dt": 0.1},
     "KuramotoSivashinsky": {"kind": "spacetime", "final_time": 150.0, "dt": 0.5},
-    # 2-D spatial fields → the final field reshaped to its grid (a heatmap):
-    "GrayScott": {"kind": "field", "final_time": 1500.0, "dt": 3.0, "method": "RK45"},
-    "SwiftHohenberg": {"kind": "field", "final_time": 50.0, "dt": 0.1, "method": "RK45"},
+    # 2-D spatial fields → the final field reshaped to its grid (a heatmap).
+    # NO "method" override: that routes to the SciPy fallback, and solve_ivp over a
+    # 1k-5k-state Python RHS is intractable.  They are non-stiff + continuous, so the
+    # fast Rust engine's explicit kernel renders them (a couple of seconds).
+    "GrayScott": {"kind": "field", "final_time": 1500.0, "dt": 3.0},
+    "SwiftHohenberg": {"kind": "field", "final_time": 50.0, "dt": 0.1},
     "MultiChua": {"ic": "0.1*ones"},
     "DoubleGyre": {"final_time": 40.0},
     "Oregonator": {"skip": True},  # stiff — solve_ivp needs special handling
