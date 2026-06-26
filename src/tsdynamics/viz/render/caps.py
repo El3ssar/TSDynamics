@@ -171,12 +171,19 @@ class RendererCapabilities:
         every layer's mark must be drawable) with the 3-D check: a spec that is
         3-D (``ndim == 3``, a ``z`` axis, or any ``LINE3D`` / ``SURFACE3D`` mark)
         needs :attr:`supports_3d`.
+
+        A **composite** spec (one carrying child :attr:`~PlotSpec.panels`) is
+        renderable only when the backend can draw its ``COMPOSITE`` kind **and**
+        every panel — so a backend whose composite path tiles panels (plotly)
+        still falls back when a panel uses a kind it declines.
         """
         if self._is_three_d(spec) and not self.supports_3d:
             return False
         if not self.can_render(spec.kind):
             return False
-        return all(self.can_render(layer.kind) for layer in spec.layers)
+        if not all(self.can_render(layer.kind) for layer in spec.layers):
+            return False
+        return all(self.can_render_spec(panel) for panel in spec.panels)
 
     @staticmethod
     def _is_three_d(spec: PlotSpec) -> bool:

@@ -595,11 +595,22 @@ import is deferred to first render.
   The returned spec **renders itself**: `PlotSpec` has `.plot()` (inline-tweak +
   render), `.render(backend=)`, `.save(path)` (raster/vector → matplotlib, `.html`
   → plotly, by extension), and a notebook `_repr_mimebundle_`.
-  - **Composite rendering:** the **matplotlib** renderer tiles `panels` into a
-    subplot grid (`_render_composite` / per-panel `_draw_2d_panel` /
-    `_threed._draw_3d_panel`; 2-D panels optionally share axes). Plotly **declines**
-    `COMPOSITE` (multi-panel tiling is an mpl-only follow-up) and dispatch falls
-    back to mpl; an *overlay* single-panel spec still renders in plotly natively.
+  - **Composite rendering:** **both** in-tree drawing backends tile `panels` into
+    a subplot grid. The **matplotlib** renderer (`_render_composite` / per-panel
+    `_draw_2d_panel` / `_threed._draw_3d_panel`; 2-D panels optionally share axes).
+    The **plotly** renderer (`viz/render/plotly/_composite.py::render_composite`)
+    tiles natively via `plotly.subplots.make_subplots(rows, cols, specs=…)`: each
+    panel's cell is typed `"scene"` (a 3-D panel) or `"xy"` (a 2-D panel) so a
+    composite **mixing** a time-series panel and a 3-D portrait renders with each
+    panel on the right subplot type; per-panel traces are built by the factored
+    single-panel cores (`_core.build_2d_traces` / `_threed.build_3d_traces`) and
+    added with `add_trace(…, row, col)`, and per-panel colorbars are repositioned
+    into each panel's own domain (`_place_colorbars`) so stacked images do not
+    collide. `.save("fig.html")` on a composite therefore yields one interactive
+    multi-panel page. The capability check recurses into `panels`
+    (`RendererCapabilities.can_render_spec`), so plotly still falls back to mpl
+    when a panel uses a kind it declines. (Plotly **declines** only `COMPOSITE`
+    *animations* for now — `viz/render/plotly/_anim.py` is single-panel.)
 - **Animation — an orthogonal modifier (`viz/spec.py::Animation`,
   `PlotSpec.animation`):** any spec of any `PlotKind` (single-panel or composite)
   becomes a movie by carrying an `Animation`; the semantic `kind` is unchanged and

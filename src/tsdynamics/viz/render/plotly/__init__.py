@@ -32,15 +32,36 @@ ready for an mkdocs page / web frontend.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ...spec import PlotKind
+from ...spec import PlotKind, PlotSpec
 from ..caps import RendererCapabilities
 
 if TYPE_CHECKING:
     from tsdynamics.registry import Registry
 
 __all__ = ["register"]
+
+
+@dataclass(frozen=True)
+class _PlotlyCapabilities(RendererCapabilities):
+    """plotly capabilities that draw a *static* composite but decline an animated one.
+
+    The plotly composite path (:mod:`._composite`) tiles a static multi-panel
+    figure natively, so ``COMPOSITE`` is in the supported kind set.  An **animated**
+    composite, however, is the matplotlib renderer's job (its
+    :class:`~matplotlib.animation.FuncAnimation` animates each panel in lockstep;
+    the plotly animation core is single-panel), so a composite that also carries an
+    :class:`~tsdynamics.viz.spec.Animation` is declined and dispatch falls back.
+    """
+
+    def can_render_spec(self, spec: PlotSpec) -> bool:
+        """Decline an animated composite; otherwise defer to the base check."""
+        if spec.is_composite and spec.is_animated:
+            return False
+        return super().can_render_spec(spec)
+
 
 #: The registry name the plotly backend registers under.
 _BACKEND_NAME = "plotly"
@@ -72,14 +93,16 @@ _KINDS_3D: frozenset[PlotKind] = frozenset(
 )
 
 #: The semantic kinds plotly declines, so a spec of these kinds falls back to
-#: matplotlib: the animation kinds (deferred everywhere) and ``COMPOSITE`` (the
-#: multi-panel figure — its subplot tiling is the matplotlib reference renderer's
-#: job for now; an overlay single-panel spec still renders here natively).
+#: matplotlib: only the animation kinds (deferred everywhere).  ``COMPOSITE``
+#: (the multi-panel figure) is now drawn natively by :mod:`._composite` — a
+#: :func:`plotly.subplots.make_subplots` grid tiling each panel onto its own
+#: ``xy`` / ``scene`` cell — so it is **not** declined; the per-panel capability
+#: recursion (:meth:`~tsdynamics.viz.render.caps.RendererCapabilities.can_render_spec`)
+#: still falls back when a panel uses a kind plotly cannot draw.
 _DECLINED_KINDS: frozenset[PlotKind] = frozenset(
     {
         PlotKind.TRAJECTORY_ANIMATION,
         PlotKind.ENSEMBLE_ANIMATION,
-        PlotKind.COMPOSITE,
     }
 )
 
@@ -138,7 +161,7 @@ def register(registry: Registry) -> bool:
     if _BACKEND_NAME in registry:
         return False
 
-    capabilities = RendererCapabilities.of_kinds(
+    capabilities = _PlotlyCapabilities.of_kinds(
         _BACKEND_NAME,
         _REGISTERED_KINDS,
         supports_3d=True,
