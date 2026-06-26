@@ -103,6 +103,12 @@ class PlotKind(StrEnum):
     PHASE_PORTRAIT_2D = "phase_portrait_2d"
     PHASE_PORTRAIT_3D = "phase_portrait_3d"
     SPACETIME = "spacetime"
+    # a spatial **field** at one instant: the state of a spatially-extended
+    # system (a method-of-lines PDE) reshaped to its grid.  One kind covers both
+    # spatial dimensionalities — a 1-D field is a line (a profile), a 2-D field
+    # an ``IMAGE`` heatmap; an animation plays the field over time (a travelling
+    # wave / an evolving 2-D field movie).  See stream VIZ-SPATIAL-FIELD.
+    SPATIAL_FIELD = "spatial_field"
     # a multi-panel figure: an arrangement of sub-:class:`PlotSpec` ``panels``
     # under a :class:`Layout` (the composition seam — ``tsdynamics.viz.plot``)
     COMPOSITE = "composite"
@@ -576,17 +582,21 @@ class Animation:
 
     Frame model (``mode``)
     ----------------------
-    - ``"reveal"`` (the default, and all this release ships): the layer keeps its
-      full static data and each frame shows a *slice* of it — a comet whose head
-      is the current sample and whose tail reaches back :attr:`trail_length`
-      (``None`` ⇒ the whole curve persists).  Covers trajectories, phase
-      portraits, delay embeddings, time series, spacetime.  Memory ``O(data)``.
-    - ``"frames"``: genuinely different data per frame — an **evolving field**
-      such as a 2-D Kuramoto–Sivashinsky ``u(x, t)`` heatmap, rendered by growing
-      the spacetime ``IMAGE`` column by column along its time axis (so consecutive
-      frames carry different image content, not a sweep line over a static image).
-      The matplotlib renderer drives it from the ``IMAGE`` layer's 2-D ``z`` field;
-      a backend that cannot animate draws the final, full field.
+    - ``"reveal"`` (the default): the layer keeps its full static data and each
+      frame shows a *slice* of it — a comet whose head is the current sample and
+      whose tail reaches back :attr:`trail_length` (``None`` ⇒ the whole curve
+      persists).  Covers trajectories, phase portraits, delay embeddings, time
+      series, spacetime.  Memory ``O(data)``.
+    - ``"frames"``: a **spatial-field movie** — the field of a spatially-extended
+      system (a method-of-lines PDE) played over time.  Each frame is the field's
+      *spatial* state at that instant: a 1-D field plays as a travelling-wave line,
+      a 2-D field as an ``imshow`` heatmap (Gray–Scott / Swift–Hohenberg), so
+      consecutive frames carry genuinely different data.  Built via
+      ``to_plot_spec(kind="field", animate=...)`` (a
+      :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` spec carrying the
+      per-time field stack on its layer's ``"frames"`` channel); the matplotlib
+      renderer plays the stack frame by frame, and a backend that cannot animate
+      draws the final field.  **matplotlib-only** (mp4 / gif).
 
     Parameters
     ----------
@@ -778,7 +788,10 @@ class Layer:
         - ``"cat"`` — integer category indices pairing with the categorical
           :attr:`Axis.categories` (a ``BAR`` / ``CATEGORICAL_BAR`` / ``FEATURE_BARS``).
         - ``"size"`` — per-point marker size for a ``SCATTER``.
-        - ``"frame"`` — a leading animation axis (deferred rendering).
+        - ``"frames"`` — the per-time field stack of a ``SPATIAL_FIELD`` layer
+          (shape ``(T, *spatial)`` — ``(T, Nx)`` for a 1-D profile, ``(T, Ny, Nx)``
+          for a 2-D field), played frame by frame by the ``"frames"``-mode
+          animator.  The layer's static channels hold the *final* field.
     label : str, optional
         Legend entry for this layer, or ``None``.
     style : dict, optional

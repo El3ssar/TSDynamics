@@ -42,6 +42,9 @@ _ACCENT_2 = "#0d9488"  # teal — secondary / delay-embedding view
 FIG_OVERRIDES: dict[str, dict] = {
     "Lorenz96": {"kind": "spacetime", "final_time": 60.0, "dt": 0.1},
     "KuramotoSivashinsky": {"kind": "spacetime", "final_time": 150.0, "dt": 0.5},
+    # 2-D spatial fields → the final field reshaped to its grid (a heatmap):
+    "GrayScott": {"kind": "field", "final_time": 1500.0, "dt": 3.0, "method": "RK45"},
+    "SwiftHohenberg": {"kind": "field", "final_time": 50.0, "dt": 0.1, "method": "RK45"},
     "MultiChua": {"ic": "0.1*ones"},
     "DoubleGyre": {"final_time": 40.0},
     "Oregonator": {"skip": True},  # stiff — solve_ivp needs special handling
@@ -251,6 +254,8 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
 
 def _render_ode(entry, plt, opts):
     t, y = _ode_trajectory(entry, opts)
+    if opts.get("kind") == "field":
+        return _render_field(entry, plt, y)
     if opts.get("kind") == "spacetime" or entry.cls().dim is None:
         return _render_spacetime(entry, plt, t, y)
     dim = y.shape[1]
@@ -281,6 +286,23 @@ def _render_spacetime(entry, plt, t, y):
     )
     ax.set_xlabel("t")
     ax.set_ylabel("cell")
+    return fig
+
+
+def _render_field(entry, plt, y):
+    """Render a 2-D spatial-field system: the final field reshaped to its grid.
+
+    The system's ``_field_shape`` ``(Ny, Nx)`` gives the spatial grid; for a
+    multi-block state (Gray–Scott's ``[u, v]``) the **last** block (the activator)
+    is shown — the convention the ``kind="field"`` plot recipe uses.
+    """
+    sys_obj = entry.cls()
+    shape = getattr(sys_obj, "_field_shape", None) or (y.shape[1],)
+    cells = int(np.prod(shape))
+    block = y[-1, -cells:]  # the last field block at the final time
+    fig, ax = plt.subplots(figsize=(4.6, 4.2))
+    ax.imshow(block.reshape(shape), origin="lower", cmap="viridis")
+    ax.set_xticks([]), ax.set_yticks([])
     return fig
 
 

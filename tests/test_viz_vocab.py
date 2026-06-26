@@ -38,6 +38,10 @@ EXPECTED_SEMANTIC_KINDS: frozenset[str] = frozenset(
         "phase_portrait_2d",
         "phase_portrait_3d",
         "spacetime",
+        # the spatial-field kind (stream VIZ-SPATIAL-FIELD): a spatially-extended
+        # system's field at one instant, reshaped to its grid — a 1-D profile line
+        # or a 2-D heatmap; an animation plays it over time (the field movie).
+        "spatial_field",
         "composite",
         "bifurcation",
         "orbit_diagram",

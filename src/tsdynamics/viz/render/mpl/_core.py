@@ -112,6 +112,10 @@ KIND_PRESETS: dict[PlotKind, _KindPreset] = {
     PlotKind.IMAGE: _KindPreset(cmap="viridis"),
     PlotKind.SPACETIME: _KindPreset(cmap="viridis"),
     PlotKind.SPECTROGRAM: _KindPreset(cmap="magma", norm="log"),
+    # a 2-D spatial field is a viridis heatmap (its equal aspect rides on the
+    # spec, set by the producer for the 2-D case only); a 1-D field is a plain
+    # auto-aspect line, which ignores the cmap.  See stream VIZ-SPATIAL-FIELD.
+    PlotKind.SPATIAL_FIELD: _KindPreset(cmap="viridis"),
 }
 
 _DEFAULT_PRESET = _KindPreset()
