@@ -55,6 +55,54 @@ small built-in colormap (so no matplotlib import), or from an explicit per-verte
 RGB ``style["color"]``.  ``bounds`` are the per-axis ``[min, max]`` over every
 geometry's vertices; the ``camera`` is derived from those bounds (a corner view
 looking at the centre) unless ``spec.meta["camera"]`` overrides it.
+
+Composite (multi-panel) payloads
+--------------------------------
+A :data:`~tsdynamics.viz.spec.PlotKind.COMPOSITE` spec carries its drawable
+content in :attr:`~tsdynamics.viz.spec.PlotSpec.panels` (one sub-spec per panel)
+plus a :class:`~tsdynamics.viz.spec.Layout`, not in its top-level ``layers``.
+:func:`lower_spec` detects a composite and lowers **each panel recursively**,
+emitting a ``"panels"`` list instead of a single ``"geometries"`` block::
+
+    {
+        "schema_version": <int>,
+        "kind": "composite",
+        "title": "<plot title>",
+        "geometries": [],                   # always empty for a composite
+        "panels": [ <panel>, ... ],         # one per child panel
+        "metadata": {
+            "schema_version": <int>,
+            "layout": {                     # the Layout, plus the resolved grid
+                "mode": "stack" | "row" | "grid",
+                "rows": <int>, "cols": <int>,
+                "share_x": <bool>, "share_y": <bool>
+            },
+            "bounds": { ... },              # union over every (placed) panel
+            "camera": { ... }               # framing that whole placed scene
+        }
+    }
+
+Each ``panel`` is a single-panel payload (the same ``geometries`` / per-panel
+``metadata`` a non-composite spec produces) plus its **identity and placement**::
+
+    {
+        "index": <int>,                     # panel order (0-based)
+        "title": "<panel title>",
+        "kind": "<panel PlotSpec.kind value>",
+        "grid": {"row": <int>, "col": <int>},   # cell in the layout grid
+        "offset": [<x>, <y>, <z>],          # local-origin translation (see below)
+        "geometries": [ <geometry>, ... ],
+        "metadata": { ... }                 # the panel's own labels/units/bounds/camera
+    }
+
+The panel's geometry ``positions`` stay in the panel's **own** local coordinates
+(unshifted), so a frontend can render each panel into its own viewport
+untouched.  The separate ``offset`` is a convenience translation — each panel's
+local-bounds centre laid out on the resolved ``rows`` × ``cols`` grid with unit
+cell spacing (column → +x, row → −y, so row 0 is at the top) — for a frontend
+that prefers to drop every panel into **one** shared scene rather than tile
+viewports.  Either reading is valid: the panel ``grid`` cell and ``offset`` are
+redundant placement hints, and the geometry itself is never mutated.
 """
 
 from __future__ import annotations
@@ -67,7 +115,7 @@ from ...export import SCHEMA_VERSION
 from ...spec import PlotKind
 
 if TYPE_CHECKING:
-    from ...spec import Axis, Layer, PlotSpec
+    from ...spec import Axis, Layer, Layout, PlotSpec
 
 __all__ = ["lower_spec"]
 
@@ -86,11 +134,17 @@ _GEOMETRY_TYPE: dict[PlotKind, str] = {
 def lower_spec(spec: PlotSpec) -> dict[str, Any]:
     """Lower ``spec`` to a three.js BufferGeometry-ready JSON-able payload.
 
-    Walks the spec's drawable layers, lowering each one whose mark is a
-    line / points / surface (other marks — images, bars, quivers — have no
-    BufferGeometry analogue and are skipped) into a flat-positions geometry, then
-    derives the top-level ``metadata`` (labels / units / bounds / camera) from the
-    axes and the lowered vertices.
+    For a **single-panel** spec, walks the spec's drawable layers, lowering each
+    one whose mark is a line / points / surface (other marks — images, bars,
+    quivers — have no BufferGeometry analogue and are skipped) into a
+    flat-positions geometry, then derives the top-level ``metadata`` (labels /
+    units / bounds / camera) from the axes and the lowered vertices.
+
+    For a **composite** spec (``PlotKind.COMPOSITE`` — its drawable content lives
+    in :attr:`~tsdynamics.viz.spec.PlotSpec.panels`, not the top-level layers),
+    lowers each panel recursively and emits a ``"panels"`` list of per-panel
+    payloads (each carrying its identity, grid placement, and a layout-offset)
+    plus a top-level ``layout`` block — see the module docstring for the schema.
 
     Parameters
     ----------
@@ -102,6 +156,18 @@ def lower_spec(spec: PlotSpec) -> dict[str, Any]:
     dict
         A JSON-serializable payload conforming to the module-docstring schema
         (every value is a plain ``str`` / ``int`` / ``float`` / ``list``).
+    """
+    if spec.is_composite:
+        return _lower_composite(spec)
+    return _lower_single(spec)
+
+
+def _lower_single(spec: PlotSpec) -> dict[str, Any]:
+    """Lower a single-panel spec to the ``geometries`` + ``metadata`` payload.
+
+    The non-composite lowering: walk ``spec.layers``, lower each drawable mark,
+    and derive the per-spec ``metadata`` (labels / units / bounds / camera).
+    Kept as a stable helper so the composite path can reuse it per panel.
     """
     geometries: list[dict[str, Any]] = []
     for layer in spec.layers:
@@ -124,6 +190,123 @@ def lower_spec(spec: PlotSpec) -> dict[str, Any]:
         "geometries": geometries,
         "metadata": metadata,
     }
+
+
+# ---------------------------------------------------------------------------
+# composite (multi-panel) → panel groups
+# ---------------------------------------------------------------------------
+
+
+def _lower_composite(spec: PlotSpec) -> dict[str, Any]:
+    """Lower a ``COMPOSITE`` spec to a panelled payload.
+
+    Lowers each child panel via :func:`_lower_single`, places it on the resolved
+    ``rows`` × ``cols`` grid (per the :class:`~tsdynamics.viz.spec.Layout`), tags
+    it with its identity (index / title / kind) + grid cell + a layout-offset, and
+    aggregates the per-panel bounds (each shifted by its offset) into a top-level
+    ``bounds`` / ``camera`` that frames the whole laid-out scene.
+    """
+    panels_in = spec.panels
+    rows, cols = _composite_grid(spec.layout, len(panels_in))
+
+    panels_out: list[dict[str, Any]] = []
+    placed_geometries: list[dict[str, Any]] = []
+    for i, panel in enumerate(panels_in):
+        sub = _lower_single(panel)
+        row, col = divmod(i, cols) if cols else (i, 0)
+        offset = _panel_offset(sub["metadata"]["bounds"], row, col)
+        panels_out.append(
+            {
+                "index": i,
+                "title": panel.title,
+                "kind": panel.kind.value,
+                "grid": {"row": row, "col": col},
+                "offset": offset,
+                "geometries": sub["geometries"],
+                "metadata": sub["metadata"],
+            }
+        )
+        # A bounds-only copy of each geometry, shifted by the panel's offset, so
+        # the aggregate camera frames the laid-out scene (positions stay local).
+        for geom in sub["geometries"]:
+            placed_geometries.append({"positions": _shift_positions(geom["positions"], offset)})
+
+    bounds = _bounds(placed_geometries)
+    metadata = {
+        "schema_version": SCHEMA_VERSION,
+        "layout": _layout_dict(spec.layout, rows, cols),
+        "bounds": bounds,
+        "camera": _camera(spec, bounds),
+    }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": spec.kind.value,
+        "title": spec.title,
+        "geometries": [],
+        "panels": panels_out,
+        "metadata": metadata,
+    }
+
+
+def _composite_grid(layout: Layout | None, n: int) -> tuple[int, int]:
+    """Return the ``(rows, cols)`` grid for a composite's :class:`Layout`.
+
+    Mirrors the matplotlib renderer's tiling: ``"row"`` → one row, ``"grid"`` →
+    the explicit ``rows`` × ``cols`` (or a near-square fit when unset), and
+    ``"stack"`` (the default) → one column.  ``n == 0`` yields ``(0, 0)``.
+    """
+    if n <= 0:
+        return 0, 0
+    mode = getattr(layout, "mode", "stack")
+    if mode == "row":
+        return 1, n
+    if mode == "grid":
+        rows = getattr(layout, "rows", None)
+        cols = getattr(layout, "cols", None)
+        if rows and cols:
+            return int(rows), int(cols)
+        c = int(np.ceil(np.sqrt(n)))
+        r = int(np.ceil(n / c))
+        return r, c
+    return n, 1  # "stack" (default): one column
+
+
+def _panel_offset(bounds: dict[str, list[float]], row: int, col: int) -> list[float]:
+    """Local-origin translation placing a panel at grid cell ``(row, col)``.
+
+    Each panel is centred on its own bounds, then translated so that adjacent
+    cells sit one (max panel span) apart: column → +x, row → −y (row 0 on top),
+    z untouched.  The span scale keeps panels from overlapping regardless of their
+    individual extents.
+    """
+    span_x = bounds["x"][1] - bounds["x"][0]
+    span_y = bounds["y"][1] - bounds["y"][0]
+    span = max(span_x, span_y, 1.0)
+    pitch = span * 1.2  # a small gutter between cells
+    cx = (bounds["x"][0] + bounds["x"][1]) / 2.0
+    cy = (bounds["y"][0] + bounds["y"][1]) / 2.0
+    return [col * pitch - cx, -row * pitch - cy, 0.0]
+
+
+def _layout_dict(layout: Layout | None, rows: int, cols: int) -> dict[str, Any]:
+    """Serialize the composite layout (its mode/share flags + the resolved grid)."""
+    return {
+        "mode": getattr(layout, "mode", "stack"),
+        "rows": int(rows),
+        "cols": int(cols),
+        "share_x": bool(getattr(layout, "share_x", False)),
+        "share_y": bool(getattr(layout, "share_y", False)),
+    }
+
+
+def _shift_positions(positions: list[float], offset: list[float]) -> list[float]:
+    """Translate a flat ``[x0, y0, z0, ...]`` list by ``offset`` ``[dx, dy, dz]``."""
+    ox, oy, oz = offset
+    shifted = list(positions)
+    shifted[0::3] = [v + ox for v in positions[0::3]]
+    shifted[1::3] = [v + oy for v in positions[1::3]]
+    shifted[2::3] = [v + oz for v in positions[2::3]]
+    return shifted
 
 
 # ---------------------------------------------------------------------------
