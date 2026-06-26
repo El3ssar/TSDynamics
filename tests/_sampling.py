@@ -58,10 +58,21 @@ INTEGRATION_SAMPLE: list[str] = [
     # population_dynamics
     "Finance",
     "CoevolvingPredatorPrey",
-    # spatial_fields (2-D method-of-lines PDEs — high-dim flattened fields)
-    "GrayScott",
-    "SwiftHohenberg",
+    # NOTE: the `spatial_fields` category (GrayScott, SwiftHohenberg) is
+    # intentionally absent — see HEAVY_FIELD_CATEGORIES below.
 ]
+
+# ODE categories excluded from the per-system correctness sweeps because they are
+# high-dimensional method-of-lines PDE *fields* (a flattened 2-D grid → ~1k-5k
+# coupled ODEs).  At the catalogue default grid, lowering the symbolic tape alone
+# costs seconds-to-tens-of-seconds and a full integration / pure-Python reference
+# trajectory is intractable (and the dense symbolic autogen Jacobian does not
+# scale at all).  They are viz-only demos, fully exercised by the viz field-movie
+# tests on small grids (N=8) — which lower + integrate the same `_equations` on the
+# engine.  Consumers that skip these categories: the INTEGRATION_SAMPLE
+# category-coverage guard (test_registry) and the `reference == engine` RHS leg
+# (test_xval_catalogue leg 3).
+HEAVY_FIELD_CATEGORIES: set[str] = {"spatial_fields"}
 
 # --- ODE systems excluded from the exhaustive integration sweeps ------------
 # Systems that cannot be integrated by adaptive solvers in bounded time would

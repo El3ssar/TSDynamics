@@ -92,12 +92,21 @@ def test_integration_sample_names_exist() -> None:
 
 
 def test_integration_sample_covers_every_ode_category() -> None:
-    """Every ODE category needs >= 2 representatives in the slow tier."""
+    """Every ODE category needs >= 2 representatives in the slow tier.
+
+    Exception: categories in ``HEAVY_FIELD_CATEGORIES`` (high-dim method-of-lines
+    PDE fields, too heavy for the integration / reference-xval sweeps) are
+    deliberately not sampled — they are covered by the small-grid viz field tests.
+    """
+    from _sampling import HEAVY_FIELD_CATEGORIES
+
     sample_categories: dict[str, int] = {}
     for name in INTEGRATION_SAMPLE:
         cat = registry.get(name).category
         sample_categories[cat] = sample_categories.get(cat, 0) + 1
     for category in registry.categories("ode"):
+        if category in HEAVY_FIELD_CATEGORIES:
+            continue
         assert sample_categories.get(category, 0) >= 2, (
             f"ODE category {category!r} has fewer than 2 representatives in "
             f"INTEGRATION_SAMPLE (tests/_sampling.py) — add some."

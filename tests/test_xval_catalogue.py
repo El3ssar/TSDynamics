@@ -171,7 +171,16 @@ def test_ode_reference_matches_engine(ode_entry) -> None:
     with the interpreter the families dispatch to, up to a 1-ULP transcendental
     slack.  Pure-arithmetic systems (the ``OP_POWI`` path included) agree
     bit-for-bit — pinned exactly by :func:`test_op_powi_is_bit_exact`.
+
+    High-dimensional method-of-lines PDE fields (``HEAVY_FIELD_CATEGORIES``) are
+    skipped: at the catalogue default grid their symbolic tape costs seconds to
+    tens of seconds *just to lower*, for no extra coverage — the same ``_equations``
+    are lowered + integrated on the engine by the small-grid viz field tests.
     """
+    from _sampling import HEAVY_FIELD_CATEGORIES
+
+    if ode_entry.category in HEAVY_FIELD_CATEGORIES:
+        pytest.skip(f"{ode_entry.name}: high-dim PDE field — lowering too heavy (covered by viz)")
     sys = ode_entry.cls()
     for u, t in _states(sys.dim, seed=31):
         reference = run.eval_rhs(sys, u, t, backend="reference")
