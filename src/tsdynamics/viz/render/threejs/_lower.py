@@ -101,13 +101,15 @@ _GEOMETRY_TYPE: dict[PlotKind, str] = {
     PlotKind.SURFACE3D: "surface",
 }
 
-#: Layer marks the reveal animation drives — the curve / points marks whose
-#: vertices are a natural sweep order.  A ``SURFACE3D`` mesh has no comet reveal
-#: (the loader animates only line / points geometries by draw-range), so it is
-#: not counted when sizing the animation.
-_ANIMATED_MARKS: frozenset[PlotKind] = frozenset(
-    {PlotKind.LINE, PlotKind.LINE3D, PlotKind.SCATTER, PlotKind.MARKERS}
-)
+#: Layer marks the reveal animation drives — the **line** marks whose vertices
+#: are a natural sweep order and whose index buffer (``0,1,1,2,...``) the loader
+#: reveals by ``setDrawRange``.  ``SCATTER`` / ``MARKERS`` (a ``points`` geometry
+#: with no index buffer) and ``SURFACE3D`` (a mesh) have **no** comet reveal in
+#: the reference loader, so they are excluded: a points-only / surface-only spec
+#: emits no animation block (and :func:`_animation_metadata` warns) rather than a
+#: block the loader cannot play (which would leave the export static *and* freeze
+#: the camera).  Mirror this set in the loader's ``geom.type === "line"`` guard.
+_ANIMATED_MARKS: frozenset[PlotKind] = frozenset({PlotKind.LINE, PlotKind.LINE3D})
 
 
 def lower_spec(spec: PlotSpec) -> dict[str, Any]:
@@ -511,13 +513,18 @@ def _animation_metadata(spec: PlotSpec) -> dict[str, Any] | None:
 
     Returns ``None`` when ``spec.animation`` is absent (so a static export is
     byte-identical to the pre-animation payload) or when the spec has no
-    animatable line / points layer (a draw-range reveal needs one).
+    animatable **line** layer to reveal.  In the latter case — an animation *was*
+    requested but the reference loader has no comet to play (a ``points``-only or
+    ``surface``-only spec) — a :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`
+    warning is emitted so the animation is never *silently* dropped: the export is
+    a valid static payload that the loader renders (auto-rotating) as usual.
     """
     anim = spec.animation
     if anim is None:
         return None
     n_samples = _animated_sample_count(spec)
     if n_samples < 2:
+        _warn_unrevealable(spec)
         return None
     trail = _trail_length_samples(spec, anim)
     return {
@@ -534,6 +541,30 @@ def _animation_metadata(spec: PlotSpec) -> dict[str, Any] | None:
     }
 
 
+def _warn_unrevealable(spec: PlotSpec) -> None:
+    """Warn that an animated spec has no line geometry the threejs loader can reveal.
+
+    Honors the issue's "animates, **or warns** — never silently drops" contract:
+    the threejs reveal comet is a ``setDrawRange`` sweep over a **line** index
+    buffer, so a ``points``-only / ``surface``-only animated spec has nothing to
+    reveal.  Rather than emit a block the loader cannot play (which would freeze
+    the export *and* the camera), the exporter drops the animation to a static
+    payload and warns here.
+    """
+    import warnings
+
+    from ..caps import VisualizationDegraded
+
+    kind = spec.kind.value if hasattr(spec.kind, "value") else str(spec.kind)
+    warnings.warn(
+        f"threejs export: the animation on this {kind!r} spec was dropped — its "
+        "reveal comet needs a line (LINE / LINE3D) geometry, but the spec has only "
+        "points / surface layers. Exporting a static payload instead.",
+        VisualizationDegraded,
+        stacklevel=2,
+    )
+
+
 def _head_color(color: Any) -> list[float] | None:
     """Coerce the head color to a plain ``[r, g, b]`` list, or ``None``.
 
@@ -546,7 +577,7 @@ def _head_color(color: Any) -> list[float] | None:
 
 
 def _animated_sample_count(spec: PlotSpec) -> int:
-    """Vertices on the longest animated (line / points) layer — the reveal length."""
+    """Vertices on the longest animatable (line) layer — the reveal length (0 if none)."""
     n = 0
     for layer in spec.layers:
         if PlotKind(layer.kind) not in _ANIMATED_MARKS:

@@ -644,8 +644,12 @@ import is deferred to first render.
   `geometry.setDrawRange(start, count)` + a `THREE.Points` head, on a
   `requestAnimationFrame` clock with a play/pause overlay — and because the
   draw-range update is independent of `OrbitControls`, the camera is held still by
-  default yet **orbitable while it plays**. A static payload (no
-  `metadata.animation`) renders exactly as before.
+  default yet **orbitable while it plays**. The reveal sweeps a **line** index
+  buffer, so the block is emitted only for `LINE`/`LINE3D` specs (`_ANIMATED_MARKS`);
+  an animated `points`-only / `surface`-only spec has no comet to play, so the
+  exporter drops to a static payload and **warns** (`VisualizationDegraded`) rather
+  than silently dropping it (and the loader auto-rotates, never freezing the
+  camera). A static payload (no `metadata.animation`) renders exactly as before.
   `PlotSpec.save` picks the
   backend by extension (animated: `.html`→plotly, `.mp4`/`.gif`→matplotlib) and
   takes `fps`/`dpi`/`size`. The `Animation` directive round-trips through

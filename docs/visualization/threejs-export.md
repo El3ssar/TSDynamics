@@ -80,6 +80,12 @@ backdrop with a bright windowed trail and a head marker sweeping the line — by
 `geometry.setDrawRange(start, count)` per frame (no buffer re-upload). Because `OrbitControls` is
 independent of that draw-range update, you can **orbit the attractor with the mouse while it plays**.
 
+The reveal comet sweeps a **line** index buffer (`LINE` / `LINE3D`), so the block is emitted only
+when the spec has a line layer. An animated `points`-only (`SCATTER` / `MARKERS`) or `surface`-only
+spec has nothing to reveal: the exporter drops the animation to a valid static payload (which the
+loader renders, auto-rotating, as usual) and emits a `VisualizationDegraded` warning — the animation
+is **never silently dropped**.
+
 ## The reference loader
 
 [`tsdyn-threejs-loader.js`](../_static/tsdyn-threejs-loader.js) is a tiny reference ES module that

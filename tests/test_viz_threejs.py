@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from tsdynamics.viz.export import SCHEMA_VERSION
-from tsdynamics.viz.render.caps import RenderResult
+from tsdynamics.viz.render.caps import RenderResult, VisualizationDegraded
 from tsdynamics.viz.spec import Animation, Axis, Layer, PlotKind, PlotSpec
 
 
@@ -397,13 +397,55 @@ def test_animated_2d_phase_portrait_animates() -> None:
     assert anim["n_samples"] == n
 
 
-def test_surface_only_animation_emits_no_block() -> None:
-    """A spec whose only layer is a surface has no reveal-able line → no block."""
+def test_surface_only_animation_warns_and_emits_no_block() -> None:
+    """An animated surface-only spec → no block + a VisualizationDegraded warning."""
     from tsdynamics.viz.render.threejs._lower import lower_spec
 
     spec = _surface_spec()
     spec.animation = Animation()
-    payload = lower_spec(spec)
+    with pytest.warns(VisualizationDegraded):
+        payload = lower_spec(spec)
+    assert "animation" not in payload["metadata"]
+
+
+def test_points_only_animation_warns_and_emits_no_block() -> None:
+    """An animated SCATTER/MARKERS-only spec emits NO block and WARNS (never silent).
+
+    Regression guard (issue #465): a points geometry has no index buffer for the
+    loader's setDrawRange reveal, so emitting a block would leave the export static
+    *and* freeze the camera.  The exporter must drop the animation to a static
+    payload (the loader then auto-rotates) and warn rather than silently produce it.
+    """
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    for mark in (PlotKind.SCATTER, PlotKind.MARKERS):
+        n = 32
+        t = np.linspace(0.0, 1.0, n)
+        spec = PlotSpec(
+            kind=PlotKind.PHASE_PORTRAIT_3D,
+            layers=[Layer(kind=mark, data={"x": np.sin(t), "y": np.cos(t), "z": t})],
+            x=Axis(label="x"),
+            y=Axis(label="y"),
+            z=Axis(label="z"),
+            ndim=3,
+            animation=Animation(),
+        )
+        with pytest.warns(VisualizationDegraded):
+            payload = lower_spec(spec)
+        assert "animation" not in payload["metadata"]
+        # The geometry is the same valid (static) points export as without animation.
+        assert payload["geometries"][0]["type"] == "points"
+
+
+def test_static_points_spec_does_not_warn() -> None:
+    """A points spec with NO Animation lowers silently (no spurious warning)."""
+    import warnings
+
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", VisualizationDegraded)
+        payload = lower_spec(_phase2d_scatter_spec(32))
     assert "animation" not in payload["metadata"]
 
 
@@ -423,6 +465,7 @@ def test_to_plot_spec_animate_flag_drives_threejs_payload() -> None:
 
 def test_loader_js_drives_setdrawrange_reveal() -> None:
     """The reference loader honors metadata.animation via setDrawRange (string check)."""
+    import re
     from pathlib import Path
 
     loader = Path(__file__).resolve().parents[1] / "docs" / "_static" / "tsdyn-threejs-loader.js"
@@ -431,3 +474,15 @@ def test_loader_js_drives_setdrawrange_reveal() -> None:
     assert "meta.animation" in src
     assert "setDrawRange" in src
     assert "buildLineComet" in src
+    # Only LINE geometries get a comet (mirrors _ANIMATED_MARKS = {LINE, LINE3D}):
+    # a points/surface geometry has no index buffer to setDrawRange over.
+    assert 'geom.type === "line"' in src
+    # Index-unit invariant: a LineSegments index buffer is 0,1,1,2,... (TWO indices
+    # per segment), so setDrawRange works in INDEX units — start/count are `2 *`
+    # the vertex window, never the raw vertex index (a vertex-vs-index mixup would
+    # reveal a wrong-length / wrong-position trail).
+    assert re.search(r"start\s*=\s*2\s*\*\s*lo", src)
+    assert re.search(r"count\s*=\s*2\s*\*", src)
+    # A defensive animation-block-but-no-line payload must NOT freeze the camera:
+    # autoRotate keys off whether a comet was actually installed, not on `anim`.
+    assert "autoRotate = opts.autoRotate ?? !revealing" in src

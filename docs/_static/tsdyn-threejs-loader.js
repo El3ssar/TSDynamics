@@ -301,8 +301,11 @@ export function renderThreejsPayload(container, payload, opts = {}) {
 
   // When the payload is animated, build a reveal comet for every line geometry
   // (other geometry types are drawn static); otherwise draw every geometry static.
+  // `revealing` is true only when at least one comet was actually installed — a
+  // (defensive) animation block with no line geometry must NOT freeze the camera.
   const anim = meta.animation || null;
   let animationHandle = null;
+  let revealing = false;
   if (anim) {
     const comets = [];
     for (const geom of payload.geometries || []) {
@@ -316,6 +319,9 @@ export function renderThreejsPayload(container, payload, opts = {}) {
     }
     if (comets.length) {
       animationHandle = installAnimation(container, comets, anim);
+      revealing = true;
+    } else {
+      console.warn("tsd-anim(threejs): animation block but no line geometry to reveal");
     }
   } else {
     for (const geom of payload.geometries || []) {
@@ -326,9 +332,10 @@ export function renderThreejsPayload(container, payload, opts = {}) {
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(...target);
   controls.enableDamping = true;
-  // An animated payload holds the camera still by default (the geometry reveal is
-  // the motion — auto-rotation would mask it); the user can still orbit by mouse.
-  controls.autoRotate = opts.autoRotate ?? !anim;
+  // A reveal comet holds the camera still by default (the geometry reveal is the
+  // motion — auto-rotation would mask it); the user can still orbit by mouse.
+  // Without an installed comet the camera auto-rotates as in the static export.
+  controls.autoRotate = opts.autoRotate ?? !revealing;
   controls.autoRotateSpeed = 0.6;
   controls.update();
 
