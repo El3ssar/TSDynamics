@@ -173,14 +173,14 @@ def test_ode_reference_matches_engine(ode_entry) -> None:
     bit-for-bit — pinned exactly by :func:`test_op_powi_is_bit_exact`.
 
     High-dimensional method-of-lines PDE fields (``HEAVY_FIELD_CATEGORIES``) are
-    skipped: at the catalogue default grid their symbolic tape costs seconds to
-    tens of seconds *just to lower*, for no extra coverage — the same ``_equations``
-    are lowered + integrated on the engine by the small-grid viz field tests.
+    skipped: this leg re-lowers the tape for every sample state, so for a 1k-5k-state
+    field it is tens of seconds for no extra coverage — the same ``_equations`` are
+    lowered + integrated on the engine by the small-grid viz field tests.
     """
     from _sampling import HEAVY_FIELD_CATEGORIES
 
     if ode_entry.category in HEAVY_FIELD_CATEGORIES:
-        pytest.skip(f"{ode_entry.name}: high-dim PDE field — lowering too heavy (covered by viz)")
+        pytest.skip(f"{ode_entry.name}: high-dim PDE field — re-lowered per state (covered by viz)")
     sys = ode_entry.cls()
     for u, t in _states(sys.dim, seed=31):
         reference = run.eval_rhs(sys, u, t, backend="reference")

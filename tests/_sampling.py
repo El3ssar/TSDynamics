@@ -62,16 +62,17 @@ INTEGRATION_SAMPLE: list[str] = [
     # intentionally absent — see HEAVY_FIELD_CATEGORIES below.
 ]
 
-# ODE categories excluded from the per-system correctness sweeps because they are
-# high-dimensional method-of-lines PDE *fields* (a flattened 2-D grid → ~1k-5k
-# coupled ODEs).  At the catalogue default grid, lowering the symbolic tape alone
-# costs seconds-to-tens-of-seconds and a full integration / pure-Python reference
-# trajectory is intractable (and the dense symbolic autogen Jacobian does not
-# scale at all).  They are viz-only demos, fully exercised by the viz field-movie
-# tests on small grids (N=8) — which lower + integrate the same `_equations` on the
-# engine.  Consumers that skip these categories: the INTEGRATION_SAMPLE
-# category-coverage guard (test_registry) and the `reference == engine` RHS leg
-# (test_xval_catalogue leg 3).
+# ODE categories excluded from the per-system integration / cross-validation sweeps
+# because they are high-dimensional method-of-lines PDE *fields* (a flattened 2-D
+# grid → ~1k-5k coupled ODEs).  The pure-Python *reference* trajectory leg
+# (test_xval_catalogue leg 4) steps them in interpreted Python (intractable), and
+# the per-state `reference == engine` RHS leg (leg 3) re-lowers the tape for every
+# sample state (tens of seconds at 1k-5k states).  Engine lowering + integration
+# themselves are fast (a couple of seconds — the field movies are quick), so these
+# systems are fully exercised by the small-grid viz field tests (N=8), which lower
+# + integrate the same `_equations` on the engine.  Skipped by: the
+# INTEGRATION_SAMPLE coverage guard (test_registry), the reference==engine leg
+# (test_xval_catalogue leg 3), and the nightly full integration sweep.
 HEAVY_FIELD_CATEGORIES: set[str] = {"spatial_fields"}
 
 # --- ODE systems excluded from the exhaustive integration sweeps ------------
