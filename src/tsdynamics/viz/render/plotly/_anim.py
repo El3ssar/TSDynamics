@@ -6,12 +6,15 @@ scene per frame (janky, and it fights the camera even with ``uirevision``):
 - **HTML export — the real one (:func:`animated_html`):** the full attractor is
   drawn **once** (a faint, static, rotatable trace) and a ``requestAnimationFrame``
   loop (:data:`_REALTIME_JS`) advances a **comet** (a windowed trail + a head) by
-  re-rendering with ``Plotly.react`` (which, unlike ``restyle``, actually redraws a
-  gl3d/WebGL trace) under a constant ``uirevision`` (which makes plotly preserve the
-  user's camera across the updates).  So the user can **orbit the attractor with the
-  mouse while it plays**, at 60 fps (genuinely smooth).  It is also tiny (the curve
-  is embedded once, in the static context trace).  Zero-extra-dependency "share the
-  animation" path (no ffmpeg/kaleido).
+  **streaming the comet's trace buffers in place with ``Plotly.extendTraces``**
+  (append the next points, trim to a ``maxPoints`` window).  Crucially
+  ``extendTraces`` does **not** re-create the gl3d traces or rebuild the WebGL scene
+  (it only pokes the existing GPU buffers), so — unlike ``Plotly.react``, which tears
+  the moving traces down every frame and thereby ate an in-progress orbit drag — the
+  attractor is **rotatable with the mouse WHILE it plays, with no click lag and
+  without the animation ever stopping**.  A constant ``uirevision`` keeps the camera
+  the user sets.  It is also tiny (the curve is embedded once, in the static context
+  trace).  Zero-extra-dependency "share the animation" path (no ffmpeg/kaleido).
 - **Live figure (:func:`build_animated_figure`, notebooks):** a plotly ``frames``
   + play-button + slider figure (the only option for a returned ``Figure`` with no
   HTML wrapper to host a script).  Functional, but the HTML export is the smooth one.
@@ -39,23 +42,24 @@ if TYPE_CHECKING:
 __all__ = ["animated_html", "build_animated_figure"]
 
 #: The real-time driver: a ``requestAnimationFrame`` loop that advances a comet by
-#: mutating only the comet/head trace data and re-rendering with ``Plotly.react``.
-#: ``react`` re-renders the WebGL (gl3d) scene — which ``Plotly.restyle`` does *not*
-#: do for 3-D traces (the data updates but nothing redraws) — while a constant
-#: ``uirevision`` makes plotly **preserve the user's camera / zoom / pan across the
-#: updates** (the documented "uirevision persist" pattern), so a 3-D attractor stays
-#: rotatable with the mouse while it animates.  The full curve lives in the static
-#: context trace (unchanged each tick, so ``react`` diffs it away — only the small
-#: comet re-renders).  ``{plot_id}`` is substituted by plotly with the graph-div id;
-#: ``__…__`` tokens are filled below.
+#: **streaming its trace buffers in place with ``Plotly.extendTraces``** (append the
+#: next points, trim to a ``maxPoints`` sliding window; the single-point head uses
+#: ``maxPoints`` 1; the window resets to the start once per loop via ``restyle``).
+#: ``extendTraces`` redraws the gl3d comet WITHOUT re-creating the traces or
+#: rebuilding the WebGL scene — so an in-progress mouse orbit-drag is never
+#: interrupted (rotate WHILE it plays, no click lag, the stream never stops), and a
+#: constant ``uirevision`` keeps the user's camera.  (``Plotly.react`` also redraws
+#: gl3d but tears the moving traces down every frame; that per-frame scene rebuild
+#: ate the drag and lagged the first rotation — so it is deliberately NOT used here.)
+#: The full curve lives in the static context trace (never touched).  ``{plot_id}``
+#: is substituted by plotly with the graph-div id; ``__…__`` tokens are filled below.
 _REALTIME_JS = """
 (function() {
   var gd = document.getElementById('{plot_id}');
   if (!gd || !window.Plotly) { console.warn('tsd-anim: no graph div / Plotly'); return; }
   var LAYERS = __LAYERS__, WINDOW = __WINDOW__, STRIDE = __STRIDE__;
   var IS3D = __IS3D__, N = __N__;
-  var layout = gd.layout;
-  // Cache the full curve + the comet/head trace templates from the initial figure.
+  // Cache the full curve arrays from the initial figure.
   // Read the curve from plotly's DECODED data (gd._fullData): plotly serialises a
   // numpy array into a base64 typed-array *spec* object ({dtype, bdata}) and stores
   // THAT in gd.data[i].x — which has no .slice — while gd._fullData[i].x is the
@@ -88,9 +92,6 @@ _REALTIME_JS = """
       z: asArray(d.z != null ? d.z : raw.z),
     };
   });
-  var cometProto = LAYERS.map(function(m) { return gd.data[m.comet]; });
-  var headProto = LAYERS.map(function(m) { return m.head >= 0 ? gd.data[m.head] : null; });
-  var ctxTrace = LAYERS.map(function(m) { return gd.data[m.ctx]; });
   console.info('tsd-anim: starting', {N: N, window: WINDOW, stride: STRIDE, is3d: IS3D});
 
   // --- A minimal, always-visible play/pause + restart control overlay --------
@@ -113,62 +114,78 @@ _REALTIME_JS = """
   bar.appendChild(playBtn); bar.appendChild(restartBtn); bar.appendChild(readout);
   gd.appendChild(bar);
 
-  // --- Rotate-while-it-plays: pause the comet while the pointer is down --------
-  // Plotly.react() rebuilds the gl3d scene each frame, which EATS an in-progress
-  // orbit drag — so a 3-D attractor feels un-rotatable while it animates.  Hold
-  // the comet for the moment the pointer is down (and a beat after release), so
-  // gl3d's native camera drag runs uninterrupted; the camera the user sets is
-  // kept (constant uirevision) and the comet resumes the instant they let go.
-  var interacting = false, resumeTimer = null;
-  function holdAfter(ms) {
-    if (resumeTimer) { clearTimeout(resumeTimer); }
-    resumeTimer = setTimeout(function() { interacting = false; resumeTimer = null; }, ms);
+  // Keep the comet animating WHILE the user orbits, with NO snap-back.  A gl3d comet
+  // redraw restores the camera from gd.layout (uirevision); a mouse orbit-drag only
+  // *commits* the new camera to gd.layout on release, so mid-drag each extendTraces
+  // redraw was snapping the view back to where the drag began.  plotly reports the
+  // live camera continuously through 'plotly_relayouting', so we mirror it into
+  // gd.layout.scene.camera as the drag happens — the next redraw then keeps the live
+  // pose.  Pure data mirror (we issue no relayout/redraw → no recursion, no flicker,
+  // the animation never stops); on release uirevision keeps the committed pose.
+  if (typeof gd.on === 'function') {
+    var mirrorCam = function(e) {
+      if (e && e['scene.camera']) {
+        if (!gd.layout.scene) { gd.layout.scene = {}; }
+        gd.layout.scene.camera = e['scene.camera'];
+      }
+    };
+    gd.on('plotly_relayouting', mirrorCam);
+    gd.on('plotly_relayout', mirrorCam);
   }
-  function beginInteract() { interacting = true; if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; } }
-  gd.addEventListener('mousedown', beginInteract);
-  window.addEventListener('mouseup', function() { holdAfter(140); });
-  gd.addEventListener('wheel', function() { interacting = true; holdAfter(280); }, { passive: true });
-  gd.addEventListener('touchstart', beginInteract, { passive: true });
-  window.addEventListener('touchend', function() { holdAfter(180); }, { passive: true });
 
+  // Stream the comet by MUTATING the trace buffers in place.  Plotly.extendTraces
+  // appends the next points to the comet line (trimmed to a WINDOW-length sliding
+  // window via maxPoints) and advances the single-point head (maxPoints 1).  Unlike
+  // Plotly.react it does NOT re-create the gl3d traces or rebuild the WebGL scene —
+  // it only pokes the existing trace GPU buffers — so an in-progress mouse
+  // orbit-drag is never interrupted: you rotate WHILE it plays, with no click lag,
+  // and the camera is left untouched (constant uirevision).  (react redraws gl3d
+  // too, but tears the moving traces down every frame, and that per-frame scene
+  // rebuild is what ate the drag and lagged the first rotation.)
   var i = 1, playing = true, raf = null;
-  function render() {
-    var hi = i % N, lo = Math.max(0, hi - WINDOW);
-    // A FRESH array with FRESH comet/head trace objects each tick — plotly's
-    // react() treats an unchanged array *reference* as unchanged data (its
-    // immutable diff), so the comet must be a new object with freshly sliced
-    // arrays; the static context curve keeps its original object, so react
-    // diffs it away and only the small comet/head re-render (camera untouched).
-    var arr = gd.data.slice();
+  // A plain-Array slice (not a typed-array slice) so the appended chunk matches the
+  // comet trace's own plain-array data — extendTraces rejects a type mismatch.
+  function slc(a, lo, hi) { return Array.prototype.slice.call(a, lo, hi + 1); }
+  function pushRange(lo, hi) {
     for (var l = 0; l < LAYERS.length; l++) {
       var m = LAYERS[l], f = full[l];
-      var comet = Object.assign({}, cometProto[l],
-        {x: f.x.slice(lo, hi + 1), y: f.y.slice(lo, hi + 1)});
-      if (IS3D) { comet.z = f.z.slice(lo, hi + 1); }
-      arr[m.comet] = comet;
-      arr[m.ctx] = ctxTrace[l];
-      if (m.head >= 0) {
-        var head = Object.assign({}, headProto[l], {x: [f.x[hi]], y: [f.y[hi]]});
-        if (IS3D) { head.z = [f.z[hi]]; }
-        arr[m.head] = head;
+      var ext = IS3D
+        ? {x: [slc(f.x, lo, hi)], y: [slc(f.y, lo, hi)], z: [slc(f.z, lo, hi)]}
+        : {x: [slc(f.x, lo, hi)], y: [slc(f.y, lo, hi)]};
+      try {
+        Plotly.extendTraces(gd, ext, [m.comet], WINDOW);
+        if (m.head >= 0) {
+          var eh = IS3D
+            ? {x: [[f.x[hi]]], y: [[f.y[hi]]], z: [[f.z[hi]]]}
+            : {x: [[f.x[hi]]], y: [[f.y[hi]]]};
+          Plotly.extendTraces(gd, eh, [m.head], 1);
+        }
+      } catch (e) {
+        console.error('tsd-anim: extendTraces failed', e);
+        playing = false; playBtn.textContent = '▶'; return false;
       }
     }
-    try {
-      Plotly.react(gd, arr, layout);
-    } catch (e) {
-      console.error('tsd-anim: react failed', e);
-      playing = false; playBtn.textContent = '▶'; return;
+    return true;
+  }
+  function seedStart() {
+    // Reset the comet + head to the first sample (one in-place redraw, once per
+    // loop) so the windowed comet does not draw a line back across the attractor.
+    for (var l = 0; l < LAYERS.length; l++) {
+      var m = LAYERS[l], f = full[l];
+      var s = IS3D ? {x: [[f.x[0]]], y: [[f.y[0]]], z: [[f.z[0]]]}
+                   : {x: [[f.x[0]]], y: [[f.y[0]]]};
+      Plotly.restyle(gd, s, [m.comet]);
+      if (m.head >= 0) { Plotly.restyle(gd, s, [m.head]); }
     }
-    readout.textContent = Math.round(100 * hi / (N - 1)) + '%';
+    i = 0;
   }
   function tick() {
     if (!playing) { raf = null; return; }
-    // Skip the redraw while the user is interacting so the orbit drag is smooth;
-    // keep the rAF alive so the comet resumes the moment they release.
-    if (!interacting) {
-      render();
-      i += STRIDE; if (i >= N) { i = 1; }
-    }
+    var lo = i + 1, hi = Math.min(i + STRIDE, N - 1);
+    if (lo <= hi && !pushRange(lo, hi)) { return; }
+    readout.textContent = Math.round(100 * hi / (N - 1)) + '%';
+    i = hi;
+    if (i >= N - 1) { seedStart(); }
     raf = requestAnimationFrame(tick);
   }
   function start() { if (!raf) { raf = requestAnimationFrame(tick); } }
@@ -177,8 +194,7 @@ _REALTIME_JS = """
     playBtn.textContent = playing ? '❚❚' : '▶';
     if (playing) { start(); }
   };
-  restartBtn.onclick = function() { i = 1; render(); };
-  render();   // paint frame 0 immediately so the comet is visible at rest
+  restartBtn.onclick = function() { seedStart(); readout.textContent = '0%'; };
   start();
 })();
 """
@@ -318,9 +334,11 @@ def _comet_traces(
     if three_d:
         out.append(
             go.Scatter3d(
-                x=arr["x"][sl],
-                y=arr["y"][sl],
-                z=arr["z"][sl],
+                # Plain lists (not numpy → not a base64 typed-array spec) so the
+                # real-time driver's Plotly.extendTraces can append to the comet.
+                x=arr["x"][sl].tolist(),
+                y=arr["y"][sl].tolist(),
+                z=arr["z"][sl].tolist(),
                 mode="lines",
                 line={"color": color, "width": width} if color else {"width": width},
                 name=layer.label or "",
@@ -341,8 +359,9 @@ def _comet_traces(
     else:
         out.append(
             go.Scatter(
-                x=arr["x"][sl],
-                y=arr["y"][sl],
+                # Plain lists so the real-time driver's Plotly.extendTraces can append.
+                x=arr["x"][sl].tolist(),
+                y=arr["y"][sl].tolist(),
                 mode="lines",
                 line={"color": color, "width": width} if color else {"width": width},
                 name=layer.label or "",

@@ -69,43 +69,52 @@ def test_realtime_js_normalises_axis_arrays_before_slicing(components):
     js = _html(components=components)
     assert "asArray" in js  # the up-front normalisation guard
     assert "bdata" in js  # the guard explicitly handles plotly's base64 typed-array spec
-    assert ".slice(lo, hi + 1)" in js  # the per-frame comet slice the guard protects
+    assert "Array.prototype.slice.call" in js  # plain-array per-frame slice (extendTraces-safe)
 
 
 # ---------------------------------------------------------------------------
-# The rAF / comet / react wiring (the correct machinery) stays intact
+# The rAF / comet streaming wiring (Plotly.extendTraces — rotatable while playing)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("components", [None, ["x", "z"], "x"])
-def test_realtime_js_keeps_the_raf_comet_react_wiring(components):
-    """The smooth driver: a rAF loop advancing a comet via ``Plotly.react``."""
-    pytest.importorskip("plotly")
-    js = _html(components=components)
-    assert "requestAnimationFrame" in js  # the frame-rate driver
-    assert "tsd-anim" in js  # the diagnostic marker / starting log
-    assert "Plotly.react" in js  # re-renders gl3d under constant uirevision
-    assert "Plotly.restyle" not in js  # restyle does NOT redraw gl3d — must never appear
-    assert "cometProto" in js  # the comet trace template
-    assert "gd.data.slice()" in js  # fresh array each tick → react's immutable diff fires
-    assert "uirevision" in js  # camera/zoom preserved across react calls
+def test_realtime_js_streams_the_comet_via_extendtraces():
+    """The smooth driver advances the comet with ``Plotly.extendTraces``.
 
-
-@pytest.mark.parametrize("components", [None, ["x", "z"], "x"])
-def test_realtime_js_pauses_the_comet_while_the_pointer_is_down(components):
-    """Rotate-while-it-plays: the redraw is gated off while the user interacts.
-
-    ``Plotly.react`` rebuilds the gl3d scene each frame and eats an in-progress
-    orbit drag, so a 3-D attractor felt un-rotatable while animating.  The driver
-    now holds the comet while the pointer is down (``mousedown``/``mouseup`` +
-    ``wheel``/touch), gating ``render()`` behind ``!interacting`` so gl3d's native
-    camera drag runs uninterrupted and resumes on release.
+    ``extendTraces`` mutates the comet's trace buffers in place (a sliding window via
+    ``maxPoints``) and never re-creates the gl3d traces or rebuilds the WebGL scene —
+    so the attractor is rotatable WHILE it plays, with no click-to-rotate lag.
+    ``Plotly.react`` (which rebuilt the moving gl3d traces every frame and ate the
+    orbit drag) must NOT be our per-frame driver.  Inspect the driver TEMPLATE (not
+    the full HTML, whose bundled plotly.js naturally contains the string
+    ``Plotly.react``).
     """
     pytest.importorskip("plotly")
-    js = _html(components=components)
-    assert "interacting" in js  # the interaction flag
-    assert "mousedown" in js and "mouseup" in js  # pointer-down/up drive it
-    assert "if (!interacting)" in js  # render() is gated off during a drag
+    from tsdynamics.viz.render.plotly._anim import _REALTIME_JS
+
+    js = _REALTIME_JS
+    assert "requestAnimationFrame" in js  # the frame-rate driver
+    assert "tsd-anim" in js  # the diagnostic marker / starting log
+    assert "Plotly.extendTraces" in js  # in-place buffer streaming (no scene rebuild)
+    assert "Plotly.react(" not in js  # our driver must not CALL react (it rebuilds gl3d)
+
+
+def test_realtime_js_mirrors_the_live_camera_during_a_drag():
+    """Rotate-while-it-plays WITHOUT snap-back: the live drag camera is mirrored.
+
+    A gl3d comet redraw restores the camera from ``gd.layout`` (uirevision); a mouse
+    orbit-drag only commits the new camera on release, so mid-drag each redraw used to
+    snap the view back to the drag's start.  The driver mirrors the live
+    ``plotly_relayouting`` camera into ``gd.layout.scene.camera`` so the next redraw
+    keeps the in-progress rotation — the animation never stops and there is no pause
+    hack (guards against regressing to the react-era ``!interacting`` workaround).
+    """
+    pytest.importorskip("plotly")
+    from tsdynamics.viz.render.plotly._anim import _REALTIME_JS
+
+    js = _REALTIME_JS
+    assert "plotly_relayouting" in js  # the live-drag event we track
+    assert "scene.camera" in js  # mirrored into gd.layout.scene.camera
+    assert "interacting" not in js  # no pause hack — the comet streams uninterrupted
 
 
 def test_realtime_html_3d_and_2d_both_carry_the_fix(tmp_path):
@@ -117,4 +126,4 @@ def test_realtime_html_3d_and_2d_both_carry_the_fix(tmp_path):
         assert tr.to_plot_spec(components=comps, animate=True).save(str(out)) == str(out)
         text = out.read_text()
         assert "_fullData" in text  # the fix shipped in the written artifact
-        assert "requestAnimationFrame" in text and "Plotly.react" in text
+        assert "requestAnimationFrame" in text and "Plotly.extendTraces" in text

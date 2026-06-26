@@ -641,25 +641,28 @@ import is deferred to first render.
   ffmpeg/pillow); **plotly** → `viz/render/plotly/_anim.py`: HTML export
   (`.save("x.html")`, the zero-extra-dep default) is a **real-time** animation — the
   full attractor is drawn once (static, rotatable) and a `requestAnimationFrame`
-  loop advances a comet via `Plotly.react` (which redraws gl3d — `restyle` does
-  **not**, and must never be used here). Each tick hands `react` a **fresh array
-  with fresh comet/head trace objects** (`gd.data.slice()` + `Object.assign`) — its
-  immutable diff treats an unchanged array *reference* as unchanged data, so reusing
-  `gd.data` silently no-ops; the static context trace keeps its original object, so
-  `react` diffs it away and only the small comet re-renders. The full-curve cache is
+  loop streams a comet by **mutating its trace buffers in place with
+  `Plotly.extendTraces`** (append the next points, trim to a `maxPoints` sliding
+  window; the single-point head uses `maxPoints` 1; once per loop the window resets
+  to the start via `restyle`). `extendTraces` redraws the gl3d comet **without
+  re-creating the traces or rebuilding the WebGL scene**, so an in-progress mouse
+  orbit-drag is never interrupted: you **rotate WHILE it plays, with no click lag and
+  the stream never stops**, and a constant `uirevision` keeps the camera you set.
+  This replaced an earlier `Plotly.react` driver (a fresh comet/head trace object via
+  `gd.data.slice()` + `Object.assign` each frame): react redraws gl3d too but **tears
+  the moving traces down every frame**, and that per-frame scene rebuild ate the drag
+  and lagged the first rotation — so react must NOT be used for the per-frame update.
+  (A browser shootout also found the old "`restyle` can't redraw gl3d" lore is false
+  in modern plotly; `extendTraces` is still preferred as the purpose-built streaming
+  primitive.) The full-curve cache is
   read from plotly's **decoded** data (`gd._fullData`, a `Float64Array`), not raw
   `gd.data` — plotly 6 stores a base64 typed-array *spec* (`{dtype, bdata}`, no
   `.slice`) in `gd.data[i].x`, so the loop normalises each axis up front (`asArray`)
-  or the per-frame `.slice` throws on frame 0 and the curve stays static (issue
-  #464). The layout (hence the
-  camera) is never touched and `uirevision` is constant, so the camera is
-  **preserved — orbit while it plays**. The *drag itself* works because the loop
-  **pauses `render()` while the pointer is down** (`mousedown`/`mouseup` + wheel /
-  touch set an `interacting` flag; `tick()` gates the redraw behind `!interacting`):
-  `Plotly.react` rebuilds the gl3d scene each frame and would otherwise eat the
-  in-progress orbit gesture, so a 3-D attractor felt un-rotatable; the comet holds
-  for the moment you drag and resumes the instant you release (the camera you set
-  persists). A minimal **play/pause + restart overlay**
+  + slices via `Array.prototype.slice.call` (plain arrays, so `extendTraces`'
+  type-match is satisfied), or the per-frame read throws on frame 0 and the curve
+  stays static (issue #464). The comet/head traces are emitted as **plain Python
+  lists** (not numpy → not a `{bdata}` spec) so `extendTraces` can append to them.
+  A minimal **play/pause + restart overlay**
   (bottom-left, with a % readout) makes it obviously alive without devtools.
   A returned live figure (notebooks) instead uses a plotly frames + play/slider
   player (`build_animated_figure`). Camera-spin/clock are mpl-only for now.
