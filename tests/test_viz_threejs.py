@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 
 from tsdynamics.viz.export import SCHEMA_VERSION
-from tsdynamics.viz.render.caps import RenderResult
-from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+from tsdynamics.viz.render.caps import RenderResult, VisualizationDegraded
+from tsdynamics.viz.spec import Animation, Axis, Layer, PlotKind, PlotSpec
 
 
 def _lorenz_line3d_spec(n: int = 64) -> PlotSpec:
@@ -287,3 +287,202 @@ def test_threejs_does_not_shadow_drawing_default() -> None:
         registry.renderers.clear()
         for entry in saved:
             registry.renderers.register(entry.name, entry.obj)
+
+
+# ---------------------------------------------------------------------------
+# animation: the reveal directive in metadata (issue #465)
+# ---------------------------------------------------------------------------
+
+
+def _animated_line3d_spec(n: int = 64, anim: Animation | None = None) -> PlotSpec:
+    """A 3-D LINE3D spec carrying an :class:`Animation` (a reveal comet)."""
+    spec = _lorenz_line3d_spec(n)
+    spec.animation = anim if anim is not None else Animation()
+    spec.meta["dt"] = 0.01
+    return spec
+
+
+def test_animated_spec_adds_animation_block() -> None:
+    """An animated spec's payload carries a ``metadata.animation`` block."""
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    payload = lower_spec(_animated_line3d_spec(64))
+    anim = payload["metadata"]["animation"]
+    expected_keys = {
+        "fps",
+        "duration",
+        "n_frames",
+        "loop",
+        "pingpong",
+        "trail_length_samples",
+        "head",
+        "head_size",
+        "head_color",
+        "n_samples",
+    }
+    assert set(anim) == expected_keys
+    assert anim["fps"] == 30.0
+    assert anim["head"] is True
+    assert anim["n_samples"] == 64  # the line's vertex count
+    # A persistent (default) trail is null, never a number.
+    assert anim["trail_length_samples"] is None
+
+
+def test_static_spec_has_no_animation_block() -> None:
+    """A spec without an Animation carries no ``animation`` key (byte-stable)."""
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    payload = lower_spec(_lorenz_line3d_spec(64))
+    assert "animation" not in payload["metadata"]
+
+
+def test_animation_does_not_touch_geometry() -> None:
+    """Adding an Animation leaves the geometry buffers byte-identical (draw-range reveal)."""
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    static = lower_spec(_lorenz_line3d_spec(64))
+    animated = lower_spec(_animated_line3d_spec(64))
+    # The only payload difference is the metadata.animation block.
+    assert animated["geometries"] == static["geometries"]
+    assert animated["metadata"]["bounds"] == static["metadata"]["bounds"]
+    assert animated["metadata"]["camera"] == static["metadata"]["camera"]
+
+
+def test_trail_length_resolves_to_samples() -> None:
+    """A ``steps`` trail surfaces as an int sample count; ``time`` divides by dt."""
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    steps = lower_spec(_animated_line3d_spec(64, Animation(trail_kind="steps", trail_length=20)))
+    assert steps["metadata"]["animation"]["trail_length_samples"] == 20
+
+    # "time" trail of 0.2 time-units at dt=0.01 → 20 samples.
+    timed = lower_spec(_animated_line3d_spec(64, Animation(trail_kind="time", trail_length=0.2)))
+    assert timed["metadata"]["animation"]["trail_length_samples"] == 20
+
+
+def test_head_color_rgb_surfaces_as_triple() -> None:
+    """An RGB ``head_color`` surfaces as an [r, g, b] triple (a named color → null)."""
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    rgb = lower_spec(_animated_line3d_spec(64, Animation(head_color=(1.0, 0.0, 0.0))))
+    assert rgb["metadata"]["animation"]["head_color"] == [1.0, 0.0, 0.0]
+
+    named = lower_spec(_animated_line3d_spec(64, Animation(head_color="red")))
+    assert named["metadata"]["animation"]["head_color"] is None
+
+
+def test_animation_block_round_trips_through_json() -> None:
+    """The animated payload (block included) survives json.dumps / json.loads."""
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    payload = lower_spec(_animated_line3d_spec(64))
+    assert json.loads(json.dumps(payload)) == payload
+
+
+def test_animated_2d_phase_portrait_animates() -> None:
+    """A 2-D LINE spec (lifted to z=0) also carries the animation block."""
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    n = 40
+    t = np.linspace(0.0, 1.0, n)
+    spec = PlotSpec(
+        kind=PlotKind.PHASE_PORTRAIT_2D,
+        layers=[Layer(kind=PlotKind.LINE, data={"x": np.sin(t), "y": np.cos(t)})],
+        x=Axis(label="x"),
+        y=Axis(label="y"),
+        ndim=2,
+        animation=Animation(),
+    )
+    anim = lower_spec(spec)["metadata"]["animation"]
+    assert anim["n_samples"] == n
+
+
+def test_surface_only_animation_warns_and_emits_no_block() -> None:
+    """An animated surface-only spec → no block + a VisualizationDegraded warning."""
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    spec = _surface_spec()
+    spec.animation = Animation()
+    with pytest.warns(VisualizationDegraded):
+        payload = lower_spec(spec)
+    assert "animation" not in payload["metadata"]
+
+
+def test_points_only_animation_warns_and_emits_no_block() -> None:
+    """An animated SCATTER/MARKERS-only spec emits NO block and WARNS (never silent).
+
+    Regression guard (issue #465): a points geometry has no index buffer for the
+    loader's setDrawRange reveal, so emitting a block would leave the export static
+    *and* freeze the camera.  The exporter must drop the animation to a static
+    payload (the loader then auto-rotates) and warn rather than silently produce it.
+    """
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    for mark in (PlotKind.SCATTER, PlotKind.MARKERS):
+        n = 32
+        t = np.linspace(0.0, 1.0, n)
+        spec = PlotSpec(
+            kind=PlotKind.PHASE_PORTRAIT_3D,
+            layers=[Layer(kind=mark, data={"x": np.sin(t), "y": np.cos(t), "z": t})],
+            x=Axis(label="x"),
+            y=Axis(label="y"),
+            z=Axis(label="z"),
+            ndim=3,
+            animation=Animation(),
+        )
+        with pytest.warns(VisualizationDegraded):
+            payload = lower_spec(spec)
+        assert "animation" not in payload["metadata"]
+        # The geometry is the same valid (static) points export as without animation.
+        assert payload["geometries"][0]["type"] == "points"
+
+
+def test_static_points_spec_does_not_warn() -> None:
+    """A points spec with NO Animation lowers silently (no spurious warning)."""
+    import warnings
+
+    from tsdynamics.viz.render.threejs._lower import lower_spec
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", VisualizationDegraded)
+        payload = lower_spec(_phase2d_scatter_spec(32))
+    assert "animation" not in payload["metadata"]
+
+
+def test_to_plot_spec_animate_flag_drives_threejs_payload() -> None:
+    """``to_plot_spec(animate=True)`` → animation block; ``animate=False`` → none."""
+    pytest.importorskip("tsdynamics._rust")
+    import tsdynamics as ts
+
+    tr = ts.Lorenz().integrate(final_time=10.0, dt=0.01).after(2.0)
+    animated = tr.to_plot_spec(animate=True).render("threejs", raw=True)
+    static = tr.to_plot_spec(animate=False).render("threejs", raw=True)
+    assert "animation" in animated["metadata"]
+    assert "animation" not in static["metadata"]
+    # The animation toggle never perturbs the geometry buffers.
+    assert animated["geometries"] == static["geometries"]
+
+
+def test_loader_js_drives_setdrawrange_reveal() -> None:
+    """The reference loader honors metadata.animation via setDrawRange (string check)."""
+    import re
+    from pathlib import Path
+
+    loader = Path(__file__).resolve().parents[1] / "docs" / "_static" / "tsdyn-threejs-loader.js"
+    src = loader.read_text(encoding="utf-8")
+    # The animation path keys off metadata.animation and reveals by draw-range.
+    assert "meta.animation" in src
+    assert "setDrawRange" in src
+    assert "buildLineComet" in src
+    # Only LINE geometries get a comet (mirrors _ANIMATED_MARKS = {LINE, LINE3D}):
+    # a points/surface geometry has no index buffer to setDrawRange over.
+    assert 'geom.type === "line"' in src
+    # Index-unit invariant: a LineSegments index buffer is 0,1,1,2,... (TWO indices
+    # per segment), so setDrawRange works in INDEX units — start/count are `2 *`
+    # the vertex window, never the raw vertex index (a vertex-vs-index mixup would
+    # reveal a wrong-length / wrong-position trail).
+    assert re.search(r"start\s*=\s*2\s*\*\s*lo", src)
+    assert re.search(r"count\s*=\s*2\s*\*", src)
+    # A defensive animation-block-but-no-line payload must NOT freeze the camera:
+    # autoRotate keys off whether a comet was actually installed, not on `anim`.
+    assert "autoRotate = opts.autoRotate ?? !revealing" in src

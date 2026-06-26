@@ -657,6 +657,21 @@ import is deferred to first render.
   (bottom-left, with a % readout) makes it obviously alive without devtools.
   A returned live figure (notebooks) instead uses a plotly frames + play/slider
   player (`build_animated_figure`). Camera-spin/clock are mpl-only for now.
+  **threejs** → the data exporter (`viz/render/threejs/_lower.py`) adds a
+  `metadata.animation` block (`fps`/`duration`/`trail_length_samples`/`head`/
+  `n_samples`) when `spec.animation` is set — the geometry buffers are untouched
+  (byte-identical to the static export). The reference loader
+  (`docs/_static/tsdyn-threejs-loader.js`) honors it with a **reveal comet**: a
+  faint full-curve backdrop + a bright windowed trail advanced by
+  `geometry.setDrawRange(start, count)` + a `THREE.Points` head, on a
+  `requestAnimationFrame` clock with a play/pause overlay — and because the
+  draw-range update is independent of `OrbitControls`, the camera is held still by
+  default yet **orbitable while it plays**. The reveal sweeps a **line** index
+  buffer, so the block is emitted only for `LINE`/`LINE3D` specs (`_ANIMATED_MARKS`);
+  an animated `points`-only / `surface`-only spec has no comet to play, so the
+  exporter drops to a static payload and **warns** (`VisualizationDegraded`) rather
+  than silently dropping it (and the loader auto-rotates, never freezing the
+  camera). A static payload (no `metadata.animation`) renders exactly as before.
   `PlotSpec.save` picks the
   backend by extension (animated: `.html`→plotly, `.mp4`/`.gif`→matplotlib) and
   takes `fps`/`dpi`/`size`. The `Animation` directive round-trips through

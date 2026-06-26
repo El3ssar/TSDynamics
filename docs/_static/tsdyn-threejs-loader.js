@@ -14,6 +14,19 @@
  *     const handle = renderThreejsPayload(document.querySelector("#viewer"), payload);
  *
  * `handle` carries { scene, camera, renderer, controls, dispose() }.
+ *
+ * Animation (reveal comet)
+ * ------------------------
+ * When the payload's `metadata.animation` block is present (an *animated*
+ * `PlotSpec`, e.g. `to_plot_spec(animate=True)`), each line geometry plays a
+ * **reveal comet**: a faint full-curve backdrop is drawn once, and a bright comet
+ * (a windowed trail + a `THREE.Points` head) sweeps the curve by advancing
+ * `geometry.setDrawRange(start, count)` per `requestAnimationFrame` — no buffer is
+ * re-uploaded.  `OrbitControls` keeps running, so the camera is independent of the
+ * geometry update: **orbit the attractor with the mouse while it plays.**  A
+ * minimal play/pause + restart overlay (mirroring the plotly export) sits
+ * bottom-left.  A *static* payload (no `metadata.animation`) renders exactly as
+ * before.
  */
 
 import * as THREE from "three";
@@ -75,6 +88,185 @@ function boundsCentre(bounds) {
 }
 
 /**
+ * Build the reveal comet for one line geometry: a faint full-curve backdrop, a
+ * bright windowed trail (animated via `setDrawRange`), and a `THREE.Points` head.
+ *
+ * The `LineSegments` index buffer is `0,1,1,2,2,3,...` (two indices per segment),
+ * so `setDrawRange(start, count)` works in *index* units — `count = 2 * segments`.
+ * Returns a comet object exposing `seek(headVertex, trailVertices)`.
+ */
+function buildLineComet(geom, anim) {
+  const nVerts = geom.positions.length / 3;
+  const hasColor = Boolean(geom.colors && geom.colors.length === geom.positions.length);
+  const group = new THREE.Group();
+
+  // Faint full-curve backdrop (the static context the comet sweeps over).
+  const backdropGeom = buildGeometry(geom);
+  const backdrop = new THREE.LineSegments(
+    backdropGeom,
+    new THREE.LineBasicMaterial({
+      vertexColors: hasColor,
+      color: hasColor ? 0xffffff : 0x4f9dff,
+      transparent: true,
+      opacity: 0.18,
+    })
+  );
+  group.add(backdrop);
+
+  // Bright comet trail — its own geometry so the draw-range does not touch the
+  // backdrop.  Drawn as an indexed LineSegments over the same vertices.
+  const trailGeom = buildGeometry(geom);
+  const trail = new THREE.LineSegments(
+    trailGeom,
+    new THREE.LineBasicMaterial({
+      vertexColors: hasColor,
+      color: hasColor ? 0xffffff : 0x6fd6ff,
+    })
+  );
+  group.add(trail);
+
+  // The head marker — a single THREE.Points at the current sample.
+  let head = null;
+  if (anim.head) {
+    const headPos = new Float32Array([0, 0, 0]);
+    const headGeom = new THREE.BufferGeometry();
+    headGeom.setAttribute("position", new THREE.BufferAttribute(headPos, 3));
+    const headColor =
+      anim.head_color != null
+        ? new THREE.Color(anim.head_color[0], anim.head_color[1], anim.head_color[2])
+        : new THREE.Color(0xffe066);
+    head = new THREE.Points(
+      headGeom,
+      new THREE.PointsMaterial({
+        size: Math.max(2.0, anim.head_size || 6.0),
+        color: headColor,
+        sizeAttenuation: false,
+      })
+    );
+    group.add(head);
+  }
+
+  const positions = geom.positions;
+  function seek(headVertex, trailVertices) {
+    const hv = Math.max(0, Math.min(nVerts - 1, headVertex | 0));
+    // Trail window: [lo, hv].  trailVertices == null ⇒ persistent (lo = 0).
+    const lo = trailVertices == null ? 0 : Math.max(0, hv - trailVertices);
+    // Index units: each segment is 2 indices; the window spans (hv - lo) segments.
+    const start = 2 * lo;
+    const count = 2 * Math.max(0, hv - lo);
+    trail.geometry.setDrawRange(start, count);
+    if (head) {
+      const p = head.geometry.getAttribute("position");
+      p.setXYZ(0, positions[3 * hv], positions[3 * hv + 1], positions[3 * hv + 2]);
+      p.needsUpdate = true;
+    }
+  }
+  seek(0, anim.trail_length_samples);
+
+  return { group, seek, nVerts };
+}
+
+/**
+ * Install the reveal-comet animation: build a comet per line geometry, a master
+ * `requestAnimationFrame` clock advancing the head over all comets in lockstep,
+ * and a minimal play/pause + restart overlay.  Returns `{ objects, stop() }`.
+ */
+function installAnimation(container, comets, anim) {
+  // The reveal length is the longest comet (others clamp to their last vertex).
+  let nSamples = anim.n_samples | 0;
+  for (const c of comets) {
+    nSamples = Math.max(nSamples, c.nVerts);
+  }
+  nSamples = Math.max(2, nSamples);
+  const trail = anim.trail_length_samples != null ? anim.trail_length_samples | 0 : null;
+
+  // Speed: traverse the whole series in ~duration seconds at the browser's ~60fps.
+  const duration = anim.duration && anim.duration > 0 ? anim.duration : 12.0;
+  const stride = Math.max(1, Math.round(nSamples / (duration * 60.0)));
+
+  // --- play/pause + restart overlay (mirrors the plotly export) --------------
+  if (getComputedStyle(container).position === "static") {
+    container.style.position = "relative";
+  }
+  const bar = document.createElement("div");
+  bar.style.cssText =
+    "position:absolute;left:10px;bottom:10px;z-index:10;display:flex;gap:6px;" +
+    "align-items:center;font:12px system-ui,sans-serif;color:#aaa;user-select:none;";
+  const mkBtn = (txt) => {
+    const b = document.createElement("button");
+    b.textContent = txt;
+    b.style.cssText =
+      "cursor:pointer;border:1px solid #8888;border-radius:6px;" +
+      "background:rgba(127,127,127,.18);color:inherit;width:30px;height:26px;" +
+      "font-size:13px;line-height:1;padding:0;";
+    return b;
+  };
+  const playBtn = mkBtn("❚❚");
+  const restartBtn = mkBtn("↺");
+  const readout = document.createElement("span");
+  bar.appendChild(playBtn);
+  bar.appendChild(restartBtn);
+  bar.appendChild(readout);
+  container.appendChild(bar);
+
+  let i = 1;
+  let playing = true;
+  let stopped = false;
+
+  function paint() {
+    const hi = i % nSamples;
+    for (const c of comets) {
+      c.seek(Math.min(hi, c.nVerts - 1), trail);
+    }
+    readout.textContent = Math.round((100 * hi) / (nSamples - 1)) + "%";
+  }
+
+  // The comet clock is decoupled from OrbitControls' own rAF loop (the camera
+  // keeps updating regardless), so only advance the head index here.
+  function tick() {
+    if (stopped) return;
+    if (playing) {
+      paint();
+      i += stride;
+      if (i >= nSamples) {
+        if (anim.loop === false) {
+          playing = false;
+          playBtn.textContent = "▶";
+        } else {
+          i = 1;
+        }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  playBtn.onclick = () => {
+    playing = !playing;
+    playBtn.textContent = playing ? "❚❚" : "▶";
+  };
+  restartBtn.onclick = () => {
+    i = 1;
+    paint();
+  };
+
+  paint(); // paint frame 0 immediately so the comet is visible at rest
+  requestAnimationFrame(tick);
+  console.info("tsd-anim(threejs): starting", {
+    n: nSamples,
+    trail: trail,
+    stride: stride,
+  });
+
+  return {
+    objects: comets.map((c) => c.group),
+    stop() {
+      stopped = true;
+      if (bar.parentNode === container) container.removeChild(bar);
+    },
+  };
+}
+
+/**
  * Render a TSDynamics `threejs` payload into `container` and return a handle.
  *
  * @param {HTMLElement} container - a sized element to mount the WebGL canvas in.
@@ -107,14 +299,43 @@ export function renderThreejsPayload(container, payload, opts = {}) {
   key.position.set(1, 1, 1);
   scene.add(key);
 
-  for (const geom of payload.geometries || []) {
-    scene.add(buildObject(geom));
+  // When the payload is animated, build a reveal comet for every line geometry
+  // (other geometry types are drawn static); otherwise draw every geometry static.
+  // `revealing` is true only when at least one comet was actually installed — a
+  // (defensive) animation block with no line geometry must NOT freeze the camera.
+  const anim = meta.animation || null;
+  let animationHandle = null;
+  let revealing = false;
+  if (anim) {
+    const comets = [];
+    for (const geom of payload.geometries || []) {
+      if (geom.type === "line") {
+        const comet = buildLineComet(geom, anim);
+        comets.push(comet);
+        scene.add(comet.group);
+      } else {
+        scene.add(buildObject(geom)); // points / surface: drawn whole
+      }
+    }
+    if (comets.length) {
+      animationHandle = installAnimation(container, comets, anim);
+      revealing = true;
+    } else {
+      console.warn("tsd-anim(threejs): animation block but no line geometry to reveal");
+    }
+  } else {
+    for (const geom of payload.geometries || []) {
+      scene.add(buildObject(geom));
+    }
   }
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(...target);
   controls.enableDamping = true;
-  controls.autoRotate = opts.autoRotate ?? true;
+  // A reveal comet holds the camera still by default (the geometry reveal is the
+  // motion — auto-rotation would mask it); the user can still orbit by mouse.
+  // Without an installed comet the camera auto-rotates as in the static export.
+  controls.autoRotate = opts.autoRotate ?? !revealing;
   controls.autoRotateSpeed = 0.6;
   controls.update();
 
@@ -138,6 +359,7 @@ export function renderThreejsPayload(container, payload, opts = {}) {
 
   function dispose() {
     running = false;
+    if (animationHandle) animationHandle.stop();
     window.removeEventListener("resize", onResize);
     controls.dispose();
     renderer.dispose();
