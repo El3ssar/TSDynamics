@@ -1,7 +1,7 @@
 """Diff- and registry-aware test selection for fast, change-scoped CI.
 
 The bulk suite is *registry-driven*: most tests are parametrized over every
-built-in system (149 today) or every registered analysis/transform, so a run of
+built-in system (151 today) or every registered analysis/transform, so a run of
 the whole ``not full`` tier is thousands of items.  On a PR that only touches one
 system or one analysis area, almost all of that work is irrelevant — yet the old
 CI ran it all, on a 2×2 matrix, twice.  This module narrows a run to the tests a

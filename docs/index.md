@@ -1,7 +1,7 @@
 ---
 template: home.html
 title: TSDynamics — dynamical systems & chaos analysis for Python
-description: TSDynamics — 149 built-in dynamical systems, compiled integration, and chaos analysis for Python.
+description: TSDynamics — 151 built-in dynamical systems, compiled integration, and chaos analysis for Python.
 hide:
   - navigation
   - toc
@@ -9,7 +9,7 @@ hide:
 
 # TSDynamics
 
-**149 built-in dynamical systems. Compiled integration. Chaos analysis.**
+**151 built-in dynamical systems. Compiled integration. Chaos analysis.**
 
 TSDynamics is a Python library for studying dynamical systems: continuous
 flows, delay equations, stochastic systems, and discrete maps, all behind one
@@ -47,11 +47,11 @@ warmup — the first call is as fast as every later one.
     interpreter (the default) with a Cranelift JIT alongside. There is no
     compile step and no warmup: the first call runs at full speed.
 
-- **149 systems out of the box**
+- **151 systems out of the box**
 
     ---
 
-    118 continuous flows, 5 delay systems, and 26 discrete maps, from
+    120 continuous flows, 5 delay systems, and 26 discrete maps, from
     Lorenz and Rössler to Mackey–Glass and Hénon — each with literature
     defaults, named variables, and known Lyapunov values where published.
 

@@ -28,9 +28,28 @@ The payload is a JSON object::
                 "position": [<x>, <y>, <z>],
                 "target":   [<x>, <y>, <z>],
                 "up":       [<x>, <y>, <z>]
+            },
+            "animation": {                       # ONLY when spec.animation is set
+                "fps": <float>,
+                "duration": <float | null>,
+                "n_frames": <int | null>,
+                "loop": <bool>,
+                "pingpong": <bool>,
+                "trail_length_samples": <int | null>,   # null ⇒ persistent trail
+                "head": <bool>,
+                "head_size": <float>,
+                "head_color": [<r>, <g>, <b>] | null,
+                "n_samples": <int>               # vertices on the longest animated line
             }
         }
     }
+
+A static (non-animated) spec carries **no** ``animation`` key in ``metadata`` —
+the export is byte-for-byte the pre-animation payload.  When ``spec.animation`` is
+present the geometry buffers are unchanged: the loader animates by **draw-range**
+(``geometry.setDrawRange``) over a faint full-curve backdrop, so no positions /
+colors are re-uploaded and no per-vertex time attribute is needed (the line
+vertices are already the natural reveal order).
 
 Each ``geometry`` is::
 
@@ -55,6 +74,54 @@ small built-in colormap (so no matplotlib import), or from an explicit per-verte
 RGB ``style["color"]``.  ``bounds`` are the per-axis ``[min, max]`` over every
 geometry's vertices; the ``camera`` is derived from those bounds (a corner view
 looking at the centre) unless ``spec.meta["camera"]`` overrides it.
+
+Composite (multi-panel) payloads
+--------------------------------
+A :data:`~tsdynamics.viz.spec.PlotKind.COMPOSITE` spec carries its drawable
+content in :attr:`~tsdynamics.viz.spec.PlotSpec.panels` (one sub-spec per panel)
+plus a :class:`~tsdynamics.viz.spec.Layout`, not in its top-level ``layers``.
+:func:`lower_spec` detects a composite and lowers **each panel recursively**,
+emitting a ``"panels"`` list instead of a single ``"geometries"`` block::
+
+    {
+        "schema_version": <int>,
+        "kind": "composite",
+        "title": "<plot title>",
+        "geometries": [],                   # always empty for a composite
+        "panels": [ <panel>, ... ],         # one per child panel
+        "metadata": {
+            "schema_version": <int>,
+            "layout": {                     # the Layout, plus the resolved grid
+                "mode": "stack" | "row" | "grid",
+                "rows": <int>, "cols": <int>,
+                "share_x": <bool>, "share_y": <bool>
+            },
+            "bounds": { ... },              # union over every (placed) panel
+            "camera": { ... }               # framing that whole placed scene
+        }
+    }
+
+Each ``panel`` is a single-panel payload (the same ``geometries`` / per-panel
+``metadata`` a non-composite spec produces) plus its **identity and placement**::
+
+    {
+        "index": <int>,                     # panel order (0-based)
+        "title": "<panel title>",
+        "kind": "<panel PlotSpec.kind value>",
+        "grid": {"row": <int>, "col": <int>},   # cell in the layout grid
+        "offset": [<x>, <y>, <z>],          # local-origin translation (see below)
+        "geometries": [ <geometry>, ... ],
+        "metadata": { ... }                 # the panel's own labels/units/bounds/camera
+    }
+
+The panel's geometry ``positions`` stay in the panel's **own** local coordinates
+(unshifted), so a frontend can render each panel into its own viewport
+untouched.  The separate ``offset`` is a convenience translation — each panel's
+local-bounds centre laid out on the resolved ``rows`` × ``cols`` grid with unit
+cell spacing (column → +x, row → −y, so row 0 is at the top) — for a frontend
+that prefers to drop every panel into **one** shared scene rather than tile
+viewports.  Either reading is valid: the panel ``grid`` cell and ``offset`` are
+redundant placement hints, and the geometry itself is never mutated.
 """
 
 from __future__ import annotations
@@ -67,7 +134,7 @@ from ...export import SCHEMA_VERSION
 from ...spec import PlotKind
 
 if TYPE_CHECKING:
-    from ...spec import Axis, Layer, PlotSpec
+    from ...spec import Animation, Axis, Layer, Layout, PlotSpec
 
 __all__ = ["lower_spec"]
 
@@ -82,15 +149,36 @@ _GEOMETRY_TYPE: dict[PlotKind, str] = {
     PlotKind.SURFACE3D: "surface",
 }
 
+#: Layer marks the reveal animation drives — the **line** marks whose vertices
+#: are a natural sweep order and whose index buffer (``0,1,1,2,...``) the loader
+#: reveals by ``setDrawRange``.  ``SCATTER`` / ``MARKERS`` (a ``points`` geometry
+#: with no index buffer) and ``SURFACE3D`` (a mesh) have **no** comet reveal in
+#: the reference loader, so they are excluded: a points-only / surface-only spec
+#: emits no animation block (and :func:`_animation_metadata` warns) rather than a
+#: block the loader cannot play (which would leave the export static *and* freeze
+#: the camera).  Mirror this set in the loader's ``geom.type === "line"`` guard.
+_ANIMATED_MARKS: frozenset[PlotKind] = frozenset({PlotKind.LINE, PlotKind.LINE3D})
+
 
 def lower_spec(spec: PlotSpec) -> dict[str, Any]:
     """Lower ``spec`` to a three.js BufferGeometry-ready JSON-able payload.
 
-    Walks the spec's drawable layers, lowering each one whose mark is a
-    line / points / surface (other marks — images, bars, quivers — have no
-    BufferGeometry analogue and are skipped) into a flat-positions geometry, then
-    derives the top-level ``metadata`` (labels / units / bounds / camera) from the
-    axes and the lowered vertices.
+    For a **single-panel** spec, walks the spec's drawable layers, lowering each
+    one whose mark is a line / points / surface (other marks — images, bars,
+    quivers — have no BufferGeometry analogue and are skipped) into a
+    flat-positions geometry, then derives the top-level ``metadata`` (labels /
+    units / bounds / camera) from the axes and the lowered vertices.  When
+    ``spec.animation`` is set, an ``animation`` block is added to ``metadata``
+    (the reveal directive — fps / duration / trail length in samples / head) so
+    the reference loader plays a comet reveal via ``geometry.setDrawRange``; the
+    geometry buffers are unchanged, and a static spec's payload is byte-for-byte
+    the pre-animation one.
+
+    For a **composite** spec (``PlotKind.COMPOSITE`` — its drawable content lives
+    in :attr:`~tsdynamics.viz.spec.PlotSpec.panels`, not the top-level layers),
+    lowers each panel recursively and emits a ``"panels"`` list of per-panel
+    payloads (each carrying its identity, grid placement, and a layout-offset)
+    plus a top-level ``layout`` block — see the module docstring for the schema.
 
     Parameters
     ----------
@@ -103,6 +191,18 @@ def lower_spec(spec: PlotSpec) -> dict[str, Any]:
         A JSON-serializable payload conforming to the module-docstring schema
         (every value is a plain ``str`` / ``int`` / ``float`` / ``list``).
     """
+    if spec.is_composite:
+        return _lower_composite(spec)
+    return _lower_single(spec)
+
+
+def _lower_single(spec: PlotSpec) -> dict[str, Any]:
+    """Lower a single-panel spec to the ``geometries`` + ``metadata`` payload.
+
+    The non-composite lowering: walk ``spec.layers``, lower each drawable mark,
+    and derive the per-spec ``metadata`` (labels / units / bounds / camera).
+    Kept as a stable helper so the composite path can reuse it per panel.
+    """
     geometries: list[dict[str, Any]] = []
     for layer in spec.layers:
         geom = _lower_layer(layer)
@@ -110,13 +210,16 @@ def lower_spec(spec: PlotSpec) -> dict[str, Any]:
             geometries.append(geom)
 
     bounds = _bounds(geometries)
-    metadata = {
+    metadata: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "labels": _axis_labels(spec),
         "units": _axis_units(spec),
         "bounds": bounds,
         "camera": _camera(spec, bounds),
     }
+    animation = _animation_metadata(spec)
+    if animation is not None:
+        metadata["animation"] = animation
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": spec.kind.value,
@@ -124,6 +227,123 @@ def lower_spec(spec: PlotSpec) -> dict[str, Any]:
         "geometries": geometries,
         "metadata": metadata,
     }
+
+
+# ---------------------------------------------------------------------------
+# composite (multi-panel) → panel groups
+# ---------------------------------------------------------------------------
+
+
+def _lower_composite(spec: PlotSpec) -> dict[str, Any]:
+    """Lower a ``COMPOSITE`` spec to a panelled payload.
+
+    Lowers each child panel via :func:`_lower_single`, places it on the resolved
+    ``rows`` × ``cols`` grid (per the :class:`~tsdynamics.viz.spec.Layout`), tags
+    it with its identity (index / title / kind) + grid cell + a layout-offset, and
+    aggregates the per-panel bounds (each shifted by its offset) into a top-level
+    ``bounds`` / ``camera`` that frames the whole laid-out scene.
+    """
+    panels_in = spec.panels
+    rows, cols = _composite_grid(spec.layout, len(panels_in))
+
+    panels_out: list[dict[str, Any]] = []
+    placed_geometries: list[dict[str, Any]] = []
+    for i, panel in enumerate(panels_in):
+        sub = _lower_single(panel)
+        row, col = divmod(i, cols) if cols else (i, 0)
+        offset = _panel_offset(sub["metadata"]["bounds"], row, col)
+        panels_out.append(
+            {
+                "index": i,
+                "title": panel.title,
+                "kind": panel.kind.value,
+                "grid": {"row": row, "col": col},
+                "offset": offset,
+                "geometries": sub["geometries"],
+                "metadata": sub["metadata"],
+            }
+        )
+        # A bounds-only copy of each geometry, shifted by the panel's offset, so
+        # the aggregate camera frames the laid-out scene (positions stay local).
+        for geom in sub["geometries"]:
+            placed_geometries.append({"positions": _shift_positions(geom["positions"], offset)})
+
+    bounds = _bounds(placed_geometries)
+    metadata = {
+        "schema_version": SCHEMA_VERSION,
+        "layout": _layout_dict(spec.layout, rows, cols),
+        "bounds": bounds,
+        "camera": _camera(spec, bounds),
+    }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": spec.kind.value,
+        "title": spec.title,
+        "geometries": [],
+        "panels": panels_out,
+        "metadata": metadata,
+    }
+
+
+def _composite_grid(layout: Layout | None, n: int) -> tuple[int, int]:
+    """Return the ``(rows, cols)`` grid for a composite's :class:`Layout`.
+
+    Mirrors the matplotlib renderer's tiling: ``"row"`` → one row, ``"grid"`` →
+    the explicit ``rows`` × ``cols`` (or a near-square fit when unset), and
+    ``"stack"`` (the default) → one column.  ``n == 0`` yields ``(0, 0)``.
+    """
+    if n <= 0:
+        return 0, 0
+    mode = getattr(layout, "mode", "stack")
+    if mode == "row":
+        return 1, n
+    if mode == "grid":
+        rows = getattr(layout, "rows", None)
+        cols = getattr(layout, "cols", None)
+        if rows and cols:
+            return int(rows), int(cols)
+        c = int(np.ceil(np.sqrt(n)))
+        r = int(np.ceil(n / c))
+        return r, c
+    return n, 1  # "stack" (default): one column
+
+
+def _panel_offset(bounds: dict[str, list[float]], row: int, col: int) -> list[float]:
+    """Local-origin translation placing a panel at grid cell ``(row, col)``.
+
+    Each panel is centred on its own bounds, then translated so that adjacent
+    cells sit one (max panel span) apart: column → +x, row → −y (row 0 on top),
+    z untouched.  The span scale keeps panels from overlapping regardless of their
+    individual extents.
+    """
+    span_x = bounds["x"][1] - bounds["x"][0]
+    span_y = bounds["y"][1] - bounds["y"][0]
+    span = max(span_x, span_y, 1.0)
+    pitch = span * 1.2  # a small gutter between cells
+    cx = (bounds["x"][0] + bounds["x"][1]) / 2.0
+    cy = (bounds["y"][0] + bounds["y"][1]) / 2.0
+    return [col * pitch - cx, -row * pitch - cy, 0.0]
+
+
+def _layout_dict(layout: Layout | None, rows: int, cols: int) -> dict[str, Any]:
+    """Serialize the composite layout (its mode/share flags + the resolved grid)."""
+    return {
+        "mode": getattr(layout, "mode", "stack"),
+        "rows": int(rows),
+        "cols": int(cols),
+        "share_x": bool(getattr(layout, "share_x", False)),
+        "share_y": bool(getattr(layout, "share_y", False)),
+    }
+
+
+def _shift_positions(positions: list[float], offset: list[float]) -> list[float]:
+    """Translate a flat ``[x0, y0, z0, ...]`` list by ``offset`` ``[dx, dy, dz]``."""
+    ox, oy, oz = offset
+    shifted = list(positions)
+    shifted[0::3] = [v + ox for v in positions[0::3]]
+    shifted[1::3] = [v + oy for v in positions[1::3]]
+    shifted[2::3] = [v + oz for v in positions[2::3]]
+    return shifted
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +678,113 @@ def _vec3(value: Any, *, default: tuple[float, float, float]) -> list[float]:
         except (TypeError, ValueError):
             return list(default)
     return list(default)
+
+
+# ---------------------------------------------------------------------------
+# animation (the reveal directive — draw-range driven on the frontend)
+# ---------------------------------------------------------------------------
+
+
+def _animation_metadata(spec: PlotSpec) -> dict[str, Any] | None:
+    """Build the ``metadata["animation"]`` block, or ``None`` for a static spec.
+
+    Mirrors the matplotlib / plotly reveal model so the three.js loader plays the
+    same comet (a windowed trail + a head marker sweeping the curve over a faint
+    full-curve backdrop).  The geometry buffers are **not** touched — the loader
+    advances ``geometry.setDrawRange`` over the line vertices, so all the block
+    carries is the directive plus ``n_samples`` (the longest animated line's
+    vertex count) for the loop to size its window / stride against.
+
+    Returns ``None`` when ``spec.animation`` is absent (so a static export is
+    byte-identical to the pre-animation payload) or when the spec has no
+    animatable **line** layer to reveal.  In the latter case — an animation *was*
+    requested but the reference loader has no comet to play (a ``points``-only or
+    ``surface``-only spec) — a :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`
+    warning is emitted so the animation is never *silently* dropped: the export is
+    a valid static payload that the loader renders (auto-rotating) as usual.
+    """
+    anim = spec.animation
+    if anim is None:
+        return None
+    n_samples = _animated_sample_count(spec)
+    if n_samples < 2:
+        _warn_unrevealable(spec)
+        return None
+    trail = _trail_length_samples(spec, anim)
+    return {
+        "fps": float(anim.fps),
+        "duration": None if anim.duration is None else float(anim.duration),
+        "n_frames": None if anim.n_frames is None else int(anim.n_frames),
+        "loop": bool(anim.loop),
+        "pingpong": bool(anim.pingpong),
+        "trail_length_samples": trail,
+        "head": bool(anim.head),
+        "head_size": float(anim.head_size),
+        "head_color": _head_color(anim.head_color),
+        "n_samples": int(n_samples),
+    }
+
+
+def _warn_unrevealable(spec: PlotSpec) -> None:
+    """Warn that an animated spec has no line geometry the threejs loader can reveal.
+
+    Honors the issue's "animates, **or warns** — never silently drops" contract:
+    the threejs reveal comet is a ``setDrawRange`` sweep over a **line** index
+    buffer, so a ``points``-only / ``surface``-only animated spec has nothing to
+    reveal.  Rather than emit a block the loader cannot play (which would freeze
+    the export *and* the camera), the exporter drops the animation to a static
+    payload and warns here.
+    """
+    import warnings
+
+    from ..caps import VisualizationDegraded
+
+    kind = spec.kind.value if hasattr(spec.kind, "value") else str(spec.kind)
+    warnings.warn(
+        f"threejs export: the animation on this {kind!r} spec was dropped — its "
+        "reveal comet needs a line (LINE / LINE3D) geometry, but the spec has only "
+        "points / surface layers. Exporting a static payload instead.",
+        VisualizationDegraded,
+        stacklevel=2,
+    )
+
+
+def _head_color(color: Any) -> list[float] | None:
+    """Coerce the head color to a plain ``[r, g, b]`` list, or ``None``.
+
+    Reuses :func:`_parse_rgb` (an RGB / RGBA sequence → a triple; a named-color
+    string / ``None`` → ``None``) but returns a JSON-friendly ``list`` so the
+    animation block stays plain-list / plain-float like the rest of the payload.
+    """
+    rgb = _parse_rgb(color)
+    return None if rgb is None else [rgb[0], rgb[1], rgb[2]]
+
+
+def _animated_sample_count(spec: PlotSpec) -> int:
+    """Vertices on the longest animatable (line) layer — the reveal length (0 if none)."""
+    n = 0
+    for layer in spec.layers:
+        if PlotKind(layer.kind) not in _ANIMATED_MARKS:
+            continue
+        arr = layer.data.get("x", layer.data.get("y"))
+        if arr is not None:
+            n = max(n, int(np.asarray(arr).reshape(-1).shape[0]))
+    return n
+
+
+def _trail_length_samples(spec: PlotSpec, anim: Animation) -> int | None:
+    """Resolve the comet tail length to a vertex count (``None`` ⇒ persistent).
+
+    Reuses :meth:`~tsdynamics.viz.spec.Animation.tail_samples` (the same
+    ``"time"`` ÷ ``dt`` / ``"steps"`` rule the other backends use), reading the
+    sample spacing from ``spec.meta["dt"]`` for a time-unit trail.
+    """
+    dt = spec.meta.get("dt") if isinstance(spec.meta, dict) else None
+    try:
+        dt_f = float(dt) if dt is not None and float(dt) > 0 else None
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        dt_f = None
+    return anim.tail_samples(dt_f)
 
 
 # ---------------------------------------------------------------------------

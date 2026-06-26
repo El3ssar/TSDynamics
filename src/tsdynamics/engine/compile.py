@@ -710,24 +710,28 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
     """
     import symengine
 
-    from tsdynamics.engine.symbols import state_time_symbols
-
-    y, t_sym = state_time_symbols()
-
     dim = system.dim
     struct_vals = system._structural_vals()
     control_names = list(system._control_params())
     control_syms = {k: symengine.Symbol(f"p{i}") for i, k in enumerate(control_names)}
 
-    exprs = list(type(system)._equations(y, t_sym, **{**struct_vals, **control_syms}))
-    if len(exprs) != dim:
-        raise ValueError(f"_equations must return {dim} expressions, got {len(exprs)}")
-
     u_syms = [symengine.Symbol(f"u{i}") for i in range(dim)]
     t_canon = symengine.Symbol("t")
-    subs = {y(i): u_syms[i] for i in range(dim)}
-    subs[t_sym] = t_canon
-    rhs = [symengine.sympify(e).subs(subs) for e in exprs]
+
+    # Build the RHS directly over the canonical state symbols u_i (accessor
+    # ``y(i) -> u_syms[i]``) and time ``t``.  The previous path built the RHS over
+    # a Function ``y(i)`` and then substituted ``{y(i): u_i}`` for every i — an
+    # O(dim²) operation (a dim-entry subs applied to each of dim expressions) that
+    # dominated lowering for high-dimensional method-of-lines fields (~18 s for a
+    # 4608-state Gray-Scott; sub-second now).  The lowered tape is identical: the
+    # expressions are the same, merely constructed over u_i from the start.
+    def y(i: int) -> Any:
+        return u_syms[i]
+
+    exprs = list(type(system)._equations(y, t_canon, **{**struct_vals, **control_syms}))
+    if len(exprs) != dim:
+        raise ValueError(f"_equations must return {dim} expressions, got {len(exprs)}")
+    rhs = [symengine.sympify(e) for e in exprs]
 
     return lower_expressions(
         rhs,

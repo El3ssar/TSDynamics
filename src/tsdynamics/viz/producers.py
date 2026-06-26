@@ -59,6 +59,7 @@ __all__ = [
     "phase_portrait",
     "phase_portrait_field",
     "spacetime",
+    "spatial_field",
     "time_series",
     "vector_field",
 ]
@@ -649,6 +650,185 @@ def spacetime(source: Trajectory, *, transpose: bool = False) -> PlotSpec:
         meta={**_meta(source), "component_names": list(names) if names is not None else None},
     )
     return spec.autocolor()
+
+
+# ---------------------------------------------------------------------------
+# Spatial field (a spatially-extended system's field, played over time)
+# ---------------------------------------------------------------------------
+
+
+def spatial_field(
+    source: Trajectory,
+    *,
+    field_shape: tuple[int, ...] | None = None,
+    component: int | str | None = None,
+) -> PlotSpec:
+    """Build a :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` spec from a field trajectory.
+
+    A *spatial field* is the state of a spatially-extended system (a method-of-
+    lines PDE) reshaped to its spatial grid: each per-time state vector becomes a
+    spatial snapshot, and the per-frame plot's shape follows the field's spatial
+    dimensionality —
+
+    - a **1-D field** ``u(x)`` (``field_shape=(N,)`` or none) is a **line** (the
+      profile); animating it is a travelling-wave movie;
+    - a **2-D field** ``u(x, y)`` (``field_shape=(Ny, Nx)``) is an ``IMAGE``
+      heatmap; animating it is an evolving-field movie.
+
+    One semantic kind covers both (the renderer dispatches on the field's spatial
+    ndim, like :meth:`~tsdynamics.data.Trajectory.to_plot_spec` already
+    auto-dispatches on component count).
+
+    The full per-time field stack rides on the layer's ``"frames"`` channel (shape
+    ``(T, *spatial)``) so a ``frames``-mode animation plays the genuinely-evolving
+    field; the final-time snapshot is the layer's static data (``z`` for 2-D, ``y``
+    for 1-D), so a still render / a backend that cannot animate draws the field at
+    the final time.
+
+    Parameters
+    ----------
+    source : Trajectory
+        A field trajectory.  ``field_shape`` (the spatial grid) is taken from the
+        argument, else ``source.meta["field_shape"]`` (recorded by a system that
+        declares ``_field_shape``); without either, the state vector is treated as
+        a 1-D profile (honest — never guessing a 2-D grid).
+    field_shape : tuple of int, optional
+        The spatial grid ``(Ny, Nx)`` (2-D) or ``(N,)`` (1-D) one field block
+        occupies.  Overrides the trajectory's recorded shape.
+    component : int or str, optional
+        Which field **block** to plot when the state packs several
+        (``source.meta["field_labels"]``, e.g. Gray–Scott's ``("u", "v")``).  A
+        name resolves against the labels, an integer indexes them.  ``None``
+        selects the **last** block (the activator convention: Gray–Scott's ``v``),
+        or the whole state for a single-block field.
+
+    Returns
+    -------
+    PlotSpec
+        A ``SPATIAL_FIELD`` spec — ``ndim=2`` with an ``IMAGE`` layer for a 2-D
+        field, ``ndim=1`` with a ``LINE`` layer for a 1-D profile.
+    """
+    _, y, _, _ = _split_traj(source)
+    shape, labels = _resolve_field_shape(source, field_shape)
+    block = _select_field_block(y, shape, labels, component)
+    # ``block`` is (T, prod(shape)); the per-time field stack reshaped to the grid.
+    frames = block.reshape(block.shape[0], *shape)
+    title = _title(source)
+    meta = {**_meta(source), "field_shape": tuple(int(n) for n in shape)}
+
+    if len(shape) >= 2:
+        return _spatial_field_2d(frames, title, meta)
+    return _spatial_field_1d(frames, title, meta)
+
+
+def _spatial_field_2d(frames: np.ndarray, title: str, meta: dict[str, Any]) -> PlotSpec:
+    """Build the 2-D heatmap ``SPATIAL_FIELD`` spec (an ``IMAGE`` + the frame stack)."""
+    final = frames[-1]
+    ny, nx = final.shape
+    layer = Layer(
+        PlotKind.IMAGE,
+        {
+            "x": np.arange(nx, dtype=float),
+            "y": np.arange(ny, dtype=float),
+            "z": final,
+            "frames": frames,
+        },
+    )
+    spec = PlotSpec(
+        kind=PlotKind.SPATIAL_FIELD,
+        ndim=2,
+        aspect="equal",
+        title=title,
+        x=Axis(label="x"),
+        y=Axis(label="y"),
+        layers=[layer],
+        colorbar=Colorbar(label="u"),
+        meta=meta,
+    )
+    # Fix the colour range across all frames (the full field stack) so an animated
+    # movie never re-scales between frames; a static render uses the same range.
+    finite = frames[np.isfinite(frames)]
+    if finite.size:
+        spec.clim = (float(finite.min()), float(finite.max()))
+    return spec.autocolor()
+
+
+def _spatial_field_1d(frames: np.ndarray, title: str, meta: dict[str, Any]) -> PlotSpec:
+    """Build the 1-D profile ``SPATIAL_FIELD`` spec (a ``LINE`` + the frame stack)."""
+    final = frames[-1]
+    x = np.arange(final.shape[0], dtype=float)
+    layer = Layer(PlotKind.LINE, {"x": x, "y": final, "frames": frames}, label="u(x)")
+    return PlotSpec(
+        kind=PlotKind.SPATIAL_FIELD,
+        ndim=1,
+        title=title,
+        x=Axis(label="x"),
+        y=Axis(label="u"),
+        layers=[layer],
+        meta=meta,
+    )
+
+
+def _resolve_field_shape(
+    source: Any, field_shape: tuple[int, ...] | None
+) -> tuple[tuple[int, ...], tuple[str, ...] | None]:
+    """Resolve ``(spatial_shape, field_labels)`` from the argument or the trajectory meta.
+
+    Priority: an explicit ``field_shape`` argument, else ``meta["field_shape"]``.
+    Returns ``None`` shape only as the 1-D fallback handled by the caller.
+    """
+    meta = getattr(source, "meta", None)
+    labels = None
+    if isinstance(meta, dict):
+        ml = meta.get("field_labels")
+        labels = tuple(str(s) for s in ml) if ml else None
+    if field_shape is not None:
+        return tuple(int(n) for n in field_shape), labels
+    if isinstance(meta, dict):
+        ms = meta.get("field_shape")
+        if ms is not None:
+            return tuple(int(n) for n in ms), labels
+    # No field metadata: treat the whole state vector as a 1-D profile (honest;
+    # never guess a 2-D grid).
+    dim = int(np.atleast_2d(np.asarray(getattr(source, "y", np.empty((0, 0))))).shape[1])
+    return (dim,), labels
+
+
+def _select_field_block(
+    y: np.ndarray,
+    shape: tuple[int, ...],
+    labels: tuple[str, ...] | None,
+    component: int | str | None,
+) -> np.ndarray:
+    """Slice the chosen field block (shape ``(T, prod(shape))``) out of the state.
+
+    A single-block field returns the leading ``prod(shape)`` columns.  When the
+    state packs several blocks (``labels``), ``component`` picks one — a name
+    resolved against ``labels``, an integer index — defaulting to the **last**
+    block (the activator convention, e.g. Gray–Scott's ``v``).
+    """
+    cells = int(np.prod(shape))
+    n_blocks = max(1, y.shape[1] // cells) if cells else 1
+    if labels is not None:
+        n_blocks = len(labels)
+    if component is None:
+        block = n_blocks - 1  # the activator / last block by convention
+    elif isinstance(component, str):
+        if labels is None:
+            raise KeyError(
+                f"cannot resolve field block {component!r}: the trajectory declares no "
+                f"`field_labels`; select a block by integer index instead."
+            )
+        try:
+            block = labels.index(component)
+        except ValueError:
+            raise KeyError(
+                f"unknown field block {component!r}; declared field_labels: {labels}"
+            ) from None
+    else:
+        block = int(component) % n_blocks
+    lo = block * cells
+    return y[:, lo : lo + cells]
 
 
 # ---------------------------------------------------------------------------

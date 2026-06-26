@@ -119,6 +119,10 @@ def test_ode_rhs_lowers_to_symbolic(ode_entry) -> None:
     spuriously redden the gate), with a small ``atol`` floor for near-zero
     components.
     """
+    from _sampling import HEAVY_FIELD_CATEGORIES
+
+    if ode_entry.category in HEAVY_FIELD_CATEGORIES:
+        pytest.skip(f"{ode_entry.name}: high-dim PDE field — viz-only (heavy full-grid sweep)")
     rep = crossvalidate_rhs(
         ode_entry.cls(),
         candidate=RustEngine(backend="interp"),
@@ -143,6 +147,10 @@ def test_ode_rhs_lowers_to_symbolic(ode_entry) -> None:
 
 def test_ode_interp_equals_jit_bit_for_bit(ode_entry) -> None:
     """Every ODE: a short engine integration is bit-identical on interp and jit."""
+    from _sampling import HEAVY_FIELD_CATEGORIES
+
+    if ode_entry.category in HEAVY_FIELD_CATEGORIES:
+        pytest.skip(f"{ode_entry.name}: high-dim PDE field — viz-only (heavy full-grid sweep)")
     sys = ode_entry.cls()
     ic = _resolve_ic(sys, ode_entry.name)
     kw = dict(final_time=0.5, dt=0.05, t0=0.0, ic=ic, method="RK45", rtol=1e-9, atol=1e-11)
@@ -171,7 +179,16 @@ def test_ode_reference_matches_engine(ode_entry) -> None:
     with the interpreter the families dispatch to, up to a 1-ULP transcendental
     slack.  Pure-arithmetic systems (the ``OP_POWI`` path included) agree
     bit-for-bit — pinned exactly by :func:`test_op_powi_is_bit_exact`.
+
+    High-dimensional method-of-lines PDE fields (``HEAVY_FIELD_CATEGORIES``) are
+    skipped: this leg re-lowers the tape for every sample state, so for a 1k-5k-state
+    field it is tens of seconds for no extra coverage — the same ``_equations`` are
+    lowered + integrated on the engine by the small-grid viz field tests.
     """
+    from _sampling import HEAVY_FIELD_CATEGORIES
+
+    if ode_entry.category in HEAVY_FIELD_CATEGORIES:
+        pytest.skip(f"{ode_entry.name}: high-dim PDE field — re-lowered per state (covered by viz)")
     sys = ode_entry.cls()
     for u, t in _states(sys.dim, seed=31):
         reference = run.eval_rhs(sys, u, t, backend="reference")

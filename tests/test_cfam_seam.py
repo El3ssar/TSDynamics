@@ -246,7 +246,7 @@ def test_sde_subclass_excluded_from_builtin_sweeps() -> None:
 
 def test_sde_detection_does_not_disturb_builtin_family_counts() -> None:
     counts = registry.families()  # builtin only
-    assert counts == {"ode": 118, "dde": 5, "map": 26}
+    assert counts == {"ode": 120, "dde": 5, "map": 26}
     assert "sde" not in counts  # no built-in SDE systems yet
 
 

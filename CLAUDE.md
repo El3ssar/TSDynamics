@@ -88,7 +88,7 @@ src/tsdynamics/
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
 ├── viz/                      # PlotSpec IR seam + renderers (mpl/plotly/json/threejs) + compose.py (ts.viz.plot)
 ├── systems/
-│   ├── continuous/           # 8 ODE category modules + delayed_systems.py (DDEs!)
+│   ├── continuous/           # 9 ODE category modules (+ spatial_fields.py 2-D PDEs) + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
 └── utils/
     ├── grids.py              # make_output_grid (hoisted output-grid builder)
@@ -115,8 +115,8 @@ module's `__all__`), so a new system needs no manual edit there.
 
 `tsdynamics.__all__` exports:
 
-- The 149 built-in systems are reachable via `tsdynamics.systems` (149 today:
-  118 ODE + 5 DDE + 26 maps), not the top-level `__all__`
+- The 151 built-in systems are reachable via `tsdynamics.systems` (151 today:
+  120 ODE + 5 DDE + 26 maps), not the top-level `__all__`
 - Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`,
   `StochasticSystem`; result type `Trajectory`
 - Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
@@ -229,7 +229,12 @@ records name/cls/family/category/dim/params/reference/known_lyapunov.
 Optional per-system metadata ClassVars: `variables` (component names →
 `traj["x"]`, docs labels), `reference` (literature citation shown in docs),
 `known_lyapunov` (drives `tests/test_known_values.py`; keys: `spectrum`+`atol`,
-or `n_positive`, plus `params`/`ic`/`kwargs`/`source`).
+or `n_positive`, plus `params`/`ic`/`kwargs`/`source`), and — for a
+**spatially-extended** system whose state vector is a flattened field —
+`_field_shape: tuple[int, ...]` (the spatial grid `(Ny, Nx)` / `(N,)`, resolved
+onto `traj.meta["field_shape"]` by `SystemBase.__init__`/`_provenance` for the
+`kind="field"` spatial-field movie) and `field_labels` (the names of the field
+blocks packed into the state, e.g. Gray–Scott's `("u", "v")`).
 
 ---
 
@@ -595,11 +600,22 @@ import is deferred to first render.
   The returned spec **renders itself**: `PlotSpec` has `.plot()` (inline-tweak +
   render), `.render(backend=)`, `.save(path)` (raster/vector → matplotlib, `.html`
   → plotly, by extension), and a notebook `_repr_mimebundle_`.
-  - **Composite rendering:** the **matplotlib** renderer tiles `panels` into a
-    subplot grid (`_render_composite` / per-panel `_draw_2d_panel` /
-    `_threed._draw_3d_panel`; 2-D panels optionally share axes). Plotly **declines**
-    `COMPOSITE` (multi-panel tiling is an mpl-only follow-up) and dispatch falls
-    back to mpl; an *overlay* single-panel spec still renders in plotly natively.
+  - **Composite rendering:** **both** in-tree drawing backends tile `panels` into
+    a subplot grid. The **matplotlib** renderer (`_render_composite` / per-panel
+    `_draw_2d_panel` / `_threed._draw_3d_panel`; 2-D panels optionally share axes).
+    The **plotly** renderer (`viz/render/plotly/_composite.py::render_composite`)
+    tiles natively via `plotly.subplots.make_subplots(rows, cols, specs=…)`: each
+    panel's cell is typed `"scene"` (a 3-D panel) or `"xy"` (a 2-D panel) so a
+    composite **mixing** a time-series panel and a 3-D portrait renders with each
+    panel on the right subplot type; per-panel traces are built by the factored
+    single-panel cores (`_core.build_2d_traces` / `_threed.build_3d_traces`) and
+    added with `add_trace(…, row, col)`, and per-panel colorbars are repositioned
+    into each panel's own domain (`_place_colorbars`) so stacked images do not
+    collide. `.save("fig.html")` on a composite therefore yields one interactive
+    multi-panel page. The capability check recurses into `panels`
+    (`RendererCapabilities.can_render_spec`), so plotly still falls back to mpl
+    when a panel uses a kind it declines. (Plotly **declines** only `COMPOSITE`
+    *animations* for now — `viz/render/plotly/_anim.py` is single-panel.)
 - **Animation — an orthogonal modifier (`viz/spec.py::Animation`,
   `PlotSpec.animation`):** any spec of any `PlotKind` (single-panel or composite)
   becomes a movie by carrying an `Animation`; the semantic `kind` is unchanged and
@@ -611,30 +627,83 @@ import is deferred to first render.
   with the static `.relabel`/`.rescale`/`.limits`/`.style(…)`/… tweaks — including
   `.style(axes=False)`, which records `meta["axes_visible"]=False` and every
   renderer honors it: mpl `ax.set_axis_off()`, plotly axis/scene `visible=False`,
-  for a clean "attractor floating in space" still or animation). The frame model is
-  **reveal** (this release): the layer keeps its full static data and each frame
-  shows a comet — head at the current sample, tail reaching back `trail_length`
-  (`None` ⇒ persistent); the frame math lives on `Animation`
-  (`head_indices`/`tail_samples`/`frame_count`). Per-kind head default: on for
-  portraits / spacetime, off for a plain time series; a composite plays panels in
-  **lockstep** on one master clock (each panel keeps its own per-kind head). The
-  `frames` mode (materialized per-frame data, e.g. an evolving 2-D field) is
-  reserved, not yet rendered (issue #461). Rendering: **matplotlib** →
+  for a clean "attractor floating in space" still or animation). There are **two
+  frame models** (`Animation.mode`). **`reveal`** (the default): the layer keeps
+  its full static data and each frame shows a comet — head at the current sample,
+  tail reaching back `trail_length` (`None` ⇒ persistent); the frame math lives on
+  `Animation` (`head_indices`/`tail_samples`/`frame_count`). Per-kind head default:
+  on for portraits / spacetime, off for a plain time series; a composite plays
+  panels in **lockstep** on one master clock (each panel keeps its own per-kind
+  head). **`frames`** (stream VIZ-SPATIAL-FIELD): a **spatial-field movie** — the
+  field of a spatially-extended system (a method-of-lines PDE) *played over time*.
+  Each frame is the field's **spatial** state at that instant, and the per-frame
+  plot's shape follows the field's spatial dimensionality: a **1-D field** `u(x)`
+  is a travelling-wave **line** (the profile — Kuramoto–Sivashinsky), a **2-D
+  field** `u(x,y)` an `imshow` **heatmap** movie (Gray–Scott / Swift–Hohenberg).
+  ONE semantic kind covers both — the new `SPATIAL_FIELD` `PlotKind` (the
+  renderer dispatches on the field's spatial ndim, like `to_plot_spec`
+  auto-dispatches on component count). The producer
+  (`viz/producers.py::spatial_field`) stacks every per-time snapshot on the
+  layer's `"frames"` channel (shape `(T, *spatial)`) and keeps the **final** field
+  as the static layer data (`z` for 2-D / `y` for 1-D), so a still save / a backend
+  that can't animate draws the final field; the mpl renderer plays the stack frame
+  by frame (`viz/render/mpl/_anim.py::_field_movie_driver` → `_field_movie_2d` /
+  `_field_movie_1d`), consecutive frames carrying genuinely different data. **Front
+  door:** `system.to_plot_spec(kind="field", animate=True)` — the `"field"` recipe
+  routes via `_KIND_ALIASES`; the spatial layout comes from the **system**, via the
+  optional `_field_shape: tuple[int, ...]` ClassVar (recorded onto
+  `traj.meta["field_shape"]` at integration time, so a bare `Trajectory` carries
+  it). No `shape` kwarg: a system with no `_field_shape` (or a 1-D one) is a 1-D
+  profile (honest — never guesses a 2-D grid). A multi-block field state declares
+  `field_labels` (e.g. Gray–Scott's `("u", "v")`); `components="u"|"v"` picks the
+  block, defaulting to the **last** (the activator). The field movie is
+  **matplotlib-only** (mp4/gif): plotly *declines* an animated `SPATIAL_FIELD` (a
+  static field it draws), threejs draws a 1-D profile / declines a 2-D field.
+  Rendering: **matplotlib** →
   `viz/render/mpl/_anim.py` builds a `FuncAnimation` (`.save("x.mp4"/"x.gif")` via
   ffmpeg/pillow); **plotly** → `viz/render/plotly/_anim.py`: HTML export
   (`.save("x.html")`, the zero-extra-dep default) is a **real-time** animation — the
   full attractor is drawn once (static, rotatable) and a `requestAnimationFrame`
-  loop advances a comet via `Plotly.react` (which redraws gl3d — `restyle` does
-  **not**, and must never be used here). Each tick hands `react` a **fresh array
-  with fresh comet/head trace objects** (`gd.data.slice()` + `Object.assign`) — its
-  immutable diff treats an unchanged array *reference* as unchanged data, so reusing
-  `gd.data` silently no-ops; the static context trace keeps its original object, so
-  `react` diffs it away and only the small comet re-renders. The layout (hence the
-  camera) is never touched and `uirevision` is constant, so the camera is
-  **preserved — orbit while it plays**. A minimal **play/pause + restart overlay**
+  loop streams a comet by **mutating its trace buffers in place with
+  `Plotly.extendTraces`** (append the next points, trim to a `maxPoints` sliding
+  window; the single-point head uses `maxPoints` 1; once per loop the window resets
+  to the start via `restyle`). `extendTraces` redraws the gl3d comet **without
+  re-creating the traces or rebuilding the WebGL scene**, so an in-progress mouse
+  orbit-drag is never interrupted: you **rotate WHILE it plays, with no click lag and
+  the stream never stops**, and a constant `uirevision` keeps the camera you set.
+  This replaced an earlier `Plotly.react` driver (a fresh comet/head trace object via
+  `gd.data.slice()` + `Object.assign` each frame): react redraws gl3d too but **tears
+  the moving traces down every frame**, and that per-frame scene rebuild ate the drag
+  and lagged the first rotation — so react must NOT be used for the per-frame update.
+  (A browser shootout also found the old "`restyle` can't redraw gl3d" lore is false
+  in modern plotly; `extendTraces` is still preferred as the purpose-built streaming
+  primitive.) The full-curve cache is
+  read from plotly's **decoded** data (`gd._fullData`, a `Float64Array`), not raw
+  `gd.data` — plotly 6 stores a base64 typed-array *spec* (`{dtype, bdata}`, no
+  `.slice`) in `gd.data[i].x`, so the loop normalises each axis up front (`asArray`)
+  + slices via `Array.prototype.slice.call` (plain arrays, so `extendTraces`'
+  type-match is satisfied), or the per-frame read throws on frame 0 and the curve
+  stays static (issue #464). The comet/head traces are emitted as **plain Python
+  lists** (not numpy → not a `{bdata}` spec) so `extendTraces` can append to them.
+  A minimal **play/pause + restart overlay**
   (bottom-left, with a % readout) makes it obviously alive without devtools.
   A returned live figure (notebooks) instead uses a plotly frames + play/slider
   player (`build_animated_figure`). Camera-spin/clock are mpl-only for now.
+  **threejs** → the data exporter (`viz/render/threejs/_lower.py`) adds a
+  `metadata.animation` block (`fps`/`duration`/`trail_length_samples`/`head`/
+  `n_samples`) when `spec.animation` is set — the geometry buffers are untouched
+  (byte-identical to the static export). The reference loader
+  (`docs/_static/tsdyn-threejs-loader.js`) honors it with a **reveal comet**: a
+  faint full-curve backdrop + a bright windowed trail advanced by
+  `geometry.setDrawRange(start, count)` + a `THREE.Points` head, on a
+  `requestAnimationFrame` clock with a play/pause overlay — and because the
+  draw-range update is independent of `OrbitControls`, the camera is held still by
+  default yet **orbitable while it plays**. The reveal sweeps a **line** index
+  buffer, so the block is emitted only for `LINE`/`LINE3D` specs (`_ANIMATED_MARKS`);
+  an animated `points`-only / `surface`-only spec has no comet to play, so the
+  exporter drops to a static payload and **warns** (`VisualizationDegraded`) rather
+  than silently dropping it (and the loader auto-rotates, never freezing the
+  camera). A static payload (no `metadata.animation`) renders exactly as before.
   `PlotSpec.save` picks the
   backend by extension (animated: `.html`→plotly, `.mp4`/`.gif`→matplotlib) and
   takes `fps`/`dpi`/`size`. The `Animation` directive round-trips through
@@ -678,7 +747,7 @@ inner loop** — see below.
 
 ### Change-scoped testing (stream CI-CHANGED) — use this, not the full suite
 
-The bulk suite is registry-driven (every test parametrized over all 149 systems
+The bulk suite is registry-driven (every test parametrized over all 151 systems
 + every analysis/transform), so a plain `uv run pytest` is thousands of items and
 takes minutes. **To check your work, run only what your diff touches:**
 
@@ -896,5 +965,5 @@ exps = mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])
 
 # Registry
 from tsdynamics import registry
-registry.families()                         # {'ode': 118, 'dde': 5, 'map': 26}
+registry.families()                         # {'ode': 120, 'dde': 5, 'map': 26}
 ```

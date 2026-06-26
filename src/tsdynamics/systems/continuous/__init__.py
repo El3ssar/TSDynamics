@@ -135,6 +135,7 @@ from .physical_systems import (
     WindmiReduced,
 )
 from .population_dynamics import CoevolvingPredatorPrey, Finance, KawczynskiStrizhak
+from .spatial_fields import GrayScott, SwiftHohenberg
 
 __all__ = []
 
@@ -300,6 +301,9 @@ __all__ += [
 
 # population_dynamics
 __all__ += ["CoevolvingPredatorPrey", "KawczynskiStrizhak", "Finance"]
+
+# spatial_fields (2-D method-of-lines PDEs — spatial-field movies)
+__all__ += ["GrayScott", "SwiftHohenberg"]
 
 
 def __dir__() -> list[str]:

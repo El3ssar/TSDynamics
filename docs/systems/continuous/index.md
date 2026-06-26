@@ -1,12 +1,12 @@
 ---
-description: The 118 built-in continuous flows — ODE systems run on the native Rust engine, organized into eight categories.
+description: The 120 built-in continuous flows — ODE systems run on the native Rust engine, organized into eight categories.
 ---
 
 <span class="ts-kicker">Systems · Continuous</span>
 
 # Continuous systems
 
-The largest family: **118 ODE systems**, all subclasses of
+The largest family: **120 ODE systems**, all subclasses of
 [`ContinuousSystem`](../../reference/base.md). Each declares its parameters
 and dimension at class level and defines the vector field in one symbolic
 `_equations` method; it is lowered to the native Rust engine in-process and

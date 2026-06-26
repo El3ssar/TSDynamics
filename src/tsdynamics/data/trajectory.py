@@ -45,6 +45,12 @@ if TYPE_CHECKING:
 _KIND_ALIASES: dict[str, str] = {
     "delay": "delay_embedding",
     "delay_embedding": "delay_embedding",
+    # ``"field"`` is a *recipe* (not a frozen PlotKind value): it routes to the
+    # ``spatial_field`` producer, which emits a real ``SPATIAL_FIELD`` spec — a
+    # 1-D profile line or a 2-D heatmap of the system's field, reshaped via its
+    # ``_field_shape``.  ``"spatial_field"`` (the kind value) routes here too.
+    "field": "spatial_field",
+    "spatial_field": "spatial_field",
 }
 
 #: Per-route allow-list of the extra keyword(s) accepted via ``**kind_kw`` — kept
@@ -58,6 +64,10 @@ _KIND_KW: dict[str, frozenset[str]] = {
     "phase_portrait_2d": frozenset({"color_by"}),
     "phase_portrait_3d": frozenset({"color_by"}),
     "spacetime": frozenset({"transpose"}),
+    # ``"field"`` takes no per-kind keyword — the spatial grid comes from the
+    # system's ``_field_shape`` (via meta), and the field-block selector rides on
+    # the main ``components=`` argument.
+    "spatial_field": frozenset(),
 }
 
 #: The keywords ``plot()`` peels off and forwards to :meth:`Trajectory.to_plot_spec`
@@ -317,6 +327,15 @@ class Trajectory:
         ):
             return self._with_animation(self._poincare_section_spec(all_names), animate)
 
+        # The ``"field"`` / ``"spatial_field"`` recipe routes before component
+        # resolution: here ``components=`` selects a *field block* (e.g. Gray–
+        # Scott's "u"/"v"), not a state component, so it must not be resolved
+        # against the per-cell labels.
+        if kind is not None and _KIND_ALIASES.get(kind, kind) == "spatial_field":
+            self._validate_kind_kw("spatial_field", kind_kw)
+            field = self._spatial_field_spec(components)
+            return self._with_animation(field, animate)
+
         sel = self._resolve_components(components, all_names)
         sel_names = tuple(all_names[i] for i in sel)
         n_sel = len(sel)
@@ -356,11 +375,38 @@ class Trajectory:
         :class:`~tsdynamics.viz.spec.Animation` fields; an ``Animation`` is used
         verbatim.  The spec carries ``meta["dt"]``, so time-unit trails / the clock
         resolve at render time.
+
+        A :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` spec always animates
+        in the **frames** model — the field *movie*: each frame is the spatial
+        state at that instant (a 1-D profile line or a 2-D heatmap), so consecutive
+        frames carry genuinely different data.  No comet window, no head marker; the
+        field itself is the motion.
         """
         if animate is False or animate is None:
             return spec
         from tsdynamics.viz.spec import Animation as _Animation
         from tsdynamics.viz.spec import PlotKind
+
+        if spec.kind == PlotKind.SPATIAL_FIELD:
+            # The spatial-field movie is the frames model — every frame is a fresh
+            # spatial snapshot.  Force ``mode="frames"`` and the field defaults (no
+            # comet window, no head), letting the caller's own keys still win.
+            field_defaults: dict[str, Any] = {
+                "mode": "frames",
+                "head": False,
+                "trail_kind": None,
+            }
+            if isinstance(animate, _Animation):
+                animate.mode = "frames"
+                animate.head = False
+                animate.trail_kind = None
+                animate.trail_length = None
+                spec.animation = animate
+            elif isinstance(animate, dict):
+                spec.animation = _Animation(**{**field_defaults, **animate})
+            else:  # truthy (e.g. ``True``)
+                spec.animation = _Animation(**field_defaults)
+            return spec
 
         head_default = spec.kind != PlotKind.TIME_SERIES
         # Default to a *windowed* comet (a moving trail + head over the full faint
@@ -595,9 +641,42 @@ class Trajectory:
             y=y_axis,
             layers=[layer],
             colorbar=Colorbar(label="state"),
-            meta={**dict(self.meta), "component_names": list(names)},
+            # ``time_axis`` records which image axis runs in time so an
+            # animate={"mode":"frames"} movie grows along time under either
+            # orientation (rows when transposed, columns otherwise).
+            meta={
+                **dict(self.meta),
+                "component_names": list(names),
+                "time_axis": "row" if transpose else "col",
+            },
         )
         return spec.autocolor()
+
+    def _spatial_field_spec(self, component: int | str | Sequence[int | str] | None) -> PlotSpec:
+        """Build a :data:`SPATIAL_FIELD` spec via the ``spatial_field`` producer.
+
+        The spatial grid is read from ``meta["field_shape"]`` (recorded by a system
+        declaring ``_field_shape``); ``component`` selects a field block
+        (Gray–Scott's ``"u"`` / ``"v"``).  A bare field with no grid metadata falls
+        back to a 1-D profile.
+        """
+        from tsdynamics.errors import InvalidParameterError
+        from tsdynamics.viz import producers
+
+        block: int | str | None
+        if component is None:
+            block = None
+        elif isinstance(component, (int, str, np.integer)):
+            block = int(component) if isinstance(component, np.integer) else component
+        else:  # a sequence — a field movie plots exactly one block
+            items = list(component)
+            if len(items) != 1:
+                raise InvalidParameterError(
+                    "kind='field' plots a single field block; select exactly one via "
+                    f"components= (got {len(items)})."
+                )
+            block = items[0]
+        return producers.spatial_field(self, component=block)
 
     def plot(self, backend: str | None = None, **kwargs: Any) -> Any:
         """Render this trajectory via a visualization backend.

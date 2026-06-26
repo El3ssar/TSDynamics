@@ -121,14 +121,16 @@ def test_ode_integration_shape_and_finiteness(name: str) -> None:
 
 
 @pytest.mark.full
-@pytest.mark.slow  # belt-and-braces: `-m "not slow"` alone must never trigger 118 compiles
+@pytest.mark.slow  # belt-and-braces: `-m "not slow"` alone must never trigger 120 compiles
 def test_ode_full_integration_sweep(ode_entry) -> None:
     import zlib
 
-    from _sampling import HARD_TO_INTEGRATE
+    from _sampling import HARD_TO_INTEGRATE, HEAVY_FIELD_CATEGORIES
 
     if ode_entry.name in HARD_TO_INTEGRATE:
         pytest.skip(HARD_TO_INTEGRATE[ode_entry.name])
+    if ode_entry.category in HEAVY_FIELD_CATEGORIES:
+        pytest.skip(f"{ode_entry.name}: high-dim PDE field — covered by the viz field tests")
     sys = ode_entry.cls()
     # Deterministic per-system IC: systems with a default_ic use it; the rest
     # get a fixed (seeded) draw so the sweep is reproducible, not flaky.

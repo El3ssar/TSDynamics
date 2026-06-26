@@ -5,7 +5,7 @@ The bulk suite is registry-driven (see ``conftest.py``); this module holds the
 hand-picked subsets and inputs that cannot be derived from the registry:
 
 - ``INTEGRATION_SAMPLE`` — representative ODE systems compiled + integrated in
-  the regular ``slow`` tier.  The full 118-system sweep runs nightly under
+  the regular ``slow`` tier.  The full 120-system sweep runs nightly under
   ``-m full``.  A guard test in ``test_registry.py`` enforces that every ODE
   category keeps at least two representatives here.
 - ``MAP_LYAPUNOV_EXCLUDE`` — maps whose Jacobian is singular or undefined
@@ -58,7 +58,22 @@ INTEGRATION_SAMPLE: list[str] = [
     # population_dynamics
     "Finance",
     "CoevolvingPredatorPrey",
+    # NOTE: the `spatial_fields` category (GrayScott, SwiftHohenberg) is
+    # intentionally absent — see HEAVY_FIELD_CATEGORIES below.
 ]
+
+# ODE categories excluded from the per-system integration / cross-validation sweeps
+# because they are high-dimensional method-of-lines PDE *fields* (a flattened 2-D
+# grid → ~1k-5k coupled ODEs).  The pure-Python *reference* trajectory leg
+# (test_xval_catalogue leg 4) steps them in interpreted Python (intractable), and
+# the per-state `reference == engine` RHS leg (leg 3) re-lowers the tape for every
+# sample state (tens of seconds at 1k-5k states).  Engine lowering + integration
+# themselves are fast (a couple of seconds — the field movies are quick), so these
+# systems are fully exercised by the small-grid viz field tests (N=8), which lower
+# + integrate the same `_equations` on the engine.  Skipped by: the
+# INTEGRATION_SAMPLE coverage guard (test_registry), the reference==engine leg
+# (test_xval_catalogue leg 3), and the nightly full integration sweep.
+HEAVY_FIELD_CATEGORIES: set[str] = {"spatial_fields"}
 
 # --- ODE systems excluded from the exhaustive integration sweeps ------------
 # Systems that cannot be integrated by adaptive solvers in bounded time would

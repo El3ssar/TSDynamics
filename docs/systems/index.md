@@ -1,16 +1,16 @@
 ---
-description: The catalogue of 149 built-in dynamical systems — 118 continuous flows, 5 delay systems, 26 discrete maps — with auto-generated per-system pages.
+description: The catalogue of 151 built-in dynamical systems — 120 continuous flows, 5 delay systems, 26 discrete maps — with auto-generated per-system pages.
 ---
 
 <span class="ts-kicker">Systems</span>
 
 # Systems
 
-TSDynamics ships **149 built-in systems** across three families:
+TSDynamics ships **151 built-in systems** across three families:
 
 | Family | Base class | Count | Time | Engine |
 | ------ | ---------- | ----- | ---- | ------ |
-| [Continuous](continuous/index.md) | `ContinuousSystem` | 118 | continuous | Rust engine |
+| [Continuous](continuous/index.md) | `ContinuousSystem` | 120 | continuous | Rust engine |
 | [Delay](delay/index.md) | `DelaySystem` | 5 | continuous, with memory | Rust engine |
 | [Discrete](discrete/index.md) | `DiscreteMap` | 26 | discrete | Rust engine |
 
@@ -30,7 +30,7 @@ or discoverable programmatically through the
 ```python
 from tsdynamics import registry
 
-registry.families()                          # {'ode': 118, 'dde': 5, 'map': 26}
+registry.families()                          # {'ode': 120, 'dde': 5, 'map': 26}
 [e.name for e in registry.all_systems(family="dde")]
 # ['MackeyGlass', 'IkedaDelay', 'SprottDelay', 'ScrollDelay', 'PiecewiseCircuit']
 ```
