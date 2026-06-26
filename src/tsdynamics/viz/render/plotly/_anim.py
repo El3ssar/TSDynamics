@@ -113,6 +113,24 @@ _REALTIME_JS = """
   bar.appendChild(playBtn); bar.appendChild(restartBtn); bar.appendChild(readout);
   gd.appendChild(bar);
 
+  // --- Rotate-while-it-plays: pause the comet while the pointer is down --------
+  // Plotly.react() rebuilds the gl3d scene each frame, which EATS an in-progress
+  // orbit drag — so a 3-D attractor feels un-rotatable while it animates.  Hold
+  // the comet for the moment the pointer is down (and a beat after release), so
+  // gl3d's native camera drag runs uninterrupted; the camera the user sets is
+  // kept (constant uirevision) and the comet resumes the instant they let go.
+  var interacting = false, resumeTimer = null;
+  function holdAfter(ms) {
+    if (resumeTimer) { clearTimeout(resumeTimer); }
+    resumeTimer = setTimeout(function() { interacting = false; resumeTimer = null; }, ms);
+  }
+  function beginInteract() { interacting = true; if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; } }
+  gd.addEventListener('mousedown', beginInteract);
+  window.addEventListener('mouseup', function() { holdAfter(140); });
+  gd.addEventListener('wheel', function() { interacting = true; holdAfter(280); }, { passive: true });
+  gd.addEventListener('touchstart', beginInteract, { passive: true });
+  window.addEventListener('touchend', function() { holdAfter(180); }, { passive: true });
+
   var i = 1, playing = true, raf = null;
   function render() {
     var hi = i % N, lo = Math.max(0, hi - WINDOW);
@@ -145,8 +163,12 @@ _REALTIME_JS = """
   }
   function tick() {
     if (!playing) { raf = null; return; }
-    render();
-    i += STRIDE; if (i >= N) { i = 1; }
+    // Skip the redraw while the user is interacting so the orbit drag is smooth;
+    // keep the rAF alive so the comet resumes the moment they release.
+    if (!interacting) {
+      render();
+      i += STRIDE; if (i >= N) { i = 1; }
+    }
     raf = requestAnimationFrame(tick);
   }
   function start() { if (!raf) { raf = requestAnimationFrame(tick); } }

@@ -653,7 +653,13 @@ import is deferred to first render.
   or the per-frame `.slice` throws on frame 0 and the curve stays static (issue
   #464). The layout (hence the
   camera) is never touched and `uirevision` is constant, so the camera is
-  **preserved — orbit while it plays**. A minimal **play/pause + restart overlay**
+  **preserved — orbit while it plays**. The *drag itself* works because the loop
+  **pauses `render()` while the pointer is down** (`mousedown`/`mouseup` + wheel /
+  touch set an `interacting` flag; `tick()` gates the redraw behind `!interacting`):
+  `Plotly.react` rebuilds the gl3d scene each frame and would otherwise eat the
+  in-progress orbit gesture, so a 3-D attractor felt un-rotatable; the comet holds
+  for the moment you drag and resumes the instant you release (the camera you set
+  persists). A minimal **play/pause + restart overlay**
   (bottom-left, with a % readout) makes it obviously alive without devtools.
   A returned live figure (notebooks) instead uses a plotly frames + play/slider
   player (`build_animated_figure`). Camera-spin/clock are mpl-only for now.

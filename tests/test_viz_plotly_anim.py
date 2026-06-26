@@ -91,6 +91,23 @@ def test_realtime_js_keeps_the_raf_comet_react_wiring(components):
     assert "uirevision" in js  # camera/zoom preserved across react calls
 
 
+@pytest.mark.parametrize("components", [None, ["x", "z"], "x"])
+def test_realtime_js_pauses_the_comet_while_the_pointer_is_down(components):
+    """Rotate-while-it-plays: the redraw is gated off while the user interacts.
+
+    ``Plotly.react`` rebuilds the gl3d scene each frame and eats an in-progress
+    orbit drag, so a 3-D attractor felt un-rotatable while animating.  The driver
+    now holds the comet while the pointer is down (``mousedown``/``mouseup`` +
+    ``wheel``/touch), gating ``render()`` behind ``!interacting`` so gl3d's native
+    camera drag runs uninterrupted and resumes on release.
+    """
+    pytest.importorskip("plotly")
+    js = _html(components=components)
+    assert "interacting" in js  # the interaction flag
+    assert "mousedown" in js and "mouseup" in js  # pointer-down/up drive it
+    assert "if (!interacting)" in js  # render() is gated off during a drag
+
+
 def test_realtime_html_3d_and_2d_both_carry_the_fix(tmp_path):
     """The saved ``.html`` (the user-facing path) carries the fix for 3-D and 2-D."""
     pytest.importorskip("plotly")
