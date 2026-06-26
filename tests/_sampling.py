@@ -58,6 +58,9 @@ INTEGRATION_SAMPLE: list[str] = [
     # population_dynamics
     "Finance",
     "CoevolvingPredatorPrey",
+    # spatial_fields (2-D method-of-lines PDEs — high-dim flattened fields)
+    "GrayScott",
+    "SwiftHohenberg",
 ]
 
 # --- ODE systems excluded from the exhaustive integration sweeps ------------

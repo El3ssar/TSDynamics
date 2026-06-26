@@ -300,6 +300,26 @@ class SystemBase(SystemPlottable):
     #: access on trajectories (``traj["x"]``) and labelled docs figures.
     variables: ClassVar[tuple[str, ...] | None] = None
 
+    #: Optional **spatial** grid shape for a spatially-extended system whose state
+    #: vector is a flattened field — e.g. ``(Ny, Nx)`` for a 2-D
+    #: reaction-diffusion / PDE lattice, or ``(N,)`` for a 1-D profile.  When set,
+    #: it is recorded on ``traj.meta["field_shape"]`` so the visualization layer's
+    #: ``kind="field"`` recipe (stream VIZ-SPATIAL-FIELD) reshapes each per-time
+    #: state vector to that grid and plays it as a *spatial-field movie* (a line
+    #: for a 1-D field, an ``imshow`` heatmap for a 2-D field).  A system that
+    #: packs several field blocks into one state vector (e.g. Gray–Scott's
+    #: ``[u, v]``) also declares :attr:`field_labels` and gives the grid of one
+    #: block here.  ``None`` for an ordinary low-dimensional system.
+    _field_shape: ClassVar[tuple[int, ...] | None] = None
+
+    #: Optional names of the field blocks packed into the flattened state vector
+    #: of a spatially-extended system (e.g. ``("u", "v")`` for a two-species
+    #: reaction-diffusion model).  Each block has :attr:`_field_shape` grid cells,
+    #: laid out contiguously in state order.  Lets the ``kind="field"`` recipe
+    #: select which block to plot via ``components="u"|"v"`` (the first block is
+    #: the default).  ``None`` for a single-block field.
+    field_labels: ClassVar[tuple[str, ...] | None] = None
+
     #: Optional literature reference for the system, e.g.
     #: ``"Lorenz (1963), J. Atmos. Sci. 20, 130"``.  Surfaced in the docs.
     reference: ClassVar[str | None] = None
@@ -336,6 +356,7 @@ class SystemBase(SystemPlottable):
         params: dict[str, Any] | None = None,
         ic: Any | None = None,
         dim: int | None = None,
+        field_shape: tuple[int, ...] | None = None,
     ) -> None:
         # Build ParamSet from class defaults + constructor overrides
         defaults = dict(type(self).params)
@@ -354,6 +375,13 @@ class SystemBase(SystemPlottable):
         # dim: constructor arg > class attribute
         resolved_dim = dim if dim is not None else type(self).dim
         object.__setattr__(self, "dim", resolved_dim)
+
+        # field_shape (spatially-extended systems): constructor arg > class
+        # attribute.  Set via object.__setattr__ so a custom-N instance overrides
+        # the class default without tripping the ClassVar assignment rule (mirrors
+        # ``dim``).  ``_provenance`` reads the instance value onto ``traj.meta``.
+        resolved_field_shape = field_shape if field_shape is not None else type(self)._field_shape
+        object.__setattr__(self, "_field_shape", resolved_field_shape)
 
         # Initial conditions
         ic_arr = np.asarray(ic, dtype=float) if ic is not None else None
@@ -509,12 +537,24 @@ class SystemBase(SystemPlottable):
         """Build the provenance dict attached to trajectories as ``traj.meta``."""
         from tsdynamics import __version__
 
-        return {
+        prov: dict[str, Any] = {
             "system": type(self).__name__,
             "params": cast(ParamSet, self.params).as_dict(),
             "tsdynamics": __version__,
             **extra,
         }
+        # A spatially-extended system carries its grid shape (and field-block
+        # labels) so a bare Trajectory can be played as a spatial-field movie
+        # (stream VIZ-SPATIAL-FIELD) without the producing system in hand.  Read
+        # the *instance* attribute first so a custom-N instance (which sets
+        # ``self._field_shape`` in __init__) wins over the class default.
+        field_shape = getattr(self, "_field_shape", None)
+        if field_shape is not None:
+            prov["field_shape"] = tuple(int(n) for n in field_shape)
+            field_labels = getattr(self, "field_labels", None)
+            if field_labels is not None:
+                prov["field_labels"] = tuple(str(s) for s in field_labels)
+        return prov
 
     def __repr__(self) -> str:
         params_str = ", ".join(f"{k}={v}" for k, v in self.params.items())

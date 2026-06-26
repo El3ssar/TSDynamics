@@ -54,11 +54,19 @@ class _PlotlyCapabilities(RendererCapabilities):
     :class:`~matplotlib.animation.FuncAnimation` animates each panel in lockstep;
     the plotly animation core is single-panel), so a composite that also carries an
     :class:`~tsdynamics.viz.spec.Animation` is declined and dispatch falls back.
+
+    Likewise an animated :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` — the
+    *field movie* — is matplotlib-only (the plotly reveal animator drives curves,
+    not a per-frame field stack), so it is declined and dispatch falls back to
+    matplotlib (mp4 / gif).  A **static** ``SPATIAL_FIELD`` (a 2-D heatmap or a 1-D
+    line) plotly draws natively.
     """
 
     def can_render_spec(self, spec: PlotSpec) -> bool:
-        """Decline an animated composite; otherwise defer to the base check."""
+        """Decline an animated composite / field movie; otherwise defer to the base."""
         if spec.is_composite and spec.is_animated:
+            return False
+        if spec.is_animated and spec.kind == PlotKind.SPATIAL_FIELD:
             return False
         return super().can_render_spec(spec)
 

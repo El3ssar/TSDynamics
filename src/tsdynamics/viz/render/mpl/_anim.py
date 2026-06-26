@@ -11,11 +11,14 @@ An animated :class:`~tsdynamics.viz.spec.PlotSpec` (one carrying an
   (``None`` ⇒ persistent).  Per kind the "current state" head is drawn
   appropriately: a point marker on a curve (phase portraits / delay embeddings),
   a vertical sweep line on a time series or spacetime image.
-- ``"frames"``: an **evolving field** — a spacetime ``IMAGE`` whose ``z`` field
-  is materialised frame by frame (a heatmap growing left-to-right as the field
-  develops in time, e.g. a Kuramoto–Sivashinsky ``u(x, t)`` movie), so
-  consecutive frames carry genuinely different image content rather than a sweep
-  line over a static image.
+- ``"frames"``: a **spatial-field movie** — a
+  :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` spec whose layer carries the
+  full per-time field stack on its ``"frames"`` channel (shape ``(T, *spatial)``).
+  Each playback frame is the field's *spatial* state at that instant, so the plot
+  genuinely evolves: a 2-D field plays as an ``imshow`` heatmap movie (Gray–Scott
+  / Swift–Hohenberg), a 1-D field as a travelling-wave line (the
+  Kuramoto–Sivashinsky profile).  Consecutive frames carry different data, not a
+  sweep line over a static image.
 
 Axis limits (and an image's colour range) are computed once from the **full**
 data and held fixed so the view does not jump between frames; a 3-D camera
@@ -159,18 +162,19 @@ def _layer_sample_count(spec: PlotSpec) -> int:
     """Return the number of samples to reveal (the longest animated curve / field).
 
     For a curve mark this is the length of its ``x`` / ``y`` channel; for a
-    ``frames``-mode spacetime ``IMAGE`` it is the number of field columns
-    (``z.shape[1]``, the time axis the field grows along).
+    ``frames``-mode spatial-field layer it is the number of **time frames** on the
+    ``"frames"`` channel (``frames.shape[0]``).
     """
     anim = spec.animation
     frames_mode = anim is not None and anim.mode == "frames"
     n = 0
     for layer in spec.layers:
-        mark = PlotKind(layer.kind)
-        if frames_mode and mark == PlotKind.IMAGE:
-            n = max(n, _image_field_steps(spec, layer))
-            continue
-        if mark not in _animated_marks():
+        if frames_mode:
+            stack = _field_stack(layer)
+            if stack is not None:
+                n = max(n, int(stack.shape[0]))
+                continue
+        if PlotKind(layer.kind) not in _animated_marks():
             continue
         arr = layer.data.get("x", layer.data.get("y"))
         if arr is not None:
@@ -178,97 +182,53 @@ def _layer_sample_count(spec: PlotSpec) -> int:
     return max(n, 2)
 
 
-def _image_field(layer: Any) -> np.ndarray | None:
-    """Return a 2-D field array from an ``IMAGE`` layer's ``z`` (else ``c``) channel."""
-    field = layer.data.get("z")
-    if field is None:
-        field = layer.data.get("c")
-    if field is None:
-        return None
-    arr = np.asarray(field, dtype=float)
-    return arr if arr.ndim == 2 else None
+def _field_stack(layer: Any) -> np.ndarray | None:
+    """Return a layer's per-time field stack from its ``"frames"`` channel, else ``None``.
 
-
-def _frames_time_axis(spec: PlotSpec, layer: Any, field: np.ndarray) -> int:
-    """Return the field axis (``0`` rows / ``1`` columns) the movie grows along.
-
-    Prefers the unambiguous ``meta["time_axis"]`` hint the spacetime producer
-    records (``"row"`` under ``transpose=True``, ``"col"`` otherwise), so the
-    field grows in *time* regardless of orientation.  Without the hint, falls back
-    to a channel heuristic: the time axis is the one whose 1-D coordinate channel
-    is monotonic and matches the axis length (the ``y`` channel ⇒ rows), defaulting
-    to **columns** (axis ``1``) when ambiguous (the producer default).
+    The :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` producer stacks every
+    per-time spatial snapshot on this channel — shape ``(T, Nx)`` for a 1-D profile
+    or ``(T, Ny, Nx)`` for a 2-D field.  A spec with no such channel has no field
+    movie to play (the ``frames``-mode warning fires).
     """
-    hint = spec.meta.get("time_axis") if isinstance(spec.meta, dict) else None
-    if hint == "row":
-        return 0
-    if hint == "col":
-        return 1
-    n_rows, n_cols = field.shape
-    y = layer.data.get("y")
-    if y is not None:
-        ya = np.asarray(y, dtype=float)
-        if ya.ndim == 1 and ya.shape[0] == n_rows and np.all(np.diff(ya) > 0):
-            x = layer.data.get("x")
-            x_is_time = (
-                x is not None
-                and np.asarray(x).ndim == 1
-                and np.asarray(x).shape[0] == n_cols
-                and bool(np.all(np.diff(np.asarray(x, dtype=float)) > 0))
-            )
-            # If only ``y`` is the monotone, length-matching time channel, grow rows.
-            if not x_is_time:
-                return 0
-    return 1
-
-
-def _image_field_steps(spec: PlotSpec, layer: Any) -> int:
-    """Return the field's time-axis length (the number of revealable steps), else ``0``."""
-    field = _image_field(layer)
-    if field is None:
-        return 0
-    return int(field.shape[_frames_time_axis(spec, layer, field)])
+    arr = layer.data.get("frames")
+    if arr is None:
+        return None
+    a = np.asarray(arr, dtype=float)
+    return a if a.ndim in (2, 3) else None
 
 
 def _warn_if_frames_without_field(spec: PlotSpec) -> None:
-    """Warn (degrade) when ``mode="frames"`` is asked for a spec with no 2-D field.
+    """Warn (degrade) when ``mode="frames"`` is asked for a spec with no field stack.
 
-    The evolving-field model needs a 2-D ``IMAGE`` field (a ``SPACETIME`` heatmap)
-    to grow.  On a curve kind (time series / phase portrait / delay embedding)
-    there is no such field, so the renderer silently uses the reveal drivers
-    instead; this emits a :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`
-    so the degrade is visible rather than silent.  A no-op when a field is present.
+    The spatial-field movie model needs a layer carrying the per-time field stack
+    on its ``"frames"`` channel (a ``SPATIAL_FIELD`` spec).  On any other spec there
+    is no such stack, so the renderer falls back to the reveal drivers; this emits a
+    :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` so the degrade is
+    visible rather than silent.  A no-op when a field stack is present.
     """
     import warnings
 
-    has_field = any(
-        PlotKind(layer.kind) == PlotKind.IMAGE and _image_field(layer) is not None
-        for layer in spec.layers
-    )
+    has_field = any(_field_stack(layer) is not None for layer in spec.layers)
     if has_field:
         return
     from ..caps import VisualizationDegraded
 
     warnings.warn(
-        'animate mode="frames" needs a 2-D field image (a "spacetime" kind); this '
-        f"spec ({spec.kind.value!r}) has none, so it animates with the reveal model "
-        'instead. Use kind="spacetime" for an evolving-field movie.',
+        'animate mode="frames" plays a spatial-field movie, which needs a field '
+        f'stack (a "field" kind); this spec ({spec.kind.value!r}) has none, so it '
+        'animates with the reveal model instead. Use kind="field" for a field movie.',
         VisualizationDegraded,
         stacklevel=2,
     )
 
 
 def _first_x(spec: PlotSpec) -> np.ndarray | None:
-    """Return the first animated layer's ``x`` channel (for clock time inference).
-
-    For a ``frames``-mode spacetime field the natural clock axis is the ``IMAGE``
-    layer's ``x`` channel (the time vector the field grows along).
-    """
+    """Return the first animated layer's ``x`` channel (for clock time inference)."""
     anim = spec.animation
     frames_mode = anim is not None and anim.mode == "frames"
     for layer in spec.layers:
         mark = PlotKind(layer.kind)
-        animated = mark in _animated_marks() or (frames_mode and mark == PlotKind.IMAGE)
+        animated = mark in _animated_marks() or (frames_mode and _field_stack(layer) is not None)
         if animated and "x" in layer.data:
             xa = np.asarray(layer.data["x"], dtype=float)
             if xa.ndim == 1:
@@ -279,18 +239,20 @@ def _first_x(spec: PlotSpec) -> np.ndarray | None:
 def _make_layer_driver(
     ax: Any, layer: Any, spec: PlotSpec, anim: Animation, *, three_d: bool
 ) -> Any:
-    """Build a `(head_index, tail) -> None` updater for one layer (or ``None`` to skip).
+    """Build a `(frame_index, tail) -> None` updater for one layer (or ``None`` to skip).
 
-    Curve layers animate as a revealing trail + a head marker; an ``IMAGE`` layer
-    (spacetime) is drawn statically with a moving vertical sweep line; any other
-    mark is drawn fully and not animated.
+    In ``frames`` mode a layer carrying a per-time field stack plays as a
+    **spatial-field movie** — a 2-D heatmap or a 1-D profile materialised per frame;
+    in ``reveal`` mode curve layers animate as a revealing trail + a head marker and
+    an ``IMAGE`` layer (spacetime) is drawn statically with a moving vertical sweep
+    line; any other mark is drawn fully and not animated.
     """
     mark = PlotKind(layer.kind)
     kind = normalize_kind(spec.kind)
 
+    if anim.mode == "frames" and _field_stack(layer) is not None:
+        return _field_movie_driver(ax, layer, spec)
     if mark == PlotKind.IMAGE:
-        if anim.mode == "frames":
-            return _image_frames_driver(ax, layer, spec)
         return _image_sweep_driver(ax, layer, spec)
     if mark not in _animated_marks():
         _draw_static_layer(ax, layer, spec, three_d=three_d)
@@ -446,61 +408,89 @@ def _image_sweep_driver(ax: Axes, layer: Any, spec: PlotSpec) -> Any:
     return drive
 
 
-def _image_frames_driver(ax: Axes, layer: Any, spec: PlotSpec) -> Any:
-    """Drive an **evolving field**: a spacetime ``IMAGE`` materialised per frame.
+def _field_movie_driver(ax: Axes, layer: Any, spec: PlotSpec) -> Any:
+    """Drive a **spatial-field movie**: the per-time field stack played frame by frame.
 
-    Unlike the reveal-mode sweep (a moving line over a static image), the frames
-    model grows the heatmap along its **time axis** — the field develops in front
-    of the viewer (a Kuramoto–Sivashinsky ``u(x, t)`` movie).  The time axis is
-    detected from the layer's coordinate channels (columns in the default
-    orientation, rows under ``transpose=True``), so the field grows in *time*
-    regardless of orientation.  Each frame swaps in a fresh field whose
-    not-yet-reached time slices are masked (drawn as the colormap's "bad" colour),
-    so consecutive frames carry genuinely different image content.  Colour range
-    and extent are fixed from the full field so the view never jumps.
+    The :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` producer stacks every
+    per-time spatial snapshot on the layer's ``"frames"`` channel (shape
+    ``(T, Ny, Nx)`` for a 2-D field, ``(T, Nx)`` for a 1-D profile).  Each playback
+    frame ``i`` shows ``stack[i]`` — the field's genuine spatial state at that
+    instant — so consecutive frames differ: a 2-D field plays as an ``imshow``
+    heatmap movie, a 1-D field as a travelling-wave line.  The colour range (2-D) /
+    the y-limits (1-D) are fixed from the **whole** stack so the view never jumps.
     """
-    from ._core import _image_extent, _make_norm, _preset_for, _resolve_cmap, _resolve_norm
-
-    field = _image_field(layer)
-    if field is None:  # pragma: no cover - guarded by _make_layer_driver/the warning
-        # Not a 2-D field — fall back to the reveal sweep over a static image.
+    stack = _field_stack(layer)
+    if stack is None:  # pragma: no cover - guarded by _make_layer_driver
         return _image_sweep_driver(ax, layer, spec)
-
-    time_axis = _frames_time_axis(spec, layer, field)
-    n_steps = field.shape[time_axis]
-    preset = _preset_for(normalize_kind(spec.kind))
-    extent = _image_extent(layer, spec)
-    interp = layer.style.get("interpolation", "nearest")
-    cmap = _resolve_cmap(spec, layer, preset)
-    finite = field[np.isfinite(field)]
+    n_steps = int(stack.shape[0])
+    finite = stack[np.isfinite(stack)]
     if spec.clim is not None:
         vmin, vmax = spec.clim
     elif finite.size:
         vmin, vmax = float(finite.min()), float(finite.max())
     else:  # pragma: no cover - degenerate empty field
         vmin, vmax = 0.0, 1.0
-    norm = _make_norm(_resolve_norm(spec, preset), (vmin, vmax))
 
+    if stack.ndim == 3:
+        return _field_movie_2d(ax, layer, spec, stack, (vmin, vmax), n_steps)
+    return _field_movie_1d(ax, layer, spec, stack, (vmin, vmax), n_steps)
+
+
+def _field_movie_2d(
+    ax: Axes,
+    layer: Any,
+    spec: PlotSpec,
+    stack: np.ndarray,
+    clim: tuple[float, float],
+    n_steps: int,
+) -> Any:
+    """Play a 2-D field stack ``(T, Ny, Nx)`` as an ``imshow`` heatmap movie."""
+    from ._core import _make_norm, _preset_for, _resolve_cmap, _resolve_norm
+
+    preset = _preset_for(normalize_kind(spec.kind))
+    cmap = _resolve_cmap(spec, layer, preset)
+    interp = layer.style.get("interpolation", "nearest")
+    norm = _make_norm(_resolve_norm(spec, preset), clim)
+    ny, nx = stack.shape[1], stack.shape[2]
     im = ax.imshow(
-        np.full_like(field, np.nan),
+        stack[0],
         origin="lower",
-        aspect="auto",
-        extent=extent,
+        aspect="equal" if spec.aspect == "equal" else "auto",
+        extent=(0.0, float(nx), 0.0, float(ny)),
         cmap=cmap,
         norm=norm,
         interpolation=interp,
     )
 
     def drive(i: int, tail: int | None) -> None:
-        reveal = min(i + 1, n_steps)
-        lo = 0 if tail is None else max(0, reveal - tail)
-        shown = np.full_like(field, np.nan)
-        sl = slice(lo, reveal)
-        if time_axis == 1:
-            shown[:, sl] = field[:, sl]
-        else:
-            shown[sl, :] = field[sl, :]
-        im.set_data(shown)
+        im.set_data(stack[min(i, n_steps - 1)])
+
+    return drive
+
+
+def _field_movie_1d(
+    ax: Axes,
+    layer: Any,
+    spec: PlotSpec,
+    stack: np.ndarray,
+    ylim: tuple[float, float],
+    n_steps: int,
+) -> Any:
+    """Play a 1-D field stack ``(T, Nx)`` as a travelling-wave line movie."""
+    x = layer.data.get("x")
+    xs = np.asarray(x, dtype=float) if x is not None else np.arange(stack.shape[1], dtype=float)
+    color = layer.style.get("color")
+    lw = layer.style.get("lw", layer.style.get("linewidth", 2.0))
+    (line,) = ax.plot(xs, stack[0], color=color, lw=lw, label=layer.label)
+    # Fix the y-range from the whole stack (with a little pad) so the profile does
+    # not rescale frame to frame.
+    lo, hi = ylim
+    if hi > lo:
+        pad = 0.05 * (hi - lo)
+        ax.set_ylim(lo - pad, hi + pad)
+
+    def drive(i: int, tail: int | None) -> None:
+        line.set_ydata(stack[min(i, n_steps - 1)])
 
     return drive
 

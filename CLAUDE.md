@@ -88,7 +88,7 @@ src/tsdynamics/
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
 ├── viz/                      # PlotSpec IR seam + renderers (mpl/plotly/json/threejs) + compose.py (ts.viz.plot)
 ├── systems/
-│   ├── continuous/           # 8 ODE category modules + delayed_systems.py (DDEs!)
+│   ├── continuous/           # 9 ODE category modules (+ spatial_fields.py 2-D PDEs) + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
 └── utils/
     ├── grids.py              # make_output_grid (hoisted output-grid builder)
@@ -115,8 +115,8 @@ module's `__all__`), so a new system needs no manual edit there.
 
 `tsdynamics.__all__` exports:
 
-- The 149 built-in systems are reachable via `tsdynamics.systems` (149 today:
-  118 ODE + 5 DDE + 26 maps), not the top-level `__all__`
+- The 151 built-in systems are reachable via `tsdynamics.systems` (151 today:
+  120 ODE + 5 DDE + 26 maps), not the top-level `__all__`
 - Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`,
   `StochasticSystem`; result type `Trajectory`
 - Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
@@ -229,7 +229,12 @@ records name/cls/family/category/dim/params/reference/known_lyapunov.
 Optional per-system metadata ClassVars: `variables` (component names →
 `traj["x"]`, docs labels), `reference` (literature citation shown in docs),
 `known_lyapunov` (drives `tests/test_known_values.py`; keys: `spectrum`+`atol`,
-or `n_positive`, plus `params`/`ic`/`kwargs`/`source`).
+or `n_positive`, plus `params`/`ic`/`kwargs`/`source`), and — for a
+**spatially-extended** system whose state vector is a flattened field —
+`_field_shape: tuple[int, ...]` (the spatial grid `(Ny, Nx)` / `(N,)`, resolved
+onto `traj.meta["field_shape"]` by `SystemBase.__init__`/`_provenance` for the
+`kind="field"` spatial-field movie) and `field_labels` (the names of the field
+blocks packed into the state, e.g. Gray–Scott's `("u", "v")`).
 
 ---
 
@@ -629,14 +634,32 @@ import is deferred to first render.
   `Animation` (`head_indices`/`tail_samples`/`frame_count`). Per-kind head default:
   on for portraits / spacetime, off for a plain time series; a composite plays
   panels in **lockstep** on one master clock (each panel keeps its own per-kind
-  head). **`frames`** (issue #461): an **evolving 2-D field** — a `SPACETIME`
-  `IMAGE` whose `z` field grows column by column along its time axis (a
-  Kuramoto–Sivashinsky `u(x,t)` heatmap movie), so consecutive frames carry
-  genuinely different image content rather than a sweep line over a static image.
-  Built via `to_plot_spec(kind="spacetime", animate={"mode": "frames"})` (which
-  defaults to a persistent growth — no comet window, no head); the mpl renderer
-  drives it from the `IMAGE` 2-D `z` (`viz/render/mpl/_anim.py::_image_frames_driver`)
-  and a still-image save writes the final, full field. Rendering: **matplotlib** →
+  head). **`frames`** (stream VIZ-SPATIAL-FIELD): a **spatial-field movie** — the
+  field of a spatially-extended system (a method-of-lines PDE) *played over time*.
+  Each frame is the field's **spatial** state at that instant, and the per-frame
+  plot's shape follows the field's spatial dimensionality: a **1-D field** `u(x)`
+  is a travelling-wave **line** (the profile — Kuramoto–Sivashinsky), a **2-D
+  field** `u(x,y)` an `imshow` **heatmap** movie (Gray–Scott / Swift–Hohenberg).
+  ONE semantic kind covers both — the new `SPATIAL_FIELD` `PlotKind` (the
+  renderer dispatches on the field's spatial ndim, like `to_plot_spec`
+  auto-dispatches on component count). The producer
+  (`viz/producers.py::spatial_field`) stacks every per-time snapshot on the
+  layer's `"frames"` channel (shape `(T, *spatial)`) and keeps the **final** field
+  as the static layer data (`z` for 2-D / `y` for 1-D), so a still save / a backend
+  that can't animate draws the final field; the mpl renderer plays the stack frame
+  by frame (`viz/render/mpl/_anim.py::_field_movie_driver` → `_field_movie_2d` /
+  `_field_movie_1d`), consecutive frames carrying genuinely different data. **Front
+  door:** `system.to_plot_spec(kind="field", animate=True)` — the `"field"` recipe
+  routes via `_KIND_ALIASES`; the spatial layout comes from the **system**, via the
+  optional `_field_shape: tuple[int, ...]` ClassVar (recorded onto
+  `traj.meta["field_shape"]` at integration time, so a bare `Trajectory` carries
+  it). No `shape` kwarg: a system with no `_field_shape` (or a 1-D one) is a 1-D
+  profile (honest — never guesses a 2-D grid). A multi-block field state declares
+  `field_labels` (e.g. Gray–Scott's `("u", "v")`); `components="u"|"v"` picks the
+  block, defaulting to the **last** (the activator). The field movie is
+  **matplotlib-only** (mp4/gif): plotly *declines* an animated `SPATIAL_FIELD` (a
+  static field it draws), threejs draws a 1-D profile / declines a 2-D field.
+  Rendering: **matplotlib** →
   `viz/render/mpl/_anim.py` builds a `FuncAnimation` (`.save("x.mp4"/"x.gif")` via
   ffmpeg/pillow); **plotly** → `viz/render/plotly/_anim.py`: HTML export
   (`.save("x.html")`, the zero-extra-dep default) is a **real-time** animation — the
@@ -715,7 +738,7 @@ inner loop** — see below.
 
 ### Change-scoped testing (stream CI-CHANGED) — use this, not the full suite
 
-The bulk suite is registry-driven (every test parametrized over all 149 systems
+The bulk suite is registry-driven (every test parametrized over all 151 systems
 + every analysis/transform), so a plain `uv run pytest` is thousands of items and
 takes minutes. **To check your work, run only what your diff touches:**
 
@@ -933,5 +956,5 @@ exps = mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])
 
 # Registry
 from tsdynamics import registry
-registry.families()                         # {'ode': 118, 'dde': 5, 'map': 26}
+registry.families()                         # {'ode': 120, 'dde': 5, 'map': 26}
 ```
