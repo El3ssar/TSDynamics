@@ -42,10 +42,7 @@ concurrency:
 
 jobs:
   test:
-    # Disabled: tests already run on every PR (ci.yml) and nightly (nightly.yml),
-    # so the release publish is no longer gated on a redundant full-suite re-run
-    # on main. Re-enable (`if: github.event_name == 'push'`) to restore the gate.
-    if: false
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -86,6 +83,7 @@ jobs:
         continue-on-error: true
 
   release:
+    needs: test
     if: github.event_name == 'push' && github.repository == 'El3ssar/TSDynamics'
     runs-on: ubuntu-latest
     permissions:
