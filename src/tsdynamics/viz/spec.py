@@ -581,9 +581,12 @@ class Animation:
       is the current sample and whose tail reaches back :attr:`trail_length`
       (``None`` ⇒ the whole curve persists).  Covers trajectories, phase
       portraits, delay embeddings, time series, spacetime.  Memory ``O(data)``.
-    - ``"frames"`` (reserved, not yet rendered): genuinely different data per
-      frame (an evolving field such as a 2-D Kuramoto–Sivashinsky heatmap); the
-      layer channels carry a leading ``frame`` axis.  Memory ``O(frames × data)``.
+    - ``"frames"``: genuinely different data per frame — an **evolving field**
+      such as a 2-D Kuramoto–Sivashinsky ``u(x, t)`` heatmap, rendered by growing
+      the spacetime ``IMAGE`` column by column along its time axis (so consecutive
+      frames carry different image content, not a sweep line over a static image).
+      The matplotlib renderer drives it from the ``IMAGE`` layer's 2-D ``z`` field;
+      a backend that cannot animate draws the final, full field.
 
     Parameters
     ----------

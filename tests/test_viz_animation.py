@@ -401,6 +401,265 @@ def test_style_axes_false_matplotlib(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Frames mode: an evolving 2-D field (Kuramoto-Sivashinsky u(x, t)) (issue #461)
+# ---------------------------------------------------------------------------
+
+
+def _spacetime_field_traj(*, final_time=8.0, dt=0.1, N=8):
+    """A cheap high-dimensional field trajectory whose spacetime image evolves."""
+    return ts.Lorenz96(N=N).trajectory(final_time=final_time, dt=dt)
+
+
+def _gif_frames(path):
+    """Return the GIF's frames as a list of RGB ndarrays (browser-free)."""
+    import numpy as np
+    from PIL import Image
+
+    frames = []
+    with Image.open(path) as im:
+        for i in range(getattr(im, "n_frames", 1)):
+            im.seek(i)
+            frames.append(np.asarray(im.convert("RGB")).copy())
+    return frames
+
+
+def test_frames_mode_front_door_defaults_to_a_growing_field():
+    """``animate={"mode": "frames"}`` stamps the evolving-field model (no comet/head)."""
+    spec = _spacetime_field_traj().to_plot_spec(kind="spacetime", animate={"mode": "frames"})
+    assert spec.is_animated
+    assert spec.kind == PlotKind.SPACETIME  # kind unchanged — animation is orthogonal
+    a = spec.animation
+    assert a.mode == "frames"
+    assert a.head is False  # the image itself is the motion
+    assert a.trail_kind is None  # persistent growth, no comet window
+
+
+def test_frames_mode_round_trips_through_to_dict():
+    spec = (
+        _spacetime_field_traj()
+        .to_plot_spec(kind="spacetime", animate={"mode": "frames"})
+        .animate(n_frames=10, fps=12)
+    )
+    d = spec.to_dict()
+    rebuilt = PlotSpec.from_dict(d)
+    assert rebuilt.to_dict() == d
+    assert rebuilt.animation.mode == "frames"
+
+
+def test_frames_mode_renders_a_funcanimation():
+    pytest.importorskip("matplotlib")
+    spec = (
+        _spacetime_field_traj()
+        .to_plot_spec(kind="spacetime", animate={"mode": "frames"})
+        .animate(n_frames=8)
+    )
+    anim = spec.render(backend="matplotlib")
+    assert hasattr(anim, "to_jshtml")  # a real FuncAnimation
+    assert isinstance(anim.to_jshtml(), str)  # frames render without error
+
+
+def test_frames_mode_field_grows_and_consecutive_frames_differ():
+    """The headline #461 deliverable: the heatmap field evolves frame by frame.
+
+    Renders the evolving-field animation and confirms (a) the revealed field
+    *grows* (strictly more finite cells each frame) and (b) consecutive frames
+    carry genuinely different image content — not a sweep line over a static
+    image.  Reads the ``imshow`` array directly (browser-free).
+    """
+    import numpy as np
+
+    pytest.importorskip("matplotlib")
+    spec = (
+        _spacetime_field_traj()
+        .to_plot_spec(kind="spacetime", animate={"mode": "frames"})
+        .animate(n_frames=10)
+    )
+    anim = spec.render(backend="matplotlib")
+    fig = anim._fig
+    ax = fig.axes[0]
+    image = ax.images[0]
+
+    revealed = []
+    snapshots = []
+    for k in range(10):
+        anim._func(k)  # advance to playback frame k
+        arr = np.asarray(image.get_array(), dtype=float)
+        revealed.append(int(np.isfinite(arr).sum()))
+        snapshots.append(np.nan_to_num(arr, nan=-1e9).copy())
+    anim.to_jshtml()  # consume so the animation is not GC'd un-rendered (warns under -W error)
+
+    # The field grows (more finite cells over time) and never shrinks.
+    assert revealed[0] < revealed[-1]
+    assert all(revealed[i] <= revealed[i + 1] for i in range(len(revealed) - 1))
+    # Consecutive frames differ (distinct image content, not just a moving line).
+    assert all(
+        not np.array_equal(snapshots[i], snapshots[i + 1]) for i in range(len(snapshots) - 1)
+    )
+    assert len({s.tobytes() for s in snapshots}) >= 2
+
+
+def test_frames_mode_kuramoto_sivashinsky_gif_frames_evolve(tmp_path):
+    """A real PDE field (Kuramoto-Sivashinsky u(x, t)) exported to GIF evolves.
+
+    Saves the evolving-field animation as a GIF and decodes the frames: the
+    heatmap content changes across frames (the spatiotemporal field develops).
+    """
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
+    import numpy as np
+
+    tr = ts.KuramotoSivashinsky().trajectory(final_time=30.0, dt=0.5)
+    spec = tr.to_plot_spec(kind="spacetime", animate={"mode": "frames"}).animate(n_frames=8)
+    out = tmp_path / "ks_field.gif"
+    assert spec.save(str(out), fps=8) == str(out)
+
+    frames = _gif_frames(out)
+    assert len(frames) >= 2
+    diffs = [
+        int(np.abs(frames[i].astype(int) - frames[i - 1].astype(int)).sum())
+        for i in range(1, len(frames))
+    ]
+    assert all(d > 0 for d in diffs)  # every consecutive pair of heatmaps differs
+
+
+def test_frames_mode_still_image_is_the_full_final_field(tmp_path):
+    """A still-image extension on a frames-mode spec writes the full (final) field."""
+    pytest.importorskip("matplotlib")
+    out = tmp_path / "ks_field.png"
+    spec = (
+        _spacetime_field_traj()
+        .to_plot_spec(kind="spacetime", animate={"mode": "frames"})
+        .animate(n_frames=6)
+    )
+    assert spec.save(str(out)) == str(out)
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"  # a real PNG, not a failed movie
+
+
+# ---------------------------------------------------------------------------
+# Sweep guarantee: every animatable plot kind yields a renderable animation
+# ---------------------------------------------------------------------------
+
+
+def _animatable_specs():
+    """One representative spec per animatable kind, all with ``animate=True``."""
+    lor = ts.Lorenz().integrate(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
+    field = _spacetime_field_traj()
+    return {
+        "time_series": lor.to_plot_spec(kind="time_series", components="x", animate=True),
+        "phase_portrait_2d": lor.to_plot_spec(components=["x", "y"], animate=True),
+        "phase_portrait_3d": lor.to_plot_spec(animate=True),
+        "delay_embedding": lor.to_plot_spec(kind="delay", tau=0.1, components="x", animate=True),
+        "spacetime_reveal": field.to_plot_spec(kind="spacetime", animate=True),
+        "spacetime_frames": field.to_plot_spec(kind="spacetime", animate={"mode": "frames"}),
+    }
+
+
+@pytest.mark.parametrize("name", list(_animatable_specs()))
+def test_every_animatable_kind_renders_an_animation(name):
+    """Animate ANY kind: each representative spec renders without error."""
+    pytest.importorskip("matplotlib")
+    spec = _animatable_specs()[name].animate(n_frames=6)
+    anim = spec.render(backend="matplotlib")
+    assert hasattr(anim, "to_jshtml")  # a FuncAnimation, not a static figure
+    assert isinstance(anim.to_jshtml(), str)  # all frames render
+
+
+def test_curve_kinds_reveal_multiple_distinct_frames():
+    """Curve kinds reveal must produce > 1 *distinct* frame (the comet really moves)."""
+    import numpy as np
+
+    pytest.importorskip("matplotlib")
+    lor = ts.Lorenz().integrate(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
+    # A persistent reveal so the drawn curve strictly grows (no windowing).
+    spec = (
+        lor.to_plot_spec(components=["x", "y"], animate=True).animate(n_frames=8).trail(length=None)
+    )
+    anim = spec.render(backend="matplotlib")
+    # With a persistent trail the first Line2D is the revealing curve; its vertex
+    # set grows and its endpoint (the comet head) advances each frame.
+    line = anim._fig.axes[0].lines[0]
+    heads = []
+    sizes = []
+    for k in range(8):
+        anim._func(k)
+        xs = np.asarray(line.get_xdata(), dtype=float)
+        ys = np.asarray(line.get_ydata(), dtype=float)
+        sizes.append(xs.size)
+        if xs.size:
+            heads.append((float(xs[-1]), float(ys[-1])))
+    anim.to_jshtml()  # consume so the animation is not GC'd un-rendered
+    assert len(set(heads)) > 1  # the head advances → distinct frames
+    assert sizes[0] < sizes[-1]  # the persistent trail grows
+
+
+def test_spacetime_reveal_sweep_line_moves():
+    """The spacetime *reveal* sweep produces > 1 distinct sweep-line position."""
+    import numpy as np
+
+    pytest.importorskip("matplotlib")
+    spec = _spacetime_field_traj().to_plot_spec(kind="spacetime", animate=True).animate(n_frames=8)
+    anim = spec.render(backend="matplotlib")
+    ax = anim._fig.axes[0]
+    # The moving "now" sweep line is the only Line2D over the static image.
+    sweep = ax.lines[0]
+    positions = []
+    for k in range(8):
+        anim._func(k)
+        positions.append(float(np.asarray(sweep.get_xdata(), dtype=float)[0]))
+    anim.to_jshtml()  # consume so the animation is not GC'd un-rendered
+    assert len(set(positions)) > 1  # the sweep advances → distinct frames
+    assert positions[0] < positions[-1]
+
+
+# ---------------------------------------------------------------------------
+# Frames mode: orientation, object form, and the no-field degrade (review)
+# ---------------------------------------------------------------------------
+
+
+def test_frames_mode_animation_object_gets_field_defaults():
+    """``Animation(mode="frames")`` (object form) also gets the evolving-field defaults."""
+    spec = _spacetime_field_traj().to_plot_spec(kind="spacetime", animate=Animation(mode="frames"))
+    assert spec.animation.mode == "frames"
+    assert spec.animation.head is False  # not the curve default (True)
+    assert spec.animation.trail_kind is None
+
+
+def test_frames_mode_grows_along_time_when_transposed():
+    """A ``transpose=True`` spacetime still grows along the TIME axis (rows), not space."""
+    import numpy as np
+
+    pytest.importorskip("matplotlib")
+    spec = _spacetime_field_traj().to_plot_spec(
+        kind="spacetime", transpose=True, animate={"mode": "frames"}
+    )
+    assert spec.meta["time_axis"] == "row"  # the unambiguous orientation hint
+    spec.animate(n_frames=8)
+    anim = spec.render(backend="matplotlib")
+    image = anim._fig.axes[0].images[0]
+    revealed = []
+    for k in range(8):
+        anim._func(k)
+        revealed.append(int(np.isfinite(np.asarray(image.get_array(), dtype=float)).sum()))
+    anim.to_jshtml()  # consume so the animation is not GC'd un-rendered
+    assert revealed[0] < revealed[-1]  # the field grows in time
+    assert all(revealed[i] <= revealed[i + 1] for i in range(len(revealed) - 1))
+
+
+def test_frames_mode_on_a_curve_kind_warns_and_degrades():
+    """``mode="frames"`` on a non-field kind warns (degrades) but still renders."""
+    pytest.importorskip("matplotlib")
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    lor = ts.Lorenz().integrate(final_time=6.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
+    spec = lor.to_plot_spec(kind="time_series", components="x", animate={"mode": "frames"}).animate(
+        n_frames=5
+    )
+    with pytest.warns(VisualizationDegraded, match="2-D field"):
+        anim = spec.render(backend="matplotlib")
+    assert isinstance(anim.to_jshtml(), str)  # still renders (reveal fallback)
+
+
+# ---------------------------------------------------------------------------
 # Import-light: building an animation pulls in no plotting library
 # ---------------------------------------------------------------------------
 

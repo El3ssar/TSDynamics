@@ -622,15 +622,21 @@ import is deferred to first render.
   with the static `.relabel`/`.rescale`/`.limits`/`.style(…)`/… tweaks — including
   `.style(axes=False)`, which records `meta["axes_visible"]=False` and every
   renderer honors it: mpl `ax.set_axis_off()`, plotly axis/scene `visible=False`,
-  for a clean "attractor floating in space" still or animation). The frame model is
-  **reveal** (this release): the layer keeps its full static data and each frame
-  shows a comet — head at the current sample, tail reaching back `trail_length`
-  (`None` ⇒ persistent); the frame math lives on `Animation`
-  (`head_indices`/`tail_samples`/`frame_count`). Per-kind head default: on for
-  portraits / spacetime, off for a plain time series; a composite plays panels in
-  **lockstep** on one master clock (each panel keeps its own per-kind head). The
-  `frames` mode (materialized per-frame data, e.g. an evolving 2-D field) is
-  reserved, not yet rendered (issue #461). Rendering: **matplotlib** →
+  for a clean "attractor floating in space" still or animation). There are **two
+  frame models** (`Animation.mode`). **`reveal`** (the default): the layer keeps
+  its full static data and each frame shows a comet — head at the current sample,
+  tail reaching back `trail_length` (`None` ⇒ persistent); the frame math lives on
+  `Animation` (`head_indices`/`tail_samples`/`frame_count`). Per-kind head default:
+  on for portraits / spacetime, off for a plain time series; a composite plays
+  panels in **lockstep** on one master clock (each panel keeps its own per-kind
+  head). **`frames`** (issue #461): an **evolving 2-D field** — a `SPACETIME`
+  `IMAGE` whose `z` field grows column by column along its time axis (a
+  Kuramoto–Sivashinsky `u(x,t)` heatmap movie), so consecutive frames carry
+  genuinely different image content rather than a sweep line over a static image.
+  Built via `to_plot_spec(kind="spacetime", animate={"mode": "frames"})` (which
+  defaults to a persistent growth — no comet window, no head); the mpl renderer
+  drives it from the `IMAGE` 2-D `z` (`viz/render/mpl/_anim.py::_image_frames_driver`)
+  and a still-image save writes the final, full field. Rendering: **matplotlib** →
   `viz/render/mpl/_anim.py` builds a `FuncAnimation` (`.save("x.mp4"/"x.gif")` via
   ffmpeg/pillow); **plotly** → `viz/render/plotly/_anim.py`: HTML export
   (`.save("x.html")`, the zero-extra-dep default) is a **real-time** animation — the
