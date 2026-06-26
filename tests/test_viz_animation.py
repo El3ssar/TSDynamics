@@ -346,23 +346,22 @@ def test_fade_comet_3d_renders():
 
 
 def test_save_html_is_realtime_and_rotatable(tmp_path):
-    """The HTML export is the real-time (rAF + react) animation, not plotly frames.
+    """The HTML export is the real-time (rAF + extendTraces) animation, not plotly frames.
 
-    A requestAnimationFrame loop hands ``Plotly.react`` fresh comet trace objects
-    each tick while leaving the layout (camera) and the static context trace
-    untouched, so the attractor is rotatable while it plays; embedding the curve
-    once (no frames) keeps the file small.  A minimal play/pause + restart overlay
-    makes the animation obviously alive without devtools.
+    A requestAnimationFrame loop streams the comet with ``Plotly.extendTraces`` (in-
+    place buffer mutation — no gl3d scene rebuild) and mirrors the live drag camera
+    into ``gd.layout`` so the attractor is rotatable WHILE it plays, with no lag and
+    no snap-back; embedding the curve once (no frames) keeps the file small.  A
+    minimal play/pause + restart overlay makes the animation obviously alive.
     """
     pytest.importorskip("plotly")
     out = tmp_path / "orbit.html"
     assert _lorenz().to_plot_spec(animate=True).save(str(out)) == str(out)
     text = out.read_text()
     assert "requestAnimationFrame" in text  # the smooth frame-rate driver
-    assert "Plotly.react" in text  # re-renders gl3d under constant uirevision → camera kept
-    assert "Plotly.restyle" not in text  # restyle does NOT redraw gl3d traces — never use it
+    assert "Plotly.extendTraces" in text  # in-place comet streaming (no gl3d scene rebuild)
+    assert "plotly_relayouting" in text  # mirror the live drag camera → rotatable while playing
     assert "uirevision" in text  # the camera/zoom-preservation token
-    assert "gd.data.slice()" in text  # fresh array each tick → react's immutable diff fires
     assert "playBtn" in text and "restartBtn" in text  # the visible play/pause + restart control
     assert text.count('"frames"') == 0  # not the janky frame-animation path
     assert "{plot_id}" not in text  # the div id was substituted (loop will bind)
