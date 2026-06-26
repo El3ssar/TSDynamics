@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     import plotly.graph_objects as go
 
 
-__all__ = ["MARK_DISPATCH", "render"]
+__all__ = ["MARK_DISPATCH", "build_2d_traces", "render"]
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +571,64 @@ def _span_shape(axis: str, span: tuple[float, float], style: dict[str, Any]) -> 
 
 
 # ---------------------------------------------------------------------------
+# 2-D panel builders (factored so the composite renderer can reuse them)
+# ---------------------------------------------------------------------------
+
+
+def build_2d_traces(spec: PlotSpec) -> list[go.BaseTraceType]:
+    """Build every 2-D trace for ``spec`` through :data:`MARK_DISPATCH`.
+
+    Factored out of :func:`render` so the composite renderer can draw a 2-D
+    panel's traces into one cell of a :func:`plotly.subplots.make_subplots` grid
+    (rather than its own figure).  A layer whose mark has no builder is skipped.
+    """
+    traces: list[go.BaseTraceType] = []
+    for layer in spec.layers:
+        builder = MARK_DISPATCH.get(PlotKind(layer.kind))
+        if builder is None:
+            continue
+        traces.extend(builder(layer, spec))
+    return traces
+
+
+def _build_2d_layout(spec: PlotSpec) -> dict[str, Any]:
+    """Build the single-panel 2-D ``update_layout`` dict (axes / legend / annotations).
+
+    Mirrors the inline body :func:`render` used before the composite refactor:
+    the typed x / y axes (with an ``"equal"`` aspect mapped to a constrained
+    y-axis and hidden axes honoured), the legend, the title, and the
+    ``vline`` / ``hline`` / ``text`` / ``span`` annotations as layout shapes /
+    annotations.
+    """
+    xaxis = _axis_layout(spec.x)
+    yaxis = _axis_layout(spec.y)
+    if spec.aspect == "equal":
+        yaxis["scaleanchor"] = "x"
+        yaxis["scaleratio"] = 1
+    if spec._axes_hidden():
+        xaxis["visible"] = False
+        yaxis["visible"] = False
+
+    show_legend = spec.legend is not None and spec.legend.show
+    layout: dict[str, Any] = {
+        "xaxis": xaxis,
+        "yaxis": yaxis,
+        "showlegend": show_legend,
+    }
+    if spec.title:
+        layout["title"] = {"text": spec.title}
+    if show_legend and spec.legend is not None and spec.legend.title:
+        layout["legend"] = {"title": {"text": spec.legend.title}}
+
+    shapes, texts = _annotation_shapes(spec.annotations)
+    if shapes:
+        layout["shapes"] = shapes
+    if texts:
+        layout["annotations"] = texts
+    return layout
+
+
+# ---------------------------------------------------------------------------
 # The render entry point
 # ---------------------------------------------------------------------------
 
@@ -659,44 +717,24 @@ def render(
                 include_plotlyjs=include_plotlyjs,
             )
         return build_animated_figure(spec)
+    if spec.is_composite:
+        from ._composite import render_composite
+
+        return render_composite(
+            spec,
+            html=html,
+            path=path,
+            full_html=full_html,
+            include_plotlyjs=include_plotlyjs,
+            **_kw,
+        )
     if _threed.is_three_d(spec):
         return _threed.render_3d(spec, **_kw)
     else:
         fig = go.Figure()
-        for layer in spec.layers:
-            builder = MARK_DISPATCH.get(PlotKind(layer.kind))
-            if builder is None:
-                continue
-            for trace in builder(layer, spec):
-                fig.add_trace(trace)
-
-        xaxis = _axis_layout(spec.x)
-        yaxis = _axis_layout(spec.y)
-        if spec.aspect == "equal":
-            yaxis["scaleanchor"] = "x"
-            yaxis["scaleratio"] = 1
-        if spec._axes_hidden():
-            xaxis["visible"] = False
-            yaxis["visible"] = False
-
-        show_legend = spec.legend is not None and spec.legend.show
-        layout: dict[str, Any] = {
-            "xaxis": xaxis,
-            "yaxis": yaxis,
-            "showlegend": show_legend,
-        }
-        if spec.title:
-            layout["title"] = {"text": spec.title}
-        if show_legend and spec.legend is not None and spec.legend.title:
-            layout["legend"] = {"title": {"text": spec.legend.title}}
-
-        shapes, texts = _annotation_shapes(spec.annotations)
-        if shapes:
-            layout["shapes"] = shapes
-        if texts:
-            layout["annotations"] = texts
-
-        fig.update_layout(**layout)
+        for trace in build_2d_traces(spec):
+            fig.add_trace(trace)
+        fig.update_layout(**_build_2d_layout(spec))
 
     if path is not None:
         # Write a self-contained interactive HTML file (standalone by default).

@@ -280,9 +280,12 @@ def test_save_json_writes_the_ir(tmp_path):
     assert len(data["panels"]) == 2
 
 
-def test_composite_render_with_plotly_backend_falls_back_to_matplotlib():
+def test_composite_render_with_plotly_backend_is_native_no_fallback():
+    # plotly now tiles a composite natively (make_subplots), so no fallback /
+    # VisualizationDegraded warning fires for a composite of supported panels.
     pytest.importorskip("plotly")
-    pytest.importorskip("matplotlib")  # the fallback target tiles the composite
+    import warnings
+
     from tsdynamics.viz.render.caps import VisualizationDegraded
 
     comp = viz.plot(
@@ -290,9 +293,12 @@ def test_composite_render_with_plotly_backend_falls_back_to_matplotlib():
         viz.plot(_lorenz(), components="y"),
         layout="stack",
     )
-    with pytest.warns(VisualizationDegraded):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", VisualizationDegraded)
         fig = comp.render(backend="plotly")
-    assert type(fig).__name__ == "Figure"  # matplotlib tiled it after the decline
+    # a plotly figure, not a matplotlib one — the module is plotly's
+    assert type(fig).__module__.startswith("plotly")
+    assert type(fig).__name__ == "Figure"
 
 
 def test_composing_imports_no_plot_library():

@@ -29,7 +29,7 @@ from ...spec import PlotKind, PlotSpec
 if TYPE_CHECKING:
     import plotly.graph_objects as go
 
-__all__ = ["MARK_DISPATCH_3D", "is_three_d", "render_3d"]
+__all__ = ["MARK_DISPATCH_3D", "build_3d_traces", "is_three_d", "render_3d", "scene_layout"]
 
 
 def is_three_d(spec: PlotSpec) -> bool:
@@ -271,6 +271,32 @@ def _scene_axis(axis: Any) -> dict[str, Any]:
     return out
 
 
+def build_3d_traces(spec: PlotSpec) -> list[go.BaseTraceType]:
+    """Build every 3-D trace for ``spec`` through :data:`MARK_DISPATCH_3D`.
+
+    Factored out of :func:`render_3d` so the composite renderer can draw a 3-D
+    panel's ``go.Scatter3d`` / ``go.Surface`` traces into one ``scene`` cell of a
+    :func:`plotly.subplots.make_subplots` grid (rather than its own figure).
+    """
+    traces: list[go.BaseTraceType] = []
+    for layer in spec.layers:
+        builder = MARK_DISPATCH_3D.get(PlotKind(layer.kind))
+        if builder is None:
+            continue
+        traces.extend(builder(layer, spec))
+    return traces
+
+
+def scene_layout(spec: PlotSpec) -> dict[str, Any]:
+    """Return the plotly ``scene`` layout dict for a 3-D ``spec``.
+
+    The public wrapper over the private :func:`_scene` builder, so the composite
+    renderer can attach a panel's scene (axes / camera / aspect) to the right
+    ``sceneN`` slot of a subplot grid.
+    """
+    return _scene(spec)
+
+
 def render_3d(spec: PlotSpec, **_kw: Any) -> go.Figure:
     """Render a 3-D :class:`~tsdynamics.viz.spec.PlotSpec` to an orbitable plotly Figure.
 
@@ -296,12 +322,8 @@ def render_3d(spec: PlotSpec, **_kw: Any) -> go.Figure:
     import plotly.graph_objects as go
 
     fig = go.Figure()
-    for layer in spec.layers:
-        builder = MARK_DISPATCH_3D.get(PlotKind(layer.kind))
-        if builder is None:
-            continue
-        for trace in builder(layer, spec):
-            fig.add_trace(trace)
+    for trace in build_3d_traces(spec):
+        fig.add_trace(trace)
 
     show_legend = spec.legend is not None and spec.legend.show
     layout: dict[str, Any] = {"scene": _scene(spec), "showlegend": show_legend}
