@@ -357,23 +357,38 @@ class Trajectory:
         verbatim.  The spec carries ``meta["dt"]``, so time-unit trails / the clock
         resolve at render time.
 
-        Requesting ``mode="frames"`` (a dict / ``Animation`` with that mode) selects
-        the **evolving-field** model — the spacetime ``IMAGE`` grows column by column
-        as the field develops in time (a Kuramoto–Sivashinsky ``u(x, t)`` movie)
-        rather than a sweep line over a static image.  Its defaults are a persistent
-        growth (no trailing window, no head marker), which the chainable
-        ``.trail()`` / ``.head()`` knobs can still override.
+        Requesting ``mode="frames"`` — via a dict ``{"mode": "frames"}`` **or** an
+        ``Animation(mode="frames")`` object — selects the **evolving-field** model:
+        the spacetime ``IMAGE`` grows column by column as the field develops in time
+        (a Kuramoto–Sivashinsky ``u(x, t)`` movie) rather than a sweep line over a
+        static image.  Both forms get the same field-appropriate defaults — a
+        persistent growth (no trailing window, no head marker; the image *is* the
+        motion) — which the chainable ``.trail()`` / ``.head()`` knobs still override.
         """
         if animate is False or animate is None:
             return spec
         from tsdynamics.viz.spec import Animation as _Animation
         from tsdynamics.viz.spec import PlotKind
 
-        if isinstance(animate, dict) and animate.get("mode") == "frames":
+        frames_mode = (isinstance(animate, dict) and animate.get("mode") == "frames") or (
+            getattr(animate, "mode", None) == "frames"
+        )
+        if frames_mode:
             # An evolving 2-D field: the whole heatmap grows in time, so there is
             # no comet window and no point marker — the image itself is the motion.
+            # Applied to BOTH the dict and the Animation-object form so an
+            # ``Animation(mode="frames")`` is not silently left with the curve
+            # defaults (head on, no growth); the dict/object's own keys still win.
             field_defaults: dict[str, Any] = {"head": False, "trail_kind": None}
-            spec.animation = _Animation(**{**field_defaults, **animate})
+            if isinstance(animate, _Animation):
+                spec.animation = animate
+                spec.animation.head = False
+                spec.animation.trail_kind = None
+                spec.animation.trail_length = None
+            elif isinstance(animate, dict):  # a dict carrying mode="frames"
+                spec.animation = _Animation(**{**field_defaults, **animate})
+            else:  # pragma: no cover - frames_mode implies a dict / Animation
+                spec.animation = _Animation(**field_defaults, mode="frames")
             return spec
 
         head_default = spec.kind != PlotKind.TIME_SERIES
@@ -609,7 +624,14 @@ class Trajectory:
             y=y_axis,
             layers=[layer],
             colorbar=Colorbar(label="state"),
-            meta={**dict(self.meta), "component_names": list(names)},
+            # ``time_axis`` records which image axis runs in time so an
+            # animate={"mode":"frames"} movie grows along time under either
+            # orientation (rows when transposed, columns otherwise).
+            meta={
+                **dict(self.meta),
+                "component_names": list(names),
+                "time_axis": "row" if transpose else "col",
+            },
         )
         return spec.autocolor()
 

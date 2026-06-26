@@ -592,6 +592,73 @@ def test_curve_kinds_reveal_multiple_distinct_frames():
     assert sizes[0] < sizes[-1]  # the persistent trail grows
 
 
+def test_spacetime_reveal_sweep_line_moves():
+    """The spacetime *reveal* sweep produces > 1 distinct sweep-line position."""
+    import numpy as np
+
+    pytest.importorskip("matplotlib")
+    spec = _spacetime_field_traj().to_plot_spec(kind="spacetime", animate=True).animate(n_frames=8)
+    anim = spec.render(backend="matplotlib")
+    ax = anim._fig.axes[0]
+    # The moving "now" sweep line is the only Line2D over the static image.
+    sweep = ax.lines[0]
+    positions = []
+    for k in range(8):
+        anim._func(k)
+        positions.append(float(np.asarray(sweep.get_xdata(), dtype=float)[0]))
+    anim.to_jshtml()  # consume so the animation is not GC'd un-rendered
+    assert len(set(positions)) > 1  # the sweep advances → distinct frames
+    assert positions[0] < positions[-1]
+
+
+# ---------------------------------------------------------------------------
+# Frames mode: orientation, object form, and the no-field degrade (review)
+# ---------------------------------------------------------------------------
+
+
+def test_frames_mode_animation_object_gets_field_defaults():
+    """``Animation(mode="frames")`` (object form) also gets the evolving-field defaults."""
+    spec = _spacetime_field_traj().to_plot_spec(kind="spacetime", animate=Animation(mode="frames"))
+    assert spec.animation.mode == "frames"
+    assert spec.animation.head is False  # not the curve default (True)
+    assert spec.animation.trail_kind is None
+
+
+def test_frames_mode_grows_along_time_when_transposed():
+    """A ``transpose=True`` spacetime still grows along the TIME axis (rows), not space."""
+    import numpy as np
+
+    pytest.importorskip("matplotlib")
+    spec = _spacetime_field_traj().to_plot_spec(
+        kind="spacetime", transpose=True, animate={"mode": "frames"}
+    )
+    assert spec.meta["time_axis"] == "row"  # the unambiguous orientation hint
+    spec.animate(n_frames=8)
+    anim = spec.render(backend="matplotlib")
+    image = anim._fig.axes[0].images[0]
+    revealed = []
+    for k in range(8):
+        anim._func(k)
+        revealed.append(int(np.isfinite(np.asarray(image.get_array(), dtype=float)).sum()))
+    anim.to_jshtml()  # consume so the animation is not GC'd un-rendered
+    assert revealed[0] < revealed[-1]  # the field grows in time
+    assert all(revealed[i] <= revealed[i + 1] for i in range(len(revealed) - 1))
+
+
+def test_frames_mode_on_a_curve_kind_warns_and_degrades():
+    """``mode="frames"`` on a non-field kind warns (degrades) but still renders."""
+    pytest.importorskip("matplotlib")
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    lor = ts.Lorenz().integrate(final_time=6.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
+    spec = lor.to_plot_spec(kind="time_series", components="x", animate={"mode": "frames"}).animate(
+        n_frames=5
+    )
+    with pytest.warns(VisualizationDegraded, match="2-D field"):
+        anim = spec.render(backend="matplotlib")
+    assert isinstance(anim.to_jshtml(), str)  # still renders (reveal fallback)
+
+
 # ---------------------------------------------------------------------------
 # Import-light: building an animation pulls in no plotting library
 # ---------------------------------------------------------------------------

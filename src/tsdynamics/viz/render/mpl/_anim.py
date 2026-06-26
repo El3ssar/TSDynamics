@@ -124,6 +124,8 @@ def _build_panel_animation(fig: Figure, ax: Any, spec: PlotSpec, *, three_d: boo
     """
     anim = spec.animation
     assert anim is not None
+    if anim.mode == "frames":
+        _warn_if_frames_without_field(spec)
     dt = _spec_dt(spec)
 
     n_samples = _layer_sample_count(spec)
@@ -166,7 +168,7 @@ def _layer_sample_count(spec: PlotSpec) -> int:
     for layer in spec.layers:
         mark = PlotKind(layer.kind)
         if frames_mode and mark == PlotKind.IMAGE:
-            n = max(n, _image_field_columns(layer))
+            n = max(n, _image_field_steps(spec, layer))
             continue
         if mark not in _animated_marks():
             continue
@@ -187,10 +189,73 @@ def _image_field(layer: Any) -> np.ndarray | None:
     return arr if arr.ndim == 2 else None
 
 
-def _image_field_columns(layer: Any) -> int:
-    """Return the column count (time axis) of a 2-D ``IMAGE`` field, else ``0``."""
+def _frames_time_axis(spec: PlotSpec, layer: Any, field: np.ndarray) -> int:
+    """Return the field axis (``0`` rows / ``1`` columns) the movie grows along.
+
+    Prefers the unambiguous ``meta["time_axis"]`` hint the spacetime producer
+    records (``"row"`` under ``transpose=True``, ``"col"`` otherwise), so the
+    field grows in *time* regardless of orientation.  Without the hint, falls back
+    to a channel heuristic: the time axis is the one whose 1-D coordinate channel
+    is monotonic and matches the axis length (the ``y`` channel ⇒ rows), defaulting
+    to **columns** (axis ``1``) when ambiguous (the producer default).
+    """
+    hint = spec.meta.get("time_axis") if isinstance(spec.meta, dict) else None
+    if hint == "row":
+        return 0
+    if hint == "col":
+        return 1
+    n_rows, n_cols = field.shape
+    y = layer.data.get("y")
+    if y is not None:
+        ya = np.asarray(y, dtype=float)
+        if ya.ndim == 1 and ya.shape[0] == n_rows and np.all(np.diff(ya) > 0):
+            x = layer.data.get("x")
+            x_is_time = (
+                x is not None
+                and np.asarray(x).ndim == 1
+                and np.asarray(x).shape[0] == n_cols
+                and bool(np.all(np.diff(np.asarray(x, dtype=float)) > 0))
+            )
+            # If only ``y`` is the monotone, length-matching time channel, grow rows.
+            if not x_is_time:
+                return 0
+    return 1
+
+
+def _image_field_steps(spec: PlotSpec, layer: Any) -> int:
+    """Return the field's time-axis length (the number of revealable steps), else ``0``."""
     field = _image_field(layer)
-    return int(field.shape[1]) if field is not None else 0
+    if field is None:
+        return 0
+    return int(field.shape[_frames_time_axis(spec, layer, field)])
+
+
+def _warn_if_frames_without_field(spec: PlotSpec) -> None:
+    """Warn (degrade) when ``mode="frames"`` is asked for a spec with no 2-D field.
+
+    The evolving-field model needs a 2-D ``IMAGE`` field (a ``SPACETIME`` heatmap)
+    to grow.  On a curve kind (time series / phase portrait / delay embedding)
+    there is no such field, so the renderer silently uses the reveal drivers
+    instead; this emits a :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`
+    so the degrade is visible rather than silent.  A no-op when a field is present.
+    """
+    import warnings
+
+    has_field = any(
+        PlotKind(layer.kind) == PlotKind.IMAGE and _image_field(layer) is not None
+        for layer in spec.layers
+    )
+    if has_field:
+        return
+    from ..caps import VisualizationDegraded
+
+    warnings.warn(
+        'animate mode="frames" needs a 2-D field image (a "spacetime" kind); this '
+        f"spec ({spec.kind.value!r}) has none, so it animates with the reveal model "
+        'instead. Use kind="spacetime" for an evolving-field movie.',
+        VisualizationDegraded,
+        stacklevel=2,
+    )
 
 
 def _first_x(spec: PlotSpec) -> np.ndarray | None:
@@ -385,22 +450,25 @@ def _image_frames_driver(ax: Axes, layer: Any, spec: PlotSpec) -> Any:
     """Drive an **evolving field**: a spacetime ``IMAGE`` materialised per frame.
 
     Unlike the reveal-mode sweep (a moving line over a static image), the frames
-    model grows the heatmap column by column along its time axis — the field
-    develops in front of the viewer (a Kuramoto–Sivashinsky ``u(x, t)`` movie).
-    Each frame swaps in a fresh field whose not-yet-reached columns are masked
-    (drawn as the colormap's "bad" colour), so consecutive frames carry genuinely
-    different image content.  Colour range and extent are fixed from the full
-    field so the view never jumps.
+    model grows the heatmap along its **time axis** — the field develops in front
+    of the viewer (a Kuramoto–Sivashinsky ``u(x, t)`` movie).  The time axis is
+    detected from the layer's coordinate channels (columns in the default
+    orientation, rows under ``transpose=True``), so the field grows in *time*
+    regardless of orientation.  Each frame swaps in a fresh field whose
+    not-yet-reached time slices are masked (drawn as the colormap's "bad" colour),
+    so consecutive frames carry genuinely different image content.  Colour range
+    and extent are fixed from the full field so the view never jumps.
     """
     from ._core import _image_extent, _make_norm, _preset_for, _resolve_cmap, _resolve_norm
 
     field = _image_field(layer)
-    if field is None:
+    if field is None:  # pragma: no cover - guarded by _make_layer_driver/the warning
         # Not a 2-D field — fall back to the reveal sweep over a static image.
         return _image_sweep_driver(ax, layer, spec)
 
+    time_axis = _frames_time_axis(spec, layer, field)
+    n_steps = field.shape[time_axis]
     preset = _preset_for(normalize_kind(spec.kind))
-    n_cols = field.shape[1]
     extent = _image_extent(layer, spec)
     interp = layer.style.get("interpolation", "nearest")
     cmap = _resolve_cmap(spec, layer, preset)
@@ -424,10 +492,14 @@ def _image_frames_driver(ax: Axes, layer: Any, spec: PlotSpec) -> Any:
     )
 
     def drive(i: int, tail: int | None) -> None:
-        reveal = min(i + 1, n_cols)
-        shown = np.full_like(field, np.nan)
+        reveal = min(i + 1, n_steps)
         lo = 0 if tail is None else max(0, reveal - tail)
-        shown[:, lo:reveal] = field[:, lo:reveal]
+        shown = np.full_like(field, np.nan)
+        sl = slice(lo, reveal)
+        if time_axis == 1:
+            shown[:, sl] = field[:, sl]
+        else:
+            shown[sl, :] = field[sl, :]
         im.set_data(shown)
 
     return drive
