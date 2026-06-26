@@ -356,11 +356,25 @@ class Trajectory:
         :class:`~tsdynamics.viz.spec.Animation` fields; an ``Animation`` is used
         verbatim.  The spec carries ``meta["dt"]``, so time-unit trails / the clock
         resolve at render time.
+
+        Requesting ``mode="frames"`` (a dict / ``Animation`` with that mode) selects
+        the **evolving-field** model — the spacetime ``IMAGE`` grows column by column
+        as the field develops in time (a Kuramoto–Sivashinsky ``u(x, t)`` movie)
+        rather than a sweep line over a static image.  Its defaults are a persistent
+        growth (no trailing window, no head marker), which the chainable
+        ``.trail()`` / ``.head()`` knobs can still override.
         """
         if animate is False or animate is None:
             return spec
         from tsdynamics.viz.spec import Animation as _Animation
         from tsdynamics.viz.spec import PlotKind
+
+        if isinstance(animate, dict) and animate.get("mode") == "frames":
+            # An evolving 2-D field: the whole heatmap grows in time, so there is
+            # no comet window and no point marker — the image itself is the motion.
+            field_defaults: dict[str, Any] = {"head": False, "trail_kind": None}
+            spec.animation = _Animation(**{**field_defaults, **animate})
+            return spec
 
         head_default = spec.kind != PlotKind.TIME_SERIES
         # Default to a *windowed* comet (a moving trail + head over the full faint

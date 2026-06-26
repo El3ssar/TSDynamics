@@ -2,16 +2,24 @@
 
 An animated :class:`~tsdynamics.viz.spec.PlotSpec` (one carrying an
 :class:`~tsdynamics.viz.spec.Animation`) renders here to a
-:class:`matplotlib.animation.FuncAnimation`.  The model is **reveal**: the spec's
-layers keep their full static data and each frame shows a moving slice — a comet
-whose head is the current sample and whose tail reaches back
-:attr:`~tsdynamics.viz.spec.Animation.trail_length` (``None`` ⇒ persistent).
+:class:`matplotlib.animation.FuncAnimation`.  Two frame models are supported
+(:attr:`~tsdynamics.viz.spec.Animation.mode`):
 
-Per kind the "current state" head is drawn appropriately: a point marker on a
-curve (phase portraits / delay embeddings), a vertical sweep line on a time
-series or spacetime image.  Axis limits are computed once from the **full** data
-and held fixed so the view does not jump between frames; a 3-D camera optionally
-spins; an optional clock prints the current time.
+- ``"reveal"`` (the default): the spec's layers keep their full static data and
+  each frame shows a moving slice — a comet whose head is the current sample and
+  whose tail reaches back :attr:`~tsdynamics.viz.spec.Animation.trail_length`
+  (``None`` ⇒ persistent).  Per kind the "current state" head is drawn
+  appropriately: a point marker on a curve (phase portraits / delay embeddings),
+  a vertical sweep line on a time series or spacetime image.
+- ``"frames"``: an **evolving field** — a spacetime ``IMAGE`` whose ``z`` field
+  is materialised frame by frame (a heatmap growing left-to-right as the field
+  develops in time, e.g. a Kuramoto–Sivashinsky ``u(x, t)`` movie), so
+  consecutive frames carry genuinely different image content rather than a sweep
+  line over a static image.
+
+Axis limits (and an image's colour range) are computed once from the **full**
+data and held fixed so the view does not jump between frames; a 3-D camera
+optionally spins; an optional clock prints the current time.
 
 This module imports matplotlib only when called (never at ``import tsdynamics``).
 """
@@ -146,10 +154,21 @@ def _build_panel_animation(fig: Figure, ax: Any, spec: PlotSpec, *, three_d: boo
 
 
 def _layer_sample_count(spec: PlotSpec) -> int:
-    """Return the number of samples to reveal (the longest animated curve's ``x``/``y``)."""
+    """Return the number of samples to reveal (the longest animated curve / field).
+
+    For a curve mark this is the length of its ``x`` / ``y`` channel; for a
+    ``frames``-mode spacetime ``IMAGE`` it is the number of field columns
+    (``z.shape[1]``, the time axis the field grows along).
+    """
+    anim = spec.animation
+    frames_mode = anim is not None and anim.mode == "frames"
     n = 0
     for layer in spec.layers:
-        if PlotKind(layer.kind) not in _animated_marks():
+        mark = PlotKind(layer.kind)
+        if frames_mode and mark == PlotKind.IMAGE:
+            n = max(n, _image_field_columns(layer))
+            continue
+        if mark not in _animated_marks():
             continue
         arr = layer.data.get("x", layer.data.get("y"))
         if arr is not None:
@@ -157,11 +176,38 @@ def _layer_sample_count(spec: PlotSpec) -> int:
     return max(n, 2)
 
 
+def _image_field(layer: Any) -> np.ndarray | None:
+    """Return a 2-D field array from an ``IMAGE`` layer's ``z`` (else ``c``) channel."""
+    field = layer.data.get("z")
+    if field is None:
+        field = layer.data.get("c")
+    if field is None:
+        return None
+    arr = np.asarray(field, dtype=float)
+    return arr if arr.ndim == 2 else None
+
+
+def _image_field_columns(layer: Any) -> int:
+    """Return the column count (time axis) of a 2-D ``IMAGE`` field, else ``0``."""
+    field = _image_field(layer)
+    return int(field.shape[1]) if field is not None else 0
+
+
 def _first_x(spec: PlotSpec) -> np.ndarray | None:
-    """Return the first animated layer's ``x`` channel (for clock time inference)."""
+    """Return the first animated layer's ``x`` channel (for clock time inference).
+
+    For a ``frames``-mode spacetime field the natural clock axis is the ``IMAGE``
+    layer's ``x`` channel (the time vector the field grows along).
+    """
+    anim = spec.animation
+    frames_mode = anim is not None and anim.mode == "frames"
     for layer in spec.layers:
-        if PlotKind(layer.kind) in _animated_marks() and "x" in layer.data:
-            return np.asarray(layer.data["x"], dtype=float)
+        mark = PlotKind(layer.kind)
+        animated = mark in _animated_marks() or (frames_mode and mark == PlotKind.IMAGE)
+        if animated and "x" in layer.data:
+            xa = np.asarray(layer.data["x"], dtype=float)
+            if xa.ndim == 1:
+                return xa
     return None
 
 
@@ -178,6 +224,8 @@ def _make_layer_driver(
     kind = normalize_kind(spec.kind)
 
     if mark == PlotKind.IMAGE:
+        if anim.mode == "frames":
+            return _image_frames_driver(ax, layer, spec)
         return _image_sweep_driver(ax, layer, spec)
     if mark not in _animated_marks():
         _draw_static_layer(ax, layer, spec, three_d=three_d)
@@ -329,6 +377,58 @@ def _image_sweep_driver(ax: Axes, layer: Any, spec: PlotSpec) -> Any:
     def drive(i: int, tail: int | None) -> None:
         xi = float(xs[min(i, n - 1)]) if xs is not None else float(i)
         line.set_xdata([xi, xi])
+
+    return drive
+
+
+def _image_frames_driver(ax: Axes, layer: Any, spec: PlotSpec) -> Any:
+    """Drive an **evolving field**: a spacetime ``IMAGE`` materialised per frame.
+
+    Unlike the reveal-mode sweep (a moving line over a static image), the frames
+    model grows the heatmap column by column along its time axis — the field
+    develops in front of the viewer (a Kuramoto–Sivashinsky ``u(x, t)`` movie).
+    Each frame swaps in a fresh field whose not-yet-reached columns are masked
+    (drawn as the colormap's "bad" colour), so consecutive frames carry genuinely
+    different image content.  Colour range and extent are fixed from the full
+    field so the view never jumps.
+    """
+    from ._core import _image_extent, _make_norm, _preset_for, _resolve_cmap, _resolve_norm
+
+    field = _image_field(layer)
+    if field is None:
+        # Not a 2-D field — fall back to the reveal sweep over a static image.
+        return _image_sweep_driver(ax, layer, spec)
+
+    preset = _preset_for(normalize_kind(spec.kind))
+    n_cols = field.shape[1]
+    extent = _image_extent(layer, spec)
+    interp = layer.style.get("interpolation", "nearest")
+    cmap = _resolve_cmap(spec, layer, preset)
+    finite = field[np.isfinite(field)]
+    if spec.clim is not None:
+        vmin, vmax = spec.clim
+    elif finite.size:
+        vmin, vmax = float(finite.min()), float(finite.max())
+    else:  # pragma: no cover - degenerate empty field
+        vmin, vmax = 0.0, 1.0
+    norm = _make_norm(_resolve_norm(spec, preset), (vmin, vmax))
+
+    im = ax.imshow(
+        np.full_like(field, np.nan),
+        origin="lower",
+        aspect="auto",
+        extent=extent,
+        cmap=cmap,
+        norm=norm,
+        interpolation=interp,
+    )
+
+    def drive(i: int, tail: int | None) -> None:
+        reveal = min(i + 1, n_cols)
+        shown = np.full_like(field, np.nan)
+        lo = 0 if tail is None else max(0, reveal - tail)
+        shown[:, lo:reveal] = field[:, lo:reveal]
+        im.set_data(shown)
 
     return drive
 
