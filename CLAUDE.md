@@ -667,17 +667,25 @@ import is deferred to first render.
   loop streams a comet by **mutating its trace buffers in place with
   `Plotly.extendTraces`** (append the next points, trim to a `maxPoints` sliding
   window; the single-point head uses `maxPoints` 1; once per loop the window resets
-  to the start via `restyle`). `extendTraces` redraws the gl3d comet **without
-  re-creating the traces or rebuilding the WebGL scene**, so an in-progress mouse
-  orbit-drag is never interrupted: you **rotate WHILE it plays, with no click lag and
-  the stream never stops**, and a constant `uirevision` keeps the camera you set.
-  This replaced an earlier `Plotly.react` driver (a fresh comet/head trace object via
-  `gd.data.slice()` + `Object.assign` each frame): react redraws gl3d too but **tears
-  the moving traces down every frame**, and that per-frame scene rebuild ate the drag
-  and lagged the first rotation — so react must NOT be used for the per-frame update.
-  (A browser shootout also found the old "`restyle` can't redraw gl3d" lore is false
-  in modern plotly; `extendTraces` is still preferred as the purpose-built streaming
-  primitive.) The full-curve cache is
+  to the start via `restyle`). **Rotate-while-playing for 3-D is via pause-on-drag**
+  (verified in a real headless-Chrome drag probe): a gl3d (`Scatter3d`) trace update
+  has `editType` `calc`/`plot`, so it forces a **full WebGL scene replot** — there is
+  NO lightweight position-only gl3d update (the in-place `scattergl` batch update is
+  2-D only), and replotting each frame *while* the user orbits **cancels the drag
+  gesture** (and pegs the thread). So the rAF loop **fully suspends the comet stream
+  for the duration of a drag**: a **capture-phase `pointerdown`** on the graph div
+  (fires *before* plotly's own canvas handler, so not one `extendTraces` lands after
+  the gesture starts) sets a `dragging` flag and the loop does **zero trace work**
+  until `pointerup`/`pointercancel`, leaving the gl3d scene free to orbit as smoothly
+  as a static 3-D plot; the stream resumes from where it paused on release. The live
+  drag camera is mirrored into `gd.layout.scene.camera` (via `plotly_relayouting`) so
+  that first resumed redraw keeps the dragged pose — **no snap-back** — and a constant
+  `uirevision` holds the camera. (Earlier attempts that kept *streaming* during the
+  drag — a `Plotly.react` rebuild, then plain `extendTraces` — could not be rotated:
+  every per-frame gl3d replot ate the orbit gesture. The honest fact is plotly gl3d
+  cannot stream data while you orbit; pausing the stream during the drag is the fix.
+  2-D plots have no orbit gesture and `scattergl` updates cheaply, so the pause is a
+  no-op there.) The full-curve cache is
   read from plotly's **decoded** data (`gd._fullData`, a `Float64Array`), not raw
   `gd.data` — plotly 6 stores a base64 typed-array *spec* (`{dtype, bdata}`, no
   `.slice`) in `gd.data[i].x`, so the loop normalises each axis up front (`asArray`)

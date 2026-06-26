@@ -349,10 +349,12 @@ def test_save_html_is_realtime_and_rotatable(tmp_path):
     """The HTML export is the real-time (rAF + extendTraces) animation, not plotly frames.
 
     A requestAnimationFrame loop streams the comet with ``Plotly.extendTraces`` (in-
-    place buffer mutation — no gl3d scene rebuild) and mirrors the live drag camera
-    into ``gd.layout`` so the attractor is rotatable WHILE it plays, with no lag and
-    no snap-back; embedding the curve once (no frames) keeps the file small.  A
-    minimal play/pause + restart overlay makes the animation obviously alive.
+    place buffer mutation).  For a 3-D plot the stream is paused for the duration of a
+    drag (a gl3d data update would replot the scene and cancel the orbit gesture), so
+    the attractor rotates smoothly and resumes on release; the live drag camera is
+    mirrored into ``gd.layout`` so there is no snap-back.  Embedding the curve once (no
+    frames) keeps the file small.  A minimal play/pause + restart overlay makes the
+    animation obviously alive.
     """
     pytest.importorskip("plotly")
     out = tmp_path / "orbit.html"
@@ -360,7 +362,8 @@ def test_save_html_is_realtime_and_rotatable(tmp_path):
     text = out.read_text()
     assert "requestAnimationFrame" in text  # the smooth frame-rate driver
     assert "Plotly.extendTraces" in text  # in-place comet streaming (no gl3d scene rebuild)
-    assert "plotly_relayouting" in text  # mirror the live drag camera → rotatable while playing
+    assert "pointerdown" in text  # the drag-start hook that pauses the stream → rotatable
+    assert "plotly_relayouting" in text  # mirror the live drag camera → no snap-back
     assert "uirevision" in text  # the camera/zoom-preservation token
     assert "playBtn" in text and "restartBtn" in text  # the visible play/pause + restart control
     assert text.count('"frames"') == 0  # not the janky frame-animation path
