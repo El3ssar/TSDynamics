@@ -86,7 +86,9 @@ class ParamSet(MutableMapping[str, Any]):
         self._data[key] = value
 
     def __delitem__(self, key: str) -> None:
-        raise TypeError("Parameters are fixed-key — cannot delete.")
+        from tsdynamics.errors import InvalidInputError
+
+        raise InvalidInputError("Parameters are fixed-key — cannot delete.")
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._data)
@@ -722,15 +724,17 @@ class SystemBase(SystemPlottable):
         from tsdynamics.derived import PoincareMap
 
         if plane is None:
+            from tsdynamics.errors import InvalidParameterError
+
             if section is None:
-                raise ValueError(
+                raise InvalidParameterError(
                     "poincare() needs either `section=` (with `at=`) or an explicit `plane=`."
                 )
             comp = section
             if isinstance(comp, str):
                 names = getattr(type(self), "variables", None)
                 if names is None:
-                    raise ValueError(
+                    raise InvalidParameterError(
                         f"{type(self).__name__} declares no `variables`; "
                         f"pass an integer `section=` (component index)."
                     )

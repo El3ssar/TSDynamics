@@ -110,16 +110,21 @@ def resolve_backend(backend: str) -> str:
 
     Raises
     ------
-    ValueError
-        If ``backend`` is not a recognised name.
+    InvalidParameterError
+        If ``backend`` is not a recognised name.  Subclasses :class:`ValueError`,
+        so existing ``except ValueError`` handlers keep catching it.
     """
     name = str(backend).lower()
     if name == "auto":
         return "interp"
     if name not in BACKENDS:
-        raise ValueError(
-            f"unknown backend {backend!r}; choose from {sorted(BACKENDS)} (or 'auto'). "
-            f"'interp'/'jit' run on the Rust engine; 'reference' is the pure-Python oracle."
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value(
+            "backend",
+            backend,
+            options=[*sorted(BACKENDS), "auto"],
+            hint="'interp'/'jit' run on the Rust engine; 'reference' is the pure-Python oracle.",
         )
     return name
 
@@ -287,6 +292,26 @@ def _recommend_method(problem: Problem) -> Any:
     )
 
 
+def _resolve_method_for(method: str, problem: Problem) -> Any:
+    """Resolve ``method=`` to a :class:`solvers.Resolution` for an already-built problem.
+
+    The single home for the ``method=`` contract shared by :func:`integrate` and
+    :func:`ensemble`, so ``"auto"`` means the same thing through both entry points
+    (diagnosis #11/#13).  A literal ``method="auto"`` triggers a-priori
+    auto-stiffness selection over *problem* (:func:`_recommend_method` →
+    :func:`solvers.recommend`); every other name normalises spellings/aliases
+    ("RK45" → "rk45", "dopri5" → "rk45") and rejects unknown or v2-only names
+    ("LSODA") with a listing error + a stiff hint.  Resolving is harmless for the
+    families that ignore ``method=`` (maps fold params in; SDE/DDE batches are
+    refused by the caller before stepping).
+    """
+    from tsdynamics import solvers
+
+    if solvers.normalize(method) == "auto":
+        return _recommend_method(problem)
+    return solvers.resolve(method)
+
+
 def integrate(
     system_or_problem: Any,
     *,
@@ -358,22 +383,18 @@ def integrate(
     backend = resolve_backend(backend)
 
     # Resolve the solver name to a canonical engine kernel (the C-SOLV → C-FAM
-    # wiring).  A literal ``method="auto"`` triggers a-priori **auto-stiffness**
-    # selection: the problem is lowered first so the Jacobian spectrum at the start
-    # state can be probed (``solvers.recommend`` → ``_recommend_method``), picking
-    # the implicit ``bdf`` kernel on a stiff RHS and the explicit ``rk45``
-    # otherwise.  Every other name normalises spellings/aliases (e.g. "RK45" →
-    # "rk45", "dopri5" → "rk45") and rejects unknown or v2-only names (e.g.
-    # "LSODA") with a listing error + a stiff hint pointing at "bdf".  Maps ignore
-    # `method` and an SDE problem is refused below, so resolving is harmless there.
-    from tsdynamics import solvers
-
-    if solvers.normalize(method) == "auto":
-        problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
-        resolution = _recommend_method(problem)
-    else:
-        resolution = solvers.resolve(method)
-        problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
+    # wiring), via the shared :func:`_resolve_method_for` contract (so ``"auto"``
+    # behaves identically in :func:`ensemble`).  A literal ``method="auto"``
+    # triggers a-priori **auto-stiffness** selection: the problem is lowered first
+    # so the Jacobian spectrum at the start state can be probed
+    # (``solvers.recommend`` → ``_recommend_method``), picking the implicit ``bdf``
+    # kernel on a stiff RHS and the explicit ``rk45`` otherwise.  Every other name
+    # normalises spellings/aliases (e.g. "RK45" → "rk45", "dopri5" → "rk45") and
+    # rejects unknown or v2-only names (e.g. "LSODA") with a listing error + a
+    # stiff hint pointing at "bdf".  Maps ignore `method` and an SDE problem is
+    # refused below, so resolving is harmless there.
+    problem = _as_problem(system_or_problem, ic=ic, **build_kwargs)
+    resolution = _resolve_method_for(method, problem)
     method = resolution.name
 
     # The implicit ODE kernels (bdf/rosenbrock/trbdf2) need ∂f/∂u on the tape, or
@@ -1033,7 +1054,7 @@ def _reference_events(
     tape = problem.tape
     p = problem.params_vec()
     ic = np.asarray(problem.ic, dtype=np.float64).ravel()
-    scipy_method = _SCIPY_METHOD.get(method, method)
+    scipy_method = _scipy_method(method)
 
     def rhs(t: float, u: np.ndarray) -> np.ndarray:
         return eval_tape(tape, u, p, t)
@@ -1531,18 +1552,21 @@ def ensemble(
     """
     backend = resolve_backend(backend)
 
-    # Canonicalise the solver name exactly as :func:`integrate` /
-    # :func:`integrate_events` do, so an alias ("dopri5" → "rk45") or a v2-only
-    # name ("LSODA") is normalised/rejected uniformly across the three engine
-    # entry points. Maps and SDEs ignore `method`, so resolving is harmless.
-    from tsdynamics import solvers
-
-    method = solvers.resolve(method).name
-
     problem = _as_problem(system_or_problem, **build_kwargs)
+
+    # Canonicalise the solver name exactly as :func:`integrate` does, via the
+    # shared :func:`_resolve_method_for` contract — so an alias ("dopri5" →
+    # "rk45"), a v2-only name ("LSODA"), and the auto-stiffness ``method="auto"``
+    # are all handled identically across the engine entry points (diagnosis
+    # #11/#13: ``"auto"`` is no longer an "unknown solver method" error here).
+    # Maps and SDEs ignore `method`, so resolving is harmless.
+    method = _resolve_method_for(method, problem).name
+
     ics = np.ascontiguousarray(ics, dtype=np.float64)
     if ics.ndim != 2 or ics.shape[1] != problem.dim:
-        raise ValueError(f"ics must be (n, {problem.dim}); got shape {ics.shape}")
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value("ics", ics.shape, rule=f"must be (n, {problem.dim})")
 
     # Maps and SDEs are dispatched before the (ODE-shaped) start-time logic below:
     # a MapProblem has no ``t0``, and an SDE batch needs its own seeded entry
@@ -1852,7 +1876,7 @@ def _reference_ode(
         return np.empty((0, problem.dim), dtype=np.float64)
     tape = problem.tape
     p = problem.params_vec()
-    scipy_method = _SCIPY_METHOD.get(method, method)
+    scipy_method = _scipy_method(method)
 
     def rhs(t: float, u: np.ndarray) -> np.ndarray:
         return eval_tape(tape, u, p, t)
@@ -1889,7 +1913,7 @@ def _reference_map(problem: MapProblem, steps: int) -> np.ndarray:
     for i in range(steps):
         x = eval_tape(tape, x)
         if not np.all(np.isfinite(x)):
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"{_name(problem)}: map diverged — non-finite state at iteration {i} "
                 f"(0-based, of {steps} requested)."
             )
@@ -1966,6 +1990,30 @@ _SCIPY_METHOD: dict[str, str] = {
     "rosenbrock": "Radau",
     "trbdf2": "BDF",
 }
+
+
+def _scipy_method(method: str) -> str:
+    """Map a canonical engine kernel name to a SciPy ``solve_ivp`` method, or raise.
+
+    The reference backend's ODE oracle is :func:`scipy.integrate.solve_ivp`, which
+    only knows the methods in :data:`_SCIPY_METHOD`.  A kernel with no SciPy
+    equivalent (an SDE method reaching the ODE oracle, a plugin kernel with no
+    mapping) gets a clear :class:`~tsdynamics.errors.InvalidParameterError`
+    naming the method and pointing at the engine backends — instead of letting a
+    raw SciPy ``ValueError`` ("Unknown method …") surface from inside the oracle.
+    """
+    try:
+        return _SCIPY_METHOD[method]
+    except KeyError:
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value(
+            "method",
+            method,
+            rule="has no reference (SciPy) equivalent",
+            hint=f"Use backend='interp'/'jit' (the Rust engine) for this method, or "
+            f"choose a reference-capable one from {sorted(_SCIPY_METHOD)}.",
+        ) from None
 
 
 # ---------------------------------------------------------------------------

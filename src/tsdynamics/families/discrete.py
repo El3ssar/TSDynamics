@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
+
 from .base import SystemBase, Trajectory
 
 if TYPE_CHECKING:
@@ -116,7 +118,7 @@ class DiscreteMap(SystemBase):
             if sig_names is None:  # catch-all (X, *params) or non-introspectable
                 continue
             if sig_names != declared:
-                raise TypeError(
+                raise InvalidInputError(
                     f"{cls.__name__}.{name} takes parameters {sig_names} but the "
                     f"params dict declares {declared} — names and ORDER must match, "
                     f"because parameters are passed positionally."
@@ -196,7 +198,7 @@ class DiscreteMap(SystemBase):
         else:
             nf = float(n_or_dt)
             if not nf.is_integer() or nf < 1:
-                raise ValueError(
+                raise InvalidParameterError(
                     f"{type(self).__name__}.step takes a positive whole number of "
                     f"iterations, got {n_or_dt!r} (fractional time steps have no "
                     f"meaning for discrete maps)."
@@ -215,7 +217,7 @@ class DiscreteMap(SystemBase):
             for _ in range(n):
                 x = np.asarray(step_fn(x, *params), dtype=np.float64).ravel()
         if not np.isfinite(x).all():
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"{type(self).__name__}: map diverged at iteration {self._n_now + n}."
             )
         self._state_now = np.asarray(x, dtype=float).reshape(self.dim)
@@ -361,7 +363,7 @@ class DiscreteMap(SystemBase):
                 )
                 ic_arr = np.random.rand(cast(int, self.dim))
                 object.__setattr__(self, "ic", ic_arr.copy())
-        raise RuntimeError(
+        raise ConvergenceError(
             f"{type(self).__name__}.iterate exhausted {max_retries} "
             f"retries without a finite trajectory."
         )
@@ -387,7 +389,7 @@ class DiscreteMap(SystemBase):
         finite_rows = np.isfinite(traj.y).all(axis=1)
         if not finite_rows.all():
             bad = int(np.argmin(finite_rows))
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"{type(self).__name__}: map diverged at iteration {bad} (backend={backend!r})."
             )
         return traj

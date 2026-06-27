@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError
+
 from .base import Trajectory
 
 __all__ = ["WrappedSystem"]
@@ -106,7 +108,7 @@ class WrappedSystem:
         amount = self._default_dt if n_or_dt is None else n_or_dt
         new = np.asarray(self._step_fn(self._state, amount), dtype=np.float64).reshape(self.dim)
         if not np.all(np.isfinite(new)):
-            raise RuntimeError("WrappedSystem.step produced non-finite state")
+            raise ConvergenceError("WrappedSystem.step produced non-finite state")
         self._state = new
         self._t += amount
         return self._state.copy()

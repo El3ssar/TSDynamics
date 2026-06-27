@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError
+from tsdynamics.errors import ConvergenceError, InvalidParameterError
 from tsdynamics.utils.grids import make_output_grid
 
 from .base import SystemBase, Trajectory
@@ -415,7 +415,7 @@ class StochasticSystem(SystemBase, ABC):
         dw = _wiener(s["rng"], dt, u.size)
         u = _sde_step(s["method"], s["drift"], s["diffusion"], u, s["p"], self._t_now, dw, dt)
         if not np.all(np.isfinite(u)):
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"{type(self).__name__}: SDE diverged at t={self._t_now + dt:.6g} during step()."
             )
         self._t_now += dt
@@ -631,7 +631,7 @@ class StochasticSystem(SystemBase, ABC):
         base_seed = _resolve_seed(seed)
         ics = np.ascontiguousarray(ics, dtype=np.float64)
         if ics.ndim != 2 or ics.shape[1] != self.dim:
-            raise ValueError(f"ics must be (n, {self.dim}); got shape {ics.shape}")
+            raise InvalidParameterError(f"ics must be (n, {self.dim}); got shape {ics.shape}")
 
         backend_canon = run.resolve_backend(backend)
         if backend_canon != "reference":
@@ -719,7 +719,7 @@ class StochasticSystem(SystemBase, ABC):
             return cls._default_method
         canon = _METHODS.get(str(method).lower())
         if canon is None:
-            raise ValueError(
+            raise InvalidParameterError(
                 f"unknown SDE method {method!r}; choose from "
                 f"{sorted(set(_METHODS.values()))} (aliases: {sorted(_METHODS)})."
             )
