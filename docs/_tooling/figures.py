@@ -89,7 +89,7 @@ def _style():
     return plt
 
 
-RENDERER_VERSION = "4"  # bump manually when rendering output materially changes
+RENDERER_VERSION = "5"  # bump manually when rendering output materially changes
 
 
 def cache_key(entry) -> str:
@@ -148,6 +148,14 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     Mirrors the renderer's IC-retry contract: the engine raises on divergence
     (it does not re-roll the IC itself), so off-basin random starts are caught
     and retried here, exactly as the SciPy fallback does.
+
+    Marches with the **fixed-step** ``rk4`` kernel rather than the adaptive default
+    on purpose: an off-basin random start that races to infinity then raises after a
+    handful of cheap steps and is retried, instead of sending the *adaptive*
+    step-controller into a minutes-long step-shrinking spiral as it chases the
+    diverging solution down to the minimum step size (a cold build of the
+    conservative / chaotic catalogue otherwise appears to hang).  ``rk4`` at
+    ``dt = 0.01`` is more than accurate enough for a non-stiff attractor thumbnail.
     """
     final_time = opts.get("final_time", 100.0)
     dt = opts.get("dt", 0.01)
@@ -164,6 +172,7 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
                 dt=dt,
                 ic=np.asarray(ic, dtype=float),
                 backend="interp",
+                method="rk4",
             )
         except (RuntimeError, ValueError):  # divergence / off-basin start
             ic = None

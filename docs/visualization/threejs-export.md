@@ -101,6 +101,17 @@ const payload = await (await fetch("lorenz.json")).json();
 renderThreejsPayload(document.querySelector("#viewer"), payload);
 ```
 
+## In the system catalogue
+
+Every **3-D ODE** system page in the [catalogue](../systems/continuous/index.md) embeds exactly this
+pipeline: at docs-build time an animated `PHASE_PORTRAIT_3D` payload of the attractor is exported,
+inlined into a small self-contained HTML document (the import map + the inlined payload + this
+reference loader), and dropped onto the page in an `<iframe>` — so the headline figure on, say, the
+[Lorenz](../systems/continuous/chaotic-attractors/Lorenz.md) page is the **live, orbitable comet**
+rather than a static PNG. Maps, DDEs, spatial-field and stiff/discontinuous systems keep their static
+figure, and any page degrades to the PNG when WebGL or the CDN is unavailable. The emitter is
+`docs/_tooling/threejs_viewer.py`.
+
 ## Live demo
 
 The Lorenz payload exported above, rendered in your browser by the reference loader (drag to orbit,

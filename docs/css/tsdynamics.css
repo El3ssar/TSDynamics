@@ -153,3 +153,17 @@
   display: block;
   margin: 0 auto;
 }
+
+/* ---- System-page interactive attractor — the live three.js viewer ------ */
+.md-typeset iframe.tsdyn-attractor {
+  display: block;
+  width: 100%;
+  height: 440px;
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--ts-radius);
+  background: #0b1020;
+  box-shadow: var(--ts-shadow);
+  /* The canvas owns drag (orbit) + wheel (zoom); keep the page from hijacking. */
+  touch-action: none;
+}
