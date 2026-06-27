@@ -42,16 +42,17 @@ __all__ = ["fixed_mass_dimension"]
 
 
 def _kth_valid_distances(
-    dists: np.ndarray, idx: np.ndarray, ref_index: np.ndarray, w: int, k: int
+    dists: np.ndarray, valid: np.ndarray, csum: np.ndarray, k: int
 ) -> np.ndarray:
     """For each reference row, the distance to its ``k``-th Theiler-valid neighbour.
 
-    A neighbour ``j`` of reference ``i`` is valid when ``|i - j| > w`` (this also
-    drops the self-match at distance 0).  Rows without ``k`` valid neighbours in
-    the queried block yield ``nan``.
+    ``valid[i, c]`` flags whether the ``c``-th queried neighbour of reference row
+    ``i`` is Theiler-valid (``|i - j| > w``, which also drops the self-match at
+    distance 0), and ``csum`` is its row-wise cumulative count.  Both are
+    ``k``-independent, so they are computed once by the caller and reused across
+    every mass ``k`` instead of being rebuilt per call.  Rows without ``k`` valid
+    neighbours in the queried block yield ``nan``.
     """
-    valid = np.abs(idx - ref_index[:, None]) > w
-    csum = np.cumsum(valid, axis=1)
     # The k-th valid neighbour is the column where the running count first hits k.
     hit = valid & (csum == k)
     has_k = hit.any(axis=1)
@@ -158,9 +159,16 @@ def fixed_mass_dimension(
     dists = np.atleast_2d(dists)
     idx = np.atleast_2d(idx)
 
+    # The Theiler-validity mask and its row-wise running count are independent of
+    # the mass ``k``, so build them once and reuse across every k (the per-k
+    # ``_kth_valid_distances`` only re-tests ``csum == k``) instead of recomputing
+    # the full (n_ref, k_query) ``abs``+``cumsum`` for each of the ``n_ks`` masses.
+    valid = np.abs(idx - ref_index[:, None]) > w
+    csum = np.cumsum(valid, axis=1)
+
     mean_log_r = np.empty(ks.size)
     for m, k in enumerate(ks):
-        rk = _kth_valid_distances(dists, idx, ref_index, w, int(k))
+        rk = _kth_valid_distances(dists, valid, csum, int(k))
         rk = rk[np.isfinite(rk) & (rk > 0.0)]
         if rk.size == 0:
             raise ValueError(

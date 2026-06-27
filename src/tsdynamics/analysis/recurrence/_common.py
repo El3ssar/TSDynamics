@@ -2,11 +2,11 @@ r"""
 Shared plumbing for the recurrence / RQA toolkit.
 
 Holds the point-set coercion (:func:`_as_points`), metric handling
-(:func:`_metric_p`), the run-length extractors that turn a recurrence matrix's
-diagonals and columns into line-length histograms (:func:`_run_lengths`,
-:func:`_runs_from_sorted`), and the recurrence-rate → threshold inversion
-(:func:`_threshold_for_rate`).  The estimators live in :mod:`.matrix`,
-:mod:`.rqa` and :mod:`.windowed`.
+(:func:`_metric_p`), the loop-free run-length extractors that turn a recurrence
+matrix's diagonals and columns into line-length histograms
+(:func:`_diagonal_run_lengths`, :func:`_vertical_run_lengths`), and the
+recurrence-rate → threshold inversion (:func:`_threshold_for_rate`).  The
+estimators live in :mod:`.matrix`, :mod:`.rqa` and :mod:`.windowed`.
 
 The :class:`~tsdynamics.data.Trajectory` is duck-typed (``.y``) to avoid an
 import cycle through :mod:`tsdynamics.families` / :mod:`tsdynamics.data`.
@@ -96,35 +96,81 @@ def _metric_p(metric: str | float) -> float:
     return table[key]
 
 
-def _run_lengths(mask: np.ndarray) -> np.ndarray:
-    """Lengths of maximal runs of ``True`` in a 1-D boolean array.
+def _diagonal_run_lengths(mat: Any) -> np.ndarray:
+    r"""Lengths of every diagonal recurrence line in the upper triangle.
 
-    Used for diagonal lines, where the recurrence values along a diagonal are
-    materialised densely.  Returns an empty array when there are no runs.
+    A whole-matrix, loop-free replacement for densifying one diagonal at a time.
+    The stored upper-triangle entries ``(i, j)`` with ``j > i`` are the diagonal
+    recurrence points; the one indexed by ``k = j - i`` lies on diagonal ``k``.
+    Two such points are on the *same* diagonal line iff they are consecutive
+    along that diagonal — same ``k`` and ``i`` incrementing by one — so sorting
+    the entries lexicographically by ``(k, i)`` makes each maximal line a maximal
+    block with constant ``k`` and ``i`` stepping by ``1``.  This is exactly the
+    per-diagonal "consecutive run" the explicit loop computed (and only the upper
+    triangle is read, matching the by-symmetry convention of the diagonal
+    statistics).  Returns an empty array when there are no diagonal lines.
     """
-    if mask.size == 0:
-        return np.empty(0, dtype=np.intp)
-    padded = np.empty(mask.size + 2, dtype=bool)
-    padded[0] = padded[-1] = False
-    padded[1:-1] = mask
-    diff = np.diff(padded.view(np.int8))
-    starts = np.flatnonzero(diff == 1)
-    ends = np.flatnonzero(diff == -1)
-    return ends - starts
+    coo = mat.tocoo()
+    row = np.asarray(coo.row)
+    col = np.asarray(coo.col)
+    upper = col > row
+    row = row[upper]
+    col = col[upper]
+    k = col - row  # diagonal index of each upper-triangle recurrence point
+    order = np.lexsort((row, k))  # primary key k, secondary key row
+    return _grouped_consecutive_runs(k[order], row[order])
 
 
-def _runs_from_sorted(indices: np.ndarray) -> np.ndarray:
-    """Lengths of runs of consecutive integers in a sorted index array.
+def _vertical_run_lengths(mat: Any) -> np.ndarray:
+    r"""Lengths of every vertical recurrence line (consecutive rows per column).
 
-    Used for vertical lines: a sparse column's stored row indices are ascending,
-    so a maximal block of consecutive rows is a vertical recurrence line.  Avoids
-    materialising the column densely.
+    A whole-matrix, loop-free replacement for the per-column Python loop.  The
+    CSC form already stores each column's row indices contiguously and ascending
+    (``sort_indices``), so the stored ``indices`` array is exactly the columns'
+    sorted rows laid end to end.  A vertical line is a maximal block of
+    consecutive rows *within one column*, i.e. a run that breaks at a column
+    boundary (the start of a new CSC block) or where the stored row does not
+    increment by one.  Detecting both breaks across the flat ``indices`` array
+    reproduces the per-column runs without materialising any column densely or
+    iterating in Python.  Returns an empty array when there are no vertical
+    lines.
     """
+    csc = mat.tocsc()
+    csc.sort_indices()  # ascending row indices within each column block
+    indices = np.asarray(csc.indices)
     if indices.size == 0:
         return np.empty(0, dtype=np.intp)
-    splits = np.flatnonzero(np.diff(indices) != 1) + 1
-    bounds = np.concatenate(([0], splits, [indices.size]))
-    return np.diff(bounds)
+    indptr = np.asarray(csc.indptr)
+    # A run starts at every column-block boundary ...
+    run_start = np.zeros(indices.size, dtype=bool)
+    nonempty = np.diff(indptr) > 0
+    run_start[indptr[:-1][nonempty]] = True
+    # ... and wherever a stored row is not the previous row + 1 (within a block,
+    # the column boundaries above already force a start so a cross-column false
+    # "consecutive" pair cannot merge two columns into one line).
+    run_start[0] = True
+    run_start[1:] |= np.diff(indices) != 1
+    bounds = np.flatnonzero(run_start)
+    ends = np.append(bounds[1:], indices.size)
+    return (ends - bounds).astype(np.intp)
+
+
+def _grouped_consecutive_runs(group: np.ndarray, pos: np.ndarray) -> np.ndarray:
+    """Run lengths of maximal blocks with constant ``group`` and ``pos`` stepping by 1.
+
+    ``group`` and ``pos`` must be sorted lexicographically by ``(group, pos)``.
+    A run breaks where ``group`` changes or ``pos`` does not increment by one —
+    the same maximal-line rule used for diagonals.  Returns an empty array for an
+    empty input.
+    """
+    if group.size == 0:
+        return np.empty(0, dtype=np.intp)
+    run_start = np.empty(group.size, dtype=bool)
+    run_start[0] = True
+    run_start[1:] = (group[1:] != group[:-1]) | (np.diff(pos) != 1)
+    bounds = np.flatnonzero(run_start)
+    ends = np.append(bounds[1:], group.size)
+    return (ends - bounds).astype(np.intp)
 
 
 def _sample_valid_distances(

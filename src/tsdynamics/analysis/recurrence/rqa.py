@@ -14,10 +14,12 @@ its diagonal and vertical lines encode (Zbilut & Webber, *Phys. Lett. A* **171**
   signature of *laminar* / intermittent phases.  They give the **laminarity**
   (LAM) and **trapping time** (TT).
 
-Line lengths are read straight off the sparse matrix — diagonals densify one at a
-time, vertical lines come from the consecutive runs of each column's stored row
-indices — so no dense :math:`N \times N` array is formed.  The line of identity
-is excluded (see :func:`~tsdynamics.analysis.recurrence_matrix`), and by symmetry
+Line lengths are read straight off the sparse matrix in one vectorised pass —
+diagonal lines are the consecutive runs of the upper-triangle entries grouped by
+diagonal index :math:`k = j - i`, vertical lines the consecutive runs of each
+column's stored row indices — so no dense :math:`N \times N` array (nor any
+per-diagonal / per-column Python loop) is formed.  The line of identity is
+excluded (see :func:`~tsdynamics.analysis.recurrence_matrix`), and by symmetry
 the diagonal statistics are gathered from the upper triangle alone (every ratio
 and length is unchanged by the doubling).
 """
@@ -30,7 +32,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from .._result import AnalysisResult
-from ._common import _run_lengths, _runs_from_sorted
+from ._common import _diagonal_run_lengths, _vertical_run_lengths
 from .matrix import RecurrenceMatrix, recurrence_matrix
 
 __all__ = ["RQAResult", "rqa"]
@@ -152,30 +154,6 @@ class RQAResult(AnalysisResult):
         )
 
 
-def _diagonal_lengths(mat: Any) -> np.ndarray:
-    """Lengths of every diagonal recurrence line in the upper triangle."""
-    n = mat.shape[0]
-    out: list[np.ndarray] = []
-    for k in range(1, n):
-        runs = _run_lengths(np.asarray(mat.diagonal(k), dtype=bool))
-        if runs.size:
-            out.append(runs)
-    return np.concatenate(out) if out else np.empty(0, dtype=np.intp)
-
-
-def _vertical_lengths(mat: Any) -> np.ndarray:
-    """Lengths of every vertical recurrence line (consecutive rows per column)."""
-    csc = mat.tocsc()
-    csc.sort_indices()  # ascending row indices within each column
-    indptr, indices = csc.indptr, csc.indices
-    out: list[np.ndarray] = []
-    for j in range(csc.shape[1]):
-        runs = _runs_from_sorted(indices[indptr[j] : indptr[j + 1]])
-        if runs.size:
-            out.append(runs)
-    return np.concatenate(out) if out else np.empty(0, dtype=np.intp)
-
-
 def _line_stats(lengths: np.ndarray, min_length: int) -> tuple[float, float, int]:
     """``(fraction_in_long_lines, mean_long_length, max_long_length)``.
 
@@ -267,8 +245,8 @@ def rqa(
             theiler=theiler,
         )
 
-    diag = _diagonal_lengths(rm.matrix)
-    vert = _vertical_lengths(rm.matrix)
+    diag = _diagonal_run_lengths(rm.matrix)
+    vert = _vertical_run_lengths(rm.matrix)
 
     det, avg_diag, l_max = _line_stats(diag, lmin)
     lam, tt, v_max = _line_stats(vert, vmin)

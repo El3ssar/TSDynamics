@@ -22,6 +22,7 @@ Butterworth, S. (1930). On the theory of filter amplifiers.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -40,6 +41,25 @@ __all__ = [
 ]
 
 _TINY = np.finfo(float).tiny
+
+
+@lru_cache(maxsize=256)
+def _design_butter_sos(
+    order: int, cutoff_key: float | tuple[float, ...], btype: str, fs: float
+) -> np.ndarray:
+    """Design (and cache) a Butterworth SOS for a ``(order, cutoff, btype, fs)`` key.
+
+    :func:`scipy.signal.butter` does a fresh pole/zero placement on every call;
+    the design depends only on these four scalars, so caching it lets repeated
+    filtering (the same filter swept over many signals, e.g. an ensemble) skip
+    the redesign.  ``cutoff`` is passed through as ``list(cutoff_key)`` for a
+    pair so SciPy sees exactly the original argument, and the returned SOS is
+    marked read-only so a cached array can never be mutated in place by a caller.
+    """
+    cutoff: Any = list(cutoff_key) if isinstance(cutoff_key, tuple) else cutoff_key
+    sos: np.ndarray = np.asarray(_sig.butter(order, cutoff, btype=btype, fs=fs, output="sos"))
+    sos.flags.writeable = False
+    return sos
 
 
 def detrend(data: Any, *, method: str = "linear") -> Any:
@@ -164,7 +184,18 @@ def butter_filter(
         raise ValueError(f"{btype} needs a single scalar cutoff, got {cutoff!r}.")
 
     sig = to_signal(x)
-    sos = _sig.butter(order, cutoff, btype=btype, fs=rate, output="sos")
+    # Cache the design on the four scalars it depends on.  ``edges`` is the
+    # float view of ``cutoff`` already built for validation; for a scalar cutoff
+    # SciPy sees a Python float (a 0-d ndarray would broadcast the same Wn), and
+    # for a pair it sees ``list((low, high))`` — both byte-identical designs to
+    # passing the raw ``cutoff``.
+    cutoff_key: float | tuple[float, ...] = (
+        float(edges[0]) if edges.size == 1 else tuple(edges.tolist())
+    )
+    # sosfiltfilt needs a writeable SOS buffer; the cached design is read-only,
+    # so hand it a fresh copy (a tiny (n_sections, 6) array — negligible vs the
+    # pole/zero placement we just skipped).
+    sos = _design_butter_sos(order, cutoff_key, btype, float(rate)).copy()
     out = _sig.sosfiltfilt(sos, sig, axis=0)
     return wrap_like(x, out, filtered={"btype": btype, "cutoff": cutoff, "order": order})
 

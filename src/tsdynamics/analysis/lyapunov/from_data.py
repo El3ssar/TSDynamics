@@ -338,27 +338,54 @@ def lyapunov_from_data(
         eps = float(eps)
         if eps <= 0.0:
             raise ValueError("eps must be positive (series may be constant).")
-        ref_idx: list[int] = []
-        neigh_of: list[np.ndarray] = []
+        # One batched ball query for *all* candidate reference rows, then filter
+        # each candidate list to neighbours inside eps, outside the Theiler window,
+        # and whose k-ahead image still exists (j <= last). A reference point with
+        # >= n_neighbors survivors contributes. This reproduces the per-point
+        # ``query_ball_point`` loop exactly (same eps, same predicate, same order).
+        cand_lists = tree.query_ball_point(emb[: last + 1], eps)
+        ref_idx_list: list[int] = []
+        # Flat (reference, neighbour) pair arrays plus per-reference neighbour
+        # counts: the divergence average over each reference's neighbour set is a
+        # segment-mean over these flat arrays (np.add.at grouping below), so the
+        # per-k double Python loop collapses to one vectorised distance + reduce.
+        ref_repeat_blocks: list[np.ndarray] = []
+        neigh_blocks: list[np.ndarray] = []
+        counts: list[int] = []
         for n in range(last + 1):
-            cand = tree.query_ball_point(emb[n], eps)
-            neigh_list = [j for j in cand if j <= last and abs(j - n) > theiler]
-            if len(neigh_list) >= n_neighbors:
-                ref_idx.append(n)
-                neigh_of.append(np.asarray(neigh_list, dtype=int))
-        if not ref_idx:
+            cand = cand_lists[n]
+            neigh = np.fromiter(
+                (j for j in cand if j <= last and abs(j - n) > theiler),
+                dtype=np.intp,
+            )
+            if neigh.size >= n_neighbors:
+                ref_pos = len(ref_idx_list)
+                ref_idx_list.append(n)
+                ref_repeat_blocks.append(np.full(neigh.size, ref_pos, dtype=np.intp))
+                neigh_blocks.append(neigh)
+                counts.append(int(neigh.size))
+        if not ref_idx_list:
             raise ValueError(
                 "no reference point has a neighbour within eps outside the Theiler "
                 "window; increase eps, lower dimension, or shorten the Theiler window."
             )
+        n_reference = len(ref_idx_list)
+        ref_idx_arr = np.asarray(ref_idx_list, dtype=np.intp)
+        ref_repeat = np.concatenate(ref_repeat_blocks)  # group id per pair
+        neigh_flat = np.concatenate(neigh_blocks)  # neighbour row per pair
+        counts_arr = np.asarray(counts, dtype=float)  # neighbours per reference
         divergence = np.empty(k_max + 1)
         for k in range(k_max + 1):
-            acc = 0.0
-            for n, neigh in zip(ref_idx, neigh_of, strict=True):
-                d = np.linalg.norm(emb[n + k] - emb[neigh + k], axis=1)
-                acc += np.log(max(float(d.mean()), _TINY))
-            divergence[k] = acc / len(ref_idx)
-        n_reference = len(ref_idx)
+            # Pairwise distances between every reference and its neighbours at the
+            # k-ahead image, in one vectorised pass over the flat pair arrays.
+            diff = emb[ref_idx_arr[ref_repeat] + k] - emb[neigh_flat + k]
+            d = np.sqrt(np.einsum("ij,ij->i", diff, diff))
+            # Mean distance per reference (segment-sum / count), matching the
+            # per-point ``d.mean()`` exactly.
+            sums = np.zeros(n_reference)
+            np.add.at(sums, ref_repeat, d)
+            means = sums / counts_arr
+            divergence[k] = float(np.mean(np.log(np.maximum(means, _TINY))))
     else:  # rosenstein
         # Examine the n_query nearest candidates per point; the cap is a
         # heuristic sized to clear the Theiler window. A reference point whose
@@ -367,27 +394,32 @@ def lyapunov_from_data(
         n_query = min(n_rows, 4 * theiler + 20)
         _, idx_all = tree.query(emb, k=n_query)
         idx_all = np.atleast_2d(idx_all)
-        refs: list[int] = []
-        nn: list[int] = []
-        for n in range(last + 1):
-            for col in range(1, n_query):  # column 0 is the point itself
-                j = int(idx_all[n, col])
-                if j <= last and abs(j - n) > theiler:
-                    refs.append(n)
-                    nn.append(j)
-                    break
-        if not refs:
+        # Select, for each reference row, the FIRST candidate column (in the
+        # tree's nearest-first order) that clears the Theiler window and whose
+        # k-ahead image exists — exactly the inner break-loop, expressed as a
+        # masked argmax. ``argmax`` returns the first True (the break target);
+        # rows with no valid candidate are dropped (``any`` over the row is False).
+        rows = idx_all[: last + 1, 1:]  # drop column 0 (the point itself)
+        ref_grid = np.arange(last + 1, dtype=np.intp)[:, None]
+        valid = (rows <= last) & (np.abs(rows - ref_grid) > theiler)
+        has_neighbour = valid.any(axis=1)
+        first_col = valid.argmax(axis=1)  # first valid column per row (0 if none)
+        ref_arr = ref_grid[:, 0][has_neighbour]
+        nn_arr = rows[ref_arr, first_col[has_neighbour]].astype(np.intp)
+        if ref_arr.size == 0:
             raise ValueError(
                 "no nearest neighbour outside the Theiler window was found; "
                 "use a longer series or shorten the Theiler window."
             )
-        ref_arr = np.asarray(refs, dtype=int)
-        nn_arr = np.asarray(nn, dtype=int)
-        divergence = np.empty(k_max + 1)
-        for k in range(k_max + 1):
-            d = np.linalg.norm(emb[ref_arr + k] - emb[nn_arr + k], axis=1)
-            divergence[k] = float(np.mean(np.log(np.maximum(d, _TINY))))
-        n_reference = ref_arr.size
+        # All look-ahead images at once: index the reference / neighbour pairs at
+        # every lag k via broadcasting, one norm reduction over the last axis.
+        ks = np.arange(k_max + 1, dtype=np.intp)
+        ref_at_k = emb[ref_arr[:, None] + ks]  # (n_ref, k_max+1, dim)
+        nn_at_k = emb[nn_arr[:, None] + ks]
+        diff = ref_at_k - nn_at_k
+        d = np.sqrt(np.einsum("ijk,ijk->ij", diff, diff))  # (n_ref, k_max+1)
+        divergence = np.mean(np.log(np.maximum(d, _TINY)), axis=0)
+        n_reference = int(ref_arr.size)
 
     times = np.arange(k_max + 1, dtype=float) * dt
     if fit is None:

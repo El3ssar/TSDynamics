@@ -232,6 +232,30 @@ def _resolve_fit_range(
     return lo, hi
 
 
+def _expansion_volumes(mats: np.ndarray) -> np.ndarray:
+    r"""Batched Hunt--Ott ``G(M)`` over a stack of matrices ``mats`` (shape ``(n, d, d)``).
+
+    Returns one volume per matrix, identical to calling
+    :func:`~tsdynamics.analysis.chaos._common.expansion_volume` on each: a
+    non-finite matrix reports ``+inf``; otherwise the product of its singular
+    values exceeding 1 (``1.0`` when none exceed 1).  One ``np.linalg.svd`` over
+    the whole stack replaces the per-matrix Python calls; LAPACK computes each
+    matrix's singular values independently, so the values match per matrix.
+    """
+    n = mats.shape[0]
+    out = np.empty(n)
+    finite = np.all(np.isfinite(mats), axis=(1, 2))
+    out[~finite] = np.inf
+    if np.any(finite):
+        # Singular values of every finite matrix at once (descending per row).
+        sv = np.linalg.svd(mats[finite], compute_uv=False)  # (n_finite, d)
+        # Product of singular values > 1 per matrix: mask sub-unit values to 1 so
+        # they drop out of the product (matches ``s[s > 1.0]`` then ``prod``;
+        # the all-<=1 row then yields the empty-product 1.0).
+        out[finite] = np.prod(np.where(sv > 1.0, sv, 1.0), axis=1)
+    return out
+
+
 def _expansion_map(
     system: Any, ics: np.ndarray, box: Box, n_steps: int
 ) -> tuple[np.ndarray, np.ndarray, int]:
@@ -243,23 +267,39 @@ def _expansion_map(
     mats = [eye.copy() for _ in range(n)]
     states = [np.asarray(ic, dtype=float).ravel() for ic in ics]
     alive = np.ones(n, dtype=bool)
+    lo, hi = box.lo, box.hi
 
     times = np.arange(0, n_steps + 1, dtype=float)
     ln_e = np.empty(n_steps + 1)
     ln_e[0] = 0.0  # E(0) = mean of G(I) = 1
     for t in range(1, n_steps + 1):
-        total = 0.0
-        for i in range(n):
-            if not alive[i]:
-                continue
+        # Advance each still-alive sample's fundamental matrix and state. The map
+        # ``_step``/``_jacobian`` are not batchable over samples (a user kernel may
+        # not broadcast), so the advance stays a per-sample loop; the kill test and
+        # the volume SVD that follow are batched.
+        live_idx = np.flatnonzero(alive)
+        for i in live_idx:
             x = states[i]
             mats[i] = jac(x) @ mats[i]
             x = step(x)
             states[i] = x
-            if not box.contains(x):
-                alive[i] = False
-                continue
-            total += _c.expansion_volume(mats[i])
+        # Box-membership of every freshly-stepped state in one pass (same
+        # ``lo <= x <= hi`` predicate as ``box.contains``).
+        stepped = np.array([states[i] for i in live_idx]) if live_idx.size else np.empty((0, dim))
+        inside = (
+            np.all((stepped >= lo) & (stepped <= hi), axis=1)
+            if live_idx.size
+            else np.empty(0, dtype=bool)
+        )
+        survivors = live_idx[inside]
+        alive[live_idx[~inside]] = False
+        # G(DF^t) summed over the survivors via one batched SVD; division by the
+        # full sample count ``n`` (escaped samples contribute 0) is unchanged.
+        if survivors.size:
+            vol_mats = np.stack([mats[i] for i in survivors])
+            total = float(np.sum(_expansion_volumes(vol_mats)))
+        else:
+            total = 0.0
         e = total / n
         ln_e[t] = np.log(e) if e > 0.0 else -np.inf
     return times, ln_e, int(np.count_nonzero(alive))
@@ -279,25 +319,37 @@ def _expansion_flow(
     mats = [np.eye(dim) for _ in range(n)]
     alive = np.ones(n, dtype=bool)
     t_local = np.zeros(n)
+    lo, hi = box.lo, box.hi
 
     times = np.empty(n_steps + 1)
     times[0] = 0.0
     ln_e = np.empty(n_steps + 1)
     ln_e[0] = 0.0
     for s in range(1, n_steps + 1):
-        total = 0.0
-        for i in range(n):
-            if not alive[i]:
-                continue
+        # The RK4 variational sub-stepping calls the SymEngine-lambdified
+        # ``rhs``/``jac``, which are not batchable over samples, so the advance
+        # stays a per-sample loop (the variational core is untouched). The kill
+        # test and the volume SVD are batched across the survivors.
+        live_idx = np.flatnonzero(alive)
+        for i in live_idx:
             x, m, t = states[i], mats[i], t_local[i]
             for _ in range(n_internal):
                 x, m = rk4_variational(rhs, jac, x, m, t, h)
                 t += h
             states[i], mats[i], t_local[i] = x, m, t
-            if not box.contains(x):
-                alive[i] = False
-                continue
-            total += _c.expansion_volume(m)
+        stepped = np.array([states[i] for i in live_idx]) if live_idx.size else np.empty((0, dim))
+        inside = (
+            np.all((stepped >= lo) & (stepped <= hi), axis=1)
+            if live_idx.size
+            else np.empty(0, dtype=bool)
+        )
+        survivors = live_idx[inside]
+        alive[live_idx[~inside]] = False
+        if survivors.size:
+            vol_mats = np.stack([mats[i] for i in survivors])
+            total = float(np.sum(_expansion_volumes(vol_mats)))
+        else:
+            total = 0.0
         e = total / n
         times[s] = s * dt
         ln_e[s] = np.log(e) if e > 0.0 else -np.inf

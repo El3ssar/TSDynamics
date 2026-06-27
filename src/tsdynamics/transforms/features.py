@@ -27,7 +27,15 @@ import numpy as np
 
 from ._common import channel_iter, resolve_fs, to_signal
 from ._result import FeatureSet
-from .spectral import dominant_frequency, spectral_centroid, spectral_entropy
+from .spectral import (
+    _dominant_frequency_of,
+    _spectral_centroid_of,
+    _spectral_entropy_of,
+    dominant_frequency,
+    power_spectral_density,
+    spectral_centroid,
+    spectral_entropy,
+)
 
 __all__ = [
     "FEATURE_FUNCTIONS",
@@ -152,6 +160,29 @@ FEATURE_FUNCTIONS: dict[str, Callable[[np.ndarray, float], float]] = {
 }
 
 
+#: Spectral features that are all reductions of the *same* per-channel PSD.
+#: :func:`extract_features` computes that PSD once per channel and applies each
+#: requested reduction, instead of letting every feature recompute the spectrum
+#: (the catalogue entries above still work standalone — they each compute their
+#: own PSD — but the bulk path reuses one spectrum across all three).
+_PSD_FEATURES = frozenset({"dominant_frequency", "spectral_centroid", "spectral_entropy"})
+
+
+def _psd_feature_of(name: str, freqs: np.ndarray, psd: np.ndarray) -> float:
+    """Apply one spectral reduction to an already-computed single-channel PSD.
+
+    Mirrors the bare-call defaults of the matching catalogue cores
+    (``_dominant_frequency``/``_spectral_centroid``/``_spectral_entropy``), which
+    call the public spectral functions with only ``fs=`` — i.e. every other PSD /
+    reduction option at its default — so the result is identical.
+    """
+    if name == "dominant_frequency":
+        return float(_dominant_frequency_of(freqs, psd))
+    if name == "spectral_centroid":
+        return float(_spectral_centroid_of(freqs, psd))
+    return float(_spectral_entropy_of(psd))
+
+
 def feature_names() -> list[str]:
     """Return the names of every catalogued feature, in default column order."""
     return list(FEATURE_FUNCTIONS)
@@ -203,13 +234,36 @@ def extract_features(
     sig = to_signal(data)
     rate = resolve_fs(data, fs=fs, dt=dt)
     names = feature_names() if features is None else list(features)
+
+    # Validate every requested name up front (preserving the original error and
+    # available-list) so the shared-PSD fast path below never half-fills ``out``.
+    for name in names:
+        if name not in FEATURE_FUNCTIONS:
+            raise KeyError(f"unknown feature {name!r}; available: {feature_names()}.")
+
+    # Compute the per-channel PSD ONCE and feed it to every requested spectral
+    # reduction, instead of each of dominant_frequency / spectral_centroid /
+    # spectral_entropy recomputing the same Welch spectrum (up to a 3× saving on
+    # the dominant cost of this routine).  The PSD here matches each spectral
+    # core's bare ``f(col, fs)`` call exactly (default method/window/etc.).
+    psd_names = [name for name in names if name in _PSD_FEATURES]
+    psd_values: dict[str, Any] = {}
+    if psd_names:
+        per_channel: dict[str, list[float]] = {name: [] for name in psd_names}
+        for _, col in channel_iter(sig):
+            freqs, psd = power_spectral_density(col, fs=rate)
+            for name in psd_names:
+                per_channel[name].append(_psd_feature_of(name, freqs, psd))
+        for name in psd_names:
+            vals = per_channel[name]
+            psd_values[name] = vals[0] if sig.ndim == 1 else np.asarray(vals, dtype=float)
+
     out: dict[str, Any] = {}
     for name in names:
-        try:
-            fn = FEATURE_FUNCTIONS[name]
-        except KeyError:
-            raise KeyError(f"unknown feature {name!r}; available: {feature_names()}.") from None
-        out[name] = _per_channel(sig, fn, rate)
+        if name in psd_values:
+            out[name] = psd_values[name]
+        else:
+            out[name] = _per_channel(sig, FEATURE_FUNCTIONS[name], rate)
     return out
 
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from .._result import ScalarResult
 from .core import as_series
@@ -100,16 +101,21 @@ def sample_entropy(
     emb_m = _embed(series, dimension, delay, n_templates)
     emb_m1 = _embed(series, dimension + 1, delay, n_templates)
 
-    b_count = 0  # length-m matches (ordered, self excluded)
-    a_count = 0  # length-(m+1) matches
-    for i in range(n_templates):
-        dist_m = np.max(np.abs(emb_m - emb_m[i]), axis=1)
-        within = dist_m <= rad
-        within[i] = False  # exclude self-match
-        b_count += int(within.sum())
-        if within.any():
-            dist_m1 = np.max(np.abs(emb_m1[within] - emb_m1[i]), axis=1)
-            a_count += int(np.count_nonzero(dist_m1 <= rad))
+    # Brute-force template matching is O(n_templates^2); a Chebyshev (L_inf)
+    # cKDTree counts the same template pairs in O(n_templates log n_templates).
+    # ``count_neighbors`` returns ordered pairs (i, j) with max-norm distance
+    # <= rad *including* the n_templates self-pairs (i, i), so subtracting
+    # n_templates removes exactly the self-matches the loop excluded.
+    #
+    # For the length-(m+1) count: Chebyshev distance is monotone in the number
+    # of columns, so dist over m+1 columns >= dist over m columns.  Hence every
+    # (m+1)-template pair within rad is automatically within rad over its first
+    # m columns — the loop's ``within`` pre-filter is therefore redundant, and
+    # counting (m+1)-template pairs directly reproduces ``a_count`` exactly.
+    tree_m = cKDTree(emb_m)
+    b_count = int(tree_m.count_neighbors(tree_m, rad, p=np.inf)) - n_templates
+    tree_m1 = cKDTree(emb_m1)
+    a_count = int(tree_m1.count_neighbors(tree_m1, rad, p=np.inf)) - n_templates
 
     if b_count == 0:
         raise ValueError("no length-m template matches — increase r or lengthen the series.")
@@ -164,12 +170,15 @@ def approximate_entropy(
         if n_templates <= 0:
             raise ValueError(f"series too short for dimension={mm}, delay={delay}.")
         emb = _embed(series, mm, delay, n_templates)
-        log_sum = 0.0
-        for i in range(n_templates):
-            dist = np.max(np.abs(emb - emb[i]), axis=1)
-            c = np.count_nonzero(dist <= rad)  # includes self-match (i)
-            log_sum += np.log(c / n_templates)
-        return log_sum / n_templates
+        # ``C_i^m`` is the number of templates within Chebyshev radius ``rad`` of
+        # template ``i`` *including* the self-match.  A cKDTree ball query returns
+        # exactly that per-point neighbour count (radius is inclusive, the point
+        # itself is always within distance 0), turning the O(n^2) per-template
+        # scan into O(n log n).  ``return_length=True`` yields the integer counts
+        # directly, identical to ``np.count_nonzero(dist <= rad)`` for each i.
+        tree = cKDTree(emb)
+        counts = tree.query_ball_point(emb, rad, p=np.inf, return_length=True)
+        return float(np.sum(np.log(counts / n_templates)) / n_templates)
 
     value = float(phi(dimension) - phi(dimension + 1))
     return ScalarResult(
