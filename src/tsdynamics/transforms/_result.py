@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tsdynamics._result_common import resolve_plot_kind
+
 if TYPE_CHECKING:
     from tsdynamics.viz.spec import PlotSpec
 
@@ -154,7 +156,7 @@ class Spectrum(_Plottable):
         """
         from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.POWER_SPECTRUM
+        spec_kind = resolve_plot_kind(kind, PlotKind.POWER_SPECTRUM)
         freqs = self.frequencies
         psd = self.psd
         cols = psd if psd.ndim == 2 else psd[:, None]
@@ -262,7 +264,7 @@ class Spectrogram(_Plottable):
         """
         from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.SPECTROGRAM
+        spec_kind = resolve_plot_kind(kind, PlotKind.SPECTROGRAM)
         layer = Layer(
             PlotKind.IMAGE,
             {"x": self.times, "y": self.frequencies, "c": self.power},
@@ -356,7 +358,7 @@ class FeatureSet(_Plottable):
         """
         from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.FEATURE_BARS
+        spec_kind = resolve_plot_kind(kind, PlotKind.FEATURE_BARS)
         names = self.names
         mat = self.matrix()  # (n_features, channels)
         n_feat, n_chan = mat.shape if mat.ndim == 2 else (mat.shape[0], 1)
