@@ -7,14 +7,18 @@ scene per frame (janky, and it fights the camera even with ``uirevision``):
   drawn **once** (a faint, static, rotatable trace) and a ``requestAnimationFrame``
   loop (:data:`_REALTIME_JS`) advances a **comet** (a windowed trail + a head) by
   **streaming the comet's trace buffers in place with ``Plotly.extendTraces``**
-  (append the next points, trim to a ``maxPoints`` window).  Crucially
-  ``extendTraces`` does **not** re-create the gl3d traces or rebuild the WebGL scene
-  (it only pokes the existing GPU buffers), so — unlike ``Plotly.react``, which tears
-  the moving traces down every frame and thereby ate an in-progress orbit drag — the
-  attractor is **rotatable with the mouse WHILE it plays, with no click lag and
-  without the animation ever stopping**.  A constant ``uirevision`` keeps the camera
-  the user sets.  It is also tiny (the curve is embedded once, in the static context
-  trace).  Zero-extra-dependency "share the animation" path (no ffmpeg/kaleido).
+  (append the next points, trim to a ``maxPoints`` window).  **Rotate-while-playing
+  via pause-on-drag:** updating a 3-D (gl3d) trace forces plotly to replot the whole
+  WebGL scene (no lightweight position-only update exists for gl3d — that is a
+  ``scattergl`` 2-D-only optimisation), and replotting *while* the user is orbiting
+  cancels the drag gesture.  So the loop **suspends the comet stream for the duration
+  of a drag** — a capture-phase ``pointerdown`` (before plotly's own handler) sets a
+  ``dragging`` flag and the loop does zero trace work until ``pointerup`` — leaving
+  the gl3d scene free to orbit as smoothly as a static 3-D plot; on release the
+  stream resumes.  A constant ``uirevision`` (plus a live-camera mirror during the
+  drag) keeps the camera the user sets, with no snap-back.  It is also tiny (the
+  curve is embedded once, in the static context trace).  Zero-extra-dependency
+  "share the animation" path (no ffmpeg/kaleido).
 - **Live figure (:func:`build_animated_figure`, notebooks):** a plotly ``frames``
   + play-button + slider figure (the only option for a returned ``Figure`` with no
   HTML wrapper to host a script).  Functional, but the HTML export is the smooth one.
@@ -45,14 +49,26 @@ __all__ = ["animated_html", "build_animated_figure"]
 #: **streaming its trace buffers in place with ``Plotly.extendTraces``** (append the
 #: next points, trim to a ``maxPoints`` sliding window; the single-point head uses
 #: ``maxPoints`` 1; the window resets to the start once per loop via ``restyle``).
-#: ``extendTraces`` redraws the gl3d comet WITHOUT re-creating the traces or
-#: rebuilding the WebGL scene — so an in-progress mouse orbit-drag is never
-#: interrupted (rotate WHILE it plays, no click lag, the stream never stops), and a
-#: constant ``uirevision`` keeps the user's camera.  (``Plotly.react`` also redraws
-#: gl3d but tears the moving traces down every frame; that per-frame scene rebuild
-#: ate the drag and lagged the first rotation — so it is deliberately NOT used here.)
-#: The full curve lives in the static context trace (never touched).  ``{plot_id}``
-#: is substituted by plotly with the graph-div id; ``__…__`` tokens are filled below.
+#:
+#: **Pause-on-drag — the rotate-while-playing fix.**  Any update to a *3-D* (gl3d /
+#: ``Scatter3d``) trace forces plotly to **replot the whole WebGL scene** (its
+#: ``editType`` for trace data is ``calc``/``plot``; there is no lightweight
+#: position-only update for gl3d — the in-place ``scattergl`` batch update is 2-D
+#: only).  Doing that every frame *while* the user is mid-orbit cancels the drag
+#: gesture (and pegs the thread), which is why the 3-D animation could not be
+#: rotated.  So the loop **fully suspends the comet stream for the duration of a
+#: drag**: a capture-phase ``pointerdown`` (fired *before* plotly's own handler, so
+#: not one ``extendTraces`` lands after the gesture starts) sets ``dragging`` and the
+#: loop does **zero** trace work until the matching ``pointerup`` — leaving the gl3d
+#: scene free to orbit as smoothly as a static 3-D plot.  On release the stream
+#: resumes from where it paused.  To avoid a snap-back on that first resumed redraw
+#: (a gl3d redraw restores the camera from ``gd.layout`` under ``uirevision``, but a
+#: drag only *commits* its camera on release), the live camera is mirrored into
+#: ``gd.layout.scene.camera`` continuously via ``plotly_relayouting``.  2-D plots
+#: have no orbit gesture and ``scattergl`` updates cheaply, so the pause is a no-op
+#: there.  The full curve lives in the static context trace (never touched).
+#: ``{plot_id}`` is substituted by plotly with the graph-div id; ``__…__`` tokens are
+#: filled below.
 _REALTIME_JS = """
 (function() {
   var gd = document.getElementById('{plot_id}');
@@ -114,14 +130,39 @@ _REALTIME_JS = """
   bar.appendChild(playBtn); bar.appendChild(restartBtn); bar.appendChild(readout);
   gd.appendChild(bar);
 
-  // Keep the comet animating WHILE the user orbits, with NO snap-back.  A gl3d comet
-  // redraw restores the camera from gd.layout (uirevision); a mouse orbit-drag only
-  // *commits* the new camera to gd.layout on release, so mid-drag each extendTraces
-  // redraw was snapping the view back to where the drag began.  plotly reports the
-  // live camera continuously through 'plotly_relayouting', so we mirror it into
-  // gd.layout.scene.camera as the drag happens — the next redraw then keeps the live
-  // pose.  Pure data mirror (we issue no relayout/redraw → no recursion, no flicker,
-  // the animation never stops); on release uirevision keeps the committed pose.
+  // --- Drag detection: suspend the stream for the whole gesture --------------
+  // `dragging` gates the loop (see frame()).  We flip it on a CAPTURE-phase
+  // pointerdown on the graph div, which fires before plotly's own canvas handler —
+  // so the stream is already suspended by the time the orbit gesture begins and not
+  // one extendTraces replot lands mid-drag to cancel it.  Resume on pointerup /
+  // pointercancel anywhere (a drag often ends with the pointer off the canvas), and
+  // — belt and braces — on plotly's own relayout (fired when it commits the camera).
+  var dragging = false, userPaused = false, dead = false;
+  function endDrag() { dragging = false; }
+  if (typeof gd.addEventListener === 'function') {
+    gd.addEventListener('pointerdown', function(e) {
+      if (bar.contains(e.target)) { return; }  // overlay buttons are not a drag
+      dragging = true;
+    }, true);
+    // Wheel-zoom also replots the gl3d scene; suspend it for the scroll burst so the
+    // zoom stays smooth, then resume shortly after the wheel goes quiet.
+    var wheelTimer = null;
+    gd.addEventListener('wheel', function() {
+      dragging = true;
+      if (wheelTimer) { clearTimeout(wheelTimer); }
+      wheelTimer = setTimeout(endDrag, 250);
+    }, true);
+  }
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('pointerup', endDrag, true);
+    window.addEventListener('pointercancel', endDrag, true);
+  }
+
+  // Mirror the LIVE camera into gd.layout during a drag so the first resumed redraw
+  // keeps the pose the user dragged to (no snap-back): a gl3d redraw restores the
+  // camera from gd.layout under uirevision, but a drag only *commits* it on release.
+  // Pure data mirror (no relayout/redraw issued) → no recursion, no flicker.  The
+  // relayout handler also clears `dragging` as a backstop for pointerup.
   if (typeof gd.on === 'function') {
     var mirrorCam = function(e) {
       if (e && e['scene.camera']) {
@@ -130,19 +171,13 @@ _REALTIME_JS = """
       }
     };
     gd.on('plotly_relayouting', mirrorCam);
-    gd.on('plotly_relayout', mirrorCam);
+    gd.on('plotly_relayout', function(e) { mirrorCam(e); endDrag(); });
   }
 
   // Stream the comet by MUTATING the trace buffers in place.  Plotly.extendTraces
   // appends the next points to the comet line (trimmed to a WINDOW-length sliding
-  // window via maxPoints) and advances the single-point head (maxPoints 1).  Unlike
-  // Plotly.react it does NOT re-create the gl3d traces or rebuild the WebGL scene —
-  // it only pokes the existing trace GPU buffers — so an in-progress mouse
-  // orbit-drag is never interrupted: you rotate WHILE it plays, with no click lag,
-  // and the camera is left untouched (constant uirevision).  (react redraws gl3d
-  // too, but tears the moving traces down every frame, and that per-frame scene
-  // rebuild is what ate the drag and lagged the first rotation.)
-  var i = 1, playing = true, raf = null;
+  // window via maxPoints) and advances the single-point head (maxPoints 1).
+  var i = 1;
   // A plain-Array slice (not a typed-array slice) so the appended chunk matches the
   // comet trace's own plain-array data — extendTraces rejects a type mismatch.
   function slc(a, lo, hi) { return Array.prototype.slice.call(a, lo, hi + 1); }
@@ -162,7 +197,7 @@ _REALTIME_JS = """
         }
       } catch (e) {
         console.error('tsd-anim: extendTraces failed', e);
-        playing = false; playBtn.textContent = '▶'; return false;
+        return false;
       }
     }
     return true;
@@ -179,23 +214,28 @@ _REALTIME_JS = """
     }
     i = 0;
   }
-  function tick() {
-    if (!playing) { raf = null; return; }
+  // One always-scheduled rAF loop.  Keeping the clock alive (rather than
+  // stopping/restarting it) makes resume instant — flipping a flag is all it takes.
+  // While dragging (or user-paused) the frame does ZERO trace work, so the gl3d
+  // orbit is never fought by a replot.
+  function frame() {
+    if (dead) { return; }
+    requestAnimationFrame(frame);
+    if (userPaused || dragging) { return; }
     var lo = i + 1, hi = Math.min(i + STRIDE, N - 1);
-    if (lo <= hi && !pushRange(lo, hi)) { return; }
+    if (lo <= hi && !pushRange(lo, hi)) {
+      dead = true; userPaused = true; playBtn.textContent = '▶'; return;
+    }
     readout.textContent = Math.round(100 * hi / (N - 1)) + '%';
     i = hi;
     if (i >= N - 1) { seedStart(); }
-    raf = requestAnimationFrame(tick);
   }
-  function start() { if (!raf) { raf = requestAnimationFrame(tick); } }
   playBtn.onclick = function() {
-    playing = !playing;
-    playBtn.textContent = playing ? '❚❚' : '▶';
-    if (playing) { start(); }
+    userPaused = !userPaused;
+    playBtn.textContent = userPaused ? '▶' : '❚❚';
   };
   restartBtn.onclick = function() { seedStart(); readout.textContent = '0%'; };
-  start();
+  requestAnimationFrame(frame);
 })();
 """
 
@@ -494,16 +534,18 @@ def animated_html(
     full_html: bool | None = None,
     include_plotlyjs: str | bool = "cdn",
 ) -> str | os.PathLike[str]:
-    """Export a smooth, **rotatable-while-playing** real-time animation as HTML.
+    """Export a smooth, **rotatable** real-time animation as HTML.
 
     Draws the full attractor once (faint, static) + a comet (windowed trail + head)
     per curve layer, then attaches a ``requestAnimationFrame`` loop
-    (:data:`_REALTIME_JS`) that advances the comet via ``Plotly.react`` — handing
-    back fresh comet trace objects while the layout (hence the camera) and the
-    static context trace are left untouched, so the camera the user sets is
-    **never reset** and motion runs at the browser's frame rate.  A minimal
-    play/pause + restart overlay makes it obviously alive and controllable.
-    Returns the HTML string (``html=True``) or the written path (``path=``).
+    (:data:`_REALTIME_JS`) that streams the comet in place with
+    ``Plotly.extendTraces``.  For a 3-D plot the comet stream is **suspended for the
+    duration of a mouse drag** (a gl3d trace update forces a full WebGL replot that
+    would otherwise cancel the orbit gesture), so the attractor rotates as smoothly
+    as a static 3-D plot and the animation resumes on release; ``uirevision`` plus a
+    live-camera mirror keep the pose with no snap-back.  A minimal play/pause +
+    restart overlay makes it obviously alive and controllable.  Returns the HTML
+    string (``html=True``) or the written path (``path=``).
     """
     import plotly.graph_objects as go
 
