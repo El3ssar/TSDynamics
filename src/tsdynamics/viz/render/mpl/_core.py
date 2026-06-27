@@ -52,7 +52,7 @@ by that module.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -763,7 +763,7 @@ MARK_DISPATCH: dict[PlotKind, _MarkDrawer] = {
 # ---------------------------------------------------------------------------
 
 
-def _apply_axis(ax: Axes, axis: Axis, which: str, theme: Theme) -> None:
+def _apply_axis(ax: Axes, axis: Axis, which: Literal["x", "y"], theme: Theme) -> None:
     """Apply one :class:`~tsdynamics.viz.spec.Axis` — all fields including new ones.
 
     Handles the existing fields (label, scale, limits, ticks, categories) plus the
@@ -838,8 +838,7 @@ def _apply_axis(ax: Axes, axis: Axis, which: str, theme: Theme) -> None:
     if axis.tick_rotation is not None:
         tick_kw["rotation"] = float(axis.tick_rotation)
     if tick_kw:
-        # mypy sees ax.tick_params axis as Literal['both','x','y']; which is already one of those
-        ax.tick_params(axis=which, **tick_kw)  # type: ignore[arg-type]
+        ax.tick_params(axis=which, **tick_kw)
 
     # Spine / axis label color (axis.color overrides theme.foreground)
     if ink is not None:

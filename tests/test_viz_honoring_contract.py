@@ -152,6 +152,7 @@ def _mpl_area_poly(fig: object) -> object | None:
 
 def _assert_mpl_honors(key: str, value: object) -> None:
     """Render on matplotlib and assert the artifact reflects ``style[key] = value``."""
+    pytest.importorskip("matplotlib")
     from matplotlib.colors import to_rgba
 
     if key in ("fill", "fillalpha"):

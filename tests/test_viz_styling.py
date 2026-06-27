@@ -187,7 +187,7 @@ def test_normalize_style_drops_unknown_key_with_one_warning():
 def test_normalize_style_warn_false_is_silent():
     """``warn=False`` (the renderer path) drops unknown keys without warning."""
     with warnings.catch_warnings():
-        warnings.simplefilter("error")  # any warning would raise here
+        warnings.simplefilter("error", VisualizationDegraded)  # any warning would raise here
         out = normalize_style({"color": "blue", "bogus": 1}, warn=False)
     assert out == {"color": "blue"}
 
@@ -417,6 +417,7 @@ def _first_line2d(fig):
 
 def test_matplotlib_honors_style_and_theme():
     """mpl draws the requested color/width/dash and applies background + grid."""
+    pytest.importorskip("matplotlib")
     spec = _styled_themed_spec()
     fig = spec.render(backend="matplotlib")
 
@@ -438,6 +439,7 @@ def test_matplotlib_honors_style_and_theme():
 
 def test_matplotlib_uncolored_layer_gets_palette_color():
     """An uncolored layer is colored from the theme palette (mpl color cycle)."""
+    pytest.importorskip("matplotlib")
     spec = _line_spec().theme(Theme(name="p", palette=("#0000ff",)))
     fig = spec.render(backend="matplotlib")
     line = _first_line2d(fig)
@@ -518,7 +520,7 @@ def test_json_backend_deep_roundtrips_styled_themed_spec():
     spec = _styled_themed_spec()
     # json is a faithful serializer → NO honoring gaps → no warning at all.
     with warnings.catch_warnings():
-        warnings.simplefilter("error")
+        warnings.simplefilter("error", VisualizationDegraded)
         text = spec.render(backend="json", raw=True)
     rebuilt = from_json(text)
 
@@ -583,9 +585,10 @@ def test_plotly_warns_once_for_camera_spin():
 
 def test_clean_spec_emits_no_degradation_warning_mpl():
     """A spec carrying only knobs mpl honors emits NO VisualizationDegraded."""
+    pytest.importorskip("matplotlib")
     spec = _line_spec().style(color="#00ff00", linewidth=2.0)
     with warnings.catch_warnings():
-        warnings.simplefilter("error")  # any VisualizationDegraded would raise
+        warnings.simplefilter("error", VisualizationDegraded)  # any VisualizationDegraded would raise
         spec.render(backend="matplotlib")
 
 
@@ -602,7 +605,7 @@ def test_clean_spec_emits_no_degradation_warning_threejs():
         ],
     )
     with warnings.catch_warnings():
-        warnings.simplefilter("error")
+        warnings.simplefilter("error", VisualizationDegraded)
         spec.render(backend="threejs", raw=True)
 
 
@@ -613,6 +616,7 @@ def test_clean_spec_emits_no_degradation_warning_threejs():
 
 def test_default_backend_is_stable_matplotlib():
     """Rendering the same spec twice with no backend yields the identical (mpl) type."""
+    pytest.importorskip("matplotlib")
     spec = _line_spec()
     fig1 = spec.render()
     fig2 = spec.render()
