@@ -28,10 +28,10 @@ from .compile import (
     DelaySlot,
     LoweredSDE,
     Tape,
-    lower_dde,
-    lower_map,
-    lower_ode,
-    lower_sde,
+    lower_dde_cached,
+    lower_map_cached,
+    lower_ode_cached,
+    lower_sde_cached,
 )
 
 __all__ = [
@@ -250,7 +250,7 @@ def ode_problem(
     with_jacobian : bool, default False
         Lower the analytic Jacobian alongside the RHS (for stiff solvers).
     """
-    tape = lower_ode(system, with_jacobian=with_jacobian)
+    tape = lower_ode_cached(system, with_jacobian=with_jacobian)
     ic_arr = system.resolve_ic(ic)
     return ODEProblem(tape=tape, ic=ic_arr, t0=float(t0), system=system)
 
@@ -281,7 +281,7 @@ def map_problem(
         If the map's ``_step`` cannot be traced symbolically (see
         :func:`tsdynamics.engine.compile.lower_map`).
     """
-    tape = lower_map(system, with_jacobian=with_jacobian)
+    tape = lower_map_cached(system, with_jacobian=with_jacobian)
     ic_arr = system.resolve_ic(ic)
     return MapProblem(tape=tape, ic=ic_arr, n0=int(n0), system=system)
 
@@ -309,7 +309,7 @@ def dde_problem(
         If a delayed access has a state-dependent delay (see
         :func:`tsdynamics.engine.compile.lower_dde`).
     """
-    tape, slots = lower_dde(system)
+    tape, slots = lower_dde_cached(system)
     ic_arr = system.resolve_ic(ic)
     return DDEProblem(tape=tape, delay_slots=slots, ic=ic_arr, t0=float(t0), system=system)
 
@@ -337,7 +337,7 @@ def sde_problem(
     with_diffusion_jacobian : bool, default False
         Lower ``∂g/∂u`` into the diffusion tape (required by Milstein).
     """
-    lowered: LoweredSDE = lower_sde(system, with_diffusion_jacobian=with_diffusion_jacobian)
+    lowered: LoweredSDE = lower_sde_cached(system, with_diffusion_jacobian=with_diffusion_jacobian)
     ic_arr = system.resolve_ic(ic)
     return SDEProblem(
         drift=lowered.drift,
