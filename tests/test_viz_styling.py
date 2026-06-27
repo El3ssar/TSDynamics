@@ -588,7 +588,9 @@ def test_clean_spec_emits_no_degradation_warning_mpl():
     pytest.importorskip("matplotlib")
     spec = _line_spec().style(color="#00ff00", linewidth=2.0)
     with warnings.catch_warnings():
-        warnings.simplefilter("error", VisualizationDegraded)  # any VisualizationDegraded would raise
+        warnings.simplefilter(
+            "error", VisualizationDegraded
+        )  # any VisualizationDegraded would raise
         spec.render(backend="matplotlib")
 
 
