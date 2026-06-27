@@ -10,6 +10,8 @@ import numpy as np
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.engine.run import Event
 
+from tsdynamics.engine.events import _DIRECTION_WORDS  # noqa: F401  # re-export for back-compat
+from tsdynamics.engine.events import _normalize_event_direction as _normalize_direction
 from tsdynamics.errors import invalid_value
 from tsdynamics.families import Trajectory
 
@@ -22,44 +24,12 @@ __all__ = ["PoincareMap", "PoincareSection"]
 # ---------------------------------------------------------------------------
 # Friendly section spelling — named axes + direction words
 # ---------------------------------------------------------------------------
-
-#: Friendly spellings for the crossing-direction filter.  ``"up"`` keeps only
-#: crossings where the section function ``g(u) = normal·u - offset`` is
-#: *increasing* (the trajectory pierces the plane in the ``+normal`` sense),
-#: ``"down"`` only the decreasing ones, and ``"both"`` keeps either.
-_DIRECTION_WORDS: dict[str, int] = {
-    "up": +1,
-    "increasing": +1,
-    "positive": +1,
-    "+": +1,
-    "down": -1,
-    "decreasing": -1,
-    "negative": -1,
-    "-": -1,
-    "both": 0,
-    "either": 0,
-    "all": 0,
-}
-
-
-def _normalize_direction(direction: Any) -> int:
-    """Coerce a crossing-direction spec to one of ``{+1, 0, -1}``.
-
-    Accepts the friendly words ``"up"`` / ``"down"`` / ``"both"`` (and a few
-    synonyms) as well as any signed number — its sign is taken, so ``+1`` /
-    ``-1`` / ``0`` and larger magnitudes all map into ``{+1, 0, -1}``.
-    """
-    if isinstance(direction, str):
-        key = direction.strip().lower()
-        if key not in _DIRECTION_WORDS:
-            raise invalid_value(
-                "direction",
-                value=direction,
-                rule="must be 'up', 'down', or 'both'",
-                hint="or pass a signed number: +1 (up), -1 (down), 0 (both).",
-            )
-        return _DIRECTION_WORDS[key]
-    return int(np.sign(direction))
+# The direction vocabulary (``_DIRECTION_WORDS``) and its coercion helper
+# (imported above as ``_normalize_direction``) are the single canonical pair in
+# :mod:`tsdynamics.engine.events` — the engine layer sits *below* ``derived`` in
+# the import graph, so importing them here introduces no cycle.  ``_DIRECTION_WORDS``
+# is re-imported (rather than only used) to keep the historical
+# ``poincare._DIRECTION_WORDS`` path resolvable.
 
 
 def _resolve_section_plane(system: Any, plane: Any, direction: Any) -> tuple[tuple[Any, Any], int]:

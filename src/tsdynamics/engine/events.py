@@ -167,9 +167,11 @@ def crossings(
 # and the dependency-light :func:`scipy.integrate.solve_ivp` ``events=`` oracle —
 # two independent implementations that the test-suite cross-checks.
 
-#: Friendly spellings for the crossing-direction filter (kept byte-identical to
-#: :data:`tsdynamics.derived.poincare._DIRECTION_WORDS`; duplicated here so the
-#: engine layer stays below ``derived`` in the import graph).
+#: Friendly spellings for the crossing-direction filter.  ``"up"`` keeps only
+#: crossings where the event function ``g(u, t)`` is *increasing*, ``"down"`` only
+#: the decreasing ones, and ``"both"`` keeps either.  This is the single canonical
+#: home: :mod:`tsdynamics.derived.poincare` (one layer up in the import graph)
+#: imports it from here, and :mod:`tsdynamics.engine.run` re-exports it.
 _DIRECTION_WORDS: dict[str, int] = {
     "up": +1,
     "increasing": +1,

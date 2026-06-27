@@ -367,6 +367,13 @@ class DelaySystem(SystemBase, ABC):
         method : str, default "rk45"
             The explicit kernel (``"rk45"``, ``"tsit5"``, ``"dop853"``,
             ``"rk4"``); the method of steps drives explicit kernels only.
+            ``"auto"`` is an explicit **no-op** here — it resolves to the DDE
+            default (``rk45``) without an auto-stiffness probe.  Auto-stiffness is
+            an ODE-only feature: the one-point heuristic reads only the
+            instantaneous Jacobian and would ignore the delay terms that shape a
+            DDE's spectrum (it could even select an implicit kernel the
+            method-of-steps engine cannot drive), so pass another explicit
+            ``method=`` directly if you need one.
 
         Returns
         -------

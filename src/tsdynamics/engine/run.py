@@ -284,18 +284,30 @@ def _primary_tape(problem: Problem) -> Any:
 def _recommend_method(problem: Problem) -> Any:
     """Resolve ``method="auto"`` to a kernel by a-priori auto-stiffness selection.
 
-    The auto-stiffness wiring (ticket FIX-AUTOSTIFF): probe the problem's Jacobian
-    spectrum at its start state and let the solver registry recommend an implicit
-    kernel (``bdf``) on a stiff RHS or the explicit default (``rk45``) otherwise
-    (:func:`tsdynamics.solvers.recommend`).  The probe is the one-point heuristic
-    :func:`tsdynamics.solvers.is_stiff` — useful but not a guarantee (see its
-    docstring): the verdict is read at the integration's *own* start state
-    (``problem.ic``), so a system declares a stiff default via ``_default_method``
-    when the heuristic is too coarse for it.
+    The auto-stiffness wiring (ticket FIX-AUTOSTIFF) applies to **ODEs only**:
+    probe the problem's Jacobian spectrum at its start state and let the solver
+    registry recommend an implicit kernel (``bdf``) on a stiff RHS or the explicit
+    default (``rk45``) otherwise (:func:`tsdynamics.solvers.recommend`).  The probe
+    is the one-point heuristic :func:`tsdynamics.solvers.is_stiff` — useful but not
+    a guarantee (see its docstring): the verdict is read at the integration's *own*
+    start state (``problem.ic``), so a system declares a stiff default via
+    ``_default_method`` when the heuristic is too coarse for it.
 
-    Maps iterate without a solver kernel, so ``"auto"`` is a no-op there: it
-    resolves to the explicit ODE default the map branch ignores (keeping a literal
-    ``method="auto"`` from raising on a map rather than meaning anything).
+    Maps and DDEs treat ``"auto"`` as an explicit, documented **no-op** — it
+    resolves to the family default rather than probing:
+
+    - **Maps** iterate without a solver kernel, so the resolved kernel is ignored
+      by the map branch (``"auto"`` simply does not raise).
+    - **DDEs** are driven by the method of steps, which reuses the *explicit*
+      stage kernels only.  A stiffness probe would be meaningless **and** a trap:
+      :func:`tsdynamics.solvers.is_stiff` reads only the *instantaneous* Jacobian
+      ``∂f/∂u``, ignoring the delay terms that actually shape a DDE's spectrum, so
+      a spurious "stiff" verdict could otherwise select the implicit
+      ``rosenbrock`` the DDE engine cannot drive.  ``"auto"`` therefore resolves to
+      the DDE default (``rk45``); a delay system that genuinely needs another
+      explicit kernel should pass ``method=`` explicitly.
+
+    SDEs never reach here (the SDE path refuses ``run.integrate`` upstream).
 
     Parameters
     ----------
@@ -309,8 +321,11 @@ def _recommend_method(problem: Problem) -> Any:
     """
     from tsdynamics import solvers
 
-    if isinstance(problem, MapProblem):
-        return solvers.resolve(solvers.DEFAULT_METHOD["ode"])
+    # Maps (no kernel) and DDEs (explicit method-of-steps; no meaningful stiffness
+    # probe) fall back to their family default — auto-stiffness is ODE-only.
+    if isinstance(problem, MapProblem | DDEProblem):
+        family = "dde" if isinstance(problem, DDEProblem) else "ode"
+        return solvers.resolve(solvers.DEFAULT_METHOD[family], family=family)
     return solvers.recommend(
         problem.system,
         family=problem.family,
@@ -379,10 +394,14 @@ def integrate(
         Initial state (only used when building a Problem from a system).
     method : str, default "RK45"
         Solver name, resolved by the solver registry (stream C-SOLV).  The
-        special value ``"auto"`` selects a kernel by a-priori auto-stiffness:
-        the Jacobian spectrum at the start state is probed and an implicit
-        kernel (``bdf``) is used on a stiff RHS, the explicit default (``rk45``)
-        otherwise (:func:`tsdynamics.solvers.recommend`; a one-point heuristic).
+        special value ``"auto"`` selects a kernel by a-priori auto-stiffness
+        **for ODEs**: the Jacobian spectrum at the start state is probed and an
+        implicit kernel (``bdf``) is used on a stiff RHS, the explicit default
+        (``rk45``) otherwise (:func:`tsdynamics.solvers.recommend`; a one-point
+        heuristic).  For maps (no kernel) and DDEs (explicit method-of-steps,
+        whose instantaneous-Jacobian probe would ignore the delay terms),
+        ``"auto"`` is a no-op resolving to the family default — see
+        :func:`_recommend_method`.
     rtol, atol : float
         Solver tolerances.
     backend : str, default "interp"
