@@ -31,6 +31,7 @@ The pieces
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -193,6 +194,25 @@ def _marker_size(style: dict[str, Any], theme: Theme | None = None) -> float | N
     return float(sz) if sz is not None else None
 
 
+def _apply_zorder(traces: list[go.BaseTraceType], style: dict[str, Any]) -> None:
+    """Set the canonical ``zorder`` draw order on every 2-D trace, in place.
+
+    plotly 6.x supports a trace-level ``.zorder`` on the 2-D cartesian traces
+    (``Scatter`` / ``Bar`` / ``Histogram`` / ``Heatmap``) — higher draws on top —
+    so the canonical ``zorder`` style key is honored by mapping it directly.  3-D
+    traces (``Scatter3d`` / ``Surface``) have no ``zorder`` knob (their draw order
+    is the intrinsic depth of the scene), so the 3-D renderer never calls this.
+    """
+    if "zorder" not in style:
+        return
+    z = int(style["zorder"])
+    for trace in traces:
+        # All cartesian 2-D traces this renderer emits carry ``zorder``; guard
+        # defensively so a future trace type without it cannot raise.
+        if "zorder" in trace:
+            trace.zorder = z
+
+
 # ---------------------------------------------------------------------------
 # Mark trace builders (one per layer mark) — each returns a list of traces
 # ---------------------------------------------------------------------------
@@ -236,7 +256,7 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         cbar = _colorbar_dict(spec)
         if cbar is not None:
             marker["colorbar"] = cbar
-        return [
+        traces: list[go.BaseTraceType] = [
             go.Scatter(
                 x=x,
                 y=y,
@@ -248,7 +268,9 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
                 opacity=_opacity(style),
             )
         ]
-    return [
+        _apply_zorder(traces, style)
+        return traces
+    traces = [
         go.Scatter(
             x=x,
             y=y,
@@ -259,6 +281,8 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             opacity=_opacity(style),
         )
     ]
+    _apply_zorder(traces, style)
+    return traces
 
 
 def _build_scatter(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
@@ -293,7 +317,7 @@ def _build_scatter(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             marker["colorbar"] = cbar
     elif "color" in style:
         marker["color"] = style["color"]
-    return [
+    traces: list[go.BaseTraceType] = [
         go.Scatter(
             x=x,
             y=y,
@@ -304,6 +328,8 @@ def _build_scatter(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             opacity=_opacity(style),
         )
     ]
+    _apply_zorder(traces, style)
+    return traces
 
 
 def _build_image(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
@@ -332,7 +358,9 @@ def _build_image(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         kw["showscale"] = False
     elif cbar is not None:
         kw["colorbar"] = cbar
-    return [go.Heatmap(**kw)]
+    traces: list[go.BaseTraceType] = [go.Heatmap(**kw)]
+    _apply_zorder(traces, _canon_style(layer))
+    return traces
 
 
 def _build_histogram(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
@@ -351,7 +379,7 @@ def _build_histogram(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     color = style.get("color")
     opacity = _opacity(style)
     if y is not None:
-        return [
+        bars: list[go.BaseTraceType] = [
             go.Bar(
                 x=x,
                 y=y,
@@ -361,7 +389,9 @@ def _build_histogram(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
                 opacity=opacity,
             )
         ]
-    return [
+        _apply_zorder(bars, style)
+        return bars
+    hist: list[go.BaseTraceType] = [
         go.Histogram(
             x=x,
             name=layer.label,
@@ -370,6 +400,8 @@ def _build_histogram(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             opacity=opacity,
         )
     ]
+    _apply_zorder(hist, style)
+    return hist
 
 
 def _build_bar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
@@ -386,7 +418,7 @@ def _build_bar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         x = np.arange(y.size, dtype=float)
     style = _canon_style(layer)
     color = style.get("color")
-    return [
+    traces: list[go.BaseTraceType] = [
         go.Bar(
             x=x,
             y=y,
@@ -396,6 +428,52 @@ def _build_bar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             opacity=_opacity(style),
         )
     ]
+    _apply_zorder(traces, style)
+    return traces
+
+
+#: A neutral fallback band color when an ``AREA`` layer carries no ``color``.
+_DEFAULT_FILL_RGB: tuple[int, int, int] = (31, 119, 180)  # the default-palette blue
+
+
+def _rgba(color: str | None, alpha: float) -> str:
+    """Compose an ``rgba(...)`` fill string from a CSS color + an opacity in [0, 1].
+
+    Baking the fill opacity into the ``fillcolor`` (rather than the trace-level
+    ``opacity``) is what lets ``AREA`` honor a *separate* ``fillalpha`` for the
+    band while a central line / the edges keep their own opacity.  A ``#rrggbb``
+    hex or an ``rgb(r,g,b)`` color is parsed to its channels; anything else (a CSS
+    name like ``"blue"``) is wrapped in plotly's own ``rgba`` over the parsed
+    channels when possible, else falls back to the neutral palette blue so the
+    band is always genuinely alpha-blended.
+    """
+    a = max(0.0, min(1.0, float(alpha)))
+    r, g, b = _DEFAULT_FILL_RGB
+    if isinstance(color, str):
+        c = color.strip()
+        if c.startswith("#") and len(c) == 7:
+            with contextlib.suppress(ValueError):
+                r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+        elif c.startswith("#") and len(c) == 4:
+            with contextlib.suppress(ValueError):
+                r, g, b = int(c[1] * 2, 16), int(c[2] * 2, 16), int(c[3] * 2, 16)
+        elif c.lower().startswith("rgb(") and c.endswith(")"):
+            parts = c[4:-1].split(",")
+            if len(parts) == 3:
+                with contextlib.suppress(ValueError):
+                    r, g, b = (int(float(p)) for p in parts)
+        else:
+            # A CSS name (e.g. "blue") — resolve its channels so the alpha is
+            # genuinely honored rather than dropped.  matplotlib's color table is
+            # the one always-present resolver for the full CSS name set (plotly's
+            # own ``validate_colors`` does not parse names); falling through to the
+            # neutral fill keeps the band alpha-blended if even that is absent.
+            with contextlib.suppress(Exception):
+                from matplotlib.colors import to_rgb
+
+                fr, fg, fb = to_rgb(c)
+                r, g, b = int(round(fr * 255)), int(round(fg * 255)), int(round(fb * 255))
+    return f"rgba({r}, {g}, {b}, {a})"
 
 
 def _build_area(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
@@ -404,6 +482,13 @@ def _build_area(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     Emits an invisible ``lo`` boundary trace plus a ``hi`` trace with
     ``fill="tonexty"`` so the band between them is shaded; a central ``y`` line is
     drawn through the fan when a distinct ``y`` is supplied alongside the edges.
+
+    The band's opacity is the canonical **``fillalpha``** style key (AREA-only,
+    default ``0.3``), baked into the ``rgba`` ``fillcolor`` so it is a genuine
+    fill opacity independent of any line ``alpha``.  The canonical **``fill``**
+    key (a bool, AREA / ENSEMBLE_FAN only) suppresses the shaded band when
+    ``False`` — the edges / central line still draw, just unfilled.  Neither
+    ``fill`` nor ``fillalpha`` is ever forwarded onto a line / scatter trace.
     """
     import plotly.graph_objects as go
 
@@ -422,26 +507,32 @@ def _build_area(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         hi = y if y is not None else np.zeros_like(x)
     style = _canon_style(layer)
     color = style.get("color")
-    alpha = _opacity(style) if "alpha" in layer.style else 0.3
+    # fillalpha (AREA-only) is the band opacity; default 0.3 when unset.
+    fillalpha = float(style.get("fillalpha", 0.3))
+    # fill=False suppresses the shaded band (edges / line still draw).
+    show_fill = bool(style.get("fill", True))
+    fillcolor = _rgba(color, fillalpha) if show_fill else None
+    hi_kw: dict[str, Any] = {
+        "x": x,
+        "y": hi,
+        "mode": "lines",
+        "line": {"width": 0},
+        "name": layer.label,
+        "showlegend": layer.label is not None,
+    }
+    if show_fill:
+        hi_kw["fill"] = "tonexty"
+        hi_kw["fillcolor"] = fillcolor
     traces: list[go.BaseTraceType] = [
         go.Scatter(x=x, y=lo, mode="lines", line={"width": 0}, showlegend=False, hoverinfo="skip"),
-        go.Scatter(
-            x=x,
-            y=hi,
-            mode="lines",
-            line={"width": 0},
-            fill="tonexty",
-            fillcolor=color,
-            opacity=alpha,
-            name=layer.label,
-            showlegend=layer.label is not None,
-        ),
+        go.Scatter(**hi_kw),
     ]
     theme = _resolve_theme(spec)
     if y is not None and "lo" in layer.data:
         traces.append(
             go.Scatter(x=x, y=y, mode="lines", line=_line_style(layer, theme), showlegend=False)
         )
+    _apply_zorder(traces, style)
     return traces
 
 
@@ -468,7 +559,7 @@ def _build_errorbar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     ms = _marker_size(style, theme)
     if ms is not None:
         marker["size"] = ms
-    return [
+    traces: list[go.BaseTraceType] = [
         go.Scatter(
             x=x,
             y=y,
@@ -480,6 +571,8 @@ def _build_errorbar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             opacity=_opacity(style),
         )
     ]
+    _apply_zorder(traces, style)
+    return traces
 
 
 def _build_quiver(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
@@ -505,7 +598,7 @@ def _build_quiver(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     seg_y[0::3], seg_y[1::3], seg_y[2::3] = y, ye, np.nan
     style = _canon_style(layer)
     color = style.get("color")
-    return [
+    traces: list[go.BaseTraceType] = [
         go.Scatter(
             x=seg_x,
             y=seg_y,
@@ -518,6 +611,8 @@ def _build_quiver(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             x=xe, y=ye, mode="markers", marker={"size": 4, "color": color}, showlegend=False
         ),
     ]
+    _apply_zorder(traces, style)
+    return traces
 
 
 #: Layer mark → trace builder.  The 3-D marks (``LINE3D`` / ``SURFACE3D``) are

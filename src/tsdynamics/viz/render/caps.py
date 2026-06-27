@@ -107,11 +107,13 @@ _BACKEND_ANIMATION_GAPS: dict[str, frozenset[str]] = {
     "threejs": _THREEJS_ANIMATION_GAPS,
 }
 
-#: Theme fields that the **threejs** backend does *not* honor (the three.js exporter
-#: serializes background / palette / foreground into a ``metadata.theme`` block and the
-#: loader reads them, but font/grid presentation is a browser concern — not exported).
+#: Theme fields that the **threejs** backend does *not* honor.  The three.js loader
+#: honors **only** ``background`` and ``palette`` (the exporter serializes those into a
+#: ``metadata.theme`` block); ``foreground`` is dead (the loader marks it "unused here"
+#: and the exporter no longer emits it) and font / grid / title presentation is a browser
+#: concern that is not wired into the three.js scene — every one of these is a gap.
 _THREEJS_THEME_GAPS: frozenset[str] = frozenset(
-    {"font_family", "font_size", "title_size", "grid", "grid_color", "grid_alpha"}
+    {"foreground", "font_family", "font_size", "title_size", "grid", "grid_color", "grid_alpha"}
 )
 
 #: Per-backend theme presentation gaps.
@@ -229,6 +231,8 @@ def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
     if theme_gaps and spec._theme is not None:
         t = spec._theme
         # Only report when the theme actually sets the field (not None / default).
+        if "foreground" in theme_gaps and t.foreground is not None:
+            gaps.add("theme.foreground")
         if "font_family" in theme_gaps and t.font_family is not None:
             gaps.add("theme.font_family")
         if "font_size" in theme_gaps and t.font_size is not None:

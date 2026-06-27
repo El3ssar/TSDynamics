@@ -74,7 +74,14 @@ def _degraded_warning_class() -> type[Warning]:
 
 
 def _validate_unit_interval(value: Any) -> float:
-    """Coerce ``value`` to a float in ``[0, 1]`` (raises ``ValueError`` otherwise)."""
+    """Coerce ``value`` to a float in ``[0, 1]`` (raises ``ValueError`` otherwise).
+
+    A ``bool`` (``True``/``False``) is rejected — ``True`` is *not* a valid opacity
+    of ``1.0`` (it is almost always a caller mistake), so it raises rather than
+    silently coercing.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"expected a value in [0, 1], got bool {value!r}")
     v = float(value)
     if not (0.0 <= v <= 1.0):
         raise ValueError(f"expected a value in [0, 1], got {value!r}")
@@ -82,7 +89,13 @@ def _validate_unit_interval(value: Any) -> float:
 
 
 def _validate_positive(value: Any) -> float:
-    """Coerce ``value`` to a non-negative float (raises ``ValueError`` otherwise)."""
+    """Coerce ``value`` to a non-negative float (raises ``ValueError`` otherwise).
+
+    A ``bool`` (``True``/``False``) is rejected — a line/marker size is a magnitude,
+    not a flag, so ``True`` raises rather than silently becoming ``1.0``.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"expected a non-negative number, got bool {value!r}")
     v = float(value)
     if v < 0.0:
         raise ValueError(f"expected a non-negative number, got {value!r}")
@@ -149,7 +162,15 @@ def _validate_bool(value: Any) -> bool:
 
 
 def _validate_int(value: Any) -> int:
-    """Coerce ``value`` to a plain ``int``."""
+    """Require a genuine ``int`` (raises ``ValueError`` on a float or ``bool``).
+
+    ``zorder`` is a draw order — a non-integer (``1.7``) or a ``bool``
+    (``True``/``False``) is a caller mistake, so this *rejects* rather than
+    truncating (the old ``int(1.7) == 1`` silent floor) or accepting a ``bool``
+    (``int`` subclass).
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"expected an int, got {value!r}")
     return int(value)
 
 
@@ -240,8 +261,11 @@ def _build_style_keys() -> dict[str, StyleKey]:
         StyleKey(
             name="cmap",
             aliases=("colormap", "colorscale"),
-            honored_by=_ALL_BACKENDS,
-            doc="colormap name for the c / image channel",
+            honored_by=frozenset({"matplotlib", "plotly"}),
+            doc=(
+                "colormap name for the c / image channel (threejs uses a fixed "
+                "built-in ramp — an arbitrary cmap name is not honored)"
+            ),
         ),
         StyleKey(
             name="fill",
@@ -266,7 +290,9 @@ def _build_style_keys() -> dict[str, StyleKey]:
 
 
 #: The canonical per-layer style vocabulary: canonical name → :class:`StyleKey`.
-#: Closed and reviewed — extending it is a deliberate contract change.
+#: Closed and reviewed — extending it is a deliberate contract change.  Each
+#: entry exposes its accepted aliases, e.g.
+#: ``STYLE_KEYS["linewidth"].aliases == ("lw",)``.
 STYLE_KEYS: dict[str, StyleKey] = _build_style_keys()
 
 
@@ -365,7 +391,7 @@ DEFAULT_PALETTE: tuple[str, ...] = (
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Theme:
     """A figure-level look: palette, background/foreground ink, font, grid, sizes.
 
@@ -660,18 +686,18 @@ def resolve_palette(p: str | Sequence[str]) -> tuple[str, ...]:
     ----------
     p : str or sequence of str
         Either the name of a registered theme (whose :attr:`Theme.palette` is
-        returned) or an explicit sequence of color strings.
+        returned), a single color string that is *not* a registered theme name
+        (e.g. ``"#ff0000"`` / ``"red"`` → a **one-color palette**), or an explicit
+        sequence of color strings.
 
     Returns
     -------
     tuple of str
-        The resolved color cycle.
-
-    Raises
-    ------
-    KeyError
-        If ``p`` is a string that is not a registered theme name.
+        The resolved color cycle.  A bare non-theme color string resolves to a
+        1-tuple ``(p,)`` rather than raising.
     """
     if isinstance(p, str):
-        return get_theme(p).palette
+        if p in THEMES:
+            return get_theme(p).palette
+        return (p,)
     return tuple(p)

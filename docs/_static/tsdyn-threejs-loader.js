@@ -323,12 +323,18 @@ function installAnimation(container, comets, anim) {
 /**
  * Render a TSDynamics `threejs` payload into `container` and return a handle.
  *
- * Applies the payload's `metadata.theme` block when present:
+ * Applies the payload's `metadata.theme` block when present. The threejs
+ * backend honors exactly two theme fields (a WebGL scene has no axes / text /
+ * grid to ink), so the exporter emits only these and the loader reads only
+ * these:
  * - `theme.background` sets the scene background color (overridden by
  *   `opts.background`).
  * - `theme.palette` provides the auto-color cycle for geometries that carry no
  *   per-vertex colors and no explicit `material.color`.
- * - `theme.foreground` is available for future axis/label coloring (unused here).
+ *
+ * No `theme.foreground` / font / grid / title-size fields are present in the
+ * payload (the exporter drops them rather than ship a dead field); the
+ * renderer's capability layer warns that they are not honored.
  *
  * @param {HTMLElement} container - a sized element to mount the WebGL canvas in.
  * @param {object} payload - the parsed `spec.render("threejs")` JSON payload.

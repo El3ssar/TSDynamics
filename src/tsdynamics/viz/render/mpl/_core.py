@@ -277,8 +277,11 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
         kw["alpha"] = float(canon["alpha"])
     if "zorder" in canon:
         kw["zorder"] = int(canon["zorder"])
-    if "fill" in canon:
-        kw["fill"] = bool(canon["fill"])
+    # NOTE: ``fill`` / ``fillalpha`` are AREA/ENSEMBLE_FAN-only knobs and are
+    # consumed directly by ``_draw_area`` (which reads them off ``canon``).  They
+    # are deliberately NOT forwarded here: a ``Line2D`` (``ax.plot``) and a
+    # ``PathCollection`` (``ax.scatter``) both reject a ``fill=`` kwarg, so
+    # leaking it crashes a fully-styled LINE/SCATTER layer.
 
     # linewidth: canonical key → mpl "linewidth"
     if "linewidth" in canon:
@@ -656,12 +659,16 @@ def _draw_area(
         hi = y if y is not None else np.zeros_like(x)
     canon = normalize_style(layer.style, warn=False)
     fill_alpha = canon.get("fillalpha", canon.get("alpha", 0.3))
+    # ``fill`` (AREA-only) suppresses the shaded band when False; the central
+    # line (when a distinct ``y`` is present) still draws.  Default True.
+    show_fill = bool(canon.get("fill", True))
     kw: dict[str, Any] = {"alpha": float(fill_alpha)}
     if "color" in canon:
         kw["color"] = canon["color"]
     if layer.label is not None:
         kw["label"] = layer.label
-    ax.fill_between(x, lo, hi, **kw)
+    if show_fill:
+        ax.fill_between(x, lo, hi, **kw)
     if y is not None and "lo" in layer.data:
         # A central line through a fan/band, when a distinct ``y`` is supplied.
         line_kw = {k: v for k, v in kw.items() if k in ("color", "label")}
@@ -1009,7 +1016,7 @@ def render(
     return fig
 
 
-def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec) -> None:
+def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = None) -> None:
     """Draw one 2-D spec's layers + axes/colorbar/legend/annotations onto ``ax``.
 
     The single-panel body of :func:`render`, factored out so the composite
@@ -1018,8 +1025,12 @@ def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec) -> None:
     Step 1: resolve theme and apply it figure-locally (background, color cycle,
     font, default grid).  Step 2: draw layers with normalized per-layer style
     overriding theme defaults.  Step 3: apply enriched Axis/Legend/Colorbar fields.
+
+    ``theme`` lets the composite renderer pass an *inherited* theme (its own) for a
+    panel that has none, **without mutating the panel spec** — when ``None`` the
+    panel's own resolved theme is used.
     """
-    theme = _resolve_theme(spec)
+    theme = theme if theme is not None else _resolve_theme(spec)
     preset = _preset_for(normalize_kind(spec.kind))
 
     # Step 1: apply theme presentation
@@ -1107,9 +1118,11 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     share_y = bool(getattr(layout, "share_y", False))
     anchor: Axes | None = None
     for i, panel in enumerate(panels):
-        # Resolve: panel theme > composite theme > global default
-        if panel._theme is None:
-            panel._theme = composite_theme
+        # Resolve the effective theme LOCALLY (panel theme > composite theme).
+        # Do NOT write it back onto the panel spec — rendering must never mutate
+        # its input, so a re-render under a different composite theme stays
+        # correct and a caller's ``panel._theme is None`` survives the render.
+        effective_theme = panel._theme if panel._theme is not None else composite_theme
         threed = _threed.is_three_d(panel)
         sub_kw: dict[str, Any] = {}
         if not threed and anchor is not None:
@@ -1119,9 +1132,9 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
                 sub_kw["sharey"] = anchor
         ax = fig.add_subplot(rows, cols, i + 1, projection=("3d" if threed else None), **sub_kw)
         if threed:
-            _threed._draw_3d_panel(fig, ax, panel)
+            _threed._draw_3d_panel(fig, ax, panel, effective_theme)
         else:
-            _draw_2d_panel(fig, ax, panel)
+            _draw_2d_panel(fig, ax, panel, effective_theme)
             if anchor is None:
                 anchor = ax
     if spec.title:

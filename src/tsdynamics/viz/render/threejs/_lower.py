@@ -31,7 +31,6 @@ The payload is a JSON object::
             },
             "theme": {                           # ALWAYS present; resolved Theme
                 "background": "<str | null>",    # scene background color
-                "foreground": "<str | null>",    # default ink color
                 "palette": ["<str>", ...]        # color cycle for auto-colored layers
             },
             "animation": {                       # ONLY when spec.animation is set
@@ -64,14 +63,16 @@ keys that the three.js backend honors::
         "linewidth":   <float | null>,          # line width (pt)
         "markersize":  <float | null>,          # point size (pt)
         "alpha":       <float | null>,          # 0..1 opacity
-        "cmap":        "<str | null>",          # colormap name for per-vertex colors
         "zorder":      <int | null>             # maps to THREE renderOrder
     }
 
 Keys are ``null`` when not set by the user (the loader applies its own default).
-``linestyle`` and marker *shape* are **not** in the material block — they are
-excluded from the threejs backend's ``honored_by`` set (see
-:data:`~tsdynamics.viz.style.STYLE_KEYS`) and the loader ignores them.
+``linestyle``, marker *shape*, and ``cmap`` are **not** in the material block —
+they are excluded from the threejs backend's ``honored_by`` set (see
+:data:`~tsdynamics.viz.style.STYLE_KEYS`) and the loader ignores them.  ``cmap``
+in particular cannot be honored: the loader uses a fixed built-in colormap ramp
+(see :func:`_colormap`) for the per-vertex ``"c"`` channel, so an arbitrary
+colormap *name* would be a dead field — it is therefore not emitted.
 
 Each ``geometry`` is::
 
@@ -629,12 +630,14 @@ def _material_style(layer: Layer, *, palette_color: str | None = None) -> dict[s
     """Extract the three.js-honored per-layer style keys into a ``material`` dict.
 
     The three.js backend honors: ``color``, ``linewidth``, ``markersize``,
-    ``alpha``, ``cmap``, and ``zorder`` (mapped to ``renderOrder`` by the loader).
-    ``linestyle`` and marker *shape* are excluded from the backend's
-    ``honored_by`` set and are **not** serialized here.
+    ``alpha``, and ``zorder`` (mapped to ``renderOrder`` by the loader).
+    ``linestyle``, marker *shape*, and ``cmap`` are excluded from the backend's
+    ``honored_by`` set and are **not** serialized here — the loader uses a fixed
+    built-in colormap ramp for the per-vertex ``"c"`` channel, so an arbitrary
+    ``cmap`` name cannot be honored.
 
     The layer's ``style`` dict is first canonicalized via :func:`normalize_style`
-    (aliases → canonical names, values validated); then the six honored keys are
+    (aliases → canonical names, values validated); then the honored keys are
     extracted, with ``None`` for any key not set.  When the layer carries no
     explicit ``color`` the ``palette_color`` fallback is used so the loader sees a
     deterministic per-layer color from the theme palette.
@@ -661,14 +664,12 @@ def _material_style(layer: Layer, *, palette_color: str | None = None) -> dict[s
     lw = canon.get("linewidth")
     ms = canon.get("markersize")
     alpha = canon.get("alpha")
-    cmap = canon.get("cmap")
     zorder = canon.get("zorder")
     return {
         "color": str(color) if color is not None else None,
         "linewidth": float(lw) if lw is not None else None,
         "markersize": float(ms) if ms is not None else None,
         "alpha": float(alpha) if alpha is not None else None,
-        "cmap": str(cmap) if cmap is not None else None,
         "zorder": int(zorder) if zorder is not None else None,
     }
 
@@ -676,17 +677,20 @@ def _material_style(layer: Layer, *, palette_color: str | None = None) -> dict[s
 def _theme_metadata(theme: Theme) -> dict[str, Any]:
     """Serialize the resolved theme into a compact ``metadata.theme`` block.
 
-    The loader reads three fields to apply scene-level presentation:
+    The loader reads two fields to apply scene-level presentation:
 
     - ``background``: the scene background color (a CSS string or ``null``).
-    - ``foreground``: the default ink / axis color (a CSS string or ``null``).
     - ``palette``: the ordered color cycle for auto-colored layers (a list of
       CSS strings); the loader assigns ``palette[i % len(palette)]`` to geometry
       ``i`` when it carries no per-vertex colors and its ``material.color`` is
       also ``null``.
 
-    Only these three fields travel to the loader — the other Theme fields
-    (font, grid, line/marker sizes) are not meaningful in a three.js scene.
+    Only these two fields travel to the loader — the other Theme fields
+    (``foreground``, font, grid, title size, line/marker sizes) are **not**
+    honored in a three.js scene (the loader has no axes / text / grid to ink),
+    so they are not emitted: a dropped field is honest, a dead field would
+    overclaim.  The threejs backend's theme-honored set is therefore
+    ``{background, palette}`` — ``caps`` warns for every other theme field.
 
     Parameters
     ----------
@@ -696,12 +700,10 @@ def _theme_metadata(theme: Theme) -> dict[str, Any]:
     Returns
     -------
     dict
-        A JSON-serializable mapping with ``"background"``, ``"foreground"``,
-        and ``"palette"`` keys.
+        A JSON-serializable mapping with ``"background"`` and ``"palette"`` keys.
     """
     return {
         "background": theme.background,
-        "foreground": theme.foreground,
         "palette": list(theme.palette),
     }
 

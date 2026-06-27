@@ -1178,9 +1178,15 @@ class PlotSpec:
     def resolved_theme(self) -> Theme:
         """The effective :class:`~tsdynamics.viz.style.Theme` for this spec.
 
-        Returns this spec's own theme if it set one, otherwise the active global
-        default (:func:`~tsdynamics.viz.style.get_theme`).  Renderers that need a
-        concrete theme call this; the raw ``Theme | None`` lives on the private
+        This is the **READ** half of the three-part theme pattern (see
+        :meth:`theme` for the full picture): ``spec.theme(...)`` **SETS**,
+        ``spec.resolved_theme`` **READS** the effective theme, and ``spec._theme``
+        is the **raw private field**.
+
+        Returns this spec's own theme if it set one (``spec._theme is not None``),
+        otherwise the active global default
+        (:func:`~tsdynamics.viz.style.get_theme`).  Renderers that need a concrete
+        theme read this; the unresolved ``Theme | None`` lives on the private
         :attr:`_theme` field.
         """
         return self._theme if self._theme is not None else get_theme(None)
@@ -1189,14 +1195,41 @@ class PlotSpec:
         """Set this spec's figure-level :class:`~tsdynamics.viz.style.Theme`.
 
         The figure-level look (palette / font / background / grid / line
-        defaults).  The theme is stored on the private ``_theme`` field; read the
-        effective value back via :attr:`resolved_theme`.
+        defaults).  This is the **SET** half of a deliberate three-part pattern:
+
+        - ``spec.theme(...)`` **SETS** (mutate this spec's theme + return ``self``
+          for chaining) — *this method*.
+        - :attr:`spec.resolved_theme <resolved_theme>` **READS** the effective
+          theme, falling back to the active global default when this spec set
+          none.
+        - ``spec._theme`` is the **raw private field** (``Theme | None``) — the
+          unresolved attribute renderers may read directly; prefer
+          :attr:`resolved_theme` everywhere else.
+
+        ``theme`` is **positional-only** — call ``spec.theme("dark")``, not
+        ``spec.theme(theme="dark")`` (the keyword name is reserved so a theme
+        field literally named ``theme`` could be passed in ``**overrides``).
+
+        Eager-materialisation semantics:
+
+        - ``spec.theme("dark")`` / ``spec.theme(some_theme)`` pins that named /
+          explicit theme.
+        - ``spec.theme(None)`` (or ``spec.theme()``) with **no** overrides stores
+          the active global default *by snapshot* — and because that snapshot is
+          taken now, the spec is **detached from any later**
+          :func:`~tsdynamics.viz.style.set_theme` (it will not track a future
+          global-default change).
+        - ``spec.theme(None, **overrides)`` **eagerly materialises** the active
+          global default and applies ``overrides`` on top via
+          :meth:`~tsdynamics.viz.style.Theme.merged` — likewise detaching from a
+          future ``set_theme``.
 
         Parameters
         ----------
-        theme : str or Theme, optional
+        theme : str or Theme or None, positional-only
             A registered theme name, a :class:`~tsdynamics.viz.style.Theme`
-            instance, or ``None`` (the active global default).
+            instance, or ``None`` (snapshot the active global default *now*).
+            Positional-only: pass it by position, never as ``theme=``.
         **overrides
             :class:`~tsdynamics.viz.style.Theme` fields to override on top of the
             resolved theme (``palette``, ``background``, ``font_family``, …),

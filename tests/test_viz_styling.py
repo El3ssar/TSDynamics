@@ -54,27 +54,13 @@ from tsdynamics.viz.style import (
 
 # ---------------------------------------------------------------------------
 # Global-state isolation
+#
+# The autouse ``_reset_global_theme`` fixture that snapshots + restores the
+# single mutable global theme state (``THEMES`` / ``_ACTIVE``) lives in
+# ``tests/conftest.py`` so it wraps **every** test in the suite (not just this
+# module), eliminating the cross-module pollution landmine: a ``set_theme(...)``
+# here can no longer leak into a registry-driven sweep elsewhere.
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _reset_global_theme():
-    """Snapshot + restore the single mutable global theme state around each test.
-
-    The theme registry (``THEMES``) and the active-default name (``_ACTIVE``) are
-    process globals; tests that ``set_theme(...)`` / ``register_theme(...)`` must
-    not leak into the rest of the (registry-driven) suite.  Restore both.
-    """
-    import tsdynamics.viz.style as style_mod
-
-    saved_active = style_mod._ACTIVE
-    saved_themes = dict(style_mod.THEMES)
-    try:
-        yield
-    finally:
-        style_mod._ACTIVE = saved_active
-        style_mod.THEMES.clear()
-        style_mod.THEMES.update(saved_themes)
 
 
 # ---------------------------------------------------------------------------
@@ -503,8 +489,11 @@ def test_threejs_material_and_theme_metadata():
 
     theme_block = payload["metadata"]["theme"]
     assert theme_block["background"] == "#202020"
-    assert theme_block["foreground"] == "#eeeeee"
     assert theme_block["palette"] == ["#123456", "#abcdef"]
+    # ``foreground`` is NOT honored by the three.js loader, so the exporter no
+    # longer emits it (a dead field would overclaim — contract: threejs theme set
+    # is ``{background, palette}`` only).
+    assert "foreground" not in theme_block
 
 
 def test_threejs_uncolored_layer_gets_palette_color():

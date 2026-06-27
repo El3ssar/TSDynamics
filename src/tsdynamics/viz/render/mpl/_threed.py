@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ...spec import PlotKind, PlotSpec
-from ...style import normalize_style
+from ...style import Theme, normalize_style
 from ._core import (
     _LINESTYLE_MPL,
     _MARKER_MPL,
@@ -257,7 +257,7 @@ def render_3d(spec: PlotSpec, *, figsize: tuple[float, float] | None = None) -> 
     return fig
 
 
-def _draw_3d_panel(fig: Any, ax: Any, spec: PlotSpec) -> None:
+def _draw_3d_panel(fig: Any, ax: Any, spec: PlotSpec, theme: Theme | None = None) -> None:
     """Draw one 3-D spec's marks + axes/colorbar/legend onto an ``mplot3d`` ``ax``.
 
     The single-panel body of :func:`render_3d`, factored out so the composite
@@ -265,10 +265,14 @@ def _draw_3d_panel(fig: Any, ax: Any, spec: PlotSpec) -> None:
 
     Resolves the spec's theme and applies it figure-locally (background, color
     cycle, font); each layer's canonical style overrides theme defaults.
+
+    ``theme`` lets the composite renderer pass an *inherited* theme (its own) for a
+    panel that has none, **without mutating the panel spec** — when ``None`` the
+    panel's own resolved theme is used.
     """
     from ._core import _apply_legend
 
-    theme = _resolve_theme(spec)
+    theme = theme if theme is not None else _resolve_theme(spec)
     _apply_theme_to_figure(fig, ax, theme)
     _apply_theme_color_cycle(ax, theme)
 

@@ -45,6 +45,7 @@ from .caps import (
     RendererCapabilities,
     RenderResult,
     VisualizationDegraded,
+    _normalize_backend_name,
     style_honoring_gaps,
 )
 
@@ -246,6 +247,10 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
         raise _visualization_not_installed()
 
     if backend is not None:
+        # Accept the same friendly aliases caps uses (``"mpl"`` → ``"matplotlib"``)
+        # so ``.render(backend="mpl")`` resolves the registered renderer instead of
+        # raising KeyError on the alias.
+        backend = _normalize_backend_name(backend)
         renderer = renderers.get(backend)  # KeyError (naming) if unknown
         if _can_render(renderer, spec):
             return backend, renderer
