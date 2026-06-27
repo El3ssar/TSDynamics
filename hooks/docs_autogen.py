@@ -30,14 +30,22 @@ sys.path.insert(0, str(_ROOT / "docs" / "_tooling"))
 
 import equations as _equations  # noqa: E402  (docs/_tooling)
 import figures as _figures  # noqa: E402  (docs/_tooling)
+import threejs_viewer as _viewer  # noqa: E402  (docs/_tooling)
 
 WITH_FIGURES = os.environ.get("TSD_DOCS_FIGURES", "1") != "0"
+
+#: Optional comma-separated allow-list of system names — a fast preview that builds
+#: only those systems' catalogue pages (e.g. ``TSD_DOCS_ONLY=Lorenz,Rossler mkdocs
+#: serve`` when iterating on one page).  Empty (the default) builds every system.
+_ONLY = {n.strip() for n in os.environ.get("TSD_DOCS_ONLY", "").split(",") if n.strip()}
 
 FAMILY_DIRS = {"ode": "systems/continuous", "dde": "systems/delay", "map": "systems/discrete"}
 FAMILY_LABELS = {"ode": "Continuous", "dde": "Delay", "map": "Discrete"}
 
 #: uri → markdown source for every generated page.
 _GENERATED: dict[str, str] = {}
+#: uri → HTML for every generated interactive three.js viewer (assets/threejs/*.html).
+_VIEWERS: dict[str, str] = {}
 _VERSION = "?"
 
 
@@ -57,7 +65,28 @@ def _summary(cls) -> str:
     return " ".join(first.split())
 
 
-def _system_page(entry, fig_path: Path | None) -> str:
+def _viewer_block(entry, family_dir: str) -> str:
+    """Raw-HTML ``<iframe>`` embedding this system's interactive three.js viewer.
+
+    MkDocs only rewrites relative paths on ``<a>`` / ``<img>`` (not ``<iframe>``), so
+    the ``src`` is computed against the **output** (directory-URL) location, not the
+    markdown source.  A page ``systems/<fam>/<cat>/<Name>.md`` is served at
+    ``systems/<fam>/<cat>/<Name>/`` — four directory levels deep — so reaching the
+    site-root ``assets/threejs/<Name>.html`` needs four ``../``:
+    ``family_dir.count("/") + 3`` = (the two ``systems/<fam>`` segments) + category +
+    the ``<Name>/`` directory-URL level.  The figure ``<img>`` below uses one fewer
+    ``../`` because MkDocs resolves *its* path from the markdown source (one shallower).
+    """
+    depth = family_dir.count("/") + 3  # output-relative: 2 family segs + category + dir-URL
+    src = "../" * depth + f"assets/threejs/{entry.name}.html"
+    title = f"{entry.name} attractor — drag to orbit, scroll to zoom (plays automatically)"
+    return (
+        f'<iframe class="tsdyn-attractor" src="{src}" loading="lazy" '
+        f'title="{title}" scrolling="no"></iframe>'
+    )
+
+
+def _system_page(entry, fig_path: Path | None, has_viewer: bool) -> str:
     family_dir = FAMILY_DIRS[entry.family]
     kicker = f"Systems · {FAMILY_LABELS[entry.family]} · {_title(entry.category)}"
     parts: list[str] = [f"# {entry.name}", "", f"<small>{kicker}</small>", ""]
@@ -80,7 +109,14 @@ def _system_page(entry, fig_path: Path | None) -> str:
         if getattr(entry.cls, "variables", None):
             parts += [f"**Variables:** `{', '.join(entry.cls.variables)}`", ""]
 
-    if fig_path is not None:
+    if has_viewer:
+        # A live, orbitable three.js attractor (a setDrawRange reveal comet with
+        # OrbitControls in its own loop — rotate it with the mouse while it plays),
+        # embedded as an isolated iframe so its CDN import map and module script are
+        # immune to Material's instant navigation.  Falls back to the static PNG when
+        # WebGL/JS is unavailable (handled inside the viewer document).
+        parts += [_viewer_block(entry, family_dir), ""]
+    elif fig_path is not None:
         # Markdown image syntax (not raw HTML): MkDocs rewrites the relative
         # path for use_directory_urls, so it works both locally and deployed.
         depth = family_dir.count("/") + 2  # family dir + category dir
@@ -151,12 +187,16 @@ def on_config(config):
 
     _VERSION = tsdynamics.__version__
     _GENERATED.clear()
+    _VIEWERS.clear()
 
     skipped_figures: list[str] = []
+    viewer_names: list[str] = []
 
     for family, family_dir in FAMILY_DIRS.items():
         categories: dict[str, list] = {}
         for entry in registry.all_systems(family=family):
+            if _ONLY and entry.name not in _ONLY:
+                continue
             categories.setdefault(entry.category, []).append(entry)
 
         family_sections: list = []
@@ -168,10 +208,20 @@ def on_config(config):
             section_items: list = [f"{cat_dir}/index.md"]
 
             for entry in entries:
+                # An interactive three.js viewer replaces the static figure for
+                # eligible (3-D ODE) attractors; everything else keeps its PNG.
+                viewer_html = _viewer.render_html(entry) if WITH_FIGURES else None
+                has_viewer = viewer_html is not None
+                if has_viewer:
+                    _VIEWERS[f"assets/threejs/{entry.name}.html"] = viewer_html
+                    viewer_names.append(entry.name)
+
+                # Render (or fall back to) the static PNG: it is the page figure for
+                # non-eligible systems and the viewer's WebGL/no-JS fallback poster.
                 fig = _figures.render(entry) if WITH_FIGURES else None
-                if WITH_FIGURES and fig is None:
+                if WITH_FIGURES and fig is None and not has_viewer:
                     skipped_figures.append(entry.name)
-                _GENERATED[f"{cat_dir}/{entry.name}.md"] = _system_page(entry, fig)
+                _GENERATED[f"{cat_dir}/{entry.name}.md"] = _system_page(entry, fig, has_viewer)
                 section_items.append({entry.name: f"{cat_dir}/{entry.name}.md"})
 
             family_sections.append({_title(category): section_items})
@@ -182,15 +232,20 @@ def on_config(config):
     n_pages = len(_GENERATED)
     print(f"docs_autogen: generated {n_pages} pages", end="")
     if WITH_FIGURES:
-        print(f", figures skipped for {len(skipped_figures)}: {skipped_figures or 'none'}")
+        print(
+            f", {len(viewer_names)} interactive viewers"
+            f", figures skipped for {len(skipped_figures)}: {skipped_figures or 'none'}"
+        )
     else:
         print(" (figures disabled via TSD_DOCS_FIGURES=0)")
     return config
 
 
 def on_files(files, config):
-    """Register the generated pages as virtual files."""
+    """Register the generated pages and interactive viewer documents as virtual files."""
     for uri, content in _GENERATED.items():
+        files.append(File.generated(config, uri, content=content))
+    for uri, content in _VIEWERS.items():
         files.append(File.generated(config, uri, content=content))
     return files
 

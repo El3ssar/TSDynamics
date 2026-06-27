@@ -94,9 +94,10 @@ src/tsdynamics/
     ├── grids.py              # make_output_grid (hoisted output-grid builder)
     └── sagitta_dt.py         # estimate_dt_from_sagitta
 
-hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures at build time
+hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures/viewers (TSD_DOCS_ONLY= subset preview)
 docs/_tooling/equations.py     # symbolic → LaTeX rendering for docs
-docs/_tooling/figures.py       # cached figure rendering (scipy for ODEs)
+docs/_tooling/figures.py       # cached static-figure rendering (engine rk4 / scipy for stiff+discontinuous ODEs)
+docs/_tooling/threejs_viewer.py # cached interactive three.js attractor viewers (3-D ODE pages; iframe-embedded)
 tests/_sampling.py             # curated slow-tier sample + DDE histories + exclusions
 ```
 
