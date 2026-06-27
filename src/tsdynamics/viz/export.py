@@ -17,7 +17,7 @@ Schema
 The serialized text is a JSON object with two top-level keys::
 
     {
-        "schema_version": 1,
+        "schema_version": 2,
         "spec": { ... PlotSpec.to_dict() ... }
     }
 
@@ -26,7 +26,10 @@ The serialized text is a JSON object with two top-level keys::
   migrated on read.  :func:`from_json` tolerates a *missing* or *older*
   ``"schema_version"`` (back-compat): a bare ``PlotSpec.to_dict()`` object — one
   that has no ``"schema_version"`` key but does carry the spec's own ``"kind"`` /
-  ``"layers"`` keys — is read as an *unversioned* (legacy) payload.
+  ``"layers"`` keys — is read as an *unversioned* (legacy) payload.  A v1 payload
+  (produced before the styling overhaul) loads cleanly: the new fields
+  (``theme``, enriched ``Axis``/``Legend``/``Colorbar``) are absent → default
+  values (``theme=None``, ``grid=None``, etc.).
 - ``"spec"`` — the exact output of :meth:`PlotSpec.to_dict`; rebuilt with
   :meth:`PlotSpec.from_dict`.
 
@@ -53,7 +56,19 @@ __all__ = [
 #: The current JSON-envelope schema version stamped by :func:`to_json` /
 #: :func:`to_dict_envelope`.  Bumped only when the *envelope* or the underlying
 #: :meth:`PlotSpec.to_dict` layout changes in a way that needs migration on read.
-SCHEMA_VERSION = 1
+#:
+#: Revision history:
+#:   1 — initial versioned envelope (``{"schema_version": 1, "spec": {...}}``).
+#:   2 — styling/theming overhaul: ``PlotSpec.theme`` field added (a
+#:       :class:`~tsdynamics.viz.style.Theme` dict or ``null``); enriched
+#:       :class:`~tsdynamics.viz.spec.Axis` fields (``grid``, ``color``,
+#:       ``label_size``, ``tick_size``, ``tick_rotation``); enriched
+#:       :class:`~tsdynamics.viz.spec.Legend` fields (``font_size``, ``ncol``,
+#:       ``frame``); enriched :class:`~tsdynamics.viz.spec.Colorbar` field
+#:       (``label_size``).  All new fields are optional with
+#:       :meth:`~tsdynamics.viz.spec.PlotSpec.from_dict`-tolerated defaults, so a
+#:       v1 payload loads without error (old fields are absent → default values).
+SCHEMA_VERSION = 2
 
 #: The envelope key carrying the integer schema version.
 _VERSION_KEY = "schema_version"

@@ -384,6 +384,8 @@ class Trajectory:
         """
         if animate is False or animate is None:
             return spec
+        from dataclasses import replace as _dc_replace
+
         from tsdynamics.viz.spec import Animation as _Animation
         from tsdynamics.viz.spec import PlotKind
 
@@ -397,11 +399,10 @@ class Trajectory:
                 "trail_kind": None,
             }
             if isinstance(animate, _Animation):
-                animate.mode = "frames"
-                animate.head = False
-                animate.trail_kind = None
-                animate.trail_length = None
-                spec.animation = animate
+                # Use dataclasses.replace — never mutate the caller's Animation.
+                spec.animation = _dc_replace(
+                    animate, mode="frames", head=False, trail_kind=None, trail_length=None
+                )
             elif isinstance(animate, dict):
                 spec.animation = _Animation(**{**field_defaults, **animate})
             else:  # truthy (e.g. ``True``)

@@ -81,6 +81,19 @@ def plot(
     PlotSpec
         A single-panel spec (overlay) or a ``COMPOSITE`` spec (panelled).  The
         result renders itself — ``.plot()`` / ``.save(...)`` / ``.render(...)``.
+
+    Notes
+    -----
+    **Theme resolution order** for a composite figure (``layout="stack"`` /
+    ``"row"`` / ``"grid"``): renderers resolve the theme per panel as
+    ``panel.theme or composite.theme or get_theme(None)`` — the panel's own theme
+    wins, then the composite-level theme (set via
+    :meth:`~tsdynamics.viz.spec.PlotSpec.theme` on the returned spec), then
+    the active global default.  An overlay (single panel) uses
+    ``spec.theme or get_theme(None)`` directly.  To give every panel the same
+    theme, call ``result.theme("dark")`` on the composite result; to style
+    one panel differently, call ``.theme(...)`` on that panel before passing
+    it to ``plot``.
     """
     from tsdynamics.errors import InvalidParameterError
 

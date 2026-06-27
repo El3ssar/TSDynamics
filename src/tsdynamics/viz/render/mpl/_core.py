@@ -12,6 +12,23 @@ dispatch falls back to it whenever a partial backend (plotly / json / three.js)
 declines a spec.  Every 2-D :class:`~tsdynamics.viz.spec.PlotKind` must draw here
 without error.
 
+Theme and style application
+---------------------------
+The renderer follows the three-step contract from the design spec (§3):
+
+1. **Resolve the theme** (``spec.theme or get_theme(None)``) and apply it
+   figure-locally: background facecolor, default color cycle (from
+   ``theme.palette``), font family + size via per-artist kwargs (no global
+   ``rcParams`` mutation — the mutation is scoped to the figure), default
+   ``line_width`` / ``marker_size``, and default grid on/off.
+2. **Per-layer style**: ``normalize_style(layer.style, warn=False)`` (the
+   dispatcher already warned), then translate canonical keys to mpl kwargs,
+   OVERRIDING theme defaults.
+3. **Honor enriched dataclass fields**: :class:`~tsdynamics.viz.spec.Axis` (grid,
+   color, label_size, tick_size, tick_rotation, tickformat via
+   ``FormatStrFormatter``), :class:`~tsdynamics.viz.spec.Legend` (font_size, ncol,
+   frame), :class:`~tsdynamics.viz.spec.Colorbar` (label_size), and ``zorder``.
+
 The pieces
 ----------
 - :data:`KIND_PRESETS` — semantic kind → axis/aspect/colorbar defaults.  A
@@ -26,10 +43,10 @@ The pieces
   spec's semantic kind, draw every layer, apply axes / colorbar / legend /
   annotations, and return the figure.
 
-3-D marks (``LINE3D`` / ``SURFACE3D``) are drawn by a *follow-up* stream
-(VIZ-MPL-3D).  This core raises a clear :class:`NotImplementedError` for a 3-D
-mark so the capability declaration (``supports_3d=True``) routes 3-D here while
-the drawing is filled in later.
+3-D marks (``LINE3D`` / ``SURFACE3D``) are drawn by :mod:`._threed`.  This core
+raises a clear :class:`NotImplementedError` for a 3-D mark so the capability
+declaration (``supports_3d=True``) routes 3-D here while the drawing is filled in
+by that module.
 """
 
 from __future__ import annotations
@@ -40,6 +57,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ...spec import Annotation, Axis, Colorbar, Layer, PlotKind, PlotSpec
+from ...style import Theme, normalize_style
 from .. import normalize_kind
 from ..caps import RenderResult
 
@@ -127,20 +145,167 @@ def _preset_for(kind: PlotKind) -> _KindPreset:
 
 
 # ---------------------------------------------------------------------------
+# Theme application helpers
+# ---------------------------------------------------------------------------
+
+
+#: Mapping from canonical linestyle names (from normalize_style) to mpl spellings.
+_LINESTYLE_MPL: dict[str, str] = {
+    "solid": "solid",
+    "dashed": "dashed",
+    "dotted": "dotted",
+    "dashdot": "dashdot",
+}
+
+#: Mapping from canonical marker names (from normalize_style) to mpl spellings.
+_MARKER_MPL: dict[str, str] = {
+    "circle": "o",
+    "square": "s",
+    "triangle": "^",
+    "diamond": "D",
+    "cross": "+",
+    "x": "x",
+    "star": "*",
+    "none": "None",
+}
+
+
+def _resolve_theme(spec: PlotSpec) -> Theme:
+    """Return the effective theme for ``spec`` (its own theme or the global default)."""
+    return spec.resolved_theme
+
+
+def _apply_theme_to_figure(fig: Any, ax: Any, theme: Theme) -> None:
+    """Apply figure-level theme settings: background, font (figure-local, not rcParams).
+
+    This is a **figure-local** mutation: we set facecolor on the figure and axes
+    directly, and store font properties on the figure-level text objects.  We do
+    NOT mutate global ``rcParams`` — that would bleed into other figures created in
+    the same process.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+    theme : Theme
+        The resolved theme to apply.
+    """
+    if theme.background is not None:
+        fig.patch.set_facecolor(theme.background)
+        ax.set_facecolor(theme.background)
+
+    if theme.foreground is not None:
+        # Color the spines, tick labels, and axis labels
+        for spine in ax.spines.values():
+            spine.set_edgecolor(theme.foreground)
+        ax.tick_params(colors=theme.foreground, which="both")
+        ax.xaxis.label.set_color(theme.foreground)
+        ax.yaxis.label.set_color(theme.foreground)
+        if ax.get_title():
+            ax.title.set_color(theme.foreground)
+
+
+def _apply_theme_color_cycle(ax: Any, theme: Theme) -> None:
+    """Set the axes color cycle from the theme's palette."""
+    ax.set_prop_cycle(color=list(theme.palette))
+
+
+def _apply_theme_grid(ax: Any, spec: PlotSpec, theme: Theme) -> None:
+    """Apply grid visibility from Axis.grid (per-axis) falling back to theme.grid.
+
+    Also applies theme grid_color / grid_alpha when a grid is shown.
+    """
+    x_grid = spec.x.grid if spec.x.grid is not None else theme.grid
+    y_grid = spec.y.grid if spec.y.grid is not None else theme.grid
+
+    grid_kw: dict[str, Any] = {}
+    if theme.grid_color is not None:
+        grid_kw["color"] = theme.grid_color
+    if theme.grid_alpha is not None:
+        grid_kw["alpha"] = theme.grid_alpha
+
+    # matplotlib warns (and force-enables the grid) if line properties are
+    # supplied while the grid is being turned off, so only pass grid_kw when the
+    # grid is actually shown.
+    if x_grid or y_grid:
+        ax.grid(True, **grid_kw)
+    else:
+        ax.grid(False)
+    if x_grid != y_grid:
+        # Per-axis grid when they differ
+        if x_grid:
+            ax.grid(True, axis="x", **grid_kw)
+        else:
+            ax.grid(False, axis="x")
+        if y_grid:
+            ax.grid(True, axis="y", **grid_kw)
+        else:
+            ax.grid(False, axis="y")
+
+
+# ---------------------------------------------------------------------------
 # Style coercion helpers
 # ---------------------------------------------------------------------------
 
-#: Neutral style keys that map straight onto matplotlib artist kwargs.
-_PASSTHROUGH_STYLE = ("color", "alpha", "lw", "linewidth", "linestyle", "ls", "zorder")
 
+def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
+    """Return a dict of mpl-ready style kwargs from the layer's canonical style + theme defaults.
 
-def _line_kwargs(layer: Layer) -> dict[str, Any]:
-    """Collect matplotlib line kwargs from a layer's neutral style."""
-    style = layer.style
+    Calls ``normalize_style(warn=False)`` on the layer's raw style dict (the
+    dispatcher already emitted any consolidated warning), then maps canonical keys
+    to matplotlib-specific spellings.  Theme defaults for ``line_width`` /
+    ``marker_size`` are used only when the layer carries no override.
+
+    Parameters
+    ----------
+    layer : Layer
+    theme : Theme
+        The resolved theme (provides default line_width / marker_size).
+
+    Returns
+    -------
+    dict
+        Matplotlib artist kwargs (``color``, ``lw``, ``linestyle``, ``marker``,
+        ``ms``, ``alpha``, ``zorder``, …).
+    """
+    canon = normalize_style(layer.style, warn=False)
     kw: dict[str, Any] = {}
-    for key in _PASSTHROUGH_STYLE:
-        if key in style:
-            kw[key] = style[key]
+
+    if "color" in canon:
+        kw["color"] = canon["color"]
+    if "alpha" in canon:
+        kw["alpha"] = float(canon["alpha"])
+    if "zorder" in canon:
+        kw["zorder"] = int(canon["zorder"])
+    if "fill" in canon:
+        kw["fill"] = bool(canon["fill"])
+
+    # linewidth: canonical key → mpl "linewidth"
+    if "linewidth" in canon:
+        kw["linewidth"] = float(canon["linewidth"])
+    elif theme.line_width is not None:
+        kw["linewidth"] = float(theme.line_width)
+
+    # linestyle: canonical → mpl spelling
+    if "linestyle" in canon:
+        kw["linestyle"] = _LINESTYLE_MPL.get(str(canon["linestyle"]), canon["linestyle"])
+
+    # marker: canonical → mpl spelling
+    if "marker" in canon:
+        kw["marker"] = _MARKER_MPL.get(str(canon["marker"]), canon["marker"])
+
+    # markersize: canonical key → mpl "markersize"
+    if "markersize" in canon:
+        kw["markersize"] = float(canon["markersize"])
+    elif theme.marker_size is not None:
+        kw["markersize"] = float(theme.marker_size)
+
+    return kw
+
+
+def _line_kwargs(layer: Layer, theme: Theme) -> dict[str, Any]:
+    """Collect matplotlib line kwargs from a layer's style + theme defaults."""
+    kw = _canon_style(layer, theme)
     if layer.label is not None:
         kw["label"] = layer.label
     return kw
@@ -148,7 +313,8 @@ def _line_kwargs(layer: Layer) -> dict[str, Any]:
 
 def _resolve_cmap(spec: PlotSpec, layer: Layer, preset: _KindPreset) -> str | None:
     """Pick the colormap: layer style > spec colorbar > kind preset > backend default."""
-    cmap = layer.style.get("cmap")
+    canon = normalize_style(layer.style, warn=False)
+    cmap = canon.get("cmap")
     if cmap is not None:
         return str(cmap)
     if spec.colorbar is not None and spec.colorbar.cmap is not None:
@@ -181,10 +347,10 @@ def _make_norm(name: str | None, clim: tuple[float, float] | None) -> Any:
 # Mark drawing functions (one per layer mark)
 # ---------------------------------------------------------------------------
 
-#: A mark-drawing function takes ``(ax, layer, spec, preset)`` and draws the
+#: A mark-drawing function takes ``(ax, layer, spec, preset, theme)`` and draws the
 #: layer, returning a colour-mappable artist when it produced one (for the
 #: colorbar) else ``None``.
-_MarkDrawer = Callable[["Axes", Layer, PlotSpec, _KindPreset], "ScalarMappable | None"]
+_MarkDrawer = Callable[["Axes", Layer, PlotSpec, _KindPreset, Theme], "ScalarMappable | None"]
 
 
 def _channel(layer: Layer, name: str) -> np.ndarray | None:
@@ -196,7 +362,7 @@ def _channel(layer: Layer, name: str) -> np.ndarray | None:
 
 
 def _draw_line(
-    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
     """Draw a ``LINE`` mark — a poly-line, optionally colour-by-``c``.
 
@@ -213,8 +379,9 @@ def _draw_line(
         x = np.arange(y.size, dtype=float)
     c = _channel(layer, "c")
     if c is not None and c.size == y.size and y.size >= 2:
-        return _draw_colored_line(ax, x, y, c, spec, layer, preset)
-    ax.plot(x, y, **_line_kwargs(layer))
+        return _draw_colored_line(ax, x, y, c, spec, layer, preset, theme)
+    kw = _line_kwargs(layer, theme)
+    ax.plot(x, y, **kw)
     return None
 
 
@@ -226,6 +393,7 @@ def _draw_colored_line(
     spec: PlotSpec,
     layer: Layer,
     preset: _KindPreset,
+    theme: Theme,
 ) -> ScalarMappable:
     """Draw a line whose segments are coloured by ``c`` (a ``LineCollection``)."""
     from matplotlib.collections import LineCollection
@@ -238,9 +406,14 @@ def _draw_colored_line(
     # array as a list so the type checker sees the expected Sequence shape.
     lc = LineCollection(list(segments), cmap=cmap, norm=norm)
     lc.set_array(c[:-1])
-    lw = layer.style.get("lw", layer.style.get("linewidth"))
+    canon = normalize_style(layer.style, warn=False)
+    lw = canon.get("linewidth") or (theme.line_width if theme.line_width is not None else None)
     if lw is not None:
-        lc.set_linewidth(lw)
+        lc.set_linewidth(float(lw))
+    if "zorder" in canon:
+        lc.set_zorder(int(canon["zorder"]))
+    if "alpha" in canon:
+        lc.set_alpha(float(canon["alpha"]))
     if layer.label is not None:
         lc.set_label(layer.label)
     ax.add_collection(lc)
@@ -249,7 +422,7 @@ def _draw_colored_line(
 
 
 def _draw_scatter(
-    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
     """Draw a ``SCATTER`` / ``MARKERS`` mark, optionally colour-/size-mapped."""
     y = _channel(layer, "y")
@@ -260,24 +433,29 @@ def _draw_scatter(
         x = np.arange(y.size, dtype=float)
     c = _channel(layer, "c")
     size = _channel(layer, "size")
+    canon = normalize_style(layer.style, warn=False)
     kw: dict[str, Any] = {}
-    if "alpha" in layer.style:
-        kw["alpha"] = layer.style["alpha"]
-    if "marker" in layer.style:
-        kw["marker"] = layer.style["marker"]
+    if "alpha" in canon:
+        kw["alpha"] = float(canon["alpha"])
+    if "marker" in canon:
+        kw["marker"] = _MARKER_MPL.get(str(canon["marker"]), canon["marker"])
+    if "zorder" in canon:
+        kw["zorder"] = int(canon["zorder"])
     if layer.label is not None:
         kw["label"] = layer.label
     if size is not None:
         kw["s"] = size
-    elif "s" in layer.style:
-        kw["s"] = layer.style["s"]
+    elif "markersize" in canon:
+        kw["s"] = float(canon["markersize"])
+    elif theme.marker_size is not None:
+        kw["s"] = float(theme.marker_size)
     if c is not None:
         kw["c"] = c
         kw["cmap"] = _resolve_cmap(spec, layer, preset)
         kw["norm"] = _make_norm(_resolve_norm(spec, preset), spec.clim)
         return ax.scatter(x, y, **kw)
-    if "color" in layer.style:
-        kw["color"] = layer.style["color"]
+    if "color" in canon:
+        kw["color"] = canon["color"]
     ax.scatter(x, y, **kw)
     return None
 
@@ -324,7 +502,7 @@ def _make_discrete_cmap_norm(
 
 
 def _draw_image(
-    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
     """Draw an ``IMAGE`` mark from a 2-D ``z`` (or ``c``) channel.
 
@@ -401,7 +579,7 @@ def _image_extent(
 
 
 def _draw_histogram(
-    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
     """Draw a ``HISTOGRAM`` mark.
 
@@ -413,11 +591,12 @@ def _draw_histogram(
     if x is None:
         return None
     y = _channel(layer, "y")
+    canon = normalize_style(layer.style, warn=False)
     kw: dict[str, Any] = {}
-    if "color" in layer.style:
-        kw["color"] = layer.style["color"]
-    if "alpha" in layer.style:
-        kw["alpha"] = layer.style["alpha"]
+    if "color" in canon:
+        kw["color"] = canon["color"]
+    if "alpha" in canon:
+        kw["alpha"] = float(canon["alpha"])
     if layer.label is not None:
         kw["label"] = layer.label
     if y is not None:
@@ -430,7 +609,9 @@ def _draw_histogram(
     return None
 
 
-def _draw_bar(ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset) -> ScalarMappable | None:
+def _draw_bar(
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
+) -> ScalarMappable | None:
     """Draw a ``BAR`` mark — values ``y`` at positions ``x`` / ``cat``."""
     y = _channel(layer, "y")
     if y is None:
@@ -440,11 +621,12 @@ def _draw_bar(ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset) -> Sc
         x = _channel(layer, "x")
     if x is None:
         x = np.arange(y.size, dtype=float)
+    canon = normalize_style(layer.style, warn=False)
     kw: dict[str, Any] = {}
-    if "color" in layer.style:
-        kw["color"] = layer.style["color"]
-    if "alpha" in layer.style:
-        kw["alpha"] = layer.style["alpha"]
+    if "color" in canon:
+        kw["color"] = canon["color"]
+    if "alpha" in canon:
+        kw["alpha"] = float(canon["alpha"])
     if layer.label is not None:
         kw["label"] = layer.label
     ax.bar(x, y, **kw)
@@ -452,7 +634,7 @@ def _draw_bar(ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset) -> Sc
 
 
 def _draw_area(
-    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
     """Draw an ``AREA`` mark — a shaded ``lo <= hi`` band over ``x``.
 
@@ -472,9 +654,11 @@ def _draw_area(
         lo = y if y is not None else np.zeros_like(x)
     if hi is None:
         hi = y if y is not None else np.zeros_like(x)
-    kw: dict[str, Any] = {"alpha": layer.style.get("alpha", 0.3)}
-    if "color" in layer.style:
-        kw["color"] = layer.style["color"]
+    canon = normalize_style(layer.style, warn=False)
+    fill_alpha = canon.get("fillalpha", canon.get("alpha", 0.3))
+    kw: dict[str, Any] = {"alpha": float(fill_alpha)}
+    if "color" in canon:
+        kw["color"] = canon["color"]
     if layer.label is not None:
         kw["label"] = layer.label
     ax.fill_between(x, lo, hi, **kw)
@@ -486,7 +670,7 @@ def _draw_area(
 
 
 def _draw_errorbar(
-    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
     """Draw an ``ERRORBAR`` mark — ``y`` vs ``x`` with symmetric ``err`` bars."""
     y = _channel(layer, "y")
@@ -496,11 +680,16 @@ def _draw_errorbar(
     if x is None:
         x = np.arange(y.size, dtype=float)
     err = _channel(layer, "err")
-    kw: dict[str, Any] = {"fmt": layer.style.get("marker", "o")}
-    if "color" in layer.style:
-        kw["color"] = layer.style["color"]
-    if "alpha" in layer.style:
-        kw["alpha"] = layer.style["alpha"]
+    canon = normalize_style(layer.style, warn=False)
+    raw_marker = canon.get("marker", "o")
+    mpl_marker = (
+        _MARKER_MPL.get(str(raw_marker), raw_marker) if isinstance(raw_marker, str) else "o"
+    )
+    kw: dict[str, Any] = {"fmt": mpl_marker}
+    if "color" in canon:
+        kw["color"] = canon["color"]
+    if "alpha" in canon:
+        kw["alpha"] = float(canon["alpha"])
     if layer.label is not None:
         kw["label"] = layer.label
     ax.errorbar(x, y, yerr=err, **kw)
@@ -508,7 +697,7 @@ def _draw_errorbar(
 
 
 def _draw_quiver(
-    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
     """Draw a ``QUIVER`` mark — arrows ``(u, v)`` at positions ``(x, y)``.
 
@@ -521,25 +710,26 @@ def _draw_quiver(
     if x is None or y is None or u is None or v is None:
         return None
     c = _channel(layer, "c")
+    canon = normalize_style(layer.style, warn=False)
     if c is not None:
         cmap = _resolve_cmap(spec, layer, preset)
         norm = _make_norm(_resolve_norm(spec, preset), spec.clim)
         q = ax.quiver(x, y, u, v, c, cmap=cmap, norm=norm)
         return q
     kw: dict[str, Any] = {}
-    if "color" in layer.style:
-        kw["color"] = layer.style["color"]
+    if "color" in canon:
+        kw["color"] = canon["color"]
     ax.quiver(x, y, u, v, **kw)
     return None
 
 
 def _draw_3d_unsupported(
-    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset
+    ax: Axes, layer: Layer, spec: PlotSpec, preset: _KindPreset, theme: Theme
 ) -> ScalarMappable | None:
-    """Raise for a 3-D mark — drawn by the follow-up VIZ-MPL-3D stream."""
+    """Raise for a 3-D mark — drawn by :mod:`._threed`."""
     raise NotImplementedError(
         f"the matplotlib reference renderer draws 2-D marks only; {layer.kind.value!r} "
-        "(3-D) is added by the VIZ-MPL-3D stream."
+        "(3-D) is drawn by the _threed module."
     )
 
 
@@ -566,34 +756,108 @@ MARK_DISPATCH: dict[PlotKind, _MarkDrawer] = {
 # ---------------------------------------------------------------------------
 
 
-def _apply_axis(ax: Axes, axis: Axis, which: str) -> None:
-    """Apply one :class:`~tsdynamics.viz.spec.Axis` (label/scale/limits/ticks/categories)."""
+def _apply_axis(ax: Axes, axis: Axis, which: str, theme: Theme) -> None:
+    """Apply one :class:`~tsdynamics.viz.spec.Axis` — all fields including new ones.
+
+    Handles the existing fields (label, scale, limits, ticks, categories) plus the
+    new enriched fields: ``grid``, ``color``, ``label_size``, ``tick_size``,
+    ``tick_rotation``, and ``tickformat`` (now honored via
+    :class:`~matplotlib.ticker.FormatStrFormatter`).
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+    axis : Axis
+        The typed axis spec.
+    which : {"x", "y"}
+        Which axis to apply to.
+    theme : Theme
+        The resolved theme (provides foreground color, font sizes).
+    """
+    import matplotlib.ticker as mticker
+
     set_label = ax.set_xlabel if which == "x" else ax.set_ylabel
     set_scale = ax.set_xscale if which == "x" else ax.set_yscale
     set_lim = ax.set_xlim if which == "x" else ax.set_ylim
     set_ticks = ax.set_xticks if which == "x" else ax.set_yticks
     set_ticklabels = ax.set_xticklabels if which == "x" else ax.set_yticklabels
+    get_axis_obj = ax.xaxis if which == "x" else ax.yaxis
 
+    # Determine effective ink color: axis.color > theme.foreground > None
+    ink = axis.color if axis.color is not None else theme.foreground
+
+    # Label
     if axis.label:
-        set_label(axis.label)
+        label_kw: dict[str, Any] = {}
+        if ink is not None:
+            label_kw["color"] = ink
+        eff_label_size = axis.label_size if axis.label_size is not None else theme.font_size
+        if eff_label_size is not None:
+            label_kw["fontsize"] = float(eff_label_size)
+        set_label(axis.label, **label_kw)
+
+    # Scale
     if axis.scale in ("log", "symlog"):
         set_scale(axis.scale)
     elif axis.scale == "categorical" and axis.categories is not None:
         positions = np.arange(len(axis.categories), dtype=float)
         set_ticks(positions)
         set_ticklabels(list(axis.categories))
+
+    # Limits
     if axis.limits is not None:
         set_lim(axis.limits[0], axis.limits[1])
+
+    # Explicit ticks
     if axis.ticks is not None:
         set_ticks(list(axis.ticks))
 
+    # Tick formatter (honor tickformat — previously IGNORED)
+    if axis.tickformat is not None:
+        fmt_str = axis.tickformat
+        # Use StrMethodFormatter for Python str.format strings, else FormatStrFormatter
+        if "{" in fmt_str:
+            get_axis_obj.set_major_formatter(mticker.StrMethodFormatter(fmt_str))
+        else:
+            get_axis_obj.set_major_formatter(mticker.FormatStrFormatter(fmt_str))
 
-def _apply_axes(ax: Axes, spec: PlotSpec, preset: _KindPreset) -> None:
+    # Tick styling: size and rotation
+    tick_kw: dict[str, Any] = {}
+    if ink is not None:
+        tick_kw["colors"] = ink
+    eff_tick_size = axis.tick_size if axis.tick_size is not None else theme.font_size
+    if eff_tick_size is not None:
+        tick_kw["labelsize"] = float(eff_tick_size)
+    if axis.tick_rotation is not None:
+        tick_kw["rotation"] = float(axis.tick_rotation)
+    if tick_kw:
+        # mypy sees ax.tick_params axis as Literal['both','x','y']; which is already one of those
+        ax.tick_params(axis=which, **tick_kw)  # type: ignore[arg-type]
+
+    # Spine / axis label color (axis.color overrides theme.foreground)
+    if ink is not None:
+        if which == "x":
+            ax.spines["bottom"].set_edgecolor(ink)
+            ax.spines["top"].set_edgecolor(ink)
+        else:
+            ax.spines["left"].set_edgecolor(ink)
+            ax.spines["right"].set_edgecolor(ink)
+
+
+def _apply_axes(ax: Axes, spec: PlotSpec, preset: _KindPreset, theme: Theme) -> None:
     """Apply both axes, the title, and the aspect ratio to ``ax``."""
-    _apply_axis(ax, spec.x, "x")
-    _apply_axis(ax, spec.y, "y")
+    _apply_axis(ax, spec.x, "x", theme)
+    _apply_axis(ax, spec.y, "y", theme)
     if spec.title:
-        ax.set_title(spec.title)
+        title_kw: dict[str, Any] = {}
+        if theme.foreground is not None:
+            title_kw["color"] = theme.foreground
+        eff_title_size = theme.title_size if theme.title_size is not None else theme.font_size
+        if eff_title_size is not None:
+            title_kw["fontsize"] = float(eff_title_size)
+        if theme.font_family is not None:
+            title_kw["fontfamily"] = theme.font_family
+        ax.set_title(spec.title, **title_kw)
     aspect = spec.aspect if spec.aspect != "auto" else preset.aspect
     if aspect == "equal":
         ax.set_aspect("equal", adjustable="box")
@@ -604,25 +868,55 @@ def _apply_axes(ax: Axes, spec: PlotSpec, preset: _KindPreset) -> None:
 def _apply_colorbar(
     fig: Figure, ax: Axes, mappable: ScalarMappable | None, colorbar: Colorbar | None
 ) -> None:
-    """Attach a colorbar for ``mappable`` honouring a :class:`Colorbar` spec."""
+    """Attach a colorbar for ``mappable`` honouring a :class:`Colorbar` spec.
+
+    Now also honors ``colorbar.label_size`` (the new enriched field).
+    """
     if mappable is None or colorbar is None or not colorbar.show:
         return
     cb = fig.colorbar(mappable, ax=ax, location=colorbar.location)
     if colorbar.label:
-        cb.set_label(colorbar.label)
+        label_kw: dict[str, Any] = {}
+        if colorbar.label_size is not None:
+            label_kw["fontsize"] = float(colorbar.label_size)
+        cb.set_label(colorbar.label, **label_kw)
     if colorbar.ticks is not None:
         cb.set_ticks(list(colorbar.ticks))
+    if colorbar.tickformat is not None:
+        import matplotlib.ticker as mticker
+
+        fmt_str = colorbar.tickformat
+        if "{" in fmt_str:
+            cb.ax.yaxis.set_major_formatter(mticker.StrMethodFormatter(fmt_str))
+        else:
+            cb.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter(fmt_str))
+    if colorbar.label_size is not None:
+        cb.ax.tick_params(labelsize=float(colorbar.label_size))
 
 
-def _apply_legend(ax: Axes, spec: PlotSpec) -> None:
-    """Draw the per-layer legend when the spec asks for one and labels exist."""
+def _apply_legend(ax: Axes, spec: PlotSpec, theme: Theme) -> None:
+    """Draw the per-layer legend, honouring all enriched :class:`Legend` fields.
+
+    Now honors ``legend.font_size``, ``legend.ncol``, and ``legend.frame`` in
+    addition to the existing ``location`` / ``title``.
+    """
     if spec.legend is None or not spec.legend.show:
         return
     handles, labels = ax.get_legend_handles_labels()
     if not handles:
         return
-    title = spec.legend.title or None
-    ax.legend(loc=spec.legend.location, title=title)
+    leg = spec.legend
+    legend_kw: dict[str, Any] = {
+        "loc": leg.location,
+        "ncols": int(leg.ncol),
+        "frameon": bool(leg.frame),
+    }
+    if leg.title:
+        legend_kw["title"] = leg.title
+    eff_font_size = leg.font_size if leg.font_size is not None else theme.font_size
+    if eff_font_size is not None:
+        legend_kw["fontsize"] = float(eff_font_size)
+    ax.legend(**legend_kw)
 
 
 def _apply_annotations(ax: Axes, annotations: list[Annotation]) -> None:
@@ -654,9 +948,10 @@ def render(
     """Render a 2-D :class:`~tsdynamics.viz.spec.PlotSpec` to a matplotlib Figure.
 
     Builds a :class:`~matplotlib.figure.Figure` with the Agg canvas (no
-    ``pyplot``), draws every :class:`~tsdynamics.viz.spec.Layer` through
-    :data:`MARK_DISPATCH`, then applies the axes, colorbar, legend and
-    annotations the spec carries.  The spec's semantic kind is normalised through
+    ``pyplot``), resolves the spec's theme, applies it figure-locally (no global
+    ``rcParams`` mutation), draws every :class:`~tsdynamics.viz.spec.Layer` through
+    :data:`MARK_DISPATCH`, then applies the axes, colorbar, legend and annotations
+    the spec carries.  The spec's semantic kind is normalised through
     :func:`tsdynamics.viz.render.normalize_kind` so an alias / mark spelling
     resolves to the preset table.
 
@@ -664,8 +959,9 @@ def render(
     ----------
     spec : PlotSpec
         The backend-agnostic spec to draw.  Its per-call tweaks
-        (relabel/rescale/limits/ticks/colorize) are already baked into the typed
-        axes / colorbar, so honouring those honours the tweaks.
+        (relabel/rescale/limits/ticks/colorize/style/recolor/theme/…) are
+        already baked into the typed axes / colorbar / theme, so honouring those
+        honours the tweaks.
     figsize : tuple of float, optional
         ``(width, height)`` in inches; matplotlib's default when ``None``.
     **_kw
@@ -695,7 +991,18 @@ def render(
     if _threed.is_three_d(spec):
         return _threed.render_3d(spec, figsize=figsize)
 
-    fig = Figure(figsize=figsize)
+    # Resolve meta figsize / dpi
+    meta_figsize = spec.meta.get("figsize") if isinstance(spec.meta, dict) else None
+    if figsize is None and meta_figsize is not None:
+        w, h = meta_figsize
+        if w is not None and h is not None:
+            figsize = (float(w), float(h))
+
+    dpi: float | None = None
+    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
+        dpi = float(spec.meta["dpi"])
+
+    fig = Figure(figsize=figsize, dpi=dpi)
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(1, 1, 1)
     _draw_2d_panel(fig, ax, spec)
@@ -707,19 +1014,33 @@ def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec) -> None:
 
     The single-panel body of :func:`render`, factored out so the composite
     renderer can draw each panel into its own axes of a shared figure.
+
+    Step 1: resolve theme and apply it figure-locally (background, color cycle,
+    font, default grid).  Step 2: draw layers with normalized per-layer style
+    overriding theme defaults.  Step 3: apply enriched Axis/Legend/Colorbar fields.
     """
+    theme = _resolve_theme(spec)
     preset = _preset_for(normalize_kind(spec.kind))
+
+    # Step 1: apply theme presentation
+    _apply_theme_to_figure(fig, ax, theme)
+    _apply_theme_color_cycle(ax, theme)
+
+    # Step 2: draw layers
     mappable: ScalarMappable | None = None
     for layer in spec.layers:
         drawer = MARK_DISPATCH.get(PlotKind(layer.kind))
         if drawer is None:
             continue
-        produced = drawer(ax, layer, spec, preset)
+        produced = drawer(ax, layer, spec, preset, theme)
         if produced is not None:
             mappable = produced
-    _apply_axes(ax, spec, preset)
+
+    # Step 3: apply axes (grid, labels, ticks, tickformat, …), colorbar, legend, annotations
+    _apply_theme_grid(ax, spec, theme)
+    _apply_axes(ax, spec, preset, theme)
     _apply_colorbar(fig, ax, mappable, spec.colorbar)
-    _apply_legend(ax, spec)
+    _apply_legend(ax, spec, theme)
     _apply_annotations(ax, spec.annotations)
 
 
@@ -745,12 +1066,18 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     Each panel is a single-panel :class:`~tsdynamics.viz.spec.PlotSpec` drawn into
     its own axes (a 3-D panel gets an ``mplot3d`` axes); 2-D panels optionally
     share x / y per the :class:`~tsdynamics.viz.spec.Layout`.
+
+    A composite spec may carry its own ``theme``; each panel inherits it when the
+    panel has no theme of its own (``panel.theme or composite.theme or get_theme()``).
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     from mpl_toolkits import mplot3d  # noqa: F401 — registers the "3d" projection
 
     from . import _threed
+
+    # Inherit composite theme onto panels that have no own theme
+    composite_theme = _resolve_theme(spec)
 
     panels = spec.panels
     layout = spec.layout
@@ -763,13 +1090,26 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     rows, cols = _composite_grid(layout, len(panels))
     if figsize is None:
         figsize = (cols * 5.0, rows * 3.2)
-    fig = Figure(figsize=figsize)
+
+    # Composite-level dpi
+    dpi: float | None = None
+    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
+        dpi = float(spec.meta["dpi"])
+
+    fig = Figure(figsize=figsize, dpi=dpi)
     FigureCanvasAgg(fig)
+
+    # Apply composite-level background to the figure
+    if composite_theme.background is not None:
+        fig.patch.set_facecolor(composite_theme.background)
 
     share_x = bool(getattr(layout, "share_x", False))
     share_y = bool(getattr(layout, "share_y", False))
     anchor: Axes | None = None
     for i, panel in enumerate(panels):
+        # Resolve: panel theme > composite theme > global default
+        if panel._theme is None:
+            panel._theme = composite_theme
         threed = _threed.is_three_d(panel)
         sub_kw: dict[str, Any] = {}
         if not threed and anchor is not None:
@@ -785,7 +1125,12 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
             if anchor is None:
                 anchor = ax
     if spec.title:
-        fig.suptitle(spec.title)
+        title_kw: dict[str, Any] = {}
+        if composite_theme.foreground is not None:
+            title_kw["color"] = composite_theme.foreground
+        if composite_theme.title_size is not None:
+            title_kw["fontsize"] = float(composite_theme.title_size)
+        fig.suptitle(spec.title, **title_kw)
     return fig
 
 

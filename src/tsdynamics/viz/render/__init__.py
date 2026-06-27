@@ -2,8 +2,8 @@
 
 :meth:`tsdynamics.viz.spec.PlotSpec.render` delegates here.  This module turns a
 backend-agnostic :class:`~tsdynamics.viz.spec.PlotSpec` into a figure (or export
-payload) by choosing a registered renderer and **falling back** to the
-matplotlib reference renderer when the chosen backend cannot draw a spec's kind:
+payload) by choosing a registered renderer and **falling back** to the matplotlib
+reference renderer when the chosen backend cannot draw a spec's kind:
 
 - :func:`register_builtin_renderers` — lazily import and register the in-tree
   backends that are *installed* (matplotlib, plotly, json, three.js).  Called on
@@ -11,8 +11,16 @@ matplotlib reference renderer when the chosen backend cannot draw a spec's kind:
 - :func:`select_renderer` — resolve a backend by name (or pick a default) and,
   via the :class:`~tsdynamics.viz.render.caps.RendererCapabilities`, fall back to
   a capable backend (emitting :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`)
-  when the requested one declines the spec.
+  when the requested one declines the spec.  When no backend is named,
+  **matplotlib is the default** — it is the universal reference renderer and is
+  always preferred over partial backends (plotly, json, threejs).
 - :func:`render_spec` — the one entry point :meth:`PlotSpec.render` calls.
+  Before calling the renderer it emits **one consolidated**
+  :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` warning (via
+  :func:`~tsdynamics.viz.render.caps.style_honoring_gaps`) naming every style
+  key, animation knob, or theme/axis field that the chosen backend will ignore.
+  The renderer is then called with ``warn=False`` so it suppresses duplicate
+  per-key warnings.
 - :func:`normalize_kind` / :data:`_KIND_ALIAS` — canonicalise friendly / legacy
   kind spellings (the ``result.plot.phase()`` / ``.image()`` accessor strings) to
   real :class:`~tsdynamics.viz.spec.PlotKind` members, so a backend's
@@ -32,7 +40,13 @@ import warnings
 from typing import Any
 
 from ..spec import PlotKind, PlotSpec
-from .caps import Renderer, RendererCapabilities, RenderResult, VisualizationDegraded
+from .caps import (
+    Renderer,
+    RendererCapabilities,
+    RenderResult,
+    VisualizationDegraded,
+    style_honoring_gaps,
+)
 
 __all__ = [
     "Renderer",
@@ -43,13 +57,20 @@ __all__ = [
     "register_builtin_renderers",
     "render_spec",
     "select_renderer",
+    "style_honoring_gaps",
 ]
 
 #: The in-tree backend submodules dispatch tries to register, in preference
-#: order (matplotlib is the universal reference renderer / fallback).  Each is a
-#: ``tsdynamics.viz.render.<name>`` module exposing ``register(registry)``; a
-#: module that is absent (its stream has not landed) or whose plotting library is
-#: not installed is skipped.
+#: order.  Each is a ``tsdynamics.viz.render.<name>`` module exposing
+#: ``register(registry)``; a module that is absent (its stream has not landed)
+#: or whose plotting library is not installed is skipped.
+#:
+#: **Note on ordering:** matplotlib is listed first to make it the *default*
+#: drawing backend when no ``backend=`` is given — it is the universal reference
+#: renderer that draws every kind.  Plotly comes second so ``backend="plotly"``
+#: always works when available.  The data-export backends (json / threejs) are
+#: listed last; ``select_renderer`` skips them when no backend is named (they
+#: return a payload, not a figure).
 _BUILTIN_BACKENDS: tuple[str, ...] = ("mpl", "plotly", "json", "threejs")
 
 #: Friendly / legacy kind spellings → canonical :class:`~tsdynamics.viz.spec.PlotKind`.
@@ -71,6 +92,13 @@ _KIND_ALIAS: dict[str, PlotKind] = {
     "diagnostic": PlotKind.DIAGNOSTIC_CURVE,
     "scaling": PlotKind.SCALING_FIT,
 }
+
+#: The canonical name that ``select_renderer`` prefers as the default drawing
+#: backend (when no ``backend=`` is given and no capability-based selection
+#: already picked a winner).  Must be a name in ``_BUILTIN_BACKENDS``'s
+#: ``register(registry)`` hook.  Matplotlib is preferred because it is the
+#: universal reference renderer that draws every kind.
+_PREFERRED_DEFAULT_BACKEND = "matplotlib"
 
 
 def normalize_kind(kind: PlotKind | str) -> PlotKind:
@@ -103,6 +131,11 @@ def register_builtin_renderers(*, strict: bool = False) -> list[str]:
     Idempotent — a backend already in the registry is left untouched — and only
     ever called from :func:`render_spec` (never at import), so importing
     TSDynamics never pulls in a plotting library.
+
+    After registration the registry order is normalised so that the preferred
+    default backend (matplotlib) is **first** in iteration order when present,
+    giving :func:`select_renderer` a deterministic default independent of which
+    backends are installed or how many times this function is called.
     """
     from tsdynamics import registry
 
@@ -122,7 +155,36 @@ def register_builtin_renderers(*, strict: bool = False) -> list[str]:
                 if strict:
                     raise
                 warnings.warn(f"failed to register viz backend {name!r}: {exc}", stacklevel=2)
+    # Normalise iteration order: ensure the preferred default backend is first
+    # so that select_renderer(no-backend) always picks it when available.
+    _seat_preferred_first(registry.renderers)
     return [n for n in registry.renderers.names() if n not in before]
+
+
+def _seat_preferred_first(renderers: Any) -> None:
+    """Move the preferred default backend to the *front* of iteration order.
+
+    Idempotent — if the preferred backend is already first (or not registered at
+    all) this is a no-op.  Calling this after every ``register_builtin_renderers``
+    makes the default selection deterministic regardless of registration order.
+    """
+    names = renderers.names()
+    if not names or names[0] == _PREFERRED_DEFAULT_BACKEND:
+        return
+    if _PREFERRED_DEFAULT_BACKEND not in names:
+        return
+    renderer = renderers.get(_PREFERRED_DEFAULT_BACKEND)
+    renderers.unregister(_PREFERRED_DEFAULT_BACKEND)
+    # Re-insert at the front: unregister removes it; re-registering now puts it
+    # at the end, so we unregister everything after it and re-add them after.
+    # Simpler: collect all current names after removal, prepend preferred, rebuild.
+    remaining_names = renderers.names()
+    remaining = [(n, renderers.get(n)) for n in remaining_names]
+    for n in remaining_names:
+        renderers.unregister(n)
+    renderers.register(_PREFERRED_DEFAULT_BACKEND, renderer)
+    for n, r in remaining:
+        renderers.register(n, r)
 
 
 def _capabilities_of(renderer: Any) -> RendererCapabilities | None:
@@ -144,15 +206,20 @@ def _can_render(renderer: Any, spec: PlotSpec) -> bool:
 def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, Any]:
     """Choose the ``(name, renderer)`` to draw ``spec``, with capability fallback.
 
+    When ``backend`` is ``None`` (the default), **matplotlib is preferred** — it
+    is the universal reference renderer that draws every kind and is always
+    registered first after :func:`register_builtin_renderers`.  If matplotlib is
+    not installed, the first registered drawing backend that can handle the spec
+    is chosen (data-export backends such as ``json`` / ``threejs`` are skipped in
+    the default selection).
+
     Parameters
     ----------
     spec : PlotSpec
         The spec to render (its kind / 3-D-ness drive the capability check).
     backend : str, optional
-        A requested backend name.  ``None`` picks the first registered backend
-        that can draw the spec (the registration order in
-        :data:`_BUILTIN_BACKENDS` puts matplotlib first, so it is the default
-        when present).
+        A requested backend name.  ``None`` picks **matplotlib** when available,
+        otherwise the first registered drawing backend that can draw the spec.
 
     Returns
     -------
@@ -197,23 +264,35 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
         )
         return fallback
 
-    # Default (no-backend) selection: a data-export backend (``json`` / ``threejs``
-    # — ``data_export=True``) returns a payload, not a figure, so it must never be
-    # the default for ``result.plot()`` / ``spec.render()``.  Prefer a *drawing*
-    # backend first; fall to a data-export one only if nothing else can render.
-    chosen = _first_capable(spec, renderers, skip_data_export=True)
+    # Default (no-backend) selection:
+    # 1. Prefer the canonical default backend (matplotlib) if it is registered
+    #    and can draw the spec — deterministic, independent of registry order.
+    if _PREFERRED_DEFAULT_BACKEND in renderers:
+        preferred = renderers.get(_PREFERRED_DEFAULT_BACKEND)
+        if _can_render(preferred, spec):
+            return _PREFERRED_DEFAULT_BACKEND, preferred
+
+    # 2. Fall through to capability-based selection among drawing backends
+    #    (data-export backends return payloads, not figures — skip them).
+    chosen = _first_capable(
+        spec, renderers, skip_data_export=True, exclude=_PREFERRED_DEFAULT_BACKEND
+    )
     if chosen is None:
-        chosen = _first_capable(spec, renderers)
+        chosen = _first_capable(spec, renderers, exclude=_PREFERRED_DEFAULT_BACKEND)
     if chosen is not None:
         return chosen
-    # No backend declares it can draw this; use the first registered and let it
-    # try (a capability-less universal renderer would have matched above).
+
+    # 3. Last resort: use the first registered backend and let it try.
     name = renderers.names()[0]
     return name, renderers.get(name)
 
 
 def _first_capable(
-    spec: PlotSpec, renderers: Any, *, exclude: str | None = None, skip_data_export: bool = False
+    spec: PlotSpec,
+    renderers: Any,
+    *,
+    exclude: str | None = None,
+    skip_data_export: bool = False,
 ) -> tuple[str, Any] | None:
     """Return the first ``(name, renderer)`` that can draw ``spec``, else ``None``.
 
@@ -241,14 +320,19 @@ def render_spec(spec: PlotSpec, backend: str | None = None, **backend_kw: Any) -
 
     Registers the installed in-tree backends (lazily, once), selects one by name
     or by capability (falling back when the requested backend declines the spec),
-    and calls it, forwarding ``backend_kw``.
+    emits **one consolidated** :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`
+    warning for any style keys / animation knobs / theme fields the chosen backend
+    will ignore (via :func:`~tsdynamics.viz.render.caps.style_honoring_gaps`), then
+    calls the renderer with ``warn=False`` so it suppresses duplicate per-key
+    warnings.
 
     Parameters
     ----------
     spec : PlotSpec
         The spec to render.
     backend : str, optional
-        Backend name; ``None`` selects the default capable backend.
+        Backend name; ``None`` selects **matplotlib** (the default), or the first
+        capable drawing backend when matplotlib is not installed.
     **backend_kw
         Forwarded to the chosen renderer callable.
 
@@ -266,7 +350,18 @@ def render_spec(spec: PlotSpec, backend: str | None = None, **backend_kw: Any) -
         If ``backend`` names an unregistered backend.
     """
     register_builtin_renderers()
-    _name, renderer = select_renderer(spec, backend)
+    chosen_name, renderer = select_renderer(spec, backend)
+
+    # Emit ONE consolidated degradation warning for all the knobs the chosen
+    # backend will silently ignore (style keys, animation, theme/axis fields).
+    gaps = style_honoring_gaps(spec, chosen_name)
+    if gaps:
+        warnings.warn(
+            f"{chosen_name}: ignoring {', '.join(gaps)}",
+            VisualizationDegraded,
+            stacklevel=2,
+        )
+
     return renderer(spec, **backend_kw)
 
 

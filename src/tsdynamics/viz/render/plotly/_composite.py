@@ -42,7 +42,7 @@ import numpy as np
 
 from ...spec import PlotSpec
 from . import _threed
-from ._core import _build_2d_layout, build_2d_traces
+from ._core import _build_2d_layout, _theme_layout, build_2d_traces
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
@@ -181,6 +181,14 @@ def render_composite(
     # be ambiguous, so leave plotly's per-trace legend entries off by default
     # (each panel's title carries its identity).
     fig.update_layout(showlegend=False)
+
+    # Apply theme-level presentation to the composite figure (background, font).
+    # The composite spec may carry its own theme; panels may override per-panel.
+    composite_theme = spec.resolved_theme
+    theme_layout = _theme_layout(composite_theme)
+    if theme_layout:
+        fig.update_layout(**theme_layout)
+
     if spec.title:
         fig.update_layout(title={"text": spec.title})
 

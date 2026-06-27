@@ -24,7 +24,9 @@ The pieces
   normalise the spec's semantic kind, add every layer's traces, apply axes
   (label / scale / limits / categories), colorbar (cmap / clim), legend, and the
   ``vline`` / ``hline`` / ``text`` / ``span`` annotations (as layout shapes /
-  annotations).  Returns the :class:`~plotly.graph_objects.Figure`.
+  annotations).  The spec's resolved :class:`~tsdynamics.viz.style.Theme` is
+  applied to the figure layout (``paper_bgcolor`` / ``plot_bgcolor``,
+  ``layout.font``, axis ``showgrid``).  Returns the :class:`~plotly.graph_objects.Figure`.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ...spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+from ...style import Theme, normalize_style
 from .. import normalize_kind
 
 if TYPE_CHECKING:
@@ -43,6 +46,62 @@ if TYPE_CHECKING:
 
 
 __all__ = ["MARK_DISPATCH", "build_2d_traces", "render"]
+
+
+# ---------------------------------------------------------------------------
+# Canonical style → plotly mapping helpers
+# ---------------------------------------------------------------------------
+
+#: Canonical linestyle names → plotly ``dash`` names.
+_DASH_MAP: dict[str, str] = {
+    "solid": "solid",
+    "dashed": "dash",
+    "dotted": "dot",
+    "dashdot": "dashdot",
+    # legacy / mpl short spellings (kept for layers that still carry them)
+    "-": "solid",
+    "--": "dash",
+    ":": "dot",
+    "-.": "dashdot",
+}
+
+#: Canonical marker-shape names → plotly marker symbols.
+#: Unknown → ``"circle"`` (the dispatcher warns via §5.2 honest negotiation).
+_MARKER_MAP: dict[str, str] = {
+    "circle": "circle",
+    "square": "square",
+    "triangle": "triangle-up",
+    "diamond": "diamond",
+    "cross": "cross",
+    "x": "x",
+    "star": "star",
+    "none": "circle",  # plotly has no "none" — smallest visible marker
+    # legacy / mpl single-char spellings (style.py canonicalises, but a layer
+    # that bypassed normalize_style may still carry these)
+    "o": "circle",
+    ".": "circle",
+    "s": "square",
+    "^": "triangle-up",
+    "v": "triangle-down",
+    "d": "diamond",
+    "D": "diamond",
+    "+": "cross",
+    "*": "star",
+}
+
+
+def _resolve_theme(spec: PlotSpec) -> Theme:
+    """Return the effective theme for ``spec`` (spec-level or active global)."""
+    return spec.resolved_theme
+
+
+def _canon_style(layer: Layer) -> dict[str, Any]:
+    """Return the normalized (canonical-key) style dict for a layer.
+
+    Renderers call with ``warn=False`` — the dispatcher already emitted the
+    consolidated :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`.
+    """
+    return normalize_style(layer.style, warn=False)
 
 
 # ---------------------------------------------------------------------------
@@ -58,61 +117,39 @@ def _channel(layer: Layer, name: str) -> np.ndarray | None:
     return np.asarray(arr, dtype=float)
 
 
-def _line_style(layer: Layer) -> dict[str, Any]:
-    """Build a plotly ``line`` dict from a layer's neutral style keys."""
-    style = layer.style
+def _line_style(layer: Layer, theme: Theme | None = None) -> dict[str, Any]:
+    """Build a plotly ``line`` dict from a layer's canonical style keys.
+
+    Falls back to theme-level ``line_width`` when no per-layer width is set.
+    """
+    style = _canon_style(layer)
     line: dict[str, Any] = {}
     color = style.get("color")
     if color is not None:
         line["color"] = color
-    width = style.get("lw", style.get("linewidth"))
+    width = style.get("linewidth")
+    if width is None and theme is not None and theme.line_width is not None:
+        width = theme.line_width
     if width is not None:
-        line["width"] = width
-    dash = _DASH_MAP.get(str(style.get("linestyle", style.get("ls", ""))))
+        line["width"] = float(width)
+    dash = _DASH_MAP.get(str(style.get("linestyle", "")))
     if dash is not None:
         line["dash"] = dash
     return line
 
 
-#: matplotlib-flavoured linestyle spellings → plotly ``dash`` names.
-_DASH_MAP: dict[str, str] = {
-    "-": "solid",
-    "solid": "solid",
-    "--": "dash",
-    "dashed": "dash",
-    ":": "dot",
-    "dotted": "dot",
-    "-.": "dashdot",
-    "dashdot": "dashdot",
-}
-
-
 def _marker_symbol(style: dict[str, Any]) -> str | None:
-    """Map a matplotlib-flavoured marker code to a plotly symbol, if recognised."""
+    """Map a canonical marker name to a plotly symbol (``None`` ⇒ omit from trace)."""
     marker = style.get("marker")
     if marker is None:
         return None
     return _MARKER_MAP.get(str(marker), "circle")
 
 
-#: matplotlib marker codes → plotly marker symbols (unknown → ``"circle"``).
-_MARKER_MAP: dict[str, str] = {
-    "o": "circle",
-    ".": "circle",
-    "s": "square",
-    "^": "triangle-up",
-    "v": "triangle-down",
-    "x": "x",
-    "+": "cross",
-    "d": "diamond",
-    "D": "diamond",
-    "*": "star",
-}
-
-
 def _colorscale(spec: PlotSpec, layer: Layer) -> str | None:
     """Pick the plotly colorscale: layer style > spec colorbar cmap > ``None``."""
-    cmap = layer.style.get("cmap")
+    style = _canon_style(layer)
+    cmap = style.get("cmap")
     if cmap is not None:
         return str(cmap)
     if spec.colorbar is not None and spec.colorbar.cmap is not None:
@@ -130,6 +167,8 @@ def _colorbar_dict(spec: PlotSpec) -> dict[str, Any] | None:
         out["title"] = cbar.label
     if cbar.ticks is not None:
         out["tickvals"] = [float(t) for t in cbar.ticks]
+    if cbar.label_size is not None:
+        out["titlefont"] = {"size": float(cbar.label_size)}
     return out
 
 
@@ -139,6 +178,19 @@ def _clim_kwargs(spec: PlotSpec) -> dict[str, float]:
         return {}
     lo, hi = spec.clim
     return {"cmin": float(lo), "cmax": float(hi)}
+
+
+def _opacity(style: dict[str, Any]) -> float:
+    """Resolve the ``alpha`` / ``opacity`` canonical key (default 1.0)."""
+    return float(style.get("alpha", 1.0))
+
+
+def _marker_size(style: dict[str, Any], theme: Theme | None = None) -> float | None:
+    """Resolve the ``markersize`` canonical key, falling back to theme default."""
+    sz = style.get("markersize")
+    if sz is None and theme is not None:
+        sz = theme.marker_size
+    return float(sz) if sz is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +221,8 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     if xy is None:
         return []
     x, y = xy
+    style = _canon_style(layer)
+    theme = _resolve_theme(spec)
     c = _channel(layer, "c")
     if c is not None and c.size == y.size:
         # Colour-by-``c``: plotly colours markers, not line segments, so render a
@@ -187,11 +241,11 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
                 x=x,
                 y=y,
                 mode="lines+markers",
-                line=_line_style(layer),
+                line=_line_style(layer, theme),
                 marker=marker,
                 name=layer.label,
                 showlegend=layer.label is not None,
-                opacity=layer.style.get("alpha", 1.0),
+                opacity=_opacity(style),
             )
         ]
     return [
@@ -199,10 +253,10 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             x=x,
             y=y,
             mode="lines",
-            line=_line_style(layer),
+            line=_line_style(layer, theme),
             name=layer.label,
             showlegend=layer.label is not None,
-            opacity=layer.style.get("alpha", 1.0),
+            opacity=_opacity(style),
         )
     ]
 
@@ -215,16 +269,20 @@ def _build_scatter(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     if xy is None:
         return []
     x, y = xy
+    style = _canon_style(layer)
+    theme = _resolve_theme(spec)
     c = _channel(layer, "c")
-    size = _channel(layer, "size")
+    size_arr = _channel(layer, "size")
     marker: dict[str, Any] = {}
-    symbol = _marker_symbol(layer.style)
+    symbol = _marker_symbol(style)
     if symbol is not None:
         marker["symbol"] = symbol
-    if size is not None:
-        marker["size"] = size
-    elif "s" in layer.style:
-        marker["size"] = layer.style["s"]
+    if size_arr is not None:
+        marker["size"] = size_arr
+    else:
+        ms = _marker_size(style, theme)
+        if ms is not None:
+            marker["size"] = ms
     if c is not None:
         marker["color"] = c
         marker["colorscale"] = _colorscale(spec, layer)
@@ -233,8 +291,8 @@ def _build_scatter(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         cbar = _colorbar_dict(spec)
         if cbar is not None:
             marker["colorbar"] = cbar
-    elif "color" in layer.style:
-        marker["color"] = layer.style["color"]
+    elif "color" in style:
+        marker["color"] = style["color"]
     return [
         go.Scatter(
             x=x,
@@ -243,7 +301,7 @@ def _build_scatter(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             marker=marker,
             name=layer.label,
             showlegend=layer.label is not None,
-            opacity=layer.style.get("alpha", 1.0),
+            opacity=_opacity(style),
         )
     ]
 
@@ -289,8 +347,9 @@ def _build_histogram(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     if x is None:
         return []
     y = _channel(layer, "y")
-    color = layer.style.get("color")
-    opacity = layer.style.get("alpha", 1.0)
+    style = _canon_style(layer)
+    color = style.get("color")
+    opacity = _opacity(style)
     if y is not None:
         return [
             go.Bar(
@@ -325,7 +384,8 @@ def _build_bar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         x = _channel(layer, "x")
     if x is None:
         x = np.arange(y.size, dtype=float)
-    color = layer.style.get("color")
+    style = _canon_style(layer)
+    color = style.get("color")
     return [
         go.Bar(
             x=x,
@@ -333,7 +393,7 @@ def _build_bar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             name=layer.label,
             showlegend=layer.label is not None,
             marker={"color": color} if color is not None else {},
-            opacity=layer.style.get("alpha", 1.0),
+            opacity=_opacity(style),
         )
     ]
 
@@ -360,8 +420,9 @@ def _build_area(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         lo = y if y is not None else np.zeros_like(x)
     if hi is None:
         hi = y if y is not None else np.zeros_like(x)
-    color = layer.style.get("color")
-    alpha = layer.style.get("alpha", 0.3)
+    style = _canon_style(layer)
+    color = style.get("color")
+    alpha = _opacity(style) if "alpha" in layer.style else 0.3
     traces: list[go.BaseTraceType] = [
         go.Scatter(x=x, y=lo, mode="lines", line={"width": 0}, showlegend=False, hoverinfo="skip"),
         go.Scatter(
@@ -376,8 +437,11 @@ def _build_area(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             showlegend=layer.label is not None,
         ),
     ]
+    theme = _resolve_theme(spec)
     if y is not None and "lo" in layer.data:
-        traces.append(go.Scatter(x=x, y=y, mode="lines", line=_line_style(layer), showlegend=False))
+        traces.append(
+            go.Scatter(x=x, y=y, mode="lines", line=_line_style(layer, theme), showlegend=False)
+        )
     return traces
 
 
@@ -393,12 +457,17 @@ def _build_errorbar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
         x = np.arange(y.size, dtype=float)
     err = _channel(layer, "err")
     error_y = {"type": "data", "array": err, "visible": True} if err is not None else None
+    style = _canon_style(layer)
+    theme = _resolve_theme(spec)
     marker: dict[str, Any] = {}
-    symbol = _marker_symbol(layer.style)
+    symbol = _marker_symbol(style)
     if symbol is not None:
         marker["symbol"] = symbol
-    if "color" in layer.style:
-        marker["color"] = layer.style["color"]
+    if "color" in style:
+        marker["color"] = style["color"]
+    ms = _marker_size(style, theme)
+    if ms is not None:
+        marker["size"] = ms
     return [
         go.Scatter(
             x=x,
@@ -408,7 +477,7 @@ def _build_errorbar(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             error_y=error_y,
             name=layer.label,
             showlegend=layer.label is not None,
-            opacity=layer.style.get("alpha", 1.0),
+            opacity=_opacity(style),
         )
     ]
 
@@ -434,7 +503,8 @@ def _build_quiver(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     seg_y = np.empty(y.size * 3)
     seg_x[0::3], seg_x[1::3], seg_x[2::3] = x, xe, np.nan
     seg_y[0::3], seg_y[1::3], seg_y[2::3] = y, ye, np.nan
-    color = layer.style.get("color")
+    style = _canon_style(layer)
+    color = style.get("color")
     return [
         go.Scatter(
             x=seg_x,
@@ -475,11 +545,22 @@ MARK_DISPATCH: dict[PlotKind, _MarkBuilder] = {
 _AXIS_TYPE: dict[str, str] = {"linear": "linear", "log": "log", "symlog": "linear"}
 
 
-def _axis_layout(axis: Axis) -> dict[str, Any]:
-    """Build a plotly axis-layout dict from a typed :class:`Axis`."""
+def _axis_layout(axis: Axis, theme: Theme | None = None) -> dict[str, Any]:
+    """Build a plotly axis-layout dict from a typed :class:`Axis`.
+
+    Honors the enriched fields added in the styling redesign:
+    ``grid`` (per-axis grid visibility, overrides theme default),
+    ``color`` (axis ink — spine, ticks, labels), ``label_size``, ``tick_size``,
+    ``tick_rotation``.  When a field is ``None`` the theme / plotly default wins.
+    """
     out: dict[str, Any] = {}
     if axis.label:
-        out["title"] = {"text": axis.label}
+        title: dict[str, Any] = {"text": axis.label}
+        if axis.label_size is not None:
+            title["font"] = {"size": float(axis.label_size)}
+        elif theme is not None and theme.font_size is not None:
+            title["font"] = {"size": float(theme.font_size)}
+        out["title"] = title
     if axis.scale == "categorical" and axis.categories is not None:
         out["type"] = "category"
         out["tickmode"] = "array"
@@ -498,6 +579,46 @@ def _axis_layout(axis: Axis) -> dict[str, Any]:
         out["tickvals"] = [float(t) for t in axis.ticks]
     if axis.tickformat is not None:
         out["tickformat"] = axis.tickformat
+
+    # ── enriched styling fields ──────────────────────────────────────────────
+    # Grid visibility: Axis.grid > theme.grid > plotly default (off).
+    grid_on = axis.grid
+    if grid_on is None and theme is not None:
+        grid_on = theme.grid
+    if grid_on is not None:
+        out["showgrid"] = bool(grid_on)
+        if grid_on and theme is not None:
+            if theme.grid_color is not None:
+                out["gridcolor"] = theme.grid_color
+            if theme.grid_alpha is not None:
+                # plotly uses ``gridwidth`` for grid line width, not alpha; express
+                # alpha as opacity on the *line color* via rgba when we have a hex.
+                # For simplicity store it as a layout meta and apply via ``gridcolor``
+                # only if we can.  The safe path: leave plotly to alpha-blend normally.
+                pass  # grid_alpha honored by mpl; plotly gridcolor handles it visually
+
+    # Axis ink / color (spine, label, ticks).
+    ink = axis.color
+    if ink is None and theme is not None:
+        ink = theme.foreground
+    if ink is not None:
+        out["tickcolor"] = ink
+        out["linecolor"] = ink
+        out["title"] = {
+            **out.get("title", {}),
+            "font": {**out.get("title", {}).get("font", {}), "color": ink},
+        }
+
+    # Tick font size.
+    if axis.tick_size is not None:
+        out["tickfont"] = {"size": float(axis.tick_size)}
+    elif theme is not None and theme.font_size is not None:
+        out["tickfont"] = {"size": float(theme.font_size)}
+
+    # Tick label rotation.
+    if axis.tick_rotation is not None:
+        out["tickangle"] = float(axis.tick_rotation)
+
     return out
 
 
@@ -571,6 +692,69 @@ def _span_shape(axis: str, span: tuple[float, float], style: dict[str, Any]) -> 
 
 
 # ---------------------------------------------------------------------------
+# Theme → plotly layout translation
+# ---------------------------------------------------------------------------
+
+
+def _theme_layout(theme: Theme) -> dict[str, Any]:
+    """Build the theme portion of a plotly ``update_layout`` dict.
+
+    Translates:
+    - ``background`` → ``paper_bgcolor`` + ``plot_bgcolor``
+    - ``foreground`` → ``font.color``
+    - ``font_family`` → ``font.family``
+    - ``font_size`` → ``font.size``
+    """
+    layout: dict[str, Any] = {}
+    if theme.background is not None:
+        layout["paper_bgcolor"] = theme.background
+        layout["plot_bgcolor"] = theme.background
+    font: dict[str, Any] = {}
+    if theme.foreground is not None:
+        font["color"] = theme.foreground
+    if theme.font_family is not None:
+        font["family"] = theme.font_family
+    if theme.font_size is not None:
+        font["size"] = float(theme.font_size)
+    if font:
+        layout["font"] = font
+    return layout
+
+
+def _legend_layout(spec: PlotSpec, theme: Theme) -> dict[str, Any]:
+    """Build the legend portion of a plotly ``update_layout`` dict.
+
+    Honors :class:`~tsdynamics.viz.spec.Legend` enriched fields:
+    ``font_size`` (legend entry font), ``ncol`` (``traceorder`` approximation),
+    ``frame`` (``bgcolor`` / ``bordercolor`` to toggle the box).
+    """
+    leg = spec.legend
+    if leg is None or not leg.show:
+        return {}
+    out: dict[str, Any] = {}
+    if leg.title:
+        out["title"] = {"text": leg.title}
+    font: dict[str, Any] = {}
+    if leg.font_size is not None:
+        font["size"] = float(leg.font_size)
+    elif theme.font_size is not None:
+        font["size"] = float(theme.font_size)
+    if theme.foreground is not None:
+        font["color"] = theme.foreground
+    if font:
+        out["font"] = font
+    # ncol: plotly does not have a direct "columns" knob; it mirrors an implicit
+    # horizontal orientation when ncol > 1.
+    if leg.ncol > 1:
+        out["orientation"] = "h"
+    # frame: suppress the legend box via bgcolor/bordercolor transparency.
+    if not leg.frame:
+        out["bgcolor"] = "rgba(0,0,0,0)"
+        out["bordercolor"] = "rgba(0,0,0,0)"
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 2-D panel builders (factored so the composite renderer can reuse them)
 # ---------------------------------------------------------------------------
 
@@ -598,10 +782,12 @@ def _build_2d_layout(spec: PlotSpec) -> dict[str, Any]:
     the typed x / y axes (with an ``"equal"`` aspect mapped to a constrained
     y-axis and hidden axes honoured), the legend, the title, and the
     ``vline`` / ``hline`` / ``text`` / ``span`` annotations as layout shapes /
-    annotations.
+    annotations.  The resolved :class:`~tsdynamics.viz.style.Theme` is applied
+    (background, font, grid defaults) before the per-axis overrides.
     """
-    xaxis = _axis_layout(spec.x)
-    yaxis = _axis_layout(spec.y)
+    theme = _resolve_theme(spec)
+    xaxis = _axis_layout(spec.x, theme)
+    yaxis = _axis_layout(spec.y, theme)
     if spec.aspect == "equal":
         yaxis["scaleanchor"] = "x"
         yaxis["scaleratio"] = 1
@@ -615,10 +801,18 @@ def _build_2d_layout(spec: PlotSpec) -> dict[str, Any]:
         "yaxis": yaxis,
         "showlegend": show_legend,
     }
+    # Apply theme-level presentation.
+    layout.update(_theme_layout(theme))
+
     if spec.title:
-        layout["title"] = {"text": spec.title}
-    if show_legend and spec.legend is not None and spec.legend.title:
-        layout["legend"] = {"title": {"text": spec.legend.title}}
+        title_dict: dict[str, Any] = {"text": spec.title}
+        if theme.title_size is not None:
+            title_dict["font"] = {"size": float(theme.title_size)}
+        layout["title"] = title_dict
+    if show_legend:
+        leg_dict = _legend_layout(spec, theme)
+        if leg_dict:
+            layout["legend"] = leg_dict
 
     shapes, texts = _annotation_shapes(spec.annotations)
     if shapes:
@@ -653,34 +847,37 @@ def render(
     resolves to a real kind), and an ``"equal"`` aspect maps to a constrained
     y-axis so phase portraits / sections / images keep their geometry.
 
+    The resolved :class:`~tsdynamics.viz.style.Theme` (``spec.resolved_theme``:
+    the spec's own theme or the active global default) is applied to the plotly
+    layout:
+    ``paper_bgcolor`` / ``plot_bgcolor``, ``layout.font`` (family + size),
+    axis ``showgrid`` (with ``gridcolor``).  Per-layer canonical style keys
+    (``linewidth`` → ``line.width``, ``linestyle`` → ``line.dash``,
+    ``marker`` → ``marker.symbol``, ``markersize`` → ``marker.size``,
+    ``alpha`` → ``opacity``, ``cmap`` → ``colorscale``) are translated from
+    their canonical names to plotly idioms.  Legend enriched fields
+    (``font_size``, ``ncol``, ``frame``) are honored where plotly allows.
+
     Parameters
     ----------
     spec : PlotSpec
         The backend-agnostic spec to draw.  Its per-call tweaks
-        (relabel / rescale / limits / ticks / colorize) are already baked into the
-        typed axes / colorbar, so honouring those honours the tweaks.
+        (relabel / rescale / limits / ticks / colorize / style / theme) are
+        already baked into the typed axes / colorbar / theme / layers, so
+        honouring those honours the tweaks.
     html : bool, optional
         When ``True`` return the self-contained interactive **HTML string**
-        instead of the live figure (the embeddable fragment from
-        :func:`tsdynamics.viz.render.plotly._html.to_html`) — so
-        ``result.plot(backend="plotly", html=True)`` yields HTML ready to drop
-        into a web page.  Default ``False`` (return the figure).
+        instead of the live figure — so ``result.plot(backend="plotly", html=True)``
+        yields HTML ready to drop into a web page.  Default ``False``.
     path : str or os.PathLike, optional
         When given, **write** the self-contained interactive HTML to this file
-        (UTF-8) and return the :class:`pathlib.Path` — so
-        ``result.plot(backend="plotly", path="fig.html")`` saves a standalone
-        page.  Implies HTML export regardless of ``html``.
+        and return the :class:`pathlib.Path`.  Implies HTML export.
     full_html : bool, optional
-        Whether the exported HTML is a standalone document (``<html>`` wrapper)
-        or a bare embeddable fragment.  Default ``False`` for ``html=True`` (a
-        fragment) and ``True`` for ``path=`` (a standalone file); pass it
-        explicitly to override.  Ignored when neither ``html`` nor ``path`` is
-        set.
+        Whether the exported HTML is a standalone document or a bare fragment.
+        Default ``False`` for ``html=True``, ``True`` for ``path=``.
     include_plotlyjs : str or bool, optional
-        How the exported HTML provides the plotly bundle; ``"cdn"`` (the default)
-        references it from a CDN so the fragment stays small.  See
-        :func:`tsdynamics.viz.render.plotly._html.to_html`.  Ignored when neither
-        ``html`` nor ``path`` is set.
+        How to provide the plotly bundle; ``"cdn"`` (the default) references it
+        from a CDN.
     **_kw
         Forwarded but unused backend keywords (kept for a uniform renderer
         signature).

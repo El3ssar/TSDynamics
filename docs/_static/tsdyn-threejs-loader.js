@@ -47,38 +47,79 @@ function buildGeometry(geom) {
   return geometry;
 }
 
+/**
+ * Resolve a material color from a geometry's `material` block, a palette, and
+ * an index — producing a THREE.Color-compatible value or a fallback hex number.
+ *
+ * Priority: geom.material.color (explicit) → palette[index % len] → fallback.
+ *
+ * @param {object|null} mat - the geometry's `material` block (may be null).
+ * @param {string[]} palette - the theme palette color cycle (may be empty).
+ * @param {number} index - the geometry's index in the layer list (for cycling).
+ * @param {number} fallback - a hex number used when nothing else resolves.
+ * @returns {string|number} a CSS color string or a hex integer for THREE.Color.
+ */
+function resolveColor(mat, palette, index, fallback) {
+  if (mat && mat.color != null) return mat.color;
+  if (palette && palette.length > 0) return palette[index % palette.length];
+  return fallback;
+}
+
 /** Build the drawable Object3D for one geometry, dispatching on its `type`. */
-function buildObject(geom) {
+function buildObject(geom, index, palette) {
   const geometry = buildGeometry(geom);
-  const hasColor = geometry.getAttribute("color") !== undefined;
+  const hasVertexColor = geometry.getAttribute("color") !== undefined;
+  const mat = geom.material || null;
+  // When per-vertex colors are present they take precedence over the material
+  // color; when absent, resolve the color from the material block / palette.
+  const baseColor = hasVertexColor
+    ? 0xffffff
+    : resolveColor(mat, palette, index, 0x4f9dff);
+  const opacity = mat && mat.alpha != null ? mat.alpha : 1.0;
+  const transparent = opacity < 1.0;
+
   if (geom.type === "points") {
-    const material = new THREE.PointsMaterial({
-      size: 0.6,
-      vertexColors: hasColor,
-      color: hasColor ? 0xffffff : 0x4f9dff,
+    const pointMat = new THREE.PointsMaterial({
+      size: mat && mat.markersize != null ? mat.markersize : 0.6,
+      vertexColors: hasVertexColor,
+      color: baseColor,
+      opacity,
+      transparent,
     });
-    return new THREE.Points(geometry, material);
+    const obj = new THREE.Points(geometry, pointMat);
+    if (mat && mat.zorder != null) obj.renderOrder = mat.zorder | 0;
+    return obj;
   }
   if (geom.type === "surface") {
     geometry.computeVertexNormals();
-    const material = new THREE.MeshStandardMaterial({
-      vertexColors: hasColor,
-      color: hasColor ? 0xffffff : 0x4f9dff,
+    const meshMat = new THREE.MeshStandardMaterial({
+      vertexColors: hasVertexColor,
+      color: baseColor,
       metalness: 0.1,
       roughness: 0.8,
       side: THREE.DoubleSide,
       flatShading: false,
+      opacity,
+      transparent,
     });
-    return new THREE.Mesh(geometry, material);
+    const obj = new THREE.Mesh(geometry, meshMat);
+    if (mat && mat.zorder != null) obj.renderOrder = mat.zorder | 0;
+    return obj;
   }
   // "line" — an indexed list of segment endpoints (0,1,1,2,2,3,...).
-  const material = new THREE.LineBasicMaterial({
-    vertexColors: hasColor,
-    color: hasColor ? 0xffffff : 0x4f9dff,
+  const lineMat = new THREE.LineBasicMaterial({
+    vertexColors: hasVertexColor,
+    color: baseColor,
+    linewidth: mat && mat.linewidth != null ? mat.linewidth : 1,
+    opacity,
+    transparent,
   });
-  return geom.indices && geom.indices.length
-    ? new THREE.LineSegments(geometry, material)
-    : new THREE.Line(geometry, material);
+  const obj =
+    geom.indices && geom.indices.length
+      ? new THREE.LineSegments(geometry, lineMat)
+      : new THREE.Line(geometry, lineMat);
+  if (mat && mat.zorder != null) obj.renderOrder = mat.zorder | 0;
+  return obj;
 }
 
 /** Centre of the payload bounds, used as the default orbit target. */
@@ -94,11 +135,20 @@ function boundsCentre(bounds) {
  * The `LineSegments` index buffer is `0,1,1,2,2,3,...` (two indices per segment),
  * so `setDrawRange(start, count)` works in *index* units — `count = 2 * segments`.
  * Returns a comet object exposing `seek(headVertex, trailVertices)`.
+ *
+ * @param {object} geom - the geometry block (positions/colors/indices/material).
+ * @param {object} anim - the metadata.animation block.
+ * @param {string[]} palette - the theme palette color cycle for auto-coloring.
+ * @param {number} index - this geometry's index in the scene layer list.
  */
-function buildLineComet(geom, anim) {
+function buildLineComet(geom, anim, palette, index) {
   const nVerts = geom.positions.length / 3;
   const hasColor = Boolean(geom.colors && geom.colors.length === geom.positions.length);
   const group = new THREE.Group();
+  const mat = geom.material || null;
+  const lineColor = hasColor ? 0xffffff : resolveColor(mat, palette, index, 0x4f9dff);
+  const lw = mat && mat.linewidth != null ? mat.linewidth : 1;
+  const alpha = mat && mat.alpha != null ? mat.alpha : 1.0;
 
   // Faint full-curve backdrop (the static context the comet sweeps over).
   const backdropGeom = buildGeometry(geom);
@@ -106,9 +156,10 @@ function buildLineComet(geom, anim) {
     backdropGeom,
     new THREE.LineBasicMaterial({
       vertexColors: hasColor,
-      color: hasColor ? 0xffffff : 0x4f9dff,
+      color: lineColor,
       transparent: true,
-      opacity: 0.18,
+      opacity: 0.18 * alpha,
+      linewidth: lw,
     })
   );
   group.add(backdrop);
@@ -120,7 +171,10 @@ function buildLineComet(geom, anim) {
     trailGeom,
     new THREE.LineBasicMaterial({
       vertexColors: hasColor,
-      color: hasColor ? 0xffffff : 0x6fd6ff,
+      color: hasColor ? 0xffffff : resolveColor(mat, palette, index, 0x6fd6ff),
+      linewidth: lw,
+      opacity: alpha,
+      transparent: alpha < 1.0,
     })
   );
   group.add(trail);
@@ -269,19 +323,33 @@ function installAnimation(container, comets, anim) {
 /**
  * Render a TSDynamics `threejs` payload into `container` and return a handle.
  *
+ * Applies the payload's `metadata.theme` block when present:
+ * - `theme.background` sets the scene background color (overridden by
+ *   `opts.background`).
+ * - `theme.palette` provides the auto-color cycle for geometries that carry no
+ *   per-vertex colors and no explicit `material.color`.
+ * - `theme.foreground` is available for future axis/label coloring (unused here).
+ *
  * @param {HTMLElement} container - a sized element to mount the WebGL canvas in.
  * @param {object} payload - the parsed `spec.render("threejs")` JSON payload.
- * @param {object} [opts] - { background?: number, autoRotate?: boolean }.
+ * @param {object} [opts] - { background?: string|number, autoRotate?: boolean }.
  */
 export function renderThreejsPayload(container, payload, opts = {}) {
   const width = container.clientWidth || 640;
   const height = container.clientHeight || 420;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(opts.background ?? 0x0b1020);
+  const meta = payload.metadata || {};
+
+  // Apply the theme block: background color + palette.
+  const theme = meta.theme || null;
+  // Priority: opts.background > theme.background > built-in default.
+  const bgColor = opts.background ?? (theme && theme.background) ?? 0x0b1020;
+  scene.background = new THREE.Color(bgColor);
+  // The palette drives auto-coloring of layers that carry no per-vertex color.
+  const palette = theme && Array.isArray(theme.palette) ? theme.palette : [];
 
   const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1e5);
-  const meta = payload.metadata || {};
   const cam = meta.camera || {};
   const target = cam.target || boundsCentre(meta.bounds);
   camera.up.set(...(cam.up || [0, 0, 1]));
@@ -306,15 +374,17 @@ export function renderThreejsPayload(container, payload, opts = {}) {
   const anim = meta.animation || null;
   let animationHandle = null;
   let revealing = false;
+  const geometries = payload.geometries || [];
   if (anim) {
     const comets = [];
-    for (const geom of payload.geometries || []) {
+    for (let i = 0; i < geometries.length; i++) {
+      const geom = geometries[i];
       if (geom.type === "line") {
-        const comet = buildLineComet(geom, anim);
+        const comet = buildLineComet(geom, anim, palette, i);
         comets.push(comet);
         scene.add(comet.group);
       } else {
-        scene.add(buildObject(geom)); // points / surface: drawn whole
+        scene.add(buildObject(geom, i, palette)); // points / surface: drawn whole
       }
     }
     if (comets.length) {
@@ -324,8 +394,8 @@ export function renderThreejsPayload(container, payload, opts = {}) {
       console.warn("tsd-anim(threejs): animation block but no line geometry to reveal");
     }
   } else {
-    for (const geom of payload.geometries || []) {
-      scene.add(buildObject(geom));
+    for (let i = 0; i < geometries.length; i++) {
+      scene.add(buildObject(geometries[i], i, palette));
     }
   }
 
