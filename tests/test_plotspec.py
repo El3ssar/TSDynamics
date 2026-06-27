@@ -191,7 +191,8 @@ def test_style_targets_a_single_layer_by_index():
     spec = _sample_spec()
     spec.style(layer=1, marker="o")
     assert "marker" not in spec.layers[0].style
-    assert spec.layers[1].style["marker"] == "o"
+    # normalize_style canonicalizes the matplotlib marker alias "o" -> "circle".
+    assert spec.layers[1].style["marker"] == "circle"
 
 
 # ---------------------------------------------------------------------------

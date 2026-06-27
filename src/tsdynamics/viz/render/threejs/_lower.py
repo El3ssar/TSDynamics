@@ -438,7 +438,7 @@ def _lower_line_or_points(
         "indices": indices,
         "material": _material_style(layer, palette_color=palette_color),
     }
-    colors = _colors(layer, n, palette_color=palette_color)
+    colors = _colors(layer, n)
     if colors is not None:
         geometry["colors"] = colors
     return geometry
@@ -520,30 +520,19 @@ def _surface_indices(rows: int, cols: int) -> list[int]:
 # ---------------------------------------------------------------------------
 
 
-def _colors(layer: Layer, n: int, *, palette_color: str | None = None) -> list[float] | None:
-    """Per-vertex flat RGB for a line / points layer, or ``None`` if uncolored.
+def _colors(layer: Layer, n: int) -> list[float] | None:
+    """Per-vertex flat RGB for a line / points layer's scalar ``"c"`` channel.
 
-    Priority:
-    1. A scalar ``"c"`` channel mapped through the built-in colormap.
-    2. An explicit ``style["color"]`` (any form parseable by :func:`_parse_color`).
-    3. The theme-palette auto-color for this layer's index (``palette_color``).
-
-    Returns ``None`` when none of the above resolves — the loader then applies
-    its own default material color.
+    Returns the per-vertex buffer **only** for a genuine ``"c"`` gradient (mapped
+    through the built-in colormap).  A *solid* color — an explicit
+    ``style["color"]`` or the theme-palette auto-color — is carried once by the
+    layer ``material.color`` (see :func:`_material_style`); baking it into a
+    redundant per-vertex array would just repeat the same RGB for every vertex,
+    so the function returns ``None`` and lets the flat ``material.color`` stand.
     """
     c = _flat(layer.data.get("c"))
     if c is not None and c.size >= n:
         return _scalar_colors(c[:n])
-    # Prefer explicit style color, fall back to the palette auto-color.
-    color_str = layer.style.get("color")
-    if color_str is None and palette_color is not None:
-        color_str = palette_color
-    rgb = _parse_color(color_str)
-    if rgb is not None:
-        flat: list[float] = []
-        for _ in range(n):
-            flat.extend(rgb)
-        return flat
     return None
 
 
@@ -628,52 +617,6 @@ def _parse_rgb(color: Any) -> tuple[float, float, float] | None:
         except (TypeError, ValueError):
             return None
         return (r, g, b)
-    return None
-
-
-def _parse_color(color: Any) -> tuple[float, float, float] | None:
-    """Coerce any style color to an ``(r, g, b)`` triple in ``[0, 1]``, or ``None``.
-
-    Extends :func:`_parse_rgb` to also handle hex strings (``"#rrggbb"`` /
-    ``"#rgb"``) so that the canonical style vocabulary (where ``color`` is a CSS
-    string) round-trips through the exporter as per-vertex RGB for the loader.
-    Named CSS colors (``"red"`` etc.) are **not** parsed here — the loader must
-    interpret them natively via ``THREE.Color``; when a string is not a valid hex
-    it is returned as-is in the material block (see :func:`_material_style`).
-
-    Parameters
-    ----------
-    color : Any
-        A color value — ``None``, an RGB/RGBA float sequence, or a hex string.
-
-    Returns
-    -------
-    tuple of float or None
-        ``(r, g, b)`` in ``[0, 1]``, or ``None`` when the color cannot be parsed
-        into a numeric triple.
-    """
-    if color is None:
-        return None
-    # RGB/RGBA float tuple — delegate to _parse_rgb.
-    if isinstance(color, (list, tuple)):
-        return _parse_rgb(color)
-    # Hex string: "#rrggbb" or "#rgb".
-    if isinstance(color, str) and color.startswith("#"):
-        h = color.lstrip("#")
-        try:
-            if len(h) == 6:
-                r = int(h[0:2], 16) / 255.0
-                g = int(h[2:4], 16) / 255.0
-                b = int(h[4:6], 16) / 255.0
-                return (r, g, b)
-            if len(h) == 3:
-                r = int(h[0] * 2, 16) / 255.0
-                g = int(h[1] * 2, 16) / 255.0
-                b = int(h[2] * 2, 16) / 255.0
-                return (r, g, b)
-        except (ValueError, IndexError):
-            pass
-    # Named CSS color or unparseable — return None; the loader must handle it.
     return None
 
 

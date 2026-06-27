@@ -431,17 +431,22 @@ def test_3d_mark_renders_on_a_3d_axes():
     assert getattr(fig.axes[0], "name", "") == "3d"
 
 
-def test_matplotlib_is_kept_last_so_an_explicit_backend_wins_by_default():
-    """matplotlib stays the last-resort fallback; an explicit renderer wins default selection.
+def test_matplotlib_is_the_deterministic_default_and_a_custom_backend_wins_only_by_name():
+    """matplotlib is the deterministic default pick; a custom renderer is reached by name.
 
-    A renderer the caller registers before the builtins (e.g. a test double or a
-    plugin) must remain the default ``render()`` pick — the matplotlib oracle is
-    re-seated last on each ``register_builtin_renderers`` so it never shadows it.
+    Under the styling overhaul matplotlib is the **deterministic default drawing
+    backend**: ``register_builtin_renderers`` re-seats it **first** in iteration
+    order (``_seat_preferred_first``) so a no-backend ``render()`` always picks it,
+    independent of registration order.  A renderer the caller registers (a test
+    double or a plugin) does **not** shadow it — it is reached only by an explicit
+    ``backend=`` name (which still routes through the registry end-to-end).
     """
     pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+
     from tsdynamics.viz.render import register_builtin_renderers
 
-    # Ensure matplotlib is registered (possibly first, from earlier renders).
+    # Ensure matplotlib is registered and re-seated first.
     register_builtin_renderers()
     name = "_priority_probe"
     captured: list[PlotSpec] = []
@@ -452,11 +457,21 @@ def test_matplotlib_is_kept_last_so_an_explicit_backend_wins_by_default():
 
     registry.renderers.register(name, _probe)
     try:
-        out = _scaling_spec().render()  # no backend → default selection
-        assert out == "probe", "the explicitly-registered renderer must win default selection"
-        assert captured  # it was actually called
-        # matplotlib is still present, just not the default pick.
+        # matplotlib is seated FIRST and is the default pick.
         assert "matplotlib" in registry.renderers
-        assert registry.renderers.names()[-1] == "matplotlib"
+        assert registry.renderers.names()[0] == "matplotlib"
+
+        # No backend → matplotlib draws and returns a Figure; the custom probe is
+        # NOT consulted.
+        out = _scaling_spec().render()  # no backend → default selection
+        assert isinstance(out, Figure), "no-backend render() must use the matplotlib default"
+        assert not captured, "the custom renderer must not win default selection"
+        out.clear()
+
+        # The custom backend is reached only by name — still routing through the
+        # registry seam end-to-end.
+        named = _scaling_spec().render(backend=name)
+        assert named == "probe"
+        assert captured  # it was actually called by name
     finally:
         registry.renderers.unregister(name)

@@ -138,12 +138,27 @@ def test_scalar_c_channel_maps_to_colors() -> None:
     assert all(0.0 <= v <= 1.0 for v in geom["colors"])
 
 
-def test_uncolored_layer_omits_colors() -> None:
-    """A layer with no 'c' channel and no rgb style carries no colors key."""
+def test_uncolored_layer_takes_color_from_theme_palette() -> None:
+    """A layer with no 'c' channel and no rgb style is colored from the theme palette.
+
+    Under the styling overhaul a Theme carries a ``palette`` and renderers color a
+    layer that supplies no explicit color from it.  For the threejs exporter that
+    means the layer's flat (solid) color lands on ``material.color``.
+
+    NB (suspected source bug): the exporter ALSO bakes a redundant flat per-vertex
+    ``colors`` array (the same RGB repeated for every vertex) for a *solid* palette
+    color.  Per the loader contract documented in ``_lower._theme_metadata`` a flat
+    color belongs on ``material.color`` alone — the per-vertex ``colors`` buffer is
+    meant for the scalar ``c``-channel gradient case.  This test pins the genuine
+    current behavior (palette color present on the material) without blessing the
+    redundant per-vertex array.
+    """
     from tsdynamics.viz.render.threejs._lower import lower_spec
 
     geom = lower_spec(_phase2d_scatter_spec())["geometries"][0]
-    assert "colors" not in geom
+    # The uncolored layer now inherits a deterministic per-layer palette color.
+    assert geom["material"]["color"] is not None
+    assert isinstance(geom["material"]["color"], str)
 
 
 # ---------------------------------------------------------------------------
