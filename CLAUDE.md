@@ -183,8 +183,9 @@ Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 The `transforms`, `engine`, `solvers` and `errors` submodules are bound eagerly
 on the top-level namespace and in `__all__` (`transforms`/`errors` headline,
 `engine`/`solvers` flagged internal in their docstrings). The `viz` package
-(`PlotSpec` IR; no renderer ships yet) is bound **lazily** via the module
-`__getattr__`, so a plain `import tsdynamics` pulls in no plotting/IR machinery —
+(`PlotSpec` IR + four self-registering renderers — matplotlib/plotly/json/threejs —
+plus the styling/theme system) is bound **lazily** via the module `__getattr__`, so
+a plain `import tsdynamics` pulls in no plotting library at import time —
 `ts.viz` resolves (and caches) on first access and shows in `__all__`/`dir()`.
 
 ---
@@ -583,6 +584,47 @@ import is deferred to first render.
   (interactive 2-D + 3-D + HTML), `json` and `threejs` (data-export). Dispatch
   (`viz/render/__init__.py`) selects by name or capability and falls back to mpl
   with a `VisualizationDegraded` warning when a backend declines a spec.
+  **matplotlib is the deterministic default** (`_PREFERRED_DEFAULT_BACKEND`,
+  `_seat_preferred_first`): a no-backend `render()` is matplotlib on the first and
+  every subsequent render (the old register-order-dependent default-flip is gone);
+  a custom/registered backend is reached only by an explicit `backend="name"`
+  (`caps`-normalised aliases like `"mpl"` accepted). json never draws — it
+  serializes — so it is exempt from the honoring negotiation below.
+- **Styling & theming (`viz/style.py`):** the look of every plot is controlled by a
+  **canonical, validated, introspectable** vocabulary, honored consistently across
+  the three *visual* backends (matplotlib/plotly/threejs; json serializes it). The
+  pieces:
+  - **`STYLE_KEYS`** — the closed per-layer style vocabulary (`color`, `linewidth`,
+    `linestyle`, `marker`, `markersize`, `alpha`, `cmap`, `fill`, `fillalpha`,
+    `zorder`), each a `StyleKey(name, aliases, honored_by, validate, doc)`.
+    `normalize_style()` is the single choke point: it canonicalises aliases
+    (`lw`→`linewidth`, `c`→`color`, `s`/`ms`→`markersize`, `"--"`→`"dashed"`,
+    `"o"`→`"circle"`, …), validates values (rejects out-of-range / wrong-type,
+    incl. bool), and **drops unknown keys with a warning** (no more silent typos).
+  - **`honored_by` is an enforced contract.** Each `StyleKey` declares which
+    backends genuinely render it; `caps.style_honoring_gaps(spec, backend)`
+    collects every per-layer key, `Animation` knob, and `Theme` field the chosen
+    backend does **not** honor, and the dispatcher emits **one consolidated
+    `VisualizationDegraded`** per render naming them (renderers then run
+    `warn=False`). `tests/test_viz_honoring_contract.py` renders every
+    honored claim and asserts the artifact reflects it (and that every non-honored
+    key warns) — an overclaim cannot ship green. (`fill`/`fillalpha` apply to AREA
+    marks only; `cmap`/`linestyle`/marker-shape are not honored by threejs.)
+  - **`Theme`** (a **frozen** dataclass: palette, background, foreground, font,
+    grid, line/marker defaults) + the **`THEMES`** registry with four built-ins
+    (`default`/`dark`/`minimal`/`publication`) and a single mutable global default
+    via `set_theme`/`get_theme`/`themes`/`register_theme` (the **only** mutable
+    viz global — `tests/conftest.py` has an autouse fixture snapshotting+restoring
+    it around every test). A `PlotSpec` carries a private `_theme`; renderers read
+    `spec.resolved_theme` (the spec's theme, else the global default) and apply it
+    first (palette colours unstyled layers), then per-layer style overrides it.
+  - **Fluent tweaks** (all mutate-and-return-self, so they chain and render
+    identically on every backend): `.style(**keys)`, `.recolor(*colors)`,
+    `.theme(name|Theme, **overrides)` (a setter; `theme` is positional-only),
+    `.palette(...)`, `.grid(...)`, `.font(...)`, `.background(...)`, `.size(...)`,
+    alongside the existing `.relabel/.rescale/.limits/.ticks/.colorize/.animate/…`.
+    Public introspection: `ts.viz.STYLE_KEYS`, `ts.viz.themes()`,
+    `ts.viz.get_theme()/set_theme()`. (Full guide: `docs/visualization/styling.md`.)
 - **Single-panel front door:** `Trajectory.to_plot_spec(...)` / `.plot(...)` (see
   the `Trajectory` section) builds **one panel**.
 - **Composition — `tsdynamics.viz.plot(*things, layout="overlay", **build_kw)`

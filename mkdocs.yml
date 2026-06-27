@@ -182,6 +182,7 @@ nav:
   - Transforms:
       - transforms/index.md
   - Visualization:
+      - Styling & themes: visualization/styling.md
       - three.js export: visualization/threejs-export.md
   - Tutorials:
       - tutorials/index.md
