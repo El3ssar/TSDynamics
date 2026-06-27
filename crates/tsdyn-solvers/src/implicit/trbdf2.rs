@@ -25,25 +25,27 @@
 //! "Analysis and implementation of TR-BDF2", Appl. Numer. Math. 20, 1996.
 
 use super::control::{BaseOutcome, BaseStep, DoublingWork, Tolerances};
-use super::newton::newton_substage;
+use super::newton::{solve_substage_reuse, NewtonWork};
 use crate::caps::{Caps, ProblemKind, ProblemKinds};
 use crate::register_solver;
 use crate::solver::{Solver, SolverState, StepOutcome};
 use tsdyn_ir::Evaluator;
 
-/// Stage scratch for TR-BDF2: the start derivative, both stage bases, Newton work
-/// (RHS, Jacobian, iteration matrix, pivots, increment), and the first stage's
-/// solution. Grown to the system dimension on first use.
+/// Stage scratch for TR-BDF2: the start derivative, both stage bases, the first
+/// stage's solution, and the shared Newton work (RHS, Jacobian, iteration matrix,
+/// pivots, increment, plus the cached-factorization shift). Grown to the system
+/// dimension on first use.
+///
+/// Both substages share the diagonal coefficient (`w = γ/2 = d`), so they share
+/// the iteration-matrix shift; the [`NewtonWork`] cache lets the BDF2 substage
+/// reuse the trapezoidal substage's frozen Jacobian / LU when the two shifts are
+/// bit-equal, and lets the next step's first substage reuse it while `h` holds.
 #[derive(Default)]
 struct TrBdf2Base {
     f0: Vec<f64>,
     base_buf: Vec<f64>,
     y1: Vec<f64>,
-    fy: Vec<f64>,
-    jac: Vec<f64>,
-    mat: Vec<f64>,
-    piv: Vec<usize>,
-    delta: Vec<f64>,
+    newton: NewtonWork,
     tol: Tolerances,
 }
 
@@ -53,12 +55,9 @@ impl TrBdf2Base {
             self.f0 = vec![0.0; n];
             self.base_buf = vec![0.0; n];
             self.y1 = vec![0.0; n];
-            self.fy = vec![0.0; n];
-            self.jac = vec![0.0; n * n];
-            self.mat = vec![0.0; n * n];
-            self.piv = vec![0; n];
-            self.delta = vec![0.0; n];
         }
+        // NewtonWork grows and (re)initialises its own cache state.
+        self.newton.ensure(n);
     }
 }
 
@@ -95,7 +94,11 @@ impl BaseStep for TrBdf2Base {
         let denom = g * (2.0 - g);
         let c1 = 1.0 / denom;
         let c0 = -(1.0 - g) * (1.0 - g) / denom; // c1 + c0 == 1
-        let w = (1.0 - g) / (2.0 - g); // BDF2 substage coefficient
+
+        // BDF2 substage coefficient. (1-g)/(2-g) == γ/2 == d (both = 1 - √2/2),
+        // so bind it to `d`: a *bit*-equal shift lets the BDF2 substage reuse the
+        // trapezoidal substage's cached LU factorization (no re-factor).
+        let w = d;
 
         // f(t, u).
         ev.eval(u, p, t, scratch, &mut self.f0);
@@ -104,24 +107,21 @@ impl BaseStep for TrBdf2Base {
         }
 
         // --- Substage 1: trapezoidal to t + γh ---
-        // y1 = base1 + d·h·f(t+γh, y1), base1 = u + d·h·f0.
+        // y1 = base1 + d·h·f(t+γh, y1), base1 = u + d·h·f0. The reuse path freezes
+        // and factors I − d·h·J here (and offers it to substage 2 / the next step).
         for i in 0..n {
             self.base_buf[i] = u[i] + d * h * self.f0[i];
             self.y1[i] = u[i] + g * h * self.f0[i]; // explicit-Euler predictor over γh
         }
-        // Borrow the struct's buffers as disjoint fields for the Newton solve.
+        // Borrow the disjoint buffer fields alongside the shared Newton work.
         let TrBdf2Base {
             base_buf,
             y1,
-            fy,
-            jac,
-            mat,
-            piv,
-            delta,
+            newton,
             tol,
             ..
         } = self;
-        match newton_substage(
+        match solve_substage_reuse(
             ev,
             t + g * h,
             p,
@@ -129,11 +129,7 @@ impl BaseStep for TrBdf2Base {
             h,
             base_buf,
             y1,
-            fy,
-            jac,
-            mat,
-            piv,
-            delta,
+            newton,
             scratch,
             tol.rtol,
             tol.atol,
@@ -144,21 +140,20 @@ impl BaseStep for TrBdf2Base {
 
         // --- Substage 2: BDF2 to t + h ---
         // y2 = base2 + w·h·f(t+h, y2), base2 = c1·y1 + c0·u; solution written to out.
+        // w == d (stiffly accurate), so this shares the shift w·h = d·h with
+        // substage 1 and reuses its cached LU (no Jacobian eval / re-factor) while
+        // the quasi-Newton converges; it refreshes only if convergence degrades.
         for i in 0..n {
             self.base_buf[i] = c1 * self.y1[i] + c0 * u[i];
             out[i] = self.y1[i]; // predictor: the trapezoidal stage value
         }
         let TrBdf2Base {
             base_buf,
-            fy,
-            jac,
-            mat,
-            piv,
-            delta,
+            newton,
             tol,
             ..
         } = self;
-        match newton_substage(
+        match solve_substage_reuse(
             ev,
             t + h,
             p,
@@ -166,11 +161,7 @@ impl BaseStep for TrBdf2Base {
             h,
             base_buf,
             out,
-            fy,
-            jac,
-            mat,
-            piv,
-            delta,
+            newton,
             scratch,
             tol.rtol,
             tol.atol,

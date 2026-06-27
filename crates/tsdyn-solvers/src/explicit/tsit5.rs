@@ -16,7 +16,8 @@ use crate::{
     register_solver, Caps, Evaluator, ProblemKind, ProblemKinds, Solver, SolverState, StepOutcome,
 };
 
-use super::control::{adaptive_step, RkWork};
+use super::control::RkWork;
+use super::rk45::{fsal_adaptive_step, FsalCache};
 
 // Tsitouras 5(4) nodes (c₆ = c₇ = 1; the 7th is the FSAL solution stage).
 const C: &[f64] = &[0.0, 0.161, 0.327, 0.9, 0.9800255409045097, 1.0, 1.0];
@@ -88,6 +89,8 @@ pub struct Tsit5 {
     rtol: f64,
     atol: f64,
     work: RkWork,
+    /// FSAL cache: the previous accepted step's last stage, reused as stage 0.
+    fsal: FsalCache,
 }
 
 impl Tsit5 {
@@ -105,6 +108,7 @@ impl Tsit5 {
             rtol,
             atol,
             work: RkWork::new(),
+            fsal: FsalCache::new(),
         }
     }
 }
@@ -125,7 +129,7 @@ impl Solver for Tsit5 {
     }
 
     fn step(&mut self, ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome {
-        adaptive_step(
+        fsal_adaptive_step(
             ev,
             st,
             h,
@@ -137,6 +141,7 @@ impl Solver for Tsit5 {
             self.rtol,
             self.atol,
             &mut self.work,
+            &mut self.fsal,
         )
     }
 }
