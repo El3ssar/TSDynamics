@@ -9,13 +9,15 @@ what the bulk test-suite and the documentation generator iterate over;
 user-defined classes are registered too but excluded from iteration by
 default.
 
-Alongside the system registry, this module hosts three *reserved* generic name
-registries — :data:`analyses`, :data:`transforms` and :data:`renderers` —
-:class:`Registry` containers (name → object + metadata) for the analysis,
-transform and visualization-backend streams to register into.  :data:`renderers`
-ships **empty** (visualization is deferred, decision D6); it is the seam a future
-multi-backend plotting suite registers into.  Solvers are **not** registered
-here: they live in the richer
+Alongside the system registry, this module hosts three generic name registries —
+:data:`analyses`, :data:`transforms` and :data:`renderers` — :class:`Registry`
+containers (name → object + metadata) for the analysis, transform and
+visualization-backend streams to register into.  The in-tree analyses/transforms
+self-register from their subpackages on import, and :data:`renderers` is populated
+by the four self-registering :mod:`tsdynamics.viz` backends (matplotlib / Plotly /
+JSON / three.js) when ``tsdynamics.viz`` is first imported — it is created empty
+here and stays empty until then, since ``import tsdynamics`` pulls in no plotting
+machinery.  Solvers are **not** registered here: they live in the richer
 :mod:`tsdynamics.solvers` registry (a ``name → SolverSpec`` table carrying
 capability flags, populated by that package's directory scan + the
 :mod:`~tsdynamics.plugins` entry-point loader).
@@ -76,7 +78,38 @@ _BASE_PREFIX = "tsdynamics.families"
 
 @dataclass(frozen=True, eq=False)
 class SystemEntry:
-    """One registered system class plus the metadata the tooling needs."""
+    """One registered system class plus the metadata the tooling needs.
+
+    A frozen record built once per concrete :class:`~tsdynamics.families.base.SystemBase`
+    subclass at registration time.  It snapshots everything the bulk test-suite,
+    the documentation generator, and programmatic consumers read *about* a system
+    without instantiating it.
+
+    Attributes
+    ----------
+    name : str
+        The class name (and the key it is looked up by, e.g. ``"Lorenz"``).
+    cls : type
+        The system class itself (instantiate it to use the system).
+    family : {"ode", "dde", "map", "sde", "other"}
+        The family tag, resolved by walking the MRO (see :data:`_FAMILY_BASES`).
+    category : str
+        The defining module's stem (e.g. ``"chaotic_attractors"``).
+    module : str
+        The fully-qualified module the class is defined in.
+    dim : int or None
+        The state-space dimension, or ``None`` for a variable-dimension system.
+    params : Mapping[str, Any]
+        A read-only snapshot of the default control parameters.
+    is_builtin : bool
+        ``True`` for catalogue systems (defined under ``tsdynamics.systems``),
+        ``False`` for user-defined classes.
+    reference : str or None
+        The literature citation shown in the docs, if the class declares one.
+    known_lyapunov : Mapping[str, Any] or None
+        The reference Lyapunov metadata driving ``tests/test_known_values.py``,
+        if the class declares it.
+    """
 
     name: str
     cls: type
@@ -101,6 +134,16 @@ _BY_NAME: dict[str, list[SystemEntry]] = {}
 
 
 def _family_of(cls: type) -> Family:
+    """Resolve a class's family tag by walking its MRO, nearest ancestor first.
+
+    The lookup is deliberately MRO-based rather than module-based: the DDE
+    catalogue lives in ``systems/continuous/delayed_systems.py``, so a path check
+    would mis-tag a ``DelaySystem`` subclass as ``"ode"``.  Walking the MRO finds
+    the *nearest* family base (a ``DelaySystem`` ancestor is hit before its own
+    ``ContinuousSystem`` ancestor), and the ``_BASE_PREFIX`` guard ensures only a
+    genuine framework base (under :mod:`tsdynamics.families`) counts — a
+    user-defined class that happens to be named ``DiscreteMap`` does not.
+    """
     for ancestor in cls.__mro__:
         tag = _FAMILY_BASES.get(ancestor.__name__)
         if tag is not None and ancestor.__module__.startswith(_BASE_PREFIX):
@@ -379,12 +422,13 @@ analyses = Registry("analysis")
 #: Registered data/signal transforms (spectral, filters, feature extractors).
 transforms = Registry("transform")
 #: Registered visualization renderers (backend name → a callable that consumes a
-#: :class:`~tsdynamics.viz.spec.PlotSpec` and draws it).  Ships **empty**:
-#: visualization is deferred (decision D6), so no backend is registered yet — the
-#: seam exists so a future matplotlib / Plotly / web renderer plugs in by
-#: construction.  :meth:`~tsdynamics.viz.spec.PlotSpec.render` resolves a backend
-#: through this registry; out-of-tree backends are discovered via the
-#: ``tsdynamics.renderers`` entry-point group (see :mod:`tsdynamics.viz`).
+#: :class:`~tsdynamics.viz.spec.PlotSpec` and draws it).  Created **empty** and
+#: populated lazily: the four in-tree backends (matplotlib / Plotly / JSON /
+#: three.js) self-register when :mod:`tsdynamics.viz` is first imported, so a plain
+#: ``import tsdynamics`` (which pulls in no plotting machinery) leaves it empty
+#: until ``ts.viz`` is touched.  :meth:`~tsdynamics.viz.spec.PlotSpec.render`
+#: resolves a backend through this registry; out-of-tree backends are discovered
+#: via the ``tsdynamics.renderers`` entry-point group (see :mod:`tsdynamics.viz`).
 renderers = Registry("renderer")
 
 

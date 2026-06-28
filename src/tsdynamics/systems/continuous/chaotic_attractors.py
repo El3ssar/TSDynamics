@@ -47,7 +47,26 @@ class Lorenz(ContinuousSystem):
         )
 
 
+# TODO(reference): unverified — needs a primary citation (bounded/coordinate-mapped
+# Lorenz variant; no single primary source confidently identified)
 class LorenzBounded(ContinuousSystem):
+    """
+    Bounded variant of the Lorenz (1963) attractor.
+
+    A reformulation of the classic Lorenz equations in which the dynamics are
+    confined to a bounded region of phase space by polynomial correction terms
+    scaled by ``1/r**2``; as ``r -> infinity`` it reduces to the standard
+    Lorenz system.
+
+    Parameters
+    ----------
+    sigma, rho, beta : float
+        The usual Lorenz parameters (Prandtl number, Rayleigh ratio, geometric
+        factor). Defaults give the canonical chaotic regime.
+    r : float
+        Bounding radius. Larger ``r`` recovers the unbounded Lorenz flow.
+    """
+
     params = {"beta": 2.667, "r": 64, "rho": 28, "sigma": 10}
     dim = 3
 
@@ -91,7 +110,25 @@ class LorenzBounded(ContinuousSystem):
         return xdot, ydot, zdot
 
 
+# TODO(reference): unverified — needs a primary citation (two diffusively coupled
+# Lorenz systems; no single canonical primary source confidently identified)
 class LorenzCoupled(ContinuousSystem):
+    """
+    Two diffusively coupled Lorenz (1963) systems.
+
+    Two identical Lorenz subsystems whose x-variables are linearly coupled with
+    strength ``kappa``; a canonical testbed for chaos synchronization and the
+    onset of (anti-)synchronized and desynchronized states. The state is laid
+    out as ``[x1, y1, z1, x2, y2, z2]`` (``dim = 6``).
+
+    Parameters
+    ----------
+    sigma, rho, beta : float
+        Standard Lorenz parameters, shared by both subsystems.
+    kappa : float
+        Diffusive coupling strength between the two x-variables.
+    """
+
     params = {"beta": 8 / 3, "kappa": 2.85, "rho": 28, "sigma": 10}
     dim = 6
 
@@ -122,6 +159,7 @@ class Lorenz96(ContinuousSystem):
         Forcing strength. Runtime-tunable (no recompile).
     """
 
+    reference = "Lorenz (1996), Proc. ECMWF Seminar on Predictability 1, 1-18"
     params = {"f": 8.0, "N": 20}
     # N affects the symbolic structure (loop length), so it must be baked in.
     _structural_params = frozenset({"N"})
@@ -153,8 +191,27 @@ class Lorenz96(ContinuousSystem):
 
 
 class Lorenz84(ContinuousSystem):
+    """
+    Lorenz (1984) low-order general-circulation model.
+
+    A three-variable model of the large-scale mid-latitude atmospheric
+    circulation: ``x`` is the intensity of the westerly wind current (and the
+    poleward temperature gradient), while ``y`` and ``z`` are the cosine and
+    sine phases of a chain of superposed large-scale eddies. For different
+    thermal forcings the system has stable steady, periodic, or irregular
+    (chaotic) solutions; the default parameters give the chaotic attractor.
+
+    Parameters
+    ----------
+    a, b : float
+        Damping coefficients of the wind current and the eddies.
+    f, g : float
+        Thermal (symmetric) and asymmetric forcing amplitudes.
+    """
+
     params = {"a": 1.32, "b": 7.91, "f": 4.83, "g": 4.194}
     dim = 3
+    reference = "Lorenz (1984), Tellus 36A, 98-110"
 
     @staticmethod
     def _equations(Y, t, *, a, b, f, g):
@@ -174,6 +231,23 @@ class Lorenz84(ContinuousSystem):
 
 
 class Rossler(ContinuousSystem):
+    """
+    Rössler (1976) strange attractor.
+
+    A three-dimensional flow with a single quadratic nonlinearity, designed as a
+    minimal prototype of chaos simpler than Lorenz. The dynamics spiral outward
+    in the ``x``–``y`` plane and are reinjected by an occasional fold in ``z``,
+    producing a band-like attractor that arises through a period-doubling
+    cascade. The defaults give the canonical chaotic regime.
+
+    Parameters
+    ----------
+    a, b : float
+        Coefficients controlling the spiral growth and the reinjection.
+    c : float
+        Parameter governing the fold; the standard route to chaos.
+    """
+
     params = {"a": 0.2, "b": 0.2, "c": 5.7}
     dim = 3
     variables = ("x", "y", "z")
@@ -204,8 +278,27 @@ class Rossler(ContinuousSystem):
 
 
 class Thomas(ContinuousSystem):
+    """
+    Thomas' cyclically symmetric attractor.
+
+    A three-dimensional flow that is cyclically symmetric in ``x``, ``y`` and
+    ``z`` and can be read as a frictionally damped particle moving in a 3-D
+    lattice of sinusoidal forces. As the damping ``a`` is lowered the system
+    passes from a fixed point through limit cycles to chaos, and for weak
+    damping exhibits "labyrinth chaos" — random-walk-like motion across the
+    lattice of unstable equilibria.
+
+    Parameters
+    ----------
+    a : float
+        Dissipation (friction) coefficient; smaller ``a`` is more chaotic.
+    b : float
+        Amplitude of the sinusoidal forcing.
+    """
+
     params = {"a": 1.85, "b": 10}
     dim = 3
+    reference = "Thomas (1999), Int. J. Bifurc. Chaos 9, 1889-1905"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -267,6 +360,10 @@ class KuramotoSivashinsky(ContinuousSystem):
     # number of equations, only the coefficients).
     _structural_params = frozenset({"N"})
 
+    reference = (
+        "Kuramoto & Tsuzuki (1976), Prog. Theor. Phys. 55, 356-369; "
+        "Sivashinsky (1977), Acta Astronaut. 4, 1177-1206"
+    )
     params = {"N": 32, "L": 22.0}
 
     #: Seed for the deterministic broadband IC builder.  Override per-instance
@@ -419,8 +516,27 @@ class KuramotoSivashinsky(ContinuousSystem):
 
 
 class Halvorsen(ContinuousSystem):
+    """
+    Halvorsen's cyclically symmetric attractor.
+
+    A three-dimensional flow proposed by Arne Dehli Halvorsen that is symmetric
+    under cyclic interchange of ``x``, ``y`` and ``z``, combining linear damping
+    and cross-coupling with a single quadratic self-term per equation. It
+    produces a visually intricate cyclically symmetric strange attractor.
+
+    Parameters
+    ----------
+    a : float
+        Linear damping coefficient (default 1.4 gives the chaotic attractor).
+    b : float
+        Coupling coefficient between the three variables.
+    """
+
+    # Originally circulated by A. D. Halvorsen on the sci.fractals newsgroup and
+    # documented (without a formal primary paper) by Sprott (2003).
     params = {"a": 1.4, "b": 4}
     dim = 3
+    reference = "Sprott (2003), Chaos and Time-Series Analysis"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -440,6 +556,23 @@ class Halvorsen(ContinuousSystem):
 
 
 class Chua(ContinuousSystem):
+    """
+    Chua's circuit (double-scroll attractor).
+
+    The canonical autonomous electronic oscillator whose only nonlinearity is a
+    piecewise-linear resistor (the "Chua diode"), here represented by the
+    odd ramp ``m1 x + 0.5 (m0 - m1)(|x+1| - |x-1|)``. For the classic parameters
+    it produces the double-scroll strange attractor.
+
+    Parameters
+    ----------
+    alpha, beta : float
+        Dimensionless circuit parameters (capacitor/inductor ratios).
+    m0, m1 : float
+        Inner and outer slopes of the piecewise-linear Chua diode
+        characteristic.
+    """
+
     params = {"alpha": 15.6, "beta": 28.0, "m0": -1.142857, "m1": -0.71429}
     dim = 3
     reference = "Matsumoto, Chua & Komuro (1985), IEEE Trans. Circuits Syst. 32, 798-818"
@@ -482,6 +615,10 @@ class Chua(ContinuousSystem):
         return row1, row2, row3
 
 
+# TODO(reference): unverified — needs a primary citation (a resistively coupled ring
+# of Chua circuits; several distinct coupled-Chua-array papers exist and no single
+# primary source confidently matches this exact formulation. The underlying single
+# circuit is Matsumoto, Chua & Komuro (1985), IEEE Trans. Circuits Syst. 32, 798-818.)
 class MultiChua(ContinuousSystem):
     """
     Ring of ``n_circuits`` Chua circuits coupled through their x-variables.
@@ -563,8 +700,35 @@ class MultiChua(ContinuousSystem):
 
 
 class Duffing(ContinuousSystem):
+    """
+    Forced Duffing oscillator (double-well, periodically driven).
+
+    The damped, harmonically driven oscillator with a cubic restoring force,
+    written as an autonomous 3-D system by carrying the drive phase ``z`` with
+    ``z' = omega``. The cubic nonlinearity makes the potential a double well
+    (for ``beta < 0``), and for suitable forcing the response is chaotic with a
+    strange attractor. The defaults are a standard chaotic regime.
+
+    Parameters
+    ----------
+    alpha : float
+        Linear stiffness coefficient.
+    beta : float
+        Cubic stiffness coefficient (negative gives a double well).
+    delta : float
+        Linear damping coefficient.
+    gamma : float
+        Amplitude of the periodic forcing.
+    omega : float
+        Angular frequency of the periodic forcing.
+    """
+
     params = {"alpha": 1.0, "beta": -1.0, "delta": 0.1, "gamma": 0.35, "omega": 1.4}
     dim = 3
+    reference = (
+        "Duffing (1918), Erzwungene Schwingungen bei veränderlicher "
+        "Eigenfrequenz, Vieweg, Braunschweig"
+    )
     # The explicit default (rk45) fails to integrate this system; an implicit
     # solver handles it robustly, so make that the default.
     _default_method = "bdf"
@@ -587,8 +751,26 @@ class Duffing(ContinuousSystem):
 
 
 class RabinovichFabrikant(ContinuousSystem):
+    """
+    Rabinovich–Fabrikant system.
+
+    A three-dimensional model derived for the stochastic self-modulation of
+    waves in a non-equilibrium dissipative medium. With cubic nonlinearities it
+    exhibits an unusually rich phase space, including chaotic attractors and
+    hidden/transient chaos that is highly sensitive to the parameters and
+    initial conditions.
+
+    Parameters
+    ----------
+    a : float
+        Parameter controlling the modulation/dissipation balance.
+    g : float
+        Parameter controlling the linear growth/damping.
+    """
+
     params = {"a": 1.1, "g": 0.87}
     dim = 3
+    reference = "Rabinovich & Fabrikant (1979), Sov. Phys. JETP 50, 311-317"
     default_ic = [-1.0, 0.0, 0.5]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -609,8 +791,24 @@ class RabinovichFabrikant(ContinuousSystem):
 
 
 class Dadras(ContinuousSystem):
+    """
+    Dadras–Momeni system.
+
+    An eight-term three-dimensional autonomous system with quadratic
+    nonlinearities that can generate two-, three- and four-scroll chaotic
+    attractors as a single parameter is varied. The default parameters give a
+    multi-scroll chaotic attractor.
+
+    Parameters
+    ----------
+    c, e, o, p, r : float
+        Coefficients of the polynomial terms controlling the scroll structure
+        and the dissipation of the flow.
+    """
+
     params = {"c": 2.0, "e": 9.0, "o": 2.7, "p": 3.0, "r": 1.7}
     dim = 3
+    reference = "Dadras & Momeni (2009), Phys. Lett. A 373, 3637-3642"
 
     @staticmethod
     def _equations(Y, t, *, c, e, o, p, r):
@@ -629,7 +827,20 @@ class Dadras(ContinuousSystem):
         return row1, row2, row3
 
 
+# TODO(reference): unverified — needs a primary citation (the class name and the
+# parameter-free RHS here could not be matched to a single primary paper with
+# confidence; candidates include Pehlivan–Uyaroglu and Wei systems, but the
+# equations do not cleanly correspond to one verified source)
 class PehlivanWei(ContinuousSystem):
+    """
+    Pehlivan–Wei chaotic system.
+
+    A parameter-free three-dimensional autonomous system with two quadratic
+    nonlinearities, notable for its simple algebraic form and its equilibrium
+    structure. It produces a chaotic attractor from the fixed initial
+    conditions.
+    """
+
     params = {}
     dim = 3
 
@@ -654,8 +865,19 @@ class PehlivanWei(ContinuousSystem):
 
 
 class SprottTorus(ContinuousSystem):
+    """
+    Sprott's torus system (strange attractor with coexisting invariant tori).
+
+    A simple time-reversible three-dimensional flow with quadratic
+    nonlinearities and no equilibria. It is conservative (quasi-periodic motion
+    on nested invariant tori) for some initial conditions and dissipative
+    (a hidden strange attractor with a symmetric twin repellor) for others.
+    Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (2014), Phys. Lett. A 378, 1361-1363"
 
     @staticmethod
     def _equations(Y, t):
@@ -675,8 +897,19 @@ class SprottTorus(ContinuousSystem):
 
 
 class SprottA(ContinuousSystem):
+    """
+    Sprott case A — one of the algebraically simplest chaotic flows.
+
+    Case A from Sprott's 1994 computer search for minimal three-dimensional
+    autonomous chaotic systems (five terms, two quadratic nonlinearities). It is
+    conservative and identical to the Nosé–Hoover thermostatted oscillator at
+    its standard parameter, exhibiting a chaotic sea interspersed with invariant
+    tori. Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t):
@@ -696,8 +929,16 @@ class SprottA(ContinuousSystem):
 
 
 class SprottB(ContinuousSystem):
+    """
+    Sprott case B — an algebraically simple chaotic flow.
+
+    Case B from Sprott's 1994 search for minimal three-dimensional chaotic
+    systems (five terms, two quadratic nonlinearities). Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t):
@@ -717,8 +958,16 @@ class SprottB(ContinuousSystem):
 
 
 class SprottC(ContinuousSystem):
+    """
+    Sprott case C — an algebraically simple chaotic flow.
+
+    Case C from Sprott's 1994 search for minimal three-dimensional chaotic
+    systems (five terms, two quadratic nonlinearities). Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t):
@@ -738,8 +987,16 @@ class SprottC(ContinuousSystem):
 
 
 class SprottD(ContinuousSystem):
+    """
+    Sprott case D — an algebraically simple chaotic flow.
+
+    Case D from Sprott's 1994 search for minimal three-dimensional chaotic
+    systems (five terms, two quadratic nonlinearities). Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -760,8 +1017,16 @@ class SprottD(ContinuousSystem):
 
 
 class SprottE(ContinuousSystem):
+    """
+    Sprott case E — an algebraically simple chaotic flow.
+
+    Case E from Sprott's 1994 search for minimal three-dimensional chaotic
+    systems (five terms, two quadratic nonlinearities). Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t):
@@ -781,8 +1046,21 @@ class SprottE(ContinuousSystem):
 
 
 class SprottF(ContinuousSystem):
+    """
+    Sprott case F — an algebraically simple chaotic flow.
+
+    Case F from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default ``a = 0.5``.
+
+    Parameters
+    ----------
+    a : float
+        Single adjustable coefficient of the flow.
+    """
+
     params = {"a": 0.5}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -802,8 +1080,21 @@ class SprottF(ContinuousSystem):
 
 
 class SprottG(ContinuousSystem):
+    """
+    Sprott case G — an algebraically simple chaotic flow.
+
+    Case G from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default ``a = 0.4``.
+
+    Parameters
+    ----------
+    a : float
+        Single adjustable coefficient of the flow.
+    """
+
     params = {"a": 0.4}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -823,8 +1114,21 @@ class SprottG(ContinuousSystem):
 
 
 class SprottH(ContinuousSystem):
+    """
+    Sprott case H — an algebraically simple chaotic flow.
+
+    Case H from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default ``a = 0.5``.
+
+    Parameters
+    ----------
+    a : float
+        Single adjustable coefficient of the flow.
+    """
+
     params = {"a": 0.5}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -844,8 +1148,21 @@ class SprottH(ContinuousSystem):
 
 
 class SprottI(ContinuousSystem):
+    """
+    Sprott case I — an algebraically simple chaotic flow.
+
+    Case I from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default ``a = 0.2``.
+
+    Parameters
+    ----------
+    a : float
+        Single adjustable coefficient of the flow.
+    """
+
     params = {"a": 0.2}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -866,8 +1183,16 @@ class SprottI(ContinuousSystem):
 
 
 class SprottJ(ContinuousSystem):
+    """
+    Sprott case J — an algebraically simple chaotic flow.
+
+    Case J from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t):
@@ -887,8 +1212,21 @@ class SprottJ(ContinuousSystem):
 
 
 class SprottK(ContinuousSystem):
+    """
+    Sprott case K — an algebraically simple chaotic flow.
+
+    Case K from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default ``a = 0.3``.
+
+    Parameters
+    ----------
+    a : float
+        Single adjustable coefficient of the flow.
+    """
+
     params = {"a": 0.3}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -908,8 +1246,21 @@ class SprottK(ContinuousSystem):
 
 
 class SprottL(ContinuousSystem):
+    """
+    Sprott case L — an algebraically simple chaotic flow.
+
+    Case L from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default parameters.
+
+    Parameters
+    ----------
+    a, b : float
+        Adjustable coefficients of the flow.
+    """
+
     params = {"a": 0.9, "b": 3.9}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
@@ -930,8 +1281,21 @@ class SprottL(ContinuousSystem):
 
 
 class SprottM(ContinuousSystem):
+    """
+    Sprott case M — an algebraically simple chaotic flow.
+
+    Case M from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default ``a = 1.7``.
+
+    Parameters
+    ----------
+    a : float
+        Single adjustable coefficient of the flow.
+    """
+
     params = {"a": 1.7}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -952,8 +1316,16 @@ class SprottM(ContinuousSystem):
 
 
 class SprottN(ContinuousSystem):
+    """
+    Sprott case N — an algebraically simple chaotic flow.
+
+    Case N from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t):
@@ -973,8 +1345,21 @@ class SprottN(ContinuousSystem):
 
 
 class SprottO(ContinuousSystem):
+    """
+    Sprott case O — an algebraically simple chaotic flow.
+
+    Case O from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default ``a = 2.7``.
+
+    Parameters
+    ----------
+    a : float
+        Single adjustable coefficient of the flow.
+    """
+
     params = {"a": 2.7}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -995,8 +1380,21 @@ class SprottO(ContinuousSystem):
 
 
 class SprottP(ContinuousSystem):
+    """
+    Sprott case P — an algebraically simple chaotic flow.
+
+    Case P from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default ``a = 2.7``.
+
+    Parameters
+    ----------
+    a : float
+        Single adjustable coefficient of the flow.
+    """
+
     params = {"a": 2.7}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
@@ -1017,8 +1415,21 @@ class SprottP(ContinuousSystem):
 
 
 class SprottQ(ContinuousSystem):
+    """
+    Sprott case Q — an algebraically simple chaotic flow.
+
+    Case Q from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default parameters.
+
+    Parameters
+    ----------
+    a, b : float
+        Adjustable coefficients of the flow.
+    """
+
     params = {"a": 3.1, "b": 0.5}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -1038,8 +1449,21 @@ class SprottQ(ContinuousSystem):
 
 
 class SprottR(ContinuousSystem):
+    """
+    Sprott case R — an algebraically simple chaotic flow.
+
+    Case R from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Chaotic at the default parameters.
+
+    Parameters
+    ----------
+    a, b : float
+        Adjustable coefficients of the flow.
+    """
+
     params = {"a": 0.9, "b": 0.4}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -1059,8 +1483,16 @@ class SprottR(ContinuousSystem):
 
 
 class SprottS(ContinuousSystem):
+    """
+    Sprott case S — an algebraically simple chaotic flow.
+
+    Case S from Sprott's 1994 search (six terms, one quadratic nonlinearity).
+    Parameter-free.
+    """
+
     params = {}
     dim = 3
+    reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
 
     @staticmethod
     def _equations(Y, t):
@@ -1079,7 +1511,20 @@ class SprottS(ContinuousSystem):
         return row1, row2, row3
 
 
+# TODO(reference): unverified — needs a primary citation (a Sprott-style jerk flow
+# with sign() damping and a Gaussian exp(-x^2) nonlinearity; likely from Sprott's
+# "Elegant Chaos" catalogue of special-function flows, but the exact primary source
+# for this specific example could not be confirmed)
 class SprottMore(ContinuousSystem):
+    """
+    Sprott-style jerk flow with a Gaussian nonlinearity.
+
+    A three-dimensional jerk-type flow combining a sign-function (Coulomb-like)
+    damping term with a Gaussian ``exp(-x**2)`` nonlinearity. An example of a
+    minimal chaotic flow built from non-polynomial elementary functions.
+    Parameter-free.
+    """
+
     params = {}
     dim = 3
 
@@ -1101,8 +1546,25 @@ class SprottMore(ContinuousSystem):
 
 
 class SprottJerk(ContinuousSystem):
+    """
+    Sprott's simplest dissipative chaotic flow (jerk system).
+
+    The algebraically simplest dissipative chaotic flow with a single quadratic
+    nonlinearity, written in jerk form ``x''' + mu x'' - x'^2 + x = 0`` (state
+    space: ``x' = y``, ``y' = z``, ``z' = -x + y^2 - mu z``). It has been proven
+    that no simpler chaotic system with a quadratic nonlinearity exists; the
+    attractor resembles a Möbius strip and reaches chaos via period doubling
+    around ``mu ≈ 2.017``.
+
+    Parameters
+    ----------
+    mu : float
+        Damping coefficient; chaos occurs for ``2.017 < mu < 2.082``.
+    """
+
     params = {"mu": 2.017}
     dim = 3
+    reference = "Sprott (1997), Phys. Lett. A 228, 271-274"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
@@ -1126,8 +1588,25 @@ class SprottJerk(ContinuousSystem):
 
 
 class Arneodo(ContinuousSystem):
+    """
+    Arneodo–Coullet–Tresser system.
+
+    A third-order jerk-type system with a cubic nonlinearity that exhibits a
+    spiral-type ("Shilnikov") strange attractor arising from a homoclinic
+    bifurcation. Written as ``x' = y``, ``y' = z``, ``z' = -a x - b y - c z +
+    d x^3``.
+
+    Parameters
+    ----------
+    a, b, c : float
+        Linear feedback coefficients.
+    d : float
+        Cubic nonlinearity coefficient.
+    """
+
     params = {"a": -5.5, "b": 4.5, "c": 1.0, "d": -1.0}
     dim = 3
+    reference = "Arneodo, Coullet & Tresser (1981), Commun. Math. Phys. 79, 573-579"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1147,8 +1626,25 @@ class Arneodo(ContinuousSystem):
 
 
 class Rucklidge(ContinuousSystem):
+    """
+    Rucklidge model of double convection.
+
+    A third-order model that is an asymptotically exact description of weakly
+    nonlinear two-dimensional convection in a fluid layer subject to a lateral
+    constraint (double / double-diffusive convection). It exhibits chaotic
+    behaviour for suitable parameters.
+
+    Parameters
+    ----------
+    a : float
+        Dissipation parameter.
+    b : float
+        Forcing (Rayleigh-like) parameter.
+    """
+
     params = {"a": 2.0, "b": 6.7}
     dim = 3
+    reference = "Rucklidge (1992), J. Fluid Mech. 237, 209-229"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -1168,8 +1664,23 @@ class Rucklidge(ContinuousSystem):
 
 
 class HyperRossler(ContinuousSystem):
+    """
+    Rössler hyperchaotic system.
+
+    The first four-dimensional flow shown to be hyperchaotic — i.e. to possess
+    two positive Lyapunov exponents (two directions of instability on the
+    attractor) — using a single quadratic nonlinearity. The defaults are
+    Rössler's original hyperchaotic parameter set.
+
+    Parameters
+    ----------
+    a, b, c, d : float
+        Coefficients of the four-variable flow (defaults give hyperchaos).
+    """
+
     params = {"a": 0.25, "b": 3.0, "c": 0.5, "d": 0.05}
     dim = 4
+    reference = "Rössler (1979), Phys. Lett. A 71, 155-157"
     default_ic = [-10.0, -6.0, 0.0, 10.0]  # random U[0,1)^4 escapes the basin
 
     @staticmethod
@@ -1191,7 +1702,25 @@ class HyperRossler(ContinuousSystem):
         return row1, row2, row3, row4
 
 
+# TODO(reference): unverified — needs a primary citation (a 4-D hyperchaotic Lorenz
+# system; several distinct "hyperchaotic Lorenz" constructions exist and this exact
+# RHS could not be matched to one primary source with confidence)
 class HyperLorenz(ContinuousSystem):
+    """
+    Hyperchaotic Lorenz-type system.
+
+    A four-dimensional extension of the Lorenz system obtained by adding a
+    fourth state ``w`` that feeds back into the dynamics, producing hyperchaos
+    (two positive Lyapunov exponents).
+
+    Parameters
+    ----------
+    a, b, c : float
+        Lorenz-like coefficients of the underlying three-variable core.
+    d : float
+        Feedback coefficient of the added fourth variable.
+    """
+
     params = {"a": 10, "b": 2.667, "c": 28, "d": 1.1}
     dim = 4
 
@@ -1205,7 +1734,22 @@ class HyperLorenz(ContinuousSystem):
         return xdot, ydot, zdot, wdot
 
 
+# TODO(reference): unverified — needs a primary citation (a 4-D hyperchaotic
+# Yang–Chen-type system; the exact primary source for this RHS could not be
+# confirmed among the many similar hyperchaotic-Chen constructions)
 class HyperYangChen(ContinuousSystem):
+    """
+    Hyperchaotic Yang–Chen-type system.
+
+    A four-dimensional Chen-like flow with an added linear feedback variable
+    ``w`` that yields hyperchaotic dynamics (two positive Lyapunov exponents).
+
+    Parameters
+    ----------
+    a, b, c, d : float
+        Coefficients of the four-variable flow.
+    """
+
     params = {"a": 30, "b": 3, "c": 35, "d": 8}
     dim = 4
 
@@ -1219,7 +1763,22 @@ class HyperYangChen(ContinuousSystem):
         return xdot, ydot, zdot, wdot
 
 
+# TODO(reference): unverified — needs a primary citation (a 4-D hyperchaotic "Yan"
+# system; the exact primary source for this RHS could not be confirmed)
 class HyperYan(ContinuousSystem):
+    """
+    Hyperchaotic Yan-type system.
+
+    A four-dimensional flow with multiple cross-product nonlinearities and a
+    feedback variable ``w`` producing hyperchaos (two positive Lyapunov
+    exponents).
+
+    Parameters
+    ----------
+    a, b, c, d : float
+        Coefficients of the four-variable flow.
+    """
+
     params = {"a": 37, "b": 3, "c": 26, "d": 38}
     dim = 4
 
@@ -1234,8 +1793,24 @@ class HyperYan(ContinuousSystem):
 
 
 class GuckenheimerHolmes(ContinuousSystem):
+    """
+    Guckenheimer–Holmes structurally stable heteroclinic cycle.
+
+    A symmetric three-dimensional flow exhibiting a robust (structurally stable)
+    heteroclinic cycle connecting saddle equilibria, the prototypical model of
+    "cycling chaos". The dynamics slow down near each saddle in turn, giving
+    long, intermittent excursions.
+
+    Parameters
+    ----------
+    a, b, c, d, e, f : float
+        Coefficients setting the linear growth/rotation and the nonlinear
+        coupling that close the heteroclinic cycle.
+    """
+
     params = {"a": 0.4, "b": 20.25, "c": 3, "d": 1.6, "e": 1.7, "f": 0.44}
     dim = 3
+    reference = "Guckenheimer & Holmes (1988), Math. Proc. Cambridge Philos. Soc. 103, 189-192"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e, f):
@@ -1247,8 +1822,24 @@ class GuckenheimerHolmes(ContinuousSystem):
 
 
 class HenonHeiles(ContinuousSystem):
+    """
+    Hénon–Heiles system.
+
+    A two-degree-of-freedom Hamiltonian model of the planar motion of a star in
+    an axisymmetric galactic potential, written as a four-dimensional flow in
+    ``(x, y, px, py)``. As the energy increases the phase space transitions from
+    mostly regular (invariant tori) to predominantly chaotic motion — a classic
+    illustration of the breakdown of a third integral of motion.
+
+    Parameters
+    ----------
+    lam : float
+        Strength of the cubic anharmonic coupling in the potential.
+    """
+
     params = {"lam": 1}
     dim = 4
+    reference = "Hénon & Heiles (1964), Astron. J. 69, 73-79"
     default_ic = [0.1, 0.1, 0.1, 0.1]  # low-energy bounded orbit; random U[0,1)^4 can be unbound
 
     @staticmethod
@@ -1271,8 +1862,24 @@ class HenonHeiles(ContinuousSystem):
 
 
 class NoseHoover(ContinuousSystem):
+    """
+    Nosé–Hoover thermostatted oscillator.
+
+    A one-dimensional harmonic oscillator coupled to a single deterministic
+    Nosé–Hoover thermostat variable. This time-reversible, conservative
+    three-dimensional flow exhibits a coexistence of regular (toroidal) and
+    chaotic trajectories depending on the initial conditions, and is a canonical
+    example of deterministic thermostatted dynamics.
+
+    Parameters
+    ----------
+    a : float
+        Target-temperature parameter of the thermostat.
+    """
+
     params = {"a": 1.5}
     dim = 3
+    reference = "Posch, Hoover & Vesely (1986), Phys. Rev. A 33, 4253-4265"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1284,8 +1891,25 @@ class NoseHoover(ContinuousSystem):
 
 
 class RikitakeDynamo(ContinuousSystem):
+    """
+    Rikitake two-disk dynamo.
+
+    A coupled two-disk homopolar dynamo in which the current from each disk
+    excites the coil of the other. It produces chaotic reversals of the current
+    direction that mimic the irregular polarity reversals of the geomagnetic
+    field — an early dynamical model of geomagnetic reversal.
+
+    Parameters
+    ----------
+    a : float
+        Asymmetry / coupling coefficient between the two disks.
+    mu : float
+        Common damping (dissipation) coefficient.
+    """
+
     params = {"a": 1.0, "mu": 1.0}
     dim = 3
+    reference = "Rikitake (1958), Proc. Cambridge Philos. Soc. 54, 89-105"
 
     @staticmethod
     def _equations(Y, t, *, a, mu):

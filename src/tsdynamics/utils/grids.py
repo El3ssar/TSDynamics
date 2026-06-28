@@ -22,6 +22,23 @@ def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:
     sample would otherwise fall short of it — so the final time is always
     sampled exactly, regardless of whether ``dt`` divides ``tf - t0``.
 
+    The endpoint tolerance
+    ----------------------
+    ``tf`` is appended when ``t_arr`` is empty *or* its last sample sits below
+    ``tf - 1e-12``.  The small absolute slack matters: when ``dt`` divides the
+    window cleanly, the last ``arange`` sample lands on ``tf`` only up to
+    floating-point error — typically a fraction of a ULP *below* it.  Comparing
+    against the bare ``tf`` would then see ``t_arr[-1] < tf`` and append a second,
+    sub-ULP-spaced "endpoint", giving a spurious final segment of width ~1e-16.
+    The ``1e-12`` slack treats any sample already within that band of ``tf`` as
+    *being* the endpoint, so a cleanly-dividing window yields no duplicate tail.
+    It is an **absolute** tolerance (not relative) by deliberate design: the
+    integration windows here are O(1)–O(1e3) in time units and ``dt`` is rarely
+    below ~1e-6, so 1e-12 is far smaller than any meaningful step yet comfortably
+    larger than ``arange`` round-off — a relative tolerance would buy nothing and
+    complicate the contract.  (A pathological window with ``dt`` itself near
+    1e-12 is already rejected upstream as physically meaningless.)
+
     This is the one chokepoint every flow family (ODE / DDE / SDE) and the
     engine run layer build their grid through, so it is also where the two
     silent-footgun horizons are caught early with a domain message: a

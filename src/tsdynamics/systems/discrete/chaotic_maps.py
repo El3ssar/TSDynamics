@@ -39,8 +39,25 @@ class Henon(DiscreteMap):
 
 
 class Ulam(DiscreteMap):
+    r"""
+    Ulam–von Neumann map :math:`x' = a - b\,x^2`.
+
+    The canonical quadratic map of 1D chaos.  With ``a=1, b=2`` it is the form
+    :math:`x' = 1 - 2x^2` on :math:`[-1, 1]`, which is conjugate to the fully
+    developed logistic map :math:`4x(1-x)`; it is ergodic with a smooth
+    invariant density and Lyapunov exponent :math:`\ln 2`.  Ulam and von Neumann
+    introduced it as a deterministic pseudo-random source for the early Monte
+    Carlo computations at Los Alamos.
+
+    Parameters
+    ----------
+    a, b : float
+        Map parameters.  ``a=1, b=2`` gives the fully chaotic (ergodic) regime.
+    """
+
     params = {"a": 1.0, "b": 2.0}
     dim = 1
+    reference = "Ulam & von Neumann (1947), Bull. Amer. Math. Soc. 53, 1120"
 
     @staticmethod
     def _step(X, a, b):
@@ -133,6 +150,15 @@ class Tinkerbell(DiscreteMap):
 
 
 class Gingerbreadman(DiscreteMap):
+    r"""
+    Gingerbreadman map :math:`x' = 1 - y + |x|,\ y' = x`.
+
+    A piecewise-linear, area-preserving (conservative) map whose orbits trace a
+    gingerbread-man-shaped region of mixed chaotic seas and periodic islands.
+    It has no parameters: the dynamics are fixed by the absolute value, which
+    makes it a textbook example of chaos arising from a non-smooth fold.
+    """
+
     params = {}
     dim = 2
     reference = "Devaney (1984), Physica D 10, 387-393"
@@ -153,6 +179,25 @@ class Gingerbreadman(DiscreteMap):
 
 
 class Zaslavskii(DiscreteMap):
+    r"""
+    Zaslavsky dissipative standard map.
+
+    A dissipative ("kicked") rotor: a damped version of the Chirikov standard
+    map in which the phase ``x`` lives on the unit circle and the action ``y``
+    contracts each step.  The contraction folds the standard-map web onto a
+    fractal strange attractor — one of the earliest explicit strange-attractor
+    models.
+
+    Parameters
+    ----------
+    eps : float
+        Kick (perturbation) strength.
+    nu : float
+        Coupling between the action and the phase advance.
+    r : float
+        Damping rate; ``exp(-r)`` is the per-step contraction of the action.
+    """
+
     params = {"eps": 5.0, "nu": 0.2, "r": 2.0}
     dim = 2
     reference = "Zaslavsky (1978), Phys. Lett. A 69, 145-147"
@@ -185,6 +230,28 @@ class Zaslavskii(DiscreteMap):
 
 
 class Chirikov(DiscreteMap):
+    r"""
+    Chirikov standard (kicked-rotor) map.
+
+    The canonical area-preserving map of Hamiltonian chaos,
+
+    .. math::
+
+        p'  &= p + k \sin x \\
+        x'  &= x + p'
+
+    modelling a periodically kicked rotor.  As the stochasticity parameter ``k``
+    grows the invariant KAM tori break up; the last torus is destroyed near the
+    critical value :math:`k \approx 0.971635` (the default), above which global
+    chaotic diffusion in the action sets in.
+
+    Parameters
+    ----------
+    k : float
+        Stochasticity (kick) strength.  ``k=0`` is integrable; the golden-mean
+        KAM torus dies at ``k ≈ 0.971635``.
+    """
+
     params = {"k": 0.971635}
     dim = 2
     reference = "Chirikov (1979), Phys. Rep. 52, 263-379"
@@ -207,6 +274,26 @@ class Chirikov(DiscreteMap):
 
 # Hyperchaotic maps
 class FoldedTowel(DiscreteMap):
+    r"""
+    Rössler folded-towel map — the prototypical hyperchaotic map.
+
+    A 3D invertible map with *two* positive Lyapunov exponents (hence
+    hyperchaos) and one negative, the smallest dimension in which hyperchaos can
+    occur.  Each projection of its attractor resembles a folded towel, giving
+    the map its name.  At the default parameters it is hyperchaotic.
+
+    Parameters
+    ----------
+    a, b, c, d, e, f, g : float
+        Map parameters of the three coupled quadratic recurrences; the defaults
+        reproduce Rössler's original folded-towel attractor.
+    """
+
+    # TODO(reference): the existing citation points at Rössler's hyperchaotic
+    # *flow* ("An equation for hyperchaos", Phys. Lett. A 71A:155-157, 1979).
+    # The folded-towel *map* coded here was introduced in Rössler (1979),
+    # "Chaotic oscillations: an example of hyperchaos", Lectures in Applied
+    # Mathematics 17, 141-156 — maintainer should confirm and switch.
     params = {"a": 3.8, "b": 0.05, "c": 0.35, "d": 0.1, "e": 1.9, "f": 3.78, "g": 0.2}
     dim = 3
     reference = "Rössler (1979), Phys. Lett. A 71, 155-157"
@@ -241,11 +328,37 @@ class FoldedTowel(DiscreteMap):
 
 
 class GeneralizedHenon(DiscreteMap):
+    r"""
+    Baier–Klein generalized (3D) Hénon map.
+
+    A three-dimensional diffeomorphism carrying a single quadratic term,
+
+    .. math::
+
+        x'  &= a - y^2 - b\,z \\
+        y'  &= x \\
+        z'  &= y
+
+    that extends the Hénon map to higher dimension by chaining a delay line of
+    states.  It was introduced to exhibit *hyperchaos*: for suitable parameters
+    it admits two positive Lyapunov exponents (two directions of stretching and
+    folding).  ``b`` controls the dissipation (the constant Jacobian determinant
+    is :math:`\pm b`).
+
+    Parameters
+    ----------
+    a : float
+        Nonlinearity strength of the quadratic term.
+    b : float
+        Coupling to the delayed state ``z``; sets the volume contraction rate.
+    """
+
     params = {
         "a": 1.9,
         "b": 0.03,
     }
     dim = 3
+    reference = "Baier & Klein (1990), Phys. Lett. A 151, 281-284"
 
     @staticmethod
     def _step(X, a, b):

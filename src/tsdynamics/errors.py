@@ -31,6 +31,35 @@ already-excellent ``method=`` / ``backend=`` / ``set_state`` messages establishe
 :func:`invalid_value` builds exactly that message so the standard is applied
 uniformly rather than re-spelled at every raise site.
 
+The hierarchy at a glance
+-------------------------
+============================ =================== ===========================
+Class                        Stdlib base         Raised for
+============================ =================== ===========================
+:class:`TSDynamicsError`     :class:`Exception`  (abstract common ancestor)
+:class:`InvalidParameterError` :class:`ValueError` a bad *value* (range/choice)
+:class:`InvalidInputError`   :class:`TypeError`  a bad argument *type*/*shape*
+:class:`ConvergenceError`    :class:`RuntimeError` divergence / non-convergence
+:class:`BackendError`        :class:`RuntimeError` a compute-backend failure
+============================ =================== ===========================
+
+One concrete leaf lives outside this module to keep it import-light (it must load
+while the package is still initialising):
+:class:`tsdynamics.engine.run.EngineNotAvailableError` subclasses
+:class:`BackendError` and is raised when the compiled ``tsdynamics._rust``
+extension is absent — ``except BackendError`` (or ``except RuntimeError``) catches
+it.
+
+Known gap (tracked WS-ERRORS xfail)
+-----------------------------------
+A wrong-length **initial condition** is still reshaped by NumPy in the family
+``resolve_ic`` path, so it currently surfaces as a raw NumPy ``ValueError``
+(``cannot reshape array …``) rather than a typed :class:`InvalidInputError`.  That
+raise site lives in :mod:`tsdynamics.families`, not here; wrapping it cleanly is
+deferred so this module stays a leaf with no family-side imports.  ``except
+ValueError`` still catches the leak, so the failure mode is correct in kind if not
+yet in framing.
+
 Examples
 --------
 >>> from tsdynamics.errors import TSDynamicsError, InvalidParameterError
