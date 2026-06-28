@@ -92,11 +92,21 @@ def _kurtosis(sig: np.ndarray, fs: float) -> float:
 
 
 def _zcr(sig: np.ndarray, fs: float) -> float:
-    """Zero-crossing rate: fraction of adjacent samples that change sign."""
+    """Zero-crossing rate: fraction of adjacent samples that change sign.
+
+    A crossing is a flip of the :func:`numpy.signbit` partition (the ``< 0`` vs
+    ``>= 0`` half-line).  Exact zeros — including negative zero (``-0.0``), for
+    which ``np.signbit`` is ``True`` even though the value is ``0.0`` — are first
+    normalised to ``+0.0`` so a ``-0.0`` sample cannot fabricate a crossing
+    against its ``+0.0`` neighbours (the defect this guards against).
+    """
     if sig.size < 2:
         return 0.0
-    # signbit splits at 0.0 consistently (no spurious crossing on exact zeros).
-    return float(np.count_nonzero(np.diff(np.signbit(sig)))) / (sig.size - 1)
+    # Collapse -0.0 to +0.0 before signbit: numpy's signbit(-0.0) is True, so a
+    # signal grazing zero from below (... +x, -0.0, +y ...) would otherwise count
+    # two spurious crossings.  Adding 0.0 turns every signed zero into +0.0.
+    sign_lt_zero = np.signbit(sig + 0.0)
+    return float(np.count_nonzero(np.diff(sign_lt_zero))) / (sig.size - 1)
 
 
 def _hjorth_triple(sig: np.ndarray) -> tuple[float, float, float]:
@@ -325,6 +335,12 @@ def zero_crossing_rate(x: Any) -> Any:
     """
     Fraction of adjacent samples that change sign, per channel.
 
+    A crossing is a flip of the ``< 0`` / ``>= 0`` partition between consecutive
+    samples; the rate is the crossing count divided by ``n_samples - 1``, so it
+    lies in ``[0, 1]``.  For a clean tone of frequency ``f`` sampled at ``fs`` it
+    is approximately ``2 f / fs``.  Signed zeros are normalised (``-0.0`` is
+    treated as ``+0.0``) so a sample grazing zero cannot fabricate a crossing.
+
     Parameters
     ----------
     x : Trajectory or array-like
@@ -334,6 +350,13 @@ def zero_crossing_rate(x: Any) -> Any:
     -------
     float or ndarray
         Scalar for a single channel, ``(channels,)`` otherwise.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0, 1, 200, endpoint=False)
+    >>> round(float(zero_crossing_rate(np.sin(2 * np.pi * 5 * t))), 2)
+    0.05
     """
     sig = to_signal(x)
     return _per_channel(sig, _zcr, 1.0)
@@ -343,10 +366,20 @@ def hjorth_parameters(x: Any) -> dict[str, Any]:
     """
     Hjorth activity, mobility and complexity per channel (Hjorth 1970).
 
-    - **activity** — the signal variance (its power).
-    - **mobility** — ``sqrt(var(x') / var(x))``, a mean-frequency proxy.
-    - **complexity** — ``mobility(x') / mobility(x)``, how much the signal departs
-      from a pure sinusoid (1.0 for a sine wave).
+    The three descriptors are built from the variances of the signal ``x`` and
+    its first / second discrete differences (``x'``, ``x''``):
+
+    - **activity** — ``var(x)``, the signal's power.
+    - **mobility** — ``sqrt(var(x') / var(x))``, the standard deviation of the
+      slope relative to that of the amplitude; a proxy for the mean frequency.
+    - **complexity** — ``mobility(x') / mobility(x)``, i.e.
+      ``sqrt(var(x'') / var(x')) / sqrt(var(x') / var(x))``; how much the signal's
+      frequency content departs from a pure tone.  It is ``1`` for an ideal
+      sinusoid and grows as the spectrum broadens.
+
+    The differences are taken with :func:`numpy.diff` (unit sample spacing), so
+    mobility is in cycles per sample.  A constant channel (zero variance) has no
+    shape and returns ``0`` for all three rather than dividing by zero.
 
     Parameters
     ----------
@@ -358,6 +391,18 @@ def hjorth_parameters(x: Any) -> dict[str, Any]:
     dict
         Keys ``"activity"``, ``"mobility"``, ``"complexity"``; each value is a
         ``float`` for a single channel or a ``(channels,)`` array otherwise.
+
+    References
+    ----------
+    Hjorth, B. (1970). EEG analysis based on time domain properties.
+    *Electroencephalography and Clinical Neurophysiology*, 29(3), 306-310.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0, 10, 4000, endpoint=False)
+    >>> round(hjorth_parameters(np.sin(2 * np.pi * 3 * t))["complexity"], 2)
+    1.0
     """
     sig = to_signal(x)
     triples = [_hjorth_triple(col) for _, col in channel_iter(sig)]

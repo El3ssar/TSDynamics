@@ -324,3 +324,86 @@ def test_scalar_and_highdim_inputs_raise() -> None:
         tx.detrend(3.0)
     with pytest.raises(ValueError, match="1-D or 2-D"):
         tx.detrend(np.zeros((4, 4, 4)))
+
+
+# ---------------------------------------------------------------------------
+# Deep-audit regression fixes
+# ---------------------------------------------------------------------------
+
+
+def test_zcr_ignores_negative_zero() -> None:
+    """A -0.0 sample between two positives is not a sign change (no spurious ZCR).
+
+    ``np.signbit(-0.0)`` is True, so the old implementation counted two
+    crossings for ``[1.0, -0.0, 1.0]``; the signed zero must be normalised away.
+    """
+    assert tx.zero_crossing_rate(np.array([1.0, -0.0, 1.0])) == 0.0
+    # A genuine crossing is still counted: + then - is one sign change.
+    assert tx.zero_crossing_rate(np.array([1.0, -1.0])) == pytest.approx(1.0)
+    # ... and a -0.0 leading a real negative excursion is one crossing, not two.
+    assert tx.zero_crossing_rate(np.array([1.0, -0.0, -1.0, 1.0])) == pytest.approx(2 / 3)
+
+
+def test_extract_features_zcr_ignores_negative_zero() -> None:
+    """The catalogue ZCR feature inherits the negative-zero guard."""
+    feats = tx.extract_features(np.array([1.0, -0.0, 1.0]), features=["zero_crossing_rate"])
+    assert feats["zero_crossing_rate"] == 0.0
+
+
+def test_single_component_trajectory_returns_scalar_features(
+    time: np.ndarray, two_tone: np.ndarray
+) -> None:
+    """A 1-component Trajectory is a single channel → scalar (float) summaries.
+
+    Its ``y`` is a ``(T, 1)`` column; ``to_signal`` must squeeze it so the
+    scalar-claimed features return a Python ``float``, not a length-1 array,
+    exactly as the bare 1-D-array path does.
+    """
+    traj = _traj(time, two_tone)
+    ent = tx.spectral_entropy(traj)
+    assert isinstance(ent, float)
+    cen = tx.spectral_centroid(traj)
+    assert isinstance(cen, float)
+    feats = tx.extract_features(traj, features=["mean", "spectral_centroid"])
+    assert isinstance(feats["mean"], float)
+    assert isinstance(feats["spectral_centroid"], float)
+    # The value matches the bare-array path with the inferred fs.
+    assert ent == pytest.approx(tx.spectral_entropy(two_tone, fs=FS))
+
+
+def test_shape_preserving_transform_keeps_2d_state(time: np.ndarray, two_tone: np.ndarray) -> None:
+    """A round-tripped single-component Trajectory keeps a 2-D ``(T, 1)`` state.
+
+    ``to_signal`` squeezes the channel axis, so ``wrap_like`` must restore the
+    original 2-D shape — ``Trajectory.dim`` reads ``y.shape[1]`` and would crash
+    on a 1-D ``y``.
+    """
+    traj = _traj(time, two_tone)
+    out = tx.normalize(traj, method="zscore")
+    assert isinstance(out, Trajectory)
+    assert out.y.shape == traj.y.shape
+    assert out.dim == 1
+
+
+def test_butter_filter_rejects_nonpositive_order(two_tone: np.ndarray) -> None:
+    """``order`` must be a positive integer, like every other validated arg."""
+    with pytest.raises(ValueError, match="order"):
+        tx.butter_filter(two_tone, 10.0, btype="lowpass", fs=FS, order=0)
+    with pytest.raises(ValueError, match="order"):
+        tx.lowpass(two_tone, 10.0, fs=FS, order=-2)
+
+
+def test_power_spectrum_to_plot_spec_falls_back_to_linear_with_zeros() -> None:
+    """A PSD with exact-zero bins must not force an unrenderable log y-axis."""
+    spec_obj = tx.Spectrum(
+        frequencies=np.array([0.0, 1.0, 2.0]),
+        psd=np.array([1.0, 0.0, 2.0]),
+    )
+    plot_spec = spec_obj.to_plot_spec()
+    assert plot_spec.y.scale == "linear"
+    # An all-positive PSD still uses the log scale (orders-of-magnitude span).
+    pos = tx.Spectrum(
+        frequencies=np.array([0.0, 1.0, 2.0]),
+        psd=np.array([1.0, 0.5, 2.0]),
+    )
+    assert pos.to_plot_spec().y.scale == "log"

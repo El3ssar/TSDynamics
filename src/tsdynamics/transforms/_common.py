@@ -7,7 +7,9 @@ shape ``(T, dim)`` already obeys).  The helpers here centralise the two pieces o
 boilerplate that would otherwise be copy-pasted across every transform:
 
 - :func:`to_signal` — coerce the polymorphic input to a contiguous ``float``
-  array, leaving 1-D signals 1-D and multi-channel signals ``(T, channels)``.
+  array, leaving 1-D signals 1-D and multi-channel signals ``(T, channels)``.  A
+  single-component :class:`~tsdynamics.data.Trajectory` (``y`` of shape
+  ``(T, 1)``) is squeezed to 1-D so its scalar summaries return a ``float``.
 - :func:`resolve_fs` — settle the sampling frequency.  Spectral estimators need
   it; a :class:`~tsdynamics.data.Trajectory` already carries the information in
   its ``t`` vector, so it is inferred from there when the caller does not pass an
@@ -53,10 +55,21 @@ def to_signal(x: Any) -> np.ndarray:
     Returns
     -------
     ndarray
-        ``float`` array, contiguous, shape unchanged from the underlying data.
+        ``float`` array, contiguous.  A single-channel input — a 1-D array or a
+        :class:`~tsdynamics.data.Trajectory` with one state component (``y`` of
+        shape ``(T, 1)``) — is returned 1-D, so the scalar-summary transforms
+        return a Python ``float`` (not a length-1 array) as their docstrings
+        promise.  A genuine multi-channel ``(T, channels)`` input stays 2-D.
     """
     if _is_trajectory(x):
-        return np.ascontiguousarray(x.y, dtype=float)
+        sig = np.ascontiguousarray(x.y, dtype=float)
+        # A 1-D Trajectory packs its single component as a (T, 1) column; squeeze
+        # the width-1 channel axis so a scalar-claimed feature returns a float,
+        # matching the bare 1-D-array path.  A multi-channel (T, C>1) y is left
+        # 2-D.
+        if sig.ndim == 2 and sig.shape[1] == 1:
+            sig = np.ascontiguousarray(sig[:, 0])
+        return sig
     # Rank-check the raw array first: ``ascontiguousarray`` would promote a 0-D
     # scalar to 1-D and hide it, so the scalar guard has to come before it.
     arr = np.asarray(x, dtype=float)
@@ -163,7 +176,13 @@ def wrap_like(x: Any, y: np.ndarray, **meta_update: Any) -> Any:
 
         meta = dict(x.meta)
         meta.update(meta_update)
-        return Trajectory(x.t, np.asarray(y), x.system, meta=meta)
+        # Restore the original 2-D ``(T, dim)`` state shape: ``to_signal`` squeezes
+        # a single-component Trajectory to a 1-D signal, but a ``Trajectory.y`` is
+        # always 2-D (``Trajectory.dim`` reads ``y.shape[1]``), so reshape back
+        # before rebuilding.  Shape-preserving transforms keep the channel count,
+        # so ``x.y.shape`` is exactly right.
+        out = np.asarray(y).reshape(x.y.shape)
+        return Trajectory(x.t, out, x.system, meta=meta)
     return np.asarray(y)
 
 

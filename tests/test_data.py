@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.data import Trajectory
+from tsdynamics.data import Ball, Box, Grid, Trajectory
 
 
 class _NamedStub:
@@ -104,3 +104,59 @@ def test_trajectory_set_distance_roundtrips_through_data() -> None:
     b = Trajectory(t, np.ones((5, 2)), system=None)
     assert a.set_distance(b) == pytest.approx(np.sqrt(2))
     assert a.set_distance(b, method="hausdorff") == pytest.approx(np.sqrt(2))
+
+
+# ---------------------------------------------------------------------------
+# Region.contains: single point returns a scalar bool; a batch returns a mask
+# ---------------------------------------------------------------------------
+
+
+def test_box_contains_single_point_is_scalar_bool() -> None:
+    box = Box([-1.0, -1.0], [1.0, 1.0])
+    assert box.contains([0.0, 0.0]) is True
+    assert box.contains([2.0, 0.0]) is False
+    # exact return type is a Python bool (not a numpy scalar)
+    assert isinstance(box.contains([0.0, 0.0]), bool)
+
+
+def test_box_contains_batch_returns_per_row_mask() -> None:
+    """A (n, dim) batch must yield an (n,) mask, never one conflated bool.
+
+    Before the fix ``np.all`` collapsed the whole array, so a batch with one
+    inside and one outside point silently returned a single ``False``.
+    """
+    box = Box([-1.0, -1.0], [1.0, 1.0])
+    pts = np.array([[0.0, 0.0], [2.0, 0.0], [-0.5, 0.5]])
+    mask = box.contains(pts)
+    assert isinstance(mask, np.ndarray)
+    np.testing.assert_array_equal(mask, [True, False, True])
+
+
+def test_ball_contains_batch_returns_per_row_mask() -> None:
+    ball = Ball([0.0, 0.0], r=1.0)
+    pts = np.array([[0.0, 0.0], [2.0, 0.0], [0.5, 0.5]])
+    mask = ball.contains(pts)
+    np.testing.assert_array_equal(mask, [True, False, True])
+    assert ball.contains([0.5, 0.5]) is True
+
+
+def test_grid_contains_batch_returns_per_row_mask() -> None:
+    grid = Grid([-1.0, -1.0], [1.0, 1.0], (5, 5))
+    pts = np.array([[0.0, 0.0], [3.0, 0.0]])
+    np.testing.assert_array_equal(grid.contains(pts), [True, False])
+
+
+def test_contains_rejects_wrong_shape() -> None:
+    """A flat array whose length is not ``dim`` must raise, not silently reduce."""
+    box = Box([-1.0, -1.0], [1.0, 1.0])
+    with pytest.raises(ValueError, match="containment query"):
+        box.contains([0.0, 0.0, 0.0])  # 3-vector against a 2-D box
+    with pytest.raises(ValueError, match="containment query"):
+        Ball([0.0, 0.0], r=1.0).contains(np.zeros((2, 2, 2)))  # 3-D array
+
+
+def test_box_contains_1d_scalar_point() -> None:
+    """A bare scalar is still a valid single point of a 1-D region (back-compat)."""
+    box = Box([-1.0], [1.0])
+    assert box.contains(0.5) is True
+    assert box.contains(2.0) is False
