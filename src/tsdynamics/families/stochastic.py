@@ -534,6 +534,16 @@ class StochasticSystem(SystemBase, ABC):
         seed : int, optional
             Seed for the noise realisation (random if omitted). The resolved seed
             is recorded in ``traj.meta["seed"]`` so a run can be reproduced.
+
+            .. note::
+               ``integrate(seed=s)`` draws its noise from the **raw** seed ``s``,
+               whereas a single-row batch ``ensemble([ic], seed=s)[0]`` draws from
+               the **per-index** stream ``seed_for(s, 0)`` (the
+               parallel-equals-serial contract of :meth:`ensemble`).  These two
+               derived seeds differ, so the two calls trace **different** sample
+               paths for the same ``s`` — by design, not a bug.  To reproduce one
+               ``ensemble`` trajectory standalone, integrate with that index's
+               derived seed.
         backend : str, optional
             Defaults to ``_default_backend`` (``"interp"``).  ``"interp"`` /
             ``"jit"`` dispatch the two-tape
@@ -606,6 +616,13 @@ class StochasticSystem(SystemBase, ABC):
         **reproducible** and matches the compiled engine's per-index seeding
         (the parallel-equals-serial contract). A diverging trajectory yields a
         row of ``NaN`` rather than aborting the batch.
+
+        .. note::
+           Because every trajectory is seeded by index, ``ensemble([ic], seed=s)``
+           draws from ``seed_for(s, 0)``, which differs from the **raw** seed ``s``
+           used by ``integrate(seed=s)``.  The two calls therefore trace different
+           sample paths for the same ``s`` — by design (the index seeding is what
+           makes a batch reproducible and parallel-safe).
 
         Parameters
         ----------

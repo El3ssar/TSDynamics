@@ -44,6 +44,16 @@ class ParamSet(MutableMapping[str, Any]):
     data : dict
         Initial key→value mapping.  All future writes must use existing keys.
 
+    Raises
+    ------
+    AttributeError
+        On attribute-style read or write of an undeclared key
+        (``p.unknown`` / ``p.unknown = ...``).
+    KeyError
+        On item-style write of an undeclared key (``p["unknown"] = ...``).
+    InvalidInputError
+        On any attempt to delete a key (the key set is frozen).
+
     Examples
     --------
     >>> p = ParamSet({"sigma": 10.0, "rho": 28.0})
@@ -184,7 +194,28 @@ class MetaStore(MutableMapping[str, Any]):
         self._records: dict[str, list[dict[str, Any]]] = {}
 
     def record(self, key: str, value: Any, **context: Any) -> Any:
-        """Append ``value`` under ``key`` with optional context kwargs."""
+        """Append ``value`` under ``key`` with optional context kwargs.
+
+        Each call stores a new record ``{"value", "context", "timestamp"}`` —
+        earlier records under the same key are preserved (retrievable with
+        :meth:`history`), and ``meta[key]`` returns the most recent value.
+
+        Parameters
+        ----------
+        key : str
+            The result name (e.g. ``"lyapunov_spectrum"``).
+        value : Any
+            The computed value to store.
+        **context
+            Free-form context recorded alongside the value (e.g. ``dt``,
+            ``final_time``), surfaced by :meth:`history`.
+
+        Returns
+        -------
+        Any
+            ``value`` unchanged, so a result can be recorded and returned in one
+            expression (``return self.meta.record("k", v)``).
+        """
         import time
 
         self._records.setdefault(key, []).append(
@@ -281,7 +312,16 @@ class SystemBase(SystemPlottable):
 
         lor = Lorenz(params={"rho": 30.0}, ic=[1.0, 0.0, 0.0])
 
-    Constructor will raise ``ValueError`` for unknown param keys.
+    The constructor raises
+    :class:`~tsdynamics.errors.InvalidParameterError` (a ``ValueError``
+    subclass) for any unknown parameter key, so a typo such as
+    ``params={"rhoo": 30.0}`` fails loudly instead of being silently ignored.
+
+    See Also
+    --------
+    ParamSet : the fixed-key parameter container behind ``params``.
+    MetaStore : the append-with-history store behind ``meta``.
+    resolve_ic : the uniform initial-condition resolution helper.
     """
 
     #: Class-level parameter defaults.  Keys are frozen once the instance
@@ -360,6 +400,28 @@ class SystemBase(SystemPlottable):
         dim: int | None = None,
         field_shape: tuple[int, ...] | None = None,
     ) -> None:
+        """Initialise a system from its class defaults plus instance overrides.
+
+        Parameters
+        ----------
+        params : dict, optional
+            Per-instance parameter overrides.  Every key must already exist in
+            the class-level :attr:`params` defaults; unknown keys raise.
+        ic : array-like, optional
+            Initial conditions.  Stored on ``self.ic`` (as a ``float`` array) and
+            used by :meth:`resolve_ic` when no explicit ``ic`` is later supplied.
+        dim : int, optional
+            State-space dimension override for variable-dimension systems.  Falls
+            back to the class-level :attr:`dim` when omitted.
+        field_shape : tuple of int, optional
+            Spatial grid shape override for a spatially-extended system (see
+            :attr:`_field_shape`).  Falls back to the class-level value.
+
+        Raises
+        ------
+        InvalidParameterError
+            If ``params`` contains a key that is not a declared parameter.
+        """
         # Build ParamSet from class defaults + constructor overrides
         defaults = dict(type(self).params)
         if params:
@@ -445,7 +507,15 @@ class SystemBase(SystemPlottable):
         """
         Return a deep copy with the same class, params, and ic.
 
-        The copy has its own independent ``params`` and ``meta`` stores.
+        The copy has its own independent ``params`` and ``meta`` stores, so
+        mutating the clone's parameters or recording metadata on it never
+        affects the original.
+
+        Returns
+        -------
+        SystemBase
+            A fresh instance of the same subclass with copied ``params`` and
+            ``ic`` and an empty ``meta`` store.
         """
         return type(self)(
             params=cast(ParamSet, self.params).as_dict(),

@@ -9,7 +9,98 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.families import System
+from tsdynamics.errors import InvalidInputError, InvalidParameterError
+from tsdynamics.families import MetaStore, ParamSet, System
+
+# ---------------------------------------------------------------------------
+# Base-class contracts: ParamSet / MetaStore / resolve_ic (fast)
+# ---------------------------------------------------------------------------
+
+
+class TestParamSet:
+    def test_fixed_key_rejects_unknown(self) -> None:
+        p = ParamSet({"sigma": 10.0})
+        with pytest.raises(AttributeError, match="Unknown parameter"):
+            p.rho = 1.0
+        with pytest.raises(KeyError, match="Unknown parameter"):
+            p["rho"] = 1.0
+        with pytest.raises(InvalidInputError, match="fixed-key"):
+            del p["sigma"]
+
+    def test_attr_and_item_access_agree(self) -> None:
+        p = ParamSet({"sigma": 10.0, "rho": 28.0})
+        p.sigma = 15.0
+        assert p["sigma"] == 15.0
+        assert p.as_tuple() == (15.0, 28.0)
+        assert p.as_dict() == {"sigma": 15.0, "rho": 28.0}
+
+    def test_param_hash_process_stable(self) -> None:
+        # MD5-backed hash must be identical for equal contents (no hash seed).
+        a = ParamSet({"sigma": 10.0, "rho": 28.0})
+        b = ParamSet({"sigma": 10.0, "rho": 28.0})
+        assert a.param_hash() == b.param_hash()
+        b.rho = 29.0
+        assert a.param_hash() != b.param_hash()
+
+
+class TestMetaStore:
+    def test_record_history_and_latest(self) -> None:
+        m = MetaStore()
+        m.record("k", 1, dt=0.1)
+        m.record("k", 2, dt=0.2)
+        assert m["k"] == 2  # latest wins
+        hist = m.history("k")
+        assert [r["value"] for r in hist] == [1, 2]  # oldest first
+        assert hist[0]["context"] == {"dt": 0.1}
+        assert m.latest() == {"k": 2}
+
+    def test_equality_against_plain_dict(self) -> None:
+        m = MetaStore()
+        assert m == {}
+        m["a"] = 1
+        m["a"] = 1  # overwrite — equality is on the latest value
+        assert m == {"a": 1}
+        other = MetaStore()
+        other["a"] = 1
+        assert m == other
+
+    def test_repr_annotates_overwritten_keys(self) -> None:
+        m = MetaStore()
+        m["dt"] = 0.01
+        m["system"] = "lorenz"
+        m["system"] = "lorenz"
+        r = repr(m)
+        assert "dt=0.01" in r
+        assert "system='lorenz' (x2)" in r
+        assert repr(MetaStore()) == "MetaStore()"
+
+
+class TestResolveIc:
+    def test_priority_arg_over_self_over_default(self) -> None:
+        # arg > self.ic > default_ic
+        lor = ts.Lorenz(ic=[1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(lor.resolve_ic([4.0, 5.0, 6.0]), [4.0, 5.0, 6.0])
+        # the explicit arg is now stored, so a subsequent bare call reproduces it
+        np.testing.assert_array_equal(lor.resolve_ic(), [4.0, 5.0, 6.0])
+
+    def test_falls_back_to_self_ic(self) -> None:
+        lor = ts.Lorenz(ic=[1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(lor.resolve_ic(), [1.0, 2.0, 3.0])
+
+    def test_random_fallback_is_deterministic_under_seed(self) -> None:
+        # No ic, no default_ic -> random U[0,1)^dim, reproducible under a seed.
+        np.random.seed(0)
+        a = ts.Lorenz().resolve_ic()
+        np.random.seed(0)
+        b = ts.Lorenz().resolve_ic()
+        assert a.shape == (3,)
+        np.testing.assert_array_equal(a, b)
+
+
+def test_constructor_rejects_unknown_param() -> None:
+    with pytest.raises(InvalidParameterError, match="unknown parameter"):
+        ts.Lorenz(params={"sigmaa": 99.0})
+
 
 # ---------------------------------------------------------------------------
 # Structural conformance (fast)

@@ -330,7 +330,16 @@ def dde_lyapunov_spectrum(
     # in sign and reported a negative leading exponent for the chaotic
     # Mackey–Glass attractor.)
     n_avg = max(1, int(round(final_time / chunk)))
+    # The transient is discarded a full delay window at a time, so ``n_burn`` is
+    # ``round(burn_in / chunk)``.  For a large delay (``chunk = max_delay``) a
+    # requested ``burn_in`` smaller than half a window rounds to zero — e.g.
+    # ``tau = 100, burn_in = 50`` gives ``round(0.5) = 0`` — and the transient is
+    # then NOT discarded, the exact failure the module docstring warns against.
+    # Round UP to at least one window whenever a positive ``burn_in`` was asked
+    # for, so a non-zero request always discards at least the first delay window.
     n_burn = int(round(burn_in / chunk))
+    if burn_in > 0.0 and n_burn == 0:
+        n_burn = 1
     n_chunks = n_burn + n_avg
     log_sums = np.zeros(n_exp)
     seg_t = chunk + grid  # absolute times of the next past window within [0, chunk]

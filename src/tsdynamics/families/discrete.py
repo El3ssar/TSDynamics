@@ -190,7 +190,29 @@ class DiscreteMap(SystemBase):
         self._n_now = int(t) if t is not None else 0
 
     def step(self, n_or_dt: int | None = None) -> np.ndarray:
-        """Advance ``n`` iterations (default 1) and return the new state."""
+        """
+        Advance ``n`` iterations and return the new state.
+
+        The first call performs an implicit :meth:`reinit`.
+
+        Parameters
+        ----------
+        n_or_dt : int, optional
+            Number of iterations to advance (default 1).  Must be a positive
+            whole number — a discrete map has no notion of a fractional step.
+
+        Returns
+        -------
+        ndarray, shape (dim,)
+            A copy of the state after ``n`` iterations.
+
+        Raises
+        ------
+        InvalidParameterError
+            If ``n_or_dt`` is non-positive or not a whole number.
+        ConvergenceError
+            If the orbit diverges to a non-finite state within the ``n`` steps.
+        """
         if self._state_now is None:
             self.reinit()
         if n_or_dt is None:
@@ -339,6 +361,17 @@ class DiscreteMap(SystemBase):
         -------
         Trajectory
             ``t`` is ``arange(steps)`` (integer step indices, not float times).
+
+        Raises
+        ------
+        ConvergenceError
+            If an explicit ``ic`` diverges, or every random-IC retry diverges.
+        EngineNotAvailableError
+            If a Rust-engine backend (``"interp"`` / ``"jit"``) is requested but
+            the compiled extension is not built.  This propagates immediately
+            (it is not divergence) rather than consuming the retry budget.
+        TapeCompileError
+            If ``_step`` cannot be lowered to the engine IR (piecewise / ufunc).
         """
         backend = backend if backend is not None else self._default_backend
 
@@ -350,7 +383,18 @@ class DiscreteMap(SystemBase):
         for attempt in range(max_retries):
             try:
                 return self._iterate_engine(steps=steps, ic=ic_arr, backend=backend)
-            except RuntimeError as exc:
+            except (ConvergenceError, ArithmeticError) as exc:
+                # Catch ONLY divergence — :class:`ConvergenceError` (the engine /
+                # reference "diverge loudly" signal, also a ``RuntimeError``) and the
+                # arithmetic blow-ups (``OverflowError`` / ``FloatingPointError`` /
+                # ``ZeroDivisionError``, all :class:`ArithmeticError`).  A missing /
+                # broken engine surfaces as
+                # :class:`~tsdynamics.engine.run.EngineNotAvailableError` (a
+                # :class:`~tsdynamics.errors.BackendError`, hence a ``RuntimeError`` but
+                # NOT a ``ConvergenceError``); narrowing the catch lets it — and any
+                # other genuine fault, e.g. a ``backend="jit"`` compile failure —
+                # propagate loudly instead of being mistaken for divergence and
+                # silently burning the whole retry budget.
                 if ic_explicit or attempt == max_retries - 1:
                     raise
                 # Off-basin random draw diverged; warn (not stdout) and retry from
@@ -430,6 +474,14 @@ class DiscreteMap(SystemBase):
         Returns
         -------
         ndarray, shape (n_exp,)
+            Lyapunov exponents ordered from largest to smallest.
+
+        References
+        ----------
+        .. [1] G. Benettin, L. Galgani, A. Giorgilli, and J.-M. Strelcyn,
+           "Lyapunov characteristic exponents for smooth dynamical systems and
+           for Hamiltonian systems; a method for computing all of them,"
+           *Meccanica* 15, 9-30 (1980).
         """
         from tsdynamics.derived.tangent import TangentSystem
 

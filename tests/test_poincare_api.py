@@ -21,7 +21,7 @@ import pytest
 import tsdynamics as ts
 from tsdynamics.analysis._result import VisualizationNotInstalled
 from tsdynamics.derived import PoincareMap, PoincareSection
-from tsdynamics.errors import InvalidParameterError
+from tsdynamics.errors import ConvergenceError, InvalidParameterError
 from tsdynamics.families import Trajectory
 from tsdynamics.viz.spec import PlotKind
 
@@ -192,3 +192,48 @@ def test_plane_errors_are_value_errors() -> None:
     assert issubclass(InvalidParameterError, ValueError)
     with pytest.raises(ValueError):
         PoincareMap(_rossler(), plane=("nope", 0.0))
+
+
+def test_parse_plane_out_of_range_is_invalid_parameter() -> None:
+    """An out-of-range index raises the typed ``InvalidParameterError``."""
+    with pytest.raises(InvalidParameterError, match="out of range"):
+        PoincareMap(_rossler(), plane=(7, 0.0))
+
+
+def test_parse_plane_zero_normal_is_invalid_parameter() -> None:
+    """A zero normal vector raises the typed ``InvalidParameterError``."""
+    with pytest.raises(InvalidParameterError, match="non-zero"):
+        PoincareMap(_rossler(), plane=(np.zeros(3), 0.0))
+
+
+# ---------------------------------------------------------------------------
+# ConvergenceError contract — a plane that misses the attractor (CLAUDE.md)
+# ---------------------------------------------------------------------------
+
+
+def test_section_missing_attractor_raises_convergence_error() -> None:
+    """A plane the bounded Rössler attractor never reaches raises ConvergenceError.
+
+    CLAUDE.md promises no-crossing-within-``max_time`` raises a
+    :class:`~tsdynamics.errors.ConvergenceError` (a ``RuntimeError``), not a bare
+    ``RuntimeError``.  ``x = 1e6`` is far outside the attractor, so no crossing is
+    ever found within the short ``max_time`` — on both the engine fast path
+    (default backend) and the pure-Python loop (``backend="reference"``).
+    """
+    pm = PoincareMap(_rossler(), plane=("x", 1e6), dt=0.05, max_time=50.0)
+    pm.reinit([1.0, 1.0, 0.0])
+    with pytest.raises(ConvergenceError):
+        pm.trajectory(5)
+
+    pm_ref = PoincareMap(_rossler(), plane=("x", 1e6), dt=0.05, max_time=50.0)
+    pm_ref.reinit([1.0, 1.0, 0.0])
+    with pytest.raises(ConvergenceError):
+        pm_ref.trajectory(5, backend="reference")
+
+
+def test_section_missing_attractor_is_runtime_error() -> None:
+    """``except RuntimeError`` still catches the no-crossing failure (additive)."""
+    pm = PoincareMap(_rossler(), plane=("x", 1e6), dt=0.05, max_time=50.0)
+    pm.reinit([1.0, 1.0, 0.0])
+    with pytest.raises(RuntimeError):
+        pm.trajectory(5, backend="reference")

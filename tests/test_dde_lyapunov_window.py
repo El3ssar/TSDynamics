@@ -138,3 +138,52 @@ def test_interp_equals_jit_bit_for_bit_under_window_semantics() -> None:
     interp = ts.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
     jit = ts.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
     np.testing.assert_array_equal(interp, jit)
+
+
+def _mackeyglass_chunk() -> float:
+    """The renormalisation chunk (= one delay window) the estimator uses."""
+    from tsdynamics.families._dde_lyapunov import _build_extended_tape
+
+    _, slots, _ = _build_extended_tape(ts.MackeyGlass(), 1)
+    return max(s.delay for s in slots)
+
+
+def test_small_positive_burn_in_still_discards_one_window() -> None:
+    """A ``burn_in`` that rounds to zero windows must NOT skip the transient.
+
+    For Mackey–Glass the renormalisation chunk is one delay window
+    (``max_delay = tau * 1.01 ≈ 17.17``).  A small but positive ``burn_in`` such
+    as 5.0 has ``round(5.0 / 17.17) = round(0.29) = 0`` — and the pre-fix code
+    then discarded **zero** windows, silently averaging the transient back in
+    (the exact failure the module docstring warns against).
+
+    Failing-first contract: a small positive ``burn_in`` (rounds to 0) must
+    behave like discarding exactly **one** window — so its spectrum equals the
+    ``burn_in == chunk`` run and **differs** from the ``burn_in = 0`` run (which
+    legitimately discards nothing).  Pre-fix, the small-``burn_in`` run was
+    identical to ``burn_in = 0`` (both discarded zero windows) → FAIL.
+    """
+    ic = np.asarray(_mackeyglass_on_attractor_ic(), dtype=np.float64)
+    chunk = _mackeyglass_chunk()
+    assert round(5.0 / chunk) == 0, "test premise: 5.0 must round to zero windows"
+
+    def run(burn_in: float) -> np.ndarray:
+        return ts.MackeyGlass().lyapunov_spectrum(
+            backend="interp",
+            n_exp=1,
+            dt=0.5,
+            burn_in=burn_in,
+            final_time=200.0,
+            ic=ic,
+            rtol=1e-4,
+            atol=1e-4,
+        )
+
+    no_burn = run(0.0)  # discards nothing
+    small_burn = run(5.0)  # rounds to 0 → must round UP to 1 window post-fix
+    one_window = run(chunk)  # discards exactly one window
+
+    # Post-fix: a positive burn_in rounding to zero discards one window, matching
+    # the explicit one-window run and differing from the zero-burn-in run.
+    np.testing.assert_array_equal(small_burn, one_window)
+    assert not np.array_equal(small_burn, no_burn), (small_burn, no_burn)

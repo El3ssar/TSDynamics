@@ -54,15 +54,37 @@ class System(Protocol):
         ...
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
-        """Advance by ``n`` iterations (discrete) or ``dt`` time (continuous)."""
+        """Advance the system and return the new state.
+
+        The argument is the number of iterations for a discrete map and the time
+        increment ``dt`` for a continuous flow (each family supplies a sensible
+        default when ``None``).  Calling ``step`` on a fresh system performs an
+        implicit :meth:`reinit` first.
+
+        Returns
+        -------
+        ndarray
+            The state after advancing.
+        """
         ...
 
     def state(self) -> np.ndarray:
-        """Return a copy of the current state vector."""
+        """Return a copy of the current state vector.
+
+        Calling ``state`` on a fresh system performs an implicit :meth:`reinit`
+        first.  The returned array is a copy, so mutating it never disturbs the
+        live stepper.
+        """
         ...
 
     def set_state(self, u: Any) -> None:
-        """Overwrite the current state (not available for DDEs)."""
+        """Overwrite the current state.
+
+        Not available for delay systems — a DDE's state is a whole history
+        function, not a point, so its implementation raises
+        ``NotImplementedError``; use :meth:`reinit` to restart from a constant
+        past instead.
+        """
         ...
 
     def time(self) -> float:

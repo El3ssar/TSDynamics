@@ -53,7 +53,23 @@ class StroboscopicMap(DerivedSystem):
         return True
 
     def step(self, n_or_dt: int | None = None) -> np.ndarray:
-        """Advance ``n`` periods (default 1) and return the new state."""
+        """Advance ``n`` forcing periods (default 1) and return the new state.
+
+        ``n_or_dt`` is a **period count**, not a time increment — the wrapper
+        presents a discrete map, so the argument is coerced to an integer with
+        ``int()`` (a float is *truncated toward zero*, matching the discrete-view
+        convention; pass a whole number to be explicit).
+
+        Parameters
+        ----------
+        n_or_dt : int, optional
+            Number of forcing periods to advance.  ``None`` advances one period.
+
+        Returns
+        -------
+        numpy.ndarray
+            The full-dimensional state after ``n`` periods.
+        """
         n = int(n_or_dt) if n_or_dt is not None else 1
         return cast(np.ndarray, self.system.step(n * self.period))
 
@@ -62,7 +78,28 @@ class StroboscopicMap(DerivedSystem):
         return cast(float, self.system.time())
 
     def trajectory(self, steps: int = 100, *, transient: int = 0, **kwargs: Any) -> Trajectory:
-        """Collect ``steps`` once-per-period samples (after ``transient`` periods)."""
+        """Collect ``steps`` once-per-period samples (after ``transient`` periods).
+
+        Sampling starts from the inner flow's **live cursor** and advances by
+        exactly one forcing :attr:`period` per sample; ``transient`` leading
+        periods are stepped through and discarded first.  Any keyword (``ic=``,
+        solver options) triggers a :meth:`reinit` before sampling.
+
+        Parameters
+        ----------
+        steps : int
+            Number of once-per-period samples to collect.
+        transient : int
+            Number of leading periods to step through and discard.
+        **kwargs
+            Forwarded to :meth:`reinit` (``ic`` is popped) when non-empty.
+
+        Returns
+        -------
+        Trajectory
+            The strobed samples — continuous sample times in ``t`` (one period
+            apart), full-dimensional states in ``y``.
+        """
         if kwargs:
             self.reinit(kwargs.pop("ic", None), **kwargs)
         if transient:
@@ -104,6 +141,15 @@ class StroboscopicMap(DerivedSystem):
         Returns
         -------
         PlotSpec
+
+        Notes
+        -----
+        Sampling starts from the inner flow's **live cursor** (this calls
+        :meth:`trajectory`, which steps the wrapped system as a side effect with
+        no transient discarded), so the picture reflects wherever the system
+        currently sits — :meth:`reinit` first for a deterministic start state, or
+        burn the transient in beforehand to image the attractor rather than the
+        approach to it.
         """
         from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
 

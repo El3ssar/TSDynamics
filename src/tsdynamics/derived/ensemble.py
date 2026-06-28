@@ -61,15 +61,38 @@ class EnsembleSystem:
         return cast(bool, self.template.is_discrete)
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
-        """Advance every member and return the stacked states, shape (m, dim)."""
+        """Advance every member synchronously and return the stacked states.
+
+        Parameters
+        ----------
+        n_or_dt : float or int, optional
+            The per-member increment (a ``dt`` for a flow, an iteration count for
+            a map).  ``None`` uses each member's default.
+
+        Returns
+        -------
+        numpy.ndarray
+            The new states, shape ``(size, dim)`` — one row per member.
+        """
         return np.array([m.step(n_or_dt) for m in self.members])
 
     def states(self) -> np.ndarray:
-        """Return the current states, shape (m, dim)."""
+        """Return the current member states, shape ``(size, dim)``."""
         return np.array([m.state() for m in self.members])
 
     def set_states(self, states: Any) -> None:
-        """Overwrite every member's state."""
+        """Overwrite every member's state.
+
+        Parameters
+        ----------
+        states : array-like, shape (size, dim)
+            One new state per member, in member order.
+
+        Raises
+        ------
+        ValueError
+            If ``states`` is not exactly ``(size, dim)``.
+        """
         states_arr = np.atleast_2d(np.asarray(states, dtype=float))
         if states_arr.shape != (self.size, self.dim):
             raise ValueError(f"expected shape {(self.size, self.dim)}, got {states_arr.shape}")

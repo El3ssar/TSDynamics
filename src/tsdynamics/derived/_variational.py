@@ -56,7 +56,11 @@ def build_variational_tape(system: Any, k: int) -> Any:
     Returns
     -------
     Tape
-        A lowered, validated tape with ``dim·(k+1)`` state inputs and outputs.
+        A lowered, validated tape with ``dim·(k+1)`` state inputs and outputs,
+        carrying its own ``∂(extended RHS)/∂z`` Jacobian block so an implicit
+        stiff kernel (a base flow whose ``_default_method`` is ``"bdf"``) can
+        integrate the extended system.  An explicit kernel skips the
+        Jacobian-only registers, so the result is unchanged for non-stiff flows.
     """
     import symengine
 
@@ -105,12 +109,23 @@ def build_variational_tape(system: Any, k: int) -> Any:
                 acc = acc + jac[j][c] * w_syms[base + c]
             exprs.append(acc)
 
+    # Lower the extended tape *with* its Jacobian.  The renormalisation loop in
+    # :class:`~tsdynamics.derived.tangent.TangentSystem` integrates this extended
+    # ODE per-step through ``engine.run.integrate`` on a *pre-built* ODEProblem,
+    # and ``run.integrate`` deliberately does **not** rebuild a pre-built problem
+    # ``with_jacobian=True``.  So if the base flow's stiff default (e.g.
+    # ``_default_method="bdf"`` on Oregonator / KuramotoSivashinsky / Duffing /
+    # the stiff Sprott jerks) drives an implicit kernel, the kernel needs the
+    # ``∂(extended RHS)/∂z`` tape to be present here — emit it.  An explicit
+    # kernel ignores the Jacobian outputs (the interpreter's dead-register
+    # elimination / the JIT's reachable set skip them), so the spectrum is
+    # answer-identical for non-stiff systems.
     return lower_expressions(
         exprs,
         [*u_syms, *w_syms],
         param_syms=[control_syms[name] for name in control_names],
         time_sym=t_canon,
-        jacobian=False,
+        jacobian=True,
         control_names=control_names,
     )
 

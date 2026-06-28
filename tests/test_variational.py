@@ -151,6 +151,104 @@ def test_tangent_lyapunov_records_meta() -> None:
     assert rec["context"]["reortho_interval"] == 1
 
 
+class _StiffLinOsc(ContinuousSystem):
+    """Linear oscillator that *defaults to the stiff BDF kernel*.
+
+    Same constant-Jacobian closed-form oracle as :class:`LinOsc` (spectrum
+    ``[-1, -2]``), but with ``_default_method = "bdf"`` so the tangent flow is
+    driven onto an *implicit* engine kernel.  Before the fix the extended
+    variational tape was lowered with ``jacobian=False``, so the implicit kernel
+    found no Jacobian tape and ``lyapunov_spectrum`` *raised*; this gives a fast,
+    closed-form regression for that path without the cost of a genuinely stiff
+    catalogue system.
+    """
+
+    params = {"k": 2.0, "c": 3.0}
+    dim = 2
+    variables = ("x", "y")
+    _default_method = "bdf"
+
+    @staticmethod
+    def _equations(y, t, k, c):
+        return [y(1), -k * y(0) - c * y(1)]
+
+
+def test_variational_tape_emits_jacobian() -> None:
+    """The extended variational tape carries its own Jacobian block.
+
+    Regression guard for the P0 bug: a base flow whose ``_default_method`` is an
+    implicit kernel (``"bdf"``) integrates the *pre-built* extended ODEProblem,
+    and ``engine.run.integrate`` does not rebuild a pre-built problem
+    ``with_jacobian=True`` — so the Jacobian must be present on the tape itself.
+    """
+    tape = build_variational_tape(LinOsc(), 2)
+    assert tape.has_jacobian
+
+
+def test_stiff_default_ode_lyapunov_does_not_raise() -> None:
+    """A stiff-defaulted (``bdf``) flow's Lyapunov spectrum integrates cleanly.
+
+    Fast closed-form proxy for the catalogue stiff systems (Oregonator,
+    KuramotoSivashinsky, Duffing, the stiff Sprott jerks): the implicit kernel
+    now has the extended Jacobian it needs, so the spectrum is finite, descending
+    and matches the analytic ``[-1, -2]`` instead of raising.  Exercises the
+    *engine* implicit path (the one the bug broke), so it skips without the
+    compiled extension.
+    """
+    pytest.importorskip("tsdynamics._rust")
+    tang = TangentSystem(_StiffLinOsc(), k=2, backend="interp")
+    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, burn_in=5.0, ic=[1.0, 0.5])
+    assert np.all(np.isfinite(spec))
+    assert spec[0] >= spec[1]  # descending (QR order)
+    np.testing.assert_allclose(spec, [-1.0, -2.0], atol=0.05)
+
+
+def test_structural_change_rebuilds_extended_tape() -> None:
+    """A live structural-parameter change re-lowers the cached extended tape.
+
+    The extended tape bakes in structural parameters; a stale cache would carry
+    the wrong dimension/structure.  Reinitialising after a structural change must
+    rebuild it (the cache is keyed on the structural values).
+    """
+    tang = TangentSystem(LinOsc(), k=2, backend="reference")
+    tang.reinit([1.0, 0.5])
+    first_tape = tang._ext_tape
+    first_key = tang._ext_tape_key
+    # No structural params on LinOsc → key is the empty tuple and the tape is
+    # reused across reinit (a control/IC change is not a structural change).
+    tang.reinit([0.2, 0.3])
+    assert tang._ext_tape is first_tape
+    assert tang._ext_tape_key == first_key
+
+    # Simulate a structural change by poking the cached key stale; the next
+    # reinit must rebuild (key mismatch path).
+    tang._ext_tape_key = (("N", 99),)
+    tang.reinit([0.2, 0.3])
+    assert tang._ext_tape is not first_tape
+    assert tang._ext_tape_key == ()
+
+
+@pytest.mark.slow
+def test_oregonator_stiff_lyapunov_finite_descending() -> None:
+    """The genuinely-stiff Oregonator Lyapunov spectrum is finite and descending.
+
+    End-to-end guard for the named P0 system: ``ts.Oregonator()`` defaults to the
+    implicit ``bdf`` kernel, so ``lyapunov_spectrum`` drives the extended
+    variational ODE onto that kernel.  Before the fix this *raised* (no Jacobian
+    tape); it must now return a finite, descending spectrum.  ``final_time`` is
+    kept modest for speed — correctness of the *values* is covered by the
+    closed-form oscillator oracles above; here we only assert it does not raise
+    and is well-formed.
+    """
+    pytest.importorskip("tsdynamics._rust")
+    spec = ts.Oregonator().lyapunov_spectrum(
+        final_time=6.0, dt=0.01, burn_in=2.0, ic=[1.0, 1.0, 1.0]
+    )
+    assert spec.shape == (3,)
+    assert np.all(np.isfinite(spec))
+    assert spec[0] >= spec[1] >= spec[2]  # descending (QR order)
+
+
 @pytest.mark.slow
 def test_ode_family_delegates_to_tangent_engine() -> None:
     """Family ODE ``lyapunov_spectrum`` reproduces the literature Lorenz spectrum.

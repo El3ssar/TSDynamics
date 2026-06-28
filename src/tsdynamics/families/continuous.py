@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from typing import Any, ClassVar, cast
 
@@ -154,7 +155,17 @@ class ContinuousSystem(SystemBase, ABC):
     #               SymEngine-Lambdified numeric RHS/Jacobian evaluators
     #               (used by figures, Poincaré Hermite refinement and analyses),
     #               keyed by class + dim + structural params.
-    _lambdified: ClassVar[dict[str, tuple[Any, Any, list[str]]]] = {}
+    # Bounded LRU (move-to-end on hit, evict-oldest past the cap) so a long-lived
+    # process that lowers many distinct structural variants of one system (e.g. a
+    # Lorenz96 swept over its dimension ``N``) cannot grow this without bound; the
+    # control-param sweep that re-runs one structural variant is served from a
+    # single entry, so the common case never evicts.  The cap is generous because
+    # each entry is a couple of compiled SymEngine callables, not a heavy buffer.
+    _lambdified: ClassVar[OrderedDict[str, tuple[Any, Any, list[str]]]] = OrderedDict()
+
+    #: Maximum number of distinct numeric-evaluator entries kept per class in
+    #: :attr:`_lambdified` before the least-recently-used entry is evicted.
+    _LAMBDIFIED_CACHE_MAXSIZE: ClassVar[int] = 64
 
     # Protocol stepping state (instances shadow these class defaults on first
     # ``reinit``).  The engine lowers the tape once in ``reinit`` and ``step``
@@ -606,11 +617,23 @@ class ContinuousSystem(SystemBase, ABC):
 
         Both take a flat argument vector ``[y_0..y_{dim-1}, t, *control_params]``.
         Cached per (class, dim, structural-hash) — parameter value changes
-        need no rebuild because control params are call-time arguments.
+        need no rebuild because control params are call-time arguments.  The
+        per-class cache is a bounded LRU (:attr:`_LAMBDIFIED_CACHE_MAXSIZE`):
+        a cache hit is moved to the most-recently-used end, and an insertion past
+        the cap evicts the least-recently-used entry, so a process that lowers many
+        distinct structural variants stays bounded.
+
+        Returns
+        -------
+        tuple of (rhs_fn, jac_fn, control_names)
+            ``rhs_fn`` / ``jac_fn`` are SymEngine ``Lambdify`` callables and
+            ``control_names`` the ordered non-structural parameter names.
         """
+        cache = type(self)._lambdified
         key = self._cache_key()
-        cached = type(self)._lambdified.get(key)
+        cached = cache.get(key)
         if cached is not None:
+            cache.move_to_end(key)  # mark most-recently-used
             return cached
 
         import symengine
@@ -637,7 +660,10 @@ class ContinuousSystem(SystemBase, ABC):
         jac_fn = symengine.Lambdify(args, [e.subs(subs) for row in jac_rows for e in row])
 
         entry = (rhs_fn, jac_fn, control_names)
-        type(self)._lambdified[key] = entry
+        cache[key] = entry
+        cache.move_to_end(key)
+        while len(cache) > type(self)._LAMBDIFIED_CACHE_MAXSIZE:
+            cache.popitem(last=False)  # evict least-recently-used
         return entry
 
     def jacobian(self, u: Any, t: float = 0.0) -> np.ndarray:
@@ -923,6 +949,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
+        backend: str = "interp",
         **integrator_kwargs: Any,
     ) -> np.ndarray:
         """
@@ -931,7 +958,9 @@ class ContinuousSystem(SystemBase, ABC):
         Delegates to :class:`~tsdynamics.derived.tangent.TangentSystem`, the one
         backend-neutral variational/Lyapunov engine shared across families: the
         *extended* variational ODE (state ⊕ ``k`` tangent vectors) is integrated
-        on the Rust engine per dt-chunk and QR-reorthonormalised.
+        on the chosen ``backend`` per dt-chunk and QR-reorthonormalised.  The
+        Benettin time-averaging of the log-stretch rates follows the classical
+        construction of Benettin et al. [1]_.
 
         Results are stored in ``self.meta['lyapunov_spectrum']``.
 
@@ -951,18 +980,36 @@ class ContinuousSystem(SystemBase, ABC):
             Integrator (default ``"RK45"``).
         rtol, atol : float
             Tolerances.
+        backend : {"interp", "jit", "reference"}, optional
+            Backend on which the extended variational ODE is integrated.
+            Defaults to ``"interp"`` (the zero-warmup Rust engine interpreter).
+            ``"reference"`` is the dependency-light pure-Python oracle (usable
+            without the compiled wheel); ``"jit"`` is the Cranelift JIT.  Any
+            other name is rejected by :class:`~tsdynamics.derived.tangent.TangentSystem`.
 
         Returns
         -------
         ndarray, shape (n_exp,)
             Lyapunov exponents ordered from largest to smallest.
+
+        Raises
+        ------
+        InvalidParameterError
+            If ``n_exp`` is given and not a positive integer.
+
+        References
+        ----------
+        .. [1] G. Benettin, L. Galgani, A. Giorgilli, and J.-M. Strelcyn,
+           "Lyapunov characteristic exponents for smooth dynamical systems and
+           for Hamiltonian systems; a method for computing all of them,"
+           *Meccanica* 15, 9-30 (1980).
         """
         if n_exp is not None and n_exp <= 0:
             raise InvalidParameterError(f"n_exp must be a positive integer, got {n_exp!r}")
         from tsdynamics.derived.tangent import TangentSystem
 
         k = n_exp if n_exp is not None else self.dim
-        return TangentSystem(self, k=k, backend="interp").lyapunov_spectrum(
+        return TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
             final_time=final_time,
             dt=dt,
             ic=ic,
