@@ -53,7 +53,9 @@ class ContinuationResult(AnalysisResult):
     attractors : list[dict[int, Attractor]]
         Per value, the located attractors keyed by their *global* (matched) id.
     diverged : ndarray
-        Diverged fraction at each value.
+        Diverged-or-untracked fraction at each value: the diverged share **plus**
+        the basin mass of any attractor dropped by ``min_fraction``, so the
+        tracked bands and this share together tile :math:`[0, 1]`.
     """
 
     param: str = ""
@@ -77,7 +79,9 @@ class ContinuationResult(AnalysisResult):
         Builds a ``CONTINUATION`` spec — the basin fractions **stacked** against
         the swept parameter, one filled ``AREA`` band per global attractor id (its
         ``"lo"`` / ``"hi"`` channels are the cumulative fraction below and above
-        the band, so the bands tile ``[0, 1]``).  Each **tipping** event from
+        the band).  The attractor bands fill the tracked share; the remaining gap
+        up to ``1`` is the diverged / untracked mass (:attr:`diverged`), so the
+        bands plus that gap tile :math:`[0, 1]`.  Each **tipping** event from
         :meth:`tipping_points` — a basin annihilating (``"disappear"``) or being
         born (``"appear"``) — is drawn as a vertical
         :class:`~tsdynamics.viz.spec.Annotation` at the parameter value where it
@@ -208,7 +212,9 @@ def continuation(
     min_fraction : float, default 0.0
         Drop attractors whose basin fraction is below this at a given value before
         matching — a filter for the tiny spurious sets the recurrence finder can
-        report near unstable equilibria.  ``0`` keeps everything.
+        report near unstable equilibria.  ``0`` keeps everything.  The dropped
+        basin mass is folded into the reported ``diverged`` share, so the tracked
+        bands plus ``diverged`` still tile :math:`[0, 1]`.
     match_method : {"centroid", "hausdorff", "minimum"}, default "centroid"
         Set distance used to match attractors between values.
     match_threshold : float, optional
@@ -221,6 +227,12 @@ def continuation(
     Returns
     -------
     ContinuationResult
+
+    Raises
+    ------
+    TypeError
+        If ``system`` is a delay or stochastic system (unsupported by the
+        recurrence finder).
 
     References
     ----------
@@ -246,6 +258,15 @@ def continuation(
             for lid, att in bf.attractors.attractors.items()
             if bf.fractions.get(lid, 0.0) >= min_fraction
         }  # local_id -> Attractor, tiny spurious sets dropped
+        # Basin mass of the dropped (sub-``min_fraction``) sets is not tracked as a
+        # band, so fold it into the "diverged / other" share — otherwise the
+        # stacked bands plus diverged would sum below one (the un-tracked spurious
+        # mass would silently vanish from the [0, 1] tiling).
+        dropped = sum(
+            float(bf.fractions.get(lid, 0.0))
+            for lid in bf.attractors.attractors
+            if lid not in local
+        )
 
         local_to_global, next_global = _match(
             prev_global, local, next_global, method=match_method, threshold=match_threshold
@@ -258,7 +279,7 @@ def continuation(
             fractions[gid][k] = float(bf.fractions.get(lid, 0.0))
             value_attractors[gid] = att
         per_value.append(value_attractors)
-        diverged.append(float(bf.diverged))
+        diverged.append(float(bf.diverged) + dropped)
         prev_global = value_attractors
 
     frac_arrays = {gid: np.asarray(arr) for gid, arr in fractions.items()}

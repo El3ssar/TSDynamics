@@ -55,16 +55,20 @@ class RQAResult(AnalysisResult):
     avg_diagonal_length : float
         ``L`` — mean length of the diagonal lines counted by ``DET``.
     max_diagonal_length : int
-        ``L_max`` — longest diagonal line (excluding the line of identity).
+        ``L_max`` — longest diagonal line, excluding the line of identity and
+        with **no** ``min_diagonal`` filter (Marwan et al. 2007); ``0`` only when
+        there are no diagonal recurrence lines at all.
     divergence : float
-        ``DIV`` :math:`= 1/L_{\max}` (``inf`` when there are no diagonal lines).
+        ``DIV`` :math:`= 1/L_{\max}` (``inf`` only when there are no diagonal
+        lines, i.e. ``L_max == 0``).
     diagonal_entropy : float
         ``ENTR`` — Shannon entropy (nats) of the diagonal line-length
         distribution.
     trapping_time : float
         ``TT`` — mean length of the vertical lines counted by ``LAM``.
     max_vertical_length : int
-        ``V_max`` — longest vertical line.
+        ``V_max`` — longest vertical line, with **no** ``min_vertical`` filter
+        (the vertical analogue of ``L_max``).
     size : int
         Number of states ``N``.
     epsilon : float
@@ -155,18 +159,25 @@ class RQAResult(AnalysisResult):
 
 
 def _line_stats(lengths: np.ndarray, min_length: int) -> tuple[float, float, int]:
-    """``(fraction_in_long_lines, mean_long_length, max_long_length)``.
+    """``(fraction_in_long_lines, mean_long_length, max_line_length)``.
 
-    ``fraction`` is over *all* recurrence points on lines of this orientation
-    (the denominator is ``lengths.sum()``); the mean and max are over lines no
-    shorter than ``min_length``.
+    ``fraction`` and the mean are over the recurrence-point statistics counted by
+    the ratio measures (DET / LAM and L / TT): the denominator is the total
+    recurrence points on lines of this orientation (``lengths.sum()``), and the
+    mean is over lines no shorter than ``min_length``.  The **maximum** is the
+    longest line in the *full* unfiltered histogram (no ``min_length`` cut) — the
+    Marwan et al. (2007) definition of ``L_max`` / ``V_max`` (the line of identity
+    is already absent from the recurrence matrix), which feeds ``DIV = 1/L_max``.
     """
     total = float(lengths.sum())
     long = lengths[lengths >= min_length]
     frac = float(long.sum()) / total if total > 0.0 else 0.0
-    if long.size == 0:
-        return frac, 0.0, 0
-    return frac, float(long.mean()), int(long.max())
+    # L_max / V_max are the longest line overall, *not* filtered by min_length
+    # (so a near-random series with only short lines still reports L_max >= 1 and
+    # a finite DIV instead of L_max = 0 / DIV = inf).
+    max_len = int(lengths.max()) if lengths.size else 0
+    mean_long = float(long.mean()) if long.size else 0.0
+    return frac, mean_long, max_len
 
 
 def _diagonal_entropy(lengths: np.ndarray, min_length: int) -> float:
@@ -214,16 +225,40 @@ def rqa(
     Returns
     -------
     RQAResult
+        The recurrence-quantification measures (RR, DET, LAM, L, L_max, DIV,
+        ENTR, TT, V_max) plus the raw diagonal / vertical line-length histograms.
 
     Raises
     ------
     ValueError
-        On conflicting matrix-building arguments or ``min_* < 1``.
+        If ``min_diagonal`` or ``min_vertical`` is ``< 1``, or if ``data`` is a
+        :class:`~tsdynamics.analysis.RecurrenceMatrix` and a ``threshold`` /
+        ``recurrence_rate`` is also given (build the matrix with those instead).
+        Matrix-building errors (no threshold/rate, out-of-range values, an
+        over-wide Theiler window) propagate from
+        :func:`~tsdynamics.analysis.recurrence_matrix`.
+
+    Notes
+    -----
+    ``L_max`` and ``V_max`` are the longest diagonal / vertical lines over the
+    *full* line-length histograms (no ``min_*`` filter), matching Marwan et al.
+    (2007); ``DIV = 1 / L_max``.  The ``min_diagonal`` / ``min_vertical`` cut
+    applies only to the ratio and mean measures (DET / LAM / L / TT / ENTR).
 
     References
     ----------
     N. Marwan, M. C. Romano, M. Thiel and J. Kurths, "Recurrence plots for the
     analysis of complex systems", *Phys. Rep.* **438**, 237 (2007).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tsdynamics as ts
+    >>> t = np.linspace(0.0, 100.0, 1000)
+    >>> emb = ts.embed(np.sin(t), dimension=2, delay=5)
+    >>> res = ts.rqa(emb, recurrence_rate=0.05)
+    >>> 0.0 <= res.determinism <= 1.0
+    True
     """
     if int(min_diagonal) < 1 or int(min_vertical) < 1:
         raise ValueError("min_diagonal and min_vertical must be >= 1.")

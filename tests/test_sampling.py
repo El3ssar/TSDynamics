@@ -1,4 +1,4 @@
-"""Regions, samplers, grid enumeration, and set distances."""
+"""Regions, samplers, grid enumeration, set distances, and sagitta Δt tools."""
 
 from __future__ import annotations
 
@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
+from tsdynamics.analysis.sampling.sagitta import (
+    _sagitta_chord,
+    estimate_dt_from_sagitta,
+    sagitta_profile,
+)
 from tsdynamics.data import Ball, Box, Grid, grid_points, sampler, set_distance
+from tsdynamics.errors import InvalidParameterError
 
 # ---------------------------------------------------------------------------
 # Regions
@@ -120,3 +126,69 @@ def test_set_distance_accepts_trajectory() -> None:
     tr2 = ts.Trajectory(t, np.ones((5, 2)), system=None)
     assert tr1.set_distance(tr2) == pytest.approx(np.sqrt(2))
     assert tr1.set_distance(tr2, method="minimum") == pytest.approx(np.sqrt(2))
+
+
+# ---------------------------------------------------------------------------
+# Sagitta-based Δt selector
+# ---------------------------------------------------------------------------
+
+
+def test_sagitta_degenerate_chord_scores_zero() -> None:
+    # A triple whose endpoints coincide (|c - a| == 0) has no defined chord; the
+    # sagitta must be 0, not the spurious full |b - a| the old code produced.
+    a = np.array([[0.0, 0.0]])
+    b = np.array([[1.0, 1.0]])  # far from a, but the chord is degenerate
+    c = np.array([[0.0, 0.0]])  # c == a → zero-length chord
+    sagitta, chord = _sagitta_chord(a, b, c)
+    assert chord[0] == 0.0
+    assert sagitta[0] == 0.0
+
+
+def test_sagitta_nondegenerate_chord_unchanged() -> None:
+    # Regression guard: a genuine right-angle bow is still measured exactly.
+    a = np.array([[0.0, 0.0]])
+    b = np.array([[1.0, 1.0]])
+    c = np.array([[2.0, 0.0]])
+    sagitta, chord = _sagitta_chord(a, b, c)
+    assert chord[0] == pytest.approx(2.0)
+    assert sagitta[0] == pytest.approx(1.0)
+
+
+def test_sagitta_profile_zero_chord_runs_score_zero() -> None:
+    # A constant (stationary) run has zero-length chords everywhere; every
+    # interior bow must be 0, not the distance to a stuck point.
+    s = np.zeros((20, 2))
+    prof = sagitta_profile(s, span=1)
+    assert np.all(prof == 0.0)
+
+
+def test_estimate_dt_rejects_nonfinite_input() -> None:
+    rng = np.random.default_rng(0)
+    y = rng.normal(size=200)
+    y[100] = np.nan
+    with pytest.raises(InvalidParameterError):
+        estimate_dt_from_sagitta(y, 0.1, epsilon=0.1)
+
+    y_inf = rng.normal(size=(200, 2))
+    y_inf[50, 1] = np.inf
+    with pytest.raises(InvalidParameterError):
+        estimate_dt_from_sagitta(y_inf, 0.1, epsilon=0.1)
+
+
+def test_estimate_dt_embeds_1d_via_public_estimators() -> None:
+    # A clean periodic 1-D signal is delay-embedded transparently; the run must
+    # succeed and record the embedding parameters in the notes.
+    t = np.linspace(0.0, 80.0, 1600)
+    y = np.sin(t) + 0.3 * np.sin(2.0 * t)
+    res = estimate_dt_from_sagitta(y, 0.05, epsilon=0.1)
+    assert res.stride >= 1
+    assert res.delta_t == pytest.approx(res.stride * 0.05)
+    assert "Takens embedding" in res.notes
+
+
+def test_estimate_dt_multivariate_runs() -> None:
+    t = np.linspace(0.0, 40.0, 800)
+    y = np.column_stack([np.sin(t), np.cos(t)])
+    res = estimate_dt_from_sagitta(y, 0.05, epsilon=0.2)
+    assert res.stride >= 1
+    assert "Takens embedding" not in res.notes

@@ -272,6 +272,91 @@ def test_resilience_missing_attractor_raises():
         bas.resilience(res, 5)
 
 
+def test_resilience_sliced_grid_does_not_over_pad_degenerate_axes():
+    """A (N, N, 1, 1) slice must measure the in-plane distance, not a spurious
+    one-cell border injected by padding the pinned axes.
+
+    Regression: padding/EDT over a degenerate ``counts == 1`` axis put a False
+    boundary one cell away along that axis, capping every reported distance at
+    ~1 cell.  The free axes here span [-1, 1] so the true distance to the x=0
+    boundary is ~0.5 — far above the bogus ~1-cell cap.
+    """
+    grid = Grid([-1.0, -1.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0], (101, 101, 1, 1))
+    xs = np.linspace(-1, 1, 101)
+    plane = np.where(xs[:, None] < 0.0, 1, 2) * np.ones((101, 101), dtype=int)
+    labels = plane[:, :, None, None]  # laid out on the (101, 101, 1, 1) grid
+    att1 = Attractor(1, np.array([[-0.5, 0.0, 0.0, 0.0]]), cells=1)
+    att2 = Attractor(2, np.array([[0.5, 0.0, 0.0, 0.0]]), cells=1)
+    aset = AttractorSet({1: att1, 2: att2}, diverged=0, seeds=labels.size)
+    res = BasinsResult(labels=labels, grid=grid, attractors=aset)
+    # In-plane the attractor at x=-0.5 is ~0.5 from the x=0 boundary; the pinned
+    # axes 2,3 must NOT cap it to ~one cell.
+    assert float(bas.resilience(res, 1)) == pytest.approx(0.5, abs=0.03)
+    assert float(bas.resilience(res, 2)) == pytest.approx(0.5, abs=0.03)
+
+
+def test_basin_entropy_diverged_box_counts_as_zero_in_normalization():
+    """A fully-diverged box contributes zero entropy but still counts in N.
+
+    Regression: with ``include_diverged=False`` an all-``-1`` box was skipped, so
+    S_b normalised over non-empty boxes only.  Daza et al. (2016) average over all
+    N boxes — here a 50/50 split between a fractal-mixed box and an all-escape box
+    must halve S_b relative to the single mixed box.
+    """
+    rng = np.random.default_rng(0)
+    mixed = rng.integers(1, 4, size=(10, 10))  # one box, three colours, high S
+    escape = np.full((10, 10), -1, dtype=int)  # one fully diverged box, S = 0
+    labels = np.concatenate([mixed, escape], axis=1)  # 10 x 20 -> two 10x10 boxes
+    be = bas.basin_entropy(labels, box_size=10)
+    assert be.n_boxes == 2  # the empty box is counted, not skipped
+    mixed_only = bas.basin_entropy(mixed, box_size=10)
+    # S_b over {mixed, 0} == half of S_b over {mixed}.
+    assert be.sb == pytest.approx(mixed_only.sb / 2.0, abs=1e-9)
+
+
+def test_continuation_min_fraction_mass_folds_into_diverged():
+    """Dropped sub-``min_fraction`` basin mass is folded into the diverged share,
+    so tracked-band + diverged still tiles [0, 1] at every value.
+
+    Driven by a tiny synthetic 1-D map (no integration backend needed): a stable
+    fixed point at 0 plus a sliver of escape outside the box, with a spurious
+    fixed point filtered by ``min_fraction``.
+    """
+
+    class _Sink(ts.DiscreteMap):
+        params = {"shift": 0.0}
+        dim = 1
+
+        @staticmethod
+        def _step(X, shift):
+            return (0.5 * X[0] + shift,)
+
+        @staticmethod
+        def _jacobian(X, shift):
+            return ((0.5,),)
+
+    cont = bas.continuation(
+        _Sink(),
+        "shift",
+        [0.0, 0.1],
+        Box([-1.0], [1.0]),
+        n=200,
+        resolution=100,
+        seed=0,
+        min_fraction=0.05,
+        consecutive_recurrences=8,
+        attractor_locate_steps=5,
+        max_steps=200,
+    )
+    # tracked bands + diverged tile [0, 1] at every parameter value.
+    n_values = cont.values.size
+    banded = np.zeros(n_values)
+    for gid in cont.ids:
+        banded = banded + np.nan_to_num(cont.fractions[gid], nan=0.0)
+    total = banded + cont.diverged
+    assert np.allclose(total, 1.0, atol=1e-9)
+
+
 # ===========================================================================
 # Fast tier — tipping points on a hand-built continuation
 # ===========================================================================

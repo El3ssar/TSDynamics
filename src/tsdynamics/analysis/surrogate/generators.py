@@ -164,6 +164,18 @@ def random_shuffle(
     -------
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
+
+    Raises
+    ------
+    ValueError
+        If ``data`` cannot be coerced to a finite 1-D series (see
+        :func:`~tsdynamics.analysis.surrogate._common._as_series`).
+
+    References
+    ----------
+    .. [1] J. Theiler, S. Eubank, A. Longtin, B. Galdrikian, and J. D. Farmer,
+       "Testing for nonlinearity in time series: the method of surrogate data,"
+       Physica D 58, 77-94 (1992).
     """
     series = _as_series(data, component)
     rng = np.random.default_rng(seed)
@@ -200,6 +212,17 @@ def fourier_surrogate(
     -------
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
+
+    Raises
+    ------
+    ValueError
+        If ``data`` cannot be coerced to a finite 1-D series.
+
+    References
+    ----------
+    .. [1] J. Theiler, S. Eubank, A. Longtin, B. Galdrikian, and J. D. Farmer,
+       "Testing for nonlinearity in time series: the method of surrogate data,"
+       Physica D 58, 77-94 (1992).
     """
     series = _as_series(data, component)
     rng = np.random.default_rng(seed)
@@ -232,6 +255,17 @@ def aaft_surrogate(
     -------
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
+
+    Raises
+    ------
+    ValueError
+        If ``data`` cannot be coerced to a finite 1-D series.
+
+    References
+    ----------
+    .. [1] J. Theiler, S. Eubank, A. Longtin, B. Galdrikian, and J. D. Farmer,
+       "Testing for nonlinearity in time series: the method of surrogate data,"
+       Physica D 58, 77-94 (1992).
     """
     series = _as_series(data, component)
     rng = np.random.default_rng(seed)
@@ -284,6 +318,16 @@ def iaaft_surrogate(
     -------
     numpy.ndarray, shape (n, N)
         The surrogate ensemble.
+
+    Raises
+    ------
+    ValueError
+        If ``data`` cannot be coerced to a finite 1-D series.
+
+    References
+    ----------
+    .. [1] T. Schreiber and A. Schmitz, "Improved surrogate data for nonlinearity
+       tests," Physical Review Letters 77, 635-638 (1996).
     """
     series = _as_series(data, component)
     rng = np.random.default_rng(seed)

@@ -201,6 +201,45 @@ def test_rqa_empty_matrix_is_well_defined():
     assert res.divergence == float("inf")
 
 
+def _isolated_recurrence_matrix(n: int, pairs: list[tuple[int, int]]) -> rec.RecurrenceMatrix:
+    """A symmetric, LOI-free RecurrenceMatrix with exactly the given off-diagonal pairs."""
+    from scipy import sparse
+
+    i = np.array([a for a, _ in pairs], dtype=np.intp)
+    j = np.array([b for _, b in pairs], dtype=np.intp)
+    rows = np.concatenate([i, j])
+    cols = np.concatenate([j, i])
+    ones = np.ones(rows.size, dtype=bool)
+    mat = sparse.csr_matrix((ones, (rows, cols)), shape=(n, n))
+    return rec.RecurrenceMatrix(matrix=mat, epsilon=1.0, metric="euclidean", theiler_window=0)
+
+
+def test_rqa_lmax_ignores_min_length():
+    """L_max / V_max use the FULL line histogram regardless of ``min_length``.
+
+    Per Marwan et al. (2007) a longest line shorter than ``min_diagonal`` still
+    gives ``L_max >= 1`` and a finite ``DIV``.
+
+    Two isolated recurrence pairs sit on distinct diagonals far apart, so every
+    diagonal and vertical line has length exactly 1 — below the default
+    ``min_diagonal``/``min_vertical`` of 2.  Before the fix L_max/V_max were
+    filtered by min_length and collapsed to 0 (DIV = inf); afterwards they report
+    the true longest line (1) and DIV = 1.0.
+    """
+    rm = _isolated_recurrence_matrix(50, [(2, 10), (20, 35)])
+    res = rec.rqa(rm)  # default min_diagonal = min_vertical = 2
+    # No line reaches length 2, so the ratio measures vanish ...
+    assert res.determinism == 0.0
+    assert res.laminarity == 0.0
+    # ... but the longest line is genuinely length 1, not 0.
+    assert res.max_diagonal_length >= 1
+    assert res.max_vertical_length >= 1
+    assert res.max_diagonal_length == 1
+    # DIV = 1 / L_max must be finite (was inf before the fix).
+    assert np.isfinite(res.divergence)
+    assert res.divergence == pytest.approx(1.0)
+
+
 def test_rqa_diagonal_entropy_periodic_below_random(noise):
     """A single dominant line length (periodic) is lower-entropy than noise's spread."""
     periodic = rec.rqa(_logistic(3.5), recurrence_rate=0.05, theiler=1)

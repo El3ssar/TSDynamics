@@ -34,7 +34,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.errors import InvalidInputError
+from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._result import AnalysisResult
@@ -75,11 +75,19 @@ class GALIResult(AnalysisResult):
 
     def __float__(self) -> float:
         """Return the final GALI value (the order/chaos summary)."""
-        return float(self.values[-1])
+        return self.final
 
     @property
     def final(self) -> float:
-        """The last GALI value."""
+        """The last GALI value.
+
+        Raises
+        ------
+        InvalidParameterError
+            If the series is empty (no samples were recorded).
+        """
+        if self.values.size == 0:
+            raise InvalidParameterError("GALIResult has no samples (empty values).")
         return float(self.values[-1])
 
     def decay_rate(self, *, floor: float = 1e-12, t_min: float | None = None) -> float:
@@ -213,12 +221,21 @@ def gali(
         ``ic`` is never silently swapped for a random one — pass an ``ic`` from a
         known basin point, shorten ``transient``, or omit ``ic`` to roll a random
         one.
-    ValueError
-        If ``k`` is outside ``[2, dim]``; if ``dt`` is passed for a map (or
-        ``n`` for a flow); or, **only when ``ic`` is omitted**, if a random
-        initial condition diverges to a non-finite state from every draw after
-        the retry budget — in which case pass an ``ic`` from a known basin point
-        (or shorten ``transient``).
+    InvalidParameterError
+        If ``k`` is outside ``[2, dim]``; if the step count is degenerate
+        (``n < 1`` for a map, ``final_time <= 0`` or ``dt <= 0`` for a flow); or
+        if ``dt`` is passed for a map (or ``n`` for a flow).
+    ConvergenceError
+        Only when ``ic`` is omitted: if a random initial condition diverges to a
+        non-finite state from every draw after the retry budget — in which case
+        pass an ``ic`` from a known basin point (or shorten ``transient``).
+
+    Notes
+    -----
+    For a chaotic orbit GALI\ :sub:`k` decays as
+    :math:`\exp\!\big[-\sum_{i=2}^{k}(\lambda_1-\lambda_i)\,t\big]`, so its
+    log-slope measures the leading Lyapunov-exponent gaps; a regular orbit keeps
+    it bounded.  See the module docstring for the full statement.
 
     Examples
     --------
@@ -229,8 +246,9 @@ def gali(
 
     References
     ----------
-    Skokos, Bountis & Antonopoulos (2007), *Physica D* 231, 30--54.
-    Skokos, Bountis & Antonopoulos (2008), *Eur. Phys. J. Spec. Top.* 165, 5--14.
+    Skokos, Bountis & Antonopoulos, "Geometrical properties of local dynamics in
+    Hamiltonian systems: The Generalized Alignment Index (GALI) method",
+    *Physica D* **231** (2007) 30--54.
     """
     if isinstance(system, DiscreteMap):
         mode = "map"
@@ -245,23 +263,32 @@ def gali(
     dim = int(system.dim)
     k = int(k)
     if not 2 <= k <= dim:
-        raise ValueError(f"k must satisfy 2 <= k <= dim ({dim}); got {k}.")
+        raise InvalidParameterError(f"k must satisfy 2 <= k <= dim ({dim}); got {k}.")
 
     rng = np.random.default_rng(seed)
     w0 = _c._orthonormal_frame(dim, k, rng)
 
     if mode == "map":
         if dt is not None:
-            raise ValueError("dt has no meaning for a discrete map — omit it.")
+            raise InvalidParameterError("dt has no meaning for a discrete map — omit it.")
         n_steps = 1000 if n is None else int(n)
+        if n_steps < 1:
+            raise InvalidParameterError(f"n (number of iterations) must be >= 1; got {n_steps}.")
         n_burn = 500 if transient is None else int(transient)
         run_args: tuple[Any, ...] = (n_steps, n_burn)
         discrete = True
     else:
         if n is not None:
-            raise ValueError("n applies to maps; use final_time/dt for a flow.")
+            raise InvalidParameterError("n applies to maps; use final_time/dt for a flow.")
         t_end = 100.0 if final_time is None else float(final_time)
         step_dt = 0.1 if dt is None else float(dt)
+        if step_dt <= 0.0:
+            raise InvalidParameterError(f"dt must be positive; got {step_dt}.")
+        if t_end <= 0.0 or int(round(t_end / step_dt)) < 1:
+            raise InvalidParameterError(
+                f"final_time must be positive and span at least one dt step; "
+                f"got final_time={t_end}, dt={step_dt}."
+            )
         t_burn = 20.0 if transient is None else float(transient)
         run_args = (t_end, step_dt, t_burn, int(n_internal))
         discrete = False
@@ -320,7 +347,7 @@ def gali(
         if result is not None:
             return _wrap(result)
 
-    raise ValueError(
+    raise ConvergenceError(
         f"gali: {type(system).__name__} orbit diverges from every tried random IC after "
         f"{max_retries} attempts — pass an `ic` from a known basin point, or shorten "
         "the burn-in via `transient`."

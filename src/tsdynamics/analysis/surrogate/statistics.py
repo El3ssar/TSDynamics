@@ -60,6 +60,19 @@ def time_reversal_asymmetry(data: np.ndarray, delay: int = 1) -> float:
     -------
     float
         The asymmetry ratio (``0.0`` for a constant series).
+
+    Raises
+    ------
+    ValueError
+        If ``delay < 1`` or the series has ``<= delay`` samples.
+
+    References
+    ----------
+    .. [1] T. Schreiber and A. Schmitz, "Improved surrogate data for nonlinearity
+       tests," Physical Review Letters 77, 635-638 (1996).
+    .. [2] C. Diks, J. C. van Houwelingen, F. Takens, and J. DeGoede,
+       "Reversibility as a criterion for discriminating time series," Physics
+       Letters A 201, 221-228 (1995).
     """
     data = np.asarray(data, dtype=float)
     if delay < 1:
@@ -125,6 +138,14 @@ def nonlinear_prediction_error(
     ValueError
         If the parameters are out of range or the series is too short to embed and
         find the requested neighbours.
+
+    References
+    ----------
+    .. [1] G. Sugihara and R. M. May, "Nonlinear forecasting as a way of
+       distinguishing chaos from measurement error in time series," Nature 344,
+       734-741 (1990).
+    .. [2] H. Kantz and T. Schreiber, *Nonlinear Time Series Analysis*, 2nd ed.,
+       Cambridge University Press (2004).
     """
     data = np.asarray(data, dtype=float)
     if dimension < 1 or delay < 1 or horizon < 1:

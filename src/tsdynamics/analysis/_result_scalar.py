@@ -52,9 +52,15 @@ class _NumericOps:
     def __round__(self, ndigits: int | None = None) -> float | int:  # noqa: D105
         return round(float(self), ndigits) if ndigits is not None else round(float(self))
 
-    def __array__(self, dtype: Any = None) -> np.ndarray:  # noqa: D105
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:  # noqa: D105
+        # NumPy 2.0 passes ``copy`` into ``__array__``; honor it (a 0-d array of a
+        # Python float is always a fresh buffer, so ``copy=False`` is also safe).
         arr = np.asarray(float(self))
-        return arr.astype(dtype) if dtype is not None else arr
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
 
     # -- comparisons (NotImplemented → reflected op, e.g. pytest.approx) ------
 

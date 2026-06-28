@@ -64,7 +64,11 @@ def sample_entropy(
     dimension : int, default 2
         Template length.
     r : float, optional
-        Tolerance (Chebyshev radius).  Defaults to ``0.2 · std(data)``.
+        Tolerance (Chebyshev radius).  Defaults to ``0.2 · std(data)`` — the
+        standalone Richman & Moorman (2000) convention.  Note that
+        :func:`~tsdynamics.analysis.entropy.multiscale.multiscale_entropy`
+        deliberately fixes ``r = 0.15 · std`` instead (Costa et al. 2002), so its
+        scale-1 entry does not equal ``sample_entropy`` at defaults.
     delay : int, default 1
         Embedding delay.
     component : int or str, optional
@@ -81,6 +85,12 @@ def sample_entropy(
     ValueError
         If the series is too short or no length-``dimension`` template pair
         matches (``r`` too small).
+
+    References
+    ----------
+    Richman, J. S. & Moorman, J. R. (2000). Physiological time-series analysis
+    using approximate entropy and sample entropy. *Am. J. Physiol. Heart Circ.
+    Physiol.* **278**, H2039–H2049.
 
     Examples
     --------
@@ -160,6 +170,16 @@ def approximate_entropy(
     -------
     float
         Approximate entropy in nats.
+
+    Raises
+    ------
+    ValueError
+        If the series is too short for the requested ``dimension``/``delay``.
+
+    References
+    ----------
+    Pincus, S. M. (1991). Approximate entropy as a measure of system complexity.
+    *Proc. Natl. Acad. Sci. USA* **88**, 2297–2301.
     """
     series = as_series(data, component)
     n = series.size

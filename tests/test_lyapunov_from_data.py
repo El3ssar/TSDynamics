@@ -13,6 +13,7 @@ import pytest
 import tsdynamics as ts
 from tsdynamics.analysis.lyapunov import LyapunovFromData, lyapunov_from_data
 from tsdynamics.analysis.lyapunov.from_data import _delay_embed
+from tsdynamics.errors import ConvergenceError, InvalidParameterError
 
 
 @pytest.fixture(scope="module")
@@ -142,6 +143,36 @@ class TestValidation:
             lyapunov_from_data(
                 np.random.default_rng(0).normal(size=40), dimension=3, delay=2, k_max=40
             )
+
+    def test_bad_params_raise_typed_invalid_parameter(self) -> None:
+        """Reconstruction-parameter errors are the typed InvalidParameterError.
+
+        Regression: these used to be bare ``ValueError``/numpy crashes. They must
+        now subclass :class:`~tsdynamics.errors.InvalidParameterError` (still a
+        ``ValueError``, so existing ``except ValueError`` keeps working).
+        """
+        with pytest.raises(InvalidParameterError, match="embedding dimension"):
+            lyapunov_from_data(np.zeros(500), dimension=0, k_max=10)
+        with pytest.raises(InvalidParameterError, match="method"):
+            lyapunov_from_data(np.zeros(500), method="nope", k_max=10)
+        with pytest.raises(InvalidParameterError, match="fit region"):
+            lyapunov_from_data(np.arange(500.0), k_max=10, fit=(0, 99))
+
+    def test_too_short_series_raises_typed_error(self) -> None:
+        """A series too short for the embedding raises a clean typed error, not a numpy crash."""
+        with pytest.raises(InvalidParameterError, match="too short"):
+            lyapunov_from_data(np.arange(4.0), dimension=4, delay=3, k_max=2)
+
+    def test_no_neighbours_raises_convergence_error(self) -> None:
+        """No neighbour within ``eps`` outside the Theiler window → ConvergenceError.
+
+        Regression: a strictly increasing ramp queried with a tiny ``eps`` finds
+        no dynamical neighbours, which used to crash on an empty reduction. It
+        must now raise a clean :class:`~tsdynamics.errors.ConvergenceError`.
+        """
+        ramp = np.arange(500.0)  # consecutive points differ by 1.0
+        with pytest.raises(ConvergenceError, match="neighbour"):
+            lyapunov_from_data(ramp, dimension=2, delay=1, k_max=10, method="kantz", eps=1e-9)
 
 
 # ---------------------------------------------------------------------------

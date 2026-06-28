@@ -1,10 +1,10 @@
 """Visualization seam for the analysis result classes.
 
-Holds the deferred-plotting machinery split out of ``analysis/_result.py``:
+Holds the plotting machinery split out of ``analysis/_result.py``:
 :class:`VisualizationNotInstalled` (the canonical public exception the whole viz
-layer raises), the defensive renderer-registry probe ``_available_renderers``,
-and the :class:`_PlotAccessor` that backs ``AnalysisResult.plot`` (callable *and*
-a namespace of typed kind methods).  Nothing here imports a plotting library at
+layer raises), the renderer-registry probe ``_available_renderers``, and the
+:class:`_PlotAccessor` that backs ``AnalysisResult.plot`` (callable *and* a
+namespace of typed kind methods).  Nothing here imports a plotting library at
 module scope — every viz import is deferred to call time.
 """
 
@@ -16,33 +16,53 @@ if TYPE_CHECKING:
     from tsdynamics.analysis._result_base import AnalysisResult
 
 _VIZ_HINT = (
-    "Visualization is deferred in this release: no rendering backend is "
-    "registered. Export the data with .to_dict() / .to_frame() and plot it "
-    "yourself, or install a backend once one is available."
+    "No visualization backend is available: install one (e.g. `pip install "
+    "matplotlib` or `pip install plotly`), or export the data with .to_dict() / "
+    ".to_frame() and plot it yourself."
 )
 
 
 class VisualizationNotInstalled(ImportError):  # noqa: N818 — canonical v4 public name
     """Raised by ``result.plot`` when no visualization backend is available.
 
-    Subclasses :class:`ImportError` so the (deferred) plotting machinery reads
-    like any other optional dependency: ``except ImportError`` catches it.  When
-    a renderer registers itself in ``tsdynamics.registry.renderers`` the seam
-    starts working with no change to result types.
+    Subclasses :class:`ImportError` so the plotting machinery reads like any
+    other optional dependency: ``except ImportError`` catches it.  It is raised
+    only when *no* rendering backend can be registered — e.g. a wheel-free
+    environment with neither matplotlib nor plotly installed.
     """
 
 
 def _available_renderers() -> Any | None:
-    """Return the renderer registry if it exists and is non-empty, else ``None``.
+    """Return the renderer registry if it has a usable backend, else ``None``.
 
-    The renderer registry (``registry.renderers``) and the rendering backends
-    are added by later visualization streams.  Resolving it lazily and
-    defensively keeps :class:`AnalysisResult` self-contained today while wiring
-    itself up automatically the moment a backend lands.
+    Seeds the in-tree rendering backends first (matplotlib / plotly / json /
+    threejs) via :func:`tsdynamics.viz.render.register_builtin_renderers`, then
+    reports the registry only if it ended up non-empty.  The seeding step is what
+    makes ``result.plot()`` work on the **very first** viz action in a fresh
+    process: without it the registry is empty until some other code path happens
+    to register a backend, so the gate would spuriously raise
+    :class:`VisualizationNotInstalled` even with matplotlib installed.
+
+    The viz import is deferred to call time (never at module scope), so importing
+    the result layer still pulls in no plotting library.  The registration helper
+    is reached through the module object (``render.register_builtin_renderers``)
+    rather than a bound import so tests can monkeypatch it.
+
+    Returns
+    -------
+    tsdynamics.registry.Registry or None
+        The renderer registry when at least one backend registered, else
+        ``None`` (no backend installed → the caller raises).
     """
     try:
+        from tsdynamics.viz import render
+
+        render.register_builtin_renderers()
+    except Exception:  # best-effort seeding — fall through to whatever is registered
+        pass
+    try:
         from tsdynamics.registry import renderers
-    except Exception:  # pragma: no cover - registry has no renderers yet
+    except Exception:  # pragma: no cover - defensive
         return None
     try:
         return renderers if len(renderers) else None
@@ -55,8 +75,9 @@ class _PlotAccessor:
 
     ``result.plot()`` renders the result's default view; the named methods
     (``result.plot.scaling()``, ``.phase()``, …) force a particular semantic
-    plot kind.  Every entry point funnels through :meth:`_render`, which raises
-    :class:`VisualizationNotInstalled` until a rendering backend is registered.
+    plot kind.  Every entry point funnels through :meth:`_render`, which seeds the
+    in-tree backends and renders, raising :class:`VisualizationNotInstalled` only
+    when no rendering backend can be registered (a wheel-free environment).
     """
 
     __slots__ = ("_result",)
@@ -118,24 +139,46 @@ class _PlotAccessor:
         The ``kind`` requested by a typed method routes into ``to_plot_spec`` (so
         the *spec* carries the semantic kind), and rendering goes through the
         documented ``PlotSpec.render(backend, **backend_kw)`` contract — ``kind``
-        is never passed to ``render``.  This path only runs once a backend lands
-        (the visualization streams own the spec); until then it is unreachable.
+        is never passed to ``render``.
+
+        Parameters
+        ----------
+        kind : str, optional
+            The semantic plot kind a typed accessor method forces (e.g.
+            ``"scaling_fit"``), or ``None`` for the result's natural kind.
+        backend : str, optional
+            The renderer to use (``"matplotlib"`` / ``"plotly"`` / …); ``None``
+            lets :meth:`~tsdynamics.viz.spec.PlotSpec.render` pick the default.
+        **tweaks
+            Backend keyword arguments forwarded verbatim to ``PlotSpec.render``.
+
+        Returns
+        -------
+        object
+            Whatever the chosen backend's ``render`` returns (a Matplotlib
+            figure, a Plotly figure, …).
+
+        Raises
+        ------
+        VisualizationNotInstalled
+            If no rendering backend can be registered, or the result has no
+            ``to_plot_spec`` method.
         """
         renderers = _available_renderers()
         if renderers is None:
             raise VisualizationNotInstalled(_VIZ_HINT)
         to_spec = getattr(self._result, "to_plot_spec", None)
-        if to_spec is None:  # pragma: no cover - wired by the to_plot_spec stream
+        if to_spec is None:  # pragma: no cover - every result has to_plot_spec
             raise VisualizationNotInstalled(
                 f"{type(self._result).__name__} has no to_plot_spec() yet, so it cannot be plotted."
             )
         # A typed method (e.g. .scaling()) requests a kind; pass it to to_plot_spec
         # when that result accepts an override, else fall back to its natural kind.
-        try:  # pragma: no cover - exercised once a backend registers
+        try:
             spec = to_spec(kind=kind) if kind is not None else to_spec()
         except TypeError:
             spec = to_spec()
-        if backend is not None:  # pragma: no cover - exercised once a backend registers
+        if backend is not None:
             return spec.render(backend, **tweaks)
         return spec.render(**tweaks)
 

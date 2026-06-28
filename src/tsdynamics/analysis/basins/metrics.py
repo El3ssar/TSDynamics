@@ -250,12 +250,20 @@ def basin_entropy(
     include_diverged : bool, default False
         If ``False`` (the default), diverged cells (``-1``) are dropped before the
         per-box colour count — escape is not a basin, so it must not inflate the
-        entropy as a spurious extra colour.  Set ``True`` to count ``-1`` as its
-        own colour (the legacy behaviour).
+        entropy as a spurious extra colour.  A box that is *entirely* diverged then
+        holds no settled basin and contributes zero entropy, but still counts in
+        the box total :math:`N` (Daza et al. (2016) average :math:`S_b` over all
+        :math:`N` boxes).  Set ``True`` to count ``-1`` as its own colour (the
+        legacy behaviour).
 
     Returns
     -------
     BasinEntropy
+
+    Raises
+    ------
+    ValueError
+        If ``box_size < 1`` or the label array yields no boxes (it is empty).
 
     References
     ----------
@@ -272,10 +280,16 @@ def basin_entropy(
     n_boundary = 0
     for block in _iter_blocks(labels, box_size):
         flat = block.reshape(-1)
+        if flat.size == 0:
+            continue  # a zero-area block can only arise from an empty grid edge.
         if not include_diverged:
             flat = flat[flat != -1]  # escape is not a colour
-        if flat.size == 0:
-            continue
+            if flat.size == 0:
+                # A fully diverged box holds no settled basin → zero Gibbs entropy.
+                # Daza et al. (2016) normalise S_b over *all* N boxes, so an empty
+                # box must still count in N (as a zero), not be skipped.
+                box_entropies.append(0.0)
+                continue
         _, counts = np.unique(flat, return_counts=True)
         p = counts / flat.size
         s = float(-np.sum(p * np.log(p)) / log)
@@ -354,6 +368,12 @@ def uncertainty_exponent(
     Returns
     -------
     UncertaintyExponent
+
+    Raises
+    ------
+    ValueError
+        If fewer than two ``radii`` are given, or fewer than two non-zero
+        :math:`f(\varepsilon)` values are available to fit a slope (no boundary).
 
     References
     ----------
@@ -475,6 +495,12 @@ def wada_property(
     -------
     WadaResult
 
+    Raises
+    ------
+    ValueError
+        If ``basins`` carries non-integer labels (attractor ids must be integers,
+        with ``-1`` marking escape).
+
     References
     ----------
     A. Daza, A. Wagemakers, M. A. F. Sanjuán and J. A. Yorke, "Testing for basins
@@ -550,6 +576,22 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
         Distance from the attractor to its basin boundary (behaves as a
         ``float``), in state-space units.
 
+    Raises
+    ------
+    TypeError
+        If ``result`` is not a :class:`BasinsResult` (the grid + attractors are
+        required to measure a state-space distance).
+    ValueError
+        If the labels are not laid out on the grid (a pre-squeezed slice), or
+        ``attractor_id`` is absent from the basin image.
+
+    Notes
+    -----
+    A *sliced* basin image (a label cube with one or more degenerate ``counts == 1``
+    axes, e.g. a position-plane slice of a higher-dimensional flow) is collapsed to
+    its free axes before the distance transform, so a pinned axis does not inject a
+    spurious one-cell-away boundary that would cap the reported distance.
+
     References
     ----------
     L. Halekotte and U. Feudel, "Minimal fatal shocks in multistable complex
@@ -575,20 +617,34 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
 
     counts = np.asarray(grid.shape, dtype=float)
     span = grid.hi - grid.lo
-    spacing = np.where(counts > 1, span / np.maximum(counts - 1, 1), 1.0)
+    spacing_full = np.where(counts > 1, span / np.maximum(counts - 1, 1), 1.0)
+
+    # Drop degenerate (``counts == 1``) axes — a pinned slice coordinate of a
+    # higher-dimensional flow.  Padding/EDT over such an axis would inject a
+    # spurious one-cell-away False border (the axis has only one layer), capping
+    # the reported distance.  We mirror ``_as_label_array``: collapse the slice to
+    # its effective dimension, keeping only the free axes for the distance field
+    # and the matching grid origin / spacing entries.
+    free = np.flatnonzero(np.asarray(grid.shape) > 1)
+    if free.size == 0:  # fully degenerate grid (a single cell): no boundary at all.
+        free = np.arange(labels.ndim)
+    mask_free = np.squeeze(mask, axis=tuple(a for a in range(labels.ndim) if a not in free))
+    lo_free = grid.lo[free]
+    spacing = spacing_full[free]
 
     # Pad the basin mask with a one-cell False border so the computational-domain
     # edge is itself a boundary.  Without this, a basin that runs to the grid edge
     # has no nearby background there and the EDT reports the (large) distance to
     # the far interior boundary instead — *overestimating* the minimal fatal shock
     # (the domain simply ends; we cannot claim resilience past what was computed).
-    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    padded = np.pad(mask_free, 1, mode="constant", constant_values=False)
     edt = distance_transform_edt(padded, sampling=spacing)
-    shape = np.asarray(grid.shape)
+    shape = np.asarray(mask_free.shape)
 
     def _edt_at(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """(distance-to-boundary, clipped cell index) for each state in ``points``."""
-        idx = np.clip(np.rint((points - grid.lo) / spacing).astype(int), 0, shape - 1)
+        pts_free = np.atleast_2d(np.asarray(points, dtype=float))[:, free]
+        idx = np.clip(np.rint((pts_free - lo_free) / spacing).astype(int), 0, shape - 1)
         return edt[tuple((idx + 1).T)], idx
 
     # Minimal fatal shock = the closest approach of the attractor to its basin
@@ -599,7 +655,7 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     pts = np.atleast_2d(np.asarray(att.points, dtype=float))
     if pts.size:
         dists, idx = _edt_at(pts)
-        on_basin = mask[tuple(idx.T)]  # ignore stray points outside the basin
+        on_basin = mask_free[tuple(idx.T)]  # ignore stray points outside the basin
         value = float(np.min(dists[on_basin])) if np.any(on_basin) else float("nan")
     else:
         value = float("nan")

@@ -284,10 +284,26 @@ def cao_dimension(
         ``int(result)`` is the recommended :math:`m`; ``result.afn_e1`` /
         ``result.afn_e2`` carry the curves.
 
+    Raises
+    ------
+    ValueError
+        If ``delay`` is less than ``1``, ``max_dim`` is less than ``2``, the
+        series is too short for the requested window, or too few valid
+        neighbours survive the Theiler exclusion at some dimension.
+
     References
     ----------
     L. Cao, "Practical method for determining the minimum embedding dimension of
     a scalar time series", *Physica D* **110**, 43 (1997).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tsdynamics.analysis.embedding import cao_dimension
+    >>> t = np.linspace(0.0, 200.0, 4000)
+    >>> x = np.sin(t) + 0.5 * np.sin(2.0 * t)
+    >>> int(cao_dimension(x, delay=10, max_dim=8)) >= 2
+    True
     """
     x = _as_series(data, component=component)
     tau, max_dim = int(delay), int(max_dim)
@@ -380,11 +396,27 @@ def false_nearest_neighbors(
         ``int(result)`` is the recommended :math:`m`; ``result.fnn_fraction``
         carries the decay curve.
 
+    Raises
+    ------
+    ValueError
+        If ``delay`` is less than ``1``, ``max_dim`` is less than ``1``, the
+        series is constant, the series is too short for the requested window, or
+        too few valid neighbours survive the Theiler exclusion at some dimension.
+
     References
     ----------
     M. B. Kennel, R. Brown and H. D. I. Abarbanel, "Determining embedding
     dimension for phase-space reconstruction using a geometrical construction",
     *Phys. Rev. A* **45**, 3403 (1992).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tsdynamics.analysis.embedding import false_nearest_neighbors
+    >>> t = np.linspace(0.0, 200.0, 4000)
+    >>> x = np.sin(t) + 0.5 * np.sin(2.0 * t)
+    >>> int(false_nearest_neighbors(x, delay=10, max_dim=8)) >= 2
+    True
     """
     x = _as_series(data, component=component)
     tau, max_dim = int(delay), int(max_dim)
@@ -461,6 +493,18 @@ def embedding_dimension(
     Returns
     -------
     EmbeddingDimension
+
+    Raises
+    ------
+    ValueError
+        If ``method`` is neither ``"cao"`` nor ``"fnn"``, or the selected
+        estimator rejects its arguments (see :func:`cao_dimension` /
+        :func:`false_nearest_neighbors`).
+
+    See Also
+    --------
+    cao_dimension : Cao's averaged false-neighbour estimator.
+    false_nearest_neighbors : Kennel's false-nearest-neighbour estimator.
     """
     method = method.lower()
     if method == "cao":

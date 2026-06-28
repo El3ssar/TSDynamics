@@ -315,6 +315,14 @@ def fixed_points(
         A list-like ``CollectionResult`` of :class:`FixedPoint`, sorted by
         coordinate.
 
+    Raises
+    ------
+    NotImplementedError
+        If ``system`` is neither a discrete map nor a continuous flow.
+    ValueError
+        If ``method`` is not ``"newton"``/``"sd"``/``"dl"``, or ``"sd"``/``"dl"``
+        is requested for a flow (use ``"newton"`` on ``f(x)=0``).
+
     Examples
     --------
     >>> fixed_points(Henon())              # two saddles of the Hénon map
@@ -432,9 +440,7 @@ def _stabilising_matrices(method: str, dim: int, max_c: int | None) -> list[np.n
     """Return the ``C`` set for SD/DL (empty for Newton), with a truncation warning."""
     if method == "newton":
         return []
-    full = 1
-    for k in range(1, dim + 1):
-        full *= 2 * k
+    full = _c._signed_permutation_count(dim)
     mats = _c.signed_permutation_matrices(dim, max_c)
     if max_c is not None and full > max_c:
         import warnings

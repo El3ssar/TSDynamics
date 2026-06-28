@@ -157,6 +157,17 @@ def test_rqa_measures_are_bounded(seed, n, target):
     # A non-empty determinism implies at least one counted diagonal line.
     if res.determinism > 0.0:
         assert res.max_diagonal_length >= 1
+    # L_max / V_max are the longest *unfiltered* lines (Marwan et al. 2007): any
+    # stored recurrence point lies on a diagonal AND a vertical line of length
+    # >= 1, so the maxima must be >= 1 and DIV = 1/L_max must be finite — even
+    # when every line is shorter than min_diagonal (DET == 0).
+    if res.recurrence_rate > 0.0:
+        assert res.max_diagonal_length >= 1
+        assert res.max_vertical_length >= 1
+        assert np.isfinite(res.divergence)
+    else:
+        assert res.max_diagonal_length == 0
+        assert res.divergence == float("inf")
 
 
 def test_rqa_accepts_prebuilt_matrix_unchanged():

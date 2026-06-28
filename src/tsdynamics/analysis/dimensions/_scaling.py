@@ -15,7 +15,12 @@ contiguous window of at least ``min_window`` points, keeping those whose
 straight-line residual is within ``tol`` of the best, and returning the *widest*
 such window (ties broken toward the smaller residual).  This favours a long,
 clean linear stretch over a short near-perfect one — the standard goal when
-reading a dimension off a log--log plot (Theiler 1990).
+reading a dimension off a log--log plot.
+
+References
+----------
+J. Theiler, "Estimating fractal dimension", *J. Opt. Soc. Am. A* **7**, 1055
+(1990).
 """
 
 from __future__ import annotations
@@ -103,13 +108,18 @@ def fit_scaling_region(
     widest window (ties broken toward the smaller residual), so a long clean
     stretch is preferred over a short near-perfect one.
 
+    The residual threshold is set from windows of at least three points: a
+    two-point window has zero residual by construction, so it is never allowed
+    to drive the threshold to zero (which would, with ``min_window=2``, reject
+    every genuinely linear-but-noisy window on a real curve).
+
     Parameters
     ----------
     x, y : ndarray
         Abscissa and ordinate of the log--log curve, ordered by increasing
         scale.  Must be the same length.
     min_window : int, default 5
-        Minimum number of points in the fitted window.
+        Minimum number of points in the fitted window.  Must be ``>= 2``.
     tol : float, default 1.5
         A window is a candidate when its residual sigma is at most
         ``tol * sigma_min``.  Larger ``tol`` admits wider but slightly less
@@ -118,12 +128,28 @@ def fit_scaling_region(
     Returns
     -------
     ScalingFit
+        The fitted slope/intercept and the selected index window.
 
     Raises
     ------
     ValueError
-        If fewer than ``min_window`` points are supplied or ``x`` and ``y``
-        differ in length.
+        If ``x`` and ``y`` differ in length, if ``min_window < 2``, if fewer
+        than ``min_window`` points are supplied, or if ``x`` has no spread (no
+        admissible window).
+
+    References
+    ----------
+    J. Theiler, "Estimating fractal dimension", *J. Opt. Soc. Am. A* **7**,
+    1055 (1990).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.linspace(0.0, 1.0, 30)
+    >>> y = 2.0 * x + 0.5
+    >>> fit = fit_scaling_region(x, y)
+    >>> round(fit.slope, 6)
+    2.0
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -149,7 +175,17 @@ def fit_scaling_region(
     if not candidates:
         raise ValueError("No admissible scaling window (x has no spread). Check the input scales.")
 
-    sigma_min = min(c[0] for c in candidates)
+    # The residual threshold is set from the *informative* windows only.  A
+    # two-point window has zero degrees of freedom, so ``_lstsq_line`` reports
+    # ``sigma = 0`` for it regardless of the data; if such a window set
+    # ``sigma_min`` the threshold would collapse to 0 and (with ``min_window=2``)
+    # only exactly-collinear/two-point windows would survive on a noisy curve.
+    # Restricting ``sigma_min`` to windows with >= 3 points gives every estimator
+    # a meaningful spread to threshold against; the default ``min_window=5``
+    # admits only >= 5-point windows, so this is a no-op there.
+    informative = [c for c in candidates if c[1] >= 3]
+    pool = informative if informative else candidates
+    sigma_min = min(c[0] for c in pool)
     threshold = sigma_min * tol if sigma_min > 0.0 else 0.0
     # Widest window within the residual threshold; tie-break toward smaller sigma.
     kept = [c for c in candidates if c[0] <= threshold + 1e-300]

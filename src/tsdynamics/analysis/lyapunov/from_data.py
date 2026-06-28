@@ -31,6 +31,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError, InvalidParameterError
+
 from .._result import ScalingResult
 
 __all__ = ["LyapunovFromData", "lyapunov_from_data"]
@@ -166,12 +168,12 @@ def _delay_embed(series: np.ndarray, m: int, tau: int) -> np.ndarray:
     if x.ndim == 1:
         x = x[:, None]
     elif x.ndim != 2:
-        raise ValueError("series must be 1D (scalar) or 2D (n_samples, n_channels).")
+        raise InvalidParameterError("series must be 1D (scalar) or 2D (n_samples, n_channels).")
     n, d = x.shape
     span = (m - 1) * tau
     rows = n - span
     if rows <= 0:
-        raise ValueError(
+        raise InvalidParameterError(
             f"series too short: {n} samples cannot fill an m={m}, tau={tau} embedding "
             f"(needs more than {span})."
         )
@@ -284,6 +286,20 @@ def lyapunov_from_data(
         The estimated exponent, the full divergence curve, and the parameters
         used.  Casts to ``float`` as the exponent.
 
+    Raises
+    ------
+    InvalidParameterError
+        If a reconstruction parameter is invalid (``dimension < 1``,
+        ``delay < 1``, ``k_max < 2``, ``n_neighbors < 1``, ``dt <= 0``,
+        ``theiler < 0``, an unknown ``method``, ``eps <= 0`` for a constant
+        series, an out-of-bounds ``fit`` window, or a ``k_max`` too large / series
+        too short to leave any forward image).
+    ConvergenceError
+        If no usable neighbour is found (no reference point has a neighbour
+        within ``eps`` outside the Theiler window, or no nearest neighbour clears
+        the Theiler window), or the fit window holds too few usable divergence
+        points to fit a slope.
+
     Notes
     -----
     The estimate is only as good as the embedding and the chosen scaling region.
@@ -297,6 +313,15 @@ def lyapunov_from_data(
     >>> res = ts.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
     >>> 0.30 < float(res) < 0.55      # ≈ 0.42
     True
+
+    References
+    ----------
+    H. Kantz, "A robust method to estimate the maximal Lyapunov exponent of a
+    time series", *Physics Letters A* **185** (1994) 77--87.
+
+    M. T. Rosenstein, J. J. Collins & C. J. De Luca, "A practical method for
+    calculating largest Lyapunov exponents from small data sets", *Physica D*
+    **65** (1993) 117--134.
     """
     dimension = int(dimension)
     delay = int(delay)
@@ -305,20 +330,20 @@ def lyapunov_from_data(
     dt = float(dt)
     method = method.lower()
     if dimension < 1:
-        raise ValueError("dimension (embedding dimension) must be >= 1.")
+        raise InvalidParameterError("dimension (embedding dimension) must be >= 1.")
     if delay < 1:
-        raise ValueError("delay (embedding delay) must be >= 1.")
+        raise InvalidParameterError("delay (embedding delay) must be >= 1.")
     if k_max < 2:
-        raise ValueError("k_max must be >= 2 to fit a slope.")
+        raise InvalidParameterError("k_max must be >= 2 to fit a slope.")
     if n_neighbors < 1:
-        raise ValueError("n_neighbors must be >= 1.")
+        raise InvalidParameterError("n_neighbors must be >= 1.")
     if dt <= 0.0:
-        raise ValueError("dt must be positive.")
+        raise InvalidParameterError("dt must be positive.")
     if method not in {"kantz", "rosenstein"}:
-        raise ValueError(f"method must be 'kantz' or 'rosenstein', got {method!r}.")
+        raise InvalidParameterError(f"method must be 'kantz' or 'rosenstein', got {method!r}.")
     theiler = (dimension - 1) * delay if theiler is None else int(theiler)
     if theiler < 0:
-        raise ValueError("theiler must be >= 0.")
+        raise InvalidParameterError("theiler must be >= 0.")
 
     from scipy.spatial import cKDTree
 
@@ -326,7 +351,7 @@ def lyapunov_from_data(
     n_rows = emb.shape[0]
     last = n_rows - 1 - k_max  # references/neighbours need their k-ahead image to exist
     if last < 1:
-        raise ValueError(
+        raise InvalidParameterError(
             "k_max is too large for the embedded series: no forward images remain. "
             "Use a longer series or reduce k_max, dimension, or delay."
         )
@@ -337,7 +362,7 @@ def lyapunov_from_data(
             eps = 0.1 * float(np.std(emb))
         eps = float(eps)
         if eps <= 0.0:
-            raise ValueError("eps must be positive (series may be constant).")
+            raise InvalidParameterError("eps must be positive (series may be constant).")
         # One batched ball query for *all* candidate reference rows, then filter
         # each candidate list to neighbours inside eps, outside the Theiler window,
         # and whose k-ahead image still exists (j <= last). A reference point with
@@ -365,7 +390,7 @@ def lyapunov_from_data(
                 neigh_blocks.append(neigh)
                 counts.append(int(neigh.size))
         if not ref_idx_list:
-            raise ValueError(
+            raise ConvergenceError(
                 "no reference point has a neighbour within eps outside the Theiler "
                 "window; increase eps, lower dimension, or shorten the Theiler window."
             )
@@ -407,7 +432,7 @@ def lyapunov_from_data(
         ref_arr = ref_grid[:, 0][has_neighbour]
         nn_arr = rows[ref_arr, first_col[has_neighbour]].astype(np.intp)
         if ref_arr.size == 0:
-            raise ValueError(
+            raise ConvergenceError(
                 "no nearest neighbour outside the Theiler window was found; "
                 "use a longer series or shorten the Theiler window."
             )
@@ -427,9 +452,19 @@ def lyapunov_from_data(
     else:
         lo, hi = int(fit[0]), int(fit[1])
         if not (0 <= lo < hi <= k_max):
-            raise ValueError(f"fit region {fit!r} must satisfy 0 <= lo < hi <= k_max ({k_max}).")
+            raise InvalidParameterError(
+                f"fit region {fit!r} must satisfy 0 <= lo < hi <= k_max ({k_max})."
+            )
     xfit = times[lo : hi + 1]
     yfit = divergence[lo : hi + 1]
+    # The divergence curve is floored at ``log(_TINY)``, so it is always finite;
+    # guard the slope fit anyway against a degenerate (single-point / collinear-x)
+    # window so it raises a clean typed error rather than a numpy rank warning.
+    if xfit.size < 2 or not np.any(np.isfinite(yfit)):
+        raise ConvergenceError(
+            "lyapunov_from_data: the fit window holds too few usable divergence points "
+            "to fit a slope; widen `fit` or use a longer series / different embedding."
+        )
     slope, intercept = (float(c) for c in np.polyfit(xfit, yfit, 1))
     stderr = _slope_stderr(xfit, yfit, slope, intercept)
 

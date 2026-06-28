@@ -96,14 +96,38 @@ class OrbitDiagram(AnalysisResult):
         which :meth:`periods` differs.  Transitions touching a diverged value
         (``-1``) are skipped.
 
+        Parameters
+        ----------
+        component : int, default 0
+            Which recorded component to count branches in.
+        max_period : int, default 16
+            Periods above this are treated as aperiodic when detecting changes.
+        rtol : float, default 0.01
+            Relative gap separating branches in :meth:`periods`.
+
         Returns
         -------
         numpy.ndarray of float
             Estimated bifurcation parameter values, in sweep order.  Their
             resolution is the spacing of ``values``.
+
+        References
+        ----------
+        Feigenbaum, M. J. (1978). Quantitative universality for a class of
+        nonlinear transformations. *Journal of Statistical Physics*, 19, 25--52.
         """
         p = self.periods(component=component, max_period=max_period, rtol=rtol)
-        changed = (p[:-1] != p[1:]) & (p[:-1] != -1) & (p[1:] != -1)
+        return self._bifurcation_points_from_periods(p)
+
+    def _bifurcation_points_from_periods(self, periods: np.ndarray) -> np.ndarray:
+        """Midpoints between consecutive values whose ``periods`` differ (no reseed).
+
+        The core of :meth:`bifurcation_points`, factored so a caller that has
+        already computed ``periods`` (e.g. :meth:`to_plot_spec`) reuses it instead
+        of recomputing the period sweep.  Transitions touching a diverged value
+        (``-1``) are skipped.
+        """
+        changed = (periods[:-1] != periods[1:]) & (periods[:-1] != -1) & (periods[1:] != -1)
         (i,) = np.nonzero(changed)
         return cast(np.ndarray, 0.5 * (self.values[i] + self.values[i + 1]))
 
@@ -135,8 +159,11 @@ class OrbitDiagram(AnalysisResult):
         spec_kind = PlotKind(kind) if kind is not None else PlotKind.ORBIT_DIAGRAM
         annotations: list[Annotation] = []
         if len(self.values) > 1:
-            onsets = self.bifurcation_points()
+            # Compute the period sweep once and feed it to *both* the onset
+            # detection and the per-line period label (instead of recomputing
+            # ``periods()`` inside ``bifurcation_points()`` and again here).
             periods = self.periods()
+            onsets = self._bifurcation_points_from_periods(periods)
             for onset in np.asarray(onsets, dtype=float).ravel():
                 # Label the line with the period the cascade opens *onto* (the
                 # period just to the right of the onset).
@@ -276,6 +303,35 @@ def orbit_diagram(
         Seed for the random initial condition when the system has none; makes
         the diagram reproducible.
 
+    Returns
+    -------
+    OrbitDiagram
+        The swept ``values`` and the per-value recorded ``points``.  A value
+        whose orbit diverged carries an empty point set (and emits a
+        :class:`RuntimeWarning`).
+
+    Raises
+    ------
+    TypeError
+        If ``system`` is not a discrete-time view (a
+        :class:`~tsdynamics.families.DiscreteMap`, or a flow wrapped in
+        :class:`~tsdynamics.derived.PoincareMap` /
+        :class:`~tsdynamics.derived.StroboscopicMap`).
+    ValueError
+        If a named ``component`` is requested but the system does not declare
+        ``variables``.
+
+    Warns
+    -----
+    RuntimeWarning
+        When a parameter value diverges; that value records an empty set and the
+        sweep continues.
+
+    References
+    ----------
+    May, R. M. (1976). Simple mathematical models with very complicated
+    dynamics. *Nature*, 261, 459--467.
+
     Examples
     --------
     >>> od = orbit_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 600), n=120)
@@ -311,8 +367,7 @@ def orbit_diagram(
 
     import warnings
 
-    from tsdynamics.engine.compile import TapeCompileError
-    from tsdynamics.engine.run import EngineNotAvailableError
+    from tsdynamics.errors import BackendError
     from tsdynamics.families import DiscreteMap
 
     values_arr = np.asarray(list(values), dtype=float)
@@ -341,10 +396,14 @@ def orbit_diagram(
             if use_engine:
                 try:
                     rec, last = _record_via_iterate(current, start, transient, n, idx)
-                except (TapeCompileError, EngineNotAvailableError):
-                    # This map cannot run on the engine (a non-lowerable step, or
-                    # no compiled wheel): fall back to the protocol path for this
-                    # value and the rest of the sweep.
+                except (NotImplementedError, BackendError):
+                    # This map cannot run on the engine: either a non-lowerable
+                    # ``_step`` (the engine raises ``TapeCompileError``, a
+                    # ``NotImplementedError``) or no compiled wheel (the public
+                    # ``EngineNotAvailableError``, a ``BackendError``).  Catch the
+                    # public bases — not the engine-internal leaf types — and fall
+                    # back to the protocol path for this value and the rest of the
+                    # sweep.
                     use_engine = False
                     rec, last = _record_via_step(current, start, transient, n, idx)
             else:

@@ -20,9 +20,9 @@ The surface every result inherits
   dependency, imported lazily, with an install hint if it is missing).
 - ``plot`` — the visualization seam: an accessor that is both callable
   (``result.plot()``) and a namespace of typed kind methods
-  (``result.plot.scaling()``).  Visualization ships in a later release, so until
-  a rendering backend registers itself the seam raises
-  :class:`VisualizationNotInstalled`.
+  (``result.plot.scaling()``).  The in-tree backends seed themselves on first
+  use, so it renders out of the box with a plotting library installed; with none
+  the seam raises :class:`VisualizationNotInstalled`.
 
 Subclassing contract
 --------------------

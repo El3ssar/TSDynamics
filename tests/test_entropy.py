@@ -223,6 +223,19 @@ class TestDispersionEntropy:
         counts = np.bincount(z, minlength=7)[1:]
         assert counts[1:-1].min() > 0.10 * x.size
 
+    def test_normalization_divides_by_log_full_alphabet(self):
+        # Documented convention (Rostaghi & Azami 2016): normalisation divides by
+        # log_base(c**m), the FULL dispersion-pattern alphabet — so a finite white-
+        # noise series sits strictly below 1, and normalized == raw / log2(c**m).
+        rng = np.random.default_rng(21)
+        x = rng.standard_normal(20000)
+        c, m = 6, 2
+        raw = float(ts.dispersion_entropy(x, c=c, dimension=m, normalize=False))
+        norm_h = float(ts.dispersion_entropy(x, c=c, dimension=m, normalize=True))
+        assert norm_h == pytest.approx(raw / np.log2(c**m), abs=1e-12)
+        # Finite white noise approaches but does not reach the full-alphabet max.
+        assert 0.9 < norm_h < 1.0
+
     def test_reference_pipeline(self):
         # Independent re-derivation of the dispersion-pattern entropy pipeline.
         from scipy.stats import norm
@@ -365,6 +378,26 @@ class TestMultiscale:
         auto = ts.multiscale_entropy(x, scales=4)
         fixed = ts.multiscale_entropy(x, scales=4, r=0.15 * x.std())
         assert np.allclose(auto, fixed)
+
+    def test_default_r_factor_is_costa_015_not_sampen_02(self):
+        # Documented convention: multiscale_entropy fixes r = 0.15 * std (Costa
+        # et al. 2002), NOT sample_entropy's standalone 0.2 * std (Richman &
+        # Moorman 2000).  So scale 1 equals sample_entropy AT 0.15 * std, and
+        # must differ from the bare default (0.2 * std).
+        rng = np.random.default_rng(11)
+        x = rng.standard_normal(3000)
+        mse1 = float(ts.multiscale_entropy(x, scales=1)[0])
+        # scale 1 == coarse_grain(x, 1) == x, so it equals SampEn at r = 0.15*std.
+        assert mse1 == pytest.approx(float(ts.sample_entropy(x, r=0.15 * x.std())), abs=1e-12)
+        # It is NOT the bare-default SampEn (which uses 0.2 * std).
+        assert mse1 != pytest.approx(float(ts.sample_entropy(x)), abs=1e-6)
+
+    def test_r_factor_override_matches_sampen_default(self):
+        # Passing r_factor=0.2 makes scale 1 coincide with bare sample_entropy.
+        rng = np.random.default_rng(13)
+        x = rng.standard_normal(3000)
+        mse1 = float(ts.multiscale_entropy(x, scales=1, r_factor=0.2)[0])
+        assert mse1 == pytest.approx(float(ts.sample_entropy(x)), abs=1e-12)
 
 
 # ---------------------------------------------------------------------------
