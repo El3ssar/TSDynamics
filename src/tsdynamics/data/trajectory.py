@@ -283,8 +283,11 @@ class Trajectory:
             Options valid for one kind only are accepted as keywords rather than
             cluttering the signature — ``tau`` (required for ``kind="delay"``,
             converted from time units to samples via ``meta["dt"]``),
-            ``color_by={"time", "speed"}`` (time series / phase portraits),
-            ``transpose`` (spacetime).  Passing one to the wrong kind raises
+            ``color_by`` (time series / phase portraits — a named field
+            ``"time"``/``"speed"``/``"sagitta"``/``"curvature"``/``"acceleration"``/
+            ``"arclength"``/``"index"``, a per-point array, or a callable
+            ``f(trajectory) -> array``), ``transpose`` (spacetime).  Passing one to
+            the wrong kind raises
             :class:`~tsdynamics.errors.InvalidParameterError`.
 
         The :mod:`tsdynamics.viz` import is local to this method (lazy), and the

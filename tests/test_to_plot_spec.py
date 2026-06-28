@@ -361,6 +361,40 @@ def test_color_by_time_attaches_colorbar_channel():
     assert spec.colorbar is not None
 
 
+def test_color_by_accepts_array_callable_and_named_fields():
+    """color_by takes an array, a callable f(traj) -> array, and the named fields."""
+    traj = _lorenz_traj()
+    n = len(traj.t)
+
+    # An arbitrary per-point array — the case that previously CRASHED on a portrait
+    # (the colorbar label did ``color_by == "time"`` on the array).
+    energy = np.asarray(traj["x"]) ** 2 + np.asarray(traj["y"]) ** 2 + np.asarray(traj["z"]) ** 2
+    spec = traj.to_plot_spec(components=["x", "z"], color_by=energy)
+    assert spec.layers[0].data["c"].shape == (n,)
+    assert spec.colorbar is not None and spec.colorbar.label == "value"
+
+    # A callable receiving the whole Trajectory (so it can use any named component).
+    spec = traj.to_plot_spec(components=["x", "z"], color_by=lambda tr: np.asarray(tr["z"]))
+    assert spec.layers[0].data["c"].shape == (n,)
+    assert spec.colorbar.label == "value"
+
+    # Every named field -> a finite per-point channel, labelled by its name.
+    for name in ("time", "speed", "sagitta", "curvature", "accel", "arclength", "index"):
+        spec = traj.to_plot_spec(components=["x", "z"], color_by=name)
+        c = spec.layers[0].data["c"]
+        assert c.shape == (n,) and bool(np.all(np.isfinite(c)))
+        assert spec.colorbar.label == name
+
+
+def test_color_by_invalid_inputs_raise():
+    """An unknown name and a wrong-length array both raise ValueError."""
+    traj = _lorenz_traj()
+    with pytest.raises(ValueError, match="unknown color_by"):
+        traj.to_plot_spec(components=["x", "z"], color_by="nope")
+    with pytest.raises(ValueError, match="trajectory has"):
+        traj.to_plot_spec(components=["x", "z"], color_by=np.arange(5.0))
+
+
 def test_poincare_short_circuit_is_overridden_by_components_or_kind():
     section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
     # Default view honours the section intent…
