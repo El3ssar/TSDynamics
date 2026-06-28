@@ -1,10 +1,12 @@
 """
-Visualization — the deferred-but-designed-for plot seam (decision D6).
+Visualization — the backend-agnostic plot seam (decision D6).
 
-This package ships **no rendering backend**: visualization is deferred, and
-``import tsdynamics`` (and ``import tsdynamics.viz``) pulls in **no plot library**
-— there is no matplotlib / Plotly / web import anywhere here.  What it does ship
-is the *contract* a future multi-backend suite plugs into by construction:
+``import tsdynamics`` (and ``import tsdynamics.viz``) **imports no plot library
+at import time** — there is no matplotlib / Plotly / web import here.  Four
+renderers (matplotlib, plotly, json, threejs) self-register lazily on first
+render.
+
+What it ships:
 
 - :mod:`~tsdynamics.viz.spec` — the backend-agnostic, JSON-serializable
   :class:`~tsdynamics.viz.spec.PlotSpec` intermediate representation (plus
@@ -13,23 +15,22 @@ is the *contract* a future multi-backend suite plugs into by construction:
   and the :class:`~tsdynamics.viz.spec.Plottable` mixin).  A result describes
   itself with ``to_plot_spec()``; the spec carries data + semantic intent and no
   rendering state.
+- :mod:`~tsdynamics.viz.style` — the **canonical per-layer style vocabulary**
+  (:data:`STYLE_KEYS`, :func:`normalize_style`) and the **figure-level theme
+  system** (:class:`Theme`, :func:`get_theme`, :func:`set_theme`, :func:`themes`,
+  :func:`register_theme`).  :data:`STYLE_KEYS` is the public introspection mapping
+  (``name → StyleKey``); :func:`normalize_style` is the single choke point that
+  canonicalizes aliases, validates values, and drops unknown keys.
+- :func:`plot` (:mod:`~tsdynamics.viz.compose`) — the **composition front door**:
+  arranges one or more plottables into a single- or multi-panel
+  :class:`~tsdynamics.viz.spec.PlotSpec`.
 - the **renderers registry** (:data:`tsdynamics.registry.renderers`) — a backend
-  name → renderer-callable map mirroring :data:`tsdynamics.registry.analyses` /
-  :data:`~tsdynamics.registry.transforms` exactly.  A backend self-registers a
-  callable that consumes a :class:`~tsdynamics.viz.spec.PlotSpec`;
-  :meth:`~tsdynamics.viz.spec.PlotSpec.render` looks the backend up by name.
-  Until a backend lands the registry stays empty, so
-  :meth:`~tsdynamics.viz.spec.PlotSpec.render` raises a helpful
-  ``VisualizationNotInstalled``.
+  name → renderer-callable map.  A backend self-registers on first use;
+  :meth:`~tsdynamics.viz.spec.PlotSpec.render` looks it up by name.
 
 Out-of-tree renderers register through the ``tsdynamics.renderers`` entry-point
-group (the visualization analogue of ``tsdynamics.analyses`` /
-``tsdynamics.transforms``; see :mod:`tsdynamics.plugins`); :func:`discover_plugins`
-loads them into :data:`tsdynamics.registry.renderers` at import.  In-tree backends
-(when a viz stream lands) self-register from their own modules.
-
-Do not add rendering code to an engine/analysis stream — only the spec IR and
-this registry seam live here today.
+group; :func:`discover_plugins` loads them into
+:data:`tsdynamics.registry.renderers` at import.
 """
 
 from .. import registry as _registry
@@ -44,6 +45,16 @@ from .spec import (
     PlotKind,
     PlotSpec,
     Plottable,
+)
+from .style import (
+    STYLE_KEYS,
+    THEMES,
+    Theme,
+    get_theme,
+    normalize_style,
+    register_theme,
+    set_theme,
+    themes,
 )
 
 #: The entry-point group out-of-tree visualization backends declare against
@@ -64,8 +75,16 @@ __all__ = [
     "PlotKind",
     "PlotSpec",
     "Plottable",
+    "STYLE_KEYS",
+    "THEMES",
+    "Theme",
     "discover_plugins",
+    "get_theme",
+    "normalize_style",
     "plot",
+    "register_theme",
+    "set_theme",
+    "themes",
 ]
 
 

@@ -29,6 +29,10 @@ The payload is a JSON object::
                 "target":   [<x>, <y>, <z>],
                 "up":       [<x>, <y>, <z>]
             },
+            "theme": {                           # ALWAYS present; resolved Theme
+                "background": "<str | null>",    # scene background color
+                "palette": ["<str>", ...]        # color cycle for auto-colored layers
+            },
             "animation": {                       # ONLY when spec.animation is set
                 "fps": <float>,
                 "duration": <float | null>,
@@ -50,6 +54,25 @@ present the geometry buffers are unchanged: the loader animates by **draw-range*
 (``geometry.setDrawRange``) over a faint full-curve backdrop, so no positions /
 colors are re-uploaded and no per-vertex time attribute is needed (the line
 vertices are already the natural reveal order).
+
+Each geometry now carries a ``material`` block with the layer's style vocabulary
+keys that the three.js backend honors::
+
+    "material": {
+        "color":       "<CSS string | null>",   # explicit layer color
+        "linewidth":   <float | null>,          # line width (pt)
+        "markersize":  <float | null>,          # point size (pt)
+        "alpha":       <float | null>,          # 0..1 opacity
+        "zorder":      <int | null>             # maps to THREE renderOrder
+    }
+
+Keys are ``null`` when not set by the user (the loader applies its own default).
+``linestyle``, marker *shape*, and ``cmap`` are **not** in the material block —
+they are excluded from the threejs backend's ``honored_by`` set (see
+:data:`~tsdynamics.viz.style.STYLE_KEYS`) and the loader ignores them.  ``cmap``
+in particular cannot be honored: the loader uses a fixed built-in colormap ramp
+(see :func:`_colormap`) for the per-vertex ``"c"`` channel, so an arbitrary
+colormap *name* would be a dead field — it is therefore not emitted.
 
 Each ``geometry`` is::
 
@@ -132,9 +155,11 @@ import numpy as np
 
 from ...export import SCHEMA_VERSION
 from ...spec import PlotKind
+from ...style import normalize_style
 
 if TYPE_CHECKING:
     from ...spec import Animation, Axis, Layer, Layout, PlotSpec
+    from ...style import Theme
 
 __all__ = ["lower_spec"]
 
@@ -200,12 +225,18 @@ def _lower_single(spec: PlotSpec) -> dict[str, Any]:
     """Lower a single-panel spec to the ``geometries`` + ``metadata`` payload.
 
     The non-composite lowering: walk ``spec.layers``, lower each drawable mark,
-    and derive the per-spec ``metadata`` (labels / units / bounds / camera).
-    Kept as a stable helper so the composite path can reuse it per panel.
+    and derive the per-spec ``metadata`` (labels / units / bounds / camera /
+    theme).  Kept as a stable helper so the composite path can reuse it per
+    panel.
     """
+    # Resolve the theme once (either the spec's own or the global default).
+
+    theme = spec.resolved_theme
+
     geometries: list[dict[str, Any]] = []
-    for layer in spec.layers:
-        geom = _lower_layer(layer)
+    for i, layer in enumerate(spec.layers):
+        palette_color = theme.palette[i % len(theme.palette)] if theme.palette else None
+        geom = _lower_layer(layer, palette_color=palette_color)
         if geom is not None:
             geometries.append(geom)
 
@@ -216,6 +247,7 @@ def _lower_single(spec: PlotSpec) -> dict[str, Any]:
         "units": _axis_units(spec),
         "bounds": bounds,
         "camera": _camera(spec, bounds),
+        "theme": _theme_metadata(theme),
     }
     animation = _animation_metadata(spec)
     if animation is not None:
@@ -351,26 +383,40 @@ def _shift_positions(positions: list[float], offset: list[float]) -> list[float]
 # ---------------------------------------------------------------------------
 
 
-def _lower_layer(layer: Layer) -> dict[str, Any] | None:
+def _lower_layer(layer: Layer, *, palette_color: str | None = None) -> dict[str, Any] | None:
     """Lower one :class:`~tsdynamics.viz.spec.Layer` to a geometry, or ``None``.
 
     Returns ``None`` for a mark with no BufferGeometry analogue (an image, bar,
     histogram, quiver, …) so the caller drops it from the payload.
+
+    Parameters
+    ----------
+    layer : Layer
+        The layer to lower.
+    palette_color : str, optional
+        The auto-color from the theme palette for this layer's position in the
+        spec's layer list.  Used as the fallback color when the layer carries no
+        explicit ``style["color"]`` and no per-vertex ``"c"`` channel.
     """
     geom_type = _GEOMETRY_TYPE.get(layer.kind)
     if geom_type is None:
         return None
 
     if geom_type == "surface":
-        return _lower_surface(layer)
-    return _lower_line_or_points(layer, geom_type)
+        return _lower_surface(layer, palette_color=palette_color)
+    return _lower_line_or_points(layer, geom_type, palette_color=palette_color)
 
 
-def _lower_line_or_points(layer: Layer, geom_type: str) -> dict[str, Any] | None:
+def _lower_line_or_points(
+    layer: Layer, geom_type: str, *, palette_color: str | None = None
+) -> dict[str, Any] | None:
     """Lower a line / points layer to a flat-positions geometry.
 
     A 2-D layer (no ``"z"`` channel) is lifted to ``z = 0``.  A ``"line"`` gets a
     consecutive-segment-endpoint ``indices`` list; ``"points"`` gets an empty one.
+    The geometry carries a ``material`` block (the three.js-honored style keys) and
+    the auto-palette color is used when the layer has no explicit color or per-vertex
+    ``"c"`` channel.
     """
     x = _flat(layer.data.get("x"))
     y = _flat(layer.data.get("y"))
@@ -391,6 +437,7 @@ def _lower_line_or_points(layer: Layer, geom_type: str) -> dict[str, Any] | None
         "label": layer.label,
         "positions": positions,
         "indices": indices,
+        "material": _material_style(layer, palette_color=palette_color),
     }
     colors = _colors(layer, n)
     if colors is not None:
@@ -398,13 +445,14 @@ def _lower_line_or_points(layer: Layer, geom_type: str) -> dict[str, Any] | None
     return geometry
 
 
-def _lower_surface(layer: Layer) -> dict[str, Any] | None:
+def _lower_surface(layer: Layer, *, palette_color: str | None = None) -> dict[str, Any] | None:
     """Lower a ``SURFACE3D`` layer to a triangulated-grid geometry.
 
     Expects the ``"x"`` / ``"y"`` / ``"z"`` channels as 2-D grids of identical
     shape (rows × cols).  Emits row-major interleaved vertex positions and an
     index list of two triangles per grid quad (``THREE.Mesh`` / ``BufferGeometry``
-    order).
+    order).  The geometry carries a ``material`` block with the three.js-honored
+    style keys.
     """
     x = _grid(layer.data.get("x"))
     y = _grid(layer.data.get("y"))
@@ -424,6 +472,7 @@ def _lower_surface(layer: Layer) -> dict[str, Any] | None:
         "label": layer.label,
         "positions": positions,
         "indices": indices,
+        "material": _material_style(layer, palette_color=palette_color),
     }
     c = _grid(layer.data.get("c"))
     cflat = c.reshape(-1) if c is not None and c.shape == z.shape else z.reshape(-1)
@@ -473,20 +522,18 @@ def _surface_indices(rows: int, cols: int) -> list[int]:
 
 
 def _colors(layer: Layer, n: int) -> list[float] | None:
-    """Per-vertex flat RGB for a line / points layer, or ``None`` if uncolored.
+    """Per-vertex flat RGB for a line / points layer's scalar ``"c"`` channel.
 
-    Prefers a scalar ``"c"`` channel mapped through the built-in colormap; falls
-    back to a single ``style["color"]`` RGB broadcast to every vertex.
+    Returns the per-vertex buffer **only** for a genuine ``"c"`` gradient (mapped
+    through the built-in colormap).  A *solid* color — an explicit
+    ``style["color"]`` or the theme-palette auto-color — is carried once by the
+    layer ``material.color`` (see :func:`_material_style`); baking it into a
+    redundant per-vertex array would just repeat the same RGB for every vertex,
+    so the function returns ``None`` and lets the flat ``material.color`` stand.
     """
     c = _flat(layer.data.get("c"))
     if c is not None and c.size >= n:
         return _scalar_colors(c[:n])
-    rgb = _parse_rgb(layer.style.get("color"))
-    if rgb is not None:
-        flat: list[float] = []
-        for _ in range(n):
-            flat.extend(rgb)
-        return flat
     return None
 
 
@@ -575,8 +622,90 @@ def _parse_rgb(color: Any) -> tuple[float, float, float] | None:
 
 
 # ---------------------------------------------------------------------------
-# metadata: labels / units / bounds / camera
+# material style (the honored per-layer style keys for threejs)
 # ---------------------------------------------------------------------------
+
+
+def _material_style(layer: Layer, *, palette_color: str | None = None) -> dict[str, Any]:
+    """Extract the three.js-honored per-layer style keys into a ``material`` dict.
+
+    The three.js backend honors: ``color``, ``linewidth``, ``markersize``,
+    ``alpha``, and ``zorder`` (mapped to ``renderOrder`` by the loader).
+    ``linestyle``, marker *shape*, and ``cmap`` are excluded from the backend's
+    ``honored_by`` set and are **not** serialized here — the loader uses a fixed
+    built-in colormap ramp for the per-vertex ``"c"`` channel, so an arbitrary
+    ``cmap`` name cannot be honored.
+
+    The layer's ``style`` dict is first canonicalized via :func:`normalize_style`
+    (aliases → canonical names, values validated); then the honored keys are
+    extracted, with ``None`` for any key not set.  When the layer carries no
+    explicit ``color`` the ``palette_color`` fallback is used so the loader sees a
+    deterministic per-layer color from the theme palette.
+
+    Parameters
+    ----------
+    layer : Layer
+        The layer whose ``style`` dict to extract.
+    palette_color : str, optional
+        Theme-palette auto-color for this layer (used when ``style["color"]`` is
+        absent).
+
+    Returns
+    -------
+    dict
+        A JSON-friendly ``material`` block; every value is a plain Python scalar
+        (str / float / int / None).
+    """
+    canon = normalize_style(layer.style, warn=False)
+    # Resolve the color: explicit style > palette auto-color.
+    color: str | None = canon.get("color")
+    if color is None and palette_color is not None:
+        color = palette_color
+    lw = canon.get("linewidth")
+    ms = canon.get("markersize")
+    alpha = canon.get("alpha")
+    zorder = canon.get("zorder")
+    return {
+        "color": str(color) if color is not None else None,
+        "linewidth": float(lw) if lw is not None else None,
+        "markersize": float(ms) if ms is not None else None,
+        "alpha": float(alpha) if alpha is not None else None,
+        "zorder": int(zorder) if zorder is not None else None,
+    }
+
+
+def _theme_metadata(theme: Theme) -> dict[str, Any]:
+    """Serialize the resolved theme into a compact ``metadata.theme`` block.
+
+    The loader reads two fields to apply scene-level presentation:
+
+    - ``background``: the scene background color (a CSS string or ``null``).
+    - ``palette``: the ordered color cycle for auto-colored layers (a list of
+      CSS strings); the loader assigns ``palette[i % len(palette)]`` to geometry
+      ``i`` when it carries no per-vertex colors and its ``material.color`` is
+      also ``null``.
+
+    Only these two fields travel to the loader — the other Theme fields
+    (``foreground``, font, grid, title size, line/marker sizes) are **not**
+    honored in a three.js scene (the loader has no axes / text / grid to ink),
+    so they are not emitted: a dropped field is honest, a dead field would
+    overclaim.  The threejs backend's theme-honored set is therefore
+    ``{background, palette}`` — ``caps`` warns for every other theme field.
+
+    Parameters
+    ----------
+    theme : Theme
+        The resolved (never ``None``) theme for the spec.
+
+    Returns
+    -------
+    dict
+        A JSON-serializable mapping with ``"background"`` and ``"palette"`` keys.
+    """
+    return {
+        "background": theme.background,
+        "palette": list(theme.palette),
+    }
 
 
 def _axis_labels(spec: PlotSpec) -> dict[str, str]:

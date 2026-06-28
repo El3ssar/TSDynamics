@@ -70,17 +70,17 @@ def register(registry: Registry) -> bool:
     -----
     matplotlib is the *universal fallback* (the conformance oracle): it draws
     every kind, so dispatch routes to it whenever the chosen backend declines a
-    spec.  To keep it a true last-resort rather than shadowing a more specific
-    backend (or a renderer a caller registered explicitly), it is kept **last**
-    in the registry's iteration order — when this hook runs again and another
-    renderer has since been registered ahead of it, matplotlib is re-seated at
-    the end.  Selecting it by name (``render("matplotlib")``) is unaffected.
+    spec.  Iteration order is owned by the dispatch layer
+    (:func:`tsdynamics.viz.render.register_builtin_renderers`), which seats
+    matplotlib **first** via ``_seat_preferred_first`` after every registration
+    pass — so this hook just registers (or no-ops if already present) and never
+    re-seats itself.  Selecting it by name (``render("matplotlib")``) is
+    unaffected.
     """
     if not _matplotlib_available():
         return False
 
     if _BACKEND_NAME in registry:
-        _reseat_last(registry)
         return False
 
     capabilities = RendererCapabilities.all_kinds(_BACKEND_NAME, supports_3d=True)
@@ -95,18 +95,3 @@ def register(registry: Registry) -> bool:
     _render.capabilities = capabilities  # type: ignore[attr-defined]
     registry.register(_BACKEND_NAME, _render)
     return True
-
-
-def _reseat_last(registry: Registry) -> None:
-    """Move an already-registered matplotlib entry to the end of iteration order.
-
-    Keeps matplotlib the *last-resort* fallback so a more specific backend — or a
-    renderer the caller registered explicitly — is preferred by capability-based
-    default selection.  A no-op when matplotlib is already last.
-    """
-    names = registry.names()
-    if not names or names[-1] == _BACKEND_NAME or _BACKEND_NAME not in names:
-        return
-    renderer = registry.get(_BACKEND_NAME)
-    registry.unregister(_BACKEND_NAME)
-    registry.register(_BACKEND_NAME, renderer)

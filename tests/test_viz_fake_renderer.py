@@ -30,6 +30,7 @@ import).
 
 from __future__ import annotations
 
+import contextlib
 import typing
 
 import numpy as np
@@ -71,6 +72,7 @@ from tsdynamics.analysis.recurrence.windowed import WindowedRQA
 from tsdynamics.analysis.surrogate.generators import SurrogateEnsemble
 from tsdynamics.analysis.surrogate.hypothesis import SurrogateTest
 from tsdynamics.data import Grid
+from tsdynamics.viz.render.caps import VisualizationDegraded, style_honoring_gaps
 from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 # ---------------------------------------------------------------------------
@@ -395,15 +397,25 @@ def test_result_to_plot_spec_is_valid_or_documented(cls, build, fake_renderer) -
     assert rebuilt.kind == spec.kind
     assert len(rebuilt.layers) == len(spec.layers)
 
-    # And the whole seam resolves through a backend (the fake no-op renderer).
-    rendered = spec.render()
+    # And the whole seam resolves through a backend.  matplotlib is now the
+    # deterministic default; route through the fake no-op renderer *by name* so
+    # it actually receives the spec and the seam is exercised end-to-end.  The
+    # fake backend declares no honored style knobs, so a spec carrying any
+    # styled/palette-colored layer degrades — the dispatcher emits ONE
+    # consolidated VisualizationDegraded naming the dropped knobs (which the
+    # ``filterwarnings=["error"]`` suite would otherwise raise).  Expect the
+    # warning exactly when the spec has gaps for this backend.
+    expect_degraded = bool(style_honoring_gaps(spec, "_fake_noop_renderer"))
+    ctx = pytest.warns(VisualizationDegraded) if expect_degraded else contextlib.nullcontext()
+    with ctx:
+        rendered = spec.render(backend="_fake_noop_renderer")
     assert rendered is fake_renderer[-1] is spec
 
 
 def test_plot_seam_renders_through_fake_backend(fake_renderer) -> None:
-    """``result.plot()`` routes a spec to the registered backend (end-to-end seam)."""
+    """``result.plot(backend=)`` routes a spec to the named backend (end-to-end seam)."""
     result = LyapunovSpectrum(values=np.array([0.91, 0.0, -14.57]))
-    out = result.plot()
+    out = result.plot(backend="_fake_noop_renderer")
     assert isinstance(out, PlotSpec)
     assert fake_renderer and fake_renderer[-1] is out
 

@@ -233,4 +233,8 @@ filterwarnings = [
   # DiscreteMap.iterate warns when an off-basin random IC diverges and it retries
   # — expected, benign resilience; do not let it trip the `error` filter.
   "ignore:.*Retrying from a new random initial condition.*:RuntimeWarning",
+  # A missing OPTIONAL viz backend (matplotlib/plotly not installed) is expected in
+  # lean test environments: register_builtin_renderers warns and continues with the
+  # dependency-free backends. Benign — do not let it trip the `error` filter.
+  "ignore:.*failed to register viz backend.*:UserWarning",
 ]

@@ -384,6 +384,8 @@ class Trajectory:
         """
         if animate is False or animate is None:
             return spec
+        from dataclasses import replace as _dc_replace
+
         from tsdynamics.viz.spec import Animation as _Animation
         from tsdynamics.viz.spec import PlotKind
 
@@ -397,11 +399,10 @@ class Trajectory:
                 "trail_kind": None,
             }
             if isinstance(animate, _Animation):
-                animate.mode = "frames"
-                animate.head = False
-                animate.trail_kind = None
-                animate.trail_length = None
-                spec.animation = animate
+                # Use dataclasses.replace — never mutate the caller's Animation.
+                spec.animation = _dc_replace(
+                    animate, mode="frames", head=False, trail_kind=None, trail_length=None
+                )
             elif isinstance(animate, dict):
                 spec.animation = _Animation(**{**field_defaults, **animate})
             else:  # truthy (e.g. ``True``)
@@ -419,7 +420,11 @@ class Trajectory:
             "trail_length": float(max(2, min(self.n_steps // 10, 200))),
         }
         if isinstance(animate, _Animation):
-            spec.animation = animate
+            # Copy — never store (and later mutate) the caller's Animation by
+            # reference, so a subsequent ``.trail()``/``.head()`` on the spec does
+            # not reach back and mutate the caller's object (matches the
+            # SPATIAL_FIELD branch, which already copies via ``replace``).
+            spec.animation = _dc_replace(animate)
         elif isinstance(animate, dict):
             spec.animation = _Animation(**{**defaults, **animate})
         else:  # truthy (e.g. ``True``)

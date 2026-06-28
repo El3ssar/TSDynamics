@@ -13,6 +13,14 @@ no ``kaleido``).  The component triple is whatever the spec's ``x`` / ``y`` /
 ``z`` channels carry (the producer chooses it — an arbitrary, non-first-three
 triple for a Lorenz-96), so this renderer is triple-agnostic.
 
+The resolved :class:`~tsdynamics.viz.style.Theme` is applied to the 3-D scene:
+``paper_bgcolor`` / ``plot_bgcolor`` from ``theme.background``, ``layout.font``
+from ``theme.font_family`` / ``theme.font_size``.  Per-layer canonical style keys
+(``linewidth`` → ``line.width``, ``linestyle`` → ``line.dash``,
+``marker`` / ``markersize`` → ``marker.symbol`` / ``marker.size``,
+``alpha`` → ``opacity``, ``cmap`` → ``colorscale``) are honored exactly as in
+the 2-D core.
+
 The camera is read from ``spec.meta["camera"]`` (the ``eye`` / ``up`` plotly
 spelling — each a ``{"x", "y", "z"}`` mapping); when absent plotly's own default
 camera applies.
@@ -25,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ...spec import PlotKind, PlotSpec
+from ...style import Theme, normalize_style
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
@@ -41,6 +50,16 @@ def is_three_d(spec: PlotSpec) -> bool:
     )
 
 
+def _resolve_theme(spec: PlotSpec) -> Theme:
+    """Return the effective theme for ``spec`` (spec-level or active global)."""
+    return spec.resolved_theme
+
+
+def _canon_style(layer: Any) -> dict[str, Any]:
+    """Return the normalized (canonical-key) style dict for a layer."""
+    return normalize_style(layer.style, warn=False)
+
+
 def _f(arr: Any) -> np.ndarray:
     """Coerce a channel to a float ``ndarray``."""
     return np.asarray(arr, dtype=float)
@@ -55,7 +74,8 @@ def _xyz(layer: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
 
 def _colorscale(spec: PlotSpec, layer: Any) -> str | None:
     """Pick the plotly colorscale: layer style > spec colorbar cmap > ``None``."""
-    cmap = layer.style.get("cmap")
+    style = _canon_style(layer)
+    cmap = style.get("cmap")
     if cmap is not None:
         return str(cmap)
     if spec.colorbar is not None and spec.colorbar.cmap is not None:
@@ -73,6 +93,8 @@ def _colorbar_dict(spec: PlotSpec) -> dict[str, Any] | None:
         out["title"] = cbar.label
     if cbar.ticks is not None:
         out["tickvals"] = [float(t) for t in cbar.ticks]
+    if cbar.label_size is not None:
+        out["titlefont"] = {"size": float(cbar.label_size)}
     return out
 
 
@@ -90,6 +112,9 @@ def _build_line3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
     A plain line is ``mode="lines"``; a colour-by-``c`` line renders as
     ``mode="lines+markers"`` with the scalar field mapped onto the colour-scaled
     markers (plotly colours markers, not line segments), so hover shows the scalar.
+    Per-layer canonical style keys ``linewidth`` (→ ``line.width``), ``linestyle``
+    (→ ``line.dash``, via :data:`_DASH_MAP`), and ``alpha`` (→ ``opacity``) are
+    honored; the theme's ``line_width`` default fills in when no explicit width is set.
     """
     import plotly.graph_objects as go
 
@@ -97,13 +122,20 @@ def _build_line3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
     if xyz is None:
         return []
     x, y, z = xyz
-    style = layer.style
+    style = _canon_style(layer)
+    theme = _resolve_theme(spec)
     line: dict[str, Any] = {}
     if "color" in style:
         line["color"] = style["color"]
-    if "lw" in style or "linewidth" in style:
-        line["width"] = style.get("lw", style.get("linewidth"))
-    opacity = style.get("alpha", 1.0)
+    width = style.get("linewidth")
+    if width is None and theme.line_width is not None:
+        width = theme.line_width
+    if width is not None:
+        line["width"] = float(width)
+    dash = _DASH_MAP.get(str(style.get("linestyle", "")))
+    if dash is not None:
+        line["dash"] = dash
+    opacity = float(style.get("alpha", 1.0))
     c = layer.data.get("c")
     if c is not None and _f(c).size == z.size:
         marker: dict[str, Any] = {
@@ -146,8 +178,9 @@ def _build_scatter3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
     """Build a 3-D ``SCATTER`` / ``MARKERS`` ``go.Scatter3d``, colour-/size-mapped.
 
     A ``LINE`` / ``MARKERS`` / ``SCATTER`` mark in a 3-D spec carries a ``z``
-    channel and draws as a 3-D scatter, honouring the ``c`` (colour) and ``size``
-    channels.
+    channel and draws as a 3-D scatter, honouring the ``c`` (colour), ``size``,
+    ``markersize`` (canonical key), and ``alpha`` channels.  Falls back to the
+    theme's ``marker_size`` default.
     """
     import plotly.graph_objects as go
 
@@ -155,12 +188,18 @@ def _build_scatter3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
     if xyz is None:
         return []
     x, y, z = xyz
+    style = _canon_style(layer)
+    theme = _resolve_theme(spec)
     marker: dict[str, Any] = {}
-    size = layer.data.get("size")
-    if size is not None:
-        marker["size"] = _f(size)
-    elif "s" in layer.style:
-        marker["size"] = layer.style["s"]
+    size_arr = layer.data.get("size")
+    if size_arr is not None:
+        marker["size"] = _f(size_arr)
+    else:
+        ms = style.get("markersize")
+        if ms is None and theme.marker_size is not None:
+            ms = theme.marker_size
+        if ms is not None:
+            marker["size"] = float(ms)
     c = layer.data.get("c")
     if c is not None:
         marker["color"] = _f(c)
@@ -170,8 +209,8 @@ def _build_scatter3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
         cbar = _colorbar_dict(spec)
         if cbar is not None:
             marker["colorbar"] = cbar
-    elif "color" in layer.style:
-        marker["color"] = layer.style["color"]
+    elif "color" in style:
+        marker["color"] = style["color"]
     return [
         go.Scatter3d(
             x=x,
@@ -181,7 +220,7 @@ def _build_scatter3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
             marker=marker,
             name=layer.label,
             showlegend=layer.label is not None,
-            opacity=layer.style.get("alpha", 1.0),
+            opacity=float(style.get("alpha", 1.0)),
         )
     ]
 
@@ -215,6 +254,19 @@ def _build_surface3d(layer: Any, spec: PlotSpec) -> list[go.BaseTraceType]:
     return [go.Surface(**kw)]
 
 
+#: plotly ``line.dash`` names (canonical → plotly).
+_DASH_MAP: dict[str, str] = {
+    "solid": "solid",
+    "dashed": "dash",
+    "dotted": "dot",
+    "dashdot": "dashdot",
+    # legacy / mpl short spellings kept for layers that bypassed normalize_style
+    "-": "solid",
+    "--": "dash",
+    ":": "dot",
+    "-.": "dashdot",
+}
+
 #: 3-D layer mark → trace builder.  ``LINE`` / ``MARKERS`` / ``SCATTER`` in a 3-D
 #: spec draw as their 3-D counterparts (they carry a ``z`` channel).
 MARK_DISPATCH_3D: dict[PlotKind, Any] = {
@@ -232,14 +284,24 @@ def _scene(spec: PlotSpec) -> dict[str, Any]:
     Reads the camera from ``spec.meta["camera"]`` (the plotly ``eye`` / ``up``
     spelling, each a ``{"x", "y", "z"}`` mapping); absent keys keep plotly's own
     default camera.  ``aspect="equal"`` requests a cube (``aspectmode="cube"``).
+    The theme's ``foreground`` color is applied to the scene axes (title, ticks,
+    line) when set.
     """
+    theme = _resolve_theme(spec)
     scene: dict[str, Any] = {
-        "xaxis": _scene_axis(spec.x),
-        "yaxis": _scene_axis(spec.y),
+        "xaxis": _scene_axis(spec.x, theme),
+        "yaxis": _scene_axis(spec.y, theme),
     }
     if spec.z is not None:
-        scene["zaxis"] = _scene_axis(spec.z)
+        scene["zaxis"] = _scene_axis(spec.z, theme)
     scene["aspectmode"] = "cube" if spec.aspect == "equal" else "auto"
+    # Background: a 3-D plot's background is the ``bgcolor`` of each axis pane.
+    if theme.background is not None:
+        bg = theme.background
+        for k in ("xaxis", "yaxis", "zaxis"):
+            if k in scene:
+                scene[k]["backgroundcolor"] = bg
+        scene["bgcolor"] = bg
     camera = spec.meta.get("camera") if isinstance(spec.meta, dict) else None
     if isinstance(camera, dict):
         cam: dict[str, Any] = {}
@@ -261,13 +323,28 @@ def _scene(spec: PlotSpec) -> dict[str, Any]:
     return scene
 
 
-def _scene_axis(axis: Any) -> dict[str, Any]:
-    """Build one plotly ``scene`` axis dict (title + range) from a typed :class:`Axis`."""
+def _scene_axis(axis: Any, theme: Theme | None = None) -> dict[str, Any]:
+    """Build one plotly ``scene`` axis dict (title + range + theming)."""
     out: dict[str, Any] = {}
     if axis.label:
-        out["title"] = {"text": axis.label}
+        title: dict[str, Any] = {"text": axis.label}
+        if axis.label_size is not None:
+            title["font"] = {"size": float(axis.label_size)}
+        elif theme is not None and theme.font_size is not None:
+            title["font"] = {"size": float(theme.font_size)}
+        if theme is not None and theme.foreground is not None:
+            title.setdefault("font", {})["color"] = theme.foreground
+        out["title"] = title
     if axis.limits is not None:
         out["range"] = [float(axis.limits[0]), float(axis.limits[1])]
+    # Foreground ink for axis ticks / lines.
+    if theme is not None and theme.foreground is not None:
+        out["tickcolor"] = theme.foreground
+        out["linecolor"] = theme.foreground
+    if axis.tick_size is not None:
+        out["tickfont"] = {"size": float(axis.tick_size)}
+    elif theme is not None and theme.font_size is not None:
+        out["tickfont"] = {"size": float(theme.font_size)}
     return out
 
 
@@ -291,8 +368,8 @@ def scene_layout(spec: PlotSpec) -> dict[str, Any]:
     """Return the plotly ``scene`` layout dict for a 3-D ``spec``.
 
     The public wrapper over the private :func:`_scene` builder, so the composite
-    renderer can attach a panel's scene (axes / camera / aspect) to the right
-    ``sceneN`` slot of a subplot grid.
+    renderer can attach a panel's scene (axes / camera / aspect / theme) to the
+    right ``sceneN`` slot of a subplot grid.
     """
     return _scene(spec)
 
@@ -304,7 +381,8 @@ def render_3d(spec: PlotSpec, **_kw: Any) -> go.Figure:
     through :data:`MARK_DISPATCH_3D` (``go.Scatter3d`` / ``go.Surface``), then
     applies the ``scene`` (three axis titles / ranges, cube aspect for an
     ``"equal"`` spec, and the ``spec.meta["camera"]`` eye / up), the title, and the
-    legend.  The result is a draggable / zoomable 3-D figure.
+    legend.  The resolved :class:`~tsdynamics.viz.style.Theme` is applied to the
+    figure layout (``paper_bgcolor`` / ``plot_bgcolor``, ``layout.font``).
 
     Parameters
     ----------
@@ -321,15 +399,29 @@ def render_3d(spec: PlotSpec, **_kw: Any) -> go.Figure:
     """
     import plotly.graph_objects as go
 
+    from ._core import _theme_layout
+
+    theme = _resolve_theme(spec)
     fig = go.Figure()
     for trace in build_3d_traces(spec):
         fig.add_trace(trace)
 
     show_legend = spec.legend is not None and spec.legend.show
     layout: dict[str, Any] = {"scene": _scene(spec), "showlegend": show_legend}
+    # Apply theme-level presentation (background, font).
+    layout.update(_theme_layout(theme))
     if spec.title:
-        layout["title"] = {"text": spec.title}
+        title_dict: dict[str, Any] = {"text": spec.title}
+        if theme.title_size is not None:
+            title_dict["font"] = {"size": float(theme.title_size)}
+        layout["title"] = title_dict
     if show_legend and spec.legend is not None and spec.legend.title:
-        layout["legend"] = {"title": {"text": spec.legend.title}}
+        leg: dict[str, Any] = {"title": {"text": spec.legend.title}}
+        if spec.legend.font_size is not None:
+            leg["font"] = {"size": float(spec.legend.font_size)}
+        if not spec.legend.frame:
+            leg["bgcolor"] = "rgba(0,0,0,0)"
+            leg["bordercolor"] = "rgba(0,0,0,0)"
+        layout["legend"] = leg
     fig.update_layout(**layout)
     return fig

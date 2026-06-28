@@ -170,7 +170,9 @@ def test_register_adds_plotly_when_installed(go):
     assert isinstance(caps, RendererCapabilities)
     assert caps.interactive is True
     assert caps.web_export is True
-    assert caps.supports_3d is False
+    # The styling overhaul gives plotly a real orbitable 3-D scene, so it now
+    # advertises supports_3d=True (3-D specs render here instead of falling back).
+    assert caps.supports_3d is True
     # Re-registering is a no-op (idempotent).
     assert plotly_backend.register(reg) is False
 

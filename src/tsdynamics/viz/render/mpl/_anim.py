@@ -29,12 +29,14 @@ This module imports matplotlib only when called (never at ``import tsdynamics``)
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ...spec import Animation, PlotKind, PlotSpec
 from .. import normalize_kind
+from ._core import _apply_theme_color_cycle, _apply_theme_to_figure, _resolve_theme
 
 if TYPE_CHECKING:
     from matplotlib.animation import FuncAnimation
@@ -89,10 +91,23 @@ def render_animation(
     anim = spec.animation
     assert anim is not None  # guaranteed by the dispatch (is_animated)
 
-    fig = Figure(figsize=figsize)
+    # Resolve meta figsize / dpi
+    meta_figsize = spec.meta.get("figsize") if isinstance(spec.meta, dict) else None
+    if figsize is None and meta_figsize is not None:
+        w, h = meta_figsize
+        if w is not None and h is not None:
+            figsize = (float(w), float(h))
+    dpi: float | None = None
+    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
+        dpi = float(spec.meta["dpi"])
+
+    theme = _resolve_theme(spec)
+    fig = Figure(figsize=figsize, dpi=dpi)
     FigureCanvasAgg(fig)
     three_d = _threed.is_three_d(spec)
     ax = fig.add_subplot(1, 1, 1, projection="3d" if three_d else None)
+    _apply_theme_to_figure(fig, ax, theme)
+    _apply_theme_color_cycle(ax, theme)
 
     updater = _build_panel_animation(fig, ax, spec, three_d=three_d)
     interval = 1000.0 / float(anim.fps) if anim.fps > 0 else 50.0
@@ -124,12 +139,20 @@ def _build_panel_animation(fig: Figure, ax: Any, spec: PlotSpec, *, three_d: boo
 
     Returns an updater whose ``update(playback_frame)`` mutates the artists.  Used
     both for a single-panel animation and for each panel of a lockstep composite.
+
+    Applies the spec's theme figure-locally (background, color cycle, font) before
+    drawing any layer.
     """
     anim = spec.animation
     assert anim is not None
     if anim.mode == "frames":
         _warn_if_frames_without_field(spec)
     dt = _spec_dt(spec)
+
+    # Apply theme to this panel's axes
+    theme = _resolve_theme(spec)
+    _apply_theme_to_figure(fig, ax, theme)
+    _apply_theme_color_cycle(ax, theme)
 
     n_samples = _layer_sample_count(spec)
     head_idx = anim.head_indices(n_samples)
@@ -395,7 +418,8 @@ def _image_sweep_driver(ax: Axes, layer: Any, spec: PlotSpec) -> Any:
     """Draw a static spacetime image with a moving vertical "now" sweep line."""
     from ._core import _draw_image, _preset_for
 
-    _draw_image(ax, layer, spec, _preset_for(normalize_kind(spec.kind)))
+    theme = _resolve_theme(spec)
+    _draw_image(ax, layer, spec, _preset_for(normalize_kind(spec.kind)), theme)
     x = layer.data.get("x")
     xs = np.asarray(x, dtype=float) if x is not None else None
     n = xs.shape[0] if xs is not None else _layer_sample_count(spec)
@@ -503,7 +527,8 @@ def _draw_static_layer(ax: Axes, layer: Any, spec: PlotSpec, *, three_d: bool) -
         return
     drawer = MARK_DISPATCH.get(PlotKind(layer.kind))
     if drawer is not None:
-        drawer(ax, layer, spec, _preset_for(normalize_kind(spec.kind)))
+        theme = _resolve_theme(spec)
+        drawer(ax, layer, spec, _preset_for(normalize_kind(spec.kind)), theme)
 
 
 # ---------------------------------------------------------------------------
@@ -600,17 +625,32 @@ def _render_composite_animation(
     rows, cols = _composite_grid(spec.layout, len(panels))
     if figsize is None:
         figsize = (cols * 5.0, rows * 3.2)
-    fig = Figure(figsize=figsize)
+
+    composite_theme = _resolve_theme(spec)
+
+    dpi: float | None = None
+    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
+        dpi = float(spec.meta["dpi"])
+
+    fig = Figure(figsize=figsize, dpi=dpi)
     FigureCanvasAgg(fig)
+    if composite_theme.background is not None:
+        fig.patch.set_facecolor(composite_theme.background)
 
     updaters: list[_PanelUpdater] = []
     for i, panel in enumerate(panels):
-        # Each panel inherits the composite's clock if it has none of its own.
-        if panel.animation is None:
-            panel.animation = anim
-        three_d = _threed.is_three_d(panel)
+        # Resolve the effective animation/theme LOCALLY — never mutate the caller's
+        # panel specs. A panel inherits the composite's clock/animation and theme
+        # when it carries none of its own; the resolved values are threaded into a
+        # throwaway copy passed to the per-panel draw.
+        effective = dataclasses.replace(
+            panel,
+            animation=panel.animation or anim,
+            _theme=panel._theme or composite_theme,
+        )
+        three_d = _threed.is_three_d(effective)
         ax = fig.add_subplot(rows, cols, i + 1, projection="3d" if three_d else None)
-        updaters.append(_build_panel_animation(fig, ax, panel, three_d=three_d))
+        updaters.append(_build_panel_animation(fig, ax, effective, three_d=three_d))
     if spec.title:
         fig.suptitle(spec.title)
 

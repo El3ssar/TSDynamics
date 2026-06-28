@@ -57,7 +57,11 @@ def fake_renderer():
     renderers.clear()
     renderers.register("_fake_kinds_renderer", _render, replace=True)
     try:
-        yield captured
+        # Yield (name, captured): matplotlib is now the deterministic default
+        # backend, so a no-arg render would route to mpl (and return a Figure);
+        # the seam reaches a custom backend only *by name*, so callers must pass
+        # ``backend=name`` to route a render through this fake and capture the spec.
+        yield name, captured
     finally:
         renderers.clear()
         for entry in saved:
@@ -116,20 +120,26 @@ def test_typed_kind_method_uses_valid_plotkind(method_name, fake_renderer) -> No
     the captured kind resolves.  An invalid spelling raises ``ValueError`` from
     ``PlotKind(kind)`` here — the test fails rather than passing on a tautology.
     """
+    name, captured = fake_renderer
     result = _KindCapturingResult()
     method = getattr(result.plot, method_name)
-    method()  # forces kind=<this method's kind> into to_plot_spec
+    # matplotlib is the deterministic default backend; name the fake backend to
+    # route the render through it (still exercises the seam end-to-end).
+    method(backend=name)  # forces kind=<this method's kind> into to_plot_spec
     assert result.seen, f".plot.{method_name}() never reached to_plot_spec()"
     forced = result.seen[-1]
     assert isinstance(forced, PlotKind)
     # And the fake renderer was actually handed a spec carrying that kind.
-    assert fake_renderer and fake_renderer[-1].kind == forced
+    assert captured and captured[-1].kind == forced
 
 
 def test_default_plot_call_resolves(fake_renderer) -> None:
     """``result.plot()`` (no typed kind) also resolves to a valid spec via the seam."""
+    name, captured = fake_renderer
     result = _KindCapturingResult()
-    spec = result.plot()
+    # Route through the named fake backend so the seam hands it the resolved spec
+    # (a no-arg render would go to the default matplotlib backend and return a Figure).
+    spec = result.plot(backend=name)
     assert isinstance(spec, PlotSpec)
     assert isinstance(spec.kind, PlotKind)
 

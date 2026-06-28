@@ -37,12 +37,26 @@ def _time_series() -> PlotSpec:
 
 
 def test_html_module_imports_no_plotly() -> None:
-    """Importing the HTML helper must not drag plotly into ``sys.modules``."""
+    """Importing the HTML helper must not drag plotly into ``sys.modules``.
+
+    Run in a fresh subprocess so the check is robust against an earlier test (in
+    this or another module) having already imported plotly into the live
+    interpreter's ``sys.modules`` — the contract is about the *import side effect*
+    of the HTML helper, which only a clean process can observe.
+    """
+    import subprocess
     import sys
 
-    import tsdynamics.viz.render.plotly._html as html_mod  # noqa: F401
-
-    assert "plotly" not in sys.modules
+    code = (
+        "import sys; "
+        "import tsdynamics.viz.render.plotly._html as html_mod; "
+        "assert 'plotly' not in sys.modules, "
+        "sorted(m for m in sys.modules if 'plotly' in m); "
+        "print('ok')"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "ok" in proc.stdout
 
 
 def test_html_helper_surface() -> None:

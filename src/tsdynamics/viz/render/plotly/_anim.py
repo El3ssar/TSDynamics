@@ -423,6 +423,8 @@ def _comet_traces(
 
 def _apply_layout(fig: go.Figure, spec: PlotSpec, anim: Any, *, three_d: bool) -> None:
     """Camera-locked layout: fixed ranges, play / pause, slider, real transitions."""
+    from ._core import _theme_layout
+
     frame_ms = 1000.0 / float(anim.fps) if anim.fps > 0 else 40.0
     # 2-D tweens the head glide between frames; 3-D has no trace tween (rely on the
     # dense frame schedule), so its transition stays instantaneous.
@@ -479,6 +481,11 @@ def _apply_layout(fig: go.Figure, spec: PlotSpec, anim: Any, *, three_d: bool) -
         "uirevision": _UIREVISION,  # preserve camera / zoom across frames
         "margin": {"t": 40, "r": 10, "b": 10, "l": 10},
     }
+
+    # Apply theme-level presentation (background, font).
+    theme = spec.resolved_theme
+    layout.update(_theme_layout(theme))
+
     if spec.title:
         layout["title"] = {"text": spec.title}
 
@@ -620,10 +627,17 @@ def animated_html(
 
 def _realtime_layout(fig: go.Figure, spec: PlotSpec, *, three_d: bool) -> None:
     """Apply fixed ranges + title for the real-time animation (no frames / play button)."""
+    from ._core import _theme_layout
+
     layout: dict[str, Any] = {
         "margin": {"t": 40, "r": 10, "b": 10, "l": 10},
         "uirevision": _UIREVISION,
     }
+
+    # Apply theme-level presentation (background, font).
+    theme = spec.resolved_theme
+    layout.update(_theme_layout(theme))
+
     if spec.title:
         layout["title"] = {"text": spec.title}
     if three_d:

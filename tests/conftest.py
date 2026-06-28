@@ -246,3 +246,34 @@ def ar1_signal() -> np.ndarray:
     from _strategies import ar1
 
     return ar1(2048, phi=0.7, seed=2024)
+
+
+# ---------------------------------------------------------------------------
+# Global theme-state isolation (stream VIZ-STYLING)
+#
+# The viz theme registry (``tsdynamics.viz.style.THEMES``) and the active-default
+# name (``_ACTIVE``) are process globals.  A test that ``set_theme(...)`` /
+# ``register_theme(...)`` would otherwise leak that mutation into every later
+# test in the (registry-driven, cross-module) suite.  This autouse fixture
+# snapshots both around EVERY test and restores them on teardown, so the mutable
+# global default can never bleed across module boundaries.
+#
+# The ``tsdynamics.viz.style`` import is lazy (inside the fixture) and import-light
+# (no plotting backend), so it does not drag matplotlib/plotly into a test that
+# never touches viz; it only resolves the module that already holds the globals.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_global_theme():
+    """Snapshot + restore the single mutable global viz theme state around each test."""
+    import tsdynamics.viz.style as style_mod
+
+    saved_active = style_mod._ACTIVE
+    saved_themes = dict(style_mod.THEMES)
+    try:
+        yield
+    finally:
+        style_mod._ACTIVE = saved_active
+        style_mod.THEMES.clear()
+        style_mod.THEMES.update(saved_themes)

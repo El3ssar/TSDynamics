@@ -61,6 +61,8 @@ from typing import Any, ClassVar, Literal
 
 import numpy as np
 
+from .style import Theme, get_theme, normalize_style
+
 __all__ = [
     "Animation",
     "Annotation",
@@ -274,6 +276,18 @@ class Axis:
         Category labels for a ``"categorical"`` axis — the tick label at integer
         position ``i`` is ``categories[i]`` (basin ids, feature names, …).
         ``None`` for a numeric axis.
+    grid : bool, optional
+        Whether to draw gridlines along this axis.  ``None`` (default) defers to
+        the theme's ``grid`` default; ``True`` / ``False`` force it.
+    color : str, optional
+        The axis ink color (spine / ticks / label), or ``None`` to defer to the
+        theme's ``foreground``.
+    label_size : float, optional
+        Font size for the axis label, or ``None`` to defer to the theme.
+    tick_size : float, optional
+        Font size for the tick labels, or ``None`` to defer to the theme.
+    tick_rotation : float, optional
+        Rotation (degrees) of the tick labels, or ``None`` for no rotation.
     """
 
     label: str = ""
@@ -282,6 +296,11 @@ class Axis:
     ticks: Sequence[float] | None = None
     tickformat: str | None = None
     categories: Sequence[str] | None = None
+    grid: bool | None = None
+    color: str | None = None
+    label_size: float | None = None
+    tick_size: float | None = None
+    tick_rotation: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this axis."""
@@ -292,6 +311,11 @@ class Axis:
             "ticks": [float(t) for t in self.ticks] if self.ticks is not None else None,
             "tickformat": self.tickformat,
             "categories": list(self.categories) if self.categories is not None else None,
+            "grid": self.grid,
+            "color": self.color,
+            "label_size": None if self.label_size is None else float(self.label_size),
+            "tick_size": None if self.tick_size is None else float(self.tick_size),
+            "tick_rotation": None if self.tick_rotation is None else float(self.tick_rotation),
         }
 
     @classmethod
@@ -307,6 +331,11 @@ class Axis:
             ticks=list(ticks) if ticks is not None else None,
             tickformat=d.get("tickformat"),
             categories=list(categories) if categories is not None else None,
+            grid=d.get("grid"),
+            color=d.get("color"),
+            label_size=d.get("label_size"),
+            tick_size=d.get("tick_size"),
+            tick_rotation=d.get("tick_rotation"),
         )
 
 
@@ -421,6 +450,8 @@ class Colorbar:
         Whether the color channel is categorical (discrete swatches, one per
         label — a basin / attractor index image) rather than a continuous ramp.
         Default ``False``.
+    label_size : float, optional
+        Font size for the colorbar label, or ``None`` to defer to the theme.
     """
 
     label: str = ""
@@ -431,6 +462,7 @@ class Colorbar:
     cmap: str | None = None
     norm: _Norm | None = None
     discrete: bool = False
+    label_size: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this colorbar."""
@@ -443,6 +475,7 @@ class Colorbar:
             "cmap": self.cmap,
             "norm": self.norm,
             "discrete": bool(self.discrete),
+            "label_size": None if self.label_size is None else float(self.label_size),
         }
 
     @classmethod
@@ -458,6 +491,7 @@ class Colorbar:
             cmap=d.get("cmap"),
             norm=d.get("norm"),
             discrete=bool(d.get("discrete", False)),
+            label_size=d.get("label_size"),
         )
 
 
@@ -484,11 +518,20 @@ class Legend:
         (``"best"``, ``"upper right"``, …).  Default ``"best"``.
     title : str, optional
         Legend title, or ``""`` for none.
+    font_size : float, optional
+        Font size for the legend entries, or ``None`` to defer to the theme.
+    ncol : int, optional
+        Number of columns to lay the entries out in.  Default ``1``.
+    frame : bool, optional
+        Whether to draw the legend's bounding frame / box.  Default ``True``.
     """
 
     show: bool = True
     location: _LegendLoc = "best"
     title: str = ""
+    font_size: float | None = None
+    ncol: int = 1
+    frame: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this legend."""
@@ -496,6 +539,9 @@ class Legend:
             "show": bool(self.show),
             "location": self.location,
             "title": self.title,
+            "font_size": None if self.font_size is None else float(self.font_size),
+            "ncol": int(self.ncol),
+            "frame": bool(self.frame),
         }
 
     @classmethod
@@ -505,6 +551,9 @@ class Legend:
             show=bool(d.get("show", True)),
             location=d.get("location", "best"),
             title=d.get("title", ""),
+            font_size=d.get("font_size"),
+            ncol=int(d.get("ncol", 1)),
+            frame=bool(d.get("frame", True)),
         )
 
 
@@ -878,12 +927,20 @@ class PlotSpec:
         Reference lines / text overlays carried by the result.
     meta : dict, optional
         Provenance and rendering hints passed through untouched (e.g.
-        ``meta["animate"] = {"fps": 30}`` for an animated spec).
+        ``meta["animate"] = {"fps": 30}`` for an animated spec, or
+        ``meta["figsize"]`` / ``meta["dpi"]`` set by :meth:`size`).
+    theme : Theme, optional
+        The figure-level look (palette / font / background / grid / line
+        defaults).  ``None`` (default) defers to the active global default theme
+        (renderers call :func:`~tsdynamics.viz.style.get_theme` when
+        :attr:`theme` is ``None``).
 
     Notes
     -----
     The tweak methods (:meth:`relabel`, :meth:`rescale`, :meth:`limits`,
-    :meth:`ticks`, :meth:`style`) mutate the spec in place and return ``self``,
+    :meth:`ticks`, :meth:`style`, :meth:`recolor`, :meth:`theme`,
+    :meth:`palette`, :meth:`grid`, :meth:`font`, :meth:`background`,
+    :meth:`size`) mutate the spec in place and return ``self``,
     so they chain::
 
         spec.rescale(x="log").limits(y=(1e-17, 5)).ticks(x=[1, 10, 100])
@@ -915,6 +972,16 @@ class PlotSpec:
     # composite) becomes a movie by carrying an :class:`Animation`.  The semantic
     # ``kind`` is unchanged; a backend that cannot animate draws the final frame.
     animation: Animation | None = None
+    # Theme: the figure-level look (palette / font / background / grid / line
+    # defaults).  ``None`` ⇒ renderers resolve the active global default at draw
+    # time (``get_theme(None)``); a panel's own theme overrides a composite's.
+    #
+    # Stored under the private ``_theme`` field because the public fluent tweak is
+    # the ``theme(...)`` **method** (frozen public name) — a dataclass field and a
+    # method cannot share one name.  Read the resolved value via the
+    # :attr:`resolved_theme` property or :meth:`theme_or_default`; renderers read
+    # the raw ``Theme | None`` via the :attr:`_theme` field.
+    _theme: Theme | None = None
 
     def __post_init__(self) -> None:
         """Normalize ``kind`` and the optional ``clim`` color range."""
@@ -1061,7 +1128,11 @@ class PlotSpec:
             animation).  ``None`` leaves axis visibility unchanged.
         **kw
             Per-layer style keys to set (``color``, ``cmap``, ``lw``, ``alpha``,
-            ``marker``, …).
+            ``marker``, …).  These are routed through
+            :func:`~tsdynamics.viz.style.normalize_style`: aliases (``lw`` →
+            ``linewidth``, ``c`` → ``color``, ``s`` → ``markersize``) are
+            canonicalized, values validated, and an unknown key is dropped with a
+            single ``VisualizationDegraded`` warning.
 
         Returns
         -------
@@ -1070,9 +1141,247 @@ class PlotSpec:
         """
         if axes is not None:
             self.meta["axes_visible"] = bool(axes)
+        canon = normalize_style(kw)
         targets = self.layers if layer is None else [self.layers[layer]]
         for lyr in targets:
-            lyr.style.update(kw)
+            lyr.style.update(canon)
+        return self
+
+    def recolor(self, *colors: str, layer: int | None = None) -> PlotSpec:
+        """Assign explicit colors to layers (the per-layer color shorthand).
+
+        Parameters
+        ----------
+        *colors : str
+            One or more colors (CSS name / hex / …).
+        layer : int, optional
+            When ``None`` (default), color ``i`` is assigned to layer ``i``,
+            cycling (``colors[i % len(colors)]``).  When an ``int``, that one
+            layer's color is set to ``colors[0]``.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        if not colors:
+            return self
+        if layer is not None:
+            self.layers[layer].style["color"] = colors[0]
+            return self
+        n = len(colors)
+        for i, lyr in enumerate(self.layers):
+            lyr.style["color"] = colors[i % n]
+        return self
+
+    @property
+    def resolved_theme(self) -> Theme:
+        """The effective :class:`~tsdynamics.viz.style.Theme` for this spec.
+
+        This is the **READ** half of the three-part theme pattern (see
+        :meth:`theme` for the full picture): ``spec.theme(...)`` **SETS**,
+        ``spec.resolved_theme`` **READS** the effective theme, and ``spec._theme``
+        is the **raw private field**.
+
+        Returns this spec's own theme if it set one (``spec._theme is not None``),
+        otherwise the active global default
+        (:func:`~tsdynamics.viz.style.get_theme`).  Renderers that need a concrete
+        theme read this; the unresolved ``Theme | None`` lives on the private
+        :attr:`_theme` field.
+        """
+        return self._theme if self._theme is not None else get_theme(None)
+
+    def theme(self, theme: str | Theme | None = None, /, **overrides: Any) -> PlotSpec:
+        """Set this spec's figure-level :class:`~tsdynamics.viz.style.Theme`.
+
+        The figure-level look (palette / font / background / grid / line
+        defaults).  This is the **SET** half of a deliberate three-part pattern:
+
+        - ``spec.theme(...)`` **SETS** (mutate this spec's theme + return ``self``
+          for chaining) — *this method*.
+        - :attr:`spec.resolved_theme <resolved_theme>` **READS** the effective
+          theme, falling back to the active global default when this spec set
+          none.
+        - ``spec._theme`` is the **raw private field** (``Theme | None``) — the
+          unresolved attribute renderers may read directly; prefer
+          :attr:`resolved_theme` everywhere else.
+
+        ``theme`` is **positional-only** — call ``spec.theme("dark")``, not
+        ``spec.theme(theme="dark")`` (the keyword name is reserved so a theme
+        field literally named ``theme`` could be passed in ``**overrides``).
+
+        Eager-materialisation semantics:
+
+        - ``spec.theme("dark")`` / ``spec.theme(some_theme)`` pins that named /
+          explicit theme.
+        - ``spec.theme(None)`` (or ``spec.theme()``) with **no** overrides stores
+          the active global default *by snapshot* — and because that snapshot is
+          taken now, the spec is **detached from any later**
+          :func:`~tsdynamics.viz.style.set_theme` (it will not track a future
+          global-default change).
+        - ``spec.theme(None, **overrides)`` **eagerly materialises** the active
+          global default and applies ``overrides`` on top via
+          :meth:`~tsdynamics.viz.style.Theme.merged` — likewise detaching from a
+          future ``set_theme``.
+
+        Parameters
+        ----------
+        theme : str or Theme or None, positional-only
+            A registered theme name, a :class:`~tsdynamics.viz.style.Theme`
+            instance, or ``None`` (snapshot the active global default *now*).
+            Positional-only: pass it by position, never as ``theme=``.
+        **overrides
+            :class:`~tsdynamics.viz.style.Theme` fields to override on top of the
+            resolved theme (``palette``, ``background``, ``font_family``, …),
+            applied via :meth:`~tsdynamics.viz.style.Theme.merged`.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        base = theme if isinstance(theme, Theme) else get_theme(theme)
+        self._theme = base.merged(**overrides) if overrides else base
+        return self
+
+    def palette(self, colors: str | Sequence[str]) -> PlotSpec:
+        """Set the theme's color cycle (a named palette or an explicit list).
+
+        Parameters
+        ----------
+        colors : str or sequence of str
+            A registered theme name (its palette) or an explicit sequence of
+            colors.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        from .style import resolve_palette
+
+        base = self._theme if self._theme is not None else get_theme()
+        self._theme = base.merged(palette=resolve_palette(colors))
+        return self
+
+    def grid(
+        self,
+        show: bool = True,
+        *,
+        axis: Literal["x", "y", "both"] = "both",
+        color: str | None = None,
+        alpha: float | None = None,
+    ) -> PlotSpec:
+        """Toggle / style gridlines on the chosen axis (or both).
+
+        Parameters
+        ----------
+        show : bool, optional
+            Whether to draw gridlines.  Default ``True``.
+        axis : {"x", "y", "both"}, optional
+            Which axis the grid applies to.  Default ``"both"``.
+        color : str, optional
+            Gridline color — applied as a theme override (``grid_color``) so it is
+            shared across the figure.
+        alpha : float, optional
+            Gridline opacity — applied as a theme override (``grid_alpha``).
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        targets: list[Axis] = []
+        if axis in ("x", "both"):
+            targets.append(self.x)
+        if axis in ("y", "both"):
+            targets.append(self.y)
+        for ax in targets:
+            ax.grid = bool(show)
+        if color is not None or alpha is not None:
+            base = self._theme if self._theme is not None else get_theme()
+            overrides: dict[str, Any] = {}
+            if color is not None:
+                overrides["grid_color"] = color
+            if alpha is not None:
+                overrides["grid_alpha"] = float(alpha)
+            self._theme = base.merged(**overrides)
+        return self
+
+    def font(self, family: str | None = None, size: float | None = None) -> PlotSpec:
+        """Set the theme font family and/or size.
+
+        Parameters
+        ----------
+        family : str, optional
+            Font family.
+        size : float, optional
+            Base font size.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        base = self._theme if self._theme is not None else get_theme()
+        overrides: dict[str, Any] = {}
+        if family is not None:
+            overrides["font_family"] = family
+        if size is not None:
+            overrides["font_size"] = float(size)
+        if overrides:
+            self._theme = base.merged(**overrides)
+        return self
+
+    def background(self, color: str) -> PlotSpec:
+        """Set the theme background (figure / axes facecolor).
+
+        Parameters
+        ----------
+        color : str
+            Background color (CSS name / hex / …).
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        base = self._theme if self._theme is not None else get_theme()
+        self._theme = base.merged(background=color)
+        return self
+
+    def size(
+        self,
+        width: float | None = None,
+        height: float | None = None,
+        dpi: float | None = None,
+    ) -> PlotSpec:
+        """Set the figure size (pixels-as-inches via ``meta``) and/or resolution.
+
+        ``figsize`` / ``dpi`` are *not* theme fields — they live in ``meta``
+        (``meta["figsize"] = (width, height)``, ``meta["dpi"]``), only the
+        dimensions you pass being updated.
+
+        Parameters
+        ----------
+        width, height : float, optional
+            Figure width / height; an omitted dimension keeps its current value.
+        dpi : float, optional
+            Output resolution (dots per inch).
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, for chaining.
+        """
+        if width is not None or height is not None:
+            cur = self.meta.get("figsize")
+            cw, ch = cur if isinstance(cur, (tuple, list)) and len(cur) == 2 else (None, None)
+            new_w = float(width) if width is not None else cw
+            new_h = float(height) if height is not None else ch
+            self.meta["figsize"] = (new_w, new_h)
+        if dpi is not None:
+            self.meta["dpi"] = float(dpi)
         return self
 
     def _axes_hidden(self) -> bool:
@@ -1596,6 +1905,7 @@ class PlotSpec:
             "panels": [p.to_dict() for p in self.panels],
             "layout": self.layout.to_dict() if self.layout is not None else None,
             "animation": self.animation.to_dict() if self.animation is not None else None,
+            "theme": self._theme.to_dict() if self._theme is not None else None,
         }
 
     @classmethod
@@ -1638,6 +1948,7 @@ class PlotSpec:
             animation=Animation.from_dict(d["animation"])
             if d.get("animation") is not None
             else None,
+            _theme=Theme.from_dict(d["theme"]) if d.get("theme") is not None else None,
         )
 
 
