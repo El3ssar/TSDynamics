@@ -87,9 +87,24 @@ def power_spectral_density(
     Returns
     -------
     freqs : ndarray, shape (n_freqs,)
-        Frequency bins, in the same units as ``fs``.
+        Frequency bins, in the same units as ``fs``, from ``0`` (DC) to the
+        Nyquist frequency ``fs / 2``.
     psd : ndarray, shape (n_freqs,) or (n_freqs, channels)
         Power at each frequency, one column per channel.
+
+    Notes
+    -----
+    The estimate is **one-sided**: for a real-valued signal the power of each
+    pair of conjugate (positive/negative) frequencies is folded onto the single
+    positive bin, so every interior bin's power is doubled relative to the
+    two-sided spectrum.  The DC (``0``) and — when present — Nyquist (``fs / 2``)
+    bins have no conjugate twin and are *not* doubled.  This is SciPy's default
+    ``return_onesided=True`` convention, so a sinusoid of amplitude ``A`` carries
+    total power ``A**2 / 2`` (its time-average) at its line.  With
+    ``scaling="density"`` the value is a power *spectral density* (units²/Hz, so
+    integrating over frequency recovers the signal variance); with
+    ``scaling="spectrum"`` it is a power *spectrum* (units², so summing over bins
+    recovers the variance).
 
     Examples
     --------
@@ -321,7 +336,11 @@ def power_spectrum(
     >>> round(spec.dominant_frequency)
     5
     """
-    freqs, psd = power_spectral_density(data, fs=fs, dt=dt, **psd_kwargs)
+    # Resolve the sampling rate once: it is needed both to compute the PSD and to
+    # stamp ``meta["fs"]``, and ``resolve_fs`` re-infers it from the Trajectory
+    # time vector on every call, so reuse the single resolved value below.
+    rate = resolve_fs(data, fs=fs, dt=dt)
+    freqs, psd = power_spectral_density(data, fs=rate, **psd_kwargs)
     dom: Any = None
     cen: Any = None
     if markers:
@@ -335,7 +354,7 @@ def power_spectrum(
     meta = {
         "transform": "power_spectrum",
         "method": psd_kwargs.get("method", "welch"),
-        "fs": resolve_fs(data, fs=fs, dt=dt),
+        "fs": rate,
         "scaling": scaling,
     }
     return Spectrum(

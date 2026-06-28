@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 from scipy import signal as _sig
 
+from ..errors import invalid_value
 from ._common import resolve_fs, to_signal, wrap_like
 
 __all__ = [
@@ -157,19 +158,34 @@ def butter_filter(
     fs, dt : float, optional
         Sampling frequency / spacing (see :func:`tsdynamics.transforms.power_spectral_density`).
     order : int, default 4
-        Butterworth order (per band edge).
+        Butterworth order (per band edge).  Must be a positive integer.
 
     Returns
     -------
     Trajectory or ndarray
         Same type and shape as ``x``, filtered.
 
+    Raises
+    ------
+    InvalidParameterError
+        If ``order`` is not at least 1 (a :class:`ValueError`).
+    ValueError
+        If ``cutoff`` does not lie strictly between 0 and the Nyquist frequency,
+        or the number of cutoff edges does not match ``btype``.
+
     Notes
     -----
     Zero-phase filtering doubles the effective order and needs the signal to be
     longer than the filter's padding (a few times ``order``); very short signals
     raise from :func:`scipy.signal.sosfiltfilt`.
+
+    References
+    ----------
+    Butterworth, S. (1930). On the theory of filter amplifiers.
+    *Experimental Wireless and the Wireless Engineer*, 7, 536-541.
     """
+    if order < 1:
+        raise invalid_value("order", order, rule="must be a positive integer (>= 1)")
     rate = resolve_fs(x, fs=fs, dt=dt)
     nyquist = 0.5 * rate
     edges = np.atleast_1d(np.asarray(cutoff, dtype=float))

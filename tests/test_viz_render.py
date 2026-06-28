@@ -262,3 +262,96 @@ def test_render_buffer_is_a_nonempty_png():
     data = buf.getvalue()
     assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
     assert len(data) > 1000, "suspiciously small PNG (empty render?)"
+
+
+# ---------------------------------------------------------------------------
+# 6 — default backend selection is order-independent (matplotlib by name)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _isolated_renderers():
+    """Snapshot + restore the global renderers registry around a test.
+
+    The renderers registry is a process global; these tests rewrite it to a
+    controlled order, so restore it afterwards to avoid leaking into other tests.
+    """
+    saved = list(registry.renderers.all())
+    registry.renderers.clear()
+    try:
+        yield registry.renderers
+    finally:
+        registry.renderers.clear()
+        for entry in saved:
+            registry.renderers.register(entry.name, entry.obj)
+
+
+def _fake_renderer(caps):
+    """A minimal renderer callable carrying a ``.capabilities`` descriptor."""
+
+    def _render(spec, **kw):  # pragma: no cover - never actually invoked here
+        return spec
+
+    _render.capabilities = caps  # type: ignore[attr-defined]
+    return _render
+
+
+def test_matplotlib_is_default_when_registered_last(_isolated_renderers):
+    """matplotlib is the no-backend default even when registered *after* others.
+
+    Regression guard: the default is chosen by name, not by registration order,
+    so seating it first in the registry is unnecessary (the removed
+    ``_seat_preferred_first`` reshuffle had no observable effect).
+    """
+    from tsdynamics.viz.render import select_renderer
+    from tsdynamics.viz.render.caps import RendererCapabilities
+
+    renderers = _isolated_renderers
+    # Register a capable *drawing* backend first, then matplotlib last.
+    renderers.register("plotly", _fake_renderer(RendererCapabilities.all_kinds("plotly")))
+    renderers.register("matplotlib", _fake_renderer(RendererCapabilities.all_kinds("matplotlib")))
+
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)])
+    name, _ = select_renderer(spec, backend=None)
+    assert name == "matplotlib"
+
+
+def test_matplotlib_default_independent_of_order(_isolated_renderers):
+    """The no-backend default is matplotlib for either registration order."""
+    from tsdynamics.viz.render import select_renderer
+    from tsdynamics.viz.render.caps import RendererCapabilities
+
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)])
+    for order in (("matplotlib", "plotly"), ("plotly", "matplotlib")):
+        _isolated_renderers.clear()
+        for nm in order:
+            _isolated_renderers.register(nm, _fake_renderer(RendererCapabilities.all_kinds(nm)))
+        name, _ = select_renderer(spec, backend=None)
+        assert name == "matplotlib", order
+
+
+def test_last_resort_prefers_drawing_backend_over_exporter(_isolated_renderers):
+    """When no backend *declares* it can draw, the first drawing backend wins.
+
+    matplotlib is absent and neither remaining backend declares the spec's kind,
+    so selection falls to step 3.  A data-export backend registered first must
+    not win over a later drawing backend — the figure-producing one is preferred.
+    """
+    from tsdynamics.viz.render import select_renderer
+    from tsdynamics.viz.render.caps import RendererCapabilities
+
+    renderers = _isolated_renderers
+    # An exporter registered first, then a (partial) drawing backend that does
+    # not declare this kind — both decline, so step 3 decides.
+    renderers.register(
+        "json",
+        _fake_renderer(RendererCapabilities.of_kinds("json", [], data_export=True)),
+    )
+    renderers.register(
+        "plotly",
+        _fake_renderer(RendererCapabilities.of_kinds("plotly", [PlotKind.IMAGE])),
+    )
+
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_layer_for_mark(PlotKind.LINE)])
+    name, _ = select_renderer(spec, backend=None)
+    assert name == "plotly"

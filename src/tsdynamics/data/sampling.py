@@ -41,9 +41,57 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+def _coerce_query(u: Any, dim: int) -> tuple[np.ndarray, bool]:
+    """Coerce a containment query to a 2-D ``(n, dim)`` array.
+
+    A single point ``(dim,)`` becomes a one-row batch and the boolean flag
+    ``True`` (so the caller can squeeze the result back to a scalar); a batch
+    ``(n, dim)`` passes through with flag ``False``.  Any other shape — in
+    particular a flat array whose length is not ``dim`` — raises, so a batch can
+    never silently collapse into one conflated truth value.
+    """
+    arr = np.asarray(u, dtype=float)
+    if arr.ndim == 0 and dim == 1:
+        # A bare scalar is a valid single point of a 1-D region.
+        return arr.reshape(1, 1), True
+    if arr.ndim == 1 and arr.shape[0] == dim:
+        return arr[None, :], True
+    if arr.ndim == 2 and arr.shape[1] == dim:
+        return arr, False
+    raise ValueError(
+        f"containment query must have shape ({dim},) for a single point or "
+        f"(n, {dim}) for a batch; got shape {arr.shape}."
+    )
+
+
 @dataclass(frozen=True)
 class Box:
-    """Axis-aligned box ``[lo_i, hi_i]`` per dimension."""
+    """Axis-aligned box ``[lo_i, hi_i]`` per dimension.
+
+    A closed, axis-aligned hyper-rectangle of state space: a point lies in the
+    box iff ``lo_i <= u_i <= hi_i`` for every axis ``i``.  It is one of the
+    region primitives (alongside :class:`Ball` and :class:`Grid`) that the
+    sampler / basin / attractor layer is built on.
+
+    Parameters
+    ----------
+    lo, hi : array_like, shape (dim,)
+        Per-axis lower and upper corners.  Coerced to ``float`` arrays; ``hi``
+        must be ``>= lo`` componentwise.
+
+    Raises
+    ------
+    ValueError
+        If ``lo`` and ``hi`` differ in shape, or ``hi < lo`` on any axis.
+
+    Examples
+    --------
+    >>> b = Box([-1.0, -1.0], [1.0, 1.0])
+    >>> b.contains([0.0, 0.0])
+    True
+    >>> b.contains([[0.0, 0.0], [2.0, 0.0]])      # batch query → per-row mask
+    array([ True, False])
+    """
 
     lo: np.ndarray
     hi: np.ndarray
@@ -61,15 +109,60 @@ class Box:
         """State-space dimension."""
         return self.lo.size
 
-    def contains(self, u: Any) -> bool:
-        """Whether point ``u`` lies in the box."""
-        u = np.asarray(u, dtype=float)
-        return bool(np.all(u >= self.lo) and np.all(u <= self.hi))
+    def contains(self, u: Any) -> Any:
+        """Whether point(s) ``u`` lie in the box.
+
+        Parameters
+        ----------
+        u : array_like
+            A single point of shape ``(dim,)`` **or** a batch of shape
+            ``(n, dim)``.  Any other shape raises (so a batch can never silently
+            collapse into one conflated truth value).
+
+        Returns
+        -------
+        bool or ndarray of bool
+            A scalar ``bool`` for a single point, or an ``(n,)`` boolean mask —
+            row ``i`` is ``True`` iff point ``i`` lies in the box.
+
+        Raises
+        ------
+        ValueError
+            If ``u`` is neither a ``(dim,)`` point nor an ``(n, dim)`` batch.
+        """
+        pts, scalar = _coerce_query(u, self.dim)
+        mask = np.all((pts >= self.lo) & (pts <= self.hi), axis=1)
+        return bool(mask[0]) if scalar else mask
 
 
 @dataclass(frozen=True)
 class Ball:
-    """Closed Euclidean ball of radius ``r`` about ``center``."""
+    """Closed Euclidean ball of radius ``r`` about ``center``.
+
+    The set of points within Euclidean distance ``r`` of ``center`` (inclusive).
+    Together with :class:`Box` and :class:`Grid` it is one of the region
+    primitives the sampler / basin / attractor layer is built on.
+
+    Parameters
+    ----------
+    center : array_like, shape (dim,)
+        Ball centre.  Coerced to a ``float`` array.
+    r : float
+        Radius; must be strictly positive.
+
+    Raises
+    ------
+    ValueError
+        If ``r <= 0``.
+
+    Examples
+    --------
+    >>> ball = Ball([0.0, 0.0], r=1.0)
+    >>> ball.contains([0.5, 0.5])
+    True
+    >>> ball.contains([[0.0, 0.0], [2.0, 0.0]])    # batch query → per-row mask
+    array([ True, False])
+    """
 
     center: np.ndarray
     r: float
@@ -84,15 +177,60 @@ class Ball:
         """State-space dimension."""
         return self.center.size
 
-    def contains(self, u: Any) -> bool:
-        """Whether point ``u`` lies in the ball."""
-        u = np.asarray(u, dtype=float)
-        return bool(np.linalg.norm(u - self.center) <= self.r)
+    def contains(self, u: Any) -> Any:
+        """Whether point(s) ``u`` lie in the ball.
+
+        Parameters
+        ----------
+        u : array_like
+            A single point of shape ``(dim,)`` **or** a batch of shape
+            ``(n, dim)``.  Any other shape raises.
+
+        Returns
+        -------
+        bool or ndarray of bool
+            A scalar ``bool`` for a single point, or an ``(n,)`` boolean mask.
+
+        Raises
+        ------
+        ValueError
+            If ``u`` is neither a ``(dim,)`` point nor an ``(n, dim)`` batch.
+        """
+        pts, scalar = _coerce_query(u, self.dim)
+        mask = np.linalg.norm(pts - self.center, axis=1) <= self.r
+        return bool(mask[0]) if scalar else mask
 
 
 @dataclass(frozen=True)
 class Grid:
-    """Regular grid: ``counts[i]`` points spanning ``[lo_i, hi_i]`` per axis."""
+    """Regular grid: ``counts[i]`` points spanning ``[lo_i, hi_i]`` per axis.
+
+    A regular Cartesian lattice over an axis-aligned box: axis ``i`` carries
+    ``counts[i]`` evenly spaced nodes spanning ``[lo_i, hi_i]`` (inclusive of
+    both endpoints).  Use :func:`grid_points` to enumerate the lattice nodes and
+    :func:`region` for a terse ``(lo, hi, n)``-per-axis constructor.
+
+    Parameters
+    ----------
+    lo, hi : array_like, shape (dim,)
+        Per-axis lower and upper bounds of the bounding box.
+    counts : tuple of int
+        Number of nodes per axis; each must be ``>= 1``.
+
+    Raises
+    ------
+    ValueError
+        If ``lo``, ``hi``, and ``counts`` disagree in length, or any count
+        is ``< 1``.
+
+    Examples
+    --------
+    >>> g = Grid([-1.0, -1.0], [1.0, 1.0], (3, 3))
+    >>> g.shape
+    (3, 3)
+    >>> g.contains([0.0, 0.0])
+    True
+    """
 
     lo: np.ndarray
     hi: np.ndarray
@@ -118,13 +256,34 @@ class Grid:
         return self.counts
 
     def axes(self) -> list[np.ndarray]:
-        """Per-axis coordinate vectors."""
+        """Per-axis coordinate vectors (``dim`` arrays, ``counts[i]`` long)."""
         return [np.linspace(self.lo[i], self.hi[i], self.counts[i]) for i in range(self.dim)]
 
-    def contains(self, u: Any) -> bool:
-        """Whether point ``u`` lies in the grid's bounding box."""
-        u = np.asarray(u, dtype=float)
-        return bool(np.all(u >= self.lo) and np.all(u <= self.hi))
+    def contains(self, u: Any) -> Any:
+        """Whether point(s) ``u`` lie in the grid's bounding box.
+
+        Membership is against the bounding box ``[lo_i, hi_i]`` — *not* exact
+        coincidence with a lattice node.
+
+        Parameters
+        ----------
+        u : array_like
+            A single point of shape ``(dim,)`` **or** a batch of shape
+            ``(n, dim)``.  Any other shape raises.
+
+        Returns
+        -------
+        bool or ndarray of bool
+            A scalar ``bool`` for a single point, or an ``(n,)`` boolean mask.
+
+        Raises
+        ------
+        ValueError
+            If ``u`` is neither a ``(dim,)`` point nor an ``(n, dim)`` batch.
+        """
+        pts, scalar = _coerce_query(u, self.dim)
+        mask = np.all((pts >= self.lo) & (pts <= self.hi), axis=1)
+        return bool(mask[0]) if scalar else mask
 
 
 Region = Box | Ball | Grid

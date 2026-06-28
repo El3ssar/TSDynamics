@@ -133,10 +133,21 @@ def register_builtin_renderers(*, strict: bool = False) -> list[str]:
     ever called from :func:`render_spec` (never at import), so importing
     TSDynamics never pulls in a plotting library.
 
-    After registration the registry order is normalised so that the preferred
-    default backend (matplotlib) is **first** in iteration order when present,
-    giving :func:`select_renderer` a deterministic default independent of which
-    backends are installed or how many times this function is called.
+    The default backend (matplotlib) is selected *by name* in
+    :func:`select_renderer`, so the registration order here does not affect which
+    backend is chosen when no ``backend=`` is given.
+
+    Parameters
+    ----------
+    strict : bool, optional
+        When ``True``, re-raise a backend's import / registration failure instead
+        of warning and skipping it (default ``False``).
+
+    Returns
+    -------
+    list of str
+        The backend names newly added to the registry by this call (already
+        registered backends are not re-listed).
     """
     from tsdynamics import registry
 
@@ -156,36 +167,7 @@ def register_builtin_renderers(*, strict: bool = False) -> list[str]:
                 if strict:
                     raise
                 warnings.warn(f"failed to register viz backend {name!r}: {exc}", stacklevel=2)
-    # Normalise iteration order: ensure the preferred default backend is first
-    # so that select_renderer(no-backend) always picks it when available.
-    _seat_preferred_first(registry.renderers)
     return [n for n in registry.renderers.names() if n not in before]
-
-
-def _seat_preferred_first(renderers: Any) -> None:
-    """Move the preferred default backend to the *front* of iteration order.
-
-    Idempotent — if the preferred backend is already first (or not registered at
-    all) this is a no-op.  Calling this after every ``register_builtin_renderers``
-    makes the default selection deterministic regardless of registration order.
-    """
-    names = renderers.names()
-    if not names or names[0] == _PREFERRED_DEFAULT_BACKEND:
-        return
-    if _PREFERRED_DEFAULT_BACKEND not in names:
-        return
-    renderer = renderers.get(_PREFERRED_DEFAULT_BACKEND)
-    renderers.unregister(_PREFERRED_DEFAULT_BACKEND)
-    # Re-insert at the front: unregister removes it; re-registering now puts it
-    # at the end, so we unregister everything after it and re-add them after.
-    # Simpler: collect all current names after removal, prepend preferred, rebuild.
-    remaining_names = renderers.names()
-    remaining = [(n, renderers.get(n)) for n in remaining_names]
-    for n in remaining_names:
-        renderers.unregister(n)
-    renderers.register(_PREFERRED_DEFAULT_BACKEND, renderer)
-    for n, r in remaining:
-        renderers.register(n, r)
 
 
 def _capabilities_of(renderer: Any) -> RendererCapabilities | None:
@@ -208,11 +190,12 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
     """Choose the ``(name, renderer)`` to draw ``spec``, with capability fallback.
 
     When ``backend`` is ``None`` (the default), **matplotlib is preferred** — it
-    is the universal reference renderer that draws every kind and is always
-    registered first after :func:`register_builtin_renderers`.  If matplotlib is
+    is the universal reference renderer that draws every kind and is selected by
+    name, so the choice is independent of registration order.  If matplotlib is
     not installed, the first registered drawing backend that can handle the spec
     is chosen (data-export backends such as ``json`` / ``threejs`` are skipped in
-    the default selection).
+    the default selection).  As a final fallback (no backend declares it can draw
+    the spec) the first registered drawing backend is used.
 
     Parameters
     ----------
@@ -287,7 +270,15 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
     if chosen is not None:
         return chosen
 
-    # 3. Last resort: use the first registered backend and let it try.
+    # 3. Last resort: no backend can *declare* it draws the spec.  Prefer the
+    #    first registered *drawing* backend (a serializer's payload is not a
+    #    figure), falling back to the very first registered backend if every
+    #    backend is a data exporter.
+    for name in renderers.names():
+        renderer = renderers.get(name)
+        caps = _capabilities_of(renderer)
+        if caps is None or not caps.data_export:
+            return name, renderer
     name = renderers.names()[0]
     return name, renderers.get(name)
 

@@ -29,7 +29,7 @@ result — or importing :mod:`tsdynamics` — never pulls in a plotting backend.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -139,9 +139,13 @@ class Spectrum(_Plottable):
     def to_plot_spec(self, kind: str | None = None) -> PlotSpec:
         """Describe the spectrum as a ``POWER_SPECTRUM`` :class:`PlotSpec`.
 
-        One ``LINE`` per channel over ``(frequency, power)``, a log y-scale
-        (power spans orders of magnitude), and the dominant frequency /
-        spectral centroid as ``vline`` annotations.
+        One ``LINE`` per channel over ``(frequency, power)`` and the dominant
+        frequency / spectral centroid as ``vline`` annotations.  The y-axis uses
+        a **log** scale when the PSD is strictly positive everywhere (power spans
+        orders of magnitude) and falls back to a **linear** scale otherwise — a
+        PSD with exact-zero bins (an unwindowed periodogram of a band-limited
+        signal, or ``scaling="spectrum"`` with empty bands) cannot be shown on a
+        log axis at all.
 
         Parameters
         ----------
@@ -172,13 +176,18 @@ class Spectrum(_Plottable):
         ]
 
         ylabel = "PSD" if self.scaling == "density" else "power"
+        # A log scale demands strictly positive data; a PSD can legitimately hold
+        # exact zeros (empty bins), so use a log y-axis only when every value is
+        # positive and fall back to linear otherwise rather than emit an
+        # unrenderable spec.
+        y_scale: Literal["linear", "log"] = "log" if bool(np.all(self.psd > 0.0)) else "linear"
         annotations = self._marker_annotations()
         spec = PlotSpec(
             kind=spec_kind,
             ndim=2,
             title="Spectrum",
             x=Axis(label="frequency"),
-            y=Axis(label=ylabel, scale="log"),
+            y=Axis(label=ylabel, scale=y_scale),
             layers=layers,
             annotations=annotations,
             legend=Legend() if n_chan > 1 else None,
