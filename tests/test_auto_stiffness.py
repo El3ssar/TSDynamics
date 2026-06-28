@@ -100,6 +100,42 @@ def test_auto_matches_the_explicitly_named_kernel() -> None:
     np.testing.assert_array_equal(auto.y, explicit.y)
 
 
+def test_ensemble_on_stiff_system_rebuilds_the_jacobian_tape() -> None:
+    """``ensemble`` rebuilds the Jacobian tape for an implicit kernel, like ``integrate``.
+
+    Regression: ``integrate`` rebuilt the tape ``with_jacobian`` when the method
+    resolved to an implicit kernel, but ``ensemble`` resolved the method
+    identically and *skipped* that rebuild, so a stiff ``ensemble(method="bdf")``
+    (and ``"auto"`` whenever its probe picks bdf) dispatched a Jacobian-less tape
+    and the engine raised ``"method 'bdf' … needs an analytic Jacobian"``. Both
+    entry points now share one resolve+rebuild helper.
+
+    ``method="bdf"`` deterministically requires the Jacobian (the clean regression
+    trigger); ``method="auto"`` reaches the same path when its per-batch stiffness
+    probe selects bdf — both must run, not raise. The window ``t ∈ [0, 0.5]`` is
+    before the Oregonator's first relaxation spike, so the ensemble's final state
+    equals the lone integrate's last grid point exactly (no phase sensitivity).
+    """
+    from tsdynamics.engine.run import ensemble
+
+    kw = dict(final_time=0.5, dt=0.05, backend="reference")
+    ics = np.array([OREGONATOR_IC, [1.1, 1.0, 0.9]], dtype=float)
+
+    out = ensemble(ts.systems.Oregonator(), ics, method="bdf", **kw)
+    assert out.shape == (2, 3)
+    # No crash, and the implicit kernel got its Jacobian tape.
+    assert np.isfinite(out).all(), "ensemble(method='bdf') returned a non-finite row"
+    # The batch solved the stiff system with its analytic Jacobian: each row equals
+    # the lone integrate of that IC (smooth window ⇒ no spike phase sensitivity).
+    for row, ic in zip(out, ics, strict=True):
+        traj = ts.systems.Oregonator().integrate(ic=ic, method="bdf", **kw)
+        np.testing.assert_allclose(row, traj.y[-1], rtol=1e-7, atol=1e-9)
+
+    # The originally reported variant: method="auto" must also not raise.
+    auto = ensemble(ts.systems.Oregonator(), ics, method="auto", **kw)
+    assert np.isfinite(auto).all()
+
+
 # ---------------------------------------------------------------------------
 # Default unchanged unless auto
 # ---------------------------------------------------------------------------

@@ -50,6 +50,8 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError, InvalidParameterError
+
 __all__ = ["dde_lyapunov_spectrum"]
 
 
@@ -86,7 +88,7 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     dim = system.dim
     exprs = list(type(system)._equations(y, t_sym, **system.params.as_dict()))
     if len(exprs) != dim:
-        raise ValueError(f"_equations must return {dim} expressions, got {len(exprs)}")
+        raise InvalidParameterError(f"_equations must return {dim} expressions, got {len(exprs)}")
 
     t_canon = symengine.Symbol("t")
     u = [symengine.Symbol(f"u{i}") for i in range(dim)]
@@ -118,7 +120,7 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
 
     nb = len(base_slots)
     if nb == 0:
-        raise ValueError(f"{type(system).__name__}: no delayed terms — not a DDE")
+        raise InvalidParameterError(f"{type(system).__name__}: no delayed terms — not a DDE")
 
     # Symbols for the base delayed terms, then the base RHS in (u, delayed) form.
     bdel = [symengine.Symbol(f"ud{s}") for s in range(nb)]
@@ -277,7 +279,7 @@ def dde_lyapunov_spectrum(
 
     n_exp = int(n_exp)
     if n_exp < 1:
-        raise ValueError(f"n_exp must be >= 1, got {n_exp}")
+        raise InvalidParameterError(f"n_exp must be >= 1, got {n_exp}")
     backend = resolve_backend(backend)
     if backend == "reference":
         raise NotImplementedError(
@@ -298,7 +300,7 @@ def dde_lyapunov_spectrum(
     # The deviation history segment has (n_seg+1)·dim sample dimensions, the ceiling
     # on the number of linearly-independent deviation functions it can carry.
     if n_exp > (n_seg + 1) * dim:
-        raise ValueError(
+        raise InvalidParameterError(
             f"n_exp={n_exp} exceeds the delay-window resolution (n_seg+1)·dim="
             f"{(n_seg + 1) * dim}; decrease dt (finer window) or lower n_exp."
         )
@@ -366,7 +368,7 @@ def dde_lyapunov_spectrum(
         ys = np.asarray(traj.y, dtype=np.float64)
         ts = np.asarray(traj.t, dtype=np.float64)
         if not np.all(np.isfinite(ys)):
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"{type(system).__name__}: DDE variational integration diverged "
                 f"(chunk {c}); try a smaller dt or a looser tolerance."
             )

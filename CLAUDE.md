@@ -56,9 +56,11 @@ src/tsdynamics/
 │   └── wrapped.py            # WrappedSystem (canonical home; adapt an external stepper — re-exported via derived)
 ├── engine/                   # Rust-facing engine layer; tsdynamics._rust is the sole backend
 │   ├── symbols.py            # engine-native symbolic frontend: state_time_symbols() → (Function("y"), Symbol("t"))
-│   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator
+│   ├── compile.py            # symbolic dynamics → IR Tape (all families) + reference evaluator + bounded lowered-tape CACHE (lower_*_cached / clear_tape_cache / tape_cache_stats)
 │   ├── problem.py            # per-family Problem builders bundling a tape + runtime context
-│   └── run.py                # backend select (interp|jit|reference) + integrate/ensemble + solver resolve/with_jacobian wiring
+│   ├── run.py                # backend select (interp|jit|reference) + integrate/ensemble + solver resolve/with_jacobian wiring (re-exports events.py + reference.py names)
+│   ├── events.py             # event subsystem split out of run.py: crossings/Event/EventSolution/integrate_events (WS-CROSSKERNEL + WS-EVENTSAPI)
+│   └── reference.py          # the pure-Python reference oracle (backend="reference") split out of run.py: SciPy-stepped ODE + reference-evaluated map
 ├── solvers/                  # F2 registry mechanism + C-SOLV in-tree specs (explicit/implicit/stochastic) + method= resolution/aliases + auto-stiffness (select.py)
 ├── derived/
 │   ├── _base.py              # DerivedSystem (wrapper base, with_params rebuilds)
@@ -73,8 +75,17 @@ src/tsdynamics/
 ├── data/                     # state-space geometry + trajectory lingua franca (was sampling.py)
 │   ├── trajectory.py         # Trajectory (canonical home; re-exported via families + top level)
 │   └── sampling.py           # Box/Ball/Grid, sampler, grid_points, set_distance
+├── _result_common.py         # tiny shared result helper (resolve_plot_kind) for BOTH analysis._result and transforms._result — leaf, no viz import at module scope
 ├── analysis/                 # quantifiers, one subpackage per A-* stream (A-LAYOUT reorg)
 │   ├── __init__.py           # flat re-exports (public API) + analyses plugin discovery
+│   ├── _result.py            # re-exporting FACADE: re-exports the result hierarchy from the _result_* submodules (back-compat import surface)
+│   ├── _result_base.py       # AnalysisResult (frozen-dataclass base: meta/repr/summary/to_dict/to_frame/plot seam)
+│   ├── _result_scalar.py     # ScalarResult / CountResult (+ _NumericOps)
+│   ├── _result_array.py      # ArrayResult
+│   ├── _result_collection.py # CollectionResult
+│   ├── _result_scaling.py    # ScalingResult
+│   ├── _result_viz.py        # the .plot accessor seam (_PlotAccessor / VisualizationNotInstalled)
+│   ├── _result_json.py       # to_dict / repr helpers (_jsonify / _is_frame_scalar)
 │   ├── orbits/               # A-ORBIT: orbit_diagram + OrbitDiagram (+ periods/bifurcation_points; orbit_diagram.py); poincare_section (poincare.py); return_map + ReturnMap (first-return/next-amplitude map; return_map.py); self-registers into registry.analyses
 │   ├── lyapunov/             # A-LYAP: lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
 │   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL — fixed.py), periodic_orbits/periodic_orbit/PeriodicOrbit + estimate_period (periodic.py), shared primitives (_common.py); self-registers
@@ -260,10 +271,12 @@ plus:
   for every concrete family; the abstract `SystemBase` keeps `"reference"` (the
   wheel-free oracle). Passing `backend=None` to a family's `integrate` /
   `iterate` resolves to it. `run.integrate` also resolves the `method=` string
-  through the solver registry (`solvers.resolve`) — canonicalising spellings and
-  aliases (`"RK45"`/`"dopri5"` → `"rk45"`) and rejecting v2-only names (`"LSODA"`)
-  with a stiff hint — and rebuilds the ODE tape `with_jacobian=True` when an
-  implicit kernel needs it. The output grid each
+  through the shared `_resolve_method_for` contract (so an alias `"RK45"`/
+  `"dopri5"` → `"rk45"`, a rejected v2-only name `"LSODA"`, and the auto-stiffness
+  `method="auto"` all behave identically in **`integrate` and `ensemble`**) and
+  rebuilds the ODE tape `with_jacobian=True` when an implicit kernel needs it.
+  Lowering goes through the cached `lower_*_cached` helpers (see the tape cache
+  section), so a parameter sweep reuses one tape. The output grid each
   family samples on is the one hoisted `tsdynamics.utils.grids.make_output_grid`
   (the four byte-identical `_make_t_eval` copies are gone). **SDEs are the
   exception** — they keep the dedicated `run.sde_integrate_dense` /
@@ -312,11 +325,21 @@ All three families + all derived wrappers implement:
 - First `step()`/`state()` on a cold system does an implicit `reinit()`.
 - ODE: `reinit` lowers the system to an engine tape once; each `step(dt)`
   integrates one `dt` chunk through `run.integrate` from the live state.
+- **`backend="reference"` is honored through the stepping protocol** (ODE):
+  `reinit(backend="reference")` resolves and stores the backend (`resolve_backend`
+  raises `InvalidParameterError` for an unknown name), and `step()` then routes to
+  `_step_reference` — one `dt` chunk on the pure-Python reference ODE integrator
+  (the same path `integrate(backend="reference")` uses), so the wheel-free oracle
+  is reachable via `reinit`/`step`/`state`. It is **no longer silently coerced to
+  `interp`** (diagnosis #5); reference owns no resumable `OdeStepper`, so it never
+  builds the engine fast path.
 - **DDE `set_state` raises** (state is a history function); `reinit(u)`
   restarts from a constant past. DDE stepping is forward-only (each `step`
-  re-integrates from the constant past via the method of steps).
+  re-integrates from the constant past via the method of steps). **DDE
+  `backend="reference"` is loudly rejected** (there is no pure-Python DDE
+  integrator) rather than silently degraded.
 - Map `step(n)` runs the per-call pure-Python `_step` loop (silencing NumPy FP
-  warnings so an overflow surfaces as the explicit divergence `RuntimeError`).
+  warnings so an overflow surfaces as the explicit divergence `ConvergenceError`).
 - Param changes after `reinit` need a new `reinit` to reach a live stepper.
 
 ### `ContinuousSystem` extras
@@ -339,7 +362,9 @@ All three families + all derived wrappers implement:
   `bdf` on a stiff RHS / `rk45` otherwise — the resolved kernel is recorded in
   `traj.meta["method"]`. It is a *heuristic* (IC-dependent), so a reliably-stiff
   system should still declare `_default_method`; maps (no solver kernel) treat
-  `"auto"` as a no-op.
+  `"auto"` as a no-op. `"auto"` is wired through the **shared** `_resolve_method_for`
+  contract, so `integrate(method="auto")` and `ensemble(method="auto")` resolve it
+  consistently (the run-split closed the gap where only `integrate` understood it).
 
 ### `DiscreteMap` extras
 
@@ -404,14 +429,45 @@ All three families + all derived wrappers implement:
   `run.sde_integrate_dense` / `run.sde_ensemble_final` seam, and `run.integrate`
   /`run.ensemble` *refuse* an SDE problem.
 
+### Solver-kernel & interpreter performance (Rust engine internals)
+
+The Rust solver kernels (`crates/tsdyn-solvers/`) and the SSA interpreter
+(`crates/tsdyn-vm/src/interp.rs`) carry a few work-saving optimisations; all are
+answer-preserving (`interp == jit` and equal to the un-optimised path to the
+documented tolerance):
+
+- **FSAL (First Same As Last) on the adaptive explicit kernels** — `rk45`,
+  `tsit5`, `bs3` reuse the last stage `f` of the accepted step as the first stage
+  of the next (a genuine FSAL pair: `c_last = 1`, `a_last = b`). The reuse is
+  guarded on the *next* step's first-stage point being bit-for-bit the live state
+  (so a rejected trial keeps the reuse valid); the shared implementation lives once
+  in the explicit module, and the non-FSAL adaptive kernels (cashkarp/rkf45/
+  heun_euler) recompute. (`dop853` also has its own FSAL.)
+- **Frozen-Jacobian / LU reuse on the SDIRK / ESDIRK stiff kernels** — `sdirk2`
+  and `trbdf2` run a *modified*-Newton iteration (`crates/tsdyn-solvers/src/
+  implicit/newton.rs`): freeze the analytic Jacobian `J = ∂f/∂u`, factor the
+  iteration matrix `I − coef·h·J` once, and **reuse the frozen `J` + its LU
+  factorization across substages and across consecutive steps** while `h` (and so
+  the bit-equal shift) holds — `solve_substage_reuse`/`NewtonWork` keep the cache.
+  Both stiff kernels' substages share their diagonal coefficient, so stage 2
+  reuses stage 1's LU; robustness is held by a refactor-on-degradation trigger.
+- **Interpreter dead-register elimination on the RHS-only path** — a
+  Jacobian-bearing tape carries registers that feed *only* the Jacobian outputs.
+  The RHS-only `Interpreter::eval` runs with a precomputed liveness mask that skips
+  every op no RHS output transitively depends on (mirroring the Cranelift JIT's
+  `reachable` set), so it never computes Jacobian-only subexpressions; the
+  Jacobian path `eval_jac` ignores the mask and runs the full tape.
+
 ---
 
 ## Derived systems & analysis
 
 - Wrappers forward `params`/`meta`; `with_params()` re-parametrizes the inner
   system and rebuilds the wrapper → orbit diagrams over `PoincareMap` /
-  `StroboscopicMap` are bifurcation diagrams of flows (ODE control-param
-  caching keeps sweeps cheap; DDE sweeps recompile per value).
+  `StroboscopicMap` are bifurcation diagrams of flows (an ODE control-param sweep
+  reuses one cached lowered tape — see the tape cache below — so it stays cheap;
+  a DDE sweep bakes its delays/params into the tape, so each value is a cache miss
+  that re-lowers).
 - `PoincareMap` refines crossings with cubic Hermite using `_rhs_numeric`
   (O(dt⁴)); falls back to linear interpolation for DDEs.
 - **The section API is named (stream WS-POINCARE-API):** `PoincareMap` and
@@ -445,8 +501,9 @@ All three families + all derived wrappers implement:
   a chaotic flow the two float-distinct computations diverge by roundoff, as any
   two would — the section is the same attractor). DDEs (no `_rhs_numeric`), stiff
   defaults (an implicit `_default_method`), and `backend="reference"` keep the
-  Python loop. Divergence / no-crossing-within-`max_time` still raises
-  `RuntimeError`. (The unwired `integrate_events` was the dead E-EVENT code.)
+  Python loop. Divergence / no-crossing-within-`max_time` raises
+  `ConvergenceError` (a `RuntimeError` subclass). (The unwired `integrate_events`
+  was the dead E-EVENT code.)
 - **General events API (stream WS-EVENTSAPI):** `ContinuousSystem.run(events=[...])`
   exposes the same wired event engine generally — a scipy-shaped `events=` surface
   for arbitrary stopping (A-RQA / A-BASIN / custom). An **`Event`**
@@ -732,6 +789,17 @@ import is deferred to first render.
   `[tool.mypy.overrides]` block. Map kernels are plain `@staticmethod`, so the
   type checker reads a map's `_step(x, y, a, b)` first argument as state, not
   `self`.
+- **Typed errors (stream WS-ERRORS, `tsdynamics.errors`):** the library raises its
+  own exception types, each subclassing the builtin a caller would historically
+  catch (the hierarchy is purely *additive*) — `InvalidParameterError` (a
+  `ValueError`: a bad `dt`/method/backend/section/param value), `InvalidInputError`
+  (a `TypeError`: a malformed argument, e.g. an array of the wrong shape),
+  `ConvergenceError` (a `RuntimeError`: divergence / non-convergence / no crossing),
+  and `BackendError`/`EngineNotAvailableError` (a `RuntimeError`: the compiled engine
+  is unavailable). These are wired across the families and `engine/run.py`
+  (divergence → `ConvergenceError`; an out-of-range `dt`/unknown backend/bad
+  argument → `InvalidParameterError` / `InvalidInputError`) so a `RuntimeError` /
+  `ValueError` / `TypeError` `except` keeps catching the same failure.
 - **Docstrings:** NumPy convention; cite original papers, never competitor software
 - **Never reference the Julia dynamical-systems ecosystem** in code, docs, or
   comments — ideas may be absorbed, citations go to the original literature.
@@ -819,6 +887,24 @@ systems/analyses join the sweeps with zero test edits:
   independent complexity measures must concur). Per-stream literature numbers
   stay in each stream's own test file; `test_known_quantifiers.py` does not
   duplicate them.
+- **Catalogue RHS correctness gate.** `tests/test_equation_reference.py` defends
+  the `_equations`/`_step`/`_drift` kernels against transcription / operator-
+  precedence bugs (the class that produced the `WindmiReduced` `p**1/2` defect) in
+  two layers: a curated set of well-known systems whose RHS is checked against an
+  independent hand-derivation at a fixed state, plus a **golden snapshot** — the
+  lowered-tape hash of every catalogue system pinned in
+  `tests/_equation_reference_golden.txt`, so any unintended change to a kernel
+  fails the snapshot test and names the system (regenerate only after a reviewed
+  change).
+- **SDE coverage gate.** `tests/test_sde_coverage.py` exercises what the empty
+  registry SDE sweep cannot — a **multi-dimensional** state-dependent diagonal-Itô
+  SDE (per-component Wiener substrate + Milstein correction across a vector state)
+  and the **analytic moments** of the canonical Ornstein–Uhlenbeck / geometric
+  Brownian motion processes.
+- **Tape-cache gate.** `tests/test_lowering_cache.py` proves the lowered-tape
+  cache is correct: a control-param sweep is served from the cache (one tape),
+  a structural / map / DDE param change or a monkeypatched kernel is a deliberate
+  miss, and a `TSDYNAMICS_NO_TAPE_CACHE` run is value-identical to a cached one.
 
 When adding an analysis/transform, the registry meta-QA picks it up
 automatically (give it a docstring, register it). When adding a property test,
@@ -869,6 +955,13 @@ reuse `_strategies` and assert a real invariant — never a tautology.
   means one wheel per (platform, arch) covers every CPython ≥ 3.12. Full rationale
   + recipe: `docs/theory/packaging.md`; invariants guarded by
   `tests/test_packaging.py`.
+- **The PyO3 bridge is a package (`crates/tsdyn-core/src/bridge/`):** the FFI
+  marshalling layer (once a single `bridge.rs`) is now a `bridge/` module —
+  `marshal.rs` (the shared tape/array ⇄ FFI conversions), one file per family/
+  surface (`ode.rs` / `dde.rs` / `sde.rs` / `map.rs` / `events.rs`), the resumable
+  `stepper.rs` (`OdeStepper`), and `mod.rs` (the `#[pymodule]` entry binding every
+  exported FFI function). The exported FFI names are unchanged — it is a pure
+  Rust-side split.
 
 ---
 
@@ -895,7 +988,7 @@ reuse `_strategies` and assert a real invariant — never a tautology.
 
 ---
 
-## No compilation cache (zero warmup)
+## Tape lowering & the in-process tape cache (zero warmup)
 
 The engine lowers each system to an in-process IR tape on first use — there is
 **no on-disk compile cache** and no C-compilation step (the old
@@ -903,9 +996,27 @@ The engine lowers each system to an in-process IR tape on first use — there is
 are gone). Editing an `_equations`/`_step` body just takes effect on the next
 run; nothing to wipe.
 
-- Control parameters are read live from the system on every run, so a
-  parameter change never re-lowers. A *delay* value (DDE) or a structural
-  parameter is baked into the tape, so changing one re-lowers.
+- Control parameters are read live from the system on every run (through
+  `problem.params_vec()`), so a parameter change never bakes into the tape. A
+  *delay* value (DDE) or a structural parameter **is** baked into the tape.
+- **In-process lowered-tape cache (stream PERF-LOWER-CACHE, `engine/compile.py`):**
+  lowering is a pure function of the *math* (kernel body, dimension, structural
+  parameters, DDE/map params, the `with_jacobian` flag), so the lowered `Tape`
+  (and `LoweredSDE`) is memoised by `lower_ode_cached` / `lower_map_cached` /
+  `lower_dde_cached` / `lower_sde_cached`. The key carries the system class,
+  `with_jacobian`, dim, the structural (ODE/SDE) or all (map/DDE) parameter
+  values, and the **kernel callable object itself** (so a monkeypatched/redefined
+  kernel is a deliberate miss — no stale tape); **control-parameter values are
+  deliberately absent**, so a control-param sweep (continuation, an orbit diagram
+  over a `PoincareMap`, a Lyapunov sweep) reuses one cached tape instead of
+  re-lowering a byte-identical one per value — the win is largest for the
+  high-dim method-of-lines fields (a Gray–Scott lowers in seconds). The cache is
+  a bounded LRU (`_TAPE_CACHE_MAXSIZE = 256`) and thread-safe; correctness rests
+  on the `Tape`/`LoweredSDE` being immutable frozen dataclasses (`to_arrays`
+  returns fresh FFI copies). Surface: `clear_tape_cache()` (empty + reset
+  counters), `tape_cache_stats()` → `{"hits","misses","size","maxsize"}`, and the
+  `TSDYNAMICS_NO_TAPE_CACHE` env var (truthy ⇒ always re-lower — the bypass that
+  proves WITH-cache == WITHOUT-cache).
 - The docs figure cache is unrelated and still exists: `.cache/docs-figures`,
   keyed by class source hash (CI persists it via actions/cache).
 

@@ -253,30 +253,41 @@ def zero_one_test(
     lags = np.arange(1, n_cut + 1, dtype=float)
     mean_phi_sq = float(np.mean(phi)) ** 2
 
-    k_c = np.empty(int(n_c))
-    for idx, c in enumerate(c_values):
-        p = np.cumsum(phi * np.cos(j * c))
-        q = np.cumsum(phi * np.sin(j * c))
-        msd = np.empty(n_cut)
-        for li in range(n_cut):
-            lag = li + 1
-            dp = p[lag:] - p[:-lag]
-            dq = q[lag:] - q[:-lag]
-            msd[li] = np.mean(dp * dp + dq * dq)
-        # Regularised mean-square displacement: subtract the oscillatory term so
-        # only the (diffusive) trend remains (Gottwald & Melbourne 2009, eq. 2.6).
-        osc = mean_phi_sq * (1.0 - np.cos(lags * c)) / (1.0 - np.cos(c))
-        d = msd - osc
-        k_c[idx] = _c._pearson(lags, d)
+    # Drive all frequencies at once: the skew-translation sums for every ``c``
+    # are the columns of ``p``/``q`` (shape ``(n_pts, n_c)``). Batching the
+    # ``cos``/``sin``/``cumsum`` across frequencies removes the per-frequency
+    # Python work; each column is byte-identical to the per-``c`` cumsum.
+    phase = np.outer(j, c_values)  # j*c for every (sample, frequency)
+    phi_col = phi[:, None]
+    p_all = np.cumsum(phi_col * np.cos(phase), axis=0)  # (n_pts, n_c)
+    q_all = np.cumsum(phi_col * np.sin(phase), axis=0)
+
+    # Mean-square displacement at each lag, vectorised over all frequencies at
+    # once: the per-lag difference ``p[lag:] - p[:-lag]`` and the ``np.mean`` over
+    # samples are unchanged (same elements, same reduction axis) — only the
+    # per-frequency Python loop is gone.
+    msd = np.empty((n_cut, int(n_c)))
+    for li in range(n_cut):
+        lag = li + 1
+        dp = p_all[lag:] - p_all[:-lag]
+        dq = q_all[lag:] - q_all[:-lag]
+        msd[li] = np.mean(dp * dp + dq * dq, axis=0)
+
+    # Regularised mean-square displacement: subtract the oscillatory term so only
+    # the (diffusive) trend remains (Gottwald & Melbourne 2009, eq. 2.6).
+    osc = mean_phi_sq * (1.0 - np.cos(np.outer(lags, c_values))) / (1.0 - np.cos(c_values))
+    d_all = msd - osc  # (n_cut, n_c)
+    k_c = np.array([_c._pearson(lags, d_all[:, idx]) for idx in range(int(n_c))])
 
     k = float(np.median(k_c))
     # Capture the skew-translation plane (p_c, q_c) at the most representative
     # frequency — the one whose K_c is closest to the reported median K — purely
-    # for the diagnostic figure (it does not enter K).  Recomputing the two
-    # cumulative sums for that single c leaves the K computation above untouched.
-    c_rep = float(c_values[int(np.argmin(np.abs(k_c - k)))])
-    p_rep = np.cumsum(phi * np.cos(j * c_rep))
-    q_rep = np.cumsum(phi * np.sin(j * c_rep))
+    # for the diagnostic figure (it does not enter K).  The representative
+    # column already lives in the batched ``p_all``/``q_all`` (byte-identical to a
+    # standalone ``cumsum`` for that single c), so slice it instead of recomputing.
+    idx_rep = int(np.argmin(np.abs(k_c - k)))
+    p_rep = p_all[:, idx_rep]
+    q_rep = q_all[:, idx_rep]
     result = ZeroOneResult(
         value=k,
         p=p_rep,

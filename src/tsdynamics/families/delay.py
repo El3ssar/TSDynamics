@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
+
 from .base import SystemBase, Trajectory
 
 if TYPE_CHECKING:
@@ -158,14 +160,14 @@ class DelaySystem(SystemBase, ABC):
             delays = [float(self.params[k]) for k in type(self)._delay_params]
         except KeyError as err:
             missing = err.args[0]
-            raise ValueError(
+            raise InvalidParameterError(
                 f"{type(self).__name__}: delay parameter {missing!r} listed in "
                 f"_delay_params but not found in self.params. Declared params: "
                 f"{list(self.params)}"
             ) from err
         for k, d in zip(type(self)._delay_params, delays, strict=True):
             if not (d > 0.0):
-                raise ValueError(
+                raise InvalidParameterError(
                     f"{type(self).__name__}: delay parameter {k!r} = {d!r} must be "
                     f"strictly positive."
                 )
@@ -241,7 +243,7 @@ class DelaySystem(SystemBase, ABC):
         )
         state = np.asarray(traj.y[-1], dtype=float)
         if not np.isfinite(state).all():
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"{type(self).__name__}: DDE diverged at t={self._t_now:.6g} during step()."
             )
         self._state_now = state.copy()
@@ -365,6 +367,13 @@ class DelaySystem(SystemBase, ABC):
         method : str, default "rk45"
             The explicit kernel (``"rk45"``, ``"tsit5"``, ``"dop853"``,
             ``"rk4"``); the method of steps drives explicit kernels only.
+            ``"auto"`` is an explicit **no-op** here — it resolves to the DDE
+            default (``rk45``) without an auto-stiffness probe.  Auto-stiffness is
+            an ODE-only feature: the one-point heuristic reads only the
+            instantaneous Jacobian and would ignore the delay terms that shape a
+            DDE's spectrum (it could even select an implicit kernel the
+            method-of-steps engine cannot drive), so pass another explicit
+            ``method=`` directly if you need one.
 
         Returns
         -------
@@ -490,7 +499,7 @@ class DelaySystem(SystemBase, ABC):
         from tsdynamics.families._dde_lyapunov import dde_lyapunov_spectrum
 
         if kwargs:
-            raise TypeError(
+            raise InvalidInputError(
                 f"lyapunov_spectrum(backend={backend!r}) does not accept the "
                 f"extra integration keyword(s) {sorted(kwargs)}."
             )

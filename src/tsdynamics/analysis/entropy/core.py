@@ -35,6 +35,7 @@ Tsallis, C. (1988). Possible generalization of Boltzmann–Gibbs statistics.
 from __future__ import annotations
 
 import itertools
+import math
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -202,11 +203,29 @@ class OrdinalPatterns(OutcomeSpace):
         # argsort is stable → ties broken by order of appearance (Bandt–Pompe).
         return np.argsort(windows, axis=1, kind="stable")
 
+    def _labels_from_patterns(self, patterns: np.ndarray) -> np.ndarray:
+        """Dense pattern index for each row, identical to the ``_index`` lookup.
+
+        ``itertools.permutations`` enumerates permutations in lexicographic order,
+        so ``self._index[tuple(row)]`` is exactly the lexicographic rank of that
+        permutation.  That rank is the Lehmer code in the factorial number system:
+        ``rank = Σ_i (#{j > i : p_j < p_i}) · (m - 1 - i)!``.  Computing it with a
+        small ``O(m^2)`` set of broadcasted comparisons (``m`` is tiny) replaces
+        the per-window Python ``tuple``/dict lookup with one vectorised pass.
+        """
+        m = self.m
+        if patterns.shape[0] == 0:
+            return np.zeros(0, dtype=np.intp)
+        rank = np.zeros(patterns.shape[0], dtype=np.intp)
+        for i in range(m):
+            # Count, for each window, how many later entries rank below position i.
+            smaller = (patterns[:, i + 1 :] < patterns[:, i, None]).sum(axis=1)
+            rank += smaller.astype(np.intp) * math.factorial(m - 1 - i)
+        return rank
+
     def counts(self, x: np.ndarray) -> np.ndarray:  # noqa: D102
         patterns = self._patterns(x)
-        labels = np.fromiter(
-            (self._index[tuple(row)] for row in patterns), dtype=np.intp, count=patterns.shape[0]
-        )
+        labels = self._labels_from_patterns(patterns)
         return np.bincount(labels, minlength=self.cardinality)
 
     def labels(self) -> list[str]:
@@ -235,9 +254,7 @@ class OrdinalPatterns(OutcomeSpace):
         idx = np.arange(n_windows)[:, None] + np.arange(self.m)[None, :] * self.tau
         windows = x[idx]
         patterns = np.argsort(windows, axis=1, kind="stable")
-        labels = np.fromiter(
-            (self._index[tuple(row)] for row in patterns), dtype=np.intp, count=n_windows
-        )
+        labels = self._labels_from_patterns(patterns)
         weights = windows.var(axis=1)
         return labels, weights
 

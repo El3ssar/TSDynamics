@@ -45,10 +45,15 @@ the same convention the symbolic Jacobian autogen uses.
 
 from __future__ import annotations
 
+import hashlib
 import math
+import os
+import threading
 import types
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import numpy as np
 
@@ -57,16 +62,23 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 __all__ = [
     "DelaySlot",
+    "LoweredSDE",
     "Tape",
     "TapeCompileError",
+    "clear_tape_cache",
     "eval_tape",
     "eval_tape_jac",
     "lower_dde",
+    "lower_dde_cached",
     "lower_expressions",
     "lower_map",
+    "lower_map_cached",
     "lower_ode",
+    "lower_ode_cached",
     "lower_sde",
+    "lower_sde_cached",
     "run_tape",
+    "tape_cache_stats",
 ]
 
 # ---------------------------------------------------------------------------
@@ -680,6 +692,256 @@ def lower_expressions(
 def _sym_name(sym: Any) -> str:
     """Return a SymEngine symbol's name (``.name`` attr, else ``str``)."""
     return getattr(sym, "name", None) or str(sym)
+
+
+# ---------------------------------------------------------------------------
+# Lowered-tape cache (stream PERF-LOWER-CACHE)
+# ---------------------------------------------------------------------------
+#
+# Lowering a system's symbolic dynamics to an IR :class:`Tape` is a pure function
+# of the *math*: the kernel body, the dimension, the baked-in structural
+# parameters, the DDE delays, and the ``with_jacobian`` flag.  Control parameters
+# are **not** baked into the tape — they are read live at runtime through
+# ``problem.params_vec()`` — so a control-parameter sweep (continuation, an
+# orbit-diagram over a ``PoincareMap``, a Lyapunov sweep) re-lowers a *byte
+# identical* tape on every value.  For small ODEs that is cheap (~0.1 ms), but for
+# high-dimensional method-of-lines fields it dominates wholesale: a 4608-state
+# Gray–Scott lowers in ~2.2 s while a short integration runs in ~0.1 s, so a
+# parameter sweep that re-lowers per value spends >95 % of its time re-deriving an
+# identical tape.
+#
+# This module memoises the lowered tape, keyed on **everything that affects the
+# tape and nothing that does not**.  The key includes the kernel callable object
+# itself (not merely ``id()``), so the entry is held alive exactly as long as the
+# kernel is, and a runtime monkeypatch / redefinition of the kernel — swapping in
+# a new function object — is a cache *miss* (no stale tape).  Control-parameter
+# values are deliberately absent from the key.
+#
+# Correctness rests on the lowered :class:`Tape` (and :class:`LoweredSDE`) being
+# **immutable**: ``Tape`` is a frozen dataclass over ndarray fields that no
+# downstream consumer writes to (``to_arrays`` returns fresh contiguous copies for
+# the FFI), so a shared cached tape can be handed to every problem safely.
+
+#: Maximum number of distinct lowered tapes retained (LRU eviction).  Bounds the
+#: memory of a long session sweeping many distinct systems; a single sweep keys on
+#: one entry, so this is generous.
+_TAPE_CACHE_MAXSIZE = 256
+
+#: env var: set truthy to disable the cache process-wide (always re-lower).  Lets
+#: tests prove WITH-cache == WITHOUT-cache and gives users an escape hatch.
+_TAPE_CACHE_ENV = "TSDYNAMICS_NO_TAPE_CACHE"
+
+#: LRU store (insertion-ordered) + a coarse lock; lowering can run on worker
+#: threads (e.g. an ensemble fan-out building a problem), so guard the dict.
+_tape_cache: OrderedDict[Any, Any] = OrderedDict()
+_tape_cache_lock = threading.Lock()
+_tape_cache_hits = 0
+_tape_cache_misses = 0
+
+
+def _cache_enabled() -> bool:
+    """Whether the lowered-tape cache is active (off if the env var is truthy)."""
+    val = os.environ.get(_TAPE_CACHE_ENV, "")
+    return val.strip().lower() not in ("1", "true", "yes", "on")
+
+
+def clear_tape_cache() -> None:
+    """Empty the lowered-tape cache and reset its hit/miss counters.
+
+    The bypass hook for tests (prove a cached sweep equals a re-lowered one) and
+    for freeing memory.  Combined with the ``TSDYNAMICS_NO_TAPE_CACHE`` env var
+    (disable entirely), it gives a full clear/bypass surface.
+    """
+    global _tape_cache_hits, _tape_cache_misses
+    with _tape_cache_lock:
+        _tape_cache.clear()
+        _tape_cache_hits = 0
+        _tape_cache_misses = 0
+
+
+def tape_cache_stats() -> dict[str, int]:
+    """Return the cache ``{"hits", "misses", "size", "maxsize"}`` counters.
+
+    Lets a test assert a repeat lowering was actually served from the cache.
+    """
+    with _tape_cache_lock:
+        return {
+            "hits": _tape_cache_hits,
+            "misses": _tape_cache_misses,
+            "size": len(_tape_cache),
+            "maxsize": _TAPE_CACHE_MAXSIZE,
+        }
+
+
+def _hashable_value(v: Any) -> Any:
+    """Coerce a parameter value into a collision-resistant hashable key part.
+
+    Most parameters are plain scalars (already hashable, returned as-is).  An
+    unhashable value — most plausibly a NumPy array used as a structural
+    parameter — must be coerced without losing information: ``repr`` is unsafe
+    because NumPy truncates large arrays (``array([0., 1., ..., 1997., ...])``),
+    so two genuinely different arrays could collide and serve a *stale* tape.
+    Arrays are keyed on ``(shape, dtype, sha256(bytes))`` instead; any other
+    unhashable type falls back to a typed ``repr`` (and never to a bare ``repr``
+    that could alias across types).
+    """
+    try:
+        hash(v)
+        return v
+    except TypeError:
+        pass
+    arr = getattr(v, "tobytes", None)
+    if arr is not None and hasattr(v, "shape") and hasattr(v, "dtype"):
+        digest = hashlib.sha256(v.tobytes()).hexdigest()
+        return ("ndarray", tuple(v.shape), str(v.dtype), digest)
+    return (type(v).__name__, repr(v))
+
+
+def _structural_key(system: Any) -> tuple[tuple[str, Any], ...]:
+    """Return the ``(name, value)`` of every structural parameter, sorted by name.
+
+    Structural parameters are baked into the tape as constants, so they belong in
+    the key; control parameters are read live and must NOT be.  Values are coerced
+    to a collision-resistant hashable form (see :func:`_hashable_value`).
+    """
+    struct_fn = getattr(system, "_structural_vals", None)
+    struct = struct_fn() if struct_fn is not None else {}
+    return tuple((k, _hashable_value(struct[k])) for k in sorted(struct))
+
+
+def _all_params_key(system: Any) -> tuple[tuple[str, Any], ...]:
+    """Return the ``(name, value)`` of every parameter, sorted — for map/DDE tapes.
+
+    Maps and DDEs fold *all* parameters into the tape (``n_param == 0``), so every
+    parameter value affects the tape and belongs in the key (a delay value is one
+    such parameter, so DDE delays are covered here).
+    """
+    params = getattr(system, "params", {})
+    return tuple((k, _hashable_value(params[k])) for k in sorted(params))
+
+
+def _kernel_identity(cls: type, *names: str) -> tuple[Any, ...]:
+    """Hold the raw kernel callables in the key so identity drives invalidation.
+
+    Storing the function object (the staticmethod unwrapped) — not its ``id()`` —
+    makes the key compare by object identity *and* keeps the kernel alive for the
+    entry's lifetime, so a monkeypatched / redefined kernel (a new function object)
+    misses the cache and re-lowers, while an unchanged kernel hits.
+    """
+    return tuple(
+        getattr(getattr(cls, n), "__func__", getattr(cls, n))
+        for n in names
+        if getattr(cls, n, None) is not None
+    )
+
+
+def _cache_get_or_build[T](key: Any, build: Callable[[], T]) -> T:
+    """Return the cached value for ``key`` (LRU), building + storing it on a miss.
+
+    ``build`` is only called outside the lock (lowering can be slow and may itself
+    recurse), so two threads racing the same cold key may both build — harmless,
+    since the result is a value-identical immutable tape; the last writer wins and
+    both callers get a correct tape.  When the cache is disabled (env var) this is
+    a straight passthrough that never touches the store.
+    """
+    global _tape_cache_hits, _tape_cache_misses
+    if not _cache_enabled():
+        return build()
+    with _tape_cache_lock:
+        hit = _tape_cache.get(key, _MISS)
+        if hit is not _MISS:
+            _tape_cache.move_to_end(key)
+            _tape_cache_hits += 1
+            return cast("T", hit)
+        _tape_cache_misses += 1
+    value = build()
+    with _tape_cache_lock:
+        _tape_cache[key] = value
+        _tape_cache.move_to_end(key)
+        while len(_tape_cache) > _TAPE_CACHE_MAXSIZE:
+            _tape_cache.popitem(last=False)
+    return value
+
+
+_MISS = object()  # sentinel distinguishing "absent" from a stored ``None``
+
+
+def lower_ode_cached(system: Any, *, with_jacobian: bool = False) -> Tape:
+    """Return a cached :func:`lower_ode` tape, memoised across a parameter sweep.
+
+    Keyed on the system class, ``with_jacobian``, dimension, the structural
+    parameters (baked into the tape), and the ``_equations`` kernel object.
+    Control-parameter values are absent from the key (they feed the tape live via
+    ``params_vec``), so a control-parameter sweep reuses one cached tape.
+    """
+    key = (
+        "ode",
+        type(system),
+        bool(with_jacobian),
+        int(system.dim),
+        _structural_key(system),
+        _kernel_identity(type(system), "_equations"),
+    )
+    return _cache_get_or_build(key, lambda: lower_ode(system, with_jacobian=with_jacobian))
+
+
+def lower_map_cached(system: Any, *, with_jacobian: bool = False) -> Tape:
+    """Return a cached :func:`lower_map` next-state tape.
+
+    Maps fold *all* parameters into the tape, so the key carries every parameter
+    value (alongside the class, ``with_jacobian``, dim, and the ``_step`` kernel
+    object); a parameter change is therefore a deliberate miss.
+    """
+    key = (
+        "map",
+        type(system),
+        bool(with_jacobian),
+        int(system.dim),
+        _all_params_key(system),
+        _kernel_identity(type(system), "_step"),
+    )
+    return _cache_get_or_build(key, lambda: lower_map(system, with_jacobian=with_jacobian))
+
+
+def lower_dde_cached(system: Any) -> tuple[Tape, list[DelaySlot]]:
+    """Return a cached :func:`lower_dde` extended tape + delay slots.
+
+    DDEs bake every parameter (delays included) into the tape, so the key carries
+    all parameter values plus the class, dim and ``_equations`` kernel object.  The
+    returned ``(tape, slots)`` is immutable (the ``DelaySlot`` list holds plain
+    namedtuples); a fresh slot list is returned per call so a consumer cannot
+    mutate the cached one.
+    """
+    key = (
+        "dde",
+        type(system),
+        int(system.dim),
+        _all_params_key(system),
+        _kernel_identity(type(system), "_equations"),
+    )
+    tape, slots = _cache_get_or_build(key, lambda: lower_dde(system))
+    return tape, list(slots)
+
+
+def lower_sde_cached(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredSDE:
+    """Return a cached :func:`lower_sde` drift + diffusion tape pair.
+
+    Keyed like the ODE path (class, ``with_diffusion_jacobian``, dim, structural
+    parameters) plus *both* kernel objects (``_drift`` and ``_diffusion``), so a
+    monkeypatch of either invalidates the entry.  Control parameters feed both
+    tapes live, so they stay out of the key.
+    """
+    key = (
+        "sde",
+        type(system),
+        bool(with_diffusion_jacobian),
+        int(system.dim),
+        _structural_key(system),
+        _kernel_identity(type(system), "_drift", "_diffusion"),
+    )
+    return _cache_get_or_build(
+        key, lambda: lower_sde(system, with_diffusion_jacobian=with_diffusion_jacobian)
+    )
 
 
 # ---------------------------------------------------------------------------

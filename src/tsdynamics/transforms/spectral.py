@@ -129,6 +129,52 @@ def power_spectral_density(
     return freqs, psd
 
 
+# --- PSD reductions over a precomputed spectrum ------------------------------
+#
+# Each public scalar summary (entropy / centroid / dominant frequency) is the
+# thin public wrapper that computes the PSD then calls the matching ``_*_of``
+# core below.  Splitting the reduction out lets a caller that already holds a
+# ``(freqs, psd)`` pair (``power_spectrum``, ``extract_features``) reuse the one
+# spectrum across all three summaries instead of recomputing it per summary —
+# the reductions are byte-identical to the inlined originals.
+
+
+def _spectral_entropy_of(psd: np.ndarray, *, normalize: bool = True, base: float = 2.0) -> Any:
+    """Spectral entropy of an already-computed PSD (see :func:`spectral_entropy`)."""
+    psd = np.asarray(psd, dtype=float)
+    total = psd.sum(axis=0)
+    # A constant (zero-power) channel has no spectral content → entropy 0.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        p = np.where(total > 0.0, psd / total, 0.0)
+        logp = np.where(p > 0.0, np.log(p) / np.log(base), 0.0)
+    entropy = -(p * logp).sum(axis=0)
+    if normalize:
+        n_freqs = psd.shape[0]
+        if n_freqs > 1:
+            entropy = entropy / (np.log(n_freqs) / np.log(base))
+    return float(entropy) if np.ndim(entropy) == 0 else entropy
+
+
+def _spectral_centroid_of(freqs: np.ndarray, psd: np.ndarray) -> Any:
+    """Spectral centroid of an already-computed PSD (see :func:`spectral_centroid`)."""
+    psd = np.asarray(psd, dtype=float)
+    total = psd.sum(axis=0)
+    weighted = (freqs[:, None] * psd if psd.ndim == 2 else freqs * psd).sum(axis=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        centroid = np.where(total > 0.0, weighted / total, 0.0)
+    return float(centroid) if np.ndim(centroid) == 0 else centroid
+
+
+def _dominant_frequency_of(freqs: np.ndarray, psd: np.ndarray, *, exclude_dc: bool = True) -> Any:
+    """Dominant frequency of an already-computed PSD (see :func:`dominant_frequency`)."""
+    psd = np.asarray(psd, dtype=float)
+    if exclude_dc and freqs.size > 1 and freqs[0] == 0.0:
+        freqs = freqs[1:]
+        psd = psd[1:]
+    peak = freqs[np.argmax(psd, axis=0)]
+    return float(peak) if np.ndim(peak) == 0 else peak
+
+
 def spectral_entropy(
     data: Any,
     *,
@@ -166,18 +212,7 @@ def spectral_entropy(
         Spectral entropy; scalar for a single channel, ``(channels,)`` otherwise.
     """
     _, psd = power_spectral_density(data, fs=fs, dt=dt, **psd_kwargs)
-    psd = np.asarray(psd, dtype=float)
-    total = psd.sum(axis=0)
-    # A constant (zero-power) channel has no spectral content → entropy 0.
-    with np.errstate(divide="ignore", invalid="ignore"):
-        p = np.where(total > 0.0, psd / total, 0.0)
-        logp = np.where(p > 0.0, np.log(p) / np.log(base), 0.0)
-    entropy = -(p * logp).sum(axis=0)
-    if normalize:
-        n_freqs = psd.shape[0]
-        if n_freqs > 1:
-            entropy = entropy / (np.log(n_freqs) / np.log(base))
-    return float(entropy) if np.ndim(entropy) == 0 else entropy
+    return _spectral_entropy_of(psd, normalize=normalize, base=base)
 
 
 def spectral_centroid(
@@ -208,12 +243,7 @@ def spectral_centroid(
         Centroid frequency; scalar for a single channel, ``(channels,)`` otherwise.
     """
     freqs, psd = power_spectral_density(data, fs=fs, dt=dt, **psd_kwargs)
-    psd = np.asarray(psd, dtype=float)
-    total = psd.sum(axis=0)
-    weighted = (freqs[:, None] * psd if psd.ndim == 2 else freqs * psd).sum(axis=0)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        centroid = np.where(total > 0.0, weighted / total, 0.0)
-    return float(centroid) if np.ndim(centroid) == 0 else centroid
+    return _spectral_centroid_of(freqs, psd)
 
 
 def dominant_frequency(
@@ -245,12 +275,7 @@ def dominant_frequency(
         Peak frequency; scalar for a single channel, ``(channels,)`` otherwise.
     """
     freqs, psd = power_spectral_density(data, fs=fs, dt=dt, **psd_kwargs)
-    psd = np.asarray(psd, dtype=float)
-    if exclude_dc and freqs.size > 1 and freqs[0] == 0.0:
-        freqs = freqs[1:]
-        psd = psd[1:]
-    peak = freqs[np.argmax(psd, axis=0)]
-    return float(peak) if np.ndim(peak) == 0 else peak
+    return _dominant_frequency_of(freqs, psd, exclude_dc=exclude_dc)
 
 
 def power_spectrum(
@@ -300,8 +325,12 @@ def power_spectrum(
     dom: Any = None
     cen: Any = None
     if markers:
-        dom = dominant_frequency(data, fs=fs, dt=dt, **psd_kwargs)
-        cen = spectral_centroid(data, fs=fs, dt=dt, **psd_kwargs)
+        # Reuse the single PSD computed above for both markers instead of
+        # recomputing it inside dominant_frequency / spectral_centroid (~3×
+        # fewer Welch/periodogram passes).  ``exclude_dc=True`` is the
+        # dominant_frequency default, so the result is unchanged.
+        dom = _dominant_frequency_of(freqs, psd)
+        cen = _spectral_centroid_of(freqs, psd)
     scaling = str(psd_kwargs.get("scaling", "density"))
     meta = {
         "transform": "power_spectrum",

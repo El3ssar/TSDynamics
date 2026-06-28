@@ -23,7 +23,7 @@
 //! ODEs", *SIAM J. Numer. Anal.* **14**(6) (1977) 1006–1021.
 
 use super::control::{BaseOutcome, BaseStep, DoublingWork, Tolerances};
-use super::newton::{solve_substage, NewtonWork};
+use super::newton::{solve_substage_reuse, NewtonWork};
 use crate::caps::{Caps, ProblemKind, ProblemKinds};
 use crate::register_solver;
 use crate::solver::{Solver, SolverState, StepOutcome};
@@ -80,10 +80,15 @@ impl BaseStep for Sdirk2Base {
         }
 
         // --- Stage 1: Y1 = u + γ·h·f(t+γh, Y1) ---
+        // Both SDIRK substages share the diagonal γ and the step h, so the Newton
+        // iteration matrix I − γ·h·J is *identical* for stage 1 and stage 2 (and,
+        // while the controller holds h, for the next step's stage 1). The reuse
+        // path freezes/factors it here and stage 2 reuses that LU; the shift key
+        // (γ·h) makes the step-doubling half steps (γ·h/2) re-form automatically.
         for i in 0..n {
             self.y1[i] = u[i] + gamma * h * self.f0[i]; // explicit predictor
         }
-        match solve_substage(
+        match solve_substage_reuse(
             ev,
             t + gamma * h,
             p,
@@ -110,7 +115,10 @@ impl BaseStep for Sdirk2Base {
             self.base2[i] = u[i] + (1.0 - gamma) * h * self.k1[i];
             out[i] = self.base2[i] + gamma * h * self.k1[i]; // explicit predictor
         }
-        match solve_substage(
+        // Stage 2 shares the shift γ·h with stage 1, so this reuses the cached LU
+        // (no Jacobian evaluation, no re-factorization) while the quasi-Newton
+        // converges; it refreshes only if convergence degrades.
+        match solve_substage_reuse(
             ev,
             t + h,
             p,

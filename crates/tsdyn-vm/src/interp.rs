@@ -10,6 +10,19 @@
 //! buffer — exactly the v2 engine's build-once / per-worker-`Workspace` pattern
 //! (ROADMAP §4c).
 //!
+//! # Dead-register elimination on the RHS-only path
+//!
+//! A Jacobian-bearing tape holds registers that feed *only* the Jacobian
+//! outputs. The RHS-only [`eval`](Interpreter::eval) does not need them, so the
+//! interpreter precomputes (once, at [`Interpreter::new`]) a liveness mask —
+//! the registers some RHS output transitively depends on — and the RHS-only
+//! pass skips every op not in it. This mirrors the Cranelift JIT's `reachable`
+//! backward pass (`tsdyn-jit/src/codegen.rs`), which already emits `tsdyn_eval`
+//! with the Jacobian-only subexpressions dropped. The arithmetic in each
+//! *executed* arm is unchanged, so the live registers — and hence the RHS
+//! outputs — stay **bit-for-bit** identical to a full pass; [`eval_jac`] still
+//! runs the whole tape.
+//!
 //! # Surface mirrors the engine `Evaluator` seam
 //!
 //! The method surface here — [`dim`], [`n_param`], [`n_scratch`],
@@ -41,7 +54,7 @@
 //! contract — the interpreter equals the v2 tape semantics for *every* tape, not
 //! merely to a tolerance on a fixed system list.
 
-use tsdyn_ir::{Op, Tape};
+use tsdyn_ir::{Op, OpKind, Tape};
 
 /// A tape evaluator that interprets the instruction stream directly.
 ///
@@ -63,13 +76,23 @@ use tsdyn_ir::{Op, Tape};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Interpreter {
     tape: Tape,
+    /// RHS liveness mask, one bool per tape register: `rhs_live[i]` is true iff
+    /// some RHS output (`tape.outputs()`) transitively depends on register `i`.
+    /// Computed once at construction (it depends only on the frozen tape) and
+    /// reused by every [`eval`](Interpreter::eval) call so the RHS-only pass
+    /// skips Jacobian-only subexpressions — exactly what the Cranelift JIT's
+    /// `reachable` backward pass does for its `tsdyn_eval` function. The
+    /// Jacobian path ([`eval_jac`](Interpreter::eval_jac)) ignores this mask and
+    /// runs the full tape, so the Jacobian outputs are unaffected.
+    rhs_live: Vec<bool>,
 }
 
 impl Interpreter {
     /// Wrap a validated [`Tape`] in an interpreter.
     #[inline]
     pub fn new(tape: Tape) -> Self {
-        Interpreter { tape }
+        let rhs_live = compute_rhs_live(&tape);
+        Interpreter { tape, rhs_live }
     }
 
     /// The tape being interpreted.
@@ -109,13 +132,31 @@ impl Interpreter {
     ///
     /// One linear pass, no allocation. Every match arm is identical to the
     /// `tsdyn-ir` reference evaluator so results are bit-for-bit equal.
+    ///
+    /// When `live` is `Some(mask)`, an instruction whose result register is not
+    /// marked live is skipped (dead-register elimination): the RHS-only path
+    /// passes the precomputed [`rhs_live`](Interpreter::rhs_live) mask so it
+    /// never computes Jacobian-only subexpressions. Skipping is safe because the
+    /// tape is strict SSA (every operand index < the op that writes it) and the
+    /// mask is closed under operands — any register a live op reads is itself
+    /// live, hence already computed. When `live` is `None` every op runs (the
+    /// Jacobian path). The arithmetic in each executed arm is byte-for-byte
+    /// unchanged, so the live registers hold identical values either way.
     #[inline]
-    fn run(&self, u: &[f64], p: &[f64], t: f64, regs: &mut [f64]) {
+    fn run(&self, u: &[f64], p: &[f64], t: f64, regs: &mut [f64], live: Option<&[bool]>) {
         let ops = self.tape.ops();
         let a = self.tape.a();
         let b = self.tape.b();
         let imm = self.tape.imm();
         for i in 0..ops.len() {
+            // Dead-register elimination: skip an op whose result feeds no live
+            // output. A skipped register's slot is left untouched; reachability
+            // guarantees no live op ever reads it.
+            if let Some(mask) = live {
+                if !mask[i] {
+                    continue;
+                }
+            }
             let ai = a[i] as usize;
             let r = match ops[i] {
                 Op::Const => imm[i],
@@ -181,7 +222,11 @@ impl Interpreter {
     #[inline]
     pub fn eval(&self, u: &[f64], p: &[f64], t: f64, scratch: &mut [f64], deriv: &mut [f64]) {
         self.debug_check_buffers(u, p, scratch, deriv);
-        self.run(u, p, t, scratch);
+        // RHS-only: run with the precomputed liveness mask so Jacobian-only
+        // subexpressions are never evaluated. The live registers — every one a
+        // RHS output reads — are computed by the unchanged arithmetic, so the
+        // outputs are bit-for-bit identical to a full pass.
+        self.run(u, p, t, scratch, Some(&self.rhs_live));
         for (k, &slot) in self.tape.outputs().iter().enumerate() {
             deriv[k] = scratch[slot as usize];
         }
@@ -213,7 +258,10 @@ impl Interpreter {
             jac.len(),
             self.tape.jac_outputs().len()
         );
-        self.run(u, p, t, scratch);
+        // Jacobian path: run the FULL tape (`None`) — the RHS-only liveness
+        // mask does not cover Jacobian outputs, so everything must be computed,
+        // exactly as before.
+        self.run(u, p, t, scratch, None);
         for (k, &slot) in self.tape.outputs().iter().enumerate() {
             deriv[k] = scratch[slot as usize];
         }
@@ -272,6 +320,47 @@ impl Interpreter {
             self.n_param()
         );
     }
+}
+
+/// Compute the RHS liveness mask: `mask[i]` is true iff some RHS output
+/// (`tape.outputs()`) transitively depends on register `i`.
+///
+/// One backward pass. The tape is strict SSA — every operand index is strictly
+/// less than the register the op writes — so visiting registers in reverse and
+/// propagating need from an op to its operands marks the full transitive
+/// dependency set in a single sweep (an operand is always visited after every
+/// op that reads it). This mirrors the Cranelift JIT's `reachable` pass
+/// (`tsdyn-jit/src/codegen.rs`) with `with_jac = false`: the RHS-only function
+/// there likewise emits only registers reachable from `tape.outputs()`. The
+/// operand structure is read from [`Op::kind`] (Leaf reads nothing; Unary/Powi
+/// read `a`; Binary reads `a` and `b`) so this never needs a per-op match.
+fn compute_rhs_live(tape: &Tape) -> Vec<bool> {
+    let n = tape.n_reg();
+    let mut live = vec![false; n];
+
+    // Seed: every RHS output register is live. (Jacobian outputs are NOT seeded
+    // — the mask is for the RHS-only path; `eval_jac` runs the full tape.)
+    for &r in tape.outputs() {
+        live[r as usize] = true;
+    }
+
+    let ops = tape.ops();
+    let a = tape.a();
+    let b = tape.b();
+    for i in (0..n).rev() {
+        if !live[i] {
+            continue;
+        }
+        match ops[i].kind() {
+            OpKind::Leaf => {}
+            OpKind::Unary | OpKind::Powi => live[a[i] as usize] = true,
+            OpKind::Binary => {
+                live[a[i] as usize] = true;
+                live[b[i] as usize] = true;
+            }
+        }
+    }
+    live
 }
 
 #[cfg(test)]
@@ -531,6 +620,79 @@ mod tests {
         interp.eval_jac(&[5.0], &[], 0.0, &mut scratch, &mut deriv, &mut jac);
         assert_eq!(deriv[0], 5.0);
         assert!(jac[0].is_nan(), "jac should be left untouched");
+    }
+
+    #[test]
+    fn rhs_only_eval_skips_jacobian_only_registers() {
+        // Lorenz carries Jacobian outputs whose registers (neg_sigma, zero,
+        // neg_one, neg_x, neg_beta) feed ONLY the Jacobian, not the RHS. The
+        // RHS-only liveness mask must exclude them.
+        let interp = Interpreter::new(lorenz());
+
+        // The RHS outputs and everything they read are live; at least one
+        // register (a Jacobian-only one) must be dead, proving DCE has teeth.
+        for &slot in interp.tape().outputs() {
+            assert!(interp.rhs_live[slot as usize], "an RHS output must be live");
+        }
+        assert!(
+            interp.rhs_live.iter().any(|&b| !b),
+            "Lorenz has Jacobian-only registers, so some register must be dead"
+        );
+    }
+
+    #[test]
+    fn rhs_is_bit_identical_with_and_without_dce() {
+        // The whole bar: DCE must not perturb the RHS by a single bit. Compare
+        // the RHS-only `eval` (mask-driven) against the full-tape pass `eval_jac`
+        // runs (its `deriv` is computed with NO mask).
+        let interp = Interpreter::new(lorenz());
+        let u = [1.3, -2.7, 4.1];
+        let p = [10.0, 28.0, 8.0 / 3.0];
+
+        let deriv_dce = interp.eval_alloc(&u, &p, 0.7); // mask-driven RHS-only
+        let (deriv_full, _jac) = interp.eval_jac_alloc(&u, &p, 0.7); // full pass
+
+        for (k, (&d, &f)) in deriv_dce.iter().zip(deriv_full.iter()).enumerate() {
+            assert_eq!(
+                d.to_bits(),
+                f.to_bits(),
+                "deriv[{k}] differs bit-for-bit: dce {d} vs full {f}"
+            );
+        }
+    }
+
+    #[test]
+    fn dead_register_left_untouched_does_not_corrupt_rhs() {
+        // A skipped op never writes its slot; a stale value there must not leak
+        // into the RHS. Run on deliberately dirty scratch (poisoned with NaN):
+        // the live registers are all recomputed, so the RHS stays correct.
+        let interp = Interpreter::new(lorenz());
+        let u = [1.0, 2.0, 3.0];
+        let p = [10.0, 28.0, 8.0 / 3.0];
+        let mut scratch = vec![f64::NAN; interp.n_scratch()];
+        let mut deriv = [0.0; 3];
+        interp.eval(&u, &p, 0.0, &mut scratch, &mut deriv);
+        let want = [
+            10.0 * (2.0 - 1.0),
+            1.0 * (28.0 - 3.0) - 2.0,
+            1.0 * 2.0 - (8.0 / 3.0) * 3.0,
+        ];
+        for (k, (&g, &w)) in deriv.iter().zip(want.iter()).enumerate() {
+            assert!((g - w).abs() < 1e-15, "deriv[{k}]: got {g}, want {w}");
+        }
+    }
+
+    #[test]
+    fn no_jacobian_tape_keeps_every_rhs_register_live() {
+        // With no Jacobian outputs there is nothing dead to drop, but the mask
+        // must still be correct: every register an RHS output depends on is live.
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let y = b.state(1);
+        let s = b.add(x, y);
+        let interp = Interpreter::new(b.finish(&[s], &[], 2, 0).unwrap());
+        assert!(interp.rhs_live.iter().all(|&b| b), "no dead registers here");
+        assert_eq!(interp.eval_alloc(&[2.0, 5.0], &[], 0.0)[0], 7.0);
     }
 
     #[test]

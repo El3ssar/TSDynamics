@@ -44,8 +44,12 @@ class KaplanYorke(DiscreteMap):
     @staticmethod
     def _step(X, alpha):
         x, y = X
-        # Wrap with a modulus just below 1 (not exactly 1.0) so the result stays
-        # strictly inside [0, 1) and never lands on the periodic boundary.
+        # Doubling map on the unit circle. The canonical wrap is mod 1, but the
+        # pure doubling map x -> frac(2x) drains a float mantissa one bit per
+        # step (2x is an exact shift) and collapses to the x=0 fixed point in
+        # ~52 iterations, killing the chaos. Wrapping just below 1 injects a
+        # ~5e-8 offset at each fold that keeps the orbit non-degenerate; the
+        # dynamics (and Lyapunov exponent ln 2) are unchanged to that tolerance.
         xp = (2 * x) % 0.99999995
         yp = alpha * y + np.cos(4 * np.pi * x)
         return xp, yp

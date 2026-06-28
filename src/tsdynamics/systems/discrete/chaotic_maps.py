@@ -162,9 +162,9 @@ class Zaslavskii(DiscreteMap):
         x, y = X
         mu = (1 - np.exp(-r)) / r
         xp = x + nu * (1 + mu * y) + eps * nu * mu * np.cos(2 * np.pi * x)
-        # Wrap with a modulus just below 1 (not exactly 1.0) so the result stays
-        # strictly inside [0, 1) and never lands on the periodic boundary.
-        xp = xp % 0.99999995
+        # Phase variable lives on the unit circle: wrap mod 1 (floor-mod already
+        # yields a result in [0, 1)).
+        xp = xp % 1
         yp = np.exp(-r) * (y + eps * np.cos(2 * np.pi * x))
         return xp, yp
 

@@ -185,6 +185,6 @@ class WindmiReduced(ContinuousSystem):
         z = d1 * (i - 1)
         z_clamped = (abs(z + c) - abs(z - c)) / 2
         idot = a1 * (vsw - v)
-        vdot = b1 * i - b2 * p**1 / 2 - b3 * v
+        vdot = b1 * i - b2 * abs(p) ** (1 / 2) - b3 * v
         pdot = vsw**2 - abs(p) ** (5 / 4) * vsw ** (1 / 2) * (1 + tanh(z_clamped)) / 2
         return idot, vdot, pdot

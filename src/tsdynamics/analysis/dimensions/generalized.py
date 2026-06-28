@@ -72,6 +72,44 @@ __all__ = [
 _DEFAULT_OFFSETS: tuple[float, ...] = (0.0, 0.2, 0.4, 0.6, 0.8)
 
 
+def _occupied_counts(coords: np.ndarray) -> np.ndarray:
+    """Per-occupied-box point counts of integer cell coordinates ``(M, dim)``.
+
+    Equivalent to ``np.unique(coords, axis=0, return_counts=True)[1]`` but groups
+    on a single 1-D mixed-radix key instead of the structured ``axis=0`` lexsort,
+    which is markedly faster on the large ``(M, dim)`` coordinate blocks here.
+    Each cell row is offset to a non-negative ``(M, dim)`` grid and encoded as
+    ``sum_d coord_d * prod(span_<d)`` — a bijection on the occupied cells, so the
+    grouping (and hence the count *multiset*) is identical.  Only the counts are
+    consumed downstream (their order is irrelevant to ``sum p**q`` /
+    ``sum p log p`` and to the box *count* ``size``), so returning them in key
+    order rather than lexicographic row order changes nothing.
+
+    The encoding fits one ``int64`` key unless the product of per-axis spans would
+    overflow; in that (extreme, high-dimension / huge-extent) case it falls back
+    to the exact structured ``np.unique`` so the result is unconditionally
+    preserved.
+    """
+    if coords.shape[1] == 1:
+        return np.unique(coords[:, 0], return_counts=True)[1]
+    cell = coords - coords.min(axis=0)
+    spans = cell.max(axis=0).astype(object) + 1  # per-axis number of occupied levels
+    # Mixed-radix place values; Python-int (object) arithmetic detects overflow.
+    stride = 1
+    overflow = False
+    strides: list[int] = []
+    for s in spans:
+        strides.append(stride)
+        stride *= int(s)
+        if stride > np.iinfo(np.int64).max:
+            overflow = True
+            break
+    if overflow:
+        return np.unique(coords, axis=0, return_counts=True)[1]
+    key = (cell.astype(np.int64) * np.asarray(strides, dtype=np.int64)).sum(axis=1)
+    return np.unique(key, return_counts=True)[1]
+
+
 def _occupancy(points: np.ndarray, eps: float, mins: np.ndarray, offset: float = 0.0) -> np.ndarray:
     """Point counts of the occupied boxes of side ``eps``.
 
@@ -80,8 +118,7 @@ def _occupancy(points: np.ndarray, eps: float, mins: np.ndarray, offset: float =
     origin-at-``mins`` partition.
     """
     coords = np.floor((points - mins) / eps + offset).astype(np.int64)
-    _, counts = np.unique(coords, axis=0, return_counts=True)
-    return counts
+    return _occupied_counts(coords)
 
 
 def _min_cover_occupancy(

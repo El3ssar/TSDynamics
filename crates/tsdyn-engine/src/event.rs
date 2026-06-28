@@ -556,6 +556,14 @@ pub fn integrate_events(
     let mut pending: Vec<EventHit> = Vec::new();
     let mut u0_local = vec![0.0; dim];
     let mut ubuf = vec![0.0; dim];
+    // Reusable scratch for the refined crossing state, hoisted out of the
+    // per-step/per-event loops (it was a fresh `vec![0.0; dim]` per crossing).
+    // The refinement fully overwrites every element below before it is read, so
+    // its prior contents never leak — and an *independent copy* is pushed into
+    // `pending` (the stored hit must not alias this scratch, which is reused on
+    // the next crossing). Net: the per-crossing zero-init memset is gone, and
+    // each hit's owned `u` is a single copy of the identical refined state.
+    let mut u_cross = vec![0.0; dim];
     let mut steps = 0usize;
 
     while st.t < t1 {
@@ -602,7 +610,10 @@ pub fn integrate_events(
                     // `g0`/`g1` entering the refinement are guaranteed finite.
                     if let Some(dir) = ev_spec.direction.crosses(g_prev[e_idx], g1) {
                         let g0 = g_prev[e_idx];
-                        let mut u_cross = vec![0.0; dim];
+                        // `u_cross` is the hoisted scratch; the branches below
+                        // overwrite all `dim` elements via `interpolate` /
+                        // `HermiteStep::eval` (each writes every component), so
+                        // its previous contents are irrelevant.
                         let s_star = if use_native {
                             let s = bracketed_root(
                                 |s| {
@@ -666,7 +677,9 @@ pub fn integrate_events(
                         pending.push(EventHit {
                             event: e_idx,
                             t: t_cross,
-                            u: u_cross,
+                            // The stored hit must own its state independently of
+                            // the reused `u_cross` scratch — copy, never move.
+                            u: u_cross.clone(),
                             direction: dir,
                         });
                     }

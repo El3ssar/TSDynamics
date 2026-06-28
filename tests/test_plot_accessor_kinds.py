@@ -33,13 +33,19 @@ from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 @pytest.fixture
 def fake_renderer():
-    """Register a no-op renderer for the duration of one test, then remove it.
+    """Install a no-op renderer as the *only* renderer for one test, then restore.
 
     The seam only attempts to render once ``registry.renderers`` is non-empty, so
     this fixture is what makes ``result.plot.<kind>()`` actually walk the
     ``_render`` path (and thus reach ``to_plot_spec(kind=...)``) instead of
     short-circuiting on ``VisualizationNotInstalled``.  It returns the spec it was
     handed so the test can inspect it.
+
+    It snapshots and clears the global ``renderers`` registry so the fake is the
+    sole backend dispatch can pick — otherwise a real renderer registered by an
+    earlier test (e.g. matplotlib auto-registering on first render) would be
+    selected instead and the fake would capture nothing, making this gate
+    order-dependent.  The prior registry is restored verbatim on teardown.
     """
     captured: list[PlotSpec] = []
 
@@ -47,13 +53,15 @@ def fake_renderer():
         captured.append(spec)
         return spec
 
-    name = "_fake_kinds_renderer"
-    renderers.register(name, _render, replace=True)
+    saved = renderers.all()
+    renderers.clear()
+    renderers.register("_fake_kinds_renderer", _render, replace=True)
     try:
         yield captured
     finally:
-        if name in renderers:
-            renderers.unregister(name)
+        renderers.clear()
+        for entry in saved:
+            renderers.register(entry.name, entry.obj, replace=True, **dict(entry.metadata))
 
 
 class _KindCapturingResult(AnalysisResult):

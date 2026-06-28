@@ -4,11 +4,12 @@
 //! the FSAL ("first same as last") structure: the fourth stage is `f` at the
 //! proposed solution point (`c₄ = 1`, `a₄ = b`), which gives the embedded
 //! 2nd-order estimate for step control. It is efficient at crude-to-moderate
-//! tolerances and is the method MATLAB exposes as `ode23`. (FSAL *reuse* of the
-//! last stage as the next step's first stage — saving one evaluation per step —
-//! is not exploited by the shared [`adaptive_step`](super::control::adaptive_step)
-//! loop, which recomputes stage 0 each step; this kernel therefore costs four
-//! evaluations per accepted step.)
+//! tolerances and is the method MATLAB exposes as `ode23`. The FSAL *reuse* of
+//! the last stage as the next step's first stage — saving one evaluation per
+//! accepted step — is exploited via the shared
+//! [`fsal_adaptive_step`](super::rk45::fsal_adaptive_step), so an accepted step
+//! costs three RHS evaluations rather than four (the first step after a fresh
+//! start or a rejected step still pays the fourth, having no reusable stage).
 //!
 //! Reference: P. Bogacki & L. F. Shampine, "A 3(2) pair of Runge–Kutta
 //! formulas", *Appl. Math. Lett.* **2**(4) (1989) 321–325.
@@ -21,7 +22,8 @@ use crate::{
     register_solver, Caps, Evaluator, ProblemKind, ProblemKinds, Solver, SolverState, StepOutcome,
 };
 
-use super::control::{adaptive_step, RkWork};
+use super::control::RkWork;
+use super::rk45::{fsal_adaptive_step, FsalCache};
 
 // Bogacki–Shampine 3(2) nodes (c₄ = 1; the 4th is the FSAL solution stage).
 const C: &[f64] = &[0.0, 0.5, 0.75, 1.0];
@@ -56,6 +58,8 @@ pub struct Bs3 {
     rtol: f64,
     atol: f64,
     work: RkWork,
+    /// FSAL cache: the previous accepted step's last stage, reused as stage 0.
+    fsal: FsalCache,
 }
 
 impl Bs3 {
@@ -72,6 +76,7 @@ impl Bs3 {
             rtol,
             atol,
             work: RkWork::new(),
+            fsal: FsalCache::new(),
         }
     }
 }
@@ -92,7 +97,7 @@ impl Solver for Bs3 {
     }
 
     fn step(&mut self, ev: &dyn Evaluator, st: &mut SolverState, h: f64) -> StepOutcome {
-        adaptive_step(
+        fsal_adaptive_step(
             ev,
             st,
             h,
@@ -104,6 +109,7 @@ impl Solver for Bs3 {
             self.rtol,
             self.atol,
             &mut self.work,
+            &mut self.fsal,
         )
     }
 }

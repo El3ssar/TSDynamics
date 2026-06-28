@@ -8,6 +8,8 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
+from tsdynamics.errors import InvalidParameterError
+
 from .base import SystemBase, Trajectory
 
 
@@ -301,8 +303,18 @@ class ContinuousSystem(SystemBase, ABC):
                 self.params[k] = v
         t0 = float(t) if t is not None else 0.0
         ic_arr = self.resolve_ic(u)
-        be = backend if backend is not None else self._default_backend
-        self._step_backend = be if be in ("interp", "jit") else "interp"
+        from tsdynamics.engine.run import resolve_backend
+
+        # Honour the requested backend through the stepping protocol: ``reference``
+        # is the wheel-free pure-Python oracle and a real, supported stepping path
+        # (one ``dt`` chunk per ``step`` through the reference ODE integrator), not
+        # something to silently coerce to ``"interp"`` (the old behaviour, which
+        # made the oracle unreachable via ``reinit``/``step``/``state`` — diagnosis
+        # #5).  ``resolve_backend`` raises ``InvalidParameterError`` for an unknown
+        # name (it subclasses ``ValueError``).
+        self._step_backend = resolve_backend(
+            backend if backend is not None else self._default_backend
+        )
 
         from tsdynamics import solvers
         from tsdynamics.engine.problem import ode_problem
@@ -388,6 +400,15 @@ class ContinuousSystem(SystemBase, ABC):
         assert self._step_method_canonical is not None
         dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
 
+        # The wheel-free pure-Python oracle: advance one ``dt`` chunk through the
+        # reference ODE integrator (the same path ``integrate(backend="reference")``
+        # uses), so the protocol exposes the oracle honestly instead of secretly
+        # running the compiled engine (diagnosis #5).  Off the durable engine-handle
+        # fast path (reference owns no ``OdeStepper``); it is the validation backend,
+        # not a hot loop.
+        if self._step_backend == "reference":
+            return self._step_reference(dt)
+
         t0 = self._t_now
         tf = t0 + dt
         # Preserve the released ``step`` span contract exactly: a non-positive ``dt``
@@ -459,6 +480,53 @@ class ContinuousSystem(SystemBase, ABC):
         object.__setattr__(self, "_state_now", state.copy())
         return state.copy()
 
+    def _step_reference(self, dt: float) -> np.ndarray:
+        """Advance one ``dt`` chunk on the pure-Python reference ODE integrator.
+
+        The ``backend="reference"`` stepping path: it integrates the cached
+        (loop-invariant) tape from the live ``(state, t)`` over a one-segment grid
+        with the same :func:`tsdynamics.engine.run._run_continuous` the
+        ``integrate(backend="reference")`` entry point uses, so the wheel-free
+        oracle is reachable through ``reinit``/``step``/``state`` exactly as it is
+        through ``integrate`` (diagnosis #5).  Answer-identical to
+        ``integrate(backend="reference")`` over the same ``dt`` discretisation.
+
+        A non-positive ``dt`` / non-forward window raises
+        :class:`~tsdynamics.errors.InvalidParameterError` (a ``ValueError``), the
+        same loud-footgun contract as the engine stepping path
+        (:func:`~tsdynamics.utils.grids.make_output_grid` enforces it).
+        """
+        import dataclasses
+
+        from tsdynamics.engine.run import _run_continuous
+        from tsdynamics.utils.grids import make_output_grid
+
+        assert self._state_now is not None
+        assert self._step_method_canonical is not None
+        t0 = self._t_now
+        tf = t0 + dt
+        # Raises InvalidParameterError for dt <= 0 / a non-forward window; otherwise
+        # the (possibly single-node) one-segment grid the reference integrator samples.
+        t_eval = make_output_grid(t0, tf, dt)
+        # Re-point the cached, already-lowered problem at the live state/time without
+        # re-lowering (a frozen-dataclass copy); the reference integrator reads the
+        # tape + live params off it.
+        prob = dataclasses.replace(
+            self._engine_problem, ic=np.ascontiguousarray(self._state_now, dtype=np.float64), t0=t0
+        )
+        y = _run_continuous(
+            prob,
+            t_eval,
+            method=self._step_method_canonical,
+            rtol=self._step_rtol,
+            atol=self._step_atol,
+            backend="reference",
+        )
+        state = np.asarray(y[-1], dtype=float)
+        object.__setattr__(self, "_t_now", tf)
+        object.__setattr__(self, "_state_now", state.copy())
+        return state.copy()
+
     def state(self) -> np.ndarray:
         """Return a copy of the current state (implicit ``reinit`` if cold)."""
         if self._state_now is None:
@@ -524,7 +592,9 @@ class ContinuousSystem(SystemBase, ABC):
         control_syms = {k: symengine.Symbol(k) for k in self._control_params()}
         f_sym = list(type(self)._equations(y, t_sym, **{**struct_vals, **control_syms}))
         if len(f_sym) != dim:
-            raise ValueError(f"_equations must return {dim} expressions, got {len(f_sym)}")
+            raise InvalidParameterError(
+                f"_equations must return {dim} expressions, got {len(f_sym)}"
+            )
         return [
             [_resolve_derivative_nodes(symengine.sympify(fi).diff(y(j))) for j in range(dim)]
             for fi in f_sym
@@ -888,7 +958,7 @@ class ContinuousSystem(SystemBase, ABC):
             Lyapunov exponents ordered from largest to smallest.
         """
         if n_exp is not None and n_exp <= 0:
-            raise ValueError(f"n_exp must be a positive integer, got {n_exp!r}")
+            raise InvalidParameterError(f"n_exp must be a positive integer, got {n_exp!r}")
         from tsdynamics.derived.tangent import TangentSystem
 
         k = n_exp if n_exp is not None else self.dim
