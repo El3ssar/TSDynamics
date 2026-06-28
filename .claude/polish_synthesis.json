@@ -1,0 +1,703 @@
+{
+ "program_name": "TSDynamics v4 \u2014 \"Polish & Foundations\": one interface, one result model, one viz seam, a fast core",
+ "north_star": "Make TSDynamics the reference dynamical-systems library by refining what already exists into its most polished, intuitive, and fast form \u2014 a single learnable interface (define \u2192 run \u2192 analyze \u2192 result \u2192 [later] visualize), one consistent calling convention, one result-object model that doubles as the viz contract, and a Rust-fast Poincar\u00e9/bifurcation/basins path \u2014 shipped as a single loud-clean-break v4.0, with the multi-backend visualization suite deferred but fully designed-for so it can be added later by construction with zero churn to result types.",
+ "design_principles": [
+  "One intent, one verb. `system.run(...)` produces a trajectory for EVERY family (flow/DDE/SDE/map); `.integrate`/`.iterate`/`.trajectory` survive as thin aliases. No more remembering integrate-for-flows vs iterate-for-maps.",
+  "One first argument, named by kind. Every analysis takes `system` (a System: flow/map/derived) or `data` (a measured Trajectory/ndarray) as its first positional argument. The 9\u201315 spellings (sys/map_sys/observable/sys_or_traj/source/x/series/\u2026) collapse to exactly two.",
+  "One word per concept. A frozen glossary fixes the canonical kwarg for every recurring idea (transient, final_time, n, dt, ic, seed, dimension, delay, theiler, n_neighbors), each with one spelling and one documented unit. A CI gate fails the build if a banned spelling reappears.",
+  "Every analysis returns a self-describing result object \u2014 never a bare float/array/list. A shared `AnalysisResult` base gives every result `.meta` (provenance), `.summary()`, `.to_dict()`/`.to_frame()`, a `.plot` seam, and a great repr \u2014 while `__array__`/`__float__`/`__iter__` dunders keep `np.asarray(spec)`, `float(d)`, and `for fp in fps` working.",
+  "Curated top, deep-but-discoverable underneath (the scipy model). The flat 95-name top-level shrinks to ~28 curated headline names; everything else lives at a guessable path (`ts.analysis.dimensions.correlation_dimension`) with flat re-exports kept for back-compat. `ts.analysis.<TAB>` shows ~10 categories, not 78 functions.",
+  "Answer-preserving speed. Every performance fix is a pure speedup \u2014 identical numbers (the Rust event engine already matches the Python refinement to ~1e-11). We wire dead-but-tested Rust (`integrate_events`) and kill the per-dt FFI tax; we never trade correctness for ms.",
+  "Design the viz seam now, ship no backend. A pure-Python, JSON-serializable `PlotSpec` IR + closed `PlotKind` enum + a renderers registry means the future matplotlib/Plotly/three.js/GPU suite plugs in against ONE stable per-result contract \u2014 added later with no changes to any result type.",
+  "Break loudly and kindly, once. v4.0 renames freely (full license to break) but ships a thin moved-to shim: every renamed symbol/kwarg raises a precise 'renamed to X in v4.0' message + a libcst codemod automates the migration. The shim is deleted in v4.1.",
+  "Standards are enforced, not aspirational. mypy --strict goes 727\u21920 and becomes a CI gate; doctests run in CI; a `TSDynamicsError` hierarchy replaces leaked numpy/engine tracebacks; silent footguns (final_time=-5, dt=0, swallowed kwargs, typo'd params) all raise. Registry-driven meta-QA sweeps new systems/analyses with zero test edits."
+ ],
+ "target_api_tree": "tsdynamics/                         # curated top level: ~28 names (was 95)\n\u251c\u2500 run/analyze/define basics\n\u2502   \u251c\u2500 <systems>                     # ts.systems.Lorenz (canonical); ts.Lorenz lazy back-compat\n\u2502   \u251c\u2500 ContinuousSystem, DelaySystem, StochasticSystem, DiscreteMap, WrappedSystem\n\u2502   \u2502       # the 5 family bases + WrappedSystem (rehomed: canonical in .families, re-exported here)\n\u2502   \u251c\u2500 PoincareMap, StroboscopicMap, TangentSystem, EnsembleSystem, ProjectedSystem\n\u2502   \u2514\u2500 Trajectory                    # canonical in .data, re-exported here\n\u2502\n\u251c\u2500 headline analyses (promoted, the 5\u20137 a newcomer reaches for)\n\u2502   \u251c\u2500 lyapunov_spectrum(system, *, k=None, final_time=None, transient=None, dt=None, ic=None, method=None, seed=None) -> LyapunovSpectrum\n\u2502   \u251c\u2500 bifurcation_diagram(system, param, values, *, ...)   -> OrbitDiagram   (alias: orbit_diagram)\n\u2502   \u251c\u2500 poincare_section(system, plane=('y', 0.0, 'up'), *, n=None, transient=None, seed=None) -> PoincareSection\n\u2502   \u251c\u2500 recurrence_matrix(data, *, ...) -> RecurrenceMatrix\n\u2502   \u251c\u2500 basins(system, region, *, seed=None, ...) -> BasinsResult            (alias: basins_of_attraction)\n\u2502   \u2514\u2500 fixed_points(system, ...) -> FixedPointSet\n\u2502\n\u251c\u2500 submodules (the deep, navigable tree)\n\u2502   \u251c\u2500 analysis/                     # ts.analysis.<TAB> -> ~10 categories, not 78 fns\n\u2502   \u2502   \u251c\u2500 lyapunov/      lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension, lyapunov_from_data\n\u2502   \u2502   \u251c\u2500 dimensions/    correlation_dimension, generalized_dimension, box_counting_dimension, \u2026\n\u2502   \u2502   \u251c\u2500 chaos/         gali, zero_one_test, expansion_entropy\n\u2502   \u2502   \u251c\u2500 recurrence/    recurrence_matrix, rqa, windowed_rqa\n\u2502   \u2502   \u251c\u2500 entropy/       permutation_entropy, dispersion_entropy, sample_entropy, \u2026\n\u2502   \u2502   \u251c\u2500 embedding/     embed, optimal_delay, embedding_dimension (cao/fnn)\n\u2502   \u2502   \u251c\u2500 surrogate/     surrogates, surrogate_test, time_reversal_asymmetry, \u2026\n\u2502   \u2502   \u251c\u2500 orbits/        orbit_diagram, poincare_section, return_map\n\u2502   \u2502   \u251c\u2500 fixedpoints/   fixed_points, periodic_orbits, periodic_orbit, estimate_period\n\u2502   \u2502   \u2514\u2500 basins/        find_attractors, basins_of_attraction, basin_fractions, \u2026\n\u2502   \u2502   (flat re-exports retained: `from tsdynamics.analysis import correlation_dimension` still works)\n\u2502   \u251c\u2500 transforms/        spectral / preprocessing / features  (NOW reachable as ts.transforms \u2014 bug fix)\n\u2502   \u251c\u2500 data/              Trajectory, Box, Ball, Grid, region(), sampler, grid_points, set_distance\n\u2502   \u251c\u2500 derived/           the 5 wrappers (WrappedSystem re-exported)\n\u2502   \u251c\u2500 families/          SystemBase, ParamSet, MetaStore, System (protocol), WrappedSystem (canonical), the bases\n\u2502   \u251c\u2500 viz/               PlotSpec, PlotKind, Layer, Axis, Plottable  (IR only \u2014 NO backend ships)\n\u2502   \u251c\u2500 errors/            TSDynamicsError + InvalidParameterError/InvalidInputError/ConvergenceError/BackendError\n\u2502   \u251c\u2500 engine/            (importable, flagged internal)\n\u2502   \u251c\u2500 solvers/           (importable, flagged internal)\n\u2502   \u2514\u2500 registry/          all_systems, families, analyses, transforms, renderers (NEW)\n\u2502\n\u2514\u2500 object-side surface (additive, discoverable from a system in hand)\n    system.run(...) | system.lyapunov_spectrum() | system.fixed_points()\n    system.poincare(section='y', at=0.0).run(n=500)      # fluent derived builder\n    system.lyap.spectrum() | system.dims.correlation() | system.chaos.gali(k=2)   # cached topical accessors\n    result.summary() | result.to_frame() | result.plot()  # plot() raises VisualizationNotInstalled until a backend lands",
+ "headline_before_after": [
+  {
+   "scenario": "Take a Poincar\u00e9 section (the maintainer's named slow + cryptic complaint)",
+   "before": "pmap = ts.PoincareMap(ros, plane=(1, 0.0))   # opaque (index, value) tuple\nsec = pmap.trajectory(500)                    # 13.8 s; ~58k Python integrate() calls, 1 FFI/dt\n# sec is a bare Trajectory(dim=3) \u2014 a renderer can't tell a section from a flow",
+   "after": "sec = ts.poincare_section(ros, plane=('y', 0.0, 'up'), n=500, transient=20, seed=0)\n# ~0.13 s \u2014 wires the already-built Rust integrate_events (O(h^4) Hermite, dead code today)\n# returns PoincareSection (carries POINCARE_SECTION plot intent); identical crossings to ~1e-11\nsec.summary(); sec.plot()    # plot() seam exists now, raises cleanly until a backend ships"
+  },
+  {
+   "scenario": "Guess any analysis signature",
+   "before": "ts.lyapunov_spectrum(sys=lor)         # help() shows only (sys, **kwargs)\nts.fixed_points(system=henon)\nts.recurrence_matrix(data=series)\nts.permutation_entropy(x=series)\nts.zero_one_test(observable=traj['x'])   # bare float -0.016, sign-ambiguous\n# nine first-arg names; one swallowed typo (nonsense=5) returns a normal spectrum",
+   "after": "ts.lyapunov_spectrum(system=lor, final_time=300, transient=50, k=3)\nts.fixed_points(system=henon)\nts.recurrence_matrix(data=series)\nts.permutation_entropy(data=series)\nts.zero_one_test(system=lor, component='x', transient=50)   # -> ZeroOneTest(K=0.998, chaotic=True)\nLorenz().lyapunov_spectrum(nonsense=5)   # TypeError: unexpected keyword 'nonsense'  (no longer swallowed)"
+  },
+  {
+   "scenario": "Plot any scaling-curve result (the concrete viz unblock)",
+   "before": "d = ts.correlation_dimension(traj); d.x, d.y, d.fit_slice, d.dimension\nl = ts.lyapunov_from_data(s);        l.times, l.divergence, l.fit_region, l.lyapunov\ne = ts.expansion_entropy(sys, box);  e.times, e.log_growth, e.fit_slice, e.entropy\n# five incompatible field schemes \u2014 a generic .plot.scaling() literally cannot find 'the curve'",
+   "after": "for r in (ts.correlation_dimension(traj), ts.lyapunov_from_data(s), ts.expansion_entropy(sys, region)):\n    r.abscissa, r.ordinate, r.fit_region, r.estimate, r.stderr   # ONE ScalingResult schema\n    r.plot.scaling()        # generic \u2014 same code renders every scaling result\nfloat(ts.correlation_dimension(traj))      # 1.886 \u2014 __float__ still works\nts.correlation_dimension(traj).dimension   # kept as a read-only alias of .estimate"
+  },
+  {
+   "scenario": "A wrong initial condition / invalid horizon",
+   "before": "Lorenz().integrate(final_time=10, dt=0.01, ic=[1.0, 2.0])\n# ValueError: cannot reshape array of size 2 into shape (3,)   (leaked numpy)\nLorenz().integrate(final_time=-5, dt=0.01)\n# -> Trajectory(n_steps=1, t=[-5,-5])   (silent garbage)\nLorenz().integrate(final_time=10, dt=0.0)\n# -> bare ZeroDivisionError from a grid helper",
+   "after": "Lorenz().run(final_time=10, dt=0.01, ic=[1.0, 2.0])\n# InvalidInputError: initial condition has 2 components but Lorenz has dim=3 (expected length 3 for ('x','y','z'))\nLorenz().run(final_time=-5, dt=0.01)\n# InvalidParameterError: final_time must be > 0, got -5\nLorenz().run(final_time=10, dt=0.0)\n# InvalidParameterError: dt must be > 0, got 0.0   \u2014 all subclass ValueError so `except ValueError` still catches"
+  },
+  {
+   "scenario": "Reach the transforms suite / run any family",
+   "before": "import tsdynamics as ts\nts.transforms            # AttributeError (module unreachable; invisible to ts.<TAB>)\nLorenz().integrate(...)  # flow verb\nHenon().iterate(...)     # map verb \u2014 Henon has no .integrate, flow\u2192map transfer hits AttributeError",
+   "after": "ts.transforms.power_spectral_density(traj)   # reachable, shows in ts.<TAB>\nLorenz().run(final_time=100, dt=0.01)        # one verb\u2026\nHenon().run(n=5000)                          # \u2026every family"
+  },
+  {
+   "scenario": "A v3 script meets v4 (migration)",
+   "before": "ts.orbit_diagram(sys, 'r', vals)\n# v4 silent break would give: AttributeError: module 'tsdynamics' has no attribute 'orbit_diagram'",
+   "after": "ts.orbit_diagram(sys, 'r', vals)\n# AttributeError: tsdynamics.orbit_diagram was renamed to tsdynamics.bifurcation_diagram in v4.0\n#                 (renamed for discoverability). Update to `bifurcation_diagram`. (Shim removed in v4.1.)\n# plus: `python -m scripts.migrate_v3_to_v4 myscript.py` rewrites it automatically"
+  }
+ ],
+ "key_decisions": [
+  {
+   "question": "System interface: free functions vs methods vs dual? (the dossiers' central conflict)",
+   "recommendation": "DUAL, with free functions canonical. Free functions stay THE documented API (`ts.lyapunov_spectrum(system)`). The object side is an additive convenience: first-class verbs (`system.run`, `system.fixed_points`, `system.poincare(...)`) plus a small set of cached topical accessors (`system.lyap.spectrum()`, `system.dims.correlation()`, `system.chaos.gali(k=2)`) that simply bind the system and delegate to the free functions. NOT 60 flat methods.",
+   "rationale": "Free-function-canonical matches scipy/statsmodels and keeps a stable surface for data-only analyses that have no system. The accessor layer (xarray pattern) makes analyses discoverable from a system in hand via grouped tab-completion without exploding the namespace or duplicating docs. It is purely additive \u2014 it ships before any breaking rename and carries zero behavioral risk.",
+   "needs_maintainer": true
+  },
+  {
+   "question": "Verb to produce a trajectory: keep integrate/iterate, or unify?",
+   "recommendation": "Unify on `system.run(...)` (dispatches on is_discrete) as canonical across all families; keep `.integrate`/`.iterate`/`.trajectory` as permanent flavoured aliases (zero breakage).",
+   "rationale": "One intent \u2192 one verb is the single biggest learnability win and removes the flow\u2192map AttributeError trap. `.run` reads cleanly in fluent chains (`sys.poincare(...).run(n=500)`). Keeping the domain-readable aliases costs nothing and preserves muscle memory. (Note: API-dossier proposed `.trajectory` as canonical, interface-dossier proposed `.run`; I pick `.run` because `.trajectory()` is already an alias-laden noun and `.run` is the cleaner verb for chains.)",
+   "needs_maintainer": true
+  },
+  {
+   "question": "Poincar\u00e9 perf: Python batch-buffer, wire the dead Rust event engine, or a resumable Rust stepper?",
+   "recommendation": "Wire the already-built, already-tested Rust `integrate_events` (FFI + `run.crossings()`) as the primary fix for Poincar\u00e9/return-map/strobo (~100\u00d7). Ship the trivial Python step-buffer for generic incremental consumers (basins-over-flows) now, and design the resumable Rust `OdeStepper` handle as the durable replacement that supersedes the buffer later.",
+   "rationale": "The native event engine exists as dead code, matches the Python refinement to ~1e-11, and is the exact native solution to the named complaint \u2014 wiring it is medium effort for ~100\u00d7. The Python buffer is a near-free ~20\u201350\u00d7 for the FSM/strobo paths that don't fit the event model. The resumable stepper is the clean end-state but a larger FFI surface, so it lands after the cheap wins prove out.",
+   "needs_maintainer": true
+  },
+  {
+   "question": "Where do the result base and the PlotSpec live?",
+   "recommendation": "Result base `AnalysisResult`/`ScalingResult` in `tsdynamics/analysis/_result.py`; the viz IR (`PlotSpec`/`PlotKind`/`Plottable`) in `tsdynamics/viz/spec.py`. Results gain a `.plot` accessor that builds a `PlotSpec` and (until a backend registers) raises `VisualizationNotInstalled`.",
+   "rationale": "Keeps the result contract a data/analysis concern and the rendering contract a viz concern, with a clean one-way dependency (results know how to emit a spec; the spec knows nothing about results). `viz/` already exists as the reserved stub. Core stays plotting-free: `import tsdynamics` pulls no matplotlib.",
+   "needs_maintainer": true
+  },
+  {
+   "question": "Migration mechanism: silent clean break, loud moved-to shim, or full FutureWarning cycles?",
+   "recommendation": "Loud moved-to shim for exactly one release (v4.0 raises precise renamed-to errors via a `_migration.py` module-`__getattr__` + an `@aliased_kwargs` decorator; v4.1 deletes it), plus a libcst codemod and a v3\u2192v4 migration table.",
+   "rationale": "A silent break punishes the few real v3 users with cryptic AttributeError/TypeError; full FutureWarning cycles freeze the redesign in compatibility amber against the explicit license to break. The loud shim costs ~one module, turns every breakage into a one-line fix, and the codemod doubles as a completeness test of the rename table. This is the NumPy-2.0 model \u2014 a kind break that is more in the polish spirit than a silent one.",
+   "needs_maintainer": true
+  },
+  {
+   "question": "How aggressively to shrink the top-level __all__?",
+   "recommendation": "Shrink to ~28 curated names: the 5 family bases + WrappedSystem, the 5 derived wrappers, Trajectory, ~6 headline analyses, and the submodules. Keep flat re-exports under `ts.analysis` so existing `from tsdynamics.analysis import correlation_dimension` keeps working; demote per-category entropy/dimension/embedding/surrogate functions out of the top level (still reachable).",
+   "rationale": "95 undifferentiated names is the opposite of scipy discoverability; ~28 gives a clean front door while nothing becomes unreachable. The flat re-exports keep the break small. If the maintainer prefers minimal disruption, the fallback is 'ADD the sub-namespaces, keep the ~52 analysis fns top-level' \u2014 less clean but less churny.",
+   "needs_maintainer": true
+  },
+  {
+   "question": "pandas for .to_frame(): hard or soft dependency?",
+   "recommendation": "Soft. `.to_dict()` is always available (stdlib); `.to_frame()` lazy-imports pandas behind an extra `tsdynamics[frame]` with a clear install hint on ImportError.",
+   "rationale": "Keeps the core dependency-light (matching the library's ethos) while giving notebook users the tabular export they expect. No always-on heavy dep.",
+   "needs_maintainer": false
+  },
+  {
+   "question": "transient unit: one global unit or per-call following the horizon?",
+   "recommendation": "Per-call: `transient` is time for flows, steps for maps (mirroring how each family is parameterized); the Poincar\u00e9 'skip crossings' concept becomes its own `skip_crossings`. Documented in the glossary and enforced by the naming gate.",
+   "rationale": "A single global unit would be a lie for at least one family; per-call matches the horizon the user already thinks in. The key fix is killing the FOUR spellings (transient/burn_in/n_cut/implicit) and the cross-call ambiguity, not forcing one unit.",
+   "needs_maintainer": false
+  },
+  {
+   "question": "kaplan_yorke_dimension home: stays in lyapunov or moves to dimensions?",
+   "recommendation": "Keep it discoverable from both: it lives in `analysis.lyapunov` (computed from a spectrum) and is re-exported into `analysis.dimensions`; also surfaced as `LyapunovSpectrum.kaplan_yorke` so the common path needs no second call.",
+   "rationale": "It is conceptually a dimension but operationally a function of a Lyapunov spectrum; dual-homing + the property on the result satisfies both mental models without picking a fight.",
+   "needs_maintainer": false
+  }
+ ],
+ "perf_wins": [
+  "Poincar\u00e9 section, R\u00f6ssler 500 crossings: ~13.8 s \u2192 ~0.13 s (\u2248100\u00d7) by wiring the already-built Rust integrate_events (O(h^4) Hermite) through FFI + run.crossings(); crossings identical to the Python refinement to ~1e-11 (validated by the existing event.rs parity test).",
+  "Bifurcation diagram over a PoincareMap (R\u00f6ssler, 20 values): ~34.1 s \u2192 seconds \u2014 inherits the Poincar\u00e9 fix automatically since every crossing now costs one engine call instead of dozens of per-dt integrate() round-trips.",
+  "basins_of_attraction over a 2-D flow (Lissajous2D, 900 cells): ~30.7 s \u2192 ~1 s range (\u224820\u201350\u00d7) via the batch-ahead step buffer that amortizes solver-resolve/grid-build/provenance over a 256-step chunk (one FFI call); answer-identical for fixed dt. The durable Rust OdeStepper later makes this ~30\u00d7 with no buffering heuristics.",
+  "ContinuousSystem.step(dt) repeated at constant dt: ~45 \u00b5s \u2192 <5 \u00b5s amortized (the buffer), removing the per-dt tax that today makes <10% of Poincar\u00e9 wall-time the actual Rust integration.",
+  "Map bifurcation diagram (Logistic, 600 values \u00d7 120 iters): ~2.8 s \u2192 sub-second (\u22485\u201320\u00d7) by routing the sweep through the existing Rust iterate engine (rayon) instead of a Python step() loop.",
+  "run.integrate per-step residual: \u226530% cut by hoisting loop-invariants \u2014 resolve the solver + Jacobian decision once at reinit (was 58,553 resolves per 100-crossing section), skip provenance on internal stepping, special-case the 2-element single-step output grid."
+ ],
+ "viz_contract_summary": "A three-part, pure-Python, no-backend contract so the future multi-backend suite plugs in by construction. (1) A serializable PlotSpec IR (viz/spec.py): `layers` (each kind + channel\u2192ndarray data + neutral style), typed `Axis` per dimension (label/scale\u2208{linear,log,symlog}/limits/ticks/tickformat), title, ndim, aspect, annotations (reference lines like logistic r\u2081=3), and meta \u2014 with `to_dict`/`from_dict` round-tripping arrays\u2194lists, and tweak methods (relabel/rescale/limits/ticks/style) that MUTATE THE SPEC (so 'set xscale=log' is identical across every backend). The semantic plot type is a CLOSED `PlotKind` enum the contract owns up front (TIME_SERIES, PHASE_PORTRAIT_2D/3D, SPACETIME, BIFURCATION, ORBIT_DIAGRAM, COBWEB, RETURN_MAP, POINCARE_SECTION, BASINS_IMAGE, RECURRENCE_PLOT, POWER_SPECTRUM, SCALING_FIT, DIAGNOSTIC_CURVE, LINE_FAMILY, HISTOGRAM_NULL, ENSEMBLE_ANIMATION); an animation is just a PlotSpec whose layers carry a leading `frame` axis (a non-animating backend renders the final frame). (2) Every Trajectory and result grows `to_plot_spec() -> PlotSpec` (3\u20138 lines, NEVER imports a plot lib) plus `.plot(...)` sugar via a `Plottable` mixin; Trajectory auto-dispatches kind on dimensionality (the logic currently hand-rolled in docs/_tooling/figures.py). The one behavioral change made now: poincare_section/PoincareMap return a result carrying POINCARE_SECTION intent so a renderer never mistakes a section for a flow. (3) Backends are renderers registered through a NEW `registry.renderers = Registry('renderer')` (mirroring analyses/transforms, discovered via the same entry-point machinery); `spec.render(backend='matplotlib'|'plotly'|'threejs')` resolves by name. Until a backend ships, `.plot()` raises `VisualizationNotInstalled` and `_repr_mimebundle_` no-ops. The existing 814-line docs figure tooling is rewritten to consume specs and becomes the matplotlib backend's golden regression oracle. The crucial enabler is the ONE ScalingResult schema (estimate/stderr/abscissa/ordinate/fit_region/intercept) so a single .plot.scaling() renders the whole dimension/lyapunov-from-data/expansion-entropy/Cao/FNN family.",
+ "migration_plan": "ONE loud-clean-break v4.0 (full license to break), softened by a thin moved-to shim deleted in v4.1. Sequencing de-risks the whole swarm by ordering breakage last: (Phase 1, ADDITIVE, zero breakage) ship AnalysisResult/ScalingResult + .plot stub, the PlotSpec IR + renderers registry, the object accessors + system.run, the TSDynamicsError hierarchy, and wire mypy/doctest CI jobs in non-blocking mode \u2014 none of this changes a public call. (Phase 2, PERF, answer-preserving) wire integrate_events, the step buffer, map-iterate routing, loop-invariant hoist \u2014 pure speedups, byte-identical outputs, no signature changes. (Phase 3, BREAK) land the naming/first-arg unification and the result-wrapping of bare returns BEHIND the shim: `tsdynamics/_migration.py` exposes a module-`__getattr__` over a `_MOVED = {old: (new, why)}` table that raises a precise 'renamed to X in v4.0 (why); removed in v4.1' AttributeError for every renamed symbol, and an `@aliased_kwargs` decorator that raises a one-line TypeError for every renamed kwarg (sys/x/series/observable/source/map_sys\u2192system/data; n_exp\u2192k; burn_in/n_cut\u2192transient). What a shim CAN'T paper over is a TRUE clean break but mostly transparent: bare\u2192result objects keep `__array__`/`__float__`/`__int__`/`__iter__`/`__getitem__` so `np.asarray(spec)`, `float(d)`, `for fp in fps`, `fps[0]` all still work; the transient-unit normalization and lyapunov_spectrum's **kwargs\u2192explicit-signature get migration-table rows + codemod coverage but no runtime alias. Ship alongside: `docs/migration/v3-to-v4.md` (one row per renamed symbol/kwarg/verb) and `scripts/migrate_v3_to_v4.py` (libcst codemod for the mechanical renames: sys=\u2192system=, x=/series=\u2192data=, orbit_diagram\u2192bifurcation_diagram, .integrate/.iterate\u2192.run) \u2014 the codemod doubles as a completeness test of the rename table. (Phase 4, ENFORCE) flip mypy/doctest/naming/result-contract CI gates to blocking. Cut v4.0 with the shim active; v4.1 deletes `_migration.py`. Net: the few real v3 users get a one-line fix (or a one-command codemod run) for every breakage, the redesign is never frozen in deprecation amber, and CI prevents the inconsistency from ever creeping back.",
+ "phases": [
+  {
+   "id": "P1",
+   "name": "Foundations \u2014 the result model, the interface, and the viz seam (additive, zero breakage)",
+   "summary": "Lay every structural keystone WITHOUT breaking a single public call: the shared AnalysisResult/ScalingResult base + .plot accessor, the serializable PlotSpec IR + renderers registry + to_plot_spec() on every result, the unified system.run verb + topical accessors + fluent derived builders, the TSDynamicsError hierarchy, and the small hygiene fixes (#117 repr, dead _ode_lyap branch). These are the load-bearing seams the rest of the program hangs on; all are purely additive so they can ship and stabilize before any rename.",
+   "workstream_ids": [
+    "WS-RESULT",
+    "WS-SCALING",
+    "WS-VIZSPEC",
+    "WS-VIZREG",
+    "WS-TOSPEC",
+    "WS-RUNVERB",
+    "WS-ACCESSORS",
+    "WS-FLUENT",
+    "WS-ERRORS",
+    "WS-HYGIENE",
+    "WS-META117"
+   ]
+  },
+  {
+   "id": "P2",
+   "name": "Performance \u2014 make the named-slow paths Rust-fast (answer-preserving)",
+   "summary": "Kill the per-dt FFI tax the maintainer named. Wire the already-built-but-dead Rust integrate_events for ~100\u00d7 Poincar\u00e9 (and the bifurcation/return-map paths that inherit it); add the batch-ahead step buffer for basins-over-flows and strobo; route map sweeps through the Rust iterate engine; hoist run.integrate loop-invariants. Every change is byte-identical output \u2014 pure speedup. The durable resumable-stepper is designed here and supersedes the buffer later.",
+   "workstream_ids": [
+    "WS-CROSSKERNEL",
+    "WS-STEPBUF",
+    "WS-MAPITER",
+    "WS-INVHOIST",
+    "WS-STEPPER",
+    "WS-EVENTSAPI"
+   ]
+  },
+  {
+   "id": "P3",
+   "name": "Interface unification \u2014 one calling convention, one navigable tree (the break)",
+   "summary": "Land the breaking-but-shimmed redesign: one first-argument convention (system/data) and one kwarg vocabulary across all analyses, lyapunov_spectrum's real signature, wrap every bare return into a result object, surface the analysis sub-namespaces + curate the top-level __all__, fix submodule reachability + rehome WrappedSystem, give Poincar\u00e9 a named viz-ready entry point, and ship the loud moved-to migration shim + codemod. All renames ride behind the shim so v3 callers get a one-line fix.",
+   "workstream_ids": [
+    "WS-REACH",
+    "WS-CONV",
+    "WS-WRAP",
+    "WS-NAMESPACE",
+    "WS-POINCARE-API",
+    "WS-VOCAB",
+    "WS-MIGRATE"
+   ]
+  },
+  {
+   "id": "P4",
+   "name": "Standards enforcement & polish (lock it in)",
+   "summary": "Make the quality gates real and permanent so the consistency can't regress: drive mypy --strict 727\u21920 and gate it in CI, run doctests in CI, complete docstrings (Parameters/Returns/runnable Examples), and add the registry-driven meta-QA gates (naming, errors, result-contract) that sweep every new system/analysis with zero test edits. Finally, rewrite the docs figure tooling onto PlotSpec as the matplotlib backend's golden oracle.",
+   "workstream_ids": [
+    "WS-MYPY",
+    "WS-DOCS",
+    "WS-RESULT-GATE",
+    "WS-NAMEGATE",
+    "WS-ERRGATE",
+    "WS-DOCSFIG"
+   ]
+  }
+ ],
+ "workstreams": [
+  {
+   "id": "WS-RESULT",
+   "title": "AnalysisResult base + .plot accessor stub + provenance",
+   "track": "STRUCT",
+   "tier": 1,
+   "slug": "analysis-result-base",
+   "owns": [
+    "src/tsdynamics/analysis/_result.py",
+    "tests/test_analysis_result.py"
+   ],
+   "acceptance": "analysis/_result.py defines a frozen-dataclass AnalysisResult with _repr_fields-driven __repr__ + _repr_html_, .summary() (human readout + interpretation line), .to_dict() (stdlib), .to_frame() (lazy pandas, soft dep tsdynamics[frame] with install hint), a .plot accessor (callable AND a namespace of typed methods, raising VisualizationNotInstalled until a backend registers), and .meta built from SystemBase._provenance(). Unit tests cover repr/summary/to_dict and the plot-stub error.",
+   "effort": "M",
+   "rationale": "The single keystone every other result and the viz suite hang on; purely additive.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-SCALING",
+   "title": "ScalingResult canonical schema (estimate/abscissa/ordinate/fit_region)",
+   "track": "STRUCT",
+   "tier": 2,
+   "slug": "scaling-result-schema",
+   "owns": [
+    "src/tsdynamics/analysis/_result.py"
+   ],
+   "acceptance": "ScalingResult(AnalysisResult) exposes ONE schema: estimate, stderr, abscissa, ordinate, fit_region, intercept, __float__, local_slopes, scaling_window; a generic .plot.scaling() renders any instance. Round-trip + __float__ tested.",
+   "effort": "S",
+   "rationale": "Collapses 5 incompatible scaling-curve field schemes into one so generic plotting is possible \u2014 the concrete viz unblock.",
+   "depends_on": [
+    "WS-RESULT"
+   ]
+  },
+  {
+   "id": "WS-VIZSPEC",
+   "title": "PlotSpec IR + PlotKind enum + tweak API (pure dataclasses, no plot deps)",
+   "track": "VIZREADY",
+   "tier": 1,
+   "slug": "plotspec-ir",
+   "owns": [
+    "src/tsdynamics/viz/spec.py"
+   ],
+   "acceptance": "viz/spec.py defines PlotSpec/Layer/Axis/Annotation/PlotKind/Plottable; relabel/rescale/limits/ticks/style mutate-and-chain; to_dict/from_dict round-trips arrays\u2194lists; no matplotlib/plotly import anywhere; `import tsdynamics` still pulls no plot library.",
+   "effort": "M",
+   "rationale": "The backend-agnostic serializable contract the whole deferred viz suite registers against.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-VIZREG",
+   "title": "renderers registry + entry-point discovery (mirror analyses/transforms)",
+   "track": "VIZREADY",
+   "tier": 2,
+   "slug": "renderers-registry",
+   "owns": [
+    "src/tsdynamics/registry.py",
+    "src/tsdynamics/viz/__init__.py"
+   ],
+   "acceptance": "registry.renderers = Registry('renderer') added next to analyses/transforms; spec.render(backend) resolves via it with a helpful KeyError; viz/__init__ calls register_entry_points(registry.renderers, 'tsdynamics.renderers'); the registry meta-QA sweep covers renderers.",
+   "effort": "S",
+   "rationale": "Lets a future backend plug in via the proven entry-point machinery with zero core change.",
+   "depends_on": [
+    "WS-VIZSPEC"
+   ]
+  },
+  {
+   "id": "WS-TOSPEC",
+   "title": "to_plot_spec() on Trajectory + every result; Poincar\u00e9 section intent",
+   "track": "VIZREADY",
+   "tier": 2,
+   "slug": "to-plot-spec",
+   "owns": [
+    "src/tsdynamics/data/trajectory.py",
+    "src/tsdynamics/analysis/**",
+    "src/tsdynamics/derived/poincare.py"
+   ],
+   "acceptance": "Trajectory (auto dim-dispatch + kind override) and OrbitDiagram/DimensionResult/RecurrenceMatrix/RQAResult/GALIResult/BasinsResult/ReturnMap/LyapunovFromData/SurrogateTest each emit a correct PlotSpec; poincare_section/PoincareMap carry POINCARE_SECTION intent; a property test asserts every result round-trips its spec; no behavior change beyond the section result.",
+   "effort": "L",
+   "rationale": "Makes the data self-describing so a renderer needs no per-result special-casing.",
+   "depends_on": [
+    "WS-VIZSPEC",
+    "WS-RESULT",
+    "WS-SCALING"
+   ]
+  },
+  {
+   "id": "WS-RUNVERB",
+   "title": "Unify produce-a-trajectory under system.run()",
+   "track": "IFACE",
+   "tier": 1,
+   "slug": "run-verb",
+   "owns": [
+    "src/tsdynamics/families/continuous.py",
+    "src/tsdynamics/families/discrete.py",
+    "src/tsdynamics/families/protocol.py"
+   ],
+   "acceptance": "Lorenz().run(final_time=...) and Henon().run(n=...) both return a Trajectory dispatching on is_discrete; .integrate/.iterate/.trajectory remain aliases; protocol doc lists .run as THE producer verb; quick-start updated.",
+   "effort": "S",
+   "rationale": "One verb across families removes the flow\u2192map AttributeError trap; additive (aliases kept).",
+   "depends_on": []
+  },
+  {
+   "id": "WS-ACCESSORS",
+   "title": "Object-side topical accessor layer (additive)",
+   "track": "IFACE",
+   "tier": 2,
+   "slug": "topical-accessors",
+   "owns": [
+    "src/tsdynamics/families/base.py",
+    "src/tsdynamics/families/_accessors.py"
+   ],
+   "acceptance": "system.lyap/.dims/.recurrence/.chaos/.surrogate/.entropy cached accessors delegate to the free functions with the system bound; first-class verbs system.fixed_points()/.poincare(...)/.tangent(k)/.project(...)/.ensemble() present; tab on `system.` shows grouped accessors; no behavior change vs the free functions.",
+   "effort": "M",
+   "rationale": "Makes the analysis toolkit discoverable from a system in hand without 60 flat methods.",
+   "depends_on": [
+    "WS-RUNVERB"
+   ]
+  },
+  {
+   "id": "WS-FLUENT",
+   "title": "Fluent derived-builder methods on systems",
+   "track": "IFACE",
+   "tier": 2,
+   "slug": "fluent-derived",
+   "owns": [
+    "src/tsdynamics/families/_accessors.py",
+    "src/tsdynamics/derived/__init__.py"
+   ],
+   "acceptance": "system.poincare(section='y', at=0.0)/.stroboscope()/.tangent(k)/.project(...)/.ensemble(...) return wrappers reading left-to-right; stroboscope infers its period; poincare_section becomes a convenience over system.poincare(...).run; old PoincareMap path retained.",
+   "effort": "M",
+   "rationale": "Reads left-to-right (sys.poincare(...).run(n=500)) and collapses the class/function duplication.",
+   "depends_on": [
+    "WS-RUNVERB"
+   ]
+  },
+  {
+   "id": "WS-ERRORS",
+   "title": "TSDynamicsError hierarchy + value-naming error standard + kill silent footguns",
+   "track": "POLISH",
+   "tier": 1,
+   "slug": "error-hierarchy",
+   "owns": [
+    "src/tsdynamics/errors.py",
+    "src/tsdynamics/families/base.py",
+    "src/tsdynamics/utils/grids.py",
+    "src/tsdynamics/analysis/**"
+   ],
+   "acceptance": "tsdynamics.errors defines TSDynamicsError + leaves multiply-inheriting stdlib types (InvalidParameterError(ValueError), InvalidInputError(TypeError), ConvergenceError, BackendError); final_time<=0/dt<=0/too-short-data/unknown-kwargs/unknown-attr all raise a value-naming message (names bad value, lists valid options/rule, suggests fix); numpy/engine internals wrapped at the public boundary; `except ValueError` still catches.",
+   "effort": "L",
+   "rationale": "Replaces leaked tracebacks and silent garbage with domain errors; foundational for the error gate.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-HYGIENE",
+   "title": "Hygiene PR: dead _ode_lyap branch + stale config",
+   "track": "POLISH",
+   "tier": 1,
+   "slug": "hygiene",
+   "owns": [
+    "src/tsdynamics/derived/tangent.py",
+    "pyproject.toml"
+   ],
+   "acceptance": "the unreachable _ode_lyap branch in derived/tangent.py (2 reads, 0 assignments) is removed; the unused pywt mypy override dropped; ruff stays green.",
+   "effort": "S",
+   "rationale": "Removes a latent AttributeError and config rot; trivially independent.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-META117",
+   "title": "Fix MetaStore.__repr__ (#117) to show latest values",
+   "track": "POLISH",
+   "tier": 1,
+   "slug": "metastore-repr",
+   "owns": [
+    "src/tsdynamics/families/base.py",
+    "tests/test_metastore_repr.py"
+   ],
+   "acceptance": "MetaStore reprs latest value per key with an (xN) annotation for overwritten keys (e.g. MetaStore(system='lorenz' (x2), dt=0.01)) instead of the current record-COUNTS at base.py:199-201; regression test asserts values appear and overwritten keys are annotated; no change to __getitem__/latest().",
+   "effort": "S",
+   "rationale": "A user-filed bug making provenance look empty in notebooks; one-line, repr-only.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-CROSSKERNEL",
+   "title": "Wire Rust integrate_events \u2192 run.crossings \u2192 ~100\u00d7 Poincar\u00e9/return/strobo",
+   "track": "PERF",
+   "tier": 1,
+   "slug": "crossing-kernel",
+   "owns": [
+    "crates/tsdyn-core/src/lib.rs",
+    "crates/tsdyn-core/src/bridge.rs",
+    "src/tsdynamics/engine/run.py",
+    "src/tsdynamics/derived/poincare.py",
+    "src/tsdynamics/derived/_crossings.py",
+    "src/tsdynamics/analysis/orbits/poincare.py",
+    "src/tsdynamics/analysis/orbits/return_map.py",
+    "tests/test_poincare_perf.py"
+   ],
+   "acceptance": "a new integrate_events_dense pyfunction is registered in tsdyn-core/src/lib.rs (today only 5 integrate fns / 11 pyfunctions are wired; integrate_events is dead code in event.rs); run.crossings() builds the one-output g(u,t)=normal\u00b7u-offset tape via lower_expressions; PoincareMap.trajectory(500) on Rossler drops from ~13.8 s to the ~0.13 s range (>=50\u00d7); crossing times/states match the Python refinement to <1e-9; return_map(kind='poincare') and StroboscopicMap route through it; DDE/no-RHS systems keep the Python fallback; divergence still raises RuntimeError.",
+   "effort": "L",
+   "rationale": "Directly answers the maintainer's named complaint by connecting an already-validated native engine.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-STEPBUF",
+   "title": "Batch-ahead buffer in ContinuousSystem.step() (kill per-dt integrate tax)",
+   "track": "PERF",
+   "tier": 1,
+   "slug": "step-buffer",
+   "owns": [
+    "src/tsdynamics/families/continuous.py"
+   ],
+   "acceptance": "step(dt) repeated at constant dt drops from ~45 \u00b5s to <5 \u00b5s amortized by integrating a ~256-step chunk in one FFI call and handing them out; basins_of_attraction over a 2-D flow >=20\u00d7 faster; buffer invalidated on set_state/reinit/dt-change; results bit-identical for fixed-step methods, within tol for adaptive; no Rust change.",
+   "effort": "S",
+   "rationale": "Near-free large speedup for the incremental FSM/strobo paths the event engine can't serve.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-MAPITER",
+   "title": "Route map orbit_diagram/basins through the Rust iterate engine",
+   "track": "PERF",
+   "tier": 2,
+   "slug": "map-iterate",
+   "owns": [
+    "src/tsdynamics/analysis/orbits/orbit_diagram.py",
+    "src/tsdynamics/analysis/basins/attractors.py",
+    "src/tsdynamics/engine/run.py"
+   ],
+   "acceptance": "orbit_diagram over a DiscreteMap (Logistic 600\u00d7120) >=5\u00d7 faster and numerically identical; map basins use iterate_map/ensemble where applicable; carry_state semantics (last orbit row \u2192 next IC) preserved.",
+   "effort": "M",
+   "rationale": "Map sweeps already have a rayon engine path; stop looping step() in Python.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-INVHOIST",
+   "title": "Hoist loop-invariants out of run.integrate's per-call path",
+   "track": "PERF",
+   "tier": 2,
+   "slug": "invariant-hoist",
+   "owns": [
+    "src/tsdynamics/engine/run.py",
+    "src/tsdynamics/families/continuous.py"
+   ],
+   "acceptance": "solver-resolve + Jacobian decision resolved once at reinit and cached on the problem; internal stepping skips _provenance; the 2-element single-step output grid special-cased; per-step residual cost cut >=30% with identical results (measured on a step() microbench); provenance retained on the final user-facing Trajectory.",
+   "effort": "S",
+   "rationale": "Removes the 58k-redundant-resolves-per-section overhead that dominates residual step cost.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-STEPPER",
+   "title": "Resumable Rust OdeStepper handle (durable replacement for buffering)",
+   "track": "PERF",
+   "tier": 3,
+   "slug": "resumable-stepper",
+   "owns": [
+    "crates/tsdyn-core/src/lib.rs",
+    "crates/tsdyn-core/src/bridge.rs",
+    "crates/tsdyn-engine/src/event.rs",
+    "src/tsdynamics/engine/run.py",
+    "src/tsdynamics/families/continuous.py"
+   ],
+   "acceptance": "an opaque engine stepper (built tape + Box<dyn Solver> + SolverState) exposes advance(dt) and advance_to_event(g); ContinuousSystem.step()/PoincareMap use it; basins-over-flows ~30\u00d7 faster; GIL/lifetime-safe; results match the batch path; supersedes WS-STEPBUF's buffer (which is then removed).",
+   "effort": "L",
+   "rationale": "The clean end-state that retires the buffering heuristic; larger FFI surface so it lands after the cheap wins.",
+   "depends_on": [
+    "WS-STEPBUF"
+   ]
+  },
+  {
+   "id": "WS-EVENTSAPI",
+   "title": "Optional general events= API (scipy-shaped) for analyses",
+   "track": "PERF",
+   "tier": 3,
+   "slug": "events-api",
+   "owns": [
+    "src/tsdynamics/engine/run.py",
+    "src/tsdynamics/families/continuous.py",
+    "src/tsdynamics/derived/poincare.py"
+   ],
+   "acceptance": "system.run(events=[...]) exposes the wired event engine (multiple/terminal events, direction) for A-RQA/A-BASIN/arbitrary stopping; PoincareMap is one consumer; documented and tested against the Python fallback.",
+   "effort": "M",
+   "rationale": "Generalizes the wired event engine beyond Poincar\u00e9; future-proofs basins/RQA stopping conditions.",
+   "depends_on": [
+    "WS-CROSSKERNEL"
+   ]
+  },
+  {
+   "id": "WS-REACH",
+   "title": "Fix submodule reachability + single-home duplicated symbols + rehome WrappedSystem",
+   "track": "STRUCT",
+   "tier": 1,
+   "slug": "reachability-rehome",
+   "owns": [
+    "src/tsdynamics/__init__.py",
+    "src/tsdynamics/families/__init__.py",
+    "src/tsdynamics/derived/__init__.py"
+   ],
+   "acceptance": "ts.transforms reachable + in top-level __all__; ts.engine/ts.solvers reachable and docstring-flagged internal; WrappedSystem canonical in families (re-exported from derived); each of Trajectory/Box/Ball/Grid has one documented canonical home; all existing imports still resolve.",
+   "effort": "S",
+   "rationale": "Pure additive bug-fix: a whole transform layer is invisible to ts.<TAB> today.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-CONV",
+   "title": "Unify the calling convention across all analyses (first-arg, vocabulary, lyapunov sig)",
+   "track": "IFACE",
+   "tier": 1,
+   "slug": "calling-convention",
+   "owns": [
+    "src/tsdynamics/analysis/**",
+    "tests/test_calling_convention.py"
+   ],
+   "acceptance": "every analysis takes system or data as first positional; shared kwargs ic/seed/transient/final_time/n/dt/component/region with one unit each; lyapunov_spectrum has a documented top-level signature (no **kwargs; n_exp\u2192k); zero_one_test takes a system (data= overload); seed= added to orbit_diagram/poincare_section/return_map/basins_of_attraction; basins grid\u2192region; ts.data.region([(lo,hi,n),...]) added; a signature-lint test bans sys/map_sys/observable/source/x/series.",
+   "effort": "L",
+   "rationale": "The core interface fix \u2014 turns nine first-arg spellings into two and gives the flagship analysis a real signature.",
+   "depends_on": [
+    "WS-RESULT",
+    "WS-VOCAB"
+   ]
+  },
+  {
+   "id": "WS-WRAP",
+   "title": "Wrap bare returns + collection results; migrate subpackages onto the base",
+   "track": "IFACE",
+   "tier": 2,
+   "slug": "wrap-returns",
+   "owns": [
+    "src/tsdynamics/analysis/**",
+    "tests/test_analysis_registry.py"
+   ],
+   "acceptance": "lyapunov_spectrum\u2192LyapunovSpectrum (__array__, .kaplan_yorke); max_lyapunov/zero_one_test/estimate_period/optimal_delay\u2192ScalarResult (with dropped context like K\u2208[0,1], m/base/normalized); embed\u2192Embedding; fixed_points/periodic_orbits\u2192FixedPointSet/OrbitSet (iter/getitem/len + stable/unstable + to_frame/plot); DimensionResult/LyapunovFromData/ExpansionEntropyResult/GALI/Cao/FNN reparented onto ScalingResult with domain-name @property aliases; all 12 subpackages migrated; the registry-QA guard asserts every registered analysis returns an AnalysisResult with .meta.",
+   "effort": "XL",
+   "rationale": "Makes results self-describing/exportable/plottable while preserving dunder coercion for back-compat.",
+   "depends_on": [
+    "WS-RESULT",
+    "WS-CONV"
+   ]
+  },
+  {
+   "id": "WS-NAMESPACE",
+   "title": "Surface analysis sub-namespaces + curate the top-level __all__",
+   "track": "STRUCT",
+   "tier": 2,
+   "slug": "namespace-curate",
+   "owns": [
+    "src/tsdynamics/__init__.py",
+    "src/tsdynamics/analysis/__init__.py"
+   ],
+   "acceptance": "ts.analysis.<TAB> shows the ~10 category subpackages; each lists its right estimators; flat re-exports retained; top-level __all__ shrunk to ~28 curated names with the ~6 headline analyses promoted (bifurcation_diagram/basins aliases added); docs nav mirrors the tree.",
+   "effort": "M",
+   "rationale": "scipy-style discoverability; the structure already exists in code and is simply surfaced.",
+   "depends_on": [
+    "WS-REACH",
+    "WS-CONV"
+   ]
+  },
+  {
+   "id": "WS-POINCARE-API",
+   "title": "Named viz-ready poincare_section entry point",
+   "track": "IFACE",
+   "tier": 2,
+   "slug": "poincare-api",
+   "owns": [
+    "src/tsdynamics/analysis/orbits/poincare.py",
+    "src/tsdynamics/derived/poincare.py"
+   ],
+   "acceptance": "poincare_section(system, plane=('y', 0.0, 'up'), n=..., transient=..., seed=...) replaces the cryptic plane=(idx,value) tuple, returns a PoincareSection carrying POINCARE_SECTION intent + .plot; old PoincareMap().trajectory path retained; routes through the fast crossing kernel.",
+   "effort": "M",
+   "rationale": "Readable plane spec + viz-ready result; ties the IFACE and VIZREADY work to the fast path.",
+   "depends_on": [
+    "WS-CONV",
+    "WS-TOSPEC",
+    "WS-CROSSKERNEL"
+   ]
+  },
+  {
+   "id": "WS-VOCAB",
+   "title": "Frozen naming glossary",
+   "track": "POLISH",
+   "tier": 1,
+   "slug": "naming-glossary",
+   "owns": [
+    "docs/contributing/glossary.md"
+   ],
+   "acceptance": "docs/contributing/glossary.md fixes the canonical kwarg for every recurring concept (system/data first-arg, ic, seed, transient[time for flows/steps for maps], final_time, n, dt, dimension, delay, theiler, n_neighbors) with one spelling + one unit each; homonyms carved out and documented (gali's k is an order, not a neighbour count).",
+   "effort": "S",
+   "rationale": "The single source of truth the convention work and the naming gate both reference.",
+   "depends_on": []
+  },
+  {
+   "id": "WS-MIGRATE",
+   "title": "v3\u2192v4 loud moved-to shim + migration docs + libcst codemod",
+   "track": "MIGRATE",
+   "tier": 2,
+   "slug": "migration-shim",
+   "owns": [
+    "src/tsdynamics/_migration.py",
+    "src/tsdynamics/__init__.py",
+    "docs/migration/v3-to-v4.md",
+    "scripts/migrate_v3_to_v4.py",
+    "tests/test_migration.py"
+   ],
+   "acceptance": "_migration.py raises a precise moved-to AttributeError for every renamed symbol (module __getattr__ over _MOVED) and a one-line TypeError for every renamed kwarg (@aliased_kwargs: sys/x/series/observable/source/map_sys\u2192system/data, n_exp\u2192k, burn_in/n_cut\u2192transient); docs/migration/v3-to-v4.md table covers all renames/verbs; scripts/migrate_v3_to_v4.py (libcst) rewrites the mechanical renames; a test asserts every renamed old name raises pointing to the new name; shim scheduled for deletion in v4.1.",
+   "effort": "M",
+   "rationale": "Delivers all four sibling dossiers' renames safely \u2014 a kind break, one-line fixes, codemod-completeness-tested.",
+   "depends_on": [
+    "WS-VOCAB",
+    "WS-CONV",
+    "WS-NAMESPACE"
+   ]
+  },
+  {
+   "id": "WS-MYPY",
+   "title": "Make mypy --strict honest and CI-gated (727\u21920)",
+   "track": "POLISH",
+   "tier": 2,
+   "slug": "mypy-strict",
+   "owns": [
+    "src/tsdynamics/**/*.py",
+    "pyproject.toml",
+    ".github/workflows/",
+    "CLAUDE.md",
+    "CONTRIBUTING.md"
+   ],
+   "acceptance": "mypy --strict src/tsdynamics exits 0 (annotate the 284 missing defs; typed Protocol or documented type:ignore[override] for the 175 map _step/_jacobian overrides; fix genuine attr-defined; drop stale pywt override); a typecheck CI job runs on PRs; CLAUDE.md pre-push block + CONTRIBUTING flipped from 'advisory' to 'required'.",
+   "effort": "L",
+   "rationale": "The advertised type safety is currently fiction (727 errors, gated nowhere) and hides a real latent bug.",
+   "depends_on": [
+    "WS-HYGIENE"
+   ]
+  },
+  {
+   "id": "WS-DOCS",
+   "title": "Docstring completeness + doctest CI gate",
+   "track": "POLISH",
+   "tier": 2,
+   "slug": "docstrings-doctest",
+   "owns": [
+    "src/tsdynamics/**/*.py",
+    ".github/workflows/ci.yml",
+    ".github/workflows/nightly.yml"
+   ],
+   "acceptance": "every public callable has NumPy Parameters+Returns+a runnable Examples; lyapunov_spectrum's explicit signature is documented; pytest --doctest-modules runs a curated fast subset in ci.yml + the full 33-file set nightly; a docstring gate asserts the three sections exist on every registered analysis.",
+   "effort": "M",
+   "rationale": "10/24 headline analyses lack runnable examples and the 33 doctest files run nowhere today.",
+   "depends_on": [
+    "WS-VOCAB",
+    "WS-CONV"
+   ]
+  },
+  {
+   "id": "WS-RESULT-GATE",
+   "title": "Result-object contract test (provenance + export + plot seam)",
+   "track": "POLISH",
+   "tier": 3,
+   "slug": "result-gate",
+   "owns": [
+    "tests/test_analysis_registry.py",
+    "tests/test_polish_standards.py"
+   ],
+   "acceptance": "registry-driven: every registered analysis returns an object carrying .meta/.summary()/.to_dict()/the .plot seam; scaling results expose canonical (abscissa,ordinate,fit_region,estimate,stderr); fails if a new analysis returns a bare value or a hand-rolled result without the contract.",
+   "effort": "S",
+   "rationale": "Stops the 28-hand-rolled-results pattern from ever reappearing; runs last so it fails loudly on any un-migrated stream.",
+   "depends_on": [
+    "WS-WRAP"
+   ]
+  },
+  {
+   "id": "WS-NAMEGATE",
+   "title": "CI naming-gate test",
+   "track": "POLISH",
+   "tier": 3,
+   "slug": "naming-gate",
+   "owns": [
+    "tests/test_polish_standards.py"
+   ],
+   "acceptance": "registry-driven test fails CI if any public signature uses a banned spelling (transient/burn_in/n_cut beyond canonical, the 5-way horizon, delay/tau/lag/max_lag, the 4-way neighbours) or a non-canonical first arg; homonym carve-outs honored.",
+   "effort": "S",
+   "rationale": "Enforces the glossary so consistency can't drift back after the rename.",
+   "depends_on": [
+    "WS-VOCAB",
+    "WS-CONV"
+   ]
+  },
+  {
+   "id": "WS-ERRGATE",
+   "title": "Error-message gate test",
+   "track": "POLISH",
+   "tier": 3,
+   "slug": "error-gate",
+   "owns": [
+    "tests/test_polish_standards.py"
+   ],
+   "acceptance": "asserts the headline wrong-input table (final_time<=0, dt<=0, too-short data, unknown kwarg, unknown attr, wrong-dim ic) raises the right TSDynamicsError subclass with a value-naming message; the silent-footgun cases now raise rather than returning garbage.",
+   "effort": "S",
+   "rationale": "Locks in the error standard against regression.",
+   "depends_on": [
+    "WS-ERRORS"
+   ]
+  },
+  {
+   "id": "WS-DOCSFIG",
+   "title": "Rewrite docs figure tooling onto PlotSpec as the matplotlib golden oracle",
+   "track": "VIZREADY",
+   "tier": 3,
+   "slug": "docs-figures-onspec",
+   "owns": [
+    "docs/_tooling/make_analysis_figures.py",
+    "docs/_tooling/figures.py"
+   ],
+   "acceptance": "the 814-line per-result fig_* functions collapse to result.to_plot_spec().render('matplotlib') + brand styling; their current output becomes the matplotlib backend's golden regression oracle; TSD_DOCS_FIGURES build still passes --strict.",
+   "effort": "M",
+   "rationale": "Proves the spec covers every real plot and gives the future matplotlib backend a free regression suite.",
+   "depends_on": [
+    "WS-TOSPEC"
+   ]
+  }
+ ],
+ "sequencing_notes": "Strict phase ordering is the de-risking lever: P1 (foundations) and P2 (perf) are BOTH fully additive/answer-preserving and can run in parallel from day one \u2014 nothing in them breaks a public call, so they can land and stabilize before any rename. The one cross-phase edge to watch: WS-POINCARE-API (P3) depends on WS-CROSSKERNEL (P2) and WS-TOSPEC (P1), so wire the fast kernel and the spec before giving Poincar\u00e9 its new named entry point. Within P1, WS-RESULT is the universal keystone (everything result-shaped waits on it) and WS-VIZSPEC is the viz keystone; WS-SCALING bridges them. P3 is the only phase that breaks, and it ALL rides behind WS-MIGRATE's shim \u2014 land WS-VOCAB first (it's the source of truth WS-CONV/WS-MIGRATE/WS-NAMEGATE/WS-DOCS all reference), then WS-CONV (signatures), then WS-WRAP (returns), then WS-NAMESPACE/WS-POINCARE-API, then WS-MIGRATE last in the phase to capture the full rename set. P4 gates flip to blocking only AFTER their target work lands (WS-RESULT-GATE after WS-WRAP, WS-NAMEGATE after WS-CONV, WS-ERRGATE after WS-ERRORS, WS-MYPY after WS-HYGIENE) \u2014 wire them non-blocking earlier if convenient. WS-WRAP is the one XL stream; it self-registers per subpackage so it can be split into 12 independent sub-PRs (one per analysis subpackage) with no cross-edits, and the registry-QA guard (WS-RESULT-GATE) is added last so it fails loudly on any subpackage not yet migrated. Keep the proven dev protocol throughout: one issue + one worktree (.claude/worktrees/tsd-<ID> on stream/<ID>-<slug>) + one PR per workstream, append-only on shared files (__init__.py __all__, registry.py, _result.py).",
+ "open_questions_for_maintainer": [
+  "Confirm the dual interface: free functions stay canonical in docs, with object-side accessors (system.lyap.spectrum()) and first-class verbs (system.fixed_points()) as additive convenience \u2014 or do you want the METHOD form to become canonical in the docs and the free functions demoted to a thin convenience layer?",
+  "Confirm system.run() as the one canonical trajectory verb (with .integrate/.iterate/.trajectory kept as permanent aliases) vs. promoting .trajectory() itself \u2014 the two interface dossiers disagreed and I picked .run for fluent chains.",
+  "How aggressively to shrink the top level: ~28 curated names (clean, my recommendation) vs. the conservative 'ADD sub-namespaces but keep the ~52 analysis functions top-level' (less churn, less clean)?",
+  "Confirm the loud moved-to shim for one release (v4.0 raises renamed-to errors, v4.1 deletes the shim) over a pure silent break or full multi-release FutureWarning cycles \u2014 and confirm we ship the libcst codemod.",
+  "Perf sequencing: ship the trivial Python step-buffer now (WS-STEPBUF) and design the resumable Rust OdeStepper (WS-STEPPER) as its durable successor, or jump straight to the Rust handle (cleaner end state, larger FFI surface, later)?",
+  "Expose a general scipy-shaped system.run(events=[...]) so the wired event engine also serves RQA/basins/arbitrary stopping, or only the PoincareMap special case for now?",
+  "Should poincare_section/return_map standardize on a single first-arg (system, coercing a Trajectory internally) or split into system-vs-data entry points, given they legitimately accept either?",
+  "pandas as a soft dep (tsdynamics[frame], lazy import) for .to_frame() \u2014 confirm, with .to_dict() staying stdlib-only?",
+  "Attribute-set validation: raise on an unknown system attribute (lor.sigmaa=99) to match with_params and catch typos, or only warn (some users set scratch attrs)?",
+  "Is the ~6.9 s cold import worth attacking in this program (lazy-load SymEngine/Rust behind module __getattr__), or out of scope for the polish pass?"
+ ]
+}

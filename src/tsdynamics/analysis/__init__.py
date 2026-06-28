@@ -42,6 +42,10 @@ re-exported here so the public surface is flat:
   (basin stability), :func:`basin_entropy`, :func:`uncertainty_exponent` and
   :func:`wada_property` (boundary structure), :func:`continuation` /
   :func:`tipping_points` (global continuation) and :func:`resilience`.
+- :mod:`~tsdynamics.analysis.sampling` — sagitta-based sampling tools:
+  :func:`estimate_dt_from_sagitta` (choose an output ``dt`` for a trajectory) and
+  :func:`sagitta_profile` (the per-point bow off the local chord, e.g. a
+  ``color_by="sagitta"`` field).
 
 Out-of-tree analyses register through the ``tsdynamics.analyses`` entry-point
 group (see :mod:`tsdynamics.plugins`); :func:`discover_plugins` loads them into
@@ -70,6 +74,7 @@ from . import (
     lyapunov,
     orbits,
     recurrence,
+    sampling,
     surrogate,
 )
 
@@ -176,6 +181,7 @@ from .recurrence import (
     rqa,
     windowed_rqa,
 )
+from .sampling import estimate_dt_from_sagitta, sagitta_profile
 from .surrogate import (
     SurrogateEnsemble,
     SurrogateTest,
@@ -204,6 +210,7 @@ _CATEGORY_SUBPACKAGES = (
     "orbits",
     "fixedpoints",
     "basins",
+    "sampling",
 )
 
 __all__ = [
@@ -258,6 +265,7 @@ __all__ = [
     "embed",
     "embedding_dimension",
     "entropy",
+    "estimate_dt_from_sagitta",
     "estimate_period",
     "expansion_entropy",
     "false_nearest_neighbors",
@@ -289,6 +297,7 @@ __all__ = [
     "resilience",
     "return_map",
     "rqa",
+    "sagitta_profile",
     "sample_entropy",
     "surrogate_test",
     "surrogates",
@@ -309,6 +318,7 @@ __all__ = [
     "lyapunov",
     "orbits",
     "recurrence",
+    "sampling",
     "surrogate",
 ]
 

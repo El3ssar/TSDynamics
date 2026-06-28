@@ -243,3 +243,14 @@ are; continuation tracks attractors and their basins across a parameter.
 ::: tsdynamics.analysis.basins.continuation.ContinuationResult
 
 ::: tsdynamics.analysis.basins.continuation.tipping_points
+
+## Sampling
+
+Sagitta-based tools for time-ordered samples: choose an output `dt` (the
+largest stride whose mid-point bow off the chord — the *sagitta* — stays under a
+geometric tolerance), or read the per-point sagitta as a local "how sharply it
+bends" field.
+
+::: tsdynamics.analysis.sampling.sagitta.estimate_dt_from_sagitta
+
+::: tsdynamics.analysis.sampling.sagitta.sagitta_profile

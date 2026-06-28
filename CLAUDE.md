@@ -95,15 +95,15 @@ src/tsdynamics/
 │   ├── recurrence/          # A-RQA: recurrence_matrix (fixed ε / target rate, sparse cKDTree) + rqa (DET/LAM/L_max/ENTR/TT) + windowed_rqa; self-registers into registry.analyses
 │   ├── surrogate/           # A-SURR: surrogates (shuffle/FT/AAFT/IAAFT generators) + time_reversal_asymmetry/nonlinear_prediction_error stats + surrogate_test→SurrogateTest (rank p + sigma); self-registers into registry.analyses
 │   ├── basins/              # A-BASIN: find_attractors/basins_of_attraction (recurrence-FSM AttractorMapper) + basin_fractions (basin stability) + basin_entropy/uncertainty_exponent/wada_property (boundary structure) + continuation/tipping_points + resilience; cell tessellation in _common.py; self-registers into registry.analyses
-│   └── embedding/           # owned by A-EMBED
+│   ├── embedding/           # owned by A-EMBED
+│   └── sampling/            # sagitta tools: estimate_dt_from_sagitta (output-dt selector) + sagitta_profile (per-point bow, the color_by="sagitta" field). NOT registered into registry.analyses (a sampling tool, not a quantifier); SagittaDt result is hidden (not exported)
 ├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
 ├── viz/                      # PlotSpec IR seam + renderers (mpl/plotly/json/threejs) + compose.py (ts.viz.plot)
 ├── systems/
 │   ├── continuous/           # 9 ODE category modules (+ spatial_fields.py 2-D PDEs) + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
 └── utils/
-    ├── grids.py              # make_output_grid (hoisted output-grid builder)
-    └── sagitta_dt.py         # estimate_dt_from_sagitta
+    └── grids.py              # make_output_grid (the single hoisted output-grid builder; sagitta tooling moved to analysis/sampling/)
 
 hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures/viewers (TSD_DOCS_ONLY= subset preview)
 docs/_tooling/equations.py     # symbolic → LaTeX rendering for docs
