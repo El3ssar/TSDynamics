@@ -113,6 +113,7 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
     "fixedpoints": ("test_fixed_points.py", "test_fixed_points_flow_region.py"),
     "orbits": ("test_orbits.py", "test_orbit_diagram_perf.py", "test_poincare_perf.py"),
     "basins": ("test_basins.py",),
+    "sampling": ("test_analysis_sagitta.py",),
     # Lyapunov is cross-cutting (the spectrum feeds the known-value catalogue),
     # so it pulls its dedicated tests *and* the literature catalogue.
     "lyapunov": (

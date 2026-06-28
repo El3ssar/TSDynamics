@@ -173,27 +173,17 @@ def _as_curve(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
 
 
 def _sagitta(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    """Per-point *sagitta*: the perpendicular bow off the local chord.
+    """Per-point **relative** sagitta (bow ÷ chord) of the drawn curve.
 
-    For each interior point ``i`` this is its perpendicular distance to the chord
-    of its neighbours ``(i-1, i, i+1)`` — the per-point, unit-span form of the
-    geometric quantity the engine's sagitta-based Δt selector uses (see
-    :func:`tsdynamics.utils.sagitta_dt.estimate_dt_from_sagitta`): large where the
-    trajectory bends sharply, ~0 on straight runs. Endpoints are 0.
+    Reuses the library's sagitta geometry —
+    :func:`tsdynamics.analysis.sampling.sagitta_profile` — on the drawn points (a
+    single component uses the ``(t, value)`` graph). *Relative* (bow ÷ chord, with
+    per-feature σ-normalization) so it tracks how sharply the trajectory **bends**
+    rather than how fast it moves. Endpoints are 0.
     """
-    curve = _as_curve(t, pts)
-    n = curve.shape[0]
-    sag = np.zeros(n, dtype=float)
-    if n < 3:
-        return sag
-    a, b, c = curve[:-2], curve[1:-1], curve[2:]
-    chord = c - a
-    length = np.linalg.norm(chord, axis=1)
-    unit = chord / np.where(length > 0.0, length, 1.0)[:, None]
-    ab = b - a
-    proj = np.einsum("ij,ij->i", ab, unit)[:, None] * unit
-    sag[1:-1] = np.linalg.norm(ab - proj, axis=1)
-    return sag
+    from tsdynamics.analysis.sampling import sagitta_profile
+
+    return sagitta_profile(_as_curve(t, pts), relative=True)
 
 
 def _curvature(t: np.ndarray, pts: np.ndarray) -> np.ndarray:

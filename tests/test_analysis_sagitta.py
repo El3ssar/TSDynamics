@@ -1,11 +1,15 @@
-"""Tests for ``tsdynamics.utils``."""
+"""Tests for the sagitta tooling in ``tsdynamics.analysis.sampling``."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from tsdynamics.utils import SagittaDt, estimate_dt_from_sagitta
+from tsdynamics.analysis.sampling import estimate_dt_from_sagitta, sagitta_profile
+
+# ``SagittaDt`` is the selector's result container — intentionally NOT on the public
+# surface (not in any ``__all__``); reachable only via its deep module for typing.
+from tsdynamics.analysis.sampling.sagitta import SagittaDt
 
 # ---------------------------------------------------------------------------
 # estimate_dt_from_sagitta
@@ -81,3 +85,30 @@ class TestSagitta:
         y, dt0 = _spiral_3d()
         with pytest.raises(ValueError, match="epsilon"):
             estimate_dt_from_sagitta(y, dt0, epsilon=-1.0)
+
+
+# ---------------------------------------------------------------------------
+# sagitta_profile (the per-point bow, used as a color_by field)
+# ---------------------------------------------------------------------------
+
+
+class TestSagittaProfile:
+    def test_per_point_shape_and_endpoints(self) -> None:
+        y, _ = _spiral_3d(T=500)
+        prof = sagitta_profile(y)
+        assert prof.shape == (y.shape[0],)
+        assert prof[0] == 0.0 and prof[-1] == 0.0  # the span endpoints stay 0
+        assert np.all(np.isfinite(prof))
+
+    def test_relative_is_a_bounded_bend_ratio(self) -> None:
+        y, _ = _spiral_3d(T=500)
+        rel = sagitta_profile(y, relative=True)  # bow / chord
+        assert rel.min() >= 0.0 and rel.max() <= 1.0 + 1e-9
+
+    def test_straight_line_has_zero_sagitta(self) -> None:
+        line = np.column_stack([np.linspace(0, 1, 100), np.linspace(0, 2, 100)])
+        assert np.allclose(sagitta_profile(line), 0.0)
+
+    def test_1d_series_is_treated_as_a_column(self) -> None:
+        prof = sagitta_profile(np.sin(np.linspace(0, 10, 200)))
+        assert prof.shape == (200,) and np.all(np.isfinite(prof))

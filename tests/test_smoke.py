@@ -90,10 +90,13 @@ def test_models_do_not_clutter_top_level_namespace() -> None:
 
 
 def test_utils_public_surface() -> None:
-    from tsdynamics.utils import (  # noqa: F401
-        SagittaDt,
-        estimate_dt_from_sagitta,
-    )
+    import tsdynamics.utils as u
+    from tsdynamics.utils import make_output_grid  # noqa: F401
+
+    # The sagitta tooling moved to ``tsdynamics.analysis.sampling`` (and ``SagittaDt``
+    # is hidden); ``utils`` now exposes only the output-grid helper.
+    assert set(u.__all__) == {"make_output_grid"}
+    from tsdynamics.analysis.sampling import estimate_dt_from_sagitta  # noqa: F401
 
 
 def test_internals_not_in_top_level_all() -> None:

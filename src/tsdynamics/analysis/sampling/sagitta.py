@@ -6,8 +6,12 @@ range of candidate strides, measures the *sagitta* — the perpendicular bow of 
 midpoint of each (i−span, i, i+span) triple off its chord — at a robust
 percentile, then picks the largest stride whose sagitta stays within a geometric
 tolerance.  One-dimensional input is first delay-embedded (lag via AMI, dimension
-via FNN) so the geometric criterion lives in a reconstructed state space.  The
-public surface is :func:`estimate_dt_from_sagitta` returning a :class:`SagittaDt`.
+via FNN) so the geometric criterion lives in a reconstructed state space.
+
+The public surface is :func:`estimate_dt_from_sagitta` (the Δt selector) and
+:func:`sagitta_profile` (the per-point sagitta along a curve — its bow off the
+local chord, used e.g. as a ``color_by`` field).  The result container
+``SagittaDt`` is intentionally not exported.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from scipy.spatial.distance import cdist
 
 from tsdynamics.errors import invalid_value
 
-__all__ = ["SagittaDt", "estimate_dt_from_sagitta"]
+__all__ = ["estimate_dt_from_sagitta", "sagitta_profile"]
 
 
 @dataclass(frozen=True)
@@ -36,33 +40,91 @@ class SagittaDt:
     notes: str = ""  # info / warnings
 
 
+def _sagitta_chord(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-triple ``(sagitta, chord_length)`` for points ``a, b, c``.
+
+    The *sagitta* is the perpendicular bow of the middle point ``b`` off the chord
+    ``a -> c``; the *chord length* is ``|c - a|``.  This is the one geometric
+    kernel shared by the Δt selector (:func:`_compute_sagitta_stats`) and the
+    per-point profile (:func:`sagitta_profile`).
+    """
+    ac = c - a
+    chord = np.linalg.norm(ac, axis=1)
+    unit = np.zeros_like(ac)
+    valid = chord > 0
+    if np.any(valid):
+        unit[valid] = (ac[valid].T / chord[valid]).T
+    ba = b - a
+    proj = np.einsum("ij,ij->i", ba, unit)[:, None] * unit
+    sagitta = np.linalg.norm(ba - proj, axis=1)
+    return sagitta, chord
+
+
 def _compute_sagitta_stats(
     samples: np.ndarray, span: int, percentile_p: float
 ) -> tuple[float, float]:
     """Return (sagitta_percentile, chord_median) for triples at a given span."""
     n = samples.shape[0]
     centers = np.arange(span, n - span, span)
-
-    A = samples[centers - span, :]
-    B = samples[centers, :]
-    C = samples[centers + span, :]
-
-    AC = C - A
-    chord_length = np.linalg.norm(AC, axis=1)
-    unit_chord = np.zeros_like(AC)
+    sagitta, chord_length = _sagitta_chord(
+        samples[centers - span, :], samples[centers, :], samples[centers + span, :]
+    )
     valid = chord_length > 0
-    if np.any(valid):
-        unit_chord[valid] = (AC[valid].T / chord_length[valid]).T
-
-    BA = B - A
-    proj_len = np.einsum("ij,ij->i", BA, unit_chord)
-    proj_vec = (proj_len[:, None]) * unit_chord
-    perp_vec = BA - proj_vec
-    sagitta = np.linalg.norm(perp_vec, axis=1)
-
     s_p = float(np.nanpercentile(sagitta, percentile_p))
     chord_med = float(np.nanmedian(chord_length[valid])) if np.any(valid) else 0.0
     return s_p, chord_med
+
+
+def sagitta_profile(
+    samples: np.ndarray,
+    *,
+    span: int = 1,
+    relative: bool = True,
+    normalize: bool = True,
+) -> np.ndarray:
+    """Per-point *sagitta* along a sampled curve — its local bow off the chord.
+
+    For each interior point ``i`` the sagitta is the perpendicular distance of
+    ``samples[i]`` from the chord through its neighbours ``(i-span, i+span)`` (the
+    same geometry the sagitta-based Δt selector uses, here evaluated at *every*
+    point rather than a strided percentile).  Large where the trajectory bends
+    sharply, ~0 on straight runs; the first/last ``span`` points are 0.
+
+    Parameters
+    ----------
+    samples : np.ndarray, shape (n,) or (n, d)
+        Time-ordered points (a 1-D series is treated as a column).
+    span : int, optional
+        Neighbour offset of the chord ``(i-span, i, i+span)``.  Default 1.
+    relative : bool, optional
+        Divide each bow by its chord length, giving a dimensionless *bend* ratio
+        that is (largely) independent of the local speed/step.  Default ``True``.
+    normalize : bool, optional
+        σ-normalize each feature first (per-feature std, ``ddof=1``) so no single
+        coordinate dominates the geometry.  Default ``True``.
+
+    Returns
+    -------
+    np.ndarray, shape (n,)
+        The per-point sagitta, aligned to ``samples``.
+    """
+    s = np.asarray(samples, dtype=float)
+    if s.ndim == 1:
+        s = s[:, None]
+    n = s.shape[0]
+    out = np.zeros(n, dtype=float)
+    if span < 1 or n < 2 * span + 1:
+        return out
+    if normalize:
+        std = s.std(axis=0, ddof=1)
+        std = np.where(np.isfinite(std) & (std > 0.0), std, 1.0)
+        s = s / std
+    i = np.arange(span, n - span)
+    sagitta, chord = _sagitta_chord(s[i - span], s[i], s[i + span])
+    if relative:
+        sagitta = sagitta / np.where(chord > 0.0, chord, 1.0)
+    out[i] = sagitta
+    return out
 
 
 def _estimate_lag_ami(y: np.ndarray, max_lag: int | None = None, n_bins: int = 16) -> int:

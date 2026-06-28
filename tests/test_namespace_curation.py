@@ -182,6 +182,7 @@ _CATEGORIES = (
     "orbits",
     "fixedpoints",
     "basins",
+    "sampling",
 )
 
 
