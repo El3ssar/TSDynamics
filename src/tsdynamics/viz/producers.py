@@ -144,31 +144,134 @@ def _speed(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return np.asarray(np.linalg.norm(dpts, axis=1), dtype=float)
 
 
+def _acceleration(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Per-point acceleration magnitude ``|d^2(pts)/dt^2|``."""
+    if pts.shape[0] < 3:
+        return np.zeros(pts.shape[0], dtype=float)
+    acc = np.gradient(np.gradient(pts, t, axis=0), t, axis=0)
+    return np.asarray(np.linalg.norm(acc, axis=1), dtype=float)
+
+
+def _arclength(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Cumulative arc length along the drawn curve (starts at 0)."""
+    if pts.shape[0] < 2:
+        return np.zeros(pts.shape[0], dtype=float)
+    seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    return np.concatenate([np.zeros(1), np.cumsum(seg)]).astype(float)
+
+
+def _as_curve(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Return the curve the *bend* fields use (``sagitta`` / ``curvature``).
+
+    A 2-/3-component selection is already a space curve, so use it directly. A
+    single component (a time series) is the graph ``(t, value)`` — using that 2-D
+    curve keeps the bend measures well defined instead of degenerate.
+    """
+    if pts.shape[1] >= 2:
+        return np.asarray(pts, dtype=float)
+    return np.column_stack([np.asarray(t, dtype=float), pts[:, 0].astype(float)])
+
+
+def _sagitta(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Per-point *sagitta*: the perpendicular bow off the local chord.
+
+    For each interior point ``i`` this is its perpendicular distance to the chord
+    of its neighbours ``(i-1, i, i+1)`` — the per-point, unit-span form of the
+    geometric quantity the engine's sagitta-based Δt selector uses (see
+    :func:`tsdynamics.utils.sagitta_dt.estimate_dt_from_sagitta`): large where the
+    trajectory bends sharply, ~0 on straight runs. Endpoints are 0.
+    """
+    curve = _as_curve(t, pts)
+    n = curve.shape[0]
+    sag = np.zeros(n, dtype=float)
+    if n < 3:
+        return sag
+    a, b, c = curve[:-2], curve[1:-1], curve[2:]
+    chord = c - a
+    length = np.linalg.norm(chord, axis=1)
+    unit = chord / np.where(length > 0.0, length, 1.0)[:, None]
+    ab = b - a
+    proj = np.einsum("ij,ij->i", ab, unit)[:, None] * unit
+    sag[1:-1] = np.linalg.norm(ab - proj, axis=1)
+    return sag
+
+
+def _curvature(t: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Per-point Frenet curvature (dimension-general).
+
+    ``κ = sqrt(|r'|^2 |r''|^2 − (r'·r'')^2) / |r'|^3``, on the drawn space curve (a
+    single component uses the ``(t, value)`` graph, like :func:`_sagitta`).
+    """
+    curve = _as_curve(t, pts)
+    if curve.shape[0] < 3:
+        return np.zeros(curve.shape[0], dtype=float)
+    r1 = np.gradient(curve, t, axis=0)
+    r2 = np.gradient(r1, t, axis=0)
+    s1 = np.einsum("ij,ij->i", r1, r1)
+    num = np.sqrt(
+        np.clip(s1 * np.einsum("ij,ij->i", r2, r2) - np.einsum("ij,ij->i", r1, r2) ** 2, 0.0, None)
+    )
+    den = np.power(s1, 1.5)
+    return np.asarray(np.divide(num, den, out=np.zeros_like(num), where=den > 1e-12), dtype=float)
+
+
+#: Named per-point colour fields: ``name -> f(t, drawn_points) -> (T,) values`` for
+#: a layer's ``"c"`` channel. Add a new ``color_by`` name by extending this table.
+_COLOR_FIELDS: dict[str, Callable[[np.ndarray, np.ndarray], np.ndarray]] = {
+    "time": lambda t, pts: np.asarray(t, dtype=float),
+    "index": lambda t, pts: np.arange(pts.shape[0], dtype=float),
+    "speed": _speed,
+    "acceleration": _acceleration,
+    "accel": _acceleration,
+    "arclength": _arclength,
+    "sagitta": _sagitta,
+    "curvature": _curvature,
+}
+
+
+def _color_label(color_by: object) -> str:
+    """Return a short colorbar label for a ``color_by`` request (its name, or ``"value"``)."""
+    if isinstance(color_by, str):
+        return color_by
+    name = getattr(color_by, "__name__", None) if callable(color_by) else None
+    return name if name and name != "<lambda>" else "value"
+
+
 def _color_channel(
-    color_by: str | np.ndarray | None,
+    color_by: str | np.ndarray | Callable[..., np.ndarray] | None,
+    source: Trajectory,
     t: np.ndarray,
     pts: np.ndarray,
 ) -> np.ndarray | None:
     """Resolve a ``color_by`` request into a per-point ``"c"`` channel array.
 
-    ``color_by`` is ``"time"`` (the time vector), ``"speed"`` (the local
-    trajectory speed ``|du/dt|``), an explicit per-point array, or ``None``.
+    ``color_by`` may be a **name** from :data:`_COLOR_FIELDS` (``"time"``,
+    ``"speed"``, ``"sagitta"``, ``"curvature"``, ``"acceleration"``/``"accel"``,
+    ``"arclength"``, ``"index"`` — computed from the drawn points), a **callable**
+    ``f(trajectory) -> array`` (given the whole :class:`~tsdynamics.data.Trajectory`
+    so it can use any named component), an explicit **per-point array**, or
+    ``None``. The result is a 1-D array of length ``len(pts)``; a mismatch raises.
     """
     if color_by is None:
         return None
     if isinstance(color_by, str):
-        if color_by == "time":
-            return np.asarray(t, dtype=float)
-        if color_by == "speed":
-            return _speed(t, pts)
-        raise ValueError(f"unknown color_by={color_by!r}; use 'time', 'speed', or an array.")
-    arr = np.asarray(color_by, dtype=float)
-    if arr.shape[0] != pts.shape[0]:
+        field = _COLOR_FIELDS.get(color_by)
+        if field is None:
+            raise ValueError(
+                f"unknown color_by={color_by!r}; use one of {sorted(_COLOR_FIELDS)}, "
+                f"a per-point array, or a callable f(trajectory) -> array."
+            )
+        c = np.asarray(field(np.asarray(t, dtype=float), pts), dtype=float)
+    elif callable(color_by):
+        c = np.asarray(color_by(source), dtype=float)
+    else:
+        c = np.asarray(color_by, dtype=float)
+    c = c.ravel()
+    if c.shape[0] != pts.shape[0]:
         raise ValueError(
-            f"color_by array length {arr.shape[0]} does not match the "
-            f"{pts.shape[0]} trajectory points."
+            f"color_by produced {c.shape[0]} values but the trajectory has {pts.shape[0]} points."
         )
-    return arr
+    return c
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +283,7 @@ def time_series(
     source: Trajectory,
     *,
     components: Sequence[int | str] | None = None,
-    color_by: str | np.ndarray | None = None,
+    color_by: str | np.ndarray | Callable[..., np.ndarray] | None = None,
     legend: bool = True,
 ) -> PlotSpec:
     """Build an overlaid component-vs-time spec (``TIME_SERIES``).
@@ -197,10 +300,13 @@ def time_series(
     components : sequence of int or str, optional
         Which components to overlay (names when ``variables`` are declared, or
         integer indices).  ``None`` draws every component.
-    color_by : {"time", "speed"} or ndarray, optional
-        Colour each line/scatter by the ``"c"`` channel: the time vector, the
-        local speed ``|du/dt|``, or an explicit per-point array.  ``None`` leaves
-        the layers single-coloured.
+    color_by : str, ndarray, or callable, optional
+        Colour each line/scatter by the ``"c"`` channel. A name —
+        ``"time"``, ``"speed"``, ``"sagitta"``, ``"curvature"``,
+        ``"acceleration"`` (alias ``"accel"``), ``"arclength"`` or ``"index"`` —
+        is computed from the drawn points; a callable ``f(trajectory) -> array``
+        is given the whole trajectory (so it can use any named component); or pass
+        an explicit per-point array.  ``None`` leaves the layers single-coloured.
     legend : bool, optional
         Whether to attach a legend when more than one component is drawn.
         Default ``True``.
@@ -223,7 +329,7 @@ def time_series(
     for idx in sel:
         col = y[:, idx]
         data: dict[str, np.ndarray] = {"x": t, "y": col}
-        c = _color_channel(color_by, t, col[:, None])
+        c = _color_channel(color_by, source, t, col[:, None])
         if c is not None:
             data["c"] = c
             cbar = True
@@ -236,7 +342,7 @@ def time_series(
         y=Axis(label=_label(sel[0], names) if len(sel) == 1 else ""),
         layers=layers,
         legend=Legend() if (legend and len(layers) > 1) else None,
-        colorbar=Colorbar(label="time" if color_by == "time" else "speed") if cbar else None,
+        colorbar=Colorbar(label=_color_label(color_by)) if cbar else None,
         meta=_meta(source),
     )
     return spec.autocolor()
@@ -251,7 +357,7 @@ def phase_portrait(
     source: Trajectory,
     *,
     components: Sequence[int | str] | None = None,
-    color_by: str | np.ndarray | None = None,
+    color_by: str | np.ndarray | Callable[..., np.ndarray] | None = None,
 ) -> PlotSpec:
     """Build a phase portrait over an arbitrary component pair or triple.
 
@@ -268,8 +374,9 @@ def phase_portrait(
     components : sequence of int or str, optional
         Two or three component selectors (names or integer indices) naming the
         display axes.  ``None`` uses the first two (or three) components.
-    color_by : {"time", "speed"} or ndarray, optional
-        Colour the curve/cloud by the ``"c"`` channel (see :func:`time_series`).
+    color_by : str, ndarray, or callable, optional
+        Colour the curve/cloud by the ``"c"`` channel — a named field, a
+        ``f(trajectory) -> array`` callable, or an array (see :func:`time_series`).
 
     Returns
     -------
@@ -298,7 +405,7 @@ def phase_portrait(
     data: dict[str, np.ndarray] = {"x": pts[:, 0], "y": pts[:, 1]}
     if want_3d:
         data["z"] = pts[:, 2]
-    c = _color_channel(color_by, t, pts)
+    c = _color_channel(color_by, source, t, pts)
     cbar = c is not None
     if c is not None:
         data["c"] = c
@@ -313,7 +420,7 @@ def phase_portrait(
         y=Axis(label=_label(sel[1], names)),
         z=Axis(label=_label(sel[2], names)) if want_3d else None,
         layers=[Layer(mark, data)],
-        colorbar=Colorbar(label="time" if color_by == "time" else "speed") if cbar else None,
+        colorbar=Colorbar(label=_color_label(color_by)) if cbar else None,
         meta=_meta(source),
     )
     return spec.autocolor()
