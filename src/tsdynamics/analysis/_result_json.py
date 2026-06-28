@@ -50,11 +50,17 @@ def _jsonify(obj: Any) -> Any:
         return {str(k): _jsonify(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple, set, frozenset)):
         return [_jsonify(v) for v in obj]
+    # An ``int``-backed result (``CountResult`` *is* an ``int``): collapse it to a
+    # plain ``int`` so the jsonified tree carries only native types — never a
+    # result-object identity, and never a stale ``meta`` riding on the subclass.
+    # Checked before the general-result branch (which would expand it via
+    # ``to_dict``).
+    if isinstance(obj, AnalysisResult) and isinstance(obj, int):
+        return int(obj)
     # A nested result object (e.g. an ``Attractor`` inside an ``AttractorSet``):
     # serialize it through its own JSON-friendly ``to_dict`` rather than leaving a
-    # non-serializable object behind.  ``int``-backed results (``CountResult`` *is*
-    # an ``int``) are excluded so they stay native JSON scalars.
-    if isinstance(obj, AnalysisResult) and not isinstance(obj, (int, float, str)):
+    # non-serializable object behind.  ``float``/``str``-backed results stay native.
+    if isinstance(obj, AnalysisResult) and not isinstance(obj, (float, str)):
         return obj.to_dict()
     # A SciPy sparse matrix (the recurrence matrix): emit a COO triplet so it
     # round-trips without densifying to ``O(N^2)``.

@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError, InvalidParameterError
 from tsdynamics.families import DelaySystem
 
 from ... import registry as _registry
@@ -113,11 +114,16 @@ class LyapunovSpectrum(ArrayResult):
 
 
 def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
-    """
-    Kaplan–Yorke (Lyapunov) dimension from a Lyapunov spectrum.
+    r"""Kaplan--Yorke (Lyapunov) dimension from a Lyapunov spectrum.
 
-    ``D_KY = j + (λ₁ + ... + λ_j) / |λ_{j+1}|`` where ``j`` is the largest
-    index with a non-negative cumulative sum (Kaplan & Yorke 1979).
+    .. math::
+
+        D_{KY} = j + \frac{\lambda_1 + \cdots + \lambda_j}{|\lambda_{j+1}|},
+
+    where :math:`j` is the largest index whose cumulative exponent sum is
+    non-negative (Kaplan & Yorke 1979).  Interpolating between the :math:`j`-th
+    and :math:`(j+1)`-th exponents gives a fractional estimate of the attractor's
+    information dimension.
 
     Parameters
     ----------
@@ -136,6 +142,12 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
     --------
     >>> float(kaplan_yorke_dimension([0.906, 0.0, -14.57]))   # Lorenz
     2.062...
+
+    References
+    ----------
+    J. L. Kaplan & J. A. Yorke, "Chaotic behavior of multidimensional difference
+    equations", in *Functional Differential Equations and Approximation of Fixed
+    Points*, Lecture Notes in Mathematics **730**, Springer (1979) 204--227.
     """
     s = np.sort(np.asarray(spectrum, dtype=float))[::-1]
     if s.size == 0 or s[0] < 0.0:
@@ -159,13 +171,13 @@ def lyapunov_spectrum(
     ic: Any | None = None,
     method: str | None = None,
 ) -> LyapunovSpectrum:
-    """
-    Lyapunov spectrum of any system — the uniform, documented entry point.
+    """Lyapunov spectrum of any system — the uniform, documented entry point.
 
     Dispatches to the family implementation (QR tangent dynamics for maps, the
     extended variational system on the engine for ODEs, the engine
     function-space estimator for DDEs), translating this one signature to each
-    family's native keywords.
+    family's native keywords.  The exponents are obtained by Benettin
+    renormalisation of an evolving orthonormal frame (Benettin et al. 1980).
 
     Parameters
     ----------
@@ -198,10 +210,27 @@ def lyapunov_spectrum(
         ``np.asarray(result)``, indexing and iteration work — that also carries
         ``.meta``, ``.summary()`` and the ``.kaplan_yorke`` dimension.
 
+    Raises
+    ------
+    TypeError
+        If ``system`` has no ``lyapunov_spectrum`` implementation (e.g. a derived
+        wrapper — compute the spectrum on the underlying system).
+    ValueError
+        If ``k <= 0``, or a keyword is passed to the wrong family (``final_time``
+        / ``dt`` / ``transient`` / ``method`` for a map; ``n`` for a flow; or a
+        ``method`` for a DDE, which selects its engine via ``backend``).
+
     Examples
     --------
     >>> lyapunov_spectrum(Lorenz(), final_time=300.0)   # [0.91, ~0, -14.57]
     >>> lyapunov_spectrum(Henon(), k=2, n=5000)         # [0.42, -1.62]
+
+    References
+    ----------
+    G. Benettin, L. Galgani, A. Giorgilli & J.-M. Strelcyn, "Lyapunov
+    characteristic exponents for smooth dynamical systems and for Hamiltonian
+    systems; a method for computing all of them", *Meccanica* **15** (1980)
+    9--20 (Part 1) and 21--30 (Part 2).
     """
     method_fn = getattr(system, "lyapunov_spectrum", None)
     if method_fn is None:
@@ -272,14 +301,15 @@ def max_lyapunov(
     ic: Any | None = None,
     seed: int | None = None,
 ) -> ScalarResult:
-    """
-    Maximal Lyapunov exponent by two-trajectory rescaling (Benettin et al. 1976).
+    r"""Maximal Lyapunov exponent by two-trajectory rescaling (Benettin et al. 1976).
 
     Runs a reference and a perturbed copy of the system in lockstep through
     the :class:`~tsdynamics.families.System` protocol — no Jacobian needed, so it
     works for any ODE or map (including ones with non-smooth right-hand
-    sides).  Not available for DDEs (their state cannot be ``set_state``-ed);
-    use ``DelaySystem.lyapunov_spectrum`` instead.
+    sides).  The separation is rescaled back to ``d0`` after every cycle and the
+    accumulated :math:`\ln(d / d_0)` is averaged over elapsed time.  Not
+    available for DDEs (their state cannot be ``set_state``-ed); use
+    ``DelaySystem.lyapunov_spectrum`` instead.
 
     Parameters
     ----------
@@ -306,9 +336,24 @@ def max_lyapunov(
         Estimated maximal exponent (per unit time / per iteration), a drop-in for
         its ``float`` value that also carries ``.meta`` / ``.summary()``.
 
+    Raises
+    ------
+    NotImplementedError
+        If ``system`` is a delay system (it has no ``set_state``).
+    ValueError
+        If ``dt`` is passed for a discrete map.
+    ConvergenceError
+        If the two trajectories collapse or diverge (zero / non-finite
+        separation), or a continuous system's clock does not advance.
+
     Examples
     --------
     >>> max_lyapunov(Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)   # ≈ 0.91
+
+    References
+    ----------
+    G. Benettin, L. Galgani & J.-M. Strelcyn, "Kolmogorov entropy and numerical
+    experiments", *Physical Review A* **14** (1976) 2338--2345.
     """
     if isinstance(system, DelaySystem):
         raise NotImplementedError(
@@ -316,7 +361,7 @@ def max_lyapunov(
             "use DelaySystem.lyapunov_spectrum (the engine estimator) instead."
         )
     if system.is_discrete and dt is not None:
-        raise ValueError(
+        raise InvalidParameterError(
             "dt has no meaning for discrete maps — omit it (every step is one iteration)."
         )
 
@@ -340,7 +385,7 @@ def max_lyapunov(
         delta = pert.state() - ref.state()
         d = float(np.linalg.norm(delta))
         if d == 0.0 or not np.isfinite(d):
-            raise RuntimeError(
+            raise ConvergenceError(
                 "max_lyapunov: trajectories collapsed or diverged — "
                 "try a larger d0 or smaller steps_per."
             )
@@ -358,7 +403,7 @@ def max_lyapunov(
         # the exponent whenever the guess misses the real per-step advance.
         elapsed = float(ref.time() - t_start)
         if elapsed <= 0.0 or not np.isfinite(elapsed):
-            raise RuntimeError(
+            raise ConvergenceError(
                 "max_lyapunov: the reference clock did not advance — a continuous "
                 "system must report elapsed time through time(); pass an explicit dt."
             )

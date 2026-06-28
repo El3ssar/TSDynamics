@@ -30,7 +30,7 @@ the A-FP detectors use.  Everything else here is A-FP-specific.
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -148,29 +148,62 @@ def signed_permutation_matrices(dim: int, max_count: int | None = None) -> list[
     instability type.
 
     For ``dim >= 4`` the count explodes (``384, 3840, ...``); ``max_count`` caps
-    the returned list (identity-first ordering, then sign flips, then
-    permutations) — callers warn when they truncate.
+    the returned list.  Matrices are generated lazily in priority order —
+    identity first, then sign flips on the identity, then the non-identity
+    permutations with their sign flips — and generation stops as soon as
+    ``max_count`` matrices are collected (the full set is never materialised when
+    truncated).  Callers warn when they truncate.
+
+    Parameters
+    ----------
+    dim : int
+        State dimension; the group has ``2^dim · dim!`` members.
+    max_count : int, optional
+        Cap on the number returned.  ``None`` returns the full set.
+
+    Returns
+    -------
+    list of ndarray
+        Up to ``max_count`` ``(dim, dim)`` signed-permutation matrices, in
+        priority order (identity first).
+    """
+    out: list[np.ndarray] = []
+    for c in _iter_signed_permutation_matrices(dim):
+        out.append(c)
+        if max_count is not None and len(out) >= max_count:
+            break
+    return out
+
+
+def _signed_permutation_count(dim: int) -> int:
+    """Size of the hyperoctahedral group ``B_d``: ``2^dim · dim!`` (computed, not built)."""
+    count = 1 << dim
+    for k in range(2, dim + 1):
+        count *= k
+    return count
+
+
+def _iter_signed_permutation_matrices(dim: int) -> Iterator[np.ndarray]:
+    """Yield the signed-permutation matrices lazily in priority order.
+
+    Order: identity, then pure sign flips on the identity (fewest negatives
+    first), then each non-identity permutation with its sign flips — so a caller
+    that stops early keeps the most useful matrices.
     """
     eye = np.eye(dim)
-    mats: list[np.ndarray] = []
-    # Order so the most useful matrices come first: identity, then pure sign
-    # flips on the identity, then the permutations with their sign flips.
-    for perm in itertools.permutations(range(dim)):
+    # Identity permutation first, then the remaining permutations in itertools'
+    # lexicographic order; within each permutation, signs ordered fewest-negative
+    # first so the identity matrix (all +1) leads the whole sequence.
+    identity_perm = tuple(range(dim))
+    perms = [identity_perm] + [p for p in itertools.permutations(range(dim)) if p != identity_perm]
+    sign_vectors = sorted(
+        itertools.product((1.0, -1.0), repeat=dim),
+        key=lambda s: sum(1 for v in s if v < 0.0),
+    )
+    for perm in perms:
         perm_mat = eye[list(perm)]
-        for signs in itertools.product((1.0, -1.0), repeat=dim):
-            mats.append((np.array(signs)[:, None] * perm_mat).copy())
-    # Move the identity to the front (signs all +1 on the identity permutation).
-    mats.sort(key=lambda c: (not np.array_equal(c, eye), _signed_perm_rank(c)))
-    if max_count is not None and len(mats) > max_count:
-        mats = mats[:max_count]
-    return mats
-
-
-def _signed_perm_rank(c: np.ndarray) -> int:
-    """Return a stable ordering key: number of negative entries, then displacement."""
-    neg = int((c < 0).sum())
-    disp = int(np.sum(np.abs(np.argmax(np.abs(c), axis=1) - np.arange(c.shape[0]))))
-    return 100 * neg + disp
+        for signs in sign_vectors:
+            yield (np.array(signs)[:, None] * perm_mat).copy()
 
 
 # ── root finding: Newton / Schmelcher--Diakonos / Davidchack--Lai ─────────────
@@ -178,10 +211,11 @@ def _signed_perm_rank(c: np.ndarray) -> int:
 # The three schemes drive a residual ``g(x)`` (with Jacobian ``G(x) = Dg``) to
 # zero.  For map fixed/periodic points ``g(x) = f^p(x) - x`` and ``G = Df^p - I``;
 # for flow equilibria ``g(x) = f(x)`` and ``G = J(x)``.  Davidchack & Lai (1999)
-# is a Newton step regularised by ``beta*‖g‖*Cᵀ``; it reduces to plain Newton at
+# is a Newton step regularised by ``beta*‖g‖*C``; it reduces to plain Newton at
 # ``beta = 0`` and recovers Newton's quadratic rate as ``‖g‖ → 0`` (the
 # regulariser self-anneals).  Schmelcher & Diakonos (1997) is the explicit-Euler
-# step ``x + lambda*C*g`` on the stabilising flow.
+# step ``x + lambda*C*g`` on the stabilising flow.  Both sweep the *same* ``C``
+# list (the truncation-consistent choice — see ``converge_root``).
 
 
 def converge_root(
@@ -225,7 +259,13 @@ def converge_root(
                 dx = lam * (c_mat @ g)
             elif method == "dl":
                 assert c_mat is not None
-                a = beta * ng * c_mat.T - jac_resid(x)
+                # Sweep the *same* ``C`` list SD does: over the full
+                # hyperoctahedral set ``{Cᵀ} = {C}`` so the original
+                # Davidchack--Lai ``Cᵀ`` and ``C`` are equivalent, but under a
+                # ``max_c`` truncation ``Cᵀ`` would visit a different subset than
+                # SD's ``C`` — using ``C`` keeps both schemes on the identical
+                # (truncated) sweep.
+                a = beta * ng * c_mat - jac_resid(x)
                 dx = np.linalg.solve(a, g)
             else:  # pragma: no cover - guarded by the public entry points
                 raise ValueError(f"unknown root-finding method {method!r}.")

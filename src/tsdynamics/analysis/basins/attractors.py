@@ -25,12 +25,13 @@ basin and continuation layers drive over a full grid.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from ...data import Ball, Box, Grid, sampler, set_distance
+from ...errors import ConvergenceError
 from .._result import AnalysisResult
 from ._common import (
     DIVERGED_COLOR,
@@ -310,15 +311,26 @@ class _AttractorMapper:
     # -- driving the system through the protocol --
 
     def _reinit(self, ic: np.ndarray) -> None:
+        """Reinitialise the driven system at initial condition ``ic``."""
         self.system.reinit(np.asarray(ic, dtype=float))
 
     def _advance(self) -> np.ndarray | None:
-        """Advance one step; ``None`` if the trajectory blew up (raised / non-finite)."""
+        """Advance one step; ``None`` if the trajectory blew up (raised / non-finite).
+
+        Only genuine *divergence* (a :class:`~tsdynamics.errors.ConvergenceError`,
+        the maps' / flows' loud-divergence contract) and arithmetic overflow are
+        treated as "gone".  An engine-unavailability failure
+        (:class:`~tsdynamics.errors.BackendError` /
+        :class:`~tsdynamics.engine.run.EngineNotAvailableError`) is *also* a
+        ``RuntimeError`` but is **not** a divergence — it propagates rather than
+        silently painting an all-diverged basin.
+        """
         try:
             state = np.asarray(self.system.step(self._step_arg), dtype=float).reshape(-1)
-        except (RuntimeError, ArithmeticError):
-            # maps raise on divergence; flows may overflow — both mean "gone".
-            # (ArithmeticError covers FloatingPointError and OverflowError.)
+        except (ConvergenceError, ArithmeticError):
+            # maps/flows raise ConvergenceError on divergence; arithmetic overflow
+            # (ArithmeticError covers FloatingPointError and OverflowError) is the
+            # same "gone for good".  Engine-unavailability errors are not caught.
             return None
         return state if np.all(np.isfinite(state)) else None
 
@@ -432,6 +444,7 @@ class _AttractorMapper:
         parent = {k: k for k in ids}
 
         def find(a: int) -> int:
+            """Union-find root of ``a`` with path compression."""
             while parent[a] != a:
                 parent[a] = parent[parent[a]]
                 a = parent[a]
@@ -529,6 +542,23 @@ def find_attractors(
     AttractorSet
         The located attractors plus how many seeds diverged.
 
+    Raises
+    ------
+    TypeError
+        If ``system`` is a delay or stochastic system (their state is not a
+        finite-dimensional point the cell tessellation can bin).
+
+    Notes
+    -----
+    The seed loop is **sequential by design**, not a parallelism oversight: each
+    seed is followed cell-by-cell through the system's step protocol (one engine
+    round-trip per cell check), and the persistent cell labels (``_att_cells`` /
+    ``_bas_cells``) accumulated by earlier seeds let later seeds settle cheaply by
+    reaching an already-labelled cell.  That shared, order-dependent labelling
+    state is what makes the sweep amortise — and is exactly why the loop cannot be
+    naively parallelised without changing the result or the determinism.  The
+    dominant cost is therefore ``n_seeds`` × (steps to settle) engine steps.
+
     References
     ----------
     G. Datseris and A. Wagemakers, "Effortless estimation of basins of
@@ -546,12 +576,9 @@ def find_attractors(
             diverged += 1
     merge = mapper.merge_map(resolve_merge_tol(grid, merge_tol))
     found = mapper.attractor_set(diverged=diverged, seeds=int(n_seeds), merge=merge)
-    return AttractorSet(
-        attractors=found.attractors,
-        diverged=found.diverged,
-        seeds=found.seeds,
-        meta=AnalysisResult.build_meta(system, analysis="find_attractors"),
-    )
+    # Attach provenance without re-allocating the (potentially large) attractor
+    # dict — ``replace`` reuses every field but ``meta``.
+    return replace(found, meta=AnalysisResult.build_meta(system, analysis="find_attractors"))
 
 
 def resolve_merge_tol(cellgrid: _CellGrid, merge_tol: float | None) -> float:

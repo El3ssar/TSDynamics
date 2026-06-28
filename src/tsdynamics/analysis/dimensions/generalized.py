@@ -277,8 +277,21 @@ def generalized_dimension(
 def box_counting_dimension(data: Any, **kwargs: Any) -> DimensionResult:
     r"""Box-counting (capacity) dimension :math:`D_0`.
 
-    Thin wrapper over :func:`generalized_dimension` with ``q=0``.  Keyword
-    arguments are forwarded.
+    Thin wrapper over :func:`generalized_dimension` with ``q=0`` — the count of
+    occupied boxes scales as :math:`N(\epsilon) \sim \epsilon^{-D_0}`.
+
+    Parameters
+    ----------
+    data : Trajectory or array-like, shape (N, dim)
+        The point set.
+    **kwargs
+        Forwarded to :func:`generalized_dimension` (``scales``, ``n_scales``,
+        ``sat_frac``, ``min_window``, ``tol``, ``offsets``).
+
+    Returns
+    -------
+    DimensionResult
+        ``float(result)`` is :math:`D_0`.
     """
     return generalized_dimension(data, 0.0, **kwargs)
 
@@ -286,8 +299,22 @@ def box_counting_dimension(data: Any, **kwargs: Any) -> DimensionResult:
 def information_dimension(data: Any, **kwargs: Any) -> DimensionResult:
     r"""Information dimension :math:`D_1`.
 
-    Thin wrapper over :func:`generalized_dimension` with ``q=1``.  Keyword
-    arguments are forwarded.
+    Thin wrapper over :func:`generalized_dimension` with ``q=1`` — the slope of
+    the Shannon information :math:`\sum_i p_i \log p_i` against
+    :math:`\log \epsilon`.
+
+    Parameters
+    ----------
+    data : Trajectory or array-like, shape (N, dim)
+        The point set.
+    **kwargs
+        Forwarded to :func:`generalized_dimension` (``scales``, ``n_scales``,
+        ``sat_frac``, ``min_window``, ``tol``, ``offsets``).
+
+    Returns
+    -------
+    DimensionResult
+        ``float(result)`` is :math:`D_1`.
     """
     return generalized_dimension(data, 1.0, **kwargs)
 

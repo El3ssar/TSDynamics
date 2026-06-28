@@ -31,6 +31,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.data import Box, sampler
+from tsdynamics.errors import InvalidParameterError
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._result import AnalysisResult, ScalingResult
@@ -144,6 +145,18 @@ def expansion_entropy(
     -------
     ExpansionEntropyResult
 
+    Raises
+    ------
+    NotImplementedError
+        If ``system`` is neither a discrete map nor a continuous flow.
+    InvalidParameterError
+        If ``n_samples < 1``; if the step count is degenerate (``n < 1`` for a
+        map, ``final_time <= 0`` or ``dt <= 0`` for a flow); if ``dt`` is passed
+        for a map (or ``n`` for a flow); if the region dimension does not match
+        the system; or if fewer than two finite :math:`\ln E(t)` points remain to
+        fit (too few survivors stayed in the region — enlarge it or shorten the
+        horizon).
+
     Examples
     --------
     >>> float(expansion_entropy(Tent(params={"mu": 1.0}), Box([0.0], [1.0])))
@@ -151,7 +164,7 @@ def expansion_entropy(
 
     References
     ----------
-    Hunt & Ott (2015), *Chaos* 25, 097618 ("Defining chaos").
+    Hunt & Ott, "Defining chaos", *Chaos* **25** (2015) 097618.
     """
     if isinstance(system, DiscreteMap):
         mode = "map"
@@ -163,24 +176,37 @@ def expansion_entropy(
             f"{type(system).__name__}."
         )
 
+    n_samples = int(n_samples)
+    if n_samples < 1:
+        raise InvalidParameterError(f"n_samples must be >= 1; got {n_samples}.")
+
     box = _c._resolve_region(system, region)
     if box.dim != system.dim:
-        raise ValueError(
+        raise InvalidParameterError(
             f"region dimension ({box.dim}) does not match system dimension ({system.dim})."
         )
     draw = sampler(box, seed=seed)
-    ics = np.array([draw() for _ in range(int(n_samples))])
+    ics = np.array([draw() for _ in range(n_samples)])
 
     if mode == "map":
         if dt is not None:
-            raise ValueError("dt has no meaning for a discrete map — omit it.")
+            raise InvalidParameterError("dt has no meaning for a discrete map — omit it.")
         n_steps = 15 if n is None else int(n)
+        if n_steps < 1:
+            raise InvalidParameterError(f"n (number of iterations) must be >= 1; got {n_steps}.")
         times, log_growth, survivors = _expansion_map(system, ics, box, n_steps)
     else:
         if n is not None:
-            raise ValueError("n applies to maps; use final_time/dt for a flow.")
+            raise InvalidParameterError("n applies to maps; use final_time/dt for a flow.")
         t_end = 5.0 if final_time is None else float(final_time)
         step_dt = 0.1 if dt is None else float(dt)
+        if step_dt <= 0.0:
+            raise InvalidParameterError(f"dt must be positive; got {step_dt}.")
+        if t_end <= 0.0 or int(round(t_end / step_dt)) < 1:
+            raise InvalidParameterError(
+                f"final_time must be positive and span at least one dt step; "
+                f"got final_time={t_end}, dt={step_dt}."
+            )
         times, log_growth, survivors = _expansion_flow(
             system, ics, box, t_end, step_dt, int(n_internal)
         )
@@ -192,7 +218,7 @@ def expansion_entropy(
     t_fit, y_fit = times[lo : hi + 1], log_growth[lo : hi + 1]
     finite = np.isfinite(y_fit)
     if int(np.count_nonzero(finite)) < 2:
-        raise ValueError(
+        raise InvalidParameterError(
             "expansion entropy: fewer than two finite ln E(t) points in the fit range "
             "(too few survivors stayed in the region — enlarge it or shorten the horizon)."
         )
@@ -220,11 +246,13 @@ def _resolve_fit_range(
     if fit_range is not None:
         lo, hi = int(fit_range[0]), int(fit_range[1])
         if not (0 <= lo < hi < n):
-            raise ValueError(f"fit_range {fit_range} out of bounds for {n} points.")
+            raise InvalidParameterError(f"fit_range {fit_range} out of bounds for {n} points.")
         return lo, hi
     finite = np.nonzero(np.isfinite(log_growth))[0]
     if finite.size < 2:
-        raise ValueError("expansion entropy: fewer than two finite ln E(t) points to fit.")
+        raise InvalidParameterError(
+            "expansion entropy: fewer than two finite ln E(t) points to fit."
+        )
     lo = int(finite[0])
     if lo == 0 and finite.size > 2:
         lo = int(finite[1])  # drop t=0 (ln E = 0 trivially)

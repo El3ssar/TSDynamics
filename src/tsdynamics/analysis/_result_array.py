@@ -47,9 +47,15 @@ class ArrayResult(AnalysisResult):
 
     # -- ndarray protocol ----------------------------------------------------
 
-    def __array__(self, dtype: Any = None) -> np.ndarray:  # noqa: D105
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:  # noqa: D105
+        # NumPy 2.0 passes ``copy`` into ``__array__``; honor it so ``np.array``
+        # (which defaults to copying) does not error under ``filterwarnings=error``.
         arr = np.asarray(self.values)
-        return arr.astype(dtype) if dtype is not None else arr
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=bool(copy))
+        elif copy:
+            arr = arr.copy()
+        return arr
 
     def __getitem__(self, key: Any) -> Any:  # noqa: D105
         return self.values[key]
@@ -106,8 +112,49 @@ class ArrayResult(AnalysisResult):
     __rmul__ = __mul__
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-friendly mapping (the array as a nested list + ``meta``)."""
+        """Return a JSON-friendly mapping (the array as a nested list + ``meta``).
+
+        Returns
+        -------
+        dict
+            ``{"values": <nested list>, "meta": <provenance>}``.
+        """
         return {"values": _jsonify(self.values), "meta": _jsonify(self.meta)}
+
+    def to_frame(self) -> Any:
+        """Return a :class:`pandas.DataFrame` tabulating the wrapped array.
+
+        The base :meth:`AnalysisResult.to_frame` would return an *empty* frame
+        here, because ``values`` is declared ``repr=False`` and so is not a
+        display field — it tabulates display scalars, of which an
+        :class:`ArrayResult` has none.  This override puts the array itself in the
+        table instead: a 1-D array becomes a single ``value`` column (one row per
+        element); a 2-D array becomes one ``c{j}`` column per channel (column).
+        ``meta`` rides on ``frame.attrs["meta"]`` like the other subclasses.
+
+        ``pandas`` is a soft dependency, imported lazily; a missing install raises
+        an :class:`ImportError` naming the ``tsdynamics[frame]`` extra.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One column (``value``) for a 1-D array, one per channel for a 2-D
+            array, with ``meta`` on ``frame.attrs["meta"]``.
+
+        Raises
+        ------
+        ImportError
+            If :mod:`pandas` is not installed.
+        """
+        pd = self._require_pandas()
+        arr = np.asarray(self.values)
+        if arr.ndim <= 1:
+            frame = pd.DataFrame({"value": arr.ravel()})
+        else:
+            flat = arr.reshape(arr.shape[0], -1)
+            frame = pd.DataFrame({f"c{j}": flat[:, j] for j in range(flat.shape[1])})
+        frame.attrs["meta"] = dict(self.meta) if self.meta else {}
+        return frame
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe the wrapped array as a :class:`PlotSpec` (safe generic view).

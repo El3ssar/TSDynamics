@@ -368,6 +368,12 @@ def basins_of_attraction(
     BasinsResult
         The labelled basin image and the attractors it refers to.
 
+    Raises
+    ------
+    TypeError
+        If ``system`` is a delay or stochastic system (unsupported by the
+        recurrence finder).
+
     References
     ----------
     G. Datseris and A. Wagemakers, "Effortless estimation of basins of
@@ -449,6 +455,12 @@ def basin_fractions(
     -------
     BasinFractions
         Fractions per attractor, the diverged share, and the attractors.
+
+    Raises
+    ------
+    TypeError
+        If ``system`` is a delay or stochastic system (unsupported by the
+        recurrence finder).
 
     References
     ----------

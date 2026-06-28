@@ -19,8 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.spatial.distance import cdist
 
+from tsdynamics.analysis.embedding import embedding_dimension, optimal_delay
 from tsdynamics.errors import invalid_value
 
 __all__ = ["estimate_dt_from_sagitta", "sagitta_profile"]
@@ -28,7 +28,31 @@ __all__ = ["estimate_dt_from_sagitta", "sagitta_profile"]
 
 @dataclass(frozen=True)
 class SagittaDt:
-    """Result container for sagitta-based Δt selection."""
+    r"""Result of a sagitta-based :math:`\Delta t` selection.
+
+    Returned by :func:`estimate_dt_from_sagitta`; not part of the public export
+    surface (reach it via the return value).
+
+    Attributes
+    ----------
+    delta_t : float
+        The recommended output step :math:`\Delta t^\ast = \text{stride} \times
+        \Delta t_0`.
+    stride : int
+        The chosen decimation stride :math:`m^\ast`.
+    percentile_value : float
+        The achieved sagitta percentile :math:`S_p(m^\ast)` at that stride.
+    indices : numpy.ndarray
+        Decimation indices for the input data (always including the last sample).
+    p : float
+        The percentile used (kept for inspection).
+    epsilon : float
+        The geometric tolerance used (kept for inspection).
+    searched_ms : numpy.ndarray
+        The candidate strides evaluated during the search.
+    notes : str
+        Informational / warning text (e.g. embedding parameters for 1-D input).
+    """
 
     delta_t: float  # Δt* = stride * base_dt
     stride: int  # stride m*
@@ -47,6 +71,11 @@ def _sagitta_chord(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> tuple[np.ndar
     ``a -> c``; the *chord length* is ``|c - a|``.  This is the one geometric
     kernel shared by the Δt selector (:func:`_compute_sagitta_stats`) and the
     per-point profile (:func:`sagitta_profile`).
+
+    A *degenerate* triple — one whose chord ``|c - a|`` is zero — has no defined
+    perpendicular and its sagitta is set to ``0`` (rather than the spurious full
+    ``|b - a|`` a zero chord direction would otherwise produce); such triples are
+    also dropped from the chord-median denominator downstream.
     """
     ac = c - a
     chord = np.linalg.norm(ac, axis=1)
@@ -57,13 +86,20 @@ def _sagitta_chord(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> tuple[np.ndar
     ba = b - a
     proj = np.einsum("ij,ij->i", ba, unit)[:, None] * unit
     sagitta = np.linalg.norm(ba - proj, axis=1)
+    # Degenerate (zero-length) chords have no defined bow: score them 0 instead of
+    # the full |b - a| that the zero unit vector would yield.
+    sagitta = np.where(valid, sagitta, 0.0)
     return sagitta, chord
 
 
 def _compute_sagitta_stats(
     samples: np.ndarray, span: int, percentile_p: float
 ) -> tuple[float, float]:
-    """Return (sagitta_percentile, chord_median) for triples at a given span."""
+    """Return ``(sagitta_percentile, chord_median)`` for triples at a given span.
+
+    Degenerate triples (zero-length chord) contribute a sagitta of ``0`` and are
+    excluded from the chord median.
+    """
     n = samples.shape[0]
     centers = np.arange(span, n - span, span)
     sagitta, chord_length = _sagitta_chord(
@@ -127,158 +163,38 @@ def sagitta_profile(
     return out
 
 
-def _estimate_lag_ami(y: np.ndarray, max_lag: int | None = None, n_bins: int = 16) -> int:
-    """
-    Estimate optimal time lag via first local minimum of AMI.
-
-    Fast cap: ``max_lag <= 2000`` to avoid O(n × max_lag) blowups on long series.
-    """
-    y = np.asarray(y, float).ravel()
-    n = y.size
-    if n < 10:
-        return 1
-    max_lag = max(2, min(n // 10, 2000)) if max_lag is None else min(max_lag, n // 2)
-
-    y_min, y_max = np.min(y), np.max(y)
-    if not np.isfinite(y_min) or not np.isfinite(y_max) or (y_max - y_min) < 1e-12:
-        return 1
-    y_norm = (y - y_min) / (y_max - y_min)
-
-    ami_values = []
-    for lag in range(1, max_lag + 1):
-        y1 = y_norm[:-lag]
-        y2 = y_norm[lag:]
-        hist_2d, _, _ = np.histogram2d(y1, y2, bins=n_bins, range=[[0, 1], [0, 1]])
-        p_joint = hist_2d / np.sum(hist_2d)
-        p_y1 = np.sum(p_joint, axis=1)
-        p_y2 = np.sum(p_joint, axis=0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            log_term = np.log(p_joint) - np.log(p_y1[:, None]) - np.log(p_y2[None, :])
-            mi = np.nansum(p_joint * log_term)
-        ami_values.append(max(mi, 0.0))
-
-    ami_arr = np.asarray(ami_values, float)
-    for i in range(1, len(ami_arr) - 1):
-        if ami_arr[i - 1] > ami_arr[i] < ami_arr[i + 1]:
-            return i + 1
-    return int(np.argmin(ami_arr)) + 1
-
-
-def _estimate_embedding_dim_fnn(
-    y: np.ndarray,
-    lag: int,
-    max_dim: int = 15,
-    rtol: float = 15.0,
-    atol: float = 2.0,
-    fnn_threshold: float = 0.01,
-) -> int:
-    """
-    Estimate embedding dimension via False Nearest Neighbours (Kennel algorithm).
-
-    Uses a subset neighbor pool + Theiler window + early stop.
-    Internal constants: pool_size=5000, n_test=500, theiler=2*lag.
-    """
-    x = np.asarray(y, float).ravel()
-    n = x.size
-    if n < 5 or lag < 1:
-        return 2
-
-    POOL_SIZE = 5000
-    N_TEST = 500
-    theiler = max(1, 2 * lag)
-
-    sigma_x = x.std(ddof=1) if x.std(ddof=1) > 0 else 1.0
-
-    chosen_m = 2
-    below_twice = 0
-
-    for m in range(2, max_dim + 1):
-        Tm = n - (m - 1) * lag
-        Tm1 = n - m * lag
-        if Tm1 < 10:
-            break
-
-        Xm = np.column_stack([x[i * lag : i * lag + Tm] for i in range(m)])
-        Xm1 = np.column_stack([x[i * lag : i * lag + Tm1] for i in range(m + 1)])
-
-        pool_size = min(POOL_SIZE, Tm)
-        pool_idx = np.linspace(0, Tm - 1, pool_size, dtype=int)
-        if pool_size <= 2:
-            break
-        step = max(1, pool_size // N_TEST)
-        test_idx = pool_idx[::step][:N_TEST]
-        if test_idx.size == 0:
-            break
-
-        Dm = cdist(Xm[test_idx], Xm[pool_idx], metric="euclidean")
-
-        for r, ti in enumerate(test_idx):
-            mask_bad = np.abs(pool_idx - ti) <= theiler
-            Dm[r, mask_bad] = np.inf
-
-        nn_col = np.argmin(Dm, axis=1)
-        nn_dist_m = Dm[np.arange(nn_col.size), nn_col]
-        valid_nn = np.isfinite(nn_dist_m)
-        if not np.any(valid_nn):
-            continue
-
-        nn_idx = pool_idx[nn_col[valid_nn]]
-        ti_valid = test_idx[valid_nn]
-        Rm = nn_dist_m[valid_nn]
-
-        mask_range = (ti_valid < Tm1) & (nn_idx < Tm1) & (Rm > 0)
-        if not np.any(mask_range):
-            continue
-
-        ti2 = ti_valid[mask_range]
-        nj2 = nn_idx[mask_range]
-        Rm2 = Rm[mask_range]
-
-        num = np.abs(x[ti2 + m * lag] - x[nj2 + m * lag])
-        E1 = (num / Rm2) > rtol
-
-        diff_m1 = Xm1[ti2] - Xm1[nj2]
-        Rm1 = np.linalg.norm(diff_m1, axis=1)
-        E2 = (Rm1 / sigma_x) > atol
-
-        fnn_fraction = np.mean(E1 | E2)
-
-        if fnn_fraction < fnn_threshold:
-            below_twice += 1
-            chosen_m = m
-            if below_twice >= 2:
-                break
-        else:
-            below_twice = 0
-            chosen_m = m
-
-    return int(max(2, chosen_m))
-
-
 def _takens_embedding(y: np.ndarray, lag: int, embed_dim: int) -> np.ndarray:
-    """
-    Create Takens (delay coordinate) embedding of a 1D time series.
+    """Build a Takens (delay-coordinate) embedding of a 1-D series.
+
+    Each row is ``[y(t), y(t+lag), ..., y(t+(embed_dim-1)*lag)]``.
 
     Parameters
     ----------
     y : np.ndarray, shape (n_samples,)
-        1D time series.
+        The scalar time series.
     lag : int
-        Time lag between coordinates.
+        Delay (in samples) between successive coordinates.
     embed_dim : int
         Embedding dimension.
 
     Returns
     -------
     np.ndarray, shape (n_embedded, embed_dim)
-        Embedded time series where each row is [y(t), y(t+lag), ..., y(t+(embed_dim-1)*lag)].
+        The delay-coordinate vectors.
+
+    Raises
+    ------
+    InvalidParameterError
+        If the series is too short for the requested ``lag``/``embed_dim``.
     """
     n_samples = len(y)
     n_embedded = n_samples - (embed_dim - 1) * lag
 
     if n_embedded <= 0:
-        raise ValueError(
-            f"Not enough samples for embedding: need > {(embed_dim - 1) * lag}, got {n_samples}"
+        raise invalid_value(
+            "y",
+            n_samples,
+            rule=f"too few samples for embedding (need > {(embed_dim - 1) * lag})",
         )
 
     embedded = np.zeros((n_embedded, embed_dim))
@@ -299,49 +215,83 @@ def estimate_dt_from_sagitta(
     min_points_per_segment: int = 3,
     search_growth: float = 1.5,
 ) -> SagittaDt:
-    """
-    Sagitta-based Δt selector (derivative-free, robust, idempotent).
+    r"""Sagitta-based output-step :math:`\Delta t^\ast` selector.
 
-    - For d = 1: automatically applies Takens embedding after estimating optimal lag (AMI)
-      and embedding dimension (FNN). The embedding is transparent to the user.
-    - For d > 1: computes sagitta in state space as before.
-      y_std is per-feature σ-normalized (ddof=1).
+    A derivative-free, scale-invariant, idempotent heuristic for the output
+    sampling step.  For a range of candidate strides it measures the *sagitta* —
+    the perpendicular bow of the midpoint of each ``(i-span, i, i+span)`` triple
+    off its chord — at a robust percentile, then picks the largest stride whose
+    sagitta still satisfies the geometric tolerance ``epsilon``.
+
+    A one-dimensional input is first delay-embedded so the geometric criterion
+    lives in a reconstructed state space: the delay is the first minimum of the
+    time-delayed mutual information (Fraser & Swinney 1986) and the dimension is
+    Kennel's false-nearest-neighbour estimate (Kennel, Brown & Abarbanel 1992),
+    both via the public :mod:`tsdynamics.analysis.embedding` estimators
+    (:func:`~tsdynamics.analysis.embedding.optimal_delay` and
+    :func:`~tsdynamics.analysis.embedding.embedding_dimension` with
+    ``method="fnn"``).  Multivariate input is used directly, per-feature
+    σ-normalised (``ddof=1``).
 
     Parameters
     ----------
-    y : np.ndarray, shape (n_samples, n_dim) or (n_samples,)
-        Time-ordered samples y_i. If 1D, Takens embedding will be applied automatically.
+    y : numpy.ndarray, shape (n_samples,) or (n_samples, n_dim)
+        Time-ordered samples.  A 1-D (or ``(n, 1)``) series is delay-embedded
+        automatically.  Must be finite.
     dt0 : float
-        Base sampling step Δt0 > 0.
+        Base sampling step :math:`\Delta t_0 > 0`.
     epsilon : float
-        Geometric tolerance. Absolute (σ-normalized units) when use_relative=False,
-        relative (sagitta / chord_median) when use_relative=True.
-    percentile : float
-        Robust percentile p (e.g., 95.0).
-    coarsen_only : bool
-        If True, never suggest Δt* < Δt0 (i.e., m >= 1). Does not affect behaviour
-        when span=1 already exceeds ε — that case is flagged via 'notes' and
-        stride=1 is returned regardless.
-    use_relative : bool or None
-        Whether to use relative sagitta criterion (sagitta / chord_median <= ε).
-        If None (default), automatically set to True for 1D input (post-embedding)
-        and False for multivariate input. Pass explicitly to override.
-        NOTE: relative criterion is not strictly monotone in stride; binary search
-        is approximate for that case.
-    min_points_per_segment : int
-        Require at least this many triples (i-span, i, i+span) to evaluate a candidate span.
-    search_growth : float
-        Multiplicative growth for coarse search over spans.
+        Geometric tolerance :math:`\varepsilon > 0`.  Absolute (σ-normalised
+        units) when ``use_relative=False``; relative (``sagitta / chord_median``)
+        when ``use_relative=True``.
+    percentile : float, optional
+        Robust percentile :math:`p \in (0, 100]`.  Default ``95.0``.
+    coarsen_only : bool, optional
+        If ``True``, never suggest :math:`\Delta t^\ast < \Delta t_0`
+        (``stride >= 1``).  Does not affect behaviour when ``span=1`` already
+        exceeds :math:`\varepsilon` — that case is flagged via ``notes`` and
+        ``stride=1`` is returned regardless.  Default ``True``.
+    use_relative : bool or None, optional
+        Whether to use the relative sagitta criterion
+        (``sagitta / chord_median <= epsilon``).  ``None`` (default) selects
+        ``True`` for 1-D input (post-embedding) and ``False`` for multivariate
+        input.  The relative criterion is not strictly monotone in stride, so the
+        binary search is approximate for that case.
+    min_points_per_segment : int, optional
+        Minimum number of triples ``(i-span, i, i+span)`` required to evaluate a
+        candidate span.  Default ``3``.
+    search_growth : float, optional
+        Multiplicative growth factor (``> 1``) for the coarse stride search.
+        Default ``1.5``.
 
     Returns
     -------
     SagittaDt
-        Result with chosen Δt*, stride, achieved percentile value, indices, and bookkeeping.
-        For 1D input, the 'notes' field will contain embedding parameters (lag, dimension).
+        The chosen :math:`\Delta t^\ast`, stride, achieved percentile value,
+        decimation ``indices``, and search bookkeeping.  For 1-D input the
+        ``notes`` field records the embedding parameters (lag, dimension).
+
+    Raises
+    ------
+    InvalidParameterError
+        If ``y`` is not a NumPy array, is not 1-D/2-D, contains non-finite
+        values, has too few samples, or if ``dt0`` / ``epsilon`` / ``percentile``
+        / ``search_growth`` / ``min_points_per_segment`` violate their bounds.
+
+    References
+    ----------
+    A. M. Fraser and H. L. Swinney, "Independent coordinates for strange
+    attractors from mutual information", *Phys. Rev. A* **33**, 1134 (1986).
+
+    M. B. Kennel, R. Brown and H. D. I. Abarbanel, "Determining embedding
+    dimension for phase-space reconstruction using a geometrical construction",
+    *Phys. Rev. A* **45**, 3403 (1992).
     """
     # -------- input validation and dimensionality handling --------
     if not isinstance(y, np.ndarray):
         raise invalid_value("y", type(y).__name__, rule="must be a numpy array")
+    if not np.all(np.isfinite(y)):
+        raise invalid_value("y", "non-finite", rule="must be finite (no nan/inf)")
 
     needs_embedding = False
 
@@ -367,8 +317,11 @@ def estimate_dt_from_sagitta(
                 rule="must have at least 50 samples for 1D embedding (got len(y))",
             )
 
-        embedding_lag = _estimate_lag_ami(y_original)
-        embedding_dim = _estimate_embedding_dim_fnn(y_original, embedding_lag)
+        # Delegate delay/dimension selection to the public embedding estimators
+        # (first-minimum AMI delay; Kennel FNN dimension) — one implementation,
+        # no drift.
+        embedding_lag = int(optimal_delay(y_original, method="mi"))
+        embedding_dim = int(embedding_dimension(y_original, method="fnn", delay=embedding_lag))
 
         y = _takens_embedding(y_original, embedding_lag, embedding_dim)
         n_samples, n_dim = y.shape

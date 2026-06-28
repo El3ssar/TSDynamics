@@ -128,6 +128,12 @@ def autocorrelation(
     ndarray, shape (max_delay + 1,)
         ``acf[k]`` is the autocorrelation at lag ``k`` (``acf[0] == 1``).
 
+    Raises
+    ------
+    ValueError
+        If ``max_delay`` is negative, or the series is constant (zero variance,
+        so the autocorrelation is undefined).
+
     Notes
     -----
     Computed via FFT (Wiener--Khinchin) on the mean-subtracted series and
@@ -201,10 +207,26 @@ def mutual_information(
         (its self-information).  ``result.optimal_lag`` reads off the
         first-minimum delay and ``result.plot()`` renders the diagnostic.
 
+    Raises
+    ------
+    ValueError
+        If ``max_delay`` is negative, ``bins`` is less than ``2``, or the series
+        is constant (its range collapses, leaving the histogram undefined).
+
     References
     ----------
     A. M. Fraser and H. L. Swinney, "Independent coordinates for strange
     attractors from mutual information", *Phys. Rev. A* **33**, 1134 (1986).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tsdynamics.analysis.embedding import mutual_information
+    >>> t = np.linspace(0.0, 100.0, 2000)
+    >>> x = np.sin(2.0 * np.pi * 0.1 * t)
+    >>> mi = mutual_information(x, max_delay=40)
+    >>> int(mi.optimal_lag) >= 1
+    True
     """
     x = _as_series(data, component=component)
     n = x.size
@@ -230,8 +252,12 @@ def mutual_information(
     for tau in range(max_delay + 1):
         a = codes[: n - tau]
         b = codes[tau:] if tau > 0 else codes
-        joint = np.zeros((nbins, nbins), dtype=float)
-        np.add.at(joint, (a, b), 1.0)
+        # Flatten the (a, b) integer bin pair to a single linear index and count
+        # with bincount — the joint 2-D histogram, no per-element scatter.  a and
+        # b are already integer bin codes in [0, nbins), so a*nbins + b is the
+        # row-major flat index; this is bit-equivalent to np.add.at but vectorised.
+        flat = np.bincount(a * nbins + b, minlength=nbins * nbins)
+        joint = flat.reshape(nbins, nbins).astype(float)
         total = joint.sum()
         joint /= total
         p_a = joint.sum(axis=1)
@@ -283,12 +309,37 @@ def optimal_delay(
     CountResult
         The recommended delay (behaves as an ``int``), always ``>= 1``.
 
+    Raises
+    ------
+    ValueError
+        If ``method`` is not one of ``"mi"`` / ``"acf"`` / ``"acf_zero"``, or if
+        the underlying curve estimator rejects the series (constant input, bad
+        ``max_delay`` / ``bins``).
+
     Notes
     -----
     If no first minimum / crossing is found within ``max_delay`` (e.g. a
     slowly-decaying curve), the criterion's global fallback is used — the
     location of the smallest mutual information, or ``max_delay`` for the
     autocorrelation rules — so a usable delay is always returned.
+
+    The mutual-information criterion is the more widely recommended nonlinear
+    measure (Fraser & Swinney 1986); the autocorrelation rules are the classic
+    linear alternatives.
+
+    References
+    ----------
+    A. M. Fraser and H. L. Swinney, "Independent coordinates for strange
+    attractors from mutual information", *Phys. Rev. A* **33**, 1134 (1986).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tsdynamics.analysis.embedding import optimal_delay
+    >>> t = np.linspace(0.0, 100.0, 4000)
+    >>> x = np.sin(2.0 * np.pi * 0.05 * t)
+    >>> int(optimal_delay(x, method="mi", max_delay=60)) >= 1
+    True
     """
     method = method.lower()
     if method == "mi":

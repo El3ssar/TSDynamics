@@ -151,6 +151,18 @@ def empirical_pvalue(t_data: float, t_surr: np.ndarray, tail: str = "two") -> fl
     -------
     float
         The p-value in ``(0, 1]``.
+
+    Raises
+    ------
+    ValueError
+        If ``t_surr`` is empty, or ``tail`` is not one of ``{"two", "greater",
+        "less"}``.
+
+    References
+    ----------
+    .. [1] J. Theiler, S. Eubank, A. Longtin, B. Galdrikian, and J. D. Farmer,
+       "Testing for nonlinearity in time series: the method of surrogate data,"
+       Physica D 58, 77-94 (1992).
     """
     t_surr = np.asarray(t_surr, dtype=float)
     M = t_surr.size

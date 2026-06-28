@@ -159,6 +159,59 @@ def test_mutual_information_self_is_max(rossler):
     assert np.all(mi >= -1e-9)
 
 
+def _mi_reference(x, *, max_delay, nbins, base=np.e):
+    """Independent histogram MI using ``np.add.at`` (the pre-bincount scatter).
+
+    Mirrors the estimator's binning exactly so the only difference from the
+    public function is the joint-histogram construction; both must agree.
+    """
+    x = np.ascontiguousarray(np.asarray(x, dtype=float))
+    n = x.size
+    lo, hi = float(x.min()), float(x.max())
+    edges = np.linspace(lo, hi, nbins + 1)
+    codes = np.clip(np.digitize(x, edges[1:-1]), 0, nbins - 1)
+    log = np.log if base == np.e else (lambda v: np.log(v) / np.log(base))
+    mi = np.empty(max_delay + 1, dtype=float)
+    for tau in range(max_delay + 1):
+        a = codes[: n - tau]
+        b = codes[tau:] if tau > 0 else codes
+        joint = np.zeros((nbins, nbins), dtype=float)
+        np.add.at(joint, (a, b), 1.0)
+        joint /= joint.sum()
+        p_a = joint.sum(axis=1)
+        p_b = joint.sum(axis=0)
+        mask = joint > 0.0
+        outer = p_a[:, None] * p_b[None, :]
+        mi[tau] = float(np.sum(joint[mask] * log(joint[mask] / outer[mask])))
+    return mi
+
+
+def test_mutual_information_matches_add_at_reference(rossler):
+    """The bincount joint histogram is bit-for-bit equal to the np.add.at scatter.
+
+    Regression guard for the ``np.add.at`` -> ``np.bincount`` rewrite in
+    :func:`mutual_information`: the linear-index ``bincount`` must reproduce the
+    per-element scatter exactly (same counts, same order), so the resulting MI
+    curve is unchanged.
+    """
+    _, y = rossler
+    x = y[:1500, 0]
+    nbins, max_delay = 24, 30
+    got = np.asarray(emb.mutual_information(x, max_delay=max_delay, bins=nbins))
+    ref = _mi_reference(x, max_delay=max_delay, nbins=nbins)
+    np.testing.assert_array_equal(got, ref)
+
+
+def test_mutual_information_bincount_small_exact():
+    """A tiny hand-checkable series: bincount MI equals the scatter reference exactly."""
+    x = np.array([0.0, 1.0, 2.0, 3.0, 2.0, 1.0, 0.0, 1.0, 2.0, 3.0])
+    nbins, max_delay = 4, 4
+    got = np.asarray(emb.mutual_information(x, max_delay=max_delay, bins=nbins))
+    ref = _mi_reference(x, max_delay=max_delay, nbins=nbins)
+    np.testing.assert_array_equal(got, ref)
+    assert got[0] == pytest.approx(got.max())
+
+
 def test_optimal_delay_rossler_reasonable(rossler):
     _, y = rossler
     tau_mi = emb.optimal_delay(y[:, 0], method="mi", max_delay=80)

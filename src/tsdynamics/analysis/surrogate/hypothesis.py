@@ -21,7 +21,7 @@ import numpy as np
 from .._result import AnalysisResult
 from ._common import _as_series, _gaussian_significance, empirical_pvalue
 from .generators import surrogates
-from .statistics import STATISTICS
+from .statistics import STATISTICS, nonlinear_prediction_error
 
 __all__ = ["SurrogateTest", "surrogate_test"]
 
@@ -198,8 +198,11 @@ def surrogate_test(
         Number of surrogates.  Theiler's :math:`M = 2/\alpha - 1` makes ``39`` the
         smallest ensemble able to reach a two-sided ``α = 0.05``.
     tail : {"auto", "two", "greater", "less"}, default "auto"
-        Rejection tail.  ``"auto"`` resolves to ``"less"`` for ``"prediction_error"``
-        (determinism makes the data *more* predictable) and ``"two"`` otherwise.
+        Rejection tail.  ``"auto"`` resolves to ``"less"`` for the prediction-error
+        statistic — whether named ``"prediction_error"`` or passed as the
+        :func:`~tsdynamics.analysis.surrogate.statistics.nonlinear_prediction_error`
+        callable (determinism makes the data *more* predictable, so it rejects in
+        the lower tail) — and ``"two"`` for every other statistic.
     alpha : float, default 0.05
         Significance level for the ``rejected`` decision.
     seed : int, optional
@@ -219,7 +222,28 @@ def surrogate_test(
     Raises
     ------
     ValueError
-        If ``statistic``, ``method`` or ``tail`` is unknown.
+        If ``statistic`` or ``method`` is an unknown name, if ``tail`` is not one
+        of ``{"auto", "two", "greater", "less"}``, or if ``data`` cannot be coerced
+        to a finite 1-D series (wrong shape, fewer than three samples, non-finite
+        values, or an ambiguous multi-component input with no ``component=``).
+    TypeError
+        If a non-integer ``component`` is given for a plain 2-D array.
+
+    References
+    ----------
+    .. [1] J. Theiler, S. Eubank, A. Longtin, B. Galdrikian, and J. D. Farmer,
+       "Testing for nonlinearity in time series: the method of surrogate data,"
+       Physica D 58, 77-94 (1992).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tsdynamics.analysis.surrogate import surrogate_test
+    >>> rng = np.random.default_rng(0)
+    >>> noise = rng.standard_normal(2000)  # a linear-Gaussian null
+    >>> res = surrogate_test(noise, "time_reversal", n=39, seed=0)
+    >>> bool(res.rejected)
+    False
     """
     series = _as_series(data, component)
     stat_kw = statistic_kwargs or {}
@@ -237,7 +261,13 @@ def surrogate_test(
         stat_name = key
 
     if tail == "auto":
-        tail = "less" if stat_name == "prediction_error" else "two"
+        # Prediction error is one-sided: determinism makes the data *more*
+        # predictable, so it rejects in the LOWER tail.  Resolve it both by the
+        # registry key ("prediction_error") and by identity, so passing the
+        # callable ``nonlinear_prediction_error`` (whose ``__name__`` differs
+        # from the key) still gets the correct one-sided ``"less"`` tail.
+        predictive = stat_name == "prediction_error" or stat_fn is nonlinear_prediction_error
+        tail = "less" if predictive else "two"
 
     data_statistic = float(stat_fn(series, **stat_kw))
     ensemble = surrogates(series, method, int(n), seed=seed, **surrogate_kwargs)

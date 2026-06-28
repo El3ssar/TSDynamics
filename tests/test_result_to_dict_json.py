@@ -160,6 +160,20 @@ def test_jsonify_keeps_int_backed_result_native():
     assert json.loads(json.dumps(out))["delay"] == 7
 
 
+def test_jsonify_collapses_int_backed_result_to_plain_int():
+    """A nested ``CountResult`` is coerced to a plain ``int`` — no object identity / meta leak.
+
+    Regression: ``_jsonify`` previously fell through to ``return obj`` for an
+    ``int``-backed result, leaking the ``CountResult`` instance (carrying its
+    ``meta``) into the jsonified tree instead of a native ``int``.
+    """
+    out = _jsonify(CountResult(5, meta={"system": "leaky"}))
+    assert type(out) is int  # exactly ``int``, not the ``CountResult`` subclass
+    assert out == 5
+    # No provenance leaks through: a bare int carries no ``meta``.
+    assert not hasattr(out, "meta")
+
+
 def test_jsonify_serializes_grid_by_fields():
     """A plain state-space dataclass (``Grid``) is serialized field-by-field."""
     grid = Grid(np.array([-1.0, 0.0]), np.array([1.0, 2.0]), (3, 5))

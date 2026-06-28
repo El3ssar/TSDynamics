@@ -321,6 +321,14 @@ def periodic_orbits(
         A list-like ``CollectionResult`` of :class:`PeriodicOrbit`, sorted by
         the orbit's lexicographically smallest point.
 
+    Raises
+    ------
+    TypeError
+        If ``system`` is not a :class:`~tsdynamics.families.DiscreteMap` (use
+        :func:`periodic_orbit` for flows).
+    ValueError
+        If ``period < 1`` or ``method`` is not ``"newton"``/``"sd"``/``"dl"``.
+
     Examples
     --------
     >>> periodic_orbits(Logistic(params={"r": 3.2}), 2)   # the stable 2-cycle
@@ -340,11 +348,30 @@ def periodic_orbits(
     step, jac = _c.map_fns(system)
     eye = np.eye(dim)
 
+    # Both the residual ``g(x) = f^p(x) - x`` and its Jacobian ``Df^p - I`` come
+    # from the *same* p-fold orbit + monodromy sweep.  ``converge_root`` evaluates
+    # them at the identical iterate ``x`` within one step (e.g. DL calls both), so
+    # cache the last ``(x_p, M)`` keyed on the input vector and share it between
+    # the two closures — one ``map_orbit_monodromy`` per iterate instead of two.
+    # The cache is per-iterate (single-slot), so the value is byte-identical to
+    # recomputing.
+    cache: dict[bytes, tuple[np.ndarray, np.ndarray]] = {}
+
+    def _orbit_monodromy(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        key = x.tobytes()
+        hit = cache.get(key)
+        if hit is None:
+            x_p, m, _ = _c.map_orbit_monodromy(step, jac, x, period, dim)
+            cache.clear()  # single-slot: only the live iterate is ever reused
+            cache[key] = (x_p, m)
+            return x_p, m
+        return hit
+
     def residual(x: np.ndarray) -> np.ndarray:
-        return cast("np.ndarray", _c.map_orbit_monodromy(step, jac, x, period, dim)[0] - x)
+        return cast("np.ndarray", _orbit_monodromy(x)[0] - x)
 
     def jac_resid(x: np.ndarray) -> np.ndarray:
-        return _c.map_orbit_monodromy(step, jac, x, period, dim)[1] - eye
+        return _orbit_monodromy(x)[1] - eye
 
     lo, hi = _c.resolve_box(system, region, dim, rng)
     seeds = _build_seeds(system, dim, lo, hi, n_seeds, rng)
@@ -490,6 +517,8 @@ def periodic_orbit(
     ------
     NotImplementedError
         If ``system`` is not a continuous flow.
+    ValueError
+        If ``period_guess`` (or the auto-estimated period) is not positive.
     RuntimeError
         If the Newton iteration does not converge, or it collapses onto an
         equilibrium (the target may be a centre — a non-isolated orbit — rather
@@ -697,7 +726,8 @@ def estimate_period(
     method : {"autocorrelation", "fft"}
         ``"autocorrelation"`` — first autocorrelation peak after the first
         zero-crossing (parabolically refined).  ``"fft"`` — reciprocal of the
-        dominant spectral frequency.
+        dominant spectral frequency, with the peak bin parabolically refined to
+        sub-bin resolution.
     max_delay : int, optional
         Largest lag considered (``"autocorrelation"`` only); default ``len // 2``.
     detrend : bool
@@ -709,13 +739,22 @@ def estimate_period(
         The estimated period in time units (``dt`` units); ``float(result)``
         returns the number.
 
+    Raises
+    ------
+    ValueError
+        If fewer than 8 samples are given, the signal is constant, the
+        autocorrelation is degenerate or has no zero-crossing, the spectrum has
+        no dominant frequency, or ``method`` is not ``"autocorrelation"``/
+        ``"fft"``.
+
     Examples
     --------
     >>> estimate_period(VanDerPol().integrate(final_time=200, dt=0.01))   # ≈ 6.66
 
     References
     ----------
-    Box & Jenkins (1970), *Time Series Analysis* (autocorrelation method).
+    Box, G. E. P. & Jenkins, G. M. (1970). *Time Series Analysis: Forecasting
+    and Control*. Holden-Day (autocorrelation method).
     """
     y, step = _coerce_signal(data, dt, component)
     if y.size < 8:
@@ -878,6 +917,11 @@ def _fft_period_lag(
     Returns ``(lag, abscissa, ordinate, (xlabel, ylabel))`` — the period (in
     samples) plus the power spectrum diagnostic curve (frequency in ``1/step``
     units against spectral power) for :func:`period_diagnostic`.
+
+    The dominant bin is refined to sub-bin resolution by a parabolic fit through
+    the peak power and its two neighbours (the same interpolation the
+    autocorrelation path uses), so the estimate is not pinned to the coarse
+    ``n / k`` grid that a single FFT bin would give.
     """
     n = y.size
     spec = np.abs(np.fft.rfft(y)) ** 2
@@ -886,7 +930,13 @@ def _fft_period_lag(
     k = int(np.argmax(spec))
     if k == 0:
         raise ValueError("estimate_period: no dominant frequency found.")
-    return float(n / k), freqs.astype(float), spec.astype(float), ("frequency", "power")
+    k_ref = float(k)
+    if 0 < k < spec.size - 1:  # parabolic sub-bin refinement around the peak bin
+        a, b, c = spec[k - 1], spec[k], spec[k + 1]
+        denom = a - 2.0 * b + c
+        if denom != 0.0:
+            k_ref = k + 0.5 * (a - c) / denom
+    return float(n / k_ref), freqs.astype(float), spec.astype(float), ("frequency", "power")
 
 
 def __dir__() -> list[str]:

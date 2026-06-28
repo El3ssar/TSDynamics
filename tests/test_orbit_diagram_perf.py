@@ -29,6 +29,7 @@ pytest.importorskip("tsdynamics._rust")  # engine-marked: routes through iterate
 import tsdynamics as ts
 from tsdynamics.engine.compile import TapeCompileError
 from tsdynamics.engine.run import EngineNotAvailableError
+from tsdynamics.errors import BackendError
 from tsdynamics.families import DiscreteMap
 from tsdynamics.systems import Henon, Logistic
 
@@ -243,6 +244,34 @@ def test_engine_unavailable_falls_back_byte_identical(monkeypatch, exc):
     vals = np.linspace(2.8, 3.9, 80)
     new = ts.orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.31])
     old = _old_orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.31])
+    _assert_points_equal(new.points, old, exact=True)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        BackendError("backend down"),  # any BackendError, not just the leaf
+        NotImplementedError("cannot lower"),  # any NotImplementedError, not just TapeCompileError
+    ],
+)
+def test_engine_fallback_catches_public_bases(monkeypatch, exc):
+    """The fast-path→step fallback catches the PUBLIC bases, not engine-internal leaves.
+
+    Regression for the design fix that replaced the engine-internal
+    ``(TapeCompileError, EngineNotAvailableError)`` catch with the public
+    ``(NotImplementedError, BackendError)`` bases: a bare ``BackendError`` (the
+    base ``EngineNotAvailableError`` subclasses) and a bare ``NotImplementedError``
+    (the base ``TapeCompileError`` subclasses) must still trigger the step-loop
+    fallback — the old narrow catch would let these propagate.
+    """
+
+    def boom(self, *a, **k):
+        raise exc
+
+    monkeypatch.setattr(DiscreteMap, "iterate", boom)
+    vals = np.linspace(2.8, 3.9, 60)
+    new = ts.orbit_diagram(Logistic(), "r", vals, n=40, transient=120, ic=[0.27])
+    old = _old_orbit_diagram(Logistic(), "r", vals, n=40, transient=120, ic=[0.27])
     _assert_points_equal(new.points, old, exact=True)
 
 

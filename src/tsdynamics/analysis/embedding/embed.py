@@ -188,6 +188,17 @@ def embed(
     ----------
     F. Takens, "Detecting strange attractors in turbulence", in *Dynamical
     Systems and Turbulence*, Lecture Notes in Mathematics **898**, 366 (1981).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tsdynamics.analysis.embedding import embed
+    >>> x = np.arange(10.0)
+    >>> y = embed(x, dimension=3, delay=2)
+    >>> y.shape
+    (6, 3)
+    >>> y[0]
+    array([0., 2., 4.])
     """
     # Univariate path: a 1-D series, or an explicitly selected single component.
     univariate = component is not None or _looks_univariate(data)

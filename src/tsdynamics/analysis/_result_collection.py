@@ -174,6 +174,11 @@ class CollectionResult(AnalysisResult):
         Returns
         -------
         pandas.DataFrame
+
+        Raises
+        ------
+        ImportError
+            If :mod:`pandas` is not installed.
         """
         pd = self._require_pandas()
         rows: list[dict[str, Any]] = []

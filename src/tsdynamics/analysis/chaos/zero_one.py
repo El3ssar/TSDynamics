@@ -29,6 +29,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from tsdynamics.errors import InvalidParameterError
+
 from .._result import AnalysisResult, ScalarResult
 from . import _common as _c
 
@@ -128,7 +130,7 @@ def _observable(
     )
     if not is_system:
         if any(v is not None for v in (final_time, n, dt, transient, ic)):
-            raise ValueError(
+            raise InvalidParameterError(
                 "zero_one_test: final_time/n/dt/transient/ic apply only when the first "
                 "argument is a System; a measured series / Trajectory is used as-is."
             )
@@ -144,7 +146,9 @@ def _observable(
     # decorrelated for the test to be meaningful; a coarse dt, or a Poincaré /
     # stroboscopic view passed as ``system``, gives the cleanest K).
     if n is not None:
-        raise ValueError("zero_one_test: n is for maps/discrete views; a flow uses final_time.")
+        raise InvalidParameterError(
+            "zero_one_test: n is for maps/discrete views; a flow uses final_time."
+        )
     horizon = float(final_time) if final_time is not None else 1000.0
     burn = float(transient) if transient is not None else 0.0
     step = float(dt) if dt is not None else 0.1
@@ -219,6 +223,13 @@ def zero_one_test(
         give a small negative :math:`K`); it concentrates near ``0`` (regular) or
         ``1`` (chaotic), so ``K > 0.5`` is the usual chaos threshold.
 
+    Raises
+    ------
+    InvalidParameterError
+        If the observable is shorter than 200 points (too short for the test to
+        be meaningful); if ``n_c < 1``; if horizon keywords are passed for a
+        measured-series input; or if ``n`` is passed for a flow.
+
     Examples
     --------
     >>> zero_one_test(Logistic(params={"r": 4.0}), n=5000) > 0.9     # chaotic
@@ -229,22 +240,25 @@ def zero_one_test(
 
     References
     ----------
-    Gottwald & Melbourne (2004), *Proc. R. Soc. A* 460, 603--611.
-    Gottwald & Melbourne (2009), *SIAM J. Appl. Dyn. Syst.* 8, 129--145.
+    Gottwald & Melbourne, "A new test for chaos in deterministic systems",
+    *Proc. R. Soc. Lond. A* **460** (2004) 603--611.
+
+    Gottwald & Melbourne, "On the implementation of the 0--1 test for chaos",
+    *SIAM J. Appl. Dyn. Syst.* **8** (2009) 129--145.
     """
     phi = _observable(
         system, component, final_time=final_time, n=n, dt=dt, transient=transient, ic=ic
     )
     n_pts = phi.size
     if n_pts < 200:
-        raise ValueError(
+        raise InvalidParameterError(
             f"the 0-1 test needs a long series to be meaningful; got {n_pts} points (need >= 200)."
         )
     if n_cut is None:
         n_cut = n_pts // 10
     n_cut = int(max(1, min(n_cut, n_pts - 1)))
     if n_c < 1:
-        raise ValueError(f"n_c must be >= 1, got {n_c}.")
+        raise InvalidParameterError(f"n_c must be >= 1, got {n_c}.")
 
     rng = np.random.default_rng(seed)
     c_values = rng.uniform(c_range[0], c_range[1], size=int(n_c))

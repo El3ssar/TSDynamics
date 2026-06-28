@@ -36,7 +36,7 @@ from tsdynamics import (
     registry,
     zero_one_test,
 )
-from tsdynamics.errors import InvalidInputError
+from tsdynamics.errors import InvalidInputError, InvalidParameterError
 
 LN2 = float(np.log(2.0))
 LORENZ_GAP = 0.9056  # λ₁ - λ₂ for the classic Lorenz attractor (λ₂ = 0)
@@ -257,3 +257,53 @@ def test_expansion_entropy_long_horizon_no_crash():
     h = expansion_entropy(ts.Henon(), box, n_samples=60, n=300, seed=0)
     assert isinstance(h, ExpansionEntropyResult)
     assert np.isfinite(float(h))
+
+
+# ── robustness: degenerate step counts raise a clean typed error (regression) ──
+
+
+def test_gali_degenerate_step_count_raises_clean_error():
+    """A degenerate step count must raise a clean typed error, not an opaque IndexError.
+
+    ``gali(..., n=0)`` used to build an empty GALI series; the very first read of
+    the result (``float`` / ``.final`` → ``values[-1]``) then raised a bare
+    ``IndexError`` deep in the accessor.  It must instead reject the degenerate
+    horizon up front with an ``InvalidParameterError`` (a ``ValueError``).
+    """
+    for bad in (0, -3):
+        with pytest.raises(InvalidParameterError, match="must be >= 1"):
+            gali(ts.Henon(), k=2, ic=[0.1, 0.1], n=bad)
+    # Flow horizon: a non-positive final_time / dt spans no step.
+    with pytest.raises(InvalidParameterError, match="dt must be positive"):
+        gali(ts.Lorenz(), k=2, ic=[1.0, 1.0, 1.0], dt=0.0)
+    with pytest.raises(InvalidParameterError, match="final_time must be positive"):
+        gali(ts.Lorenz(), k=2, ic=[1.0, 1.0, 1.0], final_time=0.0)
+
+
+def test_gali_empty_result_final_raises_clean_error():
+    """Reading ``.final`` on an empty GALI series raises a clean typed error."""
+    g = GALIResult(k=2, times=np.empty(0), values=np.empty(0))
+    with pytest.raises(InvalidParameterError, match="no samples"):
+        _ = g.final
+    with pytest.raises(InvalidParameterError, match="no samples"):
+        float(g)
+
+
+def test_expansion_entropy_degenerate_inputs_raise_clean_error():
+    """Degenerate sample / step counts raise a clean typed error, never a numpy crash."""
+    box = Box([0.0], [1.0])
+    with pytest.raises(InvalidParameterError, match="n_samples must be >= 1"):
+        expansion_entropy(ts.Tent(params={"mu": 1.0}), box, n_samples=0)
+    with pytest.raises(InvalidParameterError, match="must be >= 1"):
+        expansion_entropy(ts.Tent(params={"mu": 1.0}), box, n_samples=10, n=0)
+    lorenz_box = Box([-20.0, -25.0, 0.0], [20.0, 25.0, 50.0])
+    with pytest.raises(InvalidParameterError, match="final_time must be positive"):
+        expansion_entropy(ts.Lorenz(), lorenz_box, n_samples=5, final_time=0.0)
+
+
+def test_zero_one_short_series_raises_typed_error():
+    """A too-short / empty observable raises the typed InvalidParameterError (a ValueError)."""
+    with pytest.raises(InvalidParameterError, match="long series"):
+        zero_one_test(np.zeros(50))
+    with pytest.raises(InvalidParameterError, match="long series"):
+        zero_one_test(np.empty(0))

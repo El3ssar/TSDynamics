@@ -79,6 +79,18 @@ def multiscale_entropy(
     white noise decays with scale — the discriminating feature multiscale
     entropy was designed to expose.
 
+    Notes
+    -----
+    The default ``r_factor`` is ``0.15``, not the ``0.2`` that
+    :func:`sample_entropy` uses on its own.  This is the deliberate multiscale
+    convention (Costa et al. 2002 sweep ``r`` in the ``0.1–0.25 · std`` band and
+    report ``0.15``): a tolerance fixed once from the *original* series keeps the
+    comparison across scales honest.  A direct consequence is that, **at defaults,
+    ``multiscale_entropy(x)[0]`` (scale 1) does not equal ``sample_entropy(x)``**
+    — the former uses ``r = 0.15 · std(x)`` while the latter uses
+    ``0.2 · std(x)``.  Pass ``r_factor=0.2`` (or an explicit ``r``) to make scale 1
+    coincide with the bare estimator.
+
     Parameters
     ----------
     data : array-like or Trajectory
@@ -92,7 +104,9 @@ def multiscale_entropy(
         Explicit tolerance for ``r``-based entropies (overrides ``r_factor``).
     r_factor : float, default 0.15
         When ``r`` is not given and ``entropy_fn`` accepts an ``r`` argument, use
-        ``r_factor · std(original)``.
+        ``r_factor · std(original)``.  Defaults to the multiscale convention
+        ``0.15`` (see Notes), distinct from :func:`sample_entropy`'s standalone
+        ``0.2``.
     component : int or str, optional
         Component selector for multi-component input.
     **kwargs
@@ -104,6 +118,12 @@ def multiscale_entropy(
         Entropy at each requested scale (same order as ``scales``), a drop-in for
         the bare array (``mse[0]``, ``mse.shape``, ``np.asarray(mse)``) that also
         carries ``.meta``.
+
+    References
+    ----------
+    Costa, M., Goldberger, A. L. & Peng, C.-K. (2002). Multiscale entropy
+    analysis of complex physiologic time series. *Phys. Rev. Lett.* **89**,
+    068102.
 
     Examples
     --------

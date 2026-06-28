@@ -252,6 +252,35 @@ def test_fit_scaling_region_too_few_points():
         fit_scaling_region(np.arange(3.0), np.arange(3.0), min_window=5)
 
 
+def test_fit_scaling_region_min_window_2_uses_more_than_two_points():
+    """A noisy straight line with ``min_window=2`` must not collapse to a 2-point fit.
+
+    A two-point window fits any pair exactly (residual sigma = 0), so if such a
+    window were allowed to set the residual threshold it would drop to 0 and only
+    exactly-collinear/two-point windows would survive on a noisy curve.  The fix
+    sets the threshold from windows of >= 3 points; here the whole noisy line is
+    linear, so the fitter should keep a long window and recover the slope — never
+    a degenerate 2-point window.  Fails on the pre-fix code.
+    """
+    x = np.linspace(0.0, 1.0, 40)
+    rng = np.random.default_rng(0)
+    y = 2.0 * x + 0.5 + rng.normal(0.0, 5e-2, x.size)
+    fit = fit_scaling_region(x, y, min_window=2)
+    # Pre-fix this collapsed to a 2-point window (sigma=0 forced the threshold to
+    # 0); post-fix the threshold comes from >=3-point windows, so a wider window is
+    # kept.  npts > 2 is the precise pre/post-fix discriminator (the estimator
+    # deliberately selects the cleanest sub-window, so its slope on noisy data is
+    # not expected to equal the global slope — use the default min_window for that).
+    assert fit.npts > 2, f"collapsed to a {fit.npts}-point window"
+
+
+def test_fit_scaling_region_min_window_2_degenerate_two_points():
+    """With exactly two points and ``min_window=2`` the only window is returned."""
+    fit = fit_scaling_region(np.array([0.0, 1.0]), np.array([0.5, 2.5]), min_window=2)
+    assert fit.npts == 2
+    assert fit.slope == pytest.approx(2.0)
+
+
 def test_local_slopes_length():
     x = np.linspace(0, 1, 10)
     assert local_slopes(x, 2 * x).shape == x.shape

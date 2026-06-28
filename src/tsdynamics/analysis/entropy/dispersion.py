@@ -36,6 +36,15 @@ def dispersion_entropy(
     it keeps amplitude information and is markedly faster than sample entropy,
     while remaining robust to noise.
 
+    Notes
+    -----
+    When ``normalize=True`` the entropy is divided by ``log_base(c**dimension)`` —
+    the log of the *full* dispersion-pattern alphabet (the canonical Rostaghi &
+    Azami 2016 normalisation).  Because a finite series can populate at most
+    ``n − (dimension − 1)·delay`` of those ``c**dimension`` patterns, even ideal
+    white noise sits *slightly below* 1 at finite length (it approaches 1 only as
+    ``n → ∞``); this is expected, not a defect.
+
     Parameters
     ----------
     data : array-like or Trajectory

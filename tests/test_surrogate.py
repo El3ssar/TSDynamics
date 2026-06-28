@@ -276,6 +276,41 @@ def test_surrogate_test_accepts_callable_statistic(ar1):
     assert res.surrogate_statistics.shape == (19,)
 
 
+def test_auto_tail_resolves_less_for_prediction_error_callable(ar1):
+    # Regression: tail="auto" must resolve to the one-sided "less" tail for the
+    # prediction-error statistic whether it is named OR passed as the callable.
+    # The callable's __name__ is "nonlinear_prediction_error" (not the registry
+    # key "prediction_error"), so a string-only check would wrongly fall back to
+    # two-sided — the opposite of what the docstring promises.
+    by_callable = sur.surrogate_test(
+        ar1,
+        statistic=sur.nonlinear_prediction_error,
+        method="ft",
+        n=19,
+        seed=3,
+        statistic_kwargs={"dimension": 2},
+    )
+    assert by_callable.tail == "less"
+    # Identical resolution via the string key.
+    by_name = sur.surrogate_test(
+        ar1,
+        statistic="prediction_error",
+        method="ft",
+        n=19,
+        seed=3,
+        statistic_kwargs={"dimension": 2},
+    )
+    assert by_name.tail == "less"
+    # Same statistic + tail + seed ⇒ identical p-value through either entry point.
+    assert by_callable.p_value == pytest.approx(by_name.p_value)
+
+
+def test_auto_tail_stays_two_sided_for_other_callables(ar1):
+    # A non-prediction-error callable keeps the default two-sided "auto" tail.
+    res = sur.surrogate_test(ar1, statistic=np.std, method="ft", n=19, seed=4)
+    assert res.tail == "two"
+
+
 def test_surrogate_test_unknown_statistic(ar1):
     with pytest.raises(ValueError, match="unknown statistic"):
         sur.surrogate_test(ar1, "bogus")

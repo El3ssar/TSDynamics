@@ -180,6 +180,39 @@ class TestOrbitDiagramQuantifiers:
         assert np.min(np.abs(bp - 3.0)) < 0.03
         assert np.min(np.abs(bp - (1.0 + np.sqrt(6.0)))) < 0.02
 
+    def test_to_plot_spec_computes_periods_once(self) -> None:
+        # Regression: to_plot_spec previously recomputed periods() once directly
+        # and again inside bifurcation_points() (and a third walk).  It must now
+        # compute the period sweep exactly once per call.
+        od = ts.orbit_diagram(
+            ts.Logistic(), "r", np.linspace(2.8, 3.6, 60), n=48, transient=400, ic=[0.5]
+        )
+        calls = {"n": 0}
+        real_periods = ts.OrbitDiagram.periods
+
+        def counting_periods(self, **kw):  # type: ignore[no-untyped-def]
+            calls["n"] += 1
+            return real_periods(self, **kw)
+
+        try:
+            ts.OrbitDiagram.periods = counting_periods  # type: ignore[method-assign]
+            spec = od.to_plot_spec()
+        finally:
+            ts.OrbitDiagram.periods = real_periods  # type: ignore[method-assign]
+        assert calls["n"] == 1
+        # And the labelled onset annotations are still produced (output unchanged).
+        assert any(a.kind == "vline" for a in spec.annotations)
+
+    def test_bifurcation_points_from_precomputed_periods_match(self) -> None:
+        # The factored helper must agree with the public bifurcation_points().
+        od = ts.orbit_diagram(
+            ts.Logistic(), "r", np.linspace(2.9, 3.6, 80), n=48, transient=400, ic=[0.5]
+        )
+        p = od.periods()
+        np.testing.assert_array_equal(
+            od._bifurcation_points_from_periods(p), od.bifurcation_points()
+        )
+
 
 # ---------------------------------------------------------------------------
 # registry self-registration

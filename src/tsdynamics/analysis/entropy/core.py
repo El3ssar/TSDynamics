@@ -267,6 +267,12 @@ class Dispersion(OutcomeSpace):
     onto ``c`` amplitude classes, then embedded with order ``m`` and delay ``τ``;
     each window becomes a *dispersion pattern* over ``c**m`` possibilities.
 
+    The :attr:`cardinality` is the full ``c**m`` alphabet, so a normalised entropy
+    (:func:`entropy` with ``normalize=True``) divides by ``log(c**m)`` — the
+    canonical Rostaghi & Azami (2016) convention.  A finite series can occupy at
+    most ``n − (m − 1)·τ`` of those patterns, so even white noise normalises to
+    slightly below 1 at finite length.
+
     Parameters
     ----------
     c : int
@@ -435,7 +441,19 @@ class InformationMeasure(ABC):
 
 
 class Shannon(InformationMeasure):
-    r"""Shannon entropy ``H = -∑ p log_b p`` (Shannon 1948); ``base`` sets ``b``."""
+    r"""
+    Shannon entropy ``H = -∑ p log_b p`` (Shannon 1948).
+
+    Parameters
+    ----------
+    base : float, default 2.0
+        Logarithm base ``b`` (``> 1``); ``2`` gives bits, ``e`` gives nats.
+
+    References
+    ----------
+    Shannon, C. E. (1948). A mathematical theory of communication. *Bell Syst.
+    Tech. J.* **27**, 379–423.
+    """
 
     def __init__(self, base: float = 2.0) -> None:
         if base <= 1:

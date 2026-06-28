@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import subprocess
 import sys
 import types
 from dataclasses import dataclass, field
@@ -11,7 +12,12 @@ from dataclasses import dataclass, field
 import numpy as np
 import pytest
 
-from tsdynamics.analysis._result import AnalysisResult, VisualizationNotInstalled
+from tsdynamics.analysis._result import (
+    AnalysisResult,
+    ArrayResult,
+    ScalarResult,
+    VisualizationNotInstalled,
+)
 
 # ---------------------------------------------------------------------------
 # Test result subclasses
@@ -245,6 +251,32 @@ def test_plot_typed_methods_raise_without_backend(method, _no_backend):
 
 def test_plot_accessor_repr():
     assert "plot accessor" in repr(_spectrum().plot)
+
+
+def test_plot_works_as_first_viz_action_in_fresh_process():
+    """P0 regression: ``result.plot()`` must render on first use in a fresh process.
+
+    ``_available_renderers`` used to check ``len(registry.renderers)`` without
+    ever seeding the built-in backends, so the very first viz action in a fresh
+    interpreter found an empty registry and spuriously raised
+    :class:`VisualizationNotInstalled` even with matplotlib installed.  Running it
+    in a subprocess guarantees a cold registry no in-process import could mask.
+    """
+    pytest.importorskip("matplotlib")
+    script = (
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import numpy as np\n"
+        "from tsdynamics.analysis._result import ArrayResult\n"
+        "fig = ArrayResult(values=np.linspace(0.0, 1.0, 5)).plot()\n"
+        "assert fig is not None\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
@@ -514,3 +546,52 @@ def test_to_frame_builds_scalar_row_with_stub(monkeypatch):
     assert "exponents" not in frame.columns  # arrays excluded
     assert len(frame) == 1
     assert frame.attrs["meta"]["system"] == "Lorenz"
+
+
+# ---------------------------------------------------------------------------
+# __array__ — NumPy-2.0 copy keyword (np.array(result) must not error)
+# ---------------------------------------------------------------------------
+
+
+def test_scalar_result_np_array_honours_copy_keyword():
+    # np.array(...) passes copy=True under NumPy 2.0; __array__ must accept it.
+    r = ScalarResult(3.5)
+    out = np.array(r)
+    assert out == 3.5
+    # The explicit keyword path must also work and yield an independent buffer.
+    assert np.asarray(r).item() == 3.5
+    assert r.__array__(copy=True).item() == 3.5
+
+
+def test_array_result_np_array_honours_copy_keyword():
+    base = np.linspace(0.0, 1.0, 5)
+    r = ArrayResult(values=base)
+    out = np.array(r)  # copy=True under NumPy 2.0 — must not raise
+    np.testing.assert_array_equal(out, base)
+    out[0] = 99.0  # a real copy: the wrapped array is untouched
+    assert r.values[0] == base[0]
+
+
+# ---------------------------------------------------------------------------
+# ArrayResult.to_frame — must tabulate the array, not drop it
+# ---------------------------------------------------------------------------
+
+
+def test_array_result_to_frame_1d_tabulates_values():
+    pd = pytest.importorskip("pandas")
+    r = ArrayResult(values=np.array([1.0, 2.0, 3.0]), meta={"system": "X"})
+    frame = r.to_frame()
+    assert isinstance(frame, pd.DataFrame)
+    assert list(frame.columns) == ["value"]  # the base would have dropped the array
+    np.testing.assert_array_equal(frame["value"].to_numpy(), [1.0, 2.0, 3.0])
+    assert frame.attrs["meta"]["system"] == "X"
+
+
+def test_array_result_to_frame_2d_one_column_per_channel():
+    pd = pytest.importorskip("pandas")
+    arr = np.arange(6.0).reshape(3, 2)
+    frame = ArrayResult(values=arr).to_frame()
+    assert isinstance(frame, pd.DataFrame)
+    assert list(frame.columns) == ["c0", "c1"]
+    assert len(frame) == 3
+    np.testing.assert_array_equal(frame["c1"].to_numpy(), arr[:, 1])

@@ -215,12 +215,18 @@ class AnalysisResult:
 
         The base produces a single-row frame of the scalar display fields, with
         ``meta`` carried on ``frame.attrs["meta"]``.  Subclasses that carry a
-        natural table (e.g. a scaling curve) override this with a tidy,
-        column-per-array frame.
+        natural table (e.g. a scaling curve, a wrapped array) override this with a
+        tidy, column-per-array frame.
 
         Returns
         -------
         pandas.DataFrame
+
+        Raises
+        ------
+        ImportError
+            If :mod:`pandas` is not installed (the message names the
+            ``tsdynamics[frame]`` extra).
         """
         pd = self._require_pandas()
         row: dict[str, Any] = {}
@@ -410,8 +416,14 @@ class AnalysisResult:
         """The visualization seam (callable + typed kind methods).
 
         ``result.plot()`` renders the default view; ``result.plot.scaling()``
-        and the sibling methods force a particular plot kind.  Raises
-        :class:`VisualizationNotInstalled` until a rendering backend registers
-        itself, since visualization is deferred in this release.
+        and the sibling methods force a particular plot kind.  The in-tree
+        backends seed themselves on first use, so it works out of the box when a
+        plotting library is installed; with none it raises
+        :class:`VisualizationNotInstalled`.
+
+        Returns
+        -------
+        _PlotAccessor
+            A callable that is also a namespace of typed kind methods.
         """
         return _PlotAccessor(self)
