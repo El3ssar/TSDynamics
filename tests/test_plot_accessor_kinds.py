@@ -53,9 +53,10 @@ def fake_renderer():
         captured.append(spec)
         return spec
 
+    name = "_fake_kinds_renderer"
     saved = renderers.all()
     renderers.clear()
-    renderers.register("_fake_kinds_renderer", _render, replace=True)
+    renderers.register(name, _render, replace=True)
     try:
         # Yield (name, captured): matplotlib is now the deterministic default
         # backend, so a no-arg render would route to mpl (and return a Figure);
