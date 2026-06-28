@@ -45,9 +45,9 @@ pub mod stepper;
 pub use dde::integrate_dde_dense;
 pub use events::integrate_events_dense;
 pub use map::{iterate_map, map_ensemble_final};
-pub use marshal::EngineError;
 #[cfg(test)]
 pub use marshal::build_tape;
+pub use marshal::EngineError;
 pub use ode::{ensemble_final, eval_jac, eval_rhs, integrate_dense};
 pub use sde::{sde_ensemble_final, sde_integrate_dense};
 pub use stepper::OdeStepper;
