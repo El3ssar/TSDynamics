@@ -799,6 +799,7 @@ def _theme_layout(theme: Theme) -> dict[str, Any]:
     - ``foreground`` → ``font.color``
     - ``font_family`` → ``font.family``
     - ``font_size`` → ``font.size``
+    - ``palette`` → ``colorway`` (the trace color cycle)
     """
     layout: dict[str, Any] = {}
     if theme.background is not None:
@@ -813,6 +814,8 @@ def _theme_layout(theme: Theme) -> dict[str, Any]:
         font["size"] = float(theme.font_size)
     if font:
         layout["font"] = font
+    if theme.palette:
+        layout["colorway"] = list(theme.palette)
     return layout
 
 

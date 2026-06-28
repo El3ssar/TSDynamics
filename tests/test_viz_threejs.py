@@ -159,6 +159,10 @@ def test_uncolored_layer_takes_color_from_theme_palette() -> None:
     # The uncolored layer now inherits a deterministic per-layer palette color.
     assert geom["material"]["color"] is not None
     assert isinstance(geom["material"]["color"], str)
+    # …and the flat color rides on ``material.color`` ALONE — a solid (palette)
+    # color emits no redundant per-vertex ``colors`` buffer (that array is reserved
+    # for the scalar ``c``-channel gradient case).
+    assert "colors" not in geom
 
 
 # ---------------------------------------------------------------------------

@@ -448,10 +448,13 @@ def _draw_scatter(
         kw["label"] = layer.label
     if size is not None:
         kw["s"] = size
+    # ``markersize`` / ``theme.marker_size`` are a marker *diameter* (pt, the
+    # Line2D convention), but mpl scatter's ``s`` is a marker *area* (pt²) — square
+    # the diameter so a canonical markersize matches a Line2D marker of that size.
     elif "markersize" in canon:
-        kw["s"] = float(canon["markersize"])
+        kw["s"] = float(canon["markersize"]) ** 2
     elif theme.marker_size is not None:
-        kw["s"] = float(theme.marker_size)
+        kw["s"] = float(theme.marker_size) ** 2
     if c is not None:
         kw["c"] = c
         kw["cmap"] = _resolve_cmap(spec, layer, preset)
@@ -801,6 +804,8 @@ def _apply_axis(ax: Axes, axis: Axis, which: Literal["x", "y"], theme: Theme) ->
         eff_label_size = axis.label_size if axis.label_size is not None else theme.font_size
         if eff_label_size is not None:
             label_kw["fontsize"] = float(eff_label_size)
+        if theme.font_family is not None:
+            label_kw["fontfamily"] = theme.font_family
         set_label(axis.label, **label_kw)
 
     # Scale
@@ -839,6 +844,12 @@ def _apply_axis(ax: Axes, axis: Axis, which: Literal["x", "y"], theme: Theme) ->
         tick_kw["rotation"] = float(axis.tick_rotation)
     if tick_kw:
         ax.tick_params(axis=which, **tick_kw)
+
+    # Tick-label font family (tick_params has no family kwarg — set it on the
+    # label objects directly, figure-locally, no global rcParams mutation).
+    if theme.font_family is not None:
+        for lbl in ax.get_xticklabels() if which == "x" else ax.get_yticklabels():
+            lbl.set_fontfamily(theme.font_family)
 
     # Spine / axis label color (axis.color overrides theme.foreground)
     if ink is not None:

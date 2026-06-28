@@ -120,6 +120,101 @@ everywhere.
 
 ---
 
+## Upgrading from v3 — breaking changes
+
+The v5 redesign makes the style vocabulary a **closed, validated set**. Calls
+that silently worked on the old v3 matplotlib path — because they were forwarded
+straight to matplotlib — now go through `normalize_style` and raise a
+`ValueError` **at the call site** if the value is not in the canonical vocabulary.
+This is deliberate: the same spec must render the same on plotly and the
+three.js / JSON exporters, so a knob that only matplotlib understands cannot be
+allowed through. The trade is a louder upgrade for a portable, predictable spec.
+
+```python
+# v3 — forwarded to matplotlib, silently accepted
+spec.style(marker="v", linestyle=(0, (3, 1)), alpha=1.5, zorder=2.0)
+
+# v5 — each of these raises ValueError at the call site; map to the canonical set
+spec.style(marker="triangle", linestyle="dashed", alpha=1.0, zorder=2)
+```
+
+### Markers — canonical shapes only
+
+`marker` is the canonical set `circle`, `square`, `triangle`, `diamond`,
+`cross`, `x`, `star`, `none`, plus the documented single-character aliases
+`o s ^ D + x *`. The matplotlib-only spellings that have **no** canonical
+equivalent now raise:
+
+| v3 matplotlib marker | v5 — use instead |
+| --- | --- |
+| `'v'`, `'<'`, `'>'` (oriented triangles) | `"triangle"` |
+| `'^'` | `"triangle"` (kept as an alias — still works) |
+| `'d'` (thin diamond) | `"diamond"` |
+| `'8'` (octagon) | `"circle"` (nearest) |
+| `'P'` (filled plus) | `"cross"` |
+| `'p'`, `'h'`, `'H'` (pentagon / hexagons) | `"star"` or `"circle"` (nearest) |
+
+This is a deliberate **cross-backend** choice: three.js and the JSON exporter
+cannot render oriented or exotic matplotlib markers, so the vocabulary is
+restricted to shapes every visual backend can draw (or honestly decline). We
+keep it a **hard error** rather than silently substituting — a quiet
+down-triangle → up-triangle swap would corrupt a figure more confusingly than a
+clear `ValueError` naming the unknown marker.
+
+### Linestyles — named set only
+
+`linestyle` is the named set `solid`, `dashed`, `dotted`, `dashdot`, plus the
+short aliases `- -- : -.`. The matplotlib **dash-tuple** form (e.g.
+`(0, (3, 1, 1, 1))`) now raises — pick the nearest named style:
+
+```python
+spec.style(linestyle=(0, (5, 2)))   # v3 — raises ValueError now
+spec.style(linestyle="dashed")      # v5
+```
+
+### Range / type checks
+
+Values are now coerced and range-checked, so out-of-range or wrong-typed values
+that v3 tolerated raise:
+
+- `alpha` (and `fillalpha`) must lie in `[0, 1]` — v3 tolerated `alpha > 1`
+  (matplotlib clamped it); it now raises.
+- `linewidth` / `markersize` must be `≥ 0`.
+- `zorder` must be an **integer** — a float like `2.0` raises (v3 silently
+  floored it via `int(...)`). A NumPy integer is accepted.
+- A `bool` is rejected where a magnitude is expected (`alpha=True`,
+  `linewidth=True`) rather than quietly becoming `1.0`.
+
+Unknown keys — including a near-miss typo like `colour=` — are **not** an error:
+they are dropped with a single [`VisualizationDegraded`](#per-backend-honoring)
+warning naming the offending key(s) (see *Unknown keys warn*, above), so the
+silent no-op of v3 (`colour='red'` did nothing) is gone.
+
+### Migrating: introspect the vocabulary
+
+`STYLE_KEYS` is the introspectable source of truth — there is no guesswork about
+what a key accepts:
+
+```pycon
+>>> from tsdynamics.viz import STYLE_KEYS
+>>> sorted(STYLE_KEYS)
+['alpha', 'cmap', 'color', 'fill', 'fillalpha', 'linestyle', 'linewidth', 'marker', 'markersize', 'zorder']
+>>> STYLE_KEYS["marker"].aliases          # the accepted alternate spellings
+()
+>>> STYLE_KEYS["linewidth"].aliases
+('lw',)
+>>> STYLE_KEYS["markersize"].aliases
+('ms', 's')
+```
+
+(`marker` carries no `aliases` tuple — its alternate spellings are *value*
+aliases, the single-character `o s ^ D + x *`, canonicalised by the key's
+validator rather than the key-name index.) When a `ValueError` surprises you on
+upgrade, the message names the offending key and lists the accepted values; the
+table above plus `STYLE_KEYS` is the full map.
+
+---
+
 ## Fluent tweak methods
 
 All tweaks mutate the spec and **return `self`**, so they chain in any order and
@@ -358,6 +453,64 @@ front:
 
 For a fully portable figure (including three.js), prefer `color` / `linewidth` /
 `markersize` / `alpha` / `zorder`, which every backend honors.
+
+---
+
+## Interaction with `filterwarnings = ["error"]`
+
+This repo's own pytest policy is `filterwarnings = ["error"]` — every warning
+becomes an exception — and a fair number of downstream projects run the same
+strict policy. Under it, the **two new warning paths** the styling layer adds
+turn into *errors*:
+
+1. **An unknown style key.** `.style(unknown_key=...)` (or any `normalize_style`
+   call that drops a key) emits a `VisualizationDegraded`. With warnings as
+   errors, `.style(colour="red")` *raises* instead of warning-and-dropping.
+2. **An unhonored knob at render time.** Rendering a spec that sets a knob the
+   chosen backend cannot honor (e.g. `linestyle` on three.js) emits the
+   consolidated `VisualizationDegraded` described above — which becomes an error
+   under the strict policy.
+
+There are **no false positives on a default render**: a spec that sets only
+honored knobs (or no style at all) emits nothing, so the strict policy never
+fires on an ordinary plot. Only specs that set an *unknown* key or an
+*unhonored* knob are affected — exactly the cases the warning is meant to flag.
+
+If a downstream test treats warnings as errors and you *want* the degraded path
+(you know three.js drops `linestyle`, say), scope the warning rather than
+loosening your global policy. The warning class is
+`tsdynamics.viz.render.caps.VisualizationDegraded`:
+
+```python
+import warnings
+from tsdynamics.viz.render.caps import VisualizationDegraded
+
+# 1. Swallow it locally
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", VisualizationDegraded)
+    spec.style(linestyle="dashed").render("threejs")
+```
+
+```python
+# 2. Assert it in a test (pytest), which also consumes it so it can't escalate
+import pytest
+
+with pytest.warns(VisualizationDegraded):
+    spec.style(colour="red")            # the typo path
+```
+
+```ini
+# 3. Or down-grade just this class in pyproject.toml / pytest.ini
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+    "ignore::tsdynamics.viz.render.caps.VisualizationDegraded",
+]
+```
+
+Prefer the narrowest scope that fits — `catch_warnings` / `pytest.warns` around
+the one call, not a project-wide ignore — so a genuinely-unintended degradation
+still surfaces everywhere else.
 
 ---
 

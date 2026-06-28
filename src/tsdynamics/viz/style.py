@@ -27,6 +27,7 @@ The pieces
 
 from __future__ import annotations
 
+import numbers
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -162,14 +163,16 @@ def _validate_bool(value: Any) -> bool:
 
 
 def _validate_int(value: Any) -> int:
-    """Require a genuine ``int`` (raises ``ValueError`` on a float or ``bool``).
+    """Require an integer (raises ``ValueError`` on a float or ``bool``).
 
     ``zorder`` is a draw order — a non-integer (``1.7``) or a ``bool``
     (``True``/``False``) is a caller mistake, so this *rejects* rather than
     truncating (the old ``int(1.7) == 1`` silent floor) or accepting a ``bool``
-    (``int`` subclass).
+    (``int`` subclass).  Acceptance keys off :class:`numbers.Integral` (not
+    ``int``) so a NumPy integer (``np.int64`` — *not* an ``int`` subclass) is a
+    valid draw order, e.g. ``.style(zorder=np.arange(n)[i])``.
     """
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
         raise ValueError(f"expected an int, got {value!r}")
     return int(value)
 
@@ -310,6 +313,16 @@ def _build_alias_index() -> dict[str, str]:
 _ALIAS_INDEX: dict[str, str] = _build_alias_index()
 
 
+#: Mark-rendering **structural** knobs that ride on a layer's ``style`` dict but
+#: are *not* part of the cross-backend aesthetic vocabulary (:data:`STYLE_KEYS`):
+#: ``"interpolation"`` (an IMAGE's resampling filter) and ``"bins"`` (a HISTOGRAM's
+#: bin count).  The renderers read these directly off ``layer.style``, so
+#: :func:`normalize_style` must let them through **verbatim** — they are deliberately
+#: kept out of :data:`STYLE_KEYS` so they do not enter the honoring contract /
+#: degradation warnings (they are per-mark plumbing, not portable look-and-feel).
+_PASSTHROUGH_KEYS: frozenset[str] = frozenset({"interpolation", "bins"})
+
+
 # ---------------------------------------------------------------------------
 # normalize_style
 # ---------------------------------------------------------------------------
@@ -324,7 +337,9 @@ def normalize_style(style: Mapping[str, Any], *, warn: bool = True) -> dict[str,
     ``"s"``, …) are rewritten to their canonical names (``"linewidth"``,
     ``"color"``, ``"markersize"``); values are coerced / validated by the key's
     validator (a bad value raises :class:`ValueError`); and unknown keys are
-    dropped.
+    dropped.  Keys in :data:`_PASSTHROUGH_KEYS` (the per-mark structural knobs
+    ``"interpolation"`` / ``"bins"``) are kept **verbatim** — not validated, not
+    treated as unknown, not warned.
 
     Parameters
     ----------
@@ -349,6 +364,9 @@ def normalize_style(style: Mapping[str, Any], *, warn: bool = True) -> dict[str,
     out: dict[str, Any] = {}
     unknown: list[str] = []
     for raw_key, value in style.items():
+        if raw_key in _PASSTHROUGH_KEYS:
+            out[raw_key] = value
+            continue
         canonical = _ALIAS_INDEX.get(raw_key)
         if canonical is None:
             unknown.append(raw_key)

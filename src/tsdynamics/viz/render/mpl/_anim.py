@@ -29,6 +29,7 @@ This module imports matplotlib only when called (never at ``import tsdynamics``)
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -638,15 +639,18 @@ def _render_composite_animation(
 
     updaters: list[_PanelUpdater] = []
     for i, panel in enumerate(panels):
-        # Each panel inherits the composite's clock/animation if it has none of its own.
-        if panel.animation is None:
-            panel.animation = anim
-        # Each panel inherits the composite theme when it has none of its own.
-        if panel._theme is None:
-            panel._theme = composite_theme
-        three_d = _threed.is_three_d(panel)
+        # Resolve the effective animation/theme LOCALLY — never mutate the caller's
+        # panel specs. A panel inherits the composite's clock/animation and theme
+        # when it carries none of its own; the resolved values are threaded into a
+        # throwaway copy passed to the per-panel draw.
+        effective = dataclasses.replace(
+            panel,
+            animation=panel.animation or anim,
+            _theme=panel._theme or composite_theme,
+        )
+        three_d = _threed.is_three_d(effective)
         ax = fig.add_subplot(rows, cols, i + 1, projection="3d" if three_d else None)
-        updaters.append(_build_panel_animation(fig, ax, panel, three_d=three_d))
+        updaters.append(_build_panel_animation(fig, ax, effective, three_d=three_d))
     if spec.title:
         fig.suptitle(spec.title)
 

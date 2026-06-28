@@ -325,22 +325,33 @@ def test_honored_key_reflected_in_artifact(key: str, backend: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("key", "backend"),
-    [
-        (key, backend)
-        for key, sk in STYLE_KEYS.items()
-        for backend in _VISUAL_BACKENDS
-        if backend not in sk.honored_by
-    ],
-)
-def test_unhonored_key_reported_as_gap(key: str, backend: str) -> None:
-    """A backend NOT in a key's ``honored_by`` set must report it via ``style_honoring_gaps``."""
-    # AREA so fill / fillalpha are valid on the layer; the gap check is purely on
-    # the presence of the key in ``honored_by`` (mark-independent).
-    spec = _area_spec({key: _PROBE_VALUE[key]})
-    gaps = style_honoring_gaps(spec, backend)
-    assert key in gaps, f"{backend} does not honor {key!r} but did not report it as a gap"
+def test_honoring_gaps_match_pinned_expectation() -> None:
+    """``style_honoring_gaps`` reports the pinned threejs-unhonored subset, none on mpl.
+
+    A governance gate with an INDEPENDENT, hard-coded expectation (it does **not**
+    read ``honored_by`` — the very table the gap function consumes — so it cannot
+    degrade into a tautology).  For a representative spec carrying ``cmap`` +
+    ``linestyle`` + ``marker``: threejs honors none of the three, so its gap set
+    must contain exactly those names; matplotlib honors all three, so none of them
+    may appear in its gaps.  If anyone widens ``threejs``'s ``honored_by`` to claim
+    one of these (without wiring the render), this assertion fails.
+    """
+    # Hard-coded, NOT derived from STYLE_KEYS.honored_by.
+    threejs_unhonored = {"cmap", "linestyle", "marker"}
+
+    # A SCATTER carries all three keys validly (a marker to ride on + a line dash +
+    # a colormap channel).
+    spec = _scatter_spec({"cmap": "viridis", "linestyle": "dashed", "marker": "o"})
+
+    threejs_gaps = set(style_honoring_gaps(spec, "threejs"))
+    assert threejs_unhonored <= threejs_gaps, (
+        f"threejs must report {threejs_unhonored} as gaps; got {threejs_gaps}"
+    )
+
+    mpl_gaps = set(style_honoring_gaps(spec, "matplotlib"))
+    assert threejs_unhonored.isdisjoint(mpl_gaps), (
+        f"matplotlib honors cmap/linestyle/marker — none may be a gap; got {mpl_gaps}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +393,20 @@ def test_matplotlib_honors_every_theme_field() -> None:
     """matplotlib honors ALL theme fields → ``style_honoring_gaps`` reports none."""
     spec = _line_spec({}).theme(_FULL_THEME)
     assert style_honoring_gaps(spec, "matplotlib") == []
+
+
+def test_plotly_uncolored_layer_palette_reaches_colorway() -> None:
+    """An uncolored layer's theme palette reaches plotly as the trace color cycle.
+
+    Mirror of the mpl / threejs uncolored-layer palette probes: a layer carrying no
+    explicit ``color`` is auto-colored from the theme palette.  For plotly that
+    means the palette lands on ``layout.colorway`` (the trace color cycle) — the
+    genuine honoring of the ``palette`` theme field on the plotly backend.
+    """
+    pytest.importorskip("plotly")
+    spec = _line_spec({}).theme(Theme(name="p", palette=("#ff0000", "#00ff00")))
+    fig = spec.render(backend="plotly")
+    assert tuple(fig.layout.colorway) == ("#ff0000", "#00ff00")
 
 
 @pytest.mark.parametrize("field", sorted(_ALL_THEME_FIELDS - _THREEJS_HONORED_THEME))
