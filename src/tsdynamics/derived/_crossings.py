@@ -38,6 +38,8 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError
+
 #: The first span to probe, in time units, before the crossing rate is known.
 _INITIAL_SPAN_TIME: float = 50.0
 
@@ -115,9 +117,11 @@ def section_crossings(
     ``(n_crossings, dim)`` states after ``transient`` are discarded, plus the
     time and state the march ended at — the live cursor for the caller to advance
     its system to (so a subsequent ``step()`` continues forward rather than
-    re-yielding crossings).  Raises :class:`RuntimeError` if no crossing is found
-    within ``max_time`` of marching (the plane misses the attractor or the
-    direction is wrong) — matching the Python loop's contract.
+    re-yielding crossings).  Raises
+    :class:`~tsdynamics.errors.ConvergenceError` (a ``RuntimeError``) if no
+    crossing is found within ``max_time`` of marching (the plane misses the
+    attractor or the direction is wrong) or the march makes no progress —
+    matching the Python loop's contract.
     """
     from tsdynamics.engine import run
     from tsdynamics.engine.problem import ODEProblem, ode_problem
@@ -157,7 +161,7 @@ def section_crossings(
         )
         actual_span = t_final - t_cur
         if t_final <= t_cur:
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"{type(system).__name__}: the crossing march made no progress "
                 f"(the step collapsed at t={t_cur:g})."
             )
@@ -176,7 +180,7 @@ def section_crossings(
             span_time = min(max_time, span_time * 2.0)
 
         if count < need and time_since_cross >= max_time:
-            raise RuntimeError(
+            raise ConvergenceError(
                 f"{type(system).__name__}: no section crossing within "
                 f"max_time={max_time:g} (the plane may miss the attractor, or "
                 f"direction={direction} is wrong)."

@@ -113,6 +113,7 @@ class TangentSystem(DerivedSystem):
 
         self._W: np.ndarray | None = None  # (dim, k) deviation vectors (map mode)
         self._ext_tape: Any = None  # extended variational tape (ode engine mode)
+        self._ext_tape_key: Any = None  # structural-param key the tape was built for
         self._z: np.ndarray | None = None  # extended state (ode engine mode)
         self._t = 0.0
         # ODE integration options (engine mode), captured at reinit.
@@ -167,9 +168,19 @@ class TangentSystem(DerivedSystem):
         self._reinit_ode_engine(ic_arr)
 
     def _reinit_ode_engine(self, ic_arr: np.ndarray) -> None:
-        """Lower the extended variational tape and seed the extended state."""
-        if self._ext_tape is None:
+        """Lower the extended variational tape (rebuilding on a structural change).
+
+        The lowered tape bakes in the base system's *structural* parameters
+        (``_structural_params``: a variable-dimension count, a delay, …), so a
+        live structural change must re-lower it.  The tape is keyed on the
+        current structural values and rebuilt when they differ; an ordinary
+        *control*-parameter change reads live from the system and needs no
+        rebuild.
+        """
+        key = tuple(sorted(self.system._structural_vals().items()))
+        if self._ext_tape is None or key != self._ext_tape_key:
             self._ext_tape = build_variational_tape(self.system, self.k)
+            self._ext_tape_key = key
         w0 = np.eye(self.system.dim)[:, : self.k]
         self._z = embed_extended(ic_arr, w0)
 
@@ -211,6 +222,18 @@ class TangentSystem(DerivedSystem):
         return cast(np.ndarray, sys.state())
 
     def _step_ode_engine(self, dt: float) -> np.ndarray:
+        # PERF / TODO(stepper-amortize): this builds a fresh ODEProblem and calls
+        # the full run.integrate() every dt-chunk (~final_time/dt calls per
+        # spectrum). A resumable OdeStepper (run.make_ode_stepper built once in
+        # _reinit_ode_engine, then run.step_advance(dt) here, re-seeding the
+        # extended state after each QR) would amortise the per-call FFI/tape
+        # marshalling. It is NOT done yet because the extended state is re-seeded
+        # after every QR (so the handle would need re-seeding each step) AND
+        # make_ode_stepper rejects an implicit (stiff) kernel at construction even
+        # with a Jacobian-bearing tape — so a stiff base flow could not use it.
+        # The amortisation must stay bit-identical to advance(dt)==integrate_dense
+        # (the Lorenz spectrum in test_known_values is the guard); leave it until
+        # those two constraints are resolved rather than risk the spectrum.
         if self._z is None:
             self.reinit()
         assert self._z is not None  # reinit() seeds the extended state in ODE mode

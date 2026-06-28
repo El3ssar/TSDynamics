@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
+from tsdynamics.errors import ConvergenceError
 
 # ---------------------------------------------------------------------------
 # Construction / validation (fast)
@@ -17,6 +18,44 @@ def test_poincare_plane_parsing_errors() -> None:
         ts.PoincareMap(ts.Lorenz(), plane=(7, 0.0))
     with pytest.raises(ValueError, match="non-zero"):
         ts.PoincareMap(ts.Lorenz(), plane=(np.zeros(3), 0.0))
+
+
+class _DivergingFlow:
+    """A minimal fake flow whose state goes non-finite on the first step.
+
+    Just enough of the ``System`` surface for ``PoincareMap._advance_to_crossing``
+    (``dim`` / ``state`` / ``time`` / ``step``).  No ``_rhs_numeric``, so the
+    Poincaré map uses linear refinement and never tries to lower a tape.
+    """
+
+    dim = 2
+
+    def __init__(self) -> None:
+        self._t = 0.0
+        self._u = np.array([1.0, 1.0])
+
+    def state(self) -> np.ndarray:
+        return self._u.copy()
+
+    def time(self) -> float:
+        return self._t
+
+    def step(self, dt: float) -> np.ndarray:
+        self._t += dt
+        self._u = np.array([np.inf, np.inf])  # blow up before any crossing
+        return self._u.copy()
+
+
+def test_poincare_python_march_divergence_raises_convergence_error() -> None:
+    """A non-finite inner step surfaces ConvergenceError, not a spun-out timeout.
+
+    Without the divergence guard, every ``_is_crossing`` NaN-compare is false, so
+    the march would spin the full ``max_time`` and mis-report "plane may miss the
+    attractor".  The guard catches the real cause on the very first step.
+    """
+    pm = ts.PoincareMap(_DivergingFlow(), plane=(0, 0.0), dt=0.1, max_time=1e6)
+    with pytest.raises(ConvergenceError, match="diverged"):
+        pm.step()
 
 
 def test_stroboscopic_rejects_bad_period() -> None:

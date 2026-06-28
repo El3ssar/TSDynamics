@@ -80,6 +80,46 @@ def test_wrapped_continuous_max_lyapunov_dt_normalization() -> None:
     assert lam_default == pytest.approx(lam_explicit, rel=1e-9)
 
 
+def test_wrapped_trajectory_final_time_dt_continuous() -> None:
+    # Regression: a CONTINUOUS wrapper must accept the family-uniform
+    # trajectory(final_time=, dt=) spelling (a generic protocol caller uses it).
+    # Pre-fix, trajectory(n, *, transient, ic) had no final_time/dt and raised
+    # TypeError under such callers.  final_time=1.0, dt=0.1 -> 10 samples, each
+    # advancing the exact flow by 0.1.
+    w = ts.WrappedSystem(_expanding_flow, dim=1, is_discrete=False, default_dt=0.1)
+    traj = w.trajectory(final_time=1.0, dt=0.1, ic=[1.0])
+    assert traj.y.shape == (10, 1)
+    # exact flow map of dx/dt = 0.5 x over 10 steps of 0.1 each → exp(0.5 * 1.0)
+    np.testing.assert_allclose(traj.y[-1, 0], np.exp(0.5 * 1.0), rtol=1e-9)
+    np.testing.assert_allclose(traj.t, np.arange(1, 11) * 0.1, rtol=1e-12)
+
+
+def test_wrapped_trajectory_final_time_uses_default_dt() -> None:
+    # final_time with no dt derives the step from default_dt.
+    w = ts.WrappedSystem(_expanding_flow, dim=1, is_discrete=False, default_dt=0.25)
+    traj = w.trajectory(final_time=1.0, ic=[1.0])  # 1.0 / 0.25 = 4 samples
+    assert traj.y.shape == (4, 1)
+    np.testing.assert_allclose(traj.y[-1, 0], np.exp(0.5 * 1.0), rtol=1e-9)
+
+
+def test_wrapped_trajectory_positional_n_still_works() -> None:
+    # Backward compatibility: the n-positional form is unchanged.
+    w = ts.WrappedSystem(_logistic_step, dim=1, initial=[0.3])
+    traj = w.trajectory(200, transient=50)
+    assert traj.y.shape == (200, 1)
+    assert np.all(np.isfinite(traj.y))
+
+
+def test_wrapped_trajectory_count_source_validation() -> None:
+    from tsdynamics.errors import InvalidInputError
+
+    w = ts.WrappedSystem(_logistic_step, dim=1, initial=[0.5])
+    with pytest.raises(InvalidInputError):
+        w.trajectory()  # neither n nor final_time
+    with pytest.raises(InvalidInputError):
+        w.trajectory(10, final_time=5.0)  # both
+
+
 def test_wrapped_orbit_diagram_via_protocol() -> None:
     # a wrapped discrete system feeds straight into orbit_diagram
     w = ts.WrappedSystem(_logistic_step, dim=1, is_discrete=True, initial=[0.5])

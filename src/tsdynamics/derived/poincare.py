@@ -12,7 +12,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 from tsdynamics.engine.events import _DIRECTION_WORDS  # noqa: F401  # re-export for back-compat
 from tsdynamics.engine.events import _normalize_event_direction as _normalize_direction
-from tsdynamics.errors import invalid_value
+from tsdynamics.errors import ConvergenceError, invalid_value
 from tsdynamics.families import Trajectory
 
 from . import _crossings
@@ -236,20 +236,36 @@ class PoincareMap(DerivedSystem):
 
     @staticmethod
     def _parse_plane(dim: int, plane: tuple[Any, ...]) -> tuple[np.ndarray, float]:
+        """Lower a resolved ``plane`` to a unit ``(normal, offset)`` geometry.
+
+        Accepts the ``(component_index, value)`` form (an axis-aligned section
+        ``y[i] = value``) or the ``(normal, offset)`` form (an arbitrary normal
+        **vector** and a scalar offset, normalized to a unit normal here).  A
+        malformed tuple, an out-of-range index, or a zero normal raises
+        :class:`~tsdynamics.errors.InvalidParameterError` (a ``ValueError``).
+        """
         if len(plane) != 2:
-            raise ValueError("plane must be (component_index, value) or (normal, offset)")
+            raise invalid_value(
+                "plane",
+                value=plane,
+                rule="must be (component_index, value) or (normal, offset)",
+            )
         first, second = plane
         if np.isscalar(first):
             i = int(first)  # type: ignore[arg-type]  # np.isscalar guarantees int-able
             if not 0 <= i < dim:
-                raise ValueError(f"plane component index {i} out of range for dim={dim}")
+                raise invalid_value(
+                    "plane",
+                    value=i,
+                    rule=f"component index out of range for dim={dim}",
+                )
             normal = np.zeros(dim)
             normal[i] = 1.0
             return normal, float(second)
         normal = np.asarray(first, dtype=float).reshape(dim)
         norm = np.linalg.norm(normal)
         if norm == 0.0:
-            raise ValueError("plane normal must be non-zero")
+            raise invalid_value("plane", value=first, rule="normal must be non-zero")
         return normal / norm, float(float(second) / norm)
 
     def _rebuild(self, inner: Any) -> PoincareMap:
@@ -323,13 +339,21 @@ class PoincareMap(DerivedSystem):
         while True:
             u = sys.step(self.dt)
             t = sys.time()
+            if not np.isfinite(u).all():
+                # A non-finite inner step makes every ``_is_crossing`` NaN-compare
+                # false, so the march would otherwise spin the full ``max_time`` and
+                # mis-report "plane may miss the attractor".  Surface the real cause.
+                raise ConvergenceError(
+                    f"PoincareMap: the inner flow diverged (non-finite state) at "
+                    f"t={t:g} before a section crossing was found."
+                )
             g = self._g(u)
             if self._is_crossing(g_prev, g):
                 self._t_cross, self._u_cross = self._refine(t_prev, u_prev, t, u)
                 self._n_cross += 1
                 return
             if t >= deadline:
-                raise RuntimeError(
+                raise ConvergenceError(
                     f"PoincareMap: no section crossing within max_time={self.max_time} "
                     f"(plane may miss the attractor, or direction={self.direction} is wrong)."
                 )
@@ -476,6 +500,32 @@ class PoincareMap(DerivedSystem):
         backend : {"interp", "jit", "reference"}, optional
             Engine evaluator for the fast path; defaults to the inner system's
             backend.  ``"reference"`` forces the pure-Python loop.
+
+        Returns
+        -------
+        PoincareSection
+            The collected crossings (continuous times in ``t``, full-dimensional
+            states in ``y``), carrying section plot intent and a
+            ``.summary()`` / ``.to_dict()`` readout.
+
+        Raises
+        ------
+        ConvergenceError
+            If the inner flow diverges (non-finite state) or no crossing is found
+            within ``max_time`` of marching — the plane misses the attractor, or
+            the crossing :attr:`direction` is wrong.
+
+        Notes
+        -----
+        **Live-cursor semantics.**  ``trajectory`` advances the *inner* system as
+        a side effect, so a subsequent :meth:`step` continues forward rather than
+        re-yielding the crossings just collected.  The two collection paths leave
+        the inner cursor at slightly different places: the Python loop stops just
+        past the **last collected** crossing, while the engine path stops at the
+        **span end** it marched to (which can be a little beyond the last
+        crossing).  Both invariants — that ``step()`` resumes *after* the
+        collected crossings — hold; do not rely on the exact cursor offset.  Call
+        :meth:`reinit` first if you need a deterministic restart point.
         """
         if kwargs:
             self.reinit(kwargs.pop("ic", None), **kwargs)

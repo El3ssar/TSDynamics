@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError
+from tsdynamics.errors import ConvergenceError, InvalidInputError
 
 from .base import Trajectory
 
@@ -141,19 +141,85 @@ class WrappedSystem:
 
     def trajectory(
         self,
-        n: int,
+        n: int | None = None,
         *,
         transient: int = 0,
         ic: Any | None = None,
+        final_time: float | None = None,
+        dt: float | None = None,
     ) -> Trajectory:
-        """Step ``n`` times (after ``transient``) and collect a Trajectory."""
+        """Step the wrapper repeatedly (after ``transient``) and collect a Trajectory.
+
+        The wrapper accepts **both** the map-style positional sample count ``n``
+        and — for a *continuous* wrapper — the family-uniform ``final_time`` /
+        ``dt`` spelling, so a generic protocol caller (which calls
+        ``trajectory(final_time=…, dt=…)``) works without raising ``TypeError``.
+
+        Exactly one count source must be supplied: either ``n`` (the number of
+        samples to collect), or ``final_time``.  When ``final_time`` is given the
+        sample count is ``round(final_time / dt)`` and the per-step increment is
+        ``dt`` (defaulting to ``default_dt``); for a discrete wrapper each "time
+        unit" is one iteration, so the count is ``round(final_time / dt)`` with
+        ``dt`` defaulting to ``1.0``.
+
+        Parameters
+        ----------
+        n : int, optional
+            Number of samples to collect.  Mutually exclusive with ``final_time``.
+        transient : int, default 0
+            Number of leading samples to discard (steps taken but not recorded).
+        ic : array-like, optional
+            Initial state for the run (falls back to ``initial``, then zeros).
+        final_time : float, optional
+            Integration horizon, an alternative to ``n`` for continuous wrappers
+            (and accepted for discrete ones).  The sample count is
+            ``round(final_time / dt)``.
+        dt : float, optional
+            Per-step increment used with ``final_time`` (and as the ``step``
+            argument).  Defaults to ``default_dt``.
+
+        Returns
+        -------
+        Trajectory
+            ``n`` recorded samples with their times.
+
+        Raises
+        ------
+        InvalidInputError
+            If neither ``n`` nor ``final_time`` is given, if both are, or if the
+            resolved sample count is not positive.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> flow = lambda u, dt: [u[0] * np.exp(0.5 * dt)]
+        >>> w = WrappedSystem(flow, dim=1, is_discrete=False, default_dt=0.1)
+        >>> traj = w.trajectory(final_time=1.0, dt=0.1)   # family-uniform spelling
+        >>> traj.y.shape
+        (10, 1)
+        """
+        step_dt = self._default_dt if dt is None else float(dt)
+        if final_time is not None:
+            if n is not None:
+                raise InvalidInputError(
+                    "WrappedSystem.trajectory: pass either n or final_time, not both."
+                )
+            n = int(round(float(final_time) / step_dt))
+        elif n is None:
+            raise InvalidInputError(
+                "WrappedSystem.trajectory requires n (sample count) or final_time."
+            )
+        n = int(n)
+        if n <= 0:
+            raise InvalidInputError(f"WrappedSystem.trajectory needs a positive count, got {n}.")
+
         self.reinit(ic)
         for _ in range(transient):
-            self.step()
+            self.step(step_dt)
         ts = np.empty(n)
         ys = np.empty((n, self.dim))
         for i in range(n):
-            ys[i] = self.step()
+            ys[i] = self.step(step_dt)
             ts[i] = self._t
         meta = {"system": "WrappedSystem", "is_discrete": self._is_discrete}
         return Trajectory(t=ts, y=ys, system=self, meta=meta)
