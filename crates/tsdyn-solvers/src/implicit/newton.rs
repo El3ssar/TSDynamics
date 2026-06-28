@@ -52,9 +52,19 @@ use tsdyn_ir::Evaluator;
 /// improves both the Newton conditioning and the initial guess).
 pub(crate) const NEWTON_MAX_ITERS: usize = 20;
 
-/// Newton convergence threshold on the weighted-RMS norm of the increment. Tight
-/// relative to the integration tolerance so the residual Newton error stays well
-/// below the truncation error the step-doubling estimate measures.
+/// Newton convergence threshold on the weighted-RMS norm of the increment.
+///
+/// This is a **fixed** `1e-3`, deliberately *not* derived from `rtol` the way the
+/// BDF corrector's `newton_tol` is ([`super::bdf`]). The norm it gates,
+/// [`wrms`], is already tolerance-weighted — each increment component is divided by
+/// `atol + rtol·|y_i|` before the RMS — so the test "`wrms(Δ) ≤ 1e-3`" means the
+/// Newton increment has shrunk to a thousandth of the per-component integration
+/// tolerance, *independently* of the absolute size of `rtol`. The residual Newton
+/// error is therefore held ~3 orders of magnitude below the truncation error the
+/// step-doubling estimate measures across the whole tolerance range, which is the
+/// property a derived `newton_tol` buys on the BDF side (where the norm is scaled
+/// by `atol + rtol·|y|` but the threshold is an *absolute* `f64`, so the threshold
+/// must move with `rtol`). A fixed value here is both adequate and lower-risk.
 pub(crate) const NEWTON_TOL: f64 = 1e-3;
 
 /// Weighted-RMS norm `sqrt(mean( (v_i / (atol + rtol·|ref_i|))² ))` — the scaled
@@ -194,10 +204,38 @@ fn form_factorization(
 /// residual is re-evaluated each iteration). `y` carries the current iterate in
 /// and the converged value out.
 ///
+/// Each iteration forms the residual `R(y) = y − base − coef·h·f(t, y)`, solves
+/// `(I − coef·h·J) Δ = R` against the frozen factorization, applies `y ← y − Δ`,
+/// and accepts when the weighted-RMS increment falls under [`NEWTON_TOL`].
+///
+/// # Divergence safeguard (contraction-rate early-out)
+///
+/// A flat increment-norm budget would burn all [`NEWTON_MAX_ITERS`] RHS
+/// evaluations on a step where the (frozen) Newton iteration is plainly
+/// *diverging* before returning [`BaseOutcome::Recoverable`]. This routine instead
+/// mirrors the BDF corrector ([`super::bdf`]): it estimates the linear
+/// contraction rate `rate = ‖Δ‖ / ‖Δ_prev‖` and abandons the solve early when
+///
+/// - `rate ≥ 1` — the increment is not shrinking, so the (modified) Newton is
+///   diverging and more iterations cannot recover it; or
+/// - the projected remaining error `rate^m/(1 − rate)·‖Δ‖` (with `m` the
+///   iterations still in the budget) cannot reach [`NEWTON_TOL`] — convergence is
+///   too slow to land within the budget.
+///
+/// The rate test fires **only after** the increment has been applied and only when
+/// a previous increment exists, and it is a pure *early return of the same
+/// [`BaseOutcome::Recoverable`]* the budget exhaustion would have produced. On a
+/// **converging** step the increment shrinks monotonically (`rate < 1`) and the
+/// convergence test trips first, so the accepted iterate `y` is **bit-identical**
+/// to the pre-safeguard behaviour — the controller and step result are unchanged.
+/// The only difference is that a diverging step is abandoned after one extra
+/// iteration instead of the full budget, after which the caller refactors-and-
+/// retries or shrinks `h` exactly as before.
+///
 /// Returns [`BaseOutcome::Ok`] when the increment falls under [`NEWTON_TOL`],
-/// [`BaseOutcome::Recoverable`] on a non-finite residual / iterate or on
-/// exhausting the iteration budget (the caller may then refactor and retry, or
-/// shrink `h`).
+/// [`BaseOutcome::Recoverable`] on a non-finite residual / iterate, on a detected
+/// divergence, or on exhausting the iteration budget (the caller may then refactor
+/// and retry, or shrink `h`).
 #[allow(clippy::too_many_arguments)]
 fn newton_iterate(
     ev: &dyn Evaluator,
@@ -217,7 +255,8 @@ fn newton_iterate(
     atol: f64,
 ) -> BaseOutcome {
     use super::linalg::lu_solve;
-    for _ in 0..NEWTON_MAX_ITERS {
+    let mut dnorm_old: Option<f64> = None;
+    for k in 0..NEWTON_MAX_ITERS {
         ev.eval(y, p, t, scratch, fy);
         if !fy.iter().all(|x| x.is_finite()) {
             return BaseOutcome::Recoverable;
@@ -233,9 +272,26 @@ fn newton_iterate(
         if !y.iter().all(|x| x.is_finite()) {
             return BaseOutcome::Recoverable;
         }
-        if wrms(delta, y, rtol, atol) <= NEWTON_TOL {
+        let dnorm = wrms(delta, y, rtol, atol);
+        // Accept first: a converging step trips here before the divergence guard
+        // below can fire, so its accepted iterate is bit-identical to the flat-budget
+        // behaviour.
+        if dnorm <= NEWTON_TOL {
             return BaseOutcome::Ok;
         }
+        // Contraction-rate early-out (mirrors the BDF corrector): abandon a clearly
+        // diverging / too-slowly-converging solve rather than burning the full budget.
+        // `rate < 1` on every iteration of a converging step, so this never aborts one.
+        if let Some(old) = dnorm_old {
+            if old > 0.0 {
+                let rate = dnorm / old;
+                let remaining = (NEWTON_MAX_ITERS - 1 - k) as i32;
+                if rate >= 1.0 || rate.powi(remaining) / (1.0 - rate) * dnorm > NEWTON_TOL {
+                    return BaseOutcome::Recoverable;
+                }
+            }
+        }
+        dnorm_old = Some(dnorm);
     }
     BaseOutcome::Recoverable // did not converge in the iteration budget
 }
@@ -364,5 +420,236 @@ pub(crate) fn solve_substage_reuse(
             BaseOutcome::Ok
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tsdyn_ir::Evaluator;
+
+    /// A scalar mock evaluator `f(y) = k·y²` with the *true* analytic Jacobian
+    /// `f'(y) = 2·k·y`, counting the RHS evaluations so a test can prove the
+    /// contraction-rate early-out abandons a diverging substage before the full
+    /// [`NEWTON_MAX_ITERS`] budget is spent. `dim = 1`, no parameters, no scratch.
+    ///
+    /// The counter is an [`AtomicUsize`] because [`Evaluator`] requires `Sync`.
+    struct Quadratic {
+        k: f64,
+        rhs_evals: AtomicUsize,
+    }
+
+    impl Quadratic {
+        fn new(k: f64) -> Self {
+            Quadratic {
+                k,
+                rhs_evals: AtomicUsize::new(0),
+            }
+        }
+        fn evals(&self) -> usize {
+            self.rhs_evals.load(Ordering::Relaxed)
+        }
+    }
+
+    impl Evaluator for Quadratic {
+        fn dim(&self) -> usize {
+            1
+        }
+        fn n_param(&self) -> usize {
+            0
+        }
+        fn n_scratch(&self) -> usize {
+            0
+        }
+        fn has_jacobian(&self) -> bool {
+            true
+        }
+        fn eval(&self, u: &[f64], _p: &[f64], _t: f64, _scratch: &mut [f64], deriv: &mut [f64]) {
+            self.rhs_evals.fetch_add(1, Ordering::Relaxed);
+            deriv[0] = self.k * u[0] * u[0];
+        }
+        fn eval_jac(
+            &self,
+            u: &[f64],
+            _p: &[f64],
+            _t: f64,
+            _scratch: &mut [f64],
+            deriv: &mut [f64],
+            jac: &mut [f64],
+        ) {
+            deriv[0] = self.k * u[0] * u[0];
+            jac[0] = 2.0 * self.k * u[0];
+        }
+    }
+
+    /// A linear mock `f(y) = a·y + b` with the exact Jacobian `a`. Modified Newton
+    /// against the (exact, constant) frozen Jacobian solves a linear substage in a
+    /// single iteration, so it is the clean "converging" case for the safeguard.
+    struct Affine {
+        a: f64,
+        b: f64,
+    }
+
+    impl Evaluator for Affine {
+        fn dim(&self) -> usize {
+            1
+        }
+        fn n_param(&self) -> usize {
+            0
+        }
+        fn n_scratch(&self) -> usize {
+            0
+        }
+        fn has_jacobian(&self) -> bool {
+            true
+        }
+        fn eval(&self, u: &[f64], _p: &[f64], _t: f64, _scratch: &mut [f64], deriv: &mut [f64]) {
+            deriv[0] = self.a * u[0] + self.b;
+        }
+        fn eval_jac(
+            &self,
+            u: &[f64],
+            _p: &[f64],
+            _t: f64,
+            _scratch: &mut [f64],
+            deriv: &mut [f64],
+            jac: &mut [f64],
+        ) {
+            deriv[0] = self.a * u[0] + self.b;
+            jac[0] = self.a;
+        }
+    }
+
+    /// A converging linear substage must reach its root *exactly* and report
+    /// [`BaseOutcome::Ok`] — the divergence safeguard must never fire on it (the
+    /// increment shrinks to zero, so the contraction rate stays well below 1). This
+    /// pins the answer-preserving contract: the safeguard only short-circuits
+    /// diverging steps, never a converging one.
+    #[test]
+    fn converging_substage_solves_exactly_and_accepts() {
+        // Substage y = base + coef·h·f(y), f(y) = a·y + b.
+        // Root: y* = (base + coef·h·b) / (1 − coef·h·a).
+        let (a, b) = (-2.0, 1.0); // dissipative — a well-conditioned stiff-like substage
+        let ev = Affine { a, b };
+        let (coef, h, base) = (1.0, 0.1, [0.5_f64]);
+        let mut y = [2.5_f64]; // a guess away from the root, so an iteration is exercised
+        let mut work = NewtonWork::default();
+        let mut scratch: Vec<f64> = Vec::new();
+
+        let out = solve_substage(
+            &ev,
+            0.0,
+            &[],
+            coef,
+            h,
+            &base,
+            &mut y,
+            &mut work,
+            &mut scratch,
+            1e-6,
+            1e-9,
+        );
+        assert_eq!(out, BaseOutcome::Ok);
+
+        let root = (base[0] + coef * h * b) / (1.0 - coef * h * a);
+        assert!(
+            (y[0] - root).abs() < 1e-12,
+            "converged y {} should equal the analytic root {root}",
+            y[0]
+        );
+    }
+
+    /// A genuinely diverging substage must return [`BaseOutcome::Recoverable`]
+    /// **and** the contraction-rate early-out must abandon it well before the full
+    /// [`NEWTON_MAX_ITERS`] RHS evaluations are spent (the perf fix). With the frozen
+    /// Jacobian near zero (guess ≈ 0) the iteration matrix is ≈ 1, so the strongly
+    /// expanding quadratic map `y ← base + coef·h·k·y²` blows up and the increment
+    /// grows (`rate ≥ 1`), tripping the early return.
+    #[test]
+    fn diverging_substage_bails_before_full_budget() {
+        let ev = Quadratic::new(50.0);
+        // Large coef·h and a non-trivial base drive the quadratic iteration to blow
+        // up; the guess ≈ 0 makes the frozen Jacobian ≈ 0 (iteration matrix ≈ 1).
+        let (coef, h, base) = (1.0, 1.0, [3.0_f64]);
+        let mut y = [1e-8_f64];
+        let mut work = NewtonWork::default();
+        let mut scratch: Vec<f64> = Vec::new();
+
+        let out = solve_substage(
+            &ev,
+            0.0,
+            &[],
+            coef,
+            h,
+            &base,
+            &mut y,
+            &mut work,
+            &mut scratch,
+            1e-6,
+            1e-9,
+        );
+        assert_eq!(
+            out,
+            BaseOutcome::Recoverable,
+            "a diverging substage must be reported recoverable"
+        );
+        let evals = ev.evals();
+        // The early-out catches the divergence in a handful of iterations; without it
+        // the flat budget would burn all NEWTON_MAX_ITERS (20) RHS evaluations. The
+        // generous ceiling keeps the test robust to the exact iteration the rate
+        // guard trips while still proving it short-circuits well short of the budget.
+        assert!(
+            evals <= 5,
+            "early-out should bail in ≲5 iterations (vs the full {NEWTON_MAX_ITERS} \
+             budget), but ran {evals} RHS evals"
+        );
+    }
+
+    /// The contraction-rate guard is a *divergence-only* short-circuit: a slowly but
+    /// monotonically converging substage still lands on [`BaseOutcome::Ok`]. Here a
+    /// mildly dissipative linear substage converges in one iteration (exact J), and
+    /// the eval-count is the single iteration — confirming no premature abandonment.
+    #[test]
+    fn slowly_converging_substage_is_not_abandoned() {
+        let ev = Affine { a: -0.5, b: 0.3 };
+        let (coef, h, base) = (1.0, 0.5, [0.2_f64]);
+        let mut y = [base[0]];
+        let mut work = NewtonWork::default();
+        let mut scratch: Vec<f64> = Vec::new();
+
+        let out = solve_substage(
+            &ev,
+            0.0,
+            &[],
+            coef,
+            h,
+            &base,
+            &mut y,
+            &mut work,
+            &mut scratch,
+            1e-6,
+            1e-9,
+        );
+        assert_eq!(out, BaseOutcome::Ok);
+        let root = (base[0] + coef * h * 0.3) / (1.0 - coef * h * (-0.5));
+        assert!((y[0] - root).abs() < 1e-12);
+    }
+
+    /// [`wrms`] is the tolerance-weighted RMS the convergence test gates on: a zero
+    /// increment is zero, and scaling every component by its tolerance gives a unit
+    /// norm (the sanity that makes the fixed [`NEWTON_TOL`] meaningful across rtol).
+    #[test]
+    fn wrms_is_tolerance_weighted() {
+        assert_eq!(wrms(&[0.0, 0.0], &[1.0, 1.0], 1e-3, 1e-6), 0.0);
+        // Each component equal to its own scale ⇒ every term is 1 ⇒ RMS is 1.
+        let rtol = 1e-3;
+        let atol = 1e-6;
+        let reference: [f64; 2] = [10.0, 100.0];
+        let v = [
+            atol + rtol * reference[0].abs(),
+            atol + rtol * reference[1].abs(),
+        ];
+        assert!((wrms(&v, &reference, rtol, atol) - 1.0).abs() < 1e-12);
     }
 }

@@ -125,15 +125,28 @@ impl OwnedTape {
         self.outputs.len()
     }
 
-    /// Build the validated [`tsdyn_ir::Tape`] (inside the GIL release).
-    fn build(&self) -> Result<tsdyn_ir::Tape, EngineError> {
-        bridge::build_tape(
-            &self.ops,
-            &self.a,
-            &self.b,
-            &self.imm,
-            &self.outputs,
-            &self.jac_outputs,
+    /// Build the validated [`tsdyn_ir::Tape`] (inside the GIL release),
+    /// **consuming** the owned wire arrays.
+    ///
+    /// `OwnedTape` already holds owned `Vec`s (copied once, in
+    /// [`copy_in`](OwnedTape::copy_in), so they could cross the
+    /// [`Python::detach`] GIL release). Handing those `Vec`s **by value** to the
+    /// engine — decoding `ops` to [`tsdyn_ir::Op`]s in place and moving every
+    /// array into [`tsdyn_ir::Tape::from_parts`] — avoids the second allocation
+    /// the slice path ([`tsdyn_ir::Tape::from_arrays`], which re-`to_vec`s each
+    /// array) would make. The resulting `Tape` is byte-identical: `from_parts`
+    /// runs the same validation `from_arrays` does after its copy. `build` takes
+    /// `self` because each caller uses the `OwnedTape` exactly once (the system
+    /// dimension is read via [`dim`](OwnedTape::dim) *before* the GIL release, and
+    /// `build` is the tape's last use, inside the detached closure).
+    fn build(self) -> Result<tsdyn_ir::Tape, EngineError> {
+        bridge::marshal::build_tape_owned(
+            self.ops,
+            self.a,
+            self.b,
+            self.imm,
+            self.outputs,
+            self.jac_outputs,
             self.n_state,
             self.n_param,
         )

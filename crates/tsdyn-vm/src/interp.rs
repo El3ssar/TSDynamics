@@ -16,12 +16,15 @@
 //! outputs. The RHS-only [`eval`](Interpreter::eval) does not need them, so the
 //! interpreter precomputes (once, at [`Interpreter::new`]) a liveness mask —
 //! the registers some RHS output transitively depends on — and the RHS-only
-//! pass skips every op not in it. This mirrors the Cranelift JIT's `reachable`
-//! backward pass (`tsdyn-jit/src/codegen.rs`), which already emits `tsdyn_eval`
-//! with the Jacobian-only subexpressions dropped. The arithmetic in each
-//! *executed* arm is unchanged, so the live registers — and hence the RHS
-//! outputs — stay **bit-for-bit** identical to a full pass; [`eval_jac`] still
-//! runs the whole tape.
+//! pass skips every op not in it. The mask comes from the shared
+//! [`Tape::reachable_from`](tsdyn_ir::Tape::reachable_from)`(false)` pass that
+//! the Cranelift JIT (`tsdyn-jit/src/codegen.rs`) also calls for its
+//! `tsdyn_eval` body, so the interpreter-executed register set and the
+//! JIT-emitted register set are one algorithm, not two parallel copies. The
+//! arithmetic in each *executed* arm is unchanged, so the live registers — and
+//! hence the RHS outputs — stay **bit-for-bit** identical to a full pass.
+//! [`eval_jac`] deliberately ignores the mask and runs the *whole* tape: the
+//! DCE here is **RHS-only**, never a Jacobian-liveness mask.
 //!
 //! # Surface mirrors the engine `Evaluator` seam
 //!
@@ -54,7 +57,7 @@
 //! contract — the interpreter equals the v2 tape semantics for *every* tape, not
 //! merely to a tolerance on a fixed system list.
 
-use tsdyn_ir::{Op, OpKind, Tape};
+use tsdyn_ir::{Op, Tape};
 
 /// A tape evaluator that interprets the instruction stream directly.
 ///
@@ -78,20 +81,28 @@ pub struct Interpreter {
     tape: Tape,
     /// RHS liveness mask, one bool per tape register: `rhs_live[i]` is true iff
     /// some RHS output (`tape.outputs()`) transitively depends on register `i`.
-    /// Computed once at construction (it depends only on the frozen tape) and
-    /// reused by every [`eval`](Interpreter::eval) call so the RHS-only pass
-    /// skips Jacobian-only subexpressions — exactly what the Cranelift JIT's
-    /// `reachable` backward pass does for its `tsdyn_eval` function. The
-    /// Jacobian path ([`eval_jac`](Interpreter::eval_jac)) ignores this mask and
-    /// runs the full tape, so the Jacobian outputs are unaffected.
+    /// Computed once at construction by the shared
+    /// [`Tape::reachable_from`](tsdyn_ir::Tape::reachable_from)`(false)` pass (it
+    /// depends only on the frozen tape) and reused by every
+    /// [`eval`](Interpreter::eval) call so the RHS-only pass skips Jacobian-only
+    /// subexpressions — the *same* pass the Cranelift JIT calls for its
+    /// `tsdyn_eval` function. The Jacobian path
+    /// ([`eval_jac`](Interpreter::eval_jac)) ignores this mask and runs the full
+    /// tape, so the Jacobian outputs are unaffected.
     rhs_live: Vec<bool>,
 }
 
 impl Interpreter {
     /// Wrap a validated [`Tape`] in an interpreter.
+    ///
+    /// Precomputes the RHS-only liveness mask via the shared
+    /// [`Tape::reachable_from`]`(false)` — the same dead-register-elimination
+    /// backward pass the Cranelift JIT calls for its `tsdyn_eval` body — so the
+    /// interpreter-executed and JIT-emitted register sets are structurally one
+    /// algorithm, not two parallel copies.
     #[inline]
     pub fn new(tape: Tape) -> Self {
-        let rhs_live = compute_rhs_live(&tape);
+        let rhs_live = tape.reachable_from(false);
         Interpreter { tape, rhs_live }
     }
 
@@ -320,47 +331,6 @@ impl Interpreter {
             self.n_param()
         );
     }
-}
-
-/// Compute the RHS liveness mask: `mask[i]` is true iff some RHS output
-/// (`tape.outputs()`) transitively depends on register `i`.
-///
-/// One backward pass. The tape is strict SSA — every operand index is strictly
-/// less than the register the op writes — so visiting registers in reverse and
-/// propagating need from an op to its operands marks the full transitive
-/// dependency set in a single sweep (an operand is always visited after every
-/// op that reads it). This mirrors the Cranelift JIT's `reachable` pass
-/// (`tsdyn-jit/src/codegen.rs`) with `with_jac = false`: the RHS-only function
-/// there likewise emits only registers reachable from `tape.outputs()`. The
-/// operand structure is read from [`Op::kind`] (Leaf reads nothing; Unary/Powi
-/// read `a`; Binary reads `a` and `b`) so this never needs a per-op match.
-fn compute_rhs_live(tape: &Tape) -> Vec<bool> {
-    let n = tape.n_reg();
-    let mut live = vec![false; n];
-
-    // Seed: every RHS output register is live. (Jacobian outputs are NOT seeded
-    // — the mask is for the RHS-only path; `eval_jac` runs the full tape.)
-    for &r in tape.outputs() {
-        live[r as usize] = true;
-    }
-
-    let ops = tape.ops();
-    let a = tape.a();
-    let b = tape.b();
-    for i in (0..n).rev() {
-        if !live[i] {
-            continue;
-        }
-        match ops[i].kind() {
-            OpKind::Leaf => {}
-            OpKind::Unary | OpKind::Powi => live[a[i] as usize] = true,
-            OpKind::Binary => {
-                live[a[i] as usize] = true;
-                live[b[i] as usize] = true;
-            }
-        }
-    }
-    live
 }
 
 #[cfg(test)]
@@ -693,6 +663,28 @@ mod tests {
         let interp = Interpreter::new(b.finish(&[s], &[], 2, 0).unwrap());
         assert!(interp.rhs_live.iter().all(|&b| b), "no dead registers here");
         assert_eq!(interp.eval_alloc(&[2.0, 5.0], &[], 0.0)[0], 7.0);
+    }
+
+    #[test]
+    fn rhs_live_mask_is_the_shared_reachable_from_pass() {
+        // The interpreter's RHS-only mask must BE `Tape::reachable_from(false)` —
+        // the same shared DCE pass the Cranelift JIT calls for `tsdyn_eval`. This
+        // pins the structural invariant that the two backends share one liveness
+        // computation rather than two parallel copies that could drift.
+        let tape = lorenz();
+        let interp = Interpreter::new(tape.clone());
+        assert_eq!(interp.rhs_live, tape.reachable_from(false));
+        // And the RHS-only mask is a strict subset of the with-Jacobian mask:
+        // every RHS-live register is also live when the Jacobian is included.
+        let with_jac = tape.reachable_from(true);
+        for (i, &live) in interp.rhs_live.iter().enumerate() {
+            if live {
+                assert!(
+                    with_jac[i],
+                    "register {i} live for RHS but not with Jacobian"
+                );
+            }
+        }
     }
 
     #[test]

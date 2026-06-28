@@ -9,7 +9,7 @@
 //! unchanged.
 
 use tsdyn_engine::{EventDirection, IntegrateError, MapError, SdeError};
-use tsdyn_ir::{Evaluator, Tape};
+use tsdyn_ir::{Evaluator, Op, Tape};
 use tsdyn_jit::JitEvaluator;
 use tsdyn_solvers::explicit::{Bs3, CashKarp, Dop853, HeunEuler, Rk45, Rkf45, Tsit5};
 use tsdyn_solvers::implicit::{
@@ -162,6 +162,7 @@ pub(super) fn build_evaluator_send(
 /// Mirrors the argument order of the Python `Tape.to_arrays()`:
 /// `(ops, a, b, imm, outputs, jac_outputs, n_state, n_param)`. A malformed tape
 /// is rejected here, at the boundary, as [`EngineError::BadTape`].
+#[cfg(test)] // production uses the no-copy `build_tape_owned`; kept for the cross-check test.
 #[allow(clippy::too_many_arguments)] // the eight arrays are the tape contract.
 pub fn build_tape(
     ops: &[i32],
@@ -174,6 +175,39 @@ pub fn build_tape(
     n_param: usize,
 ) -> Result<Tape, EngineError> {
     Tape::from_arrays(ops, a, b, imm, outputs, jac_outputs, n_state, n_param)
+        .map_err(|e| EngineError::BadTape(e.to_string()))
+}
+
+/// Build a validated [`Tape`] from **owned** wire arrays — the move (no-copy)
+/// FFI ingestion path.
+///
+/// Identical in result to `build_tape`, but takes its arrays by value: it
+/// decodes `ops` (the raw wire opcodes) into [`Op`]s **in place** (rejecting an
+/// unknown opcode as [`EngineError::BadTape`], exactly as the slice path does),
+/// then moves the already-owned `a`/`b`/`imm`/`outputs`/`jac_outputs` `Vec`s
+/// straight into [`Tape::from_parts`]. Because the caller (`crate::OwnedTape`)
+/// already owns these `Vec`s (it copied the NumPy views once so they could
+/// cross [`Python::detach`]), this avoids the second
+/// allocation `Tape::from_arrays` makes when it `to_vec`s every slice. The tape
+/// is byte-identical — `from_parts` runs the same structural validation
+/// `from_arrays` runs after its copy.
+///
+/// [`Python::detach`]: pyo3::Python::detach
+#[allow(clippy::too_many_arguments)] // the eight arrays are the tape contract.
+pub fn build_tape_owned(
+    ops: Vec<i32>,
+    a: Vec<i32>,
+    b: Vec<i32>,
+    imm: Vec<f64>,
+    outputs: Vec<i32>,
+    jac_outputs: Vec<i32>,
+    n_state: usize,
+    n_param: usize,
+) -> Result<Tape, EngineError> {
+    // Decode the wire opcodes to `Op`s; an unknown opcode is a malformed tape.
+    let decoded: Result<Vec<Op>, _> = ops.into_iter().map(Op::from_i32).collect();
+    let decoded = decoded.map_err(|e| EngineError::BadTape(e.to_string()))?;
+    Tape::from_parts(decoded, a, b, imm, outputs, jac_outputs, n_state, n_param)
         .map_err(|e| EngineError::BadTape(e.to_string()))
 }
 
@@ -378,4 +412,77 @@ pub(super) fn map_diverge_msg(e: &MapError) -> String {
 /// Prefix the engine's SDE-divergence message, mirroring [`diverge_msg`].
 pub(super) fn sde_diverge_msg(e: &SdeError) -> String {
     format!("SDE integration diverged before reaching the final time: {e}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A minimal valid wire tape: f(u) = u0 * p0 (dim 1, n_state 1, n_param 1).
+    // Wire opcodes: State=1, Param=2, Mul=12 (the v2 contract values pinned in
+    // `tsdyn_ir`'s tape tests).
+    #[allow(clippy::type_complexity)]
+    fn ok_wire() -> (Vec<i32>, Vec<i32>, Vec<i32>, Vec<f64>, Vec<i32>) {
+        let ops = vec![1, 2, 12];
+        let a = vec![0, 0, 0];
+        let b = vec![0, 0, 1];
+        let imm = vec![0.0, 0.0, 0.0];
+        let outputs = vec![2];
+        (ops, a, b, imm, outputs)
+    }
+
+    /// The move path ([`build_tape_owned`]) and the slice/copy path
+    /// ([`build_tape`]) must produce a byte-identical [`Tape`] — the no-copy
+    /// optimisation is answer-preserving.
+    #[test]
+    fn owned_path_equals_slice_path() {
+        let (ops, a, b, imm, outputs) = ok_wire();
+        let jac: Vec<i32> = vec![];
+
+        let by_slice =
+            build_tape(&ops, &a, &b, &imm, &outputs, &jac, 1, 1).expect("slice path builds");
+        let by_move = build_tape_owned(
+            ops.clone(),
+            a.clone(),
+            b.clone(),
+            imm.clone(),
+            outputs.clone(),
+            jac.clone(),
+            1,
+            1,
+        )
+        .expect("move path builds");
+
+        // `Tape` derives `PartialEq`, so this is a full structural equality.
+        assert_eq!(by_slice, by_move);
+        assert_eq!(by_move.n_reg(), 3);
+        assert_eq!(by_move.dim(), 1);
+        assert!(!by_move.has_jacobian());
+    }
+
+    /// The move path decodes opcodes in place and must reject an unknown one as
+    /// [`EngineError::BadTape`], exactly as the slice path does.
+    #[test]
+    fn owned_path_rejects_unknown_opcode() {
+        let (mut ops, a, b, imm, outputs) = ok_wire();
+        ops[2] = 99; // not a known opcode
+        let err = build_tape_owned(ops, a, b, imm, outputs, vec![], 1, 1).expect_err("must reject");
+        assert!(matches!(err, EngineError::BadTape(_)));
+    }
+
+    /// A malformed (out-of-range output) wire tape is rejected identically on the
+    /// move path and the slice path.
+    #[test]
+    fn owned_path_rejects_bad_shape_like_slice_path() {
+        let (ops, a, b, imm, _outputs) = ok_wire();
+        let bad_outputs = vec![9]; // output register 9 with only 3 instructions
+
+        let slice_err = build_tape(&ops, &a, &b, &imm, &bad_outputs, &[], 1, 1)
+            .expect_err("slice path rejects");
+        let move_err = build_tape_owned(ops, a, b, imm, bad_outputs, vec![], 1, 1)
+            .expect_err("move path rejects");
+
+        assert!(matches!(slice_err, EngineError::BadTape(_)));
+        assert_eq!(slice_err, move_err);
+    }
 }
