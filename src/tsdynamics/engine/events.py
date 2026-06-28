@@ -373,6 +373,23 @@ class EventSolution:
     Mirrors the SciPy ``solve_ivp`` event shape: a dense trajectory (``t`` / ``y``,
     truncated at the first terminal crossing) plus ``t_events`` / ``y_events`` —
     one array per input event, holding that event's crossing times / states.
+
+    Attributes
+    ----------
+    t : ndarray, shape (T,)
+        The output-grid times, ending at the terminal stop ``t_stop`` when an
+        event terminated the run, else at ``final_time``.
+    y : ndarray, shape (T, dim)
+        The dense states aligned with ``t``.
+    t_events : list of ndarray
+        One array per input event (in ``events`` order) of that event's crossing
+        times.
+    y_events : list of ndarray
+        One ``(K_i, dim)`` array per input event of the crossing states.
+    terminated : bool
+        Whether a terminal event stopped the run before ``final_time``.
+    events : list of Event
+        The coerced events, in input order.
     """
 
     t: np.ndarray
@@ -454,11 +471,27 @@ def integrate_events(
     Returns
     -------
     EventSolution
+        The dense trajectory (truncated at the first terminal crossing) plus one
+        crossing array per event.  Both backends land the trajectory on the same
+        ``make_output_grid(t0, t_stop, dt)`` so a terminal stop is grid-identical
+        across ``backend="interp"/"jit"`` and ``backend="reference"``.
 
     Raises
     ------
     InvalidInputError
-        If ``problem`` is not an ODE, or ``events`` is empty.
+        If ``problem`` is not an ODE.
+    InvalidParameterError
+        If ``events`` is empty.
+
+    Examples
+    --------
+    >>> import tsdynamics as ts
+    >>> from tsdynamics.engine.problem import ode_problem
+    >>> from tsdynamics.engine.run import integrate_events
+    >>> prob = ode_problem(ts.Lorenz(), ic=[1.0, 1.0, 1.0])
+    >>> sol = integrate_events(prob, [("z", 27.0, "up")], final_time=30.0, dt=0.01)
+    >>> sol.t_events[0].size > 0
+    True
     """
     from tsdynamics.errors import InvalidInputError
 
@@ -535,9 +568,36 @@ def _engine_events(
     """Collect each event's crossings on the compiled engine + a dense trajectory.
 
     Terminal events are probed first (``terminal=True``) to find the earliest
-    stop ``t_stop``; every event's crossings are then gathered over ``[t0,
-    t_stop]`` and the dense trajectory integrated on that span — so the returned
-    trajectory truncates exactly like SciPy's, and the crossings lie on it.
+    stop ``t_stop``; every non-terminal event's crossings are then gathered over
+    the integrated span and the dense trajectory integrated on it — so the
+    returned trajectory truncates exactly like the reference path, and the
+    crossings lie on it.
+
+    Parameters
+    ----------
+    problem : ODEProblem
+        The lowered ODE whose ``ic`` is the start state.
+    evs : list of Event
+        The coerced events (already normalized).
+    event_tapes : list of Tape
+        One single-output condition tape per event, in ``evs`` order.
+    final_time, dt, t0, method, rtol, atol, backend
+        As in :func:`integrate_events`.
+
+    Returns
+    -------
+    EventSolution
+
+    Notes
+    -----
+    Non-terminal crossings are collected over the *closed* span ``[t0, t_stop]``;
+    a crossing landing exactly on the terminal-stop boundary ``t_stop`` is a
+    measure-zero coincidence (a non-chaotic event firing at the very float
+    ``t_stop`` of a *different* terminal event), so this closed-span convention is
+    a benign boundary choice rather than a correctness concern.  The reference
+    (:func:`_reference_events`) path applies SciPy's own truncation, which is
+    independent of this boundary — the two are cross-checked away from such
+    coincidences.
     """
     from .run import _run_continuous
 
@@ -621,11 +681,42 @@ def _reference_events(
 ) -> EventSolution:
     """Detect events with SciPy's ``solve_ivp(events=...)`` — the wheel-free oracle.
 
-    A faithful, *independent* implementation of the engine path (SciPy's Brent
-    root-finder over its own dense output): the events test-suite cross-checks the
-    two.  Reuses the reference ODE RHS (the lowered tape evaluated in pure
-    Python) and wraps each event tape as a SciPy event callable carrying the
-    SciPy ``.terminal`` / ``.direction`` attributes.
+    An independent *stepper / root-finder over the shared lowered tape*: it reuses
+    the same lowered ``problem.tape`` and event tapes the compiled engine watches,
+    but drives them with a wholly separate time-stepper (SciPy's adaptive RK) and
+    crossing root-finder (SciPy's Brent search over its own dense output).  The
+    events test-suite cross-checks the two paths, so a bug in either the engine's
+    or SciPy's stepping/refinement surfaces as a disagreement.
+
+    On a terminal stop the dense trajectory is resampled onto
+    ``make_output_grid(t0, t_stop, dt)`` via SciPy's dense output, so ``t`` / ``y``
+    land on exactly the same grid the compiled :func:`_engine_events` path returns
+    (both end at ``t_stop``).  Without this, SciPy's event-truncated ``sol.t`` (its
+    interior points on the *full* ``[t0, final_time]`` grid, then the event time
+    appended) would disagree with the engine's ``t_stop``-aligned grid by up to one
+    ``dt``.
+
+    Parameters
+    ----------
+    problem : ODEProblem
+        The lowered ODE whose ``ic`` and ``tape`` are stepped.
+    evs : list of Event
+        The coerced events (already normalized).
+    event_tapes : list of Tape
+        One single-output condition tape per event, in ``evs`` order.
+    final_time, dt, t0, method, rtol, atol
+        As in :func:`integrate_events` (``method`` is a canonical kernel name,
+        mapped to the nearest SciPy method by
+        :func:`tsdynamics.engine.reference._scipy_method`).
+
+    Returns
+    -------
+    EventSolution
+
+    Raises
+    ------
+    ConvergenceError
+        If SciPy reports the integration failed.
     """
     from scipy.integrate import solve_ivp
 
@@ -654,26 +745,44 @@ def _reference_events(
         f.direction = e.direction
         scipy_events.append(f)
 
-    t_eval = make_output_grid(t0, final_time, dt)
+    full_grid = make_output_grid(t0, final_time, dt)
     sol = solve_ivp(
         rhs,
-        (float(t_eval[0]), float(t_eval[-1])),
+        (float(full_grid[0]), float(full_grid[-1])),
         ic,
-        t_eval=t_eval,
+        t_eval=full_grid,
         method=scipy_method,
         rtol=rtol,
         atol=atol,
         events=scipy_events,
+        dense_output=True,
     )
     if not sol.success:
         raise ConvergenceError(f"reference event integration failed: {sol.message}")
 
     t_events = [np.asarray(te, dtype=float) for te in sol.t_events]
     y_events = [np.asarray(ye, dtype=float).reshape(-1, dim) for ye in sol.y_events]
-    terminated = any(e.terminal and t_events[i].size for i, e in enumerate(evs))
+
+    # Earliest terminal crossing fixes the stop time; resample the dense output
+    # onto the canonical grid [t0, t_stop] so the reference trajectory mirrors the
+    # engine path exactly (instead of SciPy's own event-truncated sol.t, which
+    # omits the canonical grid point at/just past t_stop — the cross-backend t[-1]
+    # mismatch this resampling closes).
+    terminal_times = [
+        float(t_events[i][0]) for i, e in enumerate(evs) if e.terminal and t_events[i].size
+    ]
+    terminated = bool(terminal_times)
+    if terminated:
+        t_stop = min(terminal_times)
+        t_eval = make_output_grid(t0, t_stop, dt)
+        y = np.ascontiguousarray(sol.sol(t_eval).T) if t_eval.size else np.empty((0, dim))
+    else:
+        t_eval = np.asarray(sol.t, dtype=float)
+        y = np.ascontiguousarray(sol.y.T)
+
     return EventSolution(
-        t=np.asarray(sol.t, dtype=float),
-        y=np.ascontiguousarray(sol.y.T),
+        t=t_eval,
+        y=y,
         t_events=t_events,
         y_events=y_events,
         terminated=terminated,

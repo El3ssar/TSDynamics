@@ -289,9 +289,11 @@ def _recommend_method(problem: Problem) -> Any:
     registry recommend an implicit kernel (``bdf``) on a stiff RHS or the explicit
     default (``rk45``) otherwise (:func:`tsdynamics.solvers.recommend`).  The probe
     is the one-point heuristic :func:`tsdynamics.solvers.is_stiff` — useful but not
-    a guarantee (see its docstring): the verdict is read at the integration's *own*
-    start state (``problem.ic``), so a system declares a stiff default via
-    ``_default_method`` when the heuristic is too coarse for it.
+    a guarantee (see its docstring): the verdict is read at the problem's resolved
+    start state (``problem.ic``) and at ``problem.t0`` (``0.0`` unless a builder set
+    it; the integrate/ensemble ``t0=`` argument is not threaded here).  A system
+    declares a stiff default via ``_default_method`` when the heuristic is too
+    coarse for it.
 
     Maps and DDEs treat ``"auto"`` as an explicit, documented **no-op** — it
     resolves to the family default rather than probing:
@@ -442,10 +444,14 @@ def integrate(
         **for ODEs**: the Jacobian spectrum at the start state is probed and an
         implicit kernel (``bdf``) is used on a stiff RHS, the explicit default
         (``rk45``) otherwise (:func:`tsdynamics.solvers.recommend`; a one-point
-        heuristic).  For maps (no kernel) and DDEs (explicit method-of-steps,
-        whose instantaneous-Jacobian probe would ignore the delay terms),
-        ``"auto"`` is a no-op resolving to the family default — see
-        :func:`_recommend_method`.
+        heuristic).  The probe reads the Jacobian at the resolved initial state
+        (``problem.ic``) but always at ``t=0.0`` — the ``t0=`` argument is not
+        threaded into it — so a non-autonomous system whose stiffness varies in
+        time is classified by its ``t=0`` spectrum.  This only affects kernel
+        selection, never the integrated trajectory.  For maps (no kernel) and
+        DDEs (explicit method-of-steps, whose instantaneous-Jacobian probe would
+        ignore the delay terms), ``"auto"`` is a no-op resolving to the family
+        default — see :func:`_recommend_method`.
     rtol, atol : float
         Solver tolerances.
     backend : str, default "interp"
@@ -461,6 +467,13 @@ def integrate(
 
     Raises
     ------
+    InvalidParameterError
+        For an unknown ``backend`` or ``method`` (incl. v2-only names), a
+        non-positive ``dt``, or a non-forward window (``final_time <= t0``).
+        Subclasses :class:`ValueError`.
+    ConvergenceError
+        If the integration diverged or the step collapsed before the final time
+        (a non-finite result).  Subclasses :class:`RuntimeError`.
     EngineNotAvailableError
         For ``"interp"``/``"jit"`` when :mod:`tsdynamics._rust` is not built.
     NotImplementedError
@@ -574,6 +587,9 @@ def _run_continuous(
         )
 
     eng = _engine()
+    # ``_engine_integrate_dense`` returns a ``float64`` ndarray (the single dtype
+    # conversion point), so re-wrapping it with an explicit dtype here would be a
+    # redundant pass over the array — consume it as-is.
     y = _engine_integrate_dense(
         eng,
         _primary_tape(problem).to_arrays(),
@@ -585,7 +601,6 @@ def _run_continuous(
         atol=atol,
         jit=(backend == "jit"),
     )
-    y = np.asarray(y, dtype=np.float64)
     if not np.all(np.isfinite(y)):
         raise ConvergenceError(
             f"{_name(problem)}: integration diverged or the step collapsed before "
@@ -973,6 +988,13 @@ def ensemble(
     reference backend loops in Python.  A diverging trajectory yields a row of
     ``NaN`` rather than aborting the batch.
 
+    The same up-front ``method=`` / ``dt`` / window validation as
+    :func:`integrate` runs *before* any per-trajectory work: an unknown or
+    v2-only solver name, a non-positive ``dt``, or a non-forward window
+    (``final_time <= t0``) raises :class:`~tsdynamics.errors.InvalidParameterError`
+    here rather than slipping through to the solver as a silent no-step or
+    backwards run.
+
     Parameters
     ----------
     system_or_problem : SystemBase or Problem
@@ -984,14 +1006,38 @@ def ensemble(
         *is* the step taken for the whole run.  Matching :func:`integrate`'s
         ``dt`` so a fixed-step method gives the same trajectory through the dense
         and ensemble paths.  Consumed only by the compiled engine (the reference
-        backend integrates adaptively via SciPy and ignores it).
+        backend integrates adaptively via SciPy and ignores it).  Must be strictly
+        positive (validated up front for the flow path).
     final_time, t0, method, rtol, atol, backend
-        As in :func:`integrate`.
+        As in :func:`integrate`.  ``method="auto"`` selects a kernel by the same
+        a-priori auto-stiffness probe as :func:`integrate`, with one documented
+        caveat: the batch is *not* probed per-row.  The stiffness verdict is read
+        once, at the system's **default** initial condition (``problem.ic``, since
+        ``ensemble`` builds the Problem without a single ``ic=``) and at ``t=0.0``
+        (the start time ``t0`` is not threaded into the probe).  This only ever
+        affects which kernel is chosen — never the integrated results — so a stiff
+        batch whose default IC sits in a non-stiff region should pass an explicit
+        ``method=`` (or the system should declare ``_default_method``).
 
     Returns
     -------
     ndarray, shape (n, dim)
         Final states (rows of ``NaN`` for diverged trajectories).
+
+    Raises
+    ------
+    InvalidParameterError
+        For an unknown/v2-only ``method``, a non-positive ``dt``, a non-forward
+        window, or an ``ics`` array that is not ``(n, dim)``.  Subclasses
+        :class:`ValueError`.
+    ConvergenceError
+        Never raised for a single diverged trajectory (those become ``NaN``
+        rows); a batch-wide engine failure surfaces through the engine seam.
+    EngineNotAvailableError
+        For ``"interp"``/``"jit"`` when :mod:`tsdynamics._rust` is not built.
+    NotImplementedError
+        For an SDE problem (use :func:`sde_ensemble_final`) or a DDE problem (the
+        engine has no batched method-of-steps path — integrate one IC at a time).
     """
     backend = resolve_backend(backend)
 
@@ -1041,6 +1087,15 @@ def ensemble(
         )
 
     start = problem.t0 if t0 is None else float(t0)
+
+    # Up-front window/dt validation, identical to the checks :func:`integrate`
+    # runs through ``make_output_grid`` for the flow path: a non-positive ``dt``
+    # or a non-forward window is a typed ``InvalidParameterError`` raised here,
+    # before any (per-trajectory) engine work, rather than slipping through to the
+    # solver as a silent no-step / backwards run.  ``make_output_grid`` is the one
+    # validation chokepoint both entry points share; the grid it returns is
+    # discarded (the ensemble engine call needs only ``t0``/``t1``/``first_step``).
+    make_output_grid(start, float(final_time), dt)
 
     if backend == "reference":
         return _reference_ensemble(
@@ -1222,6 +1277,9 @@ def _engine_integrate_dense(
     (:func:`_step_continuous`) instead of rebuilding the tuple per step (stream
     WS-INVHOIST), while the single-shot :func:`integrate` path marshals them inline
     at the call site.
+
+    The returned array is typed ``float64`` here, the single conversion point —
+    :func:`_run_continuous` consumes it as-is rather than re-wrapping it.
     """
     return np.asarray(
         eng.integrate_dense(
@@ -1233,7 +1291,8 @@ def _engine_integrate_dense(
             float(rtol),
             float(atol),
             bool(jit),
-        )
+        ),
+        dtype=np.float64,
     )
 
 

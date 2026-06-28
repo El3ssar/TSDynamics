@@ -93,8 +93,12 @@ def _reference_map_ensemble(problem: MapProblem, ics: np.ndarray, steps: int) ->
     """Loop the reference map iterator over a batch; NaN row on divergence.
 
     The pure-Python twin of the engine map ensemble: each IC is iterated to its
-    ``f^{steps}`` final state; a diverged orbit becomes a ``NaN`` row (mirroring
-    the engine's per-trajectory isolation) rather than aborting the batch.
+    ``f^{steps}`` final state; a diverged orbit (a
+    :class:`~tsdynamics.errors.ConvergenceError` from :func:`_reference_map`)
+    becomes a ``NaN`` row — mirroring the engine's per-trajectory isolation —
+    rather than aborting the batch.  Only divergence is caught: any other error
+    (a structural :class:`ValueError`/``TypeError``) propagates, since masking it
+    as a NaN row would silently hide a real bug.
     """
     out = np.empty_like(ics)
     if steps <= 0:
@@ -108,7 +112,7 @@ def _reference_map_ensemble(problem: MapProblem, ics: np.ndarray, steps: int) ->
         )
         try:
             out[i] = _reference_map(sub, steps)[-1]
-        except (RuntimeError, ValueError):
+        except ConvergenceError:
             out[i] = np.nan
     return out
 
@@ -123,7 +127,13 @@ def _reference_ensemble(
     rtol: float,
     atol: float,
 ) -> np.ndarray:
-    """Loop the reference ODE integrator over a batch; NaN row on divergence."""
+    """Loop the reference ODE integrator over a batch; NaN row on divergence.
+
+    Each IC is integrated from ``t0`` to ``t1`` on the SciPy oracle; a diverged
+    trajectory (a :class:`~tsdynamics.errors.ConvergenceError`) becomes a ``NaN``
+    row, mirroring the engine's per-trajectory isolation.  Only divergence is
+    caught — any other error propagates rather than being masked as a NaN row.
+    """
     if not isinstance(problem, ODEProblem):
         raise NotImplementedError(
             f"the reference ensemble covers ODEs only, not {problem.family!r}; use "
@@ -136,7 +146,7 @@ def _reference_ensemble(
         try:
             y = _reference_ode(sub, t_eval, method=method, rtol=rtol, atol=atol)
             out[i] = y[-1]
-        except (RuntimeError, ValueError):
+        except ConvergenceError:
             out[i] = np.nan
     return out
 

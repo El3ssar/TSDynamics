@@ -443,6 +443,91 @@ def test_whole_map_catalogue_lowers() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Piecewise / boolean CSE: the literal ``1.0`` is emitted once, not per branch
+# ---------------------------------------------------------------------------
+
+
+def _count_const_one(tape: Tape) -> int:
+    """Number of ``OP_CONST`` registers holding exactly ``1.0`` in ``tape``."""
+    is_const = tape.ops == compile_ir.OP_CONST
+    return int(np.count_nonzero(is_const & (tape.imm == 1.0)))
+
+
+def test_piecewise_blend_shares_one_register_across_branches() -> None:
+    """Two ``np.where`` selections share a single ``Const 1.0`` register (CSE).
+
+    Each masked blend builds ``1 - mask``.  The literal ``1.0`` used there must
+    route through the CSE cache, so a step with *several* selections carries one
+    ``Const 1.0`` register, not one per branch.  Before the fix the hand-pushed
+    ``OP_CONST(1.0)`` bypassed CSE, giving one per blend.
+    """
+    from tsdynamics.families import DiscreteMap
+
+    class TwoWhere(DiscreteMap):
+        params = {"a": 0.5}
+        dim = 2
+
+        @staticmethod
+        def _step(X, a):
+            x, y = X[0], X[1]
+            nx = np.where(x < a, a * x, a * (1.0 - x))
+            ny = np.where(y < a, a * y, a * (1.0 - y))
+            return np.array([nx, ny])
+
+        @staticmethod
+        def _jacobian(X, a):
+            return np.eye(2)
+
+        _jacobian_fd_check = False
+
+    tape = lower_map(TwoWhere())
+    # Two independent Piecewise blends → two ``1 - mask`` subtractions, but the
+    # literal ``1.0`` is shared: exactly one ``Const 1.0`` register.
+    assert _count_const_one(tape) == 1
+
+    # And the tape is still correct on both selected and unselected regions.
+    a = 0.5
+    for x, y in [(0.2, 0.9), (0.7, 0.1), (0.4, 0.4)]:
+        got = eval_tape(tape, [x, y])
+        want_x = a * x if x < a else a * (1.0 - x)
+        want_y = a * y if y < a else a * (1.0 - y)
+        assert got[0] == pytest.approx(want_x)
+        assert got[1] == pytest.approx(want_y)
+
+
+def test_piecewise_blend_evaluates_correctly_single_branch() -> None:
+    """A single ``np.where`` blend reproduces ``_step`` on both arms after CSE.
+
+    Guards that routing the literal ``1.0`` through the CSE cache did not change
+    the lowered arithmetic (``mask*val + (1 - mask)*acc``).
+    """
+    from tsdynamics.families import DiscreteMap
+
+    class OneWhere(DiscreteMap):
+        params = {"c": 1.3}
+        dim = 1
+
+        @staticmethod
+        def _step(X, c):
+            x = X[0]
+            return np.array([np.where(x < 0.0, -c * x, c * x)])
+
+        @staticmethod
+        def _jacobian(X, c):
+            return np.array([[1.0]])
+
+        _jacobian_fd_check = False
+
+    tape = lower_map(OneWhere())
+    assert _count_const_one(tape) == 1
+    c = 1.3
+    for x in (-2.0, -0.5, 0.0, 0.5, 2.0):
+        got = eval_tape(tape, [x])[0]
+        want = -c * x if x < 0.0 else c * x
+        assert got == pytest.approx(want)
+
+
+# ---------------------------------------------------------------------------
 # DDE lowering (delayed accesses → delay slots)
 # ---------------------------------------------------------------------------
 

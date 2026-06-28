@@ -291,11 +291,21 @@ class Tape:
     def to_arrays(
         self,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, int]:
-        """Return the wire arrays the Rust ``Tape::from_arrays`` ingests.
+        r"""Return the wire arrays the Rust ``Tape::from_arrays`` ingests.
 
         The tuple is ``(ops, a, b, imm, outputs, jac_outputs, n_state,
         n_param)`` with the integer arrays as ``int32`` and ``imm`` as
-        ``float64`` — contiguous and ready for zero-copy hand-off.
+        ``float64`` — each contiguous and of the right dtype, ready for the FFI.
+
+        Notes
+        -----
+        ``np.ascontiguousarray`` is a no-op (returns the *same* object) when the
+        field is already C-contiguous and of the requested dtype, so these are
+        **views onto the tape's own arrays, not guaranteed-fresh copies**.  That
+        is safe because the consumer never writes through them: the FFI
+        constructor ``Tape::from_arrays`` copies the data into owned Rust
+        ``Vec``\\ s, and the reference evaluator only reads.  Callers must not
+        mutate the returned arrays in place (it would corrupt the cached tape).
         """
         return (
             np.ascontiguousarray(self.ops, dtype=np.int32),
@@ -434,6 +444,19 @@ class _Emitter:
         self._cache[expr] = idx
         return idx
 
+    def _one(self) -> int:
+        """Return the register holding the constant ``1.0`` (CSE-shared).
+
+        The piecewise / boolean blends need a literal one (``1 - mask``).  Routing
+        it through :meth:`emit` of ``sympy.Integer(1)`` — rather than a raw
+        ``_push(OP_CONST, imm=1.0)`` — lets the CSE cache dedup it across every
+        branch, so a tape with several piecewise selections carries a single
+        ``Const 1`` register instead of one per branch.
+        """
+        import sympy
+
+        return self.emit(sympy.Integer(1))
+
     def _emit(self, expr: Any) -> int:
         import sympy
 
@@ -542,8 +565,7 @@ class _Emitter:
                 acc = self._push(OP_SUB, a=s, b=p)
             return acc
         if isinstance(expr, sympy.Not):
-            one = self._push(OP_CONST, imm=1.0)
-            return self._push(OP_SUB, a=one, b=self.emit(expr.args[0]))
+            return self._push(OP_SUB, a=self._one(), b=self.emit(expr.args[0]))
         raise TapeCompileError(
             f"the instruction tape has no equivalent for boolean {type(expr).__name__!r}."
         )
@@ -552,10 +574,20 @@ class _Emitter:
         """Lower ``Piecewise((e0, c0), …, (en, True))`` to a masked blend.
 
         Each condition ``ck`` emits to a 1.0/0.0 mask; the value is built from
-        the last (default) branch backwards as ``mk*ek + (1 - mk)*acc``.  This
-        evaluates **both** branches, so a branch that is singular on the
-        unselected region (``0*inf = nan``) would poison the result — fine for
-        the finite-branch piecewise maps this targets, a caveat for general use.
+        the last (default) branch backwards as ``mk*ek + (1 - mk)*acc``.
+
+        .. important::
+           Because the blend is *arithmetic*, **every branch is evaluated on
+           every input**, then masked.  The IR has no control flow that could
+           skip the unselected arm.  So each branch expression must be **finite
+           on the whole domain**, not merely on the region its condition
+           selects: a branch that is singular off its own region (``±inf`` or
+           ``NaN`` there) poisons the result through ``0 * inf = NaN`` /
+           ``0 * inf + finite = NaN``.  This holds for the finite-branch
+           piecewise maps this targets (Baker's modular branches), but a
+           ``Piecewise((1/u, u != 0), (0, True))``-style guard against a
+           singularity would *not* lower correctly — rewrite it so both arms are
+           finite (e.g. blend on a regularised expression).
         """
         import sympy
 
@@ -570,8 +602,7 @@ class _Emitter:
         for value, cond in reversed(pairs[:-1]):
             mask = self.emit(cond)
             val = self.emit(value)
-            one = self._push(OP_CONST, imm=1.0)
-            inv = self._push(OP_SUB, a=one, b=mask)  # 1 - mask
+            inv = self._push(OP_SUB, a=self._one(), b=mask)  # 1 - mask
             sel = self._push(OP_MUL, a=mask, b=val)  # mask * value
             other = self._push(OP_MUL, a=inv, b=acc)  # (1 - mask) * acc
             acc = self._push(OP_ADD, a=sel, b=other)
@@ -718,9 +749,13 @@ def _sym_name(sym: Any) -> str:
 # values are deliberately absent from the key.
 #
 # Correctness rests on the lowered :class:`Tape` (and :class:`LoweredSDE`) being
-# **immutable**: ``Tape`` is a frozen dataclass over ndarray fields that no
-# downstream consumer writes to (``to_arrays`` returns fresh contiguous copies for
-# the FFI), so a shared cached tape can be handed to every problem safely.
+# treated as **immutable**: ``Tape`` is a frozen dataclass over ndarray fields
+# that no downstream consumer writes to.  ``to_arrays`` returns contiguous,
+# correct-dtype arrays for the FFI, but they are *views* onto the tape's own
+# arrays whenever those are already contiguous (``np.ascontiguousarray`` is a
+# no-op there) — the data is copied into owned Rust ``Vec``\s by
+# ``Tape::from_arrays``, and no consumer mutates them, so a shared cached tape
+# can be handed to every problem safely.
 
 #: Maximum number of distinct lowered tapes retained (LRU eviction).  Bounds the
 #: memory of a long session sweeping many distinct systems; a single sweep keys on
@@ -873,6 +908,14 @@ def lower_ode_cached(system: Any, *, with_jacobian: bool = False) -> Tape:
     parameters (baked into the tape), and the ``_equations`` kernel object.
     Control-parameter values are absent from the key (they feed the tape live via
     ``params_vec``), so a control-parameter sweep reuses one cached tape.
+
+    The tape's ``control_names`` (the runtime parameter-vector *layout*) are not a
+    key part of their own: they are a pure function of the system **class** — they
+    derive from ``_control_params()`` / the ``params`` ⨯ ``_structural_params``
+    split, neither of which a control-parameter *value* changes — so the class in
+    the key captures them transitively.  A construct that could change the control
+    layout without changing the class (e.g. per-instance ``_structural_params``)
+    would break this invariant; the catalogue does not do that.
     """
     key = (
         "ode",
@@ -930,6 +973,12 @@ def lower_sde_cached(system: Any, *, with_diffusion_jacobian: bool = False) -> L
     parameters) plus *both* kernel objects (``_drift`` and ``_diffusion``), so a
     monkeypatch of either invalidates the entry.  Control parameters feed both
     tapes live, so they stay out of the key.
+
+    As in :func:`lower_ode_cached`, the shared ``control_names`` layout of both
+    tapes is captured *transitively* by the class: the control-name layout is a
+    pure function of the class (``_control_params()`` / the ``params`` ⨯
+    ``_structural_params`` split), independent of any control-parameter value, so
+    it needs no key part of its own.
     """
     key = (
         "sde",
@@ -969,6 +1018,23 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
     Returns
     -------
     Tape
+        The lowered RHS (and Jacobian, if requested), already validated.
+
+    Raises
+    ------
+    ValueError
+        If ``_equations`` does not return exactly ``system.dim`` expressions.
+    TapeCompileError
+        If the RHS uses a construct the instruction tape cannot express (an
+        unsupported function, or a free symbol that is not a declared input).
+
+    Examples
+    --------
+    >>> import tsdynamics as ts
+    >>> from tsdynamics.engine.compile import lower_ode, eval_tape
+    >>> tape = lower_ode(ts.Lorenz())
+    >>> tape.dim
+    3
     """
     import symengine
 

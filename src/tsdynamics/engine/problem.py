@@ -403,7 +403,16 @@ def _is_sde(system: Any) -> bool:
 
 
 def _params_vec(system: Any, tape: Tape) -> np.ndarray:
-    """Read the control-parameter values for ``tape`` from ``system.params``."""
+    """Read the control-parameter values for ``tape`` from ``system.params``.
+
+    A *fresh* ``float64`` vector is built on every call, by design: it is the live
+    read that lets a control-parameter sweep reuse one compiled tape (the values
+    are never snapshotted into the Problem).  The rebuild is deliberately cheap —
+    one float per control name — and must stay so, because the engine reads it once
+    per ``integrate`` / per stepping ``dt``; it is not cached because a cache would
+    have to be invalidated on every ``system.params`` mutation, reintroducing the
+    very snapshot staleness this live read exists to avoid.
+    """
     if system is None or not tape.control_names:
         return np.empty(0, dtype=np.float64)
     return np.asarray([float(system.params[k]) for k in tape.control_names], dtype=np.float64)

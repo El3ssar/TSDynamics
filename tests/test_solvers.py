@@ -327,6 +327,26 @@ def test_select_policy():
     assert solvers.select("sde", stiff=True) == "euler_maruyama"
 
 
+def test_select_stiff_result_is_always_resolvable():
+    # Whatever select() hands back for a (family, stiff) combination must be a
+    # name resolve() accepts for that family — otherwise the policy points at a
+    # dead kernel.  This guards against re-introducing an unselectable stiff
+    # entry like the old STIFF_METHOD["dde"] = "rosenbrock".
+    for family in ("ode", "dde", "sde"):
+        for stiff in (False, True):
+            name = solvers.select(family, stiff=stiff)
+            assert solvers.resolve(name, family=family).name == name
+
+
+def test_select_dde_stiff_falls_back_to_explicit_default():
+    # The DDE method-of-steps drives an explicit ODE stage integrator only, so a
+    # "stiff" DDE verdict must fall back to the explicit DDE default rather than
+    # naming an implicit kernel resolve() rejects for the dde family.
+    assert "dde" not in solvers.STIFF_METHOD
+    assert solvers.select("dde", stiff=True) == solvers.default_method("dde")
+    assert solvers.select("dde", stiff=True) == "rk45"
+
+
 # ── auto-stiffness detection ─────────────────────────────────────────────────────
 
 
@@ -366,6 +386,21 @@ def test_recommend_picks_explicit_on_nonstiff():
     res = solvers.recommend(ts.Lorenz(), ic=[1.0, 1.0, 1.0])
     assert res.name == "rk45"
     assert res.build_kwargs == {}
+
+
+def test_recommend_dde_never_raises():
+    # recommend(family="dde") must always yield a resolvable explicit kernel.
+    # Previously STIFF_METHOD["dde"] = "rosenbrock" made select() name an
+    # implicit kernel that resolve(..., family="dde") rejects; it stayed latent
+    # only because the DDE Jacobian probe in is_stiff could never return True.
+    # Removing the "dde" entry makes the explicit fallback the contract.
+    res = solvers.recommend(ts.MackeyGlass(), family="dde")
+    assert res.name == solvers.default_method("dde")
+    assert res.spec.caps.kind == "explicit"
+    assert res.build_kwargs == {}
+    # And it holds for any ODE-spectrum a hypothetical DDE could present: even
+    # if a probe *were* stiff, the dde branch is skipped (no STIFF_METHOD entry).
+    assert solvers.recommend(ts.MackeyGlass(), family="dde", ratio_threshold=1.0).name == "rk45"
 
 
 # ── plugin solvers are selectable through the same resolver ──────────────────────

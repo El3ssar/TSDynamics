@@ -136,12 +136,22 @@ _STIFF_SCIPY_NAMES: frozenset[str] = frozenset({"lsoda", "radau", "vode"})
 DEFAULT_METHOD: dict[str, str] = {"ode": "rk45", "dde": "rk45", "sde": "euler_maruyama"}
 
 #: The default *stiff* kernel per family — what :func:`select` returns when the
-#: RHS is stiff.  Only families with an implicit kernel appear.  The ODE default
-#: is the variable-order ``bdf`` (stream E-BDF): it takes far larger steps through
-#: a smooth stiff phase than the fixed-order ``rosenbrock``/``trbdf2`` (which stay
-#: selectable by name), closing the warm-throughput gap to a variable-order BDF
-#: reference (``benches/REPORT.md``).
-STIFF_METHOD: dict[str, str] = {"ode": "bdf", "dde": "rosenbrock"}
+#: RHS is stiff.  Only families with a *selectable* implicit kernel appear, so
+#: ``select(family, stiff=True)`` for any other family falls back to that
+#: family's explicit default.  The ODE entry is the variable-order ``bdf``
+#: (stream E-BDF): it takes far larger steps through a smooth stiff phase than
+#: the fixed-order ``rosenbrock``/``trbdf2`` (which stay selectable by name),
+#: closing the warm-throughput gap to a variable-order BDF reference
+#: (``benches/REPORT.md``).
+#:
+#: **DDE has no entry on purpose.**  The DDE method-of-steps drives an *explicit*
+#: ODE stage integrator only (:func:`_spec_supports`), so the implicit stiff
+#: kernels are unreachable for ``family="dde"`` — :func:`resolve` rejects them.
+#: Listing a stiff DDE kernel here would make :func:`select` (and
+#: :func:`recommend`) hand back an unresolvable name; instead ``"dde"`` is
+#: absent, so a (hypothetical) stiff DDE verdict resolves to the explicit DDE
+#: default rather than raising.
+STIFF_METHOD: dict[str, str] = {"ode": "bdf"}
 
 
 def normalize(method: str) -> str:
@@ -385,20 +395,34 @@ def select(family: str = "ode", *, stiff: bool = False) -> str:
     This is the *policy* half of auto-stiffness: it consumes a boolean verdict
     (from :func:`is_stiff`, the engine's runtime detector, or the caller) and
     returns the appropriate kernel — the family's stiff kernel when ``stiff`` and
-    one exists, else the family default.
+    one exists in :data:`STIFF_METHOD`, else the family default
+    (:func:`default_method`).
 
     Parameters
     ----------
     family : str, default "ode"
         ``"ode"``, ``"dde"``, or ``"sde"``.
     stiff : bool, default False
-        Whether the RHS is stiff.  Ignored for families with no implicit kernel
-        (e.g. ``"sde"``), which always return their explicit default.
+        Whether the RHS is stiff.  Ignored for families with no *selectable*
+        stiff kernel — ``"sde"`` (no implicit kernel) and ``"dde"`` (the
+        method-of-steps drives an explicit ODE stage integrator only, so the
+        implicit kernels are unresolvable for it) both always return their
+        explicit default.
 
     Returns
     -------
     str
-        The selected canonical kernel name.
+        The selected canonical kernel name (always resolvable for *family*).
+
+    Examples
+    --------
+    >>> from tsdynamics.solvers import select
+    >>> select("ode", stiff=False)
+    'rk45'
+    >>> select("ode", stiff=True)
+    'bdf'
+    >>> select("dde", stiff=True)  # no stiff DDE kernel → explicit default
+    'rk45'
     """
     if stiff and family in STIFF_METHOD:
         return STIFF_METHOD[family]
@@ -440,6 +464,16 @@ def is_stiff(
     the engine's *runtime* detector (rejected-step ratio over a window) is the
     authoritative signal once integration is underway.  Returns ``False``
     conservatively when the Jacobian cannot be formed or has no decaying mode.
+
+    .. note::
+       Only **decay (real-part) stiffness** is detected — a wide spread of
+       negative real parts.  **Oscillatory stiffness** (eigenvalues with a large
+       imaginary part but a small real part, e.g. a fast-rotating but barely
+       damped mode that still bounds an explicit step by stability) is *not*
+       flagged: the ratio is built from real parts only, so such a spectrum
+       reports ``False`` here.  The engine's runtime rejected-step detector
+       remains authoritative for those cases — pass an explicit stiff
+       ``method=`` (e.g. ``"bdf"``) if you know the RHS is oscillatorily stiff.
 
     Parameters
     ----------
@@ -509,14 +543,17 @@ def recommend(
 
     Combines the detector (:func:`is_stiff`) with the policy (:func:`select`):
     probes the Jacobian spectrum and resolves to the family's stiff kernel when
-    stiff, the explicit default otherwise.
+    stiff, the explicit default otherwise.  The returned :class:`Resolution` is
+    always resolvable for *family*, so this never raises on the selection itself.
 
     Parameters
     ----------
     system : SystemBase
         The system to integrate.
     family : str, default "ode"
-        The problem family (only ``"ode"``/``"dde"`` have a stiff alternative).
+        The problem family.  Only ``"ode"`` has a selectable stiff alternative
+        (:data:`STIFF_METHOD`); ``"dde"``/``"sde"`` always recommend their
+        explicit default, so the stiffness probe is skipped for them.
     ic, t, ratio_threshold
         Forwarded to :func:`is_stiff`.
 
