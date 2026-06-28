@@ -243,6 +243,110 @@ class TestEngineVsReference:
 
 
 # ---------------------------------------------------------------------------
+# Terminal-stop grid parity across backends (regression: cross-backend t[-1])
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalGridParity:
+    """On a terminal stop the engine and reference paths must land on one grid.
+
+    Before the fix the engine path sampled ``make_output_grid(t0, t_stop, dt)``
+    (ending exactly at ``t_stop``) while the reference path returned SciPy's
+    event-truncated ``sol.t`` (interior points on the *full* grid, then the event
+    time appended) — so ``t[-1]`` / ``y[-1]`` differed by up to one ``dt`` between
+    backends.  The reference path now resamples its dense output onto the same
+    ``make_output_grid(t0, t_stop, dt)``, so the two grids are identical.
+    """
+
+    # A `dt` that does NOT divide the terminal time (20.0 / 0.3 is non-integer),
+    # so the old full-grid-aligned reference tail and the engine's t_stop-aligned
+    # grid genuinely disagree — the regression is observable.
+    _KW = dict(final_time=200.0, dt=0.3, ic=(1.0, 0.0), method="rk4")
+
+    @staticmethod
+    def _stop_at_20():
+        def stop_at(y, t):
+            return t - 20.0
+
+        stop_at.terminal = True
+        return stop_at
+
+    def test_engine_and_reference_share_terminal_grid(self):
+        sys = _EventsHarmonic()
+        eng = sys.run(backend="interp", events=[self._stop_at_20()], **self._KW)
+        ref = sys.run(backend="reference", events=[self._stop_at_20()], **self._KW)
+        assert eng.meta["terminated"] is True
+        assert ref.meta["terminated"] is True
+        # Same number of samples and the same grid (the final appended t_stop can
+        # differ by the two root-finders' resolution of t = 20.0, ~1e-6).
+        assert eng.t.shape == ref.t.shape
+        assert np.allclose(eng.t, ref.t, atol=1e-4)
+        assert np.isclose(eng.t[-1], ref.t[-1], atol=1e-4)
+        # The state tracks the same trajectory to the integrators' accuracy: the
+        # engine takes fixed-step rk4 at dt=0.3 while the reference is scipy-adaptive,
+        # so they differ by the rk4 truncation error (~1e-3), not machine precision.
+        assert np.allclose(eng.y[-1], ref.y[-1], atol=5e-3)
+
+    def test_reference_terminal_grid_ends_at_t_stop(self):
+        from tsdynamics.utils.grids import make_output_grid
+
+        sys = _EventsHarmonic()
+        ref = sys.run(backend="reference", events=[self._stop_at_20()], **self._KW)
+        # The reference trajectory now ends at the terminal stop time (t_stop ≈
+        # 20.0) on the canonical grid — not stretched over the full [0, 200] grid.
+        assert np.isclose(ref.t[-1], 20.0, atol=1e-4)
+        expected = make_output_grid(0.0, ref.t[-1], 0.3)
+        assert ref.t.shape == expected.shape
+        assert np.allclose(ref.t, expected, atol=1e-9)
+        # Far fewer samples than the full-grid path would have produced.
+        assert ref.t.size < make_output_grid(0.0, 200.0, 0.3).size
+
+
+# ---------------------------------------------------------------------------
+# Reference ensemble: only divergence is masked as a NaN row
+# ---------------------------------------------------------------------------
+
+
+class TestReferenceEnsembleErrorNarrowing:
+    """A structural error in a reference ensemble must propagate, not become NaN.
+
+    The divergence guard (a :class:`ConvergenceError`) becomes a NaN row, but an
+    unrelated ``ValueError`` (here forced by monkeypatching the per-trajectory
+    integrator) must surface — masking it would silently hide a real bug.
+    """
+
+    def test_value_error_propagates_from_ode_ensemble(self, monkeypatch):
+        from tsdynamics.engine import reference as ref_mod
+
+        def boom(*args, **kwargs):
+            raise ValueError("structural failure, not divergence")
+
+        monkeypatch.setattr(ref_mod, "_reference_ode", boom)
+        ics = np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
+        prob = ts.Lorenz()
+        from tsdynamics.engine.problem import ode_problem
+
+        p = ode_problem(prob, ic=ics[0])
+        with pytest.raises(ValueError, match="structural failure"):
+            ref_mod._reference_ensemble(p, ics, 0.0, 1.0, method="rk45", rtol=1e-6, atol=1e-9)
+
+    def test_divergence_becomes_nan_row_in_ode_ensemble(self, monkeypatch):
+        from tsdynamics.engine import reference as ref_mod
+        from tsdynamics.errors import ConvergenceError
+
+        def diverge(*args, **kwargs):
+            raise ConvergenceError("diverged")
+
+        monkeypatch.setattr(ref_mod, "_reference_ode", diverge)
+        ics = np.array([[1.0, 1.0, 1.0]])
+        from tsdynamics.engine.problem import ode_problem
+
+        p = ode_problem(ts.Lorenz(), ic=ics[0])
+        out = ref_mod._reference_ensemble(p, ics, 0.0, 1.0, method="rk45", rtol=1e-6, atol=1e-9)
+        assert np.all(np.isnan(out[0]))
+
+
+# ---------------------------------------------------------------------------
 # PoincareMap is one consumer of the events seam
 # ---------------------------------------------------------------------------
 

@@ -45,19 +45,35 @@ class SolverCaps:
     """A solver's capabilities — the Python mirror of ``tsdyn_solvers::Caps``.
 
     Drives ``method=`` resolution and the auto-stiffness layer (stream C-SOLV).
+    The four flags are how the selection layer reasons about a kernel without
+    running it: ``kind`` is the auto-stiffness axis (:func:`~select.select`
+    returns an ``"implicit"`` kernel only on a stiff RHS), ``needs_jacobian``
+    drives the ``with_jacobian=True`` tape-build decision
+    (:func:`~select.build_kwargs`), ``supports`` gates the family check in
+    :func:`~select.resolve`, and ``adaptive`` is informational metadata exposed
+    through :attr:`Resolution.adaptive` (the engine, not this layer, acts on it).
 
     Parameters
     ----------
     kind : {"explicit", "implicit"}
-        Whether the kernel is explicit or implicit (the primary auto-stiffness
-        axis).
+        Whether the kernel is explicit or implicit.  This is the primary
+        auto-stiffness axis: the selection policy hands back an implicit kernel
+        only when the RHS is judged stiff.
     adaptive : bool, default False
-        Whether the kernel does its own embedded error estimate + step adaption.
+        Whether the kernel does its own embedded error estimate + step adaption
+        (an adaptive embedded pair / variable-order multistep), as opposed to a
+        fixed-step kernel where the caller controls ``dt``.
     needs_jacobian : bool, default False
-        Whether the kernel requires the analytic Jacobian.
+        Whether the kernel requires the analytic Jacobian.  Every implicit
+        kernel sets this; an explicit kernel may also (e.g. SDE Milstein reads
+        ``∂g/∂u``).  It is exactly the signal :func:`~select.build_kwargs` turns
+        into ``with_jacobian=True`` so a Jacobian-carrying tape is built.
     supports : frozenset[str], default {"ode"}
         The problem families the kernel can integrate; a subset of
-        ``{"ode", "dde", "sde", "map"}``.
+        ``{"ode", "dde", "sde", "map"}``.  Mirrors the Rust ``ProblemKind`` set,
+        so an explicit ODE kernel is tagged ``{"ode"}`` even though the DDE
+        method-of-steps reuses it (that reuse is the selection layer's
+        :func:`~select._spec_supports` rule, not a caps flag).
     """
 
     kind: str

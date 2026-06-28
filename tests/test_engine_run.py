@@ -324,6 +324,39 @@ def test_ensemble_validates_ic_shape() -> None:
         run.ensemble(ts.Lorenz(), np.zeros((4, 2)), final_time=1.0, backend="reference")
 
 
+def test_ensemble_rejects_nonpositive_dt() -> None:
+    """``ensemble`` runs the same up-front ``dt`` validation as ``integrate``.
+
+    The reference ensemble integrates adaptively via SciPy and *ignores* ``dt``,
+    so before the shared ``make_output_grid`` validation a ``dt <= 0`` slipped
+    through silently here even though ``integrate`` rejected it.  It must now
+    raise the typed :class:`InvalidParameterError` (a ``ValueError``) up front.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    ics = np.array([[1.0, 1.0, 1.0], [0.5, 0.5, 0.5]])
+    with pytest.raises(InvalidParameterError, match=r"dt must be > 0"):
+        run.ensemble(ts.Lorenz(), ics, final_time=1.0, dt=0.0, backend="reference")
+    with pytest.raises(ValueError, match=r"dt must be > 0"):
+        run.ensemble(ts.Lorenz(), ics, final_time=1.0, dt=-0.01, backend="reference")
+
+
+def test_ensemble_rejects_backwards_window() -> None:
+    """A non-forward window (``final_time <= t0``) is rejected up front, as in ``integrate``."""
+    from tsdynamics.errors import InvalidParameterError
+
+    ics = np.array([[1.0, 1.0, 1.0]])
+    with pytest.raises(InvalidParameterError, match="must run forward in time"):
+        run.ensemble(ts.Lorenz(), ics, final_time=1.0, t0=2.0, dt=0.05, backend="reference")
+
+
+def test_ensemble_rejects_unknown_method_like_integrate() -> None:
+    """An unknown/v2-only ``method`` is rejected before any per-trajectory work."""
+    ics = np.array([[1.0, 1.0, 1.0]])
+    with pytest.raises(ValueError, match="unknown solver method"):
+        run.ensemble(ts.Lorenz(), ics, final_time=1.0, method="LSODA", backend="reference")
+
+
 def test_reference_ensemble_runs_in_python() -> None:
     """The reference ensemble loops the pure-Python integrator (no engine needed)."""
     lor = ts.Lorenz()
