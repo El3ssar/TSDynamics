@@ -94,6 +94,10 @@ def test_sweep_cached_equals_bypassed_bit_for_bit(monkeypatch):
     comp.clear_tape_cache()
     cached = _lorenz_rho_sweep()
     assert comp.tape_cache_stats()["hits"] >= 11  # 1 miss + 11 hits over 12 values
+    # Direct liveness gate (not just cached == bypassed): one shared tape served
+    # the whole sweep, yet the control param ρ is read live, so the endpoints must
+    # differ. If the cache had frozen ρ, every value would collapse to one state.
+    assert not np.allclose(cached[0], cached[-1]), "control-param sweep collapsed — cache froze ρ"
 
     # With the cache entirely bypassed (re-lower every value).
     monkeypatch.setenv(comp._TAPE_CACHE_ENV, "1")

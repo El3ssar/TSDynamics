@@ -241,18 +241,29 @@ def _expansion_volumes(mats: np.ndarray) -> np.ndarray:
     values exceeding 1 (``1.0`` when none exceed 1).  One ``np.linalg.svd`` over
     the whole stack replaces the per-matrix Python calls; LAPACK computes each
     matrix's singular values independently, so the values match per matrix.
+
+    If the batched SVD fails to converge on some (finite) matrix it raises for
+    the whole stack, so we fall back to the per-matrix scalar path, which reports
+    ``+inf`` for a non-convergent matrix — preserving the robustness of the
+    original per-call :func:`~tsdynamics.analysis.chaos._common.expansion_volume`.
     """
     n = mats.shape[0]
     out = np.empty(n)
     finite = np.all(np.isfinite(mats), axis=(1, 2))
     out[~finite] = np.inf
     if np.any(finite):
-        # Singular values of every finite matrix at once (descending per row).
-        sv = np.linalg.svd(mats[finite], compute_uv=False)  # (n_finite, d)
-        # Product of singular values > 1 per matrix: mask sub-unit values to 1 so
-        # they drop out of the product (matches ``s[s > 1.0]`` then ``prod``;
-        # the all-<=1 row then yields the empty-product 1.0).
-        out[finite] = np.prod(np.where(sv > 1.0, sv, 1.0), axis=1)
+        try:
+            # Singular values of every finite matrix at once (descending per row).
+            sv = np.linalg.svd(mats[finite], compute_uv=False)  # (n_finite, d)
+            # Product of singular values > 1 per matrix: mask sub-unit values to 1
+            # so they drop out of the product (matches ``s[s > 1.0]`` then
+            # ``prod``; the all-<=1 row then yields the empty-product 1.0).
+            out[finite] = np.prod(np.where(sv > 1.0, sv, 1.0), axis=1)
+        except np.linalg.LinAlgError:
+            # A non-convergent (but finite) matrix poisons the whole batch; redo
+            # the finite ones one at a time so the offender reports +inf and the
+            # rest still get their exact volume.
+            out[finite] = [_c.expansion_volume(m) for m in mats[finite]]
     return out
 
 

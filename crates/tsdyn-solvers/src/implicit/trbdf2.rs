@@ -95,9 +95,15 @@ impl BaseStep for TrBdf2Base {
         let c1 = 1.0 / denom;
         let c0 = -(1.0 - g) * (1.0 - g) / denom; // c1 + c0 == 1
 
-        // BDF2 substage coefficient. (1-g)/(2-g) == γ/2 == d (both = 1 - √2/2),
-        // so bind it to `d`: a *bit*-equal shift lets the BDF2 substage reuse the
-        // trapezoidal substage's cached LU factorization (no re-factor).
+        // BDF2 substage coefficient. Algebraically (1-g)/(2-g) == γ/2 == d (all
+        // equal 1 - √2/2), so bind it to `d` rather than the previous (1-g)/(2-g)
+        // spelling. This makes the BDF2 substage's shift d·h *bit-identical to the
+        // trapezoidal substage's*, so the two share one iteration matrix I − d·h·J
+        // and the BDF2 substage reuses the cached LU (no re-factor). Note this is
+        // ~2 ULP from the old (1-g)/(2-g) value, so trbdf2 is NOT bit-identical to
+        // the prior release (only the explicit FSAL kernels are) — the shift moves
+        // by ~2 ULP, well within the Newton tolerance, and converges to the same
+        // root, so the integrated trajectory is unchanged to solver tolerance.
         let w = d;
 
         // f(t, u).

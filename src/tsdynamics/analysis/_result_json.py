@@ -31,6 +31,17 @@ def _jsonify(obj: Any) -> Any:
     """
     from tsdynamics.analysis._result_base import AnalysisResult
 
+    # Complex scalars/arrays (e.g. a spiral fixed point's stability eigenvalues):
+    # JSON has no complex type, so emit the real part when the imaginary part is
+    # zero (a real-valued-but-complex-dtype result stays a plain float) and a
+    # [real, imag] pair otherwise. Checked before the ndarray/generic branches,
+    # whose ``tolist()``/``item()`` would otherwise hand back a Python ``complex``
+    # that ``json.dumps`` rejects.
+    if isinstance(obj, (complex, np.complexfloating)):
+        z = complex(obj)
+        return z.real if z.imag == 0.0 else [z.real, z.imag]
+    if isinstance(obj, np.ndarray) and np.iscomplexobj(obj):
+        return [_jsonify(v) for v in obj]
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     if isinstance(obj, np.generic):
