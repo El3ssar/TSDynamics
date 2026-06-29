@@ -893,3 +893,100 @@ def _name(problem: Problem) -> str:
 def __dir__() -> list[str]:
     """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
     return sorted(__all__)
+
+
+def lyapunov_spectrum_ode(
+    tape_arrays: tuple[Any, ...],
+    params_vec: np.ndarray,
+    z0: np.ndarray,
+    *,
+    dim: int,
+    k: int,
+    t0: float,
+    dt: float,
+    burn_in: float,
+    final_time: float,
+    method: str,
+    rtol: float,
+    atol: float,
+    jit: bool,
+) -> dict[str, Any]:
+    """Run the whole ODE Benettin Lyapunov-spectrum loop in the Rust engine.
+
+    Drives the sequential kernel (``tsdynamics._rust.lyapunov_spectrum_ode``) over
+    the **extended** variational tape: it integrates one ``dt`` chunk at a time,
+    QR-reorthonormalises the ``(dim, k)`` tangent block after each chunk, and
+    accumulates ``Σ log|diag R|`` over the averaging window — so a whole spectrum
+    estimate is **one** Python→FFI round-trip instead of
+    ``(burn_in + final_time)/dt`` per-chunk round-trips each followed by a NumPy
+    ``qr`` (stream ``perf/ode-lyapunov-engine``).  The per-``dt`` integration is
+    byte-for-byte the released :meth:`TangentSystem._step_ode_engine` numerics, so
+    ``interp == jit`` and the spectrum matches the per-chunk Python path to
+    floating-point tolerance (the QR is a hand-rolled modified Gram–Schmidt, whose
+    log-stretch factors equal the NumPy-Householder diagonal of ``|R|`` to
+    tolerance).
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The **extended** variational tape's engine wire arrays
+        (:meth:`Tape.to_arrays`) — ``dim*(k+1)`` inputs/outputs.
+    params_vec : ndarray
+        Live control parameters (the base system's, in ``_control_params`` order).
+    z0 : ndarray, shape (dim*(k+1),)
+        Extended initial state: base IC ⊕ the seed tangent frame
+        (``embed_extended``, column-major).
+    dim : int
+        Base system dimension.
+    k : int
+        Number of tangent vectors (``1 ≤ k ≤ dim``).
+    t0 : float
+        Start time.
+    dt : float
+        Renormalisation interval.
+    burn_in : float
+        Discard this much time before accumulating.
+    final_time : float
+        Averaging-window length after burn-in.
+    method : str
+        Solver kernel name (registry-canonical, e.g. ``"rk45"``).
+    rtol, atol : float
+        Adaptive-kernel tolerances.
+    jit : bool
+        Select the Cranelift evaluator.
+
+    Returns
+    -------
+    dict
+        ``{"spectrum", "final_state", "last_growths"}`` — the ``k`` exponents
+        (descending QR order), the final extended state, and the last per-step
+        log-stretch contributions.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    ConvergenceError
+        If the extended variational integration diverged.
+    """
+    eng = _engine()
+    spectrum, final_state, last_growths = eng.lyapunov_spectrum_ode(
+        *tape_arrays,
+        np.ascontiguousarray(params_vec, dtype=np.float64),
+        str(method),
+        float(rtol),
+        float(atol),
+        int(dim),
+        int(k),
+        np.ascontiguousarray(z0, dtype=np.float64),
+        float(t0),
+        float(dt),
+        float(burn_in),
+        float(final_time),
+        bool(jit),
+    )
+    return {
+        "spectrum": np.asarray(spectrum, dtype=np.float64),
+        "final_state": np.asarray(final_state, dtype=np.float64),
+        "last_growths": np.asarray(last_growths, dtype=np.float64),
+    }

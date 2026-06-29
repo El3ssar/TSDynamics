@@ -129,6 +129,149 @@ class TestMapFixedPoints:
             fixed_points(ts.Henon(), method="bogus")
 
 
+# ── interval-Newton / Krawczyk (method="interval") ───────────────────────────
+
+
+class TestIntervalMethod:
+    r"""The rigorous Krawczyk branch-and-prune (``method="interval"``).
+
+    Pinned against the *same* analytic fixed points the other methods target,
+    plus the completeness property the interval method exists for — it brackets
+    **all** roots in the box with an existence/uniqueness certificate, so on a
+    system with many equilibria it does not silently miss one the way a finite
+    multi-start can.  The interval arithmetic is not outward-rounded, so roots are
+    recovered to machine precision (each certified box is polished by Newton).
+
+    References
+    ----------
+    Krawczyk (1969), *Computing* 4, 187.
+    """
+
+    def test_henon_matches_analytic(self) -> None:
+        fps = fixed_points(ts.Henon(), region=([-3, -3], [3, 3]), method="interval")
+        a, b = 1.4, 0.3
+        disc = np.sqrt((1 - b) ** 2 + 4 * a)
+        expected = sorted([(-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)])
+        assert len(fps) == 2
+        np.testing.assert_allclose(sorted(fp.x[0] for fp in fps), expected, rtol=1e-12)
+        assert all(not fp.stable for fp in fps)  # both saddles
+        for fp in fps:
+            assert fp.x[1] == pytest.approx(b * fp.x[0], rel=1e-10)
+            assert not fp.continuous
+
+    def test_machine_precision_residual(self) -> None:
+        # The certified-box midpoint is polished by Newton, so the returned point
+        # is a root to machine precision (tighter than the multi-start tol).
+        from tsdynamics.analysis.fixedpoints._common import map_fns
+
+        fps = fixed_points(ts.Henon(), region=([-3, -3], [3, 3]), method="interval")
+        step, _ = map_fns(ts.Henon())
+        for fp in fps:
+            x = np.asarray(fp.x)
+            assert np.linalg.norm(step(x) - x) < 1e-12
+
+    def test_logistic_r4_finds_both_unstable(self) -> None:
+        fps = fixed_points(
+            ts.Logistic(params={"r": 4.0}), region=([-0.2], [1.2]), method="interval"
+        )
+        np.testing.assert_allclose(sorted(fp.x[0] for fp in fps), [0.0, 0.75], atol=1e-12)
+        assert all(not fp.stable for fp in fps)
+
+    def test_lorenz_three_equilibria(self) -> None:
+        fps = fixed_points(ts.Lorenz(), region=([-30, -30, -5], [30, 30, 55]), method="interval")
+        c = np.sqrt(8 / 3 * (28 - 1))
+        assert len(fps) == 3
+        for fp in fps:
+            assert fp.continuous and not fp.stable
+        _match(fps, np.array([0.0, 0.0, 0.0]))
+        _match(fps, np.array([c, c, 27.0]))
+        _match(fps, np.array([-c, -c, 27.0]))
+
+    def test_rossler_equilibria(self) -> None:
+        fps = fixed_points(ts.Rossler(), region=([-1, -30, -1], [8, 1, 30]), method="interval")
+        a, c = 0.2, 5.7
+        d = np.sqrt(c * c - 4 * a * a)
+        assert len(fps) == 2
+        for x in ((c + d) / 2, (c - d) / 2):
+            _match(fps, np.array([x, -x / a, x / a]), atol=1e-8)
+
+    def test_completeness_beats_multistart_on_thomas(self) -> None:
+        # The Thomas system (sin-coupled) has 27 equilibria in [-6, 6]^3.  The
+        # rigorous interval method brackets *all* of them; a finite multi-start
+        # Newton (even at a generous n_seeds) can leave some basins unsampled.
+        region = ([-6.0, -6.0, -6.0], [6.0, 6.0, 6.0])
+        iv = fixed_points(ts.Thomas(), region=region, method="interval")
+        assert len(iv) == 27
+        rhs = ts.Thomas()._rhs_numeric()
+        for fp in iv:
+            assert np.linalg.norm(rhs(np.asarray(fp.x), 0.0)) < 1e-9
+            assert fp.continuous
+        # interval is at least as complete as a moderate multi-start
+        nw = fixed_points(ts.Thomas(), region=region, n_seeds=200, seed=0)
+        assert len(iv) >= len(nw)
+
+    def test_agrees_with_newton_set(self) -> None:
+        # On a system both methods fully resolve, the certified set equals the
+        # multi-start set (same points, to a tight tolerance).
+        region = ([-30, -30, -5], [30, 30, 55])
+        iv = sorted(
+            tuple(np.round(fp.x, 6))
+            for fp in fixed_points(ts.Lorenz(), region=region, method="interval")
+        )
+        nw = sorted(
+            tuple(np.round(fp.x, 6))
+            for fp in fixed_points(ts.Lorenz(), region=region, n_seeds=400, seed=1)
+        )
+        assert iv == nw
+
+    def test_requires_bounded_region(self) -> None:
+        from tsdynamics.errors import InvalidParameterError
+
+        with pytest.raises(InvalidParameterError, match="bounded 'region'"):
+            fixed_points(ts.Henon(), method="interval")
+
+    def test_box_accepts_box_object(self) -> None:
+        from tsdynamics.data import Box
+
+        fps = fixed_points(ts.Henon(), region=Box([-3, -3], [3, 3]), method="interval")
+        assert len(fps) == 2
+
+    def test_abs_kernel_is_enclosed(self) -> None:
+        # abs() IS modelled (the Interval/IntervalJet enclose it), so a map using
+        # it works — the Tent map's non-trivial fixed point is recovered.
+        from tsdynamics.analysis.fixedpoints._common import map_fns
+
+        fps = fixed_points(ts.Tent(), region=([0.0], [1.0]), method="interval")
+        assert len(fps) >= 1
+        step, _ = map_fns(ts.Tent())
+        for fp in fps:
+            x = np.asarray(fp.x)
+            assert np.linalg.norm(step(x) - x) < 1e-10
+
+    @pytest.mark.parametrize(
+        "factory, region",
+        [
+            (ts.KaplanYorke, ([0.0, 0.0], [1.0, 1.0])),  # uses % (modulo)
+            (ts.Baker, ([0.0, 0.0], [1.0, 1.0])),  # uses a < comparison
+        ],
+    )
+    def test_unmodelled_kernel_raises(self, factory, region) -> None:
+        # A kernel the interval engine cannot enclose (a modulo, a comparison)
+        # raises a clear InvalidInputError pointing at method='newton'.
+        from tsdynamics.errors import InvalidInputError
+
+        with pytest.raises(InvalidInputError, match="method='newton'"):
+            fixed_points(factory(), region=region, method="interval")
+
+    def test_dde_rejected(self) -> None:
+        with pytest.raises(NotImplementedError):
+            fixed_points(ts.MackeyGlass(), region=([0.0], [2.0]), method="interval")
+
+    def test_meta_records_method(self) -> None:
+        fps = fixed_points(ts.Henon(), region=([-3, -3], [3, 3]), method="interval")
+        assert fps.meta["method"] == "interval"
+
+
 # ── flow equilibria ─────────────────────────────────────────────────────────
 
 

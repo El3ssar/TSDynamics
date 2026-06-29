@@ -47,6 +47,9 @@ pub mod event;
 // Appended by stream perf/basin-march (the sequential basin/attractor recurrence
 // FSM — the Rust port of the Python `_AttractorMapper`).
 pub mod basin;
+// Appended by stream perf/ode-lyapunov-engine (the Benettin ODE Lyapunov
+// renormalisation loop — extended variational integrate + QR + log-norm accumulate).
+pub mod lyapunov;
 // Appended by stream perf/param-sweep-kernel (the map orbit-diagram parameter
 // sweep — the whole sweep in one engine call).
 pub mod param_sweep;
@@ -76,6 +79,8 @@ pub use basin::{
     basin_march_flow, basin_march_map, BasinError, BasinMarchOutcome, CellGrid, MarchConfig,
     DIVERGED,
 };
+// Appended by stream perf/ode-lyapunov-engine.
+pub use lyapunov::{lyapunov_spectrum_ode, LyapunovError, LyapunovOutcome};
 // Appended by stream perf/param-sweep-kernel.
 pub use param_sweep::{map_orbit_sweep, SweepError, SweepOutcome, SweepStatus};
 
