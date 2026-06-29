@@ -61,7 +61,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from tsdynamics.errors import BackendError
+from tsdynamics.errors import BackendError, ConvergenceError
 from tsdynamics.utils.grids import make_output_grid
 
 if TYPE_CHECKING:
@@ -149,6 +149,7 @@ __all__ = [
     "integrate",
     "integrate_events",
     "make_ode_stepper",
+    "map_lyapunov",
     "resolve_backend",
     "sde_ensemble_final",
     "sde_integrate_dense",
@@ -629,6 +630,97 @@ def basin_march(
         "att_points": att_points,
         "dim": dim,
     }
+
+
+def map_lyapunov(
+    tape_arrays: tuple[Any, ...],
+    ic: np.ndarray,
+    *,
+    steps: int,
+    k: int,
+    reortho_interval: int = 1,
+    jit: bool = False,
+    name: str = "map",
+) -> tuple[np.ndarray, int]:
+    """Compute a discrete-map Lyapunov spectrum in the Rust engine, in one call.
+
+    Drives the QR tangent-map kernel (``tsdynamics._rust.map_lyapunov_spectrum``):
+    it iterates the lowered map ``f`` while propagating ``k`` deviation vectors
+    through the lowered step Jacobian ``J(x_n)`` (the **pre-image** convention),
+    reorthonormalises every ``reortho_interval`` steps, accumulates
+    ``Σ log|R_ii|``, and returns the time-averaged spectrum (largest first).  The
+    whole iteration runs without a per-step Python→FFI round-trip, so it is
+    dramatically faster than the released per-step :class:`~tsdynamics.derived.tangent.TangentSystem`
+    NumPy loop.  Driven over the same lowered IR tape the interpreter and JIT agree
+    bit-for-bit; against the released Python path it differs only by the lowered-IR
+    vs pure-Python ``_step``/``_jacobian`` float order (the WS-MAPITER caveat) — the
+    same attractor, the same spectrum to tolerance.
+
+    The map tape must carry its Jacobian (lowered ``with_jacobian=True``); a
+    Jacobian-less tape raises :class:`~tsdynamics.errors.InvalidParameterError`.
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The map step tape's engine wire arrays (:meth:`Tape.to_arrays`), lowered
+        ``with_jacobian=True``.
+    ic : ndarray, shape (dim,)
+        The state to start the iteration from.
+    steps : int
+        Number of map iterations.
+    k : int
+        Number of exponents (``1 ≤ k ≤ dim``).
+    reortho_interval : int, default 1
+        Reorthonormalise (and accumulate growth) every this many steps.
+    jit : bool, default False
+        Select the Cranelift evaluator (``True``) or the interpreter (``False``).
+    name : str, default "map"
+        System name, used only to prefix a divergence message.
+
+    Returns
+    -------
+    (exponents, intervals) : (ndarray, int)
+        The ``k`` Lyapunov exponents (largest first) and the number of completed
+        reorthonormalisation intervals (so the caller can record ``_elapsed =
+        intervals * reortho_interval``).
+
+    Raises
+    ------
+    ConvergenceError
+        If the iteration diverged (a non-finite iterate / Jacobian / frame) before
+        the step budget was exhausted.  Subclasses :class:`RuntimeError`.
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    """
+    eng = _engine()
+    ic = np.ascontiguousarray(ic, dtype=np.float64)
+    try:
+        exponents, intervals = eng.map_lyapunov_spectrum(
+            *tape_arrays,
+            ic,
+            int(steps),
+            int(k),
+            int(reortho_interval),
+            bool(jit),
+        )
+    except RuntimeError as exc:
+        # The engine raises EngineError::Diverged → RuntimeError at the first
+        # non-finite iterate (the "diverge loudly" contract).  Re-raise that as the
+        # canonical ConvergenceError with the system name; any other RuntimeError
+        # (e.g. a backend="jit" compile failure) is a different fault and must
+        # propagate unchanged, not be mislabelled as a numerical blow-up.
+        if "diverg" not in str(exc).lower():
+            raise
+        raise ConvergenceError(
+            f"{name}: map Lyapunov iteration diverged or produced a non-finite "
+            f"state before reaching {steps} iterations."
+        ) from exc
+    exponents = np.asarray(exponents, dtype=np.float64)
+    if not np.all(np.isfinite(exponents)):
+        raise ConvergenceError(
+            f"{name}: map Lyapunov spectrum is non-finite after {steps} iterations."
+        )
+    return exponents, int(intervals)
 
 
 def ensemble(
