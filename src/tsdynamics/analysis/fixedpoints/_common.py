@@ -352,7 +352,7 @@ def resolve_box(
         lo = np.asarray(lo_src, dtype=float).reshape(dim)
         hi = np.asarray(hi_src, dtype=float).reshape(dim)
         return lo, hi
-    orbit = sample_orbit_box(system, dim)
+    orbit = sample_orbit_box(system, dim, rng=rng)
     if orbit.size:
         lo, hi = orbit.min(axis=0), orbit.max(axis=0)
         span = np.where(hi - lo < 1e-3, 1.0, hi - lo)
@@ -360,16 +360,41 @@ def resolve_box(
     return -2.0 * np.ones(dim), 2.0 * np.ones(dim)
 
 
-def sample_orbit_box(system: SystemBase, dim: int, n: int = 200, transient: int = 50) -> np.ndarray:
+def _orbit_start_ic(system: SystemBase, dim: int, rng: np.random.Generator) -> np.ndarray:
+    """Resolve a starting state for the burn-in orbit from a *local* ``rng``.
+
+    Mirrors :meth:`~tsdynamics.families.SystemBase.resolve_ic`'s priority — an
+    explicitly stored ``system.ic`` first, then the class ``default_ic`` — but the
+    final random fallback draws from the supplied seeded ``Generator`` instead of
+    the process-global ``numpy.random`` state, so a caller's ``seed=`` fully
+    determines the sampling regardless of global RNG history (issue #487).
+    """
+    if system.ic is not None:
+        return np.asarray(system.ic, dtype=float).reshape(dim)
+    if type(system).default_ic is not None:
+        return np.asarray(type(system).default_ic, dtype=float).reshape(dim)
+    return rng.random(dim)
+
+
+def sample_orbit_box(
+    system: SystemBase,
+    dim: int,
+    n: int = 200,
+    transient: int = 50,
+    *,
+    rng: np.random.Generator,
+) -> np.ndarray:
     """Collect a short burn-in orbit to bound an auto search box (backend-free).
 
     Returns an empty array if the orbit cannot be produced (e.g. it diverges);
-    callers fall back to a default box.
+    callers fall back to a default box.  The starting state is resolved through
+    :func:`_orbit_start_ic`, so its random fallback draws from the seeded ``rng``
+    rather than the global ``numpy.random`` state (issue #487).
     """
     from tsdynamics.families import ContinuousSystem, DiscreteMap
 
     try:
-        x = np.asarray(system.resolve_ic(None), dtype=float).ravel()
+        x = np.asarray(_orbit_start_ic(system, dim, rng), dtype=float).ravel()
     except Exception:  # noqa: BLE001
         return np.empty((0, dim))
     pts: list[np.ndarray] = []

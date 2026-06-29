@@ -307,7 +307,12 @@ def fixed_points(
         Cap on the number of stabilising matrices tried (``sd``/``dl``).  The full
         set has ``2^dim · dim!`` members; if capped, a warning is emitted.
     seed : int, optional
-        RNG seed for reproducible seeding.
+        RNG seed for the multi-start sampling.  All randomness (the box seeds and
+        the burn-in orbit's starting state) is drawn from a *local*
+        :class:`numpy.random.Generator` seeded with this value, so a given ``seed``
+        is fully reproducible regardless of the global ``numpy.random`` state.
+        ``seed=None`` (the default) is non-deterministic — the sampling varies from
+        call to call.
 
     Returns
     -------
@@ -430,7 +435,7 @@ def _build_seeds(
 ) -> np.ndarray:
     """Random box seeds augmented with a subsample of an on-orbit burn-in."""
     seeds = rng.uniform(lo, hi, size=(int(n_seeds), dim))
-    orbit = _c.sample_orbit_box(system, dim)
+    orbit = _c.sample_orbit_box(system, dim, rng=rng)
     if orbit.size:
         seeds = np.vstack([seeds, orbit[:: max(1, len(orbit) // 20)]])
     return seeds
