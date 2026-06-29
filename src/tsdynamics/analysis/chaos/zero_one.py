@@ -90,18 +90,17 @@ class ZeroOneResult(ScalarResult):
         if p.size == 0 or q.size == 0:
             return super().to_plot_spec(kind=kind)
 
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "phase_portrait_2d",
+            layers=[pb.line(p, q, label="$(p_c, q_c)$")],
             aspect="equal",
+            xlabel="$p_c$",
+            ylabel="$q_c$",
             title=f"0--1 test translation plane ($K$ = {float(self):.3g})",
-            x=Axis(label="$p_c$"),
-            y=Axis(label="$q_c$"),
-            layers=[Layer(PlotKind.LINE, {"x": p, "y": q}, label="$(p_c, q_c)$")],
-            meta=dict(self.meta) if self.meta else {},
+            meta=self.meta,
         )
 
 

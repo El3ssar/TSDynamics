@@ -87,25 +87,22 @@ class MutualInformation(ArrayResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
         curve = np.asarray(self.values, dtype=float)
         lags = np.arange(curve.size, dtype=float)
         lag = self.optimal_lag if curve.size else 0
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "diagnostic_curve",
+            layers=[pb.line(lags, curve, label=r"$I(\tau)$")],
+            xlabel=r"delay $\tau$",
+            ylabel=r"$I(\tau)$",
             title=f"mutual information (first min at $\\tau$ = {lag})"
             if curve.size
             else "mutual information",
-            x=Axis(label=r"delay $\tau$"),
-            y=Axis(label=r"$I(\tau)$"),
-            layers=[Layer(PlotKind.LINE, {"x": lags, "y": curve}, label=r"$I(\tau)$")],
-            annotations=[Annotation(kind="vline", text=rf"$\tau$ = {lag}", x=float(lag))]
-            if curve.size
-            else [],
-            meta=dict(self.meta) if self.meta else {},
+            annotations=[pb.vline(float(lag), text=rf"$\tau$ = {lag}")] if curve.size else [],
+            meta=self.meta,
         )
 
 

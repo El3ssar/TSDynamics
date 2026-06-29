@@ -93,23 +93,20 @@ class LyapunovSpectrum(ArrayResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.LYAPUNOV_SPECTRUM
         exps = np.asarray(self.values, dtype=float)
         index = np.arange(exps.size, dtype=float)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "lyapunov_spectrum",
+            layers=[pb.bar(exps, x=index, label=r"$\lambda_i$")],
+            xlabel="index $i$",
+            ylabel=r"$\lambda_i$",
             title=f"Lyapunov spectrum ($D_{{KY}}$ = {self.kaplan_yorke:.3g})"
             if exps.size
             else "Lyapunov spectrum",
-            x=Axis(label="index $i$"),
-            y=Axis(label=r"$\lambda_i$"),
-            layers=[
-                Layer(PlotKind.BAR, {"x": index, "y": exps}, label=r"$\lambda_i$"),
-            ],
-            annotations=[Annotation(kind="hline", text=r"$\lambda = 0$", y=0.0)],
+            annotations=[pb.hline(0.0, text=r"$\lambda = 0$")],
         )
 
 

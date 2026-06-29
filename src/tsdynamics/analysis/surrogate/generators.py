@@ -79,44 +79,35 @@ class SurrogateEnsemble(ArrayResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.LINE_FAMILY
         arr = np.atleast_2d(np.asarray(self.values, dtype=float))
         idx = np.arange(arr.shape[1], dtype=float)
         method = self.meta.get("method", "surrogate") if self.meta else "surrogate"
 
-        layers: list[Layer] = []
+        layers = []
         # The shaded min/max envelope of the whole ensemble (skipped for a single
         # surrogate, where the band would collapse onto the line).
         if arr.shape[0] >= 2:
             lo = arr.min(axis=0)
             hi = arr.max(axis=0)
             layers.append(
-                Layer(
-                    PlotKind.AREA,
-                    {"x": idx, "y": (lo + hi) / 2.0, "lo": lo, "hi": hi},
-                    label="ensemble range",
-                    style={"alpha": 0.2},
+                pb.area(
+                    idx, (lo + hi) / 2.0, lo=lo, hi=hi, label="ensemble range", style={"alpha": 0.2}
                 )
             )
         n_lines = min(arr.shape[0], self._MAX_LINES)
         layers.extend(
-            Layer(
-                PlotKind.LINE,
-                {"x": idx, "y": arr[i]},
-                label=f"surrogate {i}",
-                style={"alpha": 0.35, "lw": 0.5},
-            )
+            pb.line(idx, arr[i], label=f"surrogate {i}", style={"alpha": 0.35, "lw": 0.5})
             for i in range(n_lines)
         )
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            title=f"{method} surrogates ($n$ = {arr.shape[0]})",
-            x=Axis(label="sample"),
-            y=Axis(label="value"),
+        return pb.spec(
+            kind,
+            "line_family",
             layers=layers,
+            xlabel="sample",
+            ylabel="value",
+            title=f"{method} surrogates ($n$ = {arr.shape[0]})",
         )
 
 
