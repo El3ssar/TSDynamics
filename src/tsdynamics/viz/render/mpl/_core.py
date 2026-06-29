@@ -955,22 +955,73 @@ def _apply_legend(ax: Axes, spec: PlotSpec, theme: Theme) -> None:
     ax.legend(**legend_kw)
 
 
+_TEXT_ONLY_STYLE_KEYS = frozenset({"fontsize", "fontweight", "fontstyle", "ha", "va", "rotation"})
+
+
+def _annotation_line_style(style: dict[str, Any]) -> dict[str, Any]:
+    """Drop text-only keys a line artist (``axvline``/``axhline``) would reject."""
+    return {k: v for k, v in style.items() if k not in _TEXT_ONLY_STYLE_KEYS}
+
+
+def _annotation_text_style(style: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the style keys :meth:`~matplotlib.axes.Axes.text` accepts.
+
+    A ``vline`` / ``hline`` style is a *line* style (it may carry ``linestyle`` /
+    ``linewidth``, which ``text`` rejects); the inline label inherits the shared
+    ``color`` / ``alpha`` / ``fontsize`` / ``fontweight`` so it matches its line.
+    """
+    keep = ("color", "alpha", "fontsize", "fontweight", "fontstyle")
+    return {k: style[k] for k in keep if k in style}
+
+
 def _apply_annotations(ax: Axes, annotations: list[Annotation]) -> None:
-    """Draw reference lines / text / spans (``vline`` / ``hline`` / ``text`` / ``span``)."""
+    """Draw reference lines / text / spans (``vline`` / ``hline`` / ``text`` / ``span``).
+
+    For ``vline`` / ``hline`` the ``text`` is drawn as an inline label at the top
+    (vline) / right (hline) edge of the axes *and* registered as the line's legend
+    label, so the label is visible whether or not a legend is shown.  Line-only and
+    text-only style keys are routed to the right artist, so a caller may put a
+    ``fontsize`` on a ``vline`` style without breaking the line.
+    """
     for ann in annotations:
         style = dict(ann.style)
+        line_style = _annotation_line_style(style)
         if ann.kind == "vline" and ann.x is not None:
-            ax.axvline(ann.x, label=ann.text or None, **style)
+            ax.axvline(ann.x, label=ann.text or None, **line_style)
+            if ann.text:
+                # x in data coords, y in axes fraction (top edge), label up the line.
+                ax.text(
+                    ann.x,
+                    0.99,
+                    ann.text,
+                    transform=ax.get_xaxis_transform(),
+                    ha="right",
+                    va="top",
+                    rotation=90,
+                    rotation_mode="anchor",
+                    **_annotation_text_style(style),
+                )
         elif ann.kind == "hline" and ann.y is not None:
-            ax.axhline(ann.y, label=ann.text or None, **style)
+            ax.axhline(ann.y, label=ann.text or None, **line_style)
+            if ann.text:
+                # y in data coords, x in axes fraction (right edge).
+                ax.text(
+                    0.99,
+                    ann.y,
+                    ann.text,
+                    transform=ax.get_yaxis_transform(),
+                    ha="right",
+                    va="bottom",
+                    **_annotation_text_style(style),
+                )
         elif ann.kind == "text" and ann.x is not None and ann.y is not None:
             ax.text(ann.x, ann.y, ann.text, **style)
         elif ann.kind == "span" and ann.span is not None:
             lo, hi = ann.span
             if ann.axis == "y":
-                ax.axhspan(lo, hi, **style)
+                ax.axhspan(lo, hi, **line_style)
             else:
-                ax.axvspan(lo, hi, **style)
+                ax.axvspan(lo, hi, **line_style)
 
 
 # ---------------------------------------------------------------------------

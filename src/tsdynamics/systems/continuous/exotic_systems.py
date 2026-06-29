@@ -494,6 +494,12 @@ class Robinson(ContinuousSystem):
     driven by ``x**2``. For suitable parameters it produces a Lorenz-type
     chaotic attractor.
 
+    Note
+    ----
+    The catalogue carries this vector field without a confirmed primary
+    citation: no published source could be confidently matched to this specific
+    three-dimensional form (see the module-level ``TODO`` above the class).
+
     Parameters
     ----------
     a : float

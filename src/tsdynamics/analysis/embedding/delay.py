@@ -134,9 +134,10 @@ def autocorrelation(
 
     Notes
     -----
-    Computed via FFT (Wiener--Khinchin) on the mean-subtracted series and
-    normalised by the zero-lag value, so it is an unbiased-in-mean estimate
-    (each lag divided by the full zero-lag variance, the standard convention).
+    Computed via FFT (Wiener--Khinchin) on the mean-subtracted series.  This is
+    the standard **biased** autocorrelation estimator — each lag is normalised by
+    the full zero-lag variance (not by the shrinking overlap count at that lag) —
+    which is positive-definite and the conventional choice for delay selection.
     """
     x = _as_series(data, component=component)
     n = x.size

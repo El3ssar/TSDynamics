@@ -11,9 +11,14 @@
 //! it does not use [`adaptive_step`](super::control::adaptive_step): it computes
 //! the 12 stages with the shared machinery, then forms its own blended error
 //! norm `|h|·‖e₅‖² / √((‖e₅‖² + 0.01·‖e₃‖²)·n)` — identical to SciPy's, where
-//! `‖·‖` is the per-component-scaled Euclidean norm.  The 13th (FSAL) stage that
-//! SciPy keeps for dense output has zero weight in both error estimators, so only
-//! the 12 propagation stages are needed here.
+//! `‖·‖` is the per-component-scaled Euclidean norm.
+//!
+//! There is **no propagation FSAL reuse** here: every accepted step recomputes
+//! its 12 propagation stages from scratch (unlike `rk45`/`tsit5`/`bs3`, which
+//! reuse the accepted step's last stage as the next step's first). The 13th
+//! "FSAL" stage that SciPy carries is purely a *dense-output* stage — it has zero
+//! weight in both error estimators and feeds no subsequent propagation step — so
+//! it is not computed here; only the 12 propagation stages are needed.
 
 // The Hairer coefficients are transcribed verbatim from the canonical published
 // set (also SciPy's `dop853_coefficients.py`), at higher precision than f64 can

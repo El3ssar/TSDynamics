@@ -123,10 +123,14 @@ where
     // Preallocate the contiguous output and write each trajectory DIRECTLY into
     // its own row slice in parallel. Zipping `states.par_chunks_mut(dim)` with
     // `status.par_iter_mut()` partitions the buffers into disjoint, index-aligned
-    // pieces, so worker `i` only ever touches row `i` — no per-trajectory heap
-    // `Vec` and no second copy. The partition is positional, so the output is
-    // still in input order regardless of how rayon schedules the workers
-    // (parallel == serial bit-for-bit, the determinism contract above).
+    // pieces, so worker `i` only ever touches row `i`. The win is avoiding a
+    // GLOBAL collect-then-scatter: there is no intermediate `Vec<Vec<f64>>` of
+    // per-trajectory heap allocations to gather and copy back into the contiguous
+    // buffer. Each trajectory still copies its own final state once — `integrate_final`
+    // returns an owned final-state `Vec`, which is copied into its row. The
+    // partition is positional, so the output is still in input order regardless of
+    // how rayon schedules the workers (parallel == serial bit-for-bit, the
+    // determinism contract above).
     let mut states = vec![0.0; n_ic * dim];
     let mut status = vec![TrajStatus::Ok; n_ic];
     states

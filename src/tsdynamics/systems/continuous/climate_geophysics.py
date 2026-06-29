@@ -111,10 +111,19 @@ class Hadley(ContinuousSystem):
 
     With ``a=0.25, b=4, f=8, g=1`` (and nearby) the model is chaotic; the
     catalogue default ``f=9`` likewise yields aperiodic circulation.
+
+    Note
+    ----
+    Despite the catalogue name, this is the **Lorenz-84** model (it is
+    algebraically the same system as ``Lorenz84`` in ``chaotic_attractors.py``,
+    here at a different parameter regime), not a model due to George Hadley.
     """
 
-    reference = "Hadley (1735), Philos. Trans. R. Soc. 34, 58-62"
-    doi = "10.1098/rstl.1735.0014"
+    reference = (
+        "Lorenz (1984), 'Irregularity: a fundamental property of the "
+        "atmosphere', Tellus 36A, 98-110"
+    )
+    doi = "10.1111/j.1600-0870.1984.tb00230.x"
     params = {"a": 0.2, "b": 4.0, "f": 9.0, "g": 1.0}
     dim = 3
 

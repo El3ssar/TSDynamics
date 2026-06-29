@@ -5,12 +5,20 @@
 //! Python `_AttractorMapper` (stepping + cell-binning + the shared-label early-out)
 //! inside one engine call, so a `basins_of_attraction` image is computed without
 //! the ~10^6–10^7 per-`dt` Python→FFI round-trips and the per-step Python FSM
-//! overhead the released loop pays. It is **bit-identical** to the Python mapper
-//! because it drives the *same* sequential algorithm over the *same* engine
-//! stepper: each cell-check advances a flow by one `dt` (an [`integrate_grid`] over
-//! the two-node grid `[t, t+dt]`, byte-for-byte the per-`dt` integration the Python
-//! `system.step(dt)` runs) or iterates a map once
+//! overhead the released loop pays. It drives the *same* sequential algorithm
+//! over the *same* engine stepper: each cell-check advances a flow by one `dt` (an
+//! [`integrate_grid`] over the two-node grid `[t, t+dt]`, byte-for-byte the
+//! per-`dt` integration the Python `system.step(dt)` runs) or iterates a map once
 //! ([`map_step_once`](crate::map::map_step_once)).
+//!
+//! For **flows** this is **bit-identical** to the Python mapper: both advance the
+//! same engine stepper, so the label image and the located attractor set match
+//! byte-for-byte. For **maps** the Python mapper iterates the pure-Python `_step`
+//! while this kernel runs the lowered IR; the two differ by ULPs, so a
+//! boundary-straddling iterate can bin into a neighbouring cell. In practice the
+//! map label image is still **empirically byte-identical** across the catalogue,
+//! but the guarantee is only *same-attractor* — a chaotic map's located cells may
+//! sit a few cells apart.
 //!
 //! # Layering
 //!

@@ -53,6 +53,8 @@ src/tsdynamics/
 │   ├── delay.py              # DelaySystem (engine method-of-steps, forward-only)
 │   ├── discrete.py           # DiscreteMap (engine iterate + signature validation)
 │   ├── stochastic.py         # StochasticSystem — diagonal-Itô SDEs (_drift+_diffusion; EM/Milstein)
+│   ├── _accessors.py         # analysis-accessor mixin (the deliberate families→analysis lazy-import layering seam)
+│   ├── _plottable.py         # SystemPlottable plotting seam (system.to_plot_spec/plot, splits plot vs integration kwargs)
 │   └── wrapped.py            # WrappedSystem (canonical home; adapt an external stepper — re-exported via derived)
 ├── engine/                   # Rust-facing engine layer; tsdynamics._rust is the sole backend
 │   ├── symbols.py            # engine-native symbolic frontend: state_time_symbols() → (Function("y"), Symbol("t"))
@@ -457,7 +459,9 @@ documented tolerance):
   guarded on the *next* step's first-stage point being bit-for-bit the live state
   (so a rejected trial keeps the reuse valid); the shared implementation lives once
   in the explicit module, and the non-FSAL adaptive kernels (cashkarp/rkf45/
-  heun_euler) recompute. (`dop853` also has its own FSAL.)
+  heun_euler) recompute. (`dop853` does **no** propagation FSAL reuse — it recomputes
+  its 12 stages every accepted step; its uncomputed 13th stage is a dense-output stage,
+  not a first-stage-reuse hook.)
 - **Frozen-Jacobian / LU reuse on the SDIRK / ESDIRK stiff kernels** — `sdirk2`
   and `trbdf2` run a *modified*-Newton iteration (`crates/tsdyn-solvers/src/
   implicit/newton.rs`): freeze the analytic Jacobian `J = ∂f/∂u`, factor the
@@ -668,9 +672,11 @@ documented tolerance):
   march stays **sequential by design**: the shared, order-dependent labelling is the
   dominant work-saver, and parallelising it costs a measured ~34× over-march). The
   kernel is **bit-identical** to the pure-Python `_AttractorMapper` (it drives the
-  same engine stepper per cell check): the basin **label image** is byte-for-byte
-  identical on every system, and the `AttractorSet` too **for flows** (both paths
-  advance the same engine stepper); for a **map** the located point cloud follows
+  same engine stepper per cell check): the basin **label image** and `AttractorSet`
+  are byte-for-byte identical **for flows** (both paths advance the same engine
+  stepper); for **maps** the label image is *empirically* byte-identical across the
+  catalogue but only **same-attractor** guaranteed (a ULP `_step` difference can bin
+  a boundary-straddling iterate into a neighbouring cell). For a **map** the located point cloud follows
   the lowered IR vs the pure-Python `_step`, which differ by ULPs, so a chaotic
   map's located cells are the *same attractor a few cells apart* (the WS-MAPITER
   IR-vs-NumPy caveat). `reference`, a non-lowering `_step` (e.g. the complex Newton

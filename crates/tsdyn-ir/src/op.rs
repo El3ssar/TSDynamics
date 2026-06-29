@@ -12,9 +12,13 @@
 //! | Kind        | Reads                                   | Ops |
 //! |-------------|-----------------------------------------|-----|
 //! | [`Leaf`]    | an input (`u`/`p`/`t`) or an immediate  | `Const`, `State`, `Param`, `Time` |
-//! | [`Unary`]   | register `a`                            | `Neg`, `Recip`, and the transcendental functions |
-//! | [`Binary`]  | registers `a` **and** `b`               | `Add`, `Sub`, `Mul`, `Div`, `Pow` |
+//! | [`Unary`]   | register `a`                            | `Neg`, `Recip`, the transcendental functions, and the E-OPS unaries `Floor`, `Ceil` |
+//! | [`Binary`]  | registers `a` **and** `b`               | `Add`, `Sub`, `Mul`, `Div`, `Pow`, and the E-OPS binaries: comparisons `Lt`, `Le`, `Gt`, `Ge`, `Eq`, `Ne`, plus `Min`, `Max`, `Mod`, `Rem` |
 //! | [`Powi`]    | register `a`, integer exponent in `b`   | `Powi` |
+//!
+//! (The E-OPS block — the non-smooth / piecewise comparisons, `Min`/`Max`,
+//! `Floor`/`Ceil`, and the floored `Mod` / truncated `Rem` — is the additive
+//! extension of the frozen IR; see the variant list and [`kind()`](Op::kind).)
 //!
 //! For the per-instruction operand layout (which of `a`/`b`/`imm` each kind
 //! reads) see [`crate::Tape`].

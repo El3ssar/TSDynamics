@@ -718,11 +718,13 @@ def _axis_labels(spec: PlotSpec) -> dict[str, str]:
 
 
 def _axis_units(spec: PlotSpec) -> dict[str, str]:
-    """Return the per-axis unit strings, read from each axis's ``tickformat``.
+    """Return the per-axis ``tickformat`` strings carried under the ``units`` key.
 
-    The spec IR has no dedicated unit field; the backend-neutral ``tickformat``
-    (when set) is the closest carrier, so it is surfaced here as the axis unit
-    hint (``""`` when absent).
+    NOTE: despite the ``units`` schema key, these are **not** physical units —
+    each value is the axis's ``tickformat``, a number-format string (the spec IR
+    has no dedicated unit field).  The reference loader does not render axis
+    units, so this is a passthrough carrier only; consumers must not interpret it
+    as a unit.  ``""`` when an axis carries no ``tickformat``.
     """
     return {
         "x": _unit(spec.x),
@@ -732,7 +734,7 @@ def _axis_units(spec: PlotSpec) -> dict[str, str]:
 
 
 def _unit(axis: Axis) -> str:
-    """Return the unit hint for one axis (its ``tickformat`` or ``""``)."""
+    """Return one axis's ``tickformat`` string (a number format, not a unit; ``""`` if unset)."""
     return axis.tickformat or ""
 
 

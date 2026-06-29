@@ -289,14 +289,12 @@ class FoldedTowel(DiscreteMap):
         reproduce Rössler's original folded-towel attractor.
     """
 
-    # TODO(reference): the existing citation points at Rössler's hyperchaotic
-    # *flow* ("An equation for hyperchaos", Phys. Lett. A 71A:155-157, 1979).
-    # The folded-towel *map* coded here was introduced in Rössler (1979),
-    # "Chaotic oscillations: an example of hyperchaos", Lectures in Applied
-    # Mathematics 17, 141-156 — maintainer should confirm and switch.
     params = {"a": 3.8, "b": 0.05, "c": 0.35, "d": 0.1, "e": 1.9, "f": 3.78, "g": 0.2}
     dim = 3
-    reference = "Rössler (1979), Phys. Lett. A 71, 155-157"
+    reference = (
+        "Rössler (1979), 'Chaotic oscillations: an example of hyperchaos', "
+        "Lectures in Applied Mathematics 17, 141-156"
+    )
     known_lyapunov = {
         "n_positive": 2,
         "kwargs": {"steps": 20_000},

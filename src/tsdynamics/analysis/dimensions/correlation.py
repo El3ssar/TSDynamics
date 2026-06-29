@@ -169,7 +169,10 @@ def correlation_dimension(
         The point set.
     theiler : int, default 0
         Theiler window — exclude pairs with :math:`|i - j| \le w` (see
-        :func:`correlation_sum`).  Set this for densely sampled flows.
+        :func:`correlation_sum`).  The default ``0`` suits a point set; flow
+        users on a densely sampled trajectory should set a Theiler window to
+        exclude temporally correlated neighbours, otherwise :math:`D_2` is biased
+        downward.
     metric : str or float, default "euclidean"
         Distance metric.
     radii : ndarray, optional
