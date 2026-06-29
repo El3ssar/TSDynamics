@@ -302,7 +302,13 @@ class _AttractorMapper:
         self._discrete = bool(getattr(system, "is_discrete", False))
         self._step_arg: int | float = 1 if self._discrete else self.dt
 
-        # Persistent labels (sparse): cell key → attractor id.
+        # Persistent labels (sparse): cell key → attractor id.  These dicts are
+        # read AND written by every ``map_ic`` call and carry the order-dependent
+        # state that makes the sweep amortise (a later seed inherits an earlier
+        # seed's label).  Mutating them from threads would both race and change the
+        # result, so ``map_ic`` is driven strictly serially — see the measured
+        # rationale in ``find_attractors``'s Notes for why thread-parallelism is a
+        # net loss here, not just unsafe.
         self._att_cells: dict[tuple[int, ...], int] = {}
         self._bas_cells: dict[tuple[int, ...], int] = {}
         self._att_points: dict[int, list[np.ndarray]] = {}
@@ -556,8 +562,26 @@ def find_attractors(
     ``_bas_cells``) accumulated by earlier seeds let later seeds settle cheaply by
     reaching an already-labelled cell.  That shared, order-dependent labelling
     state is what makes the sweep amortise — and is exactly why the loop cannot be
-    naively parallelised without changing the result or the determinism.  The
-    dominant cost is therefore ``n_seeds`` × (steps to settle) engine steps.
+    parallelised without changing the result or the determinism.  The dominant
+    cost is therefore ``n_seeds`` × (steps to settle) engine steps.
+
+    Why thread-parallelism is a *net loss* here (measured, so the next reader does
+    not re-derive it).  The shared early-out is the dominant work-saver: on the
+    two-well Duffing 60×60 grid a serial run takes ~42k engine steps, whereas
+    marching every seed independently to ``max_steps`` (the only way to lift the
+    serial label dependency) takes ~1.4M — a **~34×** work inflation that 16 cores
+    cannot recover (the independent full-march alone clocked ~5× *slower* than the
+    whole serial run).  Worse, only ~36 % of the serial wall time is in the engine
+    ``step()`` FFI; the other ~64 % is the inherently-serial FSM (cell binning +
+    the shared-label dict reads/writes), so Amdahl caps any speedup even before the
+    work-inflation penalty.  A "speculative march in parallel, fold in seed order"
+    scheme would reproduce the labels bit-for-bit (each seed's state stream is a
+    pure function of its IC) but pays exactly that 34× over-march, so it is
+    abandoned.  Dense-block FFI batching is *not* an option either: the FSM checks
+    the cell after every per-``dt`` ``step()`` restart, and an adaptive dense-output
+    block over several ``dt`` does not reproduce those per-``dt`` restart states
+    bit-for-bit (it drifts at ~5e-7), so it would change the cell sequence and the
+    labels.  The loop stays serial because that is the algorithm.
 
     References
     ----------
