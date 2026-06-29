@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.errors import ConvergenceError, InvalidParameterError
-from tsdynamics.families import DelaySystem
+from tsdynamics.families import DelaySystem, DiscreteMap
 
 from ... import registry as _registry
 from .._result import AnalysisResult, ArrayResult, ScalarResult
@@ -306,7 +306,17 @@ def _max_lyapunov_map(
     absent (:class:`~tsdynamics.engine.run.EngineNotAvailableError`).
     """
     from tsdynamics.engine import run
-    from tsdynamics.engine.compile import TapeCompileError, lower_map_cached
+    from tsdynamics.engine.compile import (
+        TapeCompileError,
+        lower_map_cached,
+        tape_jacobian_is_smooth,
+    )
+
+    # Only a genuine DiscreteMap has an analytic _step/_jacobian to lower; a
+    # WrappedSystem (adapted external stepper — is_discrete=True but no _step) and
+    # anything else must take the two-trajectory loop.
+    if not isinstance(system, DiscreteMap):
+        return None
 
     name = type(system).__name__
     try:
@@ -315,6 +325,10 @@ def _max_lyapunov_map(
     except TapeCompileError:
         return None  # a non-lowering _step (piecewise/ufunc) → two-trajectory loop
     except run.EngineNotAvailableError:  # pragma: no cover - wheel-free env
+        return None
+    # A piecewise map's lowered Jacobian collapses at kinks (the full-height Tent's
+    # dyadic orbit hits x=0.5, poisoning the QR growth), so decline → two-trajectory.
+    if not tape_jacobian_is_smooth(tape):
         return None
 
     steps = max(1, int(n) * int(steps_per))

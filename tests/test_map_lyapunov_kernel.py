@@ -155,3 +155,39 @@ def test_non_lowering_map_falls_back_to_numpy() -> None:
     assert np.all(np.isfinite(spec))
     # The tent map at r=1.9 is chaotic with λ = ln(r) ≈ 0.642.
     assert abs(float(spec[0]) - np.log(1.9)) < 0.05, spec
+
+
+def test_tape_jacobian_is_smooth_discriminator() -> None:
+    """``tape_jacobian_is_smooth`` flags piecewise (abs/sign/…) Jacobians.
+
+    It is the gate that routes a smooth map (Hénon) to the engine kernel and a
+    piecewise map (the ``np.abs``-based Tent) to the pure-Python QR loop.
+    """
+    from tsdynamics.engine.compile import lower_map_cached, tape_jacobian_is_smooth
+    from tsdynamics.systems import Tent
+
+    assert tape_jacobian_is_smooth(lower_map_cached(Henon(), with_jacobian=True)) is True
+    assert (
+        tape_jacobian_is_smooth(lower_map_cached(Tent(params={"mu": 1.0}), with_jacobian=True))
+        is False
+    )
+
+
+def test_piecewise_map_lyapunov_falls_back_and_is_correct() -> None:
+    """A lowerable-but-piecewise map (full-height Tent) gives λ = ln 2, not garbage.
+
+    The Tent ``_step`` uses ``np.abs`` so it *lowers*, but its lowered Jacobian
+    collapses to the a.e. value (0) at the kink x=0.5 — and the dyadic orbit lands
+    exactly there, which would poison the QR-kernel spectrum (the regression that
+    broke CI).  ``lyapunov_spectrum`` and ``max_lyapunov`` must both decline the
+    kernel (non-smooth Jacobian) and fall back to the path that reads the one-sided
+    hand-written ``_jacobian`` (±2), recovering λ = ln 2 exactly.
+    """
+    from tsdynamics.systems import Tent
+
+    ln2 = np.log(2.0)
+    tent = Tent(params={"mu": 1.0})
+    spec0 = float(np.asarray(tent.lyapunov_spectrum(steps=10_000, ic=[np.sqrt(2) / 2]))[0])
+    mle = float(ts.max_lyapunov(tent, ic=[np.sqrt(2) / 2], n=2000))
+    assert abs(spec0 - ln2) < 1e-3, spec0
+    assert abs(mle - ln2) < 5e-2, mle

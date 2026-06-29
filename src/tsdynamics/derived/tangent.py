@@ -653,7 +653,11 @@ class TangentSystem(DerivedSystem):
         explicit ``ic`` that diverges re-raises rather than retrying silently.
         """
         from tsdynamics.engine import run
-        from tsdynamics.engine.compile import TapeCompileError, lower_map_cached
+        from tsdynamics.engine.compile import (
+            TapeCompileError,
+            lower_map_cached,
+            tape_jacobian_is_smooth,
+        )
         from tsdynamics.errors import ConvergenceError
 
         sys = self.system
@@ -662,6 +666,13 @@ class TangentSystem(DerivedSystem):
             tape = lower_map_cached(sys, with_jacobian=True)
         except TapeCompileError:
             return None  # a non-lowering _step (piecewise/ufunc) → NumPy fallback
+        # A piecewise map (abs/sign/floor/min/max/comparison in _step) has a lowered
+        # Jacobian that is a.e.-correct but collapses to the a.e. value (0) at a kink —
+        # and a map orbit can land exactly on it (the full-height Tent's dyadic orbit
+        # hits x=0.5), poisoning the QR growth.  Decline so the NumPy loop, which reads
+        # the one-sided hand-written `_jacobian`, runs instead.
+        if not tape_jacobian_is_smooth(tape):
+            return None
 
         try:
             tape_arrays = tape.to_arrays()
