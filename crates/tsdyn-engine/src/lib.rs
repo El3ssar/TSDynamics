@@ -47,6 +47,9 @@ pub mod event;
 // Appended by stream perf/basin-march (the sequential basin/attractor recurrence
 // FSM — the Rust port of the Python `_AttractorMapper`).
 pub mod basin;
+// Appended by stream perf/map-lyapunov-kernel (the discrete-map QR tangent-map
+// Lyapunov spectrum — the Rust port of the Python `TangentSystem._accumulate_map`).
+pub mod map_lyapunov;
 
 #[cfg(test)]
 mod testkit;
@@ -73,6 +76,8 @@ pub use basin::{
     basin_march_flow, basin_march_map, BasinError, BasinMarchOutcome, CellGrid, MarchConfig,
     DIVERGED,
 };
+// Appended by stream perf/map-lyapunov-kernel.
+pub use map_lyapunov::{map_lyapunov, MapLyapunovError, MapLyapunovOutcome};
 
 /// Check that the linked solver registry has no duplicate names, returning the
 /// clashing names if any.

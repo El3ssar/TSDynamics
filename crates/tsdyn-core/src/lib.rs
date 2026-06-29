@@ -962,6 +962,53 @@ fn basin_march_map<'py>(
 }
 
 // ---------------------------------------------------------------------------
+// Discrete-map Lyapunov spectrum (stream perf/map-lyapunov-kernel)
+// ---------------------------------------------------------------------------
+
+use bridge::map_lyapunov_bridge;
+
+/// Compute a discrete-map Lyapunov spectrum on the engine — the whole QR
+/// tangent-map iteration (iterate `f`, propagate `k` deviation vectors through
+/// `J(x_n)` at the pre-image, reorthonormalise, accumulate `log|R_ii|`) in one call.
+///
+/// The leading tape arrays are the usual `Tape.to_arrays()` tuple for the **map**
+/// step, which **must carry its Jacobian** (`with_jacobian=True`; rejected up front
+/// otherwise). `ic` is the `(dim,)` start state; `steps` the iterate budget; `k` the
+/// number of exponents (`1 ≤ k ≤ dim`); `reortho_interval` the QR cadence. The map
+/// tape folds its parameters in, so there is no parameter vector. `jit` selects the
+/// Cranelift evaluator (numerically identical to the interpreter).
+///
+/// Returns `(exponents, intervals)`: the `k` time-averaged exponents (largest
+/// first) and the number of completed reorthonormalisation intervals. A divergence
+/// before the budget is exhausted raises `RuntimeError` (the "diverge loudly"
+/// contract); a malformed call / Jacobian-less tape raises `ValueError`.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn map_lyapunov_spectrum<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    ic: PyReadonlyArray1<f64>,
+    steps: usize,
+    k: usize,
+    reortho_interval: usize,
+    jit: bool,
+) -> PyResult<(Bound<'py, PyArray1<f64>>, usize)> {
+    let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let ic = vec_f64("ic", &ic)?;
+    let out = py
+        .detach(|| map_lyapunov_bridge(tape.build()?, &[], &ic, steps, k, reortho_interval, jit))
+        .map_err(to_py_err)?;
+    Ok((PyArray1::from_vec(py, out.exponents), out.intervals))
+}
+
+// ---------------------------------------------------------------------------
 // Resumable ODE stepper handle (stream WS-STEPPER)
 // ---------------------------------------------------------------------------
 
@@ -1179,6 +1226,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(integrate_events_dense, m)?)?;
     m.add_function(wrap_pyfunction!(basin_march_flow, m)?)?;
     m.add_function(wrap_pyfunction!(basin_march_map, m)?)?;
+    m.add_function(wrap_pyfunction!(map_lyapunov_spectrum, m)?)?;
     m.add_class::<PyOdeStepper>()?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
     m.add_function(wrap_pyfunction!(_version, m)?)?;
