@@ -66,10 +66,8 @@ pub fn lyapunov_spectrum_ode_bridge(
     // A fresh kernel per `dt` chunk (mirrors `OdeStepper::advance` / the basin
     // march); the name is a registry name, so `build_solver` always succeeds.
     let factory = move || -> Box<dyn Solver> { build_solver(name, rtol, atol) };
-    lyapunov_spectrum_ode(
-        &*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time,
-    )
-    .map_err(to_engine_err)
+    lyapunov_spectrum_ode(&*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time)
+        .map_err(to_engine_err)
 }
 
 #[cfg(test)]
@@ -129,7 +127,11 @@ mod tests {
         // interp == jit bit-for-bit (both drive the same &dyn Evaluator).
         assert_eq!(interp.spectrum.len(), jit.spectrum.len());
         for (i, (x, y)) in interp.spectrum.iter().zip(jit.spectrum.iter()).enumerate() {
-            assert_eq!(x.to_bits(), y.to_bits(), "exponent {i}: jit {y} != interp {x}");
+            assert_eq!(
+                x.to_bits(),
+                y.to_bits(),
+                "exponent {i}: jit {y} != interp {x}"
+            );
         }
         // and matches the analytic spectrum.
         assert!((interp.spectrum[0] - 0.5).abs() < 1e-4);
