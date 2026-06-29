@@ -784,7 +784,21 @@ class TangentSystem(DerivedSystem):
         atol: float = 1e-9,
         **integrator_kwargs: Any,
     ) -> np.ndarray:
-        """Burn-in then time-averaged spectrum for a flow (either ODE backend)."""
+        """Burn-in then time-averaged spectrum for a flow (either ODE backend).
+
+        Fast path (stream ``perf/ode-lyapunov-engine``): when the resolved kernel
+        is *explicit* and the backend is the compiled engine (``interp``/``jit``)
+        — exactly the cases :meth:`_setup_ode_stepper` builds a stepper for — the
+        **whole** burn-in + averaging Benettin loop (per-``dt`` extended-variational
+        integration + QR + ``Σ log|diag R|`` accumulation) runs in one
+        :func:`~tsdynamics.engine.run.lyapunov_spectrum_ode` engine call instead of
+        the per-``dt`` Python loop (one Python→FFI round-trip, no per-chunk NumPy
+        ``qr``).  The per-``dt`` numerics are byte-for-byte the per-chunk path
+        (``interp == jit``), so the spectrum is unchanged to floating-point
+        tolerance.  The slow per-chunk loop below is kept verbatim for the
+        implicit/stiff kernel, the ``reference`` oracle, and ``method="auto"`` —
+        the cases :meth:`_setup_ode_stepper` declines.
+        """
         if final_time <= 0:
             raise ValueError(f"final_time must be positive, got {final_time!r}")
         if dt <= 0:
@@ -792,18 +806,21 @@ class TangentSystem(DerivedSystem):
 
         self.reinit(ic, method=method, rtol=rtol, atol=atol, **integrator_kwargs)
 
-        # Burn-in: advance the trajectory + tangent frame without accumulating.
-        t_burn = self._t + max(0.0, burn_in)
-        while self._t < t_burn - 1e-12:
-            self.step(min(dt, t_burn - self._t))
-        self._reset_accumulators()
+        if self._step_explicit_engine and self._ode_stepper is not None:
+            exponents = self._engine_lyapunov_spectrum(dt, burn_in, final_time)
+        else:
+            # Burn-in: advance the trajectory + tangent frame without accumulating.
+            t_burn = self._t + max(0.0, burn_in)
+            while self._t < t_burn - 1e-12:
+                self.step(min(dt, t_burn - self._t))
+            self._reset_accumulators()
 
-        # Production: uniform-dt steps, time-weighted growth average.
-        t_end = self._t + final_time
-        while self._t < t_end - 1e-12:
-            self.step(min(dt, t_end - self._t))
+            # Production: uniform-dt steps, time-weighted growth average.
+            t_end = self._t + final_time
+            while self._t < t_end - 1e-12:
+                self.step(min(dt, t_end - self._t))
+            exponents = self.exponents()
 
-        exponents = self.exponents()
         self.meta.record(
             "lyapunov_spectrum",
             exponents,
@@ -814,6 +831,51 @@ class TangentSystem(DerivedSystem):
             method=method or self.system._default_method,
             backend=self._backend,
         )
+        return exponents
+
+    def _engine_lyapunov_spectrum(self, dt: float, burn_in: float, final_time: float) -> np.ndarray:
+        """Run the entire Benettin loop in one Rust engine call (the fast path).
+
+        Eligibility is decided by :meth:`_setup_ode_stepper` (an explicit engine
+        kernel): ``self._step_kernel`` is the registry-canonical method and
+        ``self._ext_tape_arrays`` the marshalled extended variational tape.  The
+        engine integrates the burn-in + averaging windows chunk-by-chunk and
+        returns the spectrum + the final extended state, which is re-seated into
+        ``self`` so :meth:`state` / :meth:`deviations` / :meth:`exponents` read
+        exactly as the per-chunk loop would have left them.
+        """
+        from tsdynamics.engine import run
+
+        assert self._z is not None  # reinit() seeds the extended state
+        assert self._step_kernel is not None  # explicit-engine path resolved it
+        if self._ext_tape_arrays is None:
+            self._ext_tape_arrays = self._ext_tape.to_arrays()
+        params_vec = self._engine_params_vec()
+        out = run.lyapunov_spectrum_ode(
+            self._ext_tape_arrays,
+            params_vec,
+            self._z,
+            dim=self.system.dim,
+            k=self.k,
+            t0=self._t,
+            dt=dt,
+            burn_in=max(0.0, burn_in),
+            final_time=final_time,
+            method=self._step_kernel,
+            rtol=self._rtol,
+            atol=self._atol,
+            jit=self._backend == "jit",
+        )
+        # Re-seat the live state from the engine's final extended state, and the
+        # accumulators so exponents()/growths() reflect this run.
+        self._z = np.asarray(out["final_state"], dtype=np.float64)
+        self._t = self._t + max(0.0, burn_in) + final_time
+        self._last_growths = np.asarray(out["last_growths"], dtype=np.float64)
+        exponents = np.asarray(out["spectrum"], dtype=np.float64)
+        # Mirror the Python accumulator state so a subsequent exponents() call
+        # returns the same estimate (sum_growths / elapsed == spectrum).
+        self._elapsed = float(final_time)
+        self._sum_growths = exponents * self._elapsed
         return exponents
 
 

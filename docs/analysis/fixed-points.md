@@ -79,6 +79,25 @@ explicit step $x_{k+1} = x_k + \lambda\,C\,g(x_k)$.
 ts.fixed_points(ts.Logistic(params={"r": 4.0}), region=([-0.2], [1.2]), method="dl")
 ```
 
+### Rigorous enumeration: `method="interval"`
+
+Multi-start can *silently miss* a root whose basin no seed landed in.
+`method="interval"` removes that risk: the **Krawczyk** operator brackets *every*
+root inside the (required) `region` by interval branch-and-prune, certifying
+existence + uniqueness per sub-box — so the returned set is provably complete (up
+to floating-point round-off), and it is faster than multi-start on the analytic
+systems it applies to. It works for maps **and** flows, needs no `seed`, and
+raises `InvalidInputError` for a kernel it cannot interval-enclose (a comparison,
+a modulo, a non-integer power — use `method="newton"` there).
+
+```python
+# all 27 equilibria of the Thomas system, rigorously, in one box
+ts.fixed_points(ts.Thomas(), region=([-6, -6, -6], [6, 6, 6]), method="interval")
+```
+
+See [Rigorous fixed points](../theory/fixed-points-interval.md) for the operator,
+the benchmark, and the round-off caveat.
+
 ## Periodic orbits of maps
 
 A period-$p$ orbit is a fixed point of the $p$-fold composition $f^{p}$, so

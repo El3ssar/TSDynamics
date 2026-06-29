@@ -50,6 +50,9 @@ pub mod basin;
 // Appended by stream perf/map-lyapunov-kernel (the discrete-map QR tangent-map
 // Lyapunov spectrum — the Rust port of the Python `TangentSystem._accumulate_map`).
 pub mod map_lyapunov;
+// Appended by stream perf/ode-lyapunov-engine (the Benettin ODE Lyapunov
+// renormalisation loop — extended variational integrate + QR + log-norm accumulate).
+pub mod lyapunov;
 
 #[cfg(test)]
 mod testkit;
@@ -78,6 +81,8 @@ pub use basin::{
 };
 // Appended by stream perf/map-lyapunov-kernel.
 pub use map_lyapunov::{map_lyapunov, MapLyapunovError, MapLyapunovOutcome};
+// Appended by stream perf/ode-lyapunov-engine.
+pub use lyapunov::{lyapunov_spectrum_ode, LyapunovError, LyapunovOutcome};
 
 /// Check that the linked solver registry has no duplicate names, returning the
 /// clashing names if any.

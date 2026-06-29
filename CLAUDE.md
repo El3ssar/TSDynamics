@@ -92,7 +92,7 @@ src/tsdynamics/
 │   ├── _result_json.py       # to_dict / repr helpers (_jsonify / _is_frame_scalar)
 │   ├── orbits/               # A-ORBIT: orbit_diagram + OrbitDiagram (+ periods/bifurcation_points; orbit_diagram.py); poincare_section (poincare.py); return_map + ReturnMap (first-return/next-amplitude map; return_map.py); self-registers into registry.analyses
 │   ├── lyapunov/             # A-LYAP: lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
-│   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL — fixed.py), periodic_orbits/periodic_orbit/PeriodicOrbit + estimate_period (periodic.py), shared primitives (_common.py); self-registers
+│   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL + rigorous Krawczyk method="interval" in _interval.py — fixed.py), periodic_orbits/periodic_orbit/PeriodicOrbit + estimate_period (periodic.py), shared primitives (_common.py); self-registers
 │   ├── dimensions/           # A-DIM: correlation/generalized-Rényi/fixed-mass fractal dims + scaling-region fit
 │   ├── entropy/              # A-ENT: permutation/dispersion/sample/multiscale entropy + LZ76 (composable OutcomeSpace×estimator×measure)
 │   ├── chaos/               # A-CHAOS: GALI_k (Skokos) + 0–1 test (Gottwald–Melbourne) + expansion entropy (Hunt–Ott); maps via _jacobian, flows via self-contained RK4 variational core (no engine/compile)
@@ -600,6 +600,22 @@ documented tolerance):
   add the Schmelcher–Diakonos/Davidchack–Lai stabilising transformations (maps
   only) to reach unstable points. Map stability is `|λ|<1`, flow stability
   `Re λ<0` (the `FixedPoint.continuous` flag picks the convention).
+  **`method="interval"`** (stream `perf/fixedpoints-interval`, engine in
+  `_interval.py`) is the *rigorous* alternative: the Krawczyk operator brackets
+  **all** roots inside the (required) `region` by interval branch-and-prune with
+  an existence+uniqueness certificate per sub-box — so it cannot silently miss a
+  root (multi-start can), is deterministic (no `seed`), and is faster on the
+  analytic systems it applies to (~2–11× on the catalogue; on Thomas's 27
+  equilibria it finds all 27 where `n_seeds=200` Newton finds 23). It builds the
+  interval residual+Jacobian by **forward-mode AD over intervals** (`IntervalJet`
+  pushed through the map `_step` or the flow's SymEngine RHS tree — no symbolic
+  diff), supports `sin/cos/exp/log/sqrt/cosh/tanh/abs`+integer powers (covers
+  every catalogue flow + analytic maps), and raises `InvalidInputError` for a
+  kernel it can't enclose (a `<`/`%`/non-integer power → use `"newton"`). The
+  arithmetic is plain-float (rigorous to round-off, machine-precise roots; a
+  *certified* outward-rounded kernel is a future engine-side project). Theory +
+  benchmark in `docs/theory/fixed-points-interval.md`. Additive: `newton`/`sd`/`dl`
+  unchanged.
 - `periodic_orbits` (A-FP) finds map period-`p` orbits as fixed points of `fᵖ`
   (Davidchack–Lai by default), with a minimal-period (`prime`) filter and
   cyclic-shift dedup. `periodic_orbit` finds a flow limit cycle by single

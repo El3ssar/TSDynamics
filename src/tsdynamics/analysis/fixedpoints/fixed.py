@@ -15,6 +15,17 @@ The default ``method="newton"`` uses the exact analytic Jacobian.  For maps,
 Davidchack--Lai (1999) stabilising transformations, which find unstable fixed
 points that pure Newton can miss by cycling a set of orthogonal matrices that
 turn each instability type into a contracting one.
+
+``method="interval"`` is a *rigorous* alternative (maps **and** flows): the
+Krawczyk operator brackets **all** roots inside the (required) search ``region``
+by interval branch-and-prune, certifying existence + uniqueness per sub-box — so
+it cannot silently miss a root the way a finite multi-start can, and is faster on
+the analytic/polynomial systems it applies to.  It needs an interval-extensible
+right-hand side (the engine lives in
+:mod:`tsdynamics.analysis.fixedpoints._interval`); a system whose kernel uses an
+op the interval engine cannot enclose (a comparison, a modulo, a non-integer
+power) raises :class:`~tsdynamics.errors.InvalidInputError`, pointing back at
+``method="newton"``.
 """
 
 from __future__ import annotations
@@ -24,6 +35,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from tsdynamics.errors import InvalidParameterError
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._result import AnalysisResult, CollectionResult
@@ -276,10 +288,18 @@ def fixed_points(
         Root-finding iterations per seed.
     dedup_tol : float
         Distance below which two roots are merged.
-    method : {"newton", "sd", "dl"}
+    method : {"newton", "sd", "dl", "interval"}
         ``"newton"`` (default) — Newton on the exact Jacobian.  ``"sd"`` /
         ``"dl"`` — Schmelcher--Diakonos / Davidchack--Lai stabilising
         transformations (maps only) for systematically reaching unstable points.
+        ``"interval"`` — the rigorous Krawczyk branch-and-prune (maps **and**
+        flows): it brackets *all* roots in ``region`` with an existence +
+        uniqueness certificate per sub-box, so it cannot silently miss a root.
+        It requires a bounded ``region`` (the box it certifies over) and an
+        interval-extensible right-hand side; a system whose kernel uses an op the
+        interval engine cannot enclose raises
+        :class:`~tsdynamics.errors.InvalidInputError` (use ``"newton"`` there).
+        The ``n_seeds`` / ``lam`` / ``beta`` / ``max_c`` knobs do not apply.
     lam : float
         Step size of the Schmelcher--Diakonos iteration (``method="sd"``).
     beta : float
@@ -308,18 +328,25 @@ def fixed_points(
     NotImplementedError
         If ``system`` is neither a discrete map nor a continuous flow.
     ValueError
-        If ``method`` is not ``"newton"``/``"sd"``/``"dl"``, or ``"sd"``/``"dl"``
-        is requested for a flow (use ``"newton"`` on ``f(x)=0``).
+        If ``method`` is not ``"newton"``/``"sd"``/``"dl"``/``"interval"``, or
+        ``"sd"``/``"dl"`` is requested for a flow (use ``"newton"`` on
+        ``f(x)=0``), or ``"interval"`` is requested without a bounded ``region``.
+    InvalidInputError
+        If ``method="interval"`` and the system's right-hand side uses an
+        operation the interval engine cannot enclose.
 
     Examples
     --------
     >>> fixed_points(Henon())              # two saddles of the Hénon map
     >>> fixed_points(Lorenz())             # the origin and the two C± equilibria
+    >>> fixed_points(Henon(), region=([-3, -3], [3, 3]), method="interval")  # rigorous
 
     References
     ----------
     Schmelcher & Diakonos (1997), *Phys. Rev. Lett.* 78, 4733.
     Davidchack & Lai (1999), *Phys. Rev. E* 60, 6172.
+    Krawczyk (1969), *Computing* 4, 187.
+    Neumaier (1990), *Interval Methods for Systems of Equations*, CUP.
     """
     if isinstance(system, DiscreteMap):
         continuous = False
@@ -332,9 +359,9 @@ def fixed_points(
         )
 
     method = method.lower()
-    if method not in ("newton", "sd", "dl"):
-        raise ValueError(f"method must be 'newton', 'sd', or 'dl', got {method!r}.")
-    if continuous and method != "newton":
+    if method not in ("newton", "sd", "dl", "interval"):
+        raise ValueError(f"method must be 'newton', 'sd', 'dl', or 'interval', got {method!r}.")
+    if continuous and method in ("sd", "dl"):
         raise ValueError(
             "the 'sd'/'dl' stabilising transformations target unstable orbits of "
             "maps; flow equilibria are found with method='newton' on f(x)=0."
@@ -342,6 +369,9 @@ def fixed_points(
 
     dim = int(system.dim)
     rng = np.random.default_rng(seed)
+
+    if method == "interval":
+        return _interval_fixed_points(system, continuous, region, dim, tol)
 
     if continuous:
         rhs, jac = _c.flow_fns(system)
@@ -405,6 +435,77 @@ def fixed_points(
     return FixedPointSet(
         items=tuple(out),
         meta=AnalysisResult.build_meta(system, analysis="fixed_points", method=method),
+    )
+
+
+def _interval_fixed_points(
+    system: Any,
+    continuous: bool,
+    region: Any,
+    dim: int,
+    tol: float,
+) -> FixedPointSet:
+    r"""Rigorous Krawczyk branch-and-prune over the search box (``method="interval"``).
+
+    Brackets every root of the residual inside ``region`` with an existence +
+    uniqueness certificate per sub-box, then classifies each by the analytic
+    Jacobian spectrum (the same stability convention as ``method="newton"``).
+
+    A bounded ``region`` is required — the interval method certifies completeness
+    *within a box*, so an unbounded search has no meaning (and the auto burn-in
+    box would not enclose off-attractor equilibria).  An interval-extensible RHS
+    is required too; a kernel the interval engine cannot enclose raises
+    :class:`~tsdynamics.errors.InvalidInputError` at build time.
+    """
+    from . import _interval as _iv
+
+    if region is None:
+        raise InvalidParameterError(
+            "method='interval' needs a bounded 'region' (the box it certifies "
+            "completeness over); pass region=([lo...], [hi...]) or a Box/Grid."
+        )
+    lo, hi = _c.resolve_box(system, region, dim, rng=np.random.default_rng(0))
+
+    if continuous:
+        resid_jac = _iv.flow_interval_fn(system)
+        rhs, jac = _c.flow_fns(system)
+
+        def residual_float(x: np.ndarray) -> np.ndarray:
+            return np.asarray(rhs(x, 0.0), dtype=float)
+
+        def jac_float(x: np.ndarray) -> np.ndarray:
+            return jac(x, 0.0)
+
+        def classify(r: np.ndarray) -> FixedPoint:
+            eig = np.linalg.eigvals(jac(r, 0.0))
+            return FixedPoint(
+                x=r, eigenvalues=eig, stable=bool(np.all(eig.real < 0.0)), continuous=True
+            )
+    else:
+        resid_jac = _iv.map_interval_fn(system)
+        step, jac = _c.map_fns(system)
+        eye = np.eye(dim)
+
+        def residual_float(x: np.ndarray) -> np.ndarray:
+            return cast("np.ndarray", step(x) - x)
+
+        def jac_float(x: np.ndarray) -> np.ndarray:
+            return jac(x) - eye
+
+        def classify(r: np.ndarray) -> FixedPoint:
+            eig = np.linalg.eigvals(jac(r))
+            return FixedPoint(
+                x=r, eigenvalues=eig, stable=bool(np.all(np.abs(eig) < 1.0)), continuous=False
+            )
+
+    roots = _iv.krawczyk_roots(lo, hi, resid_jac, residual_float, jac_float, tol=tol)
+    # Deduplicate (a root straddling a bisection cut may be certified twice).
+    kept = _c.dedup_points(roots, max(1e-6, 100.0 * tol))
+    out = [classify(r) for r in kept]
+    out.sort(key=lambda fp: tuple(fp.x))
+    return FixedPointSet(
+        items=tuple(out),
+        meta=AnalysisResult.build_meta(system, analysis="fixed_points", method="interval"),
     )
 
 
