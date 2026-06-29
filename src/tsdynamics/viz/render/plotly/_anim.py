@@ -74,7 +74,7 @@ _REALTIME_JS = """
   var gd = document.getElementById('{plot_id}');
   if (!gd || !window.Plotly) { console.warn('tsd-anim: no graph div / Plotly'); return; }
   var LAYERS = __LAYERS__, WINDOW = __WINDOW__, STRIDE = __STRIDE__;
-  var IS3D = __IS3D__, N = __N__;
+  var IS3D = __IS3D__, N = __N__, LOOP = __LOOP__, PINGPONG = __PINGPONG__;
   // Cache the full curve arrays from the initial figure.
   // Read the curve from plotly's DECODED data (gd._fullData): plotly serialises a
   // numpy array into a base64 typed-array *spec* object ({dtype, bdata}) and stores
@@ -214,27 +214,96 @@ _REALTIME_JS = """
     }
     i = 0;
   }
+  // Reverse phase (pingpong): re-seed the comet at the LAST sample and stream the
+  // window backward toward sample 0.  extendTraces appends in reverse-index order,
+  // so the comet travels back across the same curve.
+  function seedEnd() {
+    for (var l = 0; l < LAYERS.length; l++) {
+      var m = LAYERS[l], f = full[l];
+      var s = IS3D ? {x: [[f.x[N - 1]]], y: [[f.y[N - 1]]], z: [[f.z[N - 1]]]}
+                   : {x: [[f.x[N - 1]]], y: [[f.y[N - 1]]]};
+      Plotly.restyle(gd, s, [m.comet]);
+      if (m.head >= 0) { Plotly.restyle(gd, s, [m.head]); }
+    }
+    i = N - 1;
+  }
   // One always-scheduled rAF loop.  Keeping the clock alive (rather than
   // stopping/restarting it) makes resume instant — flipping a flag is all it takes.
   // While dragging (or user-paused) the frame does ZERO trace work, so the gl3d
-  // orbit is never fought by a replot.
+  // orbit is never fought by a replot.  `direction` is +1 on the forward sweep and
+  // -1 on the pingpong reverse sweep; `loop`/`pingpong` decide what happens at an
+  // endpoint (mirror the mpl contract: loop=False stops, pingpong reverses).
+  var direction = 1;
   function frame() {
     if (dead) { return; }
     requestAnimationFrame(frame);
     if (userPaused || dragging) { return; }
-    var lo = i + 1, hi = Math.min(i + STRIDE, N - 1);
-    if (lo <= hi && !pushRange(lo, hi)) {
-      dead = true; userPaused = true; playBtn.textContent = '▶'; return;
+    if (direction > 0) {
+      var lo = i + 1, hi = Math.min(i + STRIDE, N - 1);
+      if (lo <= hi && !pushRange(lo, hi)) {
+        dead = true; userPaused = true; playBtn.textContent = '▶'; return;
+      }
+      readout.textContent = Math.round(100 * hi / (N - 1)) + '%';
+      i = hi;
+      if (i >= N - 1) { atForwardEnd(); }
+    } else {
+      var lo2 = i - 1, hi2 = Math.max(i - STRIDE, 0);
+      if (lo2 >= hi2 && !pushRangeRev(lo2, hi2)) {
+        dead = true; userPaused = true; playBtn.textContent = '▶'; return;
+      }
+      readout.textContent = Math.round(100 * hi2 / (N - 1)) + '%';
+      i = hi2;
+      if (i <= 0) { atReverseEnd(); }
     }
-    readout.textContent = Math.round(100 * hi / (N - 1)) + '%';
-    i = hi;
-    if (i >= N - 1) { seedStart(); }
+  }
+  // Append samples lo..hi in DESCENDING order (the reverse comet).
+  function pushRangeRev(lo, hi) {
+    for (var l = 0; l < LAYERS.length; l++) {
+      var m = LAYERS[l], f = full[l];
+      var xs = [], ys = [], zs = [];
+      for (var k = lo; k >= hi; k--) {
+        xs.push(f.x[k]); ys.push(f.y[k]); if (IS3D) { zs.push(f.z[k]); }
+      }
+      var ext = IS3D ? {x: [xs], y: [ys], z: [zs]} : {x: [xs], y: [ys]};
+      try {
+        Plotly.extendTraces(gd, ext, [m.comet], WINDOW);
+        if (m.head >= 0) {
+          var eh = IS3D
+            ? {x: [[f.x[hi]]], y: [[f.y[hi]]], z: [[f.z[hi]]]}
+            : {x: [[f.x[hi]]], y: [[f.y[hi]]]};
+          Plotly.extendTraces(gd, eh, [m.head], 1);
+        }
+      } catch (e) {
+        console.error('tsd-anim: extendTraces failed', e);
+        return false;
+      }
+    }
+    return true;
+  }
+  // Reached the last forward sample.  pingpong → reverse; else loop → restart;
+  // else stop at the end (loop=False, mpl repeat=False parity).
+  function atForwardEnd() {
+    if (PINGPONG) { direction = -1; return; }
+    if (LOOP) { seedStart(); } else { stopAtEnd(); }
+  }
+  // Reached sample 0 on the reverse sweep (pingpong only).  loop → forward again;
+  // else stop at the start.
+  function atReverseEnd() {
+    if (LOOP) { direction = 1; seedStart(); } else { stopAtEnd(); }
+  }
+  function stopAtEnd() {
+    dead = true; userPaused = true; playBtn.textContent = '▶';
   }
   playBtn.onclick = function() {
     userPaused = !userPaused;
     playBtn.textContent = userPaused ? '▶' : '❚❚';
   };
-  restartBtn.onclick = function() { seedStart(); readout.textContent = '0%'; };
+  restartBtn.onclick = function() {
+    direction = 1; seedStart(); readout.textContent = '0%';
+    // Revive a loop that stopped at the end (loop=False) and resume playing.
+    if (dead) { dead = false; userPaused = false; playBtn.textContent = '❚❚';
+      requestAnimationFrame(frame); }
+  };
   requestAnimationFrame(frame);
 })();
 """
@@ -611,6 +680,8 @@ def animated_html(
         .replace("__STRIDE__", str(int(stride)))
         .replace("__IS3D__", "true" if three_d else "false")
         .replace("__N__", str(int(n)))
+        .replace("__LOOP__", "true" if anim.loop else "false")
+        .replace("__PINGPONG__", "true" if anim.pingpong else "false")
     )
     if path is not None:
         return _write_html(

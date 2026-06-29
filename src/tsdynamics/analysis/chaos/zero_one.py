@@ -138,7 +138,13 @@ def _observable(
         skip = int(transient) if transient is not None else 0
         count = int(n) if n is not None else 5000
         kw: dict[str, Any] = {"transient": skip}
-        if ic is not None and hasattr(system, "iterate"):
+        # Honor an explicit ``ic`` for *any* discrete System — a map *or* a
+        # discrete view (Poincaré / stroboscopic), whose ``trajectory`` accepts
+        # ``ic`` via ``**kwargs`` even though it has no ``iterate``.  Silently
+        # substituting the wrapper's default IC would hand back a K for an orbit
+        # the caller never asked about (the 0-1 test characterises a *specific*
+        # orbit), exactly the footgun ``gali`` guards against.
+        if ic is not None:
             kw["ic"] = ic
         return _c._as_observable(system.trajectory(count, **kw), component)
     # continuous flow — sample on the dt grid (successive samples must be

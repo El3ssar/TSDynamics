@@ -187,7 +187,7 @@ def _default_scales(
     return np.logspace(np.log10(diam * lo_frac), np.log10(diam * hi_frac), n_scales)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class DimensionResult(ScalingResult):
     r"""A fractal-dimension estimate with the log--log curve it was read from.
 

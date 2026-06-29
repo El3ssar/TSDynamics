@@ -87,7 +87,7 @@ src/tsdynamics/
 │   ├── _result_scalar.py     # ScalarResult / CountResult (+ _NumericOps)
 │   ├── _result_array.py      # ArrayResult
 │   ├── _result_collection.py # CollectionResult
-│   ├── _result_scaling.py    # ScalingResult
+│   ├── _result_scaling.py    # ScalingResult (mixes _NumericOps like ScalarResult: full float drop-in — comparisons/arithmetic + value-based ==/hash; subclasses re-apply @dataclass(frozen=True, eq=False))
 │   ├── _result_viz.py        # the .plot accessor seam (_PlotAccessor / VisualizationNotInstalled)
 │   ├── _result_json.py       # to_dict / repr helpers (_jsonify / _is_frame_scalar)
 │   ├── orbits/               # A-ORBIT: orbit_diagram + OrbitDiagram (+ periods/bifurcation_points; orbit_diagram.py); poincare_section (poincare.py); return_map + ReturnMap (first-return/next-amplitude map; return_map.py); self-registers into registry.analyses
@@ -355,8 +355,12 @@ All three families + all derived wrappers implement:
   `jacobian(u, t)` numeric via cached `symengine.Lambdify`, `_rhs_numeric()`
   (fast numeric RHS — used by figures, Poincaré Hermite refinement, and the
   reference-backend cross-validation). Hand-written `_jacobian` on ODE systems is
-  never used at runtime; it is cross-checked against autogen in tests. `abs`/`sign`
-  derivatives are resolved a.e. (`_resolve_derivative_nodes`).
+  never used at runtime; it is cross-checked against autogen in tests.
+  `abs`/`sign`/`min`/`max` derivatives are resolved a.e.
+  (`_resolve_derivative_nodes`) — `min`/`max` follow whichever argument is the
+  active extremum, so a symengine `Min`/`Max` ODE (or an `np.minimum`/`np.maximum`
+  map lowering to `OP_MIN`/`OP_MAX`) lowers `with_jacobian=True` for the stiff
+  (`bdf`/`rosenbrock`/`trbdf2`) and map-Lyapunov paths instead of raising.
 - `integrate(backend=)` defaults to `_default_backend` (`"interp"`). `"interp"`
   / `"jit"` / `"reference"` route through the shared C-FAM seam (`_dispatch` →
   `engine.run.integrate`) to the Rust engine (or its pure-Python oracle).
@@ -370,8 +374,12 @@ All three families + all derived wrappers implement:
   `traj.meta["method"]`. It is a *heuristic* (IC-dependent), so a reliably-stiff
   system should still declare `_default_method`; maps (no solver kernel) treat
   `"auto"` as a no-op. `"auto"` is wired through the **shared** `_resolve_method_for`
-  contract, so `integrate(method="auto")` and `ensemble(method="auto")` resolve it
-  consistently (the run-split closed the gap where only `integrate` understood it).
+  contract, so it resolves consistently on **every** `method=` entry point —
+  `integrate`, `ensemble`, the resumable stepping protocol
+  (`ContinuousSystem.reinit(method="auto")` → `step`), and the events seam
+  (`run(events=…, method="auto")`); each probes the start-state Jacobian spectrum
+  and records the canonical resolved kernel (e.g. `"rk45"`) in `traj.meta["method"]`
+  / the event solution. (Earlier only `integrate`/`ensemble` understood it.)
 
 ### `DiscreteMap` extras
 
@@ -941,7 +949,11 @@ uv run pytest --changed --changed-since=HEAD~3 ...                    # custom d
 `--changed-since=REF` or `$TSD_CHANGED_BASE` / `make test BASE=<ref>`) and selects:
 
 - a touched **system module** → only that module's systems in the per-system
-  sweeps (mapped through the live registry by module name);
+  sweeps (mapped through the live registry by module name), **plus** the
+  registry-blind catalogue RHS-correctness gates (`test_equation_reference.py`
+  golden snapshot, `test_catalogue_literature.py`, `test_xval_catalogue.py`) via
+  the `_CATALOGUE_GATES` table — a kernel-body edit cannot reach those by
+  per-system scoping, so they are selected explicitly;
 - a touched **analysis area** (`analysis/<area>/`) → that area's test files;
 - a touched **test file** → that file; plus cheap registry/layout guard tests.
 

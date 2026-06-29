@@ -92,13 +92,27 @@ def _sagitta_chord(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> tuple[np.ndar
     return sagitta, chord
 
 
+def _triple_count(n_samples: int, span: int) -> int:
+    """Count the strided ``(i-span, i, i+span)`` triples evaluated at a span.
+
+    The triple centres are ``np.arange(span, n_samples - span, span)``, so the
+    count is the length of that range — *not* ``n_samples - 2 * span`` (the span
+    of admissible centres), which over-counts by the stride factor.  This is the
+    population the :func:`estimate_dt_from_sagitta` ``min_points_per_segment``
+    guard must compare against.
+    """
+    return len(range(span, n_samples - span, span))
+
+
 def _compute_sagitta_stats(
     samples: np.ndarray, span: int, percentile_p: float
 ) -> tuple[float, float]:
     """Return ``(sagitta_percentile, chord_median)`` for triples at a given span.
 
-    Degenerate triples (zero-length chord) contribute a sagitta of ``0`` and are
-    excluded from the chord median.
+    Degenerate triples (zero-length chord) are excluded from *both* the sagitta
+    percentile and the chord median, so the numerator and denominator of the
+    relative criterion are computed over the same valid population (injected
+    zeros would otherwise bias the percentile downward, an inconsistent estimate).
     """
     n = samples.shape[0]
     centers = np.arange(span, n - span, span)
@@ -106,8 +120,12 @@ def _compute_sagitta_stats(
         samples[centers - span, :], samples[centers, :], samples[centers + span, :]
     )
     valid = chord_length > 0
-    s_p = float(np.nanpercentile(sagitta, percentile_p))
-    chord_med = float(np.nanmedian(chord_length[valid])) if np.any(valid) else 0.0
+    if np.any(valid):
+        s_p = float(np.nanpercentile(sagitta[valid], percentile_p))
+        chord_med = float(np.nanmedian(chord_length[valid]))
+    else:
+        s_p = 0.0
+        chord_med = 0.0
     return s_p, chord_med
 
 
@@ -362,7 +380,7 @@ def estimate_dt_from_sagitta(
 
     # -------- determine max span with enough triples --------
     max_span = (n_samples - 1) // 2
-    while max_span > 1 and (n_samples - 2 * max_span) < min_points_per_segment:
+    while max_span > 1 and _triple_count(n_samples, max_span) < min_points_per_segment:
         max_span -= 1
 
     def _make_result(
@@ -389,7 +407,7 @@ def estimate_dt_from_sagitta(
 
     # -------- helper to test a span --------
     def span_is_ok(span: int) -> tuple[bool, float]:
-        if (n_samples - 2 * span) < min_points_per_segment:
+        if _triple_count(n_samples, span) < min_points_per_segment:
             return False, np.nan
         s_p, chord_med = _compute_sagitta_stats(samples_for_sagitta, span, percentile)
         if use_relative:

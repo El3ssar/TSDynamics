@@ -514,9 +514,16 @@ def integrate_events(
             hint="pass at least one Event, g(y, t) callable, or plane tuple.",
         )
 
-    from tsdynamics import solvers
+    from .run_methods import _resolve_method_for
 
-    method = solvers.resolve(method).name
+    # Honour ``method="auto"`` identically to ``integrate``/``ensemble`` (diagnosis
+    # P3-1): the events path builds its own problem and never reaches
+    # ``run.integrate``, so resolving through the shared ``method=`` contract here
+    # is what makes ``run(events=…, method="auto")`` probe the Jacobian spectrum
+    # and pick ``bdf``/``rk45`` instead of crashing on the advertised value.  Every
+    # other name normalises spellings/aliases and rejects unknown/v2-only names
+    # exactly as before.
+    method = _resolve_method_for(method, problem).name
     system = problem.system
     start = problem.t0 if t0 is None else float(t0)
     event_tapes = [_event_tape(system, e) for e in evs]

@@ -312,13 +312,27 @@ def basin_entropy(
 
 
 def _iter_blocks(labels: np.ndarray, box_size: int) -> Iterator[np.ndarray]:
-    """Yield every (possibly partial) ``box_size``-cell block of ``labels``."""
+    """Yield every full ``box_size``-cell block of ``labels``.
+
+    Following the Daza et al. (2016) convention, the grid is partitioned into
+    *non-overlapping* boxes of a fixed number of cells per axis and trailing
+    partial boxes (a grid axis whose length is not a multiple of ``box_size``)
+    are discarded — a partial box samples fewer trajectories, giving a noisier,
+    biased per-box entropy.  When the grid divides ``box_size`` evenly this is
+    byte-identical to keeping every block.
+    """
     from itertools import product
 
-    ranges = [range(0, n, box_size) for n in labels.shape]
+    # Stop each axis one full box short of the end so no trailing partial block
+    # is produced; ``range(0, n - box_size + 1, box_size)`` yields only origins
+    # whose ``box_size`` slice stays in bounds.
+    ranges = [range(0, n - box_size + 1, box_size) for n in labels.shape]
+    full = (box_size,) * labels.ndim
     for origin in product(*ranges):
         sl = tuple(slice(o, o + box_size) for o in origin)
-        yield labels[sl]
+        block = labels[sl]
+        if block.shape == full:  # guard against any residual partial block
+            yield block
 
 
 # ---------------------------------------------------------------------------

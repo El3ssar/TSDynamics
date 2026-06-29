@@ -12,10 +12,11 @@ from typing import Any, ClassVar, cast
 import numpy as np
 
 from tsdynamics.analysis._result_base import AnalysisResult
+from tsdynamics.analysis._result_scalar import _NumericOps
 
 
-@dataclass(frozen=True)
-class ScalingResult(AnalysisResult):
+@dataclass(frozen=True, eq=False)
+class ScalingResult(_NumericOps, AnalysisResult):
     r"""A quantity read off the slope of a scaling curve, with that curve.
 
     Many estimators in TSDynamics share one shape: build a scaling curve, fit a
@@ -29,8 +30,13 @@ class ScalingResult(AnalysisResult):
     generic ``result.plot.scaling()`` renders any of them and any consumer can
     find "the curve" and "the fit" without knowing which estimator produced it.
 
-    The number is :attr:`estimate`; ``float(result)`` returns it, so a
-    :class:`ScalingResult` drops straight into arithmetic and comparisons.
+    The number is :attr:`estimate`; ``float(result)`` returns it, and the full
+    numeric protocol is mixed in from :class:`_NumericOps` (the same mixin
+    :class:`~tsdynamics.analysis._result_scalar.ScalarResult` uses), so a
+    :class:`ScalingResult` drops straight into arithmetic and comparisons —
+    ``dim > 2.0``, ``0.5 * (d1 + d2)`` and ``abs(result)`` all work without
+    unwrapping it.  An operand that is not float-convertible yields
+    :data:`NotImplemented`, so ``result == pytest.approx(x)`` still resolves.
 
     Attributes
     ----------
@@ -64,11 +70,16 @@ class ScalingResult(AnalysisResult):
             meta=AnalysisResult.build_meta(system, ...),
         )
 
-    The two curve arrays are declared ``field(compare=False)`` per the
-    :class:`AnalysisResult` subclassing contract (a frozen dataclass derives
-    ``__eq__`` / ``__hash__`` from its fields, and NumPy arrays are neither
-    boolean-comparable nor hashable), so two scaling results compare on their
-    scalar summary fields.
+    The class is declared ``@dataclass(frozen=True, eq=False)`` so the
+    dataclass machinery does **not** regenerate ``__eq__`` / ``__hash__`` over
+    the curve arrays (which are neither boolean-comparable nor hashable); the
+    numeric ``__eq__`` / ``__hash__`` from :class:`_NumericOps` (comparing on
+    ``float(self)``) are used instead, matching
+    :class:`~tsdynamics.analysis._result_scalar.ScalarResult`.  The two curve
+    arrays still carry ``field(compare=False)`` for clarity.  Subclasses (e.g.
+    :class:`~tsdynamics.analysis.dimensions._common.DimensionResult`) must
+    re-apply ``@dataclass(frozen=True, eq=False)`` so the numeric dunders are not
+    shadowed by a dataclass-generated ``__eq__``.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("estimate", "stderr")
@@ -81,6 +92,16 @@ class ScalingResult(AnalysisResult):
     intercept: float = 0.0
 
     # -- the value -------------------------------------------------------
+
+    @property
+    def value(self) -> float:
+        """The estimate, under the name :class:`_NumericOps` reads.
+
+        :class:`_NumericOps` resolves the numeric protocol off ``self.value``;
+        for a scaling result the value *is* :attr:`estimate` (the fitted slope),
+        so this property bridges the two.
+        """
+        return float(self.estimate)
 
     def __float__(self) -> float:
         """Return :attr:`estimate`, so the result drops into arithmetic."""

@@ -142,6 +142,13 @@ class TangentSystem(DerivedSystem):
         self._last_growths = np.zeros(self.k)
         self._sum_growths = np.zeros(self.k)
         self._elapsed = 0.0
+        # The batch engine map kernel (:meth:`_map_spectrum_engine`) returns only
+        # the time-averaged spectrum and the interval count, never the final
+        # orthonormal frame nor the last interval's per-step stretch.  When that
+        # path runs, the streaming accessors ``deviations()`` / ``growths()`` cannot
+        # be reproduced and are marked stale (set True there, cleared by ``reinit``)
+        # so they raise an honest error instead of returning the long-run average.
+        self._map_engine_stale = False
 
     def _rebuild(self, inner: Any) -> TangentSystem:
         return TangentSystem(inner, self.k, backend=self._backend)
@@ -153,6 +160,7 @@ class TangentSystem(DerivedSystem):
         self._last_growths = np.zeros(self.k)
         self._sum_growths = np.zeros(self.k)
         self._elapsed = 0.0
+        self._map_engine_stale = False
 
     def reinit(
         self,
@@ -410,6 +418,14 @@ class TangentSystem(DerivedSystem):
         backends both carry the deviation matrix explicitly.
         """
         if self._mode == "map":
+            if self._map_engine_stale:
+                raise RuntimeError(
+                    "deviations() is unavailable after a batch engine map "
+                    "lyapunov_spectrum: the Rust kernel returns only the averaged "
+                    "spectrum, not the final orthonormal frame. Call reinit() and "
+                    "step() to drive the streaming tangent frame explicitly, or use "
+                    "backend='reference' for the streaming pure-Python QR loop."
+                )
             if self._W is None:
                 raise RuntimeError("deviations() is available after reinit()")
             return self._W.copy()
@@ -420,7 +436,25 @@ class TangentSystem(DerivedSystem):
         return split_extended(self._z, self.system.dim, self.k)[1]
 
     def growths(self) -> np.ndarray:
-        """Return the log stretch factors ``log|diag R|`` from the most recent step."""
+        """Return the log stretch factors ``log|diag R|`` from the most recent step.
+
+        Raises
+        ------
+        RuntimeError
+            In map mode, after a *batch* engine ``lyapunov_spectrum`` call: the
+            Rust kernel returns only the time-averaged spectrum, not the last
+            interval's per-step stretch, so the most-recent-step value cannot be
+            reproduced. Drive the frame with ``reinit()`` + ``step()`` (or use
+            ``backend='reference'``) for streaming per-step growths.
+        """
+        if self._mode == "map" and self._map_engine_stale:
+            raise RuntimeError(
+                "growths() is unavailable after a batch engine map "
+                "lyapunov_spectrum: the Rust kernel returns only the averaged "
+                "spectrum, not the most recent step's log|diag R|. Call reinit() and "
+                "step() to drive the streaming tangent frame explicitly, or use "
+                "backend='reference' for the streaming pure-Python QR loop."
+            )
         return self._last_growths.copy()
 
     def exponents(self) -> np.ndarray:
@@ -701,12 +735,20 @@ class TangentSystem(DerivedSystem):
                 object.__setattr__(sys, "ic", None)
                 continue
 
-            # Seed the accumulators so exponents()/growths() stay coherent with the
-            # streaming API (a downstream consumer may read them after this call).
+            # Seed ``exponents()`` so it reports the just-computed spectrum (a
+            # downstream consumer may read it after this call).  The map kernel
+            # returns only the averaged spectrum and the interval count — never the
+            # final orthonormal frame nor the last interval's per-step stretch — so
+            # ``deviations()`` / ``growths()`` cannot be reproduced: mark them stale
+            # (they raise an honest error) rather than fabricating the long-run
+            # average as if it were the most recent step (the ODE engine path, by
+            # contrast, re-seats ``self._z`` and the kernel returns ``last_growths``,
+            # so its streaming accessors stay genuinely coherent).
             self._W = None
             self._sum_growths = exponents * float(intervals * reortho_interval)
-            self._last_growths = exponents.copy()
+            self._last_growths = np.full(self.k, np.nan)
             self._elapsed = float(intervals * reortho_interval)
+            self._map_engine_stale = True
             self.meta.record(
                 "lyapunov_spectrum",
                 exponents,

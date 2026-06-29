@@ -487,7 +487,12 @@ def _make_discrete_cmap_norm(
 
     base_name = _resolve_cmap(spec, layer, preset) or "tab20"
     base_cmap = mpl.colormaps[base_name]
-    _tab20_size = 20  # tab20: swatch i centres at (2i+1)/40
+    # The swatch-centre fraction is ``(2*swatch + 1) / (2 * size)``; ``size`` must be
+    # the number of swatches in the *resolved* map, not a hardcoded 20.  For tab20
+    # (size 20) this is unchanged — ``(2s+1)/40``; for any other qualitative map
+    # (Set1 size 9, …) or a continuous map (viridis size 256) it samples that map's
+    # own swatch grid evenly so each label lands on a distinct, intended colour.
+    swatch_size = max(1, int(getattr(base_cmap, "N", 20)))
 
     colors: list[Any] = []
     for v in unique_vals:
@@ -496,7 +501,7 @@ def _make_discrete_cmap_norm(
             colors.append(mcolors.to_rgba(diverged_color))
         elif v_int in palette_index:
             swatch = palette_index[v_int]
-            colors.append(base_cmap((2 * swatch + 1) / (2 * _tab20_size)))
+            colors.append(base_cmap((2 * (swatch % swatch_size) + 1) / (2 * swatch_size)))
         else:
             i = int(np.searchsorted(unique_vals, v))
             colors.append(base_cmap(i / max(n, 1)))
@@ -568,6 +573,13 @@ def _image_extent(
 
     Priority: layer ``x``/``y`` channel edges → spec axis limits → ``None``
     (matplotlib default pixel-index placement).
+
+    The ``x``/``y`` channels are pixel-*centre* coordinates (matching the plotly
+    heatmap path, which passes coordinate vectors with centre semantics).  An
+    imshow ``extent`` specifies the outer pixel *edges*, so for evenly-spaced
+    centres the extent is expanded by half a cell on each side
+    (``x0 - dx/2 .. x1 + dx/2``).  This places the image at the same physical
+    coordinates as plotly and registers overlaid scatter/annotations correctly.
     """
     x = layer.data.get("x")
     y = layer.data.get("y")
@@ -575,7 +587,14 @@ def _image_extent(
         xa = np.asarray(x, dtype=float)
         ya = np.asarray(y, dtype=float)
         if xa.ndim == 1 and ya.ndim == 1 and xa.size >= 2 and ya.size >= 2:
-            return (float(xa[0]), float(xa[-1]), float(ya[0]), float(ya[-1]))
+            dx = (float(xa[-1]) - float(xa[0])) / (xa.size - 1)
+            dy = (float(ya[-1]) - float(ya[0])) / (ya.size - 1)
+            return (
+                float(xa[0]) - dx / 2.0,
+                float(xa[-1]) + dx / 2.0,
+                float(ya[0]) - dy / 2.0,
+                float(ya[-1]) + dy / 2.0,
+            )
     if spec is not None and spec.x is not None and spec.y is not None:
         x_lim = spec.x.limits
         y_lim = spec.y.limits

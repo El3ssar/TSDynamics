@@ -271,6 +271,19 @@ def cao_dimension(
         series is too short for the requested window, or too few valid
         neighbours survive the Theiler exclusion at some dimension.
 
+    Notes
+    -----
+    The ``d = 1`` point of the returned :math:`E_1` / :math:`E_2` curves
+    (``afn_e1[0]`` / ``afn_e2[0]``) is **diagnostically unreliable**.  At
+    :math:`d = 1` the base distance :math:`R_d` is the 1-D nearest-neighbour gap
+    :math:`|x_i - x_n|`; on a densely sampled series, coincident-but-distinct
+    samples make :math:`R_d` arbitrarily small, so the per-point ratio
+    :math:`a(i, 1) = R_{d+1}/R_d` can blow up and inflate the mean by orders of
+    magnitude.  This corrupts only the *first* point of the diagnostic curve and
+    does **not** affect the recommended dimension :math:`m`, which is read off the
+    saturation plateau past :math:`d = 1` (use a Theiler window of a few
+    autocorrelation times to mitigate the artefact).
+
     References
     ----------
     L. Cao, "Practical method for determining the minimum embedding dimension of

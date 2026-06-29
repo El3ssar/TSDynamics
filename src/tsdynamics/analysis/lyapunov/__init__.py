@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import numpy as np
 
@@ -294,6 +294,7 @@ def _max_lyapunov_map(
     steps_per: int,
     transient: int,
     ic: Any | None,
+    seed: int | None,
 ) -> float | None:
     """Maximal exponent of a map as the top of the Rust QR tangent-map spectrum.
 
@@ -304,6 +305,13 @@ def _max_lyapunov_map(
     the map will not lower to the engine IR
     (:class:`~tsdynamics.engine.compile.TapeCompileError`) or the compiled wheel is
     absent (:class:`~tsdynamics.engine.run.EngineNotAvailableError`).
+
+    ``seed`` makes the off-basin random-IC retry reproducible: each retry draws
+    its initial condition from a seeded ``numpy`` generator (``U[0, 1)^dim``, the
+    same distribution :meth:`~tsdynamics.families.base.SystemBase.resolve_ic`
+    uses for a random fallback) rather than the unseeded global RNG, so a result
+    that triggers the retry is deterministic when ``seed`` is given — matching the
+    two-trajectory path's seed contract.
     """
     from tsdynamics.engine import run
     from tsdynamics.engine.compile import (
@@ -335,13 +343,24 @@ def _max_lyapunov_map(
     burn = max(0, int(transient))
 
     # Burn-in + the kernel run, with random-IC retry on divergence (a random draw
-    # can land off-basin); an explicit ``ic`` that diverges re-raises.
+    # can land off-basin); an explicit ``ic`` that diverges re-raises. The retry
+    # draws a *reproducible* random IC from a seeded generator when ``seed`` is
+    # given, so a retried result is deterministic (the two-trajectory path's
+    # contract); with ``seed=None`` the draw is unseeded, matching the prior
+    # behaviour.
     ic_explicit = ic is not None
+    rng = np.random.default_rng(seed)
+    dim = cast("int", system.dim)
     max_retries = 10
     for attempt in range(max_retries):
         ref = system.copy()
         try:
-            ref.reinit(ic if attempt == 0 else None)
+            if attempt == 0:
+                ref.reinit(ic)
+            elif seed is None:
+                ref.reinit(None)  # unseeded random fallback (resolve_ic)
+            else:
+                ref.reinit(rng.random(dim))  # reproducible random retry IC
             for _ in range(burn):
                 ref.step()
             start = np.asarray(ref.state(), dtype=float)
@@ -405,7 +424,9 @@ def max_lyapunov(
     ic : array-like, optional
         Initial condition for the reference trajectory.
     seed : int, optional
-        Seed for the random perturbation direction.
+        Seed for the random perturbation direction (two-trajectory path) and for
+        the off-basin random-IC retry on the map engine-kernel path, so a result
+        that triggers the retry is reproducible.
 
     Returns
     -------
@@ -450,7 +471,9 @@ def max_lyapunov(
     # ``_step`` will not lower, or a wheel-free environment, falls back to the
     # two-trajectory loop transparently.
     if system.is_discrete:
-        mle = _max_lyapunov_map(system, n=n, steps_per=steps_per, transient=transient, ic=ic)
+        mle = _max_lyapunov_map(
+            system, n=n, steps_per=steps_per, transient=transient, ic=ic, seed=seed
+        )
         if mle is not None:
             meta = AnalysisResult.build_meta(
                 system, analysis="max_lyapunov", n=n, transient=transient

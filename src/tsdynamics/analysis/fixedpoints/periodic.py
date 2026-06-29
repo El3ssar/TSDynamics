@@ -919,9 +919,17 @@ def _fft_period_lag(
     the peak power and its two neighbours (the same interpolation the
     autocorrelation path uses), so the estimate is not pinned to the coarse
     ``n / k`` grid that a single FFT bin would give.
+
+    A Hann (raised-cosine) taper is applied before the transform to suppress
+    spectral leakage on a finite record whose true period is not an integer
+    divisor of ``n``; this roughly halves the sub-bin period bias on
+    non-commensurate records, at the cost of a slightly broader main lobe
+    (Harris 1978, *Proc. IEEE* 66, 51 — the Hann window's leakage trade-off).
+    The autocorrelation method (the default) remains preferable for very short
+    records.
     """
     n = y.size
-    spec = np.abs(np.fft.rfft(y)) ** 2
+    spec = np.abs(np.fft.rfft(y * np.hanning(n))) ** 2
     spec[0] = 0.0  # drop the DC component
     freqs = np.fft.rfftfreq(n, d=step)
     k = int(np.argmax(spec))

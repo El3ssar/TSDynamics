@@ -738,9 +738,13 @@ class Animation:
         """Resolve the number of playback frames from the directive + data length.
 
         ``n_frames`` wins; else ``round(duration * fps)``; else a capped default.
-        Always at least 2 and at most ``n_samples`` (you cannot reveal more
-        distinct samples than exist).
+        At most ``n_samples`` (you cannot reveal more distinct samples than exist),
+        and at least 2 — *except* a single-sample layer is a still, so a degenerate
+        ``n_samples <= 1`` yields exactly one frame (the ``max(2, …)`` floor never
+        overrides the data cap into a duplicate frame).
         """
+        if n_samples <= 1:
+            return 1
         if self.n_frames is not None:
             n = int(self.n_frames)
         elif self.duration is not None:
@@ -756,6 +760,8 @@ class Animation:
         :attr:`pingpong` the sequence then mirrors back (forward, then reverse).
         """
         n_frames = self.frame_count(n_samples)
+        if n_frames <= 1:  # a single-sample still — one frame on the only sample
+            return [0]
         fwd = [round(k * (n_samples - 1) / (n_frames - 1)) for k in range(n_frames)]
         if self.pingpong and n_frames > 2:
             fwd = fwd + fwd[-2:0:-1]
