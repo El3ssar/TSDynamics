@@ -281,6 +281,79 @@ fn iterate_ensemble_final<'py>(
     PyArray1::from_vec(py, flat).reshape([n_ic, dim])
 }
 
+/// Run a whole map orbit-diagram parameter sweep in one call (stream
+/// `perf/param-sweep-kernel`), returning the recorded asymptotic states and each
+/// value's fate.
+///
+/// The leading tape arrays describe the lowered map with the **swept** parameter
+/// kept as its single runtime `Param` input (`n_param == 1`) — the other
+/// parameters fold into constants — so the sweep needs no per-value re-lowering or
+/// per-value FFI round-trip. `base_params` is the full runtime parameter vector;
+/// `sweep_index` which of its entries each `values[k]` overwrites; `ic` the base
+/// initial condition; `components` the state-component indices to record;
+/// `transient` / `n_record` the discard / record counts; `carry_state` whether
+/// each value resumes from the previous value's final state; `jit` selects the
+/// Cranelift evaluator (numerically identical to the interpreter).
+///
+/// Returns `(points, status)`: `points` is the `(n_values * n_record,
+/// n_components)` recorded array, and `status` an `(n_values,)` i64 array of `0`
+/// (finite) / `1` (diverged — the value's block is zero, dropped to an empty set
+/// by the Python wiring). The per-iterate numerics are byte-for-byte the
+/// [`iterate_map`] path.
+#[pyfunction]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn map_param_sweep<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    base_params: PyReadonlyArray1<f64>,
+    sweep_index: usize,
+    values: PyReadonlyArray1<f64>,
+    ic: PyReadonlyArray1<f64>,
+    components: PyReadonlyArray1<i64>,
+    transient: usize,
+    n_record: usize,
+    carry_state: bool,
+    jit: bool,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray1<i64>>)> {
+    let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let base_params = vec_f64("base_params", &base_params)?;
+    let values = vec_f64("values", &values)?;
+    let ic = vec_f64("ic", &ic)?;
+    let components: Vec<usize> = components
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("components must be a contiguous int64 array"))?
+        .iter()
+        .map(|&c| c as usize)
+        .collect();
+    let n_values = values.len();
+    let n_components = components.len();
+    let (points, status) = py
+        .detach(|| {
+            bridge::map_param_sweep(
+                tape.build()?,
+                &base_params,
+                sweep_index,
+                &values,
+                &ic,
+                &components,
+                transient,
+                n_record,
+                carry_state,
+                jit,
+            )
+        })
+        .map_err(to_py_err)?;
+    let points = PyArray1::from_vec(py, points).reshape([n_values * n_record, n_components])?;
+    Ok((points, PyArray1::from_vec(py, status)))
+}
+
 // ---------------------------------------------------------------------------
 // Integration
 // ---------------------------------------------------------------------------
@@ -1171,6 +1244,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(eval_jac, m)?)?;
     m.add_function(wrap_pyfunction!(iterate_map, m)?)?;
     m.add_function(wrap_pyfunction!(iterate_ensemble_final, m)?)?;
+    m.add_function(wrap_pyfunction!(map_param_sweep, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_dense, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_dde_dense, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_ensemble_final, m)?)?;

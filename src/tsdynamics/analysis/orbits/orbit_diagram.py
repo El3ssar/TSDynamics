@@ -211,27 +211,80 @@ def _count_branches(col: np.ndarray, rtol: float) -> int:
     return 1 + int(np.count_nonzero(np.diff(s) > rtol * span))
 
 
-def _record_via_iterate(
-    current: Any, start: Any, transient: int, n: int, idx: list[int]
-) -> tuple[np.ndarray, np.ndarray]:
-    """Record one parameter value on the Rust engine, in a single ``iterate`` call.
+def _sweep_via_kernel(
+    system: Any,
+    param: str,
+    values_arr: np.ndarray,
+    *,
+    transient: int,
+    n: int,
+    carry_state: bool,
+    ic: Any,
+    idx: list[int],
+) -> list[np.ndarray]:
+    """Run the *whole* map sweep in one engine call (stream perf/param-sweep-kernel).
 
-    Resolve the initial condition explicitly and iterate ``transient + n`` steps
-    in one FFI round-trip, then slice off the transient.  ``max_retries=1`` with an
-    explicit ``ic`` makes a divergent value raise ``RuntimeError`` (no random-IC
-    retry) — the caller turns that into an empty record set, exactly as the
-    per-step path does.  Returns the recorded points and the final state (the
-    carry-over initial condition for the next value).
+    Lowers the map once keeping ``param`` as the tape's single runtime ``Param``
+    (:func:`tsdynamics.engine.compile.lower_map_sweep_cached`), then drives the
+    Rust sweep kernel (:func:`tsdynamics.engine.run.map_param_sweep`) over every
+    value — one FFI round-trip for the entire diagram instead of one ``iterate``
+    call per value (the WS-MAPITER path).  The per-iterate numerics are
+    byte-for-byte the per-value ``iterate`` path, so the diagram is byte-identical
+    where the engine and NumPy agree bit-for-bit (the logistic map) and the same
+    attractor for a chaotic map.
+
+    Returns the per-value ``points`` list (an empty ``(0, k)`` array for a value
+    that diverged, with a :class:`RuntimeWarning` per such value — exactly the
+    per-value path's contract).
+
+    Raises
+    ------
+    NotImplementedError, BackendError
+        If the map's ``_step`` will not lower (``TapeCompileError``) or the
+        compiled engine is unavailable (``EngineNotAvailableError``).  The caller
+        catches these public bases and falls back to the per-value/per-step path.
     """
-    ic_resolved = current.resolve_ic(start)
-    traj = current.iterate(steps=transient + n, ic=ic_resolved, max_retries=1)
-    y = traj.y
-    rec = np.asarray(y[transient : transient + n][:, idx], dtype=float)
-    # A zero-length run (``transient + n == 0``) yields no rows; the carry-over
-    # final state is then just the resolved initial condition — matching the old
-    # step-loop's ``current.state()`` after taking no steps.
-    last = y[-1].copy() if y.shape[0] else np.asarray(ic_resolved, dtype=float).reshape(current.dim)
-    return rec, last
+    import warnings
+
+    from tsdynamics.engine.compile import lower_map_sweep_cached
+    from tsdynamics.engine.run import map_param_sweep
+
+    tape = lower_map_sweep_cached(system, param)
+    # The sweep tape has exactly the swept parameter as its single runtime input
+    # (control_names == [param]); the base vector's one slot is overwritten per
+    # value by the kernel, so its initial value is irrelevant.
+    base_params = np.zeros(1, dtype=np.float64)
+    ic_resolved = np.asarray(system.resolve_ic(ic), dtype=np.float64).reshape(system.dim)
+    components = np.asarray(idx, dtype=np.int64)
+
+    points_flat, status = map_param_sweep(
+        tape.to_arrays(),
+        base_params,
+        0,
+        values_arr,
+        ic_resolved,
+        components,
+        transient,
+        n,
+        carry_state=carry_state,
+        jit=False,
+    )
+    # ``points_flat`` is (n_values * n, k); split into one (n, k) block per value,
+    # dropping a diverged value's (zero) block to an empty set + warning — exactly
+    # the per-value path's divergence contract.
+    points: list[np.ndarray] = []
+    block = points_flat.reshape(len(values_arr), n, len(idx))
+    for k, v in enumerate(values_arr):
+        if status[k] != 0:
+            warnings.warn(
+                f"orbit_diagram: {param}={v:g} diverged; recording an empty set for this value.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            points.append(np.empty((0, len(idx))))
+        else:
+            points.append(np.array(block[k], dtype=float))
+    return points
 
 
 def _record_via_step(
@@ -373,40 +426,58 @@ def orbit_diagram(
     points: list[np.ndarray] = []
     state: np.ndarray | None = None
 
-    # A genuine DiscreteMap iterates on the Rust engine: the whole transient +
-    # record run for one parameter value becomes a single engine call (one FFI
-    # round-trip) rather than ``transient + n`` Python ``step()`` calls — the
-    # per-value bottleneck this stream removes (Logistic 600×120: ~9× faster).
-    # Flow wrappers (PoincareMap / StroboscopicMap) have no ``iterate`` and keep
-    # the per-step protocol path; a map whose ``_step`` will not lower to the IR,
-    # or a wheel-free environment with no compiled engine, falls back to it too
-    # (the decision is taken once and latched for the rest of the sweep).  Both
-    # paths iterate the *same* lowered ``_step``, so a periodic window converges to
-    # the identical cycle and — where the engine and NumPy agree bit-for-bit (e.g.
-    # the logistic map) — the whole diagram is byte-identical; a chaotic window
-    # records the same attractor (the engine ``iterate`` being the canonical map
-    # runner).
-    use_engine = isinstance(system, DiscreteMap)
+    # A genuine DiscreteMap sweeps the WHOLE parameter array in a single engine
+    # call (stream perf/param-sweep-kernel): the map is lowered once keeping the
+    # swept parameter as the tape's single runtime input, and the Rust kernel
+    # varies it per value — one FFI round-trip for the entire diagram, instead of
+    # the WS-MAPITER path's one ``iterate`` call per value (a 1000-value sweep was
+    # ~1000 round-trips; ~410 ms → a few ms).  The per-iterate numerics are
+    # byte-for-byte the per-value ``iterate`` path, so the diagram is
+    # byte-identical where the engine and NumPy agree bit-for-bit (the logistic
+    # map) and the same attractor for a chaotic map.  Flow wrappers (PoincareMap /
+    # StroboscopicMap) have no ``_step`` to lower; a map whose ``_step`` will not
+    # lower to the IR (``TapeCompileError`` → ``NotImplementedError``) or a
+    # wheel-free environment (``EngineNotAvailableError`` → ``BackendError``) fall
+    # back to the per-value/per-step protocol loop below — the same answer.
+    if isinstance(system, DiscreteMap):
+        try:
+            points = _sweep_via_kernel(
+                system,
+                param,
+                values_arr,
+                transient=transient,
+                n=n,
+                carry_state=carry_state,
+                ic=ic,
+                idx=idx,
+            )
+            meta = {
+                "system": type(system).__name__,
+                "param": param,
+                "n": n,
+                "transient": transient,
+                "carry_state": carry_state,
+                "components": tuple(idx),
+            }
+            return OrbitDiagram(
+                param=param, values=values_arr, points=points, components=tuple(idx), meta=meta
+            )
+        except (NotImplementedError, BackendError):
+            # The map cannot run on the engine sweep (a non-lowerable ``_step`` or
+            # no compiled wheel) — catch the PUBLIC bases (not the engine-internal
+            # leaf types) and fall back to the per-value/per-step loop below.
+            points = []
 
+    # The per-value protocol path: flow wrappers and the engine-sweep fallback.
     for v in values_arr:
         current = system.with_params(**{param: v})
         start = state if (carry_state and state is not None) else ic
         try:
-            if use_engine:
-                try:
-                    rec, last = _record_via_iterate(current, start, transient, n, idx)
-                except (NotImplementedError, BackendError):
-                    # This map cannot run on the engine: either a non-lowerable
-                    # ``_step`` (the engine raises ``TapeCompileError``, a
-                    # ``NotImplementedError``) or no compiled wheel (the public
-                    # ``EngineNotAvailableError``, a ``BackendError``).  Catch the
-                    # public bases — not the engine-internal leaf types — and fall
-                    # back to the protocol path for this value and the rest of the
-                    # sweep.
-                    use_engine = False
-                    rec, last = _record_via_step(current, start, transient, n, idx)
-            else:
-                rec, last = _record_via_step(current, start, transient, n, idx)
+            # Flow wrappers (PoincareMap / StroboscopicMap) and the engine-sweep
+            # fallback (a non-lowerable map / wheel-free env) both drive the
+            # per-step protocol loop — byte-identical to the engine path on a
+            # lowerable map.
+            rec, last = _record_via_step(current, start, transient, n, idx)
         except RuntimeError as exc:
             # One divergent value must not discard the whole sweep: record an
             # empty point set and restart the next value from `ic`.
