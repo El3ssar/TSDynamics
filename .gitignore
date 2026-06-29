@@ -130,6 +130,12 @@ ENV/
 env.bak/
 venv.bak/
 
+# Cross-library benchmark: isolated competitor venv + regenerable outputs
+# (scripts, julia/Project.toml + Manifest.toml, README.md and RESULTS.md ARE tracked;
+# the 687MB venv and raw results are not).
+benchmarks/.venv-bench/
+benchmarks/results/
+
 # Spyder project settings
 .spyderproject
 .spyproject
