@@ -48,7 +48,7 @@ pub use basin::{basin_march_flow_bridge, basin_march_map_bridge};
 pub use dde::integrate_dde_dense;
 pub use events::integrate_events_dense;
 pub use lyapunov::lyapunov_spectrum_ode_bridge;
-pub use map::{iterate_map, map_ensemble_final};
+pub use map::{iterate_map, map_ensemble_final, map_param_sweep};
 #[cfg(test)]
 pub use marshal::build_tape;
 pub use marshal::EngineError;

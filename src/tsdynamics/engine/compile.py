@@ -73,6 +73,8 @@ __all__ = [
     "lower_expressions",
     "lower_map",
     "lower_map_cached",
+    "lower_map_sweep",
+    "lower_map_sweep_cached",
     "lower_ode",
     "lower_ode_cached",
     "lower_sde",
@@ -1261,6 +1263,118 @@ def lower_map(system: Any, *, with_jacobian: bool = False) -> Tape:
         raise TapeCompileError(f"_step traced to {len(exprs)} components, expected dim={dim}")
 
     return lower_expressions(exprs, u_syms, jacobian=with_jacobian)
+
+
+def lower_map_sweep(system: Any, sweep_param: str) -> Tape:
+    """Lower a map's ``_step`` keeping ``sweep_param`` as a runtime ``Param``.
+
+    The variant :func:`lower_map` uses for the orbit-diagram parameter sweep
+    (stream ``perf/param-sweep-kernel``): unlike :func:`lower_map`, which folds
+    *every* parameter into the tape as a constant, this keeps the **swept**
+    parameter as the tape's single runtime ``Param`` input (``n_param == 1``,
+    ``control_names == [sweep_param]``) while the other parameters stay folded.
+    The sweep kernel then varies that one input per value, so the whole sweep is
+    one engine call with no per-value re-lowering.
+
+    The lowered next-state expression is **byte-identical** to
+    :func:`lower_map`'s at runtime for the swept parameter: a ``Param`` leaf
+    reads the same ``f64`` value a folded ``Const`` would, then feeds the same
+    op — so a value swept here lands bit-for-bit where :func:`lower_map` with
+    that value baked in would (verified for the logistic map).
+
+    Parameters
+    ----------
+    system : DiscreteMap
+        The map instance (its non-swept parameter values are baked in).
+    sweep_param : str
+        The parameter to keep as the runtime input.  Must be a declared
+        parameter of ``system``.
+
+    Returns
+    -------
+    Tape
+        ``n_param == 1`` over the single swept parameter (no Jacobian — the sweep
+        records states, not stability).
+
+    Raises
+    ------
+    InvalidParameterError
+        If ``sweep_param`` is not a declared parameter of ``system``.
+    TapeCompileError
+        If ``_step`` cannot be traced symbolically (see :func:`lower_map`).
+    """
+    import symengine
+
+    from tsdynamics.families.discrete import _unwrap_static
+
+    param_names = list(system.params)
+    if sweep_param not in param_names:
+        from tsdynamics.errors import invalid_value
+
+        raise invalid_value(
+            "sweep_param",
+            sweep_param,
+            options=param_names,
+            hint="orbit_diagram sweeps a declared parameter of the map.",
+        )
+
+    dim = system.dim
+    u_syms = [symengine.Symbol(f"u{i}") for i in range(dim)]
+    state = np.array(u_syms, dtype=object)
+    step = _trace_step(_unwrap_static(type(system)._step))
+
+    # Pass the swept parameter as a symbol (a runtime Param) and every other
+    # parameter as its current numeric value (folded to a constant), positionally
+    # in declaration order — exactly the order ``_step`` expects.
+    sweep_sym = symengine.Symbol("psweep")
+    args: list[Any] = [
+        sweep_sym if name == sweep_param else system.params[name] for name in param_names
+    ]
+
+    try:
+        out = step(state, *args)
+        exprs = [symengine.sympify(e) for e in list(out)]
+    except TapeCompileError:
+        raise
+    except Exception as err:  # noqa: BLE001 - any tracing failure means "not lowerable"
+        raise TapeCompileError(
+            f"{type(system).__name__}: _step cannot be traced symbolically "
+            f"({type(err).__name__}: {err}). Maps that branch on the state with a "
+            f"Python ``if`` (rewrite the branch with ``np.where``) or call a NumPy "
+            f"routine the tracer does not model cannot lower to a straight-line tape."
+        ) from err
+
+    if len(exprs) != dim:
+        raise TapeCompileError(f"_step traced to {len(exprs)} components, expected dim={dim}")
+
+    return lower_expressions(
+        exprs,
+        u_syms,
+        param_syms=[sweep_sym],
+        control_names=[sweep_param],
+    )
+
+
+def lower_map_sweep_cached(system: Any, sweep_param: str) -> Tape:
+    """Return a cached :func:`lower_map_sweep` tape, memoised across the sweep.
+
+    Keyed like :func:`lower_map_cached` (class, dim, the ``_step`` kernel object)
+    plus the swept parameter name and the values of every **other** parameter (the
+    folded-in constants).  The swept parameter's value is deliberately absent —
+    it is the runtime input — so the whole sweep reuses one cached tape.
+    """
+    others = tuple(
+        (k, _hashable_value(system.params[k])) for k in sorted(system.params) if k != sweep_param
+    )
+    key = (
+        "map_sweep",
+        type(system),
+        str(sweep_param),
+        int(system.dim),
+        others,
+        _kernel_identity(type(system), "_step"),
+    )
+    return _cache_get_or_build(key, lambda: lower_map_sweep(system, sweep_param))
 
 
 # ---------------------------------------------------------------------------

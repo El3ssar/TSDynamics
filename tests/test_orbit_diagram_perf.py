@@ -1,15 +1,17 @@
-"""WS-MAPITER: map ``orbit_diagram`` routes through the Rust iterate engine.
+"""Map ``orbit_diagram`` sweeps the whole parameter array in one engine call.
 
-A genuine :class:`~tsdynamics.families.DiscreteMap` runs the whole
-``transient + record`` span for one parameter value in a single engine
-``iterate`` call (one FFI round-trip) instead of a ``transient + n`` Python
-``step()`` loop.  These tests pin the two load-bearing properties:
+A genuine :class:`~tsdynamics.families.DiscreteMap` is lowered **once** keeping
+the swept parameter as the tape's single runtime input, then the Rust sweep
+kernel (stream ``perf/param-sweep-kernel``) iterates ``transient + record`` for
+every value in **one** FFI round-trip — superseding the WS-MAPITER path's one
+``iterate`` call per value (a 1000-value sweep was ~1000 round-trips).  These
+tests pin the two load-bearing properties:
 
 * **answer preservation** — the result is *byte-identical* to the old per-step
   path wherever the engine and NumPy agree bit-for-bit (the logistic map, across
   every regime), and records the *same attractor* for a chaotic map whose lowered
   IR differs from NumPy at the ULP level; and
-* **the mechanism** — the engine path issues no ``step()`` calls, while flow
+* **the mechanism** — the engine sweep issues no ``step()`` calls, while flow
   wrappers (``PoincareMap`` / ``StroboscopicMap``) and engine-less fallbacks keep
   the per-step protocol path.
 
@@ -19,12 +21,13 @@ algorithm this stream replaced.
 
 from __future__ import annotations
 
+import importlib
 import time
 
 import numpy as np
 import pytest
 
-pytest.importorskip("tsdynamics._rust")  # engine-marked: routes through iterate
+pytest.importorskip("tsdynamics._rust")  # engine-marked: routes through the sweep kernel
 
 import tsdynamics as ts
 from tsdynamics.engine.compile import TapeCompileError
@@ -32,6 +35,11 @@ from tsdynamics.engine.run import EngineNotAvailableError
 from tsdynamics.errors import BackendError
 from tsdynamics.families import DiscreteMap
 from tsdynamics.systems import Henon, Logistic
+
+# The package re-exports the ``orbit_diagram`` *function* under the submodule's
+# dotted name, shadowing the module on attribute access; reach the real module
+# object (whose ``_sweep_via_kernel`` the fallback tests patch) via importlib.
+od_mod = importlib.import_module("tsdynamics.analysis.orbits.orbit_diagram")
 
 
 def _old_orbit_diagram(
@@ -200,7 +208,7 @@ def test_chaotic_map_same_attractor():
 
 
 def test_map_path_issues_no_step_calls(monkeypatch):
-    """A DiscreteMap sweep takes the engine path — it never calls ``step()``."""
+    """A DiscreteMap sweep takes the engine sweep path — it never calls ``step()``."""
     calls = {"n": 0}
     real_step = DiscreteMap.step
 
@@ -211,6 +219,31 @@ def test_map_path_issues_no_step_calls(monkeypatch):
     monkeypatch.setattr(DiscreteMap, "step", counting_step)
     ts.orbit_diagram(Logistic(), "r", np.linspace(2.8, 3.9, 50), n=64, transient=200, ic=[0.4])
     assert calls["n"] == 0
+
+
+def test_map_sweep_is_a_single_engine_call(monkeypatch):
+    """The whole DiscreteMap sweep is ONE engine call (the named win of this stream).
+
+    The sweep kernel marches every parameter value internally, so
+    ``orbit_diagram`` over a genuine map invokes the engine sweep entry point
+    exactly once for the entire diagram — not once per value (the WS-MAPITER
+    path this stream supersedes) and not the per-step protocol loop.
+    """
+    from tsdynamics.engine import run as run_mod
+
+    calls = {"n": 0}
+    real_sweep = run_mod.map_param_sweep
+
+    def counting_sweep(*a, **k):
+        calls["n"] += 1
+        return real_sweep(*a, **k)
+
+    # Patch the name the orbit-diagram module resolves at call time (it imports
+    # ``map_param_sweep`` inside ``_sweep_via_kernel``), so patching the run module
+    # is what the wiring sees.
+    monkeypatch.setattr(run_mod, "map_param_sweep", counting_sweep)
+    ts.orbit_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 200), n=64, transient=300, ic=[0.4])
+    assert calls["n"] == 1, f"expected one sweep call for the whole diagram, got {calls['n']}"
 
 
 def test_flow_wrapper_keeps_step_path(monkeypatch):
@@ -229,18 +262,24 @@ def test_flow_wrapper_keeps_step_path(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Fallback: a non-lowerable map or a wheel-free env uses the step path
+# Fallback: a non-lowerable map or a wheel-free env uses the per-step path
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("exc", [EngineNotAvailableError("no wheel"), TapeCompileError("no lower")])
 def test_engine_unavailable_falls_back_byte_identical(monkeypatch, exc):
-    """If ``iterate`` cannot run, orbit_diagram falls back to step — same answer."""
+    """If the sweep kernel cannot run, orbit_diagram falls back to step — same answer.
 
-    def boom(self, *a, **k):
+    A non-lowerable ``_step`` (``TapeCompileError`` → ``NotImplementedError``) or a
+    wheel-free environment (``EngineNotAvailableError`` → ``BackendError``) raised
+    from the engine sweep must drop to the per-value/per-step protocol loop, which
+    is byte-identical on the logistic map.
+    """
+
+    def boom(*a, **k):
         raise exc
 
-    monkeypatch.setattr(DiscreteMap, "iterate", boom)
+    monkeypatch.setattr(od_mod, "_sweep_via_kernel", boom)
     vals = np.linspace(2.8, 3.9, 80)
     new = ts.orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.31])
     old = _old_orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.31])
@@ -255,20 +294,19 @@ def test_engine_unavailable_falls_back_byte_identical(monkeypatch, exc):
     ],
 )
 def test_engine_fallback_catches_public_bases(monkeypatch, exc):
-    """The fast-path→step fallback catches the PUBLIC bases, not engine-internal leaves.
+    """The sweep→step fallback catches the PUBLIC bases, not engine-internal leaves.
 
-    Regression for the design fix that replaced the engine-internal
-    ``(TapeCompileError, EngineNotAvailableError)`` catch with the public
-    ``(NotImplementedError, BackendError)`` bases: a bare ``BackendError`` (the
-    base ``EngineNotAvailableError`` subclasses) and a bare ``NotImplementedError``
-    (the base ``TapeCompileError`` subclasses) must still trigger the step-loop
-    fallback — the old narrow catch would let these propagate.
+    The fallback catches ``(NotImplementedError, BackendError)`` — the public bases
+    ``TapeCompileError`` and ``EngineNotAvailableError`` subclass — so a bare
+    ``BackendError`` and a bare ``NotImplementedError`` raised from the sweep kernel
+    must still trigger the per-step fallback (a narrower leaf-only catch would let
+    these propagate).
     """
 
-    def boom(self, *a, **k):
+    def boom(*a, **k):
         raise exc
 
-    monkeypatch.setattr(DiscreteMap, "iterate", boom)
+    monkeypatch.setattr(od_mod, "_sweep_via_kernel", boom)
     vals = np.linspace(2.8, 3.9, 60)
     new = ts.orbit_diagram(Logistic(), "r", vals, n=40, transient=120, ic=[0.27])
     old = _old_orbit_diagram(Logistic(), "r", vals, n=40, transient=120, ic=[0.27])
