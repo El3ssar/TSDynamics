@@ -152,6 +152,9 @@ ignore = [
   "D101",    # missing docstring in public class — class names are the documentation
   "F841",    # local variable assigned but never used — intentional in _jac methods for visual symmetry
 ]
+# Cross-library benchmark harness (auxiliary, not shipped): adapter classes and
+# their task_* methods are self-documenting by name.
+"benchmarks/**" = ["D101", "D102", "D103"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["tsdynamics"]
