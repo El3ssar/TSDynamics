@@ -491,6 +491,571 @@ def integrate(
     return Trajectory(t=t_arr, y=y, system=problem.system, meta=meta)
 
 
+def _run_continuous(
+    problem: Problem,
+    t_eval: np.ndarray,
+    *,
+    method: str,
+    rtol: float,
+    atol: float,
+    backend: str,
+) -> np.ndarray:
+    """Integrate a continuous-time problem (ODE) and sample at ``t_eval``."""
+    if backend == "reference":
+        if not isinstance(problem, ODEProblem):
+            raise NotImplementedError(
+                f"the reference integrator covers ODEs (and maps) only, not "
+                f"{problem.family!r}; use backend='interp'/'jit' (the Rust engine) for "
+                f"DDE integration, or StochasticSystem.integrate for SDEs."
+            )
+        return _reference_ode(problem, t_eval, method=method, rtol=rtol, atol=atol)
+
+    if isinstance(problem, SDEProblem):
+        # On the engine path: the generic integrate seam carries neither the SDE
+        # noise seed nor the step-as-noise-scale, and the drift tape is ODE-shaped
+        # (n_state == dim), so dispatching here would silently integrate the
+        # *deterministic* drift as an ODE. Route SDEs through their seeded entry
+        # point instead. (The reference path above already rejected SDEs.)
+        raise NotImplementedError(
+            "run.integrate cannot carry the SDE noise seed/step; use "
+            "StochasticSystem.integrate(backend=...) for diagonal-Itô SDEs, or "
+            "run.sde_integrate_dense(problem, t_eval, dt=, method=, seed=, backend=)."
+        )
+
+    eng = _engine()
+    # ``_engine_integrate_dense`` returns a ``float64`` ndarray (the single dtype
+    # conversion point), so re-wrapping it with an explicit dtype here would be a
+    # redundant pass over the array — consume it as-is.
+    y = _engine_integrate_dense(
+        eng,
+        _primary_tape(problem).to_arrays(),
+        problem.ic,
+        problem.params_vec(),
+        t_eval,
+        method=method,
+        rtol=rtol,
+        atol=atol,
+        jit=(backend == "jit"),
+    )
+    if not np.all(np.isfinite(y)):
+        raise ConvergenceError(
+            f"{_name(problem)}: integration diverged or the step collapsed before "
+            f"reaching the final time."
+        )
+    return y
+
+
+def _step_continuous(
+    tape_arrays: tuple[Any, ...],
+    ic: np.ndarray,
+    params_vec: np.ndarray,
+    t_eval: np.ndarray,
+    *,
+    method: str,
+    rtol: float,
+    atol: float,
+    jit: bool,
+    name: str,
+) -> np.ndarray:
+    """Integrate one dense ODE span from pre-marshalled tape arrays — the per-step seam.
+
+    The lean inner core of
+    :meth:`~tsdynamics.families.continuous.ContinuousSystem.step`: it performs
+    exactly the engine call and finiteness guard :func:`_run_continuous` does for an
+    ODE on the compiled engine, but takes the already-marshalled tape wire arrays
+    (cached once at ``reinit`` — they are loop-invariant) plus the live parameter
+    vector, skipping the per-call tape re-marshalling, ``Problem`` construction and
+    output-grid build that the full :func:`integrate` entry point pays.  It is
+    therefore **answer-identical** to :func:`_run_continuous` over the same inputs
+    (stream WS-INVHOIST); it serves only the constant-/small-``dt`` stepping loops
+    (Poincaré refinement, basins over flows, the streaming protocol), never a
+    user-facing :class:`~tsdynamics.families.Trajectory` (which keeps its
+    provenance via :func:`integrate`).
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The RHS tape's engine wire arrays (:meth:`Tape.to_arrays`), marshalled once
+        by the caller and reused across the loop.
+    ic : ndarray, shape (dim,)
+        The state to start this span from.
+    params_vec : ndarray
+        Live control-parameter values, read per step so a mid-loop parameter change
+        still takes effect — identical to the pre-hoist path.
+    t_eval : ndarray
+        The (two-node) output grid for this span.
+    method, rtol, atol, jit : str, float, float, bool
+        Solver configuration, resolved once by ``reinit``.
+    name : str
+        System name, for the divergence error message.
+
+    Returns
+    -------
+    ndarray, shape (len(t_eval), dim)
+
+    Raises
+    ------
+    ConvergenceError
+        If the integration diverged or the step collapsed (non-finite output) —
+        the same loud-divergence contract as :func:`_run_continuous`.  Subclasses
+        :class:`RuntimeError`, so existing ``except RuntimeError`` handlers (the
+        divergence convention) keep catching it.
+    """
+    eng = _engine()
+    y = np.asarray(
+        _engine_integrate_dense(
+            eng, tape_arrays, ic, params_vec, t_eval, method=method, rtol=rtol, atol=atol, jit=jit
+        ),
+        dtype=np.float64,
+    )
+    if not np.isfinite(y).all():
+        raise ConvergenceError(
+            f"{name}: integration diverged or the step collapsed before reaching the final time."
+        )
+    return y
+
+
+# ---------------------------------------------------------------------------
+# Resumable ODE stepper handle (stream WS-STEPPER)
+# ---------------------------------------------------------------------------
+#
+# The durable replacement for the per-`dt` :func:`_step_continuous` core: an
+# opaque engine handle (``tsdynamics._rust.OdeStepper``) that owns the built tape
+# evaluator + solver once and carries the live integration point across calls. A
+# constant-/small-``dt`` stepping loop (``ContinuousSystem.step()``, Poincaré
+# refinement, basins over flows) then never rebuilds or re-marshals the tape — only
+# the live state is threaded — yet the numerics are unchanged: ``advance(dt)`` is
+# byte-for-byte identical to the per-`dt` :func:`_step_continuous` it supersedes
+# (the engine re-seeds a fresh solver/state each ``dt``, so the adaptive controller
+# behaves exactly as the released path; verified bit-for-bit in the Rust test
+# ``stepper_advance_reproduces_per_dt_integrate_dense_bit_for_bit``).
+
+
+def make_ode_stepper(
+    tape_arrays: tuple[Any, ...],
+    ic: np.ndarray,
+    t0: float,
+    *,
+    method: str,
+    rtol: float,
+    atol: float,
+    jit: bool,
+) -> Any:
+    """Build a resumable ``OdeStepper`` engine handle over an ODE tape.
+
+    The opaque handle (``tsdynamics._rust.OdeStepper``) owns the built tape
+    evaluator + the resolved solver/tolerances once and carries the live
+    integration point ``(u, t)`` across :func:`step_advance` /
+    :func:`step_advance_to_event` calls — the durable amortisation behind
+    :meth:`~tsdynamics.families.continuous.ContinuousSystem.step` (stream
+    WS-STEPPER). It is engine-only (``"interp"`` / ``"jit"``); the ``method`` is
+    resolved by the engine's solver registry and an implicit kernel needs a tape
+    built ``with_jacobian=True`` (rejected at construction).
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The ODE tape's engine wire arrays (:meth:`Tape.to_arrays`).
+    ic : ndarray, shape (dim,)
+        The state to start from.
+    t0 : float
+        The start time.
+    method : str
+        Solver kernel name (already registry-canonical, e.g. ``"rk45"``).
+    rtol, atol : float
+        Adaptive-kernel tolerances.
+    jit : bool
+        Select the Cranelift evaluator (``True``) or the interpreter (``False``).
+
+    Returns
+    -------
+    OdeStepper
+        The opaque engine handle.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    """
+    eng = _engine()
+    return eng.OdeStepper(
+        *tape_arrays,
+        np.ascontiguousarray(ic, dtype=np.float64),
+        float(t0),
+        method,
+        float(rtol),
+        float(atol),
+        bool(jit),
+    )
+
+
+def step_advance(stepper: Any, dt: float, params_vec: np.ndarray, *, name: str) -> np.ndarray:
+    """Advance an :class:`OdeStepper` handle by one ``dt`` and return the new state.
+
+    The lean per-step seam :meth:`ContinuousSystem.step` calls: it advances the
+    durable handle one ``dt`` from the live state (reading ``params_vec`` live, so a
+    mid-loop parameter change still takes effect) and applies the same loud
+    finiteness/divergence guard :func:`_step_continuous` did.  **Answer-identical**
+    to the released per-``dt`` path (the engine reproduces it bit-for-bit), at a
+    fraction of the per-call cost — the tape is marshalled once, into the handle.
+
+    Raises
+    ------
+    ConvergenceError
+        If the segment diverged or the step collapsed (a non-finite advance).
+        Subclasses :class:`RuntimeError`, so existing ``except RuntimeError``
+        divergence handlers keep catching it.
+    """
+    u = np.asarray(stepper.advance(float(dt), params_vec), dtype=np.float64)
+    if not np.isfinite(u).all():
+        raise ConvergenceError(
+            f"{name}: integration diverged or the step collapsed before reaching the final time."
+        )
+    return u
+
+
+def step_advance_to_event(
+    stepper: Any,
+    g_tape: Any,
+    *,
+    max_span: float,
+    first_step: float,
+    direction: int,
+    params_vec: np.ndarray,
+) -> tuple[bool, float, np.ndarray, int]:
+    """March an :class:`OdeStepper` handle to the next crossing of ``g_tape``.
+
+    The resumable crossing primitive (the durable analogue of :func:`crossings` for
+    a single event): the handle marches up to ``max_span`` ahead of its live time
+    and stops at the first refined crossing of the single-output event tape
+    ``g_tape`` (``g(u, t) = 0``) in ``direction`` (``+1`` rising / ``-1`` falling /
+    ``0`` either), carrying the adaptive step across the whole search. ``first_step``
+    seeds the solver (with the fixed-step ``rk4`` it *is* the detection step ``dt``,
+    reproducing the Python ``PoincareMap`` dt-grid march).
+
+    Returns
+    -------
+    (found, t_cross, u_cross, direction) : (bool, float, ndarray, int)
+        On a hit, the refined crossing and its sign, with the handle advanced one
+        marching step *past* it (so a repeated call finds the *next* crossing); with
+        no hit ``found`` is ``False``, the handle is advanced to ``t + max_span``,
+        and ``u_cross`` is a zero placeholder.
+
+    Raises
+    ------
+    ConvergenceError
+        If the search diverged before a crossing or ``max_span``.
+    """
+    found, t_cross, u_cross, dir_ = stepper.advance_to_event(
+        *g_tape.to_arrays(),
+        float(max_span),
+        float(first_step),
+        int(direction),
+        params_vec,
+    )
+    u_cross = np.asarray(u_cross, dtype=np.float64)
+    if not (np.isfinite(t_cross) and np.isfinite(u_cross).all()):
+        raise ConvergenceError(
+            "OdeStepper.advance_to_event: crossing search diverged or produced "
+            "non-finite values before the span end."
+        )
+    return bool(found), float(t_cross), u_cross, int(dir_)
+
+
+# ---------------------------------------------------------------------------
+# Basin / attractor recurrence FSM (stream perf/basin-march)
+# ---------------------------------------------------------------------------
+# The sequential Rust kernel that runs the *entire* per-initial-condition
+# recurrence FSM (stepping + cell-binning + the shared-label early-out) in one
+# engine call — the accelerated path behind ``find_attractors`` /
+# ``basins_of_attraction``.  It is bit-identical to the Python ``_AttractorMapper``
+# because every cell-check advances the SAME engine stepper the Python
+# ``system.step(dt)`` drives (a fresh-solver ``integrate_dense`` over ``[t, t+dt]``
+# for a flow, one map iteration for a map).  See the ``basin`` module in the engine
+# crate for the why-sequential rationale (parallelism is a measured net loss).
+
+
+def basin_march(
+    tape_arrays: tuple[Any, ...],
+    params_vec: np.ndarray,
+    grid_lo: np.ndarray,
+    grid_hi: np.ndarray,
+    grid_counts: np.ndarray,
+    seeds: np.ndarray,
+    thresholds: tuple[int, int, int, int, int, int],
+    *,
+    is_discrete: bool,
+    method: str = "rk45",
+    rtol: float = 1e-6,
+    atol: float = 1e-9,
+    dt: float = 1.0,
+    jit: bool = False,
+) -> dict[str, Any]:
+    """Run the whole basin recurrence FSM in the Rust engine, for every seed.
+
+    Drives the sequential kernel (``tsdynamics._rust.basin_march_flow`` for a flow,
+    ``basin_march_map`` for a map) over the shared cell tessellation, returning the
+    per-seed labels plus the accumulated ``att_cells`` / ``bas_cells`` /
+    ``att_points`` the basin layer rebuilds its
+    :class:`~tsdynamics.analysis.basins.attractors._AttractorMapper` from.  The
+    per-cell-check numerics are byte-for-byte the released stepping path, so the
+    labels are bit-identical to the pure-Python loop.
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The ODE/map tape's engine wire arrays (:meth:`Tape.to_arrays`).
+    params_vec : ndarray
+        Live control parameters (empty for a lowered map).
+    grid_lo, grid_hi : ndarray, shape (dim,)
+        Lower/upper corner of the recurrence cell box.
+    grid_counts : ndarray of int, shape (dim,)
+        Cells per axis.
+    seeds : ndarray, shape (n_seeds, dim)
+        Initial conditions to classify, in order (the order the shared labelling
+        accumulates in — see the kernel note on why it must stay serial).
+    thresholds : tuple of int
+        ``(max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost)`` — the six FSM
+        thresholds (``consecutive_recurrences`` etc.).
+    is_discrete : bool
+        Whether ``tape_arrays`` is a map (drives the map kernel; ``dt``/``method``/
+        tolerances are then ignored).
+    method, rtol, atol, dt : optional
+        Flow stepper configuration (``method`` registry-canonical; ``dt`` the
+        per-cell-check step).
+    jit : bool, default False
+        Select the Cranelift evaluator.
+
+    Returns
+    -------
+    dict
+        ``{"labels", "att_cells", "bas_cells", "att_points", "dim"}`` where
+        ``att_cells`` / ``bas_cells`` are ``{flat_cell_index: attractor_id}`` and
+        ``att_points`` is ``{attractor_id: (m, dim) ndarray}``.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    """
+    eng = _engine()
+    seeds = np.ascontiguousarray(seeds, dtype=np.float64)
+    if seeds.ndim != 2:
+        seeds = seeds.reshape(-1, len(grid_counts))
+    grid_lo = np.ascontiguousarray(grid_lo, dtype=np.float64)
+    grid_hi = np.ascontiguousarray(grid_hi, dtype=np.float64)
+    grid_counts = np.ascontiguousarray(grid_counts, dtype=np.int64)
+    params_vec = np.ascontiguousarray(params_vec, dtype=np.float64)
+    max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost = (int(x) for x in thresholds)
+
+    if is_discrete:
+        out = eng.basin_march_map(
+            *tape_arrays,
+            params_vec,
+            grid_lo,
+            grid_hi,
+            grid_counts,
+            seeds,
+            max_steps,
+            mx_fnd,
+            mx_loc,
+            mx_att,
+            mx_bas,
+            mx_lost,
+            bool(jit),
+        )
+    else:
+        out = eng.basin_march_flow(
+            *tape_arrays,
+            params_vec,
+            str(method),
+            float(rtol),
+            float(atol),
+            float(dt),
+            grid_lo,
+            grid_hi,
+            grid_counts,
+            seeds,
+            max_steps,
+            mx_fnd,
+            mx_loc,
+            mx_att,
+            mx_bas,
+            mx_lost,
+            bool(jit),
+        )
+    (
+        labels,
+        att_keys,
+        att_ids,
+        bas_keys,
+        bas_ids,
+        point_ids,
+        point_counts,
+        points_flat,
+        dim,
+    ) = out
+    dim = int(dim)
+    att_cells = {int(k): int(v) for k, v in zip(att_keys, att_ids, strict=True)}
+    bas_cells = {int(k): int(v) for k, v in zip(bas_keys, bas_ids, strict=True)}
+    att_points: dict[int, np.ndarray] = {}
+    off = 0
+    points_flat = np.asarray(points_flat, dtype=np.float64)
+    for pid, m in zip(point_ids, point_counts, strict=True):
+        m = int(m)
+        block = points_flat[off * dim : (off + m) * dim].reshape(m, dim)
+        att_points[int(pid)] = np.array(block, dtype=np.float64)
+        off += m
+    return {
+        "labels": np.asarray(labels, dtype=np.int64),
+        "att_cells": att_cells,
+        "bas_cells": bas_cells,
+        "att_points": att_points,
+        "dim": dim,
+    }
+
+
+def _run_dde(
+    problem: DDEProblem,
+    t_eval: np.ndarray,
+    *,
+    history: Any,
+    dt: float,
+    method: str,
+    rtol: float,
+    atol: float,
+    backend: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Integrate a DDE on the Rust method-of-steps engine (stream E-DDE).
+
+    The delay system lowers (via :func:`tsdynamics.engine.compile.lower_dde`) to a
+    tape over ``dim + n_slots`` inputs whose extra inputs are the delay slots; the
+    engine fills those from a history buffer it interpolates with cubic Hermite,
+    reusing the explicit solver kernels for each step.  Only constant delays
+    lower; a state-dependent delay raises ``TapeCompileError`` at build time.
+
+    Returns ``(y, ic0)`` — the sampled trajectory and the ``t0`` state used (the
+    constant past, or ``history(0)`` for a callable past) so the caller can record
+    it in provenance.
+    """
+    if backend == "reference":
+        raise NotImplementedError(
+            f"{_name(problem)}: backend='reference' has no DDE integrator; use "
+            f"backend='interp'/'jit' (the Rust engine)."
+        )
+    try:
+        eng = _engine()
+    except EngineNotAvailableError as err:
+        raise EngineNotAvailableError(
+            f"{_name(problem)}: the Rust DDE engine (tsdynamics._rust) is not built; "
+            f"install the compiled wheel (`pip install tsdynamics`) to integrate DDEs."
+        ) from err
+
+    dim = problem.dim
+    max_delay = problem.max_delay
+    # The t0 state and the past on [-max_delay, 0]; a constant past (no history
+    # callable) is a single sample the engine treats as constant.
+    past_t, past_y, ic0 = _sample_past(history, problem.ic, dim, max_delay, dt)
+
+    slot_components = np.array([s.component for s in problem.delay_slots], dtype=np.int32)
+    slot_delays = np.array([s.delay for s in problem.delay_slots], dtype=np.float64)
+
+    y = np.asarray(
+        eng.integrate_dde_dense(
+            *problem.tape.to_arrays(),
+            slot_components,
+            slot_delays,
+            np.ascontiguousarray(ic0, dtype=np.float64),
+            np.ascontiguousarray(past_t, dtype=np.float64),
+            np.ascontiguousarray(past_y.ravel(), dtype=np.float64),
+            np.ascontiguousarray(t_eval, dtype=np.float64),
+            method,
+            float(rtol),
+            float(atol),
+            backend == "jit",
+        ),
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(y)):
+        raise ConvergenceError(
+            f"{_name(problem)}: DDE integration diverged or the step collapsed before "
+            f"reaching the final time (backend={backend!r}, method={method!r})."
+        )
+    return y, ic0
+
+
+def _sample_past(
+    history: Any,
+    ic_arr: np.ndarray,
+    dim: int,
+    max_delay: float,
+    dt: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sample the past on ``[-max_delay, 0]``, returning ``(past_t, past_y, ic0)``.
+
+    A ``None`` history is a constant past equal to ``ic_arr`` — a single sample
+    the engine reads as constant.  A callable is sampled densely (so the engine's
+    finite-difference Hermite tangents stay accurate), with the ``t0`` state taken
+    as ``history(0)``.
+    """
+    if history is None:
+        past_t = np.array([0.0], dtype=float)
+        past_y = np.asarray(ic_arr, dtype=float).reshape(1, dim)
+        return past_t, past_y, np.asarray(ic_arr, dtype=float)
+
+    # Dense sampling: step no coarser than the output dt and well below the delay,
+    # capped so a tiny delay or dt cannot explode the sample count.
+    step = min(dt, max_delay / 200.0) if max_delay > 0.0 else dt
+    step = max(step, 1e-9)
+    n = max(2, int(np.ceil(max_delay / step)) + 1)
+    n = min(n, 200_000)
+    past_t = np.linspace(-max_delay, 0.0, n)
+    past_y = np.array(
+        [np.asarray(history(s), dtype=float).reshape(dim) for s in past_t],
+        dtype=float,
+    )
+    return past_t, past_y, past_y[-1].copy()
+
+
+def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray, np.ndarray]:
+    """Iterate a map for ``steps`` steps; return ``(step_index, states)``.
+
+    The step index starts at the problem's ``n0`` so a warm-restart map carries
+    a meaningful iteration count on its trajectory.
+    """
+    if backend == "reference":
+        y = _reference_map(problem, steps)
+    else:
+        eng = _engine()
+        diverged_msg = (
+            f"{_name(problem)}: map diverged or produced a non-finite state before "
+            f"reaching {steps} iterations."
+        )
+        try:
+            y = np.asarray(
+                eng.iterate_map(
+                    *problem.tape.to_arrays(), problem.ic, int(steps), backend == "jit"
+                ),
+                dtype=np.float64,
+            )
+        except RuntimeError as exc:
+            # The compiled map loop raises (EngineError::Diverged → RuntimeError)
+            # at the first non-finite iterate — the engine's diverge-loudly
+            # contract. Re-raise *that* with the system name so the message matches
+            # every other boundary (ODE/DDE/reference). A non-divergence
+            # RuntimeError (e.g. a JIT compile failure from backend="jit") is a
+            # different fault and must propagate unchanged, not be mislabelled as a
+            # numerical blow-up.
+            if "diverg" not in str(exc).lower():
+                raise
+            raise ConvergenceError(diverged_msg) from exc
+        # Defense-in-depth: should the binding ever return NaN instead of raising,
+        # still refuse to hand back a silently poisoned trajectory.
+        if not np.all(np.isfinite(y)):
+            raise ConvergenceError(diverged_msg)
+    return np.arange(problem.n0, problem.n0 + steps), y
+
+
 def ensemble(
     system_or_problem: Any,
     ics: Any,

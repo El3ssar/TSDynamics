@@ -711,6 +711,257 @@ fn integrate_events_dense<'py>(
 }
 
 // ---------------------------------------------------------------------------
+// Basin / attractor recurrence FSM (stream perf/basin-march)
+// ---------------------------------------------------------------------------
+
+use bridge::{basin_march_flow_bridge, basin_march_map_bridge};
+use tsdyn_engine::basin::{BasinMarchOutcome, MarchConfig};
+
+/// Marshal a [`BasinMarchOutcome`] into the flat NumPy tuple the Python wiring
+/// rebuilds the mapper from.
+///
+/// Returns `(labels, att_keys, att_ids, bas_keys, bas_ids, point_ids,
+/// point_counts, points_flat, dim)`:
+///
+/// - `labels` `(n_seeds,)` i64 — per-seed attractor id (or `-1` diverged);
+/// - `att_keys`/`att_ids` `(A,)` i64 — the `att_cells` map (flat cell → id);
+/// - `bas_keys`/`bas_ids` `(B,)` i64 — the `bas_cells` map;
+/// - `point_ids`/`point_counts` `(P,)` i64 — one row per attractor id with its
+///   point-cloud row count; `points_flat` `(sum(counts)*dim,)` f64 the row-major
+///   clouds, sliced back per id by the cumulative counts; `dim` the row width.
+#[allow(clippy::type_complexity)]
+fn basin_outcome_to_py(
+    py: Python<'_>,
+    out: BasinMarchOutcome,
+) -> (
+    Bound<'_, PyArray1<i64>>,
+    Bound<'_, PyArray1<i64>>,
+    Bound<'_, PyArray1<i64>>,
+    Bound<'_, PyArray1<i64>>,
+    Bound<'_, PyArray1<i64>>,
+    Bound<'_, PyArray1<i64>>,
+    Bound<'_, PyArray1<i64>>,
+    Bound<'_, PyArray1<f64>>,
+    usize,
+) {
+    let labels = PyArray1::from_vec(py, out.labels);
+
+    let (att_keys, att_ids): (Vec<i64>, Vec<i64>) = out
+        .att_cells
+        .into_iter()
+        .map(|(k, v)| (k as i64, v))
+        .unzip();
+    let (bas_keys, bas_ids): (Vec<i64>, Vec<i64>) = out
+        .bas_cells
+        .into_iter()
+        .map(|(k, v)| (k as i64, v))
+        .unzip();
+
+    let mut point_ids: Vec<i64> = Vec::with_capacity(out.att_points.len());
+    let mut point_counts: Vec<i64> = Vec::with_capacity(out.att_points.len());
+    let mut points_flat: Vec<f64> = Vec::new();
+    for (id, m, flat) in out.att_points {
+        point_ids.push(id);
+        point_counts.push(m as i64);
+        points_flat.extend_from_slice(&flat);
+    }
+
+    (
+        labels,
+        PyArray1::from_vec(py, att_keys),
+        PyArray1::from_vec(py, att_ids),
+        PyArray1::from_vec(py, bas_keys),
+        PyArray1::from_vec(py, bas_ids),
+        PyArray1::from_vec(py, point_ids),
+        PyArray1::from_vec(py, point_counts),
+        PyArray1::from_vec(py, points_flat),
+        out.dim,
+    )
+}
+
+/// Build the six FSM thresholds from the positional ints the Python wiring passes.
+fn march_config(
+    max_steps: usize,
+    mx_fnd: usize,
+    mx_loc: usize,
+    mx_att: usize,
+    mx_bas: usize,
+    mx_lost: usize,
+) -> MarchConfig {
+    MarchConfig {
+        max_steps,
+        mx_fnd,
+        mx_loc,
+        mx_att,
+        mx_bas,
+        mx_lost,
+    }
+}
+
+/// Run the basin recurrence FSM over a **flow** (ODE) — the whole per-IC march
+/// (stepping + cell-binning + the shared-label early-out) for every seed in one
+/// sequential engine call.
+///
+/// The leading tape arrays are the usual `Tape.to_arrays()` tuple; `p` the live
+/// control parameters; `method` resolves through the solver registry (an implicit
+/// kernel needs `with_jacobian=True`, rejected up front); `dt` the per-cell-check
+/// step (byte-for-byte the `ContinuousSystem.step(dt)` numerics); `grid_lo` /
+/// `grid_hi` / `grid_counts` the recurrence cell tessellation; `seeds` an
+/// `(n_seeds, dim)` array of initial conditions; the six `mx_*` ints the FSM
+/// thresholds; `jit` selects the Cranelift evaluator (numerically identical).
+///
+/// Returns the flat tuple [`basin_outcome_to_py`] documents — per-seed labels plus
+/// the accumulated `att_cells`/`bas_cells`/`att_points` the Python wiring rebuilds
+/// the mapper from. Divergence is a `-1` label, never an error; an engine
+/// unavailability or a shape error raises (it must not become divergence).
+#[pyfunction]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn basin_march_flow<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    p: PyReadonlyArray1<f64>,
+    method: String,
+    rtol: f64,
+    atol: f64,
+    dt: f64,
+    grid_lo: PyReadonlyArray1<f64>,
+    grid_hi: PyReadonlyArray1<f64>,
+    grid_counts: PyReadonlyArray1<i64>,
+    seeds: PyReadonlyArray2<f64>,
+    max_steps: usize,
+    mx_fnd: usize,
+    mx_loc: usize,
+    mx_att: usize,
+    mx_bas: usize,
+    mx_lost: usize,
+    jit: bool,
+) -> PyResult<(
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<f64>>,
+    usize,
+)> {
+    let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let p = vec_f64("p", &p)?;
+    let grid_lo = vec_f64("grid_lo", &grid_lo)?;
+    let grid_hi = vec_f64("grid_hi", &grid_hi)?;
+    let grid_counts = grid_counts
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("grid_counts must be a contiguous int64 array"))?
+        .to_vec();
+    let seeds_vec = seeds
+        .as_slice()
+        .map_err(|_| {
+            PyValueError::new_err("seeds must be a C-contiguous (n_seeds, dim) float64 array")
+        })?
+        .to_vec();
+    let cfg = march_config(max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost);
+    let out = py
+        .detach(|| {
+            basin_march_flow_bridge(
+                tape.build()?,
+                &p,
+                &method,
+                rtol,
+                atol,
+                dt,
+                &grid_lo,
+                &grid_hi,
+                &grid_counts,
+                &seeds_vec,
+                cfg,
+                jit,
+            )
+        })
+        .map_err(to_py_err)?;
+    Ok(basin_outcome_to_py(py, out))
+}
+
+/// Run the basin recurrence FSM over a **map** (discrete system).
+///
+/// As [`basin_march_flow`], but each cell check applies the lowered `_step` map
+/// once (no `method`/`rtol`/`atol`/`dt`). The map tape folds its parameters in, so
+/// `p` is empty.
+#[pyfunction]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn basin_march_map<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    p: PyReadonlyArray1<f64>,
+    grid_lo: PyReadonlyArray1<f64>,
+    grid_hi: PyReadonlyArray1<f64>,
+    grid_counts: PyReadonlyArray1<i64>,
+    seeds: PyReadonlyArray2<f64>,
+    max_steps: usize,
+    mx_fnd: usize,
+    mx_loc: usize,
+    mx_att: usize,
+    mx_bas: usize,
+    mx_lost: usize,
+    jit: bool,
+) -> PyResult<(
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyArray1<f64>>,
+    usize,
+)> {
+    let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let p = vec_f64("p", &p)?;
+    let grid_lo = vec_f64("grid_lo", &grid_lo)?;
+    let grid_hi = vec_f64("grid_hi", &grid_hi)?;
+    let grid_counts = grid_counts
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("grid_counts must be a contiguous int64 array"))?
+        .to_vec();
+    let seeds_vec = seeds
+        .as_slice()
+        .map_err(|_| {
+            PyValueError::new_err("seeds must be a C-contiguous (n_seeds, dim) float64 array")
+        })?
+        .to_vec();
+    let cfg = march_config(max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost);
+    let out = py
+        .detach(|| {
+            basin_march_map_bridge(
+                tape.build()?,
+                &p,
+                &grid_lo,
+                &grid_hi,
+                &grid_counts,
+                &seeds_vec,
+                cfg,
+                jit,
+            )
+        })
+        .map_err(to_py_err)?;
+    Ok(basin_outcome_to_py(py, out))
+}
+
+// ---------------------------------------------------------------------------
 // Resumable ODE stepper handle (stream WS-STEPPER)
 // ---------------------------------------------------------------------------
 
@@ -926,6 +1177,8 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(integrate_sde_dense, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_sde_ensemble_final, m)?)?;
     m.add_function(wrap_pyfunction!(integrate_events_dense, m)?)?;
+    m.add_function(wrap_pyfunction!(basin_march_flow, m)?)?;
+    m.add_function(wrap_pyfunction!(basin_march_map, m)?)?;
     m.add_class::<PyOdeStepper>()?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
     m.add_function(wrap_pyfunction!(_version, m)?)?;

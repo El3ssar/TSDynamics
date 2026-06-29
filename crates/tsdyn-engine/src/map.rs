@@ -84,6 +84,25 @@ fn map_step(
     Ok(())
 }
 
+/// Apply the map **once** — `next ← f(cur)` — for a caller driving its own loop.
+///
+/// The single-step primitive the basin recurrence FSM ([`crate::basin`]) advances
+/// a map trajectory with, one cell-check at a time, so it shares the exact
+/// finiteness contract of the bulk [`iterate_dense`] / [`iterate_final`] loops
+/// (a non-finite iterate is a divergence). `scratch` is the evaluator's working
+/// buffer (reused across calls); `next` receives the next state. Returns `false`
+/// on a non-finite iterate (the caller treats it as "gone for good").
+#[inline]
+pub fn map_step_once(
+    ev: &dyn Evaluator,
+    cur: &[f64],
+    p: &[f64],
+    scratch: &mut [f64],
+    next: &mut [f64],
+) -> bool {
+    map_step(ev, cur, p, scratch, next, 0).is_ok()
+}
+
 /// Iterate the map `n_steps` times from `u0`, recording every iterate.
 ///
 /// Returns a row-major `(n_steps, dim)` buffer whose row `i` is `f^{i+1}(u0)`

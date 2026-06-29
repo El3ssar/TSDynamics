@@ -44,6 +44,9 @@ pub mod sde;
 pub mod dde;
 // Appended by stream E-EVENT (event detection + dense output).
 pub mod event;
+// Appended by stream perf/basin-march (the sequential basin/attractor recurrence
+// FSM — the Rust port of the Python `_AttractorMapper`).
+pub mod basin;
 
 #[cfg(test)]
 mod testkit;
@@ -65,6 +68,11 @@ pub use sde::{
 pub use dde::{integrate_dde_grid, DelaySlot};
 // Appended by stream E-EVENT.
 pub use event::{integrate_events, EventDirection, EventHit, EventOutcome, EventSpec, HermiteStep};
+// Appended by stream perf/basin-march.
+pub use basin::{
+    basin_march_flow, basin_march_map, BasinError, BasinMarchOutcome, CellGrid, MarchConfig,
+    DIVERGED,
+};
 
 /// Check that the linked solver registry has no duplicate names, returning the
 /// clashing names if any.
