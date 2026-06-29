@@ -389,10 +389,16 @@ def test_step_continuous_finiteness_guard_message(monkeypatch):
     by forcing the engine call to hand back a poisoned array — confirming the guard
     is wired and names the system, mirroring :func:`_run_continuous`.
     """
-    import tsdynamics.engine.run as run
+    import tsdynamics.engine._families as families
     from tsdynamics.engine.run import _step_continuous
 
-    monkeypatch.setattr(run, "_engine_integrate_dense", lambda *a, **k: np.array([[0.0], [np.inf]]))
+    # ``_step_continuous`` (and ``_engine_integrate_dense``) live in
+    # ``engine._families`` post run-split; patch the FFI shim where it is *looked
+    # up* (``_families``), not on the ``engine.run`` re-export, so the forced
+    # non-finite return reaches ``_step_continuous``'s defense-in-depth guard.
+    monkeypatch.setattr(
+        families, "_engine_integrate_dense", lambda *a, **k: np.array([[0.0], [np.inf]])
+    )
     with pytest.raises(RuntimeError, match="diverged or the step collapsed"):
         _step_continuous(
             (),
