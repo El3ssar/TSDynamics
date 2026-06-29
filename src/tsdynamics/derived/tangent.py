@@ -114,6 +114,7 @@ class TangentSystem(DerivedSystem):
         self._W: np.ndarray | None = None  # (dim, k) deviation vectors (map mode)
         self._ext_tape: Any = None  # extended variational tape (ode engine mode)
         self._ext_tape_key: Any = None  # structural-param key the tape was built for
+        self._ext_tape_arrays: Any = None  # the extended tape's engine wire arrays (cached)
         self._z: np.ndarray | None = None  # extended state (ode engine mode)
         self._t = 0.0
         # ODE integration options (engine mode), captured at reinit.
@@ -121,6 +122,19 @@ class TangentSystem(DerivedSystem):
         self._rtol = 1e-6
         self._atol = 1e-9
         self._integrator_kwargs: dict[str, Any] = {}
+        # Resumable engine stepper amortisation (stream perf/lyapunov-stepper): when
+        # the resolved kernel is *explicit* and the backend is the compiled engine
+        # (``interp``/``jit``), the per-dt-chunk loop reuses one durable
+        # ``OdeStepper`` handle (built once over the extended variational tape,
+        # re-seeded after each QR via ``set_state``) instead of constructing a fresh
+        # ``ODEProblem`` + calling ``run.integrate`` every chunk.  ``advance(dt)`` is
+        # bit-for-bit identical to the per-dt ``integrate_dense`` it supersedes, so
+        # the spectrum is unchanged.  ``make_ode_stepper`` rejects an implicit kernel
+        # at construction, so a stiff base flow (an implicit ``_default_method``) and
+        # the ``reference`` oracle keep the per-chunk ``run.integrate`` path.
+        self._ode_stepper: Any = None  # the durable OdeStepper handle (explicit only)
+        self._step_kernel: str | None = None  # canonical kernel name (e.g. "rk45")
+        self._step_explicit_engine = False  # eligible for the stepper fast path?
         self._last_growths = np.zeros(self.k)
         self._sum_growths = np.zeros(self.k)
         self._elapsed = 0.0
@@ -181,8 +195,74 @@ class TangentSystem(DerivedSystem):
         if self._ext_tape is None or key != self._ext_tape_key:
             self._ext_tape = build_variational_tape(self.system, self.k)
             self._ext_tape_key = key
+            self._ext_tape_arrays = None  # re-marshal the wire arrays for the new tape
         w0 = np.eye(self.system.dim)[:, : self.k]
         self._z = embed_extended(ic_arr, w0)
+        self._setup_ode_stepper()
+
+    def _setup_ode_stepper(self) -> None:
+        """Decide the per-chunk integration path and build the resumable stepper.
+
+        Resolves the requested method to a canonical engine kernel.  When that
+        kernel is **explicit** and the backend is the compiled engine
+        (``interp``/``jit``), build one durable
+        :class:`tsdynamics._rust.OdeStepper` over the extended variational tape —
+        the per-chunk loop then re-seeds it with ``set_state`` after each QR and
+        :func:`~tsdynamics.engine.run.step_advance` advances it one ``dt``,
+        marshalling the tape into the engine exactly once instead of per chunk
+        (the ``TODO(stepper-amortize)``).  ``advance(dt)`` reproduces the per-dt
+        ``integrate_dense`` bit-for-bit, so the spectrum is unchanged.
+
+        The fast path is declined — leaving the per-chunk ``run.integrate`` path in
+        :meth:`_step_ode_engine` untouched — for an **implicit / stiff** kernel
+        (``make_ode_stepper`` rejects it at construction), for ``method="auto"``
+        (whose per-IC stiffness probe is owned by ``run.integrate``), and for the
+        ``reference`` backend (no engine stepper).  Any failure to build the
+        handle (e.g. the engine wheel absent) silently falls back to the
+        per-chunk path.
+        """
+        self._ode_stepper = None
+        self._step_kernel = None
+        self._step_explicit_engine = False
+
+        if self._backend == "reference":
+            return
+
+        from tsdynamics import solvers
+        from tsdynamics.engine import run
+
+        requested = self._method or self.system._default_method
+        # ``method="auto"`` is owned by run.integrate (it probes the start-state
+        # Jacobian spectrum per IC); leave that path on run.integrate.
+        if solvers.normalize(requested) == "auto":
+            return
+        try:
+            resolution = solvers.resolve(requested, family="ode")
+        except ValueError:
+            return  # an unknown name surfaces loudly on the run.integrate path
+        if resolution.is_implicit:
+            return  # make_ode_stepper rejects implicit kernels — keep run.integrate
+
+        assert self._z is not None  # caller seeds the extended state first
+        if self._ext_tape_arrays is None:
+            self._ext_tape_arrays = self._ext_tape.to_arrays()
+        try:
+            self._ode_stepper = run.make_ode_stepper(
+                self._ext_tape_arrays,
+                self._z,
+                self._t,
+                method=resolution.name,
+                rtol=self._rtol,
+                atol=self._atol,
+                jit=self._backend == "jit",
+            )
+        except Exception:
+            # The engine wheel may be absent / decline; fall back transparently to
+            # the per-chunk run.integrate path (it raises the canonical errors).
+            self._ode_stepper = None
+            return
+        self._step_kernel = resolution.name
+        self._step_explicit_engine = True
 
     # --- protocol ---
 
@@ -222,39 +302,52 @@ class TangentSystem(DerivedSystem):
         return cast(np.ndarray, sys.state())
 
     def _step_ode_engine(self, dt: float) -> np.ndarray:
-        # PERF / TODO(stepper-amortize): this builds a fresh ODEProblem and calls
-        # the full run.integrate() every dt-chunk (~final_time/dt calls per
-        # spectrum). A resumable OdeStepper (run.make_ode_stepper built once in
-        # _reinit_ode_engine, then run.step_advance(dt) here, re-seeding the
-        # extended state after each QR) would amortise the per-call FFI/tape
-        # marshalling. It is NOT done yet because the extended state is re-seeded
-        # after every QR (so the handle would need re-seeding each step) AND
-        # make_ode_stepper rejects an implicit (stiff) kernel at construction even
-        # with a Jacobian-bearing tape — so a stiff base flow could not use it.
-        # The amortisation must stay bit-identical to advance(dt)==integrate_dense
-        # (the Lorenz spectrum in test_known_values is the guard); leave it until
-        # those two constraints are resolved rather than risk the spectrum.
+        # Advance the extended variational state one ``dt`` chunk, then QR-reorthonormalise.
+        #
+        # Fast path (stream perf/lyapunov-stepper): for an *explicit* engine kernel
+        # the loop reuses one durable ``OdeStepper`` handle built in
+        # :meth:`_setup_ode_stepper` — re-seed it with the post-QR extended state
+        # (``set_state``) and advance one ``dt`` (``run.step_advance``).  The tape is
+        # marshalled into the engine exactly once (at reinit), not per chunk, and
+        # ``advance(dt)`` is byte-for-byte identical to the per-dt ``integrate_dense``
+        # the slow path called, so the spectrum is unchanged.  The slow per-chunk
+        # ``run.integrate`` path below is kept verbatim for the implicit/stiff kernel
+        # (``make_ode_stepper`` rejects it), the ``reference`` oracle, ``method="auto"``,
+        # and a non-positive ``dt`` (so the canonical ``InvalidParameterError`` still
+        # fires) — exactly the cases :meth:`_setup_ode_stepper` declines.
         if self._z is None:
             self.reinit()
         assert self._z is not None  # reinit() seeds the extended state in ODE mode
         from tsdynamics.engine import run
-        from tsdynamics.engine.problem import ODEProblem
 
         dim = self.system.dim
         t0 = self._t
-        method = self._method or self.system._default_method
-        problem = ODEProblem(tape=self._ext_tape, ic=self._z, t0=t0, system=self.system)
-        traj = run.integrate(
-            problem,
-            final_time=t0 + dt,
-            dt=dt,
-            t0=t0,
-            method=method,
-            rtol=self._rtol,
-            atol=self._atol,
-            backend=self._backend,
-        )
-        x, w = split_extended(traj.y[-1], dim, self.k)
+
+        if self._step_explicit_engine and self._ode_stepper is not None and dt > 0:
+            assert self._step_kernel is not None
+            params_vec = self._engine_params_vec()
+            self._ode_stepper.set_state(self._z, t0)
+            z_next = run.step_advance(
+                self._ode_stepper, dt, params_vec, name=type(self.system).__name__
+            )
+        else:
+            from tsdynamics.engine.problem import ODEProblem
+
+            method = self._method or self.system._default_method
+            problem = ODEProblem(tape=self._ext_tape, ic=self._z, t0=t0, system=self.system)
+            traj = run.integrate(
+                problem,
+                final_time=t0 + dt,
+                dt=dt,
+                t0=t0,
+                method=method,
+                rtol=self._rtol,
+                atol=self._atol,
+                backend=self._backend,
+            )
+            z_next = traj.y[-1]
+
+        x, w = split_extended(z_next, dim, self.k)
         q, growths = _qr_growths(w)
         self._z = embed_extended(x, q)
         self._t = t0 + dt
@@ -262,6 +355,23 @@ class TangentSystem(DerivedSystem):
         self._sum_growths += growths
         self._elapsed += dt
         return x
+
+    def _engine_params_vec(self) -> np.ndarray:
+        """Return the extended tape's live control-parameter vector.
+
+        The extended variational tape carries the base system's control parameters
+        (in ``system._control_params()`` order — see
+        :func:`~tsdynamics.derived._variational.build_variational_tape`), so the
+        live parameter vector is read off a thin :class:`ODEProblem` wrapping that
+        tape and the base system; the values come straight from
+        ``system.params``, so a control-parameter change still takes effect on the
+        next ``step`` exactly as the per-chunk ``run.integrate`` path did.
+        """
+        from tsdynamics.engine.problem import ODEProblem
+
+        assert self._z is not None  # only called on the live (seeded) fast path
+        prob = ODEProblem(tape=self._ext_tape, ic=self._z, t0=self._t, system=self.system)
+        return prob.params_vec()
 
     def state(self) -> np.ndarray:
         """Return a copy of the current base-system state."""
