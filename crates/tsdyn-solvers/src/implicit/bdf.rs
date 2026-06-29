@@ -325,14 +325,20 @@ impl Bdf {
     }
 
     /// Seed the history from the current point at order 1: `D[0] = u`, `D[1] = h·f`.
-    fn initialize(&mut self, ev: &dyn Evaluator, st: &SolverState, h: f64) {
+    ///
+    /// Takes `st` mutably purely to borrow its evaluator scratch
+    /// ([`SolverState::scratch`]) for the seeding RHS evaluation, so this one-shot
+    /// initialization allocates nothing — `st.u`/`st.t`/`st.p` are read-only and
+    /// left untouched. Behaviour is identical to seeding with a fresh scratch buffer
+    /// (the evaluator overwrites scratch on entry).
+    fn initialize(&mut self, ev: &dyn Evaluator, st: &mut SolverState, h: f64) {
         let n = st.u.len();
         self.ensure(n);
         self.d.iter_mut().for_each(|x| *x = 0.0);
         self.d[0..n].copy_from_slice(&st.u);
-        // f(t0, u0) seeds the first difference D[1] = h·f.
-        let mut scratch = vec![0.0; ev.n_scratch()];
-        ev.eval(&st.u, &st.p, st.t, &mut scratch, &mut self.f);
+        // f(t0, u0) seeds the first difference D[1] = h·f; reuse the state's own
+        // scratch rather than allocating a fresh buffer for this one-shot seed.
+        ev.eval(&st.u, &st.p, st.t, &mut st.scratch, &mut self.f);
         for i in 0..n {
             self.d[n + i] = h * self.f[i];
         }

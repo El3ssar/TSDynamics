@@ -31,6 +31,22 @@
 //! re-accumulated. Variable-coefficient Adams methods are a possible future
 //! refinement; they would slot in behind this same kernel without an interface
 //! change.
+//!
+//! ## Commensurate-grid requirement (caller-facing invariant)
+//!
+//! Because every step-size *change* forces a full RK4 restart, these kernels keep
+//! their advertised order **only on a grid whose spacing is a constant multiple of
+//! the integration step** — i.e. the requested output `dt` must be commensurate
+//! with the kernel step `h`. When the grid is commensurate the mesh is uniform end
+//! to end (apart from at most one landing step), the multistep formula runs at full
+//! order, and the result is bit-identical across runs. When it is *not* — an output
+//! `dt` that is not an integer multiple of `h`, or a `step()` loop driven at an
+//! ever-changing `dt` — almost every step is a fresh restart and the method
+//! silently **degrades toward plain RK4** (its 4th-order bootstrap): still correct
+//! and convergent, but with RK4's (not the multistep's) error constant and cost.
+//! This is a deliberate scope choice: a true variable-coefficient Adams kernel is
+//! out of scope here. The degradation is *quiet* (no warning, no failure) — pick a
+//! commensurate grid to realise the multistep advantage.
 
 use std::collections::VecDeque;
 
@@ -202,7 +218,11 @@ const AB4: &[f64] = &[55.0 / 24.0, -59.0 / 24.0, 37.0 / 24.0, -9.0 / 24.0];
 // Adams–Moulton-4 corrector weights [f_pred, f_c, f_{n-1}, f_{n-2}].
 const AM4: &[f64] = &[9.0 / 24.0, 19.0 / 24.0, -5.0 / 24.0, 1.0 / 24.0];
 
-/// Adams–Bashforth 3-step explicit multistep kernel (order 3).
+/// Adams–Bashforth 3-step explicit multistep kernel (order 3, one RHS/step).
+///
+/// Holds order 3 on a commensurate (uniform-`h`) grid; an incommensurate output
+/// `dt` restarts the history each step and degrades it toward RK4 (see the
+/// module's *Commensurate-grid requirement*). Self-starts with RK4.
 #[derive(Default)]
 pub struct Ab3 {
     state: AdamsState,
@@ -237,7 +257,11 @@ register_solver!(
     || Box::new(Ab3::new())
 );
 
-/// Adams–Bashforth 4-step explicit multistep kernel (order 4).
+/// Adams–Bashforth 4-step explicit multistep kernel (order 4, one RHS/step).
+///
+/// Holds order 4 on a commensurate (uniform-`h`) grid; an incommensurate output
+/// `dt` restarts the history each step and degrades it toward RK4 (see the
+/// module's *Commensurate-grid requirement*). Self-starts with RK4.
 #[derive(Default)]
 pub struct Ab4 {
     state: AdamsState,
@@ -273,6 +297,11 @@ register_solver!(
 );
 
 /// Adams–Bashforth–Moulton predictor–corrector kernel (PECE, order 4).
+///
+/// Predicts with AB4 and corrects once with AM4 (two RHS/step). Holds order 4 on a
+/// commensurate (uniform-`h`) grid; an incommensurate output `dt` restarts the
+/// history each step and degrades it toward RK4 (see the module's
+/// *Commensurate-grid requirement*). Self-starts with RK4.
 #[derive(Default)]
 pub struct Abm4 {
     state: AdamsState,

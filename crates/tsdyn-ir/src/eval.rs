@@ -57,7 +57,8 @@
 ///
 /// Every call writes into caller-owned buffers and allocates nothing:
 ///
-/// - `u` — state, length [`dim`](Evaluator::dim) (the RHS reads it).
+/// - `u` — state, length [`n_state`](Evaluator::n_state) (the RHS reads it);
+///   equals [`dim`](Evaluator::dim) for an ordinary tape.
 /// - `p` — parameters, length [`n_param`](Evaluator::n_param).
 /// - `scratch` — working buffer of length [`n_scratch`](Evaluator::n_scratch);
 ///   its contents on entry are irrelevant and on exit unspecified.
@@ -68,8 +69,26 @@
 /// Implementations may rely on these lengths (debug builds should assert them);
 /// passing a shorter slice is a caller bug, not an `Evaluator` error.
 pub trait Evaluator: Sync {
-    /// System dimension — the length of `u`, `deriv`, and `√(jac.len())`.
+    /// System dimension — the length of `deriv` and `√(jac.len())`, i.e. the
+    /// number of derivative outputs `f` produces.
     fn dim(&self) -> usize;
+
+    /// Declared **state** width — the number of `f64` the RHS reads from `u`
+    /// (the tape's [`n_state`](crate::Tape::n_state)).
+    ///
+    /// This is distinct from [`dim`](Evaluator::dim): for an *extended* tape the
+    /// state read can differ from the derivative-output count (e.g. an event
+    /// function `g(u, t)` reads the full state but produces a single scalar). A
+    /// caller holding only a `&dyn Evaluator` uses this to size the `u` slice it
+    /// passes in, rather than assuming `u.len() == dim`.
+    ///
+    /// The default returns [`dim`](Evaluator::dim) — correct for the common case
+    /// where every state component has a matching derivative output (`n_state ==
+    /// dim`). A tape-backed evaluator whose state width differs from its output
+    /// count should override this to return the tape's `n_state()`.
+    fn n_state(&self) -> usize {
+        self.dim()
+    }
 
     /// Declared parameter width — the expected length of `p`.
     fn n_param(&self) -> usize;
@@ -125,6 +144,9 @@ mod tests {
         fn dim(&self) -> usize {
             self.tape.dim()
         }
+        fn n_state(&self) -> usize {
+            self.tape.n_state()
+        }
         fn n_param(&self) -> usize {
             self.tape.n_param()
         }
@@ -179,10 +201,57 @@ mod tests {
     }
 
     #[test]
+    fn n_state_reports_the_tape_state_width() {
+        // Lorenz: 3 state components, 3 outputs — n_state and dim coincide, but
+        // n_state must come from the tape, not be assumed equal to dim.
+        let ev = RefEval { tape: lorenz() };
+        let dynev: &dyn Evaluator = &ev;
+        assert_eq!(dynev.n_state(), 3);
+        assert_eq!(dynev.n_state(), dynev.dim());
+    }
+
+    #[test]
+    fn n_state_default_falls_back_to_dim() {
+        // An evaluator that does NOT override `n_state` (the trait default) must
+        // report `dim()`, so a `&dyn Evaluator` can still size `u`.
+        struct DimOnly;
+        impl Evaluator for DimOnly {
+            fn dim(&self) -> usize {
+                4
+            }
+            fn n_param(&self) -> usize {
+                0
+            }
+            fn n_scratch(&self) -> usize {
+                0
+            }
+            fn has_jacobian(&self) -> bool {
+                false
+            }
+            fn eval(&self, _u: &[f64], _p: &[f64], _t: f64, _s: &mut [f64], deriv: &mut [f64]) {
+                deriv.fill(0.0);
+            }
+            fn eval_jac(
+                &self,
+                _u: &[f64],
+                _p: &[f64],
+                _t: f64,
+                _s: &mut [f64],
+                _deriv: &mut [f64],
+                _jac: &mut [f64],
+            ) {
+            }
+        }
+        let dynev: &dyn Evaluator = &DimOnly;
+        assert_eq!(dynev.n_state(), 4);
+    }
+
+    #[test]
     fn usable_as_trait_object() {
         let ev = RefEval { tape: lorenz() };
         let dynev: &dyn Evaluator = &ev;
         assert_eq!(dynev.dim(), 3);
+        assert_eq!(dynev.n_state(), 3);
         assert_eq!(dynev.n_param(), 3);
         assert!(!dynev.has_jacobian());
         let mut scratch = vec![0.0; dynev.n_scratch()];

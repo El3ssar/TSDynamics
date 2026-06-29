@@ -65,12 +65,18 @@ const B: &[f64] = &[
 // Error weights b̃ = b(5th) − b̂(4th) per stage (Tsitouras 2011, Table; e₇ = 1/66).
 // These published decimals sum to ≈ −5e-12, not exactly 0: b̃ = b − b̂ is exactly
 // zero-sum in the rationals, but the tabulated b̂ decimals carry that residual.
-// The embedded estimator's 4th order is verified directly by test below.
+// The embedded estimator's 4th order is verified directly by test below, and each
+// coefficient is pinned against the published table by `e_coefficients_match_table`.
+//
+// `E` drives ONLY the embedded error estimate (step-size control); the accepted
+// 5th-order solution comes from `B` alone. So a perturbation here can only shift
+// the step *sequence* near tolerance — never an accepted result — which is why the
+// `interp == jit` / golden-fixture invariants are insensitive to it.
 const E: &[f64] = &[
     -0.001780011052226,
     -0.000816434459657,
     0.007880878010262,
-    -0.1447110071783768,
+    -0.1447110071732629,
     0.582357165452555,
     -0.458082105929187,
     1.0 / 66.0,
@@ -173,6 +179,29 @@ mod tests {
         for (i, row) in A.iter().enumerate() {
             let s: f64 = row.iter().sum();
             assert!((s - C[i]).abs() < 1e-13, "row {i}: Σa = {s}, c = {}", C[i]);
+        }
+    }
+
+    #[test]
+    fn e_coefficients_match_table() {
+        // Pin EVERY embedded error-weight `e_i` against the canonical Tsitouras
+        // (2011) table so an 11th-significant-digit transcription slip cannot drift
+        // back in silently (the original `E[3]` carried a ~5.1e-12 typo:
+        // -0.1447110071783768 instead of -0.1447110071732629). `E` drives only the
+        // step controller, so such a slip never shows up in an accepted-value test
+        // — only an exact-coefficient pin like this one catches it.
+        const E_TABLE: &[f64] = &[
+            -0.001780011052226,
+            -0.000816434459657,
+            0.007880878010262,
+            -0.1447110071732629,
+            0.582357165452555,
+            -0.458082105929187,
+            1.0 / 66.0,
+        ];
+        assert_eq!(E.len(), E_TABLE.len());
+        for (i, (&got, &want)) in E.iter().zip(E_TABLE).enumerate() {
+            assert_eq!(got.to_bits(), want.to_bits(), "E[{i}] = {got}, want {want}");
         }
     }
 

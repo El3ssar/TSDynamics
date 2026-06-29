@@ -230,23 +230,31 @@ pub fn iterate_ensemble_final(
     );
     let n_ic = u0_batch.len() / dim;
 
-    let per_traj: Vec<(Vec<f64>, MapTrajStatus)> = (0..n_ic)
-        .into_par_iter()
-        .map(|i| {
+    // Preallocate the contiguous output and write each trajectory DIRECTLY into
+    // its own row slice in parallel: `states.par_chunks_mut(dim)` zipped with
+    // `status.par_iter_mut()` gives worker `i` exclusive access to row `i`, so
+    // there is no per-trajectory heap `Vec` and no second copy. The partition is
+    // positional, so the result stays in input order regardless of thread count
+    // (maps carry no per-step randomness, so this is identical run to run).
+    let mut states = vec![0.0; n_ic * dim];
+    let mut status = vec![MapTrajStatus::Ok; n_ic];
+    states
+        .par_chunks_mut(dim)
+        .zip(status.par_iter_mut())
+        .enumerate()
+        .for_each(|(i, (row, st))| {
             let u0 = &u0_batch[i * dim..(i + 1) * dim];
             match iterate_final(ev, u0, p, n_steps) {
-                Ok(uf) => (uf, MapTrajStatus::Ok),
-                Err(e) => (vec![f64::NAN; dim], MapTrajStatus::Failed(e)),
+                Ok(uf) => {
+                    row.copy_from_slice(&uf);
+                    *st = MapTrajStatus::Ok;
+                }
+                Err(e) => {
+                    row.fill(f64::NAN);
+                    *st = MapTrajStatus::Failed(e);
+                }
             }
-        })
-        .collect();
-
-    let mut states = Vec::with_capacity(n_ic * dim);
-    let mut status = Vec::with_capacity(n_ic);
-    for (uf, s) in per_traj {
-        states.extend_from_slice(&uf);
-        status.push(s);
-    }
+        });
     MapEnsembleFinal {
         dim,
         states,
@@ -520,5 +528,41 @@ mod tests {
         let ens = iterate_ensemble_final(&ev, &[], &[], 10);
         assert_eq!(ens.n_ic(), 0);
         assert!(ens.states.is_empty());
+    }
+
+    #[test]
+    fn direct_row_write_preserves_index_order_with_interleaved_failures() {
+        // Regression for the direct-into-row-slice ensemble write (no per-traj
+        // Vec + second copy): an interleaved finite/diverging pattern must land
+        // each trajectory in its OWN row in input order with NaN confined to the
+        // diverged rows, even under a forced multi-thread pool. doubling() x←2x
+        // keeps x0=0 fixed and overflows any nonzero x0 over this horizon.
+        let ev = VmEval::new(doubling());
+        let n_ic = 64;
+        // Even index → 0 (stays at the fixed point), odd index → 1 (overflows).
+        let u0: Vec<f64> = (0..n_ic)
+            .map(|i| if i % 2 == 0 { 0.0 } else { 1.0 })
+            .collect();
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        let ens = pool.install(|| iterate_ensemble_final(&ev, &u0, &[], 100_000));
+
+        assert_eq!(ens.n_ic(), n_ic);
+        assert_eq!(ens.n_failed(), n_ic / 2);
+        for i in 0..n_ic {
+            if i % 2 == 0 {
+                assert!(ens.status[i].is_ok(), "fixed-point row {i} should survive");
+                assert_eq!(ens.row(i), &[0.0], "fixed-point row {i} must stay 0");
+            } else {
+                assert!(
+                    matches!(ens.status[i], MapTrajStatus::Failed(_)),
+                    "row {i} should have diverged"
+                );
+                assert!(ens.row(i)[0].is_nan(), "diverged row {i} must be NaN");
+            }
+        }
     }
 }

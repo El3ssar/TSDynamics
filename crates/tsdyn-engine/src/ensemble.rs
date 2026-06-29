@@ -120,26 +120,33 @@ where
     );
     let n_ic = u0_batch.len() / dim;
 
-    // map → collect preserves index order, so the output never depends on the
-    // order rayon happens to finish workers in.
-    let per_traj: Vec<(Vec<f64>, TrajStatus)> = (0..n_ic)
-        .into_par_iter()
-        .map(|i| {
+    // Preallocate the contiguous output and write each trajectory DIRECTLY into
+    // its own row slice in parallel. Zipping `states.par_chunks_mut(dim)` with
+    // `status.par_iter_mut()` partitions the buffers into disjoint, index-aligned
+    // pieces, so worker `i` only ever touches row `i` — no per-trajectory heap
+    // `Vec` and no second copy. The partition is positional, so the output is
+    // still in input order regardless of how rayon schedules the workers
+    // (parallel == serial bit-for-bit, the determinism contract above).
+    let mut states = vec![0.0; n_ic * dim];
+    let mut status = vec![TrajStatus::Ok; n_ic];
+    states
+        .par_chunks_mut(dim)
+        .zip(status.par_iter_mut())
+        .enumerate()
+        .for_each(|(i, (row, st))| {
             let u0 = &u0_batch[i * dim..(i + 1) * dim];
             let mut solver = make_solver(i);
             match integrate_final(ev, &mut *solver, u0, p, t0, t1, cfg) {
-                Ok(uf) => (uf, TrajStatus::Ok),
-                Err(e) => (vec![f64::NAN; dim], TrajStatus::Failed(e)),
+                Ok(uf) => {
+                    row.copy_from_slice(&uf);
+                    *st = TrajStatus::Ok;
+                }
+                Err(e) => {
+                    row.fill(f64::NAN);
+                    *st = TrajStatus::Failed(e);
+                }
             }
-        })
-        .collect();
-
-    let mut states = Vec::with_capacity(n_ic * dim);
-    let mut status = Vec::with_capacity(n_ic);
-    for (uf, s) in per_traj {
-        states.extend_from_slice(&uf);
-        status.push(s);
-    }
+        });
     EnsembleFinal {
         dim,
         states,
@@ -299,5 +306,52 @@ mod tests {
         let ens = ensemble_final(&ev, |_| Box::new(Rk4::new()), &[], &[], 0.0, 1.0, &cfg);
         assert_eq!(ens.n_ic(), 0);
         assert!(ens.states.is_empty());
+    }
+
+    #[test]
+    fn direct_row_write_preserves_index_order_with_interleaved_failures() {
+        // Regression for the direct-into-row-slice ensemble write (no per-traj
+        // Vec + second copy): an interleaved ok/fail/ok/fail pattern must land
+        // each trajectory in its OWN row in input order, with NaN confined to the
+        // failed rows — even under a forced multi-thread pool where workers finish
+        // out of order. blowup() diverges for x0 > 0 and decays for x0 < 0.
+        let ev = VmEval::new(blowup());
+        let cfg = IntegrateConfig::new(0.01);
+        let n_ic = 64;
+        // Even index → +1 (blows up before t=2), odd index → -1 (stays finite).
+        let u0: Vec<f64> = (0..n_ic)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        let ens = pool
+            .install(|| ensemble_final(&ev, |_| Box::new(Rk4::new()), &u0, &[], 0.0, 2.0, &cfg));
+
+        assert_eq!(ens.n_ic(), n_ic);
+        assert_eq!(ens.n_failed(), n_ic / 2);
+        for i in 0..n_ic {
+            if i % 2 == 0 {
+                assert!(
+                    matches!(ens.status[i], TrajStatus::Failed(_)),
+                    "row {i} should have diverged"
+                );
+                assert!(ens.row(i)[0].is_nan(), "diverged row {i} must be NaN");
+            } else {
+                assert!(ens.status[i].is_ok(), "row {i} should be finite");
+                assert!(
+                    ens.row(i)[0].is_finite(),
+                    "finite row {i} must not be NaN-smeared by a neighbour"
+                );
+                // -1 decaying under dx/dt = x²: x(t) = -1/(1+t), so x(2) = -1/3.
+                assert!(
+                    (ens.row(i)[0] - (-1.0 / 3.0)).abs() < 1e-6,
+                    "row {i}: {} vs -1/3",
+                    ens.row(i)[0]
+                );
+            }
+        }
     }
 }

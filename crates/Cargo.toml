@@ -49,6 +49,22 @@ repository = "https://github.com/El3ssar/TSDynamics"
 # path here; external engine/binding deps (pyo3, numpy, rayon) are pre-pinned to
 # the versions already proven in `tsdynamics-core`. Solver-/JIT-specific deps
 # (e.g. cranelift for tsdyn-jit) are declared by their owning crate, not here.
+# Release-profile tuning for the workspace members (`tsdyn-ir`/`-vm`/`-jit`/
+# `-solvers`/`-engine`). Profiles are resolved from the root manifest of the
+# build, so this block governs any `cargo build --release` / benchmark over the
+# workspace (e.g. `rust-workspace.yml`); the wheel build does NOT pass through
+# here — it roots at the excluded `tsdyn-core` manifest, which carries its own
+# matching `[profile.release]`. `lto = "thin"` enables cross-crate inlining of
+# the hot RK / interpreter loops; `codegen-units = 1` hands each crate to the
+# optimizer as a single unit. Conventional release tuning for a numerical
+# engine, and **answer-preserving** — it changes only code generation, never the
+# IEEE-754 results, so `interp == jit`, the golden fixtures and parallel==serial
+# ensembles are bit-for-bit unchanged. Affects the release build only; `cargo
+# test` (debug) is untouched.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [workspace.dependencies]
 tsdyn-ir = { path = "tsdyn-ir" }
 tsdyn-vm = { path = "tsdyn-vm" }

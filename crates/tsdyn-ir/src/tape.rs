@@ -371,6 +371,67 @@ impl Tape {
     pub fn ops_i32(&self) -> Vec<i32> {
         self.ops.iter().map(|op| op.to_i32()).collect()
     }
+
+    /// Liveness / reachability mask over the registers: `mask[i]` is `true` iff
+    /// some seed output transitively depends on register `i`.
+    ///
+    /// The seed set is the derivative [`outputs`](Tape::outputs), plus the
+    /// [`jac_outputs`](Tape::jac_outputs) when `include_jac` is `true`. This is
+    /// the single, shared dead-register-elimination (DCE) backward pass both
+    /// evaluators call:
+    ///
+    /// - `tsdyn-vm`'s `Interpreter` passes `include_jac = false` to build its
+    ///   RHS-only execution mask (skip Jacobian-only subexpressions in `eval`).
+    /// - `tsdyn-jit`'s code generator calls it with `include_jac = false` for the
+    ///   `tsdyn_eval` body and `include_jac = true` for the `tsdyn_eval_jac` body
+    ///   (emit only the registers each function's outputs reach).
+    ///
+    /// Hoisting it here makes the invariant *the JIT-emitted register set equals
+    /// the interpreter-executed register set* structural rather than maintained in
+    /// two parallel copies — both backends now read the same mask, so they cannot
+    /// drift apart by a register.
+    ///
+    /// # Algorithm
+    ///
+    /// One backward sweep. The tape is strict single static assignment — every
+    /// operand index is strictly less than the register the op writes — so
+    /// visiting registers in reverse and propagating need from a live op to its
+    /// operands marks the full transitive dependency set in a single pass (an
+    /// operand register is always visited *after* every op that reads it). The
+    /// operand structure is read from [`Op::kind`](crate::Op): a `Leaf` reads
+    /// nothing, `Unary`/`Powi` read `a`, and `Binary` reads `a` and `b`.
+    ///
+    /// The returned mask has length [`n_reg`](Tape::n_reg).
+    pub fn reachable_from(&self, include_jac: bool) -> Vec<bool> {
+        let n = self.ops.len();
+        let mut live = vec![false; n];
+
+        // Seed: every derivative-output register is live. Jacobian-output
+        // registers are seeded only when the caller wants the Jacobian path.
+        for &r in &self.outputs {
+            live[r as usize] = true;
+        }
+        if include_jac {
+            for &r in &self.jac_outputs {
+                live[r as usize] = true;
+            }
+        }
+
+        for i in (0..n).rev() {
+            if !live[i] {
+                continue;
+            }
+            match self.ops[i].kind() {
+                OpKind::Leaf => {}
+                OpKind::Unary | OpKind::Powi => live[self.a[i] as usize] = true,
+                OpKind::Binary => {
+                    live[self.a[i] as usize] = true;
+                    live[self.b[i] as usize] = true;
+                }
+            }
+        }
+        live
+    }
 }
 
 /// A source register must be a strictly earlier instruction.
@@ -501,6 +562,37 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, IrError::UnknownOpcode(99));
+    }
+
+    #[test]
+    fn reachable_from_excludes_jacobian_only_registers_when_rhs_only() {
+        // Tape: f(u) = u0 (output is register 0, a State leaf), plus a
+        // Jacobian-only register 1 = u0 * u0 that nothing in the RHS reads.
+        // outputs = [0]; jac_outputs = [1] (1x1 Jacobian = register 1).
+        let ops = vec![Op::State, Op::Mul];
+        let a = vec![0, 0];
+        let b = vec![0, 0];
+        let imm = vec![0.0, 0.0];
+        let t = Tape::from_parts(ops, a, b, imm, vec![0], vec![1], 1, 0).unwrap();
+
+        // RHS-only: only register 0 is live; the Jacobian-only Mul (reg 1) is dead.
+        let rhs = t.reachable_from(false);
+        assert_eq!(rhs, vec![true, false]);
+
+        // With the Jacobian: register 1 (and the State it reads) is live too.
+        let with_jac = t.reachable_from(true);
+        assert_eq!(with_jac, vec![true, true]);
+    }
+
+    #[test]
+    fn reachable_from_marks_full_transitive_dependency_set() {
+        // f(u) = (u0 * p0) with no Jacobian: every register feeds the output.
+        let (ops, a, b, imm, outputs) = ok_parts();
+        let t = Tape::from_parts(ops, a, b, imm, outputs, vec![], 1, 1).unwrap();
+        // State(0), Param(1), Mul(2) are all reachable from output register 2.
+        assert_eq!(t.reachable_from(false), vec![true, true, true]);
+        // No jac_outputs, so include_jac changes nothing.
+        assert_eq!(t.reachable_from(true), vec![true, true, true]);
     }
 
     #[test]

@@ -11,8 +11,15 @@
 //! [`Value`]; arithmetic / `Sqrt` / `Abs` lower to native IEEE-754 instructions
 //! and the transcendentals / `Pow` / `Powi` / `Sign` lower to calls into the
 //! host [`shims`]. Only the registers reachable from the function's outputs are
-//! emitted (a backward pass), so `tsdyn_eval` never computes Jacobian-only
-//! subexpressions.
+//! emitted — via the shared
+//! [`Tape::reachable_from`](tsdyn_ir::Tape::reachable_from) backward pass that
+//! `tsdyn-vm`'s interpreter also calls — so `tsdyn_eval` never computes
+//! Jacobian-only subexpressions, and the JIT-emitted register set is *by
+//! construction* the same set the interpreter executes.
+//!
+//! When a tape carries no Jacobian, only `tsdyn_eval` is compiled and the
+//! `tsdyn_eval_jac` pointer aliases it (the bodies would be byte-identical bar an
+//! unused `jac` pointer), avoiding a redundant compile.
 
 use std::collections::HashMap;
 
@@ -34,6 +41,11 @@ pub(crate) type EvalJacFn = unsafe extern "C" fn(*const f64, *const f64, f64, *m
 /// A finalized JIT module plus the two function pointers into its code. The
 /// module is kept alive (and freed on drop by the owner) so the pointers stay
 /// valid.
+///
+/// For a tape with no Jacobian, [`compile`] does not emit a separate
+/// `tsdyn_eval_jac` body — `eval_jac` then aliases the `tsdyn_eval` entry (the
+/// extra `jac` pointer is never read), so the field is always a callable pointer
+/// regardless of whether the tape carries a Jacobian.
 pub(crate) struct Compiled {
     pub(crate) module: JITModule,
     pub(crate) eval: EvalFn,
@@ -188,17 +200,46 @@ pub(crate) fn compile(tape: &Tape) -> Result<Compiled, JitError> {
 
     let ptr_ty = module.target_config().pointer_type();
     let eval_id = compile_fn(&mut module, tape, false, ptr_ty, &math_ids, "tsdyn_eval")?;
-    let eval_jac_id = compile_fn(&mut module, tape, true, ptr_ty, &math_ids, "tsdyn_eval_jac")?;
+    // Only compile a distinct `tsdyn_eval_jac` body when the tape actually carries
+    // a Jacobian. For a Jacobian-free tape the two bodies would be byte-identical
+    // except for an extra, never-written `jac` pointer, so we skip the redundant
+    // compile and alias `eval_jac` to the `tsdyn_eval` entry below — saving a
+    // sub-ms of one-time compile (bounded by `compile_latency`). The contract is
+    // preserved: a no-Jacobian tape's `eval_jac` leaves `jac` untouched either
+    // way (the aliased `eval` never reads or writes the extra pointer).
+    let eval_jac_id = if tape.has_jacobian() {
+        Some(compile_fn(
+            &mut module,
+            tape,
+            true,
+            ptr_ty,
+            &math_ids,
+            "tsdyn_eval_jac",
+        )?)
+    } else {
+        None
+    };
 
     module.finalize_definitions()?;
 
     let eval_ptr = module.get_finalized_function(eval_id);
-    let eval_jac_ptr = module.get_finalized_function(eval_jac_id);
-    // SAFETY: each pointer is the entry of a function we just compiled with
-    // exactly the matching native signature, so the transmute to that `fn` type
-    // is well-typed; `module` is returned alongside to keep the code mapped.
+    // SAFETY: `eval_ptr` is the entry of the function we just compiled with the
+    // matching native signature, so the transmute to `EvalFn` is well-typed;
+    // `module` is returned alongside to keep the code mapped.
     let eval = unsafe { std::mem::transmute::<*const u8, EvalFn>(eval_ptr) };
-    let eval_jac = unsafe { std::mem::transmute::<*const u8, EvalJacFn>(eval_jac_ptr) };
+    let eval_jac = match eval_jac_id {
+        // SAFETY: a real Jacobian body compiled with the `EvalJacFn` signature.
+        Some(id) => {
+            let p = module.get_finalized_function(id);
+            unsafe { std::mem::transmute::<*const u8, EvalJacFn>(p) }
+        }
+        // SAFETY: no Jacobian to compute — alias the `tsdyn_eval` entry. The
+        // `EvalJacFn` ABI is `EvalFn` plus one trailing `*mut f64` (the `jac`
+        // pointer); under the C calling convention an extra ignored pointer
+        // argument is benign, and `JitEvaluator::eval_jac` writes nothing to
+        // `jac` for a Jacobian-free tape, so the callee never reads it.
+        None => unsafe { std::mem::transmute::<*const u8, EvalJacFn>(eval_ptr) },
+    };
 
     Ok(Compiled {
         module,
@@ -261,7 +302,13 @@ fn build_body(
     let deriv_ptr = params[3];
     let jac_ptr = if with_jac { Some(params[4]) } else { None };
 
-    let need = reachable(tape, with_jac);
+    // Shared dead-register-elimination pass (hoisted into `tsdyn-ir`): emit only
+    // the registers this function's outputs reach. `tsdyn_eval` (`with_jac =
+    // false`) drops Jacobian-only subexpressions; `tsdyn_eval_jac` includes them.
+    // The interpreter (`tsdyn-vm`) calls the *same* `reachable_from(false)`, so
+    // the JIT-emitted and interpreter-executed register sets are structurally one
+    // algorithm, never two parallel copies.
+    let need = tape.reachable_from(with_jac);
     let n = tape.n_reg();
     // Each tape register maps to the SSA Value that computes it. `None` means the
     // register was not reachable from this function's outputs (so never emitted);
@@ -407,38 +454,101 @@ fn call_math(
     bcx.inst_results(call)[0]
 }
 
-/// Mark every tape register reachable from this function's outputs (and, when
-/// `with_jac`, the Jacobian outputs). One backward pass: SSA references only
-/// point to strictly-earlier registers, so visiting `i` after its readers
-/// suffices to propagate need to its operands.
-fn reachable(tape: &Tape, with_jac: bool) -> Vec<bool> {
-    let n = tape.n_reg();
-    let mut need = vec![false; n];
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsdyn_ir::TapeBuilder;
 
-    for &r in tape.outputs() {
-        need[r as usize] = true;
-    }
-    if with_jac {
-        for &r in tape.jac_outputs() {
-            need[r as usize] = true;
-        }
+    /// f(u) = u0 * u0, no Jacobian — exercises the `eval_jac`-aliasing path.
+    fn square_no_jac() -> Tape {
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let sq = b.mul(x, x);
+        b.finish(&[sq], &[], 1, 0).unwrap()
     }
 
-    let ops = tape.ops();
-    let a = tape.a();
-    let b = tape.b();
-    for i in (0..n).rev() {
-        if !need[i] {
-            continue;
+    #[test]
+    fn no_jacobian_tape_aliases_eval_jac_to_eval() {
+        // A Jacobian-free tape compiles only `tsdyn_eval`; `eval_jac` then aliases
+        // it. Calling the aliased `eval_jac` (5-arg signature) must compute the
+        // same `deriv` as `eval` and never touch the trailing `jac` pointer.
+        let compiled = compile(&square_no_jac()).unwrap();
+        let u = [3.0_f64];
+        let p: [f64; 0] = [];
+
+        let mut deriv_eval = [0.0_f64];
+        // SAFETY: matching 4-arg signature; buffers are correctly sized.
+        unsafe {
+            (compiled.eval)(u.as_ptr(), p.as_ptr(), 0.0, deriv_eval.as_mut_ptr());
         }
-        match ops[i].kind() {
-            OpKind::Leaf => {}
-            OpKind::Unary | OpKind::Powi => need[a[i] as usize] = true,
-            OpKind::Binary => {
-                need[a[i] as usize] = true;
-                need[b[i] as usize] = true;
-            }
+        assert_eq!(deriv_eval[0], 9.0);
+
+        let mut deriv_jac = [0.0_f64];
+        let mut jac = [f64::NAN]; // sentinel: must stay untouched
+                                  // SAFETY: `eval_jac` aliases the 4-arg `tsdyn_eval`; the extra `jac`
+                                  // pointer is passed per the C ABI and never read by the callee.
+        unsafe {
+            (compiled.eval_jac)(
+                u.as_ptr(),
+                p.as_ptr(),
+                0.0,
+                deriv_jac.as_mut_ptr(),
+                jac.as_mut_ptr(),
+            );
         }
+        assert_eq!(deriv_jac[0], 9.0, "aliased eval_jac must match eval");
+        assert!(jac[0].is_nan(), "no-Jacobian tape must leave jac untouched");
     }
-    need
+
+    #[test]
+    fn jacobian_tape_compiles_a_distinct_eval_jac() {
+        // With a Jacobian, a real `tsdyn_eval_jac` is compiled and writes the
+        // Jacobian entries. f(u) = u0^2 → f'(u) = 2*u0.
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let sq = b.mul(x, x);
+        let two = b.constant(2.0);
+        let dfdx = b.mul(two, x); // ∂f/∂u0 = 2*u0
+        let tape = b.finish(&[sq], &[dfdx], 1, 0).unwrap();
+        assert!(tape.has_jacobian());
+
+        let compiled = compile(&tape).unwrap();
+        let u = [3.0_f64];
+        let p: [f64; 0] = [];
+        let mut deriv = [0.0_f64];
+        let mut jac = [0.0_f64];
+        // SAFETY: matching 5-arg signature; buffers sized dim and dim*dim.
+        unsafe {
+            (compiled.eval_jac)(
+                u.as_ptr(),
+                p.as_ptr(),
+                0.0,
+                deriv.as_mut_ptr(),
+                jac.as_mut_ptr(),
+            );
+        }
+        assert_eq!(deriv[0], 9.0);
+        assert_eq!(jac[0], 6.0, "Jacobian 2*u0 at u0=3");
+    }
+
+    #[test]
+    fn jit_reachability_matches_shared_tape_pass() {
+        // The codegen reachability is now `Tape::reachable_from`; pin that the
+        // RHS-only seed (with_jac = false) drops the Jacobian-only register.
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let sq = b.mul(x, x); // RHS output (reg used by output)
+        let two = b.constant(2.0);
+        let dfdx = b.mul(two, x); // Jacobian-only
+        let tape = b.finish(&[sq], &[dfdx], 1, 0).unwrap();
+
+        let rhs_only = tape.reachable_from(false);
+        let with_jac = tape.reachable_from(true);
+        // The Jacobian register and the constant `2.0` it reads are live only
+        // with the Jacobian seeded.
+        assert!(
+            with_jac.iter().filter(|&&b| b).count() > rhs_only.iter().filter(|&&b| b).count(),
+            "the Jacobian path must keep strictly more registers live"
+        );
+    }
 }

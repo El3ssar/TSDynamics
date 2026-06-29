@@ -15,7 +15,7 @@
 //! the test suite) see exactly the same `bridge::*` surface as before:
 //!
 //! - [`marshal`] — the shared FFI plumbing: the [`EngineError`] enum, the
-//!   [`VmEvaluator`] adapter + evaluator builders, [`build_tape`] ingestion,
+//!   [`VmEvaluator`] adapter + evaluator builders, `build_tape` ingestion,
 //!   [`resolve_solver`] / [`build_solver`], the input/grid/shape guards and the
 //!   divergence-message helpers. Every family entry point is built on it.
 //! - [`ode`] — [`eval_rhs`] / [`eval_jac`] / [`integrate_dense`] /
@@ -45,7 +45,9 @@ pub mod stepper;
 pub use dde::integrate_dde_dense;
 pub use events::integrate_events_dense;
 pub use map::{iterate_map, map_ensemble_final};
-pub use marshal::{build_tape, EngineError};
+#[cfg(test)]
+pub use marshal::build_tape;
+pub use marshal::EngineError;
 pub use ode::{ensemble_final, eval_jac, eval_rhs, integrate_dense};
 pub use sde::{sde_ensemble_final, sde_integrate_dense};
 pub use stepper::OdeStepper;

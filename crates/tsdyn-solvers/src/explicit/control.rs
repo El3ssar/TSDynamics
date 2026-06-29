@@ -74,6 +74,18 @@ pub(crate) fn scaled_rms(err: &[f64], scale: &[f64], rtol: f64, atol: f64) -> f6
 /// The elementary step-size factor for an error norm `err` and controller
 /// exponent `exponent` (`= −1/(error_estimator_order + 1)`), clamped to
 /// `[MIN_FACTOR, MAX_FACTOR]`.  A zero error means "as large as allowed".
+///
+/// This is a deliberately **stateless I-controller** (no PI / no memory of the
+/// previous step's error): `factor = clamp(SAFETY · err^exponent, MIN_FACTOR,
+/// MAX_FACTOR)`.  The choice is not an oversight — it is an exact match to the v2
+/// engine's controller, against which the whole engine is cross-validated, so the
+/// kernels here reproduce its accept/reject *and* its step *sequence*.  A PI
+/// controller would damp the step after a rejection and so trace a different
+/// sequence of step sizes; that would change only *which* steps are taken near the
+/// tolerance, never the accept threshold (that lives in `err <= 1.0` at the call
+/// site) and never an accepted value.  Keep this stateless unless the v2 reference
+/// is re-baselined in lock-step — otherwise the cross-validation against it (and
+/// the `interp == jit` bit-identity, which both call this) would drift.
 #[inline]
 pub(crate) fn step_factor(err: f64, exponent: f64) -> f64 {
     if err == 0.0 {

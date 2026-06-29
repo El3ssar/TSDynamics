@@ -48,3 +48,27 @@ tsdyn-engine = { path = "../tsdyn-engine" }
 # building the shipped extension; left OFF for `cargo test` so the unit-test
 # harness links libpython and runs. Kept off the default set on purpose.
 extension-module = ["pyo3/extension-module"]
+
+# Release-profile tuning for the shipped wheel.
+#
+# This crate is the maturin build root (the project's `pyproject.toml` points
+# `manifest-path` here) and is **excluded** from `crates/Cargo.toml`'s workspace,
+# so it does NOT inherit any workspace `[profile.release]` — Cargo resolves the
+# profile from the root manifest of whatever is being built, and for the wheel
+# that root is *this* manifest. Without these keys the wheel built with cargo's
+# defaults (`lto = false`, `codegen-units = 16`), which leaves the hot RK /
+# interpreter loops in `tsdyn-vm` / `tsdyn-solvers` un-inlined across crate
+# boundaries.
+#
+# `lto = "thin"` enables cross-crate inlining of the tape-evaluation and
+# solver-step hot paths (thin LTO keeps build times reasonable vs. `"fat"`);
+# `codegen-units = 1` gives the optimizer the whole crate as one unit. Both are
+# the conventional release tuning for a tight numerical kernel. They affect ONLY
+# the release build — `cargo test` (debug) is untouched — and are
+# **answer-preserving**: LTO/codegen-unit changes alter only how the same
+# floating-point operations are scheduled into machine code, never the IEEE-754
+# result, so `interp == jit`, the golden fixtures, and the parallel==serial
+# ensembles are unchanged.
+[profile.release]
+lto = "thin"
+codegen-units = 1

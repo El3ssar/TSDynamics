@@ -368,29 +368,36 @@ where
     );
     let n_ic = u0_batch.len() / dim;
 
-    // map → collect preserves index order, so the output never depends on the
-    // order rayon finishes workers in.
-    let per_traj: Vec<(Vec<f64>, SdeTrajStatus)> = (0..n_ic)
-        .into_par_iter()
-        .map(|i| {
+    // Preallocate the contiguous output and write each trajectory DIRECTLY into
+    // its own row slice in parallel: `states.par_chunks_mut(dim)` zipped with
+    // `status.par_iter_mut()` gives worker `i` exclusive access to row `i`, so
+    // there is no per-trajectory heap `Vec` and no second copy. The partition is
+    // positional and each worker's RNG is seeded only from its index `i`
+    // (`seed_for(base_seed, i)`), so the result depends only on the index, never
+    // on thread count — parallel == serial bit-for-bit (the determinism contract).
+    let mut states = vec![0.0; n_ic * dim];
+    let mut status = vec![SdeTrajStatus::Ok; n_ic];
+    states
+        .par_chunks_mut(dim)
+        .zip(status.par_iter_mut())
+        .enumerate()
+        .for_each(|(i, (row, st))| {
             let u0 = &u0_batch[i * dim..(i + 1) * dim];
             let mut kernel = make_kernel();
             // Randomness keyed by trajectory index — the determinism contract.
             let mut rng = SplitMix64::new(seed_for(base_seed, i as u64));
             match sde_integrate_final(drift, diffusion, &mut *kernel, &mut rng, u0, p, t0, t1, cfg)
             {
-                Ok(uf) => (uf, SdeTrajStatus::Ok),
-                Err(e) => (vec![f64::NAN; dim], SdeTrajStatus::Failed(e)),
+                Ok(uf) => {
+                    row.copy_from_slice(&uf);
+                    *st = SdeTrajStatus::Ok;
+                }
+                Err(e) => {
+                    row.fill(f64::NAN);
+                    *st = SdeTrajStatus::Failed(e);
+                }
             }
-        })
-        .collect();
-
-    let mut states = Vec::with_capacity(n_ic * dim);
-    let mut status = Vec::with_capacity(n_ic);
-    for (uf, s) in per_traj {
-        states.extend_from_slice(&uf);
-        status.push(s);
-    }
+        });
     SdeEnsembleFinal {
         dim,
         states,
@@ -1104,5 +1111,110 @@ mod tests {
         );
         assert_eq!(ens.n_ic(), 0);
         assert!(ens.states.is_empty());
+    }
+
+    #[test]
+    fn direct_row_write_is_index_keyed_and_parallel_equals_serial() {
+        // Regression for the direct-into-row-slice ensemble write (no per-traj
+        // Vec + second copy). Each worker writes its OWN row and seeds its RNG
+        // only from its index, so the multi-thread result must match a serial
+        // per-index loop bit-for-bit AND each row must equal the standalone
+        // single-trajectory integration of that index's seed.
+        let drift = gbm_drift(0.1);
+        let diffusion = gbm_diffusion(0.5);
+        let cfg = SdeConfig::new(0.01);
+        let base = 0xD15EA5E;
+        let n = 128;
+        let u0 = vec![1.0; n];
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        let parallel = pool.install(|| {
+            sde_ensemble_final(
+                &drift,
+                &diffusion,
+                || Box::new(Milstein::new()),
+                base,
+                &u0,
+                &[],
+                0.0,
+                1.0,
+                &cfg,
+            )
+        });
+
+        for i in 0..n {
+            let mut kernel = Milstein::new();
+            let mut rng = SplitMix64::new(seed_for(base, i as u64));
+            let serial = sde_integrate_final(
+                &drift,
+                &diffusion,
+                &mut kernel,
+                &mut rng,
+                &[1.0],
+                &[],
+                0.0,
+                1.0,
+                &cfg,
+            )
+            .unwrap();
+            assert!(parallel.status[i].is_ok());
+            assert_eq!(
+                parallel.row(i)[0].to_bits(),
+                serial[0].to_bits(),
+                "row {i}: direct-write ensemble != serial single-trajectory",
+            );
+        }
+    }
+
+    #[test]
+    fn direct_row_write_isolates_interleaved_failures_in_order() {
+        // f(x) = x², g = 0 ⇒ deterministic finite-time blow-up for x0 = 1 and a
+        // finite decay for x0 = -1. An interleaved pattern must confine NaN to the
+        // diverged rows in input order under a forced multi-thread pool.
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let f = b.mul(x, x);
+        let drift = VmEval::new(Interpreter::new(b.finish(&[f], &[], 1, 0).unwrap()));
+        let diffusion = const_diffusion(0.0);
+        let cfg = SdeConfig::new(0.01);
+        let n = 32;
+        let u0: Vec<f64> = (0..n)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        let ens = pool.install(|| {
+            sde_ensemble_final(
+                &drift,
+                &diffusion,
+                || Box::new(EulerMaruyama::new()),
+                0,
+                &u0,
+                &[],
+                0.0,
+                2.0,
+                &cfg,
+            )
+        });
+
+        assert_eq!(ens.n_failed(), n / 2);
+        for i in 0..n {
+            if i % 2 == 0 {
+                assert!(
+                    matches!(ens.status[i], SdeTrajStatus::Failed(_)),
+                    "row {i} should have diverged"
+                );
+                assert!(ens.row(i)[0].is_nan(), "diverged row {i} must be NaN");
+            } else {
+                assert!(ens.status[i].is_ok(), "row {i} should stay finite");
+                assert!(ens.row(i)[0].is_finite());
+            }
+        }
     }
 }
