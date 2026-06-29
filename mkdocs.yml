@@ -193,6 +193,7 @@ nav:
       - Backends: theory/backends.md
       - Solvers & methods: theory/solvers.md
       - Lyapunov exponents: theory/lyapunov.md
+      - Rigorous fixed points: theory/fixed-points-interval.md
       - Conventions: theory/conventions.md
       - Packaging & distribution: theory/packaging.md
   - Reference:
