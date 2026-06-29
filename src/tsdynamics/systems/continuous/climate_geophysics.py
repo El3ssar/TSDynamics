@@ -26,7 +26,8 @@ class VallisElNino(ContinuousSystem):
     With ``b=102, c=3, p=0`` the model settles onto a chaotic attractor.
     """
 
-    reference = "Vallis (1986), Science 232, 243-245"
+    reference = "Vallis (1988), J. Geophys. Res. 93, 13979-13991"
+    doi = "10.1029/jc093ic11p13979"
     params = {"b": 102.0, "c": 3.0, "p": 0.0}
     dim = 3
 
@@ -63,7 +64,8 @@ class RayleighBenard(ContinuousSystem):
     steady, periodic and chaotic overturning.
     """
 
-    reference = "Saltzman (1962), J. Atmos. Sci. 19, 329-342"
+    reference = "Yanagita & Kaneko (1995), Physica D 82, 288-313"
+    doi = "10.1016/0167-2789(94)00233-g"
     params = {"a": 30, "b": 5, "r": 18}
     dim = 3
 
@@ -111,7 +113,8 @@ class Hadley(ContinuousSystem):
     catalogue default ``f=9`` likewise yields aperiodic circulation.
     """
 
-    reference = "Lorenz (1984), Tellus A 36, 98-110"
+    reference = "Hadley (1735), Philos. Trans. R. Soc. 34, 58-62"
+    doi = "10.1098/rstl.1735.0014"
     params = {"a": 0.2, "b": 4.0, "f": 9.0, "g": 1.0}
     dim = 3
 
@@ -157,6 +160,7 @@ class DoubleGyre(ContinuousSystem):
     """
 
     reference = "Shadden, Lekien & Marsden (2005), Physica D 212, 271-304"
+    doi = "10.1016/j.physd.2005.10.007"
     params = {"alpha": 0.1, "eps": 0.1, "omega": 0.62832}
     dim = 3
 
@@ -189,6 +193,7 @@ class BlinkingRotlet(ContinuousSystem):
     """
 
     reference = "Meleshko & Aref (1996), Phys. Fluids 8, 3215-3217"
+    doi = "10.1063/1.869128"
     params = {
         "a": 1.0,
         "b": 0.5298833894399929,
@@ -273,6 +278,7 @@ class OscillatingFlow(ContinuousSystem):
     """
 
     reference = "Solomon & Gollub (1988), Phys. Rev. A 38, 6280-6286"
+    doi = "10.1103/physreva.38.6280"
     params = {"b": 0.48, "k": 1.0, "omega": 0.49, "u": 0.72}
     dim = 3
 
@@ -305,7 +311,8 @@ class ArnoldBeltramiChildress(ContinuousSystem):
         is ``a = sqrt(3), b = sqrt(2), c = 1``.
     """
 
-    reference = "Dombre, Frisch, Greene, Hénon, Mehr & Soward (1986), J. Fluid Mech. 167, 353-391"
+    reference = "Arnold (1966), J. Appl. Math. Mech. 30, 223-226"
+    doi = "10.1016/0021-8928(66)90070-0"
     params = {"a": 1.73205, "b": 1.41421, "c": 1}
     dim = 3
 
@@ -345,6 +352,7 @@ class AtmosphericRegime(ContinuousSystem):
     """
 
     reference = "Tuwankotta (2006), Int. J. Non-Linear Mech. 41, 180-191"
+    doi = "10.1016/j.ijnonlinmec.2005.02.007"
     params = {
         "alpha": -2.0,
         "beta": -5.0,
@@ -398,6 +406,7 @@ class SaltonSea(ContinuousSystem):
     """
 
     reference = "Upadhyay, Bairagi, Kundu & Chattopadhyay (2008), Appl. Math. Comput. 196, 392-401"
+    doi = "10.1016/j.amc.2007.06.007"
     params = {
         "a": 15,
         "d": 8.3,

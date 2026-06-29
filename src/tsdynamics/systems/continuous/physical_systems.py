@@ -3,10 +3,6 @@ from symengine import cos, exp, sign, sin, tanh
 from tsdynamics.families import ContinuousSystem
 
 
-# TODO(reference): unverified — needs a primary citation. The planar double
-# pendulum is a classic textbook chaotic system with no single originating
-# research paper; dysts cites a mechanics textbook (Marion & Thornton), not a
-# primary source, so no `reference` is asserted here.
 class DoublePendulum(ContinuousSystem):
     r"""Planar double pendulum — a canonical Hamiltonian chaotic system.
 
@@ -26,6 +22,8 @@ class DoublePendulum(ContinuousSystem):
         Arm mass (both arms equal).
     """
 
+    reference = "Marion (2013), Classical Dynamics of Particles and Systems"
+    doi = "10.1016/b978-1-4832-5676-4.50003-2"
     params = {"d": 1.0, "m": 1.0}
     dim = 4
 
@@ -63,6 +61,7 @@ class SwingingAtwood(ContinuousSystem):
     """
 
     reference = "Tufillaro, Abbott & Griffiths (1984), Am. J. Phys. 52, 895-903"
+    doi = "10.1119/1.13791"
     params = {"m1": 1.0, "m2": 4.5}
     dim = 4
 
@@ -102,6 +101,7 @@ class Colpitts(ContinuousSystem):
     """
 
     reference = "Kennedy (1994), IEEE Trans. Circuits Syst. I 41, 771-774"
+    doi = "10.1109/81.331536"
     params = {"a": 30, "b": 0.8, "c": 20, "d": 0.08, "e": 10}
     dim = 3
 
@@ -144,6 +144,7 @@ class Laser(ContinuousSystem):
         "Abooee, Yaghini-Bonabi & Jahed-Motlagh (2013), "
         "Commun. Nonlinear Sci. Numer. Simul. 18, 1235-1245"
     )
+    doi = "10.1016/j.cnsns.2012.08.036"
     params = {"a": 10.0, "b": 1.0, "c": 5.0, "d": -1.0, "h": -5.0, "k": -6.0}
     dim = 3
 
@@ -176,6 +177,7 @@ class Blasius(ContinuousSystem):
     """
 
     reference = "Blasius, Huppert & Stone (1999), Nature 399, 354-359"
+    doi = "10.1038/20676"
     params = {
         "a": 1,
         "alpha1": 0.2,
@@ -220,6 +222,7 @@ class FluidTrampoline(ContinuousSystem):
     """
 
     reference = "Gilet & Bush (2009), J. Fluid Mech. 625, 167-203"
+    doi = "10.1017/s0022112008005442"
     params = {"gamma": 1.82, "psi": 0.01019, "w": 1.21}
     dim = 3
 
@@ -250,6 +253,7 @@ class JerkCircuit(ContinuousSystem):
     """
 
     reference = "Sprott (2011), IEEE Trans. Circuits Syst. II 58, 240-243"
+    doi = "10.1109/tcsii.2011.2124490"
     params = {"eps": 1e-9, "y0": 0.026}
     dim = 3
 
@@ -297,7 +301,8 @@ class WindmiReduced(ContinuousSystem):
       Newton/error-test failures.  The clamp uses ``abs`` only.
     """
 
-    reference = "Horton, Weigel & Sprott (2001), Phys. Plasmas 8, 2946-2952"
+    reference = "Smith, Thiffeault & Horton (2000), J. Geophys. Res. 105, 12983-12996"
+    doi = "10.1029/1999ja000218"
     params = {"a1": 0.247, "b1": 10.8, "b2": 0.0752, "b3": 1.06, "d1": 2200, "vsw": 5}
     dim = 3
     variables = ("i", "v", "p")

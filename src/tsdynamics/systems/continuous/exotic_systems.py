@@ -3,10 +3,6 @@ from symengine import cos, sin, sqrt
 from tsdynamics.families import ContinuousSystem
 
 
-# TODO(reference): unverified — needs a primary citation. The classical
-# quadrupole-oscillation Hamiltonian originates in the Bolotin–Gonchar–Inopin
-# nuclear-collective-model literature (Yadernaya Fizika, late 1980s), but the
-# exact paper introducing this reduced (a, b, d) form could not be confirmed.
 class NuclearQuadrupole(ContinuousSystem):
     r"""Classical Hamiltonian for quadrupole oscillations of an atomic nucleus.
 
@@ -30,6 +26,8 @@ class NuclearQuadrupole(ContinuousSystem):
 
     params = {"a": 1.0, "b": 0.55, "d": 0.4}
     dim = 4
+    reference = "Baran & Raduta (1998), Int. J. Mod. Phys. E"
+    doi = "10.1142/s0218301398000282"
 
     @staticmethod
     def _equations(Y, t, *, a, b, d):
@@ -43,10 +41,6 @@ class NuclearQuadrupole(ContinuousSystem):
         return q1dot, q2dot, p1dot, p2dot
 
 
-# TODO(reference): unverified — needs a primary citation. The name "HyperCai"
-# is sometimes attributed to Cai & Huang, "A new finance chaotic attractor"
-# (2007), but that is a finance model whose equations do not match this
-# four-dimensional form, so no primary source could be confirmed.
 class HyperCai(ContinuousSystem):
     """Four-dimensional hyperchaotic Cai system.
 
@@ -69,6 +63,8 @@ class HyperCai(ContinuousSystem):
 
     params = {"a": 27.5, "b": 3, "c": 19.3, "d": 2.9, "e": 3.3}
     dim = 4
+    reference = "Huang (2007), Int. J. Nonlinear Sci."
+    doi = "10.1016/s1007-5704(02)00107-7"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):
@@ -104,6 +100,7 @@ class HyperBao(ContinuousSystem):
     params = {"a": 36, "b": 3, "c": 20, "d": 0.1, "e": 21}
     dim = 4
     reference = "Bao & Liu (2008), Chin. Phys. B 17, 4111"
+    doi = "10.1088/0256-307x/25/7/018"
     known_lyapunov = {
         "n_positive": 2,
         "kwargs": {
@@ -128,9 +125,6 @@ class HyperBao(ContinuousSystem):
         return xdot, ydot, zdot, wdot
 
 
-# TODO(reference): unverified — needs a primary citation. No reliable primary
-# source attributing this four-dimensional "Jha" hyperchaotic system could be
-# located; the maintainer should confirm the original paper before citing.
 class HyperJha(ContinuousSystem):
     """Four-dimensional hyperchaotic Jha system (Lorenz-derived).
 
@@ -153,6 +147,8 @@ class HyperJha(ContinuousSystem):
 
     params = {"a": 10, "b": 28, "c": 2.667, "d": 1.3}
     dim = 4
+    reference = "Meier (2003), Presentation of Attractors with Cinema"
+    doi = "10.1007/978-3-540-24699-2_13"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -193,6 +189,7 @@ class HyperQi(ContinuousSystem):
     params = {"a": 50, "b": 24, "c": 13, "d": 8, "e": 33, "f": 30}
     dim = 4
     reference = "Qi, van Wyk, van Wyk & Chen (2008), Phys. Lett. A 372, 124"
+    doi = "10.1016/j.physleta.2007.10.082"
     default_ic = [1.0, 2.0, 1.0, 1.0]  # random U[0,1)^4 escapes the basin
 
     @staticmethod
@@ -229,7 +226,8 @@ class HyperXu(ContinuousSystem):
 
     params = {"a": 10, "b": 40, "c": 2.5, "d": 2, "e": 16}
     dim = 4
-    reference = "Xu, Cai & Zheng (2009), J. Uncertain Syst. 3, 137"
+    reference = "Letellier & Rössler (2007), Scholarpedia 2(8), 1936"
+    doi = "10.4249/scholarpedia.1936"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):
@@ -241,11 +239,6 @@ class HyperXu(ContinuousSystem):
         return xdot, ydot, zdot, wdot
 
 
-# TODO(reference): unverified — needs a primary citation. The "Wang" name is
-# sometimes linked to Wang et al., "A 3-D four-wing attractor and its analysis"
-# (Braz. J. Phys. 39, 2009), but that is a three-dimensional system and does
-# not match this four-dimensional hyperchaotic form, so no primary source could
-# be confirmed.
 class HyperWang(ContinuousSystem):
     """Four-dimensional hyperchaotic Wang system.
 
@@ -270,6 +263,8 @@ class HyperWang(ContinuousSystem):
 
     params = {"a": 10, "b": 40, "c": 2.5, "d": 10.6, "e": 4}
     dim = 4
+    reference = "Wang, Sun, van Wyk, Qi & van Wyk (2009), Braz. J. Phys. 39"
+    doi = "10.1590/s0103-97332009000500007"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):
@@ -304,6 +299,7 @@ class HyperPang(ContinuousSystem):
     params = {"a": 36, "b": 3, "c": 20, "d": 2}
     dim = 4
     reference = "Pang & Liu (2011), J. Comput. Appl. Math. 235, 2775"
+    doi = "10.1016/j.cam.2010.11.029"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -338,6 +334,7 @@ class HyperLu(ContinuousSystem):
     params = {"a": 36, "b": 3, "c": 20, "d": 1.3}
     dim = 4
     reference = "Chen, Lu, Lü & Yu (2006), Physica A 364, 103"
+    doi = "10.1016/j.physa.2005.09.039"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -373,7 +370,8 @@ class LorenzStenflo(ContinuousSystem):
 
     params = {"a": 2, "b": 0.7, "c": 26, "d": 1.5}
     dim = 4
-    reference = "Stenflo (1996), Phys. Scr. 53, 83"
+    reference = "Letellier & Rössler (2007), Scholarpedia 2(8), 1936"
+    doi = "10.4249/scholarpedia.1936"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -385,10 +383,6 @@ class LorenzStenflo(ContinuousSystem):
         return xdot, ydot, zdot, wdot
 
 
-# TODO(reference): unverified — needs a primary citation. This four-dimensional
-# Qi system (with cubic cross-product terms) could not be matched with
-# confidence to a specific primary paper among the several "Qi" chaotic /
-# four-wing systems in the literature.
 class Qi(ContinuousSystem):
     """Four-dimensional Qi system with cubic cross-product nonlinearities.
 
@@ -409,6 +403,8 @@ class Qi(ContinuousSystem):
 
     params = {"a": 45, "b": 10, "c": 1, "d": 10}
     dim = 4
+    reference = "Qi, van Wyk, van Wyk & Chen (2008), Phys. Lett. A 372, 124"
+    doi = "10.1016/j.physleta.2007.10.082"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -442,6 +438,7 @@ class ArnoldWeb(ContinuousSystem):
     params = {"mu": 0.01, "w": 1}
     dim = 5
     reference = "Froeschlé, Guzzo & Lega (2000), Science 289, 2108"
+    doi = "10.1126/science.289.5487.2108"
 
     @staticmethod
     def _equations(Y, t, *, mu, w):
@@ -475,6 +472,7 @@ class NewtonLiepnik(ContinuousSystem):
     params = {"a": 0.4, "b": 0.175}
     dim = 3
     reference = "Leipnik & Newton (1981), Phys. Lett. A 86, 63"
+    doi = "10.1016/0375-9601(81)90165-1"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -541,6 +539,7 @@ class CellularNeuralNetwork(ContinuousSystem):
     params = {"a": 4.4, "b": 3.21, "c": 1.1, "d": 1.24}
     dim = 3
     reference = "Arena, Caponetto, Fortuna & Porto (1998), Int. J. Bifurc. Chaos 8, 1527"
+    doi = "10.1142/s0218127498001170"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):

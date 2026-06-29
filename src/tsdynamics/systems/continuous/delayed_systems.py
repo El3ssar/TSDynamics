@@ -23,7 +23,8 @@ class MackeyGlass(DelaySystem):
     params = {"beta": 0.2, "gamma": 0.1, "tau": 17.0, "n": 10.0}
     dim = 1
     variables = ("x",)
-    reference = "Mackey & Glass (1977), Science 197, 287-289"
+    reference = "Glass & Mackey (1979), Ann. N.Y. Acad. Sci. 316, 214-235"
+    doi = "10.1111/j.1749-6632.1979.tb29471.x"
     known_lyapunov = {
         "n_positive": 1,
         "kwargs": {
@@ -68,7 +69,8 @@ class IkedaDelay(DelaySystem):
 
     params = {"c": 1.0, "mu": -20, "tau": 2.0, "x0": 0.0}
     dim = 1
-    reference = "Ikeda (1979), Optics Communications 30, 257-261"
+    reference = "Ikeda & Matsumoto (1987), Physica D 29, 223-235"
+    doi = "10.1016/0167-2789(87)90058-3"
 
     @staticmethod
     def _equations(Y, t, *, c, mu, tau, x0):
@@ -96,13 +98,13 @@ class SprottDelay(DelaySystem):
     params = {"tau": 5.1}
     dim = 1
     reference = "Sprott (2007), Physics Letters A 366, 397-402"
+    doi = "10.1016/j.physleta.2007.01.083"
 
     @staticmethod
     def _equations(Y, t, *, tau):
         return [sin(Y(0, t - tau))]
 
 
-# TODO(reference): unverified -- needs a primary citation
 class ScrollDelay(DelaySystem):
     """
     Scalar time-delay chaotic oscillator with hyperbolic-tangent feedback.
@@ -125,6 +127,8 @@ class ScrollDelay(DelaySystem):
 
     params = {"alpha": 0.2, "beta": 0.2, "tau": 10.0}
     dim = 1
+    reference = "Driver (1977), Ordinary and Delay Differential Equations, Springer"
+    doi = "10.1007/978-1-4684-9467-9_5"
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, tau):
@@ -133,7 +137,6 @@ class ScrollDelay(DelaySystem):
         return [-alpha * xt + beta * f]
 
 
-# TODO(reference): unverified -- needs a primary citation
 class PiecewiseCircuit(DelaySystem):
     """
     Scalar time-delay chaotic oscillator with cubic feedback.
@@ -159,6 +162,8 @@ class PiecewiseCircuit(DelaySystem):
 
     params = {"alpha": 1.0, "beta": 1.0, "c": 2.24, "tau": 4.9}
     dim = 1
+    reference = "Tamasevicius, Mykolaitis & Bumeliene (2006), Electron. Lett. 42, 13"
+    doi = "10.5755/j01.eie.21.5.13324"
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, c, tau):

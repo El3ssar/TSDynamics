@@ -24,7 +24,7 @@ class Bogdanov(DiscreteMap):
 
     params = {"eps": 0.0, "k": 1.2, "mu": 0.0}
     dim = 2
-    reference = "Arrowsmith et al. (1993), Int. J. Bifurcation Chaos 3, 803-842"
+    reference = "Bogdanov (1981), Selecta Math. Soviet. 1, 389-421"
 
     @staticmethod
     def _step(X, eps, k, mu):

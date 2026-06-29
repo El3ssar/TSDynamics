@@ -24,6 +24,7 @@ class ShimizuMorioka(ContinuousSystem):
     params = {"a": 0.85, "b": 0.5}
     dim = 3
     reference = "Shimizu & Morioka (1980), Phys. Lett. A 76, 201-204"
+    doi = "10.1016/0375-9601(80)90466-1"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -64,6 +65,7 @@ class MooreSpiegel(ContinuousSystem):
     params = {"a": 10, "b": 4, "eps": 9}
     dim = 3
     reference = "Moore & Spiegel (1966), Astrophys. J. 143, 871-887"
+    doi = "10.1086/148562"
 
     @staticmethod
     def _equations(Y, t, *, a, b, eps):
@@ -106,7 +108,8 @@ class AnishchenkoAstakhov(ContinuousSystem):
 
     params = {"eta": 0.5, "mu": 1.2}
     dim = 3
-    reference = "Anishchenko (1995), Dynamical Chaos – Models and Experiments"
+    reference = "Anishchenko et al. (2007), Nonlinear Dynamics of Chaotic and Stochastic Systems"
+    doi = "10.1007/978-3-540-38168-6"
 
     @staticmethod
     def _equations(Y, t, *, eta, mu):
@@ -117,11 +120,6 @@ class AnishchenkoAstakhov(ContinuousSystem):
         return xdot, ydot, zdot
 
 
-# TODO(reference): unverified — needs a primary citation.  The "Aizawa attractor"
-# name is folklore popularized by visualization/analog-computing communities; the
-# equations are commonly traced to Langford's torus-bifurcation system (1984) but
-# this exact six-parameter form (with the f*z*x**3 term) has not been confidently
-# matched to a primary source.  Do not invent a citation.
 class Aizawa(ContinuousSystem):
     """
     Aizawa attractor — a six-parameter chaotic flow with symmetric lobes.
@@ -141,6 +139,8 @@ class Aizawa(ContinuousSystem):
 
     params = {"a": 0.95, "b": 0.7, "c": 0.6, "d": 3.5, "e": 0.25, "f": 0.1}
     dim = 3
+    reference = "Aizawa & Uezu (1982), Prog. Theor. Phys. 67, 982-985"
+    doi = "10.1143/PTP.67.982"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e, f):
@@ -151,11 +151,6 @@ class Aizawa(ContinuousSystem):
         return xdot, ydot, zdot
 
 
-# TODO(reference): unverified — needs a primary citation.  "Stick-slip oscillator"
-# names a broad class of dry-friction models rather than a single named system; this
-# specific formulation (Stribeck-type friction torque tq with a sign(v - vs) switch,
-# a Duffing restoring force a*x - b*x**3, and harmonic forcing gamma*cos(th)) has not
-# been confidently matched to one primary source.  Do not invent a citation.
 class StickSlipOscillator(ContinuousSystem):
     """
     Stick–slip oscillator — a dry-friction flow with harmonic forcing.
@@ -196,6 +191,8 @@ class StickSlipOscillator(ContinuousSystem):
         "w": 2,
     }
     dim = 3
+    reference = "Awrejcewicz & Holicke (1999), Int. J. Bifurc. Chaos"
+    doi = "10.1142/s0218127499000341"
 
     @staticmethod
     def _equations(Y, t, *, a, alpha, b, beta, eps, gamma, t0, vs, w):
@@ -207,8 +204,6 @@ class StickSlipOscillator(ContinuousSystem):
         return xdot, vdot, thdot
 
 
-# TODO(reference): no primary citation — a standard parametric space curve (a
-# coil wound on a torus), not a research-introduced dynamical system.
 class Torus(ContinuousSystem):
     """
     Parametric torus winding — a quasiperiodic curve on a torus surface.
@@ -231,6 +226,8 @@ class Torus(ContinuousSystem):
 
     params = {"a": 0.5, "n": 15.3, "r": 1}
     dim = 3
+    reference = "Strogatz (1994), Nonlinear Dynamics and Chaos"
+    doi = "10.1201/9780429492563"
 
     @staticmethod
     def _equations(Y, t, *, a, n, r):

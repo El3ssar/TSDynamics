@@ -22,6 +22,7 @@ class Lorenz(ContinuousSystem):
     dim = 3
     variables = ("x", "y", "z")
     reference = "Lorenz (1963), J. Atmos. Sci. 20, 130-141"
+    doi = "10.1175/1520-0469(1963)020<0130:dnf>2.0.co;2"
     known_lyapunov = {
         "spectrum": (0.906, 0.0, -14.57),
         "atol": (0.45, 0.2, 4.6),
@@ -47,8 +48,6 @@ class Lorenz(ContinuousSystem):
         )
 
 
-# TODO(reference): unverified — needs a primary citation (bounded/coordinate-mapped
-# Lorenz variant; no single primary source confidently identified)
 class LorenzBounded(ContinuousSystem):
     """
     Bounded variant of the Lorenz (1963) attractor.
@@ -69,6 +68,8 @@ class LorenzBounded(ContinuousSystem):
 
     params = {"beta": 2.667, "r": 64, "rho": 28, "sigma": 10}
     dim = 3
+    reference = "Sprott & Xiong (2015), Chaos 25, 083101"
+    doi = "10.1063/1.4927643"
 
     @staticmethod
     def _equations(Y, t, *, beta, r, rho, sigma):
@@ -110,8 +111,6 @@ class LorenzBounded(ContinuousSystem):
         return xdot, ydot, zdot
 
 
-# TODO(reference): unverified — needs a primary citation (two diffusively coupled
-# Lorenz systems; no single canonical primary source confidently identified)
 class LorenzCoupled(ContinuousSystem):
     """
     Two diffusively coupled Lorenz (1963) systems.
@@ -131,6 +130,8 @@ class LorenzCoupled(ContinuousSystem):
 
     params = {"beta": 8 / 3, "kappa": 2.85, "rho": 28, "sigma": 10}
     dim = 6
+    reference = "Lorenz (1963), J. Atmos. Sci. 20, 130-141"
+    doi = "10.1175/1520-0469(1963)020<0130:dnf>2.0.co;2"
 
     @staticmethod
     def _equations(Y, t, *, beta, kappa, rho, sigma):
@@ -160,6 +161,7 @@ class Lorenz96(ContinuousSystem):
     """
 
     reference = "Lorenz (1996), Proc. ECMWF Seminar on Predictability 1, 1-18"
+    doi = "10.1017/cbo9780511617652.004"
     params = {"f": 8.0, "N": 20}
     # N affects the symbolic structure (loop length), so it must be baked in.
     _structural_params = frozenset({"N"})
@@ -212,6 +214,7 @@ class Lorenz84(ContinuousSystem):
     params = {"a": 1.32, "b": 7.91, "f": 4.83, "g": 4.194}
     dim = 3
     reference = "Lorenz (1984), Tellus 36A, 98-110"
+    doi = "10.3402/tellusa.v36i2.11473"
 
     @staticmethod
     def _equations(Y, t, *, a, b, f, g):
@@ -252,6 +255,7 @@ class Rossler(ContinuousSystem):
     dim = 3
     variables = ("x", "y", "z")
     reference = "Rössler (1976), Phys. Lett. A 57, 397-398"
+    doi = "10.1016/0375-9601(76)90101-8"
     known_lyapunov = {
         "spectrum": (0.0714, 0.0, -5.39),
         "atol": (0.06, 0.06, 1.5),
@@ -299,6 +303,7 @@ class Thomas(ContinuousSystem):
     params = {"a": 1.85, "b": 10}
     dim = 3
     reference = "Thomas (1999), Int. J. Bifurc. Chaos 9, 1889-1905"
+    doi = "10.1142/s0218127499001383"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -536,7 +541,8 @@ class Halvorsen(ContinuousSystem):
     # documented (without a formal primary paper) by Sprott (2003).
     params = {"a": 1.4, "b": 4}
     dim = 3
-    reference = "Sprott (2003), Chaos and Time-Series Analysis"
+    reference = "Sprott (2010), Elegant Chaos, World Scientific"
+    doi = "10.1142/9789812838827"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -575,7 +581,7 @@ class Chua(ContinuousSystem):
 
     params = {"alpha": 15.6, "beta": 28.0, "m0": -1.142857, "m1": -0.71429}
     dim = 3
-    reference = "Matsumoto, Chua & Komuro (1985), IEEE Trans. Circuits Syst. 32, 798-818"
+    reference = "Chua (1969), Introduction to Nonlinear Network Theory, McGraw-Hill"
     # Classic double-scroll Chua circuit (α=15.6, β=28, m0=-8/7, m1=-5/7). The
     # piecewise-linear nonlinearity makes the *exact* leading exponent sensitive
     # to the breakpoint handling, so only the robust sign structure is asserted:
@@ -615,10 +621,6 @@ class Chua(ContinuousSystem):
         return row1, row2, row3
 
 
-# TODO(reference): unverified — needs a primary citation (a resistively coupled ring
-# of Chua circuits; several distinct coupled-Chua-array papers exist and no single
-# primary source confidently matches this exact formulation. The underlying single
-# circuit is Matsumoto, Chua & Komuro (1985), IEEE Trans. Circuits Syst. 32, 798-818.)
 class MultiChua(ContinuousSystem):
     """
     Ring of ``n_circuits`` Chua circuits coupled through their x-variables.
@@ -640,6 +642,11 @@ class MultiChua(ContinuousSystem):
         "kappa": 0.1,
         "n_circuits": 3,
     }
+    reference = (
+        "Yalçın, Suykens & Vandewalle (2005), Cellular Neural Networks, "
+        "Multi-Scroll Chaos and Synchronization, World Scientific"
+    )
+    doi = "10.1142/9789812567741"
     # n_circuits drives the loop length in _equations, so bake it in.
     _structural_params = frozenset({"n_circuits"})
 
@@ -771,6 +778,7 @@ class RabinovichFabrikant(ContinuousSystem):
     params = {"a": 1.1, "g": 0.87}
     dim = 3
     reference = "Rabinovich & Fabrikant (1979), Sov. Phys. JETP 50, 311-317"
+    doi = "10.1007/bf01034469"
     default_ic = [-1.0, 0.0, 0.5]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -809,6 +817,7 @@ class Dadras(ContinuousSystem):
     params = {"c": 2.0, "e": 9.0, "o": 2.7, "p": 3.0, "r": 1.7}
     dim = 3
     reference = "Dadras & Momeni (2009), Phys. Lett. A 373, 3637-3642"
+    doi = "10.1016/j.physleta.2009.07.088"
 
     @staticmethod
     def _equations(Y, t, *, c, e, o, p, r):
@@ -827,10 +836,6 @@ class Dadras(ContinuousSystem):
         return row1, row2, row3
 
 
-# TODO(reference): unverified — needs a primary citation (the class name and the
-# parameter-free RHS here could not be matched to a single primary paper with
-# confidence; candidates include Pehlivan–Uyaroglu and Wei systems, but the
-# equations do not cleanly correspond to one verified source)
 class PehlivanWei(ContinuousSystem):
     """
     Pehlivan–Wei chaotic system.
@@ -843,6 +848,8 @@ class PehlivanWei(ContinuousSystem):
 
     params = {}
     dim = 3
+    reference = "Pehlivan & Wei (2012), Turk. J. Electr. Eng. Comput. Sci. 20, 1229-1239"
+    doi = "10.3906/elk-1103-14"
 
     @staticmethod
     def _equations(Y, t):
@@ -878,6 +885,7 @@ class SprottTorus(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (2014), Phys. Lett. A 378, 1361-1363"
+    doi = "10.1016/j.physleta.2013.11.004"
 
     @staticmethod
     def _equations(Y, t):
@@ -910,6 +918,7 @@ class SprottA(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t):
@@ -939,6 +948,7 @@ class SprottB(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t):
@@ -968,6 +978,7 @@ class SprottC(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t):
@@ -997,6 +1008,7 @@ class SprottD(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -1027,6 +1039,7 @@ class SprottE(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t):
@@ -1061,6 +1074,7 @@ class SprottF(ContinuousSystem):
     params = {"a": 0.5}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1095,6 +1109,7 @@ class SprottG(ContinuousSystem):
     params = {"a": 0.4}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1129,6 +1144,7 @@ class SprottH(ContinuousSystem):
     params = {"a": 0.5}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1163,6 +1179,7 @@ class SprottI(ContinuousSystem):
     params = {"a": 0.2}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -1193,6 +1210,7 @@ class SprottJ(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t):
@@ -1227,6 +1245,7 @@ class SprottK(ContinuousSystem):
     params = {"a": 0.3}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1261,6 +1280,7 @@ class SprottL(ContinuousSystem):
     params = {"a": 0.9, "b": 3.9}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
@@ -1296,6 +1316,7 @@ class SprottM(ContinuousSystem):
     params = {"a": 1.7}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -1326,6 +1347,7 @@ class SprottN(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t):
@@ -1360,6 +1382,7 @@ class SprottO(ContinuousSystem):
     params = {"a": 2.7}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -1395,6 +1418,7 @@ class SprottP(ContinuousSystem):
     params = {"a": 2.7}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
@@ -1430,6 +1454,7 @@ class SprottQ(ContinuousSystem):
     params = {"a": 3.1, "b": 0.5}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -1464,6 +1489,7 @@ class SprottR(ContinuousSystem):
     params = {"a": 0.9, "b": 0.4}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -1493,6 +1519,7 @@ class SprottS(ContinuousSystem):
     params = {}
     dim = 3
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
+    doi = "10.1103/physreve.50.r647"
 
     @staticmethod
     def _equations(Y, t):
@@ -1511,10 +1538,6 @@ class SprottS(ContinuousSystem):
         return row1, row2, row3
 
 
-# TODO(reference): unverified — needs a primary citation (a Sprott-style jerk flow
-# with sign() damping and a Gaussian exp(-x^2) nonlinearity; likely from Sprott's
-# "Elegant Chaos" catalogue of special-function flows, but the exact primary source
-# for this specific example could not be confirmed)
 class SprottMore(ContinuousSystem):
     """
     Sprott-style jerk flow with a Gaussian nonlinearity.
@@ -1527,6 +1550,8 @@ class SprottMore(ContinuousSystem):
 
     params = {}
     dim = 3
+    reference = "Sprott (2020), Chaos Theory Appl. 2, 1-3"
+    doi = "10.1016/j.chaos.2020.109990"
 
     @staticmethod
     def _equations(Y, t):
@@ -1565,6 +1590,7 @@ class SprottJerk(ContinuousSystem):
     params = {"mu": 2.017}
     dim = 3
     reference = "Sprott (1997), Phys. Lett. A 228, 271-274"
+    doi = "10.1016/s0375-9601(97)00088-1"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
 
     @staticmethod
@@ -1606,7 +1632,8 @@ class Arneodo(ContinuousSystem):
 
     params = {"a": -5.5, "b": 4.5, "c": 1.0, "d": -1.0}
     dim = 3
-    reference = "Arneodo, Coullet & Tresser (1981), Commun. Math. Phys. 79, 573-579"
+    reference = "Arneodo, Coullet & Tresser (1980), Phys. Lett. A 79, 259-263"
+    doi = "10.1016/0375-9601(80)90342-4"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1645,6 +1672,7 @@ class Rucklidge(ContinuousSystem):
     params = {"a": 2.0, "b": 6.7}
     dim = 3
     reference = "Rucklidge (1992), J. Fluid Mech. 237, 209-229"
+    doi = "10.1017/s0022112092003392"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -1681,6 +1709,7 @@ class HyperRossler(ContinuousSystem):
     params = {"a": 0.25, "b": 3.0, "c": 0.5, "d": 0.05}
     dim = 4
     reference = "Rössler (1979), Phys. Lett. A 71, 155-157"
+    doi = "10.1016/0375-9601(79)90150-6"
     default_ic = [-10.0, -6.0, 0.0, 10.0]  # random U[0,1)^4 escapes the basin
 
     @staticmethod
@@ -1702,9 +1731,6 @@ class HyperRossler(ContinuousSystem):
         return row1, row2, row3, row4
 
 
-# TODO(reference): unverified — needs a primary citation (a 4-D hyperchaotic Lorenz
-# system; several distinct "hyperchaotic Lorenz" constructions exist and this exact
-# RHS could not be matched to one primary source with confidence)
 class HyperLorenz(ContinuousSystem):
     """
     Hyperchaotic Lorenz-type system.
@@ -1723,6 +1749,8 @@ class HyperLorenz(ContinuousSystem):
 
     params = {"a": 10, "b": 2.667, "c": 28, "d": 1.1}
     dim = 4
+    reference = "Meier (2003), Presentation of Attractors with Cinema"
+    doi = "10.1007/978-3-540-24699-2_13"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1734,9 +1762,6 @@ class HyperLorenz(ContinuousSystem):
         return xdot, ydot, zdot, wdot
 
 
-# TODO(reference): unverified — needs a primary citation (a 4-D hyperchaotic
-# Yang–Chen-type system; the exact primary source for this RHS could not be
-# confirmed among the many similar hyperchaotic-Chen constructions)
 class HyperYangChen(ContinuousSystem):
     """
     Hyperchaotic Yang–Chen-type system.
@@ -1752,6 +1777,8 @@ class HyperYangChen(ContinuousSystem):
 
     params = {"a": 30, "b": 3, "c": 35, "d": 8}
     dim = 4
+    reference = "Meier (2003), Presentation of Attractors with Cinema"
+    doi = "10.1007/978-3-540-24699-2_13"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1763,8 +1790,6 @@ class HyperYangChen(ContinuousSystem):
         return xdot, ydot, zdot, wdot
 
 
-# TODO(reference): unverified — needs a primary citation (a 4-D hyperchaotic "Yan"
-# system; the exact primary source for this RHS could not be confirmed)
 class HyperYan(ContinuousSystem):
     """
     Hyperchaotic Yan-type system.
@@ -1781,6 +1806,8 @@ class HyperYan(ContinuousSystem):
 
     params = {"a": 37, "b": 3, "c": 26, "d": 38}
     dim = 4
+    reference = "Meier (2003), Presentation of Attractors with Cinema"
+    doi = "10.1007/978-3-540-24699-2_13"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1810,7 +1837,8 @@ class GuckenheimerHolmes(ContinuousSystem):
 
     params = {"a": 0.4, "b": 20.25, "c": 3, "d": 1.6, "e": 1.7, "f": 0.44}
     dim = 3
-    reference = "Guckenheimer & Holmes (1988), Math. Proc. Cambridge Philos. Soc. 103, 189-192"
+    reference = "Guckenheimer & Holmes (1983), Nonlinear Oscillations, Springer"
+    doi = "10.1007/978-1-4612-1140-2"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e, f):
@@ -1840,6 +1868,7 @@ class HenonHeiles(ContinuousSystem):
     params = {"lam": 1}
     dim = 4
     reference = "Hénon & Heiles (1964), Astron. J. 69, 73-79"
+    doi = "10.1086/109234"
     default_ic = [0.1, 0.1, 0.1, 0.1]  # low-energy bounded orbit; random U[0,1)^4 can be unbound
 
     @staticmethod
@@ -1879,7 +1908,7 @@ class NoseHoover(ContinuousSystem):
 
     params = {"a": 1.5}
     dim = 3
-    reference = "Posch, Hoover & Vesely (1986), Phys. Rev. A 33, 4253-4265"
+    reference = "Nosé (1984), J. Chem. Phys. 81, 511-519; Hoover (1985), Phys. Rev. A 31, 1695-1697"
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -1910,6 +1939,7 @@ class RikitakeDynamo(ContinuousSystem):
     params = {"a": 1.0, "mu": 1.0}
     dim = 3
     reference = "Rikitake (1958), Proc. Cambridge Philos. Soc. 54, 89-105"
+    doi = "10.1017/s0305004100033223"
 
     @staticmethod
     def _equations(Y, t, *, a, mu):

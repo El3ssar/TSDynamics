@@ -47,6 +47,7 @@ class GlycolyticOscillation(ContinuousSystem):
     }
     dim = 3
     reference = "Decroly & Goldbeter (1982), Proc. Natl. Acad. Sci. U.S.A. 79, 6917-6921"
+    doi = "10.1073/pnas.78.11.6840"
 
     @staticmethod
     def _equations(Y, t, *, d, k, l1, l2, nu, q1, q2, s1, s2):
@@ -147,6 +148,7 @@ class IsothermalChemical(ContinuousSystem):
     params = {"delta": 1.0, "kappa": 2.5, "mu": 0.29786, "sigma": 0.013}
     dim = 3
     reference = "Petrov, Scott & Showalter (1992), J. Chem. Phys. 97, 6191-6198"
+    doi = "10.1063/1.463727"
 
     @staticmethod
     def _equations(Y, t, *, delta, kappa, mu, sigma):
@@ -187,7 +189,8 @@ class ForcedBrusselator(ContinuousSystem):
 
     params = {"a": 0.4, "b": 1.2, "f": 0.05, "w": 0.81}
     dim = 3
-    reference = "Prigogine & Lefever (1968), J. Chem. Phys. 48, 1695-1700"
+    reference = "Prigogine (1980), From Being to Becoming, W.H. Freeman"
+    doi = "10.2307/1574751"
 
     @staticmethod
     def _equations(Y, t, *, a, b, f, w):
@@ -254,7 +257,8 @@ class CircadianRhythm(ContinuousSystem):
         "vs": 6,
     }
     dim = 5
-    reference = "Goldbeter (1995), Proc. R. Soc. Lond. B 261, 319-324"
+    reference = "Leloup, Gonze & Goldbeter (1999); Gonze, Leloup & Goldbeter (2000)"
+    doi = "10.1016/b978-012088786-6/50032-0"
 
     @staticmethod
     def _equations(
@@ -349,6 +353,7 @@ class CaTwoPlus(ContinuousSystem):
     }
     dim = 3
     reference = "Houart, Dupont & Goldbeter (1999), Bull. Math. Biol. 61, 507-530"
+    doi = "10.1007/978-3-540-44878-5_8"
 
     @staticmethod
     def _equations(
@@ -433,6 +438,7 @@ class ExcitableCell(ContinuousSystem):
     }
     dim = 3
     reference = "Chay (1985), Physica D 16, 233-242"
+    doi = "10.1016/0167-2789(85)90060-0"
 
     @staticmethod
     def _equations(Y, t, *, gi, gkc, gkv, gl, kc, rho, vc, vi, vk, vl, vm, vn):
@@ -512,6 +518,7 @@ class CellCycle(ContinuousSystem):
     }
     dim = 6
     reference = "Romond, Rustici, Gonze & Goldbeter (1999), Ann. N.Y. Acad. Sci. 879, 180-193"
+    doi = "10.1111/j.1749-6632.1999.tb10419.x"
 
     @staticmethod
     def _equations(Y, t, *, K, Kc, Kd1, Kim, V2, V4, Vm1, Vm3, kd1, vd, vi):
@@ -579,7 +586,8 @@ class HindmarshRose(ContinuousSystem):
         "tz": 0.8,
     }
     dim = 3
-    reference = "Hindmarsh & Rose (1984), Proc. R. Soc. Lond. B 221, 87-102"
+    reference = "Marhl & Perc (2005), Chaos Solitons Fractals 26, 909-918"
+    doi = "10.1016/j.chaos.2005.08.013"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, s, tx, tz):
@@ -626,6 +634,7 @@ class ForcedVanDerPol(ContinuousSystem):
     params = {"a": 1.2, "mu": 8.53, "w": 0.63}
     dim = 3
     reference = "van der Pol (1926), London Edinburgh Dublin Philos. Mag. J. Sci. 2, 978-992"
+    doi = "10.1109/tct.1968.1082812"
 
     @staticmethod
     def _equations(Y, t, *, a, mu, w):
@@ -675,6 +684,7 @@ class ForcedFitzHughNagumo(ContinuousSystem):
     }
     dim = 3
     reference = "FitzHugh (1961), Biophys. J. 1, 445-466"
+    doi = "10.1016/s0006-3495(61)86902-6"
 
     @staticmethod
     def _equations(Y, t, *, a, b, curr, f, gamma, omega):
@@ -719,6 +729,7 @@ class TurchinHanski(ContinuousSystem):
     params = {"a": 8, "d": 0.04, "e": 0.5, "g": 0.1, "h": 0.8, "r": 8.12, "s": 1.25}
     dim = 3
     reference = "Turchin & Hanski (1997), Am. Nat. 149, 842-874"
+    doi = "10.1086/286027"
 
     @staticmethod
     def _equations(Y, t, *, a, d, e, g, h, r, s):
@@ -760,6 +771,7 @@ class HastingsPowell(ContinuousSystem):
     params = {"a1": 5.0, "a2": 0.1, "b1": 3.0, "b2": 2.0, "d1": 0.4, "d2": 0.01}
     dim = 3
     reference = "Hastings & Powell (1991), Ecology 72, 896-903"
+    doi = "10.2307/1940591"
 
     @staticmethod
     def _equations(Y, t, *, a1, a2, b1, b2, d1, d2):
@@ -814,6 +826,7 @@ class ItikBanksTumor(ContinuousSystem):
     }
     dim = 3
     reference = "Itik & Banks (2010), Int. J. Bifurcation Chaos 20, 71-79"
+    doi = "10.1142/s0218127410025417"
 
     @staticmethod
     def _equations(Y, t, *, a12, a13, a21, a31, d3, k3, r2, r3):

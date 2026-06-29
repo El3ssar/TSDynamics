@@ -32,6 +32,7 @@ class CoevolvingPredatorPrey(ContinuousSystem):
     """
 
     reference = "Gilpin & Feldman (2017), PLoS Comput. Biol. 13, e1005644"
+    doi = "10.1371/journal.pcbi.1005644"
     params = {
         "a1": 2.5,
         "a2": 0.05,
@@ -95,6 +96,7 @@ class KawczynskiStrizhak(ContinuousSystem):
     """
 
     reference = "Strizhak & Kawczynski (1995), J. Phys. Chem. 99, 10830-10833"
+    doi = "10.1021/j100027a024"
     params = {"beta": -0.4, "gamma": 0.49, "kappa": 0.2, "mu": 2.1}
     dim = 3
 
@@ -138,7 +140,7 @@ class Finance(ContinuousSystem):
     The default parameters lie in the chaotic regime.
     """
 
-    reference = "Ma & Chen (2001), Appl. Math. Mech. 22, 1240-1251"
+    reference = "Cai & Huang (2007), Int. J. Nonlinear Sci. 3, 235-241"
     params = {"a": 0.001, "b": 0.2, "c": 1.1}
     dim = 3
 

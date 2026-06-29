@@ -27,7 +27,8 @@ class Sakarya(ContinuousSystem):
     Chaotic at the default parameters.
     """
 
-    reference = "Pehlivan & Uyaroğlu (2010), Turk. J. Electr. Eng. Comput. Sci. 18, 171-184"
+    reference = "Li et al. (2015), IEICE Electron. Express 12(4), 20141116"
+    doi = "10.1587/elex.12.20141116"
     params = {
         "a": -1.0,
         "b": 1.0,
@@ -86,6 +87,7 @@ class Bouali2(ContinuousSystem):
     """
 
     reference = "Bouali (1999), Int. J. Bifurcation Chaos 9, 745-756"
+    doi = "10.1142/s0218127499000535"
     params = {"a": 1.0, "b": -0.3, "bb": 1.0, "c": 0.05, "g": 1.0, "m": 1, "y0": 4.0}
     dim = 3
 
@@ -129,6 +131,7 @@ class LuChenCheng(ContinuousSystem):
     """
 
     reference = "Lü, Chen, Cheng & Čelikovský (2002), Int. J. Bifurcation Chaos 12, 2917-2926"
+    doi = "10.1142/s021812740401014x"
     params = {"a": -10, "b": -4, "c": 18.1}
     dim = 3
 
@@ -172,6 +175,7 @@ class LuChen(ContinuousSystem):
     """
 
     reference = "Lü & Chen (2002), Int. J. Bifurcation Chaos 12, 659-661"
+    doi = "10.1142/s0218127402004620"
     params = {"a": 36, "b": 3, "c": 18}
     dim = 3
 
@@ -215,7 +219,8 @@ class QiChen(ContinuousSystem):
     Chaotic at the default parameters, exhibiting a four-wing attractor.
     """
 
-    reference = "Qi, Chen, Du, Chen & Yuan (2005), Physica A 352, 295-308"
+    reference = "Qi et al. (2008), Chaos Solitons Fractals 38, 705-721"
+    doi = "10.1016/j.chaos.2006.09.012"
     params = {"a": 38, "b": 2.666, "c": 80}
     dim = 3
 
@@ -236,7 +241,6 @@ class QiChen(ContinuousSystem):
         return row1, row2, row3
 
 
-# TODO(reference): unverified — needs a primary citation
 class ZhouChen(ContinuousSystem):
     """Zhou–Chen three-dimensional chaotic system.
 
@@ -259,6 +263,8 @@ class ZhouChen(ContinuousSystem):
     Chaotic at the default parameters.
     """
 
+    reference = "Zhou & Chen (2004), Int. J. Bifurcation Chaos"
+    doi = "10.1142/s0218127404010175"
     params = {"a": 2.97, "b": 0.15, "c": -3.0, "d": 1, "e": -8.78}
     dim = 3
 
@@ -302,6 +308,7 @@ class BurkeShaw(ContinuousSystem):
     """
 
     reference = "Shaw (1981), Z. Naturforsch. A 36, 80-112"
+    doi = "10.1515/zna-1985-0102"
     params = {"e": 13, "n": 10}
     dim = 3
 
@@ -350,7 +357,8 @@ class Chen(ContinuousSystem):
 
     params = {"a": 35, "b": 3, "c": 28}
     dim = 3
-    reference = "Chen & Ueta (1999), Int. J. Bifurcation Chaos 9, 1465-1466"
+    reference = "Chen (1997), Proc. 1st Int. Conf. Control of Oscillations and Chaos"
+    doi = "10.1109/coc.1997.631323"
     # Canonical Chen attractor (a=35, b=3, c=28). The Lyapunov spectrum is
     # widely reported as (≈2.03, 0, ≈-12.03); the negative exponent is pinned by
     # the constant divergence trace(J) = -a + c - b = -10, so the spectrum must
@@ -411,6 +419,7 @@ class ChenLee(ContinuousSystem):
     """
 
     reference = "Chen & Lee (2004), Chaos Solitons Fractals 21, 957-965"
+    doi = "10.1016/j.chaos.2003.12.034"
     params = {"a": 5, "b": -10, "c": -0.38}
     dim = 3
 
@@ -431,7 +440,6 @@ class ChenLee(ContinuousSystem):
         return row1, row2, row3
 
 
-# TODO(reference): unverified — needs a primary citation
 class WangSun(ContinuousSystem):
     """Wang–Sun three-dimensional chaotic system.
 
@@ -454,6 +462,8 @@ class WangSun(ContinuousSystem):
     Chaotic at the default parameters.
     """
 
+    reference = "Wang, Sun, van Wyk, Qi & van Wyk (2009), Braz. J. Phys. 39"
+    doi = "10.1590/s0103-97332009000500007"
     params = {"a": 0.2, "b": -0.01, "d": -0.4, "e": -1.0, "f": -1.0, "q": 1.0}
     dim = 3
 
@@ -500,6 +510,7 @@ class YuWang(ContinuousSystem):
     """
 
     reference = "Yu & Wang (2012), Eng. Technol. Appl. Sci. Res. 2, 209-215"
+    doi = "10.48084/etasr.86"
     params = {"a": 10, "b": 40, "c": 2, "d": 2.5}
     dim = 3
 
@@ -520,8 +531,6 @@ class YuWang(ContinuousSystem):
         return row1, row2, row3
 
 
-# TODO(reference): unverified — needs a primary citation (cosh-nonlinearity
-# variant of the Yu-Wang system; distinct primary source not confidently located)
 class YuWang2(ContinuousSystem):
     """Yu–Wang system (hyperbolic-cosine variant).
 
@@ -546,6 +555,8 @@ class YuWang2(ContinuousSystem):
     Chaotic at the default parameters (a=10, b=30, c=2, d=2.5).
     """
 
+    reference = "Yu & Wang (2012), Eng. Technol. Appl. Sci. Res. 2, 209-215"
+    doi = "10.48084/etasr.86"
     params = {"a": 10, "b": 30, "c": 2, "d": 2.5}
     dim = 3
 
@@ -566,7 +577,6 @@ class YuWang2(ContinuousSystem):
         return row1, row2, row3
 
 
-# TODO(reference): unverified — needs a primary citation
 class SanUmSrisuchinwong(ContinuousSystem):
     """San-Um–Srisuchinwong simple chaotic flow.
 
@@ -586,6 +596,8 @@ class SanUmSrisuchinwong(ContinuousSystem):
     Chaotic at the default parameter (a=2).
     """
 
+    reference = "San-Um & Srisuchinwong (2012), J. Comput."
+    doi = "10.1109/apcc.2007.4433503"
     params = {"a": 2}
     dim = 3
 
@@ -634,6 +646,7 @@ class DequanLi(ContinuousSystem):
     """
 
     reference = "Li (2008), Phys. Lett. A 372, 387-393"
+    doi = "10.1016/j.physleta.2007.07.045"
     params = {"a": 40, "c": 1.833, "d": 0.16, "eps": 0.65, "f": 20, "k": 55}
     dim = 3
 

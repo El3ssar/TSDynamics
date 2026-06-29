@@ -241,6 +241,8 @@ records name/cls/family/category/dim/params/reference/known_lyapunov.
 
 Optional per-system metadata ClassVars: `variables` (component names →
 `traj["x"]`, docs labels), `reference` (literature citation shown in docs),
+`doi` (the bare DOI for that citation — e.g. `"10.1175/..."` — sourced from the
+GilpinLab/dysts dataset where available, for the docs per-system page),
 `known_lyapunov` (drives `tests/test_known_values.py`; keys: `spectrum`+`atol`,
 or `n_positive`, plus `params`/`ic`/`kwargs`/`source`), and — for a
 **spatially-extended** system whose state vector is a flattened field —
