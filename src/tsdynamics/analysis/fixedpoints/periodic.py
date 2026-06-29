@@ -505,7 +505,10 @@ def periodic_orbit(
         ``x0 = equilibrium`` (any ``T``, residual ``0``) — common for a centre or
         from a poor guess — which is rejected below this threshold.
     seed : int, optional
-        Seed for the burn-in IC, when ``ic`` is not given.
+        Seed for the burn-in IC, when ``ic`` is not given.  The random fallback is
+        drawn from a *local* :class:`numpy.random.Generator` seeded with this
+        value, so a given ``seed`` is reproducible regardless of the global
+        ``numpy.random`` state; ``seed=None`` (the default) is non-deterministic.
 
     Returns
     -------
@@ -535,9 +538,10 @@ def periodic_orbit(
         )
     dim = int(system.dim)  # type: ignore[arg-type]  # dim resolved at construction
     rhs, jac = _c.flow_fns(system)
+    rng = np.random.default_rng(seed)
 
     x0 = (
-        np.asarray(system.resolve_ic(None), dtype=float).ravel()
+        np.asarray(_c._orbit_start_ic(system, dim, rng), dtype=float).ravel()
         if ic is None
         else np.asarray(ic, dtype=float).ravel()
     )
