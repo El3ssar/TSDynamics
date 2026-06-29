@@ -4,9 +4,27 @@ from tsdynamics.families import DiscreteMap
 
 
 class Bogdanov(DiscreteMap):
+    """Bogdanov map -- discrete-time normal form of the Bogdanov-Takens bifurcation.
+
+    A planar quadratic map that arises as the Euler/time-discretisation of the
+    Bogdanov-Takens (double-zero eigenvalue) unfolding, used to study the
+    interplay of the saddle-node, Hopf and homoclinic bifurcations near a
+    cusp. The map exhibits invariant circles, Arnold tongues and chaotic
+    attractors as the parameters are varied.
+
+    Parameters
+    ----------
+    eps : float
+        Linear damping/detuning of the ``y`` recurrence (the Hopf parameter).
+    k : float
+        Strength of the quadratic ``x(x-1)`` nonlinearity.
+    mu : float
+        Coefficient of the mixed ``x*y`` term.
+    """
+
     params = {"eps": 0.0, "k": 1.2, "mu": 0.0}
     dim = 2
-    reference = "Arrowsmith et al. (1993), Int. J. Bifurcation Chaos 3, 803-842"
+    reference = "Bogdanov (1981), Selecta Math. Soviet. 1, 389-421"
 
     @staticmethod
     def _step(X, eps, k, mu):
@@ -26,7 +44,32 @@ class Bogdanov(DiscreteMap):
         return row1, row2
 
 
+# TODO(reference): unverified -- needs a primary citation. The Svensson
+# attractor circulates as a "popular" trigonometric strange attractor
+# (attributed to Johnny Svensson, documented on Paul Bourke's site and in
+# fractal-art galleries) with no traceable primary academic publication.
 class Svensson(DiscreteMap):
+    """Svensson attractor -- a sinusoidal planar strange-attractor map.
+
+    A two-dimensional iterated map built from sines and cosines of the scaled
+    coordinates that produces an intricate, often filamentary chaotic
+    attractor. It belongs to the family of trigonometric "strange attractor"
+    maps popular in generative art and used as visual test cases for attractor
+    reconstruction and Lyapunov-exponent estimation.
+
+    Parameters
+    ----------
+    a, b : float
+        Angular frequencies scaling ``x`` and ``y`` inside the trig terms.
+    c, d : float
+        Amplitudes of the cosine (``c``) and sine (``d``) contributions.
+
+    Notes
+    -----
+    Default parameters ``(a, b, c, d) = (1.5, -1.8, 1.6, 0.9)`` give one of the
+    commonly illustrated chaotic attractors.
+    """
+
     params = {"a": 1.5, "b": -1.8, "c": 1.6, "d": 0.9}
     dim = 2
 
@@ -45,7 +88,32 @@ class Svensson(DiscreteMap):
         return row1, row2
 
 
+# TODO(reference): unverified -- needs a primary citation. The Bedhead
+# attractor circulates as a "popular" trigonometric strange attractor
+# (attributed to Ivan Emrich, documented on Paul Bourke's site and in
+# fractal-art galleries) with no traceable primary academic publication.
 class Bedhead(DiscreteMap):
+    """Bedhead attractor -- a sinusoidal planar strange-attractor map.
+
+    A two-dimensional iterated map combining a ``sin(x*y/b)`` cross term with
+    additive sine/cosine terms; for suitable parameters it generates a
+    delicate chaotic attractor with a characteristic swept, "bedhead" shape.
+    Like the Svensson map it is a trigonometric strange-attractor map used as a
+    visual benchmark for chaotic-attractor analysis.
+
+    Parameters
+    ----------
+    a : float
+        Phase coefficient in the ``cos(a*x - y)`` term.
+    b : float
+        Scale dividing the ``x*y`` product and the ``sin(y)`` term.
+
+    Notes
+    -----
+    Default parameters ``(a, b) = (-0.67, 0.83)``, iterated from ``x = y = 1``,
+    give the commonly illustrated attractor.
+    """
+
     params = {"a": -0.67, "b": 0.83}
     dim = 2
 
@@ -68,8 +136,30 @@ class Bedhead(DiscreteMap):
 
 
 class ZeraouliaSprott(DiscreteMap):
+    """Zeraoulia-Sprott map -- a minimal 2-D rational chaotic map.
+
+    A two-dimensional discrete map whose first component is a rational fraction
+    ``-a*x / (1 + y**2)`` with a non-vanishing denominator. It was introduced
+    as one of the simplest rational planar maps that still produces chaotic
+    attractors, reached via a quasi-periodic route to chaos, and is studied for
+    the boundedness of its attractors.
+
+    Parameters
+    ----------
+    a : float
+        Gain of the rational ``x``-recurrence (the primary control parameter).
+    b : float
+        Linear feedback coefficient of ``y`` in the second component.
+
+    Notes
+    -----
+    Default parameters ``(a, b) = (2.7, 0.35)`` lie in the chaotic regime
+    reported by Zeraoulia & Sprott.
+    """
+
     params = {"a": 2.7, "b": 0.35}
     dim = 2
+    reference = "Zeraoulia & Sprott (2011), Int. J. Bifurcation Chaos 21, 155-160"
 
     @staticmethod
     def _step(X, a, b):
@@ -92,6 +182,22 @@ class ZeraouliaSprott(DiscreteMap):
 
 
 class GumowskiMira(DiscreteMap):
+    """Gumowski-Mira map -- a recurrence with a rational nonlinearity.
+
+    A planar map introduced in the study of particle-accelerator beam dynamics
+    that iterates a nonlinear function ``G(x) = a*x + 2*(1-a)*x**2 / (1+x**2)``.
+    It is celebrated for producing an extraordinary variety of organic,
+    ornamental attractors -- closed invariant curves, island chains and chaotic
+    sea-and-island structures -- as the parameters are tuned.
+
+    Parameters
+    ----------
+    a : float
+        Coefficient controlling the shape of the rational nonlinearity ``G``.
+    b : float
+        Linear feedback gain mixing the previous ``y`` into the recurrence.
+    """
+
     params = {"a": -1.1, "b": -0.2}
     dim = 2
     reference = "Gumowski & Mira (1980), Recurrences and Discrete Dynamic Systems"
@@ -129,14 +235,27 @@ class GumowskiMira(DiscreteMap):
 
 
 class Hopalong(DiscreteMap):
-    """
-    Hopalong (Martin) attractor map.
+    """Hopalong (Martin) attractor map -- a square-root strange-attractor map.
 
-    This is a shifted variant of Barry Martin's "Hopalong" map: the step carries
-    several ``- 1`` offsets and a ``sign(x - 1)`` / ``b*x - 1 - c`` argument
-    rather than the bare canonical ``x' = y - sign(x)*sqrt(|b*x - c|)``,
-    ``y' = a - x``. The offsets are intentional and self-consistent (the hand
-    Jacobian matches ``_step``).
+    Barry Martin's "Hopalong" map, popularised by A. K. Dewdney's Computer
+    Recreations column. Its square-root-and-sign nonlinearity sprays iterates
+    into layered, often quasi-symmetric chaotic attractors that were a staple
+    of early home-computer fractal art.
+
+    This implementation is a shifted variant: the step carries several ``- 1``
+    offsets and a ``sign(x - 1)`` / ``b*x - 1 - c`` argument rather than the
+    bare canonical ``x' = y - sign(x)*sqrt(|b*x - c|)``, ``y' = a - x``. The
+    offsets are intentional and self-consistent (the hand Jacobian matches
+    ``_step``).
+
+    Parameters
+    ----------
+    a : float
+        Additive constant in the ``y``-recurrence (sets the overall offset).
+    b : float
+        Scale inside the square-root argument.
+    c : float
+        Shift inside the square-root argument.
     """
 
     params = {"a": 3.1, "b": 2.5, "c": 4.2}
@@ -162,8 +281,31 @@ class Hopalong(DiscreteMap):
 
 
 class Pickover(DiscreteMap):
+    """Pickover (Clifford) attractor -- a sinusoidal planar strange-attractor map.
+
+    A two-dimensional iterated map of the form
+    ``x' = sin(a*y) + c*cos(a*x)``, ``y' = sin(b*x) + d*cos(b*y)`` introduced
+    in Clifford Pickover's explorations of computer-generated chaos. Like other
+    trigonometric strange-attractor maps it converges to the same intricate
+    attractor irrespective of the starting point, making it a popular subject
+    in mathematical art and a benchmark for attractor visualisation.
+
+    Parameters
+    ----------
+    a, b : float
+        Angular frequencies scaling the coordinates inside the trig terms.
+    c, d : float
+        Amplitudes of the cosine contributions in the two components.
+
+    Notes
+    -----
+    Default parameters ``(a, b, c, d) = (-1.4, 1.6, 1.0, 0.7)`` produce a
+    commonly illustrated chaotic attractor.
+    """
+
     params = {"a": -1.4, "b": 1.6, "c": 1.0, "d": 0.7}
     dim = 2
+    reference = "Pickover (1990), Computers, Pattern, Chaos and Beauty (St. Martin's Press)"
 
     @staticmethod
     def _step(X, a, b, c, d):

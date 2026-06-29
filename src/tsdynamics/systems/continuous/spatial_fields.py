@@ -98,6 +98,8 @@ class GrayScott(ContinuousSystem):
        *Science*, 261(5118), 189-192.
     """
 
+    reference = "Pearson (1993), Science 261, 189-192"
+
     # N drives the symbolic loop length (one equation per cell per field), so it
     # is baked into the tape; the rate / diffusion coefficients are runtime knobs.
     _structural_params = frozenset({"N"})
@@ -255,6 +257,8 @@ class SwiftHohenberg(ContinuousSystem):
     .. [1] Swift, J. & Hohenberg, P. C. (1977). "Hydrodynamic fluctuations at the
        convective instability." *Physical Review A*, 15(1), 319-328.
     """
+
+    reference = "Swift & Hohenberg (1977), Phys. Rev. A 15, 319-328"
 
     # N drives the symbolic loop length, so it is baked into the tape; L and r are
     # runtime control parameters (changing them only changes the coefficients).

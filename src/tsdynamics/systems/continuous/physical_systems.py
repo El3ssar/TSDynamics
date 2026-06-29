@@ -4,6 +4,26 @@ from tsdynamics.families import ContinuousSystem
 
 
 class DoublePendulum(ContinuousSystem):
+    r"""Planar double pendulum — a canonical Hamiltonian chaotic system.
+
+    Two identical rigid arms (each of length ``d`` and mass ``m``) swing under
+    gravity in a vertical plane, the lower hinged to the tip of the upper. The
+    state ``(θ₁, θ₂, p₁, p₂)`` collects the two arm angles and their conjugate
+    momenta; the equations are the canonical Hamiltonian flow, and the energy is
+    conserved (no dissipation), so the motion is quasi-periodic at low energy and
+    chaotic — exquisitely sensitive to initial conditions — once the energy is
+    large enough for the arms to flip over.
+
+    Parameters
+    ----------
+    d : float
+        Arm length (both arms equal). Sets the gravitational frequency scale.
+    m : float
+        Arm mass (both arms equal).
+    """
+
+    reference = "Marion (2013), Classical Dynamics of Particles and Systems"
+    doi = "10.1016/b978-1-4832-5676-4.50003-2"
     params = {"d": 1.0, "m": 1.0}
     dim = 4
 
@@ -21,6 +41,27 @@ class DoublePendulum(ContinuousSystem):
 
 
 class SwingingAtwood(ContinuousSystem):
+    r"""Swinging Atwood's machine — a pendulum coupled to a hanging counterweight.
+
+    A mass ``m1`` is free to swing as a pendulum on a string that runs over
+    pulleys to a non-swinging counterweight ``m2`` that only moves vertically;
+    the radial length ``r`` and swing angle ``θ`` (with conjugate momenta
+    ``pr``, ``pθ``) are thus coupled through the shared string. The conservative
+    dynamics is integrable at the special mass ratio ``m2/m1 = 3`` (every bounded
+    orbit closes) and generically chaotic otherwise, producing the intricate
+    "teardrop" and "smile" orbits for which the system is known.
+
+    Parameters
+    ----------
+    m1 : float
+        Swinging pendulum mass.
+    m2 : float
+        Non-swinging counterweight mass; the mass ratio ``m2/m1`` controls the
+        dynamics (``= 3`` is the integrable case, the default ``4.5`` is chaotic).
+    """
+
+    reference = "Tufillaro, Abbott & Griffiths (1984), Am. J. Phys. 52, 895-903"
+    doi = "10.1119/1.13791"
     params = {"m1": 1.0, "m2": 4.5}
     dim = 4
 
@@ -36,6 +77,31 @@ class SwingingAtwood(ContinuousSystem):
 
 
 class Colpitts(ContinuousSystem):
+    r"""Chaotic Colpitts oscillator — a sinusoidal LC oscillator driven into chaos.
+
+    A dimensionless third-order model of the Colpitts electronic oscillator (a
+    bipolar transistor with an LC tank), whose transistor nonlinearity is the
+    piecewise-linear exponential-diode characteristic captured here by the
+    ``sign``-gated rectifier term. For suitable component values the normally
+    sinusoidal oscillator undergoes a period-doubling route to a chaotic
+    attractor, making it a standard hardware chaos generator.
+
+    Parameters
+    ----------
+    a : float
+        Loop-gain / nonlinearity strength of the transistor term.
+    b : float
+        Damping (loss) coefficient on the voltage variable ``y``.
+    c : float
+        Bias / supply drive term.
+    d : float
+        Inductor-branch loss coefficient on ``z``.
+    e : float
+        Transistor turn-on (pinch-off) threshold of the rectifying nonlinearity.
+    """
+
+    reference = "Kennedy (1994), IEEE Trans. Circuits Syst. I 41, 771-774"
+    doi = "10.1109/81.331536"
     params = {"a": 30, "b": 0.8, "c": 20, "d": 0.08, "e": 10}
     dim = 3
 
@@ -51,6 +117,34 @@ class Colpitts(ContinuousSystem):
 
 
 class Laser(ContinuousSystem):
+    r"""Abooee–Yaghini-Bonabi–Jahed-Motlagh three-dimensional chaotic system.
+
+    A three-variable quadratic/cubic flow proposed as a semiconductor-laser-type
+    chaotic model, with cubic cross-coupling (``y·z²``, ``x·z²``) feeding a
+    strange attractor that the original authors realised as an analog electronic
+    circuit. The coordinates ``(x, y, z)`` are the model's abstract state
+    variables (field/inversion-like quantities) rather than calibrated physical
+    laser observables.
+
+    Parameters
+    ----------
+    a : float
+        Linear coupling/decay rate between ``x`` and ``y``.
+    b : float
+        Strength of the cubic ``y·z²`` coupling driving ``x``.
+    c, d : float
+        Linear and cubic (``x·z²``) coupling coefficients driving ``y``.
+    h : float
+        Linear damping of ``z``.
+    k : float
+        Strength of the quadratic ``x²`` feedback into ``z``.
+    """
+
+    reference = (
+        "Abooee, Yaghini-Bonabi & Jahed-Motlagh (2013), "
+        "Commun. Nonlinear Sci. Numer. Simul. 18, 1235-1245"
+    )
+    doi = "10.1016/j.cnsns.2012.08.036"
     params = {"a": 10.0, "b": 1.0, "c": 5.0, "d": -1.0, "h": -5.0, "k": -6.0}
     dim = 3
 
@@ -83,6 +177,7 @@ class Blasius(ContinuousSystem):
     """
 
     reference = "Blasius, Huppert & Stone (1999), Nature 399, 354-359"
+    doi = "10.1038/20676"
     params = {
         "a": 1,
         "alpha1": 0.2,
@@ -106,6 +201,28 @@ class Blasius(ContinuousSystem):
 
 
 class FluidTrampoline(ContinuousSystem):
+    r"""Fluid trampoline — a droplet bouncing on a vibrated soap film.
+
+    A reduced model of a liquid droplet bouncing on a sinusoidally driven soap
+    film, which acts as a nonlinear vertical spring. The state ``(x, y, θ)`` is
+    the droplet height, its velocity, and the forcing phase; contact with the
+    film is gated by the ``sign(x)`` switch (a restoring force plus quadratic
+    drag acting only while ``x < 0``), and the periodic forcing ``γ·cos(θ)``
+    drives the bounce. As the forcing is increased the system passes through
+    simple and multi-periodic bouncing states into chaos.
+
+    Parameters
+    ----------
+    gamma : float
+        Dimensionless forcing acceleration amplitude.
+    psi : float
+        Quadratic-drag (energy-loss) coefficient of the film contact.
+    w : float
+        Dimensionless forcing angular frequency (``θ`` advances at rate ``w``).
+    """
+
+    reference = "Gilet & Bush (2009), J. Fluid Mech. 625, 167-203"
+    doi = "10.1017/s0022112008005442"
     params = {"gamma": 1.82, "psi": 0.01019, "w": 1.21}
     dim = 3
 
@@ -119,6 +236,24 @@ class FluidTrampoline(ContinuousSystem):
 
 
 class JerkCircuit(ContinuousSystem):
+    r"""Sprott's chaotic jerk circuit with an exponential-diode nonlinearity.
+
+    A "jerk" system — a single third-order scalar ODE ``x''' = f(x, x', x'')``
+    written in companion form ``(x, y, z)`` — realising one of the algebraically
+    simplest known chaotic electronic circuits. The only nonlinearity is the
+    diode's exponential current–voltage law ``ε·(exp(y/y0) − 1)``; three
+    integrators and a single diode suffice to generate the chaotic attractor.
+
+    Parameters
+    ----------
+    eps : float
+        Diode saturation-current scale (strength of the exponential nonlinearity).
+    y0 : float
+        Diode thermal-voltage scale setting the exponential's steepness.
+    """
+
+    reference = "Sprott (2011), IEEE Trans. Circuits Syst. II 58, 240-243"
+    doi = "10.1109/tcsii.2011.2124490"
     params = {"eps": 1e-9, "y0": 0.026}
     dim = 3
 
@@ -166,7 +301,8 @@ class WindmiReduced(ContinuousSystem):
       Newton/error-test failures.  The clamp uses ``abs`` only.
     """
 
-    reference = "Horton, Weigel & Sprott (2001), Phys. Plasmas 8, 2946-2952"
+    reference = "Smith, Thiffeault & Horton (2000), J. Geophys. Res. 105, 12983-12996"
+    doi = "10.1029/1999ja000218"
     params = {"a1": 0.247, "b1": 10.8, "b2": 0.0752, "b3": 1.06, "d1": 2200, "vsw": 5}
     dim = 3
     variables = ("i", "v", "p")

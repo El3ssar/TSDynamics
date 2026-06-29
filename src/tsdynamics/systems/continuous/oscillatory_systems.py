@@ -4,8 +4,27 @@ from tsdynamics.families import ContinuousSystem
 
 
 class ShimizuMorioka(ContinuousSystem):
+    """
+    Shimizu–Morioka model — a Lorenz-like flow with simplified nonlinearity.
+
+    A three-dimensional autonomous flow introduced to study the pitchfork
+    bifurcation of the symmetric figure-eight limit cycle and the resulting
+    cascade of bifurcations seen in the Lorenz equations at large Rayleigh
+    number.  It retains the Z2 symmetry ``(x, y) -> (-x, -y)`` of the Lorenz
+    system and supports a Lorenz-type strange attractor.
+
+    Parameters
+    ----------
+    a, b : float
+        Positive bifurcation parameters (damping ``a`` and dissipation ``b``).
+        The defaults ``a = 0.85``, ``b = 0.5`` lie in the Lorenz-attractor
+        region of the parameter plane.
+    """
+
     params = {"a": 0.85, "b": 0.5}
     dim = 3
+    reference = "Shimizu & Morioka (1980), Phys. Lett. A 76, 201-204"
+    doi = "10.1016/0375-9601(80)90466-1"
 
     @staticmethod
     def _equations(Y, t, *, a, b):
@@ -25,8 +44,28 @@ class ShimizuMorioka(ContinuousSystem):
 
 
 class MooreSpiegel(ContinuousSystem):
+    """
+    Moore–Spiegel oscillator — a thermally excited aperiodic convection model.
+
+    A three-dimensional flow for a fluid element oscillating vertically in a
+    temperature gradient with a linear restoring force, exchanging heat with its
+    surroundings so that its temperature-dependent buoyancy can drive
+    overstable convection.  It was one of the earliest models to exhibit
+    aperiodic (chaotic) variability and was proposed to explain the irregular
+    luminosity of variable stars.
+
+    Parameters
+    ----------
+    a, b, eps : float
+        Coupling/stiffness (``a``), linear restoring (``b``) and tension/heat-
+        transfer (``eps``) parameters.  The defaults ``a = 10``, ``b = 4``,
+        ``eps = 9`` produce chaotic motion.
+    """
+
     params = {"a": 10, "b": 4, "eps": 9}
     dim = 3
+    reference = "Moore & Spiegel (1966), Astrophys. J. 143, 871-887"
+    doi = "10.1086/148562"
 
     @staticmethod
     def _equations(Y, t, *, a, b, eps):
@@ -46,8 +85,31 @@ class MooreSpiegel(ContinuousSystem):
 
 
 class AnishchenkoAstakhov(ContinuousSystem):
+    """
+    Anishchenko–Astakhov oscillator — a radiophysical generator of spiral chaos.
+
+    A three-dimensional autonomous flow modelling a self-sustained oscillator
+    with inertial nonlinearity (a radiophysical chaos generator).  It is a
+    canonical model of spiral (saddle-focus) chaos: the onset of chaotic
+    self-oscillations is tied to a saddle-focus separatrix loop, and the route
+    to chaos follows the Feigenbaum period-doubling scenario.  The discontinuous
+    ``sign(x)`` switch implements the inertial (half-wave rectifying)
+    nonlinearity of the generator.
+
+    Parameters
+    ----------
+    eta : float
+        Inertial-inertia (relaxation) parameter of the nonlinear element.
+    mu : float
+        Excitation parameter controlling the negative damping of the
+        oscillatory circuit.  The defaults ``eta = 0.5``, ``mu = 1.2`` lie in
+        the chaotic regime.
+    """
+
     params = {"eta": 0.5, "mu": 1.2}
     dim = 3
+    reference = "Anishchenko et al. (2007), Nonlinear Dynamics of Chaotic and Stochastic Systems"
+    doi = "10.1007/978-3-540-38168-6"
 
     @staticmethod
     def _equations(Y, t, *, eta, mu):
@@ -59,8 +121,26 @@ class AnishchenkoAstakhov(ContinuousSystem):
 
 
 class Aizawa(ContinuousSystem):
+    """
+    Aizawa attractor — a six-parameter chaotic flow with symmetric lobes.
+
+    A three-dimensional flow with rotational symmetry about the z-axis whose
+    trajectories wind into a sphere-like attractor pierced by a narrow tube,
+    producing distinctive symmetric lobes.  It is widely used as a visually
+    striking benchmark attractor.
+
+    Parameters
+    ----------
+    a, b, c, d, e, f : float
+        Shape parameters of the attractor; the defaults
+        ``(a, b, c, d, e, f) = (0.95, 0.7, 0.6, 3.5, 0.25, 0.1)`` give the
+        canonical lobed chaotic attractor.
+    """
+
     params = {"a": 0.95, "b": 0.7, "c": 0.6, "d": 3.5, "e": 0.25, "f": 0.1}
     dim = 3
+    reference = "Aizawa & Uezu (1982), Prog. Theor. Phys. 67, 982-985"
+    doi = "10.1143/PTP.67.982"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e, f):
@@ -72,6 +152,33 @@ class Aizawa(ContinuousSystem):
 
 
 class StickSlipOscillator(ContinuousSystem):
+    """
+    Stick–slip oscillator — a dry-friction flow with harmonic forcing.
+
+    A forced single-degree-of-freedom oscillator with a Duffing-type restoring
+    force and a velocity-dependent (Stribeck-like) dry-friction torque.  The
+    ``sign(v - vs)`` switch about the relative sliding velocity makes the system
+    non-smooth and produces alternating stick and slip phases that can become
+    chaotic under the periodic drive ``gamma * cos(th)``.
+
+    Parameters
+    ----------
+    a, b : float
+        Linear and cubic stiffness of the Duffing restoring force.
+    alpha, beta : float
+        Linear and cubic velocity coefficients shaping the friction torque.
+    t0 : float
+        Static (Coulomb) friction level of the ``sign``-switched torque.
+    vs : float
+        Reference (Stribeck) sliding velocity at which the switch acts.
+    eps : float
+        Coupling weight of the friction/forcing term in the velocity equation.
+    gamma : float
+        Amplitude of the harmonic drive.
+    w : float
+        Angular frequency of the harmonic drive (``th`` advances at rate ``w``).
+    """
+
     params = {
         "a": 1,
         "alpha": 0.3,
@@ -84,6 +191,8 @@ class StickSlipOscillator(ContinuousSystem):
         "w": 2,
     }
     dim = 3
+    reference = "Awrejcewicz & Holicke (1999), Int. J. Bifurc. Chaos"
+    doi = "10.1142/s0218127499000341"
 
     @staticmethod
     def _equations(Y, t, *, a, alpha, b, beta, eps, gamma, t0, vs, w):
@@ -96,8 +205,29 @@ class StickSlipOscillator(ContinuousSystem):
 
 
 class Torus(ContinuousSystem):
+    """
+    Parametric torus winding — a quasiperiodic curve on a torus surface.
+
+    Not a chaotic system: the right-hand side is purely time-driven (independent
+    of the state), so integrating it traces the parametric curve of a winding
+    that wraps ``n`` times around the tube while circling the central hole once.
+    Useful as a non-chaotic, quasiperiodic reference trajectory.
+
+    Parameters
+    ----------
+    r : float
+        Major radius (distance from the torus centre to the tube centre).
+    a : float
+        Minor radius (tube radius).
+    n : float
+        Number of tube windings per revolution about the central axis; an
+        irrational ratio gives a dense quasiperiodic winding.
+    """
+
     params = {"a": 0.5, "n": 15.3, "r": 1}
     dim = 3
+    reference = "Strogatz (1994), Nonlinear Dynamics and Chaos"
+    doi = "10.1201/9780429492563"
 
     @staticmethod
     def _equations(Y, t, *, a, n, r):
@@ -108,7 +238,27 @@ class Torus(ContinuousSystem):
         return xdot, ydot, zdot
 
 
+# TODO(reference): no primary citation — a standard Lissajous (Bowditch) figure,
+# a classical parametric curve, not a research-introduced dynamical system.
 class Lissajous3D(ContinuousSystem):
+    """
+    Three-dimensional Lissajous (Bowditch) figure.
+
+    Not a chaotic system: the right-hand side is purely time-driven (independent
+    of the state), so integrating it traces the classical parametric curve
+    ``(A cos(a t), B cos(b t + delta_y), C cos(c t + delta_z))``.  The shape is
+    closed and periodic when the frequency ratios are rational.
+
+    Parameters
+    ----------
+    A, B, C : float
+        Amplitudes along the x, y and z axes.
+    a, b, c : float
+        Frequencies along the x, y and z axes.
+    delta_y, delta_z : float
+        Phase shifts of the y and z components relative to x.
+    """
+
     params = {
         "A": 1,
         "B": 1,
@@ -151,7 +301,27 @@ class Lissajous3D(ContinuousSystem):
         return dxdt, dydt, dzdt
 
 
+# TODO(reference): no primary citation — a standard Lissajous (Bowditch) figure,
+# a classical parametric curve, not a research-introduced dynamical system.
 class Lissajous2D(ContinuousSystem):
+    """
+    Two-dimensional Lissajous (Bowditch) figure.
+
+    Not a chaotic system: the right-hand side is purely time-driven (independent
+    of the state), so integrating it traces the classical parametric curve
+    ``(A cos(a t), B cos(b t + delta))``.  The figure is closed and periodic
+    when the frequency ratio ``a : b`` is rational.
+
+    Parameters
+    ----------
+    A, B : float
+        Amplitudes along the x and y axes.
+    a, b : float
+        Frequencies along the x and y axes.
+    delta : float
+        Phase shift of the y component relative to x.
+    """
+
     params = {"A": 1, "B": 1, "a": 3, "b": 2, "delta": pi / 2}
     dim = 2
 

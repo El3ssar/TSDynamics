@@ -46,9 +46,10 @@ Reachable submodules (bound on the top-level namespace, so they show up in
   capability.
 - :mod:`~tsdynamics.errors` — the :class:`~tsdynamics.errors.TSDynamicsError`
   hierarchy that public entry points raise.
-- :mod:`~tsdynamics.viz` — the backend-agnostic ``PlotSpec`` IR (no renderer
-  ships yet).  Resolved **lazily** (via ``__getattr__``) so a plain
-  ``import tsdynamics`` pulls in no plotting machinery.
+- :mod:`~tsdynamics.viz` — the backend-agnostic ``PlotSpec`` IR plus its
+  self-registering renderers (matplotlib / Plotly / JSON / three.js).  Resolved
+  **lazily** (via ``__getattr__``) so a plain ``import tsdynamics`` pulls in no
+  plotting machinery — ``ts.viz`` imports it (and caches it) on first access.
 - :mod:`~tsdynamics.engine`, :mod:`~tsdynamics.solvers` — advanced/internal: the
   Rust-facing compile/run seam and the solver registry.  Reachable for inspection
   but rarely imported directly.
@@ -365,7 +366,7 @@ basins = basins_of_attraction  #: short alias of :func:`basins_of_attraction`
 __version__ = "5.2.2"
 
 # Built-in system classes are NOT bound into this namespace — that would bury the
-# submodules (``analysis``, ``data``, ``systems``, …) under ~149 model names in
+# submodules (``analysis``, ``data``, ``systems``, …) under ~150 model names in
 # ``dir()`` / autocomplete. The canonical path is ``tsdynamics.systems.<Name>``
 # (e.g. ``tsdynamics.systems.Lorenz``). For backwards compatibility, ``tsd.Lorenz``
 # and ``from tsdynamics import Lorenz`` still resolve, lazily, via ``__getattr__``
@@ -429,7 +430,7 @@ def __getattr__(name: str) -> Any:
     * ``tsdynamics.viz`` — imported on first access (and cached) so a plain
       ``import tsdynamics`` pulls in no plotting/IR machinery; ``viz`` still shows
       in ``__all__`` / ``dir()`` for discoverability.
-    * ``tsdynamics.Lorenz`` and friends — the ~149 built-in system classes,
+    * ``tsdynamics.Lorenz`` and friends — the ~150 built-in system classes,
       resolved from :mod:`tsdynamics.systems` (the canonical path) instead of
       binding all of them into the namespace, which keeps ``dir()`` / autocomplete
       focused on the curated public API.
