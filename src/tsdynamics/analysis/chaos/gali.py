@@ -145,23 +145,19 @@ class GALIResult(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
         xlabel = "iteration" if self.is_discrete else "time"
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            title=f"GALI$_{self.k}$",
-            x=Axis(label=xlabel),
-            y=Axis(label=f"GALI$_{self.k}$", scale="log"),
+        return pb.spec(
+            kind,
+            "diagnostic_curve",
             layers=[
-                Layer(
-                    PlotKind.LINE,
-                    {"x": np.asarray(self.times), "y": np.asarray(self.values)},
-                    label=f"GALI$_{self.k}$",
-                )
+                pb.line(np.asarray(self.times), np.asarray(self.values), label=f"GALI$_{self.k}$")
             ],
+            xlabel=xlabel,
+            ylabel=f"GALI$_{self.k}$",
+            yscale="log",
+            title=f"GALI$_{self.k}$",
         )
 
     def __repr__(self) -> str:  # noqa: D105

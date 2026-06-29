@@ -434,25 +434,23 @@ def dimension_spectrum_plot_spec(
     ValueError
         If ``spectrum`` is empty (no orders to plot).
     """
-    from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+    from .. import _plotbuilder as pb
 
     if not spectrum:
         raise ValueError("dimension spectrum is empty: nothing to plot.")
-    spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIMENSION_SPECTRUM
     qs = np.array(sorted(spectrum), dtype=float)
     dq = np.array([float(spectrum[q].dimension) for q in qs], dtype=float)
     err = np.array([float(spectrum[q].stderr) for q in qs], dtype=float)
-    layers = [
-        Layer(PlotKind.LINE, {"x": qs, "y": dq}, label=r"$D_q$"),
-        Layer(PlotKind.ERRORBAR, {"x": qs, "y": dq, "err": err}, label="std. error"),
-    ]
-    return PlotSpec(
-        kind=spec_kind,
-        ndim=2,
+    return pb.spec(
+        kind,
+        "dimension_spectrum",
+        layers=[
+            pb.line(qs, dq, label=r"$D_q$"),
+            pb.errorbar(qs, dq, err, label="std. error"),
+        ],
+        xlabel=r"$q$",
+        ylabel=r"$D_q$",
         title=r"Rényi dimension spectrum $D_q$",
-        x=Axis(label=r"$q$"),
-        y=Axis(label=r"$D_q$"),
-        layers=layers,
     )
 
 

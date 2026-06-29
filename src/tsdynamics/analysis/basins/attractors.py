@@ -182,9 +182,10 @@ class AttractorSet(AnalysisResult):
             If the set holds no attractor with a ≥ 2-D point cloud to scatter.
         """
         from tsdynamics.analysis._result import VisualizationNotInstalled
-        from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import Colorbar
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
+        from .. import _plotbuilder as pb
+
         ids = self.ids
         swatch = _palette_indices(ids)
 
@@ -205,9 +206,10 @@ class AttractorSet(AnalysisResult):
                 "export it with .to_dict() instead."
             )
 
-        layer = Layer(
-            PlotKind.SCATTER,
-            {"x": np.concatenate(xs), "y": np.concatenate(ys), "cat": np.concatenate(cats)},
+        layer = pb.scatter(
+            np.concatenate(xs),
+            np.concatenate(ys),
+            cat=np.concatenate(cats),
             label="attractors",
             style={"cmap": PALETTE},
         )
@@ -218,14 +220,14 @@ class AttractorSet(AnalysisResult):
             palette_index=swatch,
             palette_labels=[f"attractor {aid}" for aid in ids],
         )
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            aspect="equal",
-            title=f"attractors ({len(self)})",
-            x=Axis(label="x1"),
-            y=Axis(label="x2"),
+        return pb.spec(
+            kind,
+            "phase_portrait_2d",
             layers=[layer],
+            aspect="equal",
+            xlabel="x1",
+            ylabel="x2",
+            title=f"attractors ({len(self)})",
             colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
             meta=meta,
         )

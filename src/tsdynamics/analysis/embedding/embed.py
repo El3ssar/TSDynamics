@@ -72,50 +72,39 @@ class Embedding(ArrayResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
         mat = np.atleast_2d(np.asarray(self.values, dtype=float))
         m = mat.shape[1] if mat.size else 1
         if m >= 3:
-            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_3D
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=3,
+            return pb.spec(
+                kind,
+                "phase_portrait_3d",
+                layers=[pb.line3d(mat[:, 0], mat[:, 1], mat[:, 2], label="reconstruction")],
                 aspect="equal",
+                xlabel="$x_i$",
+                ylabel=r"$x_{i+\tau}$",
+                zlabel=r"$x_{i+2\tau}$",
                 title="delay embedding",
-                x=Axis(label="$x_i$"),
-                y=Axis(label=r"$x_{i+\tau}$"),
-                z=Axis(label=r"$x_{i+2\tau}$"),
-                layers=[
-                    Layer(
-                        PlotKind.LINE3D,
-                        {"x": mat[:, 0], "y": mat[:, 1], "z": mat[:, 2]},
-                        label="reconstruction",
-                    )
-                ],
             )
         if m == 2:
-            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=2,
+            return pb.spec(
+                kind,
+                "phase_portrait_2d",
+                layers=[pb.line(mat[:, 0], mat[:, 1], label="reconstruction")],
                 aspect="equal",
+                xlabel="$x_i$",
+                ylabel=r"$x_{i+\tau}$",
                 title="delay embedding",
-                x=Axis(label="$x_i$"),
-                y=Axis(label=r"$x_{i+\tau}$"),
-                layers=[
-                    Layer(PlotKind.LINE, {"x": mat[:, 0], "y": mat[:, 1]}, label="reconstruction")
-                ],
             )
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.TIME_SERIES
         series = mat[:, 0] if mat.ndim == 2 and mat.size else np.ravel(mat).astype(float)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "time_series",
+            layers=[pb.line(np.arange(series.size, dtype=float), series)],
+            xlabel="index",
+            ylabel="$x_i$",
             title="delay embedding",
-            x=Axis(label="index"),
-            y=Axis(label="$x_i$"),
-            layers=[Layer(PlotKind.LINE, {"x": np.arange(series.size, dtype=float), "y": series})],
         )
 
 

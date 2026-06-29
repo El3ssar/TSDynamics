@@ -448,3 +448,73 @@ class TestEstimatePeriodFFTRefinement:
         # parabolic interpolation on a power periodogram closes most (not all) of
         # the coarse-bin gap; ~0.25-sample residual bias is expected at n=200.
         assert est == pytest.approx(true_period, abs=0.3)
+
+
+class TestSeedDeterminism:
+    """``seed=`` must fully determine the multi-start sampling (issue #487).
+
+    The seeding (random box seeds + the burn-in orbit's starting state) must be
+    drawn from a *local* :class:`numpy.random.Generator`, never the process-global
+    ``numpy.random`` state — otherwise the result depends on import/test order.
+    """
+
+    def test_fixed_points_seed_independent_of_global_rng(self) -> None:
+        # The issue #487 repro: a continuous flow with no ``default_ic`` (so the
+        # burn-in orbit's start IC falls through to the random branch) and an
+        # explicit ``region`` (so ``resolve_box`` does not sample, but
+        # ``_build_seeds`` still calls ``sample_orbit_box``).
+        from tsdynamics.data import Box
+
+        region = Box([-12.0] * 3, [12.0] * 3)
+
+        np.random.seed(123)
+        a = fixed_points(ts.Thomas(), region=region, n_seeds=200, seed=0)
+        np.random.seed(999)
+        b = fixed_points(ts.Thomas(), region=region, n_seeds=200, seed=0)
+
+        xa = sorted(tuple(np.asarray(fp.x)) for fp in a)
+        xb = sorted(tuple(np.asarray(fp.x)) for fp in b)
+        assert len(a) == len(b)
+        assert xa == xb
+
+    def test_fixed_points_auto_region_independent_of_global_rng(self) -> None:
+        # ``region=None`` routes randomness through ``resolve_box`` → the burn-in
+        # orbit as well, so cover that path too.
+        np.random.seed(1)
+        c = fixed_points(ts.Lorenz(), n_seeds=100, seed=7)
+        np.random.seed(2)
+        d = fixed_points(ts.Lorenz(), n_seeds=100, seed=7)
+
+        xc = sorted(tuple(np.asarray(fp.x)) for fp in c)
+        xd = sorted(tuple(np.asarray(fp.x)) for fp in d)
+        assert len(c) == len(d)
+        assert xc == xd
+
+    def test_periodic_orbits_seed_independent_of_global_rng(self) -> None:
+        np.random.seed(5)
+        a = periodic_orbits(ts.Henon(), 2, seed=0)
+        np.random.seed(50)
+        b = periodic_orbits(ts.Henon(), 2, seed=0)
+
+        xa = sorted(tuple(np.asarray(o.points[0])) for o in a)
+        xb = sorted(tuple(np.asarray(o.points[0])) for o in b)
+        assert len(a) == len(b)
+        assert xa == xb
+
+    def test_burn_in_start_ic_uses_local_rng(self) -> None:
+        # The unit-level guarantee: ``_orbit_start_ic`` draws its random fallback
+        # from the supplied Generator and preserves the ``ic`` / ``default_ic``
+        # priority unchanged.
+        from tsdynamics.analysis.fixedpoints._common import _orbit_start_ic
+
+        sys = ts.Thomas()  # default_ic is None → random fallback
+        np.random.seed(123)
+        x1 = _orbit_start_ic(sys, 3, np.random.default_rng(0))
+        np.random.seed(999)
+        x2 = _orbit_start_ic(sys, 3, np.random.default_rng(0))
+        assert np.array_equal(x1, x2)
+
+        # An explicit ``system.ic`` is honored verbatim (priority preserved).
+        seeded = ts.Thomas(ic=[1.0, 2.0, 3.0])
+        y = _orbit_start_ic(seeded, 3, np.random.default_rng(0))
+        assert np.array_equal(y, [1.0, 2.0, 3.0])

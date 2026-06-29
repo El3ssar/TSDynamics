@@ -280,12 +280,10 @@ class DimensionResult(ScalingResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.SCALING_FIT
         x = np.asarray(self.x, dtype=float)
         y = np.asarray(self.y, dtype=float)
-        lo, hi = self.fit_slice
         # Axis/series labels differ by estimator kind (see the abscissa/ordinate
         # field docstring): correlation = log-radius vs log-C(r); generalized =
         # log-scale vs partition ordinate; fixed_mass = mean-log-radius vs the
@@ -295,29 +293,18 @@ class DimensionResult(ScalingResult):
             "generalized": (r"$\log \epsilon$", r"partition ordinate"),
             "fixed_mass": (r"$\langle \log r_k \rangle$", r"$\psi(k)$"),
         }.get(self.kind, (r"$\log$ scale", r"$\log$ measure"))
-        layers = [Layer(PlotKind.SCATTER, {"x": x, "y": y}, label=ylabel)]
-        if x.size and hi >= lo:
-            layers.append(
-                Layer(
-                    PlotKind.MARKERS, {"x": x[lo : hi + 1], "y": y[lo : hi + 1]}, label="fit region"
-                )
-            )
-            fit_x = np.array([x[lo], x[hi]], dtype=float)
-            layers.append(
-                Layer(
-                    PlotKind.LINE,
-                    {"x": fit_x, "y": self.intercept + self.dimension * fit_x},
-                    label=f"slope = {self.dimension:.3g}",
-                )
-            )
         q = "" if self.q is None else f" (q={self.q:g})"
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.scaling_fit(
+            kind,
+            x,
+            y,
+            fit_region=self.fit_slice,
+            slope=self.dimension,
+            intercept=self.intercept,
+            curve_label=ylabel,
+            xlabel=xlabel,
+            ylabel=ylabel,
             title=f"{self.kind} dimension{q}  D = {self.dimension:.3f}",
-            x=Axis(label=xlabel),
-            y=Axis(label=ylabel),
-            layers=layers,
         )
 
     def __repr__(self) -> str:  # noqa: D105

@@ -100,18 +100,17 @@ class WindowedRQA(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
         centers = np.asarray(self.centers, dtype=float)
         det = np.asarray(self.measure("determinism"), dtype=float)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "diagnostic_curve",
+            layers=[pb.line(centers, det, label="DET")],
+            xlabel="window centre",
+            ylabel="determinism",
             title="Windowed RQA (determinism)",
-            x=Axis(label="window centre"),
-            y=Axis(label="determinism"),
-            layers=[Layer(PlotKind.LINE, {"x": centers, "y": det}, label="DET")],
         )
 
     def __getattr__(self, name: str) -> np.ndarray:

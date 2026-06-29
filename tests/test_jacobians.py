@@ -38,8 +38,9 @@ def _fd_jacobian(step, x: np.ndarray, params: tuple) -> np.ndarray:
         xp, xm = x.copy(), x.copy()
         xp[j] += h
         xm[j] -= h
-        fp = np.asarray(step(xp, *params), dtype=float).ravel()
-        fm = np.asarray(step(xm, *params), dtype=float).ravel()
+        with np.errstate(over="ignore", invalid="ignore"):
+            fp = np.asarray(step(xp, *params), dtype=float).ravel()
+            fm = np.asarray(step(xm, *params), dtype=float).ravel()
         J[:, j] = (fp - fm) / (2.0 * h)
     return J
 

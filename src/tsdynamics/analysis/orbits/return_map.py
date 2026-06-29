@@ -89,25 +89,22 @@ class ReturnMap(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.RETURN_MAP
         cur = np.asarray(self.current, dtype=float)
         suc = np.asarray(self.successor, dtype=float)
-        layers = [Layer(PlotKind.SCATTER, {"x": cur, "y": suc}, label=r"$v_{n+1}$ vs $v_n$")]
+        layers = [pb.scatter(cur, suc, label=r"$v_{n+1}$ vs $v_n$")]
         if cur.size:
-            both = np.concatenate([cur, suc])
-            diag = np.array([float(both.min()), float(both.max())])
-            layers.append(Layer(PlotKind.LINE, {"x": diag, "y": diag}, label="$v_{n+1}=v_n$"))
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            aspect="equal",
-            title=f"{self.kind} return map",
-            x=Axis(label=r"$v_n$"),
-            y=Axis(label=r"$v_{n+1}$"),
+            layers.append(pb.diagonal(cur, suc))
+        return pb.spec(
+            kind,
+            "return_map",
             layers=layers,
-            meta=dict(self.meta),
+            aspect="equal",
+            xlabel=r"$v_n$",
+            ylabel=r"$v_{n+1}$",
+            title=f"{self.kind} return map",
+            meta=self.meta,
         )
 
     def cobweb(self, kind: str | None = None) -> Any:
@@ -131,37 +128,27 @@ class ReturnMap(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.COBWEB
         cur = np.asarray(self.current, dtype=float)
         suc = np.asarray(self.successor, dtype=float)
-        layers = [
-            Layer(PlotKind.SCATTER, {"x": cur, "y": suc}, label=r"$v_{n+1}$ vs $v_n$"),
-        ]
+        layers = [pb.scatter(cur, suc, label=r"$v_{n+1}$ vs $v_n$")]
         if cur.size:
-            both = np.concatenate([cur, suc])
-            diag = np.array([float(both.min()), float(both.max())])
-            layers.append(Layer(PlotKind.LINE, {"x": diag, "y": diag}, label="$v_{n+1}=v_n$"))
+            layers.append(pb.diagonal(cur, suc))
             stair_x, stair_y = _cobweb_path(cur, suc)
             layers.append(
-                Layer(
-                    PlotKind.LINE,
-                    {"x": stair_x, "y": stair_y},
-                    label="cobweb",
-                    style={"lw": 0.8, "alpha": 0.8},
-                )
+                pb.line(stair_x, stair_y, label="cobweb", style={"lw": 0.8, "alpha": 0.8})
             )
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            aspect="equal",
-            title=f"{self.kind} cobweb",
-            x=Axis(label=r"$v_n$"),
-            y=Axis(label=r"$v_{n+1}$"),
+        return pb.spec(
+            kind,
+            "cobweb",
             layers=layers,
-            legend=Legend() if len(layers) > 1 else None,
-            meta=dict(self.meta),
+            aspect="equal",
+            xlabel=r"$v_n$",
+            ylabel=r"$v_{n+1}$",
+            title=f"{self.kind} cobweb",
+            legend=len(layers) > 1,
+            meta=self.meta,
         )
 
     def __repr__(self) -> str:

@@ -187,9 +187,8 @@ def multiscale_entropy_plot_spec(result: ArrayResult, kind: str | None = None) -
     ValueError
         If the result carries no entropy values (nothing to plot).
     """
-    from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+    from .. import _plotbuilder as pb
 
-    spec_kind = PlotKind(kind) if kind is not None else PlotKind.COMPLEXITY_CURVE
     y = np.asarray(result.values, dtype=float).ravel()
     if y.size == 0:
         raise ValueError("multiscale-entropy profile is empty: nothing to plot.")
@@ -199,18 +198,14 @@ def multiscale_entropy_plot_spec(result: ArrayResult, kind: str | None = None) -
         x = np.asarray(scales, dtype=float)
     else:
         x = np.arange(1.0, y.size + 1.0)
-    layers = [
-        Layer(PlotKind.LINE, {"x": x, "y": y}, label="entropy"),
-        Layer(PlotKind.MARKERS, {"x": x, "y": y}, label="scales"),
-    ]
-    return PlotSpec(
-        kind=spec_kind,
-        ndim=2,
+    return pb.spec(
+        kind,
+        "complexity_curve",
+        layers=[pb.line(x, y, label="entropy"), pb.markers(x, y, label="scales")],
+        xlabel="scale factor",
+        ylabel="entropy",
         title="Multiscale entropy",
-        x=Axis(label="scale factor"),
-        y=Axis(label="entropy"),
-        layers=layers,
-        legend=Legend(),
+        legend=True,
         meta=meta,
     )
 

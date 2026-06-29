@@ -153,11 +153,10 @@ class OrbitDiagram(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
         x, y = self.flat()
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.ORBIT_DIAGRAM
-        annotations: list[Annotation] = []
+        annotations: list[Any] = []
         if len(self.values) > 1:
             # Compute the period sweep once and feed it to *both* the onset
             # detection and the per-line period label (instead of recomputing
@@ -169,17 +168,17 @@ class OrbitDiagram(AnalysisResult):
                 # period just to the right of the onset).
                 j = int(np.searchsorted(self.values, onset))
                 p = int(periods[j]) if 0 <= j < periods.size else 0
-                text = f"period {p}" if p > 0 else "bifurcation"
-                annotations.append(Annotation(kind="vline", x=float(onset), text=text))
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+                label = f"period {p}" if p > 0 else "bifurcation"
+                annotations.append(pb.vline(float(onset), text=label))
+        return pb.spec(
+            kind,
+            "orbit_diagram",
+            layers=[pb.scatter(x, y, style={"s": 1.0})],
+            xlabel=self.param,
+            ylabel="asymptotic state",
             title="orbit diagram",
-            x=Axis(label=self.param),
-            y=Axis(label="asymptotic state"),
-            layers=[Layer(PlotKind.SCATTER, {"x": x, "y": y}, style={"s": 1.0})],
             annotations=annotations,
-            meta=dict(self.meta),
+            meta=self.meta,
         )
 
     def __repr__(self) -> str:

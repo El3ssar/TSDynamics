@@ -662,9 +662,8 @@ def outcome_distribution_plot_spec(
     ValueError
         If ``probs`` is empty, or ``labels`` has a length other than ``len(probs)``.
     """
-    from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+    from .. import _plotbuilder as pb
 
-    spec_kind = PlotKind(kind) if kind is not None else PlotKind.CATEGORICAL_BAR
     p = np.asarray(probs, dtype=float).ravel()
     if p.size == 0:
         raise ValueError("outcome distribution is empty: nothing to plot.")
@@ -681,14 +680,15 @@ def outcome_distribution_plot_spec(
                 f"labels length {len(category_labels)} != number of outcomes {p.size}."
             )
     cat = np.arange(p.size, dtype=float)
-    layer = Layer(PlotKind.BAR, {"y": p, "cat": cat}, label="probability")
-    return PlotSpec(
-        kind=spec_kind,
-        ndim=2,
+    return pb.spec(
+        kind,
+        "categorical_bar",
+        layers=[pb.bar(p, cat=cat, label="probability")],
+        xlabel="outcome",
+        xscale="categorical",
+        xcategories=category_labels,
+        ylabel="probability",
         title=title,
-        x=Axis(label="outcome", scale="categorical", categories=category_labels),
-        y=Axis(label="probability"),
-        layers=[layer],
     )
 
 

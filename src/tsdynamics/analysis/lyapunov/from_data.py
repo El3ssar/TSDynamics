@@ -118,34 +118,29 @@ class LyapunovFromData(ScalingResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.SCALING_FIT
         t = np.asarray(self.times, dtype=float)
         s = np.asarray(self.divergence, dtype=float)
         lo, hi = self.fit_region
-        layers = [Layer(PlotKind.SCATTER, {"x": t, "y": s}, label="$S(k)$")]
+        # The line of slope `lyapunov` anchored to the fit-region centroid.
+        line_y = None
         if t.size and hi >= lo:
-            layers.append(
-                Layer(
-                    PlotKind.MARKERS, {"x": t[lo : hi + 1], "y": s[lo : hi + 1]}, label="fit region"
-                )
-            )
-            # The line of slope `lyapunov` anchored to the fit-region centroid.
             tc = float(np.mean(t[lo : hi + 1]))
             sc = float(np.mean(s[lo : hi + 1]))
             fit_x = np.array([t[lo], t[hi]], dtype=float)
-            fit_y = sc + self.lyapunov * (fit_x - tc)
-            layers.append(
-                Layer(PlotKind.LINE, {"x": fit_x, "y": fit_y}, label=f"slope = {self.lyapunov:.3g}")
-            )
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+            line_y = sc + self.lyapunov * (fit_x - tc)
+        return pb.scaling_fit(
+            kind,
+            t,
+            s,
+            fit_region=self.fit_region,
+            slope=self.lyapunov,
+            line_y=line_y,
+            curve_label="$S(k)$",
+            xlabel="time",
+            ylabel="mean log divergence $S(k)$",
             title=f"max. Lyapunov ({self.method}) = {self.lyapunov:.3g}",
-            x=Axis(label="time"),
-            y=Axis(label="mean log divergence $S(k)$"),
-            layers=layers,
         )
 
     def __repr__(self) -> str:  # noqa: D105

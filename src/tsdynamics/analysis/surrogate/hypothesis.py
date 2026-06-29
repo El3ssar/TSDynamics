@@ -84,7 +84,7 @@ class SurrogateTest(AnalysisResult):
         rejected — the visual read of the test.  Empty when there are no
         surrogates to quantile.
         """
-        from tsdynamics.viz.spec import Annotation
+        from .. import _plotbuilder as pb
 
         surrogate = np.asarray(self.surrogate_statistics, dtype=float)
         surrogate = surrogate[np.isfinite(surrogate)]
@@ -94,8 +94,8 @@ class SurrogateTest(AnalysisResult):
         pad = (hi - lo) * 0.05 + (abs(hi) + abs(lo)) * 1e-3 + 1.0
         style = {"color": "lightcoral", "alpha": 0.2}
 
-        def _span(span: tuple[float, float]) -> Annotation:
-            return Annotation(kind="span", text="reject", span=span, axis="x", style=style)
+        def _span(span: tuple[float, float]) -> Any:
+            return pb.span(span[0], span[1], axis="x", text="reject", style=style)
 
         if self.tail == "greater":
             return [_span((float(np.quantile(surrogate, 1.0 - self.alpha)), hi + pad))]
@@ -129,27 +129,21 @@ class SurrogateTest(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.HISTOGRAM_NULL
         surrogate = np.asarray(self.surrogate_statistics, dtype=float)
         verdict = "reject" if self.rejected else "fail to reject"
-        annotations: list[Annotation] = [
-            Annotation(
-                kind="vline",
-                text="data",
-                x=float(self.data_statistic),
-                style={"color": "lightcoral"},
-            )
+        annotations: list[Any] = [
+            pb.vline(float(self.data_statistic), text="data", style={"color": "lightcoral"})
         ]
         annotations.extend(self._rejection_tail())
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "histogram_null",
+            layers=[pb.histogram(surrogate, label=f"{self.method} surrogates")],
+            xlabel=self.statistic,
+            ylabel="count",
             title=f"{self.statistic} surrogate test (p = {self.p_value:.3g}, {verdict})",
-            x=Axis(label=self.statistic),
-            y=Axis(label="count"),
-            layers=[Layer(PlotKind.HISTOGRAM, {"x": surrogate}, label=f"{self.method} surrogates")],
             annotations=annotations,
         )
 

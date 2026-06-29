@@ -101,56 +101,50 @@ class ContinuationResult(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import (
-            Annotation,
-            Axis,
-            Colorbar,
-            Layer,
-            Legend,
-            PlotKind,
-            PlotSpec,
-        )
+        from tsdynamics.viz.spec import Colorbar
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.CONTINUATION
+        from .. import _plotbuilder as pb
+
         values = np.asarray(self.values, dtype=float)
         ids = self.ids
         swatch = _palette_indices(ids)
 
         # Stack the (nan-as-zero) fractions so the bands tile [0, 1] per value.
         cumulative = np.zeros(values.size, dtype=float)
-        layers: list[Layer] = []
+        layers = []
         for gid in ids:
             frac = np.nan_to_num(np.asarray(self.fractions[gid], dtype=float), nan=0.0)
             lo = cumulative.copy()
             cumulative = cumulative + frac
             layers.append(
-                Layer(
-                    PlotKind.AREA,
-                    {"x": values, "y": cumulative.copy(), "lo": lo, "hi": cumulative.copy()},
+                pb.area(
+                    values,
+                    cumulative.copy(),
+                    lo=lo,
+                    hi=cumulative.copy(),
                     label=f"attractor {gid}",
                     style={"cmap": PALETTE},
                 )
             )
 
         annotations = [
-            Annotation(
-                kind="vline",
-                x=float(event["value"]),
+            pb.vline(
+                float(event["value"]),
                 text=f"{event['kind']} (attractor {event['attractor']})",
-                axis="x",
             )
             for event in self.tipping_points()
         ]
         meta = dict(self.meta) if self.meta else {}
         meta.update(palette=PALETTE, diverged_color=DIVERGED_COLOR, palette_index=swatch)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            title=f"continuation over {self.param!r}",
-            x=Axis(label=self.param or "parameter"),
-            y=Axis(label="basin fraction", limits=(0.0, 1.0)),
+        return pb.spec(
+            kind,
+            "continuation",
             layers=layers,
-            legend=Legend() if len(ids) > 1 else None,
+            xlabel=self.param or "parameter",
+            ylabel="basin fraction",
+            ylimits=(0.0, 1.0),
+            title=f"continuation over {self.param!r}",
+            legend=len(ids) > 1,
             colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
             annotations=annotations,
             meta=meta,

@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from tsdynamics._result_common import resolve_plot_kind
 from tsdynamics.analysis._result_json import _fmt, _is_frame_scalar, _jsonify
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled, _PlotAccessor
 
@@ -289,37 +288,32 @@ class AnalysisResult:
             bespoke ``to_plot_spec`` is required.  Subclasses with such a result
             override this method.
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from . import _plotbuilder as pb
 
-        spec_kind = resolve_plot_kind(kind, PlotKind.DIAGNOSTIC_CURVE)
         arrays, scalars = self._plottable_fields()
 
-        layers: list[Layer] = []
+        layers = []
         xlabel, ylabel = "index", "value"
         if len(arrays) >= 2 and arrays[0][1].size == arrays[1][1].size:
             (xname, x), (yname, y) = arrays[0], arrays[1]
-            layers.append(Layer(PlotKind.LINE, {"x": x, "y": y}, label=yname))
+            layers.append(pb.line(x, y, label=yname))
             xlabel, ylabel = xname, yname
         elif arrays:
             yname, y = arrays[0]
-            layers.append(
-                Layer(PlotKind.LINE, {"x": np.arange(y.size, dtype=float), "y": y}, label=yname)
-            )
+            layers.append(pb.line(np.arange(y.size, dtype=float), y, label=yname))
             ylabel = yname
         elif scalars:
             names = [n for n, _ in scalars]
             vals = np.array([v for _, v in scalars], dtype=float)
-            layers.append(
-                Layer(PlotKind.MARKERS, {"x": np.arange(vals.size, dtype=float), "y": vals})
-            )
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=2,
+            return pb.spec(
+                kind,
+                "diagnostic_curve",
+                layers=[pb.markers(np.arange(vals.size, dtype=float), vals)],
+                xlabel="field",
+                xticks=list(range(len(names))),
+                ylabel="value",
                 title=type(self).__name__,
-                x=Axis(label="field", ticks=list(range(len(names)))),
-                y=Axis(label="value"),
-                layers=layers,
-                meta=dict(self.meta) if self.meta else {},
+                meta=self.meta,
             )
         else:
             raise VisualizationNotInstalled(
@@ -328,14 +322,14 @@ class AnalysisResult:
                 "bespoke to_plot_spec(); export it with .to_dict() meanwhile."
             )
 
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            title=type(self).__name__,
-            x=Axis(label=xlabel),
-            y=Axis(label=ylabel),
+        return pb.spec(
+            kind,
+            "diagnostic_curve",
             layers=layers,
-            meta=dict(self.meta) if self.meta else {},
+            xlabel=xlabel,
+            ylabel=ylabel,
+            title=type(self).__name__,
+            meta=self.meta,
         )
 
     def overlay_on(self, base: PlotSpec, *, kind: str | None = None) -> PlotSpec:

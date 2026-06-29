@@ -11,7 +11,6 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics._result_common import resolve_plot_kind
 from tsdynamics.analysis._result_base import AnalysisResult
 from tsdynamics.analysis._result_json import _fmt, _jsonify
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled
@@ -175,68 +174,57 @@ class ArrayResult(AnalysisResult):
         VisualizationNotInstalled
             If the array is empty or higher-than-2-D (nothing generic to draw).
         """
-        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+        from . import _plotbuilder as pb
 
         arr = np.asarray(self.values, dtype=float)
         title = type(self).__name__
-        meta = dict(self.meta) if self.meta else {}
 
         if arr.ndim == 1 and arr.size:
-            spec_kind = resolve_plot_kind(kind, PlotKind.DIAGNOSTIC_CURVE)
-            layer = Layer(PlotKind.LINE, {"x": np.arange(arr.size, dtype=float), "y": arr})
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=2,
+            return pb.spec(
+                kind,
+                "diagnostic_curve",
+                layers=[pb.line(np.arange(arr.size, dtype=float), arr)],
+                xlabel="index",
+                ylabel="value",
                 title=title,
-                x=Axis(label="index"),
-                y=Axis(label="value"),
-                layers=[layer],
-                meta=meta,
+                meta=self.meta,
             )
 
         if arr.ndim == 2 and arr.shape[0] and arr.shape[1] in (2, 3):
             if arr.shape[1] == 3:
-                spec_kind = resolve_plot_kind(kind, PlotKind.PHASE_PORTRAIT_3D)
-                layer = Layer(PlotKind.LINE3D, {"x": arr[:, 0], "y": arr[:, 1], "z": arr[:, 2]})
-                return PlotSpec(
-                    kind=spec_kind,
-                    ndim=3,
+                return pb.spec(
+                    kind,
+                    "phase_portrait_3d",
+                    layers=[pb.line3d(arr[:, 0], arr[:, 1], arr[:, 2])],
+                    xlabel="x1",
+                    ylabel="x2",
+                    zlabel="x3",
                     title=title,
-                    x=Axis(label="x1"),
-                    y=Axis(label="x2"),
-                    z=Axis(label="x3"),
-                    layers=[layer],
-                    meta=meta,
+                    meta=self.meta,
                 )
-            spec_kind = resolve_plot_kind(kind, PlotKind.PHASE_PORTRAIT_2D)
-            layer = Layer(PlotKind.SCATTER, {"x": arr[:, 0], "y": arr[:, 1]})
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=2,
+            return pb.spec(
+                kind,
+                "phase_portrait_2d",
+                layers=[pb.scatter(arr[:, 0], arr[:, 1])],
                 aspect="equal",
+                xlabel="x1",
+                ylabel="x2",
                 title=title,
-                x=Axis(label="x1"),
-                y=Axis(label="x2"),
-                layers=[layer],
-                meta=meta,
+                meta=self.meta,
             )
 
         if arr.ndim == 2 and arr.shape[0]:
-            spec_kind = resolve_plot_kind(kind, PlotKind.LINE_FAMILY)
             idx = np.arange(arr.shape[0], dtype=float)
-            layers = [
-                Layer(PlotKind.LINE, {"x": idx, "y": arr[:, j]}, label=f"[{j}]")
-                for j in range(min(arr.shape[1], 12))
-            ]
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=2,
-                title=title,
-                x=Axis(label="index"),
-                y=Axis(label="value"),
+            layers = [pb.line(idx, arr[:, j], label=f"[{j}]") for j in range(min(arr.shape[1], 12))]
+            return pb.spec(
+                kind,
+                "line_family",
                 layers=layers,
-                legend=Legend(),
-                meta=meta,
+                xlabel="index",
+                ylabel="value",
+                title=title,
+                legend=True,
+                meta=self.meta,
             )
 
         raise VisualizationNotInstalled(

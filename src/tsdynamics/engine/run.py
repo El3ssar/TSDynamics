@@ -30,6 +30,29 @@ What this module does *not* own: the solver kernels and the integrate loop
 marshalling (``tsdyn-core`` → :mod:`tsdynamics._rust`, stream E7).  It owns the
 Python-side orchestration: problem construction, backend resolution, and
 wrapping the engine's output as a :class:`~tsdynamics.families.Trajectory`.
+
+Module layout (the run-split refactor)
+--------------------------------------
+``run.py`` keeps the ``integrate`` / ``ensemble`` orchestration, the pointwise
+``eval_rhs`` / ``eval_jac`` seam, backend resolution (``resolve_backend`` /
+``_engine`` / ``BACKENDS`` / :class:`EngineNotAvailableError`) and the shared
+problem-coercion / naming / provenance helpers.  The rest was split out into
+focused submodules and is **re-exported here** so every name stays reachable at
+its historical path ``tsdynamics.engine.run.<name>``:
+
+- :mod:`~tsdynamics.engine.run_methods` — ``method=`` resolution + auto-stiffness
+  (``_resolve_method_for`` / ``_recommend_method`` / ``_resolve_method_and_prepare``).
+- :mod:`~tsdynamics.engine._families` — the per-family runners (``_run_continuous``
+  / ``_step_continuous`` / ``_run_dde`` / ``_run_map`` / ``_sample_past``) and the
+  low-level ``_engine_*`` FFI shims.
+- :mod:`~tsdynamics.engine.stepper` — the resumable ``OdeStepper`` API
+  (``make_ode_stepper`` / ``step_advance`` / ``step_advance_to_event``).
+- :mod:`~tsdynamics.engine.sde_run` — the SDE dense/ensemble seam
+  (``sde_integrate_dense`` / ``sde_ensemble_final``).
+- :mod:`~tsdynamics.engine.events` — the event subsystem (``crossings`` / ``Event``
+  / ``EventSolution`` / ``integrate_events``).
+- :mod:`~tsdynamics.engine.reference` — the pure-Python reference oracle
+  (``_reference_*`` / ``_scipy_method``).
 """
 
 from __future__ import annotations
@@ -38,20 +61,38 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from tsdynamics.errors import BackendError, ConvergenceError
+from tsdynamics.errors import BackendError
 from tsdynamics.utils.grids import make_output_grid
 
 if TYPE_CHECKING:
     from tsdynamics.families import Trajectory
 
+from ._families import (  # noqa: F401
+    _engine_ensemble_final,
+    _engine_integrate_dense,
+    _engine_map_ensemble_final,
+    _run_dde,
+    _run_map,
+    _sample_past,
+)
+
+# The run-split refactor moved the focused concerns out of this module into the
+# submodules below.  Re-export every name they own so all of them stay reachable
+# at their historical path ``tsdynamics.engine.run.<name>`` — a pure move, no
+# public-surface change.  (The split-out modules late-import the shared run-side
+# helpers — ``_engine``/``resolve_backend``/``_name``/``_primary_tape``/… — from
+# this module inside their functions, so these module-level imports do not create
+# an import cycle.)  ``_run_continuous`` / ``_step_continuous`` carry the explicit
+# ``X as X`` re-export spelling because the rest of ``src`` imports them by that
+# private name (``continuous.py`` / ``events.py``) and they are not in ``__all__``,
+# so ``mypy --strict`` (``--no-implicit-reexport``) needs them marked explicit; the
+# names in ``__all__`` (and the test-only privates) are fine under plain ``F401``.
+from ._families import _run_continuous as _run_continuous
+from ._families import _step_continuous as _step_continuous
 from .compile import eval_tape, eval_tape_jac
 
 # Event subsystem (engine/events.py) and the pure-Python reference oracle
-# (engine/reference.py) were split out of this module (the run-split refactor).
-# Re-export every name they own so all of them stay reachable at their historical
-# path ``tsdynamics.engine.run.<name>`` — a pure move, no public-surface change.
-# ``_reference_*`` are also used internally below by ``_run_continuous`` /
-# ``_run_map`` / ``ensemble``; the remaining names are re-exports for back-compat.
+# (engine/reference.py).
 from .events import (  # noqa: F401
     _DIRECTION_WORDS,
     _EVENT_ENGINE_METHODS,
@@ -80,6 +121,20 @@ from .reference import (  # noqa: F401
     _reference_map_ensemble,
     _reference_ode,
     _scipy_method,
+)
+from .run_methods import (  # noqa: F401
+    _recommend_method,
+    _resolve_method_and_prepare,
+    _resolve_method_for,
+)
+from .sde_run import (  # noqa: F401
+    sde_ensemble_final,
+    sde_integrate_dense,
+)
+from .stepper import (  # noqa: F401
+    make_ode_stepper,
+    step_advance,
+    step_advance_to_event,
 )
 
 __all__ = [
@@ -186,6 +241,13 @@ def _as_problem(obj: Any, **build_kwargs: Any) -> Problem:
     return build_problem(obj, **build_kwargs)
 
 
+def _primary_tape(problem: Problem) -> Any:
+    """Return the RHS/next-state tape of a problem (the drift tape for an SDE)."""
+    if isinstance(problem, SDEProblem):
+        return problem.drift
+    return problem.tape
+
+
 # ---------------------------------------------------------------------------
 # Pointwise RHS / Jacobian evaluation (runnable today)
 # ---------------------------------------------------------------------------
@@ -269,135 +331,9 @@ def eval_jac(
     return np.asarray(d), np.asarray(j).reshape(tape.dim, tape.dim)
 
 
-def _primary_tape(problem: Problem) -> Any:
-    """Return the RHS/next-state tape of a problem (the drift tape for an SDE)."""
-    if isinstance(problem, SDEProblem):
-        return problem.drift
-    return problem.tape
-
-
 # ---------------------------------------------------------------------------
 # Integration
 # ---------------------------------------------------------------------------
-
-
-def _recommend_method(problem: Problem) -> Any:
-    """Resolve ``method="auto"`` to a kernel by a-priori auto-stiffness selection.
-
-    The auto-stiffness wiring (ticket FIX-AUTOSTIFF) applies to **ODEs only**:
-    probe the problem's Jacobian spectrum at its start state and let the solver
-    registry recommend an implicit kernel (``bdf``) on a stiff RHS or the explicit
-    default (``rk45``) otherwise (:func:`tsdynamics.solvers.recommend`).  The probe
-    is the one-point heuristic :func:`tsdynamics.solvers.is_stiff` — useful but not
-    a guarantee (see its docstring): the verdict is read at the problem's resolved
-    start state (``problem.ic``) and at ``problem.t0`` (``0.0`` unless a builder set
-    it; the integrate/ensemble ``t0=`` argument is not threaded here).  A system
-    declares a stiff default via ``_default_method`` when the heuristic is too
-    coarse for it.
-
-    Maps and DDEs treat ``"auto"`` as an explicit, documented **no-op** — it
-    resolves to the family default rather than probing:
-
-    - **Maps** iterate without a solver kernel, so the resolved kernel is ignored
-      by the map branch (``"auto"`` simply does not raise).
-    - **DDEs** are driven by the method of steps, which reuses the *explicit*
-      stage kernels only.  A stiffness probe would be meaningless **and** a trap:
-      :func:`tsdynamics.solvers.is_stiff` reads only the *instantaneous* Jacobian
-      ``∂f/∂u``, ignoring the delay terms that actually shape a DDE's spectrum, so
-      a spurious "stiff" verdict could otherwise select the implicit
-      ``rosenbrock`` the DDE engine cannot drive.  ``"auto"`` therefore resolves to
-      the DDE default (``rk45``); a delay system that genuinely needs another
-      explicit kernel should pass ``method=`` explicitly.
-
-    SDEs never reach here (the SDE path refuses ``run.integrate`` upstream).
-
-    Parameters
-    ----------
-    problem : Problem
-        The already-lowered problem (built once by :func:`integrate`).
-
-    Returns
-    -------
-    solvers.Resolution
-        The recommended kernel, carrying its ``build_kwargs``.
-    """
-    from tsdynamics import solvers
-
-    # Maps (no kernel) and DDEs (explicit method-of-steps; no meaningful stiffness
-    # probe) fall back to their family default — auto-stiffness is ODE-only.
-    if isinstance(problem, MapProblem | DDEProblem):
-        # A map has no solver family of its own (DEFAULT_METHOD has no "map" key)
-        # and the map branch discards the resolved kernel entirely, so it borrows
-        # the "ode" default purely to return a valid Resolution; only DDEs carry a
-        # genuine family here.
-        family = "dde" if isinstance(problem, DDEProblem) else "ode"
-        return solvers.resolve(solvers.DEFAULT_METHOD[family], family=family)
-    return solvers.recommend(
-        problem.system,
-        family=problem.family,
-        ic=problem.ic,
-        t=getattr(problem, "t0", 0.0),
-    )
-
-
-def _resolve_method_for(method: str, problem: Problem) -> Any:
-    """Resolve ``method=`` to a :class:`solvers.Resolution` for an already-built problem.
-
-    The single home for the ``method=`` contract shared by :func:`integrate` and
-    :func:`ensemble`, so ``"auto"`` means the same thing through both entry points
-    (diagnosis #11/#13).  A literal ``method="auto"`` triggers a-priori
-    auto-stiffness selection over *problem* (:func:`_recommend_method` →
-    :func:`solvers.recommend`); every other name normalises spellings/aliases
-    ("RK45" → "rk45", "dopri5" → "rk45") and rejects unknown or v2-only names
-    ("LSODA") with a listing error + a stiff hint.  Resolving is harmless for the
-    families that ignore ``method=`` (maps fold params in; SDE/DDE batches are
-    refused by the caller before stepping).
-    """
-    from tsdynamics import solvers
-
-    if solvers.normalize(method) == "auto":
-        return _recommend_method(problem)
-    return solvers.resolve(method)
-
-
-def _resolve_method_and_prepare(
-    system_or_problem: Any,
-    problem: Problem,
-    method: str,
-    build_kwargs: dict[str, Any],
-    **rebuild_extra: Any,
-) -> tuple[str, Problem]:
-    """Resolve ``method=`` and rebuild the ODE problem ``with_jacobian`` if the kernel needs it.
-
-    The single shared contract for both :func:`integrate` and :func:`ensemble`, so
-    ``method="auto"`` *and* the implicit-kernel Jacobian requirement behave
-    identically through both entry points.  (This previously drifted: ``ensemble``
-    resolved ``"auto"`` but skipped the ``with_jacobian`` rebuild, so a stiff
-    ``ensemble(method="auto")`` dispatched a Jacobian-less tape and the engine
-    refused it — factoring the two halves into one helper closes that gap.)
-
-    The implicit ODE kernels (``bdf``/``rosenbrock``/``trbdf2``) need ``∂f/∂u`` on
-    the tape or the engine refuses the step.  Rebuild once with the Jacobian when
-    the resolved method needs it and the tape lacks it — only for an ODE built from
-    a *system* (DDEs drive explicit kernels only; maps fold params in; a pre-built
-    ``Problem`` we cannot re-lower, so the engine raises its clear guard instead).
-    ``rebuild_extra`` carries entry-point-specific build kwargs (``integrate``
-    passes ``ic=``; ``ensemble`` seeds each trajectory later, so it passes none).
-
-    Returns the canonical method name and the (possibly rebuilt) problem.
-    """
-    resolution = _resolve_method_for(method, problem)
-    if (
-        resolution.build_kwargs.get("with_jacobian")
-        and isinstance(problem, ODEProblem)
-        and not problem.tape.has_jacobian
-        and "with_jacobian" not in build_kwargs
-        and not isinstance(system_or_problem, ODEProblem)
-    ):
-        problem = _as_problem(
-            system_or_problem, with_jacobian=True, **rebuild_extra, **build_kwargs
-        )
-    return resolution.name, problem
 
 
 def integrate(
@@ -1269,239 +1205,6 @@ def ensemble(
             jit=(backend == "jit"),
         ),
         dtype=np.float64,
-    )
-
-
-# ---------------------------------------------------------------------------
-# SDE integration (diagonal-Itô; drift + diffusion tapes)
-# ---------------------------------------------------------------------------
-#
-# The SDE engine entry points.  Unlike :func:`integrate` / :func:`ensemble`,
-# these carry the two SDE-specific knobs — the fixed step ``dt`` (which *is* the
-# noise scale ``√dt``) and the noise ``seed`` — and drive the two-tape engine
-# call (drift + diffusion).  The family base class
-# (:class:`~tsdynamics.families.stochastic.StochasticSystem`) calls these for its
-# ``backend="interp"/"jit"`` path and wraps the result as a Trajectory with
-# provenance; the pure-Python reference path stays in the family.
-
-
-def sde_integrate_dense(
-    problem: SDEProblem,
-    t_eval: np.ndarray,
-    *,
-    dt: float,
-    method: str,
-    seed: int,
-    backend: str = "interp",
-) -> np.ndarray:
-    """Integrate one diagonal-Itô SDE trajectory on the engine.
-
-    Parameters
-    ----------
-    problem : SDEProblem
-        The lowered drift + diffusion tapes plus runtime context.
-    t_eval : ndarray
-        Output grid; the first row of the result is the state at ``t_eval[0]``.
-    dt : float
-        Fixed step *and* noise scale (each Wiener increment is ``~ N(0, dt)``).
-    method : str
-        SDE kernel name (``"euler_maruyama"`` / ``"milstein"``).
-    seed : int
-        Seed for the noise stream (a ``u64``).
-    backend : str, default "interp"
-        ``"interp"`` or ``"jit"``.  ``"reference"`` has no engine SDE integrator
-        (the pure-Python reference lives in the family).
-
-    Returns
-    -------
-    ndarray, shape (len(t_eval), dim)
-
-    Raises
-    ------
-    EngineNotAvailableError
-        If :mod:`tsdynamics._rust` is not built.
-    NotImplementedError
-        If ``backend="reference"`` (use the family's reference integrator).
-    RuntimeError
-        If the trajectory diverged before the final time.
-    """
-    backend = resolve_backend(backend)
-    if backend == "reference":
-        raise NotImplementedError(
-            "the engine SDE path needs backend='interp'/'jit'; the pure-Python "
-            "reference SDE integrator lives in StochasticSystem.integrate."
-        )
-    eng = _engine()
-    y = eng.integrate_sde_dense(
-        *problem.drift.to_arrays(),
-        *problem.diffusion.to_arrays(),
-        np.ascontiguousarray(problem.ic, dtype=np.float64),
-        problem.params_vec(),
-        np.ascontiguousarray(t_eval, dtype=np.float64),
-        method,
-        float(dt),
-        int(seed),
-        backend == "jit",
-    )
-    return np.asarray(y, dtype=np.float64)
-
-
-def sde_ensemble_final(
-    problem: SDEProblem,
-    ics: np.ndarray,
-    *,
-    t0: float,
-    t1: float,
-    dt: float,
-    method: str,
-    seed: int,
-    backend: str = "interp",
-) -> np.ndarray:
-    """Integrate a batch of SDE initial conditions to ``t1`` and return final states.
-
-    ``ics`` is ``(n, dim)``.  Trajectory ``i`` is seeded by ``seed_for(seed, i)``
-    inside the engine, so the batch is **parallel == serial** bit-for-bit; a
-    diverging trajectory yields a row of ``NaN`` rather than aborting the batch.
-
-    Parameters
-    ----------
-    problem : SDEProblem
-    ics : ndarray, shape (n, dim)
-    t0, t1 : float
-        Integration window.
-    dt, method, seed, backend
-        As in :func:`sde_integrate_dense` (``seed`` is the ensemble base seed).
-
-    Returns
-    -------
-    ndarray, shape (n, dim)
-        Final states (rows of ``NaN`` for diverged trajectories).
-    """
-    backend = resolve_backend(backend)
-    if backend == "reference":
-        raise NotImplementedError(
-            "the engine SDE ensemble needs backend='interp'/'jit'; the pure-Python "
-            "reference SDE ensemble lives in StochasticSystem.ensemble."
-        )
-    eng = _engine()
-    ics = np.ascontiguousarray(ics, dtype=np.float64)
-    y = eng.integrate_sde_ensemble_final(
-        *problem.drift.to_arrays(),
-        *problem.diffusion.to_arrays(),
-        ics,
-        problem.params_vec(),
-        float(t0),
-        float(t1),
-        method,
-        float(dt),
-        int(seed),
-        backend == "jit",
-    )
-    return np.asarray(y, dtype=np.float64)
-
-
-# ---------------------------------------------------------------------------
-# Engine dispatch (the E7 binding surface)
-# ---------------------------------------------------------------------------
-#
-# These marshal a Problem to the call the compiled extension exposes.  The exact
-# signatures are finalised by stream E7 (tsdyn-core / tsdynamics._rust); they are
-# isolated here so that is the only thing E7 needs to match.  The payload is the
-# tape wire arrays + the runtime vectors + the solver options.
-
-
-def _engine_integrate_dense(
-    eng: Any,
-    tape_arrays: tuple[Any, ...],
-    ic: np.ndarray,
-    params_vec: np.ndarray,
-    t_eval: np.ndarray,
-    *,
-    method: str,
-    rtol: float,
-    atol: float,
-    jit: bool,
-) -> np.ndarray:
-    """Dispatch a dense single-trajectory integration to the engine.
-
-    ``tape_arrays`` is the RHS tape's wire tuple (:meth:`Tape.to_arrays` — the
-    drift tape for an SDE).  Taking the marshalled arrays as an argument rather than
-    deriving them here lets a hot stepping loop pass arrays it marshalled once
-    (:func:`_step_continuous`) instead of rebuilding the tuple per step (stream
-    WS-INVHOIST), while the single-shot :func:`integrate` path marshals them inline
-    at the call site.
-
-    The returned array is typed ``float64`` here, the single conversion point —
-    :func:`_run_continuous` consumes it as-is rather than re-wrapping it.
-    """
-    return np.asarray(
-        eng.integrate_dense(
-            *tape_arrays,
-            np.ascontiguousarray(ic, dtype=np.float64),
-            params_vec,
-            np.ascontiguousarray(t_eval, dtype=np.float64),
-            method,
-            float(rtol),
-            float(atol),
-            bool(jit),
-        ),
-        dtype=np.float64,
-    )
-
-
-def _engine_ensemble_final(
-    eng: Any,
-    problem: Problem,
-    ics: np.ndarray,
-    t0: float,
-    t1: float,
-    *,
-    first_step: float,
-    method: str,
-    rtol: float,
-    atol: float,
-    jit: bool,
-) -> np.ndarray:
-    """Dispatch a parallel ensemble integration (final states) to the engine.
-
-    ``first_step`` is the integration cadence (the user's ``dt``): only the first
-    trial step for an adaptive kernel, but the step for the whole run for the
-    fixed-step ``rk4`` — so the ensemble and dense (:func:`integrate`) paths take
-    identical steps for fixed-step methods.
-    """
-    return np.asarray(
-        eng.integrate_ensemble_final(
-            *_primary_tape(problem).to_arrays(),
-            ics,
-            problem.params_vec(),
-            float(t0),
-            float(t1),
-            float(first_step),
-            method,
-            float(rtol),
-            float(atol),
-            bool(jit),
-        )
-    )
-
-
-def _engine_map_ensemble_final(
-    eng: Any, problem: MapProblem, ics: np.ndarray, steps: int, *, jit: bool
-) -> np.ndarray:
-    """Dispatch a parallel map ensemble (final iterates) to the engine.
-
-    Map parameters fold into the tape (``n_param == 0``), so there is no
-    parameter vector; a diverging trajectory comes back as a ``NaN`` row.
-    ``jit`` picks the native-code evaluator over the interpreter (bit-for-bit
-    identical results).
-    """
-    return np.asarray(
-        eng.iterate_ensemble_final(
-            *problem.tape.to_arrays(),
-            np.ascontiguousarray(ics, dtype=np.float64),
-            int(steps),
-            bool(jit),
-        )
     )
 
 

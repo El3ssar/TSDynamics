@@ -138,9 +138,10 @@ class BasinsResult(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import Colorbar
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.BASINS_IMAGE
+        from .. import _plotbuilder as pb
+
         labels = np.asarray(self.labels)
 
         assert self.grid is not None  # a populated basin image always carries its grid
@@ -155,7 +156,7 @@ class BasinsResult(AnalysisResult):
         else:
             axes = list(range(min(labels.ndim, 2)))
 
-        layers = [Layer(PlotKind.IMAGE, {"c": labels}, style={"cmap": PALETTE})]
+        layers = [pb.image(labels, style={"cmap": PALETTE})]
 
         # Mark the attractor representatives on a 2-D image, projected onto the
         # two free axes.  Lower-dim grids skip the overlay.
@@ -164,9 +165,9 @@ class BasinsResult(AnalysisResult):
             ax0, ax1 = (axes + [0, 1])[:2]
             if centers.size and centers.shape[1] > max(ax0, ax1):
                 layers.append(
-                    Layer(
-                        PlotKind.MARKERS,
-                        {"x": centers[:, ax0], "y": centers[:, ax1]},
+                    pb.markers(
+                        centers[:, ax0],
+                        centers[:, ax1],
                         label="attractors",
                         style={"marker": "*", "color": "black"},
                     )
@@ -175,8 +176,6 @@ class BasinsResult(AnalysisResult):
         ax0, ax1 = (axes + [0, 1])[:2]
         x_lim = (float(lo[ax0]), float(hi[ax0])) if lo.size > ax0 else None
         y_lim = (float(lo[ax1]), float(hi[ax1])) if lo.size > ax1 else None
-        x_axis = Axis(label=f"x{ax0 + 1}", limits=x_lim)
-        y_axis = Axis(label=f"x{ax1 + 1}", limits=y_lim)
 
         meta = dict(self.meta) if self.meta else {}
         meta.update(
@@ -184,14 +183,16 @@ class BasinsResult(AnalysisResult):
             diverged_color=DIVERGED_COLOR,
             palette_index=_palette_indices(self.attractors.ids),
         )
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            aspect="equal",
-            title=f"basins ({self.n_attractors} attractors)",
-            x=x_axis,
-            y=y_axis,
+        return pb.spec(
+            kind,
+            "basins_image",
             layers=layers,
+            aspect="equal",
+            xlabel=f"x{ax0 + 1}",
+            xlimits=x_lim,
+            ylabel=f"x{ax1 + 1}",
+            ylimits=y_lim,
+            title=f"basins ({self.n_attractors} attractors)",
             colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
             meta=meta,
         )
@@ -262,9 +263,10 @@ class BasinFractions(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import Colorbar
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.CATEGORICAL_BAR
+        from .. import _plotbuilder as pb
+
         ids = sorted(self.fractions)
         swatch = _palette_indices(ids)
 
@@ -276,9 +278,9 @@ class BasinFractions(AnalysisResult):
 
         ticks = [float(i) for i in range(len(categories))]
         positions = np.asarray(ticks, dtype=float)
-        layer = Layer(
-            PlotKind.BAR,
-            {"cat": positions, "y": np.asarray(heights, dtype=float)},
+        layer = pb.bar(
+            np.asarray(heights, dtype=float),
+            cat=positions,
             label="basin fraction",
             style={"cmap": PALETTE},
         )
@@ -288,13 +290,17 @@ class BasinFractions(AnalysisResult):
             diverged_color=DIVERGED_COLOR,
             palette_index=swatch,
         )
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            title="basin stability",
-            x=Axis(label="attractor", scale="categorical", categories=categories, ticks=ticks),
-            y=Axis(label="basin fraction", limits=(0.0, 1.0)),
+        return pb.spec(
+            kind,
+            "categorical_bar",
             layers=[layer],
+            xlabel="attractor",
+            xscale="categorical",
+            xcategories=categories,
+            xticks=ticks,
+            ylabel="basin fraction",
+            ylimits=(0.0, 1.0),
+            title="basin stability",
             colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
             meta=meta,
         )

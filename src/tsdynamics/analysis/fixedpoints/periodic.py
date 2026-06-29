@@ -100,49 +100,49 @@ class PeriodicOrbit(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
         pts = np.atleast_2d(np.asarray(self.points, dtype=float))
         dim = pts.shape[1] if pts.ndim == 2 and pts.size else 1
         per = f"T = {self.period:.4g}" if self.continuous else f"p = {int(self.period)}"
         title = f"{'stable' if self.stable else 'unstable'} orbit ({per})"
-        mark = PlotKind.LINE if self.continuous else PlotKind.SCATTER
+        # A flow loop is a continuous line; a map orbit is its distinct points.
+        mark2d = pb.line if self.continuous else pb.scatter
 
         if dim >= 3:
-            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_3D
-            loop = PlotKind.LINE3D if self.continuous else PlotKind.MARKERS
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=3,
+            loop = (
+                pb.line3d(pts[:, 0], pts[:, 1], pts[:, 2], label="orbit")
+                if self.continuous
+                else pb.markers(pts[:, 0], pts[:, 1], z=pts[:, 2], label="orbit")
+            )
+            return pb.spec(
+                kind,
+                "phase_portrait_3d",
+                layers=[loop],
                 aspect="equal",
+                xlabel="$x_0$",
+                ylabel="$x_1$",
+                zlabel="$x_2$",
                 title=title,
-                x=Axis(label="$x_0$"),
-                y=Axis(label="$x_1$"),
-                z=Axis(label="$x_2$"),
-                layers=[
-                    Layer(loop, {"x": pts[:, 0], "y": pts[:, 1], "z": pts[:, 2]}, label="orbit")
-                ],
             )
         if dim == 2:
-            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=2,
+            return pb.spec(
+                kind,
+                "phase_portrait_2d",
+                layers=[mark2d(pts[:, 0], pts[:, 1], label="orbit")],
                 aspect="equal",
+                xlabel="$x_0$",
+                ylabel="$x_1$",
                 title=title,
-                x=Axis(label="$x_0$"),
-                y=Axis(label="$x_1$"),
-                layers=[Layer(mark, {"x": pts[:, 0], "y": pts[:, 1]}, label="orbit")],
             )
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.TIME_SERIES
         y = pts[:, 0] if pts.ndim == 2 else np.ravel(pts).astype(float)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "time_series",
+            layers=[mark2d(np.arange(y.size, dtype=float), y, label="orbit")],
+            xlabel="index",
+            ylabel="$x$",
             title=title,
-            x=Axis(label="index"),
-            y=Axis(label="$x$"),
-            layers=[Layer(mark, {"x": np.arange(y.size, dtype=float), "y": y}, label="orbit")],
         )
 
     def eigenvalue_plane(self, kind: str | None = None) -> Any:
@@ -228,24 +228,20 @@ class OrbitSet(CollectionResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+        from tsdynamics.viz.spec import Layer
+
+        from .. import _plotbuilder as pb
 
         orbits = list(self.items)
         if not orbits:
-            spec_kind = PlotKind(kind) if kind is not None else PlotKind.PHASE_PORTRAIT_2D
-            return PlotSpec(kind=spec_kind, ndim=2, title="periodic orbits (none found)", layers=[])
+            return pb.spec(
+                kind, "phase_portrait_2d", layers=[], title="periodic orbits (none found)"
+            )
 
         # Build each orbit's own spec (it owns the per-dim layering logic) and
         # gather the layers, relabelling each by its period/stability.
         sub = [(o, o.to_plot_spec()) for o in orbits]
         ndim = max(int(s.ndim) for _, s in sub)
-        spec_kind = (
-            PlotKind(kind)
-            if kind is not None
-            else PlotKind.PHASE_PORTRAIT_3D
-            if ndim == 3
-            else PlotKind.PHASE_PORTRAIT_2D
-        )
         layers: list[Layer] = []
         for o, s in sub:
             per = f"T={o.period:.4g}" if o.continuous else f"p={int(o.period)}"
@@ -253,17 +249,16 @@ class OrbitSet(CollectionResult):
             for lyr in s.layers:
                 layers.append(Layer(lyr.kind, dict(lyr.data), label=label, style=dict(lyr.style)))
 
-        z = Axis(label="$x_2$") if ndim == 3 else None
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=3 if ndim == 3 else 2,
-            aspect="equal",
-            title=f"periodic orbits ({len(orbits)} found)",
-            x=Axis(label="$x_0$"),
-            y=Axis(label="$x_1$"),
-            z=z,
+        return pb.spec(
+            kind,
+            "phase_portrait_3d" if ndim == 3 else "phase_portrait_2d",
             layers=layers,
-            legend=Legend() if len(orbits) > 1 else None,
+            aspect="equal",
+            xlabel="$x_0$",
+            ylabel="$x_1$",
+            zlabel="$x_2$" if ndim == 3 else None,
+            title=f"periodic orbits ({len(orbits)} found)",
+            legend=len(orbits) > 1,
         )
 
 
@@ -505,7 +500,10 @@ def periodic_orbit(
         ``x0 = equilibrium`` (any ``T``, residual ``0``) — common for a centre or
         from a poor guess — which is rejected below this threshold.
     seed : int, optional
-        Seed for the burn-in IC, when ``ic`` is not given.
+        Seed for the burn-in IC, when ``ic`` is not given.  The random fallback is
+        drawn from a *local* :class:`numpy.random.Generator` seeded with this
+        value, so a given ``seed`` is reproducible regardless of the global
+        ``numpy.random`` state; ``seed=None`` (the default) is non-deterministic.
 
     Returns
     -------
@@ -535,9 +533,10 @@ def periodic_orbit(
         )
     dim = int(system.dim)  # type: ignore[arg-type]  # dim resolved at construction
     rhs, jac = _c.flow_fns(system)
+    rng = np.random.default_rng(seed)
 
     x0 = (
-        np.asarray(system.resolve_ic(None), dtype=float).ravel()
+        np.asarray(_c._orbit_start_ic(system, dim, rng), dtype=float).ravel()
         if ic is None
         else np.asarray(ic, dtype=float).ravel()
     )
@@ -817,7 +816,7 @@ def period_diagnostic(data: Any, **kwargs: Any) -> Any:
     --------
     >>> spec = period_diagnostic(VanDerPol().integrate(final_time=200, dt=0.01))
     """
-    from tsdynamics.viz.spec import Annotation, Axis, Layer, PlotKind, PlotSpec
+    from .. import _plotbuilder as pb
 
     result = estimate_period(data, **kwargs)
     meta = dict(result.meta)
@@ -828,19 +827,17 @@ def period_diagnostic(data: Any, **kwargs: Any) -> Any:
     ylabel = str(meta.get("curve_ylabel", "value"))
     period = float(result)
 
-    layers = [Layer(PlotKind.LINE, {"x": abscissa, "y": ordinate}, label=ylabel)]
     # Mark the detected period: at its lag (autocorrelation) or its frequency 1/T
     # (the spectral peak the FFT picked).
     mark_x = period if method == "autocorrelation" else (1.0 / period if period else 0.0)
-    annotations = [Annotation(kind="vline", x=mark_x, text=f"period = {period:.4g}")]
-    return PlotSpec(
-        kind=PlotKind.DIAGNOSTIC_CURVE,
-        ndim=2,
+    return pb.spec(
+        None,
+        "diagnostic_curve",
+        layers=[pb.line(abscissa, ordinate, label=ylabel)],
+        xlabel=xlabel,
+        ylabel=ylabel,
         title=f"period estimate ({method})",
-        x=Axis(label=xlabel),
-        y=Axis(label=ylabel),
-        layers=layers,
-        annotations=annotations,
+        annotations=[pb.vline(mark_x, text=f"period = {period:.4g}")],
         meta={"analysis": "period_diagnostic", "method": method, "period": period},
     )
 
