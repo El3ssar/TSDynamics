@@ -135,19 +135,21 @@ class RQAResult(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.CATEGORICAL_BAR
         labels = [lbl for lbl, _ in self._BAR_MEASURES]
         cat = np.arange(len(labels), dtype=float)
         values = np.array([float(getattr(self, attr)) for _, attr in self._BAR_MEASURES])
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "categorical_bar",
+            layers=[pb.bar(values, cat=cat, label="RQA measures")],
+            xlabel="measure",
+            xscale="categorical",
+            xcategories=labels,
+            ylabel="value",
+            ylimits=(0.0, 1.0),
             title=f"RQA  DET = {self.determinism:.3g}, LAM = {self.laminarity:.3g}",
-            x=Axis(label="measure", scale="categorical", categories=labels),
-            y=Axis(label="value", limits=(0.0, 1.0)),
-            layers=[Layer(PlotKind.BAR, {"cat": cat, "y": values}, label="RQA measures")],
         )
 
     def __repr__(self) -> str:  # noqa: D105

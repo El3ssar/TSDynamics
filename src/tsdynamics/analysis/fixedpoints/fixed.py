@@ -89,37 +89,28 @@ class FixedPoint(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.FIXED_POINTS_OVERLAY
         x = np.asarray(self.x, dtype=float).ravel()
         label = "stable" if self.stable else "unstable"
         style = _fixed_point_style(self.stable)
         if x.size >= 2:
-            layer = Layer(
-                PlotKind.SCATTER,
-                {"x": np.array([x[0]]), "y": np.array([x[1]])},
-                label=label,
-                style=style,
-            )
+            layer = pb.scatter(np.array([x[0]]), np.array([x[1]]), label=label, style=style)
             ylabel = "$x_1$"
         else:
-            layer = Layer(
-                PlotKind.SCATTER,
-                {"x": np.array([0.0]), "y": np.array([x[0] if x.size else 0.0])},
-                label=label,
-                style=style,
+            layer = pb.scatter(
+                np.array([0.0]), np.array([x[0] if x.size else 0.0]), label=label, style=style
             )
             ylabel = "$x$"
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            aspect="equal",
-            title=f"{label} fixed point",
-            x=Axis(label="$x_0$"),
-            y=Axis(label=ylabel),
+        return pb.spec(
+            kind,
+            "fixed_points_overlay",
             layers=[layer],
-            meta=dict(self.meta) if self.meta else {},
+            aspect="equal",
+            xlabel="$x_0$",
+            ylabel=ylabel,
+            title=f"{label} fixed point",
+            meta=self.meta,
         )
 
     def eigenvalue_plane(self, kind: str | None = None) -> Any:
@@ -189,10 +180,9 @@ class FixedPointSet(CollectionResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.FIXED_POINTS_OVERLAY
-        layers: list[Layer] = []
+        layers = []
         for stable, label in ((True, "stable"), (False, "unstable")):
             pts = [
                 np.asarray(fp.x, dtype=float).ravel() for fp in self.items if fp.stable is stable
@@ -203,24 +193,17 @@ class FixedPointSet(CollectionResult):
             arr = np.asarray([p[:dim] for p in pts], dtype=float)
             xs = arr[:, 0]
             ys = arr[:, 1] if dim >= 2 else np.zeros(arr.shape[0])
-            layers.append(
-                Layer(
-                    PlotKind.SCATTER,
-                    {"x": xs, "y": ys},
-                    label=label,
-                    style=_fixed_point_style(stable),
-                )
-            )
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            aspect="equal",
-            title=f"fixed points ({len(self.items)} found)",
-            x=Axis(label="$x_0$"),
-            y=Axis(label="$x_1$"),
+            layers.append(pb.scatter(xs, ys, label=label, style=_fixed_point_style(stable)))
+        return pb.spec(
+            kind,
+            "fixed_points_overlay",
             layers=layers,
-            legend=Legend() if len(layers) > 1 else None,
-            meta=dict(self.meta) if self.meta else {},
+            aspect="equal",
+            xlabel="$x_0$",
+            ylabel="$x_1$",
+            title=f"fixed points ({len(self.items)} found)",
+            legend=len(layers) > 1,
+            meta=self.meta,
         )
 
     def eigenvalue_plane(self, kind: str | None = None) -> Any:
@@ -491,24 +474,23 @@ def _eigenvalue_plane_spec(
     Floquet multiplier ``≈ 1``), that eigenvalue is split into its own
     distinctly-styled layer.  The :mod:`tsdynamics.viz.spec` import is lazy.
     """
-    from tsdynamics.viz.spec import Annotation, Axis, Layer, Legend, PlotKind, PlotSpec
+    from .. import _plotbuilder as pb
 
-    spec_kind = PlotKind(kind) if kind is not None else PlotKind.EIGENVALUE_PLANE
     eig = np.asarray(eigenvalues).ravel().astype(complex)
     n = eig.size
 
-    layers: list[Layer] = []
-    annotations: list[Annotation] = []
+    layers = []
+    annotations = []
 
     # The stability-boundary reference geometry.
     if continuous:
-        annotations.append(Annotation(kind="vline", x=0.0, text=r"$\mathrm{Re}\,\lambda = 0$"))
+        annotations.append(pb.vline(0.0, text=r"$\mathrm{Re}\,\lambda = 0$"))
     else:
         theta = np.linspace(0.0, 2.0 * np.pi, 200)
         layers.append(
-            Layer(
-                PlotKind.LINE,
-                {"x": np.cos(theta), "y": np.sin(theta)},
+            pb.line(
+                np.cos(theta),
+                np.sin(theta),
                 label=r"$|\lambda| = 1$",
                 style={"color": "gray", "lw": 1.0, "alpha": 0.6},
             )
@@ -520,9 +502,9 @@ def _eigenvalue_plane_spec(
             keep[trivial_index] = False
             tv = eig[trivial_index]
             layers.append(
-                Layer(
-                    PlotKind.SCATTER,
-                    {"x": np.array([tv.real]), "y": np.array([tv.imag])},
+                pb.scatter(
+                    np.array([tv.real]),
+                    np.array([tv.imag]),
                     label=r"trivial $\mu \approx 1$",
                     style={"marker": "x", "s": 60.0},
                 )
@@ -530,24 +512,23 @@ def _eigenvalue_plane_spec(
         rest = eig[keep]
         if rest.size:
             layers.append(
-                Layer(
-                    PlotKind.SCATTER,
-                    {"x": rest.real.astype(float), "y": rest.imag.astype(float)},
+                pb.scatter(
+                    rest.real.astype(float),
+                    rest.imag.astype(float),
                     label="multipliers" if not continuous else "eigenvalues",
                     style={"marker": "o", "s": 40.0},
                 )
             )
 
-    legend = Legend() if len(layers) > 1 else None
-    return PlotSpec(
-        kind=spec_kind,
-        ndim=2,
-        aspect="equal",
-        title=title,
-        x=Axis(label=r"$\mathrm{Re}\,\lambda$"),
-        y=Axis(label=r"$\mathrm{Im}\,\lambda$"),
+    return pb.spec(
+        kind,
+        "eigenvalue_plane",
         layers=layers,
-        legend=legend,
+        aspect="equal",
+        xlabel=r"$\mathrm{Re}\,\lambda$",
+        ylabel=r"$\mathrm{Im}\,\lambda$",
+        title=title,
+        legend=len(layers) > 1,
         annotations=annotations,
         meta=meta,
     )

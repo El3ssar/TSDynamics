@@ -108,30 +108,28 @@ class RecurrenceMatrix(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.RECURRENCE_PLOT
         # Read the COO triplet directly — row/col are the recurrent (i, j) pairs.
         # `.tocoo()` only repackages the already-stored indices (no densification);
         # the coordinate arrays are exactly `nnz` long.
         coo = self.matrix.tocoo()
         i = np.asarray(coo.row, dtype=float)
         j = np.asarray(coo.col, dtype=float)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            aspect="equal",
-            title=f"recurrence plot (RR = {self.recurrence_rate:.3g}, {i.size} pts)",
-            x=Axis(label="$i$", limits=(0.0, float(self.size))),
-            y=Axis(label="$j$", limits=(0.0, float(self.size))),
+        return pb.spec(
+            kind,
+            "recurrence_plot",
             layers=[
-                Layer(
-                    PlotKind.SCATTER,
-                    {"x": i, "y": j},
-                    label="recurrence",
-                    style={"color": "black", "s": 1, "marker": "s"},
+                pb.scatter(
+                    i, j, label="recurrence", style={"color": "black", "s": 1, "marker": "s"}
                 )
             ],
+            aspect="equal",
+            xlabel="$i$",
+            xlimits=(0.0, float(self.size)),
+            ylabel="$j$",
+            ylimits=(0.0, float(self.size)),
+            title=f"recurrence plot (RR = {self.recurrence_rate:.3g}, {i.size} pts)",
         )
 
     def __repr__(self) -> str:  # noqa: D105

@@ -11,7 +11,6 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics._result_common import resolve_plot_kind
 from tsdynamics.analysis._result_base import AnalysisResult
 
 
@@ -157,39 +156,17 @@ class ScalingResult(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from . import _plotbuilder as pb
 
-        spec_kind = resolve_plot_kind(kind, PlotKind.SCALING_FIT)
-        x = np.asarray(self.abscissa, dtype=float)
-        y = np.asarray(self.ordinate, dtype=float)
-        lo, hi = self.fit_region
-
-        layers = [
-            Layer(PlotKind.SCATTER, {"x": x, "y": y}, label="curve"),
-        ]
-        if x.size and hi >= lo:
-            layers.append(
-                Layer(
-                    PlotKind.MARKERS,
-                    {"x": x[lo : hi + 1], "y": y[lo : hi + 1]},
-                    label="fit region",
-                )
-            )
-            fit_x = np.array([x[lo], x[hi]], dtype=float)
-            layers.append(
-                Layer(
-                    PlotKind.LINE,
-                    {"x": fit_x, "y": self.intercept + self.estimate * fit_x},
-                    label=f"slope = {self.estimate:.3g}",
-                )
-            )
-
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.scaling_fit(
+            kind,
+            self.abscissa,
+            self.ordinate,
+            fit_region=self.fit_region,
+            slope=self.estimate,
+            intercept=self.intercept,
+            xlabel="abscissa",
+            ylabel="ordinate",
             title=type(self).__name__,
-            x=Axis(label="abscissa"),
-            y=Axis(label="ordinate"),
-            layers=layers,
-            meta=dict(self.meta) if self.meta else {},
+            meta=self.meta,
         )

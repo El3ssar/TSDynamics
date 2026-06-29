@@ -142,38 +142,31 @@ class UncertaintyExponent(AnalysisResult):
         -------
         PlotSpec
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from .. import _plotbuilder as pb
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.SCALING_FIT
         eps = np.asarray(self.epsilons, dtype=float)
         f = np.asarray(self.f, dtype=float)
         positive = (eps > 0.0) & (f > 0.0)
         log_eps = np.log(eps[positive])
         log_f = np.log(f[positive])
 
-        layers = [Layer(PlotKind.SCATTER, {"x": log_eps, "y": log_f}, label="curve")]
+        layers = [pb.scatter(log_eps, log_f, label="curve")]
         if log_eps.size:
             # The fitted line: slope alpha, intercept recovered so it passes
             # through the curve's centroid (log_f ≈ intercept + alpha * log_eps).
             intercept = float(np.mean(log_f) - self.alpha * np.mean(log_eps))
             fit_x = np.array([log_eps.min(), log_eps.max()], dtype=float)
             layers.append(
-                Layer(
-                    PlotKind.LINE,
-                    {"x": fit_x, "y": intercept + self.alpha * fit_x},
-                    label=f"slope = {self.alpha:.3g}",
-                )
+                pb.line(fit_x, intercept + self.alpha * fit_x, label=f"slope = {self.alpha:.3g}")
             )
-
-        meta = dict(self.meta) if self.meta else {}
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            title=type(self).__name__,
-            x=Axis(label=r"$\log\varepsilon$"),
-            y=Axis(label=r"$\log f$"),
+        return pb.spec(
+            kind,
+            "scaling_fit",
             layers=layers,
-            meta=meta,
+            xlabel=r"$\log\varepsilon$",
+            ylabel=r"$\log f$",
+            title=type(self).__name__,
+            meta=self.meta,
         )
 
     def __repr__(self) -> str:  # noqa: D105

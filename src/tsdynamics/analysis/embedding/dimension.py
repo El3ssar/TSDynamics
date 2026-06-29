@@ -121,40 +121,22 @@ class EmbeddingDimension(AnalysisResult):
             If neither the Cao curves nor the FNN fraction is present (nothing to
             draw) — the generic-fallback contract.
         """
-        from tsdynamics.viz.spec import Annotation, Axis, Layer, Legend, PlotKind, PlotSpec
-
+        from .. import _plotbuilder as pb
         from .._result import VisualizationNotInstalled
 
-        spec_kind = PlotKind(kind) if kind is not None else PlotKind.DIAGNOSTIC_CURVE
         dims = np.asarray(self.dims, dtype=float)
 
-        layers: list[Layer] = []
-        annotations: list[Annotation] = []
+        layers = []
+        annotations = []
         if self.afn_e1 is not None:
-            layers.append(
-                Layer(
-                    PlotKind.LINE,
-                    {"x": dims, "y": np.asarray(self.afn_e1, dtype=float)},
-                    label="$E_1(d)$",
-                )
-            )
+            layers.append(pb.line(dims, np.asarray(self.afn_e1, dtype=float), label="$E_1(d)$"))
             if self.afn_e2 is not None:
-                layers.append(
-                    Layer(
-                        PlotKind.LINE,
-                        {"x": dims, "y": np.asarray(self.afn_e2, dtype=float)},
-                        label="$E_2(d)$",
-                    )
-                )
-            annotations.append(Annotation(kind="hline", text="saturation = 1", y=1.0))
+                layers.append(pb.line(dims, np.asarray(self.afn_e2, dtype=float), label="$E_2(d)$"))
+            annotations.append(pb.hline(1.0, text="saturation = 1"))
             ylabel = r"$E_1$, $E_2$"
         elif self.fnn_fraction is not None:
             layers.append(
-                Layer(
-                    PlotKind.LINE,
-                    {"x": dims, "y": np.asarray(self.fnn_fraction, dtype=float)},
-                    label="FNN fraction",
-                )
+                pb.line(dims, np.asarray(self.fnn_fraction, dtype=float), label="FNN fraction")
             )
             ylabel = "false-neighbour fraction"
         else:  # pragma: no cover - both curves absent is a malformed result
@@ -163,19 +145,17 @@ class EmbeddingDimension(AnalysisResult):
                 "nothing to draw; export it with .to_dict() instead."
             )
 
-        annotations.append(
-            Annotation(kind="vline", text=f"$m$ = {int(self.dimension)}", x=float(self.dimension))
-        )
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
-            title=f"embedding dimension ({self.method}, $m$ = {int(self.dimension)})",
-            x=Axis(label="dimension $d$"),
-            y=Axis(label=ylabel),
+        annotations.append(pb.vline(float(self.dimension), text=f"$m$ = {int(self.dimension)}"))
+        return pb.spec(
+            kind,
+            "diagnostic_curve",
             layers=layers,
-            legend=Legend() if len(layers) > 1 else None,
+            xlabel="dimension $d$",
+            ylabel=ylabel,
+            title=f"embedding dimension ({self.method}, $m$ = {int(self.dimension)})",
+            legend=len(layers) > 1,
             annotations=annotations,
-            meta=dict(self.meta) if self.meta else {},
+            meta=self.meta,
         )
 
 

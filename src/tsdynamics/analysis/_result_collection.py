@@ -12,7 +12,6 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics._result_common import resolve_plot_kind
 from tsdynamics.analysis._result_base import AnalysisResult
 from tsdynamics.analysis._result_json import _is_frame_scalar, _jsonify
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled
@@ -107,7 +106,7 @@ class CollectionResult(AnalysisResult):
         VisualizationNotInstalled
             If no item yields a numeric point (nothing generic to scatter).
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from . import _plotbuilder as pb
 
         raw = [self._item_point(item) for item in self.items]
         points = [p for p in raw if p is not None and p.size]
@@ -120,31 +119,26 @@ class CollectionResult(AnalysisResult):
         dim = min(p.size for p in points)
         pts = np.asarray([p[:dim] for p in points], dtype=float)
         title = type(self).__name__
-        meta = dict(self.meta) if self.meta else {}
 
         if dim == 1:
-            spec_kind = resolve_plot_kind(kind, PlotKind.DIAGNOSTIC_CURVE)
-            layer = Layer(PlotKind.MARKERS, {"x": np.arange(len(pts), dtype=float), "y": pts[:, 0]})
-            return PlotSpec(
-                kind=spec_kind,
-                ndim=2,
+            return pb.spec(
+                kind,
+                "diagnostic_curve",
+                layers=[pb.markers(np.arange(len(pts), dtype=float), pts[:, 0])],
+                xlabel="index",
+                ylabel="value",
                 title=title,
-                x=Axis(label="index"),
-                y=Axis(label="value"),
-                layers=[layer],
-                meta=meta,
+                meta=self.meta,
             )
-        spec_kind = resolve_plot_kind(kind, PlotKind.PHASE_PORTRAIT_2D)
-        layer = Layer(PlotKind.SCATTER, {"x": pts[:, 0], "y": pts[:, 1]}, label=title)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "phase_portrait_2d",
+            layers=[pb.scatter(pts[:, 0], pts[:, 1], label=title)],
             aspect="equal",
+            xlabel="x1",
+            ylabel="x2",
             title=title,
-            x=Axis(label="x1"),
-            y=Axis(label="x2"),
-            layers=[layer],
-            meta=meta,
+            meta=self.meta,
         )
 
     @staticmethod

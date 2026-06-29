@@ -13,7 +13,6 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics._result_common import resolve_plot_kind
 from tsdynamics.analysis._result_base import AnalysisResult
 from tsdynamics.analysis._result_json import _jsonify
 
@@ -186,17 +185,16 @@ class ScalarResult(_NumericOps, AnalysisResult):
         ``DIAGNOSTIC_CURVE`` carrying the value so the ``.plot`` seam resolves
         uniformly.  The :mod:`tsdynamics.viz.spec` import is lazy.
         """
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from . import _plotbuilder as pb
 
-        spec_kind = resolve_plot_kind(kind, PlotKind.DIAGNOSTIC_CURVE)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "diagnostic_curve",
+            layers=[pb.markers(np.array([0.0]), np.array([float(self)]))],
+            xlabel="index",
+            ylabel="value",
             title=type(self).__name__,
-            x=Axis(label="index"),
-            y=Axis(label="value"),
-            layers=[Layer(PlotKind.MARKERS, {"x": np.array([0.0]), "y": np.array([float(self)])})],
-            meta=dict(self.meta) if self.meta else {},
+            meta=self.meta,
         )
 
 
@@ -241,15 +239,14 @@ class CountResult(int, AnalysisResult):
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe the count as a one-point :class:`PlotSpec` (rarely plotted)."""
-        from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+        from . import _plotbuilder as pb
 
-        spec_kind = resolve_plot_kind(kind, PlotKind.DIAGNOSTIC_CURVE)
-        return PlotSpec(
-            kind=spec_kind,
-            ndim=2,
+        return pb.spec(
+            kind,
+            "diagnostic_curve",
+            layers=[pb.markers(np.array([0.0]), np.array([float(self)]))],
+            xlabel="index",
+            ylabel="value",
             title=type(self).__name__,
-            x=Axis(label="index"),
-            y=Axis(label="value"),
-            layers=[Layer(PlotKind.MARKERS, {"x": np.array([0.0]), "y": np.array([float(self)])})],
-            meta=dict(self.meta) if self.meta else {},
+            meta=self.meta,
         )
