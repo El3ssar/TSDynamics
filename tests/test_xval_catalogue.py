@@ -418,9 +418,13 @@ def test_engine_lyapunov_matches_literature(name) -> None:
         f"Source: {meta.get('source', 'n/a')}"
     )
 
+    # interp == jit is bit-for-bit: the whole Benettin loop (extended-variational
+    # integrate + QR + log-norm accumulate) runs in the engine kernel (stream
+    # perf/ode-lyapunov-engine) over the *same* lowered tape, driven by two
+    # numerically-identical evaluators — so the spectrum agrees to the last bit.
     jit = ts.TangentSystem(cls(), backend="jit").lyapunov_spectrum(**kwargs)
-    np.testing.assert_allclose(
-        interp, jit, rtol=0.0, atol=1e-6, err_msg=f"{name}: interp vs jit Lyapunov spectrum"
+    np.testing.assert_array_equal(
+        interp, jit, err_msg=f"{name}: interp vs jit Lyapunov spectrum (must be bit-for-bit)"
     )
 
 

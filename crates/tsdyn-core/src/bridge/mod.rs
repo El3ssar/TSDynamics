@@ -33,6 +33,7 @@
 pub mod basin;
 pub mod dde;
 pub mod events;
+pub mod lyapunov;
 pub mod map;
 pub mod marshal;
 pub mod ode;
@@ -46,6 +47,7 @@ pub mod stepper;
 pub use basin::{basin_march_flow_bridge, basin_march_map_bridge};
 pub use dde::integrate_dde_dense;
 pub use events::integrate_events_dense;
+pub use lyapunov::lyapunov_spectrum_ode_bridge;
 pub use map::{iterate_map, map_ensemble_final};
 #[cfg(test)]
 pub use marshal::build_tape;

@@ -248,3 +248,59 @@ class TestTangentODE:
         assert abs(exps[0] - 0.906) < 0.45
         assert abs(exps[1]) < 0.2
         assert exps[2] < -10.0
+
+
+# ---------------------------------------------------------------------------
+# Engine ODE-Lyapunov kernel (stream perf/ode-lyapunov-engine)
+# ---------------------------------------------------------------------------
+#
+# The whole burn-in + averaging Benettin loop runs in one Rust engine call for an
+# explicit kernel on the compiled engine (interp/jit).  These pin the correctness
+# contract: interp == jit bit-for-bit, and the engine fast path agrees with the
+# per-chunk reference/Python loop to the documented chaotic-flow tolerance.
+
+
+@pytest.mark.slow
+class TestTangentEngineLyapunov:
+    """The engine ODE-Lyapunov fast path (stream perf/ode-lyapunov-engine)."""
+
+    def test_interp_equals_jit_bit_for_bit(self) -> None:
+        # The engine kernel drives two numerically-identical evaluators over the
+        # same lowered extended-variational tape, so the spectrum is bit-identical.
+        pytest.importorskip("tsdynamics._rust")
+        kw = dict(dt=0.05, burn_in=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0])
+        interp = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
+        jit = ts.Lorenz().lyapunov_spectrum(backend="jit", **kw)
+        np.testing.assert_array_equal(
+            interp, jit, err_msg="engine ODE Lyapunov: interp != jit (must be bit-for-bit)"
+        )
+
+    def test_engine_matches_reference_to_tolerance(self) -> None:
+        # The compiled-engine kernel and the pure-Python reference oracle (the
+        # per-chunk loop with NumPy-Householder QR) are two float-distinct
+        # computations of the same Benettin estimate; over a chaotic flow they
+        # diverge only by roundoff — the same-attractor tolerance.
+        pytest.importorskip("tsdynamics._rust")
+        kw = dict(dt=0.05, burn_in=50.0, final_time=300.0, ic=[1.0, 1.0, 1.0])
+        engine = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
+        reference = ts.Lorenz().lyapunov_spectrum(backend="reference", **kw)
+        np.testing.assert_allclose(engine, reference, rtol=0.0, atol=1e-2)
+        # Kaplan–Yorke dimension is preserved across the two paths.
+        assert abs(ts.kaplan_yorke_dimension(engine) - ts.kaplan_yorke_dimension(reference)) < 1e-2
+
+    def test_partial_spectrum_k_less_than_dim(self) -> None:
+        # k < dim takes the same engine kernel (the leading exponent is positive).
+        pytest.importorskip("tsdynamics._rust")
+        exps = ts.Lorenz().lyapunov_spectrum(
+            dt=0.05, burn_in=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0], n_exp=2
+        )
+        assert exps.shape == (2,)
+        assert exps[0] > 0.5  # the positive exponent (~0.9)
+
+    def test_stiff_default_keeps_the_slow_path(self) -> None:
+        # An implicit (stiff) default method declines the engine kernel
+        # (make_ode_stepper rejects it) and keeps the per-chunk loop — still finite.
+        pytest.importorskip("tsdynamics._rust")
+        sys = ts.systems.Oregonator()
+        exps = sys.lyapunov_spectrum(dt=0.05, burn_in=10.0, final_time=40.0, n_exp=2)
+        assert np.all(np.isfinite(exps))

@@ -962,6 +962,92 @@ fn basin_march_map<'py>(
 }
 
 // ---------------------------------------------------------------------------
+// ODE Lyapunov spectrum (stream perf/ode-lyapunov-engine)
+// ---------------------------------------------------------------------------
+
+use bridge::lyapunov_spectrum_ode_bridge;
+
+/// Run the whole burn-in + averaging Benettin Lyapunov-spectrum loop for an ODE
+/// flow in one engine call.
+///
+/// The leading tape arrays are the usual `Tape.to_arrays()` tuple — here the
+/// **extended** variational tape (`dim*(k+1)` inputs/outputs: the base RHS stacked
+/// with the `k` tangent-vector RHS blocks, built by
+/// `tsdynamics.derived._variational.build_variational_tape`). `p` is the live
+/// control-parameter vector; `method` resolves through the solver registry
+/// (an implicit kernel needs a Jacobian-carrying tape — the extended tape carries
+/// one); `dim` the **base** system dimension; `k` the number of tangent vectors;
+/// `z0` the extended initial state (`embed_extended`: base IC ⊕ the seed tangent
+/// frame, column-major); `t0` the start time; `dt` the renormalisation interval;
+/// `burn_in` / `final_time` the two window lengths; `jit` selects the Cranelift
+/// evaluator (numerically identical to the interpreter).
+///
+/// Each `dt` chunk is integrated by a *fresh* two-node `integrate_grid([t, t+dt])`
+/// (byte-for-byte the released `TangentSystem._step_ode_engine` numerics, so
+/// `interp == jit`), then the `(dim, k)` tangent block is QR-reorthonormalised
+/// (modified Gram–Schmidt) and `Σ log|diag R|` accumulated over the averaging
+/// window. Returns `(spectrum, final_state, last_growths)` — the `k` exponents,
+/// the final extended state, and the last per-step log-stretch contributions. A
+/// divergence raises (it must not become a plausible-looking spectrum).
+#[pyfunction]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn lyapunov_spectrum_ode<'py>(
+    py: Python<'py>,
+    ops: PyReadonlyArray1<i32>,
+    a: PyReadonlyArray1<i32>,
+    b: PyReadonlyArray1<i32>,
+    imm: PyReadonlyArray1<f64>,
+    outputs: PyReadonlyArray1<i32>,
+    jac_outputs: PyReadonlyArray1<i32>,
+    n_state: usize,
+    n_param: usize,
+    p: PyReadonlyArray1<f64>,
+    method: String,
+    rtol: f64,
+    atol: f64,
+    dim: usize,
+    k: usize,
+    z0: PyReadonlyArray1<f64>,
+    t0: f64,
+    dt: f64,
+    burn_in: f64,
+    final_time: f64,
+    jit: bool,
+) -> PyResult<(
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+)> {
+    let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
+    let p = vec_f64("p", &p)?;
+    let z0 = vec_f64("z0", &z0)?;
+    let out = py
+        .detach(|| {
+            lyapunov_spectrum_ode_bridge(
+                tape.build()?,
+                &p,
+                &method,
+                rtol,
+                atol,
+                dim,
+                k,
+                &z0,
+                t0,
+                dt,
+                burn_in,
+                final_time,
+                jit,
+            )
+        })
+        .map_err(to_py_err)?;
+    Ok((
+        PyArray1::from_vec(py, out.spectrum),
+        PyArray1::from_vec(py, out.final_state),
+        PyArray1::from_vec(py, out.last_growths),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Resumable ODE stepper handle (stream WS-STEPPER)
 // ---------------------------------------------------------------------------
 
@@ -1179,6 +1265,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(integrate_events_dense, m)?)?;
     m.add_function(wrap_pyfunction!(basin_march_flow, m)?)?;
     m.add_function(wrap_pyfunction!(basin_march_map, m)?)?;
+    m.add_function(wrap_pyfunction!(lyapunov_spectrum_ode, m)?)?;
     m.add_class::<PyOdeStepper>()?;
     m.add_function(wrap_pyfunction!(solvers, m)?)?;
     m.add_function(wrap_pyfunction!(_version, m)?)?;
