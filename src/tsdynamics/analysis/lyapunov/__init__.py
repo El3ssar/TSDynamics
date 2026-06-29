@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.errors import ConvergenceError, InvalidParameterError
-from tsdynamics.families import DelaySystem
+from tsdynamics.families import DelaySystem, DiscreteMap
 
 from ... import registry as _registry
 from .._result import AnalysisResult, ArrayResult, ScalarResult
@@ -287,6 +287,86 @@ def lyapunov_spectrum(
     return LyapunovSpectrum(values=exponents, meta=meta)
 
 
+def _max_lyapunov_map(
+    system: Any,
+    *,
+    n: int,
+    steps_per: int,
+    transient: int,
+    ic: Any | None,
+) -> float | None:
+    """Maximal exponent of a map as the top of the Rust QR tangent-map spectrum.
+
+    Burns in ``transient`` map iterations to land on the attractor, then runs the
+    engine kernel (:func:`tsdynamics.engine.run.map_lyapunov`) for ``n * steps_per``
+    iterations and returns the leading exponent (``k=1``).  Returns ``None`` to
+    decline — so :func:`max_lyapunov` falls back to the two-trajectory loop — when
+    the map will not lower to the engine IR
+    (:class:`~tsdynamics.engine.compile.TapeCompileError`) or the compiled wheel is
+    absent (:class:`~tsdynamics.engine.run.EngineNotAvailableError`).
+    """
+    from tsdynamics.engine import run
+    from tsdynamics.engine.compile import (
+        TapeCompileError,
+        lower_map_cached,
+        tape_jacobian_is_smooth,
+    )
+
+    # Only a genuine DiscreteMap has an analytic _step/_jacobian to lower; a
+    # WrappedSystem (adapted external stepper — is_discrete=True but no _step) and
+    # anything else must take the two-trajectory loop.
+    if not isinstance(system, DiscreteMap):
+        return None
+
+    name = type(system).__name__
+    try:
+        tape = lower_map_cached(system, with_jacobian=True)
+        tape_arrays = tape.to_arrays()
+    except TapeCompileError:
+        return None  # a non-lowering _step (piecewise/ufunc) → two-trajectory loop
+    except run.EngineNotAvailableError:  # pragma: no cover - wheel-free env
+        return None
+    # A piecewise map's lowered Jacobian collapses at kinks (the full-height Tent's
+    # dyadic orbit hits x=0.5, poisoning the QR growth), so decline → two-trajectory.
+    if not tape_jacobian_is_smooth(tape):
+        return None
+
+    steps = max(1, int(n) * int(steps_per))
+    burn = max(0, int(transient))
+
+    # Burn-in + the kernel run, with random-IC retry on divergence (a random draw
+    # can land off-basin); an explicit ``ic`` that diverges re-raises.
+    ic_explicit = ic is not None
+    max_retries = 10
+    for attempt in range(max_retries):
+        ref = system.copy()
+        try:
+            ref.reinit(ic if attempt == 0 else None)
+            for _ in range(burn):
+                ref.step()
+            start = np.asarray(ref.state(), dtype=float)
+            exponents, _intervals = run.map_lyapunov(
+                tape_arrays,
+                start,
+                steps=steps,
+                k=1,
+                reortho_interval=1,
+                name=name,
+            )
+        except run.EngineNotAvailableError:  # pragma: no cover - wheel-free env
+            return None
+        except (ConvergenceError, ArithmeticError):
+            if ic_explicit or attempt == max_retries - 1:
+                raise
+            continue  # off-basin random draw diverged; retry from a fresh IC
+        return float(exponents[0])
+
+    # Unreachable: the loop returns on success or re-raises on the last attempt.
+    raise ConvergenceError(  # pragma: no cover
+        f"{name}.max_lyapunov: map iterates diverge from every tried IC."
+    )
+
+
 def max_lyapunov(
     system: Any,
     *,
@@ -361,6 +441,21 @@ def max_lyapunov(
         raise InvalidParameterError(
             "dt has no meaning for discrete maps — omit it (every step is one iteration)."
         )
+
+    # Maps: the maximal exponent is the leading entry of the QR tangent-map
+    # spectrum, run in one Rust engine call (stream perf/map-lyapunov-kernel) —
+    # thousands of times faster than the per-iteration two-trajectory rescaling, and
+    # more robust (no perturbation-size / collapse tuning).  The continuous-system
+    # path below is unchanged.  Only the map path moves to the kernel; a map whose
+    # ``_step`` will not lower, or a wheel-free environment, falls back to the
+    # two-trajectory loop transparently.
+    if system.is_discrete:
+        mle = _max_lyapunov_map(system, n=n, steps_per=steps_per, transient=transient, ic=ic)
+        if mle is not None:
+            meta = AnalysisResult.build_meta(
+                system, analysis="max_lyapunov", n=n, transient=transient
+            )
+            return ScalarResult(value=mle, meta=meta)
 
     rng = np.random.default_rng(seed)
     ref = system.copy()

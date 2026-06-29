@@ -448,6 +448,8 @@ class DiscreteMap(SystemBase):
         ic: Any | None = None,
         n_exp: int | None = None,
         reortho_interval: int = 1,
+        *,
+        backend: str | None = None,
     ) -> np.ndarray:
         """
         QR-based Lyapunov spectrum.
@@ -457,6 +459,14 @@ class DiscreteMap(SystemBase):
         single forward pass evaluating the Jacobian alongside the trajectory,
         QR-reorthonormalising every ``reortho_interval`` steps, with a random-IC
         retry on divergence.
+
+        On the compiled-engine backends (``"interp"`` default / ``"jit"``) the whole
+        QR tangent-map iteration runs in one Rust kernel call
+        (:func:`tsdynamics.engine.run.map_lyapunov`) — no per-step Python→FFI
+        round-trip, so it is dramatically faster than the per-step NumPy loop.
+        ``backend="reference"`` (and any map whose ``_step`` will not lower to the
+        engine IR, or a wheel-free environment) runs the pure-Python QR loop — the
+        oracle the engine is validated against.
 
         Results are stored in ``self.meta['lyapunov_spectrum']``.
 
@@ -470,6 +480,9 @@ class DiscreteMap(SystemBase):
             Number of exponents. Defaults to ``dim``.
         reortho_interval : int
             Reorthonormalise every this many steps. Default 1.
+        backend : str, optional
+            ``"interp"`` (default, the Rust kernel) / ``"jit"`` (Cranelift) /
+            ``"reference"`` (the pure-Python QR loop).
 
         Returns
         -------
@@ -486,6 +499,6 @@ class DiscreteMap(SystemBase):
         from tsdynamics.derived.tangent import TangentSystem
 
         k = n_exp or self.dim
-        return TangentSystem(self, k=k).lyapunov_spectrum(
+        return TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
             steps=steps, ic=ic, reortho_interval=reortho_interval
         )

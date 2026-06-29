@@ -81,6 +81,7 @@ __all__ = [
     "lower_sde_cached",
     "run_tape",
     "tape_cache_stats",
+    "tape_jacobian_is_smooth",
 ]
 
 # ---------------------------------------------------------------------------
@@ -179,6 +180,59 @@ _BINARY_OPS: frozenset[int] = frozenset(
 )
 #: Leaf opcodes (read an input or an immediate; no register operands).
 _LEAF_OPS: frozenset[int] = frozenset({OP_CONST, OP_STATE, OP_PARAM, OP_TIME})
+
+#: Opcodes whose **derivative** is non-smooth (a kink or a step): ``Abs``/``sign``
+#: (resolved a.e. as ``sign u`` / ``0``, so the lowered IR derivative is ``0`` *at*
+#: a kink), the round-to-integral / modular ops (``floor``/``ceil``/``mod``/``rem``,
+#: zero derivative a.e. with a jump at the integers), the comparisons (a piecewise
+#: 0/1 selection with zero derivative), and ``min``/``max`` (a kink at the
+#: crossover).  A map whose lowered Jacobian tape contains any of these is
+#: *piecewise*: the lowered IR derivative is a.e.-correct but collapses to the
+#: a.e. value (``0``) exactly on the kink/step, where a hand-written one-sided
+#: ``_jacobian`` instead returns the meaningful slope.  See
+#: :func:`tape_jacobian_is_smooth`.
+_NONSMOOTH_OPS: frozenset[int] = frozenset(
+    {
+        _FUNC_OPS["Abs"],
+        _FUNC_OPS["sign"],
+        OP_FLOOR,
+        OP_CEIL,
+        OP_MOD,
+        OP_REM,
+        OP_MIN,
+        OP_MAX,
+        *_REL_OPS.values(),
+    }
+)
+
+
+def tape_jacobian_is_smooth(tape: Any) -> bool:
+    """Whether a lowered tape's Jacobian is smooth (no kink/step opcodes).
+
+    Returns ``False`` when the tape uses any non-smooth opcode
+    (:data:`_NONSMOOTH_OPS`: ``abs``/``sign``/``floor``/``ceil``/``mod``/``rem``/
+    comparisons/``min``/``max``) — i.e. the map is *piecewise* and its lowered IR
+    Jacobian is a.e.-correct but collapses to the a.e. value at a kink/step (where
+    a hand-written one-sided ``_jacobian`` returns the meaningful slope).  The map
+    Lyapunov **kernel** propagates the lowered Jacobian, so a piecewise map whose
+    orbit lands on a kink (e.g. the Tent map at full height, whose dyadic orbit
+    hits ``x = 0.5`` exactly) collapses the QR growth to ``log 0`` and poisons the
+    spectrum; such maps must use the pure-Python QR loop (which reads the
+    one-sided hand-written ``_jacobian``) instead.  A smooth map (Hénon, Ikeda,
+    logistic, …) returns ``True`` and keeps the fast kernel.
+
+    Parameters
+    ----------
+    tape : Tape
+        A lowered map tape (typically ``with_jacobian=True``).
+
+    Returns
+    -------
+    bool
+        ``True`` if the tape contains no non-smooth opcode, else ``False``.
+    """
+    ops = np.asarray(tape.ops, dtype=np.int64)
+    return not bool(np.isin(ops, list(_NONSMOOTH_OPS)).any())
 
 
 class TapeCompileError(NotImplementedError):

@@ -101,15 +101,19 @@ class TangentSystem(DerivedSystem):
         if not 1 <= self.k <= system.dim:
             raise ValueError(f"k must be in [1, {system.dim}], got {self.k}")
 
-        if self._mode == "map":
-            self._backend = "map"
-        else:
-            self._backend = (backend or "interp").lower()
-            if self._backend not in _ENGINE_BACKENDS:
-                raise ValueError(
-                    f"unknown ODE tangent backend {backend!r}; choose from "
-                    f"{sorted(_ENGINE_BACKENDS)} (the engine variational path)."
-                )
+        # Both maps and ODEs select among the same three backends: the compiled
+        # engine (``interp``/``jit``) or the pure-Python ``reference`` oracle.  For
+        # maps ``interp``/``jit`` run the Rust QR tangent-map kernel (stream
+        # perf/map-lyapunov-kernel) and ``reference`` the pure-NumPy QR loop (also
+        # the transparent fallback when the engine declines — a non-lowering
+        # ``_step`` or an absent wheel); for ODEs they select the variational
+        # integration backend as before.
+        self._backend = (backend or "interp").lower()
+        if self._backend not in _ENGINE_BACKENDS:
+            raise ValueError(
+                f"unknown {'map' if self._mode == 'map' else 'ODE'} tangent backend "
+                f"{backend!r}; choose from {sorted(_ENGINE_BACKENDS)}."
+            )
 
         self._W: np.ndarray | None = None  # (dim, k) deviation vectors (map mode)
         self._ext_tape: Any = None  # extended variational tape (ode engine mode)
@@ -140,8 +144,7 @@ class TangentSystem(DerivedSystem):
         self._elapsed = 0.0
 
     def _rebuild(self, inner: Any) -> TangentSystem:
-        backend = None if self._mode == "map" else self._backend
-        return TangentSystem(inner, self.k, backend=backend)
+        return TangentSystem(inner, self.k, backend=self._backend)
 
     # --- lifecycle ---
 
@@ -581,8 +584,29 @@ class TangentSystem(DerivedSystem):
         ic: Any | None = None,
         reortho_interval: int = 1,
     ) -> np.ndarray:
-        """Single-pass QR spectrum for a map, with random-IC retry on divergence."""
+        """QR tangent-map spectrum for a map, with random-IC retry on divergence.
+
+        For the compiled-engine backends (``interp``/``jit``, the default) the whole
+        QR tangent-map iteration runs in one Rust kernel call
+        (:func:`~tsdynamics.engine.run.map_lyapunov`) — no per-step Python→FFI
+        round-trip, ~thousands of times faster than the NumPy loop it supersedes.
+        The ``reference`` backend, and any map whose ``_step`` will not lower to the
+        engine IR (piecewise/ufunc) or a missing engine wheel, transparently use the
+        pure-Python QR loop (:meth:`_accumulate_map`) — the oracle the engine is
+        validated against.  The engine drives the same algorithm (Jacobian at the
+        pre-image ``x_n``, propagate the frame, QR every ``reortho_interval``), so
+        the spectrum matches to tolerance (it differs only by the lowered-IR vs
+        pure-Python float order — the WS-MAPITER caveat).
+        """
         max_retries = 10
+
+        # Fast path: the compiled engine kernel (interp/jit).  Reference, a
+        # non-lowering _step, or an absent wheel fall through to the NumPy loop.
+        if self._backend in ("interp", "jit"):
+            engine_result = self._map_spectrum_engine(steps, ic, reortho_interval, max_retries)
+            if engine_result is not None:
+                return engine_result
+
         for attempt in range(max_retries):
             use_ic = ic if attempt == 0 else None
             if self._accumulate_map(steps, use_ic, reortho_interval):
@@ -593,6 +617,7 @@ class TangentSystem(DerivedSystem):
                     steps=steps,
                     n_exp=self.k,
                     reortho_interval=reortho_interval,
+                    backend=self._backend,
                 )
                 return exponents
             if attempt < max_retries - 1:
@@ -603,6 +628,98 @@ class TangentSystem(DerivedSystem):
             f"{type(self.system).__name__}.lyapunov_spectrum: failed after "
             f"{max_retries} retries — iterates diverge from every tried IC. "
             f"Try a larger `steps` budget or pass an `ic` from a known basin point."
+        )
+
+    def _map_spectrum_engine(
+        self,
+        steps: int,
+        ic: Any | None,
+        reortho_interval: int,
+        max_retries: int,
+    ) -> np.ndarray | None:
+        """Run the map QR spectrum on the Rust engine kernel, or decline.
+
+        Lowers the map ``_step`` (with its Jacobian) once and runs the entire QR
+        tangent-map iteration in one :func:`~tsdynamics.engine.run.map_lyapunov`
+        call — the per-step Python QR loop replaced by a single FFI round-trip.
+
+        Returns the spectrum (also seeding ``self`` so ``exponents()`` reports it)
+        on success, or ``None`` to decline so the caller falls back to the pure-NumPy
+        loop — when the map will not lower to the engine IR
+        (:class:`~tsdynamics.engine.compile.TapeCompileError`) or the compiled
+        wheel is absent
+        (:class:`~tsdynamics.engine.run.EngineNotAvailableError`).  Mirrors the NumPy
+        path's random-IC retry on divergence (a random draw can land off-basin); an
+        explicit ``ic`` that diverges re-raises rather than retrying silently.
+        """
+        from tsdynamics.engine import run
+        from tsdynamics.engine.compile import (
+            TapeCompileError,
+            lower_map_cached,
+            tape_jacobian_is_smooth,
+        )
+        from tsdynamics.errors import ConvergenceError
+
+        sys = self.system
+        name = type(sys).__name__
+        try:
+            tape = lower_map_cached(sys, with_jacobian=True)
+        except TapeCompileError:
+            return None  # a non-lowering _step (piecewise/ufunc) → NumPy fallback
+        # A piecewise map (abs/sign/floor/min/max/comparison in _step) has a lowered
+        # Jacobian that is a.e.-correct but collapses to the a.e. value (0) at a kink —
+        # and a map orbit can land exactly on it (the full-height Tent's dyadic orbit
+        # hits x=0.5), poisoning the QR growth.  Decline so the NumPy loop, which reads
+        # the one-sided hand-written `_jacobian`, runs instead.
+        if not tape_jacobian_is_smooth(tape):
+            return None
+
+        try:
+            tape_arrays = tape.to_arrays()
+        except run.EngineNotAvailableError:  # pragma: no cover - defensive
+            return None
+
+        ic_explicit = ic is not None
+        for attempt in range(max_retries):
+            use_ic = sys.resolve_ic(ic if attempt == 0 else None)
+            try:
+                exponents, intervals = run.map_lyapunov(
+                    tape_arrays,
+                    use_ic,
+                    steps=steps,
+                    k=self.k,
+                    reortho_interval=reortho_interval,
+                    jit=self._backend == "jit",
+                    name=name,
+                )
+            except run.EngineNotAvailableError:  # pragma: no cover - wheel-free env
+                return None  # no engine → NumPy fallback (the wheel-free oracle)
+            except ConvergenceError:
+                if ic_explicit or attempt == max_retries - 1:
+                    raise
+                # Off-basin random draw diverged; clear the stored IC and retry.
+                object.__setattr__(sys, "ic", None)
+                continue
+
+            # Seed the accumulators so exponents()/growths() stay coherent with the
+            # streaming API (a downstream consumer may read them after this call).
+            self._W = None
+            self._sum_growths = exponents * float(intervals * reortho_interval)
+            self._last_growths = exponents.copy()
+            self._elapsed = float(intervals * reortho_interval)
+            self.meta.record(
+                "lyapunov_spectrum",
+                exponents,
+                steps=steps,
+                n_exp=self.k,
+                reortho_interval=reortho_interval,
+                backend=self._backend,
+            )
+            return exponents
+
+        # Unreachable: the loop returns on success or re-raises on the last attempt.
+        raise ConvergenceError(  # pragma: no cover
+            f"{name}.lyapunov_spectrum: map iterates diverge from every tried IC."
         )
 
     def _accumulate_map(self, steps: int, ic: Any | None, reortho_interval: int) -> bool:

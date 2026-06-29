@@ -533,8 +533,22 @@ documented tolerance):
 - **`TangentSystem` is the one Lyapunov engine** (stream C-DERIV): the
   variational/QR machinery lives here, and `DiscreteMap.lyapunov_spectrum` /
   `ContinuousSystem.lyapunov_spectrum` are thin delegations to it. Modes:
-  - **maps**: NumPy `W ← J(x)·W` + QR, Jacobian at the **pre-image** `x_n` (the
-    correct tangent-map convention), with random-IC retry on divergence.
+  - **maps**: the **engine** QR tangent-map kernel via `backend=`
+    (`"interp"`/`"jit"`/`"reference"`, stream `perf/map-lyapunov-kernel`): the
+    *whole* QR iteration — propagate `k` deviation vectors `W ← J(x_n)·W` (Jacobian
+    at the **pre-image** `x_n`, the correct tangent-map convention), modified
+    Gram–Schmidt reortho every `reortho_interval`, accumulate `Σ log|R_ii|`, average
+    — runs in **one** Rust call (`engine.run.map_lyapunov` →
+    `crates/tsdyn-engine/src/map_lyapunov.rs` → FFI `map_lyapunov_spectrum`) on the
+    map tape lowered `with_jacobian=True`, with random-IC retry on divergence. This
+    replaces the per-step Python→FFI NumPy QR loop (~6000× faster native than the
+    released per-iterate loop). `interp`==`jit` **bit-for-bit** (same lowered tape);
+    against the pure-Python `_accumulate_map` oracle it differs only by the
+    lowered-IR vs NumPy `_step`/`_jacobian` float order (the WS-MAPITER caveat) —
+    the same attractor, the same spectrum to tolerance. `backend="reference"`, a
+    non-lowering `_step` (piecewise/ufunc → `TapeCompileError`), and a wheel-free
+    environment transparently keep the pure-Python QR loop (`_accumulate_map`, the
+    oracle).
   - **ODEs**: the **backend-neutral** engine path via `backend=`
     (`"interp"`/`"jit"`/`"reference"`): the *extended* variational ODE (state ⊕ k
     tangent vectors, built in `derived/_variational.py` and lowered via the
@@ -568,7 +582,13 @@ documented tolerance):
 - `max_lyapunov` (Benettin two-trajectory) needs `set_state` → raises for DDEs.
   Its continuous normalization divides by the **measured elapsed `time()`** of
   the reference run (not a guessed step-size attribute), so it is correct for
-  any continuous system including `WrappedSystem` stepped with `dt=None`.
+  any continuous system including `WrappedSystem` stepped with `dt=None`. **For a
+  map (stream `perf/map-lyapunov-kernel`)** it is the **leading exponent of the
+  engine QR tangent-map spectrum** (`steps = n·steps_per` from the burnt-in state,
+  `k=1`), run in one Rust call — far faster and more robust than the per-iterate
+  two-trajectory rescaling (no `d0`/collapse tuning); a non-lowering `_step` or a
+  wheel-free env falls back to the two-trajectory loop. The **continuous-system
+  path is unchanged** — only the map path moved to the kernel.
 - `lyapunov_from_data` (A-LYAP) estimates the maximal exponent from a measured
   series via delay embedding + neighbour divergence (Kantz 1994 default,
   Rosenstein et al. 1993 optional); returns a `LyapunovFromData` carrying the

@@ -35,6 +35,7 @@ pub mod dde;
 pub mod events;
 pub mod lyapunov;
 pub mod map;
+pub mod map_lyapunov;
 pub mod marshal;
 pub mod ode;
 pub mod sde;
@@ -49,6 +50,7 @@ pub use dde::integrate_dde_dense;
 pub use events::integrate_events_dense;
 pub use lyapunov::lyapunov_spectrum_ode_bridge;
 pub use map::{iterate_map, map_ensemble_final, map_param_sweep};
+pub use map_lyapunov::map_lyapunov_bridge;
 #[cfg(test)]
 pub use marshal::build_tape;
 pub use marshal::EngineError;
