@@ -12,6 +12,16 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # Only validate docs when something doc-relevant changes; an out-of-scope PR
+    # would otherwise recompile the Rust engine (uv sync + maturin) for nothing.
+    # The push-to-main trigger above stays unscoped so deploys always run.
+    paths:
+      - "docs/**"
+      - "src/tsdynamics/**"
+      - "mkdocs.yml"
+      - "hooks/**"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
 
 concurrency:
   group: docs-${{ github.ref }}
