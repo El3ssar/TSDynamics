@@ -330,3 +330,32 @@ def test_map_path_unlowerable_step_falls_back(monkeypatch):
     forced = bas.basins_of_attraction(NewtonMap(), grid, **kw)
     np.testing.assert_array_equal(auto.labels, forced.labels)
     assert auto.n_attractors == 3  # the three cube roots of unity
+
+
+def test_attractor_set_centroid_is_harvest_order_invariant():
+    """A merged attractor's centroid must not depend on ``_att_points`` order.
+
+    The Rust kernel harvests ``_att_points`` from a randomised hash map, so an
+    unsorted pool made a merged ≥2-cloud centroid mean wobble ~1 ULP run-to-run
+    and diverge from the (id-ordered) Python path.  With deliberately
+    order-sensitive clouds the raw dict-order mean differs (0.333 vs 0.0); pooling
+    by ascending id makes both orders agree byte-for-byte.  Regression for the
+    adversarial-review finding on PR #490.
+    """
+    from tsdynamics.analysis.basins._common import _CellGrid
+    from tsdynamics.analysis.basins.attractors import _AttractorMapper
+
+    class _Dummy:
+        is_discrete = False
+
+    a = [np.array([1e16, 0.0])]  # id 3
+    b = [np.array([-1e16, 0.0]), np.array([1.0, 0.0])]  # id 7 — order-sensitive
+    merge = {3: 1, 7: 1}  # both merge into canonical id 1
+
+    def center(order: list[int]) -> np.ndarray:
+        m = _AttractorMapper(_Dummy(), _CellGrid([-2, -2], [2, 2], (2, 2)))
+        m._att_points = {k: {3: a, 7: b}[k] for k in order}
+        m._att_cells = {0: 3, 1: 7}
+        return m.attractor_set(diverged=0, seeds=1, merge=merge)[1].center
+
+    np.testing.assert_array_equal(center([3, 7]), center([7, 3]))

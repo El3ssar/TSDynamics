@@ -478,7 +478,13 @@ class _AttractorMapper:
             cell_counts[cid] = cell_counts.get(cid, 0) + 1
 
         pooled: dict[int, list[np.ndarray]] = {}
-        for k, pts in self._att_points.items():
+        # Pool in ascending-id order so a merged attractor's centroid mean is a
+        # deterministic, order-independent sum.  The Rust kernel harvests its
+        # ``_att_points`` from a hash map (randomised iteration order), so without
+        # this sort a merged ≥2-cloud pool would wobble by ~1 ULP run-to-run and
+        # diverge from the Python path; the pure-Python loop is already id-ordered,
+        # so this is a no-op there.  (``merge_map`` likewise sorts its ids.)
+        for k, pts in sorted(self._att_points.items(), key=lambda kv: kv[0]):
             pooled.setdefault(merge.get(k, k), []).extend(pts)
 
         attractors = {
