@@ -826,6 +826,159 @@ def step_advance_to_event(
     return bool(found), float(t_cross), u_cross, int(dir_)
 
 
+# ---------------------------------------------------------------------------
+# Basin / attractor recurrence FSM (stream perf/basin-march)
+# ---------------------------------------------------------------------------
+# The sequential Rust kernel that runs the *entire* per-initial-condition
+# recurrence FSM (stepping + cell-binning + the shared-label early-out) in one
+# engine call — the accelerated path behind ``find_attractors`` /
+# ``basins_of_attraction``.  It is bit-identical to the Python ``_AttractorMapper``
+# because every cell-check advances the SAME engine stepper the Python
+# ``system.step(dt)`` drives (a fresh-solver ``integrate_dense`` over ``[t, t+dt]``
+# for a flow, one map iteration for a map).  See the ``basin`` module in the engine
+# crate for the why-sequential rationale (parallelism is a measured net loss).
+
+
+def basin_march(
+    tape_arrays: tuple[Any, ...],
+    params_vec: np.ndarray,
+    grid_lo: np.ndarray,
+    grid_hi: np.ndarray,
+    grid_counts: np.ndarray,
+    seeds: np.ndarray,
+    thresholds: tuple[int, int, int, int, int, int],
+    *,
+    is_discrete: bool,
+    method: str = "rk45",
+    rtol: float = 1e-6,
+    atol: float = 1e-9,
+    dt: float = 1.0,
+    jit: bool = False,
+) -> dict[str, Any]:
+    """Run the whole basin recurrence FSM in the Rust engine, for every seed.
+
+    Drives the sequential kernel (``tsdynamics._rust.basin_march_flow`` for a flow,
+    ``basin_march_map`` for a map) over the shared cell tessellation, returning the
+    per-seed labels plus the accumulated ``att_cells`` / ``bas_cells`` /
+    ``att_points`` the basin layer rebuilds its
+    :class:`~tsdynamics.analysis.basins.attractors._AttractorMapper` from.  The
+    per-cell-check numerics are byte-for-byte the released stepping path, so the
+    labels are bit-identical to the pure-Python loop.
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The ODE/map tape's engine wire arrays (:meth:`Tape.to_arrays`).
+    params_vec : ndarray
+        Live control parameters (empty for a lowered map).
+    grid_lo, grid_hi : ndarray, shape (dim,)
+        Lower/upper corner of the recurrence cell box.
+    grid_counts : ndarray of int, shape (dim,)
+        Cells per axis.
+    seeds : ndarray, shape (n_seeds, dim)
+        Initial conditions to classify, in order (the order the shared labelling
+        accumulates in — see the kernel note on why it must stay serial).
+    thresholds : tuple of int
+        ``(max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost)`` — the six FSM
+        thresholds (``consecutive_recurrences`` etc.).
+    is_discrete : bool
+        Whether ``tape_arrays`` is a map (drives the map kernel; ``dt``/``method``/
+        tolerances are then ignored).
+    method, rtol, atol, dt : optional
+        Flow stepper configuration (``method`` registry-canonical; ``dt`` the
+        per-cell-check step).
+    jit : bool, default False
+        Select the Cranelift evaluator.
+
+    Returns
+    -------
+    dict
+        ``{"labels", "att_cells", "bas_cells", "att_points", "dim"}`` where
+        ``att_cells`` / ``bas_cells`` are ``{flat_cell_index: attractor_id}`` and
+        ``att_points`` is ``{attractor_id: (m, dim) ndarray}``.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    """
+    eng = _engine()
+    seeds = np.ascontiguousarray(seeds, dtype=np.float64)
+    if seeds.ndim != 2:
+        seeds = seeds.reshape(-1, len(grid_counts))
+    grid_lo = np.ascontiguousarray(grid_lo, dtype=np.float64)
+    grid_hi = np.ascontiguousarray(grid_hi, dtype=np.float64)
+    grid_counts = np.ascontiguousarray(grid_counts, dtype=np.int64)
+    params_vec = np.ascontiguousarray(params_vec, dtype=np.float64)
+    max_steps, mx_fnd, mx_loc, mx_att, mx_bas, mx_lost = (int(x) for x in thresholds)
+
+    if is_discrete:
+        out = eng.basin_march_map(
+            *tape_arrays,
+            params_vec,
+            grid_lo,
+            grid_hi,
+            grid_counts,
+            seeds,
+            max_steps,
+            mx_fnd,
+            mx_loc,
+            mx_att,
+            mx_bas,
+            mx_lost,
+            bool(jit),
+        )
+    else:
+        out = eng.basin_march_flow(
+            *tape_arrays,
+            params_vec,
+            str(method),
+            float(rtol),
+            float(atol),
+            float(dt),
+            grid_lo,
+            grid_hi,
+            grid_counts,
+            seeds,
+            max_steps,
+            mx_fnd,
+            mx_loc,
+            mx_att,
+            mx_bas,
+            mx_lost,
+            bool(jit),
+        )
+    (
+        labels,
+        att_keys,
+        att_ids,
+        bas_keys,
+        bas_ids,
+        point_ids,
+        point_counts,
+        points_flat,
+        dim,
+    ) = out
+    dim = int(dim)
+    att_cells = {int(k): int(v) for k, v in zip(att_keys, att_ids, strict=True)}
+    bas_cells = {int(k): int(v) for k, v in zip(bas_keys, bas_ids, strict=True)}
+    att_points: dict[int, np.ndarray] = {}
+    off = 0
+    points_flat = np.asarray(points_flat, dtype=np.float64)
+    for pid, m in zip(point_ids, point_counts, strict=True):
+        m = int(m)
+        block = points_flat[off * dim : (off + m) * dim].reshape(m, dim)
+        att_points[int(pid)] = np.array(block, dtype=np.float64)
+        off += m
+    return {
+        "labels": np.asarray(labels, dtype=np.int64),
+        "att_cells": att_cells,
+        "bas_cells": bas_cells,
+        "att_points": att_points,
+        "dim": dim,
+    }
+
+
 def _run_dde(
     problem: DDEProblem,
     t_eval: np.ndarray,

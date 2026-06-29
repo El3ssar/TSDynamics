@@ -30,6 +30,7 @@
 //! Errors surface as [`EngineError`], a Python-free enum the binding layer maps
 //! onto the right Python exception type.
 
+pub mod basin;
 pub mod dde;
 pub mod events;
 pub mod map;
@@ -42,6 +43,7 @@ pub mod stepper;
 // pre-split single-file module exposed it. `lib.rs` and the unit tests below
 // depend on this flat surface; keeping it here means the file split is invisible
 // to every caller.
+pub use basin::{basin_march_flow_bridge, basin_march_map_bridge};
 pub use dde::integrate_dde_dense;
 pub use events::integrate_events_dense;
 pub use map::{iterate_map, map_ensemble_final};
