@@ -491,6 +491,208 @@ class _AttractorMapper:
         }
         return AttractorSet(attractors=attractors, diverged=diverged, seeds=seeds)
 
+    # -- Rust-kernel reconstruction (stream perf/basin-march) --
+
+    def _load_march(self, outcome: dict[str, Any]) -> None:
+        """Repopulate the FSM label state from a :func:`run.basin_march` outcome.
+
+        The Rust kernel returns the *same* accumulated labelling the Python
+        :meth:`map_ic` loop would build (it drives the identical sequential FSM
+        over the identical engine stepper), but flattened for the FFI: cells are
+        **flat row-major indices** over the grid ``counts``.  Inverting that
+        flattening back to the per-axis cell-key tuples (the dict keys
+        :meth:`merge_map` / :meth:`attractor_set` read) reconstructs
+        ``_att_cells`` / ``_bas_cells`` / ``_att_points`` exactly, so every
+        downstream step (proximity merge, harvest, basin painting) runs unchanged.
+
+        ``_next_id`` is advanced past every located id so a *subsequent* Python
+        ``map_ic`` (a mixed Rust-then-Python run, e.g. an unsupported follow-up)
+        keeps allocating fresh ids.
+        """
+        counts = self.grid.counts
+        self._att_cells = {
+            _unflatten_cell(flat, counts): int(aid) for flat, aid in outcome["att_cells"].items()
+        }
+        self._bas_cells = {
+            _unflatten_cell(flat, counts): int(aid) for flat, aid in outcome["bas_cells"].items()
+        }
+        # The kernel returns each attractor's point cloud as one ``(m, dim)``
+        # array; the Python mapper keeps a *list of rows* (``attractor_set`` calls
+        # ``np.asarray`` on it), so unpack into rows to match that internal shape
+        # exactly (a later ``map_ic`` may ``.extend`` the list).
+        self._att_points = {
+            int(aid): [np.asarray(row, dtype=float) for row in pts]
+            for aid, pts in outcome["att_points"].items()
+        }
+        located = [int(aid) for aid in outcome["att_points"]]
+        self._next_id = (max(located) + 1) if located else 1
+
+
+def _unflatten_cell(flat: int, counts: tuple[int, ...]) -> tuple[int, ...]:
+    """Invert the kernel's row-major flat cell index back to a per-axis cell key.
+
+    The Rust :class:`CellGrid` folds the per-axis indices into one flat index with
+    ``flat = flat * counts[i] + k[i]`` for ``i`` ascending (row-major over
+    ``counts``); this is the exact inverse — peel the last axis first.
+    """
+    key = [0] * len(counts)
+    f = int(flat)
+    for i in range(len(counts) - 1, -1, -1):
+        key[i] = f % counts[i]
+        f //= counts[i]
+    return tuple(key)
+
+
+def _march_supported(system: Any, backend: str) -> bool:
+    """Whether the Rust basin-march kernel can drive ``system`` on ``backend``.
+
+    Supported only for an ODE flow or a discrete map (the kernel has no
+    DDE/SDE path — those reach here as ``False`` and keep the Python loop) on a
+    compiled-engine backend (``interp`` / ``jit``).  ``reference`` (the wheel-free
+    oracle) and any non-finite-state family fall back, mirroring the Poincaré
+    engine-march carve-outs.
+    """
+    if backend not in ("interp", "jit"):
+        return False
+    if _looks_unsupported(system):  # DDE / SDE — no finite-dimensional point
+        return False
+    # A flow or a map: both have a Rust kernel.  Anything else (a wrapped/custom
+    # stepper with no lowerable tape) is caught when lowering fails below.
+    return getattr(system, "is_discrete", False) or hasattr(system, "_equations")
+
+
+def classify_seeds(
+    mapper: _AttractorMapper,
+    seeds: np.ndarray,
+    *,
+    backend: str = "interp",
+    jit: bool = False,
+) -> np.ndarray:
+    """Classify a batch of seeds, accelerating the per-IC march in Rust when possible.
+
+    The single seam both :func:`find_attractors` and :func:`basins_of_attraction`
+    drive the recurrence FSM through.  When the run is *supported* — an ODE flow or
+    a map on the compiled engine whose tape lowers — the **entire** per-seed march
+    (stepping + cell-binning + the shared-label early-out) runs in one sequential
+    Rust kernel call (:func:`tsdynamics.engine.run.basin_march`), and ``mapper`` is
+    reloaded from its outcome (:meth:`_AttractorMapper._load_march`) so the existing
+    ``merge_map`` / ``attractor_set`` / basin-painting post-processing is unchanged.
+    The per-cell-check numerics are byte-for-byte the released ``system.step()``, so
+    the returned labels are **bit-identical** to the pure-Python loop.
+
+    Anything unsupported (the ``reference`` backend, a non-lowering ``_step``, a
+    DDE/SDE) transparently falls back to the per-seed Python ``map_ic`` loop — the
+    same algorithm, the same result — so this never changes an answer, only the
+    speed of the supported path.
+
+    Parameters
+    ----------
+    mapper : _AttractorMapper
+        The (freshly constructed) recurrence machine; mutated in place so a caller
+        runs the standard post-processing on it afterwards.
+    seeds : ndarray, shape (n_seeds, dim)
+        Initial conditions to classify, in the order the shared labelling
+        accumulates in (kept strictly serial — see the kernel's why-sequential
+        note).
+    backend : str, default "interp"
+        ``"interp"`` / ``"jit"`` drive the Rust kernel (when supported);
+        ``"reference"`` (or any other) forces the Python loop.
+    jit : bool, default False
+        Select the Cranelift evaluator for the supported Rust path.
+
+    Returns
+    -------
+    ndarray of int, shape (n_seeds,)
+        The per-seed attractor id (``>= 1``) or :data:`DIVERGED` (``-1``).
+    """
+    seeds = np.ascontiguousarray(seeds, dtype=np.float64).reshape(-1, mapper.grid.dim)
+    system = mapper.system
+
+    if _march_supported(system, backend):
+        outcome = _try_rust_march(mapper, seeds, jit=jit)
+        if outcome is not None:
+            mapper._load_march(outcome)
+            return np.asarray(outcome["labels"], dtype=np.int64)
+
+    # Fallback (the oracle): the per-seed Python FSM loop.
+    labels = np.empty(seeds.shape[0], dtype=np.int64)
+    for i, ic in enumerate(seeds):
+        labels[i] = mapper.map_ic(ic)
+    return labels
+
+
+def _try_rust_march(
+    mapper: _AttractorMapper, seeds: np.ndarray, *, jit: bool
+) -> dict[str, Any] | None:
+    """Build the inputs, call the Rust kernel, and return its outcome (or ``None``).
+
+    Returns ``None`` — signalling the caller to use the Python fallback — when the
+    system's tape does not lower (a non-symbolic ``_step`` / ``_equations``) or the
+    compiled engine is unavailable.  Resolves the method / Jacobian-carrying tape /
+    tolerances exactly as :meth:`ContinuousSystem.step` does (the flow defaults:
+    ``_default_method``, ``rtol=1e-6``, ``atol=1e-9``), so the kernel reproduces the
+    released stepping numerics bit-for-bit.
+    """
+    from tsdynamics import solvers
+    from tsdynamics.engine import run
+    from tsdynamics.engine.compile import TapeCompileError
+    from tsdynamics.engine.problem import map_problem, ode_problem
+
+    grid = mapper.grid
+    thresholds = (
+        mapper.max_steps,
+        mapper.mx_fnd,
+        mapper.mx_loc,
+        mapper.mx_att,
+        mapper.mx_bas,
+        mapper.mx_lost,
+    )
+    system = mapper.system
+    counts = np.asarray(grid.counts, dtype=np.int64)
+
+    try:
+        if mapper._discrete:
+            mprob = map_problem(system)
+            return run.basin_march(
+                mprob.tape.to_arrays(),
+                mprob.params_vec(),
+                grid.lo,
+                grid.hi,
+                counts,
+                seeds,
+                thresholds,
+                is_discrete=True,
+                jit=jit,
+            )
+        # A flow: resolve the method the released ``step`` would use and, for an
+        # implicit kernel, lower the Jacobian-carrying tape (the engine refuses an
+        # implicit step without ∂f/∂u) — exactly as ``ContinuousSystem.reinit``.
+        method = getattr(system, "_default_method", "RK45")
+        resolution = solvers.resolve(method)
+        oprob = ode_problem(system, **resolution.build_kwargs)
+        return run.basin_march(
+            oprob.tape.to_arrays(),
+            oprob.params_vec(),
+            grid.lo,
+            grid.hi,
+            counts,
+            seeds,
+            thresholds,
+            is_discrete=False,
+            method=resolution.name,
+            rtol=1e-6,
+            atol=1e-9,
+            dt=mapper.dt,
+            jit=jit,
+        )
+    except TapeCompileError:
+        # A non-symbolic ``_step`` / ``_equations`` (e.g. the complex-arithmetic
+        # Newton map) cannot lower — fall back to the Python loop, the oracle.
+        return None
+    except run.EngineNotAvailableError:
+        # No compiled wheel — the pure-Python fallback still works.
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -556,32 +758,37 @@ def find_attractors(
 
     Notes
     -----
-    The seed loop is **sequential by design**, not a parallelism oversight: each
-    seed is followed cell-by-cell through the system's step protocol (one engine
-    round-trip per cell check), and the persistent cell labels (``_att_cells`` /
+    The seed march is **sequential by design**, not a parallelism oversight: each
+    seed is followed cell-by-cell, and the persistent cell labels (``_att_cells`` /
     ``_bas_cells``) accumulated by earlier seeds let later seeds settle cheaply by
-    reaching an already-labelled cell.  That shared, order-dependent labelling
-    state is what makes the sweep amortise — and is exactly why the loop cannot be
-    parallelised without changing the result or the determinism.  The dominant
-    cost is therefore ``n_seeds`` × (steps to settle) engine steps.
+    reaching an already-labelled cell.  That shared, order-dependent labelling state
+    is what makes the sweep amortise — and is exactly why the march cannot be
+    parallelised without changing the result or the determinism.
 
-    Why thread-parallelism is a *net loss* here (measured, so the next reader does
-    not re-derive it).  The shared early-out is the dominant work-saver: on the
-    two-well Duffing 60×60 grid a serial run takes ~42k engine steps, whereas
-    marching every seed independently to ``max_steps`` (the only way to lift the
-    serial label dependency) takes ~1.4M — a **~34×** work inflation that 16 cores
-    cannot recover (the independent full-march alone clocked ~5× *slower* than the
-    whole serial run).  Worse, only ~36 % of the serial wall time is in the engine
-    ``step()`` FFI; the other ~64 % is the inherently-serial FSM (cell binning +
-    the shared-label dict reads/writes), so Amdahl caps any speedup even before the
-    work-inflation penalty.  A "speculative march in parallel, fold in seed order"
-    scheme would reproduce the labels bit-for-bit (each seed's state stream is a
-    pure function of its IC) but pays exactly that 34× over-march, so it is
-    abandoned.  Dense-block FFI batching is *not* an option either: the FSM checks
-    the cell after every per-``dt`` ``step()`` restart, and an adaptive dense-output
-    block over several ``dt`` does not reproduce those per-``dt`` restart states
-    bit-for-bit (it drifts at ~5e-7), so it would change the cell sequence and the
-    labels.  The loop stays serial because that is the algorithm.
+    On a supported engine run (an ODE flow or a map whose ``_step`` lowers, on the
+    ``interp`` / ``jit`` backend) the whole per-IC march now runs in **one
+    sequential Rust kernel call** (stream ``perf/basin-march``) — stepping,
+    cell-binning and the shared-label early-out all in Rust, with no per-``dt``
+    Python→FFI round-trip — so it is fast *without* parallelism.  The per-cell-check
+    numerics are byte-for-byte the released ``system.step()``, so the result is
+    bit-identical to the pure-Python loop, which stays the fallback (and the oracle)
+    for ``reference``, a non-lowering ``_step``, and DDE/SDE systems.
+
+    Why thread-parallelism is a *net loss* here, and why the kernel is therefore
+    serial (measured, so the next reader does not re-derive it).  The shared
+    early-out is the dominant work-saver: on the two-well Duffing 60×60 grid a
+    serial march takes ~42k engine steps, whereas marching every seed independently
+    to ``max_steps`` (the only way to lift the serial label dependency) takes
+    ~1.4M — a **~34×** work inflation that 16 cores cannot recover (the independent
+    full-march alone clocked ~5× *slower* than the whole serial run).  A
+    "speculative march in parallel, fold in seed order" scheme would reproduce the
+    labels bit-for-bit (each seed's state stream is a pure function of its IC) but
+    pays exactly that 34× over-march, so it is abandoned.  Dense-block FFI batching
+    is *not* an option either: the FSM checks the cell after every per-``dt``
+    ``step()`` restart, and an adaptive dense-output block over several ``dt`` does
+    not reproduce those per-``dt`` restart states bit-for-bit (it drifts at ~5e-7),
+    so it would change the cell sequence and the labels.  The march stays serial
+    because that is the algorithm; the Rust kernel makes that serial march cheap.
 
     References
     ----------
@@ -594,10 +801,17 @@ def find_attractors(
     mapper = _AttractorMapper(system, grid, dt=dt, max_steps=max_steps, **fsm)
     draw = sampler(region, seed=seed)
 
-    diverged = 0
-    for _ in range(int(n_seeds)):
-        if mapper.map_ic(draw()) == DIVERGED:
-            diverged += 1
+    # Draw the whole seed cloud up front (the sampler order is unchanged, so the
+    # classification order — and thus the shared, order-dependent labelling — is
+    # identical to the per-seed draw-then-classify loop), then march it: one
+    # sequential Rust kernel call on a supported engine run, else the per-seed
+    # Python loop (the oracle).  Either way ``mapper`` carries the same FSM state.
+    seeds = np.array([draw() for _ in range(int(n_seeds))], dtype=np.float64).reshape(-1, grid.dim)
+    from ...engine.run import resolve_backend
+
+    backend = resolve_backend(getattr(system, "_default_backend", "interp"))
+    labels = classify_seeds(mapper, seeds, backend=backend, jit=backend == "jit")
+    diverged = int(np.sum(labels == DIVERGED))
     merge = mapper.merge_map(resolve_merge_tol(grid, merge_tol))
     found = mapper.attractor_set(diverged=diverged, seeds=int(n_seeds), merge=merge)
     # Attach provenance without re-allocating the (potentially large) attractor

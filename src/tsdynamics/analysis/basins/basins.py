@@ -42,6 +42,7 @@ from .attractors import (
     AttractorSet,
     _AttractorMapper,
     _reject_unsupported,
+    classify_seeds,
     resolve_merge_tol,
 )
 
@@ -387,14 +388,17 @@ def basins_of_attraction(
         cellgrid = _recurrence_grid(recurrence, recurrence_resolution)
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
 
+    # Classify every lattice point.  On a supported engine run (an ODE flow / a map
+    # whose ``_step`` lowers, ``interp`` / ``jit``) the whole grid marches in one
+    # sequential Rust kernel call (stream ``perf/basin-march``) — bit-identical to,
+    # and falling back on, the per-point Python loop.  ``grid_points`` order is the
+    # classification order, so the shared labelling accumulates exactly as before.
     points = grid_points(region)
-    labels = np.empty(points.shape[0], dtype=np.int64)
-    diverged = 0
-    for i, p in enumerate(points):
-        lab = mapper.map_ic(p)
-        labels[i] = lab
-        if lab == DIVERGED:
-            diverged += 1
+    from ...engine.run import resolve_backend
+
+    backend = resolve_backend(getattr(system, "_default_backend", "interp"))
+    labels = classify_seeds(mapper, points, backend=backend, jit=backend == "jit")
+    diverged = int(np.sum(labels == DIVERGED))
 
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
     labels = _apply_merge(labels.reshape(region.shape), merge)
@@ -473,14 +477,19 @@ def basin_fractions(
     draw = sampler(region, seed=seed)
 
     n = int(n)
+    # Draw the whole sample up front (the sampler order — and so the labelling
+    # order — is unchanged) and march it: one sequential Rust kernel call on a
+    # supported engine run, else the per-sample Python loop (the oracle).  This
+    # also accelerates :func:`continuation`, which sweeps ``basin_fractions``.
+    samples = np.array([draw() for _ in range(n)], dtype=np.float64).reshape(-1, cellgrid.dim)
+    from ...engine.run import resolve_backend
+
+    backend = resolve_backend(getattr(system, "_default_backend", "interp"))
+    labels = classify_seeds(mapper, samples, backend=backend, jit=backend == "jit")
+    diverged = int(np.sum(labels == DIVERGED))
     counts: dict[int, int] = {}
-    diverged = 0
-    for _ in range(n):
-        lab = mapper.map_ic(draw())
-        if lab == DIVERGED:
-            diverged += 1
-        else:
-            counts[lab] = counts.get(lab, 0) + 1
+    for lab in labels[labels != DIVERGED]:
+        counts[int(lab)] = counts.get(int(lab), 0) + 1
 
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
     merged_counts: dict[int, int] = {}

@@ -610,7 +610,24 @@ documented tolerance):
   re-visits cells has found an attractor, transient cells become its basin, and a
   near-coincident split is proximity-merged (`merge_tol`). Flows step by `dt` per
   cell check, maps by one iteration; a raised/non-finite step is divergence, a
-  finite out-of-box excursion uses the lost-counter. `basins_of_attraction` paints
+  finite out-of-box excursion uses the lost-counter. **Engine-native march (stream
+  `perf/basin-march`):** on a supported run — an ODE flow or a map whose `_step`
+  lowers, on the `interp`/`jit` backend — the *whole* per-IC FSM (stepping +
+  cell-binning + the shared-label early-out) runs in **one sequential Rust kernel
+  call** (`crates/tsdyn-engine/src/basin.rs` → FFI `basin_march_flow`/
+  `basin_march_map` → `engine.run.basin_march` → `attractors.classify_seeds`), so
+  there is **no** per-`dt` Python→FFI round-trip — fast *without* parallelism (the
+  march stays **sequential by design**: the shared, order-dependent labelling is the
+  dominant work-saver, and parallelising it costs a measured ~34× over-march). The
+  kernel is **bit-identical** to the pure-Python `_AttractorMapper` (it drives the
+  same engine stepper per cell check): the basin **label image** is byte-for-byte
+  identical on every system, and the `AttractorSet` too **for flows** (both paths
+  advance the same engine stepper); for a **map** the located point cloud follows
+  the lowered IR vs the pure-Python `_step`, which differ by ULPs, so a chaotic
+  map's located cells are the *same attractor a few cells apart* (the WS-MAPITER
+  IR-vs-NumPy caveat). `reference`, a non-lowering `_step` (e.g. the complex Newton
+  map), and DDE/SDE keep the per-seed **Python loop** (the fallback and the oracle).
+  `basins_of_attraction` paints
   a `Grid` (pass a separate `recurrence` box to image a *slice* of a higher-dim
   flow — the magnetic pendulum); `basin_fractions` is Monte-Carlo basin stability
   (Menck 2013). The metrics read a label image (no integration, fast tier):
