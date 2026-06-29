@@ -53,6 +53,9 @@ pub mod map_lyapunov;
 // Appended by stream perf/ode-lyapunov-engine (the Benettin ODE Lyapunov
 // renormalisation loop — extended variational integrate + QR + log-norm accumulate).
 pub mod lyapunov;
+// Appended by stream perf/param-sweep-kernel (the map orbit-diagram parameter
+// sweep — the whole sweep in one engine call).
+pub mod param_sweep;
 
 #[cfg(test)]
 mod testkit;
@@ -83,6 +86,8 @@ pub use basin::{
 pub use map_lyapunov::{map_lyapunov, MapLyapunovError, MapLyapunovOutcome};
 // Appended by stream perf/ode-lyapunov-engine.
 pub use lyapunov::{lyapunov_spectrum_ode, LyapunovError, LyapunovOutcome};
+// Appended by stream perf/param-sweep-kernel.
+pub use param_sweep::{map_orbit_sweep, SweepError, SweepOutcome, SweepStatus};
 
 /// Check that the linked solver registry has no duplicate names, returning the
 /// clashing names if any.

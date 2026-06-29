@@ -723,6 +723,94 @@ def map_lyapunov(
     return exponents, int(intervals)
 
 
+# ---------------------------------------------------------------------------
+# Map orbit-diagram parameter sweep (stream perf/param-sweep-kernel)
+# ---------------------------------------------------------------------------
+# The whole `orbit_diagram` parameter sweep of a discrete map in ONE engine call,
+# instead of the WS-MAPITER path's one `iterate` round-trip per parameter value
+# (a 1000-value logistic sweep is ~1000 FFI round-trips otherwise). The map is
+# lowered ONCE keeping the swept parameter as the tape's single runtime `Param`
+# (``engine.compile.lower_map_sweep``), and this kernel varies that input per
+# value. The per-iterate numerics are byte-for-byte the ``iterate`` map loop, so a
+# value swept here lands bit-for-bit where the per-value path with that value baked
+# in would (the logistic map; a chaotic map is the same attractor — the WS-MAPITER
+# IR-vs-NumPy caveat). The orbit-diagram wiring (``analysis.orbits.orbit_diagram``)
+# is the sole consumer.
+
+
+def map_param_sweep(
+    tape_arrays: tuple[Any, ...],
+    base_params: np.ndarray,
+    sweep_index: int,
+    values: np.ndarray,
+    ic: np.ndarray,
+    components: np.ndarray,
+    transient: int,
+    n_record: int,
+    *,
+    carry_state: bool,
+    jit: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run a whole map orbit-diagram parameter sweep on the engine, in one call.
+
+    Drives ``tsdynamics._rust.map_param_sweep`` over a map tape lowered once with
+    the swept parameter kept as its single runtime ``Param`` input (see
+    :func:`tsdynamics.engine.compile.lower_map_sweep`).  For each value the kernel
+    sets that input, runs ``transient + n_record`` iterations (carrying the final
+    state forward across values when ``carry_state``), and records the last
+    ``n_record`` asymptotic states' selected ``components``.
+
+    Parameters
+    ----------
+    tape_arrays : tuple
+        The sweep tape's engine wire arrays (:meth:`Tape.to_arrays`); ``n_param``
+        must be ``1`` (the swept parameter).
+    base_params : ndarray
+        The full runtime parameter vector (length ``n_param``); ``sweep_index`` is
+        overwritten with each swept value.
+    sweep_index : int
+        Which entry of ``base_params`` the swept ``values`` overwrite.
+    values : ndarray
+        Parameter values, in sweep order.
+    ic : ndarray, shape (dim,)
+        The base initial condition.
+    components : ndarray of int
+        State-component indices to record.
+    transient, n_record : int
+        Steps discarded / recorded per value.
+    carry_state : bool
+        Whether each value resumes from the previous value's final state.
+    jit : bool, default False
+        Select the Cranelift evaluator (numerically identical to the interpreter).
+
+    Returns
+    -------
+    (points, status) : (ndarray, ndarray)
+        ``points`` is ``(n_values * n_record, n_components)`` recorded states;
+        ``status`` is ``(n_values,)`` of ``0`` (finite) / ``1`` (diverged — the
+        value's block is zero, dropped to an empty set by the caller).
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If :mod:`tsdynamics._rust` is not built.
+    """
+    eng = _engine()
+    points, status = eng.map_param_sweep(
+        *tape_arrays,
+        np.ascontiguousarray(base_params, dtype=np.float64),
+        int(sweep_index),
+        np.ascontiguousarray(values, dtype=np.float64),
+        np.ascontiguousarray(ic, dtype=np.float64),
+        np.ascontiguousarray(components, dtype=np.int64),
+        int(transient),
+        int(n_record),
+        bool(carry_state),
+        bool(jit),
+    )
+    return np.asarray(points, dtype=np.float64), np.asarray(status, dtype=np.int64)
+
+
 def ensemble(
     system_or_problem: Any,
     ics: Any,

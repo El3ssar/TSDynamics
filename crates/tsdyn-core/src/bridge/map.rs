@@ -5,7 +5,10 @@
 //! iteration loop, shape contract and divergence behaviour are unchanged. Shared
 //! plumbing lives in [`super::marshal`].
 
-use tsdyn_engine::{iterate_dense, iterate_ensemble_final as engine_iterate_ensemble};
+use tsdyn_engine::{
+    iterate_dense, iterate_ensemble_final as engine_iterate_ensemble, map_orbit_sweep, SweepError,
+    SweepOutcome,
+};
 use tsdyn_ir::Tape;
 
 use super::marshal::{build_evaluator, map_diverge_msg, EngineError};
@@ -125,4 +128,89 @@ pub fn map_ensemble_final(
     let ev = build_evaluator(tape, jit)?;
     let result = engine_iterate_ensemble(&*ev, ics, &[], steps);
     Ok(result.states)
+}
+
+/// Map a [`SweepError`] (a kernel-side shape failure) to the bridge's
+/// [`EngineError`] so the binding routes it to the same Python `ValueError` the
+/// other entry points use.
+fn sweep_to_engine_err(e: SweepError) -> EngineError {
+    match e {
+        SweepError::BadShape(m) => EngineError::BadShape(m),
+    }
+}
+
+/// Run the whole map orbit-diagram parameter sweep in one call (stream
+/// `perf/param-sweep-kernel`).
+///
+/// Unlike [`iterate_map`], the tape here keeps the **swept** parameter as its
+/// single runtime `Param` input (`n_param == 1`) — the Python wiring lowers the
+/// map once with the other parameters folded in, so a 1000-value sweep is one FFI
+/// call instead of ~1000 `iterate_map` round-trips. For each value the kernel sets
+/// `p[sweep_index] = value`, runs `transient + n` iterations (carrying the final
+/// state across values when `carry_state`), and records the last `n` asymptotic
+/// states' selected `components`.
+///
+/// Returns `(points, status)`: `points` is the flat row-major
+/// `(n_values * n, n_components)` recorded buffer, and `status[k]` is `0` for a
+/// value that ran finitely / `1` for a value that diverged (whose block is zero —
+/// the binding drops it to an empty set and warns, mirroring the per-value path).
+/// The per-iterate numerics are byte-for-byte the [`iterate_map`] path (a `Param`
+/// leaf reads the same `f64` a folded `Const` would).
+///
+/// `jit` selects the evaluator (Cranelift native code vs the interpreter); both
+/// are bit-for-bit identical on `eval`, so the swept diagram is numerically
+/// identical either way.
+#[allow(clippy::too_many_arguments)]
+pub fn map_param_sweep(
+    tape: Tape,
+    base_params: &[f64],
+    sweep_index: usize,
+    values: &[f64],
+    ic: &[f64],
+    components: &[usize],
+    transient: usize,
+    n_record: usize,
+    carry_state: bool,
+    jit: bool,
+) -> Result<(Vec<f64>, Vec<i64>), EngineError> {
+    // The sweep tape's next-state dimension equals its state dimension, and it
+    // carries exactly the swept parameter as a runtime input. Reject a tape whose
+    // shape disagrees (reachable only via a hand-built tape) so a mismatch is a
+    // clean error rather than a release-mode out-of-bounds inside the eval loop.
+    let dim = tape.dim();
+    if tape.n_state() != dim {
+        return Err(EngineError::BadShape(format!(
+            "map sweep expects n_state == dim (state and next-state share a \
+             dimension); got n_state = {} != dim = {dim}",
+            tape.n_state()
+        )));
+    }
+    if tape.n_param() != base_params.len() {
+        return Err(EngineError::BadShape(format!(
+            "map sweep base-parameter vector has length {}, but the tape declares \
+             n_param = {}",
+            base_params.len(),
+            tape.n_param()
+        )));
+    }
+    let ev = build_evaluator(tape, jit)?;
+    let SweepOutcome { points, status, .. } = map_orbit_sweep(
+        &*ev,
+        base_params,
+        sweep_index,
+        values,
+        ic,
+        components,
+        transient,
+        n_record,
+        carry_state,
+    )
+    .map_err(sweep_to_engine_err)?;
+    // Flatten the per-value fate to a plain i64 code (0 = ok, 1 = diverged) the
+    // FFI returns alongside the points buffer.
+    let status: Vec<i64> = status
+        .into_iter()
+        .map(|s| if s.is_ok() { 0 } else { 1 })
+        .collect();
+    Ok((points, status))
 }
