@@ -1,21 +1,19 @@
 # =========================================================================
 # TSDynamics documentation
 # =========================================================================
-# Journey-based structure: Start (productive in 10 min) → Systems (the
-# catalogue, mostly auto-generated) → Analysis (the toolkit) → Theory
-# (the math) → Reference (auto-generated API) → Project.
+# Phase-0 scaffold of the site rebuild: brand wiring + the new 8-tab
+# information architecture. Each top-level tab points at its own index.md
+# for now; the real per-section content (and the per-system generator) is
+# rebuilt in later phases.
 #
-# Per-system pages under Systems are injected at build time by
-# hooks/docs_autogen.py; the nav below lists only the hand-written pages.
-#
-# Local preview:    mkdocs serve
-# Production build: mkdocs build --strict
+# Local preview:    .venv/bin/mkdocs serve
+# Production build: .venv/bin/mkdocs build
 # =========================================================================
 
 site_name: TSDynamics
 site_description: >-
-  Compiled dynamical systems for Python — 149 built-in ODEs, DDEs and maps,
-  JIT-compiled integration, and a chaos-analysis toolkit.
+  154 built-in dynamical systems, compiled integration, and a chaos-analysis
+  toolkit for Python
 site_url: https://el3ssar.github.io/TSDynamics/
 site_author: Daniel Estevez
 
@@ -27,48 +25,43 @@ copyright: >-
 
 docs_dir: docs
 
-exclude_docs: |
-  _tooling/
-
-hooks:
-  - hooks/docs_autogen.py
-  - hooks/citation_lint.py
-
 theme:
   name: material
   custom_dir: docs/overrides
   language: en
-  logo: assets/logo.svg
-  favicon: assets/favicon.svg
+  logo: assets/brand/logo/icon-on-dark.svg
+  favicon: assets/brand/logo/favicon.svg
   icon:
     repo: fontawesome/brands/github
   font:
-    text: Figtree
+    text: IBM Plex Sans
     code: IBM Plex Mono
   palette:
     - scheme: default
-      primary: indigo
-      accent: teal
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark
     - scheme: slate
-      primary: indigo
-      accent: teal
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light
   features:
-    - content.code.annotate
-    - content.code.copy
-    - navigation.footer
-    - navigation.indexes
-    - navigation.instant
     - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
     - navigation.top
+    - navigation.footer
+    - navigation.instant
+    - navigation.tracking
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
     - search.highlight
     - search.suggest
-    - toc.follow
 
 extra:
   social:
@@ -80,8 +73,9 @@ extra:
       name: TSDynamics on PyPI
 
 extra_css:
-  - css/tsdynamics.css
-  - https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap
+  - assets/brand/tokens.css
+  - assets/brand/mkdocs/extra.css
+  - assets/brand/mkdocs/figure-rail.css
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
 
 extra_javascript:
@@ -134,88 +128,65 @@ markdown_extensions:
       title: On this page
   - pymdownx.arithmatex:
       generic: true
-  - pymdownx.betterem
-  - pymdownx.details
+  - pymdownx.superfences
   - pymdownx.highlight:
       anchor_linenums: true
-      pygments_lang_class: true
   - pymdownx.inlinehilite
-  - pymdownx.magiclink:
-      repo_url_shorthand: true
-      user: El3ssar
-      repo: TSDynamics
-  - pymdownx.superfences
+  - pymdownx.details
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
       custom_checkbox: true
+  - pymdownx.betterem
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: El3ssar
+      repo: TSDynamics
 
 nav:
   - Home: index.md
   - Start:
       - start/index.md
-      - Install: start/install.md
-      - First trajectory: start/first-trajectory.md
-      - The mental model: start/concepts.md
-  - Systems:
-      - systems/index.md
-      - Continuous:
-          - systems/continuous/index.md
-      - Delay:
-          - systems/delay/index.md
-      - Discrete:
-          - systems/discrete/index.md
   - Analysis:
       - analysis/index.md
-      - Integrate & iterate: analysis/integrate.md
-      - Lyapunov spectra: analysis/lyapunov.md
-      - Orbit & bifurcation diagrams: analysis/orbit-diagrams.md
-      - Poincaré sections: analysis/poincare.md
-      - Fixed points & periodic orbits: analysis/fixed-points.md
-      - Chaos indicators: analysis/chaos.md
-      - Recurrence & RQA: analysis/recurrence.md
-      - Fractal dimensions: analysis/dimensions.md
-      - Delay embeddings: analysis/embedding.md
-      - Entropy & complexity: analysis/entropy.md
-      - Surrogates & nonlinearity tests: analysis/surrogate.md
-      - Attractors & basins: analysis/basins.md
-  - Transforms:
-      - transforms/index.md
+  - Systems:
+      - systems/index.md
   - Visualization:
-      - Styling & themes: visualization/styling.md
-      - three.js export: visualization/threejs-export.md
+      - visualization/index.md
   - Tutorials:
       - tutorials/index.md
-      - From equations to basins: tutorials/equations-to-basins.md
-  - Theory:
-      - theory/index.md
-      - Compilation pipeline: theory/compilation.md
-      - Backends: theory/backends.md
-      - Solvers & methods: theory/solvers.md
-      - Lyapunov exponents: theory/lyapunov.md
-      - Rigorous fixed points: theory/fixed-points-interval.md
-      - Conventions: theory/conventions.md
-      - Packaging & distribution: theory/packaging.md
-  - Reference:
-      - reference/index.md
-      - Top level: reference/top-level.md
-      - Base classes: reference/base.md
-      - Derived systems: reference/derived.md
-      - Analysis: reference/analysis.md
-      - Transforms: reference/transforms.md
-      - Data & state-space: reference/data.md
-      - Solvers: reference/solvers.md
-      - Registry: reference/registry.md
-      - Utilities: reference/utils.md
+  - References:
+      - references/index.md
   - Project:
       - project/index.md
-      - Contributing: project/contributing.md
-      - Naming glossary: contributing/glossary.md
-      - Agent dispatch: contributing/agent-dispatch-playbook.md
-      - Page template: contributing/page-template.md
-      - Citation: project/citation.md
-      - Changelog: project/changelog.md
+
+exclude_docs: |
+  # tooling / non-page assets
+  _tooling/
+  _static/
+  css/
+  hero-preview.html
+  # old content trees dropped from the new IA (rebuilt in later phases)
+  theory/
+  reference/
+  transforms/
+  contributing/
+  # Phase 0 ships only the per-section index stubs; the old in-section
+  # content pages are off-nav and rebuilt section by section in Phase 2.
+  start/*.md
+  !start/index.md
+  analysis/*.md
+  !analysis/index.md
+  systems/**/*.md
+  !systems/index.md
+  visualization/*.md
+  !visualization/index.md
+  tutorials/*.md
+  !tutorials/index.md
+  project/*.md
+  !project/index.md
 
 validation:
-  omitted_files: warn
-  absolute_links: warn
+  omitted_files: ignore
+  absolute_links: ignore
+  unrecognized_links: ignore

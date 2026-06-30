@@ -1,39 +1,18 @@
----
-description: Project pages — contributing, citation, and where the release notes live.
----
-
-<span class="ts-kicker">Project</span>
-
 # Project
 
 TSDynamics is developed in the open at
 [El3ssar/TSDynamics](https://github.com/El3ssar/TSDynamics) under the MIT
 license.
 
-<div class="grid cards" markdown>
+This section will cover:
 
-- **[Contributing](contributing.md)**
-
-    ---
-
-    Dev setup with uv, the quality gates, conventional commits, and the
-    end-to-end path for adding a new system.
-
-- **[Citation](citation.md)**
-
-    ---
-
-    How to cite the software, and the original papers behind the methods
-    and the built-in systems.
-
-- **[Changelog](changelog.md)**
-
-    ---
-
-    Release notes live on GitHub Releases, generated from the commit
-    history.
-
-</div>
+- **Citation** — how to cite the software and the original papers behind its
+  methods and systems.
+- **Contributing** — dev setup, the quality gates, and conventional commits.
+- **Changelog** — release notes, generated from the commit history.
+- **Adding a system** — the end-to-end path for contributing a new system to
+  the [catalogue](../systems/).
+- **Adding a solver** — the recipe for contributing a new integration kernel.
 
 Bugs and feature requests go to the
 [issue tracker](https://github.com/El3ssar/TSDynamics/issues).

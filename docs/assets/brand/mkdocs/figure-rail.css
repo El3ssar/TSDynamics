@@ -1,0 +1,81 @@
+/* ============================================================
+   TSDynamics — figure rail
+   Wikipedia-style two-column reading layout for reference pages:
+   prose + code in a contiguous left column, figures in a right
+   rail aligned to the call that produces them. Requires the
+   `md_in_html` markdown extension.
+
+   USAGE (in a .md page):
+
+     <div class="ts-ref" markdown>
+
+     <div class="ts-item" markdown>
+     ### `viz.plot(traj)`
+     Plot each component against time.
+     ```python
+     viz.plot(traj, components=["x", "y", "z"])
+     ```
+     </div>
+     <figure class="ts-fig" markdown>
+     ![Time series](../assets/figs/lorenz_ts.svg)
+     <figcaption>FIG 1 · matplotlib — time series</figcaption>
+     </figure>
+
+     <!-- a function with NO figure: just omit the <figure>; the
+          left text runs full measure and the rail stays empty -->
+     <div class="ts-item" markdown>
+     ### `viz.use_theme(name)`
+     Apply the brand theme globally.
+     </div>
+
+     </div>
+   ============================================================ */
+
+.ts-ref{
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  column-gap: 44px;
+  row-gap: 32px;
+  align-items: start;
+  margin: 1.2rem 0 2rem;
+}
+
+/* left column — text + code, always column 1, contiguous */
+.ts-ref > .ts-item{ grid-column: 1; min-width: 0; }
+
+/* right rail — figure aligned to the top of its item's row */
+.ts-ref > .ts-fig{ grid-column: 2; align-self: start; margin: 0; }
+
+/* full-width block inside a rail section (tables, headings) */
+.ts-ref > .ts-wide{ grid-column: 1 / -1; }
+
+/* figure card */
+.ts-fig img,
+.ts-fig svg,
+.ts-fig canvas,
+.ts-fig .ts-embed{
+  width: 100%;
+  display: block;
+  background: var(--ts-surface, #fff);
+  border: 1px solid var(--ts-border, #E4E8EC);
+  border-radius: 12px;
+}
+.ts-fig figcaption{
+  font-family: var(--ts-font-mono, 'IBM Plex Mono', monospace);
+  font-size: 0.72rem;
+  color: var(--ts-n400, #94A0AA);
+  margin-top: 0.5rem;
+}
+.ts-fig figcaption .lbl{ color: var(--ts-teal-strong, #0C6B62); }
+
+/* interactive 3D embeds (three.js) get a dark stage */
+.ts-fig .ts-embed{
+  height: 220px;
+  background: radial-gradient(120% 120% at 60% 35%, #0E161C 0%, #0A0E13 70%);
+}
+
+/* stack on narrow viewports — figures drop below their text */
+@media (max-width: 960px){
+  .ts-ref{ grid-template-columns: 1fr; row-gap: 18px; }
+  .ts-ref > .ts-fig{ grid-column: 1; max-width: 460px; }
+}
