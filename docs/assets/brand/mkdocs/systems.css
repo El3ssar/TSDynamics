@@ -1,0 +1,234 @@
+/* ============================================================
+   TSDynamics — Systems catalogue (generated pages)
+   Styles the build-time per-system + browser pages emitted by
+   hooks/docs_autogen.py. Uses the brand tokens (--ts-*) and tracks
+   Material's [data-md-color-scheme] light/dark toggle.
+
+   Class map:
+     .ts-kicker        breadcrumb line above an H1
+     .ts-subtitle      lead paragraph under an H1
+     .ts-count         "N systems" muted count line
+     .ts-tags          row of header tag pills (.system-tag[/--accent])
+     .ts-stats/.ts-stat  the Systems-index stat cards
+     .ts-attractor*    the interactive viewer iframe / static figure card
+     .ts-props/.ts-prop  the four computed Properties stat cards
+     .ts-prop-src/-todo/-na  card status spans (from properties.to_markdown)
+     .ts-reference     the literature citation card
+   ============================================================ */
+
+/* ---- surface vars, tracking Material's scheme toggle ---- */
+:root,
+[data-md-color-scheme="default"] {
+  --tsc-surface: #ffffff;
+  --tsc-surface-2: #f4f6f8;
+  --tsc-border: #e7ebef;
+  --tsc-muted: #94a0aa;
+  --tsc-ink: #14181d;
+  --tsc-link: #0c6b62;
+  --tsc-accent: #463fb0;
+}
+[data-md-color-scheme="slate"] {
+  --tsc-surface: #11161d;
+  --tsc-surface-2: #161c24;
+  --tsc-border: #232b34;
+  --tsc-muted: #93a0ad;
+  --tsc-ink: #e7ecf0;
+  --tsc-link: #2cc5ae;
+  --tsc-accent: #8c85f2;
+}
+
+/* ---- kicker breadcrumb ---- */
+.md-typeset .ts-kicker {
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.75rem;
+  color: var(--tsc-muted);
+  margin: -0.4rem 0 0.9rem;
+}
+.md-typeset .ts-kicker a {
+  color: var(--tsc-link);
+}
+
+/* ---- subtitle + count ---- */
+.md-typeset .ts-subtitle {
+  font-size: 1.08rem;
+  line-height: 1.55;
+  color: var(--tsc-muted);
+  max-width: 64ch;
+  margin: 0 0 1.1rem;
+}
+.md-typeset .ts-count {
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.78rem;
+  color: var(--tsc-muted);
+  margin: 0 0 1rem;
+}
+
+/* ---- header tag pills ---- */
+.md-typeset .ts-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 1.8rem;
+}
+.md-typeset .system-tag {
+  display: inline-block;
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: #515b65;
+  background: var(--tsc-surface-2);
+  border: 1px solid var(--tsc-border);
+  border-radius: 20px;
+  padding: 3px 12px;
+  margin: 0;
+}
+[data-md-color-scheme="slate"] .md-typeset .system-tag {
+  color: #aeb9c2;
+}
+.md-typeset .system-tag--accent {
+  color: #0c6b62;
+  background: var(--ts-teal-soft, #e7f3f0);
+  border-color: #cde8e2;
+}
+[data-md-color-scheme="slate"] .md-typeset .system-tag--accent {
+  color: #2cc5ae;
+  background: rgba(44, 197, 174, 0.12);
+  border-color: rgba(44, 197, 174, 0.3);
+}
+
+/* ---- Systems-index stat cards ---- */
+.md-typeset .ts-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 1.4rem 0 2rem;
+}
+.md-typeset .ts-stat {
+  background: var(--tsc-surface);
+  border: 1px solid var(--tsc-border);
+  border-radius: 12px;
+  padding: 20px 22px;
+}
+.md-typeset .ts-stat-num {
+  font-family: var(--ts-font-display, "Space Grotesk", sans-serif);
+  font-weight: 600;
+  font-size: 2.3rem;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--tsc-ink);
+}
+.md-typeset .ts-stat-label {
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  color: var(--tsc-muted);
+  margin-top: 0.5rem;
+}
+
+/* ---- attractor (viewer iframe / static figure) ---- */
+.md-typeset .ts-attractor-fig {
+  margin: 0 0 2rem;
+}
+.md-typeset .ts-attractor {
+  display: block;
+  width: 100%;
+  height: 420px;
+  border: 1px solid #16202a;
+  border-radius: 14px;
+  background: #11151a;
+  box-shadow: 0 28px 56px -34px rgba(11, 20, 30, 0.5);
+}
+.md-typeset .ts-attractor-img {
+  width: 100%;
+  display: block;
+  border: 1px solid var(--tsc-border);
+  border-radius: 14px;
+  background: var(--tsc-surface);
+}
+.md-typeset .ts-attractor-cap {
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.72rem;
+  color: var(--tsc-muted);
+  margin-top: 0.55rem;
+}
+
+/* ---- Properties stat cards ---- */
+.md-typeset .ts-props {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin: 1rem 0 2rem;
+}
+@media (min-width: 1000px) {
+  .md-typeset .ts-props {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+.md-typeset .ts-prop {
+  background: var(--tsc-surface);
+  border: 1px solid var(--tsc-border);
+  border-radius: 11px;
+  padding: 16px 18px;
+  min-width: 0;
+}
+.md-typeset .ts-prop-label {
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tsc-muted);
+  margin-bottom: 0.6rem;
+}
+.md-typeset .ts-prop-value {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--tsc-ink);
+  overflow-wrap: anywhere;
+}
+.md-typeset .ts-prop-value .katex {
+  font-size: 1em;
+}
+.md-typeset .ts-prop-src {
+  display: inline-block;
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.66rem;
+  color: var(--tsc-muted);
+  margin-top: 0.2rem;
+}
+.md-typeset .ts-prop-todo,
+.md-typeset .ts-prop-na {
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.74rem;
+  color: var(--tsc-muted);
+  font-style: italic;
+}
+
+/* ---- reference card ---- */
+.md-typeset .ts-reference {
+  background: var(--tsc-surface);
+  border: 1px solid var(--tsc-border);
+  border-left: 3px solid var(--ts-teal, #11857a);
+  border-radius: 12px;
+  padding: 18px 22px;
+  margin: 0 0 1.2rem;
+  font-size: 0.98rem;
+  line-height: 1.55;
+}
+.md-typeset .ts-reference a {
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.82rem;
+  color: var(--tsc-link);
+}
+
+/* ---- responsive: single-column cards on narrow viewports ---- */
+@media (max-width: 700px) {
+  .md-typeset .ts-stats {
+    grid-template-columns: 1fr;
+  }
+  .md-typeset .ts-props {
+    grid-template-columns: 1fr;
+  }
+  .md-typeset .ts-attractor {
+    height: 320px;
+  }
+}

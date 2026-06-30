@@ -89,7 +89,7 @@ def _style():
     return plt
 
 
-RENDERER_VERSION = "5"  # bump manually when rendering output materially changes
+RENDERER_VERSION = "6"  # bump manually when rendering output materially changes
 
 
 def cache_key(entry) -> str:
@@ -264,11 +264,35 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     return _ode_trajectory_scipy(entry, opts)
 
 
+def _field_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
+    """Integrate a spatial-field / spacetime ODE with the system's *own* IC.
+
+    A method-of-lines field (Gray–Scott, Kuramoto–Sivashinsky, Lorenz-96) seeds
+    a structured initial field through the library's native ``resolve_ic`` — a
+    flat random ``U[0,1)^dim`` start (the generic ``_ode_trajectory_engine``
+    retry contract) never develops a pattern and trips "no bounded trajectory
+    found".  So we let the system resolve its own IC (no ``ic=`` override) and
+    integrate once through the shipped engine.
+    """
+    final_time = opts.get("final_time", 100.0)
+    dt = opts.get("dt", 0.01)
+    sys_obj = entry.cls()
+    ic = _resolve_ic(sys_obj, opts.get("ic"))
+    kwargs = {"final_time": final_time, "dt": dt, "backend": "interp"}
+    if ic is not None:
+        kwargs["ic"] = np.asarray(ic, dtype=float)
+    traj = sys_obj.integrate(**kwargs)
+    return traj.t, traj.y
+
+
 def _render_ode(entry, plt, opts):
+    if opts.get("kind") in ("field", "spacetime"):
+        t, y = _field_trajectory(entry, opts)
+        if opts.get("kind") == "field":
+            return _render_field(entry, plt, y)
+        return _render_spacetime(entry, plt, t, y)
     t, y = _ode_trajectory(entry, opts)
-    if opts.get("kind") == "field":
-        return _render_field(entry, plt, y)
-    if opts.get("kind") == "spacetime" or entry.cls().dim is None:
+    if entry.cls().dim is None:
         return _render_spacetime(entry, plt, t, y)
     dim = y.shape[1]
     if dim >= 3:

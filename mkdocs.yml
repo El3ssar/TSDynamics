@@ -76,6 +76,7 @@ extra_css:
   - assets/brand/tokens.css
   - assets/brand/mkdocs/extra.css
   - assets/brand/mkdocs/figure-rail.css
+  - assets/brand/mkdocs/systems.css
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
 
 extra_javascript:
@@ -116,6 +117,12 @@ plugins:
               - "!^_"
               - "^__init__$"
 
+# Build-time generator: the per-system + browser pages for the Systems tree,
+# emitted as virtual files and patched into the nav (see hooks/docs_autogen.py).
+hooks:
+  - hooks/docs_autogen.py
+  - hooks/citation_lint.py
+
 markdown_extensions:
   - admonition
   - attr_list
@@ -149,6 +156,7 @@ nav:
       - start/index.md
   - Analysis:
       - analysis/index.md
+      - "Integration & methods": analysis/integration-and-methods.md
   - Systems:
       - systems/index.md
   - Visualization:
@@ -177,8 +185,13 @@ exclude_docs: |
   !start/index.md
   analysis/*.md
   !analysis/index.md
-  systems/**/*.md
-  !systems/index.md
+  !analysis/integration-and-methods.md
+  # The Systems tree is build-generated (hooks/docs_autogen.py emits the new
+  # systems/<type>/<subcat>/ IA as virtual files + a fresh systems/index.md).
+  # Only the dropped old physical stubs are excluded; the generated pages pass.
+  systems/continuous/
+  systems/delay/
+  systems/discrete/
   visualization/*.md
   !visualization/index.md
   tutorials/*.md
