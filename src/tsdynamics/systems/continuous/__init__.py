@@ -136,6 +136,7 @@ from .physical_systems import (
 )
 from .population_dynamics import CoevolvingPredatorPrey, Finance, KawczynskiStrizhak
 from .spatial_fields import GrayScott, SwiftHohenberg
+from .stochastic_systems import DoubleWell, GeometricBrownianMotion, OrnsteinUhlenbeck
 
 __all__ = []
 
@@ -304,6 +305,9 @@ __all__ += ["CoevolvingPredatorPrey", "KawczynskiStrizhak", "Finance"]
 
 # spatial_fields (2-D method-of-lines PDEs — spatial-field movies)
 __all__ += ["GrayScott", "SwiftHohenberg"]
+
+# stochastic_systems (diagonal-Itô SDEs)
+__all__ += ["OrnsteinUhlenbeck", "GeometricBrownianMotion", "DoubleWell"]
 
 
 def __dir__() -> list[str]:

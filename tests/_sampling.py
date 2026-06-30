@@ -120,9 +120,12 @@ DDE_HISTORIES: dict[str, object] = {
 
 
 # --- SDE samples (per-system seed + in-basin ic for the stochastic sweep) ----
-# The diagonal-Itô analogue of DDE_HISTORIES.  Empty today: there are no
-# built-in SDE systems yet (the registry now detects the ``sde`` family, but the
-# catalogue under ``systems/`` has none).  When a built-in StochasticSystem
-# lands, add ``"<Name>": {"seed": <int>, "ic": [...]}`` here; a guard test in
-# ``test_registry.py`` asserts this stays complete against the ``sde`` family.
-SDE_SAMPLES: dict[str, dict] = {}
+# The diagonal-Itô analogue of DDE_HISTORIES.  Every built-in StochasticSystem
+# needs a ``"<Name>": {"seed": <int>, "ic": [...]}`` entry here; a guard test in
+# ``test_registry.py`` (``test_sde_samples_complete``) asserts this stays
+# complete against the ``sde`` family.
+SDE_SAMPLES: dict[str, dict] = {
+    "OrnsteinUhlenbeck": {"seed": 0, "ic": [2.0]},
+    "GeometricBrownianMotion": {"seed": 1, "ic": [1.0]},
+    "DoubleWell": {"seed": 2, "ic": [-1.0]},
+}

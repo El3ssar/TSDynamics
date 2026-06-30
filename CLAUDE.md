@@ -133,8 +133,8 @@ module's `__all__`), so a new system needs no manual edit there.
 
 `tsdynamics.__all__` exports:
 
-- The 151 built-in systems are reachable via `tsdynamics.systems` (151 today:
-  120 ODE + 5 DDE + 26 maps), not the top-level `__all__`
+- The 154 built-in systems are reachable via `tsdynamics.systems` (154 today:
+  120 ODE + 5 DDE + 26 maps + 3 SDE), not the top-level `__all__`
 - Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`,
   `StochasticSystem`; result type `Trajectory`
 - Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
@@ -238,9 +238,11 @@ records name/cls/family/category/dim/params/reference/known_lyapunov.
   DDE systems live in `systems/continuous/delayed_systems.py`.  A class is
   *concrete* (registrable) when it defines `_equations` / `_step` / `_drift`
   outside the framework bases (`_has_concrete_rhs`); `_drift` is the SDE marker.
-  There are no built-in SDE systems yet, so `registry.families()` stays
-  `{'ode': …, 'dde': …, 'map': …}` for builtins, but a user `StochasticSystem`
-  subclass now registers (non-builtin) with family `sde`.
+  Three built-in SDEs ship (`OrnsteinUhlenbeck`, `GeometricBrownianMotion`,
+  `DoubleWell`, in `systems/continuous/stochastic_systems.py`), so
+  `registry.families()` is `{'ode': …, 'dde': …, 'map': …, 'sde': 3}` for
+  builtins; a user `StochasticSystem` subclass registers (non-builtin) with
+  family `sde`.
 - Duplicate builtin class names raise at import.
 - Consumers: registry-driven test parametrization (`tests/conftest.py`
   `pytest_generate_tests`), the docs autogen hook, and users.
@@ -437,10 +439,11 @@ All three families + all derived wrappers implement:
 - **Registry-detected (stream C-FAM):** a concrete `StochasticSystem` subclass
   registers with family `sde` (`_drift` is the concrete-rhs marker, and
   `StochasticSystem` is in the family-base table), so it appears in
-  `registry.all_systems(family="sde")`. There are no built-in SDE systems in the
-  catalogue yet, so `registry.families()` (builtin-only) is unchanged; a future
-  built-in SDE needs an entry in `tests/_sampling.py::SDE_SAMPLES` (a guard test
-  enforces completeness, mirroring `DDE_HISTORIES`).
+  `registry.all_systems(family="sde")`. Three built-in SDEs ship
+  (`OrnsteinUhlenbeck`, `GeometricBrownianMotion`, `DoubleWell`), so
+  `registry.families()` (builtin-only) includes `'sde': 3`; each built-in SDE has
+  an entry in `tests/_sampling.py::SDE_SAMPLES` (a guard test enforces
+  completeness, mirroring `DDE_HISTORIES`).
 - **The SDE engine path does not use `run.integrate`** (it cannot carry the noise
   seed/step): `backend="interp"/"jit"` dispatch through the dedicated
   `run.sde_integrate_dense` / `run.sde_ensemble_final` seam, and `run.integrate`
@@ -939,7 +942,7 @@ inner loop** — see below.
 
 ### Change-scoped testing (stream CI-CHANGED) — use this, not the full suite
 
-The bulk suite is registry-driven (every test parametrized over all 151 systems
+The bulk suite is registry-driven (every test parametrized over all 154 systems
 + every analysis/transform), so a plain `uv run pytest` is thousands of items and
 takes minutes. **To check your work, run only what your diff touches:**
 
@@ -1204,5 +1207,5 @@ exps = mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])
 
 # Registry
 from tsdynamics import registry
-registry.families()                         # {'ode': 120, 'dde': 5, 'map': 26}
+registry.families()                         # {'ode': 120, 'dde': 5, 'map': 26, 'sde': 3}
 ```

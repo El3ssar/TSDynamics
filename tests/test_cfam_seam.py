@@ -246,8 +246,10 @@ def test_sde_subclass_excluded_from_builtin_sweeps() -> None:
 
 def test_sde_detection_does_not_disturb_builtin_family_counts() -> None:
     counts = registry.families()  # builtin only
-    assert counts == {"ode": 120, "dde": 5, "map": 26}
-    assert "sde" not in counts  # no built-in SDE systems yet
+    # Three built-in SDEs now ship (OrnsteinUhlenbeck / GeometricBrownianMotion /
+    # DoubleWell); the non-builtin ``_SeamGBM`` defined in this module must NOT
+    # inflate the builtin ``sde`` count beyond those three.
+    assert counts == {"ode": 120, "dde": 5, "map": 26, "sde": 3}
 
 
 def test_drift_only_class_is_registrable() -> None:
