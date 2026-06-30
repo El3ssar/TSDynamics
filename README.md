@@ -94,9 +94,12 @@ traj = ks.integrate(final_time=200.0, dt=0.25)
 traj.to_plot_spec().save("ks.png")        # 128-mode space–time field
 ```
 
+
+
 <p align="center">
-  <img src="docs/assets/readme/ks_spacetime.png" width="380" alt="Kuramoto–Sivashinsky space–time field">
+  <img src="docs/assets/readme/ks_spacetime.png" alt="Kuramoto–Sivashinsky space–time field">
 </p>
+
 
 The spinning attractor at the top is the same `to_plot_spec`, animated:
 
@@ -132,19 +135,24 @@ bare time series** (Kantz/Rosenstein).
 
 ## Highlights
 
-- **Three families, one interface** — ODEs, delay-differential equations
-  (including **DDE Lyapunov spectra**) and discrete maps, all on the same native
-  Rust engine, all implementing one stepping protocol — so every analysis tool
-  works on every system.
-- **151 built-in systems** with literature parameters: Lorenz, Rössler, Chua,
-  21 Sprott flows, Mackey–Glass, Hénon, Kuramoto–Sivashinsky, … each with an
-  auto-generated docs page.
-- **Native engine, zero warmup** — equations lower to a Rust engine (an SSA-tape
+- **Three families, one interface**
+
+  - **ODEs**
+
+  - **DDEs**
+  - **SDEs**
+  - **Discrete Maps**
+
+- **151 built-in systems** with literature parameters.
+
+- **Native engine**: equations lower to a Rust engine (an SSA-tape
   interpreter, with a Cranelift JIT alongside) in-process; parameters are runtime
   values, so changing them is free and there is no compile step or cache.
+
 - **Composition** — a `PoincareMap` of a flow *is* a discrete map, so
   `orbit_diagram(PoincareMap(Rossler(), ("y", 0.0)), "c", values)` draws the
   bifurcation diagram of a *flow* in one line.
+
 - **Backend-neutral plotting** — one `PlotSpec` IR renders to matplotlib, plotly
   (interactive + animated HTML), three.js, or JSON, with a fluent styling/theming
   vocabulary.
@@ -156,10 +164,8 @@ pip install tsdynamics            # or: uv add tsdynamics
 ```
 
 A prebuilt `abi3` wheel (manylinux / musllinux / macOS / Windows) bundles the
-native Rust engine — no Rust toolchain and no C compiler needed to install or
-run. Optional plotting extra: `tsdynamics[plot]` (matplotlib). Building from the
-sdist needs a Rust toolchain (the build backend is
-[maturin](https://www.maturin.rs/)).
+native Rust engine. No Rust toolchain and no C compiler needed to install or
+run. Optional plotting extra: `tsdynamics[plot,interactive]` (matplotlib, plotly).
 
 ## Development
 
@@ -172,8 +178,7 @@ TSD_DOCS_FIGURES=0 uv run mkdocs serve   # docs preview
 ```
 
 Releases are automated: conventional-commit PR titles drive
-[semantic-release](https://python-semantic-release.readthedocs.io/) on merge —
-see [CONTRIBUTING](https://el3ssar.github.io/TSDynamics/project/contributing/).
+[semantic-release](https://python-semantic-release.readthedocs.io/) on merge see [CONTRIBUTING](https://el3ssar.github.io/TSDynamics/project/contributing/).
 
 ## License
 
