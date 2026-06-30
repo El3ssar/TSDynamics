@@ -3,7 +3,9 @@ import numpy as np
 from tsdynamics.families import DiscreteMap
 
 
-# TODO(reference): unverified — needs a primary citation
+# Classical map: the tent map is a textbook construction with no single
+# originating paper; it is covered by any standard dynamical-systems text rather
+# than attributed to a primary research source.
 class Tent(DiscreteMap):
     r"""
     Tent map, a piecewise-linear unimodal map on the unit interval.
@@ -22,8 +24,15 @@ class Tent(DiscreteMap):
     mu : float
         Peak height (slope magnitude is :math:`2\mu`). Chaotic for
         :math:`\mu` near 1; the default ``0.95`` sits in the chaotic regime.
+
+    Note
+    ----
+    A classical textbook map with no single originating paper; see any standard
+    introduction to nonlinear dynamics (e.g. Strogatz, *Nonlinear Dynamics and
+    Chaos*) rather than a primary research citation.
     """
 
+    reference = "Classical map; see e.g. Strogatz, Nonlinear Dynamics and Chaos"
     params = {"mu": 0.95}
     dim = 1
 

@@ -175,6 +175,17 @@ def approximate_entropy(
     ------
     ValueError
         If the series is too short for the requested ``dimension``/``delay``.
+        The estimate compares an ``m``-dimensional embedding with an
+        ``(m + 1)``-dimensional one, so the binding constraint is the longer
+        pass: the series must satisfy ``N - m * delay > 0`` (the
+        ``dimension + 1`` embedding sets the minimum length).
+
+    Notes
+    -----
+    The result can be ``+inf`` when a template has no within-radius neighbour
+    other than itself at the ``(m + 1)`` dimension (a zero count yields
+    ``log(0)``), which happens for short or near-deterministic series; widen
+    ``r`` or lengthen the series to obtain a finite estimate.
 
     References
     ----------

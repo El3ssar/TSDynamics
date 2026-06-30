@@ -321,8 +321,11 @@ pub(super) fn guard_continuous(tape: &Tape) -> Result<(), EngineError> {
 
 /// Reject a method that needs an analytic Jacobian when the tape carries none.
 ///
-/// The implicit kernels (`rosenbrock`/`trbdf2`) freeze `∂f/∂u` each step and
-/// solve `(I − c·h·J)`. Driving them over a tape compiled *without* a Jacobian
+/// The guard fires for any kernel whose `caps.needs_jacobian` flag is set — i.e.
+/// the whole implicit family (`rosenbrock`/`trbdf2`/`bdf`/`backward_euler`/
+/// `implicit_midpoint`/`trapezoid`/`sdirk2`), not just the two named below.
+/// These freeze `∂f/∂u` each step and solve `(I − c·h·J)`. Driving them over a
+/// tape compiled *without* a Jacobian
 /// (`with_jacobian=False`) leaves `eval_jac`'s `jac` buffer untouched — i.e. the
 /// all-zeros it was initialised to — so the iteration matrix collapses to `I` and
 /// the L-stable step silently degrades to an *unstable forward-Euler* one: a

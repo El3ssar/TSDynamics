@@ -238,8 +238,9 @@ class Torus(ContinuousSystem):
         return xdot, ydot, zdot
 
 
-# TODO(reference): no primary citation — a standard Lissajous (Bowditch) figure,
-# a classical parametric curve, not a research-introduced dynamical system.
+# Intentionally citation-free: a standard Lissajous (Bowditch) figure is a
+# classical parametric curve, not a research-introduced dynamical system, so no
+# primary reference is attached (and none should be invented).
 class Lissajous3D(ContinuousSystem):
     """
     Three-dimensional Lissajous (Bowditch) figure.
@@ -248,6 +249,12 @@ class Lissajous3D(ContinuousSystem):
     of the state), so integrating it traces the classical parametric curve
     ``(A cos(a t), B cos(b t + delta_y), C cos(c t + delta_z))``.  The shape is
     closed and periodic when the frequency ratios are rational.
+
+    Note
+    ----
+    A Lissajous (Bowditch) figure is a classical parametric construction, not a
+    system introduced by a single research paper; it is deliberately carried
+    without a literature citation.
 
     Parameters
     ----------
@@ -301,8 +308,9 @@ class Lissajous3D(ContinuousSystem):
         return dxdt, dydt, dzdt
 
 
-# TODO(reference): no primary citation — a standard Lissajous (Bowditch) figure,
-# a classical parametric curve, not a research-introduced dynamical system.
+# Intentionally citation-free: a standard Lissajous (Bowditch) figure is a
+# classical parametric curve, not a research-introduced dynamical system, so no
+# primary reference is attached (and none should be invented).
 class Lissajous2D(ContinuousSystem):
     """
     Two-dimensional Lissajous (Bowditch) figure.
@@ -311,6 +319,12 @@ class Lissajous2D(ContinuousSystem):
     of the state), so integrating it traces the classical parametric curve
     ``(A cos(a t), B cos(b t + delta))``.  The figure is closed and periodic
     when the frequency ratio ``a : b`` is rational.
+
+    Note
+    ----
+    A Lissajous (Bowditch) figure is a classical parametric construction, not a
+    system introduced by a single research paper; it is deliberately carried
+    without a literature citation.
 
     Parameters
     ----------

@@ -58,9 +58,10 @@ class MutualInformation(ArrayResult):
     def optimal_lag(self) -> int:
         r"""The recommended delay — the first local minimum of :math:`I(\tau)`.
 
-        The first interior lag whose value is no greater than its left neighbour
-        and strictly less than its right (the Fraser--Swinney rule).  Falls back
-        to the global minimum lag (``>= 1``) when the curve has no interior dip.
+        The first interior lag that is strictly below its left neighbour and no
+        greater than its right (the Fraser--Swinney rule, taken at the *onset* of
+        the dip so a flat-bottomed valley is not over-estimated).  Falls back to
+        the global minimum lag (``>= 1``) when the curve has no interior dip.
         """
         curve = np.asarray(self.values, dtype=float)
         k = _first_local_min(curve)
@@ -133,9 +134,10 @@ def autocorrelation(
 
     Notes
     -----
-    Computed via FFT (Wiener--Khinchin) on the mean-subtracted series and
-    normalised by the zero-lag value, so it is an unbiased-in-mean estimate
-    (each lag divided by the full zero-lag variance, the standard convention).
+    Computed via FFT (Wiener--Khinchin) on the mean-subtracted series.  This is
+    the standard **biased** autocorrelation estimator — each lag is normalised by
+    the full zero-lag variance (not by the shrinking overlap count at that lag) —
+    which is positive-definite and the conventional choice for delay selection.
     """
     x = _as_series(data, component=component)
     n = x.size
@@ -268,9 +270,17 @@ def mutual_information(
 
 
 def _first_local_min(curve: np.ndarray) -> int | None:
-    """Index of the first interior local minimum (strict on the rising side)."""
+    """Index of the first interior local minimum (the *onset* of the valley).
+
+    Fraser & Swinney's first local minimum marks the onset of the dip.  The
+    predicate is strict on the descending side and non-strict on the rising side
+    (``curve[k] < curve[k-1] and curve[k] <= curve[k+1]``), so a flat-bottomed
+    valley returns the *first* lag of its plateau (the onset) rather than its far
+    edge.  On strictly shaped curves this is identical to the strict-on-both-sides
+    rule; on a quantised / flat curve it no longer over-estimates the delay.
+    """
     for k in range(1, curve.size - 1):
-        if curve[k] <= curve[k - 1] and curve[k] < curve[k + 1]:
+        if curve[k] < curve[k - 1] and curve[k] <= curve[k + 1]:
             return k
     return None
 
@@ -323,6 +333,11 @@ def optimal_delay(
     The mutual-information criterion is the more widely recommended nonlinear
     measure (Fraser & Swinney 1986); the autocorrelation rules are the classic
     linear alternatives.
+
+    The first local minimum is taken at the **onset** of the dip: on a
+    flat-bottomed (quantised) mutual-information valley the recommended
+    :math:`\tau` is the first lag of the plateau, not its far edge — so the
+    delay is not over-estimated on coarsely sampled curves.
 
     References
     ----------

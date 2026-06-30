@@ -337,14 +337,16 @@ class KuramotoSivashinsky(ContinuousSystem):
     term ``-u u_x = -0.5*(u^2)_x`` provides saturation.  For ``L ≈ 22`` the
     attractor is spatio-temporally chaotic with ~2–3 positive Lyapunov exponents.
 
-    Spatial discretisation uses 6th-order central finite differences on a uniform
-    periodic grid (7-point stencil, Fornberg weights):
+    Spatial discretisation uses central finite differences on a uniform periodic
+    grid (7-point stencils, Fornberg weights).  The 7-point stencils give 6th-order
+    accuracy for ``u_x`` and ``u_xx``; the 7-point ``u_xxxx`` stencil is 4th-order
+    accurate (the same 7 points cannot reach 6th order for the 4th derivative):
 
     .. code-block:: text
 
         (u^2)_x  ≈ (1/dx) Σ w1_k u_{j+k}^2    (6th-order, k = ±1,±2,±3)
         u_xx     ≈ (1/dx²) Σ w2_k u_{j+k}       (6th-order, k = 0,±1,±2,±3)
-        u_xxxx   ≈ (1/dx⁴) Σ w4_k u_{j+k}       (6th-order, k = 0,±1,±2,±3)
+        u_xxxx   ≈ (1/dx⁴) Σ w4_k u_{j+k}       (4th-order, k = 0,±1,±2,±3)
 
     Notes
     -----
@@ -482,7 +484,7 @@ class KuramotoSivashinsky(ContinuousSystem):
             -3.0 / 20.0,
             1.0 / 90.0,
         )
-        # Fourth derivative (7-point central): D4 * f / dx^4
+        # Fourth derivative (7-point central, 4th-order accurate): D4 * f / dx^4
         w4 = (-1.0 / 6.0, 2.0, -6.5, 28.0 / 3.0, -6.5, 2.0, -1.0 / 6.0)
         offsets = (-3, -2, -1, 0, 1, 2, 3)
 

@@ -133,7 +133,10 @@ def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | A
     def _make(kind: PlotKind) -> Animation:
         head_default = kind != PlotKind.TIME_SERIES
         if isinstance(animate, Animation):
-            return replace(animate, head=animate.head)
+            # An explicit Animation wins wholesale — its own ``head`` (and every
+            # other knob the user set) is honored verbatim; the per-kind head
+            # default applies only to the bare-``True`` / dict spellings below.
+            return animate
         if isinstance(animate, dict):
             return Animation(**{"head": head_default, **animate})
         return Animation(head=head_default)
@@ -180,6 +183,8 @@ def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
 
 def _overlay(specs: list[PlotSpec]) -> PlotSpec:
     """Merge overlay-compatible specs into one single-panel spec."""
+    from dataclasses import replace
+
     from tsdynamics.errors import InvalidParameterError
 
     if len(specs) == 1:
@@ -201,20 +206,32 @@ def _overlay(specs: list[PlotSpec]) -> PlotSpec:
         for layer in spec.layers:
             layers.append(_relabel_for_overlay(layer, tag, multi=multi))
 
+    # Deep-copy the carried-over presentation objects (Axis / Colorbar / Legend
+    # are mutable dataclasses, and PlotSpec's in-place tweaks — relabel / rescale /
+    # limits / ticks / grid — would otherwise rewrite the *first* input spec's
+    # axes through the shared reference (spooky action at a distance).  The layers
+    # are already freshly copied by ``_relabel_for_overlay``.
     return PlotSpec(
         kind=base.kind,
         ndim=base.ndim,
         aspect=base.aspect,
-        x=base.x,
-        y=base.y,
-        z=base.z,
+        x=replace(base.x) if base.x is not None else None,
+        y=replace(base.y) if base.y is not None else None,
+        z=replace(base.z) if base.z is not None else None,
         clim=base.clim,
-        colorbar=base.colorbar,
-        legend=Legend() if len(layers) > 1 else base.legend,
+        colorbar=replace(base.colorbar) if base.colorbar is not None else None,
+        legend=Legend() if len(layers) > 1 else _copy_legend(base.legend),
         title=_common_title(specs),
         layers=layers,
         meta={**dict(base.meta), "composed": list(tags)},
     )
+
+
+def _copy_legend(legend: Legend | None) -> Legend | None:
+    """Return a fresh copy of ``legend`` (``None`` passes through)."""
+    from dataclasses import replace
+
+    return replace(legend) if legend is not None else None
 
 
 def _relabel_for_overlay(layer: Layer, tag: str, *, multi: bool) -> Layer:

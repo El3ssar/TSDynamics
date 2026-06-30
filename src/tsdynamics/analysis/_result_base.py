@@ -311,6 +311,7 @@ class AnalysisResult:
                 layers=[pb.markers(np.arange(vals.size, dtype=float), vals)],
                 xlabel="field",
                 xticks=list(range(len(names))),
+                xcategories=names,
                 ylabel="value",
                 title=type(self).__name__,
                 meta=self.meta,

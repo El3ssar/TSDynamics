@@ -221,6 +221,25 @@ def _i_sqrt(x: Interval) -> Interval:
     return Interval(lo, hi)
 
 
+def _i_rpow(x: Interval, p: float) -> Interval:
+    r"""Interval image of ``x ** p`` for a real (non-integer) exponent ``p``.
+
+    Defined for a non-negative base (``x ** p = exp(p log x)`` is real only there);
+    the function is monotone on ``[0, ∞)`` (increasing for ``p > 0``, decreasing for
+    ``p < 0``), so the image is the ``p``-power of the endpoints.  A base straddling
+    or below zero yields a ``[0, ∞)`` / unbounded enclosure (the Krawczyk loop then
+    bisects), matching the conservative handling of :func:`_i_sqrt` / :func:`_i_log`.
+    """
+    lo = x.lo if x.lo > 0.0 else 0.0
+    hi = x.hi if x.hi > 0.0 else 0.0
+    if p >= 0.0:
+        return Interval(lo**p, hi**p)
+    # p < 0: x**p is decreasing; a lower endpoint at 0 blows up to +inf.
+    a = math.inf if lo == 0.0 else lo**p
+    b = math.inf if hi == 0.0 else hi**p
+    return Interval(min(a, b), max(a, b))
+
+
 def _i_sinh(x: Interval) -> Interval:
     return Interval(math.sinh(x.lo), math.sinh(x.hi))
 
@@ -371,6 +390,16 @@ class IntervalJet:
         coef = Interval(float(n)) * (self.v ** (n - 1))
         return IntervalJet(self.v**n, [coef * a for a in self.g])
 
+    def real_pow(self, p: float) -> IntervalJet:
+        r"""Forward-AD of ``self ** p`` for a real (non-integer) exponent ``p``.
+
+        The value is the interval real power (:func:`_i_rpow`) and the gradient
+        carries the chain rule ``d/dx (x ** p) = p * x ** (p - 1)`` over intervals.
+        Used by the flow path for ``sqrt`` / fractional powers of a state expression.
+        """
+        coef = Interval(p) * _i_rpow(self.v, p - 1.0)
+        return IntervalJet(_i_rpow(self.v, p), [coef * a for a in self.g])
+
     def __truediv__(self, o: Any) -> IntervalJet:
         o = self._coerce(o)
         val = self.v / o.v
@@ -410,13 +439,14 @@ _JET_UFUNC_MAP: dict[str, Callable[[IntervalJet], IntervalJet]] = {
 
 # ── symengine tree evaluation with IntervalJet (flows) ────────────────────────
 
-# symengine elementary-function node name -> the IntervalJet wrapper.
+# symengine elementary-function node name -> the IntervalJet wrapper.  ``exp`` and
+# ``sqrt`` are deliberately absent: symengine canonicalizes ``exp(z)`` to
+# ``Pow(E, z)`` and ``sqrt(z)`` to ``Pow(z, 1/2)``, so they reach the tree-walk as
+# ``Pow`` nodes handled in :func:`_eval_jet` (never as named function nodes).
 _SE_JET_FUNCS: dict[str, Callable[[IntervalJet], IntervalJet]] = {
     "sin": _JET_UFUNC_MAP["sin"],
     "cos": _JET_UFUNC_MAP["cos"],
-    "exp": _JET_UFUNC_MAP["exp"],
     "log": _JET_UFUNC_MAP["log"],
-    "sqrt": _JET_UFUNC_MAP["sqrt"],
     "sinh": _JET_UFUNC_MAP["sinh"],
     "cosh": _JET_UFUNC_MAP["cosh"],
     "tanh": _JET_UFUNC_MAP["tanh"],
@@ -442,6 +472,8 @@ def _eval_jet(expr: Any, env: dict[str, Any]) -> IntervalJet:
         return IntervalJet.const(float(expr), env["__n__"])
 
     name = type(expr).__name__
+    if name in ("Exp1", "E"):  # the constant e: symengine does not flag it is_Number
+        return IntervalJet.const(float(expr), env["__n__"])
     args = expr.args
     if name == "Add":
         acc = IntervalJet.const(0.0, env["__n__"])
@@ -454,11 +486,25 @@ def _eval_jet(expr: Any, env: dict[str, Any]) -> IntervalJet:
             acc = acc * _eval_jet(a, env)
         return acc
     if name == "Pow":
-        base = _eval_jet(args[0], env)
-        exp = args[1]
-        if exp.is_Number and float(exp).is_integer():
-            return base ** int(float(exp))
-        raise NotImplementedError(f"interval method: non-integer power {exp!r} in the RHS.")
+        # symengine canonicalizes exp(z) -> Pow(E, z) and sqrt(z) -> Pow(z, 1/2),
+        # so the elementary functions reach the tree-walk as Pow nodes, not as
+        # named function nodes.  Handle: (a) base E -> exp jet of the exponent;
+        # (b) constant Pow(number, number) -> folded constant (e.g. sqrt(2)); the
+        # foldable case must precede the integer/real-power dispatch so a numeric
+        # 1/2 exponent never raises.  (c) integer exponent -> repeated product;
+        # (d) real (non-integer) numeric exponent -> the real-power jet.
+        base_expr, exp_expr = args[0], args[1]
+        if type(base_expr).__name__ in ("Exp1", "E"):  # exp(exp_expr)
+            return _JET_UFUNC_MAP["exp"](_eval_jet(exp_expr, env))
+        if base_expr.is_Number and exp_expr.is_Number:
+            return IntervalJet.const(float(base_expr) ** float(exp_expr), env["__n__"])
+        base = _eval_jet(base_expr, env)
+        if exp_expr.is_Number:
+            pf = float(exp_expr)
+            if pf.is_integer():
+                return base ** int(pf)
+            return base.real_pow(pf)
+        raise NotImplementedError(f"interval method: non-integer power {exp_expr!r} in the RHS.")
     fn = _SE_JET_FUNCS.get(name)
     if fn is not None:
         return fn(_eval_jet(args[0], env))

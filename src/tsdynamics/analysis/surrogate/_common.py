@@ -96,9 +96,12 @@ def _phase_randomize(x: np.ndarray, n: int, rng: np.random.Generator) -> np.ndar
 
     Each surrogate keeps the magnitude spectrum :math:`|X_k|` of ``x`` exactly —
     hence the periodogram and the (circular) autocorrelation — while replacing the
-    Fourier phases with i.i.d. :math:`U[0, 2\pi)` draws.  The zero-frequency (DC)
-    component, and the Nyquist component when ``len(x)`` is even, are kept real so
-    the inverse transform is real (Theiler et al., 1992).
+    interior Fourier phases with i.i.d. :math:`U[0, 2\pi)` draws.  The zero-frequency
+    (DC) component, and the Nyquist component when ``len(x)`` is even, are real for a
+    real input and are carried through at their original *signed* values, not their
+    magnitudes, so the inverse transform is real **and the series mean (and Nyquist
+    coefficient) are preserved exactly** (Theiler et al., 1992).  Forcing those bins
+    positive would sign-flip the mean of any negative-mean series.
 
     Parameters
     ----------
@@ -118,12 +121,17 @@ def _phase_randomize(x: np.ndarray, n: int, rng: np.random.Generator) -> np.ndar
     spectrum = np.fft.rfft(x)
     magnitude = np.abs(spectrum)
     n_freq = magnitude.size
-    # Random phases per surrogate; columns 0 (DC) and -1 (Nyquist, N even) stay real.
+    # Random interior phases per surrogate.
     phases = rng.uniform(0.0, 2.0 * np.pi, size=(n, n_freq))
-    phases[:, 0] = 0.0
-    if N % 2 == 0:
-        phases[:, -1] = 0.0
     surrogate_spectrum = magnitude[None, :] * np.exp(1j * phases)
+    # Pin the DC (and, for even N, the Nyquist) bin to its original *signed* real
+    # value rather than its magnitude: those bins are real for a real input, so
+    # |X| is unchanged but the sign is preserved — keeping irfft real and the
+    # series mean / Nyquist coefficient exact (a positive |X| would flip the mean
+    # of a negative-mean series). Theiler et al. (1992).
+    surrogate_spectrum[:, 0] = spectrum[0].real
+    if N % 2 == 0:
+        surrogate_spectrum[:, -1] = spectrum[-1].real
     return np.fft.irfft(surrogate_spectrum, n=N, axis=1)
 
 

@@ -217,7 +217,9 @@ def spectral_entropy(
     normalize : bool, default True
         Divide by ``log_base(n_freqs)`` to rescale onto ``[0, 1]``.
     base : float, default 2.0
-        Logarithm base (2 → bits).
+        Logarithm base (2 → bits).  Only affects the result when
+        ``normalize=False``: the normalised spectral entropy divides by
+        ``log_base(n_freqs)``, cancelling the base, so it is base-independent.
     **psd_kwargs
         Forwarded to :func:`power_spectral_density` (``method``, ``window``, ...).
 

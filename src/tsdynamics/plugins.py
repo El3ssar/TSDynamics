@@ -133,9 +133,10 @@ def import_submodules(package: ModuleType) -> dict[str, ModuleType]:
 class _RegistryLike(Protocol):
     """The minimal surface :func:`register_entry_points` needs of a registry.
 
-    Both :class:`tsdynamics.registry.Registry` instances satisfy this; spelling
-    it as a Protocol keeps :mod:`plugins` decoupled from the registry module
-    (which imports nothing from here, so a hard import would risk a cycle).
+    Every :class:`tsdynamics.registry.Registry` instance satisfies this
+    (a structural Protocol); spelling it as a Protocol keeps :mod:`plugins`
+    decoupled from the registry module (which imports nothing from here, so a
+    hard import would risk a cycle).
     """
 
     def __contains__(self, name: object) -> bool: ...  # noqa: D105

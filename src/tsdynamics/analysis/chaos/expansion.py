@@ -41,7 +41,7 @@ from . import _common as _c
 __all__ = ["ExpansionEntropyResult", "expansion_entropy"]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class ExpansionEntropyResult(ScalingResult):
     r"""An expansion-entropy estimate with the growth curve it was read from.
 

@@ -58,7 +58,11 @@ class OrbitDiagram(AnalysisResult):
         Counts the distinct asymptotic branches in the recorded orbit — the
         period of a periodic window — by clustering the points of one component
         with a scale-free gap test: a new branch starts where the sorted-value
-        gap exceeds ``rtol`` times the orbit's range.
+        gap exceeds ``rtol`` times the orbit's range.  A finite period ``p >= 2``
+        is only reported when the recorded iterate sequence actually *revisits*
+        its values cyclically (``v[i] ≈ v[i + p]`` to ``rtol``); a chaotic band
+        whose finite-sample points merely cluster into ``p`` bins fails this
+        repeat test and is reported as aperiodic (``0``).
 
         Parameters
         ----------
@@ -81,8 +85,15 @@ class OrbitDiagram(AnalysisResult):
             if pts.shape[0] == 0:
                 out[k] = -1
                 continue
-            p = _count_branches(pts[:, component], rtol)
-            out[k] = p if p <= max_period else 0
+            col = pts[:, component]
+            p = _count_branches(col, rtol)
+            if p > max_period or (p >= 2 and not _is_cyclic(col, p, rtol)):
+                # Either too many branches to resolve as a cycle, or the branch
+                # count is a finite-sample clustering of a chaotic band that does
+                # not actually revisit its values cyclically — aperiodic.
+                out[k] = 0
+            else:
+                out[k] = p
         return out
 
     def bifurcation_points(
@@ -199,16 +210,52 @@ def _count_branches(col: np.ndarray, rtol: float) -> int:
     test would shatter a single noisy branch into many.  A converged map orbit
     has round-off-small within-branch spread and trips the same guard, correctly
     reading a period-1 window as one branch.  Non-finite values are dropped.
+
+    The guard's ``scale`` is the *centered* dispersion — ``max(|s − mean|, 1.0)``,
+    measured about the orbit's mean rather than its raw endpoints — so the
+    collapse threshold tracks the within-orbit spread (a noise floor) and not the
+    orbit's DC offset.  Anchoring on the raw magnitude conflated the offset scale
+    with the noise scale, collapsing a genuine multi-branch orbit that merely
+    lives far from the origin (e.g. branches at ``{100.0, 100.5}`` read as one
+    branch); centering decouples the two.  The ``1.0`` floor preserves the
+    integration-noise collapse for orbits near the origin (a tiny spread on a
+    period-1 flow branch still collapses unchanged).
     """
     s = np.asarray(col, dtype=float)
     s = np.sort(s[np.isfinite(s)])
     if s.size <= 1:
         return int(s.size)
     span = s[-1] - s[0]
-    scale = max(abs(s[0]), abs(s[-1]), 1.0)
-    if span <= rtol * scale:  # spread negligible vs magnitude → a single branch
+    # Centered dispersion (offset-free): the noise floor scales with the orbit's
+    # spread about its mean, not with its distance from the origin.
+    mean = float(s.mean())
+    scale = max(abs(s[0] - mean), abs(s[-1] - mean), 1.0)
+    if span <= rtol * scale:  # spread negligible vs dispersion → a single branch
         return 1
     return 1 + int(np.count_nonzero(np.diff(s) > rtol * span))
+
+
+def _is_cyclic(col: np.ndarray, p: int, rtol: float) -> bool:
+    """
+    Whether the iterate sequence ``col`` revisits its values with period ``p``.
+
+    A genuine period-``p`` window obeys ``v[i] ≈ v[i + p]`` for every recorded
+    sample (the orbit cyclically returns to the same ``p`` values), to a
+    tolerance of ``rtol`` times the orbit's range.  A chaotic band whose
+    finite-sample points happen to cluster into ``p`` gap-separated bins violates
+    this — its successive iterates wander within the band rather than repeating —
+    so the cyclic test distinguishes a true periodic window from a spurious
+    finite period read off the cluster count alone.  Non-finite values make the
+    sequence non-cyclic (a diverged/NaN run is not a clean cycle).
+    """
+    v = np.asarray(col, dtype=float)
+    if v.shape[0] <= p:
+        return False
+    finite = v[np.isfinite(v)]
+    if finite.size != v.size or finite.size == 0:
+        return False
+    tol = rtol * max(float(finite.max() - finite.min()), 1.0)
+    return bool(np.all(np.abs(v[:-p] - v[p:]) <= tol))
 
 
 def _sweep_via_kernel(

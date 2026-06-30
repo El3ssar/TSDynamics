@@ -40,7 +40,7 @@ __all__ = ["LyapunovFromData", "lyapunov_from_data"]
 _TINY = float(np.finfo(float).tiny)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class LyapunovFromData(ScalingResult):
     """Outcome of :func:`lyapunov_from_data`: the divergence curve and its slope.
 
@@ -264,7 +264,13 @@ def lyapunov_from_data(
         spans ``k = 0 … k_max``.
     eps : float, optional
         Neighbour-ball radius for ``method="kantz"``.  Defaults to ``0.1`` times
-        the standard deviation of the embedded coordinates.  Ignored by
+        the standard deviation pooled over *all* embedded coordinates.  This
+        default assumes the coordinates are comparably scaled: for a strongly
+        anisotropic embedding (channels on very different scales, or a
+        multivariate recording with disparate units) the pooled std is dominated
+        by the largest-variance coordinate and mis-scales the isotropic ball for
+        the others, biasing the neighbour set — standardize/normalize the
+        channels first (or pass an explicit ``eps``) in that case.  Ignored by
         ``"rosenstein"`` (which uses the single nearest neighbour).
     n_neighbors : int, default 1
         Minimum neighbours a reference point needs to contribute (Kantz only).
@@ -354,6 +360,8 @@ def lyapunov_from_data(
 
     if method == "kantz":
         if eps is None:
+            # Pooled std over every embedded coordinate: assumes comparably-scaled
+            # channels (see the `eps` docstring; standardize anisotropic input).
             eps = 0.1 * float(np.std(emb))
         eps = float(eps)
         if eps <= 0.0:

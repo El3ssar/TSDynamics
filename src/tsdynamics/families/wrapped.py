@@ -158,9 +158,10 @@ class WrappedSystem:
         Exactly one count source must be supplied: either ``n`` (the number of
         samples to collect), or ``final_time``.  When ``final_time`` is given the
         sample count is ``round(final_time / dt)`` and the per-step increment is
-        ``dt`` (defaulting to ``default_dt``); for a discrete wrapper each "time
-        unit" is one iteration, so the count is ``round(final_time / dt)`` with
-        ``dt`` defaulting to ``1.0``.
+        ``dt``, which defaults to ``default_dt`` for **both** continuous and
+        discrete wrappers.  (A discrete wrapper that wants the "one time unit =
+        one iteration" convention should construct itself with ``default_dt=1.0``,
+        the constructor default.)
 
         Parameters
         ----------

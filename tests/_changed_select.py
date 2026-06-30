@@ -157,6 +157,22 @@ _ALWAYS_GUARDS: tuple[str, ...] = (
     "test_analysis_layout.py",
 )
 
+#: Catalogue RHS-correctness gates run whenever any system module changes.
+#: These tests are NOT registry-parametrized per system — their cases are bare
+#: tuples / plain functions carrying no ``SystemEntry`` — so the per-system
+#: scoping in :func:`keep_item` cannot reach them.  They are the project's
+#: primary defence against operator-precedence / transcription bugs in a kernel
+#: body (the ``p**1/2`` class of defect: the golden lowered-tape snapshot in
+#: ``test_equation_reference.py``, the analytic literature identities in
+#: ``test_catalogue_literature.py``, and the engine cross-validation sweep in
+#: ``test_xval_catalogue.py``).  They are cheap (single-point lowering / short
+#: horizons), so a catalogue edit always pulls them in.
+_CATALOGUE_GATES: tuple[str, ...] = (
+    "test_equation_reference.py",
+    "test_catalogue_literature.py",
+    "test_xval_catalogue.py",
+)
+
 #: Paths with no bearing on the test suite — ignored, never escalate.
 _IGNORE_PREFIXES: tuple[str, ...] = (
     "docs/",
@@ -359,6 +375,10 @@ def classify(changed: set[str] | None) -> Plan:
 
     systems: set[str] = set()
     if system_modules:
+        # A catalogue kernel edit must run the RHS-correctness gates: they are not
+        # registry-parametrized (so per-system scoping cannot reach them) yet are
+        # the primary defence against a transcription bug in a system module.
+        selected.update(_CATALOGUE_GATES)
         by_mod = _systems_by_module()
         for mod in system_modules:
             found = by_mod.get(mod, set())

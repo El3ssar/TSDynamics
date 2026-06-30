@@ -26,6 +26,14 @@ def _unwrap_static(obj: Any) -> Any:
     return getattr(obj, "__func__", obj)
 
 
+class _KeywordOnlyParamError(Exception):
+    """A map kernel declares a keyword-only parameter (cannot bind positionally)."""
+
+    def __init__(self, param_name: str) -> None:
+        self.param_name = param_name
+        super().__init__(param_name)
+
+
 def _positional_param_names(fn: Any) -> list[str] | None:
     """
     Return the parameter names after the state argument, or None if unknowable.
@@ -33,6 +41,16 @@ def _positional_param_names(fn: Any) -> list[str] | None:
     ``None`` is returned for catch-all signatures like ``(X, *params)`` (the
     abstract methods on :class:`DiscreteMap`) and for callables that
     ``inspect.signature`` cannot introspect.
+
+    Raises
+    ------
+    _KeywordOnlyParamError
+        If the signature carries a keyword-only parameter after the state
+        argument.  The engine calls a kernel positionally as
+        ``step_fn(x, *params)``, so a keyword-only parameter can never receive
+        its value — that is an unconditional contract violation (independent of
+        whether the names happen to match the ``params`` dict), surfaced as an
+        import-time error by the caller.
     """
     try:
         sig = inspect.signature(fn)
@@ -42,6 +60,8 @@ def _positional_param_names(fn: Any) -> list[str] | None:
     for p in list(sig.parameters.values())[1:]:
         if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
             return None
+        if p.kind == p.KEYWORD_ONLY:
+            raise _KeywordOnlyParamError(p.name)
         names.append(p.name)
     return names
 
@@ -114,7 +134,15 @@ class DiscreteMap(SystemBase):
             method = getattr(cls, name, None)
             if method is None:
                 continue
-            sig_names = _positional_param_names(_unwrap_static(method))
+            try:
+                sig_names = _positional_param_names(_unwrap_static(method))
+            except _KeywordOnlyParamError as exc:
+                raise InvalidInputError(
+                    f"{cls.__name__}.{name} declares keyword-only parameter "
+                    f"{exc.param_name!r}, but map kernels are called positionally as "
+                    f"step_fn(x, *params) — a keyword-only parameter can never receive "
+                    f"its value. Make every parameter positional-or-keyword."
+                ) from None
             if sig_names is None:  # catch-all (X, *params) or non-introspectable
                 continue
             if sig_names != declared:
@@ -433,8 +461,14 @@ class DiscreteMap(SystemBase):
         finite_rows = np.isfinite(traj.y).all(axis=1)
         if not finite_rows.all():
             bad = int(np.argmin(finite_rows))
+            # Report the trajectory's own step-index axis (``traj.t``), which for a
+            # warm-restart problem (n0 > 0) is ``arange(n0, n0 + steps)`` — so the
+            # iteration number is consistent with the trajectory rather than the bare
+            # 0-based row offset ``bad``.
+            iteration = int(traj.t[bad]) if bad < traj.t.size else bad
             raise ConvergenceError(
-                f"{type(self).__name__}: map diverged at iteration {bad} (backend={backend!r})."
+                f"{type(self).__name__}: map diverged at iteration {iteration} "
+                f"(backend={backend!r})."
             )
         return traj
 

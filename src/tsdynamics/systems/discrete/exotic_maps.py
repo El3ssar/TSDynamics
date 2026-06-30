@@ -44,10 +44,10 @@ class Bogdanov(DiscreteMap):
         return row1, row2
 
 
-# TODO(reference): unverified -- needs a primary citation. The Svensson
-# attractor circulates as a "popular" trigonometric strange attractor
-# (attributed to Johnny Svensson, documented on Paul Bourke's site and in
-# fractal-art galleries) with no traceable primary academic publication.
+# Classical compendium attractor: the Svensson map circulates as a "popular"
+# trigonometric strange attractor (attributed to Johnny Svensson, documented on
+# Paul Bourke's site and in fractal-art galleries) with no single primary
+# academic source, so it is carried without a literature citation.
 class Svensson(DiscreteMap):
     """Svensson attractor -- a sinusoidal planar strange-attractor map.
 
@@ -68,6 +68,9 @@ class Svensson(DiscreteMap):
     -----
     Default parameters ``(a, b, c, d) = (1.5, -1.8, 1.6, 0.9)`` give one of the
     commonly illustrated chaotic attractors.
+
+    This is a classical compendium ("strange attractor art") map with no single
+    primary research source; it is intentionally carried without a citation.
     """
 
     params = {"a": 1.5, "b": -1.8, "c": 1.6, "d": 0.9}
@@ -88,10 +91,10 @@ class Svensson(DiscreteMap):
         return row1, row2
 
 
-# TODO(reference): unverified -- needs a primary citation. The Bedhead
-# attractor circulates as a "popular" trigonometric strange attractor
-# (attributed to Ivan Emrich, documented on Paul Bourke's site and in
-# fractal-art galleries) with no traceable primary academic publication.
+# Classical compendium attractor: the Bedhead map circulates as a "popular"
+# trigonometric strange attractor (attributed to Ivan Emrich, documented on Paul
+# Bourke's site and in fractal-art galleries) with no single primary academic
+# source, so it is carried without a literature citation.
 class Bedhead(DiscreteMap):
     """Bedhead attractor -- a sinusoidal planar strange-attractor map.
 
@@ -112,6 +115,9 @@ class Bedhead(DiscreteMap):
     -----
     Default parameters ``(a, b) = (-0.67, 0.83)``, iterated from ``x = y = 1``,
     give the commonly illustrated attractor.
+
+    This is a classical compendium ("strange attractor art") map with no single
+    primary research source; it is intentionally carried without a citation.
     """
 
     params = {"a": -0.67, "b": 0.83}

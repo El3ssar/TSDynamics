@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from tsdynamics.errors import InvalidInputError
 from tsdynamics.families import Trajectory
 
 from ._base import DerivedSystem
@@ -94,30 +95,47 @@ class ProjectedSystem(DerivedSystem):
         """Return the projected current state."""
         return cast(np.ndarray, self.system.state()[list(self.components)])
 
+    def _to_full_state(self, u_arr: np.ndarray, *, verb: str) -> np.ndarray:
+        """Map a user-supplied state to a full inner state.
+
+        The full-vs-projected interpretation is disambiguated on **intent**, not
+        purely on size, so a dimension-preserving projection (a permutation, e.g.
+        ``components=[2, 1, 0]`` on a 3-D system) is handled correctly rather than
+        silently written through untransformed:
+
+        - When a ``complete`` callable is supplied, a projected-dimensional input
+          (``size == self.dim``) is always reconstructed through it.  This takes
+          precedence over the full-state shortcut, so the ambiguous case
+          ``self.dim == self.system.dim`` resolves to the **projected** reading —
+          the one the user opted into by supplying ``complete``.
+        - With no ``complete`` callable, only a full-dimensional state can be set;
+          a full state is written directly and a projected-dimensional one raises
+          (it cannot be reconstructed).
+        """
+        if self.complete is not None and u_arr.size == self.dim:
+            return np.asarray(self.complete(u_arr), dtype=float)
+        if u_arr.size == self.system.dim:
+            return u_arr
+        if self.complete is None:
+            raise NotImplementedError(
+                f"ProjectedSystem.{verb} with a projected-dimensional state "
+                f"(size {u_arr.size}) needs a `complete=` callable to reconstruct the "
+                f"full {self.system.dim}-D state."
+            )
+        raise InvalidInputError(
+            f"ProjectedSystem.{verb}: state of size {u_arr.size} matches neither the "
+            f"projected dimension {self.dim} nor the full dimension {self.system.dim}."
+        )
+
     def set_state(self, u: Any) -> None:
         """Overwrite the state (projected inputs need a ``complete`` callable)."""
         u_arr = np.asarray(u, dtype=float)
-        if u_arr.size == self.system.dim:
-            self.system.set_state(u_arr)
-            return
-        if self.complete is None:
-            raise NotImplementedError(
-                "ProjectedSystem.set_state with a projected-dimensional state needs a "
-                "`complete=` callable to reconstruct the full state."
-            )
-        self.system.set_state(np.asarray(self.complete(u_arr), dtype=float))
+        self.system.set_state(self._to_full_state(u_arr, verb="set_state"))
 
     def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
         """Restart the full system (projected inputs need a ``complete`` callable)."""
         if u is not None:
-            u_arr = np.asarray(u, dtype=float)
-            if u_arr.size != self.system.dim:
-                if self.complete is None:
-                    raise NotImplementedError(
-                        "ProjectedSystem.reinit with a projected-dimensional state needs "
-                        "a `complete=` callable."
-                    )
-                u = np.asarray(self.complete(u_arr), dtype=float)
+            u = self._to_full_state(np.asarray(u, dtype=float), verb="reinit")
         self.system.reinit(u, **kwargs)
 
     def trajectory(self, *args: Any, **kwargs: Any) -> Trajectory:

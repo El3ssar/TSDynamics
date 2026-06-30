@@ -14,6 +14,53 @@ from tsdynamics.errors import InvalidParameterError
 from .base import SystemBase, Trajectory
 
 
+def _resolve_extremum_derivative(
+    is_max: bool, args: Sequence[Any], wrt: Any, walk: Callable[[Any], Any]
+) -> Any:
+    """Build the a.e. derivative of ``min``/``max`` of ``args`` w.r.t. ``wrt``.
+
+    The derivative of ``max(a₀, …, aₙ)`` (resp. ``min``) is, almost everywhere,
+    the derivative of whichever argument is currently the active extremum.  This is
+    expressed as a nested SymEngine ``Piecewise`` over the existing comparison
+    opcodes — the kink set (where two arguments tie) is measure-zero, so the
+    numeric Jacobian along an orbit is unaffected (the same a.e. convention the
+    ``Abs``/``sign`` resolution uses).
+
+    Each branch is the (finite) chain-rule derivative ``daᵢ/dwrt`` of one argument,
+    so the arithmetic-blend ``Piecewise`` lowering — which evaluates *every* branch
+    and masks — stays well-defined.
+
+    Parameters
+    ----------
+    is_max : bool
+        ``True`` for ``max`` (select the largest argument), ``False`` for ``min``.
+    args : sequence of SymEngine expressions
+        The extremum's arguments ``a₀, …, aₙ``.
+    wrt : SymEngine symbol or ``y(i)`` application
+        The variable to differentiate with respect to.
+    walk : callable
+        The recursive resolver (handles nested unevaluated derivatives in each
+        argument's own derivative via the chain rule).
+    """
+    import symengine
+
+    running_val = symengine.sympify(args[0])
+    running_der = walk(running_val.diff(wrt))
+    for raw in args[1:]:
+        cand_val = symengine.sympify(raw)
+        cand_der = walk(cand_val.diff(wrt))
+        # ``max``: select the candidate when it is ≥ the running extremum;
+        # ``min``: when it is ≤ it.  Ties fall through to the running branch.
+        cond = (
+            symengine.Ge(cand_val, running_val) if is_max else symengine.Le(cand_val, running_val)
+        )
+        running_der = symengine.Piecewise((cand_der, cond), (running_der, True))
+        running_val = (
+            symengine.Max(cand_val, running_val) if is_max else symengine.Min(cand_val, running_val)
+        )
+    return running_der
+
+
 def _resolve_derivative_nodes(expr: Any) -> Any:
     """
     Replace unevaluated SymEngine ``Derivative`` nodes with a.e. derivatives.
@@ -50,6 +97,16 @@ def _resolve_derivative_nodes(expr: Any) -> Any:
                     return symengine.sign(g)
                 try:  # wrt may be a symbol or a y(i) application — diff handles both
                     return symengine.sign(g) * walk(g.diff(wrt))
+                except RuntimeError:
+                    return e
+            if tname in ("Min", "Max"):
+                # ``d/dx min(a₀, …, aₙ) = Σ_i 1[aᵢ is the active extremum] · daᵢ/dx``
+                # a.e.: the derivative follows whichever argument is currently the
+                # min/max.  Express it with the existing comparison/Piecewise
+                # opcodes — every branch is the (finite) derivative of an argument,
+                # so the arithmetic-blend Piecewise lowering stays well-defined.
+                try:
+                    return _resolve_extremum_derivative(tname == "Max", target.args, wrt, walk)
                 except RuntimeError:
                     return e
             return e  # unknown derivative — leave it; Lambdify will fail loudly
@@ -335,8 +392,21 @@ class ContinuousSystem(SystemBase, ABC):
         # Resolve the step method first so an implicit kernel (bdf/rosenbrock/
         # trbdf2) gets a Jacobian-carrying tape — step() reuses this exact tape,
         # so the Jacobian must be baked in here or the engine refuses the step.
+        #
+        # ``method="auto"`` is the same a-priori auto-stiffness contract
+        # ``integrate``/``ensemble`` honour (FIX-AUTOSTIFF): probe the Jacobian
+        # spectrum at the start state and let the solver registry pick the implicit
+        # ``bdf`` on a stiff RHS or the explicit ``rk45`` otherwise
+        # (:func:`tsdynamics.solvers.recommend`).  Without this branch the stepping
+        # path crashed with an opaque "unknown solver method 'auto'" — the one
+        # entry point that rejected the advertised value (diagnosis P2-1), exactly
+        # where auto-stiffness matters for a stiff system stepped incrementally
+        # (Poincaré / basins / streaming).
         self._step_method = method or self._default_method
-        resolution = solvers.resolve(self._step_method)
+        if solvers.normalize(self._step_method) == "auto":
+            resolution = solvers.recommend(self, family="ode", ic=ic_arr, t=t0)
+        else:
+            resolution = solvers.resolve(self._step_method)
         # Cache the canonical kernel name (``"RK45"`` → ``"rk45"``) so the per-step
         # loop hits the engine core directly without re-resolving every call.
         self._step_method_canonical = resolution.name
@@ -797,6 +867,15 @@ class ContinuousSystem(SystemBase, ABC):
         meth = method or self._default_method
         ic_arr = self.resolve_ic(ic)
         prob = ode_problem(self, ic=ic_arr, t0=float(t0))
+        # Resolve ``method=`` through the shared ``auto``-aware contract so the
+        # events path honours ``method="auto"`` identically to integrate/ensemble
+        # (diagnosis P3-1) and records the canonical kernel name in ``meta`` rather
+        # than the raw ``"auto"`` alias.  ``integrate_events`` re-resolves the
+        # canonical name to itself (idempotent), so this is the single resolution
+        # point that drives both the engine call and the provenance.
+        from tsdynamics.engine.run_methods import _resolve_method_for
+
+        meth = _resolve_method_for(meth, prob).name
         sol = engine_run.integrate_events(
             prob,
             events,

@@ -131,3 +131,61 @@ macro_rules! register_solver {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Single-source-of-truth guard: every registered kernel's *declared* caps
+    /// (the [`register_solver!`] literal stored in [`SolverRegistration::caps`])
+    /// must equal the caps its freshly-built instance reports from
+    /// [`Solver::caps`](crate::Solver::caps), and likewise for the name.
+    ///
+    /// The two copies are read by *different* engine paths — the Jacobian /
+    /// implicit-kind guards read the registered `reg.caps`
+    /// (`bridge/marshal.rs`, `bridge/dde.rs`, `bridge/sde.rs`), while the
+    /// dense-output / event path reads the instance method `solver.caps()`
+    /// (`tsdyn-engine/src/event.rs`). If a kernel author edited one and not the
+    /// other (e.g. added `.with_dense()` to the registration but not to
+    /// `caps()`), the engine would build a Jacobian-free tape off one capability
+    /// set yet drive event refinement off a *different* one — a silent
+    /// correctness divergence. This test sees every kernel linked into the test
+    /// binary, so any drift fails CI loudly instead.
+    #[test]
+    fn registered_caps_match_instance_caps() {
+        let mut mismatches: Vec<String> = Vec::new();
+        for reg in registered() {
+            let instance = (reg.make)();
+            let inst_caps = instance.caps();
+            let inst_name = instance.name();
+            if inst_caps != reg.caps {
+                mismatches.push(format!(
+                    "{}: registration caps {:?} != instance caps() {:?}",
+                    reg.name, reg.caps, inst_caps
+                ));
+            }
+            if inst_name != reg.name {
+                mismatches.push(format!(
+                    "registration name {:?} != instance name() {:?}",
+                    reg.name, inst_name
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "solver registration/instance capability drift:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    /// Sanity: the guard above is non-vacuous — there *are* registered kernels
+    /// in the test binary (a dead-stripped registry would make the guard pass
+    /// trivially, see the module-level dead-stripping note).
+    #[test]
+    fn registry_is_non_empty() {
+        assert!(
+            registered().next().is_some(),
+            "no solver kernels registered in the test binary"
+        );
+    }
+}

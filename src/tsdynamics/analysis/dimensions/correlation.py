@@ -169,7 +169,10 @@ def correlation_dimension(
         The point set.
     theiler : int, default 0
         Theiler window — exclude pairs with :math:`|i - j| \le w` (see
-        :func:`correlation_sum`).  Set this for densely sampled flows.
+        :func:`correlation_sum`).  The default ``0`` suits a point set; flow
+        users on a densely sampled trajectory should set a Theiler window to
+        exclude temporally correlated neighbours, otherwise :math:`D_2` is biased
+        downward.
     metric : str or float, default "euclidean"
         Distance metric.
     radii : ndarray, optional
@@ -233,8 +236,16 @@ def correlation_dimension(
             f"only {int(mask.sum())} usable radii (need >= {min_window}); the correlation sum is "
             "saturated or empty over this grid. Pass a wider/denser `radii` or more data."
         )
+    # ``radii`` is returned in the caller's original order (which need not be
+    # monotone, since ``radii`` is a public parameter), so sort the masked pair
+    # by ascending log-radius: ``fit_scaling_region`` scans contiguous index
+    # windows and requires inputs ordered by increasing scale.  Mirrors the
+    # ``np.argsort`` pattern in ``generalized.py`` / ``fixedmass.py``.
     x = np.log(radii[mask])
     y = np.log(c[mask])
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
     fit = fit_scaling_region(x, y, min_window=min_window, tol=tol)
     return DimensionResult(
         estimate=fit.slope,

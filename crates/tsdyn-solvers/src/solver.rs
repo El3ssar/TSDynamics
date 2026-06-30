@@ -115,6 +115,15 @@ pub trait Solver: Send {
 
     /// This kernel's [capabilities](Caps): explicit/implicit, adaptive,
     /// Jacobian need, and supported problem families.
+    ///
+    /// **Must equal the caps the kernel declares in its
+    /// [`register_solver!`](crate::register_solver) line**
+    /// ([`SolverRegistration::caps`](crate::SolverRegistration)). The two copies
+    /// are read by different engine paths — the Jacobian / implicit-kind guards
+    /// read the registered copy, while the dense-output / event path reads this
+    /// method — so a drift between them is a silent correctness divergence. The
+    /// `registered_caps_match_instance_caps` registry test asserts they agree
+    /// for every linked kernel, so an out-of-sync edit fails CI.
     fn caps(&self) -> Caps;
 
     /// Advance `st` by one step of size `h`, using `ev` for RHS/Jacobian values.
