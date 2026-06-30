@@ -1,0 +1,57 @@
+/* ============================================================
+   TSDynamics — MkDocs Material theme overrides
+   Load AFTER tokens.css (see mkdocs.snippet.yml → extra_css order).
+   Material is configured with `primary: custom` / `accent: custom`,
+   so we drive its CSS variables directly below.
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+/* ---- light scheme ---- */
+[data-md-color-scheme="default"]{
+  --md-primary-fg-color:        #11857A;
+  --md-primary-fg-color--light: #2CC5AE;
+  --md-primary-fg-color--dark:  #0C6B62;
+  --md-accent-fg-color:         #574FCF;
+  --md-typeset-a-color:         #0C6B62;
+  --md-default-bg-color:        #FBFCFD;
+}
+
+/* ---- dark scheme (slate) ---- */
+[data-md-color-scheme="slate"]{
+  --md-primary-fg-color: #11857A;
+  --md-accent-fg-color:  #8C85F2;
+  --md-typeset-a-color:  #2CC5AE;
+  --md-default-bg-color: #0B0F14;
+  --md-default-fg-color: #E7ECF0;
+  --md-code-bg-color:    #0E141A;
+}
+
+/* ---- brand chrome: keep the header dark in both schemes ---- */
+.md-header, .md-tabs{ background:#0B0F14; }
+
+/* ---- headings + wordmark in the display face ---- */
+.md-typeset h1, .md-typeset h2, .md-typeset h3,
+.md-header__topic > .md-ellipsis{
+  font-family:'Space Grotesk', system-ui, sans-serif;
+  letter-spacing:-0.015em; font-weight:600;
+}
+
+/* ---- code blocks: brand dark surface + syntax theme, both schemes ---- */
+.md-typeset pre > code, .md-typeset .highlight{ background:#0B0F14; color:#C5D0D7; }
+.md-typeset .highlight .k, .md-typeset .highlight .kn, .md-typeset .highlight .kd{ color:#5FD3C0; }
+.md-typeset .highlight .nf, .md-typeset .highlight .nc{ color:#8C85F2; }
+.md-typeset .highlight .mi, .md-typeset .highlight .mf{ color:#9AD0E6; }
+.md-typeset .highlight .s, .md-typeset .highlight .s1, .md-typeset .highlight .s2{ color:#C9A26B; }
+.md-typeset .highlight .c, .md-typeset .highlight .c1, .md-typeset .highlight .cm{ color:#5C6E6B; font-style:normal; }
+
+/* ---- admonitions / tags accented with brand teal ---- */
+.md-typeset .admonition.note, .md-typeset details.note{ border-color:#11857A; }
+.md-typeset .note > .admonition-title, .md-typeset .note > summary{ background:rgba(17,133,122,0.08); }
+.md-typeset .md-tag{ background:#E7F3F0; color:#0C6B62; }
+
+/* ---- system-page tag pills (use `.system-tag` on a span) ---- */
+.system-tag{
+  font-family:'IBM Plex Mono', monospace; font-size:.72rem;
+  color:#0C6B62; background:#E7F3F0; border:1px solid #CDE8E2;
+  border-radius:20px; padding:3px 11px; margin-right:6px;
+}

@@ -221,6 +221,102 @@ function buildLineComet(geom, anim, palette, index) {
 }
 
 /**
+ * Build the reveal comet for one **points** geometry (a map's iterate cloud): a
+ * faint full point-cloud backdrop, a bright windowed cloud of the most-recent
+ * samples (animated via `setDrawRange` in *vertex* units — a Points geometry is
+ * unindexed, so `setDrawRange(start, count)` counts vertices directly), and a
+ * `THREE.Points` head at the current sample.
+ *
+ * Mirrors `buildLineComet`'s `{ group, seek, nVerts }` contract so the shared
+ * `installAnimation` clock drives line and points comets identically.  A scatter
+ * attractor has no chord to sweep, so the comet is a *trailing swarm* rather than a
+ * drawn curve — the recognizable shape (Hénon's banana, the logistic parabola)
+ * accumulates as the head wanders it.
+ *
+ * @param {object} geom - the geometry block (positions/colors/material, type "points").
+ * @param {object} anim - the metadata.animation block.
+ * @param {string[]} palette - the theme palette color cycle for auto-coloring.
+ * @param {number} index - this geometry's index in the scene layer list.
+ */
+function buildPointsComet(geom, anim, palette, index) {
+  const nVerts = geom.positions.length / 3;
+  const hasColor = Boolean(geom.colors && geom.colors.length === geom.positions.length);
+  const group = new THREE.Group();
+  const mat = geom.material || null;
+  const baseColor = hasColor ? 0xffffff : resolveColor(mat, palette, index, 0x4f9dff);
+  const size = mat && mat.markersize != null ? mat.markersize : 1.4;
+  const alpha = mat && mat.alpha != null ? mat.alpha : 1.0;
+
+  // Faint full-cloud backdrop (the static attractor the swarm sweeps over).
+  const backdropGeom = buildGeometry(geom);
+  const backdrop = new THREE.Points(
+    backdropGeom,
+    new THREE.PointsMaterial({
+      vertexColors: hasColor,
+      color: baseColor,
+      size: size,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0.16 * alpha,
+    })
+  );
+  group.add(backdrop);
+
+  // Bright trailing swarm — its own geometry so the draw-range does not touch the
+  // backdrop.  Points are unindexed, so setDrawRange is in vertex units.
+  const swarmGeom = buildGeometry(geom);
+  const swarm = new THREE.Points(
+    swarmGeom,
+    new THREE.PointsMaterial({
+      vertexColors: hasColor,
+      color: baseColor,
+      size: size * 1.35,
+      sizeAttenuation: false,
+      opacity: alpha,
+      transparent: alpha < 1.0,
+    })
+  );
+  group.add(swarm);
+
+  // The head marker — a single THREE.Points at the current sample.
+  let head = null;
+  if (anim.head) {
+    const headPos = new Float32Array([0, 0, 0]);
+    const headGeom = new THREE.BufferGeometry();
+    headGeom.setAttribute("position", new THREE.BufferAttribute(headPos, 3));
+    const headColor =
+      anim.head_color != null
+        ? new THREE.Color(anim.head_color[0], anim.head_color[1], anim.head_color[2])
+        : new THREE.Color(0xffe066);
+    head = new THREE.Points(
+      headGeom,
+      new THREE.PointsMaterial({
+        size: Math.max(2.0, anim.head_size || 6.0),
+        color: headColor,
+        sizeAttenuation: false,
+      })
+    );
+    group.add(head);
+  }
+
+  const positions = geom.positions;
+  function seek(headVertex, trailVertices) {
+    const hv = Math.max(0, Math.min(nVerts - 1, headVertex | 0));
+    // Swarm window: [lo, hv] in vertex units. trailVertices == null ⇒ persistent.
+    const lo = trailVertices == null ? 0 : Math.max(0, hv - trailVertices);
+    swarm.geometry.setDrawRange(lo, Math.max(0, hv - lo + 1));
+    if (head) {
+      const p = head.geometry.getAttribute("position");
+      p.setXYZ(0, positions[3 * hv], positions[3 * hv + 1], positions[3 * hv + 2]);
+      p.needsUpdate = true;
+    }
+  }
+  seek(0, anim.trail_length_samples);
+
+  return { group, seek, nVerts };
+}
+
+/**
  * Install the reveal-comet animation: build a comet per line geometry, a master
  * `requestAnimationFrame` clock advancing the head over all comets in lockstep,
  * and a minimal play/pause + restart overlay.  Returns `{ objects, stop() }`.
@@ -374,9 +470,10 @@ export function renderThreejsPayload(container, payload, opts = {}) {
   scene.add(key);
 
   // When the payload is animated, build a reveal comet for every line geometry
-  // (other geometry types are drawn static); otherwise draw every geometry static.
+  // (a swept curve) and every points geometry (a trailing swarm — a map's iterate
+  // cloud); surface geometries are drawn static.  Otherwise draw everything static.
   // `revealing` is true only when at least one comet was actually installed — a
-  // (defensive) animation block with no line geometry must NOT freeze the camera.
+  // (defensive) animation block with no animatable geometry must NOT freeze the camera.
   const anim = meta.animation || null;
   let animationHandle = null;
   let revealing = false;
@@ -389,15 +486,19 @@ export function renderThreejsPayload(container, payload, opts = {}) {
         const comet = buildLineComet(geom, anim, palette, i);
         comets.push(comet);
         scene.add(comet.group);
+      } else if (geom.type === "points") {
+        const comet = buildPointsComet(geom, anim, palette, i);
+        comets.push(comet);
+        scene.add(comet.group);
       } else {
-        scene.add(buildObject(geom, i, palette)); // points / surface: drawn whole
+        scene.add(buildObject(geom, i, palette)); // surface: drawn whole
       }
     }
     if (comets.length) {
       animationHandle = installAnimation(container, comets, anim);
       revealing = true;
     } else {
-      console.warn("tsd-anim(threejs): animation block but no line geometry to reveal");
+      console.warn("tsd-anim(threejs): animation block but no line/points geometry to reveal");
     }
   } else {
     for (let i = 0; i < geometries.length; i++) {

@@ -1,0 +1,144 @@
+{
+  "_comment": "Editorial decoration for the TSDynamics system catalogue. The registry (registry.all_systems()) is the SOURCE OF TRUTH for every fact: name, family, category, dim, params, variables, reference, doi, known_lyapunov, _field_shape. This file ONLY decorates: human display names for subcategories/types, prose blurbs, parameter role notes, plot-dt overrides, projection picks for 4D+ systems, and behavior tags. NEVER put computed quantities (Lyapunov spectra, fractal dimensions, Kaplan-Yorke) here — those are computed at build time. Editorial keys that do not match a registry system are ignored harmlessly; registry systems with no editorial entry render without decoration. Seeded from design/brand/data/systems.json and reconciled against the live registry.",
+
+  "type_labels": {
+    "ode": "ODEs",
+    "dde": "DDEs",
+    "sde": "SDEs",
+    "map": "Maps"
+  },
+
+  "type_blurbs": {
+    "ode": "Continuous-time systems. Write the right-hand side; TSDynamics lowers it to the Rust engine and integrates with adaptive Dormand–Prince, implicit BDF, or fixed-step schemes.",
+    "dde": "Feedback with a finite memory. Supply the delays and a history function; TSDynamics integrates by the method of steps with dense interpolation of the past.",
+    "sde": "Systems driven by noise. Provide drift and diffusion; TSDynamics integrates with Euler–Maruyama or Milstein and returns ensembles, moments, and the deterministic skeleton.",
+    "map": "Discrete-time systems. Iterate orbits, cobweb and bifurcation diagrams, and Lyapunov exponents directly — no integration needed."
+  },
+
+  "type_definitions": {
+    "ode": "\\dot{x} = f(x, t)",
+    "dde": "\\dot{x}(t) = f\\big(x(t),\\, x(t-\\tau)\\big)",
+    "sde": "dx = f(x)\\,dt + g(x)\\,dW",
+    "map": "x_{n+1} = f(x_n)"
+  },
+
+  "subcategory_labels": {
+    "chaotic_attractors": "Chaotic attractors",
+    "chem_bio_systems": "Chemical & biological systems",
+    "climate_geophysics": "Climate & geophysics",
+    "coupled_systems": "Coupled systems",
+    "exotic_systems": "Exotic systems",
+    "oscillatory_systems": "Oscillatory systems",
+    "physical_systems": "Physical systems",
+    "population_dynamics": "Population dynamics",
+    "spatial_fields": "Spatial fields",
+    "delayed_systems": "Delayed systems",
+    "stochastic_systems": "Noise-driven systems",
+    "chaotic_maps": "Chaotic maps",
+    "exotic_maps": "Exotic maps",
+    "geometric_maps": "Geometric maps",
+    "polynomial_maps": "Polynomial maps",
+    "population_maps": "Population maps"
+  },
+
+  "subcategory_blurbs": {
+    "chaotic_attractors": "Dissipative flows with a positive Lyapunov exponent that settle onto a strange attractor — bounded, aperiodic, sensitive to initial conditions.",
+    "chem_bio_systems": "Reaction kinetics and excitable cells. Mass-action and Hill-type nonlinearities give oscillations, bistability, and spikes.",
+    "climate_geophysics": "Low-order truncations of atmosphere, ocean, and flow — capturing regime behavior, tipping, and reversals with a handful of modes.",
+    "coupled_systems": "Engineered and coupled chaotic flows — generalized Lorenz/Chen-family attractors and interacting units.",
+    "exotic_systems": "Minimal or unusual constructions — hyperchaotic, conservative, and engineered attractors of higher dimension.",
+    "oscillatory_systems": "Organized around a limit cycle — self-sustained oscillation, relaxation cycles, tori, and forced resonance.",
+    "physical_systems": "Mechanical and electrical models from first principles — pendula, circuits, lasers, and few-body motion.",
+    "population_dynamics": "Interacting species and resources — cycles, coexistence, and predator–prey coevolution.",
+    "spatial_fields": "Spatially extended PDEs reduced to large ODE systems by method-of-lines — pattern formation and spatiotemporal chaos.",
+    "delayed_systems": "The rate depends on the state τ ago — a scalar variable becomes effectively infinite-dimensional, giving high-dimensional chaos from one line.",
+    "stochastic_systems": "Deterministic skeletons perturbed by Wiener noise — mean reversion, escape, switching, and noise-induced transitions.",
+    "chaotic_maps": "Aperiodic, exponentially sensitive orbits — the simplest route to chaos.",
+    "exotic_maps": "Strange and ornamental attractors — iterated trigonometric and polynomial maps prized for their structure.",
+    "geometric_maps": "Area-preserving and piecewise-linear maps — mixing, horseshoes, circle and toral dynamics.",
+    "polynomial_maps": "Low-degree polynomial maps — the canonical setting for period-doubling and renormalization.",
+    "population_maps": "Discrete-generation ecology — single-species recruitment and host–parasitoid models."
+  },
+
+  "systems": {
+    "Lorenz": {"blurb": "The 1963 convection model — three coupled quadratic ODEs whose butterfly attractor launched modern chaos theory.", "featured": true, "behavior": ["chaotic", "dissipative"], "param_roles": {"sigma": "Prandtl number", "rho": "Rayleigh ratio (drives the bifurcation)", "beta": "geometric aspect ratio"}},
+    "Rossler": {"blurb": "A single-folded-band attractor built from the minimal nonlinearity — one quadratic term — yet fully chaotic.", "featured": true, "behavior": ["chaotic", "dissipative"], "param_roles": {"a": "feedback strength", "b": "shift", "c": "fold control"}},
+    "Chen": {"blurb": "A dual to Lorenz with the opposite sign convention — a generalized chaotic flow in the Lorenz family.", "behavior": ["chaotic"]},
+    "Chua": {"blurb": "The double-scroll attractor of Chua's circuit — the canonical electronic chaos generator.", "featured": true, "behavior": ["chaotic", "circuit"]},
+    "Thomas": {"blurb": "Cyclically symmetric flow whose 27 equilibria and labyrinthine trajectories arise from pure sinusoidal feedback.", "behavior": ["chaotic", "cyclically symmetric"]},
+    "Halvorsen": {"blurb": "A cyclically symmetric quadratic flow with a tightly wound multi-scroll attractor.", "behavior": ["chaotic"]},
+    "Aizawa": {"blurb": "An ornamental forced attractor with a pinched-torus geometry — the TSDynamics signature shape.", "featured": true, "behavior": ["chaotic"]},
+    "Dadras": {"blurb": "A multi-wing chaotic flow with adjustable scroll count.", "behavior": ["chaotic"]},
+    "NoseHoover": {"blurb": "A conservative thermostatted oscillator — chaos without dissipation, sampling a canonical ensemble.", "behavior": ["conservative"]},
+    "RabinovichFabrikant": {"blurb": "A flow from plasma physics with stiff, spiky excursions and a delicate attractor.", "behavior": ["chaotic"]},
+    "RikitakeDynamo": {"blurb": "A two-disk dynamo whose chaotic reversals model the geomagnetic field flipping polarity.", "behavior": ["chaotic", "reversals"]},
+    "Lorenz84": {"blurb": "Lorenz's low-order atmospheric circulation model — regime behavior in the mid-latitude jet.", "behavior": ["chaotic", "climate"]},
+    "Lorenz96": {"blurb": "A ring of advectively coupled sites — the standard testbed for atmospheric data assimilation and spatiotemporal chaos.", "featured": true, "behavior": ["spatiotemporal"], "param_roles": {"f": "forcing (drives the chaos onset)", "N": "number of lattice sites"}},
+    "Rucklidge": {"blurb": "A model of convection in an imposed magnetic field — a compact chaotic flow.", "behavior": ["chaotic"]},
+    "BurkeShaw": {"blurb": "A symmetric chaotic flow derived from the Lorenz template.", "behavior": ["chaotic"]},
+
+    "KuramotoSivashinsky": {"blurb": "The canonical 1-D model of spatiotemporal chaos — flame fronts and falling films, chaotic in space and time.", "featured": true, "behavior": ["spatiotemporal"], "param_roles": {"N": "number of grid modes", "L": "domain length (sets the number of unstable modes)"}},
+    "GrayScott": {"blurb": "A reaction–diffusion system whose spots, stripes, and self-replicating patterns are a landmark of Turing morphogenesis.", "featured": true, "behavior": ["patterns"], "param_roles": {"F": "feed rate", "k": "kill rate", "Du": "u diffusion", "Dv": "v diffusion"}},
+    "SwiftHohenberg": {"blurb": "The prototype pattern-forming PDE — stripes and hexagons from a single scalar field near a finite-wavelength instability.", "featured": true, "behavior": ["patterns"]},
+
+    "VanDerPol": {"blurb": "The archetypal relaxation oscillator — nonlinear damping pumps a stable limit cycle.", "behavior": ["limit cycle"]},
+    "ForcedVanDerPol": {"blurb": "Van der Pol under periodic forcing — frequency entrainment and the route to chaos.", "behavior": ["forced"]},
+    "Duffing": {"blurb": "A driven double-well oscillator — the textbook forced-chaos system with a fractal basin boundary.", "featured": true, "behavior": ["forced", "chaotic"]},
+    "MooreSpiegel": {"blurb": "A thermo-mechanical oscillator from stellar convection — aperiodic pulsation.", "behavior": ["chaotic"]},
+    "ShimizuMorioka": {"blurb": "A symmetric reduction of Lorenz-like dynamics near a homoclinic bifurcation.", "behavior": ["chaotic"]},
+    "Torus": {"blurb": "Quasiperiodic motion on a 2-torus — two incommensurate frequencies, no chaos.", "behavior": ["quasiperiodic"]},
+    "Lissajous2D": {"blurb": "A planar Lissajous figure — the elementary two-frequency oscillation.", "behavior": ["quasiperiodic"]},
+    "Lissajous3D": {"blurb": "A three-frequency Lissajous curve traced on a torus.", "behavior": ["quasiperiodic"]},
+
+    "DoublePendulum": {"blurb": "Two coupled pendula — the iconic mechanically chaotic system, exquisitely sensitive to initial conditions.", "featured": true, "behavior": ["chaotic", "conservative"], "projection": ["theta1", "theta2", "p1"]},
+    "HenonHeiles": {"blurb": "A galactic potential whose bounded motion transitions from regular tori to chaos with energy.", "behavior": ["conservative", "chaotic"], "projection": ["x", "y", "px"]},
+    "Colpitts": {"blurb": "The Colpitts LC oscillator driven into chaos — a real electronic circuit model.", "behavior": ["chaotic", "circuit"]},
+    "Laser": {"blurb": "A single-mode laser (Haken) — the Lorenz equations in optical disguise.", "behavior": ["chaotic"]},
+    "JerkCircuit": {"blurb": "A minimal third-order 'jerk' circuit — chaos from one nonlinear element.", "behavior": ["chaotic", "circuit"]},
+    "SwingingAtwood": {"blurb": "The swinging Atwood machine — a mass on a pulley that swings into chaotic motion.", "behavior": ["conservative", "chaotic"], "projection": ["r", "theta", "pr"]},
+    "WindmiReduced": {"blurb": "A reduced model of the magnetosphere–ionosphere coupling (WINDMI) — substorm dynamics.", "behavior": ["chaotic"]},
+
+    "HindmarshRose": {"blurb": "A three-variable neuron model reproducing spiking and bursting with chaotic interspike patterns.", "featured": true, "behavior": ["bursting", "chaotic"]},
+    "ForcedFitzHughNagumo": {"blurb": "The forced FitzHugh–Nagumo excitable cell — periodic stimulation of a spiking neuron.", "behavior": ["excitable", "forced"]},
+    "Oregonator": {"blurb": "The Field–Körös–Noyes model of the Belousov–Zhabotinsky reaction — chemical relaxation oscillations.", "behavior": ["relaxation"]},
+    "GlycolyticOscillation": {"blurb": "Sel'kov-type glycolytic oscillations — metabolic limit cycles.", "behavior": ["limit cycle"]},
+    "ForcedBrusselator": {"blurb": "The Brusselator under periodic forcing — entrainment and chaos in an autocatalytic reaction.", "behavior": ["forced"]},
+    "HastingsPowell": {"blurb": "A three-trophic food chain whose tea-cup attractor is a landmark of ecological chaos.", "behavior": ["chaotic"]},
+    "CellCycle": {"blurb": "A model of the eukaryotic cell-division oscillator.", "behavior": ["oscillatory"]},
+    "CircadianRhythm": {"blurb": "A molecular circadian clock — entrainable biochemical oscillation.", "behavior": ["oscillatory"]},
+
+    "MackeyGlass": {"blurb": "A single delayed feedback loop modeling blood-cell production — the canonical high-dimensional delay chaos.", "featured": true, "behavior": ["chaotic"], "param_roles": {"tau": "feedback delay (raise it to climb the period-doubling cascade into chaos)", "beta": "production gain", "gamma": "decay rate", "n": "Hill exponent"}},
+    "IkedaDelay": {"blurb": "A delayed optical-cavity model — sinusoidal nonlinearity with memory, chaotic for modest delay.", "behavior": ["chaotic"], "param_roles": {"tau": "round-trip delay", "mu": "feedback strength"}},
+    "SprottDelay": {"blurb": "A minimal scalar delay equation engineered for chaos from one nonlinear term.", "behavior": ["chaotic"], "param_roles": {"tau": "feedback delay"}},
+    "ScrollDelay": {"blurb": "A delayed feedback circuit producing multi-scroll attractors in the embedding.", "behavior": ["chaotic"], "param_roles": {"tau": "feedback delay"}},
+    "PiecewiseCircuit": {"blurb": "A delayed piecewise-linear circuit — chaos from a saturating nonlinearity with memory.", "behavior": ["chaotic"], "param_roles": {"tau": "feedback delay"}},
+
+    "OrnsteinUhlenbeck": {"blurb": "The canonical mean-reverting process — linear restoring drift plus additive noise, the Gaussian stationary benchmark.", "featured": true, "behavior": ["mean-reverting"], "param_roles": {"theta": "reversion rate", "mu": "long-run mean", "sigma": "noise amplitude"}},
+    "GeometricBrownianMotion": {"blurb": "Multiplicative noise — the log-normal process underlying Black–Scholes and population growth under uncertainty.", "featured": true, "behavior": ["multiplicative"], "param_roles": {"mu": "drift rate", "sigma": "volatility"}},
+    "DoubleWell": {"blurb": "A particle in a bistable potential driven by noise — noise-induced switching between the two wells.", "featured": true, "behavior": ["switching", "bistable"], "param_roles": {"sigma": "noise amplitude (sets the escape rate)"}},
+
+    "Logistic": {"blurb": "The logistic map — one quadratic line whose period-doubling cascade is the textbook road to chaos.", "featured": true, "behavior": ["period-doubling", "chaotic"], "param_roles": {"r": "growth rate (the bifurcation parameter)"}},
+    "Henon": {"blurb": "The Hénon map — a 2-D quadratic map whose folded attractor is the canonical strange attractor of dissipative maps.", "featured": true, "behavior": ["chaotic"], "param_roles": {"a": "stretching", "b": "area contraction"}},
+    "Tent": {"blurb": "The piecewise-linear tent map — exact, fully chaotic, conjugate to the binary shift.", "behavior": ["chaotic"]},
+    "Chirikov": {"blurb": "The Chirikov standard map — the paradigm of Hamiltonian chaos, mixing tori and chaotic seas.", "featured": true, "behavior": ["mixed", "conservative"], "param_roles": {"K": "kick strength (controls the transition to global chaos)"}},
+    "Ikeda": {"blurb": "The Ikeda map — a spiral strange attractor from a nonlinear optical ring cavity.", "featured": true, "behavior": ["chaotic"]},
+    "Tinkerbell": {"blurb": "An ornamental 2-D quadratic map whose attractor resembles a fairy in flight.", "behavior": ["chaotic"]},
+    "Gingerbreadman": {"blurb": "A piecewise-linear map tiling the plane with quasiperiodic gingerbread-man cells.", "behavior": ["quasiperiodic"]},
+    "Ulam": {"blurb": "The Ulam map (logistic at r=4) — exactly chaotic with a known invariant density.", "behavior": ["chaotic"]},
+
+    "Baker": {"blurb": "The baker's map — stretch, cut, and stack; the cleanest model of mixing and the horseshoe.", "behavior": ["mixing"]},
+    "Circle": {"blurb": "The circle map — mode-locking, Arnold tongues, and the devil's staircase.", "behavior": ["mode-locking"]},
+    "Chebyshev": {"blurb": "Iterated Chebyshev polynomials — exactly chaotic maps of the interval.", "behavior": ["chaotic"]},
+    "Gauss": {"blurb": "The Gauss (continued-fraction) map — number-theoretic chaos on the unit interval.", "behavior": ["chaotic"]},
+
+    "Ricker": {"blurb": "The Ricker recruitment map — over-compensatory density dependence driving fishery population cycles and chaos.", "behavior": ["chaotic", "cycles"]},
+    "MaynardSmith": {"blurb": "A 2-D ecological recruitment map with delayed density dependence.", "behavior": ["cycles"]},
+
+    "DeJong": {"blurb": "A Peter de Jong attractor — a sinusoidal iterated map prized for its lacework structure.", "behavior": ["attractor"]},
+    "KaplanYorke": {"blurb": "The Kaplan–Yorke map — a skew product whose fractal dimension is known in closed form.", "behavior": ["chaotic"]},
+
+    "Pickover": {"blurb": "A Pickover (Clifford-style) 3-D ornamental attractor map.", "behavior": ["attractor"]},
+    "Bedhead": {"blurb": "An ornamental trigonometric attractor map.", "behavior": ["attractor"]},
+    "GumowskiMira": {"blurb": "The Gumowski–Mira map — accelerator-physics origin, endlessly varied ornamental attractors.", "behavior": ["attractor"]}
+  }
+}

@@ -1,0 +1,62 @@
+/* ============================================================
+   TSDynamics — brand tokens (framework-agnostic)
+   Primary teal sampled from viridis · accent indigo from twilight.
+   Load this first, then any framework overrides (e.g. mkdocs/extra.css).
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root{
+  /* ---- brand ---- */
+  --ts-teal:           #11857A;  /* primary · viridis ≈ 0.50 — mark, links, actions */
+  --ts-teal-strong:    #0C6B62;  /* primary text / links on light (AA) */
+  --ts-teal-soft:      #E7F3F0;  /* tint background */
+  --ts-teal-bright:    #2CC5AE;  /* primary on dark surfaces */
+  --ts-indigo:         #574FCF;  /* accent · twilight ≈ 0.30 — highlights, integrator state */
+  --ts-indigo-strong:  #463FB0;  /* accent text on light */
+  --ts-indigo-bright:  #8C85F2;  /* accent on dark surfaces */
+
+  /* ---- cool-gray neutral ramp ---- */
+  --ts-n0:#FBFCFD; --ts-n50:#F4F6F8; --ts-n100:#E9EDF1; --ts-n200:#D7DDE3;
+  --ts-n300:#BBC4CC; --ts-n400:#94A0AA; --ts-n500:#6B7681; --ts-n600:#515B65;
+  --ts-n700:#3A434B; --ts-n800:#232A31; --ts-n900:#161B21; --ts-n950:#0B0F14;
+  --ts-ink:#14181D;
+
+  /* ---- type ---- */
+  --ts-font-display:'Space Grotesk', system-ui, sans-serif;   /* headings + wordmark */
+  --ts-font-body:'IBM Plex Sans', system-ui, sans-serif;      /* body + UI */
+  --ts-font-mono:'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* ---- shape ---- */
+  --ts-radius:12px; --ts-radius-sm:7px;
+
+  /* ---- semantic · LIGHT scheme (default) ---- */
+  --ts-bg:#FBFCFD; --ts-surface:#FFFFFF; --ts-surface-2:#F4F6F8;
+  --ts-text:#14181D; --ts-muted:#5B656E; --ts-border:#E4E8EC;
+  --ts-primary:var(--ts-teal); --ts-link:var(--ts-teal-strong); --ts-accent:var(--ts-indigo);
+
+  /* ---- code syntax theme (brand) ---- */
+  --ts-code-bg:#0B0F14; --ts-code-fg:#C5D0D7;
+  --ts-code-keyword:#5FD3C0; --ts-code-func:#8C85F2; --ts-code-num:#9AD0E6;
+  --ts-code-string:#C9A26B; --ts-code-comment:#5C6E6B;
+}
+
+/* Auto dark via OS preference */
+@media (prefers-color-scheme: dark){
+  :root{
+    --ts-bg:#0B0F14; --ts-surface:#11161D; --ts-surface-2:#161C24;
+    --ts-text:#E7ECF0; --ts-muted:#93A0AD; --ts-border:#232B34;
+    --ts-primary:var(--ts-teal-bright); --ts-link:var(--ts-teal-bright); --ts-accent:var(--ts-indigo-bright);
+  }
+}
+
+/* Explicit override hooks: set data-theme="light|dark" on <html> to force a scheme */
+[data-theme="light"]{
+  --ts-bg:#FBFCFD; --ts-surface:#FFFFFF; --ts-surface-2:#F4F6F8;
+  --ts-text:#14181D; --ts-muted:#5B656E; --ts-border:#E4E8EC;
+  --ts-primary:var(--ts-teal); --ts-link:var(--ts-teal-strong); --ts-accent:var(--ts-indigo);
+}
+[data-theme="dark"]{
+  --ts-bg:#0B0F14; --ts-surface:#11161D; --ts-surface-2:#161C24;
+  --ts-text:#E7ECF0; --ts-muted:#93A0AD; --ts-border:#232B34;
+  --ts-primary:var(--ts-teal-bright); --ts-link:var(--ts-teal-bright); --ts-accent:var(--ts-indigo-bright);
+}

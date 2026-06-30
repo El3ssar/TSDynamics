@@ -1,38 +1,18 @@
----
-description: Install TSDynamics, run a first trajectory, and learn the mental model the rest of the documentation builds on.
----
+# Start
 
-<span class="ts-kicker">Start</span>
+Get productive with TSDynamics in a few minutes: install the library,
+integrate your first trajectory, define a system of your own, and run a first
+analysis.
 
-# Start here
+This section will cover:
 
-Three pages: installation, a complete worked example covering all three
-system families, and the concepts everything else builds on. They are the
-only prerequisites for the rest of the documentation.
+- **Install** — adding TSDynamics to your environment from a prebuilt wheel.
+- **First trajectory** — instantiate a built-in system, integrate it, and read
+  named components off the result.
+- **Define your own system** — subclass a family base class and write the math
+  as one symbolic method.
+- **First analysis** — a Lyapunov spectrum and a bifurcation diagram, end to
+  end.
 
-<div class="grid cards" markdown>
-
-- **[Install](install.md)**
-
-    ---
-
-    Installation with pip or uv from a prebuilt wheel — no compiler needed —
-    and the optional extras.
-
-- **[First trajectory](first-trajectory.md)**
-
-    ---
-
-    A complete worked example: integrate the Lorenz system, compute its
-    Lyapunov spectrum, iterate the Hénon map, and integrate a delay
-    equation with a history function.
-
-- **[The mental model](concepts.md)**
-
-    ---
-
-    A system is a params dict, a dimension, and one method. The three
-    subclass contracts, the compile-once cache, the `System` protocol,
-    and the registry.
-
-</div>
+From here, head to the [analysis toolkit](../analysis/) or browse the
+[system catalogue](../systems/).
