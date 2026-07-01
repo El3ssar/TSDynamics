@@ -45,7 +45,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (2026-03-27)
@@ -93,7 +93,7 @@ jobs:
       tag: ${{ steps.semrel.outputs.tag }}
       version: ${{ steps.semrel.outputs.version }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # PSR needs the full tag history AND an attached branch (it commits the
           # version bump back) — do not pin ref to a sha (detached HEAD).
@@ -150,7 +150,7 @@ jobs:
     steps:
       # Check out the *tag* (PSR's new tag, or the dispatched publish_tag) so the
       # built wheel carries the released version, not the pre-bump commit.
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
@@ -182,7 +182,7 @@ jobs:
     if: ${{ always() && needs.resolve.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
@@ -228,7 +228,7 @@ jobs:
       # workflow-trigger commit. Kept in a sub-directory so it cannot clobber the
       # collected dist/.
       - name: Check out the released source for the SBOM
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.resolve.outputs.tag }}
           path: sbom-src
