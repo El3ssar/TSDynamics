@@ -8,8 +8,8 @@ description: API reference for tsdynamics.transforms — power spectra, detrend/
 
 The signal layer that turns a raw [`Trajectory`](base.md) (or a bare array)
 into analysable features: spectral estimators, preprocessing, and a feature
-bank. Prose-first treatment lives in the
-[Transforms](../transforms/index.md) section.
+bank. These feed the from-a-signal quantifiers documented in the
+[Analysis](../analysis/index.md) section.
 
 Every entry point is shape-preserving where it makes sense — pass a
 `Trajectory` in and the sampling interval is read from its metadata — and is

@@ -310,3 +310,19 @@
     height: 320px;
   }
 }
+
+/* Bibliography: the muted "cited by <systems>" line under each reference. */
+.md-typeset .ts-cite-systems {
+  display: inline-block;
+  margin-top: 0.15rem;
+  font-family: var(--ts-mono);
+  font-size: 0.72em;
+  line-height: 1.5;
+  color: var(--ts-muted);
+}
+.md-typeset .ts-cite-systems code {
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  padding: 0;
+}
