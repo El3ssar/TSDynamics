@@ -247,14 +247,34 @@
    the stage.dataset.live guard makes a second init a no-op.
    ============================================================ */
 function tsInitHero() {
-  if (!window.THREE) {
-    // three.js (CDN script above) may not have parsed yet — retry shortly.
-    return setTimeout(tsInitHero, 80);
-  }
   var stage = document.getElementById("ts-stage");
-  if (!stage) return;                       // not on the home page
+  if (!stage) return;                       // not on this page — document$ re-fires
+                                            // on the next page, so DO NOT retry here
+                                            // (a stageless setTimeout loop spins forever).
   if (stage.dataset.live) return;           // already initialised (instant-nav guard)
+  if (!window.THREE) {
+    // three.js (CDN script above) may not have parsed yet — retry shortly, but
+    // only while THIS stage is still in the document (instant-nav away cancels it).
+    if (document.body.contains(stage)) setTimeout(tsInitHero, 80);
+    return;
+  }
   stage.dataset.live = "1";
+
+  // ---- lifecycle: everything below is torn down the instant #ts-stage leaves
+  //      the DOM (Material instant-navigation replaces the content subtree).
+  //      `alive` gates the rAF loop AND the async tour so no stray frame() keeps
+  //      firing and no next() fetches assets/hero/*.json from the wrong page. ----
+  var alive = true, rafId = null, nextTimer = null;
+  // Resolve the hero asset base to an ABSOLUTE url ONCE, against the home page's
+  // baseURI (we are on the home page right now). A later stray fetch therefore
+  // hits the correct path, never assets/hero/*.json relative to a sub-page.
+  var HERO_BASE = new URL("assets/hero/", document.baseURI).href;
+  function detached() { return !document.body.contains(stage); }
+  function stop() {
+    alive = false;
+    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+    if (nextTimer !== null) { clearTimeout(nextTimer); nextTimer = null; }
+  }
 
   var TEAL = 0x2CC5AE, TEAL_DIM = 0x11857A, INDIGO = 0x8C85F2, BG = 0x0B0F14;
   var SCALE = 24, TAIL = 560, SPEED = 3.0, AUTO_YAW = 0.0016;
@@ -353,7 +373,10 @@ function tsInitHero() {
   }
 
   function frame() {
-    requestAnimationFrame(frame);
+    // Instant-nav away removes #ts-stage from the document — tear the whole
+    // loop down (no more rAF, no pending fetch) instead of spinning forever.
+    if (!alive || detached()) { stop(); return; }
+    rafId = requestAnimationFrame(frame);
     if (!cur) return;
     if (idle && !reduced) group.rotation.y += AUTO_YAW;
     if (cur.fade < 1) cur.fade = Math.min(1, cur.fade + 0.045);   // fade-in
@@ -368,12 +391,19 @@ function tsInitHero() {
   // ---- random tour ----
   var systems = [], last = null;
   function next() {
+    if (!alive || detached()) { stop(); return; }   // torn down — no fetch
     if (!systems.length) return;
     var pick;
     do { pick = systems[(Math.random() * systems.length) | 0]; } while (pick === last && systems.length > 1);
     last = pick;
-    fetch("assets/hero/" + pick + ".json").then(function (r) { return r.json(); })
-      .then(build).catch(function () { setTimeout(next, 1200); });
+    fetch(HERO_BASE + pick + ".json").then(function (r) { return r.json(); })
+      .then(function (data) { if (alive && !detached()) build(data); })
+      .catch(function () {
+        // Only retry while the hero is still on-screen; an instant-nav away
+        // must NOT keep retrying (that was the infinite 404 flood).
+        if (alive && !detached()) nextTimer = setTimeout(next, 1200);
+        else stop();
+      });
   }
 
   // ---- drag to orbit ----
@@ -387,14 +417,17 @@ function tsInitHero() {
   dom.addEventListener("touchend", function (){ if (!dragging) return; dragging = false; idleT = setTimeout(function(){ idle = true; }, 1500); });
 
   window.addEventListener("resize", function () {
-    if (!stage.isConnected) return;
+    if (!alive || detached()) return;
     W = stage.clientWidth || W; H = stage.clientHeight || H;
     camera.aspect = W / H; camera.updateProjectionMatrix(); renderer.setSize(W, H);
   });
 
-  fetch("assets/hero/manifest.json").then(function (r){ return r.json(); })
-    .then(function (m){ systems = m.systems || []; next(); frame(); })
-    .catch(function (){ if (boot) boot.textContent = "no attractor data"; });
+  fetch(HERO_BASE + "manifest.json").then(function (r){ return r.json(); })
+    .then(function (m){
+      if (!alive || detached()) { stop(); return; }
+      systems = m.systems || []; next(); frame();
+    })
+    .catch(function (){ if (alive && !detached() && boot) boot.textContent = "no attractor data"; });
 }
 
 /* ---- copy-to-clipboard on the install chip ---- */

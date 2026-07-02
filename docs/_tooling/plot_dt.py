@@ -13,10 +13,11 @@ output step that does not visibly straighten the curve.
 
 The universal sagitta rule
 --------------------------
-The maintainer's rule: *"per system calculate the sagitta with error 0.1, that
+The maintainer's rule: *"per system calculate the sagitta with error 0.01, that
 yields the dt, integrate with that — guarantees no pixelated attractor."*  So the
-**default** ``epsilon`` here is ``0.1`` and every attractor integration (three.js
-and static alike) should sample at the ``dt`` this returns.
+**default** ``epsilon`` here is ``0.01`` (tightened from the earlier ``0.1``,
+which still left the fast attractors faceted) and every attractor integration
+(three.js and static alike) should sample at the ``dt`` this returns.
 
 Crucially the pilot is integrated at a **fine** step (``dt0``), *finer* than any
 plausible output step, so the sagitta search has room to find the true output
@@ -24,9 +25,12 @@ plausible output step, so the sagitta search has room to find the true output
 QiChen, YuWang, …): those are fast attractors whose tight curvature demands a
 ``dt`` *finer* than the naïve ``0.01`` — a pilot integrated at ``0.01`` can only
 ever report "``0.01`` is already too coarse", never the finer step that actually
-reads smooth.  Integrating the pilot at ``0.002`` lets sagitta return e.g.
-``0.002`` for DequanLi and ``0.006`` for QiChen (and, at the other end, ``0.2``
-for the slow Rössler).
+reads smooth.  A sagitta search can never report a step *finer than the pilot it
+ran*, so at ``epsilon=0.01`` the fastest attractors (DequanLi, QiChen, HyperQi)
+saturate the pilot floor — the ODE pilot is therefore integrated at ``0.001`` (was
+``0.002``) so a ``0.01``-sagitta step is actually achievable and those systems get
+their true fine output ``dt`` (``0.001`` for DequanLi/QiChen/HyperQi, ``0.004`` for
+Chen, and, at the other end, ``0.064`` for the slow Rössler).
 
 Robustness
 ----------
@@ -40,7 +44,7 @@ same system twice.
 
 Public API
 ----------
-``choose_plot_dt(entry, *, final_time=None, dt0=None, epsilon=0.1)`` -> ``float``
+``choose_plot_dt(entry, *, final_time=None, dt0=None, epsilon=0.01)`` -> ``float``
     The canonical smooth-output-``dt`` selector.
 ``FINE_PILOT_DT`` / ``PILOT_FINAL_TIME``
     The per-family fine-pilot defaults (also the fallback ``dt``).
@@ -65,7 +69,7 @@ import numpy as np
 #: output step from below (a coarse pilot cannot report a step finer than itself).
 #: These values are also the robust *fallback* ``dt`` when the heuristic cannot run.
 FINE_PILOT_DT: dict[str, float] = {
-    "ode": 0.002,
+    "ode": 0.001,  # fine enough that an ε=0.01 sagitta step is achievable for a fast attractor
     "dde": 0.02,
     "sde": 0.01,
     "map": 1.0,  # a map is iterated by steps — dt is nominal (never used to smooth)
@@ -344,7 +348,7 @@ def choose_plot_dt(
     *,
     final_time: float | None = None,
     dt0: float | None = None,
-    epsilon: float = 0.1,
+    epsilon: float = 0.01,
 ) -> float:
     """Return a smooth, non-pixelated output ``dt`` for ``entry``'s attractor plot.
 
@@ -370,8 +374,10 @@ def choose_plot_dt(
         per-family :data:`PILOT_FINAL_TIME` / :data:`FINE_PILOT_DT`.  ``dt0`` is
         also the robust fallback returned on any failure.
     epsilon
-        Geometric (sagitta) tolerance — larger ⇒ coarser ``dt``.  Default ``0.1``
-        (the maintainer's universal "no pixelated attractor" rule).
+        Geometric (sagitta) tolerance — larger ⇒ coarser ``dt``.  Default ``0.01``
+        (the maintainer's universal "no pixelated attractor" rule); the ODE fine
+        pilot (``0.001``) is deliberately finer than this so the tolerance is
+        actually reachable for a fast, tightly-curved attractor.
 
     Returns
     -------

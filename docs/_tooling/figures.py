@@ -230,7 +230,7 @@ def _style():
     return plt
 
 
-RENDERER_VERSION = "9"  # bump manually when rendering output materially changes
+RENDERER_VERSION = "10"  # bump manually when rendering output materially changes
 
 
 def cache_key(entry) -> str:
@@ -304,8 +304,9 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     then raises after a handful of cheap steps and is retried, instead of sending
     the *adaptive* step-controller into a minutes-long step-shrinking spiral as it
     chases the diverging solution down to the minimum step size (a cold build of the
-    conservative / chaotic catalogue otherwise appears to hang).  ``rk4`` at
-    ``dt = 0.01`` is more than accurate enough for a non-stiff attractor thumbnail.
+    conservative / chaotic catalogue otherwise appears to hang).  ``rk4`` at the fine
+    sagitta step (~0.002) is more than accurate enough for a non-stiff attractor
+    thumbnail.
 
     A system that cannot be marched with fixed-step ``rk4`` (a stiff relaxation
     oscillator that needs the implicit ``bdf``; a fast hyperchaotic flow that needs
@@ -318,21 +319,33 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     method = opts.get("engine_method", "rk4")
     rng = np.random.default_rng(42)
 
-    # The maintainer's sagitta rule: pick the smooth output dt (ε = 0.1), integrate
-    # finely, then sub-sample at that dt so the static curve is never faceted.  A
-    # figure ``dt`` override (a curated per-system step) is honoured verbatim.
-    nominal_dt = float(opts.get("dt", 0.01))
-    smooth_dt = _plot_dt.choose_plot_dt(entry, final_time=final_time, dt0=nominal_dt, epsilon=0.1)
-    fine_dt = min(smooth_dt, nominal_dt)
+    # The maintainer's sagitta rule (ε = 0.01, "redo with error 0.01"): pick the
+    # smooth output dt, integrate at a *fine* step, then sub-sample at that dt so the
+    # static curve is never faceted — identical to the three.js viewer's march, so a
+    # phase portrait and its interactive twin trace the same smooth curve.
+    #
+    # CRITICAL: ``choose_plot_dt`` must run its own **fine pilot** to discover the
+    # true output dt *from below*.  Call it with ``dt0=None`` so the selector uses
+    # its per-family fine-pilot step (``FINE_PILOT_DT["ode"] = 0.002``) — NOT a
+    # coarse ``nominal_dt``.  A sagitta search can only ever report a step no finer
+    # than the pilot it ran, so feeding a 0.01 pilot could never find that a fast
+    # attractor (DequanLi, QiChen, Chen, YuWang, …) needs ~0.002–0.006 to read
+    # smooth; it would just echo 0.01 back and stay pixelated.  A curated per-system
+    # ``dt`` override is still honoured verbatim (``choose_plot_dt`` short-circuits on
+    # a figure ``dt``), so those systems keep their editorial step.
+    fine_pilot_dt = float(_plot_dt.FINE_PILOT_DT.get("ode", 0.002))
+    smooth_dt = _plot_dt.choose_plot_dt(entry, final_time=final_time, dt0=None, epsilon=0.01)
+    fine_dt = min(smooth_dt, fine_pilot_dt)
     stride = max(1, int(round(smooth_dt / fine_dt)))
     # Safety floor on the point count: a pathological sagitta dt (a pilot that
     # decayed to a near-fixed manifold) must never sub-sample the drawn attractor
-    # down to a handful of segments.  Cap the stride so at least ~800 samples of the
+    # down to a handful of segments.  Cap the stride so at least ~2000 samples of the
     # post-transient curve survive — the smooth dt still wins for every well-behaved
-    # system (their stride is far below this ceiling).
+    # system (their stride is far below this ceiling), and a static PNG line carries
+    # plenty of vertices cheaply, so we keep a generous floor.
     n_fine = max(1, int(final_time / fine_dt))
     keep_frac = 1.0 - float(opts.get("transient_frac", 0.15))
-    stride = min(stride, max(1, int(n_fine * keep_frac / 800)))
+    stride = min(stride, max(1, int(n_fine * keep_frac / 2000)))
 
     sys_obj = entry.cls()
     ic = _resolve_ic(sys_obj, opts.get("ic"))
@@ -785,9 +798,18 @@ def _render_map(entry, plt, opts):
 
     - **1-D maps** → the first-return map ``x_n`` vs ``x_{n+1}`` *and* a
       recognizable **bifurcation diagram** (``ts.orbit_diagram``) side by side.
+      These stay a **static PNG** on the page (no interactive viewer).
     - **2-D maps** → the iterate cloud (a curated IC / ensemble for the maps whose
-      default orbit collapses).
-    - **3-D maps** → the iterate cloud at a curated view angle (folded-towel).
+      default orbit collapses).  Also a **static PNG** on the page.
+    - **3-D maps** (FoldedTowel, GeneralizedHenon) → the iterate cloud as a 3-D
+      scatter at a curated view angle.  A dim-3 map now also gets an *interactive*
+      (orbitable, **non-animated**) three.js point-cloud viewer (see
+      :mod:`threejs_viewer`); this static scatter is its **poster / WebGL-off
+      fallback** (the viewer iframe references it as its ``<img>``).  So we keep
+      rendering it verbatim — it does not fight the viewer (the docs hook shows the
+      PNG inline only for a system with *no* viewer, and hands it to the viewer as
+      the poster otherwise).  A good camera + plenty of iterates keep the fold
+      legible in the still.
     """
     mcfg = MAP_OVERRIDES.get(entry.name, {})
     sys_obj = entry.cls()

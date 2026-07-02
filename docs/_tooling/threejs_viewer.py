@@ -11,14 +11,15 @@ orbit while it plays" — a reveal comet over a faint full-curve backdrop, with
 ``OrbitControls`` running in its own loop so the mouse can rotate the scene *while
 the comet sweeps*.
 
-Dispatch (who gets an animated viewer)
---------------------------------------
+Dispatch (who gets a viewer)
+----------------------------
 :func:`render_html` dispatches on **family + dimension + editorial viewer config**:
 
 ======================================  ====================================================
 System                                  Viewer
 ======================================  ====================================================
-ODE ``dim in {2, 3}`` (non-forced)      3-D / 2-D reveal comet of the state itself.
+ODE ``dim in {2, 3}`` (non-forced)      3-D / 2-D reveal comet of the state itself
+                                        (animated).
 ODE ``dim >= 4`` **with a projection**  3-D reveal comet of the editorial 3-component
                                         ``projection``; a ``projection2`` yields a SECOND
                                         viewer (``render_html(rec, second=True)``) so the
@@ -31,23 +32,47 @@ ODE with a ``viewer`` editorial block   Honoured verbatim — ``components`` (a 
                                         curated static figure.
 DDE (``dim == 1``)                      2-D **delay embedding** :math:`x(t)` vs
                                         :math:`x(t-\tau)`, animated as a comet.
-Map (any dim)                           **None** — a static scatter reads better than a
-                                        trailing swarm (see :mod:`figures`).
+Map (effective ``dim == 3``)            **STATIC, orbitable** 3-D point cloud — the whole
+                                        iterate cloud as ``THREE.Points``, rotatable with
+                                        ``OrbitControls`` but **not animated** (a map is a
+                                        set of iterates, not a swept trajectory).  The
+                                        folded-towel / generalized-Hénon sheets read far
+                                        better orbitable in 3-D than as a fixed PNG.
+Map (``dim`` 1 or 2)                     **None** — a static scatter / bifurcation diagram
+                                        reads better (see :mod:`figures`).
 SDE / field / spatial                   **None** — static sample path / field image.
 ======================================  ====================================================
 
-Every attractor integration samples at the **sagitta-``dt``** returned by
-:func:`plot_dt.choose_plot_dt` (``epsilon=0.1``, the maintainer's universal
-"no pixelated attractor" rule).  The selector is called with its per-family
-*fine-pilot* default step (``FINE_PILOT_DT``: 0.002 for ODEs) — **never** a coarse
-``dt0`` override, which was the pixelation bug: a sagitta search can only report a
-step no finer than the pilot it ran, so a fast attractor (Chen, DequanLi, QiChen)
-integrated at 0.01 just echoed 0.01 back and stayed faceted, whereas the fine pilot
-discovers the true 0.002 / 0.006 output step.  We then integrate the viewer
-trajectory at that fine step and sub-sample to the sagitta step — and, because even
-a *geometrically* smooth coarse dt can leave a slow attractor with too few vertices
-to read as a swept line, a :data:`_MIN_DRAW_SAMPLES` floor shrinks the stride
-(drawing *finer* than sagitta, never coarser) so every comet has enough points.
+A map viewer carries **no** ``metadata.animation`` block, so the shared loader draws
+its point cloud statically and lets ``OrbitControls`` auto-rotate / respond to the
+mouse — there is deliberately no comet reveal for a map.
+
+Smoothness: **arc-length resampling**, not a uniform-in-time stride
+------------------------------------------------------------------
+Every flow / DDE viewer curve is integrated at the fine step ``FINE_PILOT_DT``
+(0.001 for ODEs), the transient dropped, projected to the drawn 2-/3-D view, and
+then **resampled to be equally spaced in arc length** (:func:`_smooth_arclength`)
+— constant chord length everywhere along the curve.  This replaced a
+uniform-in-*time* stride at a single sagitta ``dt`` chosen from the 95th-percentile
+segment: because that one stride is uniform in time, the fastest / sharpest turns
+(the worst ~5 % of segments) stayed under-resolved while slow arcs were
+over-sampled, so a fast attractor (HyperQi, DequanLi, QiChen) stayed polygonal at
+zoom even below the vertex cap — the uniform-in-time stride, not the cap, was the
+limiter (audit worst-case sagitta/diag: HyperQi 0.144, ZhouChen 0.072, DequanLi
+0.071, all ≫ the 0.01 target).  Sampling uniformly in *space* gives every turn
+proportional resolution, so the worst-case (not 95th-percentile) sagitta drops
+below tolerance.  The resampler grows the vertex count geometrically until the
+measured worst-case sagitta/diag falls under :data:`_SAGITTA_TARGET` (0.008), or
+the :data:`MAX_POINTS` cap is reached; a slow attractor (Rössler, ZhouChen) stops
+at the :data:`_MIN_DRAW_SAMPLES` floor and stays light, while a fast, tightly-curved
+one spends up to the cap.  So the point budget is spent where the curvature demands
+it, not uniformly.
+
+:data:`MAX_POINTS` (40 000) is the resample ceiling; the payload downsampler in
+:func:`_build_payload` is a no-op after the resample (the cloud already ≤ the cap).
+The inlined JSON stays ≲ 200 KB for a slow attractor and up to ~2 MB for the
+single hardest one (DequanLi, which spends the full cap), positions rounded to
+:data:`_POS_DECIMALS` — the smoothness of the sharpest turns is worth the bytes.
 
 Two views for a high-dim flow
 -----------------------------
@@ -87,15 +112,31 @@ LOADER_SRC = ROOT / "docs" / "_static" / "tsdyn-threejs-loader.js"
 LOADER_URI = "_static/tsdyn-threejs-loader.js"
 
 #: Bump when the emitted HTML or payload shaping materially changes (cache buster).
-VIEWER_VERSION = "6"
+VIEWER_VERSION = "8"
 
 #: CDN three.js build (pinned) — matches docs/visualization/threejs-export.md.
 _THREE_VERSION = "0.160.0"
 _THREE_CDN = f"https://cdn.jsdelivr.net/npm/three@{_THREE_VERSION}"
 
-#: Cap the vertex count: enough for a smooth comet, small enough to keep the
-#: inlined payload light.
-MAX_POINTS = 5000
+#: Cap the *drawn* vertex count — the ceiling on the **arc-length resample**
+#: (:func:`_resample_arclength`).  The viewer curve is resampled to be equally
+#: spaced *in space* (constant chord length everywhere), so the point count needed
+#: to hold the worst-case sagitta below :data:`_SAGITTA_TARGET` is set by the
+#: sharpest turn, not by a uniform-in-time stride.  On the fastest catalogue
+#: attractors (HyperQi, DequanLi) that worst turn needs ~30 000–40 000 equally-
+#: spaced vertices to read as a smooth arc; a ``THREE.Line`` of 40 000 verts is
+#: cheap, and the inlined JSON stays a couple hundred KB (positions rounded to
+#: ``_POS_DECIMALS`` decimals).  Slow attractors (Rössler, ZhouChen) satisfy the
+#: target at :data:`_MIN_DRAW_SAMPLES` and stay light — the resampler only spends
+#: vertices where the curvature demands them.
+MAX_POINTS = 40000
+
+#: Geometric smoothness target for the arc-length resampler: the WORST-case sagitta
+#: (bow of the curve off its local chord) as a fraction of the bounding-box diagonal
+#: must fall below this.  The maintainer's rule is ``0.01``; we resample to ``0.008``
+#: so there is headroom against payload rounding and browser rasterisation, and so a
+#: zoomed outer loop reads as an arc, not a chorded polygon.
+_SAGITTA_TARGET = 0.008
 
 #: Float precision in the inlined payload (positions / colors).
 _POS_DECIMALS = 4
@@ -112,25 +153,32 @@ _DDE_FINAL_TIME = 320.0
 #: Nominal coarse output dt (kept only for legacy DDE plumbing / cache knobs).
 _DT = 0.01
 _DDE_DT = 0.2
-#: The **fine** integration step for the viewer march — the step we actually
-#: integrate at before sub-sampling to the sagitta ``smooth_dt``.  It mirrors
-#: :data:`plot_dt.FINE_PILOT_DT` (0.002 for ODEs) so a fast attractor is traced at
-#: a step fine enough to represent its tight curvature; the stride then coarsens to
-#: the sagitta output dt.  Never coarser than ``smooth_dt`` (that is a no-op stride).
-_FINE_DT = float(_plot_dt.FINE_PILOT_DT.get("ode", 0.002))
+#: The **fine** integration step for the viewer march — the step we integrate at
+#: before arc-length resampling (:func:`_smooth_arclength`).  It mirrors
+#: :data:`plot_dt.FINE_PILOT_DT` (0.001 for ODEs) so a fast attractor is traced at a
+#: step fine enough to represent its tight curvature; the space-uniform resample then
+#: redistributes those dense samples so every turn is equally resolved.
+_FINE_DT = float(_plot_dt.FINE_PILOT_DT.get("ode", 0.001))
 _DDE_FINE_DT = float(_plot_dt.FINE_PILOT_DT.get("dde", 0.02))
 #: Off-basin random starts retried before the system soft-fails to its static PNG.
 _IC_RETRIES = 8
 #: Drop this leading fraction as transient before drawing the attractor.
 _TRANSIENT_FRAC = 0.2
-#: A comet needs a *floor* of vertices to interpolate smoothly, independent of the
-#: sagitta dt.  A slow, gently-curving attractor (Colpitts, the Sprott minimal
-#: flows, Rössler) can satisfy the ε=0.1 chord criterion at a coarse dt that leaves
-#: only ~70–350 samples — enough to be *geometrically* smooth but visually sparse as
-#: a swept line.  Drawing **finer than** the sagitta dt is always at least as smooth
-#: (sagitta is an upper bound on the step), so if the sagitta-strided cloud falls
-#: below this floor we shrink the stride to reach it — never coarser, only finer.
-_MIN_DRAW_SAMPLES = 1600
+#: Floor (and starting density) for the arc-length resample.  A slow, gently-curving
+#: attractor (Colpitts, the Sprott minimal flows, Rössler) reaches the sagitta target
+#: at a low vertex count, but a comet still needs a floor of vertices to interpolate
+#: smoothly and to give the reveal trail enough resolution.  The resampler starts
+#: here and grows (geometrically) only until the worst-case sagitta drops below
+#: :data:`_SAGITTA_TARGET`, so a slow attractor stays at this floor while a fast one
+#: spends up to :data:`MAX_POINTS`.  Kept below the cap so the floor never fights it.
+_MIN_DRAW_SAMPLES = 4000
+
+#: Marker size for a static **map** point cloud, as a fraction of the cloud's bounds
+#: diagonal.  The loader draws points with world-unit ``sizeAttenuation``, so a
+#: fixed size would swamp the thin folded-towel sheet (span ≈ 0.85) and vanish on the
+#: wide generalized-Hénon cube (span ≈ 6.6); scaling to the extent keeps a crisp dot
+#: cloud at any scale.
+_MAP_POINT_FRAC = 0.006
 
 # --- Brand colours (TSDynamics visual identity) ------------------------------
 _TEAL = "#2CC5AE"
@@ -180,8 +228,6 @@ def _is_field(entry) -> bool:
 def eligible(entry, *, second: bool = False) -> bool:
     """Whether ``entry`` gets an interactive viewer (else it keeps its static PNG).
 
-    - **Maps / SDEs / spatial fields** → never (static reads better; a map is a
-      static scatter, an SDE a sample path, a field an image).
     - A ``viewer`` editorial block with ``mode`` ``"static"`` / ``"drop"`` → never
       (the system is drawn as a curated static figure instead).
     - **ODE ``dim in {2, 3}``** (no growing-phase ``components`` override) →
@@ -189,6 +235,10 @@ def eligible(entry, *, second: bool = False) -> bool:
     - **ODE ``dim >= 4``** → animate **only** when an editorial 3-component
       ``projection`` (or ``projection2`` for the ``second`` view) is available.
     - **DDE (1-D)** → animate the delay embedding.
+    - **Map (effective ``dim == 3``)** → a **static, orbitable** 3-D point cloud
+      (the whole iterate cloud as ``THREE.Points``; not animated).  A 1-/2-D map,
+      an SDE, or a spatial field keeps its static PNG (a scatter / sample path /
+      field image reads better).
 
     ``TSD_DOCS_FIGURES=0`` disables every viewer.  A stiff ``_default_method`` no
     longer blocks a flow: the viewer marches it with the adaptive ``rk45`` kernel
@@ -222,7 +272,15 @@ def eligible(entry, *, second: bool = False) -> bool:
         return proj is not None
     if entry.family == "dde":
         return not second and entry.dim == 1
-    # map / sde / anything else → static
+    if entry.family == "map":
+        # A 3-D map gets a STATIC (non-animated) orbitable point cloud; there is no
+        # second view for a map, and a bifurcation-diagram map stays static.
+        if second:
+            return False
+        if figures.MAP_OVERRIDES.get(entry.name, {}).get("bifurcation"):
+            return False
+        return entry.dim == 3
+    # sde / anything else → static
     return False
 
 
@@ -268,13 +326,102 @@ def _wrap_components(y: np.ndarray, wrap: list[int] | None) -> np.ndarray:
     return y
 
 
+def _resample_arclength(y: np.ndarray, n: int) -> np.ndarray:
+    """Resample a polyline ``y`` ``(m, k)`` to ``n`` points evenly spaced in arc length.
+
+    This is the space-uniform analogue of a uniform-in-time stride: it places the
+    ``n`` output vertices at equal cumulative-chord-length intervals along the curve,
+    so every drawn segment has (approximately) the same spatial length everywhere —
+    the fast, tightly-curved turns get proportionally as many points as the slow arcs
+    instead of being under-resolved.  Mirrors ``make_hero.py::_resample``.
+
+    Degenerate input (a zero-length curve) is returned unchanged.
+    """
+    seg = np.linalg.norm(np.diff(y, axis=0), axis=1)
+    s = np.concatenate([[0.0], np.cumsum(seg)])
+    total = float(s[-1])
+    if total <= 0.0 or n < 2:
+        return y
+    u = np.linspace(0.0, total, n)
+    return np.stack([np.interp(u, s, y[:, j]) for j in range(y.shape[1])], axis=1)
+
+
+def _max_sagitta_ratio(y: np.ndarray) -> float:
+    """Worst-case sagitta / bounding-box diagonal over the triples of a polyline.
+
+    The sagitta of a triple ``(p0, p1, p2)`` is the perpendicular distance of the
+    middle point ``p1`` from the chord ``p0→p2`` — the *bow* of the curve off its
+    local chord.  Returned as a fraction of the cloud's bounding-box diagonal, so the
+    criterion is scale-free (this is the same metric the maintainer's audit reports).
+    Works for 2-D (delay embeddings) and 3-D (flows) alike.
+    """
+    if len(y) < 3:
+        return 0.0
+    p0, p1, p2 = y[:-2], y[1:-1], y[2:]
+    chord = p2 - p0
+    clen = np.linalg.norm(chord, axis=1)
+    v = p1 - p0
+    # Perpendicular component |v x chord| / |chord|.  Compute the cross product by
+    # hand (2-D → scalar magnitude, 3-D → vector norm) rather than via ``np.cross``,
+    # whose 2-D-vector form is deprecated in NumPy 2.0 (and errors under the test
+    # suite's ``filterwarnings=error``).
+    if y.shape[1] == 2:
+        cross_norm = np.abs(v[:, 0] * chord[:, 1] - v[:, 1] * chord[:, 0])
+    else:
+        cross_norm = np.linalg.norm(np.cross(v, chord), axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sag = np.where(clen > 0, cross_norm / clen, 0.0)
+    diag = float(np.linalg.norm(y.max(axis=0) - y.min(axis=0)))
+    if diag <= 0.0:
+        return 0.0
+    return float(np.nanmax(sag)) / diag
+
+
+def _smooth_arclength(
+    y: np.ndarray,
+    *,
+    target: float = _SAGITTA_TARGET,
+    nmin: int = _MIN_DRAW_SAMPLES,
+    nmax: int = MAX_POINTS,
+) -> np.ndarray:
+    """Arc-length-resample ``y`` to the fewest points whose worst-case sagitta < ``target``.
+
+    Because the resample is uniform in space, the sagitta of a locally circular arc
+    of constant chord ``h`` scales as ``h²`` — i.e. as ``1/n²`` — so growing the point
+    count geometrically converges quickly.  Starts at ``nmin`` (the comet floor) and
+    grows by 1.5× until the measured worst-case sagitta/diag drops below ``target`` or
+    the ``nmax`` vertex cap is hit.  A slow attractor stops at ``nmin`` (staying light);
+    only a fast, tightly-curved one spends up to ``nmax``.  Never coarser than the
+    fine curve it is fed (if the input already has fewer than ``nmin`` points it is
+    resampled up to ``nmin`` so the comet still reads as a swept line).
+    """
+    if len(y) < 3:
+        return y
+    n = max(2, int(nmin))
+    best = _resample_arclength(y, min(n, nmax))
+    while _max_sagitta_ratio(best) >= target and n < nmax:
+        n = min(nmax, int(n * 1.5) + 1)
+        best = _resample_arclength(y, n)
+    return best
+
+
 def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
     """Integrate a bounded ODE attractor and shape it to a drawable cloud.
 
     Honours (in priority order) the ``viewer`` editorial block, then an editorial
-    ``projection`` / ``projection2``, then the raw state.  Samples at the
-    sagitta-``dt`` (``epsilon=0.1``) so the comet is never faceted.  Returns
-    ``(n, k)`` with ``k in {2, 3}`` or ``None`` on a divergent / off-basin run.
+    ``projection`` / ``projection2``, then the raw state.
+
+    Smoothness comes from **arc-length resampling** (:func:`_smooth_arclength`), not
+    a uniform-in-time stride.  The trajectory is integrated at the fine step
+    :data:`_FINE_DT` (``0.001``), the transient dropped, projected to the drawn
+    2-/3-D view, then resampled to be equally spaced *in space* at the density whose
+    worst-case sagitta/diag stays below :data:`_SAGITTA_TARGET`.  A uniform-in-time
+    stride (the previous approach) under-resolves the fastest ~5 % of segments — the
+    sharp turns — because a single sagitta ``dt`` set from the 95th percentile leaves
+    the tail faceted; sampling uniformly in arc length gives every turn proportional
+    resolution, so a fast attractor (HyperQi, DequanLi, QiChen) reads as a smooth arc
+    even zoomed in.  Returns ``(n, k)`` with ``k in {2, 3}`` or ``None`` on a
+    divergent / off-basin run.
     """
     cfg = _viewer_cfg(entry)
     opts = figures.FIG_OVERRIDES.get(entry.name, {})
@@ -283,21 +430,13 @@ def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
     transient = float(cfg.get("transient", _TRANSIENT_FRAC))
     wrap = cfg.get("wrap")
 
-    # The smooth output dt (the maintainer's universal sagitta rule, ε = 0.1).
-    #
-    # CRITICAL: call ``choose_plot_dt`` with its per-family *fine-pilot* default
-    # (``dt0=None`` → ``FINE_PILOT_DT["ode"] = 0.002``), **not** the coarse ``_DT``.
-    # The sagitta search can only report a step no finer than the pilot it ran; a
-    # pilot integrated at 0.01 can never discover that a fast attractor (DequanLi,
-    # QiChen, …) actually needs 0.002 / 0.006 to read smooth — it just echoes 0.01
-    # back and the comet stays faceted.  Feeding ``dt0=_DT`` here was the pixelation
-    # bug: the whole point of the fine pilot is to find the true output dt *from
-    # below*.  We then integrate the viewer trajectory at that same fine step and
-    # sub-sample to ``smooth_dt`` so the drawn curve is never straightened.
+    # Integrate at the fine step (0.001) so the resampler has a dense, geometrically
+    # faithful polyline to redistribute — the arc-length resample can only be as
+    # smooth as the curve it is fed.  There is no longer a uniform ``smooth_dt``
+    # stride: the sagitta selector's per-family fine pilot IS this fine step, and the
+    # space-uniform resample below is what enforces the sagitta tolerance.
     ic_override = cfg.get("ic", opts.get("ic"))
-    smooth_dt = _plot_dt.choose_plot_dt(entry, epsilon=0.1)
-    fine_dt = min(smooth_dt, _FINE_DT)
-    stride = max(1, int(round(smooth_dt / fine_dt)))
+    fine_dt = _FINE_DT
 
     rng = np.random.default_rng(42)
     sys_obj = entry.cls()
@@ -320,14 +459,16 @@ def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
         if len(y) > 50 and np.all(np.isfinite(y)) and np.max(np.abs(y)) < 1e7:
             drop = int(transient * len(y))
             y = y[drop:]
-            # Sagitta stride keeps the coarsest smooth step; shrink it if that would
-            # leave too few vertices for a smooth comet (drawing finer is never worse).
-            eff_stride = stride
-            if len(y) // max(1, eff_stride) < _MIN_DRAW_SAMPLES:
-                eff_stride = max(1, len(y) // _MIN_DRAW_SAMPLES)
-            y = y[::eff_stride]
             y = _wrap_components(y, wrap)
-            return _select_components(entry, y, second=second)
+            view = _select_components(entry, y, second=second)
+            if view is None:
+                return None
+            # Arc-length resample the DRAWN projection (the sagitta criterion is a
+            # property of the projected curve, not the full-dim state): equally
+            # spaced in space, at the density that holds the worst-case sagitta below
+            # the target.  Slow attractors stay at the floor; fast ones spend up to
+            # the cap.
+            return _smooth_arclength(np.ascontiguousarray(view, dtype=float))
         ic = None
     return None
 
@@ -376,16 +517,18 @@ def _select_components(entry, y: np.ndarray, *, second: bool) -> np.ndarray | No
 
 
 def _dde_delay_embedding(entry) -> np.ndarray | None:
-    """Build the 2-D delay embedding ``[x(t), x(t-τ)]`` for a (scalar) DDE."""
+    """Build the 2-D delay embedding ``[x(t), x(t-τ)]`` for a (scalar) DDE.
+
+    Smoothness is enforced by arc-length resampling of the embedding (the same
+    space-uniform criterion as the ODE path), not a uniform-in-time stride: the
+    embedding is integrated at the fine DDE step :data:`_DDE_FINE_DT`, then
+    :func:`_smooth_arclength` redistributes vertices to equal spatial spacing at the
+    density that holds the worst-case sagitta below :data:`_SAGITTA_TARGET`.
+    """
     sys_obj = entry.cls()
     opts = figures.FIG_OVERRIDES.get(entry.name, {})
     final_time = opts.get("final_time", _DDE_FINAL_TIME)
-    # Same sagitta rule as the ODE path: let ``choose_plot_dt`` run its fine DDE
-    # pilot (``dt0=None`` → ``FINE_PILOT_DT["dde"] = 0.02``) and integrate the
-    # embedding at that fine step, sub-sampling to the smooth output dt.
-    smooth_dt = _plot_dt.choose_plot_dt(entry, epsilon=0.1)
-    fine_dt = min(smooth_dt, _DDE_FINE_DT)
-    stride = max(1, int(round(smooth_dt / fine_dt)))
+    fine_dt = _DDE_FINE_DT
 
     def history(s):
         return [0.8 + 0.2 * np.sin(0.2 * s)] * sys_obj.dim
@@ -403,7 +546,32 @@ def _dde_delay_embedding(entry) -> np.ndarray | None:
         return None
     drop = int(_TRANSIENT_FRAC * x.size)
     emb = np.column_stack([x[lag:], x[:-lag]])[drop:]
-    return emb[::stride]
+    if len(emb) < 3:
+        return None
+    return _smooth_arclength(np.ascontiguousarray(emb, dtype=float))
+
+
+def _map_cloud(entry) -> np.ndarray | None:
+    """Iterate a 3-D map into a drawable ``(n, 3)`` point cloud, or ``None``.
+
+    Reuses :func:`figures._map_cloud` verbatim — the same curated ``steps`` / ``burn``
+    / ``ic`` / view the static PNG uses (``MAP_OVERRIDES``: FoldedTowel iterates
+    40 000 points after a 500-step burn), so the interactive point cloud is the same
+    honest attractor the reader would have seen in the PNG, only orbitable.  A map
+    viewer is a *static* scatter (no comet), so no sagitta ``dt`` is involved — a map
+    is a set of iterates, not a swept curve.
+    """
+    mcfg = figures.MAP_OVERRIDES.get(entry.name, {})
+    try:
+        cloud = figures._map_cloud(entry, mcfg)
+    except (RuntimeError, ValueError):
+        return None
+    cloud = np.asarray(cloud, dtype=float)
+    if cloud.ndim != 2 or cloud.shape[1] < 3 or len(cloud) < 8:
+        return None
+    if not np.all(np.isfinite(cloud)) or np.max(np.abs(cloud)) > 1e7:
+        return None
+    return cloud[:, :3]
 
 
 def _cloud_for(entry, *, second: bool) -> np.ndarray | None:
@@ -412,6 +580,8 @@ def _cloud_for(entry, *, second: bool) -> np.ndarray | None:
         return _ode_cloud(entry, second=second)
     if entry.family == "dde":
         return _dde_delay_embedding(entry)
+    if entry.family == "map":
+        return _map_cloud(entry)
     return None
 
 
@@ -437,8 +607,15 @@ def _axis_labels(entry, n: int, comps: tuple[int, ...] | None) -> list[str]:
 
 
 def _build_payload(entry, *, second: bool) -> dict | None:
-    """Integrate ``entry`` and lower an animated attractor comet to a payload."""
+    """Integrate ``entry`` and lower an attractor to a three.js payload.
+
+    A **flow / DDE** lowers to an *animated* reveal-comet line (a swept trajectory);
+    a **3-D map** lowers to a *static* orbitable ``THREE.Points`` cloud (a set of
+    iterates, not a curve — no comet, no animation block).
+    """
     from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
+
+    is_map = getattr(entry, "family", None) == "map"
 
     try:
         cloud = _cloud_for(entry, second=second)
@@ -461,7 +638,14 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     color = np.linspace(0.0, 1.0, len(pts))
 
     spec_kind = PlotKind.PHASE_PORTRAIT_3D if ndim == 3 else PlotKind.PHASE_PORTRAIT_2D
-    mark_kind = PlotKind.LINE3D if ndim == 3 else PlotKind.LINE
+    # A map is a static scatter — a ``SCATTER`` mark lowers to a ``"points"`` geometry
+    # (never a swept line), which the loader draws statically and lets OrbitControls
+    # orbit (only 3-D maps are eligible, so ndim == 3 here).  A flow / DDE is a swept
+    # ``LINE3D`` / ``LINE`` the loader reveals as a comet.
+    if is_map:  # noqa: SIM108 — clearer as a block than a nested ternary
+        mark_kind = PlotKind.SCATTER
+    else:
+        mark_kind = PlotKind.LINE3D if ndim == 3 else PlotKind.LINE
 
     # Label from the *true* system dim (the projection indices reference the full
     # state), not the already-projected cloud width — otherwise a projection like
@@ -469,7 +653,13 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     label_dim = entry.dim if isinstance(getattr(entry, "dim", None), int) else cloud.shape[1]
     comps = _selected_comps(entry, label_dim, second=second)
     labels = _axis_labels(entry, ndim, comps)
-    data = {"x": pts[:, 0], "y": pts[:, 1], "c": color}
+    data = {"x": pts[:, 0], "y": pts[:, 1]}
+    # A flow / DDE comet carries a per-vertex ``c`` channel (the loader inks it teal
+    # for the trail); a **static map** cloud is drawn by the loader's ``buildObject``,
+    # which would render a per-vertex ``c`` as a rainbow — omit it so the flat brand
+    # teal (``material.color``) wins and the cloud reads as one thin teal swarm.
+    if not is_map:
+        data["c"] = color
     axes = {"x": Axis(label=labels[0]), "y": Axis(label=labels[1])}
     if ndim == 3:
         data["z"] = pts[:, 2]
@@ -486,15 +676,27 @@ def _build_payload(entry, *, second: bool) -> dict | None:
     with contextlib.suppress(Exception):
         spec.recolor(_TEAL)
 
-    spec.animate(duration=_DURATION_S, loop=True)
-    spec.trail(("steps", _TRAIL_SAMPLES))
-    spec.head(True, size=8.0, color="#8C85F2")
+    if is_map:
+        # Static, orbitable point cloud.  The loader draws a ``points`` geometry with
+        # world-unit ``sizeAttenuation``, so the marker size must scale with the
+        # cloud's extent (a fixed size would swamp the thin folded-towel sheet or
+        # vanish on the wide generalized-Hénon cube).  ~0.5% of the bounds diagonal
+        # gives a crisp dot cloud that reads as a folded sheet.
+        span = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))) or 1.0
+        with contextlib.suppress(Exception):
+            spec.style(markersize=round(_MAP_POINT_FRAC * span, 5))
+    else:
+        # Flows / DDEs animate a reveal comet; a map stays a static, orbitable cloud.
+        spec.animate(duration=_DURATION_S, loop=True)
+        spec.trail(("steps", _TRAIL_SAMPLES))
+        spec.head(True, size=8.0, color="#8C85F2")
     try:
         payload = spec.render("threejs", raw=True)
     except Exception:  # noqa: BLE001 — renderer unavailable / declined
         return None
 
-    payload = _ensure_head_color(payload)
+    if not is_map:
+        payload = _ensure_head_color(payload)
     return _round_payload(payload)
 
 
@@ -536,6 +738,10 @@ def cache_key(entry, *, second: bool) -> str:
     """Content hash: class source + editorial viewer config + this module's knobs."""
     cls_src = inspect.getsource(entry.cls)
     opts = repr(sorted(figures.FIG_OVERRIDES.get(entry.name, {}).items()))
+    # A map viewer's cloud comes from ``figures._map_cloud`` (steps / burn / ic /
+    # view), so its MAP_OVERRIDES must feed the hash too, else a curated-map tweak
+    # would serve a stale cached cloud.
+    map_opts = repr(sorted(figures.MAP_OVERRIDES.get(entry.name, {}).items()))
     ed = repr(
         (
             _viewer_cfg(entry),
@@ -549,6 +755,9 @@ def cache_key(entry, *, second: bool) -> str:
         for k in (
             VIEWER_VERSION,
             MAX_POINTS,
+            _SAGITTA_TARGET,
+            _MIN_DRAW_SAMPLES,
+            _MAP_POINT_FRAC,
             _POS_DECIMALS,
             _COL_DECIMALS,
             _DURATION_S,
@@ -567,7 +776,7 @@ def cache_key(entry, *, second: bool) -> str:
             entry.dim,
         )
     )
-    return hashlib.sha256((cls_src + opts + ed + knobs).encode()).hexdigest()[:20]
+    return hashlib.sha256((cls_src + opts + map_opts + ed + knobs).encode()).hexdigest()[:20]
 
 
 def _html(entry, payload: dict, *, second: bool) -> str:
