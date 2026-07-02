@@ -14,6 +14,14 @@
   --md-accent-fg-color:         #574FCF;
   --md-typeset-a-color:         #0C6B62;
   --md-default-bg-color:        #FBFCFD;
+  /* Re-bind the brand semantic tokens to FOLLOW Material's scheme toggle, not the
+     OS. tokens.css flips these via @media(prefers-color-scheme:dark); on a user
+     whose OS is dark but who views the site in light mode that would mismatch the
+     Material chrome (e.g. the hero washing out). These attribute-scoped rules load
+     after tokens.css and win. */
+  --ts-bg:#FBFCFD; --ts-surface:#FFFFFF; --ts-surface-2:#F4F6F8;
+  --ts-text:#14181D; --ts-muted:#5B656E; --ts-border:#E4E8EC;
+  --ts-primary:var(--ts-teal); --ts-link:var(--ts-teal-strong); --ts-accent:var(--ts-indigo);
 }
 
 /* ---- dark scheme (slate) ---- */
@@ -24,6 +32,9 @@
   --md-default-bg-color: #0B0F14;
   --md-default-fg-color: #E7ECF0;
   --md-code-bg-color:    #0E141A;
+  --ts-bg:#0B0F14; --ts-surface:#11161D; --ts-surface-2:#161C24;
+  --ts-text:#E7ECF0; --ts-muted:#93A0AD; --ts-border:#232B34;
+  --ts-primary:var(--ts-teal-bright); --ts-link:var(--ts-teal-bright); --ts-accent:var(--ts-indigo-bright);
 }
 
 /* ---- brand chrome: keep the header dark in both schemes ---- */

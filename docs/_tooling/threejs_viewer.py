@@ -76,8 +76,18 @@ import numpy as np
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-threejs"
 
+#: Canonical reference loader (source of truth) + the site URI the viewer iframes
+#: import it from.  The viewers live at ``assets/threejs/<Name>.html`` and import
+#: ``../../_static/tsdyn-threejs-loader.js`` → site-root ``_static/…``.  The
+#: ``docs/_static/`` tree is ``exclude_docs`` (tooling, not a page), so the loader
+#: is NOT copied by mkdocs — :func:`loader_asset` hands the autogen hook the source
+#: to emit as a generated file at that URI, so the import resolves on the built
+#: site instead of 404-ing (which would degrade every viewer to its static PNG).
+LOADER_SRC = ROOT / "docs" / "_static" / "tsdyn-threejs-loader.js"
+LOADER_URI = "_static/tsdyn-threejs-loader.js"
+
 #: Bump when the emitted HTML or payload shaping materially changes (cache buster).
-VIEWER_VERSION = "3"
+VIEWER_VERSION = "4"
 
 #: CDN three.js build (pinned) — matches docs/visualization/threejs-export.md.
 _THREE_VERSION = "0.160.0"
@@ -121,8 +131,9 @@ _MAP_BURN = 200
 _TEAL = "#2CC5AE"  # bright teal (the swept curve / static cloud)
 _TEAL_DEEP = "#11857A"  # deep teal (kept for the brand; head/tube reference)
 _INDIGO_HEAD = (0.549, 0.522, 0.949)  # #8C85F2 as an RGB triple for the comet head
-#: Dark canvas background (the design's deep surface).
-_BG = "#11151A"
+#: Dark canvas background — the design's deep *stage* (matches the home hero, and
+#: the colour the loader's reveal trail fades into head→tail for a seamless comet).
+_BG = "#0B0F14"
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +608,20 @@ def _html(entry, payload: dict) -> str:
 </body>
 </html>
 """
+
+
+def loader_asset() -> tuple[str, str] | None:
+    """Return ``(site_uri, source)`` for the shared three.js loader, or ``None``.
+
+    The autogen hook emits this as a generated file so the viewer iframes'
+    ``import("../../_static/tsdyn-threejs-loader.js")`` resolves on the built site.
+    Returns ``None`` if the source is missing (the viewers then soft-degrade to
+    their static PNGs, exactly as when the loader fails to load in the browser).
+    """
+    try:
+        return LOADER_URI, LOADER_SRC.read_text(encoding="utf-8")
+    except OSError:
+        return None
 
 
 def render_html(entry) -> str | None:

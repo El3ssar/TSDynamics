@@ -50,7 +50,7 @@ import os
 import sys
 from pathlib import Path
 
-from mkdocs.structure.files import File
+from mkdocs.structure.files import File, InclusionLevel
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "docs" / "_tooling"))
@@ -772,6 +772,25 @@ def on_files(files, config):
         if existing is not None:
             files.remove(existing)
         files.append(File.generated(config, uri, content=content))
+    # The viewers import the shared three.js loader from ``_static/`` — a tree
+    # ``exclude_docs`` drops, so mkdocs never copies it.  Emit it as a generated
+    # file when any viewer shipped, so the iframe import resolves instead of
+    # 404-ing (which silently degrades every viewer to its static PNG poster).
+    if _VIEWERS:
+        loader = _viewer.loader_asset()
+        if loader is not None:
+            loader_uri, loader_src = loader
+            existing = files.get_file_from_path(loader_uri)
+            if existing is not None:
+                files.remove(existing)
+            # ``_static/`` is in ``exclude_docs`` (tooling, not a page), so a plain
+            # generated file at that URI is dropped.  Force INCLUDED so the loader
+            # ships regardless — the viewer iframes import it from ``_static/``.
+            files.append(
+                File.generated(
+                    config, loader_uri, content=loader_src, inclusion=InclusionLevel.INCLUDED
+                )
+            )
     return files
 
 

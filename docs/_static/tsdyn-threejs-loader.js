@@ -32,6 +32,16 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+// --- Brand palette (matches the home hero) ---------------------------------
+// A thin teal trajectory that fades to the dark stage, an indigo state head.
+// The reveal comet inks its trail teal (fading head→tail) and its head indigo,
+// regardless of any per-vertex colormap the payload carries — so every viewer
+// reads as the elegant hero attractor, not a rainbow tube.
+const BRAND_TEAL = new THREE.Color(0x2cc5ae); // bright teal trail head
+const BRAND_TEAL_DIM = new THREE.Color(0x11857a); // deep teal backdrop curve
+const BRAND_INDIGO = new THREE.Color(0x8c85f2); // indigo state head
+const BRAND_STAGE = new THREE.Color(0x0b0f14); // dark stage (trail fades to this)
+
 /** Build a THREE.BufferGeometry from one payload geometry (positions/colors/indices). */
 function buildGeometry(geom) {
   const geometry = new THREE.BufferGeometry();
@@ -129,86 +139,117 @@ function boundsCentre(bounds) {
 }
 
 /**
- * Build the reveal comet for one line geometry: a faint full-curve backdrop, a
- * bright windowed trail (animated via `setDrawRange`), and a `THREE.Points` head.
+ * Build the reveal comet for one line geometry, matching the home hero: a faint
+ * deep-teal full-curve backdrop, a bright teal trail that **fades to the dark
+ * stage** from head → tail, and an indigo state head.
  *
- * The `LineSegments` index buffer is `0,1,1,2,2,3,...` (two indices per segment),
- * so `setDrawRange(start, count)` works in *index* units — `count = 2 * segments`.
- * Returns a comet object exposing `seek(headVertex, trailVertices)`.
+ * Unlike a `setDrawRange` window (a flat-colour slice), the trail is a
+ * fixed-length `THREE.Line` whose positions *and* per-vertex colours are rewritten
+ * every `seek()` — the head vertex is bright teal, older samples lerp toward the
+ * stage colour (`pow(f, 1.25)`), so the comet is a glowing tapering streak rather
+ * than a uniform tube.  Additive blending makes the head bloom.  The payload's own
+ * per-vertex colormap (a viridis `c` channel) is deliberately ignored for the
+ * comet — the brand look is one teal trajectory, not a rainbow.
+ *
+ * Returns a comet object exposing `seek(headVertex, trailVertices)` with the same
+ * contract `installAnimation` drives for every comet type.
  *
  * @param {object} geom - the geometry block (positions/colors/indices/material).
  * @param {object} anim - the metadata.animation block.
- * @param {string[]} palette - the theme palette color cycle for auto-coloring.
+ * @param {string[]} palette - the theme palette color cycle (unused for the brand comet).
  * @param {number} index - this geometry's index in the scene layer list.
  */
 function buildLineComet(geom, anim, palette, index) {
-  const nVerts = geom.positions.length / 3;
-  const hasColor = Boolean(geom.colors && geom.colors.length === geom.positions.length);
+  const positions = geom.positions;
+  const nVerts = positions.length / 3;
   const group = new THREE.Group();
-  const mat = geom.material || null;
-  const lineColor = hasColor ? 0xffffff : resolveColor(mat, palette, index, 0x4f9dff);
-  const lw = mat && mat.linewidth != null ? mat.linewidth : 1;
-  const alpha = mat && mat.alpha != null ? mat.alpha : 1.0;
 
-  // Faint full-curve backdrop (the static context the comet sweeps over).
-  const backdropGeom = buildGeometry(geom);
-  const backdrop = new THREE.LineSegments(
+  // Faint deep-teal full-curve backdrop (the static context the comet sweeps).
+  // A single flat teal colour — no vertex colours — so the whole attractor reads
+  // as one thin teal line at rest.
+  const backdropGeom = new THREE.BufferGeometry();
+  backdropGeom.setAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array(positions), 3)
+  );
+  const backdrop = new THREE.Line(
     backdropGeom,
     new THREE.LineBasicMaterial({
-      vertexColors: hasColor,
-      color: lineColor,
+      color: BRAND_TEAL_DIM,
       transparent: true,
-      opacity: 0.18 * alpha,
-      linewidth: lw,
+      opacity: 0.22,
+      depthWrite: false,
     })
   );
   group.add(backdrop);
 
-  // Bright comet trail — its own geometry so the draw-range does not touch the
-  // backdrop.  Drawn as an indexed LineSegments over the same vertices.
-  const trailGeom = buildGeometry(geom);
-  const trail = new THREE.LineSegments(
+  // Bright fading trail — a fixed-length windowed line, positions + colours
+  // rewritten per seek().  Additive blending so the head end blooms.
+  const trailLen = Math.max(2, (anim.trail_length_samples | 0) || 600);
+  const tpos = new Float32Array(trailLen * 3);
+  const tcol = new Float32Array(trailLen * 3);
+  const trailGeom = new THREE.BufferGeometry();
+  trailGeom.setAttribute("position", new THREE.BufferAttribute(tpos, 3));
+  trailGeom.setAttribute("color", new THREE.BufferAttribute(tcol, 3));
+  const trail = new THREE.Line(
     trailGeom,
     new THREE.LineBasicMaterial({
-      vertexColors: hasColor,
-      color: hasColor ? 0xffffff : resolveColor(mat, palette, index, 0x6fd6ff),
-      linewidth: lw,
-      opacity: alpha,
-      transparent: alpha < 1.0,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     })
   );
   group.add(trail);
 
-  // The head marker — a single THREE.Points at the current sample.
+  // The indigo state head — a glowing point at the current sample.
   let head = null;
-  if (anim.head) {
-    const headPos = new Float32Array([0, 0, 0]);
-    const headGeom = new THREE.BufferGeometry();
-    headGeom.setAttribute("position", new THREE.BufferAttribute(headPos, 3));
+  if (anim.head !== false) {
     const headColor =
       anim.head_color != null
         ? new THREE.Color(anim.head_color[0], anim.head_color[1], anim.head_color[2])
-        : new THREE.Color(0xffe066);
+        : BRAND_INDIGO;
+    const headGeom = new THREE.BufferGeometry();
+    headGeom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
     head = new THREE.Points(
       headGeom,
       new THREE.PointsMaterial({
-        size: Math.max(2.0, anim.head_size || 6.0),
+        size: Math.max(5.0, anim.head_size || 8.0),
         color: headColor,
         sizeAttenuation: false,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
       })
     );
     group.add(head);
   }
 
-  const positions = geom.positions;
   function seek(headVertex, trailVertices) {
     const hv = Math.max(0, Math.min(nVerts - 1, headVertex | 0));
-    // Trail window: [lo, hv].  trailVertices == null ⇒ persistent (lo = 0).
-    const lo = trailVertices == null ? 0 : Math.max(0, hv - trailVertices);
-    // Index units: each segment is 2 indices; the window spans (hv - lo) segments.
-    const start = 2 * lo;
-    const count = 2 * Math.max(0, hv - lo);
-    trail.geometry.setDrawRange(start, count);
+    const win = trailVertices == null ? trailLen : Math.min(trailLen, trailVertices);
+    const from = Math.max(0, hv - win + 1);
+    const m = hv - from + 1; // live samples in the window
+    // Rewrite the whole fixed-length buffer: live samples from `from`..`hv`
+    // (colour fading tail→head), the rest pinned at the head so the extra
+    // vertices collapse onto it (zero-length, invisible segments).
+    for (let k = 0; k < trailLen; k++) {
+      const idx = from + k;
+      const live = k < m && idx < nVerts;
+      const src = live ? idx : hv;
+      tpos[3 * k] = positions[3 * src];
+      tpos[3 * k + 1] = positions[3 * src + 1];
+      tpos[3 * k + 2] = positions[3 * src + 2];
+      // f: 0 at the oldest live sample → 1 at the head.
+      let f = m > 1 ? k / (m - 1) : 1;
+      if (!live) f = 1;
+      f = Math.pow(f, 1.25);
+      tcol[3 * k] = BRAND_STAGE.r + (BRAND_TEAL.r - BRAND_STAGE.r) * f;
+      tcol[3 * k + 1] = BRAND_STAGE.g + (BRAND_TEAL.g - BRAND_STAGE.g) * f;
+      tcol[3 * k + 2] = BRAND_STAGE.b + (BRAND_TEAL.b - BRAND_STAGE.b) * f;
+    }
+    trailGeom.attributes.position.needsUpdate = true;
+    trailGeom.attributes.color.needsUpdate = true;
     if (head) {
       const p = head.geometry.getAttribute("position");
       p.setXYZ(0, positions[3 * hv], positions[3 * hv + 1], positions[3 * hv + 2]);
@@ -240,60 +281,61 @@ function buildLineComet(geom, anim, palette, index) {
  */
 function buildPointsComet(geom, anim, palette, index) {
   const nVerts = geom.positions.length / 3;
-  const hasColor = Boolean(geom.colors && geom.colors.length === geom.positions.length);
   const group = new THREE.Group();
   const mat = geom.material || null;
-  const baseColor = hasColor ? 0xffffff : resolveColor(mat, palette, index, 0x4f9dff);
   const size = mat && mat.markersize != null ? mat.markersize : 1.4;
-  const alpha = mat && mat.alpha != null ? mat.alpha : 1.0;
 
-  // Faint full-cloud backdrop (the static attractor the swarm sweeps over).
+  // Faint teal full-cloud backdrop (the static attractor the swarm sweeps over) —
+  // one flat teal colour (the payload viridis colormap is ignored for the brand
+  // look), matching the line comet's deep-teal backdrop.
   const backdropGeom = buildGeometry(geom);
   const backdrop = new THREE.Points(
     backdropGeom,
     new THREE.PointsMaterial({
-      vertexColors: hasColor,
-      color: baseColor,
+      color: BRAND_TEAL_DIM,
       size: size,
       sizeAttenuation: false,
       transparent: true,
-      opacity: 0.16 * alpha,
+      opacity: 0.22,
     })
   );
   group.add(backdrop);
 
-  // Bright trailing swarm — its own geometry so the draw-range does not touch the
-  // backdrop.  Points are unindexed, so setDrawRange is in vertex units.
+  // Bright teal trailing swarm — its own geometry so the draw-range does not touch
+  // the backdrop.  Points are unindexed, so setDrawRange is in vertex units.
   const swarmGeom = buildGeometry(geom);
   const swarm = new THREE.Points(
     swarmGeom,
     new THREE.PointsMaterial({
-      vertexColors: hasColor,
-      color: baseColor,
-      size: size * 1.35,
+      color: BRAND_TEAL,
+      size: size * 1.4,
       sizeAttenuation: false,
-      opacity: alpha,
-      transparent: alpha < 1.0,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     })
   );
   group.add(swarm);
 
-  // The head marker — a single THREE.Points at the current sample.
+  // The indigo state head at the current sample.
   let head = null;
-  if (anim.head) {
+  if (anim.head !== false) {
     const headPos = new Float32Array([0, 0, 0]);
     const headGeom = new THREE.BufferGeometry();
     headGeom.setAttribute("position", new THREE.BufferAttribute(headPos, 3));
     const headColor =
       anim.head_color != null
         ? new THREE.Color(anim.head_color[0], anim.head_color[1], anim.head_color[2])
-        : new THREE.Color(0xffe066);
+        : BRAND_INDIGO;
     head = new THREE.Points(
       headGeom,
       new THREE.PointsMaterial({
-        size: Math.max(2.0, anim.head_size || 6.0),
+        size: Math.max(5.0, anim.head_size || 8.0),
         color: headColor,
         sizeAttenuation: false,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
       })
     );
     group.add(head);

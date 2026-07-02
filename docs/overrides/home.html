@@ -93,15 +93,18 @@
     display: flex; gap: 0.7rem; flex-wrap: wrap; margin: 0.4rem 0 1.5rem;
     animation: ts-rise 0.5s 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
+  /* Secondary buttons: transparent, teal outline, teal-strong text — readable
+     regardless of the light/dark scheme mismatch (the surface/ink tokens flip
+     with the OS preference; the button must not). Hover fills teal, white text. */
   .md-typeset .ts-home a.ts-btn {
     display: inline-block; padding: 0.62rem 1.15rem;
     font-family: var(--ts-mono);
     font-size: 0.62rem; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase;
-    border: 1px solid var(--ts-rule-strong); border-radius: 7px;
-    color: var(--ts-ink); background: var(--ts-surface);
+    border: 1px solid var(--ts-teal); border-radius: 7px;
+    color: var(--ts-teal-strong); background: transparent;
     transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease, color 0.12s ease;
   }
-  .md-typeset .ts-home a.ts-btn:hover { border-color: var(--ts-teal); color: var(--ts-teal-strong); transform: translateY(-1px); }
+  .md-typeset .ts-home a.ts-btn:hover { background: var(--ts-teal); border-color: var(--ts-teal); color: #fff; transform: translateY(-1px); }
   .md-typeset .ts-home a.ts-btn--primary { background: var(--ts-teal); border-color: var(--ts-teal); color: #fff; }
   .md-typeset .ts-home a.ts-btn--primary:hover { background: var(--ts-teal-strong); border-color: var(--ts-teal-strong); color: #fff; }
 
@@ -193,7 +196,7 @@
         <span class="lbl">attractor · three.js</span>
         <span class="hint">drag to orbit ⟳</span>
       </div>
-      <div id="ts-stage"><div class="ts-boot" id="ts-boot">INTEGRATING ATTRACTOR…</div></div>
+      <div id="ts-stage"><div class="ts-boot" id="ts-boot">loading…</div></div>
       <div class="ts-stage-foot">
         <span class="sysname" id="ts-sysname">—</span>
         <span class="legend">
@@ -295,16 +298,20 @@ function tsInitHero() {
     var n = data.n, raw = data.xyz, pts = new Array(n);
     for (var i = 0; i < n; i++) pts[i] = new THREE.Vector3(raw[3*i]*SCALE, raw[3*i+2]*SCALE, raw[3*i+1]*SCALE);
 
-    // faint full-attractor backdrop (a smooth tube)
-    var curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.5);
-    var tube = new THREE.Mesh(
-      new THREE.TubeGeometry(curve, Math.min(1600, n), 0.34, 12, false),
-      new THREE.MeshStandardMaterial({ color: new THREE.Color(TEAL_DIM), roughness: 0.45, metalness: 0.12,
-        transparent: true, opacity: 0.26, emissive: new THREE.Color(TEAL_DIM).multiplyScalar(0.18) })
-    );
-    group.add(tube);
+    // Faint full-attractor backdrop: a very thin, semi-transparent teal LINE
+    // tracing the whole curve (no fat tube). Additive so it glows on the dark
+    // stage without reading as an opaque ribbon.
+    var fpos = new Float32Array(n * 3);
+    for (var j = 0; j < n; j++) { fpos[3*j] = pts[j].x; fpos[3*j+1] = pts[j].y; fpos[3*j+2] = pts[j].z; }
+    var fgeo = new THREE.BufferGeometry();
+    fgeo.setAttribute("position", new THREE.BufferAttribute(fpos, 3));
+    var faint = new THREE.Line(fgeo, new THREE.LineBasicMaterial({
+      color: TEAL_DIM, transparent: true, opacity: 0.14,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
+    group.add(faint);
 
-    // bright reveal trail (a line whose colour fades to the background head→tail)
+    // Bright reveal trail (a comet): a thin line whose colour fades from bright
+    // teal at the head to transparent-black at the tail, additive-blended.
     var pos = new Float32Array(TAIL * 3), col = new Float32Array(TAIL * 3);
     var tgeo = new THREE.BufferGeometry();
     tgeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -313,13 +320,13 @@ function tsInitHero() {
       linewidth: 2, blending: THREE.AdditiveBlending, depthWrite: false }));
     group.add(trail);
 
-    // glowing indigo head (the current state)
-    var head = new THREE.Mesh(new THREE.SphereGeometry(0.95, 18, 18), new THREE.MeshBasicMaterial({ color: INDIGO }));
-    var glow = new THREE.Mesh(new THREE.SphereGeometry(2.2, 18, 18),
-      new THREE.MeshBasicMaterial({ color: INDIGO, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }));
+    // Small glowing indigo head (the current state).
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.62, 18, 18), new THREE.MeshBasicMaterial({ color: INDIGO }));
+    var glow = new THREE.Mesh(new THREE.SphereGeometry(1.5, 18, 18),
+      new THREE.MeshBasicMaterial({ color: INDIGO, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending }));
     group.add(head); group.add(glow);
 
-    cur = { pts: pts, n: n, tube: tube, trail: trail, tgeo: tgeo, head: head, glow: glow, t: 12, fade: 0 };
+    cur = { pts: pts, n: n, faint: faint, trail: trail, tgeo: tgeo, head: head, glow: glow, t: 12, fade: 0 };
     if (nameEl) nameEl.textContent = data.name;
     if (boot) boot.style.display = "none";
   }
@@ -332,7 +339,7 @@ function tsInitHero() {
       var idx = from + k, p = (idx < to && idx < cur.n) ? cur.pts[idx] : last;
       pa[3*k] = p.x; pa[3*k+1] = p.y; pa[3*k+2] = p.z;
       var f = m > 1 ? k / (m - 1) : 1;          // 0 oldest → 1 head
-      f = Math.pow(f, 1.25) * cur.fade;
+      f = Math.pow(f, 1.6) * cur.fade;          // bright at head, fast fade to tail
       ca[3*k]   = bgC.r + (tealC.r - bgC.r) * f;
       ca[3*k+1] = bgC.g + (tealC.g - bgC.g) * f;
       ca[3*k+2] = bgC.b + (tealC.b - bgC.b) * f;
@@ -340,9 +347,9 @@ function tsInitHero() {
     cur.tgeo.attributes.position.needsUpdate = true;
     cur.tgeo.attributes.color.needsUpdate = true;
     cur.head.position.copy(last); cur.glow.position.copy(last);
-    cur.tube.material.opacity = 0.28 * cur.fade;
+    cur.faint.material.opacity = 0.14 * cur.fade;
     cur.head.material.opacity = cur.fade; cur.head.visible = cur.fade > 0.02;
-    cur.glow.material.opacity = 0.22 * cur.fade;
+    cur.glow.material.opacity = 0.28 * cur.fade;
   }
 
   function frame() {
@@ -387,7 +394,7 @@ function tsInitHero() {
 
   fetch("assets/hero/manifest.json").then(function (r){ return r.json(); })
     .then(function (m){ systems = m.systems || []; next(); frame(); })
-    .catch(function (){ if (boot) boot.textContent = "NO ATTRACTOR DATA"; });
+    .catch(function (){ if (boot) boot.textContent = "no attractor data"; });
 }
 
 /* ---- copy-to-clipboard on the install chip ---- */
