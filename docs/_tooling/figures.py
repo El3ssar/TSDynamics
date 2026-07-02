@@ -37,6 +37,11 @@ OUT_DIR = ROOT / "docs" / "assets" / "figures" / "systems"
 
 _ACCENT = "#4f46e5"  # indigo — flow/system (matches the docs identity)
 _ACCENT_2 = "#0d9488"  # teal — secondary / delay-embedding view
+_TEAL = "#2CC5AE"  # bright brand teal — SDE sample paths / primary time series
+
+#: Brand-palette line colours for a multi-component time series (Oregonator's
+#: three scaled concentrations): teal, indigo, deep teal — the docs identity.
+_SERIES_PALETTE = ("#2CC5AE", "#4f46e5", "#11857A")
 
 #: Per-system rendering overrides: final_time, dt, ic, kind, transient_frac.
 FIG_OVERRIDES: dict[str, dict] = {
@@ -50,7 +55,19 @@ FIG_OVERRIDES: dict[str, dict] = {
     "SwiftHohenberg": {"kind": "field", "final_time": 50.0, "dt": 0.1},
     "MultiChua": {"ic": "0.1*ones"},
     "DoubleGyre": {"final_time": 40.0},
-    "Oregonator": {"skip": True},  # stiff — solve_ivp needs special handling
+    # Stiff relaxation oscillator (Belousov–Zhabotinsky).  An explicit kernel
+    # diverges, so integrate through the shipped engine's variable-order BDF via
+    # the ``engine_method`` override (the code that ships, not SciPy).  The scaled
+    # concentrations span several decades over one relaxation cycle, so a
+    # time-series of the three species reads far better than a Z-dominated phase
+    # portrait.
+    "Oregonator": {
+        "final_time": 40.0,
+        "dt": 0.005,
+        "engine_method": "bdf",
+        "kind": "timeseries",
+        "series_labels": ("X", "Y", "Z"),  # scaled HBrO₂ / Br⁻ / Ce⁴⁺ (docstring)
+    },
     # Finite-basin systems (Blasius, RabinovichFabrikant, Sprott*, Hyper*,
     # HenonHeiles) carry their on-attractor IC as a class ``default_ic`` —
     # the renderer picks it up via ``_resolve_ic``. Only longer integration
@@ -60,10 +77,27 @@ FIG_OVERRIDES: dict[str, dict] = {
     "SprottM": {"final_time": 60.0},
     "SprottO": {"final_time": 60.0},
     "HyperRossler": {"final_time": 60.0},
-    "HyperQi": {"final_time": 30.0},
+    # 4-D hyperchaotic flow: fixed-step rk4 diverges at this scale, but the
+    # engine's *adaptive* rk45 stays bounded — force it via ``engine_method`` so
+    # the static 3-component projection (first three of four coords) renders.  The
+    # flow is fast (large excursions per unit time), so a fine output ``dt`` keeps
+    # the swept curve smooth; a generous transient trim drops the lead-in lines.
+    "HyperQi": {
+        "final_time": 30.0,
+        "dt": 0.001,
+        "engine_method": "rk45",
+        "transient_frac": 0.3,
+    },
     # Discontinuous (sign) right-hand sides — RK45 steps across the jumps:
     "StickSlipOscillator": {"ic": [0.1, 0.1, 0.1], "final_time": 60.0, "method": "RK45"},
     "Colpitts": {"ic": [0.1, 0.1, 0.1], "final_time": 40.0, "method": "RK45"},
+    # SDE sample paths (seeded → reproducible/cacheable).  A longer window for the
+    # double well so several barrier hops (its signature switching) are visible; the
+    # ``±sqrt(a/b) = ±1`` wells are drawn as faint guide lines.  OU and GBM read well
+    # over the default window (mean reversion / a positive multiplicative-noise path).
+    "DoubleWell": {"final_time": 200.0, "seed": 0, "guides": (-1.0, 1.0)},
+    "GeometricBrownianMotion": {"final_time": 100.0, "seed": 0},
+    "OrnsteinUhlenbeck": {"final_time": 100.0, "seed": 0},
 }
 
 
@@ -89,7 +123,7 @@ def _style():
     return plt
 
 
-RENDERER_VERSION = "6"  # bump manually when rendering output materially changes
+RENDERER_VERSION = "7"  # bump manually when rendering output materially changes
 
 
 def cache_key(entry) -> str:
@@ -126,7 +160,7 @@ def _use_engine_for_ode(entry, opts) -> bool:
       ``"method"`` (``"RK45"``) override in :data:`FIG_OVERRIDES`, where the
       step controller must walk carefully across the jumps.
     """
-    if opts.get("method") is not None:  # discontinuous (sign/abs) RHS
+    if opts.get("method") is not None:  # discontinuous (sign/abs) RHS → SciPy
         return False
     # Stiff systems declare an implicit ``_default_method`` (the base default is
     # the explicit "RK45").  Ask the solver registry whether that kernel needs a
@@ -149,16 +183,24 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     (it does not re-roll the IC itself), so off-basin random starts are caught
     and retried here, exactly as the SciPy fallback does.
 
-    Marches with the **fixed-step** ``rk4`` kernel rather than the adaptive default
-    on purpose: an off-basin random start that races to infinity then raises after a
-    handful of cheap steps and is retried, instead of sending the *adaptive*
-    step-controller into a minutes-long step-shrinking spiral as it chases the
-    diverging solution down to the minimum step size (a cold build of the
+    Marches with the **fixed-step** ``rk4`` kernel by default rather than the
+    adaptive default on purpose: an off-basin random start that races to infinity
+    then raises after a handful of cheap steps and is retried, instead of sending
+    the *adaptive* step-controller into a minutes-long step-shrinking spiral as it
+    chases the diverging solution down to the minimum step size (a cold build of the
     conservative / chaotic catalogue otherwise appears to hang).  ``rk4`` at
     ``dt = 0.01`` is more than accurate enough for a non-stiff attractor thumbnail.
+
+    A system that cannot be marched with fixed-step ``rk4`` (a stiff relaxation
+    oscillator that needs the implicit ``bdf``; a fast hyperchaotic flow that needs
+    the adaptive ``rk45``) sets an ``engine_method`` override in
+    :data:`FIG_OVERRIDES`, selecting that shipped-engine kernel here — still the code
+    that ships, and still on the IC-retry contract (every engine kernel raises on
+    divergence).
     """
     final_time = opts.get("final_time", 100.0)
     dt = opts.get("dt", 0.01)
+    method = opts.get("engine_method", "rk4")
     rng = np.random.default_rng(42)
 
     sys_obj = entry.cls()
@@ -172,7 +214,7 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
                 dt=dt,
                 ic=np.asarray(ic, dtype=float),
                 backend="interp",
-                method="rk4",
+                method=method,
             )
         except (RuntimeError, ValueError):  # divergence / off-basin start
             ic = None
@@ -258,8 +300,15 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     engine (``integrate(backend="interp")``) so the docs figure is produced by
     the code that ships.  Stiff / discontinuous systems use the commented
     SciPy ``solve_ivp`` fallback (:func:`_ode_trajectory_scipy`).
+
+    An explicit ``engine_method`` override (a stiff system that wants the engine's
+    ``bdf``, a fast flow that wants the adaptive ``rk45``) always takes the engine
+    path.  This is a **figures-only** override: it deliberately does *not* flip the
+    shared :func:`_use_engine_for_ode` predicate that :mod:`threejs_viewer` reads
+    for viewer eligibility, so such a system keeps its curated static figure (a
+    time-series / projection) rather than an ill-suited 3-D comet.
     """
-    if _use_engine_for_ode(entry, opts):
+    if opts.get("engine_method") is not None or _use_engine_for_ode(entry, opts):
         return _ode_trajectory_engine(entry, opts)
     return _ode_trajectory_scipy(entry, opts)
 
@@ -292,6 +341,8 @@ def _render_ode(entry, plt, opts):
             return _render_field(entry, plt, y)
         return _render_spacetime(entry, plt, t, y)
     t, y = _ode_trajectory(entry, opts)
+    if opts.get("kind") == "timeseries":
+        return _render_timeseries(entry, plt, t, y, opts)
     if entry.cls().dim is None:
         return _render_spacetime(entry, plt, t, y)
     dim = y.shape[1]
@@ -339,6 +390,70 @@ def _render_field(entry, plt, y):
     fig, ax = plt.subplots(figsize=(4.6, 4.2))
     ax.imshow(block.reshape(shape), origin="lower", cmap="viridis")
     ax.set_xticks([]), ax.set_yticks([])
+    return fig
+
+
+def _render_timeseries(entry, plt, t, y, opts):
+    """Render every component of a low-dim flow as a brand-palette time series.
+
+    Used for a system whose phase portrait would be dominated by one
+    wildly-different-scaled coordinate — the stiff Oregonator relaxation
+    oscillator, whose three scaled concentrations span several decades over one
+    cycle.  All-positive series get a log y-axis (the honest view of a
+    multi-decade concentration); a component that dips non-positive gets a linear
+    axis.  Component names come from the ``variables`` ClassVar when present.
+    """
+    names = list(opts.get("series_labels") or getattr(entry.cls, "variables", None) or [])
+    dim = y.shape[1]
+    fig, ax = plt.subplots(figsize=(5.8, 3.2))
+    for i in range(dim):
+        label = names[i] if i < len(names) else f"y{i}"
+        ax.plot(t, y[:, i], lw=0.8, color=_SERIES_PALETTE[i % len(_SERIES_PALETTE)], label=label)
+    if np.all(y > 0):
+        ax.set_yscale("log")
+    ax.set_xlabel("t")
+    ax.legend(loc="upper right", fontsize=7, frameon=False, labelcolor="#888888")
+    fig.tight_layout()
+    return fig
+
+
+def _sde_sample_path(entry, opts) -> tuple[np.ndarray, np.ndarray]:
+    """Integrate one **seeded** sample path of a (scalar) SDE for the figure.
+
+    Runs the shipped SDE integrator with a fixed ``seed`` so the rendered path is
+    reproducible (hence cacheable).  The default ``reference`` backend (pure
+    Python) needs no compiled wheel and reproduces the engine to float tolerance —
+    the right choice for a deterministic, portable docs figure.  Honours a
+    per-system ``final_time`` / ``dt`` override (the switching double well wants a
+    longer window than a mean-reverting OU path).
+    """
+    final_time = opts.get("final_time", 100.0)
+    dt = opts.get("dt", 0.01)
+    seed = int(opts.get("seed", 0))
+    sys_obj = entry.cls()
+    traj = sys_obj.integrate(final_time=final_time, dt=dt, seed=seed, backend="reference")
+    return traj.t, traj.y
+
+
+def _render_sde(entry, plt, opts):
+    """Render a seeded SDE sample path ``x(t)`` as a brand-teal time series.
+
+    A one-dimensional diffusion (OU mean reversion, GBM's positive path, the
+    double well's noise-driven switching) is shown as its realised trajectory over
+    time — the natural depiction of an SDE, and reproducible under the fixed seed.
+    The double well's ``±sqrt(a/b)`` wells are drawn as faint guide lines so the
+    barrier-hopping reads at a glance.
+    """
+    t, y = _sde_sample_path(entry, opts)
+    x = y[:, 0]
+    fig, ax = plt.subplots(figsize=(5.8, 2.8))
+    for line in opts.get("guides", ()):  # faint horizontal reference levels
+        ax.axhline(float(line), lw=0.6, color="#88888855", ls="--")
+    ax.plot(t, x, lw=0.7, color=_TEAL)
+    names = list(getattr(entry.cls, "variables", None) or [])
+    ax.set_xlabel("t")
+    ax.set_ylabel(names[0] if names else "x")
+    fig.tight_layout()
     return fig
 
 
@@ -416,6 +531,8 @@ def render(entry) -> pathlib.Path | None:
             fig = _render_ode(entry, plt, opts)
         elif entry.family == "dde":
             fig = _render_dde(entry, plt, opts)
+        elif entry.family == "sde":
+            fig = _render_sde(entry, plt, opts)
         else:
             fig = _render_map(entry, plt, opts)
         fig.savefig(cached, dpi=150, bbox_inches="tight")

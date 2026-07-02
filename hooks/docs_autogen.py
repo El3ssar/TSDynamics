@@ -211,12 +211,18 @@ def _attractor_block(rec, uri: str, has_viewer: bool, has_figure: bool) -> list[
             "</figure>",
             "",
         ]
-    return [
-        '!!! note "Attractor figure skipped"',
-        "    Build with figures enabled (`TSD_DOCS_FIGURES=1`) to render the",
-        "    interactive attractor / static field image for this system.",
-        "",
-    ]
+    if not WITH_FIGURES:
+        # Fast preview only (``TSD_DOCS_FIGURES=0``): the render was skipped on
+        # purpose, so tell the reader how to see it.
+        return [
+            '!!! note "Attractor figure skipped"',
+            "    Build with figures enabled (`TSD_DOCS_FIGURES=1`) to render the",
+            "    interactive attractor / static field image for this system.",
+            "",
+        ]
+    # Figures are enabled but this system genuinely has no attractor image — say
+    # nothing rather than the misleading "build with figures enabled" note.
+    return []
 
 
 def _fmt_default(v) -> str:
