@@ -42,6 +42,36 @@ const BRAND_TEAL_DIM = new THREE.Color(0x11857a); // deep teal backdrop curve
 const BRAND_INDIGO = new THREE.Color(0x8c85f2); // indigo state head
 const BRAND_STAGE = new THREE.Color(0x0b0f14); // dark stage (trail fades to this)
 
+/**
+ * A soft round sprite for the state head, built once from a radial-gradient
+ * canvas.  A bare `THREE.PointsMaterial` with `sizeAttenuation:false` draws a
+ * **hard square** — the blocky white pip visible before this fix; mapping this
+ * texture (with `alphaTest`/additive blending) turns the head into a glowing
+ * circular dot that reads as the indigo state marker, not a pixel.  Lazily
+ * created and cached so every comet shares one GPU texture.
+ */
+let _headSpriteTexture = null;
+function headSprite() {
+  if (_headSpriteTexture) return _headSpriteTexture;
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const r = size / 2;
+  const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
+  // Bright opaque core → soft transparent halo (a bloom-friendly falloff).
+  grad.addColorStop(0.0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.35, "rgba(255,255,255,0.9)");
+  grad.addColorStop(0.7, "rgba(255,255,255,0.25)");
+  grad.addColorStop(1.0, "rgba(255,255,255,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  _headSpriteTexture = tex;
+  return tex;
+}
+
 /** Build a THREE.BufferGeometry from one payload geometry (positions/colors/indices). */
 function buildGeometry(geom) {
   const geometry = new THREE.BufferGeometry();
@@ -138,6 +168,59 @@ function boundsCentre(bounds) {
   return [mid(bounds?.x), mid(bounds?.y), mid(bounds?.z)];
 }
 
+/** The diagonal of the axis-aligned bounding box of a flat xyz `positions` array. */
+function boundsDiagonal(positions) {
+  const n = positions.length;
+  if (n < 3) return 1;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < n; i += 3) {
+    const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+}
+
+/**
+ * Build a **seam-aware** `LineSegments` index buffer for a polyline `positions`.
+ *
+ * A *wrapped* flow (a torus / angle attractor whose coordinates are folded mod 2π
+ * — Arnold web, Arnold–Beltrami–Childress) has consecutive samples that jump the
+ * full box width whenever an angle crosses ±π.  A plain `THREE.Line` connects those
+ * two samples with a long chord straight across the cube — a spray of spurious
+ * "seam" lines that swamp the real structure (the near-vertical smear that made the
+ * Arnold web read as a single bar).  This returns an index buffer of only the
+ * *short* segments (consecutive pairs closer than `maxStep`), so the seam chords are
+ * simply not drawn — the folded torus reads as its true web.  Returns `null` when no
+ * seam is present (the caller then draws a cheaper contiguous `THREE.Line`).
+ *
+ * @param {ArrayLike<number>} positions - flat xyz triples.
+ * @param {number} maxStep - the seam threshold (a fraction of the bounds diagonal).
+ */
+function segmentIndexSkippingSeams(positions, maxStep) {
+  const n = positions.length / 3;
+  const idx = [];
+  const t2 = maxStep * maxStep;
+  let seams = 0;
+  for (let i = 0; i + 1 < n; i++) {
+    const dx = positions[3 * i + 3] - positions[3 * i];
+    const dy = positions[3 * i + 4] - positions[3 * i + 1];
+    const dz = positions[3 * i + 5] - positions[3 * i + 2];
+    if (dx * dx + dy * dy + dz * dz > t2) {
+      seams++;
+      continue; // a wrap seam — drop this segment
+    }
+    idx.push(i, i + 1);
+  }
+  return seams > 0 ? idx : null;
+}
+
 /**
  * Build the reveal comet for one line geometry, matching the home hero: a faint
  * deep-teal full-curve backdrop, a bright teal trail that **fades to the dark
@@ -166,21 +249,29 @@ function buildLineComet(geom, anim, palette, index) {
 
   // Faint deep-teal full-curve backdrop (the static context the comet sweeps).
   // A single flat teal colour — no vertex colours — so the whole attractor reads
-  // as one thin teal line at rest.
+  // as one thin teal line at rest.  A *wrapped* torus flow (an angle folded mod 2π)
+  // is drawn as seam-skipping `LineSegments` so the fold chords don't smear across
+  // the cube; an ordinary attractor keeps the cheaper contiguous `THREE.Line`.
   const backdropGeom = new THREE.BufferGeometry();
   backdropGeom.setAttribute(
     "position",
     new THREE.BufferAttribute(new Float32Array(positions), 3)
   );
-  const backdrop = new THREE.Line(
-    backdropGeom,
-    new THREE.LineBasicMaterial({
-      color: BRAND_TEAL_DIM,
-      transparent: true,
-      opacity: 0.22,
-      depthWrite: false,
-    })
-  );
+  const seamStep = 0.4 * boundsDiagonal(positions);
+  const seamIdx = segmentIndexSkippingSeams(positions, seamStep);
+  const backdropMat = new THREE.LineBasicMaterial({
+    color: BRAND_TEAL_DIM,
+    transparent: true,
+    opacity: 0.22,
+    depthWrite: false,
+  });
+  let backdrop;
+  if (seamIdx) {
+    backdropGeom.setIndex(seamIdx);
+    backdrop = new THREE.LineSegments(backdropGeom, backdropMat);
+  } else {
+    backdrop = new THREE.Line(backdropGeom, backdropMat);
+  }
   group.add(backdrop);
 
   // Bright fading trail — a fixed-length windowed line, positions + colours
@@ -214,16 +305,25 @@ function buildLineComet(geom, anim, palette, index) {
     head = new THREE.Points(
       headGeom,
       new THREE.PointsMaterial({
-        size: Math.max(5.0, anim.head_size || 8.0),
+        size: Math.max(9.0, (anim.head_size || 8.0) * 1.6),
         color: headColor,
+        map: headSprite(),
+        alphaTest: 0.02,
         sizeAttenuation: false,
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       })
     );
+    head.renderOrder = 3;
     group.add(head);
   }
+
+  // Seam threshold for the trail: a live sample that jumps more than this from the
+  // previous one is a wrap fold, and its connecting chord is collapsed onto the
+  // previous vertex (a zero-length, invisible segment) so the comet doesn't streak
+  // across the cube as it crosses a torus seam.
+  const seamStep2 = Math.pow(0.4 * boundsDiagonal(positions), 2);
 
   function seek(headVertex, trailVertices) {
     const hv = Math.max(0, Math.min(nVerts - 1, headVertex | 0));
@@ -237,9 +337,24 @@ function buildLineComet(geom, anim, palette, index) {
       const idx = from + k;
       const live = k < m && idx < nVerts;
       const src = live ? idx : hv;
-      tpos[3 * k] = positions[3 * src];
-      tpos[3 * k + 1] = positions[3 * src + 1];
-      tpos[3 * k + 2] = positions[3 * src + 2];
+      let px = positions[3 * src];
+      let py = positions[3 * src + 1];
+      let pz = positions[3 * src + 2];
+      // Collapse a wrap-seam chord: if this live sample leapt from the previous
+      // drawn one, pin it onto the previous vertex so no chord crosses the cube.
+      if (live && k > 0) {
+        const dx = px - tpos[3 * k - 3];
+        const dy = py - tpos[3 * k - 2];
+        const dz = pz - tpos[3 * k - 1];
+        if (dx * dx + dy * dy + dz * dz > seamStep2) {
+          px = tpos[3 * k - 3];
+          py = tpos[3 * k - 2];
+          pz = tpos[3 * k - 1];
+        }
+      }
+      tpos[3 * k] = px;
+      tpos[3 * k + 1] = py;
+      tpos[3 * k + 2] = pz;
       // f: 0 at the oldest live sample → 1 at the head.
       let f = m > 1 ? k / (m - 1) : 1;
       if (!live) f = 1;
@@ -330,14 +445,17 @@ function buildPointsComet(geom, anim, palette, index) {
     head = new THREE.Points(
       headGeom,
       new THREE.PointsMaterial({
-        size: Math.max(5.0, anim.head_size || 8.0),
+        size: Math.max(9.0, (anim.head_size || 8.0) * 1.6),
         color: headColor,
+        map: headSprite(),
+        alphaTest: 0.02,
         sizeAttenuation: false,
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       })
     );
+    head.renderOrder = 3;
     group.add(head);
   }
 
@@ -496,9 +614,32 @@ export function renderThreejsPayload(container, payload, opts = {}) {
   const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1e5);
   const cam = meta.camera || {};
   const target = cam.target || boundsCentre(meta.bounds);
-  camera.up.set(...(cam.up || [0, 0, 1]));
-  camera.position.set(...(cam.position || [1, 1, 1]));
-  camera.lookAt(...target);
+
+  // A **2-D phase portrait** is exported as a flat curve in the z = 0 plane, but the
+  // payload camera is a 3-D oblique eye — so a planar loop is viewed edge-on and
+  // collapses to a diagonal band (the "sheet of parallel lines" a limit cycle read
+  // as).  Detect the planar case (a degenerate z extent) and look **straight down**
+  // the z axis instead, so the portrait shows face-on; up becomes +y.  A genuine
+  // 3-D attractor keeps its exported oblique camera.
+  const bz = meta.bounds && meta.bounds.z;
+  const bx = meta.bounds && meta.bounds.x;
+  const by = meta.bounds && meta.bounds.y;
+  const zExtent = bz ? Math.abs(bz[1] - bz[0]) : 0;
+  const xyExtent = Math.max(
+    bx ? Math.abs(bx[1] - bx[0]) : 0,
+    by ? Math.abs(by[1] - by[0]) : 0
+  );
+  const isPlanar = xyExtent > 0 && zExtent <= 1e-6 * xyExtent;
+  if (isPlanar) {
+    const dist = 1.6 * (xyExtent || 1);
+    camera.up.set(0, 1, 0);
+    camera.position.set(target[0], target[1], target[2] + dist);
+    camera.lookAt(...target);
+  } else {
+    camera.up.set(...(cam.up || [0, 0, 1]));
+    camera.position.set(...(cam.position || [1, 1, 1]));
+    camera.lookAt(...target);
+  }
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio || 1);

@@ -152,6 +152,29 @@
   margin-top: 0.55rem;
 }
 
+/* Two-projection layout for a 4-D-plus flow: side-by-side on a wide viewport,
+   stacked on a narrow one.  Each panel is a shorter square-ish stage. */
+.md-typeset .ts-attractor-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 0 0 0.4rem;
+}
+.md-typeset .ts-attractor-pair .ts-attractor-fig {
+  margin: 0;
+}
+.md-typeset .ts-attractor-pair .ts-attractor {
+  height: 340px;
+}
+.md-typeset .ts-attractor-cap--pair {
+  margin: 0 0 2rem;
+}
+@media (max-width: 820px) {
+  .md-typeset .ts-attractor-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- Properties stat cards ---- */
 .md-typeset .ts-props {
   display: grid;
@@ -218,6 +241,61 @@
   font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
   font-size: 0.82rem;
   color: var(--tsc-link);
+}
+
+/* ---- catalogue browser tables (Systems index / type / subcategory) ----
+   The generated browser tables (System | Dim | Behavior on a subcategory page,
+   Subcategory | Systems | Dim | Examples on a type page, Browse-by-type on the
+   index) shrink to their content by default and read cramped.  Make them span
+   the full content width with comfortable padding and sensible column widths. */
+.md-typeset .md-content__inner > table:not([class]),
+.md-typeset .md-content__inner > .md-typeset__table > table,
+.md-typeset__table > table {
+  width: 100%;
+  display: table;
+  table-layout: auto;
+}
+.md-typeset .md-typeset__table {
+  width: 100%;
+  margin: 1rem 0 2rem;
+}
+/* Roomier cells + a clear header row. */
+.md-typeset table:not([class]) th,
+.md-typeset table:not([class]) td {
+  padding: 0.62em 1.1em;
+  line-height: 1.5;
+}
+.md-typeset table:not([class]) th {
+  font-family: var(--ts-font-mono, "IBM Plex Mono", monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tsc-muted);
+  background: var(--tsc-surface-2);
+  white-space: nowrap;
+}
+/* First column (System / Subcategory name link) is the widest; keep the name
+   on one line and let it take the slack.  Right-align the numeric Dim column. */
+.md-typeset table:not([class]) td:first-child,
+.md-typeset table:not([class]) th:first-child {
+  width: 42%;
+  white-space: nowrap;
+}
+.md-typeset table:not([class]) td a {
+  font-weight: 600;
+}
+/* Numeric columns (Dim / Systems counts) — right-aligned, snug, tabular. */
+.md-typeset table:not([class]) td[align="right"],
+.md-typeset table:not([class]) th[align="right"] {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Zebra striping so long catalogue lists are easy to scan. */
+.md-typeset table:not([class]) tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--tsc-surface-2) 55%, transparent);
+}
+.md-typeset table:not([class]) tbody tr:hover {
+  background: color-mix(in srgb, var(--tsc-link) 8%, transparent);
 }
 
 /* ---- responsive: single-column cards on narrow viewports ---- */

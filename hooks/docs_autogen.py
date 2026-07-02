@@ -159,13 +159,6 @@ def _pill(text: str, *, accent: bool = False) -> str:
     return f'<span class="{cls}">{text}</span>'
 
 
-def _behavior_label(rec) -> str:
-    """Return a short behaviour word for a table cell (first editorial tag, else ``—``)."""
-    if rec.behavior:
-        return rec.behavior[0]
-    return "—"
-
-
 # ===========================================================================
 # Per-system page
 # ===========================================================================
@@ -178,36 +171,126 @@ def _tag_pills(rec) -> str:
     return '<p class="ts-tags">' + "".join(pills) + "</p>"
 
 
-def _attractor_block(rec, uri: str, has_viewer: bool, has_figure: bool) -> list[str]:
-    """Build the attractor block: an interactive viewer iframe, a static figure, or a note."""
+def _viewer_iframe(rec, uri: str, *, second: bool, projection_label: str) -> str:
+    """One interactive-viewer ``<iframe>`` (the primary view, or the ``projection2``).
+
+    The iframe ``src`` is resolved against the *output* (directory-URL) location: a
+    page ``systems/<t>/<c>/<Name>.md`` serves at ``systems/<t>/<c>/<Name>/`` (one
+    deeper than the source), so reaching the site-root ``assets/threejs/<Name>.html``
+    needs one extra ``../`` over the source depth.  MkDocs does not rewrite
+    ``<iframe src>``.  The second view lives at ``<Name>-b.html``.
+    """
+    depth = uri.count("/") + 1
+    suffix = "-b" if second else ""
+    src = "../" * depth + f"assets/threejs/{rec.name}{suffix}.html"
+    title = (
+        f"{rec.name} attractor{projection_label} — drag to orbit, "
+        "scroll to zoom (plays automatically)"
+    )
+    return (
+        f'<iframe class="ts-attractor" src="{src}" loading="lazy" '
+        f'title="{title}" scrolling="no"></iframe>'
+    )
+
+
+def _projection_caption(rec, *, second: bool) -> str:
+    """Return a human ``(x, y, z)`` projection label for a viewer caption, or ``""``."""
+    proj = rec.projection2 if second else rec.projection
+    if not proj:
+        return ""
+    names = list(rec.variables or [])
+    default = ["x", "y", "z", "w", "v", "u"]
+
+    def label(i):
+        try:
+            i = int(i)
+        except (TypeError, ValueError):
+            return str(i)
+        if 0 <= i < len(names):
+            return names[i]
+        return default[i] if i < len(default) else f"y{i}"
+
+    return " (" + ", ".join(label(i) for i in proj) + ")"
+
+
+#: The exact interactive-viewer caption the maintainer asked for — nothing else.
+_INTERACTIVE_CAPTION = "Interactive: drag to rotate"
+
+
+def _static_caption(rec) -> str:
+    """Return a short, honest caption for a *static* figure (no interactivity claim).
+
+    Reads the render intent the way :mod:`figures` does — a map with a
+    ``bifurcation`` override renders its return map beside a library-generated
+    bifurcation diagram; an SDE is a sample path; a spatial system a field image;
+    an editorial ``timeseries`` / ``polar`` view names itself; everything else is a
+    phase portrait.
+    """
+    fig_opts = _figures.FIG_OVERRIDES.get(rec.name, {})
+    map_opts = _figures.MAP_OVERRIDES.get(rec.name, {})
+    viewer = rec.viewer if isinstance(rec.viewer, dict) else {}
+
+    if rec.family == "sde":
+        return "sample path"
+    if rec.family == "map":
+        if map_opts.get("bifurcation"):
+            return "return map · bifurcation diagram"
+        return "attractor"
+    if rec.is_spatial or fig_opts.get("kind") in ("field", "spacetime"):
+        return "spatiotemporal field"
+    if fig_opts.get("kind") == "timeseries" or viewer.get("static_kind") == "timeseries":
+        return "time series"
+    return "phase portrait"
+
+
+def _attractor_block(
+    rec, uri: str, has_viewer: bool, has_figure: bool, has_viewer2: bool = False
+) -> list[str]:
+    """Build the attractor block: interactive viewer(s), a static figure, or a note.
+
+    A 4-D-plus flow with a second editorial ``projection2`` shows **two** animated
+    viewers over different coordinate combinations, so the reader sees more than one
+    face of a high-dimensional attractor.  Every interactive viewer carries the exact
+    caption "Interactive: drag to rotate"; a static figure gets a short honest label.
+    """
     if has_viewer:
-        # The viewer iframe ``src`` is resolved against the *output* (directory-URL)
-        # location: a page ``systems/<t>/<c>/<Name>.md`` serves at
-        # ``systems/<t>/<c>/<Name>/`` (one deeper than the source), so reaching the
-        # site-root ``assets/threejs/<Name>.html`` needs one extra ``../`` over the
-        # source depth.  MkDocs does not rewrite ``<iframe src>``.
-        depth = uri.count("/") + 1
-        src = "../" * depth + f"assets/threejs/{rec.name}.html"
-        title = f"{rec.name} attractor — drag to orbit, scroll to zoom (plays automatically)"
-        iframe = (
-            f'<iframe class="ts-attractor" src="{src}" loading="lazy" '
-            f'title="{title}" scrolling="no"></iframe>'
+        primary = _viewer_iframe(
+            rec, uri, second=False, projection_label=_projection_caption(rec, second=False)
         )
-        caption = "interactive attractor · three.js — drag to orbit, scroll to zoom"
+        if has_viewer2:
+            secondary = _viewer_iframe(
+                rec, uri, second=True, projection_label=_projection_caption(rec, second=True)
+            )
+            cap1 = f"projection{_projection_caption(rec, second=False)}"
+            cap2 = f"projection{_projection_caption(rec, second=True)}"
+            return [
+                '<div class="ts-attractor-pair">',
+                '<figure class="ts-attractor-fig" markdown>',
+                primary,
+                f'<figcaption class="ts-attractor-cap">{cap1}</figcaption>',
+                "</figure>",
+                '<figure class="ts-attractor-fig" markdown>',
+                secondary,
+                f'<figcaption class="ts-attractor-cap">{cap2}</figcaption>',
+                "</figure>",
+                "</div>",
+                f'<p class="ts-attractor-cap ts-attractor-cap--pair">{_INTERACTIVE_CAPTION}</p>',
+                "",
+            ]
         return [
             '<figure class="ts-attractor-fig" markdown>',
-            iframe,
-            f'<figcaption class="ts-attractor-cap">{caption}</figcaption>',
+            primary,
+            f'<figcaption class="ts-attractor-cap">{_INTERACTIVE_CAPTION}</figcaption>',
             "</figure>",
             "",
         ]
     if has_figure:
         rel = _rel(uri, f"assets/figures/systems/{rec.name}.png")
-        cap = "spatiotemporal field" if rec.is_spatial else "phase portrait"
+        cap = _static_caption(rec)
         return [
             '<figure class="ts-attractor-fig" markdown>',
             f"![{rec.name} {cap}]({rel}){{ loading=lazy .ts-attractor-img }}",
-            f'<figcaption class="ts-attractor-cap">{cap} · matplotlib</figcaption>',
+            f'<figcaption class="ts-attractor-cap">{cap}</figcaption>',
             "</figure>",
             "",
         ]
@@ -390,16 +473,53 @@ def _reference_block(rec) -> list[str]:
     return parts
 
 
-def _system_page(rec, *, has_viewer: bool, has_figure: bool) -> str:
+def _out_rel(from_uri: str, to_root_path: str) -> str:
+    """Site-root-relative path as seen from the *rendered* page of ``from_uri``.
+
+    A source page ``systems/a/b/X.md`` serves at ``systems/a/b/X/`` (a directory
+    URL, one level deeper than the source uri's directory depth), so a raw-HTML
+    link — which MkDocs does **not** rewrite — needs one extra ``../`` over the
+    source-relative :func:`_rel`.  Index pages (``…/index.md``) serve at their own
+    directory, so their output depth equals the source depth; pass those through
+    ``_rel`` instead.
+    """
+    depth = from_uri.count("/") + 1
+    return "../" * depth + to_root_path
+
+
+def _breadcrumb(rel_fn, links: list[tuple[str, str | None]]) -> str:
+    r"""Build a rendered HTML breadcrumb ``<p class="ts-kicker">``.
+
+    Each element is ``(label, target_root_path | None)``: a path yields a real
+    ``<a href>`` (resolved site-root-relative via ``rel_fn`` so it links correctly
+    at any depth), and ``None`` yields the plain trailing crumb.  Emitting real
+    ``<a>`` anchors (rather than markdown ``[](…)`` inside raw HTML, which MkDocs
+    does not process) is what makes the breadcrumb render as clickable links
+    instead of literal ``[Systems](…)`` text.
+    """
+    sep = ' <span class="ts-crumb-sep">/</span> '
+    crumbs = []
+    for label, target in links:
+        if target:
+            crumbs.append(f'<a href="{rel_fn(target)}">{label}</a>')
+        else:
+            crumbs.append(f"<span>{label}</span>")
+    return '<p class="ts-kicker">' + sep.join(crumbs) + "</p>"
+
+
+def _system_page(rec, *, has_viewer: bool, has_figure: bool, has_viewer2: bool = False) -> str:
     """Build the full markdown source for one system's page."""
     uri = _system_uri(rec)
-    crumb = (
-        f"[Systems]({_rel(uri, _SYSTEMS_ROOT + '/index.md')}) "
-        f"/ [{rec.type_label}]({_rel(uri, _SYSTEMS_ROOT + '/' + _catalog.type_slug(rec.family) + '/index.md')}) "
-        f"/ {rec.subcategory_label}"
+    crumb = _breadcrumb(
+        lambda p: _out_rel(uri, p),
+        [
+            ("Systems", _SYSTEMS_ROOT + "/index.html"),
+            (rec.type_label, _SYSTEMS_ROOT + "/" + _catalog.type_slug(rec.family) + "/index.html"),
+            (rec.subcategory_label, None),
+        ],
     )
 
-    parts: list[str] = [f"# {rec.name}", "", f'<p class="ts-kicker">{crumb}</p>', ""]
+    parts: list[str] = [f"# {rec.name}", "", crumb, ""]
 
     subtitle = _subtitle(rec)
     if subtitle:
@@ -408,7 +528,7 @@ def _system_page(rec, *, has_viewer: bool, has_figure: bool) -> str:
     parts += [_tag_pills(rec), ""]
 
     # Attractor (viewer / figure / note).
-    parts += _attractor_block(rec, uri, has_viewer, has_figure)
+    parts += _attractor_block(rec, uri, has_viewer, has_figure, has_viewer2=has_viewer2)
 
     # Definition: prose lead-in + the symbolic equations.
     parts += ["## Definition", ""]
@@ -511,10 +631,15 @@ def _type_index(family: str, cats: dict) -> str:
     label = _catalog.type_label(family)
     n_systems = sum(len(recs) for recs in cats.values())
 
+    uri = f"{_SYSTEMS_ROOT}/{_catalog.type_slug(family)}/index.md"
+    crumb = _breadcrumb(
+        lambda p: _rel(uri, p),
+        [("Systems", _SYSTEMS_ROOT + "/index.html"), (label, None)],
+    )
     parts = [
         f"# {label}",
         "",
-        f'<p class="ts-kicker">[Systems](../index.md) / {label}</p>',
+        crumb,
         "",
     ]
     blurb = _catalog.type_blurb(family)
@@ -589,20 +714,32 @@ def _type_define_snippet(family: str) -> list[str]:
 
 
 def _subcategory_index(family: str, category: str, records, generated: set[str]) -> str:
-    """One subcategory page: blurb + a System / Dim / Behavior table of its systems.
+    """One subcategory page: blurb + a two-column System / Dimensions table.
 
     A system links to its page only when that page was generated (always true in a
     full build; under ``TSD_DOCS_ONLY`` a non-generated system renders as plain text
     so the browser page stays whole without a broken link).
+
+    The table is exactly ``System | Dimensions`` — the old ``Behaviour`` column
+    (a mix of editorial tags with stray letters where a bare-string behaviour tag
+    had been spread character-by-character) is dropped.
     """
     label = _catalog.subcategory_label(category)
     type_label = _catalog.type_label(family)
+    uri = f"{_SYSTEMS_ROOT}/{_catalog.type_slug(family)}/{_slug(category)}/index.md"
 
+    crumb = _breadcrumb(
+        lambda p: _rel(uri, p),
+        [
+            ("Systems", _SYSTEMS_ROOT + "/index.html"),
+            (type_label, _SYSTEMS_ROOT + "/" + _catalog.type_slug(family) + "/index.html"),
+            (label, None),
+        ],
+    )
     parts = [
         f"# {label}",
         "",
-        f'<p class="ts-kicker">[Systems](../../index.md) '
-        f"/ [{type_label}](../index.md) / {label}</p>",
+        crumb,
         "",
     ]
     blurb = _catalog.subcategory_blurb(category)
@@ -611,12 +748,12 @@ def _subcategory_index(family: str, category: str, records, generated: set[str])
     parts += [
         f'<p class="ts-count">{len(records)} systems</p>',
         "",
-        "| System | Dim | Behavior |",
-        "|---|--:|---|",
+        "| System | Dimensions |",
+        "|---|--:|",
     ]
     for rec in records:
         name = f"[{rec.name}]({rec.name}.md)" if rec.name in generated else rec.name
-        parts.append(f"| {name} | {_dim_cell(rec)} | {_behavior_label(rec)} |")
+        parts.append(f"| {name} | {_dim_cell(rec)} |")
     parts.append("")
     return "\n".join(parts)
 
@@ -698,14 +835,26 @@ def on_config(config):
                 if _ONLY and rec.name not in _ONLY:
                     continue
 
-                viewer_html = _viewer.render_html(rec) if WITH_FIGURES else None
-                has_viewer = viewer_html is not None
+                # ``viewer_payloads`` is the generator front door: it returns EVERY
+                # interactive view for a system in one call, primary first — a lone
+                # ``[{"suffix": ""}]`` for a 3-D flow / DDE / low-dim state, plus a
+                # ``{"suffix": "-b"}`` second projection for a 4-D-plus flow that
+                # declares an editorial ``projection2`` (whose primary rendered).  A
+                # second view is never emitted without its primary, so the page can
+                # never show a lone "-b" attractor.
+                payloads = _viewer.viewer_payloads(rec) if WITH_FIGURES else []
+                has_viewer = bool(payloads)
+                has_viewer2 = False
                 if has_viewer:
-                    _VIEWERS[f"assets/threejs/{rec.name}.html"] = viewer_html
                     viewer_names.append(rec.name)
+                    for view in payloads:
+                        suffix = view["suffix"]
+                        _VIEWERS[f"assets/threejs/{rec.name}{suffix}.html"] = view["html"]
+                        if suffix == "-b":
+                            has_viewer2 = True
 
                 # The static figure is the page image for non-viewer systems (fields /
-                # projections / stiff) AND the viewer's WebGL/no-JS fallback poster.
+                # maps / stiff) AND the viewer's WebGL/no-JS fallback poster.
                 has_figure = False
                 if WITH_FIGURES:
                     fig = _figures.render(rec)
@@ -716,7 +865,10 @@ def on_config(config):
                         skipped.append(rec.name)
 
                 _GENERATED[_system_uri(rec)] = _system_page(
-                    rec, has_viewer=has_viewer, has_figure=(has_figure and not has_viewer)
+                    rec,
+                    has_viewer=has_viewer,
+                    has_figure=(has_figure and not has_viewer),
+                    has_viewer2=has_viewer2,
                 )
                 generated_systems.add(rec.name)
 

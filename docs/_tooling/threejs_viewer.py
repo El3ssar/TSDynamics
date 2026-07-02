@@ -7,57 +7,61 @@ through the in-tree ``threejs`` data-export backend to a BufferGeometry payload,
 payload is inlined into a tiny HTML document that boots the canonical reference
 loader (:file:`docs/_static/tsdyn-threejs-loader.js`), and the system page embeds
 that document in an ``<iframe>``.  The result is the "animated attractor you can
-orbit while it plays" — a reveal comet over a faint full-curve / full-cloud
-backdrop, with ``OrbitControls`` running in its own loop so the mouse can rotate the
-scene *while the comet sweeps*.
+orbit while it plays" — a reveal comet over a faint full-curve backdrop, with
+``OrbitControls`` running in its own loop so the mouse can rotate the scene *while
+the comet sweeps*.
 
-Dispatch table
---------------
-:func:`render_html` dispatches on **family + dimension + ``_field_shape``** and
-returns the viewer HTML, or ``None`` so the caller falls back to the static figure:
+Dispatch (who gets an animated viewer)
+--------------------------------------
+:func:`render_html` dispatches on **family + dimension + editorial viewer config**:
 
-==========================  ============================================================
-System                      Viewer
-==========================  ============================================================
-ODE, ``dim == 3``           3-D reveal comet (the original viewer).
-ODE, ``dim == 2``           2-D reveal comet (planar curve, no axes).
-ODE, ``dim >= 4``           **None** — a spatial / high-dim system; a 3-component
-  (or any ``_field_shape``)   projection is not an honest attractor, so the page keeps
-                            the static field / spacetime / projection figure.
-DDE (``dim == 1``)          2-D **delay embedding** :math:`x(t)` vs :math:`x(t-\\tau)`
-                            using the system's own ``\\tau``, animated as a comet.
-Map, ``dim == 3``           3-D point-scatter reveal comet (a trailing swarm).
-Map, ``dim == 2``           2-D point-scatter reveal comet.
-Map, ``dim == 1``           2-D **return-map** scatter :math:`x_n` vs :math:`x_{n+1}`
-                            (the recognizable parabola / tent), animated.
-==========================  ============================================================
+======================================  ====================================================
+System                                  Viewer
+======================================  ====================================================
+ODE ``dim in {2, 3}`` (non-forced)      3-D / 2-D reveal comet of the state itself.
+ODE ``dim >= 4`` **with a projection**  3-D reveal comet of the editorial 3-component
+                                        ``projection``; a ``projection2`` yields a SECOND
+                                        viewer (``render_html(rec, second=True)``) so the
+                                        page shows two faces of a high-dim flow.
+ODE with a ``viewer`` editorial block   Honoured verbatim — ``components`` (a 2-/3-index
+  (Group B "weird" systems)             projection of the honest attractor), ``wrap``
+                                        (wrap listed coords mod 2π for a torus flow),
+                                        ``ic`` / ``final_time`` / ``method`` overrides, or
+                                        ``mode: "static"`` / ``"drop"`` to defer to a
+                                        curated static figure.
+DDE (``dim == 1``)                      2-D **delay embedding** :math:`x(t)` vs
+                                        :math:`x(t-\tau)`, animated as a comet.
+Map (any dim)                           **None** — a static scatter reads better than a
+                                        trailing swarm (see :mod:`figures`).
+SDE / field / spatial                   **None** — static sample path / field image.
+======================================  ====================================================
 
-A LINE comet sweeps a drawn curve (ODE / DDE); a POINTS comet is a trailing swarm
-over the static attractor cloud (maps) — both via the shared loader (the loader
-animates ``line`` *and* ``points`` geometries identically off one master clock).
+Every attractor integration samples at the **sagitta-``dt``** returned by
+:func:`plot_dt.choose_plot_dt` (``epsilon=0.1``, the maintainer's universal
+"no pixelated attractor" rule).  The selector is called with its per-family
+*fine-pilot* default step (``FINE_PILOT_DT``: 0.002 for ODEs) — **never** a coarse
+``dt0`` override, which was the pixelation bug: a sagitta search can only report a
+step no finer than the pilot it ran, so a fast attractor (Chen, DequanLi, QiChen)
+integrated at 0.01 just echoed 0.01 back and stayed faceted, whereas the fine pilot
+discovers the true 0.002 / 0.006 output step.  We then integrate the viewer
+trajectory at that fine step and sub-sample to the sagitta step — and, because even
+a *geometrically* smooth coarse dt can leave a slow attractor with too few vertices
+to read as a swept line, a :data:`_MIN_DRAW_SAMPLES` floor shrinks the stride
+(drawing *finer* than sagitta, never coarser) so every comet has enough points.
 
-Self-containment & dependencies
--------------------------------
-The emitted HTML pulls **three.js from a CDN** (jsDelivr) via an ES-module import
-map, so it ships with no vendored JS and ``import tsdynamics`` stays plotting-free.
-The payload is **inlined** (no second fetch); the loader is **referenced** at its
-canonical ``_static`` URL (one copy, so a loader fix updates every viewer).  A
-``<noscript>`` / WebGL-failure path falls back to the static PNG, so the page
-degrades gracefully.
+Two views for a high-dim flow
+-----------------------------
+:func:`viewer_payloads` is the generator's front door: it returns *every* view of a
+system in one call (``[{"suffix": "", "html": …}, {"suffix": "-b", "html": …}]``),
+the ``-b`` present only for a 4-D-plus flow with an editorial ``projection2`` whose
+primary rendered.  :func:`render_html` stays as the single-view back-compat entry.
 
-Caching
--------
-A content-addressed cache under ``.cache/docs-threejs`` keyed by
-``sha256(class source ‖ overrides ‖ this module's knobs)`` means only new or changed
-systems ever re-integrate; CI persists the directory between builds (mirroring
-:mod:`figures`).  Per-system failures soft-fail (the page falls back to the PNG).
-
-Environment
------------
-``TSD_DOCS_FIGURES=0`` skips every heavy render (returns ``None``); ``TSD_DOCS_ONLY``
-is honoured by the autogen hook upstream (only the named systems reach this module).
-Every render path is wrapped — an unavailable ``threejs`` renderer, a failed
-integration, or a divergent map all soft-fail to ``None`` rather than raise.
+Self-containment, caching & environment mirror the previous design: three.js is
+pulled from a pinned CDN via an ES-module import map, the payload is inlined, the
+shared loader is referenced at its ``_static`` URL, results are content-addressed
+under ``.cache/docs-threejs``, and ``TSD_DOCS_FIGURES=0`` skips every heavy render.
+Every render path soft-fails to ``None`` / ``[]`` (the page falls back to its
+static PNG).
 """
 
 from __future__ import annotations
@@ -70,70 +74,91 @@ import json
 import os
 import pathlib
 
-import figures  # docs/_tooling sibling — reuse its robust trajectory acquisition
+import figures  # docs/_tooling sibling — reuse its robust IC / trajectory acquisition
 import numpy as np
+import plot_dt as _plot_dt  # the ONE sagitta-dt selector both renderers call
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-threejs"
 
 #: Canonical reference loader (source of truth) + the site URI the viewer iframes
-#: import it from.  The viewers live at ``assets/threejs/<Name>.html`` and import
-#: ``../../_static/tsdyn-threejs-loader.js`` → site-root ``_static/…``.  The
-#: ``docs/_static/`` tree is ``exclude_docs`` (tooling, not a page), so the loader
-#: is NOT copied by mkdocs — :func:`loader_asset` hands the autogen hook the source
-#: to emit as a generated file at that URI, so the import resolves on the built
-#: site instead of 404-ing (which would degrade every viewer to its static PNG).
+#: import it from.
 LOADER_SRC = ROOT / "docs" / "_static" / "tsdyn-threejs-loader.js"
 LOADER_URI = "_static/tsdyn-threejs-loader.js"
 
 #: Bump when the emitted HTML or payload shaping materially changes (cache buster).
-VIEWER_VERSION = "4"
+VIEWER_VERSION = "6"
 
 #: CDN three.js build (pinned) — matches docs/visualization/threejs-export.md.
 _THREE_VERSION = "0.160.0"
 _THREE_CDN = f"https://cdn.jsdelivr.net/npm/three@{_THREE_VERSION}"
 
 #: Cap the vertex count: enough for a smooth comet, small enough to keep the
-#: inlined payload light (≈ 4 k points × 3 floats × 2 buffers per system).
-MAX_POINTS = 4000
+#: inlined payload light.
+MAX_POINTS = 5000
 
-#: Float precision in the inlined payload (positions / colors).  Sub-screen-pixel
-#: at any sane zoom, and the sweeping comet masks the quantization — but it roughly
-#: halves the JSON size versus full ``repr`` floats.
+#: Float precision in the inlined payload (positions / colors).
 _POS_DECIMALS = 4
 _COL_DECIMALS = 3
 
 #: Reveal timing: traverse the whole attractor in ~14 s, trailing a comet of this
-#: many *samples* (a line trail or a points swarm window).
+#: many *samples*.
 _DURATION_S = 14.0
 _TRAIL_SAMPLES = 600
-#: Map swarms accumulate the cloud over a longer window (the shape needs the points).
-_MAP_TRAIL_SAMPLES = 1200
 
-#: Integration window for the continuous viewer trajectory (trimmed by transient).
-_FINAL_TIME = 100.0
+#: Integration windows (the pilot / sagitta-dt refine the *output* step within these).
+_FINAL_TIME = 90.0
+_DDE_FINAL_TIME = 320.0
+#: Nominal coarse output dt (kept only for legacy DDE plumbing / cache knobs).
 _DT = 0.01
+_DDE_DT = 0.2
+#: The **fine** integration step for the viewer march — the step we actually
+#: integrate at before sub-sampling to the sagitta ``smooth_dt``.  It mirrors
+#: :data:`plot_dt.FINE_PILOT_DT` (0.002 for ODEs) so a fast attractor is traced at
+#: a step fine enough to represent its tight curvature; the stride then coarsens to
+#: the sagitta output dt.  Never coarser than ``smooth_dt`` (that is a no-op stride).
+_FINE_DT = float(_plot_dt.FINE_PILOT_DT.get("ode", 0.002))
+_DDE_FINE_DT = float(_plot_dt.FINE_PILOT_DT.get("dde", 0.02))
 #: Off-basin random starts retried before the system soft-fails to its static PNG.
 _IC_RETRIES = 8
 #: Drop this leading fraction as transient before drawing the attractor.
-_TRANSIENT_FRAC = 0.15
-
-#: DDE viewer integration window (longer, coarser dt — the 5 DDEs are all 1-D).
-_DDE_FINAL_TIME = 320.0
-_DDE_DT = 0.2
-
-#: Map viewer iteration count + burn-in (mirrors :func:`figures._render_map`).
-_MAP_STEPS = 12_000
-_MAP_BURN = 200
+_TRANSIENT_FRAC = 0.2
+#: A comet needs a *floor* of vertices to interpolate smoothly, independent of the
+#: sagitta dt.  A slow, gently-curving attractor (Colpitts, the Sprott minimal
+#: flows, Rössler) can satisfy the ε=0.1 chord criterion at a coarse dt that leaves
+#: only ~70–350 samples — enough to be *geometrically* smooth but visually sparse as
+#: a swept line.  Drawing **finer than** the sagitta dt is always at least as smooth
+#: (sagitta is an upper bound on the step), so if the sagitta-strided cloud falls
+#: below this floor we shrink the stride to reach it — never coarser, only finer.
+_MIN_DRAW_SAMPLES = 1600
 
 # --- Brand colours (TSDynamics visual identity) ------------------------------
-#: Teal attractor tube / cloud and indigo comet head — the per-system page accent.
-_TEAL = "#2CC5AE"  # bright teal (the swept curve / static cloud)
-_TEAL_DEEP = "#11857A"  # deep teal (kept for the brand; head/tube reference)
-_INDIGO_HEAD = (0.549, 0.522, 0.949)  # #8C85F2 as an RGB triple for the comet head
-#: Dark canvas background — the design's deep *stage* (matches the home hero, and
-#: the colour the loader's reveal trail fades into head→tail for a seamless comet).
+_TEAL = "#2CC5AE"
+_INDIGO_HEAD = (0.549, 0.522, 0.949)  # #8C85F2
 _BG = "#0B0F14"
+
+
+# ---------------------------------------------------------------------------
+# Small record accessors (works for a catalogue SystemRecord *or* a bare entry)
+# ---------------------------------------------------------------------------
+def _viewer_cfg(entry) -> dict:
+    """Return the per-system ``viewer`` editorial directive (Group B), else ``{}``."""
+    cfg = getattr(entry, "viewer", None)
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _projection(entry, *, second: bool) -> tuple[int, ...] | None:
+    """Return the chosen 3-component projection index tuple (or ``None``).
+
+    ``second=True`` returns ``projection2`` when present (the page's second view).
+    """
+    proj = getattr(entry, "projection2" if second else "projection", None)
+    if not proj:
+        return None
+    try:
+        return tuple(int(i) for i in proj)
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -144,268 +169,306 @@ def _figures_disabled() -> bool:
     return os.environ.get("TSD_DOCS_FIGURES", "1") == "0"
 
 
-def _is_field_or_spatial(entry) -> bool:
-    """Whether ``entry`` is a spatial-field / high-dim system (→ static figure).
-
-    A system is "spatial / not-an-attractor-comet" when it declares a
-    ``_field_shape`` (a flattened field — Gray–Scott, Swift–Hohenberg), when its
-    figure is overridden to ``"spacetime"`` / ``"field"`` (Lorenz96, KS), or when it
-    carries ``dim >= 4`` (a hyperchaotic / many-body flow whose first three
-    components are not an honest portrait).  All of these keep their static image —
-    the per-system page picks a 3-component projection or a field/spacetime movie
-    elsewhere.
-    """
+def _is_field(entry) -> bool:
+    """Whether ``entry`` is a spatial field (``_field_shape`` / field figure)."""
     opts = figures.FIG_OVERRIDES.get(entry.name, {})
     if opts.get("kind") in ("spacetime", "field"):
         return True
-    if getattr(entry.cls, "_field_shape", None) is not None:
-        return True
-    return entry.dim is not None and entry.dim >= 4
+    return getattr(entry.cls, "_field_shape", None) is not None
 
 
-def eligible(entry) -> bool:
-    """Whether ``entry`` gets an interactive viewer (else it keeps its PNG).
+def eligible(entry, *, second: bool = False) -> bool:
+    """Whether ``entry`` gets an interactive viewer (else it keeps its static PNG).
 
-    Eligible families and dims (see the module dispatch table):
+    - **Maps / SDEs / spatial fields** → never (static reads better; a map is a
+      static scatter, an SDE a sample path, a field an image).
+    - A ``viewer`` editorial block with ``mode`` ``"static"`` / ``"drop"`` → never
+      (the system is drawn as a curated static figure instead).
+    - **ODE ``dim in {2, 3}``** (no growing-phase ``components`` override) →
+      animate the state directly.
+    - **ODE ``dim >= 4``** → animate **only** when an editorial 3-component
+      ``projection`` (or ``projection2`` for the ``second`` view) is available.
+    - **DDE (1-D)** → animate the delay embedding.
 
-    - **ODE** with a fixed ``dim`` in ``{2, 3}`` whose figure is a phase portrait
-      (not a spacetime / field override) and which the shipped explicit engine can
-      integrate (not stiff / discontinuous — those keep their SciPy-rendered PNG).
-    - **DDE** (all 1-D today) → a 2-D delay embedding.
-    - **Map** with a fixed ``dim`` in ``{1, 2, 3}`` (1-D → return-map scatter).
-
-    Field / spatial / ``dim >= 4`` systems and variable-dim (``dim is None``)
-    systems return ``False`` → the caller falls back to the static figure.
-    ``TSD_DOCS_FIGURES=0`` disables every viewer.
+    ``TSD_DOCS_FIGURES=0`` disables every viewer.  A stiff ``_default_method`` no
+    longer blocks a flow: the viewer marches it with the adaptive ``rk45`` kernel
+    for the thumbnail (still the shipped engine).
     """
     if _figures_disabled():
         return False
-    if entry.dim is None:
-        return False
-    if _is_field_or_spatial(entry):
-        return False
+    if entry.dim is None and not _is_field(entry):
+        # Variable-dim non-field flows (e.g. LorenzCoupled/MultiChua) resolve an
+        # effective dim in the catalogue record; a bare entry may not — treat a
+        # None dim conservatively as ineligible unless a projection says otherwise.
+        return _projection(entry, second=second) is not None
 
+    cfg = _viewer_cfg(entry)
+    if cfg.get("mode") in ("static", "drop"):
+        return False
     opts = figures.FIG_OVERRIDES.get(entry.name, {})
     if opts.get("skip"):
         return False
 
     if entry.family == "ode":
-        if entry.dim not in (2, 3):
+        if _is_field(entry):
             return False
-        # Stiff (implicit _default_method) / discontinuous (a "method" override)
-        # systems render via SciPy, not the explicit engine — keep their PNG.
-        return figures._use_engine_for_ode(entry, opts)
+        proj = _projection(entry, second=second)
+        if second:
+            # A second viewer exists only when a projection2 was supplied.
+            return proj is not None
+        # Primary viewer: 2-/3-D states animate directly; 4-D+ need a projection.
+        if entry.dim in (2, 3):
+            return True
+        return proj is not None
     if entry.family == "dde":
-        return entry.dim == 1  # the catalogue's DDEs are all scalar
-    if entry.family == "map":
-        return entry.dim in (1, 2, 3)
-    return False  # sde or anything else → static
+        return not second and entry.dim == 1
+    # map / sde / anything else → static
+    return False
 
 
 # ---------------------------------------------------------------------------
-# Trajectory / cloud acquisition (per family)
+# Trajectory / cloud acquisition
 # ---------------------------------------------------------------------------
-def _smooth_dt(y: np.ndarray, dt0: float, default: float) -> float:
-    """Pick a smooth (non-pixelated) output dt via the sagitta heuristic.
+def _pilot_method(entry) -> str:
+    """Resolve the engine kernel for the viewer march.
 
-    A coarse integration dt can leave the comet visibly faceted; a too-fine one
-    bloats the payload.  :func:`estimate_dt_from_sagitta` reads the trajectory's
-    own curvature and returns the largest stride whose chordal bow stays under the
-    geometric tolerance.  Soft-fails to ``default`` (the heuristic needs a clean,
-    finite, sufficiently long series).
-    """
-    try:
-        from tsdynamics.analysis.sampling import estimate_dt_from_sagitta
-
-        if y.ndim == 1:
-            y = y[:, None]
-        res = estimate_dt_from_sagitta(y, dt0, epsilon=0.02)
-        dt = float(res.delta_t)
-        if np.isfinite(dt) and dt > 0:
-            return dt
-    except Exception:  # noqa: BLE001 — heuristic is best-effort
-        pass
-    return default
-
-
-def _ode_cloud(entry) -> np.ndarray | None:
-    """Integrate a bounded ODE attractor for the viewer (``(n, dim)``) or ``None``.
-
-    Uses the shipped engine with the **fixed-step** ``rk4`` kernel (a divergent
-    off-basin random start raises promptly and is retried, instead of sending the
-    adaptive controller into a step-shrinking spiral).  Mirrors :mod:`figures`'
-    IC-retry + transient-trim contract; honours a class ``default_ic`` / a
-    :data:`figures.FIG_OVERRIDES` ``ic``.  Resamples onto a sagitta-smooth output
-    grid so the comet is not pixelated.
+    Honours a figure ``engine_method`` / discontinuous ``method`` override, else
+    ``rk45`` for a stiff-default flow and ``rk4`` for the rest (both shipped-engine
+    kernels).
     """
     opts = figures.FIG_OVERRIDES.get(entry.name, {})
-    final_time = opts.get("final_time", _FINAL_TIME)
-    dt = opts.get("dt", _DT)
-    rng = np.random.default_rng(42)
+    if opts.get("engine_method"):
+        return str(opts["engine_method"])
+    if opts.get("method"):
+        return str(opts["method"]).lower()
+    default = str(getattr(entry.cls, "_default_method", "rk4") or "rk4").lower()
+    # An implicit default (bdf/rosenbrock/trbdf2) can't drive the explicit viewer
+    # march — use the adaptive rk45 (stays bounded on these non-stiff-for-plotting
+    # flows) instead of raising.
+    if default in ("bdf", "rosenbrock", "trbdf2", "sdirk2"):
+        return "rk45"
+    if default in ("rk4",):
+        return "rk4"
+    return "rk45"
 
+
+def _wrap_components(y: np.ndarray, wrap: list[int] | None) -> np.ndarray:
+    """Wrap the listed component indices onto ``[-π, π)`` (a torus / angle flow).
+
+    A streamline whose angle grows unbounded (Arnold–Beltrami–Childress, a rotor)
+    drifts off-screen; wrapping the angular coordinate mod 2π keeps the honest
+    covering-space structure on screen.
+    """
+    if not wrap:
+        return y
+    y = y.copy()
+    for idx in wrap:
+        if 0 <= idx < y.shape[1]:
+            y[:, idx] = (y[:, idx] + np.pi) % (2 * np.pi) - np.pi
+    return y
+
+
+def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
+    """Integrate a bounded ODE attractor and shape it to a drawable cloud.
+
+    Honours (in priority order) the ``viewer`` editorial block, then an editorial
+    ``projection`` / ``projection2``, then the raw state.  Samples at the
+    sagitta-``dt`` (``epsilon=0.1``) so the comet is never faceted.  Returns
+    ``(n, k)`` with ``k in {2, 3}`` or ``None`` on a divergent / off-basin run.
+    """
+    cfg = _viewer_cfg(entry)
+    opts = figures.FIG_OVERRIDES.get(entry.name, {})
+    final_time = cfg.get("final_time", opts.get("final_time", _FINAL_TIME))
+    method = cfg.get("method", _pilot_method(entry))
+    transient = float(cfg.get("transient", _TRANSIENT_FRAC))
+    wrap = cfg.get("wrap")
+
+    # The smooth output dt (the maintainer's universal sagitta rule, ε = 0.1).
+    #
+    # CRITICAL: call ``choose_plot_dt`` with its per-family *fine-pilot* default
+    # (``dt0=None`` → ``FINE_PILOT_DT["ode"] = 0.002``), **not** the coarse ``_DT``.
+    # The sagitta search can only report a step no finer than the pilot it ran; a
+    # pilot integrated at 0.01 can never discover that a fast attractor (DequanLi,
+    # QiChen, …) actually needs 0.002 / 0.006 to read smooth — it just echoes 0.01
+    # back and the comet stays faceted.  Feeding ``dt0=_DT`` here was the pixelation
+    # bug: the whole point of the fine pilot is to find the true output dt *from
+    # below*.  We then integrate the viewer trajectory at that same fine step and
+    # sub-sample to ``smooth_dt`` so the drawn curve is never straightened.
+    ic_override = cfg.get("ic", opts.get("ic"))
+    smooth_dt = _plot_dt.choose_plot_dt(entry, epsilon=0.1)
+    fine_dt = min(smooth_dt, _FINE_DT)
+    stride = max(1, int(round(smooth_dt / fine_dt)))
+
+    rng = np.random.default_rng(42)
     sys_obj = entry.cls()
-    ic = figures._resolve_ic(sys_obj, opts.get("ic"))
+    ic = figures._resolve_ic(sys_obj, ic_override)
     for attempt in range(_IC_RETRIES):
         if ic is None or attempt > 0:
             ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
         try:
             traj = sys_obj.integrate(
                 final_time=final_time,
-                dt=dt,
+                dt=fine_dt,
                 ic=np.asarray(ic, dtype=float),
                 backend="interp",
-                method="rk4",
+                method=method,
             )
         except (RuntimeError, ValueError):  # divergence / off-basin start
             ic = None
             continue
         y = traj.y
-        if len(y) > 50 and np.all(np.isfinite(y)) and np.max(np.abs(y)) < 1e6:
-            drop = int(_TRANSIENT_FRAC * len(y))
+        if len(y) > 50 and np.all(np.isfinite(y)) and np.max(np.abs(y)) < 1e7:
+            drop = int(transient * len(y))
             y = y[drop:]
-            # Re-integrate-free smoothing: pick a coarser output stride so the comet
-            # is not faceted, by sub-sampling the dense march at the sagitta dt.
-            smooth = _smooth_dt(y[:, : min(3, y.shape[1])], dt, dt)
-            stride = max(1, int(round(smooth / dt)))
-            return y[::stride]
+            # Sagitta stride keeps the coarsest smooth step; shrink it if that would
+            # leave too few vertices for a smooth comet (drawing finer is never worse).
+            eff_stride = stride
+            if len(y) // max(1, eff_stride) < _MIN_DRAW_SAMPLES:
+                eff_stride = max(1, len(y) // _MIN_DRAW_SAMPLES)
+            y = y[::eff_stride]
+            y = _wrap_components(y, wrap)
+            return _select_components(entry, y, second=second)
         ic = None
     return None
 
 
-def _dde_delay_embedding(entry) -> np.ndarray | None:
-    """Build the 2-D delay embedding ``[x(t), x(t-τ)]`` for a (scalar) DDE.
+def _view_components(entry, dim: int, *, second: bool) -> list[int]:
+    """Resolve the component indices for a view (the ONE priority table).
 
-    Integrates the system from a non-equilibrium constant-ish history (mirrors
-    :func:`figures._render_dde`), reads ``τ`` from the live instance (``_delays()``),
-    converts it to a sample lag at the integration ``dt``, and stacks the embedding.
-    Returns ``(n, 2)`` or ``None`` on failure.
+    Priority differs by view so a Group-B "weird" system that pins its **primary**
+    projection with ``viewer.components`` can *still* show a genuinely different
+    **second** face:
+
+    - **primary** (``second=False``): ``viewer.components`` → editorial
+      ``projection`` → the first ``min(3, dim)`` state components;
+    - **second** (``second=True``): editorial ``projection2`` wins outright (so it
+      is never shadowed by the primary's ``viewer.components``) → ``viewer.components``
+      → the first ``min(3, dim)``.
+
+    Always returns a valid, in-range index list of length 2 or 3.
     """
+    cfg = _viewer_cfg(entry)
+    comps: list | tuple | None = None
+    if second:
+        proj2 = _projection(entry, second=True)
+        comps = list(proj2) if proj2 is not None else cfg.get("components")
+    else:
+        comps = cfg.get("components")
+        if comps is None:
+            proj = _projection(entry, second=False)
+            comps = list(proj) if proj is not None else None
+    if comps is None:
+        return list(range(min(3, dim)))
+    try:
+        idx = [int(c) for c in comps]
+    except (TypeError, ValueError):
+        return list(range(min(3, dim)))
+    idx = [i for i in idx if 0 <= i < dim]
+    if len(idx) < 2:
+        return list(range(min(3, dim)))
+    return idx[:3]
+
+
+def _select_components(entry, y: np.ndarray, *, second: bool) -> np.ndarray | None:
+    """Pick the 2-/3-component view of a full-dim trajectory ``y`` ``(n, dim)``."""
+    idx = _view_components(entry, y.shape[1], second=second)
+    return y[:, idx]
+
+
+def _dde_delay_embedding(entry) -> np.ndarray | None:
+    """Build the 2-D delay embedding ``[x(t), x(t-τ)]`` for a (scalar) DDE."""
     sys_obj = entry.cls()
-    final_time = figures.FIG_OVERRIDES.get(entry.name, {}).get("final_time", _DDE_FINAL_TIME)
-    dt = figures.FIG_OVERRIDES.get(entry.name, {}).get("dt", _DDE_DT)
+    opts = figures.FIG_OVERRIDES.get(entry.name, {})
+    final_time = opts.get("final_time", _DDE_FINAL_TIME)
+    # Same sagitta rule as the ODE path: let ``choose_plot_dt`` run its fine DDE
+    # pilot (``dt0=None`` → ``FINE_PILOT_DT["dde"] = 0.02``) and integrate the
+    # embedding at that fine step, sub-sampling to the smooth output dt.
+    smooth_dt = _plot_dt.choose_plot_dt(entry, epsilon=0.1)
+    fine_dt = min(smooth_dt, _DDE_FINE_DT)
+    stride = max(1, int(round(smooth_dt / fine_dt)))
 
     def history(s):
         return [0.8 + 0.2 * np.sin(0.2 * s)] * sys_obj.dim
 
     try:
-        traj = sys_obj.integrate(final_time=final_time, dt=dt, history=history)
+        traj = sys_obj.integrate(final_time=final_time, dt=fine_dt, history=history)
     except (RuntimeError, ValueError):
         return None
     x = np.asarray(traj.y[:, 0], dtype=float)
     if x.size < 64 or not np.all(np.isfinite(x)):
         return None
     tau = float(sys_obj._delays()[0])
-    lag = max(1, int(round(tau / dt)))
+    lag = max(1, int(round(tau / fine_dt)))
     if lag >= x.size - 8:
         return None
     drop = int(_TRANSIENT_FRAC * x.size)
     emb = np.column_stack([x[lag:], x[:-lag]])[drop:]
-    # Smooth + cap.
-    smooth = _smooth_dt(emb, dt, dt)
-    stride = max(1, int(round(smooth / dt)))
     return emb[::stride]
 
 
-def _map_cloud(entry) -> np.ndarray | None:
-    """Iterate a map attractor for the viewer; shape it to a drawable cloud.
-
-    - ``dim == 1`` → the **return map** ``[x_n, x_{n+1}]`` (the recognizable
-      parabola / tent), a 2-D scatter.
-    - ``dim == 2`` → the iterate cloud as-is.
-    - ``dim == 3`` → the 3-D iterate cloud.
-
-    Mirrors :func:`figures._render_map`'s iterate + burn-in contract.  Returns the
-    cloud array or ``None`` on a non-finite / too-short run.
-    """
-    sys_obj = entry.cls()
-    try:
-        traj = sys_obj.iterate(steps=_MAP_STEPS, max_retries=15)
-    except (RuntimeError, ValueError):
-        return None
-    y = np.asarray(traj.y[_MAP_BURN:], dtype=float)
-    if y.shape[0] < 64 or not np.all(np.isfinite(y)):
-        return None
-    if entry.dim == 1:
-        col = y[:, 0]
-        return np.column_stack([col[:-1], col[1:]])
-    return y
+def _cloud_for(entry, *, second: bool) -> np.ndarray | None:
+    """Acquire the drawable cloud for ``entry`` (per family), or ``None``."""
+    if entry.family == "ode":
+        return _ode_cloud(entry, second=second)
+    if entry.family == "dde":
+        return _dde_delay_embedding(entry)
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Payload building
 # ---------------------------------------------------------------------------
-def _axis_labels(entry, n: int) -> list[str]:
-    """First ``n`` component names (``variables`` ClassVar) or ``x/y/z`` defaults."""
+def _axis_labels(entry, n: int, comps: tuple[int, ...] | None) -> list[str]:
+    """Component names for the chosen ``comps`` (``variables`` ClassVar) or x/y/z."""
     names = list(getattr(entry.cls, "variables", None) or [])
-    default = ["x", "y", "z"]
-    return [names[i] if i < len(names) else default[i] for i in range(n)]
+    default = ["x", "y", "z", "w", "v", "u"]
+
+    def name(i: int) -> str:
+        if 0 <= i < len(names):
+            return names[i]
+        return default[i] if i < len(default) else f"y{i}"
+
+    idx = list(comps) if comps is not None else list(range(n))
+    # Always return exactly ``n`` labels (pad with positional fallbacks) so a
+    # projection shorter than the drawn ndim can never index past the label list.
+    while len(idx) < n:
+        idx.append(len(idx))
+    return [name(int(c)) for c in idx[:n]]
 
 
-def _kind_for(entry):
-    """Return the ``(spec_kind, mark_kind, ndim, is_line)`` tuple for ``entry``.
-
-    ODE / DDE attractors are **lines** (a swept curve); maps are **scatter**
-    point-clouds (a trailing swarm).  The viewer ndim is 3 only for a 3-D ODE /
-    3-D map; everything else (2-D ODE, DDE embedding, 1-D/2-D map) is 2-D.
-    """
-    from tsdynamics.viz.spec import PlotKind
-
-    if entry.family == "map":
-        # 3-D iterate cloud → 3-D scatter; else 2-D scatter.
-        if entry.dim == 3:
-            return PlotKind.PHASE_PORTRAIT_3D, PlotKind.SCATTER, 3, False
-        return PlotKind.PHASE_PORTRAIT_2D, PlotKind.SCATTER, 2, False
-    if entry.family == "dde":
-        return PlotKind.PHASE_PORTRAIT_2D, PlotKind.LINE, 2, True
-    # ode
-    if entry.dim == 3:
-        return PlotKind.PHASE_PORTRAIT_3D, PlotKind.LINE3D, 3, True
-    return PlotKind.PHASE_PORTRAIT_2D, PlotKind.LINE, 2, True
-
-
-def _cloud_for(entry) -> np.ndarray | None:
-    """Acquire the drawable cloud for ``entry`` (per family), or ``None``."""
-    if entry.family == "ode":
-        return _ode_cloud(entry)
-    if entry.family == "dde":
-        return _dde_delay_embedding(entry)
-    if entry.family == "map":
-        return _map_cloud(entry)
-    return None
-
-
-def _build_payload(entry) -> dict | None:
-    """Integrate / iterate ``entry`` and lower an animated attractor to a payload.
-
-    Acquires the cloud (per family), downsamples to :data:`MAX_POINTS`, builds the
-    family-appropriate spec (a LINE/LINE3D comet for flows/DDEs, a SCATTER swarm for
-    maps), stamps a reveal :class:`Animation` with the brand head, and renders the
-    in-tree ``threejs`` payload.  Returns ``None`` on any failure (the page then
-    keeps its static figure).
-    """
-    from tsdynamics.viz.spec import Axis, Layer, PlotSpec
+def _build_payload(entry, *, second: bool) -> dict | None:
+    """Integrate ``entry`` and lower an animated attractor comet to a payload."""
+    from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
 
     try:
-        cloud = _cloud_for(entry)
+        cloud = _cloud_for(entry, second=second)
     except Exception:  # noqa: BLE001 — soft-fail to the static figure
         return None
     if cloud is None or cloud.ndim != 2 or len(cloud) < 8:
         return None
 
-    spec_kind, mark_kind, ndim, is_line = _kind_for(entry)
+    ndim = min(3, cloud.shape[1])
     pts = cloud[:, :ndim]
-    if pts.shape[1] < ndim:
+    if pts.shape[1] < 2:
         return None
 
-    # Ceil-division stride so the kept vertex count never exceeds MAX_POINTS
-    # (a floor stride leaves up to 2× the cap; the inlined JSON must stay light).
-    stride = max(1, -(-len(pts) // MAX_POINTS))
-    pts = pts[::stride]
+    # Downsample to MAX_POINTS (ceil-division stride so the kept count never
+    # exceeds the cap; the inlined JSON must stay light).
+    dstride = max(1, -(-len(pts) // MAX_POINTS))
+    pts = pts[::dstride]
     if len(pts) < 8:
         return None
     color = np.linspace(0.0, 1.0, len(pts))
 
-    labels = _axis_labels(entry, ndim)
+    spec_kind = PlotKind.PHASE_PORTRAIT_3D if ndim == 3 else PlotKind.PHASE_PORTRAIT_2D
+    mark_kind = PlotKind.LINE3D if ndim == 3 else PlotKind.LINE
+
+    # Label from the *true* system dim (the projection indices reference the full
+    # state), not the already-projected cloud width — otherwise a projection like
+    # (1, 2, 3) would be filtered against a 3-column cloud and lose an index.
+    label_dim = entry.dim if isinstance(getattr(entry, "dim", None), int) else cloud.shape[1]
+    comps = _selected_comps(entry, label_dim, second=second)
+    labels = _axis_labels(entry, ndim, comps)
     data = {"x": pts[:, 0], "y": pts[:, 1], "c": color}
     axes = {"x": Axis(label=labels[0]), "y": Axis(label=labels[1])}
     if ndim == 3:
@@ -420,77 +483,32 @@ def _build_payload(entry) -> dict | None:
         layers=[Layer(mark_kind, data)],
         **axes,
     )
-    # Brand colours: teal swept curve / cloud, indigo comet head.  ``recolor`` sets
-    # the layer's base colour; the per-vertex time colour still rides when present,
-    # but the swarm/curve material colour falls back to teal where it does not.
-    with contextlib.suppress(Exception):  # recolor is a convenience, not load-bearing
+    with contextlib.suppress(Exception):
         spec.recolor(_TEAL)
 
-    trail = _MAP_TRAIL_SAMPLES if entry.family == "map" else _TRAIL_SAMPLES
     spec.animate(duration=_DURATION_S, loop=True)
-    spec.trail(("steps", trail))
+    spec.trail(("steps", _TRAIL_SAMPLES))
     spec.head(True, size=8.0, color="#8C85F2")
     try:
         payload = spec.render("threejs", raw=True)
     except Exception:  # noqa: BLE001 — renderer unavailable / declined
         return None
 
-    # The threejs exporter only emits ``metadata.animation`` for *line* geometries
-    # (its reveal comet sweeps a curve).  A map's SCATTER lowers to a ``points``
-    # geometry, so the exporter drops the animation and ships a static cloud.  Our
-    # loader, however, *does* animate a points geometry (a trailing swarm), so for a
-    # points-only payload we synthesise the same animation block the loader reads —
-    # from the spec's own directive — to drive that swarm.
-    if not is_line:
-        payload = _synthesize_points_animation(
-            payload, duration=_DURATION_S, loop=True, trail=trail
-        )
     payload = _ensure_head_color(payload)
     return _round_payload(payload)
 
 
-def _synthesize_points_animation(payload: dict, *, duration: float, loop: bool, trail: int) -> dict:
-    """Stamp a reveal-animation block onto a points-only payload (a map swarm).
+def _selected_comps(entry, dim: int, *, second: bool) -> tuple[int, ...] | None:
+    """Return the component indices actually drawn (for axis labelling).
 
-    Mirrors the schema the threejs exporter emits for a line comet — the loader's
-    ``installAnimation`` reads ``n_samples`` / ``duration`` / ``loop`` /
-    ``trail_length_samples`` / ``head`` / ``head_size`` / ``head_color`` and drives a
-    points geometry as a trailing swarm (``buildPointsComet``).  ``n_samples`` is the
-    largest geometry's vertex count (the loader clamps each comet to its own length).
-    No-op (returns the payload unchanged) if an animation block already exists.
+    Delegates to the shared :func:`_view_components` priority table so the axis
+    labels always name the coordinates the cloud actually carries.
     """
-    meta = payload.setdefault("metadata", {})
-    if isinstance(meta.get("animation"), dict):
-        return payload
-    geoms = payload.get("geometries", [])
-    n_samples = 0
-    for g in geoms:
-        if g.get("type") == "points":
-            n_samples = max(n_samples, len(g.get("positions", [])) // 3)
-    if n_samples < 2:
-        return payload  # nothing to reveal — leave it static
-    meta["animation"] = {
-        "fps": 30.0,
-        "duration": float(duration),
-        "n_frames": None,
-        "loop": bool(loop),
-        "pingpong": False,
-        "trail_length_samples": int(trail),
-        "head": True,
-        "head_size": 8.0,
-        "head_color": list(_INDIGO_HEAD),
-        "n_samples": int(n_samples),
-    }
-    return payload
+    return tuple(_view_components(entry, dim, second=second))
 
 
 def _ensure_head_color(payload: dict) -> dict:
-    """Force the indigo brand head colour into the animation metadata.
-
-    The threejs loader reads ``metadata.animation.head_color`` (an RGB triple) for
-    the comet head; if the spec did not surface it, stamp the brand indigo so every
-    viewer's head is on-brand.
-    """
+    """Force the indigo brand head colour into the animation metadata."""
     meta = payload.get("metadata")
     if (
         isinstance(meta, dict)
@@ -514,10 +532,18 @@ def _round_payload(payload: dict) -> dict:
 # ---------------------------------------------------------------------------
 # HTML wrapping + caching
 # ---------------------------------------------------------------------------
-def cache_key(entry) -> str:
-    """Content hash: class source + figure overrides + this module's knobs."""
+def cache_key(entry, *, second: bool) -> str:
+    """Content hash: class source + editorial viewer config + this module's knobs."""
     cls_src = inspect.getsource(entry.cls)
     opts = repr(sorted(figures.FIG_OVERRIDES.get(entry.name, {}).items()))
+    ed = repr(
+        (
+            _viewer_cfg(entry),
+            _projection(entry, second=False),
+            _projection(entry, second=True),
+            bool(second),
+        )
+    )
     knobs = "|".join(
         str(k)
         for k in (
@@ -527,13 +553,12 @@ def cache_key(entry) -> str:
             _COL_DECIMALS,
             _DURATION_S,
             _TRAIL_SAMPLES,
-            _MAP_TRAIL_SAMPLES,
             _FINAL_TIME,
             _DT,
+            _FINE_DT,
             _DDE_FINAL_TIME,
             _DDE_DT,
-            _MAP_STEPS,
-            _MAP_BURN,
+            _DDE_FINE_DT,
             _IC_RETRIES,
             _TRANSIENT_FRAC,
             _TEAL,
@@ -542,20 +567,11 @@ def cache_key(entry) -> str:
             entry.dim,
         )
     )
-    return hashlib.sha256((cls_src + opts + knobs).encode()).hexdigest()[:20]
+    return hashlib.sha256((cls_src + opts + ed + knobs).encode()).hexdigest()[:20]
 
 
-def _html(entry, payload: dict) -> str:
-    """Wrap ``payload`` in a self-contained viewer document for an ``<iframe>``.
-
-    The document carries an ES-module import map (three + OrbitControls from the
-    CDN), the inlined payload, and a boot script that calls the canonical reference
-    loader (referenced at ``../../_static/`` — one shared copy).  A WebGL/JS failure
-    or ``<noscript>`` falls back to the static PNG at ``../figures/systems/<name>.png``
-    (both paths are fixed relative to the viewer's own ``assets/threejs/`` location).
-    The dark brand canvas (``#11151A``) is passed to the loader as the scene
-    background so every family's viewer matches the design surface.
-    """
+def _html(entry, payload: dict, *, second: bool) -> str:
+    """Wrap ``payload`` in a self-contained viewer document for an ``<iframe>``."""
     payload_json = json.dumps(payload, separators=(",", ":"))
     png = f"../figures/systems/{entry.name}.png"
     alt = html.escape(f"{entry.name} attractor")
@@ -611,41 +627,77 @@ def _html(entry, payload: dict) -> str:
 
 
 def loader_asset() -> tuple[str, str] | None:
-    """Return ``(site_uri, source)`` for the shared three.js loader, or ``None``.
-
-    The autogen hook emits this as a generated file so the viewer iframes'
-    ``import("../../_static/tsdyn-threejs-loader.js")`` resolves on the built site.
-    Returns ``None`` if the source is missing (the viewers then soft-degrade to
-    their static PNGs, exactly as when the loader fails to load in the browser).
-    """
+    """Return ``(site_uri, source)`` for the shared three.js loader, or ``None``."""
     try:
         return LOADER_URI, LOADER_SRC.read_text(encoding="utf-8")
     except OSError:
         return None
 
 
-def render_html(entry) -> str | None:
+def has_second_view(entry) -> bool:
+    """Whether ``entry`` also gets a *second* animated viewer (``projection2``)."""
+    return eligible(entry, second=True)
+
+
+def render_html(entry, *, second: bool = False) -> str | None:
     """Return the viewer HTML for ``entry`` (cached on disk), or ``None``.
 
-    Cache hit → read the cached HTML; miss → integrate / iterate, lower, wrap, and
-    cache.  Returns ``None`` for an ineligible system (field / spatial / ``dim>=4``,
-    a map/flow the engine cannot render, ``TSD_DOCS_FIGURES=0``) or a soft failure —
-    the page then falls back to the static PNG via :mod:`figures`.  Never raises.
+    ``second=True`` renders the ``projection2`` view (the page's second attractor
+    animation for a 4-D-plus flow).  Returns ``None`` for an ineligible system, a
+    disabled build (``TSD_DOCS_FIGURES=0``), or any soft failure — the page then
+    falls back to the static PNG.  Never raises.
+
+    This is the **back-compat** single-view entry point; the generator's preferred
+    surface is :func:`viewer_payloads`, which returns every view of a system in one
+    call (and never emits a second view whose primary declined).
     """
     try:
-        if not eligible(entry):
+        if not eligible(entry, second=second):
             return None
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cached = CACHE_DIR / f"{entry.name}-{cache_key(entry)}.html"
+        suffix = "-b" if second else ""
+        cached = CACHE_DIR / f"{entry.name}{suffix}-{cache_key(entry, second=second)}.html"
         if cached.exists():
             return cached.read_text(encoding="utf-8")
 
-        payload = _build_payload(entry)
+        payload = _build_payload(entry, second=second)
         if payload is None:
             return None
-        doc = _html(entry, payload)
+        doc = _html(entry, payload, second=second)
         cached.write_text(doc, encoding="utf-8")
         return doc
     except Exception:  # noqa: BLE001 — a viewer must never break the docs build
         return None
+
+
+def viewer_payloads(entry) -> list[dict[str, str]]:
+    """Return every interactive-viewer document for ``entry``, primary first.
+
+    The docs generator's preferred surface.  Each element is
+    ``{"suffix": <str>, "html": <str>}``:
+
+    - ``suffix == ""`` — the **primary** viewer (the state itself for a low-dim
+      flow, the editorial ``projection`` for a 4-D-plus flow, the delay embedding
+      for a DDE, or the Group-B ``viewer.components`` view).
+    - ``suffix == "-b"`` — a **second** projection (``projection2``), present only
+      for a 4-D-plus flow that declares one *and* whose primary rendered.
+
+    The generator registers each element at ``assets/threejs/<Name><suffix>.html``
+    and embeds one ``<iframe>`` per view.  Returns ``[]`` for an ineligible /
+    disabled / soft-failing system (the page then falls back to its static PNG) —
+    a second view is **never** emitted without its primary, so the page can't show a
+    lone "-b" attractor.  Never raises.
+    """
+    try:
+        primary = render_html(entry, second=False)
+        if primary is None:
+            return []
+        views = [{"suffix": "", "html": primary}]
+        if eligible(entry, second=True):
+            secondary = render_html(entry, second=True)
+            if secondary is not None:
+                views.append({"suffix": "-b", "html": secondary})
+        return views
+    except Exception:  # noqa: BLE001 — a viewer must never break the docs build
+        return []

@@ -155,6 +155,15 @@ class SystemRecord:
     param_roles: dict[str, str] = field(default_factory=dict)
     plot_dt: float | None = None
     projection: tuple[Any, ...] | None = None
+    #: A *second* 3-component projection for a 4-D-plus system, so the page can
+    #: show two animated attractor views over different coordinate combinations
+    #: (the reader sees more than one face of a high-dimensional flow).
+    projection2: tuple[Any, ...] | None = None
+    #: Optional per-system viewer directive (Group B "weird" systems): a dict with
+    #: keys like ``mode`` ("animate"/"static"/"drop"), ``components`` (a 2-/3-index
+    #: projection to plot), ``wrap`` (wrap listed component indices mod 2π — torus
+    #: flows), ``ic`` / ``final_time`` / ``method`` / ``transient`` pilot overrides.
+    viewer: dict[str, Any] = field(default_factory=dict)
     behavior: tuple[str, ...] = ()
 
     # --- derived display helpers ---
@@ -220,6 +229,8 @@ class SystemRecord:
             "param_roles": dict(self.param_roles),
             "plot_dt": self.plot_dt,
             "projection": list(self.projection) if self.projection else None,
+            "projection2": list(self.projection2) if self.projection2 else None,
+            "viewer": dict(self.viewer),
             "behavior": list(self.behavior),
         }
 
@@ -316,6 +327,13 @@ def _effective_dim(entry: Any) -> int | None:
 def _as_str_tuple(value: Any) -> tuple[str, ...] | None:
     if value is None:
         return None
+    # A plain string is a SINGLE label, not an iterable of characters — editorial
+    # ``behavior`` is written both as a list (``["chaotic", "dissipative"]``) and,
+    # for many systems, as a bare string (``"chaotic"``).  Without this guard a
+    # string would be spread character-by-character (``c``, ``h``, ``a``, …) into
+    # the header pills and the subcategory table's Behavior column.
+    if isinstance(value, str):
+        return (value,) if value else None
     try:
         return tuple(str(v) for v in value)
     except TypeError:
@@ -332,6 +350,9 @@ def _merge_record(entry: Any, ed: dict[str, Any]) -> SystemRecord:
     param_roles = ed.get("param_roles") if isinstance(ed.get("param_roles"), dict) else {}
     projection = ed.get("projection")
     projection = tuple(projection) if isinstance(projection, (list, tuple)) else None
+    projection2 = ed.get("projection2")
+    projection2 = tuple(projection2) if isinstance(projection2, (list, tuple)) else None
+    viewer = ed.get("viewer") if isinstance(ed.get("viewer"), dict) else {}
     behavior = _as_str_tuple(ed.get("behavior")) or ()
     plot_dt = ed.get("plot_dt")
     try:
@@ -358,6 +379,8 @@ def _merge_record(entry: Any, ed: dict[str, Any]) -> SystemRecord:
         param_roles={str(k): str(v) for k, v in param_roles.items()},
         plot_dt=plot_dt,
         projection=projection,
+        projection2=projection2,
+        viewer=viewer,
         behavior=behavior,
     )
 

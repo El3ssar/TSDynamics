@@ -281,6 +281,18 @@
         "a": "amplitude of the periodic forcing",
         "mu": "nonlinear damping strength",
         "w": "angular frequency of the forcing"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 220.0,
+        "ic": [
+          0.1,
+          0.1,
+          0.0
+        ]
       }
     },
     "Duffing": {
@@ -296,6 +308,18 @@
         "delta": "linear damping coefficient",
         "gamma": "amplitude of the periodic forcing",
         "omega": "angular frequency of the periodic forcing"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 140.0,
+        "ic": [
+          0.1,
+          0.1,
+          0.0
+        ]
       }
     },
     "MooreSpiegel": {
@@ -367,14 +391,19 @@
         "conservative"
       ],
       "projection": [
-        "theta1",
-        "theta2",
-        "p1"
+        0,
+        1,
+        2
       ],
       "param_roles": {
         "d": "arm length (sets the gravitational frequency scale)",
         "m": "arm mass (both arms equal)"
-      }
+      },
+      "projection2": [
+        0,
+        1,
+        3
+      ]
     },
     "HenonHeiles": {
       "blurb": "A galactic potential whose bounded motion transitions from regular tori to chaos with energy.",
@@ -383,13 +412,18 @@
         "chaotic"
       ],
       "projection": [
-        "x",
-        "y",
-        "px"
+        0,
+        1,
+        2
       ],
       "param_roles": {
         "lam": "strength of the cubic anharmonic coupling"
-      }
+      },
+      "projection2": [
+        0,
+        1,
+        3
+      ]
     },
     "Colpitts": {
       "blurb": "The Colpitts LC oscillator driven into chaos — a real electronic circuit model.",
@@ -437,14 +471,19 @@
         "chaotic"
       ],
       "projection": [
-        "r",
-        "theta",
-        "pr"
+        0,
+        1,
+        2
       ],
       "param_roles": {
         "m1": "swinging pendulum mass",
         "m2": "non-swinging counterweight mass (ratio m2/m1 controls the dynamics)"
-      }
+      },
+      "projection2": [
+        0,
+        1,
+        3
+      ]
     },
     "WindmiReduced": {
       "blurb": "A reduced model of the magnetosphere–ionosphere coupling (WINDMI) — substorm dynamics.",
@@ -458,6 +497,23 @@
         "b3": "linear coupling coefficient of the reduced model",
         "d1": "steepness of the tanh substorm-onset switch",
         "vsw": "solar-wind driver (input) strength"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "portrait",
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 500.0,
+        "dt": 0.02,
+        "ic": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "method": "rk45",
+        "transient": 0.5
       }
     },
     "HindmarshRose": {
@@ -475,6 +531,20 @@
         "s": "strength of the slow adaptation feedback",
         "tx": "timescale constant of the fast (x) variable",
         "tz": "timescale constant of the slow (z) variable"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 600.0,
+        "dt": 0.05,
+        "ic": [
+          0.1,
+          0.1,
+          0.1
+        ]
       }
     },
     "ForcedFitzHughNagumo": {
@@ -490,6 +560,18 @@
         "f": "amplitude of the periodic stimulus",
         "gamma": "recovery (slow-variable) timescale factor",
         "omega": "angular frequency of the periodic stimulus"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 220.0,
+        "ic": [
+          0.1,
+          0.1,
+          0.0
+        ]
       }
     },
     "Oregonator": {
@@ -519,6 +601,22 @@
         "q2": "coupling ratio linking the two enzymatic stages",
         "s1": "maximum rate of the first allosteric enzyme",
         "s2": "maximum rate of the second allosteric enzyme"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 400.0,
+        "dt": 0.02,
+        "transient": 0.7,
+        "ic": [
+          1.0,
+          1.0,
+          1.0
+        ]
       }
     },
     "ForcedBrusselator": {
@@ -531,6 +629,18 @@
         "b": "control parameter (Hopf at b = 1 + a^2)",
         "f": "amplitude of the periodic forcing",
         "w": "angular frequency of the forcing"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 220.0,
+        "ic": [
+          1.0,
+          1.0,
+          0.0
+        ]
       }
     },
     "HastingsPowell": {
@@ -564,6 +674,37 @@
         "kd1": "basal rate of cyclin degradation",
         "vd": "maximum rate of cyclin degradation",
         "vi": "cyclin synthesis rate"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        3,
+        4
+      ],
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0,
+          4,
+          5
+        ],
+        "final_time": 600.0,
+        "dt": 0.02,
+        "ic": [
+          0.01,
+          0.01,
+          0.01,
+          0.01,
+          0.9,
+          0.9
+        ],
+        "transient": 0.35,
+        "method": "rk45"
       }
     },
     "CircadianRhythm": {
@@ -587,6 +728,35 @@
         "vmax": "upper bound of the phase-modulated transcription rate",
         "vmin": "lower bound of the phase-modulated transcription rate",
         "vs": "maximum rate of mRNA synthesis"
+      },
+      "projection": [
+        0,
+        1,
+        3
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ],
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 200.0,
+        "dt": 0.05,
+        "ic": [
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "method": "rk45"
       }
     },
     "MackeyGlass": {
@@ -1043,7 +1213,17 @@
         "b": "Lorenz-core coefficient",
         "c": "Lorenz-core coefficient",
         "d": "fourth-variable feedback coefficient"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
     },
     "HyperRossler": {
       "blurb": "Rössler's original four-dimensional flow — the first system shown to be hyperchaotic, with two positive Lyapunov exponents from a single quadratic term.",
@@ -1053,7 +1233,17 @@
         "b": "flow coefficient",
         "c": "flow coefficient",
         "d": "flow coefficient"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
     },
     "HyperYan": {
       "blurb": "A four-dimensional flow with multiple cross-product nonlinearities and a feedback variable producing hyperchaos.",
@@ -1063,7 +1253,17 @@
         "b": "flow coefficient",
         "c": "flow coefficient",
         "d": "flow coefficient"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        1,
+        2,
+        3
+      ]
     },
     "HyperYangChen": {
       "blurb": "A four-dimensional Chen-like flow with an added linear feedback variable that yields hyperchaotic dynamics.",
@@ -1073,7 +1273,17 @@
         "b": "flow coefficient",
         "c": "flow coefficient",
         "d": "flow coefficient"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
     },
     "LorenzBounded": {
       "blurb": "The Lorenz attractor reformulated with polynomial corrections that confine it to a bounded region, recovering the standard flow as r grows.",
@@ -1093,7 +1303,17 @@
         "rho": "Rayleigh ratio (shared)",
         "beta": "geometric aspect ratio (shared)",
         "kappa": "diffusive coupling strength between the two subsystems"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        3,
+        2
+      ]
     },
     "MultiChua": {
       "blurb": "A ring of Chua circuits coupled through their x-variables — multi-scroll chaos and synchronization from linked double-scroll units.",
@@ -1105,7 +1325,17 @@
         "m1": "outer slope of the Chua diode",
         "kappa": "ring coupling strength",
         "n_circuits": "number of circuits in the ring (structural — changing it recompiles)"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        3,
+        6
+      ]
     },
     "PehlivanWei": {
       "blurb": "A parameter-free three-dimensional flow with two quadratic nonlinearities, notable for its simple algebraic form and equilibrium structure.",
@@ -1118,6 +1348,24 @@
       "param_roles": {
         "mu": "perturbation strength coupling the three actions through the web",
         "w": "frequency of the driving angle"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 400.0,
+        "dt": 0.05,
+        "ic": [
+          0.5,
+          0.5,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "method": "rk45"
       }
     },
     "CellularNeuralNetwork": {
@@ -1139,7 +1387,17 @@
         "c": "self-gain of the y mode",
         "d": "gain of the y·z term feeding the auxiliary state w",
         "e": "feedback gain of x onto w"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
     },
     "HyperCai": {
       "blurb": "A 4-D hyperchaotic flow augmenting a Lorenz-like chaotic core with a fourth feedback state, yielding two positive Lyapunov exponents.",
@@ -1150,7 +1408,17 @@
         "c": "linear gain in the y equation",
         "d": "damping of the z mode (fed by y²)",
         "e": "feedback gain of the auxiliary state w onto x"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
     },
     "HyperJha": {
       "blurb": "A 4-D hyperchaotic extension of the Lorenz system with a fourth state coupled back through an x·z term, giving two positive Lyapunov exponents.",
@@ -1160,7 +1428,17 @@
         "b": "Lorenz-like gain in the y equation",
         "c": "damping of the z mode",
         "d": "self-gain of the auxiliary feedback state w"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
     },
     "HyperLu": {
       "blurb": "A 4-D hyperchaotic flow from state-feedback control of the Lü system, with two positive Lyapunov exponents verified by an electronic-circuit realization.",
@@ -1170,7 +1448,17 @@
         "b": "damping of the z mode",
         "c": "self-gain of the y mode",
         "d": "self-gain of the auxiliary feedback state w"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
     },
     "HyperPang": {
       "blurb": "A 4-D hyperchaotic flow built by adding a linear controller to the Lü system, with two positive Lyapunov exponents and a studied Hopf bifurcation.",
@@ -1180,7 +1468,17 @@
         "b": "damping of the z mode",
         "c": "self-gain of the y mode",
         "d": "feedback gain of x and y onto the auxiliary state w"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
     },
     "HyperQi": {
       "blurb": "A 4-D smooth quadratic system with two large positive Lyapunov exponents — a much-studied benchmark for hyperchaos synchronization and secure communication.",
@@ -1192,7 +1490,17 @@
         "d": "damping of the w mode",
         "e": "cross-coupling gain between the z and w states",
         "f": "cross-coupling gain between the z and w states"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        1,
+        2,
+        3
+      ]
     },
     "HyperWang": {
       "blurb": "A 4-D hyperchaotic flow with a Lorenz-like core, a quadratic x² drive on the z mode, and a fourth feedback state — two positive Lyapunov exponents.",
@@ -1203,7 +1511,17 @@
         "c": "damping of the z mode",
         "d": "feedback gain of x onto the auxiliary state w",
         "e": "strength of the x² nonlinearity driving z"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
     },
     "HyperXu": {
       "blurb": "A 4-D hyperchaotic flow from state-feedback control of a chaotic core, with two positive Lyapunov exponents and an analog-circuit realization.",
@@ -1214,7 +1532,17 @@
         "c": "damping of the z mode",
         "d": "gain of the y feedback in the w equation",
         "e": "strength of the x·z nonlinearity driving y"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
     },
     "LorenzStenflo": {
       "blurb": "Stenflo's four-dimensional generalization of Lorenz for finite-amplitude acoustic-gravity waves in a rotating atmosphere — hyperchaotic for suitable parameters.",
@@ -1224,7 +1552,17 @@
         "b": "geometric damping of the z mode",
         "c": "Rayleigh-like forcing in the y equation",
         "d": "rotation parameter coupling the auxiliary state w into x"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
     },
     "NewtonLiepnik": {
       "blurb": "Euler's rigid-body equations with a linear feedback torque, producing two coexisting strange attractors selected by the initial basin.",
@@ -1241,7 +1579,17 @@
         "a": "coefficient of the harmonic (quadratic) part",
         "b": "strength of the cubic anharmonic coupling between the two modes",
         "d": "strength of the quartic anharmonic terms"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
     },
     "Qi": {
       "blurb": "A 4-D flow in which every equation carries a triple cross-product term, giving a four-wing chaotic attractor far more complex than the quadratic Lorenz family.",
@@ -1251,7 +1599,17 @@
         "b": "linear gain in the y equation",
         "c": "damping of the z mode",
         "d": "damping of the w mode"
-      }
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        1,
+        2,
+        3
+      ]
     },
     "Robinson": {
       "blurb": "A Duffing-like double-well x–y oscillator coupled to a slow z mode driven by x², producing a Lorenz-type chaotic attractor.",
@@ -1396,6 +1754,24 @@
         "a": "amplitude of the first Beltrami component",
         "b": "amplitude of the second Beltrami component",
         "c": "amplitude of the third Beltrami component"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "wrap": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 120.0,
+        "ic": [
+          0.6,
+          0.3,
+          0.1
+        ]
       }
     },
     "AtmosphericRegime": {
@@ -1419,6 +1795,18 @@
         "bc": "rotlet strength",
         "sigma": "rotlet circulation sign/scale",
         "tau": "blinking period"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "polar",
+        "final_time": 400.0,
+        "dt": 0.05,
+        "ic": [
+          0.8,
+          4.887,
+          0.0
+        ],
+        "method": "rk45"
       }
     },
     "DoubleGyre": {
@@ -1428,6 +1816,18 @@
         "alpha": "overall advection speed",
         "eps": "amplitude of the gyre-boundary oscillation",
         "omega": "boundary oscillation frequency"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 140.0,
+        "ic": [
+          1.0,
+          0.5,
+          0.0
+        ]
       }
     },
     "Hadley": {
@@ -1448,6 +1848,18 @@
         "k": "roll wavenumber (roll size)",
         "omega": "roll oscillation frequency",
         "u": "overall flow speed"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 220.0,
+        "ic": [
+          0.5,
+          0.5,
+          0.0
+        ]
       }
     },
     "RayleighBenard": {
@@ -1523,6 +1935,21 @@
         "vn": "half-activation voltage of the gating rate",
         "kc": "intracellular Ca²⁺ removal rate",
         "rho": "slow-timescale factor of the Ca²⁺ dynamics"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0
+        ],
+        "final_time": 800.0,
+        "dt": 0.1,
+        "ic": [
+          -40.0,
+          0.1,
+          0.5
+        ],
+        "method": "rk45"
       }
     },
     "IsothermalChemical": {
@@ -1533,6 +1960,20 @@
         "kappa": "feedback coupling of the slow species",
         "sigma": "timescale ratio of the fast autocatalyst",
         "delta": "timescale ratio of the slow species"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 400.0,
+        "dt": 0.05,
+        "ic": [
+          0.5,
+          0.5,
+          0.5
+        ]
       }
     },
     "ItikBanksTumor": {
@@ -1547,6 +1988,21 @@
         "r3": "maximum immune recruitment rate",
         "k3": "half-saturation of the immune response",
         "d3": "death rate of effector immune cells"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 1500.0,
+        "dt": 0.05,
+        "ic": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "method": "rk45"
       }
     },
     "TurchinHanski": {
@@ -1560,6 +2016,18 @@
         "a": "specialist predator attack rate",
         "d": "half-saturation of the specialist response",
         "s": "specialist predator growth/self-limitation rate"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 320.0,
+        "ic": [
+          0.5,
+          0.5,
+          0.0
+        ]
       }
     },
     "AnishchenkoAstakhov": {
@@ -1583,6 +2051,19 @@
         "eps": "coupling weight of the friction/forcing term",
         "gamma": "amplitude of the harmonic drive",
         "w": "angular frequency of the harmonic drive"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 140.0,
+        "ic": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "method": "rk45"
       }
     },
     "Blasius": {
@@ -1606,6 +2087,22 @@
         "gamma": "dimensionless forcing acceleration amplitude",
         "psi": "quadratic-drag energy-loss coefficient of film contact",
         "w": "dimensionless forcing angular frequency"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "portrait",
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 200.0,
+        "dt": 0.02,
+        "ic": [
+          0.1,
+          0.1,
+          0.0
+        ],
+        "method": "rk45"
       }
     },
     "CoevolvingPredatorPrey": {
@@ -1624,6 +2121,20 @@
         "k2": "coupling strength of the fitness landscape",
         "k4": "coupling strength of the fitness landscape",
         "vv": "relative timescale of trait evolution vs population dynamics"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 600.0,
+        "dt": 0.05,
+        "ic": [
+          0.5,
+          0.3,
+          0.2
+        ]
       }
     },
     "Finance": {

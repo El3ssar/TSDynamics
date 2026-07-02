@@ -77,6 +77,9 @@ extra_css:
   - assets/brand/mkdocs/extra.css
   - assets/brand/mkdocs/figure-rail.css
   - assets/brand/mkdocs/systems.css
+  # GitHub-dark syntax highlighting for fenced code blocks — loaded AFTER
+  # extra.css so it is the final word on code-block token colours.
+  - assets/brand/mkdocs/code-github-dark.css
   - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
 
 extra_javascript:
