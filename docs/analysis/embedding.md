@@ -1,157 +1,195 @@
 ---
-description: State-space reconstruction from a scalar measurement — Takens delay embedding, with delay and dimension selection heuristics.
+description: Takens delay embedding — reconstructing a system's state space from a single scalar measurement, with mutual-information delay selection and Cao / false-nearest-neighbour dimension selection.
 ---
 
-<span class="ts-kicker">Analysis · 09</span>
+<span class="ts-kicker">Analysis · Delay embeddings</span>
 
 # Delay embeddings
 
-When you have a single measured signal but no equations, Takens' theorem
-(Takens 1981) says the attractor's geometry can be reconstructed from
-*delays* of that one observable. The scalar series $x_t$ becomes vectors
+Most of the analysis toolkit wants a *state-space cloud* — a point per instant
+in the system's phase space. But an experiment usually hands you a single scalar
+channel: a voltage, a concentration, a brightness. Takens' embedding theorem
+says that is enough. From one generic observable $x(t)$ of a deterministic
+system you can reconstruct a trajectory whose attractor is diffeomorphic to the
+true one — same topology, same invariants (correlation dimension, Lyapunov
+spectrum) — by stacking time-delayed copies of the single signal into a vector:
 
 $$
-\mathbf{y}_t = \big(x_t,\; x_{t-\tau},\; \dots,\; x_{t-(m-1)\tau}\big),
+y_i = \big(x_i,\; x_{i+\tau},\; x_{i+2\tau},\; \dots,\; x_{i+(m-1)\tau}\big).
 $$
 
-and for a large enough embedding dimension $m$ the reconstruction is
-diffeomorphic to the true state space — so invariants like dimension and
-the maximal Lyapunov exponent survive. TSDynamics gives you the embedding
-map plus the two heuristics that pick its parameters $\tau$ and $m$.
-
-<figure markdown>
-![embedding showcase](../assets/figures/analysis/embedding.png){ loading=lazy }
-<figcaption>Takens' theorem in action: the true Rössler attractor (left, its real $(x,y)$ projection) and its delay reconstruction (right, $(x(t),\,x(t-\tau))$ built from the single observable $x(t)$ with $\tau$ chosen by mutual information) share the same geometry — the state space recovered from one coordinate.</figcaption>
-</figure>
-
-| Function | Picks | Method |
-|---|---|---|
-| [`embed`](#the-embedding-map) | the vectors $\mathbf{y}_t$ | Takens delay map |
-| [`optimal_delay`](#choosing-the-delay) | the delay $\tau$ | MI / autocorrelation |
-| [`embedding_dimension`](#choosing-the-dimension) | the dimension $m$ | FNN / Cao |
-
-All routines accept a bare 1-D array, a `Trajectory`, or a multi-component
-array (pick the channel with `component=`). They are backend-free — pure
-NumPy over the series — so they run in the fast tier.
-
-## The embedding map
-
-`embed` builds the delayed coordinate vectors. Pass scalar `dimension` /
-`delay` for a univariate embedding, or sequences for a non-uniform /
-multivariate one.
+Takens (1981) guarantees this delay-coordinate map is an embedding for a generic
+observable once $m > 2d$, where $d$ is the box-counting dimension of the original
+attractor. Two choices make the reconstruction good in practice — the delay
+$\tau$ and the dimension $m$ — and TSDynamics provides a principled heuristic for
+each. All three functions live under `tsdynamics.analysis.embedding` and are
+re-exported at the top level:
 
 ```python
-import numpy as np
 import tsdynamics as ts
-
-x = np.sin(np.linspace(0, 200, 4000))
-emb = ts.embed(x, dimension=3, delay=24)
-emb.shape          # (3952, 3)  — (n − (m−1)τ) rows of length m
+from tsdynamics.analysis.embedding import (
+    embed, optimal_delay, mutual_information, autocorrelation,
+    embedding_dimension, cao_dimension, false_nearest_neighbors,
+)
 ```
+
+## The reconstruction, from one channel
+
+The figure makes the theorem concrete. On the left is the *true* $(x, y)$
+projection of the Rössler attractor; on the right is a delay reconstruction built
+from the **single observable $x(t)$** — the $y$ channel is never used, yet the
+reconstructed loop is topologically the same object.
+
+<div class="ts-ref" markdown>
+
+<div class="ts-item" markdown>
+```python
+ros = ts.systems.Rossler()
+traj = ros.integrate(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0])
+x = traj.y[1000:, 0]        # keep ONLY the x channel
+
+tau = ts.optimal_delay(x, method="mi", max_delay=120)   # 27 samples
+emb = ts.embed(x, dimension=3, delay=tau)
+emb.shape                   # (6947, 3)
+emb[:, 0], emb[:, 1]        # (x(t), x(t+tau)) — the reconstructed plane
+```
+
+`embed(data, dimension, delay)` builds the
+$(N - (m-1)\tau) \times m$ matrix of delay vectors, one reconstructed state per
+row in temporal order. The returned `Embedding` behaves as that bare array —
+index it, slice it, `np.asarray()` it — so it drops straight into the point-set
+analyses.
+</div>
+<figure class="ts-fig" markdown>
+![Rössler true state space beside a delay reconstruction from x(t) alone](../assets/figures/analysis/embedding.svg){ loading=lazy }
+<figcaption><span class="lbl">FIG 1</span> · left: the true (x, y) projection of the Rössler attractor. Right: a Takens reconstruction from the single observable x(t) at a mutual-information-chosen delay — the same loop, recovered from one channel.</figcaption>
+</figure>
+
+</div>
+
+The reconstruction feeds the geometric quantifiers directly. Because the rows
+keep the original sampling order, an index-based Theiler window still removes
+temporally-correlated pairs:
+
+```python
+ts.correlation_dimension(emb, theiler=tau)   # ≈ 1.74  (Rössler D2, from x alone)
+```
+
+`embed` also does **multivariate** embedding: pass a multi-component trajectory
+(or a 2-D array) *without* `component=` and it stacks per-channel delay
+coordinates into one joint reconstruction, with an optional per-channel
+`dimension` / `delay`.
 
 ## Choosing the delay
 
-`optimal_delay` returns $\tau$. Too small and the coordinates are nearly
-identical (the attractor squashes onto the diagonal); too large and they
-decorrelate into noise — so you want the first "knee".
+The delay trades two failures against each other. Too small, and successive
+coordinates $x_i$ and $x_{i+\tau}$ are nearly identical — the reconstruction
+collapses onto the diagonal (redundancy). Too large, and on a chaotic signal
+they become causally unrelated, so the reconstruction folds noise into the
+geometry (irrelevance). The good $\tau$ sits between.
 
-=== "Mutual information (default)"
+The recommended nonlinear criterion is the **first local minimum of the
+time-delayed mutual information** (Fraser & Swinney 1986): the lag at which
+$x_{i+\tau}$ adds the most *new* information about the state while still being
+dynamically related to $x_i$.
 
-    ```python
-    h = ts.Henon()
-    x = h.trajectory(6000, transient=500, ic=[0.1, 0.1]).y[:, 0]
-    ts.optimal_delay(x, method="mi")      # = 16
-    ```
+```python
+tau = ts.optimal_delay(x, method="mi", max_delay=120)   # 27   (first MI minimum)
 
-    The first minimum of the time-delayed mutual information
-    $I(x_t; x_{t-\tau})$ (Fraser & Swinney 1986) — the lag at which the
-    delayed coordinate is maximally *independent* yet still dynamically
-    linked. `mutual_information` returns the full $I(\tau)$ curve.
+mi = ts.mutual_information(x, max_delay=120)
+mi.optimal_lag          # 27   — the same lag, read off the curve
+mi.plot()               # the I(tau) diagnostic, with the chosen tau marked
+```
 
-=== "Autocorrelation"
-
-    ```python
-    x = np.sin(np.linspace(0, 200, 4000))
-    ts.optimal_delay(x, method="acf")     # = 24
-    ```
-
-    The lag where the autocorrelation first falls to $1 - 1/e$ (or its
-    first zero) — cheaper and linear, fine for smooth oscillatory signals.
-    `autocorrelation` returns the full curve.
+`optimal_delay` returns a `CountResult` that behaves as the integer $\tau$, so
+it drops straight into `embed`. The linear alternatives are the classic
+autocorrelation rules — `method="acf"` (first lag where the autocorrelation
+falls to $1/e$) and `method="acf_zero"` (first zero crossing); the raw curve is
+available via `autocorrelation(x)`. On the Rössler $x$ channel the $1/e$ rule
+gives $\tau \approx 22$, close to the mutual-information choice.
 
 ## Choosing the dimension
 
-`embedding_dimension` returns the minimal $m$ that unfolds the attractor —
-the dimension at which spurious crossings introduced by under-embedding
-disappear. Two estimators are available via `method=`, each also exposed
-directly. The result behaves as the integer $m$ in arithmetic
-(`int(result)`) while carrying the diagnostic curve it was read from.
+The dimension must be large enough to **unfold** the attractor — to remove the
+false crossings a low-dimensional projection creates where two distant states
+happen to overlap. TSDynamics offers two complementary neighbour-based
+estimators, unified behind `embedding_dimension`.
 
-=== "False nearest neighbours (unambiguous)"
+**Cao's averaged false neighbours** (Cao 1997) tracks, for each point, how the
+distance to its nearest neighbour changes when one extra delay coordinate is
+added. The dimension-averaged ratio $E_1(d) = E(d+1)/E(d)$ rises to and then
+**saturates at 1**; the smallest $d$ past which it stops changing is the minimum
+embedding dimension. A second quantity $E_2(d)$ stays $\approx 1$ for *random*
+data, so Cao's method also separates determinism from noise — its advantage over
+a single threshold.
 
-    ```python
-    x = ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1]).y[:, 0]
-    res = ts.false_nearest_neighbors(x, delay=1, max_dim=8)
-    int(res)              # = 2   (Hénon)
-    res.fnn_fraction      # fraction of false neighbours per dimension
-    ```
-
-    `false_nearest_neighbors` (Kennel, Brown & Abarbanel 1992) flags, at
-    each $m$, neighbours that fly apart when a coordinate is added — the
-    *false* ones. $m$ is where that fraction drops to ~0. This is the
-    sharp, unambiguous estimator.
-
-=== "Cao's method (parameter-light)"
-
-    ```python
-    x = ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1]).y[:, 0]
-    res = ts.cao_dimension(x, delay=1, max_dim=8)
-    int(res)              # = 2   (Hénon)
-    res.afn_e1            # E1(d): saturates at the true dimension
-    ```
-
-    `cao_dimension` (Cao 1997) tracks $E_1(d)$, the mean change in nearest-
-    neighbour distance as a coordinate is added; $m$ is where $E_1$
-    *saturates*. It needs only the delay and avoids FNN's two tolerances,
-    but often saturates **one step late** — a safe over-embed.
-
-!!! note "Inspect the curve"
-    Both estimators carry the per-dimension diagnostic (`res.dims` with
-    `res.fnn_fraction` / `res.afn_e1`). For a borderline attractor, read
-    off $m$ from the curve yourself rather than trusting the threshold.
-
-## Known values
-
-| Signal | $m$ | Note |
-|---|---|---|
-| Sine wave | 2 | a closed loop lives in 2-D (verified, FNN + Cao) |
-| Hénon (`x` channel) | 2 | FNN drops to 0 at $m=2$ (verified) |
-| Rössler / Lorenz | 3 | FNN unambiguous; Cao saturates one step late |
-
-The headline test: reconstruct an attractor from **one coordinate** and
-recover its invariants. Embedding Rössler's $x(t)$ alone and taking the
-[correlation dimension](dimensions.md) returns $\approx 2.0$ — the same
-value as the full 3-D attractor (expected literature value; the ODE
-reconstruction compiles, so it is slow):
+**Kennel's false nearest neighbours** (Kennel, Brown & Abarbanel 1992) calls a
+neighbour *false* when adding a coordinate pushes it far apart — its proximity
+was a projection artefact. The false-neighbour fraction decays to zero at the
+correct dimension.
 
 ```python
-ros = ts.Rossler()
-x = ros.integrate(final_time=2000.0, dt=0.05).y[:, 0]
-tau = ts.optimal_delay(x, method="mi")
-m = int(ts.false_nearest_neighbors(x, delay=tau))      # → 3
-rec = ts.embed(x, dimension=m, delay=tau)
-ts.correlation_dimension(rec)                          # ≈ 2.0
+m_cao = ts.embedding_dimension(x, method="cao", delay=tau, max_dim=8)
+int(m_cao)              # 4      (drops straight into embed)
+m_cao.afn_e1            # the E1(d) saturation curve
+m_cao.plot()            # E1 / E2 vs d, with the chosen m marked
+
+m_fnn = ts.embedding_dimension(x, method="fnn", delay=tau, max_dim=8)
+int(m_fnn)              # 3      (Kennel FNN — matches Rössler's true dim)
 ```
+
+Both return an `EmbeddingDimension`: `int(result)` is the recommended $m$, and
+the per-dimension diagnostic is carried so you can inspect the
+saturation/decay rather than trust a single number. The two estimators need not
+agree to the integer — Cao's saturation threshold and Kennel's tolerances are
+conservative in different directions — so on a marginal case take $m$ from the
+*shape* of the curve, and when in doubt embed one dimension higher.
+
+!!! note "Set a Theiler window on densely sampled flows"
+    Both dimension estimators find each point's nearest *spatial* neighbour, and
+    on a densely sampled flow the true nearest neighbour is often just the next
+    sample in time — a temporal artefact, not a geometric one. Pass
+    `theiler=w` (a few autocorrelation times) to exclude neighbours closer than
+    $w$ samples in time. For the same reason, Cao's $E_1$/$E_2$ curves are
+    unreliable at exactly $d = 1$ (the 1-D nearest-neighbour gap can be
+    arbitrarily small); the recommended $m$ is read off the plateau past $d=1$,
+    so this does not affect the result.
+
+## The full pipeline
+
+Delay, dimension, embed, analyse — from one channel to a dimension estimate:
+
+```python
+x = ts.systems.Rossler().integrate(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0]).y[1000:, 0]
+
+tau = ts.optimal_delay(x, method="mi", max_delay=120)     # 27
+m = int(ts.embedding_dimension(x, method="fnn", delay=tau, max_dim=8))  # 3
+emb = ts.embed(x, dimension=m, delay=tau)
+ts.correlation_dimension(emb, theiler=tau)                # ≈ 1.74
+```
+
+This is the standard route to a fractal dimension or a data-driven Lyapunov
+exponent when you have a recording but no equations —
+[`lyapunov_from_data`](lyapunov.md) does its own internal embedding for exactly
+this reason.
 
 ## See also
 
-- [Fractal dimensions](dimensions.md) — read invariants off the reconstruction
-- [Lyapunov spectra](lyapunov.md) — `lyapunov_from_data` embeds internally
-- [Recurrence & RQA](recurrence.md) — recurrence plots of an embedded series
+- [Fractal dimensions](dimensions.md) — the reconstruction's most common
+  consumer; remember the `theiler=tau` window on an embedded flow
+- [Lyapunov spectra](lyapunov.md) — `lyapunov_from_data` estimates the maximal
+  exponent from a delay embedding of a measured series
+- [Entropy & complexity](entropy.md) — permutation and sample entropy embed the
+  series internally with the same $(m, \tau)$ choices
 
 ## References
 
-- Takens (1981), *Lecture Notes in Mathematics* **898**, 366.
-- Fraser & Swinney (1986), *Phys. Rev. A* **33**, 1134.
-- Kennel, Brown & Abarbanel (1992), *Phys. Rev. A* **45**, 3403.
-- Cao (1997), *Physica D* **110**, 43.
+- F. Takens, "Detecting strange attractors in turbulence", in *Dynamical Systems
+  and Turbulence*, Lecture Notes in Mathematics **898**, 366 (1981).
+- A. M. Fraser and H. L. Swinney, "Independent coordinates for strange attractors
+  from mutual information", *Phys. Rev. A* **33**, 1134 (1986).
+- L. Cao, "Practical method for determining the minimum embedding dimension of a
+  scalar time series", *Physica D* **110**, 43 (1997).
+- M. B. Kennel, R. Brown and H. D. I. Abarbanel, "Determining embedding
+  dimension for phase-space reconstruction using a geometrical construction",
+  *Phys. Rev. A* **45**, 3403 (1992).

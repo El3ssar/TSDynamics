@@ -1,11 +1,14 @@
-"""
-Generate the analysis-page showcase figures (one per analysis tool).
+"""Generate the analysis-page showcase figures (one per analysis tool).
 
 Each render function uses the real tsdynamics library to produce a didactic,
-on-brand (indigo->teal) figure for its docs page. The PNGs are committed static
-assets under docs/assets/figures/analysis/; re-run after changing a generator.
+on-brand figure for its docs page: transparent background, the brand teal
+(``#11857A``) / indigo (``#574FCF``) accents, viridis/twilight where a colour
+map is called for, and IBM Plex label text (the SVG carries the font-family so
+the site's IBM Plex webfont applies when the page renders). The SVGs are
+committed static assets under ``docs/assets/figures/analysis/``; re-run after
+changing a generator::
 
-    uv run python docs/_tooling/make_analysis_figures.py
+    .venv/bin/python docs/_tooling/make_analysis_figures.py
 """
 
 from __future__ import annotations
@@ -14,11 +17,19 @@ import pathlib
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "figures" / "analysis"
 
-#: House style — transparent, hairline, quiet (matches docs/_tooling/figures.py).
-INDIGO, TEAL, AMBER, ROSE = "#4f46e5", "#0d9488", "#f59e0b", "#e11d48"
+#: Brand palette (docs/assets/brand/tokens.css) — teal primary, indigo accent,
+#: amber/rose as warm secondaries. Kept as module constants; the render
+#: functions re-bind them locally so each stays copy-paste self-contained.
+TEAL, INDIGO, AMBER, ROSE = "#11857A", "#574FCF", "#E8912D", "#D64562"
+
+#: Label font — IBM Plex Sans, with DejaVu as the layout fallback. In an SVG the
+#: chosen family string is emitted verbatim, so the page's IBM Plex webfont
+#: renders it even though the box may not be installed system-wide.
+_FONT_STACK = ["IBM Plex Sans", "DejaVu Sans", "sans-serif"]
 
 
 def _style():
+    """Configure matplotlib for the on-brand, transparent, SVG-friendly house style."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -26,6 +37,9 @@ def _style():
 
     plt.rcParams.update(
         {
+            "svg.fonttype": "none",  # keep text as <text> so IBM Plex applies in-browser
+            "font.family": "sans-serif",
+            "font.sans-serif": _FONT_STACK,
             "figure.facecolor": "none",
             "axes.facecolor": "none",
             "savefig.transparent": True,
@@ -42,16 +56,17 @@ def _style():
     return plt
 
 
-
 def fig_lyapunov(plt, out_path):
+    """Lorenz running Lyapunov spectrum converging onto its literature values."""
     import numpy as np
+
     import tsdynamics as ts
     from tsdynamics import TangentSystem
 
-    INDIGO = "#4f46e5"
-    TEAL = "#0d9488"
-    AMBER = "#f59e0b"
-    ROSE = "#e11d48"
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
+    AMBER = "#E8912D"
+    ROSE = "#D64562"
 
     known = np.array([0.906, 0.0, -14.57])
 
@@ -64,8 +79,8 @@ def fig_lyapunov(plt, out_path):
     tang.reinit(ic)
 
     dt = 0.05
-    record_every = 50          # ~ every 2.5 time units
-    n_steps = 12000            # final time ~ 600
+    record_every = 50  # ~ every 2.5 time units
+    n_steps = 12000  # final time ~ 600
     times, exps = [], []
     for i in range(1, n_steps + 1):
         tang.step(dt)
@@ -73,7 +88,7 @@ def fig_lyapunov(plt, out_path):
             times.append(tang.time())
             exps.append(tang.exponents())
     times = np.asarray(times)
-    exps = np.asarray(exps)    # (n_record, 3)
+    exps = np.asarray(exps)  # (n_record, 3)
 
     fig, ax = plt.subplots(figsize=(6.2, 4.0))
 
@@ -86,9 +101,18 @@ def fig_lyapunov(plt, out_path):
     for val in known:
         ax.axhline(val, color=ROSE, lw=0.9, ls="--", alpha=0.8, zorder=2)
     xr = times[-1]
-    for val, txt in zip(known, ["0.906", "0.0", "-14.57"]):
-        ax.annotate(txt, xy=(xr, val), xytext=(4, 0), textcoords="offset points",
-                    va="center", ha="left", fontsize=8, color=ROSE, clip_on=False)
+    for val, txt in zip(known, ["0.906", "0.0", "-14.57"], strict=True):
+        ax.annotate(
+            txt,
+            xy=(xr, val),
+            xytext=(4, 0),
+            textcoords="offset points",
+            va="center",
+            ha="left",
+            fontsize=8,
+            color=ROSE,
+            clip_on=False,
+        )
 
     ax.set_xscale("log")
     ax.set_xlim(times[0], xr)
@@ -102,16 +126,22 @@ def fig_lyapunov(plt, out_path):
 
 
 def fig_orbit_diagram(plt, out_path):
+    """Logistic-map orbit diagram with the first two period-doubling onsets marked."""
     import numpy as np
+
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    ROSE = "#e11d48"
+    INDIGO = "#574FCF"
+    ROSE = "#D64562"
 
     rs = np.linspace(2.5, 4.0, 1400)
     od = ts.orbit_diagram(
-        ts.systems.Logistic(), "r", rs,
-        n=180, transient=600, component=0,
+        ts.systems.Logistic(),
+        "r",
+        rs,
+        n=180,
+        transient=600,
+        component=0,
     )
     x, y = od.flat()
 
@@ -122,8 +152,15 @@ def fig_orbit_diagram(plt, out_path):
     for r1 in (3.0, 1.0 + np.sqrt(6.0)):
         ax.axvline(r1, color=ROSE, lw=0.8, ls=(0, (4, 3)), alpha=0.7, zorder=5)
     ax.text(3.0, 1.04, r"$r_1=3$", color=ROSE, fontsize=8, ha="center", va="bottom")
-    ax.text(1.0 + np.sqrt(6.0), 1.04, r"$r_2=1+\sqrt{6}$", color=ROSE,
-            fontsize=8, ha="center", va="bottom")
+    ax.text(
+        1.0 + np.sqrt(6.0),
+        1.04,
+        r"$r_2=1+\sqrt{6}$",
+        color=ROSE,
+        fontsize=8,
+        ha="center",
+        va="bottom",
+    )
 
     ax.set_xlim(2.5, 4.0)
     ax.set_ylim(0.0, 1.0)
@@ -137,11 +174,12 @@ def fig_orbit_diagram(plt, out_path):
 
 
 def fig_recurrence(plt, out_path):
-    import numpy as np
+    """Recurrence plots of a periodic vs a chaotic logistic orbit, side by side."""
     from matplotlib.colors import ListedColormap
+
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
+    INDIGO = "#574FCF"
     N = 220
     burn = 200  # discard the transient so both signals sit on their attractor
     rate = 0.06  # comparable density for both panels (scale-free)
@@ -162,8 +200,15 @@ def fig_recurrence(plt, out_path):
         (axes[0], rm_per, "periodic   $r = 3.5$"),
         (axes[1], rm_cha, "chaotic   $r = 4.0$"),
     ):
-        ax.imshow(rm.toarray(), cmap=cmap, origin="lower", interpolation="none",
-                  vmin=0, vmax=1, aspect="equal")
+        ax.imshow(
+            rm.toarray(),
+            cmap=cmap,
+            origin="lower",
+            interpolation="none",
+            vmin=0,
+            vmax=1,
+            aspect="equal",
+        )
         ax.set_title(label)
         ax.set_xlabel("$i$")
         ax.set_xticks([0, N // 2, N])
@@ -178,43 +223,58 @@ def fig_recurrence(plt, out_path):
 
 
 def fig_dimensions(plt, out_path):
+    """Correlation-dimension log-log scaling of the Hénon attractor with the fitted D2."""
     import numpy as np
+
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    ROSE = "#e11d48"
+    INDIGO = "#574FCF"
+    ROSE = "#D64562"
 
     # Hénon attractor point cloud (already decorrelated -> no Theiler window needed)
     traj = ts.Henon().trajectory(8000, transient=500, ic=[0.1, 0.1])
 
     # D2 estimate + the log-log scaling curve it was read from
     res = ts.correlation_dimension(traj, n_radii=32, min_window=8)
-    x, y = res.x, res.y                 # log r , log C(r)
-    lo, hi = res.fit_slice              # inclusive indices of the fitted region
+    x, y = res.x, res.y  # log r , log C(r)
+    lo, hi = res.fit_slice  # inclusive indices of the fitted region
     D2 = float(res)
 
     fig, ax = plt.subplots(figsize=(6.0, 4.0))
 
     # all correlation-sum points
-    ax.scatter(x, y, s=14, color=INDIGO, zorder=3, label="$\\log C(r)$ vs $\\log r$",
-               edgecolors="none")
+    ax.scatter(
+        x, y, s=14, color=INDIGO, zorder=3, label="$\\log C(r)$ vs $\\log r$", edgecolors="none"
+    )
     # highlight the points that fall inside the fitted scaling region
-    ax.scatter(x[lo:hi + 1], y[lo:hi + 1], s=34, facecolors="none",
-               edgecolors=INDIGO, linewidths=1.1, zorder=4)
+    ax.scatter(
+        x[lo : hi + 1],
+        y[lo : hi + 1],
+        s=34,
+        facecolors="none",
+        edgecolors=INDIGO,
+        linewidths=1.1,
+        zorder=4,
+    )
 
     # fitted scaling-region line, extended a touch beyond the window
     xpad = 0.12 * (x[hi] - x[lo])
     xline = np.array([x[lo] - xpad, x[hi] + xpad])
     yline = res.intercept + D2 * xline
-    ax.plot(xline, yline, color=ROSE, lw=1.6, zorder=5,
-            label=f"fit: slope $= D_2 = {D2:.2f}$")
+    ax.plot(xline, yline, color=ROSE, lw=1.6, zorder=5, label=f"fit: slope $= D_2 = {D2:.2f}$")
 
     # slope annotation near the line midpoint
     xm = 0.5 * (x[lo] + x[hi])
     ym = res.intercept + D2 * xm
-    ax.annotate(f"$D_2 \\approx {D2:.2f}$", xy=(xm, ym),
-                xytext=(8, -22), textcoords="offset points",
-                color=ROSE, fontsize=10, fontweight="bold")
+    ax.annotate(
+        f"$D_2 \\approx {D2:.2f}$",
+        xy=(xm, ym),
+        xytext=(8, -22),
+        textcoords="offset points",
+        color=ROSE,
+        fontsize=10,
+        fontweight="bold",
+    )
 
     ax.set_xlabel(r"$\log r$")
     ax.set_ylabel(r"$\log C(r)$")
@@ -227,11 +287,11 @@ def fig_dimensions(plt, out_path):
 
 
 def fig_embedding(plt, out_path):
-    import numpy as np
+    """Rössler true (x, y) state space beside a delay reconstruction from x(t) alone."""
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    TEAL = "#0d9488"
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
 
     # Integrate Rossler; we will keep ONLY x(t) for the reconstruction.
     ros = ts.Rossler()
@@ -264,8 +324,14 @@ def fig_embedding(plt, out_path):
     axR.set_title("delay reconstruction", color="#888888")
     axR.set_aspect("equal", adjustable="datalim")
 
-    fig.text(0.5, -0.01, rf"one observable $x(t)$ · $\tau={tau}$ samples (MI)",
-             ha="center", color="#888888", fontsize=8)
+    fig.text(
+        0.5,
+        -0.01,
+        rf"one observable $x(t)$ · $\tau={tau}$ samples (MI)",
+        ha="center",
+        color="#888888",
+        fontsize=8,
+    )
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -273,13 +339,15 @@ def fig_embedding(plt, out_path):
 
 
 def fig_chaos(plt, out_path):
+    """GALI_2 and GALI_3 decay for Lorenz against their Skokos-law reference slopes."""
     import numpy as np
+
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    TEAL   = "#0d9488"
-    AMBER  = "#f59e0b"
-    ROSE   = "#e11d48"
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
+    AMBER = "#E8912D"
+    ROSE = "#D64562"
 
     lor = ts.Lorenz()
     g2 = ts.gali(lor, 2, final_time=40.0, dt=0.05, seed=0)
@@ -294,24 +362,46 @@ def fig_chaos(plt, out_path):
 
     # Lyapunov spectrum for Lorenz: lambda1 ~ 0.906, lambda2 ~ 0, lambda3 ~ -14.57
     l1, l2, l3 = 0.9056, 0.0, -14.572
-    slope2 = (l1 - l2)                      # GALI_2 ~ e^{-(l1-l2) t}
-    slope3 = (l1 - l2) + (l1 - l3)          # GALI_3 ~ e^{-((l1-l2)+(l1-l3)) t}
+    slope2 = l1 - l2  # GALI_2 ~ e^{-(l1-l2) t}
+    slope3 = (l1 - l2) + (l1 - l3)  # GALI_3 ~ e^{-((l1-l2)+(l1-l3)) t}
 
     floor = 1e-17
-    ax.semilogy(t2, np.clip(g2.values, floor, None), color=INDIGO, lw=1.4,
-                label=r"$\mathrm{GALI}_2$  (measured)")
-    ax.semilogy(t3, np.clip(g3.values, floor, None), color=TEAL, lw=1.4,
-                label=r"$\mathrm{GALI}_3$  (measured)")
+    ax.semilogy(
+        t2,
+        np.clip(g2.values, floor, None),
+        color=INDIGO,
+        lw=1.4,
+        label=r"$\mathrm{GALI}_2$  (measured)",
+    )
+    ax.semilogy(
+        t3,
+        np.clip(g3.values, floor, None),
+        color=TEAL,
+        lw=1.4,
+        label=r"$\mathrm{GALI}_3$  (measured)",
+    )
 
     # Theoretical Skokos-law slopes, anchored at the start of each measured curve.
     ref2 = g2.values[0] * np.exp(-slope2 * t2)
     ref3 = g3.values[0] * np.exp(-slope3 * t3)
     m2 = ref2 > floor
     m3 = ref3 > floor
-    ax.semilogy(t2[m2], ref2[m2], color=ROSE, lw=0.9, ls="--",
-                label=rf"$e^{{-(\lambda_1-\lambda_2)\,t}}$,  slope $\approx {slope2:.2f}$")
-    ax.semilogy(t3[m3], ref3[m3], color=AMBER, lw=0.9, ls="--",
-                label=rf"$e^{{-[(\lambda_1-\lambda_2)+(\lambda_1-\lambda_3)]\,t}}$,  slope $\approx {slope3:.1f}$")
+    ax.semilogy(
+        t2[m2],
+        ref2[m2],
+        color=ROSE,
+        lw=0.9,
+        ls="--",
+        label=rf"$e^{{-(\lambda_1-\lambda_2)\,t}}$,  slope $\approx {slope2:.2f}$",
+    )
+    ax.semilogy(
+        t3[m3],
+        ref3[m3],
+        color=AMBER,
+        lw=0.9,
+        ls="--",
+        label=rf"$e^{{-[(\lambda_1-\lambda_2)+(\lambda_1-\lambda_3)]\,t}}$,  slope $\approx {slope3:.1f}$",
+    )
 
     ax.set_xlabel("elapsed time  $t$")
     ax.set_ylabel(r"$\mathrm{GALI}_k$")
@@ -324,20 +414,20 @@ def fig_chaos(plt, out_path):
 
 
 def fig_surrogate(plt, out_path):
+    """IAAFT surrogate null distribution of a time-reversal statistic vs the Lorenz data."""
     import numpy as np
+
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    ROSE = "#e11d48"
+    INDIGO = "#574FCF"
+    ROSE = "#D64562"
 
     # Lorenz z-component — the discriminating observable for a time-reversal test.
     lor = ts.Lorenz()
     z = lor.trajectory(final_time=150.0, dt=0.05, transient=20.0)["z"]
 
     # Surrogate hypothesis test: IAAFT null preserving distribution + spectrum.
-    res = ts.surrogate_test(
-        z, statistic="time_reversal", method="iaaft", n=200, seed=0
-    )
+    res = ts.surrogate_test(z, statistic="time_reversal", method="iaaft", n=200, seed=0)
     null = res.surrogate_statistics
     data_stat = res.data_statistic
     p = res.p_value
@@ -351,8 +441,13 @@ def fig_surrogate(plt, out_path):
     pad = 0.06 * (hi - lo)
     bins = np.linspace(null.min() - 0.01, null.max() + 0.01, 26)
     ax.hist(
-        null, bins=bins, color=INDIGO, alpha=0.32, edgecolor=INDIGO,
-        linewidth=0.5, label=f"null ({res.n_surrogates} IAAFT surrogates)",
+        null,
+        bins=bins,
+        color=INDIGO,
+        alpha=0.32,
+        edgecolor=INDIGO,
+        linewidth=0.5,
+        label=f"null ({res.n_surrogates} IAAFT surrogates)",
     )
 
     # Reference line at the original-data statistic, well outside the null.
@@ -362,16 +457,24 @@ def fig_surrogate(plt, out_path):
         f"data: {data_stat:.2f}\n$z = {zscore:.0f}\\,\\sigma$",
         xy=(data_stat, ymax * 0.62),
         xytext=(data_stat - 0.30, ymax * 0.72),
-        color=ROSE, fontsize=9, ha="right", va="center",
+        color=ROSE,
+        fontsize=9,
+        ha="right",
+        va="center",
         arrowprops=dict(arrowstyle="->", color=ROSE, lw=1.0),
     )
 
     # p-value verdict.
     verdict = "reject" if res.rejected else "fail to reject"
     ax.text(
-        0.03, 0.96,
+        0.03,
+        0.96,
         f"$p = {p:.3f} \\leq \\alpha = {res.alpha:g}$\n→ {verdict} linear null",
-        transform=ax.transAxes, ha="left", va="top", fontsize=9, color="#555555",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=9,
+        color="#555555",
     )
 
     ax.set_xlim(lo - pad, hi + pad)
@@ -384,15 +487,17 @@ def fig_surrogate(plt, out_path):
 
 
 def fig_basins(plt, out_path):
+    """Fractal (Wada) basins of the three roots of Newton's map for z**3 = 1."""
     import numpy as np
+    from matplotlib.colors import ListedColormap
+
     import tsdynamics as ts
     from tsdynamics import Grid
     from tsdynamics.analysis import basins as bas
-    from matplotlib.colors import ListedColormap
 
-    INDIGO = "#4f46e5"
-    TEAL = "#0d9488"
-    AMBER = "#f59e0b"
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
+    AMBER = "#E8912D"
 
     class NewtonMap(ts.DiscreteMap):
         """Newton's method for z**3 - 1 = 0 -- three roots, Wada basins."""
@@ -454,10 +559,15 @@ def fig_basins(plt, out_path):
     for k in ids[:3]:
         c = centers[k]
         ax.plot(
-            c[0], c[1],
-            marker="o", markersize=7,
-            markerfacecolor="white", markeredgecolor="#22222288",
-            markeredgewidth=0.8, linestyle="none", zorder=5,
+            c[0],
+            c[1],
+            marker="o",
+            markersize=7,
+            markerfacecolor="white",
+            markeredgecolor="#22222288",
+            markeredgewidth=0.8,
+            linestyle="none",
+            zorder=5,
         )
 
     ax.set_xlabel("Re z")
@@ -474,12 +584,14 @@ def fig_basins(plt, out_path):
 
 
 def fig_fixed_points(plt, out_path):
+    """Van der Pol limit cycle (single shooting) and its unstable origin equilibrium."""
     import numpy as np
+
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    TEAL = "#0d9488"
-    ROSE = "#e11d48"
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
+    ROSE = "#D64562"
 
     # Autonomous van der Pol oscillator (the doc page's running example).
     class VanDerPol(ts.ContinuousSystem):
@@ -503,8 +615,13 @@ def fig_fixed_points(plt, out_path):
     # A few trajectories spiralling onto the cycle (thin INDIGO): from near the
     # unstable origin outward, and from far outside inward.
     seeds = [
-        [0.15, 0.0], [-0.1, 0.1], [0.05, -0.2],
-        [3.3, 0.0], [-3.3, 0.0], [0.0, 4.2], [0.0, -4.2],
+        [0.15, 0.0],
+        [-0.1, 0.1],
+        [0.05, -0.2],
+        [3.3, 0.0],
+        [-3.3, 0.0],
+        [0.0, 4.2],
+        [0.0, -4.2],
     ]
 
     fig, ax = plt.subplots(figsize=(6.0, 4.2))
@@ -513,16 +630,38 @@ def fig_fixed_points(plt, out_path):
         traj = sys.integrate(ic=s, final_time=22.0, dt=0.01)
         ax.plot(traj["x"], traj["v"], color=INDIGO, lw=0.5, alpha=0.55, zorder=1)
 
-    ax.plot(cyc[:, 0], cyc[:, 1], color=TEAL, lw=2.4, zorder=3,
-            label=f"limit cycle (T = {orb.period:.3f})")
+    ax.plot(
+        cyc[:, 0],
+        cyc[:, 1],
+        color=TEAL,
+        lw=2.4,
+        zorder=3,
+        label=f"limit cycle (T = {orb.period:.3f})",
+    )
 
     for fp in fps:
         if not fp.stable:
-            ax.scatter([fp.x[0]], [fp.x[1]], marker="X", s=85, color=ROSE,
-                       zorder=5, linewidths=0, label="unstable equilibrium")
+            ax.scatter(
+                [fp.x[0]],
+                [fp.x[1]],
+                marker="X",
+                s=85,
+                color=ROSE,
+                zorder=5,
+                linewidths=0,
+                label="unstable equilibrium",
+            )
         else:
-            ax.scatter([fp.x[0]], [fp.x[1]], marker="o", s=55, color=ROSE,
-                       zorder=5, linewidths=0, label="stable equilibrium")
+            ax.scatter(
+                [fp.x[0]],
+                [fp.x[1]],
+                marker="o",
+                s=55,
+                color=ROSE,
+                zorder=5,
+                linewidths=0,
+                label="stable equilibrium",
+            )
 
     ax.set_xlabel("x")
     ax.set_ylabel("v")
@@ -536,11 +675,11 @@ def fig_fixed_points(plt, out_path):
 
 
 def fig_poincare(plt, out_path):
-    import numpy as np
+    """Rössler Poincaré section: the faint flow collapses to a thin 1-D return set."""
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    TEAL = "#0d9488"
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
 
     sys = ts.systems.Rossler()
 
@@ -560,29 +699,39 @@ def fig_poincare(plt, out_path):
     fig, ax = plt.subplots(figsize=(6.2, 4.2))
 
     ax.plot(bx, bz, color=INDIGO, lw=0.4, alpha=0.15, zorder=1)
-    ax.scatter(sx, sz, s=3.0, color=TEAL, alpha=0.9, linewidths=0, zorder=3,
-               label="crossings of  $y=0$")
+    ax.scatter(
+        sx, sz, s=3.0, color=TEAL, alpha=0.9, linewidths=0, zorder=3, label="crossings of  $y=0$"
+    )
 
     ax.set_xlabel("$x$")
     ax.set_ylabel("$z$")
     ax.legend(loc="upper left", handletextpad=0.4, markerscale=2.2)
 
     # Annotate the collapse: full flow vs. the thin return set.
-    ax.text(0.03, 0.80, "flow shown faint;\nsection collapses to\na thin 1-D return set",
-            transform=ax.transAxes, ha="left", va="top",
-            fontsize=8, color="#888888")
+    ax.text(
+        0.03,
+        0.80,
+        "flow shown faint;\nsection collapses to\na thin 1-D return set",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8,
+        color="#888888",
+    )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
 def fig_entropy(plt, out_path):
+    """Multiscale sample-entropy curves separating chaos, white noise, and a periodic signal."""
     import numpy as np
+
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    TEAL = "#0d9488"
-    AMBER = "#f59e0b"
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
+    AMBER = "#E8912D"
 
     rng = np.random.default_rng(0)
     n = 2500
@@ -606,12 +755,11 @@ def fig_entropy(plt, out_path):
     xs = np.arange(1, scales + 1)
 
     fig, ax = plt.subplots(figsize=(6.2, 3.9))
-    ax.plot(xs, mse_chaotic, color=INDIGO, lw=1.5, marker="o", ms=3.5,
-            label="logistic $r=4$ (chaotic)")
-    ax.plot(xs, mse_noise, color=AMBER, lw=1.5, marker="s", ms=3.0,
-            label="white noise")
-    ax.plot(xs, mse_periodic, color=TEAL, lw=1.5, marker="^", ms=3.5,
-            label="sine (periodic)")
+    ax.plot(
+        xs, mse_chaotic, color=INDIGO, lw=1.5, marker="o", ms=3.5, label="logistic $r=4$ (chaotic)"
+    )
+    ax.plot(xs, mse_noise, color=AMBER, lw=1.5, marker="s", ms=3.0, label="white noise")
+    ax.plot(xs, mse_periodic, color=TEAL, lw=1.5, marker="^", ms=3.5, label="sine (periodic)")
 
     ax.set_xlabel("scale factor  τ")
     ax.set_ylabel("sample entropy")
@@ -626,13 +774,16 @@ def fig_entropy(plt, out_path):
 
 
 def fig_integrate(plt, out_path):
-    import numpy as np
-    import tsdynamics as ts
+    """Lorenz 3-D attractor beside its stacked x(t), y(t), z(t) component time series."""
+    import contextlib
+
     from matplotlib.gridspec import GridSpec
 
-    INDIGO = "#4f46e5"
-    TEAL = "#0d9488"
-    AMBER = "#f59e0b"
+    import tsdynamics as ts
+
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
+    AMBER = "#E8912D"
 
     lor = ts.Lorenz()
     traj = lor.integrate(final_time=60.0, dt=0.005, ic=[1.0, 1.0, 1.0])
@@ -649,10 +800,8 @@ def fig_integrate(plt, out_path):
     ax3d.plot(x, y, z, color=INDIGO, lw=0.35, alpha=0.85)
     ax3d.set_axis_off()
     ax3d.view_init(elev=22, azim=-60)
-    try:
+    with contextlib.suppress(Exception):
         ax3d.set_box_aspect((1, 1, 0.9))
-    except Exception:
-        pass
 
     # Right: stacked x(t), y(t), z(t)
     series = [(x, INDIGO, "x"), (y, TEAL, "y"), (z, AMBER, "z")]
@@ -678,12 +827,13 @@ def fig_solvers(plt, out_path):
     import time
 
     import numpy as np
+
     import tsdynamics as ts
 
-    INDIGO = "#4f46e5"
-    TEAL = "#0d9488"
-    AMBER = "#f59e0b"
-    ROSE = "#e11d48"
+    INDIGO = "#574FCF"
+    TEAL = "#11857A"
+    AMBER = "#E8912D"
+    ROSE = "#D64562"
 
     # ----- Panel A: work-precision (achieved error vs requested tolerance) -----
     class _Decay(ts.ContinuousSystem):
@@ -705,8 +855,12 @@ def fig_solvers(plt, out_path):
         errs = []
         for rtol in tols:
             tr = decay.integrate(
-                final_time=T, dt=T, ic=[1.0],
-                method=method, rtol=float(rtol), atol=float(rtol) * 1e-3,
+                final_time=T,
+                dt=T,
+                ic=[1.0],
+                method=method,
+                rtol=float(rtol),
+                atol=float(rtol) * 1e-3,
             )
             errs.append(abs(tr.y[-1, 0] - exact))
         ax1.loglog(tols, errs, marker=marker, color=color, lw=1.6, ms=5, label=method)
@@ -736,16 +890,24 @@ def fig_solvers(plt, out_path):
         for _ in range(3):
             t0 = time.perf_counter()
             tr = vdp.integrate(
-                final_time=Tv, dt=Tv / 50, ic=[2.0, 0.0],
-                method=method, rtol=1e-6, atol=1e-8,
+                final_time=Tv,
+                dt=Tv / 50,
+                ic=[2.0, 0.0],
+                method=method,
+                rtol=1e-6,
+                atol=1e-8,
             )
             best = min(best, (time.perf_counter() - t0) * 1e3)
             xend = tr.y[-1, 0]
         return best, xend
 
     bars = [
-        ("rk45", INDIGO), ("tsit5", TEAL), ("dop853", ROSE),
-        ("bdf", AMBER), ("rosenbrock", AMBER), ("trbdf2", AMBER),
+        ("rk45", INDIGO),
+        ("tsit5", TEAL),
+        ("dop853", ROSE),
+        ("bdf", AMBER),
+        ("rosenbrock", AMBER),
+        ("trbdf2", AMBER),
     ]
     names = [b[0] for b in bars]
     colors = [b[1] for b in bars]
@@ -769,9 +931,15 @@ def fig_solvers(plt, out_path):
         ax2.text(ms * 1.15, i, f"{ms:.0f}", va="center", fontsize=7.5, color="#888888")
     assert max(xends) - min(xends) < 1e-2, xends
     ax2.text(
-        0.97, 0.04, "all land on x(T)={:.2f}".format(np.mean(xends)),
-        transform=ax2.transAxes, ha="right", va="bottom",
-        fontsize=7.5, color="#888888", style="italic",
+        0.97,
+        0.04,
+        f"all land on x(T)={np.mean(xends):.2f}",
+        transform=ax2.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=7.5,
+        color="#888888",
+        style="italic",
     )
 
     fig = plt.gcf()
@@ -799,11 +967,12 @@ FIGURES = {
 
 
 def main():
+    """Render every analysis figure to docs/assets/figures/analysis/<slug>.svg."""
     plt = _style()
     OUT.mkdir(parents=True, exist_ok=True)
     for slug, fn in FIGURES.items():
         plt.close("all")
-        out = OUT / f"{slug}.png"
+        out = OUT / f"{slug}.svg"
         fn(plt, str(out))
         print(f"  ok {slug:16} {out.stat().st_size:>7} bytes")
 

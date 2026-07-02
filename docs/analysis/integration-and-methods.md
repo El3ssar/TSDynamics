@@ -9,9 +9,14 @@ description: Integrating and iterating systems — the integrate/iterate verbs, 
 Every system in the catalogue advances the same way. You call one verb, the
 library lowers the symbolic dynamics to an in-process tape, and the Rust engine
 marches it. This page is the practical guide to that march: which verb to call,
-how to pick a solver, what automatic stiffness selection does, and which
-backend runs the numbers — followed by the **complete capability table** of
-every solver in the registry.
+what the resulting `Trajectory` gives you, how to pick a solver, what automatic
+stiffness selection does, and which backend runs the numbers — followed by the
+**complete capability table** of every solver in the registry.
+
+<figure markdown>
+![A single Lorenz integrate call shown two ways — the strange attractor traced in state space beside the x, y and z component time series it samples on the output grid](../assets/figures/analysis/integrate.svg){ loading=lazy }
+<figcaption>One <code>Lorenz().integrate(...)</code> call returns one <code>Trajectory</code>. The same data is the strange attractor in state space (left, indigo) and the stacked <code>x(t)</code>, <code>y(t)</code>, <code>z(t)</code> time series it samples on the output grid (right) — <code>traj.y</code> is <code>(T, dim)</code>, <code>traj["x"]</code> is one column of it.</figcaption>
+</figure>
 
 ## Two verbs: `integrate` and `iterate`
 
@@ -34,9 +39,80 @@ decides where the solution is sampled into the returned arrays. A coarse `dt`
 loses resolution, never accuracy. (Fixed-step kernels are the exception: there
 `dt` *is* the integration step.)
 
-For incremental control — advance a little, inspect, decide — every system also
-implements the stepping protocol (`reinit` / `step` / `state`); see
-[the Analysis toolkit](index.md).
+## The `Trajectory` object
+
+Every `integrate` or `iterate` call returns a `Trajectory`: time points `t` of
+shape `(T,)`, states `y` of shape `(T, dim)`, and provenance. It is the lingua
+franca of the whole toolkit — every quantifier accepts one, and every derived
+wrapper produces one.
+
+```python
+traj.t, traj.y               # the arrays: (T,) and (T, dim)
+traj.dim, traj.n_steps       # 3, 10001
+t, y = traj                  # tuple-unpacking compatibility
+
+traj["x"]                    # named component → (T,)   (needs class `variables`)
+traj[["x", "z"]]             # multiple components → (T, 2)
+traj[100:200]                # row slicing → new Trajectory (t and y together)
+traj.component(2)            # by index
+
+traj.after(20.0)             # drop the transient: keep t >= 20
+traj.minmax()                # per-component (minima, maxima)
+traj.standardize()           # zero mean, unit std per component (records the transform)
+traj.neighbors(q, k=3)       # (distances, indices) of the k nearest points to q (cached KD-tree)
+```
+
+Slicing keeps `t` and `y` together and preserves the metadata, so a
+transient-dropped or windowed trajectory is still a fully self-describing
+`Trajectory`. `traj.meta` carries the provenance — the system name, a snapshot of
+the parameters, the solver, the tolerances, the backend, and the actual initial
+condition used:
+
+```python
+traj.meta
+# {'system': 'Lorenz', 'params': {...}, 'tsdynamics': '5.2.6', 'engine': 'rust',
+#  'family': 'ode', 'method': 'rk45', 'backend': 'interp', 'dt': 0.01, 't0': 0.0,
+#  'rtol': 1e-06, 'atol': 1e-09, 'ic': array([...])}
+```
+
+A result you cannot trace is a result you cannot reproduce; the snapshot makes
+every saved trajectory self-describing.
+
+## The stepping API
+
+`integrate` / `iterate` produce whole trajectories in one call. For algorithms
+that need *control* — advance a little, look at the state, decide, advance again
+— every system also implements the incremental `System` protocol:
+
+```python
+lor = ts.systems.Lorenz()
+lor.reinit([1.0, 1.0, 1.0])      # explicit start (optional — step() lazily reinits)
+u = lor.step(0.01)               # advance dt=0.01, get the new state
+lor.state(), lor.time()          # current state / time
+lor.set_state(u + 1e-9)          # overwrite the state in place
+```
+
+- **`step(n_or_dt)`** — a number of iterations for maps (default 1), a time
+  increment for flows (default `0.01` for ODEs, `0.1` for DDEs). Returns the new
+  state.
+- **`reinit(u, *, t=..., params=...)`** — restart the internal stepper; parameter
+  overrides are applied first.
+- **`state()` / `time()` / `set_state(u)`** — read the live state and time, or
+  overwrite the state in place.
+- **`trajectory(...)`** — a protocol-uniform wrapper over `integrate` / `iterate`
+  with a `transient=` drop.
+
+!!! note "`set_state` on a DDE raises — by design"
+    A delay system's instantaneous state is a *history function* over
+    $[t - \tau_{\max},\, t]$, not a point, so overwriting it with a single vector
+    is not meaningful. `DelaySystem.set_state` raises `NotImplementedError`; use
+    `reinit(u)` to restart from a constant past instead. This is also why
+    `max_lyapunov` (which needs `set_state`) excludes DDEs.
+
+The protocol is what the rest of the toolkit is written against — orbit diagrams,
+Poincaré maps and `max_lyapunov` are all loops over `step()`. When a prepackaged
+analysis does not fit, you drive it directly; see
+[the Analysis toolkit](index.md#beyond-the-prepackaged-routines).
 
 ## Choosing a solver
 
