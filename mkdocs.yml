@@ -157,19 +157,64 @@ nav:
   - Home: index.md
   - Start:
       - start/index.md
+      - "Install": start/install.md
+      - "First trajectory": start/first-trajectory.md
+      - "The mental model": start/concepts.md
+      - "Defining a system": start/defining-systems.md
   - Analysis:
       - analysis/index.md
       - "Integration & methods": analysis/integration-and-methods.md
+      - "Lyapunov": analysis/lyapunov.md
+      - "Orbit & bifurcation": analysis/orbit-diagrams.md
+      - "Poincaré sections": analysis/poincare.md
+      - "Fixed & periodic points": analysis/fixed-points.md
+      - "Chaos indicators": analysis/chaos.md
+      - "Recurrence & RQA": analysis/recurrence.md
+      - "Fractal dimensions": analysis/dimensions.md
+      - "Delay embeddings": analysis/embedding.md
+      - "Entropy & complexity": analysis/entropy.md
+      - "Surrogates": analysis/surrogate.md
+      - "Attractors & basins": analysis/basins.md
   - Systems:
       - systems/index.md
   - Visualization:
       - visualization/index.md
+      - "Plotting & kinds": visualization/plotting.md
+      - "Conventions": visualization/conventions.md
+      - "Styling & themes": visualization/styling.md
+      - "Animation": visualization/animation.md
+      - "Composition": visualization/composition.md
+      - "Backends & export": visualization/backends.md
   - Tutorials:
       - tutorials/index.md
+      - "From equations to a chaotic attractor": tutorials/chaotic-attractor.md
+      - "The road to chaos — bifurcations": tutorials/bifurcations.md
+      - "Reconstructing dynamics from a signal": tutorials/reconstruction.md
+      - "Basins & multistability": tutorials/basins-multistability.md
+      - "Poincaré & return maps": tutorials/poincare-return-maps.md
+      - "Noise-driven dynamics": tutorials/noise-driven.md
   - References:
       - references/index.md
+      - "Benchmarks": references/benchmarks.md
+      - "Bibliography": references/bibliography.md
+      - "API reference":
+          - reference/index.md
+          - "Top level": reference/top-level.md
+          - "Base classes": reference/base.md
+          - "Derived systems": reference/derived.md
+          - "Analysis": reference/analysis.md
+          - "Transforms": reference/transforms.md
+          - "Data & state-space": reference/data.md
+          - "Solvers": reference/solvers.md
+          - "Registry": reference/registry.md
+          - "Utilities": reference/utils.md
   - Project:
       - project/index.md
+      - "Citation": project/citation.md
+      - "Contributing": project/contributing.md
+      - "Changelog": project/changelog.md
+      - "Adding a system": project/adding-a-system.md
+      - "Adding a solver": project/adding-a-solver.md
 
 exclude_docs: |
   # tooling / non-page assets
@@ -179,16 +224,30 @@ exclude_docs: |
   hero-preview.html
   # old content trees dropped from the new IA (rebuilt in later phases)
   theory/
-  reference/
   transforms/
   contributing/
   # Phase 0 ships only the per-section index stubs; the old in-section
   # content pages are off-nav and rebuilt section by section in Phase 2.
   start/*.md
   !start/index.md
+  !start/install.md
+  !start/first-trajectory.md
+  !start/concepts.md
+  !start/defining-systems.md
   analysis/*.md
   !analysis/index.md
   !analysis/integration-and-methods.md
+  !analysis/lyapunov.md
+  !analysis/orbit-diagrams.md
+  !analysis/poincare.md
+  !analysis/fixed-points.md
+  !analysis/chaos.md
+  !analysis/recurrence.md
+  !analysis/dimensions.md
+  !analysis/embedding.md
+  !analysis/entropy.md
+  !analysis/surrogate.md
+  !analysis/basins.md
   # The Systems tree is build-generated (hooks/docs_autogen.py emits the new
   # systems/<type>/<subcat>/ IA as virtual files + a fresh systems/index.md).
   # Only the dropped old physical stubs are excluded; the generated pages pass.
@@ -197,10 +256,27 @@ exclude_docs: |
   systems/discrete/
   visualization/*.md
   !visualization/index.md
+  !visualization/plotting.md
+  !visualization/conventions.md
+  !visualization/styling.md
+  !visualization/animation.md
+  !visualization/composition.md
+  !visualization/backends.md
   tutorials/*.md
   !tutorials/index.md
+  !tutorials/chaotic-attractor.md
+  !tutorials/bifurcations.md
+  !tutorials/reconstruction.md
+  !tutorials/basins-multistability.md
+  !tutorials/poincare-return-maps.md
+  !tutorials/noise-driven.md
   project/*.md
   !project/index.md
+  !project/citation.md
+  !project/contributing.md
+  !project/changelog.md
+  !project/adding-a-system.md
+  !project/adding-a-solver.md
 
 validation:
   omitted_files: ignore
