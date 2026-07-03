@@ -39,11 +39,11 @@ The 154 built-in systems cite **124 distinct sources**, grouped below by family 
 - Arneodo, Coullet & Tresser (1980), Phys. Lett. A 79, 259-263. [doi:10.1016/0375-9601(80)90342-4](https://doi.org/10.1016/0375-9601(80)90342-4)<br><span class="ts-cite-systems">Cited by: `Arneodo`</span>
 - Arnold (1966), J. Appl. Math. Mech. 30, 223-226. [doi:10.1016/0021-8928(66)90070-0](https://doi.org/10.1016/0021-8928(66)90070-0)<br><span class="ts-cite-systems">Cited by: `ArnoldBeltramiChildress`</span>
 - Awrejcewicz & Holicke (1999), Int. J. Bifurc. Chaos. [doi:10.1142/s0218127499000341](https://doi.org/10.1142/s0218127499000341)<br><span class="ts-cite-systems">Cited by: `StickSlipOscillator`</span>
-- Bao & Liu (2008), Chin. Phys. B 17, 4111. [doi:10.1088/0256-307x/25/7/018](https://doi.org/10.1088/0256-307x/25/7/018)<br><span class="ts-cite-systems">Cited by: `HyperBao`</span>
+- Bao & Liu (2008), Chin. Phys. Lett. 25, 2396-2399. [doi:10.1088/0256-307x/25/7/018](https://doi.org/10.1088/0256-307x/25/7/018)<br><span class="ts-cite-systems">Cited by: `HyperBao`</span>
 - Baran & Raduta (1998), Int. J. Mod. Phys. E. [doi:10.1142/s0218301398000282](https://doi.org/10.1142/s0218301398000282)<br><span class="ts-cite-systems">Cited by: `NuclearQuadrupole`</span>
 - Blasius, Huppert & Stone (1999), Nature 399, 354-359. [doi:10.1038/20676](https://doi.org/10.1038/20676)<br><span class="ts-cite-systems">Cited by: `Blasius`</span>
 - Bouali (1999), Int. J. Bifurcation Chaos 9, 745-756. [doi:10.1142/s0218127499000535](https://doi.org/10.1142/s0218127499000535)<br><span class="ts-cite-systems">Cited by: `Bouali2`</span>
-- Cai & Huang (2007), Int. J. Nonlinear Sci.. [doi:10.1016/s1007-5704(02)00107-7](https://doi.org/10.1016/s1007-5704(02)00107-7)<br><span class="ts-cite-systems">Cited by: `HyperCai`</span>
+- Cai & Huang (2007), Int. J. Nonlinear Sci..<br><span class="ts-cite-systems">Cited by: `HyperCai`</span>
 - Cai & Huang (2007), Int. J. Nonlinear Sci. 3, 235-241.<br><span class="ts-cite-systems">Cited by: `Finance`</span>
 - Chay (1985), Physica D 16, 233-242. [doi:10.1016/0167-2789(85)90060-0](https://doi.org/10.1016/0167-2789(85)90060-0)<br><span class="ts-cite-systems">Cited by: `ExcitableCell`</span>
 - Chen & Ueta (1999), Int. J. Bifurcation Chaos 9, 1465-1466. [doi:10.1142/s0218127499001024](https://doi.org/10.1142/s0218127499001024)<br><span class="ts-cite-systems">Cited by: `Chen`</span>
@@ -76,7 +76,7 @@ The 154 built-in systems cite **124 distinct sources**, grouped below by family 
 - Lorenz (1996), Proc. ECMWF Seminar on Predictability 1, 1-18.<br><span class="ts-cite-systems">Cited by: `Lorenz96`</span>
 - Lü & Chen (2002), Int. J. Bifurcation Chaos 12, 659-661. [doi:10.1142/s0218127402004620](https://doi.org/10.1142/s0218127402004620)<br><span class="ts-cite-systems">Cited by: `LuChen`</span>
 - Lü, Chen, Cheng & Čelikovský (2002), Int. J. Bifurcation Chaos 12, 2917-2926. [doi:10.1142/s021812740200631x](https://doi.org/10.1142/s021812740200631x)<br><span class="ts-cite-systems">Cited by: `LuChenCheng`</span>
-- Marion (2013), Classical Dynamics of Particles and Systems. [doi:10.1016/b978-1-4832-5676-4.50003-2](https://doi.org/10.1016/b978-1-4832-5676-4.50003-2)<br><span class="ts-cite-systems">Cited by: `DoublePendulum`</span>
+- Marion (1965), Classical Dynamics of Particles and Systems, Academic Press. [doi:10.1016/c2013-0-12598-6](https://doi.org/10.1016/c2013-0-12598-6)<br><span class="ts-cite-systems">Cited by: `DoublePendulum`</span>
 - Matsumoto (1984), IEEE Trans. Circuits Syst. 31, 1055-1058. [doi:10.1109/tcs.1984.1085459](https://doi.org/10.1109/tcs.1984.1085459)<br><span class="ts-cite-systems">Cited by: `Chua`</span>
 - Meier (2003), Presentation of Attractors with Cinema.<br><span class="ts-cite-systems">Cited by: `HyperJha`, `HyperLorenz`, `HyperYan`, `HyperYangChen`</span>
 - Meleshko & Aref (1996), Phys. Fluids 8, 3215-3217. [doi:10.1063/1.869128](https://doi.org/10.1063/1.869128)<br><span class="ts-cite-systems">Cited by: `BlinkingRotlet`</span>

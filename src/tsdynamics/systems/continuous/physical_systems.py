@@ -22,8 +22,8 @@ class DoublePendulum(ContinuousSystem):
         Arm mass (both arms equal).
     """
 
-    reference = "Marion (2013), Classical Dynamics of Particles and Systems"
-    doi = "10.1016/b978-1-4832-5676-4.50003-2"
+    reference = "Marion (1965), Classical Dynamics of Particles and Systems, Academic Press"
+    doi = "10.1016/c2013-0-12598-6"
     params = {"d": 1.0, "m": 1.0}
     dim = 4
 

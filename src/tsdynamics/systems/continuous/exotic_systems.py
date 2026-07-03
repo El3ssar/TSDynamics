@@ -64,7 +64,6 @@ class HyperCai(ContinuousSystem):
     params = {"a": 27.5, "b": 3, "c": 19.3, "d": 2.9, "e": 3.3}
     dim = 4
     reference = "Cai & Huang (2007), Int. J. Nonlinear Sci."
-    doi = "10.1016/s1007-5704(02)00107-7"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):
@@ -99,7 +98,7 @@ class HyperBao(ContinuousSystem):
 
     params = {"a": 36, "b": 3, "c": 20, "d": 0.1, "e": 21}
     dim = 4
-    reference = "Bao & Liu (2008), Chin. Phys. B 17, 4111"
+    reference = "Bao & Liu (2008), Chin. Phys. Lett. 25, 2396-2399"
     doi = "10.1088/0256-307x/25/7/018"
     known_lyapunov = {
         "n_positive": 2,
