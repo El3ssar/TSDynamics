@@ -24,13 +24,35 @@ Per-system failures soft-fail (the page ships without a figure).
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import inspect
 import pathlib
 import shutil
+import warnings
 
 import numpy as np
 import plot_dt as _plot_dt  # the ONE sagitta-dt selector both renderers call
+
+
+def _quiet_numerics(fn):
+    """Silence the expected FP / divergence ``RuntimeWarning``s of build-time work.
+
+    Rendering explores each system with random initial conditions and wide
+    sampling boxes, so some trajectories legitimately overflow or go non-finite;
+    the callers already retry or drop those (finiteness checks, IC re-rolls). This
+    keeps the ``--strict`` docs-build log clean without changing any result — the
+    control flow that handles divergence is untouched, only the noisy warning is
+    suppressed for the duration of the render.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with warnings.catch_warnings(), np.errstate(all="ignore"):
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-figures"
@@ -863,6 +885,7 @@ def _render_map(entry, plt, opts):
     return fig
 
 
+@_quiet_numerics
 def render(entry) -> pathlib.Path | None:
     """
     Ensure the figure for ``entry`` exists in ``OUT_DIR``; return its path.

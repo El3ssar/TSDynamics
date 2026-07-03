@@ -264,11 +264,28 @@
   border: 1px solid var(--tsc-inline-code-border);
 }
 
+/* Fenced code blocks: comfortable left/right breathing room so the text
+   is never crammed against the block border, balanced and identical in the
+   light (`default`) and dark (`slate`) schemes.  Material's own
+   `.md-typeset pre>code` padding is out-specificitied by the inline-code
+   reset just below (`.md-typeset .highlight code`, specificity 0,2,1), so we
+   restate a generous indent here at matching specificity.  A touch more on
+   the left than the right gives the code an intentional margin from the edge
+   while keeping the copy button clear on the right.  Line-number anchors
+   (`anchor_linenums`) are absolutely positioned + hidden, so this indent
+   does not disturb their alignment. */
+.md-typeset .highlight pre > code,
+.md-typeset pre > code {
+  padding: 0.78em 1.15em 0.78em 1.3em;
+}
+
 /* Inline code that is itself syntax-highlighted (pymdownx.inlinehilite)
    rides the fenced-block palette — its tokens inherit the variables set
    at the top, so it stays on the light inline surface but with coloured
-   tokens.  Give it the same soft surface so it reads inline. */
-.md-typeset .highlight code {
+   tokens.  Give it the same soft surface so it reads inline.  Scoped with
+   `:not(pre > code)` so it resets ONLY the inline case and never strips the
+   fenced-block padding restored above. */
+.md-typeset .highlight code:not(pre > code) {
   background: transparent;
   border: 0;
   padding: 0;

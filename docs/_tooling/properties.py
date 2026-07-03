@@ -45,19 +45,43 @@ Environment flags
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import inspect
 import json
 import os
 import pathlib
+import warnings
 from typing import Any
+
+import numpy as np
+
+
+def _quiet_numerics(fn):
+    """Silence the expected FP / divergence ``RuntimeWarning``s of build-time work.
+
+    Computing the property cards runs a bounded Lyapunov QR and a multi-start /
+    box fixed-point search over each catalogue system; random ICs and wide search
+    boxes legitimately overflow or go non-finite, and the estimators already
+    handle that (retry, drop non-finite, TODO card). This keeps the ``--strict``
+    docs-build log clean without changing any card — only the noisy warning is
+    suppressed for the duration of the computation.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with warnings.catch_warnings(), np.errstate(all="ignore"):
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-props"
 
 #: Bump when the computed-quantity logic or card shaping materially changes
 #: (cache buster — invalidates every on-disk props payload).
-PROPS_VERSION = "1"
+PROPS_VERSION = "2"
 
 #: Truthy ``TSD_DOCS_PROPS`` (default) computes the cards; ``"0"`` makes every
 #: *expensive* quantity a TODO (number-free preview).  The symbolic divergence
@@ -85,6 +109,18 @@ _LYAP_MAX_DIM = 6
 #: Equilibrium search is skipped above this dimension (multi-start Newton over a
 #: high-dim state is slow and rarely converges cleanly in a docs budget).
 _FP_MAX_DIM = 8
+
+#: The ∇·f trace is *collapsed* to a compact summary (rather than printed in
+#: full) when the system is a method-of-lines field, its effective state
+#: dimension exceeds :data:`_DIV_MAX_DIM`, or its rendered LaTeX exceeds
+#: :data:`_DIV_MAX_LATEX_LEN` characters.  Rendered-LaTeX length is the reliable
+#: bloat signal: a field (Gray–Scott ≈ 84 000 chars) or a low-dim system with a
+#: pathological rational trace (Glycolytic oscillation ≈ 50 000, Excitable cell
+#: ≈ 88 000) wrecks page load, while a tidy low-dim ODE (Lorenz ``-β-σ-1``,
+#: Rössler ``a-c+x``, and rich-but-readable ones like Lorenz-bounded at ≈ 370
+#: chars) stays well under the limit and renders in full.
+_DIV_MAX_DIM = 8
+_DIV_MAX_LATEX_LEN = 500
 
 
 # --------------------------------------------------------------------------- #
@@ -301,12 +337,14 @@ def _param_symbols(cls, sys_obj) -> dict[str, Any]:
 def _divergence_expr(entry):
     """Symbolic ∇·f = Σ ∂f_i/∂y_i for a flow (ODE) / drift (SDE) / DDE.
 
-    Built from named state symbols (so the LaTeX matches the equations card).
-    For a DDE the delayed terms ``y(i, t-τ)`` are independent function symbols,
-    so differentiating w.r.t. the instantaneous state gives the *instantaneous*
-    divergence — the right local contraction rate.  Raises on any system whose
-    RHS we cannot lower symbolically (variable-dim, NumPy bodies, …); the caller
-    turns that into a TODO.
+    Returns ``(div, state_syms, dim)`` — the expanded divergence, the set of
+    instantaneous-state symbols it was differentiated against, and the state
+    dimension.  Built from named state symbols (so the LaTeX matches the
+    equations card).  For a DDE the delayed terms ``y(i, t-τ)`` are independent
+    function symbols, so differentiating w.r.t. the instantaneous state gives the
+    *instantaneous* divergence — the right local contraction rate.  Raises on any
+    system whose RHS we cannot lower symbolically (variable-dim, NumPy bodies,
+    …); the caller turns that into a TODO.
     """
     import symengine
 
@@ -342,7 +380,7 @@ def _divergence_expr(entry):
         exprs = list(entry.cls._equations(y, t, **params))
 
     div = symengine.expand(sum(symengine.diff(exprs[i], syms[i]) for i in range(dim)))
-    return div
+    return div, set(syms), dim
 
 
 def _divergence_card(entry) -> dict[str, Any]:
@@ -353,6 +391,14 @@ def _divergence_card(entry) -> dict[str, Any]:
     divergence — the discrete analogue is the Jacobian *determinant* (the
     per-step phase-space volume factor), which we deliberately do not render as
     ``∇·f`` and instead mark as not-applicable with a pointer.
+
+    A **method-of-lines field** (Gray–Scott, Swift–Hohenberg) or any high-dim
+    flow whose ∇·f expands into a wall of near-identical per-node terms
+    (Lorenz-96, Kuramoto–Sivashinsky) would print as an enormous sum that wrecks
+    readability and page load.  Such a trace is *collapsed*
+    (:func:`_collapse_divergence`) to a compact summary — the parameter-only
+    constant part plus a "(N-cell field)" note, or a one-line "too large to
+    display" — while a low-dim ODE keeps its full, tidy ∇·f.
     """
     if entry.family == "map":
         return {
@@ -360,7 +406,7 @@ def _divergence_card(entry) -> dict[str, Any]:
             "reason": "discrete map — flow divergence undefined (per-step contraction is |det J|)",
         }
     try:
-        div = _divergence_expr(entry)
+        div, state_syms, dim = _divergence_expr(entry)
     except Exception as exc:  # noqa: BLE001 — symbolic lowering failed
         return _todo(f"symbolic divergence unavailable: {type(exc).__name__}")
     if _has_nonsmooth_derivative(div):
@@ -378,10 +424,110 @@ def _divergence_card(entry) -> dict[str, Any]:
         import sympy
 
         latex = sympy.latex(div._sympy_())
-        constant = len(div.free_symbols) == 0 or _is_constant_in_state(entry, div)
     except Exception as exc:  # noqa: BLE001
         return _todo(f"divergence render failed: {type(exc).__name__}")
+
+    constant = not (set(div.free_symbols) & state_syms)
+
+    # Collapse an enormous field / high-dim / pathologically-long trace to a
+    # compact summary.  A short, tidy ∇·f (a low-dim ODE) falls straight through
+    # and renders in full.
+    if _is_field(entry) or dim > _DIV_MAX_DIM or len(latex) > _DIV_MAX_LATEX_LEN:
+        return _collapse_divergence(entry, div, state_syms, dim)
+
     return _ok(latex, constant=constant)
+
+
+def _is_field(entry) -> bool:
+    """Whether ``entry`` is a spatially-extended (method-of-lines) field.
+
+    True when the catalogue record exposes ``is_field`` / a ``field_shape``, or
+    the class declares the ``_field_shape`` ClassVar — mirrors the field
+    detection used by the figure / viewer tooling.
+    """
+    if getattr(entry, "is_field", False):
+        return True
+    if getattr(entry, "field_shape", None):
+        return True
+    return getattr(entry.cls, "_field_shape", None) is not None
+
+
+def _collapse_divergence(entry, div, state_syms, dim: int) -> dict[str, Any]:
+    """Compact ∇·f card for a field / high-dim / pathologically-long trace.
+
+    Splits ∇·f into its parameter-only *constant* part (the uniform
+    contraction/expansion rate — short and meaningful) and the *state-dependent*
+    remainder (the per-node nonlinear terms).  The framing depends on the reason
+    the full trace is unwieldy:
+
+    - **Spatial** (a method-of-lines field, or a high-dim flow whose ∇·f is a sum
+      of near-identical per-node contributions — Gray–Scott, Kuramoto–Sivashinsky):
+      the remainder is described as "per-cell nonlinear terms (over the N-cell
+      field)" — an honest summary of a repetitive spatial sum.
+    - **Bulky** (a low-dim ODE with a pathological rational ∇·f — Excitable cell,
+      Glycolytic oscillation): there is no field, so the remainder is described
+      neutrally as "state-dependent part omitted (too large to display)".
+
+    In both cases, if even the constant part does not render short, the whole
+    expression is omitted with a one-line note (``status: "na"``).
+    """
+    import symengine
+
+    spatial = _is_field(entry) or dim > _DIV_MAX_DIM
+    if spatial:
+        n = _cell_count(entry, dim)
+        unit = "cell" if _is_field(entry) else "node"
+        span = f"the {n}-{unit} field" if _is_field(entry) else f"{n} nodes"
+        remainder_note = f"+ per-{unit} nonlinear terms (over {span})"
+        constant_note = f"uniform over {span}"
+        omit_reason = "too large to display — method-of-lines field"
+    else:
+        remainder_note = "constant part shown — state-dependent remainder omitted (too large)"
+        constant_note = "constant"
+        omit_reason = "too large to display — pathological rational divergence"
+
+    args = div.args if isinstance(div, symengine.Add) else (div,)
+    const_terms = [a for a in args if not (set(a.free_symbols) & state_syms)]
+    has_state = len(const_terms) != len(args)
+    const_part = sum(const_terms, symengine.Integer(0))
+
+    # A zero constant part carries no information — showing "∇·f = 0" beside a
+    # "remainder omitted" note would read as a false ∇·f ≡ 0.  Omit instead.
+    if const_part == 0:
+        return {"status": "na", "reason": omit_reason}
+
+    const_latex: str | None = None
+    try:
+        import sympy
+
+        const_latex = sympy.latex(const_part._sympy_())
+    except Exception:  # noqa: BLE001 — a missing/failing sympy degrades to the omit note
+        const_latex = None
+
+    if const_latex is not None and len(const_latex) <= _DIV_MAX_LATEX_LEN:
+        return {
+            "status": "collapsed",
+            "value": const_latex,
+            "constant": not has_state,
+            "note": remainder_note if has_state else constant_note,
+        }
+
+    # Even the constant part is unwieldy — omit with a clear one-line note.
+    return {"status": "na", "reason": omit_reason}
+
+
+def _cell_count(entry, dim: int) -> int:
+    """Return the field-cell / method-of-lines node count (the ``N`` in the note).
+
+    Uses the declared ``field_shape`` cell count when available (a multi-block
+    field's per-block grid size), else the state dimension.
+    """
+    shape = getattr(entry, "field_shape", None) or getattr(entry.cls, "_field_shape", None)
+    if shape:
+        import math
+
+        return int(math.prod(shape))
+    return int(dim)
 
 
 def _has_nonsmooth_derivative(div) -> bool:
@@ -393,20 +539,6 @@ def _has_nonsmooth_derivative(div) -> bool:
     """
     text = str(div)
     return "Derivative" in text or "Subs" in text or "sign(" in text.lower()
-
-
-def _is_constant_in_state(entry, div) -> bool:
-    """Whether ∇·f is free of any *state* symbol (i.e. parameter-only constant)."""
-    try:
-        import symengine
-
-        sys_obj = entry.cls()
-        dim = sys_obj.dim or 0
-        names = _state_names(entry.cls, dim)
-        state_syms = {symengine.Symbol(n) for n in names}
-        return not (set(div.free_symbols) & state_syms)
-    except Exception:  # noqa: BLE001
-        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -443,6 +575,7 @@ def _equilibria_card(entry) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+@_quiet_numerics
 def compute_properties(entry) -> dict[str, Any]:
     """Compute (or load from cache) the four property cards for ``entry``.
 
@@ -532,6 +665,13 @@ def _divergence_md(card: dict[str, Any]) -> str:
         latex = card["value"]
         tag = "constant" if card.get("constant") else "state-dependent"
         return f'$\\nabla\\!\\cdot f = {latex}$<br><span class="ts-prop-src">{tag}</span>'
+    if status == "collapsed":
+        # A field / high-dim trace shown as its short constant part plus a note
+        # describing the omitted per-cell remainder (kept off the KaTeX so the
+        # page stays light).
+        latex = card["value"]
+        note = card.get("note", "")
+        return f'$\\nabla\\!\\cdot f = {latex}$<br><span class="ts-prop-src">{note}</span>'
     if status == "na":
         return f'<span class="ts-prop-na">n/a — {card.get("reason", "")}</span>'
     return _todo_md(card)

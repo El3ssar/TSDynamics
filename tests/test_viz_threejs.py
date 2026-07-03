@@ -497,26 +497,31 @@ def test_to_plot_spec_animate_flag_drives_threejs_payload() -> None:
 
 
 def test_loader_js_drives_setdrawrange_reveal() -> None:
-    """The reference loader honors metadata.animation via setDrawRange (string check)."""
+    """The reference loader honors metadata.animation via a reveal comet (string check)."""
     import re
     from pathlib import Path
 
     loader = Path(__file__).resolve().parents[1] / "docs" / "_static" / "tsdyn-threejs-loader.js"
     src = loader.read_text(encoding="utf-8")
-    # The animation path keys off metadata.animation and reveals by draw-range.
+    # The animation path keys off metadata.animation and reveals a comet per geometry.
     assert "meta.animation" in src
     assert "setDrawRange" in src
+    # Both LINE and POINTS geometries get a comet (mirrors _ANIMATED_MARKS + the
+    # map-iterate point cloud); each exposes the same seek(headVertex, trailVertices)
+    # contract that installAnimation drives every frame.
     assert "buildLineComet" in src
-    # Only LINE geometries get a comet (mirrors _ANIMATED_MARKS = {LINE, LINE3D}):
-    # a points/surface geometry has no index buffer to setDrawRange over.
+    assert "buildPointsComet" in src
     assert 'geom.type === "line"' in src
-    # Index-unit invariant: a LineSegments index buffer is 0,1,1,2,... (TWO indices
-    # per segment), so setDrawRange works in INDEX units — start/count are `2 *`
-    # the vertex window, never the raw vertex index (a vertex-vs-index mixup would
-    # reveal a wrong-length / wrong-position trail).
-    assert re.search(r"start\s*=\s*2\s*\*\s*lo", src)
-    assert re.search(r"count\s*=\s*2\s*\*", src)
-    # A defensive animation-block-but-no-line payload must NOT freeze the camera:
+    assert "function seek(" in src
+    # LINE reveal: a fixed-length windowed THREE.Line whose positions AND per-vertex
+    # colours are rewritten each seek() — a glowing teal trail fading tail→head — rather
+    # than a flat index-unit draw-range slice.  The per-vertex colours are the tell.
+    assert "vertexColors: true" in src
+    # POINTS reveal: an unindexed Points geometry, so setDrawRange counts VERTICES
+    # directly — setDrawRange(lo, …), never a 2*-index window (that mixup would draw a
+    # wrong-length swarm).
+    assert re.search(r"setDrawRange\(\s*lo\b", src)
+    # A defensive animation-block-but-no-comet payload must NOT freeze the camera:
     # autoRotate keys off whether a comet was actually installed, not on `anim`.
     assert "autoRotate = opts.autoRotate ?? !revealing" in src
 

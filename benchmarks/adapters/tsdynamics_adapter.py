@@ -150,10 +150,10 @@ class TSDynamicsAdapter(BaseAdapter):
         T = 200.0 if quick else 500.0
 
         def run() -> float:
-            # dt=0.05 is the renormalisation interval (comparable to the Julia
-            # column's Δt); it gives the best λ_max accuracy here and is ~5×
-            # faster than dt=0.01 (no accuracy gain below 0.05).
-            ls = ts.lyapunov_spectrum(lor, final_time=T, dt=0.05, ic=ic, transient=20.0)
+            # dt=0.1 matches the Julia column's Δt=0.1 renormalisation interval, so
+            # both libraries renormalise the same number of times over the same
+            # horizon (apples-to-apples; dt=0.05 did twice the work of the jl run).
+            ls = ts.lyapunov_spectrum(lor, final_time=T, dt=0.1, ic=ic, transient=20.0)
             return float(np.max(np.asarray(ls.exponents)))
 
         return run
@@ -263,9 +263,14 @@ class TSDynamicsAdapter(BaseAdapter):
         import tsdynamics as ts
 
         h = ts.systems.Henon().with_params(**self.cfg["henon"]["params"])
+        # Match the Julia column: it runs `fixedpoints(hm, [-2,2]×[-2,2])`, a rigorous
+        # box method. Use TSDynamics' box-based Krawczyk method over the SAME box
+        # (method="interval") — not the multi-start Newton default, which is a
+        # different (stochastic, seed-swept) algorithm and not the jl comparison.
+        box = ts.data.Box(lo=[-2.0, -2.0], hi=[2.0, 2.0])
 
         def run() -> float:
-            fps = ts.fixed_points(h, seed=0)
+            fps = ts.fixed_points(h, method="interval", region=box)
             return float(max(float(np.asarray(fp.x)[0]) for fp in fps))
 
         return run

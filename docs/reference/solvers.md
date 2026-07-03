@@ -14,8 +14,9 @@ implicit method from the Jacobian spectrum. Third-party solvers register
 through the same entry point.
 
 Most users never call these directly — they pass `method="rk45"` (or similar)
-to [`integrate`](../analysis/integrate.md). This page documents the registry
-itself.
+to a system's `integrate` (see
+[Integration & methods](../analysis/integration-and-methods.md)). This page
+documents the registry itself.
 
 ## Specs & capabilities
 

@@ -918,9 +918,13 @@ import is deferred to first render.
   (divergence → `ConvergenceError`; an out-of-range `dt`/unknown backend/bad
   argument → `InvalidParameterError` / `InvalidInputError`) so a `RuntimeError` /
   `ValueError` / `TypeError` `except` keeps catching the same failure.
-- **Docstrings:** NumPy convention; cite original papers, never competitor software
-- **Never reference the Julia dynamical-systems ecosystem** in code, docs, or
-  comments — ideas may be absorbed, citations go to the original literature.
+- **Docstrings:** NumPy convention; cite the **original paper** for each method.
+  This is a code-style norm — keep code/docstrings pointing at the source
+  literature rather than at whichever library we consulted. It is **not** a veto
+  on naming other tools: the docs (in particular References → benchmarks) may name
+  and compare against other libraries, including DynamicalSystems.jl, where a
+  head-to-head is informative. (There is no citation-lint build gate; that hook
+  was removed.)
 - **Commits:** Conventional Commits; PRs are squash-merged and the PR title
   becomes the release-deciding commit (enforced by `pr-title.yml`)
 

@@ -149,7 +149,6 @@ CURATED_PAGES: tuple[str, ...] = (
     "theory/backends.md",
     "theory/compilation.md",
     "theory/solvers.md",
-    "tutorials/equations-to-basins.md",
 )
 
 # A fenced block carrying this marker is a deliberately-illustrative fragment
