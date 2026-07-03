@@ -75,7 +75,7 @@ The 154 built-in systems cite **124 distinct sources**, grouped below by family 
 - Lorenz (1984), Tellus 36A, 98-110. [doi:10.3402/tellusa.v36i2.11473](https://doi.org/10.3402/tellusa.v36i2.11473)<br><span class="ts-cite-systems">Cited by: `Lorenz84`</span>
 - Lorenz (1996), Proc. ECMWF Seminar on Predictability 1, 1-18.<br><span class="ts-cite-systems">Cited by: `Lorenz96`</span>
 - Lü & Chen (2002), Int. J. Bifurcation Chaos 12, 659-661. [doi:10.1142/s0218127402004620](https://doi.org/10.1142/s0218127402004620)<br><span class="ts-cite-systems">Cited by: `LuChen`</span>
-- Lü, Chen, Cheng & Čelikovský (2002), Int. J. Bifurcation Chaos 12, 2917-2926. [doi:10.1142/s021812740200631x](https://doi.org/10.1142/s021812740200631x)<br><span class="ts-cite-systems">Cited by: `LuChenCheng`</span>
+- Lü, Chen & Cheng (2004), Int. J. Bifurcation Chaos 14, 1507-1537. [doi:10.1142/s021812740401014x](https://doi.org/10.1142/s021812740401014x)<br><span class="ts-cite-systems">Cited by: `LuChenCheng`</span>
 - Marion (1965), Classical Dynamics of Particles and Systems, Academic Press. [doi:10.1016/c2013-0-12598-6](https://doi.org/10.1016/c2013-0-12598-6)<br><span class="ts-cite-systems">Cited by: `DoublePendulum`</span>
 - Matsumoto (1984), IEEE Trans. Circuits Syst. 31, 1055-1058. [doi:10.1109/tcs.1984.1085459](https://doi.org/10.1109/tcs.1984.1085459)<br><span class="ts-cite-systems">Cited by: `Chua`</span>
 - Meier (2003), Presentation of Attractors with Cinema.<br><span class="ts-cite-systems">Cited by: `HyperJha`, `HyperLorenz`, `HyperYan`, `HyperYangChen`</span>

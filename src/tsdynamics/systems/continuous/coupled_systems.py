@@ -109,13 +109,13 @@ class Bouali2(ContinuousSystem):
 
 
 class LuChenCheng(ContinuousSystem):
-    """Lü–Chen–Cheng unified system bridging the Lorenz and Chen attractors.
+    """Lü–Chen–Cheng generalized Lorenz-like system with constant input.
 
-    A one-parameter family of three-dimensional quadratic flows that interpolates
-    continuously between the Lorenz and the Chen system, remaining chaotic across
-    the whole transition. Introduced by Lü, Chen, Cheng and Čelikovský to "bridge
-    the gap" between the two canonical attractors; this parameterisation uses the
-    harmonic combination ``-(a*b)/(a+b)*x`` on the ``x`` channel.
+    A three-dimensional quadratic flow from the generalized Lorenz-like family of
+    Lü, Chen and Cheng, which contains the Lorenz- and Chen-type attractors as
+    special cases and stays chaotic under a constant forcing input. This
+    parameterisation uses the harmonic combination ``-(a*b)/(a+b)*x`` on the ``x``
+    channel together with a constant forcing ``c``.
 
     Parameters
     ----------
@@ -130,8 +130,8 @@ class LuChenCheng(ContinuousSystem):
     Chaotic at the default parameters.
     """
 
-    reference = "Lü, Chen, Cheng & Čelikovský (2002), Int. J. Bifurcation Chaos 12, 2917-2926"
-    doi = "10.1142/s021812740200631x"
+    reference = "Lü, Chen & Cheng (2004), Int. J. Bifurcation Chaos 14, 1507-1537"
+    doi = "10.1142/s021812740401014x"
     params = {"a": -10, "b": -4, "c": 18.1}
     dim = 3
 
