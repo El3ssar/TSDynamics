@@ -118,6 +118,10 @@ MOVIE_RECIPES: dict[str, dict] = {
         "cmap": "RdBu_r",
         "interpolation": "bilinear",
         "fps": 28,
+        # Symmetric clim at ~0.72·(peak amplitude) — the p95 of the established
+        # stripe pattern — so the mature labyrinth renders at full RdBu_r saturation
+        # (warm crest / cool trough) rather than washing out against the rare extreme.
+        "clim": ("symmetric", 0.72),
     },
 }
 
@@ -225,18 +229,76 @@ def _build_spec(entry, recipe: dict):
 
     spec = sys_obj.to_plot_spec(**spec_kw)
     # Vivid, smooth, chrome-free hero: perceptually-uniform / diverging cmap,
-    # image interpolation, and no title / axes / frame so the field fills the panel.
+    # image interpolation, and no title / axes / frame so the field fills the panel;
+    # the dark brand background matches the three.js viewer's canvas (and the
+    # ``.ts-field-movie`` CSS) so there is no white margin around the square.
     with contextlib.suppress(Exception):
         spec.style(
             cmap=recipe.get("cmap", "viridis"),
             interpolation=recipe.get("interpolation", "bilinear"),
             axes=False,
         )
+    with contextlib.suppress(Exception):
+        spec.background(_BG)
+    # Optional colour-range override.  For a signed field (Swift–Hohenberg) a tight
+    # SYMMETRIC clim scaled below the saturation amplitude makes the mature pattern
+    # render at full diverging-colormap saturation instead of washing out against the
+    # rare extreme; ``"symmetric"`` derives ``±q·max|field|`` from the stack.
+    _apply_clim(spec, recipe.get("clim"))
     spec.title = None  # drop the system-name title (the page already has the heading)
-    spec.animate(fps=int(recipe.get("fps", 25)), loop=True)
+
+    # Play EVERY integrated snapshot (not the capped default 360) so the movie is a
+    # full, smooth, long-enough loop — the field stack has ``final_time/dt`` frames.
+    n_frames = _stack_frames(spec)
+    spec.animate(fps=int(recipe.get("fps", 25)), loop=True, n_frames=n_frames)
     # Reference the ts symbol so a bare import is never flagged unused.
     _ = ts
     return spec
+
+
+def _apply_clim(spec, clim) -> None:
+    """Apply an optional colour-range override to ``spec`` (in place).
+
+    ``clim`` may be an explicit ``(vmin, vmax)`` pair, or the recipe token
+    ``("symmetric", q)`` → a symmetric range ``±q·max|field|`` derived from the
+    layer's field stack (so a diverging colormap saturates at a fraction of the peak
+    amplitude, boosting the mature-pattern contrast).  A ``None`` / unrecognised
+    value leaves the producer's full-range clim untouched.
+    """
+    if clim is None:
+        return
+    with contextlib.suppress(Exception):
+        if isinstance(clim, (tuple, list)) and len(clim) == 2 and clim[0] == "symmetric":
+            q = float(clim[1])
+            peak = 0.0
+            for layer in spec.layers:
+                frames = layer.data.get("frames")
+                if frames is not None:
+                    arr = np.asarray(frames, dtype=float)
+                    finite = arr[np.isfinite(arr)]
+                    if finite.size:
+                        peak = max(peak, float(np.abs(finite).max()))
+            if peak > 0.0:
+                lim = q * peak
+                spec.colorize(clim=(-lim, lim))
+        else:
+            spec.colorize(clim=(float(clim[0]), float(clim[1])))
+
+
+def _stack_frames(spec) -> int | None:
+    """Return the per-time field-stack length (the number of movie frames), or ``None``.
+
+    The ``SPATIAL_FIELD`` producer stacks every integrated snapshot on the layer's
+    ``"frames"`` channel (shape ``(T, *spatial)``); ``T`` is the natural movie frame
+    count.  ``None`` when no such stack is present (the animator then picks its own).
+    """
+    for layer in spec.layers:
+        frames = layer.data.get("frames")
+        if frames is not None:
+            arr = np.asarray(frames)
+            if arr.ndim >= 2:
+                return int(arr.shape[0])
+    return None
 
 
 def _write_poster(spec, poster_path: pathlib.Path) -> bool:
@@ -276,7 +338,10 @@ def _render_to_cache(entry, recipe: dict) -> tuple[pathlib.Path, pathlib.Path] |
         except Exception:  # noqa: BLE001 — integration / spec build failed
             return None
         fps = int(recipe.get("fps", 25))
-        tmp = movie.with_suffix(movie.suffix + ".tmp")
+        # The temp path MUST keep the real ``.mp4`` / ``.gif`` extension — ``spec.save``
+        # picks the encoder from the extension, so a ``.tmp`` suffix would be treated
+        # as a still-image request and fail.  Write beside the target, then rename.
+        tmp = movie.with_name(f"{movie.stem}.partial{movie.suffix}")
         try:
             if use_mp4:
                 # H.264 with web-friendly flags: yuv420p (broad browser support) +
