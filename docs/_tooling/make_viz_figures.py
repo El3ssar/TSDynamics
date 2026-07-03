@@ -601,15 +601,15 @@ def fig_spatial_field(plt, out_path):
     left = gtr.to_plot_spec(kind="field").style(cmap="viridis")
     left.relabel(title="Gray–Scott  (2-D field)")
 
-    # RIGHT: Kuramoto–Sivashinsky — a 1-D PDE; its space-time diagram is the spatial
-    # profile stacked over time. The `spacetime` producer with transpose=True puts
-    # space on x and time on y (the canonical KS view).
-    ks = ts.systems.KuramotoSivashinsky()
+    # RIGHT: Kuramoto–Sivashinsky (N=64, L=22) — a 1-D PDE; its space-time diagram is
+    # the spatial profile stacked over time. The default `spacetime` orientation puts
+    # time on x and the site index on y (viridis, the sequential-field house map).
+    ks = ts.systems.KuramotoSivashinsky(N=64, L=22.0)
     ic = 0.1 * np.cos(np.linspace(0.0, 2.0 * np.pi, ks.dim, endpoint=False))
     ktr = ks.integrate(final_time=150.0, dt=0.5, ic=ic).after(20.0)
-    right = spacetime(ktr, transpose=True).style(cmap="twilight")  # cyclic field -> twilight
+    right = spacetime(ktr, transpose=False).style(cmap="viridis")  # time on x, site index on y
     right.colorbar.label = "$u$"
-    right.relabel(x="site index", y="time", title="Kuramoto–Sivashinsky  (1-D field, space–time)")
+    right.relabel(x="time", y="site index", title="Kuramoto–Sivashinsky  (1-D field, space–time)")
 
     row = plot(left, right, layout="row").size(7.4, 3.8)
     _save_svg(row, out_path)

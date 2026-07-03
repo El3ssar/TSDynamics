@@ -291,9 +291,14 @@
   white-space: nowrap;
 }
 /* First column (System / Subcategory name link) is the widest; keep the name
-   on one line and let it take the slack.  Right-align the numeric Dim column. */
-.md-typeset table:not([class]) td:first-child,
-.md-typeset table:not([class]) th:first-child {
+   on one line and let it take the slack.  Right-align the numeric Dim column.
+   SCOPED to the generated catalogue pages only (they carry a `.ts-count` or
+   `.ts-stats` marker) — otherwise `white-space: nowrap` on a first column of
+   *prose* (e.g. the Conventions colour-map table) forces one unwrappable line
+   and blows the table past the page width.  A single-token system name never
+   needs the nowrap anyway, so this is a no-op for the catalogue itself. */
+.md-typeset:has(.ts-count, .ts-stats) table:not([class]) td:first-child,
+.md-typeset:has(.ts-count, .ts-stats) table:not([class]) th:first-child {
   width: 42%;
   white-space: nowrap;
 }
