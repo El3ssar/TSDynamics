@@ -236,7 +236,7 @@ imaginary axis for flows).
 
 ## References
 
-- Schmelcher, P. & Diakonos, F. K. (1997). General approach to the localization of unstable periodic orbits in chaotic dynamical systems. *Phys. Rev. Lett.* **78**, 4733.
+- Schmelcher, P. & Diakonos, F. K. (1997). Detecting unstable periodic orbits of chaotic dynamical systems. *Phys. Rev. Lett.* **78**, 4733.
 - Davidchack, R. L. & Lai, Y.-C. (1999). Efficient algorithm for detecting unstable periodic orbits in chaotic systems. *Phys. Rev. E* **60**, 6172.
 - Krawczyk, R. (1969). Newton-Algorithmen zur Bestimmung von Nullstellen mit Fehlerschranken. *Computing* **4**, 187–201.
 - Neumaier, A. (1990). *Interval Methods for Systems of Equations.* Cambridge University Press.

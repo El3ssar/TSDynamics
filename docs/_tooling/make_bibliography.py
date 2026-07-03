@@ -162,26 +162,9 @@ def _collect_systems(registry) -> tuple[dict[str, list[_Paper]], int, int, int]:
     return grouped, n_systems, n_papers, n_without
 
 
-#: DOIs on catalogue ``doi`` ClassVars that a CrossRef audit found resolve to a
-#: DIFFERENT record than the ``reference`` text names (wrong author/year/paper).
-#: The reference text is authoritative and kept; the DOI *link* is suppressed for
-#: these until the source metadata is corrected (tracked as an upstream fix).
-_DISTRUSTED_DOIS: frozenset[str] = frozenset({
-    "10.1017/cbo9780511617652.004", "10.1007/bf01034469",
-    "10.1016/j.physleta.2013.11.004", "10.1016/j.chaos.2020.109990",
-    "10.1007/978-3-540-24699-2_13", "10.1073/pnas.78.11.6840",
-    "10.2307/1574751", "10.1016/b978-012088786-6/50032-0",
-    "10.1007/978-3-540-44878-5_8", "10.1109/tct.1968.1082812",
-    "10.1142/s021812740401014x", "10.1515/zna-1985-0102",
-    "10.1109/apcc.2007.4433503", "10.5755/j01.eie.21.5.13324",
-    "10.1016/s1007-5704(02)00107-7", "10.1007/978-3-540-38168-6",
-    "10.1201/9780429492563", "10.1016/b978-1-4832-5676-4.50003-2",
-})
-
-
 def _render_systems_paper(paper: _Paper) -> str:
     ref = paper.reference
-    if paper.doi and paper.doi.lower() not in _DISTRUSTED_DOIS:
+    if paper.doi:
         line = f"- {ref}. [doi:{_doi_label(paper.doi)}]({_doi_url(paper.doi)})"
     else:
         line = f"- {ref}."
@@ -460,9 +443,9 @@ _METHODS: dict[str, list[tuple[str, str]]] = {
     "Fixed points, periodic orbits & interval methods": [
         (
             "schmelcher1997",
-            "P. Schmelcher & F. K. Diakonos, “General approach to the "
-            "localization of unstable periodic orbits in chaotic dynamical "
-            "systems”, *Phys. Rev. Lett.* **78**, 4733 (1997). "
+            "P. Schmelcher & F. K. Diakonos, “Detecting unstable periodic "
+            "orbits of chaotic dynamical systems”, *Phys. Rev. Lett.* **78**, "
+            "4733 (1997). "
             "[doi:10.1103/PhysRevLett.78.4733](https://doi.org/10.1103/PhysRevLett.78.4733)",
         ),
         (
@@ -515,8 +498,8 @@ _METHODS: dict[str, list[tuple[str, str]]] = {
         (
             "halekotte2020",
             "L. Halekotte & U. Feudel, “Minimal fatal shocks in multistable "
-            "complex networks”, *Sci. Rep.* **10**, 11374 (2020). "
-            "[doi:10.1038/s41598-020-68200-1](https://doi.org/10.1038/s41598-020-68200-1)",
+            "complex networks”, *Sci. Rep.* **10**, 11783 (2020). "
+            "[doi:10.1038/s41598-020-68805-6](https://doi.org/10.1038/s41598-020-68805-6)",
         ),
         (
             "datseris2022",

@@ -131,7 +131,7 @@ class LuChenCheng(ContinuousSystem):
     """
 
     reference = "Lü, Chen, Cheng & Čelikovský (2002), Int. J. Bifurcation Chaos 12, 2917-2926"
-    doi = "10.1142/s021812740401014x"
+    doi = "10.1142/s021812740200631x"
     params = {"a": -10, "b": -4, "c": 18.1}
     dim = 3
 
@@ -308,7 +308,7 @@ class BurkeShaw(ContinuousSystem):
     """
 
     reference = "Shaw (1981), Z. Naturforsch. A 36, 80-112"
-    doi = "10.1515/zna-1985-0102"
+    doi = "10.1515/zna-1981-0115"
     params = {"e": 13, "n": 10}
     dim = 3
 
@@ -357,8 +357,8 @@ class Chen(ContinuousSystem):
 
     params = {"a": 35, "b": 3, "c": 28}
     dim = 3
-    reference = "Chen (1997), Proc. 1st Int. Conf. Control of Oscillations and Chaos"
-    doi = "10.1109/coc.1997.631323"
+    reference = "Chen & Ueta (1999), Int. J. Bifurcation Chaos 9, 1465-1466"
+    doi = "10.1142/s0218127499001024"
     # Canonical Chen attractor (a=35, b=3, c=28). The Lyapunov spectrum is
     # widely reported as (≈2.03, 0, ≈-12.03); the negative exponent is pinned by
     # the constant divergence trace(J) = -a + c - b = -10, so the spectrum must
@@ -596,8 +596,8 @@ class SanUmSrisuchinwong(ContinuousSystem):
     Chaotic at the default parameter (a=2).
     """
 
-    reference = "San-Um & Srisuchinwong (2012), J. Comput."
-    doi = "10.1109/apcc.2007.4433503"
+    reference = "San-Um & Srisuchinwong (2012), J. Comput. 7, 1041-1047"
+    doi = "10.4304/jcp.7.4.1041-1047"
     params = {"a": 2}
     dim = 3
 

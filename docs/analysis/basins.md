@@ -346,6 +346,6 @@ basin; one hugging the boundary can be tipped by a small kick.
 - P. J. Menck, J. Heitzig, N. Marwan and J. Kurths, "How basin stability complements the linear-stability paradigm", *Nat. Phys.* **9**, 89 (2013).
 - A. Daza, A. Wagemakers, M. A. F. Sanjuán and J. A. Yorke, "Testing for basins of Wada", *Sci. Rep.* **5**, 16579 (2015).
 - A. Daza, A. Wagemakers, B. Georgeot, D. Guéry-Odelin and M. A. F. Sanjuán, "Basin entropy: a new tool to analyze uncertainty in dynamical systems", *Sci. Rep.* **6**, 31416 (2016).
-- L. Halekotte and U. Feudel, "Minimal fatal shocks in multistable complex networks", *Sci. Rep.* **10**, 11374 (2020).
+- L. Halekotte and U. Feudel, "Minimal fatal shocks in multistable complex networks", *Sci. Rep.* **10**, 11783 (2020).
 - G. Datseris and A. Wagemakers, "Effortless estimation of basins of attraction", *Chaos* **32**, 023104 (2022).
 - G. Datseris, K. L. Rossi and A. Wagemakers, "Framework for global stability analysis of dynamical systems", *Chaos* **33**, 073151 (2023).

@@ -161,7 +161,6 @@ class Lorenz96(ContinuousSystem):
     """
 
     reference = "Lorenz (1996), Proc. ECMWF Seminar on Predictability 1, 1-18"
-    doi = "10.1017/cbo9780511617652.004"
     params = {"f": 8.0, "N": 20}
     # N affects the symbolic structure (loop length), so it must be baked in.
     _structural_params = frozenset({"N"})
@@ -371,6 +370,7 @@ class KuramotoSivashinsky(ContinuousSystem):
         "Kuramoto & Tsuzuki (1976), Prog. Theor. Phys. 55, 356-369; "
         "Sivashinsky (1977), Acta Astronaut. 4, 1177-1206"
     )
+    doi = "10.1143/ptp.55.356"
     params = {"N": 32, "L": 22.0}
 
     #: Seed for the deterministic broadband IC builder.  Override per-instance
@@ -583,7 +583,8 @@ class Chua(ContinuousSystem):
 
     params = {"alpha": 15.6, "beta": 28.0, "m0": -1.142857, "m1": -0.71429}
     dim = 3
-    reference = "Chua (1969), Introduction to Nonlinear Network Theory, McGraw-Hill"
+    reference = "Matsumoto (1984), IEEE Trans. Circuits Syst. 31, 1055-1058"
+    doi = "10.1109/tcs.1984.1085459"
     # Classic double-scroll Chua circuit (α=15.6, β=28, m0=-8/7, m1=-5/7). The
     # piecewise-linear nonlinearity makes the *exact* leading exponent sensitive
     # to the breakpoint handling, so only the robust sign structure is asserted:
@@ -780,7 +781,6 @@ class RabinovichFabrikant(ContinuousSystem):
     params = {"a": 1.1, "g": 0.87}
     dim = 3
     reference = "Rabinovich & Fabrikant (1979), Sov. Phys. JETP 50, 311-317"
-    doi = "10.1007/bf01034469"
     default_ic = [-1.0, 0.0, 0.5]  # random U[0,1)^3 escapes the basin
 
     @staticmethod
@@ -1752,7 +1752,6 @@ class HyperLorenz(ContinuousSystem):
     params = {"a": 10, "b": 2.667, "c": 28, "d": 1.1}
     dim = 4
     reference = "Meier (2003), Presentation of Attractors with Cinema"
-    doi = "10.1007/978-3-540-24699-2_13"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1780,7 +1779,6 @@ class HyperYangChen(ContinuousSystem):
     params = {"a": 30, "b": 3, "c": 35, "d": 8}
     dim = 4
     reference = "Meier (2003), Presentation of Attractors with Cinema"
-    doi = "10.1007/978-3-540-24699-2_13"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1809,7 +1807,6 @@ class HyperYan(ContinuousSystem):
     params = {"a": 37, "b": 3, "c": 26, "d": 38}
     dim = 4
     reference = "Meier (2003), Presentation of Attractors with Cinema"
-    doi = "10.1007/978-3-540-24699-2_13"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -1839,8 +1836,8 @@ class GuckenheimerHolmes(ContinuousSystem):
 
     params = {"a": 0.4, "b": 20.25, "c": 3, "d": 1.6, "e": 1.7, "f": 0.44}
     dim = 3
-    reference = "Guckenheimer & Holmes (1983), Nonlinear Oscillations, Springer"
-    doi = "10.1007/978-1-4612-1140-2"
+    reference = "Guckenheimer & Holmes (1988), Math. Proc. Camb. Phil. Soc. 103, 189-192"
+    doi = "10.1017/s0305004100064732"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e, f):
@@ -1911,6 +1908,7 @@ class NoseHoover(ContinuousSystem):
     params = {"a": 1.5}
     dim = 3
     reference = "Nosé (1984), J. Chem. Phys. 81, 511-519; Hoover (1985), Phys. Rev. A 31, 1695-1697"
+    doi = "10.1103/physreva.31.1695"
 
     @staticmethod
     def _equations(Y, t, *, a):

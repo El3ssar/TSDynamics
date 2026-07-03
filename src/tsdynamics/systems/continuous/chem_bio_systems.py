@@ -47,7 +47,7 @@ class GlycolyticOscillation(ContinuousSystem):
     }
     dim = 3
     reference = "Decroly & Goldbeter (1982), Proc. Natl. Acad. Sci. U.S.A. 79, 6917-6921"
-    doi = "10.1073/pnas.78.11.6840"
+    doi = "10.1073/pnas.79.22.6917"
 
     @staticmethod
     def _equations(Y, t, *, d, k, l1, l2, nu, q1, q2, s1, s2):
@@ -93,6 +93,7 @@ class Oregonator(ContinuousSystem):
     }
     dim = 3  # Three variables: X, Y, Z (reduced forms of the chemical species)
     reference = "Field & Noyes (1974), J. Chem. Phys. 60, 1877-1884"
+    doi = "10.1063/1.1681288"
     # Classic stiff system (Field–Noyes); an explicit solver cannot integrate
     # it, so default to the engine's variable-order BDF.
     _default_method = "bdf"
@@ -190,7 +191,6 @@ class ForcedBrusselator(ContinuousSystem):
     params = {"a": 0.4, "b": 1.2, "f": 0.05, "w": 0.81}
     dim = 3
     reference = "Prigogine (1980), From Being to Becoming, W.H. Freeman"
-    doi = "10.2307/1574751"
 
     @staticmethod
     def _equations(Y, t, *, a, b, f, w):
@@ -258,7 +258,7 @@ class CircadianRhythm(ContinuousSystem):
     }
     dim = 5
     reference = "Leloup, Gonze & Goldbeter (1999); Gonze, Leloup & Goldbeter (2000)"
-    doi = "10.1016/b978-012088786-6/50032-0"
+    doi = "10.1177/074873099129000948"
 
     @staticmethod
     def _equations(
@@ -353,7 +353,7 @@ class CaTwoPlus(ContinuousSystem):
     }
     dim = 3
     reference = "Houart, Dupont & Goldbeter (1999), Bull. Math. Biol. 61, 507-530"
-    doi = "10.1007/978-3-540-44878-5_8"
+    doi = "10.1006/bulm.1999.0095"
 
     @staticmethod
     def _equations(
@@ -586,8 +586,8 @@ class HindmarshRose(ContinuousSystem):
         "tz": 0.8,
     }
     dim = 3
-    reference = "Marhl & Perc (2005), Chaos Solitons Fractals 26, 909-918"
-    doi = "10.1016/j.chaos.2005.08.013"
+    reference = "Hindmarsh & Rose (1984), Proc. R. Soc. Lond. B 221, 87-102"
+    doi = "10.1098/rspb.1984.0024"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, s, tx, tz):
@@ -634,7 +634,7 @@ class ForcedVanDerPol(ContinuousSystem):
     params = {"a": 1.2, "mu": 8.53, "w": 0.63}
     dim = 3
     reference = "van der Pol (1926), London Edinburgh Dublin Philos. Mag. J. Sci. 2, 978-992"
-    doi = "10.1109/tct.1968.1082812"
+    doi = "10.1080/14786442608564127"
 
     @staticmethod
     def _equations(Y, t, *, a, mu, w):

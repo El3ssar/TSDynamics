@@ -63,7 +63,7 @@ class HyperCai(ContinuousSystem):
 
     params = {"a": 27.5, "b": 3, "c": 19.3, "d": 2.9, "e": 3.3}
     dim = 4
-    reference = "Huang (2007), Int. J. Nonlinear Sci."
+    reference = "Cai & Huang (2007), Int. J. Nonlinear Sci."
     doi = "10.1016/s1007-5704(02)00107-7"
 
     @staticmethod
@@ -148,7 +148,6 @@ class HyperJha(ContinuousSystem):
     params = {"a": 10, "b": 28, "c": 2.667, "d": 1.3}
     dim = 4
     reference = "Meier (2003), Presentation of Attractors with Cinema"
-    doi = "10.1007/978-3-540-24699-2_13"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -370,8 +369,8 @@ class LorenzStenflo(ContinuousSystem):
 
     params = {"a": 2, "b": 0.7, "c": 26, "d": 1.5}
     dim = 4
-    reference = "Letellier & Rössler (2007), Scholarpedia 2(8), 1936"
-    doi = "10.4249/scholarpedia.1936"
+    reference = "Stenflo (1996), Phys. Scr. 53, 83-84"
+    doi = "10.1088/0031-8949/53/1/015"
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):

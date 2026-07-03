@@ -227,7 +227,6 @@ class Torus(ContinuousSystem):
     params = {"a": 0.5, "n": 15.3, "r": 1}
     dim = 3
     reference = "Strogatz (1994), Nonlinear Dynamics and Chaos"
-    doi = "10.1201/9780429492563"
 
     @staticmethod
     def _equations(Y, t, *, a, n, r):

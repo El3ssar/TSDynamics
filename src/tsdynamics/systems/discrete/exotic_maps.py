@@ -166,6 +166,7 @@ class ZeraouliaSprott(DiscreteMap):
     params = {"a": 2.7, "b": 0.35}
     dim = 2
     reference = "Zeraoulia & Sprott (2011), Int. J. Bifurcation Chaos 21, 155-160"
+    doi = "10.1142/s0218127411028325"
 
     @staticmethod
     def _step(X, a, b):
@@ -207,6 +208,7 @@ class GumowskiMira(DiscreteMap):
     params = {"a": -1.1, "b": -0.2}
     dim = 2
     reference = "Gumowski & Mira (1980), Recurrences and Discrete Dynamic Systems"
+    doi = "10.1007/bfb0089135"
 
     @staticmethod
     def _step(X, a, b):
@@ -267,6 +269,7 @@ class Hopalong(DiscreteMap):
     params = {"a": 3.1, "b": 2.5, "c": 4.2}
     dim = 2
     reference = "Dewdney (1986), Scientific American 255(3), 14-20"
+    doi = "10.1038/scientificamerican0986-14"
 
     @staticmethod
     def _step(X, a, b, c):
