@@ -82,11 +82,23 @@ jobs:
       id-token: write
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     concurrency:
       group: pages
       cancel-in-progress: false
     steps:
+      # GitHub's Pages sync backend intermittently returns "Deployment failed, try
+      # again later" during syncing_files even while Pages reports operational — it
+      # is answered by simply re-deploying the same artifact. Absorb one such
+      # transient automatically so a green build always ships instead of needing a
+      # manual re-run. If both attempts fail, GitHub Pages is genuinely down and the
+      # job fails.
       - name: Deploy to GitHub Pages
         id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Deploy to GitHub Pages (retry once)
+        id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4
