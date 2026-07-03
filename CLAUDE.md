@@ -115,6 +115,7 @@ hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures/viewers
 docs/_tooling/equations.py     # symbolic → LaTeX rendering for docs
 docs/_tooling/figures.py       # cached static-figure rendering (engine rk4 / scipy for stiff+discontinuous ODEs)
 docs/_tooling/threejs_viewer.py # cached interactive three.js attractor viewers (3-D ODE pages; iframe-embedded)
+docs/_tooling/field_movies.py  # cached animated spatial-field movies (2-D _field_shape pages: GrayScott/SwiftHohenberg → autoplay <video> hero; mp4 via ffmpeg + gif fallback)
 tests/_sampling.py             # curated slow-tier sample + DDE histories + exclusions
 ```
 
