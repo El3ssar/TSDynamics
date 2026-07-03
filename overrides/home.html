@@ -1,0 +1,459 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+{{ super() }}
+{% endblock %}
+
+{% block content %}
+<style>
+  /* ============================================================
+     TSDynamics — minimal brand hero landing.
+     Brand tokens come from assets/brand/tokens.css (loaded via
+     extra_css); this block only aliases the few legacy --ts-*
+     names the markup uses onto the canonical tokens, so we never
+     hardcode a parallel palette. Scoped to .ts-home.
+     ============================================================ */
+  .ts-home {
+    --ts-display: var(--ts-font-display);
+    --ts-body:    var(--ts-font-body);
+    --ts-mono:    var(--ts-font-mono);
+    --ts-ink-soft: var(--ts-n600);
+    --ts-rule:        var(--ts-border);
+    --ts-rule-strong: var(--ts-n300);
+    --ts-stage: var(--ts-n950);
+    font-family: var(--ts-body);
+    color: var(--ts-ink);
+  }
+
+  .md-content__inner { padding: 0; max-width: none; }
+  .md-content__inner::before { display: none; }
+  .md-sidebar { display: none; }
+
+  .md-typeset .ts-home a { border-bottom: none; }
+  .ts-wrap { max-width: 1200px; margin: 0 auto; padding: 0 1.4rem; }
+
+  /* ---- Hero ---- */
+  .ts-hero {
+    display: grid;
+    grid-template-columns: 6.2fr 5.8fr;
+    gap: 2.8rem;
+    align-items: center;
+    padding-top: 3.4rem;
+    padding-bottom: 2.2rem;
+  }
+  @media (max-width: 960px) { .ts-hero { grid-template-columns: 1fr; gap: 2rem; } }
+
+  .ts-eyebrow {
+    font-family: var(--ts-mono);
+    font-size: 0.66rem; font-weight: 500; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--ts-teal-strong);
+    margin: 0 0 1.05rem;
+    animation: ts-rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .md-typeset .ts-wordmark, .ts-wordmark {
+    font-family: var(--ts-display);
+    font-size: clamp(2.8rem, 6.4vw, 4.4rem);
+    font-weight: 600; letter-spacing: -0.025em; line-height: 1;
+    margin: 0 0 0.6rem !important;
+    animation: ts-rise 0.5s 0.05s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .ts-wm-ts {
+    background: linear-gradient(120deg, var(--ts-indigo-strong), var(--ts-teal));
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+  }
+  .ts-wm-dyn { color: var(--ts-n400); }
+
+  .ts-tagline {
+    font-size: 1.05rem; line-height: 1.55; color: var(--ts-ink-soft);
+    max-width: 32ch; margin: 0 0 1.6rem;
+    animation: ts-rise 0.5s 0.12s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .ts-install {
+    display: inline-flex; align-items: center; gap: 0.65rem;
+    background: var(--ts-stage); border: 1px solid #1A2530;
+    border-radius: 9px; padding: 0.62rem 0.85rem;
+    margin-bottom: 1.1rem;
+    animation: ts-rise 0.5s 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .ts-install .pmt { color: var(--ts-teal-bright); font-family: var(--ts-mono); font-size: 0.82rem; }
+  .md-typeset .ts-home .ts-install code {
+    font-family: var(--ts-mono); font-size: 0.84rem; color: #D7E0E6;
+    background: none; padding: 0; border: none; box-shadow: none;
+  }
+  .ts-install .copy {
+    margin-left: 0.3rem; font-family: var(--ts-mono); font-size: 0.62rem;
+    color: #6B7B86; border: 1px solid #263039; border-radius: 5px;
+    padding: 2px 8px; cursor: pointer; transition: color 0.12s ease, border-color 0.12s ease;
+  }
+  .ts-install .copy:hover { color: var(--ts-teal-bright); border-color: #2CC5AE55; }
+
+  .ts-cta {
+    display: flex; gap: 0.7rem; flex-wrap: wrap; margin: 0.4rem 0 1.5rem;
+    animation: ts-rise 0.5s 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  /* Secondary buttons: transparent, teal outline, teal-strong text — readable
+     regardless of the light/dark scheme mismatch (the surface/ink tokens flip
+     with the OS preference; the button must not). Hover fills teal, white text. */
+  .md-typeset .ts-home a.ts-btn {
+    display: inline-block; padding: 0.62rem 1.15rem;
+    font-family: var(--ts-mono);
+    font-size: 0.62rem; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase;
+    border: 1px solid var(--ts-teal); border-radius: 7px;
+    color: var(--ts-teal-strong); background: transparent;
+    transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease, color 0.12s ease;
+  }
+  .md-typeset .ts-home a.ts-btn:hover { background: var(--ts-teal); border-color: var(--ts-teal); color: #fff; transform: translateY(-1px); }
+  .md-typeset .ts-home a.ts-btn--primary { background: var(--ts-teal); border-color: var(--ts-teal); color: #fff; }
+  .md-typeset .ts-home a.ts-btn--primary:hover { background: var(--ts-teal-strong); border-color: var(--ts-teal-strong); color: #fff; }
+
+  .ts-cite {
+    font-size: 0.8rem; line-height: 1.6; color: var(--ts-muted);
+    border-left: 2px solid var(--ts-teal); padding-left: 0.8rem; max-width: 40ch;
+    animation: ts-rise 0.5s 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .md-typeset .ts-home .ts-cite a { color: var(--ts-teal-strong); border-bottom: 1px dotted var(--ts-n400); }
+  .md-typeset .ts-home .ts-cite a:hover { border-bottom-style: solid; }
+
+  /* ---- attractor stage (ALWAYS dark, regardless of page scheme) ---- */
+  .ts-stage-wrap {
+    border-radius: 16px; overflow: hidden;
+    border: 1px solid #16202A; background: var(--ts-stage);
+    box-shadow: 0 30px 60px -36px rgba(11, 20, 30, 0.55);
+    animation: ts-fade 0.9s 0.25s both;
+  }
+  .ts-stage-top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.7rem 1rem; border-bottom: 1px solid #18222B;
+  }
+  .ts-stage-top .lbl { font-family: var(--ts-mono); font-size: 0.72rem; color: #7E8B95; }
+  .ts-stage-top .hint { font-family: var(--ts-mono); font-size: 0.7rem; color: var(--ts-teal-bright); }
+  #ts-stage { position: relative; width: 100%; height: 430px; }
+  @media (max-width: 600px) { #ts-stage { height: 340px; } }
+  #ts-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  #ts-stage canvas:active { cursor: grabbing; }
+  .ts-stage-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.62rem 1rem; border-top: 1px solid #18222B;
+    font-family: var(--ts-mono); font-size: 0.7rem; color: #5C6872;
+  }
+  .ts-stage-foot .sysname { color: #9FB0BA; }
+  .ts-stage-foot .legend { display: flex; gap: 0.9rem; }
+  .ts-stage-foot .legend span { display: inline-flex; align-items: center; gap: 0.32rem; }
+  .ts-stage-foot .legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .ts-boot {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #3C4853; font-family: var(--ts-mono); font-size: 0.74rem; letter-spacing: 0.12em;
+  }
+
+  @keyframes ts-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes ts-fade { from { opacity: 0; } to { opacity: 1; } }
+
+  /* ---- "Why TSDynamics" — 3 compact cards ---- */
+  .ts-why { padding-top: 2.4rem; padding-bottom: 3.6rem; }
+  .ts-why-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  @media (max-width: 760px) { .ts-why-grid { grid-template-columns: 1fr; } }
+  .ts-card {
+    border: 1px solid var(--ts-rule); border-radius: 10px;
+    background: var(--ts-surface); padding: 1.15rem 1.2rem 1.25rem;
+  }
+  .ts-card .no { font-family: var(--ts-mono); font-size: 0.62rem; letter-spacing: 0.08em; color: var(--ts-teal); }
+  .md-typeset .ts-card h3 { font-family: var(--ts-display); font-size: 1.04rem; font-weight: 600; margin: 0.35rem 0 0.5rem; color: var(--ts-ink); }
+  .ts-card p { font-size: 0.78rem; line-height: 1.65; color: var(--ts-ink-soft); margin: 0; }
+</style>
+
+<div class="ts-home">
+
+  <section class="ts-hero ts-wrap">
+    <div>
+      <p class="ts-eyebrow">Dynamical systems &amp; chaos analysis · Python on a Rust engine</p>
+      <h1 class="ts-wordmark"><span class="ts-wm-ts">TS</span><span class="ts-wm-dyn">Dynamics</span></h1>
+      <p class="ts-tagline">
+        154 built-in systems. Compiled integration with no warmup. A full
+        chaos-analysis toolkit — define the math once, get the rest.
+      </p>
+
+      <div class="ts-install">
+        <span class="pmt">$</span><code id="ts-install-cmd">pip install tsdynamics</code>
+        <span class="copy" id="ts-install-copy" role="button" tabindex="0">copy</span>
+      </div>
+
+      <div class="ts-cta">
+        <a class="ts-btn ts-btn--primary" href="start/">Get started</a>
+        <a class="ts-btn" href="systems/">Browse 154 systems</a>
+        <a class="ts-btn" href="analysis/">Analysis</a>
+      </div>
+
+      <p class="ts-cite">
+        If TSDynamics helps your research, please cite it — see
+        <a href="project/">Project · Citation</a> for the BibTeX entry and DOI.
+      </p>
+    </div>
+
+    <div class="ts-stage-wrap">
+      <div class="ts-stage-top">
+        <span class="lbl">attractor · three.js</span>
+        <span class="hint">drag to orbit ⟳</span>
+      </div>
+      <div id="ts-stage"><div class="ts-boot" id="ts-boot">loading…</div></div>
+      <div class="ts-stage-foot">
+        <span class="sysname" id="ts-sysname">—</span>
+        <span class="legend">
+          <span><i style="background:#2CC5AE"></i>trajectory</span>
+          <span><i style="background:#8C85F2"></i>state</span>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <section class="ts-why ts-wrap">
+    <div class="ts-why-grid">
+      <div class="ts-card">
+        <span class="no">No. 1</span>
+        <h3>A native engine, zero warmup</h3>
+        <p>ODEs, delay equations and maps all lower to one Rust engine — an
+        SSA-tape interpreter with a Cranelift JIT alongside. No compile step,
+        no warmup: the first call runs at full speed.</p>
+      </div>
+      <div class="ts-card">
+        <span class="no">No. 2</span>
+        <h3>154 systems out of the box</h3>
+        <p>Continuous flows, delay equations and maps — Lorenz to Mackey–Glass
+        to Hénon — each with literature defaults, named variables and a
+        generated page with its attractor.</p>
+      </div>
+      <div class="ts-card">
+        <span class="no">No. 3</span>
+        <h3>One protocol, every analysis</h3>
+        <p>Everything that steps — a map, a flow, a Poincaré section of a flow —
+        shares one protocol, so the toolkit composes: an orbit diagram over a
+        Poincaré map <em>is</em> a bifurcation diagram.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ============================================================
+   TSDynamics hero — a real chaotic attractor (the library's own
+   output, exported by docs/_tooling/make_hero.py), revealed by a
+   comet head and rotated in 3D. On a full sweep a new random system
+   takes over, touring the catalogue. Teal trajectory, indigo state.
+
+   Wrapped so Material's instant-navigation can re-invoke it safely:
+   the stage.dataset.live guard makes a second init a no-op.
+   ============================================================ */
+function tsInitHero() {
+  var stage = document.getElementById("ts-stage");
+  if (!stage) return;                       // not on this page — document$ re-fires
+                                            // on the next page, so DO NOT retry here
+                                            // (a stageless setTimeout loop spins forever).
+  if (stage.dataset.live) return;           // already initialised (instant-nav guard)
+  if (!window.THREE) {
+    // three.js (CDN script above) may not have parsed yet — retry shortly, but
+    // only while THIS stage is still in the document (instant-nav away cancels it).
+    if (document.body.contains(stage)) setTimeout(tsInitHero, 80);
+    return;
+  }
+  stage.dataset.live = "1";
+
+  // ---- lifecycle: everything below is torn down the instant #ts-stage leaves
+  //      the DOM (Material instant-navigation replaces the content subtree).
+  //      `alive` gates the rAF loop AND the async tour so no stray frame() keeps
+  //      firing and no next() fetches assets/hero/*.json from the wrong page. ----
+  var alive = true, rafId = null, nextTimer = null;
+  // Resolve the hero asset base to an ABSOLUTE url ONCE, against the home page's
+  // baseURI (we are on the home page right now). A later stray fetch therefore
+  // hits the correct path, never assets/hero/*.json relative to a sub-page.
+  var HERO_BASE = new URL("assets/hero/", document.baseURI).href;
+  function detached() { return !document.body.contains(stage); }
+  function stop() {
+    alive = false;
+    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+    if (nextTimer !== null) { clearTimeout(nextTimer); nextTimer = null; }
+  }
+
+  var TEAL = 0x2CC5AE, TEAL_DIM = 0x11857A, INDIGO = 0x8C85F2, BG = 0x0B0F14;
+  var SCALE = 24, TAIL = 560, SPEED = 3.0, AUTO_YAW = 0.0016;
+  var boot = document.getElementById("ts-boot"),
+      nameEl = document.getElementById("ts-sysname");
+  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  var W = stage.clientWidth || 560, H = stage.clientHeight || 430;
+  var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(W, H);
+  stage.appendChild(renderer.domElement);
+
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 4000);
+  camera.position.set(2, 1.5, 84);
+  camera.lookAt(0, 0, 0);
+  scene.add(new THREE.AmbientLight(0xbfe9e2, 0.62));
+  var key = new THREE.DirectionalLight(0xffffff, 0.95); key.position.set(40, 60, 70); scene.add(key);
+  var rim = new THREE.DirectionalLight(0x53e0c8, 0.7); rim.position.set(-60, -10, -40); scene.add(rim);
+
+  var group = new THREE.Group();
+  group.rotation.set(-0.34, 0.6, 0);
+  scene.add(group);
+
+  var bgC = new THREE.Color(BG), tealC = new THREE.Color(TEAL);
+
+  var cur = null;
+  var dragging = false, lx = 0, ly = 0, idle = true, idleT = null;
+
+  function clearGroup() {
+    while (group.children.length) {
+      var o = group.children.pop();
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    }
+  }
+
+  function build(data) {
+    clearGroup();
+    var n = data.n, raw = data.xyz, pts = new Array(n);
+    for (var i = 0; i < n; i++) pts[i] = new THREE.Vector3(raw[3*i]*SCALE, raw[3*i+2]*SCALE, raw[3*i+1]*SCALE);
+
+    // Faint full-attractor backdrop: a very thin, semi-transparent teal LINE
+    // tracing the whole curve (no fat tube). Additive so it glows on the dark
+    // stage without reading as an opaque ribbon.
+    var fpos = new Float32Array(n * 3);
+    for (var j = 0; j < n; j++) { fpos[3*j] = pts[j].x; fpos[3*j+1] = pts[j].y; fpos[3*j+2] = pts[j].z; }
+    var fgeo = new THREE.BufferGeometry();
+    fgeo.setAttribute("position", new THREE.BufferAttribute(fpos, 3));
+    var faint = new THREE.Line(fgeo, new THREE.LineBasicMaterial({
+      color: TEAL_DIM, transparent: true, opacity: 0.14,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
+    group.add(faint);
+
+    // Bright reveal trail (a comet): a thin line whose colour fades from bright
+    // teal at the head to transparent-black at the tail, additive-blended.
+    var pos = new Float32Array(TAIL * 3), col = new Float32Array(TAIL * 3);
+    var tgeo = new THREE.BufferGeometry();
+    tgeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    tgeo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    var trail = new THREE.Line(tgeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true,
+      linewidth: 2, blending: THREE.AdditiveBlending, depthWrite: false }));
+    group.add(trail);
+
+    // Small glowing indigo head (the current state).
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.62, 18, 18), new THREE.MeshBasicMaterial({ color: INDIGO }));
+    var glow = new THREE.Mesh(new THREE.SphereGeometry(1.5, 18, 18),
+      new THREE.MeshBasicMaterial({ color: INDIGO, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending }));
+    group.add(head); group.add(glow);
+
+    cur = { pts: pts, n: n, faint: faint, trail: trail, tgeo: tgeo, head: head, glow: glow, t: 12, fade: 0 };
+    if (nameEl) nameEl.textContent = data.name;
+    if (boot) boot.style.display = "none";
+  }
+
+  function updateTrail() {
+    var to = Math.floor(cur.t), from = Math.max(0, to - TAIL);
+    var pa = cur.tgeo.attributes.position.array, ca = cur.tgeo.attributes.color.array;
+    var m = to - from, last = cur.pts[Math.max(0, to - 1)];
+    for (var k = 0; k < TAIL; k++) {
+      var idx = from + k, p = (idx < to && idx < cur.n) ? cur.pts[idx] : last;
+      pa[3*k] = p.x; pa[3*k+1] = p.y; pa[3*k+2] = p.z;
+      var f = m > 1 ? k / (m - 1) : 1;          // 0 oldest → 1 head
+      f = Math.pow(f, 1.6) * cur.fade;          // bright at head, fast fade to tail
+      ca[3*k]   = bgC.r + (tealC.r - bgC.r) * f;
+      ca[3*k+1] = bgC.g + (tealC.g - bgC.g) * f;
+      ca[3*k+2] = bgC.b + (tealC.b - bgC.b) * f;
+    }
+    cur.tgeo.attributes.position.needsUpdate = true;
+    cur.tgeo.attributes.color.needsUpdate = true;
+    cur.head.position.copy(last); cur.glow.position.copy(last);
+    cur.faint.material.opacity = 0.14 * cur.fade;
+    cur.head.material.opacity = cur.fade; cur.head.visible = cur.fade > 0.02;
+    cur.glow.material.opacity = 0.28 * cur.fade;
+  }
+
+  function frame() {
+    // Instant-nav away removes #ts-stage from the document — tear the whole
+    // loop down (no more rAF, no pending fetch) instead of spinning forever.
+    if (!alive || detached()) { stop(); return; }
+    rafId = requestAnimationFrame(frame);
+    if (!cur) return;
+    if (idle && !reduced) group.rotation.y += AUTO_YAW;
+    if (cur.fade < 1) cur.fade = Math.min(1, cur.fade + 0.045);   // fade-in
+    if (!reduced) {
+      cur.t += SPEED;
+      if (cur.t >= cur.n) { next(); }
+    }
+    updateTrail();
+    renderer.render(scene, camera);
+  }
+
+  // ---- random tour ----
+  var systems = [], last = null;
+  function next() {
+    if (!alive || detached()) { stop(); return; }   // torn down — no fetch
+    if (!systems.length) return;
+    var pick;
+    do { pick = systems[(Math.random() * systems.length) | 0]; } while (pick === last && systems.length > 1);
+    last = pick;
+    fetch(HERO_BASE + pick + ".json").then(function (r) { return r.json(); })
+      .then(function (data) { if (alive && !detached()) build(data); })
+      .catch(function () {
+        // Only retry while the hero is still on-screen; an instant-nav away
+        // must NOT keep retrying (that was the infinite 404 flood).
+        if (alive && !detached()) nextTimer = setTimeout(next, 1200);
+        else stop();
+      });
+  }
+
+  // ---- drag to orbit ----
+  var dom = renderer.domElement;
+  function xy(e){ return e.touches ? [e.touches[0].clientX, e.touches[0].clientY] : [e.clientX, e.clientY]; }
+  dom.addEventListener("mousedown", function (e){ dragging = true; idle = false; if (idleT) clearTimeout(idleT); var p = xy(e); lx = p[0]; ly = p[1]; });
+  window.addEventListener("mousemove", function (e){ if (!dragging) return; var p = xy(e); group.rotation.y += (p[0]-lx)*0.006; group.rotation.x += (p[1]-ly)*0.006; lx = p[0]; ly = p[1]; });
+  window.addEventListener("mouseup", function (){ if (!dragging) return; dragging = false; idleT = setTimeout(function(){ idle = true; }, 1500); });
+  dom.addEventListener("touchstart", function (e){ dragging = true; idle = false; if (idleT) clearTimeout(idleT); var p = xy(e); lx = p[0]; ly = p[1]; }, { passive: true });
+  dom.addEventListener("touchmove", function (e){ if (!dragging) return; var p = xy(e); group.rotation.y += (p[0]-lx)*0.006; group.rotation.x += (p[1]-ly)*0.006; lx = p[0]; ly = p[1]; }, { passive: true });
+  dom.addEventListener("touchend", function (){ if (!dragging) return; dragging = false; idleT = setTimeout(function(){ idle = true; }, 1500); });
+
+  window.addEventListener("resize", function () {
+    if (!alive || detached()) return;
+    W = stage.clientWidth || W; H = stage.clientHeight || H;
+    camera.aspect = W / H; camera.updateProjectionMatrix(); renderer.setSize(W, H);
+  });
+
+  fetch(HERO_BASE + "manifest.json").then(function (r){ return r.json(); })
+    .then(function (m){
+      if (!alive || detached()) { stop(); return; }
+      systems = m.systems || []; next(); frame();
+    })
+    .catch(function (){ if (alive && !detached() && boot) boot.textContent = "no attractor data"; });
+}
+
+/* ---- copy-to-clipboard on the install chip ---- */
+function tsInitCopy() {
+  var btn = document.getElementById("ts-install-copy");
+  if (!btn || btn.dataset.live) return;
+  btn.dataset.live = "1";
+  btn.addEventListener("click", function () {
+    var cmd = (document.getElementById("ts-install-cmd") || {}).textContent || "pip install tsdynamics";
+    if (navigator.clipboard) navigator.clipboard.writeText(cmd.trim());
+    var prev = btn.textContent; btn.textContent = "copied";
+    setTimeout(function () { btn.textContent = prev; }, 1400);
+  });
+}
+
+/* Material instant-navigation re-runs document$ on every page swap;
+   the dataset guards above make a re-entry a no-op. Fall back to a
+   plain load when document$ is unavailable. */
+if (window.document$ && typeof window.document$.subscribe === "function") {
+  window.document$.subscribe(function () { tsInitHero(); tsInitCopy(); });
+} else {
+  window.addEventListener("DOMContentLoaded", function () { tsInitHero(); tsInitCopy(); });
+}
+</script>
+{% endblock %}
+
+{% block footer %}
+{{ super() }}
+{% endblock %}

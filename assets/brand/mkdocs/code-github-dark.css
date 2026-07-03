@@ -1,0 +1,300 @@
+/* ============================================================
+   TSDynamics — GitHub-dark code blocks
+   ------------------------------------------------------------
+   Fenced code blocks (and inline code) render on a GitHub-dark
+   surface (#0d1117) with the canonical GitHub-dark token palette,
+   readable in BOTH the light (`default`) and dark (`slate`) site
+   schemes.
+
+   HOW IT WORKS
+   Material for MkDocs colours Pygments tokens through CSS custom
+   properties (`--md-code-hl-*-color`), read by rules like
+   `.highlight .o{color:var(--md-code-hl-operator-color)}`.  In the
+   light scheme several of those variables resolve to a *dark* grey
+   (meant for a light code surface) — so on our dark code surface the
+   operators / punctuation / names go nearly invisible.  We fix this at
+   the source: redefine every `--md-code-*` variable to a GitHub-dark
+   value on the code surfaces themselves, so Material's own token rules
+   produce GitHub-dark colours in either scheme.  Explicit token rules
+   below back that up for full coverage and to beat Material's
+   scheme-scoped selectors.
+
+   This file loads AFTER extra.css in mkdocs.yml, so it is the final
+   word on code-block colour.
+   ============================================================ */
+
+/* ---- GitHub-dark palette tokens (scoped to code surfaces) ----
+   Setting the variables on the code containers means both schemes
+   inherit them, and Material's `color:var(--md-code-hl-*-color)` rules
+   pick them up automatically. */
+.md-typeset .highlight,
+.md-typeset pre > code,
+.md-typeset code,
+.md-typeset .highlighttable,
+.md-typeset .codehilite {
+  --md-code-fg-color: #e6edf3;
+  --md-code-bg-color: #0d1117;
+
+  --md-code-hl-color: rgba(56, 139, 253, 0.25); /* search-highlight wash */
+  --md-code-hl-number-color: #79c0ff;
+  --md-code-hl-special-color: #ffa657;
+  --md-code-hl-function-color: #d2a8ff;
+  --md-code-hl-constant-color: #79c0ff;
+  --md-code-hl-keyword-color: #ff7b72;
+  --md-code-hl-string-color: #a5d6ff;
+  --md-code-hl-name-color: #e6edf3;
+  --md-code-hl-operator-color: #ff7b72;
+  --md-code-hl-punctuation-color: #c9d1d9;
+  --md-code-hl-comment-color: #8b949e;
+  --md-code-hl-generic-color: #8b949e;
+  --md-code-hl-variable-color: #e6edf3;
+}
+
+/* ---- surfaces ---- */
+.md-typeset pre > code,
+.md-typeset .highlight,
+.md-typeset .highlight pre,
+.md-typeset .highlighttable {
+  background: #0d1117;
+  color: #e6edf3;
+}
+.md-typeset pre {
+  border-radius: 10px;
+}
+.md-typeset .highlight {
+  border-radius: 10px;
+}
+/* A hairline border so the block sits cleanly on the light page. */
+.md-typeset pre > code,
+.md-typeset .highlight {
+  border: 1px solid #21262d;
+}
+.md-typeset .highlight pre {
+  border: 0; /* avoid a double border on the inner <pre> */
+}
+
+/* Line-number gutter (anchor_linenums) — muted GitHub-dark. */
+.md-typeset .highlighttable .linenos,
+.md-typeset .highlight .linenos,
+.md-typeset .highlight .linenodiv pre,
+.md-typeset .highlight [data-linenos]::before,
+.md-typeset .highlight .gutter {
+  color: #6e7681;
+  background: #0d1117;
+  border-right: 1px solid #21262d;
+}
+.md-typeset .highlight span.filename {
+  background: #161b22;
+  color: #e6edf3;
+  border-bottom: 1px solid #21262d;
+}
+
+/* ---- explicit GitHub-dark token colours ----
+   High specificity (scheme-agnostic) so they win over Material's
+   `[data-md-color-scheme=default] .highlight .x` rules regardless of
+   the active site scheme. */
+.md-typeset .highlight .hll {
+  background-color: rgba(56, 139, 253, 0.15);
+}
+
+/* default text / whitespace / names */
+.md-typeset .highlight code,
+.md-typeset .highlight .w,
+.md-typeset .highlight .n,
+.md-typeset .highlight .nx,
+.md-typeset .highlight .py,
+.md-typeset .highlight .nl,
+.md-typeset .highlight .nv,
+.md-typeset .highlight .vc,
+.md-typeset .highlight .vg,
+.md-typeset .highlight .vi,
+.md-typeset .highlight .bp {
+  color: #e6edf3;
+}
+
+/* keywords (import, def, return, as, in, for, …) */
+.md-typeset .highlight .k,
+.md-typeset .highlight .kn,
+.md-typeset .highlight .kd,
+.md-typeset .highlight .kr,
+.md-typeset .highlight .kp,
+.md-typeset .highlight .kc,
+.md-typeset .highlight .ow {
+  color: #ff7b72;
+  font-style: normal;
+}
+
+/* built-in type keywords */
+.md-typeset .highlight .kt {
+  color: #ff7b72;
+}
+
+/* functions / decorators / entity names */
+.md-typeset .highlight .nf,
+.md-typeset .highlight .fm,
+.md-typeset .highlight .nd {
+  color: #d2a8ff;
+}
+
+/* classes / built-ins / namespaces */
+.md-typeset .highlight .nc,
+.md-typeset .highlight .nn,
+.md-typeset .highlight .ne {
+  color: #ffa657;
+}
+
+/* python built-in pseudo names (True/False/None handled below as kc) */
+.md-typeset .highlight .nb {
+  color: #79c0ff;
+}
+
+/* strings (all flavours) */
+.md-typeset .highlight .s,
+.md-typeset .highlight .s1,
+.md-typeset .highlight .s2,
+.md-typeset .highlight .sb,
+.md-typeset .highlight .sc,
+.md-typeset .highlight .dl,
+.md-typeset .highlight .sd,
+.md-typeset .highlight .sh,
+.md-typeset .highlight .sx,
+.md-typeset .highlight .sr,
+.md-typeset .highlight .ss,
+.md-typeset .highlight .si,
+.md-typeset .highlight .se {
+  color: #a5d6ff;
+}
+/* string interpolation / escapes get a touch of blue for contrast */
+.md-typeset .highlight .si,
+.md-typeset .highlight .se {
+  color: #79c0ff;
+}
+
+/* numbers */
+.md-typeset .highlight .m,
+.md-typeset .highlight .mi,
+.md-typeset .highlight .mf,
+.md-typeset .highlight .mh,
+.md-typeset .highlight .mo,
+.md-typeset .highlight .mb,
+.md-typeset .highlight .il {
+  color: #79c0ff;
+}
+
+/* operators + punctuation — the ones that were invisible before */
+.md-typeset .highlight .o {
+  color: #ff7b72;
+}
+.md-typeset .highlight .p,
+.md-typeset .highlight .pi {
+  color: #c9d1d9;
+}
+
+/* attribute / property names (kwargs, JSON keys) */
+.md-typeset .highlight .na {
+  color: #79c0ff;
+}
+
+/* comments */
+.md-typeset .highlight .c,
+.md-typeset .highlight .c1,
+.md-typeset .highlight .cm,
+.md-typeset .highlight .cs,
+.md-typeset .highlight .ch,
+.md-typeset .highlight .cp,
+.md-typeset .highlight .cpf {
+  color: #8b949e;
+  font-style: italic;
+}
+
+/* generic (diff / output / tracebacks) */
+.md-typeset .highlight .gd {
+  color: #ffdcd7;
+  background-color: rgba(248, 81, 73, 0.15);
+}
+.md-typeset .highlight .gi {
+  color: #aff5b4;
+  background-color: rgba(46, 160, 67, 0.15);
+}
+.md-typeset .highlight .gh,
+.md-typeset .highlight .gu {
+  color: #79c0ff;
+}
+.md-typeset .highlight .gs {
+  font-weight: 700;
+}
+.md-typeset .highlight .ge {
+  font-style: italic;
+}
+.md-typeset .highlight .gr,
+.md-typeset .highlight .gt {
+  color: #ffa198;
+}
+
+/* errors */
+.md-typeset .highlight .err {
+  color: #f85149;
+  background: none;
+}
+
+/* ---- inline code (not inside a fenced block) ----
+   Keep inline code legible on the light page (dark ink on a soft grey
+   surface) and in the dark `slate` scheme (light ink).  Driven through
+   per-scheme custom properties so the colour is resolved by the theme
+   toggle and never fights selector-specificity with Material's own
+   `.md-typeset code` rule — the `:where()` exclusions carry zero
+   specificity, so the base `.md-typeset code` rule below always applies,
+   and only the *variables* differ per scheme. */
+:root,
+[data-md-color-scheme="default"] {
+  --tsc-inline-code-fg: #24292f;
+  --tsc-inline-code-bg: rgba(110, 118, 129, 0.12);
+  --tsc-inline-code-border: rgba(110, 118, 129, 0.18);
+}
+[data-md-color-scheme="slate"] {
+  --tsc-inline-code-fg: #e6edf3;
+  --tsc-inline-code-bg: rgba(110, 118, 129, 0.2);
+  --tsc-inline-code-border: rgba(110, 118, 129, 0.3);
+}
+.md-typeset code:where(:not(.highlight code)):where(:not(pre code)) {
+  background: var(--tsc-inline-code-bg);
+  color: var(--tsc-inline-code-fg);
+  border-radius: 5px;
+  padding: 0.12em 0.34em;
+  border: 1px solid var(--tsc-inline-code-border);
+}
+
+/* Fenced code blocks: comfortable left/right breathing room so the text
+   is never crammed against the block border, balanced and identical in the
+   light (`default`) and dark (`slate`) schemes.  Material's own
+   `.md-typeset pre>code` padding is out-specificitied by the inline-code
+   reset just below (`.md-typeset .highlight code`, specificity 0,2,1), so we
+   restate a generous indent here at matching specificity.  A touch more on
+   the left than the right gives the code an intentional margin from the edge
+   while keeping the copy button clear on the right.  Line-number anchors
+   (`anchor_linenums`) are absolutely positioned + hidden, so this indent
+   does not disturb their alignment. */
+.md-typeset .highlight pre > code,
+.md-typeset pre > code {
+  padding: 0.78em 1.15em 0.78em 1.3em;
+}
+
+/* Inline code that is itself syntax-highlighted (pymdownx.inlinehilite)
+   rides the fenced-block palette — its tokens inherit the variables set
+   at the top, so it stays on the light inline surface but with coloured
+   tokens.  Give it the same soft surface so it reads inline.  Scoped with
+   `:not(pre > code)` so it resets ONLY the inline case and never strips the
+   fenced-block padding restored above. */
+.md-typeset .highlight code:not(pre > code) {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+/* Copy-to-clipboard button contrast on the dark surface. */
+.md-typeset .md-clipboard {
+  color: #6e7681;
+}
+.md-typeset .md-clipboard:hover {
+  color: #e6edf3;
+}
