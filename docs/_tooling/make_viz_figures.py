@@ -26,8 +26,14 @@ committed figure is exactly reproducible.  Outputs are static assets under
 from __future__ import annotations
 
 import pathlib
+import subprocess
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "figures" / "viz"
+
+#: The self-contained three.js demo payload the Backends page embeds live.
+THREEJS_DEMO = (
+    pathlib.Path(__file__).resolve().parents[1] / "assets" / "threejs-demo" / "lorenz-threejs.json"
+)
 
 #: Brand palette (docs/assets/brand/tokens.css) — teal primary, indigo accent,
 #: amber / rose warm secondaries, bright teal for a fifth series.
@@ -36,6 +42,14 @@ TEAL, INDIGO, AMBER, ROSE, TEAL2 = "#11857A", "#574FCF", "#E8912D", "#D64562", "
 #: Label font — IBM Plex Sans, with DejaVu as the layout fallback. Emitted
 #: verbatim into the SVG so the page's IBM Plex webfont renders it in-browser.
 _FONT_FAMILY = "IBM Plex Sans"
+
+#: The brand **dark stage** every animation is rendered on (matches the three.js
+#: viewer's ``#0B0F14`` background and the hero).  A GIF cannot carry a transparent
+#: background cleanly — the pillow writer flattens transparency to a jarring green in
+#: most viewers — so an animation is saved OPAQUE on this stage rather than
+#: transparent, giving the same "attractor floating in a dark room" look as the live
+#: WebGL viewers.
+_STAGE = "#0B0F14"
 
 
 def _prepare():
@@ -98,6 +112,98 @@ def _save_svg(spec, out_path, *, transparent=True):
     import matplotlib.pyplot as plt
 
     plt.close(figure)
+
+
+def _optimise_gif(path):
+    """Shrink a GIF in place with an ffmpeg palette pass (falls back to a no-op).
+
+    The matplotlib ``pillow`` writer emits a full-colour GIF; a two-stage ffmpeg
+    ``palettegen`` / ``paletteuse`` re-encodes it against a per-clip 128-colour
+    palette with Bayer dithering, which roughly halves the file size at the same
+    pixel dimensions while keeping the dark stage clean (no visible banding on the
+    teal trail).  ffmpeg is optional — if it is absent (or errors) the original,
+    correct GIF is kept untouched.
+    """
+    path = pathlib.Path(path)
+    palette = path.with_suffix(".palette.png")
+    tmp = path.with_suffix(".opt.gif")
+    try:
+        # Stage 1: derive a 128-colour palette from the whole clip.
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-vf",
+                "palettegen=max_colors=128:stats_mode=full",
+                str(palette),
+            ],
+            check=True,
+        )
+        # Stage 2: re-encode the GIF against that palette with Bayer dithering.
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-i",
+                str(palette),
+                "-lavfi",
+                "paletteuse=dither=bayer:bayer_scale=3",
+                str(tmp),
+            ],
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        palette.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
+        return  # ffmpeg unavailable — keep the pillow GIF as-is
+    palette.unlink(missing_ok=True)
+    # Only adopt the re-encode if it actually shrank the file — for a smooth teal
+    # gradient the pillow GIF can already be near-optimal, and a dither pass can add
+    # bytes; never regress the committed size.
+    if tmp.exists() and 0 < tmp.stat().st_size < path.stat().st_size:
+        tmp.replace(path)
+    else:
+        tmp.unlink(missing_ok=True)
+
+
+def _save_anim(spec, out_path, *, dpi, fps=None):
+    """Render an animated ``PlotSpec`` and write an OPAQUE, dark-stage looping GIF.
+
+    Goes through the real ``ts.viz`` matplotlib backend (``render_spec`` returns a
+    ``FuncAnimation``), then writes it with the pillow writer and an explicit
+    ``facecolor=_STAGE`` / ``transparent=False`` so the frames land on the brand dark
+    stage.  This is the fix for the "green background" defect: with ``axes=False`` the
+    3-D axes patch is turned *off* (transparent), and a transparent GIF flattens to a
+    jarring green in most viewers — forcing the figure facecolor and disabling
+    transparency keeps the clean dark room.  Finally an ffmpeg palette pass shrinks the
+    file when it can.
+    """
+    from tsdynamics.viz.render import render_spec
+
+    # Ensure the stage colour is on the spec's theme too (fig + axes facecolor), so the
+    # 3-D background panes (when present) match; the savefig facecolor is the backstop.
+    spec.background(_STAGE)
+    fa = render_spec(spec, "matplotlib")
+    save_kw = {
+        "writer": "pillow",
+        "dpi": float(dpi),
+        "savefig_kwargs": {"facecolor": _STAGE, "transparent": False},
+    }
+    if fps is not None:
+        save_kw["fps"] = float(fps)
+    fa.save(str(out_path), **save_kw)
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+    _optimise_gif(out_path)
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +426,12 @@ def fig_compose_grid(plt, out_path):
 
 
 def fig_animation(plt, out_path):
-    """Write a looping reveal-comet GIF of the Lorenz attractor drawing itself in."""
+    """Write a looping reveal-comet GIF of the Lorenz attractor drawing itself in.
+
+    Rendered on the brand dark stage at a larger figure size (6.4x6.0 in) and higher
+    dpi (85) / fps (25) than the original low-res GIF — so the amber head and fading
+    indigo tail read crisply while the file stays a couple hundred KB.
+    """
     import tsdynamics as ts
 
     lor = ts.systems.Lorenz()
@@ -331,16 +442,143 @@ def fig_animation(plt, out_path):
     # time units — over the 3-D butterfly, axes hidden for a clean look.
     spec = (
         traj.to_plot_spec(components=["x", "y", "z"], animate=True)
-        .animate(n_frames=120, fps=30)
+        .animate(n_frames=100, fps=25)
         .trail(("time", 6.0), fade=True)
-        .head(size=7.0, color=AMBER)
-        .style(lw=0.6, axes=False)
+        .head(size=9.0, color=AMBER)
+        .style(lw=0.8, axes=False)
         .recolor(INDIGO)
         .camera(elev=22, azim=-60)
-        .size(4.8, 4.4)
+        .size(6.4, 6.0)
     )
-    # .save picks the writer from the extension: .gif -> matplotlib FuncAnimation.
-    spec.save(str(out_path), dpi=80)
+    spec.relabel(title="")
+    _save_anim(spec, out_path, dpi=85)
+
+
+def fig_animation_spin(plt, out_path):
+    """Render a rotating 3-D Aizawa attractor reveal — the camera spins one full turn.
+
+    Camera *spin* is the matplotlib-only animation knob: the azimuth sweeps ``spin``
+    full turns over the whole loop while the comet reveals the orbit, so the whole
+    attractor turns in space as it draws itself in.  A persistent trail (``.trail(None)``)
+    means nothing ever erases — the elegant "watch the whole thing accrete" hero shot
+    — inked in the brand teal with an indigo head, axes hidden.
+    """
+    import tsdynamics as ts
+
+    # Aizawa declares no named variables, so its components are selected by index.
+    aiz = ts.systems.Aizawa()
+    traj = aiz.integrate(final_time=95.0, dt=0.01, ic=[0.1, 0.0, 0.0]).after(15.0)
+
+    spec = (
+        traj.to_plot_spec(components=[0, 1, 2], animate=True)
+        .animate(n_frames=100, fps=25)
+        .trail(None)  # persistent — the orbit accretes and stays
+        .head(size=9.0, color=INDIGO)
+        .camera(elev=18, azim=-70, spin=1.0)  # one full revolution over the loop
+        .style(lw=0.7, axes=False)
+        .recolor(TEAL)
+        .size(6.0, 6.0)
+    )
+    spec.relabel(title="")
+    _save_anim(spec, out_path, dpi=74)
+
+
+def fig_animation_field(plt, out_path):
+    """Render a Gray–Scott 2-D pattern-formation movie — the reaction–diffusion field over time.
+
+    ``kind="field"`` on a spatially-extended system forces the ``frames`` animation
+    model: each frame is the activator field's spatial state at that instant, so the
+    self-replicating spots genuinely *grow and divide* across the movie (not a comet).
+    A striking, honest visual of a PDE forming a Turing pattern — viridis on the dark
+    activator field.
+    """
+    import tsdynamics as ts
+
+    # A 48x48 reaction–diffusion field. GrayScott has a deterministic seeded IC, so
+    # the pattern is reproducible; dt=5.0 samples the slow pattern formation.
+    gs = ts.systems.GrayScott()
+    gtr = gs.integrate(final_time=4000.0, dt=85.0)
+
+    # kind="field" + animate=True → SPATIAL_FIELD, mode="frames": the activator field
+    # replayed frame by frame as an imshow heatmap movie.
+    spec = (
+        gtr.to_plot_spec(kind="field", animate=True)
+        .animate(fps=15)
+        .style(cmap="viridis")
+        .size(4.6, 4.6)
+    )
+    spec.relabel(title="")
+    _save_anim(spec, out_path, dpi=78, fps=14)
+
+
+def fig_animation_delay(plt, out_path):
+    """Render a Mackey–Glass delay-embedding reveal — the DDE attractor reconstructed by a comet.
+
+    The natural view of a scalar delay system is the delay embedding ``x(t)`` vs
+    ``x(t-τ)``; animated, a teal comet with an indigo head sweeps it, so the folded
+    chaotic band of the infinite-dimensional history draws itself in from a 1-D signal.
+    """
+    import numpy as np
+
+    import tsdynamics as ts
+
+    mg = ts.systems.MackeyGlass()
+    traj = mg.integrate(
+        final_time=900.0,
+        dt=0.5,
+        history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)],
+    ).after(150.0)
+
+    spec = (
+        traj.to_plot_spec(kind="delay", components="x", tau=17.0, animate=True)
+        .animate(n_frames=100, fps=25)
+        .trail(("time", 120.0), fade=True)
+        .head(size=8.0, color=INDIGO)
+        .style(lw=0.6, axes=False)
+        .recolor(TEAL)
+        .size(5.6, 5.6)
+    )
+    spec.relabel(title="")
+    _save_anim(spec, out_path, dpi=88)
+
+
+def fig_animation_composite(plt, out_path):
+    """Render a two-panel lockstep composite movie — a 3-D portrait beside its own time series.
+
+    A COMPOSITE animation plays every panel on ONE master clock, so the state head on
+    the Lorenz butterfly (left) and the sweep on the x(t) trace (right) advance
+    together — the same instant shown two ways.  Dogfoods ``ts.viz.plot(..., animate=True)``.
+    """
+    import tsdynamics as ts
+    from tsdynamics.viz import get_theme, plot
+    from tsdynamics.viz.producers import time_series
+    from tsdynamics.viz.spec import Animation
+
+    lor = ts.systems.Lorenz()
+    traj = lor.integrate(final_time=42.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+
+    # LEFT: the 3-D butterfly (a reveal comet, indigo, axes hidden).
+    portrait = (
+        traj.to_plot_spec(components=["x", "y", "z"])
+        .style(lw=0.7, axes=False)
+        .recolor(INDIGO)
+        .camera(elev=22, azim=-60)
+    )
+    portrait.relabel(title="")
+    # RIGHT: the x(t) trace (a growing line, its sweep head on the master clock).  Its
+    # axes stay visible, so give it a light-on-dark foreground that reads on the stage.
+    trace = time_series(traj, components=["x"]).style(lw=1.0).recolor(TEAL)
+    trace.relabel(title="x(t)", x="time", y="x")
+    trace.theme(get_theme("dark"))  # light-on-dark axes that read on the stage
+
+    # Pass a fully-built master Animation at compose time so every panel inherits the
+    # whole timeline — frame count AND the fading 6-time-unit trail — with each panel's
+    # per-kind head default (a head on the 3-D portrait, none on the plain time series).
+    # A later chained .animate()/.trail() would set only the composite's own clock and
+    # leave the per-panel drivers on their heavy default frame count.
+    master = Animation(n_frames=100, fps=25, trail_kind="time", trail_length=6.0, trail_fade=True)
+    comp = plot(portrait, trace, layout="row", animate=master).size(8.0, 4.1)
+    _save_anim(comp, out_path, dpi=80)
 
 
 # ---------------------------------------------------------------------------
@@ -350,8 +588,6 @@ def fig_animation(plt, out_path):
 
 def fig_spatial_field(plt, out_path):
     """Gray–Scott 2-D activator field (heatmap) beside a Kuramoto–Sivashinsky space-time."""
-    import numpy as np
-
     import tsdynamics as ts
     from tsdynamics.viz import plot
     from tsdynamics.viz.producers import spacetime
@@ -363,15 +599,16 @@ def fig_spatial_field(plt, out_path):
     left = gtr.to_plot_spec(kind="field").style(cmap="viridis")
     left.relabel(title="Gray–Scott  (2-D field)")
 
-    # RIGHT: Kuramoto–Sivashinsky — a 1-D PDE; its space-time diagram is the spatial
-    # profile stacked over time. The `spacetime` producer with transpose=True puts
-    # space on x and time on y (the canonical KS view).
-    ks = ts.systems.KuramotoSivashinsky()
-    ic = 0.1 * np.cos(np.linspace(0.0, 2.0 * np.pi, ks.dim, endpoint=False))
-    ktr = ks.integrate(final_time=150.0, dt=0.5, ic=ic).after(20.0)
-    right = spacetime(ktr, transpose=True).style(cmap="twilight")  # cyclic field -> twilight
+    # RIGHT: Kuramoto–Sivashinsky (N=128, L=60) — a 1-D PDE; its space-time diagram is
+    # the spatial profile stacked over time. The default `spacetime` orientation puts
+    # time on x and the site index on y (viridis, the sequential-field house map). The
+    # larger L=60 domain develops the canonical multi-cell spatiotemporal chaos; the
+    # zero-mean broadband default IC (seed 0) makes the figure reproducible.
+    ks = ts.systems.KuramotoSivashinsky(N=128, L=60)
+    ktr = ks.trajectory(final_time=200, dt=0.2)
+    right = spacetime(ktr, transpose=False).style(cmap="viridis")  # time on x, site index on y
     right.colorbar.label = "$u$"
-    right.relabel(x="site index", y="time", title="Kuramoto–Sivashinsky  (1-D field, space–time)")
+    right.relabel(x="time", y="site index", title="Kuramoto–Sivashinsky  (1-D field, space–time)")
 
     row = plot(left, right, layout="row").size(7.4, 3.8)
     _save_svg(row, out_path)
@@ -397,7 +634,39 @@ FIGURES = {
 #: Animated outputs (written as GIF rather than SVG).
 GIF_FIGURES = {
     "animation-lorenz-reveal": fig_animation,
+    "animation-aizawa-spin": fig_animation_spin,
+    "animation-grayscott-field": fig_animation_field,
+    "animation-mackeyglass-delay": fig_animation_delay,
+    "animation-composite": fig_animation_composite,
 }
+
+
+def make_threejs_demo():
+    """Regenerate the live three.js demo payload the Backends page embeds.
+
+    The Backends-page "Live demo" fetches ``docs/assets/threejs-demo/lorenz-threejs.json``
+    and renders it with the reference loader.  Rather than a hand-committed payload,
+    build it through the **exact same pipeline the 3-D catalogue pages use** — the
+    ``threejs_viewer`` generator's arc-length-resampled, brand-teal, indigo-headed,
+    *animated* reveal-comet payload — so the demo is byte-for-byte the viewer readers
+    meet on every attractor page (schema 2, ``metadata.animation`` + ``metadata.theme``).
+    Reproducible: a fixed IC via the viewer's pinned seed path.
+    """
+    import json
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import threejs_viewer  # docs/_tooling sibling
+
+    from tsdynamics import registry
+
+    entry = next(e for e in registry.all_systems() if e.name == "Lorenz")
+    payload = threejs_viewer._build_payload(entry, second=False)
+    if payload is None:  # pragma: no cover - the engine is required to build docs
+        raise RuntimeError("threejs demo payload build returned None (engine unavailable?)")
+    THREEJS_DEMO.parent.mkdir(parents=True, exist_ok=True)
+    THREEJS_DEMO.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    return THREEJS_DEMO
 
 
 def main():
@@ -414,6 +683,8 @@ def main():
         out = OUT / f"{slug}.gif"
         fn(plt, out)
         print(f"  ok {slug:26} {out.stat().st_size:>8} bytes  (gif)")
+    demo = make_threejs_demo()
+    print(f"  ok {'threejs-demo':26} {demo.stat().st_size:>8} bytes  (json)")
 
 
 if __name__ == "__main__":

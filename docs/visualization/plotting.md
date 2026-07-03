@@ -238,8 +238,8 @@ declares `field_labels`; `components=` picks the block, defaulting to the last
 1-D profile — honest, never guessing a 2-D grid.
 
 <figure markdown>
-![Two panels: left, a Gray-Scott 2-D activator field as a viridis heatmap of self-replicating spots; right, a Kuramoto-Sivashinsky 1-D space-time diagram in twilight showing chaotic cellular stripes](../assets/figures/viz/spatial-field.svg){ loading=lazy }
-<figcaption>Left: the Gray–Scott activator field via <code>kind="field"</code> — a viridis heatmap of the reaction–diffusion pattern. Right: the Kuramoto–Sivashinsky 1-D field as a space-time diagram (<code>kind="spacetime", transpose=True</code>, twilight) — space vertical, time horizontal, the chaotic cellular flame front.</figcaption>
+![Two panels: left, a Gray-Scott 2-D activator field as a viridis heatmap of self-replicating spots; right, a Kuramoto-Sivashinsky 1-D space-time diagram in viridis showing chaotic cellular stripes](../assets/figures/viz/spatial-field.svg){ loading=lazy }
+<figcaption>Left: the Gray–Scott activator field via <code>kind="field"</code> — a viridis heatmap of the reaction–diffusion pattern. Right: the Kuramoto–Sivashinsky 1-D field (<code>N=128</code>, <code>L=60</code>) as a space-time diagram (<code>kind="spacetime"</code>, viridis) — time horizontal, site index vertical, the chaotic cellular flame front.</figcaption>
 </figure>
 
 **A field over time is a movie.** `to_plot_spec(kind="field", animate=True)`
@@ -381,18 +381,24 @@ lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=60.0, dt=0.01)
 
 (
     lor.to_plot_spec(animate=True)
-       .animate(n_frames=120, fps=30)
+       .animate(n_frames=100, fps=25)
        .trail(("time", 6.0), fade=True)   # a 6-time-unit comet tail, fading
-       .head(color="#ffb000")             # an amber "current state" marker
+       .head(color="#E8912D")             # an amber "current state" marker
        .style(axes=False)
+       .background("#0B0F14")             # a solid dark stage (a GIF has no alpha)
        .save("lorenz-reveal.gif")
 )
 ```
 
 <figure markdown>
-![An animated GIF of the Lorenz attractor drawing itself in: a bright amber head sweeps the two wings, trailing a fading comet tail, axes hidden](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
-<figcaption>A looping reveal-comet of the Lorenz attractor: <code>animate=True</code> + <code>.trail(("time", 6.0), fade=True)</code> gives a fading 6-time-unit tail behind an amber <code>.head</code>, axes hidden. matplotlib writes <code>.mp4</code>/<code>.gif</code>; plotly exports a real-time rotatable-while-playing <code>.html</code>.</figcaption>
+![An animated GIF of the Lorenz attractor drawing itself in: a bright amber head sweeps the two wings, trailing a fading comet tail on a dark stage, axes hidden](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
+<figcaption>A looping reveal-comet of the Lorenz attractor: <code>animate=True</code> + <code>.trail(("time", 6.0), fade=True)</code> gives a fading 6-time-unit tail behind an amber <code>.head</code>, axes hidden and drawn on the brand dark stage. matplotlib writes <code>.mp4</code>/<code>.gif</code>; plotly exports a real-time rotatable-while-playing <code>.html</code>. See <a href="animation.md">Animation</a> for the field movie, the spinning attractor, and more.</figcaption>
 </figure>
+
+!!! tip "Animate on a solid background"
+    A GIF has no alpha channel — a transparent animation is flattened to one fill
+    colour (often a jarring green). Give a movie a **solid** background:
+    `.background("#0B0F14")` here. A still `.png`/`.svg` keeps real transparency.
 
 There are two frame models. **`reveal`** (the default) keeps the full static
 data and shows a comet — a head at the current sample, a tail reaching back

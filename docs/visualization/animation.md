@@ -26,8 +26,8 @@ same `.trail(...)` reads identically whether you export an mp4, an interactive
 HTML page, or a three.js viewer.
 
 <figure class="ts-fig" markdown>
-![The Lorenz attractor drawing itself in as a looping reveal comet — an amber head tracing the orbit with a fading indigo tail, axes hidden](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · a <strong>reveal comet</strong> of the Lorenz attractor: <code>to_plot_spec(animate=True)</code> keeps the full static curve and each frame shows a moving head (amber) with a fading tail reaching back 6 time units (indigo), axes hidden for a clean "attractor floating in space" look. Built by the exact snippet in <a href="#a-first-animation">the first example below</a> and saved as a small looping GIF.</figcaption>
+![The Lorenz attractor drawing itself in as a looping reveal comet — an amber head tracing the orbit with a fading indigo tail on a dark stage, axes hidden](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
+<figcaption><span class="lbl">FIG 1</span> · a <strong>reveal comet</strong> of the Lorenz attractor: <code>to_plot_spec(animate=True)</code> keeps the full static curve and each frame shows a moving head (amber) with a fading tail reaching back 6 time units (indigo), axes hidden and drawn on the brand dark stage — the same "attractor floating in a dark room" look as the live <a href="backends.md#live-demo">WebGL viewer</a>. Built by the exact snippet in <a href="#a-first-animation">the first example below</a> and saved as a small looping GIF.</figcaption>
 </figure>
 
 ---
@@ -50,29 +50,183 @@ spec.kind             # PlotKind.PHASE_PORTRAIT_3D — the semantic kind is unch
 ```
 
 The `animate=True` above is the figure at the top of the page, minus its styling.
-The committed version chains the fluent tweaks and hides the axes, then saves a
-GIF — every number below is the value the code actually produces:
+The committed version chains the fluent tweaks, hides the axes, and saves the GIF
+on the brand dark stage — every number below is the value the code actually
+produces:
 
 ```python
-AMBER, INDIGO = "#E8912D", "#574FCF"
+AMBER, INDIGO, STAGE = "#E8912D", "#574FCF", "#0B0F14"
 
 spec = (
     traj.to_plot_spec(components=["x", "y", "z"], animate=True)
-    .animate(n_frames=120, fps=30)          # 120 frames at 30 fps -> a 4 s loop
+    .animate(n_frames=100, fps=25)          # 100 frames at 25 fps -> a 4 s loop
     .trail(("time", 6.0), fade=True)        # tail reaches back 6 time units, fading
-    .head(size=7.0, color=AMBER)            # amber "current state" marker
-    .style(lw=0.6, axes=False)              # thin line, no axes
+    .head(size=9.0, color=AMBER)            # amber "current state" marker
+    .style(lw=0.8, axes=False)              # thin line, no axes
     .recolor(INDIGO)
     .camera(elev=22, azim=-60)              # a good butterfly angle
-    .size(4.8, 4.4)
+    .background(STAGE)                       # the dark stage (see the note below)
+    .size(6.4, 6.0)
 )
-spec.save("lorenz-reveal.gif", dpi=80)      # .gif -> matplotlib FuncAnimation
+spec.save("lorenz-reveal.gif", dpi=85)      # .gif -> matplotlib FuncAnimation
 ```
 
 Every method here **mutates the spec and returns it**, so the chain is one
 expression. They are the same fluent tweaks the
-[styling page](styling.md) documents (`.style`, `.recolor`, `.size`) plus the
-animation-specific ones (`.animate`, `.trail`, `.head`, `.camera`) covered here.
+[styling page](styling.md) documents (`.style`, `.recolor`, `.size`,
+`.background`) plus the animation-specific ones (`.animate`, `.trail`, `.head`,
+`.camera`) covered here.
+
+!!! tip "Animate on a solid background, not a transparent one"
+    A GIF has no real alpha channel — a *transparent* figure is flattened to a
+    single fill colour by the encoder, which many viewers render as a jarring
+    green. Give an animation an explicit **solid** background so it lands on a
+    clean stage: `.background("#0B0F14")` (the brand dark) here, or any colour /
+    a `.theme(...)`. The committed hero loops all use the dark stage, matching the
+    WebGL viewers. A still `.png`/`.svg` save is unaffected (it keeps real
+    transparency).
+
+---
+
+## A gallery
+
+The same one-directive API drives every kind of motion. Each loop below is built
+by the exact snippet beside it — an IC- or seed-pinned trajectory, a fluent
+`.animate`/`.trail`/`.head`/`.camera` chain, and a `.background("#0B0F14")` stage
+— and lives in `docs/_tooling/make_viz_figures.py`.
+
+### A spinning attractor that accretes
+
+`camera(spin=…)` sweeps the azimuth over the loop while a **persistent** trail
+(`.trail(None)`) draws the whole orbit in and keeps it — the elegant "watch it
+accrete while it turns" hero shot. Camera spin is a matplotlib-only knob.
+
+<figure class="ts-fig" markdown>
+![The Aizawa attractor accreting as a teal orbit on a dark stage while the camera makes one full revolution, an indigo state head leading the reveal](../assets/figures/viz/animation-aizawa-spin.gif){ loading=lazy }
+<figcaption><span class="lbl">FIG 2</span> · the <strong>Aizawa</strong> attractor with <code>.trail(None)</code> (persistent — nothing erases) and <code>.camera(spin=1.0)</code>: one full revolution over the loop as the teal orbit draws itself in, an indigo head leading.</figcaption>
+</figure>
+
+```python
+import tsdynamics as ts
+
+TEAL, INDIGO = "#2CC5AE", "#574FCF"
+aiz = ts.systems.Aizawa()
+traj = aiz.integrate(final_time=95.0, dt=0.01, ic=[0.1, 0.0, 0.0]).after(15.0)
+
+spec = (
+    traj.to_plot_spec(components=[0, 1, 2], animate=True)   # Aizawa has no named vars
+    .animate(n_frames=100, fps=25)
+    .trail(None)                          # persistent — the orbit accretes and stays
+    .head(size=9.0, color=INDIGO)
+    .camera(elev=18, azim=-70, spin=1.0)  # one full revolution over the loop
+    .style(lw=0.7, axes=False)
+    .recolor(TEAL)
+    .background("#0B0F14")
+    .size(6.0, 6.0)
+)
+spec.save("aizawa-spin.gif", dpi=74)
+```
+
+### A pattern-formation field movie
+
+The `"frames"` model (below) plays a spatially-extended system's field over time.
+Gray–Scott's activator grows and divides into a Turing pattern — genuinely
+striking, and honest: each frame is a real spatial snapshot, not a comet.
+
+<figure class="ts-fig" markdown>
+![A Gray-Scott reaction-diffusion field evolving over time: viridis spots on a dark-blue field grow, replicate, and organise into a maze-like Turing pattern](../assets/figures/viz/animation-grayscott-field.gif){ loading=lazy }
+<figcaption><span class="lbl">FIG 3</span> · a <strong>Gray–Scott</strong> reaction–diffusion field played frame by frame with <code>kind="field", animate=True</code> — the activator self-replicates into a Turing pattern (viridis). This is the <code>frames</code> model, covered <a href="#the-spatial-field-movie">below</a>.</figcaption>
+</figure>
+
+```python
+import tsdynamics as ts
+
+# GrayScott has a deterministic seeded IC, so the pattern is reproducible.
+gs = ts.systems.GrayScott()
+gtr = gs.integrate(final_time=4000.0, dt=85.0)     # a 48x48 reaction-diffusion field
+
+spec = (
+    gtr.to_plot_spec(kind="field", animate=True)   # SPATIAL_FIELD, mode="frames"
+    .animate(fps=14)
+    .style(cmap="viridis")
+    .background("#0B0F14")
+    .size(4.6, 4.6)
+)
+spec.save("gray-scott-field.gif", dpi=78)
+```
+
+### A delay-embedding reveal
+
+A scalar delay system's true state lives in an infinite-dimensional history
+space; the [delay embedding](plotting.md#delay-embedding) `x(t)` vs `x(t − τ)`
+reconstructs its attractor, and a comet sweeps it in.
+
+<figure class="ts-fig" markdown>
+![A Mackey-Glass delay embedding drawing itself in: a teal comet with an indigo head traces the folded chaotic band on a dark stage](../assets/figures/viz/animation-mackeyglass-delay.gif){ loading=lazy }
+<figcaption><span class="lbl">FIG 4</span> · the <strong>Mackey–Glass</strong> delay embedding <code>x(t)</code> vs <code>x(t − 17)</code>, revealed as a teal comet with an indigo head — the folded chaotic band of a DDE reconstructed from one scalar signal.</figcaption>
+</figure>
+
+```python
+import numpy as np
+import tsdynamics as ts
+
+mg = ts.systems.MackeyGlass()
+traj = mg.integrate(
+    final_time=900.0, dt=0.5,
+    history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)],
+).after(150.0)
+
+spec = (
+    traj.to_plot_spec(kind="delay", components="x", tau=17.0, animate=True)
+    .animate(n_frames=100, fps=25)
+    .trail(("time", 120.0), fade=True)
+    .head(size=8.0, color="#574FCF")
+    .style(lw=0.6, axes=False)
+    .recolor("#2CC5AE")
+    .background("#0B0F14")
+    .size(5.6, 5.6)
+)
+spec.save("mackey-glass-delay.gif", dpi=88)
+```
+
+### A two-panel lockstep composite
+
+A [composite](composition.md) plays every panel on **one master clock**. Here the
+state head on the 3-D butterfly and the sweep on its own `x(t)` trace advance
+together — the same instant shown two ways. Passing a fully-built `Animation` at
+compose time propagates the whole timeline (frame count *and* trail) into each
+panel, with the per-kind head default (a head on the portrait, none on the time
+series).
+
+<figure class="ts-fig" markdown>
+![A two-panel movie: left, the Lorenz butterfly revealing as an indigo comet; right, its x(t) time series sweeping in teal, both advancing on one shared clock](../assets/figures/viz/animation-composite.gif){ loading=lazy }
+<figcaption><span class="lbl">FIG 5</span> · a <strong>lockstep composite</strong> via <code>ts.viz.plot(portrait, trace, layout="row", animate=Animation(...))</code>: the 3-D Lorenz reveal (indigo) and its <code>x(t)</code> trace (teal) play on one master clock — the head on the butterfly and the sweep on the trace are the same instant.</figcaption>
+</figure>
+
+```python
+import tsdynamics as ts
+from tsdynamics.viz import get_theme, plot
+from tsdynamics.viz.producers import time_series
+from tsdynamics.viz.spec import Animation
+
+lor = ts.systems.Lorenz()
+traj = lor.integrate(final_time=42.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+
+portrait = (
+    traj.to_plot_spec(components=["x", "y", "z"])
+    .style(lw=0.7, axes=False).recolor("#574FCF").camera(elev=22, azim=-60)
+)
+portrait.relabel(title="")
+trace = time_series(traj, components=["x"]).style(lw=1.0).recolor("#2CC5AE")
+trace.relabel(title="x(t)", x="time", y="x")
+# keep the visible time-series axes legible on the dark stage
+trace.theme(get_theme("dark"))
+
+# A fully-built master Animation so both panels inherit frame count AND trail.
+master = Animation(n_frames=100, fps=25, trail_kind="time", trail_length=6.0, trail_fade=True)
+comp = plot(portrait, trace, layout="row", animate=master).size(8.0, 4.1)
+comp.save("lorenz-composite.gif", dpi=80)
+```
 
 ---
 
@@ -310,9 +464,10 @@ movie.animation.head       # False     (no comet, no head marker)
 movie.layers[0].data["frames"].shape   # (T, 48, 48) — every per-time snapshot stacked
 ```
 
-The per-frame plot follows the field's **spatial dimensionality**, dispatched
-from the system's `_field_shape` metadata (recorded on `meta["field_shape"]` at
-integration time):
+[FIG 3](#a-pattern-formation-field-movie) above is exactly this — the Gray–Scott
+activator field played frame by frame. The per-frame plot follows the field's
+**spatial dimensionality**, dispatched from the system's `_field_shape` metadata
+(recorded on `meta["field_shape"]` at integration time):
 
 - A **2-D field** `u(x, y)` — Gray–Scott, Swift–Hohenberg — plays as an `imshow`
   **heatmap** movie.

@@ -45,6 +45,16 @@ _BLOCKED: list[str] = [
 
 _PATTERN = re.compile("|".join(_BLOCKED), re.IGNORECASE)
 
+#: The ONE page where naming the **Python** benchmark competitors is the point:
+#: a head-to-head cross-library speed/precision comparison cannot be written
+#: without naming the libraries it measures (SciPy, nolds, pyunicorn, …). The
+#: Julia patterns are **still** enforced here — the project convention omits the
+#: Julia ecosystem from the benchmarks page entirely — so only the two named
+#: Python-library patterns are exempted, and only on this exact page. Mirrors the
+#: carve-out already documented in ``benchmarks/README.md``.
+_BENCHMARK_PAGE = "references/benchmarks.md"
+_BENCHMARK_EXEMPT = re.compile(r"|".join((r"\bnolds\b", r"\bpyunicorn\b")), re.IGNORECASE)
+
 #: Accumulated across the build; reset per build in :func:`on_pre_build`.
 _violations: list[str] = []
 
@@ -56,8 +66,13 @@ def on_pre_build(config):  # noqa: ARG001 (mkdocs hook signature)
 
 def on_page_markdown(markdown, page, config, files):  # noqa: ARG001
     """Scan one page's markdown for blocked names, recording any hits."""
+    exempt = page.file.src_uri == _BENCHMARK_PAGE
     for match in _PATTERN.finditer(markdown):
         snippet = match.group(0).strip()
+        # The benchmarks page may name the Python competitors it measures (but
+        # never the Julia ecosystem — those patterns are still enforced there).
+        if exempt and _BENCHMARK_EXEMPT.fullmatch(snippet):
+            continue
         _violations.append(f"{page.file.src_uri}: {snippet!r}")
     return markdown
 

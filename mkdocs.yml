@@ -195,8 +195,26 @@ nav:
       - "Noise-driven dynamics": tutorials/noise-driven.md
   - References:
       - references/index.md
+      - "Benchmarks": references/benchmarks.md
+      - "Bibliography": references/bibliography.md
+      - "API reference":
+          - reference/index.md
+          - "Top level": reference/top-level.md
+          - "Base classes": reference/base.md
+          - "Derived systems": reference/derived.md
+          - "Analysis": reference/analysis.md
+          - "Transforms": reference/transforms.md
+          - "Data & state-space": reference/data.md
+          - "Solvers": reference/solvers.md
+          - "Registry": reference/registry.md
+          - "Utilities": reference/utils.md
   - Project:
       - project/index.md
+      - "Citation": project/citation.md
+      - "Contributing": project/contributing.md
+      - "Changelog": project/changelog.md
+      - "Adding a system": project/adding-a-system.md
+      - "Adding a solver": project/adding-a-solver.md
 
 exclude_docs: |
   # tooling / non-page assets
@@ -206,7 +224,6 @@ exclude_docs: |
   hero-preview.html
   # old content trees dropped from the new IA (rebuilt in later phases)
   theory/
-  reference/
   transforms/
   contributing/
   # Phase 0 ships only the per-section index stubs; the old in-section
@@ -255,6 +272,11 @@ exclude_docs: |
   !tutorials/noise-driven.md
   project/*.md
   !project/index.md
+  !project/citation.md
+  !project/contributing.md
+  !project/changelog.md
+  !project/adding-a-system.md
+  !project/adding-a-solver.md
 
 validation:
   omitted_files: ignore

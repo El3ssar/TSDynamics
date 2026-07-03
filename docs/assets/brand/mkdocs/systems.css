@@ -207,9 +207,25 @@
   line-height: 1.5;
   color: var(--tsc-ink);
   overflow-wrap: anywhere;
+  /* A long Lyapunov spectrum (a wide, non-wrapping KaTeX row) must stay
+     INSIDE the card: KaTeX lays its math out with internal absolute
+     positioning, so `overflow-wrap` cannot break it.  Cap the width to the
+     card and let an over-wide row scroll horizontally within the cell rather
+     than spilling over the border into the neighbouring card. */
+  max-width: 100%;
+  overflow-x: auto;
 }
+/* Shrink the KaTeX math a touch in this narrow cell so a 3–4 exponent
+   spectrum fits without scrolling on a normal-width card, and reduce the
+   inter-item glue so the row is compact.  `max-width` keeps any residual
+   overflow (a very long spectrum on a very narrow card) scrolling inside
+   the box instead of escaping it. */
 .md-typeset .ts-prop-value .katex {
-  font-size: 1em;
+  font-size: 0.86em;
+  max-width: 100%;
+}
+.md-typeset .ts-prop-value .katex-display {
+  margin: 0;
 }
 .md-typeset .ts-prop-src {
   display: inline-block;
@@ -275,9 +291,14 @@
   white-space: nowrap;
 }
 /* First column (System / Subcategory name link) is the widest; keep the name
-   on one line and let it take the slack.  Right-align the numeric Dim column. */
-.md-typeset table:not([class]) td:first-child,
-.md-typeset table:not([class]) th:first-child {
+   on one line and let it take the slack.  Right-align the numeric Dim column.
+   SCOPED to the generated catalogue pages only (they carry a `.ts-count` or
+   `.ts-stats` marker) — otherwise `white-space: nowrap` on a first column of
+   *prose* (e.g. the Conventions colour-map table) forces one unwrappable line
+   and blows the table past the page width.  A single-token system name never
+   needs the nowrap anyway, so this is a no-op for the catalogue itself. */
+.md-typeset:has(.ts-count, .ts-stats) table:not([class]) td:first-child,
+.md-typeset:has(.ts-count, .ts-stats) table:not([class]) th:first-child {
   width: 42%;
   white-space: nowrap;
 }
@@ -309,4 +330,20 @@
   .md-typeset .ts-attractor {
     height: 320px;
   }
+}
+
+/* Bibliography: the muted "cited by <systems>" line under each reference. */
+.md-typeset .ts-cite-systems {
+  display: inline-block;
+  margin-top: 0.15rem;
+  font-family: var(--ts-mono);
+  font-size: 0.72em;
+  line-height: 1.5;
+  color: var(--ts-muted);
+}
+.md-typeset .ts-cite-systems code {
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  padding: 0;
 }

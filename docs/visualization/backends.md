@@ -388,11 +388,15 @@ to the PNG when WebGL or the CDN is unavailable. The emitter is
 
 ### Live demo
 
-The Lorenz payload rendered in your browser by the reference loader (drag to
-orbit, scroll to zoom):
+The exact payload the 3-D catalogue pages ship — the Lorenz attractor as an
+**animated reveal comet** (a thin teal trail fading into the dark stage behind an
+indigo state head, sweeping the full faint attractor) rendered in your browser by
+the reference loader. **The camera is yours: drag to orbit, scroll to zoom — the
+comet keeps playing while you move it.** The play/pause + restart controls sit
+bottom-left.
 
 <div id="tsdyn-threejs-viewer"
-     style="width:100%;height:440px;border-radius:8px;overflow:hidden;background:#0b1020"></div>
+     style="width:100%;height:460px;border-radius:8px;overflow:hidden;background:#0b0f14"></div>
 
 <script type="importmap">
 {
@@ -408,7 +412,9 @@ orbit, scroll to zoom):
   const el = document.getElementById("tsdyn-threejs-viewer");
   try {
     const payload = await (await fetch("../../assets/threejs-demo/lorenz-threejs.json")).json();
-    renderThreejsPayload(el, payload, { autoRotate: true });
+    // An animated payload: the loader plays the reveal comet and holds the camera
+    // still by default (orbitable by mouse) — no autoRotate override needed.
+    renderThreejsPayload(el, payload);
   } catch (err) {
     el.textContent = "three.js demo unavailable (needs a network connection for the CDN build): " + err;
     el.style.color = "#9aa4c0";

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 240" role="img" aria-label="The lifecycle of a new system: one class definition flows into auto-registration, the bulk test sweep, and an auto-generated docs page." font-family="'IBM Plex Mono', ui-monospace, monospace">
+  <defs>
+    <marker id="lc-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#6b7488"/>
+    </marker>
+    <linearGradient id="lc-indigo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Node 1: the class -->
+  <rect x="16" y="66" width="176" height="108" rx="10" fill="url(#lc-indigo)"/>
+  <text x="104" y="96" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="600">1 · You write</text>
+  <text x="104" y="120" text-anchor="middle" fill="#e0e2fb" font-size="11">class MyAttractor(</text>
+  <text x="104" y="136" text-anchor="middle" fill="#e0e2fb" font-size="11">ContinuousSystem)</text>
+  <text x="104" y="158" text-anchor="middle" fill="#c7cbf5" font-size="10">one _equations method</text>
+
+  <!-- Arrow 1 -->
+  <line x1="196" y1="120" x2="240" y2="120" stroke="#6b7488" stroke-width="1.6" marker-end="url(#lc-arrow)"/>
+
+  <!-- Node 2: register -->
+  <rect x="244" y="76" width="150" height="88" rx="10" fill="#f7f8fb" stroke="#cbd0de" stroke-width="1"/>
+  <circle cx="266" cy="100" r="4" fill="#0d9488"/>
+  <text x="319" y="104" text-anchor="middle" fill="#0c1222" font-size="12" font-weight="600">registry</text>
+  <text x="319" y="126" text-anchor="middle" fill="#2b3550" font-size="10">auto-picks it up</text>
+  <text x="319" y="144" text-anchor="middle" fill="#6b7488" font-size="10">at import time</text>
+
+  <!-- Fan-out arrows from register to the three consumers -->
+  <path d="M396,110 C440,110 448,44 494,44" fill="none" stroke="#6b7488" stroke-width="1.4" marker-end="url(#lc-arrow)"/>
+  <path d="M396,120 L494,120" fill="none" stroke="#6b7488" stroke-width="1.4" marker-end="url(#lc-arrow)"/>
+  <path d="M396,130 C440,130 448,196 494,196" fill="none" stroke="#6b7488" stroke-width="1.4" marker-end="url(#lc-arrow)"/>
+
+  <!-- Consumer A: tests -->
+  <rect x="498" y="18" width="246" height="52" rx="9" fill="#ffffff" stroke="#e6e8ef" stroke-width="1"/>
+  <text x="514" y="42" fill="#0f766e" font-size="12" font-weight="600">Bulk test sweep</text>
+  <text x="514" y="60" fill="#6b7488" font-size="10">smoke · signature · Jacobian — no test to write</text>
+
+  <!-- Consumer B: top-level -->
+  <rect x="498" y="94" width="246" height="52" rx="9" fill="#ffffff" stroke="#e6e8ef" stroke-width="1"/>
+  <text x="514" y="118" fill="#4338ca" font-size="12" font-weight="600">Analysis toolkit</text>
+  <text x="514" y="136" fill="#6b7488" font-size="10">every quantifier composes over it for free</text>
+
+  <!-- Consumer C: docs -->
+  <rect x="498" y="170" width="246" height="52" rx="9" fill="#ffffff" stroke="#e6e8ef" stroke-width="1"/>
+  <text x="514" y="194" fill="#0f766e" font-size="12" font-weight="600">Auto-generated docs page</text>
+  <text x="514" y="212" fill="#6b7488" font-size="10">equations · parameters · attractor figure</text>
+</svg>

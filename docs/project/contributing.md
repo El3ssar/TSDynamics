@@ -1,42 +1,89 @@
 ---
-description: Contributing to TSDynamics — dev setup with uv, quality gates, conventional commits, and the end-to-end path for adding a system.
+description: Contributing to TSDynamics — dev setup with uv, the quality gates (ruff, mypy --strict, the two test tiers), change-scoped testing, Conventional Commits, and the automated release flow.
 ---
 
-<span class="ts-kicker">Project</span>
+<span class="ts-kicker">Project · Contributing</span>
 
 # Contributing
 
-Clear math, minimal API, no hacks. The full text lives in
+Clear math, minimal API, no hacks. Contributions are welcome — a new attractor,
+a sharper docstring, a bug fix, a whole analysis. The full text lives in
 [CONTRIBUTING.md](https://github.com/El3ssar/TSDynamics/blob/main/CONTRIBUTING.md);
-this page is the short version.
+this page is the working version.
 
 ## Dev setup
 
-You need Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/). The native engine
-ships as a prebuilt wheel, so no compiler is needed to install
-(see [Install](../start/install.md)):
+You need Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/). The native Rust
+engine ships as a prebuilt `abi3` wheel, so **no compiler is needed** to install
+or work on the pure-Python side (see [Install](../start/install.md)). Building
+from source — only needed if you edit the Rust engine — needs a
+[Rust toolchain](https://rustup.rs/).
 
 ```bash
 git clone https://github.com/El3ssar/TSDynamics.git
 cd TSDynamics
 uv sync --group dev          # editable install + pytest, ruff, mypy, pre-commit
-uv run pre-commit install    # optional: style enforced at commit time
+uv run pre-commit install    # optional: ruff lint + format enforced at commit time
 ```
 
-## Quality gates
+## The everyday loop — change-scoped testing
 
-Run before pushing — CI rejects PRs that fail any of these:
+The test suite is **registry-driven**: every per-system test is parametrised
+over all 154 built-in systems, and every analysis / transform test over the
+whole toolkit. A plain `uv run pytest` is therefore thousands of items and takes
+minutes. **Don't reach for the full suite as your inner loop.** Instead run only
+what your diff touches:
 
 ```bash
-uv run ruff check src/ tests/            # lint (zero errors)
-uv run ruff format --check src/ tests/   # formatting (line length 100)
-uv run pytest -m "not slow" --no-cov     # fast suite, ~2 s
-uv run pytest --no-cov                   # full suite, ~35 s — integration + Lyapunov
+make test          # change-scoped FAST tier for your diff — the everyday loop
+make test-slow     # change-scoped SLOW tier (long sims), if you touched heavy code
 ```
 
-Docstrings follow the NumPy convention; commits follow
-[Conventional Commits](https://www.conventionalcommits.org/)
-(`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `ci:`).
+`make test` diffs your working tree against `origin/main` and selects only the
+tests your change can affect — a touched system module runs that module's
+systems (plus the catalogue-correctness gates), a touched analysis area runs
+that area's tests, a touched test file runs itself. It is deliberately biased to
+**over-select**: any foundational change (the engine, a family base, the
+registry, `pyproject`, or any Rust crate) disables selection and runs the full
+tier, so a mis-scoped run can never *ship* a regression — the full suite runs on
+every merge to `main` and nightly. The selector prints exactly what it kept and
+why.
+
+Override the diff base when you need to (defaults to `origin/main`):
+
+```bash
+make test BASE=HEAD~3
+uv run pytest --changed --changed-since=HEAD~3 -m "not slow" --no-cov -n auto
+```
+
+For a final pre-push sanity check over *everything* (parallel, not the nightly
+exhaustive sweep):
+
+```bash
+make test-all      # full FAST tier over every system / analysis
+make test-full     # fast + slow tiers over everything
+```
+
+## The quality gates
+
+CI rejects a PR that fails any of these — run them before pushing:
+
+```bash
+uv run ruff check src/ tests/            # lint (E, F, I, N, UP, B, SIM, D rules)
+uv run ruff format --check src/ tests/   # formatting (line length 100)
+uv run mypy --strict src/tsdynamics      # static types — CI-blocking, must be clean
+make test                                # change-scoped fast tier
+```
+
+- **`ruff`** is both linter and formatter; `ruff check --fix` auto-fixes the safe
+  issues.
+- **`mypy --strict`** is a hard gate. The core library is fully strict; the
+  system *catalogue* (`tsdynamics.systems.*`) relaxes exactly three codes
+  inherent to its framework-contract kernels — `override`, `no-untyped-def`,
+  `no-untyped-call` — via a documented `[tool.mypy.overrides]` block, because the
+  `_equations` / `_step` / `_drift` bodies receive their parameters positionally.
+- **Docstrings** follow the NumPy convention. Cite the **original paper** for any
+  method — never a competing library (see below).
 
 ## Documentation
 
@@ -46,73 +93,80 @@ TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # fast, figure-less validation
 uv run mkdocs serve                               # live preview at 127.0.0.1:8000
 ```
 
-The build must pass `--strict` (CI enforces it). Two build-time conventions
-are worth knowing:
+The build must pass `--strict` (CI enforces it). Two build-time conventions are
+worth knowing:
 
-- **The system catalogue is auto-generated.** `hooks/docs_autogen.py` renders
-  one page per registered system — equations from the symbolic definition,
-  a parameter table, the `reference`, and a cached phase portrait — so a new
-  system documents itself. Set `TSD_DOCS_FIGURES=0` to skip the (slow) figure
+- **The system catalogue documents itself.** `hooks/docs_autogen.py` renders one
+  page per registered system — equations from the symbolic definition, a
+  parameter table, the `reference`, and a cached phase portrait — so a new system
+  needs no hand-written page. `TSD_DOCS_FIGURES=0` skips the (slow) figure
   rendering during local previews.
-- **Citations, never competitors.** `hooks/citation_lint.py` fails the build
-  if a published page names a competing dynamical-systems library or the
-  `*.jl` ecosystem. Cite the **original paper** for every method — that is
-  both the scholarly norm and a hard rule here. (The bare word "Julia" is
-  fine — "Julia set", a person's name — only library/ecosystem references are
-  blocked.)
+- **Citations, never competitors.** `hooks/citation_lint.py` fails the build if a
+  published page names a competing dynamical-systems library or the `*.jl`
+  ecosystem. Cite the original paper for every method — both the scholarly norm
+  and a hard rule here. (The bare word "Julia" is fine — a Julia set, a person's
+  name — only library / ecosystem references are blocked.)
 
 When you add an analysis or transform, add its prose page under
-`docs/analysis/` or `docs/transforms/`, an mkdocstrings stanza on the matching
-`docs/reference/*` page, and a `nav` entry in `mkdocs.yml`.
+`docs/analysis/`, an mkdocstrings stanza on the matching `docs/reference/*` page,
+and a `nav` entry in `mkdocs.yml`.
+
+## Commits & the PR flow
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/) —
+the changelog and release notes are generated from them:
+
+```
+feat: add Sprott-N attractor to chaotic_attractors
+fix(dde): reject zero or negative delay parameters
+perf(engine): reuse the frozen Jacobian across SDIRK substages
+docs: clarify n_exp behaviour in DelaySystem.lyapunov_spectrum
+```
+
+The prefix decides the release: `feat:` → minor, `fix:` / `perf:` → patch,
+`!` or `BREAKING CHANGE:` → major; `chore` / `ci` / `docs`-only release nothing.
+
+1. **Branch from `main`** — `git switch -c feat/my-thing main`.
+2. **Edit, then run the gates** above until green.
+3. **Open a PR.** GitHub Actions runs the linters, `mypy --strict`, the
+   change-scoped test matrix (Python 3.12 + 3.13 on Linux and macOS), and a docs
+   build.
+4. **The PR title must be a conventional commit** (enforced by `pr-title.yml`):
+   PRs are **squash-merged**, so the title becomes the commit that decides the
+   next release. Write it accordingly.
 
 ## Releases
 
-PRs are **squash-merged**, and the PR title becomes the commit message —
-so write PR titles as conventional commits too. Releases are automated
-with python-semantic-release: `feat:` bumps minor, `fix:`/`perf:` bump
-patch, `BREAKING CHANGE:`/`!` bumps major. The version is rewritten in
-`src/tsdynamics/__init__.py`, tagged, published to PyPI, and the release
-notes are generated — nothing to do by hand.
+Releases are **fully automated** by
+[python-semantic-release](https://python-semantic-release.readthedocs.io/) —
+nobody bumps a version or pushes a tag by hand. Every push to `main` runs the
+full suite with coverage, computes the version bump from the conventional-commit
+history, rewrites `__version__` (and `pyproject.toml`), tags `vX.Y.Z`, publishes
+the `abi3` wheels to PyPI via [Trusted Publishing](https://docs.pypi.org/trusted-publishers/)
+(OIDC — no API tokens), and generates the [release notes](changelog.md). The
+static `[project].version` is kept in lock-step because the build backend
+([maturin](https://www.maturin.rs/)) cannot read a Python `__version__`.
 
-## Adding a system, end to end
+## The two extension paths
 
-The whole pipeline is driven by the class definition:
+Most contributions are one of two well-trodden recipes, each with its own page:
 
-1. **Write the class** in the right module under
-   `src/tsdynamics/systems/continuous/` or `.../discrete/`, following the
-   [subclass contract](../start/concepts.md#the-three-contracts) for its
-   family. Add the name to the module's `__all__`.
-2. **The registry picks it up** automatically at import
-   (`registry.get("MyAttractor")` now works, and the class is re-exported
-   from the top level).
-3. **The test suite sweeps it** — the bulk tests iterate the registry, so
-   your system gets smoke, signature, and Jacobian checks without writing
-   a test. Add literature Lyapunov values via `known_lyapunov` to opt in
-   to the known-value tests.
-4. **Its docs page auto-generates** — equations rendered from the
-   symbolic definition, defaults, and a figure, on the next docs build.
+- [**Adding a system**](adding-a-system.md) — a new attractor, map, DDE, or SDE
+  for the catalogue. One class; the registry, tests, and docs follow.
+- [**Adding a solver**](adding-a-solver.md) — a new integration kernel for the
+  Rust engine, mirrored in the Python registry.
 
-### Optional metadata that improves everything downstream
+## PR checklist
 
-```python
-class MyAttractor(ContinuousSystem):
-    params = {"a": 0.2, "b": 0.2, "c": 5.7}
-    dim = 3
-    variables = ("x", "y", "z")                  # named traj["x"] access + labelled figures
-    reference = "Rössler (1976), Phys. Lett. A 57, 397-398"   # surfaced in the docs
-    default_ic = (1.0, 0.0, 0.0)                 # only if random ICs miss the basin
-    known_lyapunov = {                           # opt in to known-value tests
-        "spectrum": (0.0714, 0.0, -5.39),
-        "atol": (0.06, 0.06, 1.5),
-        "kwargs": {"dt": 0.1, "burn_in": 100.0, "final_time": 500.0},
-        "source": "Sprott (2003), Chaos and Time-Series Analysis",
-    }
-```
-
-!!! tip "Checklist for the PR"
-    - [ ] Class follows the family contract (symbolic ops only for flows;
-          positional param order for maps)
-    - [ ] Added to the module `__all__`
-    - [ ] `variables` and `reference` declared
-    - [ ] `uv run pytest --no-cov` green locally
-    - [ ] PR title is a conventional commit
+!!! tip "Before you open the PR"
+    - [ ] Focused, minimal change.
+    - [ ] `make test` (and `make test-slow` if you touched heavy code) green
+          locally.
+    - [ ] `ruff check` and `ruff format --check` clean.
+    - [ ] `mypy --strict src/tsdynamics` clean.
+    - [ ] Public API changes documented in docstrings; new methods cite the
+          original paper.
+    - [ ] Conventional-commit PR title.
+    - [ ] New system in the module / category `__all__`; a new DDE also has a
+          history in `tests/_sampling.py::DDE_HISTORIES`, a new built-in SDE a
+          sample in `SDE_SAMPLES` (guard tests remind you).
