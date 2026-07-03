@@ -70,7 +70,7 @@ CACHE_DIR = ROOT / ".cache" / "docs-field-movies"
 
 #: Bump when the movie recipe / encoding / poster shaping materially changes
 #: (cache buster — invalidates every on-disk movie).
-MOVIE_VERSION = "1"
+MOVIE_VERSION = "2"
 
 #: Output pixel size (square) for the rendered field movie.  720 px is a crisp,
 #: web-light hero; the H.264 mp4 for a 96² field stays well under a couple hundred
@@ -246,6 +246,10 @@ def _build_spec(entry, recipe: dict):
     # rare extreme; ``"symmetric"`` derives ``±q·max|field|`` from the stack.
     _apply_clim(spec, recipe.get("clim"))
     spec.title = None  # drop the system-name title (the page already has the heading)
+    # Drop the colorbar so the poster (the movie's static final frame) is the same
+    # chrome-free centred square as the movie itself — the animated field driver
+    # draws no colorbar, so this only affects the still poster, keeping them matched.
+    spec.colorbar = None
 
     # Play EVERY integrated snapshot (not the capped default 360) so the movie is a
     # full, smooth, long-enough loop — the field stack has ``final_time/dt`` frames.
