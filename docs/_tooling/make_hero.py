@@ -1,14 +1,23 @@
 """
-Generate the landing-hero attractor data: one compact JSON per 3D system.
+Generate the landing-hero attractor data: one compact JSON per 3-D system.
 
-The streamline geometry is produced **by TSDynamics itself** — each system is
-integrated with the library, then the 3-D phase portrait is lowered through
-``ts.viz`` (the ``threejs`` data-export renderer) so the curve vertices come from
-the library's own plotting path, not a hand-rolled projection. Those vertices are
-then arc-length-resampled and radius-normalized so the hero canvas can rotate the
-attractor at a uniform visual speed and auto-fit it without per-system tuning.
+The hero attractors are the **same curves the system pages animate**.  Each
+system's streamline is built by the interactive three.js viewer's own curve
+builder (:func:`threejs_viewer._ode_cloud`) — which reads that system's editorial
+``viewer`` block (``final_time`` / ``method`` / ``ic`` / ``transient`` /
+``projection``) and arc-length-resamples to the sagitta target, exactly the
+geometry drawn on the system page.  Here we merely choose *which* systems appear
+in the hero and downsample + radius-normalize each curve so the landing canvas
+can rotate a dozen of them at a uniform visual speed on a light page.
 
-The JSONs are committed static assets; re-run after changing the roster:
+So there is **one source of truth** for how each system is integrated — its
+editorial entry — shared by the static figure, the page viewer, and this hero.
+To retune a hero attractor, edit its ``viewer`` block in ``editorial.json`` (a
+3-D viewer ignores ``dt``: it integrates fine and resamples in arc length, so
+tune ``final_time`` / ``ic`` / ``method`` / ``transient`` instead).
+
+The JSONs are committed static assets; re-run after changing the roster or a
+system's editorial ``viewer`` block:
 
     .venv/bin/python docs/_tooling/make_hero.py
 """
@@ -18,32 +27,32 @@ from __future__ import annotations
 import json
 import pathlib
 
+import catalog as _catalog
 import numpy as np
-
-import tsdynamics as ts
+import threejs_viewer as _viewer  # docs/_tooling sibling — the page viewer's curve builder
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "hero"
-N = 2400  # points stored per system
-RETRIES = 25  # random-IC retries if a run diverges / lands on a fixed point
+N = 2400  # points stored per system — a compact downsample of the page curve
 
 # A curated set of 14 visually distinct 3-D attractors — butterfly, spiral-fold,
-# spherical shell, cyclic labyrinth, multi-lobe, spiky, bursting, climate — not
-# the whole catalogue. (system, final_time, dt)
-ROSTER = [
-    ("Lorenz", 70, 0.01),
-    ("Rossler", 240, 0.02),
-    ("Aizawa", 90, 0.01),
-    ("Thomas", 320, 0.04),
-    ("Halvorsen", 90, 0.01),
-    ("Dadras", 70, 0.01),
-    ("Chen", 60, 0.005),
-    ("RabinovichFabrikant", 140, 0.01),
-    ("NoseHoover", 170, 0.02),
-    ("Arneodo", 130, 0.01),
-    ("ShimizuMorioka", 170, 0.02),
-    ("Lorenz84", 260, 0.02),
-    ("HindmarshRose", 900, 0.05),
-    ("NewtonLiepnik", 140, 0.01),
+# spherical shell, cyclic labyrinth, multi-lobe, spiky, bursting, climate.  This is
+# NAMES ONLY: *how* each is integrated lives in its editorial ``viewer`` block (the
+# single source of truth shared with the system page), never here.
+HERO_SYSTEMS = [
+    "Lorenz",
+    "Rossler",
+    "Aizawa",
+    "Thomas",
+    "Halvorsen",
+    "Dadras",
+    "Chen",
+    "RabinovichFabrikant",
+    "NoseHoover",
+    "Arneodo",
+    "ShimizuMorioka",
+    "Lorenz84",
+    "HindmarshRose",
+    "NewtonLiepnik",
 ]
 
 
@@ -57,45 +66,25 @@ def _resample(y, n):
     return np.stack([np.interp(u, s, y[:, j]) for j in range(y.shape[1])], axis=1)
 
 
-def _library_curve(sys, final_time, dt):
-    """Integrate ``sys`` and return the 3-D streamline vertices via ``ts.viz``.
+def _prep(entry):
+    """Build one hero curve: the page viewer's own streamline, downsampled + normalized.
 
-    The trajectory is integrated with the library, then its 3-D phase portrait is
-    lowered through the ``threejs`` data-export renderer — so the curve vertices
-    are the library's own plotting geometry (``positions``), not a hand-rolled
-    slice. Retries with fresh random ICs on divergence.
+    The curve comes straight from :func:`threejs_viewer._ode_cloud` — the exact
+    geometry the system page animates (fine integration + arc-length resample,
+    honouring the editorial ``viewer`` block and any ``projection``).  We only
+    downsample it to :data:`N` points and centre + radius-normalize to ~unit so the
+    landing canvas can auto-fit and rotate it without per-system tuning.
     """
-    last_err: Exception | None = None
-    for _ in range(RETRIES):
-        try:
-            traj = sys.integrate(final_time=float(final_time), dt=float(dt))
-        except Exception as e:  # noqa: BLE001 — a diverged run; retry from a new IC
-            last_err = e
-            continue
-        # Library plotting path: 3-D phase portrait → threejs BufferGeometry payload.
-        spec = traj.to_plot_spec()  # 3 components auto-dispatch → phase_portrait_3d
-        if spec.kind.value != "phase_portrait_3d":
-            raise ValueError(f"expected a 3-D portrait, got {spec.kind.value}")
-        payload = spec.render("threejs", raw=True)
-        lines = [g for g in payload["geometries"] if g["type"] == "line"]
-        if not lines:
-            last_err = ValueError("no line geometry in payload")
-            continue
-        y = np.asarray(lines[0]["positions"], dtype=float).reshape(-1, 3)
-        y = y[np.all(np.isfinite(y), axis=1)]
-        if len(y) >= 400:
-            return y
-        last_err = ValueError("too short")
-    raise last_err or ValueError("no usable run")
-
-
-def _prep(name, final_time, dt):
-    sys = ts.systems.__dict__[name]()
-    y = _library_curve(sys, final_time, dt)
-    y = y[int(0.25 * len(y)):]  # drop transient
+    curve = _viewer._ode_cloud(entry, second=False)
+    if curve is None:
+        raise ValueError("viewer returned no curve (divergent / off-basin)")
+    y = np.asarray(curve, dtype=float)
+    if y.ndim != 2 or y.shape[1] != 3:
+        raise ValueError(f"expected a 3-D curve, got shape {y.shape}")
+    y = y[np.all(np.isfinite(y), axis=1)]
     if len(y) < 200:
         raise ValueError("too short")
-    y = _resample(y, N)
+    y = _resample(y, N)  # compact for the light landing page
     c = y.mean(0)
     d = np.linalg.norm(y - c, axis=1)
     r = np.quantile(d, 0.985) * 1.04  # robust radius (matches JS view-fit)
@@ -104,21 +93,35 @@ def _prep(name, final_time, dt):
 
 
 def main():
+    """Regenerate every hero JSON (+ manifest) from the roster; prune orphans."""
     OUT.mkdir(parents=True, exist_ok=True)
+    catalog = _catalog.load_catalog()
     ok = []
-    for name, T, dt in ROSTER:
+    for name in HERO_SYSTEMS:
+        entry = catalog.by_name(name)
+        if entry is None:
+            print(f"  skip {name}: not in catalogue")
+            continue
         try:
-            y = _prep(name, T, dt)
+            y = _prep(entry)
         except Exception as e:  # noqa: BLE001 — skip a stubborn system, keep the rest
             print(f"  skip {name}: {e}")
             continue
         (OUT / f"{name}.json").write_text(
-            json.dumps({"name": name, "n": len(y), "xyz": y.ravel().tolist()},
-                       separators=(",", ":"))
+            json.dumps(
+                {"name": name, "n": len(y), "xyz": y.ravel().tolist()},
+                separators=(",", ":"),
+            )
         )
         ok.append(name)
-        print(f"  ok   {name:22} {len(y)} pts  {(OUT/f'{name}.json').stat().st_size//1024} KB")
+        print(f"  ok   {name:22} {len(y)} pts  {(OUT / f'{name}.json').stat().st_size // 1024} KB")
     (OUT / "manifest.json").write_text(json.dumps({"systems": ok}, separators=(",", ":")))
+    # Prune orphaned hero JSONs (systems dropped from the roster) so the assets dir
+    # only ever holds the current hero set.
+    for stale in OUT.glob("*.json"):
+        if stale.stem != "manifest" and stale.stem not in ok:
+            stale.unlink()
+            print(f"  rm   {stale.stem} (orphan)")
     print(f"\nwrote {len(ok)} systems to {OUT}")
 
 
