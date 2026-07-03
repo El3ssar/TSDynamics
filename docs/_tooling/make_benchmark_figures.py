@@ -2,11 +2,10 @@
 
 These charts are built from the numbers already committed in
 ``benchmarks/RESULTS.md`` (best-of-N wall time, one full run) — this script does
-NOT re-run the benchmark, it only renders the recorded results on-brand. Three
-charts: integration and the analysis toolkit against the **Python** ecosystem
-(where TSDynamics leads by 1–2 orders of magnitude), and a head-to-head against
-**DynamicalSystems.jl** — the compiled-Julia reference — which is the honest
-measure of where the engine sits against the fastest thing in the field.
+NOT re-run the benchmark, it only renders the recorded results on-brand. Two
+charts: integration and the analysis toolkit against the **Python** ecosystem,
+where TSDynamics leads by 1–2 orders of magnitude. (The DynamicalSystems.jl
+comparison is a table in the page, not a chart — see ``benchmarks.md``.)
 
 House style matches ``make_analysis_figures.py``: transparent background, the
 brand teal (``#11857A``) / indigo (``#574FCF``) accents, IBM Plex label text
@@ -207,83 +206,10 @@ def fig_analysis_speedup(plt, out_path):
     plt.close(fig)
 
 
-def fig_julia_headtohead(plt, out_path):
-    """Plot the gap to DynamicalSystems.jl — the compiled-Julia reference.
-
-    Each bar is how many times faster DynamicalSystems.jl is than TSDynamics on
-    that task (jl_time ÷ tsdynamics_time, best-of-N from RESULTS.md). The point is
-    scale: against a decade-tuned compiled-Julia stack the gap is a *small factor*
-    — often ~2× — where against the Python ecosystem TSDynamics is 1–2 orders of
-    magnitude ahead. A teal ✓ marks the tasks where TSDynamics is at least as
-    accurate as jl against the ground truth (identical, or better).
-    """
-    import numpy as np
-
-    # (label, tsdynamics ms, jl ms, tsd_at_least_as_accurate) — from RESULTS.md.
-    rows = [
-        ("Correlation dimension", 210.66, 202.02, True),  # TSD Δ0.004 vs jl Δ0.079
-        ("Integration — long", 351.24, 196.03, False),
-        ("Integration — short", 3.58, 1.72, False),
-        ("Basins of attraction", 57.51, 20.59, False),
-        ("Lyapunov spectrum", 77.81, 17.90, False),
-        ("Bifurcation diagram", 6.56, 1.15, False),
-        ("Max. Lyapunov (from data)", 33.68, 2.96, False),
-        ("Poincaré section", 198.11, 14.11, False),
-        ("Fixed points", 2.37, 0.094, True),  # both Δ1.1e-16, machine-precise
-        ("Max. Lyapunov (Hénon)", 5.56, 0.099, True),  # TSD Δ0.004, jl Δ0.003 ≈ equal
-    ]
-
-    labels = [r[0] for r in rows]
-    ratios = [tsd / jl for _, tsd, jl, _ in rows]  # jl faster by this factor
-    acc = [r[3] for r in rows]
-
-    order = np.argsort(ratios)[::-1]  # biggest gap at top, tightest at bottom
-    labels = [labels[i] for i in order]
-    ratios = [ratios[i] for i in order]
-    acc = [acc[i] for i in order]
-
-    fig, ax = plt.subplots(figsize=(6.4, 4.6))
-    y = np.arange(len(labels))
-    ax.barh(y, ratios, color=INDIGO, zorder=3, height=0.62)
-
-    for yi, r, a in zip(y, ratios, acc, strict=True):
-        tag = f"{r:.1f}× " + ("· ✓ accuracy" if a else "")
-        ax.annotate(
-            tag,
-            xy=(r, yi),
-            xytext=(5, 0),
-            textcoords="offset points",
-            va="center",
-            ha="left",
-            fontsize=8,
-            color=TEAL if a else INDIGO,
-            fontweight="bold",
-            clip_on=False,
-        )
-
-    ax.axvline(1.0, color="#888888", lw=0.9, ls=":", zorder=1)
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels, fontsize=8.5)
-    ax.set_xscale("log")
-    ax.set_xlim(0.8, max(ratios) * 2.4)
-    ax.set_xticks([1, 2, 5, 10, 20, 50])
-    ax.set_xticklabels(["1×", "2×", "5×", "10×", "20×", "50×"])
-    ax.set_xlabel("DynamicalSystems.jl faster by  (log scale; 1× = parity)")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.set_title(
-        "Against DynamicalSystems.jl — a small factor, not an order of magnitude", loc="left"
-    )
-
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
 
 FIGURES = {
     "integration-speedup": fig_integration_speedup,
     "analysis-speedup": fig_analysis_speedup,
-    "julia-headtohead": fig_julia_headtohead,
 }
 
 

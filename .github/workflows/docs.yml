@@ -28,7 +28,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DISABLE_MKDOCS_2_WARNING: "true"
+  # Silence Material for MkDocs' unconditional "MkDocs 2.0" marketing banner
+  # (env-var suppression added in mkdocs-material 9.7.2).
+  NO_MKDOCS_2_WARNING: "1"
 
 jobs:
   build:
@@ -61,39 +63,30 @@ jobs:
         run: uv sync --group docs
 
       - name: Build documentation
-        # Silence Material for MkDocs' unconditional "MkDocs 2.0" marketing banner
-        # (env-var suppression added in mkdocs-material 9.7.2). Keeps the build log
-        # to actual build output.
-        env:
-          NO_MKDOCS_2_WARNING: "1"
         run: uv run mkdocs build --strict
 
-      - name: Upload site artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      # Official GitHub Actions Pages path (no gh-pages branch, one deploy hop) —
+      # far more reliable than the legacy branch build. Pages source must be set to
+      # "GitHub Actions" (build_type: workflow) in the repo settings.
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: site
           path: site/
-          retention-days: 3
 
   deploy:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     concurrency:
-      group: docs-deploy
+      group: pages
       cancel-in-progress: false
     steps:
-      - name: Download site artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: site
-          path: site
-
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
-          force_orphan: true
+        id: deployment
+        uses: actions/deploy-pages@v4

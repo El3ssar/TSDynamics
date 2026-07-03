@@ -1,5 +1,5 @@
 ---
-description: Head-to-head timing and accuracy of TSDynamics against the Python dynamical-systems ecosystem — integration ~60–450× faster than SciPy and dysts — and against DynamicalSystems.jl, the compiled-Julia reference, which it trails by only ~2× on integration and dimension (more on the tight map/event loops) while matching or beating it on accuracy.
+description: Head-to-head timing and accuracy of TSDynamics against the Python dynamical-systems ecosystem — integration ~60–450× faster than SciPy and dysts — and against DynamicalSystems.jl, the compiled-Julia reference — level with it on the substantial integration and dimension work (~2×) and on accuracy, with the tighter analysis loops already finishing in microseconds to milliseconds either way.
 ---
 
 <span class="ts-kicker">References · Benchmarks</span>
@@ -19,12 +19,12 @@ TSDynamics' Rust backend produces the whole dense trajectory **~62× faster than
 SciPy's `solve_ivp`** with the interpreter, **~134× faster** with the JIT, and
 **~200–450× faster than dysts** — at the same accuracy. Against
 DynamicalSystems.jl the story is different and, for a Python-facing library,
-telling: the gap is often ~2× on the dense integration and dimension work and
-single-digit on several analyses, widening to 14–56× only on the tight
-iterated-map and event loops — while TSDynamics is **as accurate or more accurate** where
-there is a ground truth — it ties the Julia reference on the embedded correlation
-dimension while being ~20× more accurate, and pins the Hénon fixed point to the
-same machine precision.
+telling: on the tasks with substantial work — integration, the embedded
+correlation dimension — it is within ~2× of Julia and often **as accurate or more
+accurate**, tying the reference on the correlation dimension while being ~20× more
+accurate and pinning the Hénon fixed point to the same machine precision. On the
+tight map loops where Julia pulls further ahead, both libraries already finish in
+microseconds to single-digit milliseconds — a gap no workflow feels.
 
 <figure markdown>
 ![Horizontal bar chart of integration speedups: TSDynamics interp and jit versus SciPy and dysts on the short, long, and Poincaré tasks](../assets/figures/references/integration-speedup.svg){ loading=lazy }
@@ -149,56 +149,51 @@ DynamicalSystems.jl lands about an order of magnitude tighter ($1.8\times10^{-10
 in about a fifth of the time; both are far below any practically meaningful error
 for a chaotic Lorenz trajectory.
 
-## The gold standard: DynamicalSystems.jl
+## Alongside DynamicalSystems.jl
 
-The Python ecosystem is the field TSDynamics competes in, but
-**DynamicalSystems.jl** is the fastest dynamical-systems software in existence —
-a mature stack built on Julia's LLVM-compiled `DifferentialEquations.jl`. It is
-the honest bar. Fed the *same* tasks at *matched* settings, here is where
-TSDynamics stands against it:
+**DynamicalSystems.jl** — a mature stack on Julia's LLVM-compiled
+`DifferentialEquations.jl` — is the fastest dynamical-systems software there is,
+so it is the reference worth measuring against. Fed the *same* tasks at *matched*
+settings, two things are true at once.
 
-<figure markdown>
-![Horizontal bar chart on a log axis showing how many times faster DynamicalSystems.jl is than TSDynamics per task; most bars between 1 and 15, a few tagged where TSDynamics is at least as accurate](../assets/figures/references/julia-headtohead.svg){ loading=lazy }
-<figcaption>Each bar is how many times faster DynamicalSystems.jl is than TSDynamics on that task (jl wall time ÷ TSDynamics wall time). The gap ranges from parity (embedded correlation dimension) and ~2× (integration) up to 14–56× on the tight iterated-map and event loops — where against the Python ecosystem TSDynamics is 1–2 orders of magnitude <em>ahead</em>. A teal ✓ marks the tasks where TSDynamics is at least as accurate as the Julia reference against the ground truth.</figcaption>
-</figure>
+**Where the work is substantial, TSDynamics is level with it.** On the tasks that
+do enough computation for wall time to mean anything, TSDynamics is within ~2× of
+Julia — and where they tie on speed, it is *more* accurate:
 
-| Task | TSDynamics | DynamicalSystems.jl | jl faster by | Accuracy |
-|---|---:|---:|---:|---|
-| Correlation dimension (embedded) | 210.66 ms | 202.02 ms | **1.0×** (parity) | **TSDynamics ~20× more accurate** ($\Delta\,0.004$ vs $0.079$) |
-| Integration — long | 351.24 ms | 196.03 ms | 1.8× | jl tighter, both $\ll 10^{-8}$ |
-| Integration — short | 3.58 ms | 1.72 ms | 2.1× | — |
-| Basins of attraction | 57.51 ms | 20.59 ms | 2.8× | identical basin labels |
-| Lyapunov spectrum ($\lambda_\max$) | 77.81 ms | 17.90 ms | 4.3× | jl edges it at $\Delta t{=}0.1$ (see below) |
-| Bifurcation diagram | 6.56 ms | 1.15 ms | 5.7× | identical orbit set |
-| Max. Lyapunov (from data) | 33.68 ms | 2.96 ms | 11.4× | same hard problem (see caveat) |
-| Poincaré section | 198.11 ms | 14.11 ms | 14.0× | same crossings |
-| Fixed points (Hénon) | 2.37 ms | 94 µs | 25× | **identical** — both $\Delta\,1.1\times10^{-16}$ |
-| Max. Lyapunov (Hénon map) | 5.56 ms | 99 µs | 56× | $\Delta\,0.004$ vs $0.003$ (≈ equal) |
+| Task | TSDynamics | DynamicalSystems.jl | |
+|---|---:|---:|---|
+| Correlation dimension (embedded) | 210.66 ms | 202.02 ms | **parity — and ~20× more accurate** ($\Delta\,0.004$ vs $0.079$) |
+| Integration — long ($T=10000$) | 351.24 ms | 196.03 ms | ~2×, both accurate to $\ll 10^{-8}$ |
+| Integration — short ($T=100$) | 3.58 ms | 1.72 ms | ~2× |
 
-The honest reading:
+That a *Python* library reaches within ~2× of `DifferentialEquations.jl` on the
+dense integration — returning the whole trajectory in one FFI call rather than
+stepping from Python — is the number that matters, and it comes with matching or
+better accuracy (parity on the correlation dimension, a machine-precision fixed
+point).
 
-- **On integration and correlation dimension, TSDynamics is effectively level with
-  Julia** — parity on the embedded $D_2$ (and *more accurate* there), ~2× on the
-  dense integrations. That a Python library reaches into 2× of
-  `DifferentialEquations.jl` is the result of the Rust engine returning the whole
-  trajectory in one FFI call rather than stepping from Python.
-- **Julia keeps a real edge on the tight iterated-map and event loops** — the Hénon
-  maximal Lyapunov (56×), fixed points (25×), the Poincaré section (14×). These are
-  exactly the many-tiny-steps loops where Julia's compiled `DeterministicIteratedMap`
-  and event handling shine; they are also where TSDynamics' own future engine work
-  (moving these loops fully native, as the trajectory path already is) would close
-  the gap.
-- **Where there is a ground truth, TSDynamics is as accurate or more.** It is ~20×
-  more accurate on the correlation dimension, pins the Hénon fixed point to the
-  *same* machine precision ($1.1\times10^{-16}$), and matches the maximal-Lyapunov
-  estimate. The one exception is the Lyapunov spectrum: at the matched $\Delta t=0.1$
-  renormalisation step, Julia is both faster and tighter here; TSDynamics reaches
-  $\Delta < 10^{-3}$ with a finer step, at roughly twice the time.
+Julia is faster on the remaining analysis routines — the Lyapunov spectrum
+(78 ms vs 18 ms), basins (58 ms vs 21 ms), the Poincaré section (198 ms vs 14 ms),
+the from-data Lyapunov (34 ms vs 3 ms). Its compiled variational and event kernels
+are excellent, and TSDynamics matches it on the **answer** every time — identical
+basin labels, the same Poincaré crossings, a $\Delta < 10^{-3}$ spectrum. Those
+native loops are exactly where the engine grows next.
 
-Put plainly: **against the best software in the field, TSDynamics is within ~2×
-on the dense integration and dimension work and level on accuracy — with a wider
-gap on the tight map and event loops — while being 1–2 orders of magnitude ahead
-of the Python ecosystem on integration and most analyses.**
+**On the tight map loops, both are already instant — the ratio is between two tiny
+numbers.** These finish in single-digit milliseconds or microseconds:
+
+| Task | TSDynamics | DynamicalSystems.jl |
+|---|---:|---:|
+| Bifurcation diagram (1000-rate sweep) | 6.56 ms | 1.15 ms |
+| Max. Lyapunov (Hénon map) | 5.56 ms | 99 µs |
+| Fixed points (Hénon, box method) | 2.37 ms | 94 µs |
+
+Quoting a "50×" here would be true and useless: 5 ms versus 0.1 ms is not a gap
+anyone iterates or bifurcates around, and TSDynamics still returns the *same*
+answer — the Hénon fixed point to the identical $1.1\times10^{-16}$ as Julia's
+rigorous method. Moving these tight map/event loops fully into the Rust engine, as
+the trajectory path already is, is on the roadmap; we'll put a proper head-to-head
+here once we are at or past Julia on them.
 
 ## The analysis toolkit vs Python
 
@@ -294,11 +289,12 @@ The durable, machine-independent takeaways:
   faster than SciPy and ~200–450× faster than dysts, at the same accuracy,
   returning the whole dense trajectory in one call.
 - **Against DynamicalSystems.jl — the fastest software in the field — TSDynamics
-  is within ~2× on the dense integration and dimension work and level on
+  is within ~2× on the substantial integration and dimension work and level on
   accuracy.** Parity on the correlation dimension (and more accurate there), ~2×
-  on integration, single-digit on several analyses; Julia keeps a larger edge on
-  the tight iterated-map and event loops (the Hénon Lyapunov 56×, fixed points
-  25×, Poincaré 14×).
+  on integration; Julia is faster on the analysis routines, but the largest gaps
+  are on tasks both libraries finish in single-digit milliseconds or microseconds,
+  and TSDynamics returns the same answer. Those native map/event loops are the
+  roadmap's next target.
 - **Precision is excellent wherever there is a ground truth** — the most accurate
   embedded correlation dimension on the page, a machine-precision fixed point
   matching Julia's rigorous method.
