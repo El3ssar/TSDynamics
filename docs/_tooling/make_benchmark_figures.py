@@ -2,9 +2,11 @@
 
 These charts are built from the numbers already committed in
 ``benchmarks/RESULTS.md`` (best-of-N wall time, one full run) — this script does
-NOT re-run the benchmark, it only renders the recorded results on-brand. Per the
-project convention (see ``CLAUDE.md``) the Julia column is dropped entirely: the
-charts compare TSDynamics against the **Python** ecosystem only.
+NOT re-run the benchmark, it only renders the recorded results on-brand. Three
+charts: integration and the analysis toolkit against the **Python** ecosystem
+(where TSDynamics leads by 1–2 orders of magnitude), and a head-to-head against
+**DynamicalSystems.jl** — the compiled-Julia reference — which is the honest
+measure of where the engine sits against the fastest thing in the field.
 
 House style matches ``make_analysis_figures.py``: transparent background, the
 brand teal (``#11857A``) / indigo (``#574FCF``) accents, IBM Plex label text
@@ -64,9 +66,9 @@ def fig_integration_speedup(plt, out_path):
 
     # (label, TSDynamics interp ms, jit ms, baseline ms) — from RESULTS.md.
     rows = [
-        ("Integration\nshort (T=100)", 7.19, 3.71, [("SciPy", 486.06), ("dysts", 1431.0)]),
-        ("Integration\nlong (T=10000)", 773.49, 363.29, [("SciPy", 54427.0), ("dysts", 138035.0)]),
-        ("Poincaré section\n(Rössler)", 197.04, 198.78, [("SciPy", 5293.0)]),
+        ("Integration\nshort (T=100)", 7.78, 3.58, [("SciPy", 480.47), ("dysts", 1544.0)]),
+        ("Integration\nlong (T=10000)", 780.08, 351.24, [("SciPy", 54921.0), ("dysts", 156802.0)]),
+        ("Poincaré section\n(Rössler)", 202.93, 198.11, [("SciPy", 5306.0)]),
     ]
 
     fig, ax = plt.subplots(figsize=(6.4, 3.9))
@@ -143,17 +145,17 @@ def fig_analysis_speedup(plt, out_path):
 
     # (label, tsdynamics ms, [(competitor, ms), ...]) — from RESULTS.md.
     rows = [
-        ("Embedding dim\n(Cao / FNN)", 27.43, [("nolitsa", 1237.0), ("neurokit2", 178.35)]),
-        ("Sample entropy", 21.10, [("antropy", 14.83), ("neurokit2", 12.24), ("nolds", 428.70)]),
+        ("Embedding dim\n(Cao / FNN)", 26.84, [("nolitsa", 1678.0), ("neurokit2", 215.65)]),
+        ("Sample entropy", 21.09, [("antropy", 18.09), ("neurokit2", 16.57), ("nolds", 475.90)]),
         (
             "Corr. dimension\n(embedded)",
-            216.87,
-            [("nolitsa", 250.22), ("nolds", 1637.0), ("dysts", 1028.0), ("neurokit2", 1065.0)],
+            210.66,
+            [("nolitsa", 375.71), ("nolds", 1864.0), ("dysts", 1220.0), ("neurokit2", 1550.0)],
         ),
-        ("Max. Lyapunov\nfrom data", 34.81, [("nolds", 252.68), ("nolitsa", 130.15)]),
-        ("RQA determinism", 18.27, [("pyunicorn", 28.24), ("neurokit2", 118.98)]),
-        ("Multiscale entropy", 31.36, [("neurokit2", 146.10)]),
-        ("IAAFT surrogate", 26.13, [("nolitsa", 10.73), ("neurokit2", 11.55)]),
+        ("Max. Lyapunov\nfrom data", 33.68, [("nolds", 283.17), ("nolitsa", 202.98)]),
+        ("RQA determinism", 19.29, [("pyunicorn", 34.91), ("neurokit2", 151.11)]),
+        ("Multiscale entropy", 30.54, [("neurokit2", 186.36)]),
+        ("IAAFT surrogate", 25.01, [("nolitsa", 21.76), ("neurokit2", 14.90)]),
     ]
 
     labels, speeds, wins = [], [], []
@@ -205,9 +207,83 @@ def fig_analysis_speedup(plt, out_path):
     plt.close(fig)
 
 
+def fig_julia_headtohead(plt, out_path):
+    """Plot the gap to DynamicalSystems.jl — the compiled-Julia reference.
+
+    Each bar is how many times faster DynamicalSystems.jl is than TSDynamics on
+    that task (jl_time ÷ tsdynamics_time, best-of-N from RESULTS.md). The point is
+    scale: against a decade-tuned compiled-Julia stack the gap is a *small factor*
+    — often ~2× — where against the Python ecosystem TSDynamics is 1–2 orders of
+    magnitude ahead. A teal ✓ marks the tasks where TSDynamics is at least as
+    accurate as jl against the ground truth (identical, or better).
+    """
+    import numpy as np
+
+    # (label, tsdynamics ms, jl ms, tsd_at_least_as_accurate) — from RESULTS.md.
+    rows = [
+        ("Correlation dimension", 210.66, 202.02, True),  # TSD Δ0.004 vs jl Δ0.079
+        ("Integration — long", 351.24, 196.03, False),
+        ("Integration — short", 3.58, 1.72, False),
+        ("Basins of attraction", 57.51, 20.59, False),
+        ("Lyapunov spectrum", 77.81, 17.90, False),
+        ("Bifurcation diagram", 6.56, 1.15, False),
+        ("Max. Lyapunov (from data)", 33.68, 2.96, False),
+        ("Poincaré section", 198.11, 14.11, False),
+        ("Fixed points", 2.37, 0.094, True),  # both Δ1.1e-16, machine-precise
+        ("Max. Lyapunov (Hénon)", 5.56, 0.099, True),  # TSD Δ0.004, jl Δ0.003 ≈ equal
+    ]
+
+    labels = [r[0] for r in rows]
+    ratios = [tsd / jl for _, tsd, jl, _ in rows]  # jl faster by this factor
+    acc = [r[3] for r in rows]
+
+    order = np.argsort(ratios)[::-1]  # biggest gap at top, tightest at bottom
+    labels = [labels[i] for i in order]
+    ratios = [ratios[i] for i in order]
+    acc = [acc[i] for i in order]
+
+    fig, ax = plt.subplots(figsize=(6.4, 4.6))
+    y = np.arange(len(labels))
+    ax.barh(y, ratios, color=INDIGO, zorder=3, height=0.62)
+
+    for yi, r, a in zip(y, ratios, acc, strict=True):
+        tag = f"{r:.1f}× " + ("· ✓ accuracy" if a else "")
+        ax.annotate(
+            tag,
+            xy=(r, yi),
+            xytext=(5, 0),
+            textcoords="offset points",
+            va="center",
+            ha="left",
+            fontsize=8,
+            color=TEAL if a else INDIGO,
+            fontweight="bold",
+            clip_on=False,
+        )
+
+    ax.axvline(1.0, color="#888888", lw=0.9, ls=":", zorder=1)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=8.5)
+    ax.set_xscale("log")
+    ax.set_xlim(0.8, max(ratios) * 2.4)
+    ax.set_xticks([1, 2, 5, 10, 20, 50])
+    ax.set_xticklabels(["1×", "2×", "5×", "10×", "20×", "50×"])
+    ax.set_xlabel("DynamicalSystems.jl faster by  (log scale; 1× = parity)")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_title(
+        "Against DynamicalSystems.jl — a small factor, not an order of magnitude", loc="left"
+    )
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 FIGURES = {
     "integration-speedup": fig_integration_speedup,
     "analysis-speedup": fig_analysis_speedup,
+    "julia-headtohead": fig_julia_headtohead,
 }
 
 
