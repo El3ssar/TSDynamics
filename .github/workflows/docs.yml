@@ -76,7 +76,7 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .cache/docs-field-movies
-          key: docs-field-movies-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/field_movies.py') }}
+          key: docs-field-movies-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/field_movies.py', 'src/tsdynamics/viz/render/mpl/**') }}
           restore-keys: |
             docs-field-movies-
 

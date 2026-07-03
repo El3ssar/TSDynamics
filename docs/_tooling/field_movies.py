@@ -56,6 +56,7 @@ the movie is a build artifact exactly like a three.js viewer.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import html
 import inspect
@@ -67,6 +68,14 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-field-movies"
+
+#: The matplotlib renderer package the field-movie path actually runs through
+#: (``_anim.py`` builds the ``FuncAnimation``; ``_core`` / ``_threed`` supply the
+#: cmap / norm / preset helpers it imports).  Its source is folded into
+#: :func:`cache_key` so a **renderer-only** change (e.g. a tweak to
+#: ``_field_movie_2d``) busts the on-disk movie cache — the recipe/class-source
+#: hash alone would serve a stale movie otherwise.
+_MPL_RENDER_DIR = ROOT / "src" / "tsdynamics" / "viz" / "render" / "mpl"
 
 #: Bump when the movie recipe / encoding / poster shaping materially changes
 #: (cache buster — invalidates every on-disk movie).
@@ -181,12 +190,33 @@ def _recipe(entry) -> dict:
     }
 
 
+@functools.lru_cache(maxsize=1)
+def _renderer_fingerprint() -> str:
+    """Hash the matplotlib field-movie renderer's source (cache-key ingredient).
+
+    The rendered movie is a pure function of the *math* (system + recipe) **and**
+    the renderer that plays the field stack (:mod:`tsdynamics.viz.render.mpl`).
+    Folding the renderer source into :func:`cache_key` means a renderer-only edit —
+    which leaves the class source and recipe untouched — is still a cache miss, so a
+    build never serves a movie produced by a stale renderer.  All ``*.py`` under the
+    ``mpl`` render package are hashed (sorted for determinism); a missing package
+    (never, in-tree) degrades to an empty fingerprint rather than raising.
+    """
+    h = hashlib.sha256()
+    if _MPL_RENDER_DIR.is_dir():
+        for path in sorted(_MPL_RENDER_DIR.rglob("*.py")):
+            with contextlib.suppress(OSError):
+                h.update(path.read_bytes())
+    return h.hexdigest()
+
+
 def cache_key(entry) -> str:
-    """Content hash: class source + this system's recipe + module knobs."""
+    """Content hash: class source + this system's recipe + module knobs + renderer."""
     cls_src = inspect.getsource(entry.cls)
     recipe = repr(sorted(_recipe(entry).items()))
     knobs = "|".join(str(k) for k in (MOVIE_VERSION, _PX, _DPI, _BG))
-    return hashlib.sha256((cls_src + recipe + knobs).encode()).hexdigest()[:20]
+    renderer = _renderer_fingerprint()
+    return hashlib.sha256((cls_src + recipe + knobs + renderer).encode()).hexdigest()[:20]
 
 
 def _ffmpeg_available() -> bool:
