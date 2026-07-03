@@ -61,6 +61,11 @@ jobs:
         run: uv sync --group docs
 
       - name: Build documentation
+        # Silence Material for MkDocs' unconditional "MkDocs 2.0" marketing banner
+        # (env-var suppression added in mkdocs-material 9.7.2). Keeps the build log
+        # to actual build output.
+        env:
+          NO_MKDOCS_2_WARNING: "1"
         run: uv run mkdocs build --strict
 
       - name: Upload site artifact

@@ -45,12 +45,36 @@ Environment flags
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import inspect
 import json
 import os
 import pathlib
+import warnings
 from typing import Any
+
+import numpy as np
+
+
+def _quiet_numerics(fn):
+    """Silence the expected FP / divergence ``RuntimeWarning``s of build-time work.
+
+    Computing the property cards runs a bounded Lyapunov QR and a multi-start /
+    box fixed-point search over each catalogue system; random ICs and wide search
+    boxes legitimately overflow or go non-finite, and the estimators already
+    handle that (retry, drop non-finite, TODO card). This keeps the ``--strict``
+    docs-build log clean without changing any card — only the noisy warning is
+    suppressed for the duration of the computation.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with warnings.catch_warnings(), np.errstate(all="ignore"):
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-props"
@@ -551,6 +575,7 @@ def _equilibria_card(entry) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+@_quiet_numerics
 def compute_properties(entry) -> dict[str, Any]:
     """Compute (or load from cache) the four property cards for ``entry``.
 
