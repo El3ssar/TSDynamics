@@ -104,9 +104,9 @@ hint. The direction words are `"up"` (increasing through the plane, the
 default), `"down"`, and `"both"`:
 
 ```python
-ts.poincare_section(sys, plane=("y", 0.0, "up"))    # only upward crossings
-ts.poincare_section(sys, plane=("y", 0.0), direction="down")
-ts.poincare_section(sys, plane=("y", 0.0, "both"))  # both orientations
+ts.poincare_section(traj, plane=("y", 0.0, "up"))    # only upward crossings
+ts.poincare_section(traj, plane=("y", 0.0), direction="down")
+ts.poincare_section(traj, plane=("y", 0.0, "both"))  # both orientations
 ```
 
 One-sided sections are usually what you want — a two-sided section superimposes

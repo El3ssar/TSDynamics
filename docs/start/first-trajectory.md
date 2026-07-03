@@ -85,6 +85,7 @@ how many components you select — one is a time series, two a 2-D phase portrai
 three a 3-D one — and `.save()` renders it:
 
 ```python
+# skip-doctest — .save() renders to a file, needs the optional tsdynamics[viz] backend
 traj.to_plot_spec().save("lorenz.png")            # 3-D phase portrait (3 components)
 traj.to_plot_spec(components="x").save("x.png")   # a single-component time series
 ```
