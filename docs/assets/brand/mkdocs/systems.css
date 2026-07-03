@@ -319,6 +319,22 @@
   background: color-mix(in srgb, var(--tsc-link) 8%, transparent);
 }
 
+/* ---- wide PROSE tables scroll instead of cramping ----
+   The catalogue rules above pin an unclassed table to the content-column width.
+   That is right for the 2–4-column catalogue tables, but a *prose* page (pages
+   WITHOUT the `.ts-count`/`.ts-stats` markers) can carry a genuinely wide table —
+   the References → benchmarks "Integration speed" grid is six columns and needs
+   ~880px. Forced to the ~690px column it was crushed. Let a prose table size to
+   its content and SCROLL horizontally inside Material's `.md-typeset__scrollwrap`
+   (which already has `overflow-x: auto`): `min-width: 100%` keeps a narrow prose
+   table filling the column, `max-width: none` lets a wide one grow past it so the
+   scroll kicks in. Catalogue tables (on marker pages) are untouched. */
+.md-typeset:not(:has(.ts-count, .ts-stats)) .md-typeset__table > table:not([class]) {
+  width: auto;
+  min-width: 100%;
+  max-width: none;
+}
+
 /* ---- responsive: single-column cards on narrow viewports ---- */
 @media (max-width: 700px) {
   .md-typeset .ts-stats {
