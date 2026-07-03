@@ -83,7 +83,8 @@ make test                                # change-scoped fast tier
   `no-untyped-call` — via a documented `[tool.mypy.overrides]` block, because the
   `_equations` / `_step` / `_drift` bodies receive their parameters positionally.
 - **Docstrings** follow the NumPy convention. Cite the **original paper** for any
-  method — never a competing library (see below).
+  method — the scholarly norm (and it keeps the API docs pointing at the source,
+  not at whichever library we happened to look at).
 
 ## Documentation
 
@@ -93,7 +94,7 @@ TSD_DOCS_FIGURES=0 uv run mkdocs build --strict   # fast, figure-less validation
 uv run mkdocs serve                               # live preview at 127.0.0.1:8000
 ```
 
-The build must pass `--strict` (CI enforces it). Two build-time conventions are
+The build must pass `--strict` (CI enforces it). One build-time convention is
 worth knowing:
 
 - **The system catalogue documents itself.** `hooks/docs_autogen.py` renders one
@@ -101,11 +102,6 @@ worth knowing:
   parameter table, the `reference`, and a cached phase portrait — so a new system
   needs no hand-written page. `TSD_DOCS_FIGURES=0` skips the (slow) figure
   rendering during local previews.
-- **Citations, never competitors.** `hooks/citation_lint.py` fails the build if a
-  published page names a competing dynamical-systems library or the `*.jl`
-  ecosystem. Cite the original paper for every method — both the scholarly norm
-  and a hard rule here. (The bare word "Julia" is fine — a Julia set, a person's
-  name — only library / ecosystem references are blocked.)
 
 When you add an analysis or transform, add its prose page under
 `docs/analysis/`, an mkdocstrings stanza on the matching `docs/reference/*` page,

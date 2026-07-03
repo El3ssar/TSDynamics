@@ -124,7 +124,6 @@ plugins:
 # emitted as virtual files and patched into the nav (see hooks/docs_autogen.py).
 hooks:
   - hooks/docs_autogen.py
-  - hooks/citation_lint.py
 
 markdown_extensions:
   - admonition

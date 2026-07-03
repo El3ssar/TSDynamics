@@ -48,10 +48,9 @@ Two conventions run through everything a contributor touches:
   auto-registers at class-definition time, and the bulk test suite, the docs
   generator, and the top-level namespace all iterate over it. A new system needs
   no test file and no docs page — it inherits both.
-- **Cite the original literature, never a competing library.** Docstrings and
-  docs pages cite the paper a method or model comes from. A build-time
-  [citation lint](contributing.md#documentation) enforces this: naming a
-  competing dynamical-systems library fails the docs build.
+- **Cite the original literature.** Docstrings and docs pages cite the paper a
+  method or model comes from, so the attribution points at the source rather than
+  at whichever implementation we consulted.
 
 ## Where things happen
 
