@@ -179,8 +179,20 @@ nav:
       - systems/index.md
   - Visualization:
       - visualization/index.md
+      - "Plotting & kinds": visualization/plotting.md
+      - "Conventions": visualization/conventions.md
+      - "Styling & themes": visualization/styling.md
+      - "Animation": visualization/animation.md
+      - "Composition": visualization/composition.md
+      - "Backends & export": visualization/backends.md
   - Tutorials:
       - tutorials/index.md
+      - "From equations to a chaotic attractor": tutorials/chaotic-attractor.md
+      - "The road to chaos — bifurcations": tutorials/bifurcations.md
+      - "Reconstructing dynamics from a signal": tutorials/reconstruction.md
+      - "Basins & multistability": tutorials/basins-multistability.md
+      - "Poincaré & return maps": tutorials/poincare-return-maps.md
+      - "Noise-driven dynamics": tutorials/noise-driven.md
   - References:
       - references/index.md
   - Project:
@@ -227,8 +239,20 @@ exclude_docs: |
   systems/discrete/
   visualization/*.md
   !visualization/index.md
+  !visualization/plotting.md
+  !visualization/conventions.md
+  !visualization/styling.md
+  !visualization/animation.md
+  !visualization/composition.md
+  !visualization/backends.md
   tutorials/*.md
   !tutorials/index.md
+  !tutorials/chaotic-attractor.md
+  !tutorials/bifurcations.md
+  !tutorials/reconstruction.md
+  !tutorials/basins-multistability.md
+  !tutorials/poincare-return-maps.md
+  !tutorials/noise-driven.md
   project/*.md
   !project/index.md
 
