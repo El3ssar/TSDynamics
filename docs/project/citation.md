@@ -1,5 +1,5 @@
 ---
-description: How to cite TSDynamics — a software BibTeX entry, the original papers behind its methods, and the per-system reference and DOI carried by every built-in.
+description: How to cite TSDynamics — its Zenodo DOI and software BibTeX entry, the original papers behind its methods, and the per-system reference and DOI carried by every built-in.
 ---
 
 <span class="ts-kicker">Project · Citation</span>
@@ -13,12 +13,15 @@ model and the algorithm; the software is the instrument.
 
 ## Citing the software
 
-Cite the version you actually used. The installed version is always available
-at runtime:
+TSDynamics is archived on Zenodo and has a persistent DOI:
+[**10.5281/zenodo.20945679**](https://doi.org/10.5281/zenodo.20945679). This is
+the *concept* DOI — it always resolves to the newest release, so you never have
+to update it. Cite it alongside the exact version you actually used; the
+installed version is always available at runtime:
 
 ```python
 import tsdynamics as ts
-ts.__version__          # e.g. '5.2.6'
+ts.__version__          # e.g. '{{ tsdynamics_version }}'
 ```
 
 A BibTeX entry for the software:
@@ -27,18 +30,21 @@ A BibTeX entry for the software:
 @software{estevez_tsdynamics,
   author  = {Estevez, Daniel},
   title   = {{TSDynamics}: compiled dynamical systems and chaos analysis for {Python}},
-  url      = {https://github.com/El3ssar/TSDynamics},
-  version = {5.2.6},
   year    = {2026},
+  version = {{{ tsdynamics_version }}},
+  doi     = {10.5281/zenodo.20945679},
+  url     = {https://doi.org/10.5281/zenodo.20945679},
   note    = {MIT license. Set version = to your installed tsdynamics.__version__.}
 }
 ```
 
-!!! note "No DOI yet"
-    TSDynamics does not currently mint a per-release DOI (there is no Zenodo
-    archive). If a persistent, citable identifier is later published, this page
-    will carry it and a matching `doi = {...}` field — until then the GitHub URL
-    plus the exact version is the canonical reference. Please pin the `version`.
+!!! note "Cite this repository"
+    `10.5281/zenodo.20945679` is the **concept DOI**: it always resolves to the
+    newest published release. Zenodo also mints a distinct version DOI for each
+    release, so if you need to pin a specific archived version cite that release's
+    own DOI instead — but for a citation that never goes stale, use the concept
+    DOI above and pin the `version` field to your installed
+    `tsdynamics.__version__`.
 
 ## Citing the methods
 

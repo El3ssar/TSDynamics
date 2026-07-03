@@ -26,6 +26,27 @@ exactly this path.
 <figcaption>One <code>PlotSpec</code>, one line: <code>ts.systems.Lorenz(ic=[1,1,1]).plot(kind="phase_portrait_3d")</code>. The axes are hidden with <code>.style(axes=False)</code> and the camera framed with <code>.camera(elev=22, azim=-60)</code> for the attractor "floating in space".</figcaption>
 </figure>
 
+…and the *same* spec becomes a movie by attaching one directive — a reveal comet,
+a spinning attractor, or a field replaying over time:
+
+<div class="grid" markdown style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+
+<figure markdown>
+![The Lorenz attractor drawing itself in as a looping reveal comet — an amber head and a fading indigo tail on a dark stage](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
+<figcaption>A <strong>reveal comet</strong> — <code>animate=True</code> + a fading trail.</figcaption>
+</figure>
+
+<figure markdown>
+![A Gray-Scott reaction-diffusion field evolving into a maze-like Turing pattern in viridis on a dark stage](../assets/figures/viz/animation-grayscott-field.gif){ loading=lazy }
+<figcaption>A <strong>field movie</strong> — <code>kind="field", animate=True</code>.</figcaption>
+</figure>
+
+</div>
+
+<figcaption style="text-align:center;color:var(--md-default-fg-color--light);font-size:.8rem">
+Both loops are built through the same <code>to_plot_spec</code> front door — see <a href="animation.md">Animation</a>. The Lorenz 3-D attractor is also a <a href="backends.md#live-demo">live, orbitable WebGL viewer</a>.
+</figcaption>
+
 ## Why an intermediate representation?
 
 Most plotting APIs bind you to one library the moment you call them: a
