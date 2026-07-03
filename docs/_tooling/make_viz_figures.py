@@ -588,8 +588,6 @@ def fig_animation_composite(plt, out_path):
 
 def fig_spatial_field(plt, out_path):
     """Gray–Scott 2-D activator field (heatmap) beside a Kuramoto–Sivashinsky space-time."""
-    import numpy as np
-
     import tsdynamics as ts
     from tsdynamics.viz import plot
     from tsdynamics.viz.producers import spacetime
@@ -601,12 +599,13 @@ def fig_spatial_field(plt, out_path):
     left = gtr.to_plot_spec(kind="field").style(cmap="viridis")
     left.relabel(title="Gray–Scott  (2-D field)")
 
-    # RIGHT: Kuramoto–Sivashinsky (N=64, L=22) — a 1-D PDE; its space-time diagram is
+    # RIGHT: Kuramoto–Sivashinsky (N=128, L=60) — a 1-D PDE; its space-time diagram is
     # the spatial profile stacked over time. The default `spacetime` orientation puts
-    # time on x and the site index on y (viridis, the sequential-field house map).
-    ks = ts.systems.KuramotoSivashinsky(N=64, L=22.0)
-    ic = 0.1 * np.cos(np.linspace(0.0, 2.0 * np.pi, ks.dim, endpoint=False))
-    ktr = ks.integrate(final_time=150.0, dt=0.5, ic=ic).after(20.0)
+    # time on x and the site index on y (viridis, the sequential-field house map). The
+    # larger L=60 domain develops the canonical multi-cell spatiotemporal chaos; the
+    # zero-mean broadband default IC (seed 0) makes the figure reproducible.
+    ks = ts.systems.KuramotoSivashinsky(N=128, L=60)
+    ktr = ks.trajectory(final_time=200, dt=0.2)
     right = spacetime(ktr, transpose=False).style(cmap="viridis")  # time on x, site index on y
     right.colorbar.label = "$u$"
     right.relabel(x="time", y="site index", title="Kuramoto–Sivashinsky  (1-D field, space–time)")

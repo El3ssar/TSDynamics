@@ -239,7 +239,7 @@ declares `field_labels`; `components=` picks the block, defaulting to the last
 
 <figure markdown>
 ![Two panels: left, a Gray-Scott 2-D activator field as a viridis heatmap of self-replicating spots; right, a Kuramoto-Sivashinsky 1-D space-time diagram in viridis showing chaotic cellular stripes](../assets/figures/viz/spatial-field.svg){ loading=lazy }
-<figcaption>Left: the Gray–Scott activator field via <code>kind="field"</code> — a viridis heatmap of the reaction–diffusion pattern. Right: the Kuramoto–Sivashinsky 1-D field (<code>N=64</code>, <code>L=22</code>) as a space-time diagram (<code>kind="spacetime"</code>, viridis) — time horizontal, site index vertical, the chaotic cellular flame front.</figcaption>
+<figcaption>Left: the Gray–Scott activator field via <code>kind="field"</code> — a viridis heatmap of the reaction–diffusion pattern. Right: the Kuramoto–Sivashinsky 1-D field (<code>N=128</code>, <code>L=60</code>) as a space-time diagram (<code>kind="spacetime"</code>, viridis) — time horizontal, site index vertical, the chaotic cellular flame front.</figcaption>
 </figure>
 
 **A field over time is a movie.** `to_plot_spec(kind="field", animate=True)`
