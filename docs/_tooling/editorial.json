@@ -1,0 +1,2226 @@
+{
+  "_comment": "Editorial decoration for the TSDynamics system catalogue. The registry (registry.all_systems()) is the SOURCE OF TRUTH for every fact: name, family, category, dim, params, variables, reference, doi, known_lyapunov, _field_shape. This file ONLY decorates: human display names for subcategories/types, prose blurbs, parameter role notes, plot-dt overrides, projection picks for 4D+ systems, and behavior tags. NEVER put computed quantities (Lyapunov spectra, fractal dimensions, Kaplan-Yorke) here — those are computed at build time. Editorial keys that do not match a registry system are ignored harmlessly; registry systems with no editorial entry render without decoration. Seeded from design/brand/data/systems.json and reconciled against the live registry.",
+  "type_labels": {
+    "ode": "ODEs",
+    "dde": "DDEs",
+    "sde": "SDEs",
+    "map": "Maps"
+  },
+  "type_blurbs": {
+    "ode": "Continuous-time systems. Write the right-hand side; TSDynamics lowers it to the Rust engine and integrates with adaptive Dormand–Prince, implicit BDF, or fixed-step schemes.",
+    "dde": "Feedback with a finite memory. Supply the delays and a history function; TSDynamics integrates by the method of steps with dense interpolation of the past.",
+    "sde": "Systems driven by noise. Provide drift and diffusion; TSDynamics integrates with Euler–Maruyama or Milstein and returns ensembles, moments, and the deterministic skeleton.",
+    "map": "Discrete-time systems. Iterate orbits, cobweb and bifurcation diagrams, and Lyapunov exponents directly — no integration needed."
+  },
+  "type_definitions": {
+    "ode": "\\dot{x} = f(x, t)",
+    "dde": "\\dot{x}(t) = f\\big(x(t),\\, x(t-\\tau)\\big)",
+    "sde": "dx = f(x)\\,dt + g(x)\\,dW",
+    "map": "x_{n+1} = f(x_n)"
+  },
+  "subcategory_labels": {
+    "chaotic_attractors": "Chaotic attractors",
+    "chem_bio_systems": "Chemical & biological systems",
+    "climate_geophysics": "Climate & geophysics",
+    "coupled_systems": "Coupled systems",
+    "exotic_systems": "Exotic systems",
+    "oscillatory_systems": "Oscillatory systems",
+    "physical_systems": "Physical systems",
+    "population_dynamics": "Population dynamics",
+    "spatial_fields": "Spatial fields",
+    "delayed_systems": "Delayed systems",
+    "stochastic_systems": "Noise-driven systems",
+    "chaotic_maps": "Chaotic maps",
+    "exotic_maps": "Exotic maps",
+    "geometric_maps": "Geometric maps",
+    "polynomial_maps": "Polynomial maps",
+    "population_maps": "Population maps"
+  },
+  "subcategory_blurbs": {
+    "chaotic_attractors": "Dissipative flows with a positive Lyapunov exponent that settle onto a strange attractor — bounded, aperiodic, sensitive to initial conditions.",
+    "chem_bio_systems": "Reaction kinetics and excitable cells. Mass-action and Hill-type nonlinearities give oscillations, bistability, and spikes.",
+    "climate_geophysics": "Low-order truncations of atmosphere, ocean, and flow — capturing regime behavior, tipping, and reversals with a handful of modes.",
+    "coupled_systems": "Engineered and coupled chaotic flows — generalized Lorenz/Chen-family attractors and interacting units.",
+    "exotic_systems": "Minimal or unusual constructions — hyperchaotic, conservative, and engineered attractors of higher dimension.",
+    "oscillatory_systems": "Organized around a limit cycle — self-sustained oscillation, relaxation cycles, tori, and forced resonance.",
+    "physical_systems": "Mechanical and electrical models from first principles — pendula, circuits, lasers, and few-body motion.",
+    "population_dynamics": "Interacting species and resources — cycles, coexistence, and predator–prey coevolution.",
+    "spatial_fields": "Spatially extended PDEs reduced to large ODE systems by method-of-lines — pattern formation and spatiotemporal chaos.",
+    "delayed_systems": "The rate depends on the state τ ago — a scalar variable becomes effectively infinite-dimensional, giving high-dimensional chaos from one line.",
+    "stochastic_systems": "Deterministic skeletons perturbed by Wiener noise — mean reversion, escape, switching, and noise-induced transitions.",
+    "chaotic_maps": "Aperiodic, exponentially sensitive orbits — the simplest route to chaos.",
+    "exotic_maps": "Strange and ornamental attractors — iterated trigonometric and polynomial maps prized for their structure.",
+    "geometric_maps": "Area-preserving and piecewise-linear maps — mixing, horseshoes, circle and toral dynamics.",
+    "polynomial_maps": "Low-degree polynomial maps — the canonical setting for period-doubling and renormalization.",
+    "population_maps": "Discrete-generation ecology — single-species recruitment and host–parasitoid models."
+  },
+  "systems": {
+    "Lorenz": {
+      "blurb": "The 1963 convection model — three coupled quadratic ODEs whose butterfly attractor launched modern chaos theory.",
+      "featured": true,
+      "behavior": [
+        "chaotic",
+        "dissipative"
+      ],
+      "param_roles": {
+        "sigma": "Prandtl number",
+        "rho": "Rayleigh ratio (drives the bifurcation)",
+        "beta": "geometric aspect ratio"
+      }
+    },
+    "Rossler": {
+      "blurb": "A single-folded-band attractor built from the minimal nonlinearity — one quadratic term — yet fully chaotic.",
+      "featured": true,
+      "behavior": [
+        "chaotic",
+        "dissipative"
+      ],
+      "param_roles": {
+        "a": "feedback strength",
+        "b": "shift",
+        "c": "fold control"
+      }
+    },
+    "Chen": {
+      "blurb": "A dual to Lorenz with the opposite sign convention — a generalized chaotic flow in the Lorenz family.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "coupling gain of the x-y channel",
+        "b": "linear decay rate of the z channel",
+        "c": "self-feedback gain of the y channel"
+      }
+    },
+    "Chua": {
+      "blurb": "The double-scroll attractor of Chua's circuit — the canonical electronic chaos generator.",
+      "featured": true,
+      "behavior": [
+        "chaotic",
+        "circuit"
+      ],
+      "param_roles": {
+        "alpha": "dimensionless circuit parameter (capacitor/inductor ratio)",
+        "beta": "dimensionless circuit parameter (capacitor/inductor ratio)",
+        "m0": "inner slope of the piecewise-linear Chua diode",
+        "m1": "outer slope of the piecewise-linear Chua diode"
+      }
+    },
+    "Thomas": {
+      "blurb": "Cyclically symmetric flow whose 27 equilibria and labyrinthine trajectories arise from pure sinusoidal feedback.",
+      "behavior": [
+        "chaotic",
+        "cyclically symmetric"
+      ],
+      "param_roles": {
+        "a": "dissipation (friction) coefficient (smaller = more chaotic)",
+        "b": "amplitude of the sinusoidal forcing"
+      }
+    },
+    "Halvorsen": {
+      "blurb": "A cyclically symmetric quadratic flow with a tightly wound multi-scroll attractor.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "linear damping coefficient",
+        "b": "coupling coefficient between the three variables"
+      }
+    },
+    "Aizawa": {
+      "blurb": "An ornamental forced attractor with a pinched-torus geometry — the TSDynamics signature shape.",
+      "featured": true,
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "shape parameter of the attractor",
+        "b": "shape parameter of the attractor",
+        "c": "shape parameter of the attractor",
+        "d": "shape parameter of the attractor",
+        "e": "shape parameter of the attractor",
+        "f": "shape parameter of the attractor"
+      }
+    },
+    "Dadras": {
+      "blurb": "A multi-wing chaotic flow with adjustable scroll count.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "c": "polynomial-term coefficient (scroll structure)",
+        "e": "polynomial-term coefficient (scroll structure)",
+        "o": "polynomial-term coefficient (scroll structure)",
+        "p": "polynomial-term coefficient (scroll structure)",
+        "r": "polynomial-term coefficient (dissipation)"
+      }
+    },
+    "NoseHoover": {
+      "blurb": "A conservative thermostatted oscillator — chaos without dissipation, sampling a canonical ensemble.",
+      "behavior": [
+        "conservative"
+      ],
+      "param_roles": {
+        "a": "target-temperature parameter of the thermostat"
+      }
+    },
+    "RabinovichFabrikant": {
+      "blurb": "A flow from plasma physics with stiff, spiky excursions and a delicate attractor.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "modulation / dissipation balance parameter",
+        "g": "linear growth / damping parameter"
+      }
+    },
+    "RikitakeDynamo": {
+      "blurb": "A two-disk dynamo whose chaotic reversals model the geomagnetic field flipping polarity.",
+      "behavior": [
+        "chaotic",
+        "reversals"
+      ],
+      "param_roles": {
+        "a": "asymmetry / coupling between the two disks",
+        "mu": "common damping (dissipation) coefficient"
+      }
+    },
+    "Lorenz84": {
+      "blurb": "Lorenz's low-order atmospheric circulation model — regime behavior in the mid-latitude jet.",
+      "behavior": [
+        "chaotic",
+        "climate"
+      ],
+      "param_roles": {
+        "a": "damping of the wind current",
+        "b": "damping of the eddies",
+        "f": "thermal (symmetric) forcing amplitude",
+        "g": "asymmetric forcing amplitude"
+      }
+    },
+    "Lorenz96": {
+      "blurb": "A ring of advectively coupled sites — the standard testbed for atmospheric data assimilation and spatiotemporal chaos.",
+      "featured": true,
+      "behavior": [
+        "spatiotemporal"
+      ],
+      "param_roles": {
+        "f": "forcing (drives the chaos onset)",
+        "N": "number of lattice sites"
+      }
+    },
+    "Rucklidge": {
+      "blurb": "A model of convection in an imposed magnetic field — a compact chaotic flow.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "dissipation parameter",
+        "b": "forcing (Rayleigh-like) parameter"
+      }
+    },
+    "BurkeShaw": {
+      "blurb": "A symmetric chaotic flow derived from the Lorenz template.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "e": "constant forcing on the z channel",
+        "n": "common coupling / timescale scaling the cross terms"
+      }
+    },
+    "KuramotoSivashinsky": {
+      "blurb": "The canonical 1-D model of spatiotemporal chaos — flame fronts and falling films, chaotic in space and time.",
+      "featured": true,
+      "behavior": [
+        "spatiotemporal"
+      ],
+      "param_roles": {
+        "N": "number of grid modes",
+        "L": "domain length (sets the number of unstable modes)"
+      }
+    },
+    "GrayScott": {
+      "blurb": "A reaction–diffusion system whose spots, stripes, and self-replicating patterns are a landmark of Turing morphogenesis.",
+      "featured": true,
+      "behavior": [
+        "patterns"
+      ],
+      "param_roles": {
+        "F": "feed rate",
+        "k": "kill rate",
+        "Du": "u diffusion",
+        "Dv": "v diffusion",
+        "N": "grid points per side (structural — changing it recompiles)"
+      }
+    },
+    "SwiftHohenberg": {
+      "blurb": "The prototype pattern-forming PDE — stripes and hexagons from a single scalar field near a finite-wavelength instability.",
+      "featured": true,
+      "behavior": [
+        "patterns"
+      ],
+      "param_roles": {
+        "N": "grid points per side (structural — changing it recompiles)",
+        "L": "domain length per side",
+        "r": "linear growth control (unstable bandwidth)"
+      }
+    },
+    "VanDerPol": {
+      "blurb": "The archetypal relaxation oscillator — nonlinear damping pumps a stable limit cycle.",
+      "behavior": [
+        "limit cycle"
+      ]
+    },
+    "ForcedVanDerPol": {
+      "blurb": "Van der Pol under periodic forcing — frequency entrainment and the route to chaos.",
+      "behavior": [
+        "forced"
+      ],
+      "param_roles": {
+        "a": "amplitude of the periodic forcing",
+        "mu": "nonlinear damping strength",
+        "w": "angular frequency of the forcing"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 220.0,
+        "ic": [
+          0.1,
+          0.1,
+          0.0
+        ]
+      }
+    },
+    "Duffing": {
+      "blurb": "A driven double-well oscillator — the textbook forced-chaos system with a fractal basin boundary.",
+      "featured": true,
+      "behavior": [
+        "forced",
+        "chaotic"
+      ],
+      "param_roles": {
+        "alpha": "linear stiffness coefficient",
+        "beta": "cubic stiffness coefficient (negative = double well)",
+        "delta": "linear damping coefficient",
+        "gamma": "amplitude of the periodic forcing",
+        "omega": "angular frequency of the periodic forcing"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 140.0,
+        "ic": [
+          0.1,
+          0.1,
+          0.0
+        ]
+      }
+    },
+    "MooreSpiegel": {
+      "blurb": "A thermo-mechanical oscillator from stellar convection — aperiodic pulsation.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "coupling / stiffness parameter",
+        "b": "linear restoring parameter",
+        "eps": "tension / heat-transfer parameter"
+      }
+    },
+    "ShimizuMorioka": {
+      "blurb": "A symmetric reduction of Lorenz-like dynamics near a homoclinic bifurcation.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "damping bifurcation parameter",
+        "b": "dissipation bifurcation parameter"
+      }
+    },
+    "Torus": {
+      "blurb": "Quasiperiodic motion on a 2-torus — two incommensurate frequencies, no chaos.",
+      "behavior": [
+        "quasiperiodic"
+      ],
+      "param_roles": {
+        "a": "minor radius (tube radius)",
+        "n": "tube windings per revolution (irrational = quasiperiodic)",
+        "r": "major radius (centre to tube centre)"
+      }
+    },
+    "Lissajous2D": {
+      "blurb": "A planar Lissajous figure — the elementary two-frequency oscillation.",
+      "behavior": [
+        "quasiperiodic"
+      ],
+      "param_roles": {
+        "A": "amplitude along the x axis",
+        "B": "amplitude along the y axis",
+        "a": "frequency along the x axis",
+        "b": "frequency along the y axis",
+        "delta": "phase shift of y relative to x"
+      }
+    },
+    "Lissajous3D": {
+      "blurb": "A three-frequency Lissajous curve traced on a torus.",
+      "behavior": [
+        "quasiperiodic"
+      ],
+      "param_roles": {
+        "A": "amplitude along the x axis",
+        "B": "amplitude along the y axis",
+        "C": "amplitude along the z axis",
+        "a": "frequency along the x axis",
+        "b": "frequency along the y axis",
+        "c": "frequency along the z axis",
+        "delta_y": "phase shift of y relative to x",
+        "delta_z": "phase shift of z relative to x"
+      }
+    },
+    "DoublePendulum": {
+      "blurb": "Two coupled pendula — the iconic mechanically chaotic system, exquisitely sensitive to initial conditions.",
+      "featured": true,
+      "behavior": [
+        "chaotic",
+        "conservative"
+      ],
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "param_roles": {
+        "d": "arm length (sets the gravitational frequency scale)",
+        "m": "arm mass (both arms equal)"
+      },
+      "projection2": [
+        0,
+        1,
+        3
+      ]
+    },
+    "HenonHeiles": {
+      "blurb": "A galactic potential whose bounded motion transitions from regular tori to chaos with energy.",
+      "behavior": [
+        "conservative",
+        "chaotic"
+      ],
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "param_roles": {
+        "lam": "strength of the cubic anharmonic coupling"
+      },
+      "projection2": [
+        0,
+        1,
+        3
+      ]
+    },
+    "Colpitts": {
+      "blurb": "The Colpitts LC oscillator driven into chaos — a real electronic circuit model.",
+      "behavior": [
+        "chaotic",
+        "circuit"
+      ],
+      "param_roles": {
+        "a": "loop-gain / nonlinearity strength of the transistor term",
+        "b": "damping (loss) coefficient on the voltage y",
+        "c": "bias / supply drive term",
+        "d": "inductor-branch loss coefficient on z",
+        "e": "transistor turn-on (pinch-off) threshold"
+      }
+    },
+    "Laser": {
+      "blurb": "A single-mode laser (Haken) — the Lorenz equations in optical disguise.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "linear coupling / decay rate between x and y",
+        "b": "strength of the cubic y*z^2 coupling driving x",
+        "c": "linear coupling coefficient driving y",
+        "d": "cubic (x*z^2) coupling coefficient driving y",
+        "h": "linear damping of z",
+        "k": "strength of the quadratic x^2 feedback into z"
+      }
+    },
+    "JerkCircuit": {
+      "blurb": "A minimal third-order 'jerk' circuit — chaos from one nonlinear element.",
+      "behavior": [
+        "chaotic",
+        "circuit"
+      ],
+      "param_roles": {
+        "eps": "diode saturation-current scale (nonlinearity strength)",
+        "y0": "diode thermal-voltage scale (exponential steepness)"
+      }
+    },
+    "SwingingAtwood": {
+      "blurb": "The swinging Atwood machine — a mass on a pulley that swings into chaotic motion.",
+      "behavior": [
+        "conservative",
+        "chaotic"
+      ],
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "param_roles": {
+        "m1": "swinging pendulum mass",
+        "m2": "non-swinging counterweight mass (ratio m2/m1 controls the dynamics)"
+      },
+      "projection2": [
+        0,
+        1,
+        3
+      ]
+    },
+    "WindmiReduced": {
+      "blurb": "A reduced model of the magnetosphere–ionosphere coupling (WINDMI) — substorm dynamics.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a1": "linear coupling coefficient of the reduced model",
+        "b1": "linear coupling coefficient of the reduced model",
+        "b2": "linear coupling coefficient of the reduced model",
+        "b3": "linear coupling coefficient of the reduced model",
+        "d1": "steepness of the tanh substorm-onset switch",
+        "vsw": "solar-wind driver (input) strength"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "portrait",
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 500.0,
+        "dt": 0.02,
+        "ic": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "method": "rk45",
+        "transient": 0.5
+      }
+    },
+    "HindmarshRose": {
+      "blurb": "A three-variable neuron model reproducing spiking and bursting with chaotic interspike patterns.",
+      "featured": true,
+      "behavior": [
+        "bursting",
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "coefficient of the cubic spike term",
+        "b": "coefficient of the quadratic spike term",
+        "c": "constant of the fast recovery dynamics",
+        "d": "constant of the fast recovery dynamics",
+        "s": "strength of the slow adaptation feedback",
+        "tx": "timescale constant of the fast (x) variable",
+        "tz": "timescale constant of the slow (z) variable"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 600.0,
+        "dt": 0.05,
+        "ic": [
+          0.1,
+          0.1,
+          0.1
+        ]
+      }
+    },
+    "ForcedFitzHughNagumo": {
+      "blurb": "The forced FitzHugh–Nagumo excitable cell — periodic stimulation of a spiking neuron.",
+      "behavior": [
+        "excitable",
+        "forced"
+      ],
+      "param_roles": {
+        "a": "constant of the slow recovery dynamics",
+        "b": "constant of the slow recovery dynamics",
+        "curr": "constant baseline stimulus current",
+        "f": "amplitude of the periodic stimulus",
+        "gamma": "recovery (slow-variable) timescale factor",
+        "omega": "angular frequency of the periodic stimulus"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 220.0,
+        "ic": [
+          0.1,
+          0.1,
+          0.0
+        ]
+      }
+    },
+    "Oregonator": {
+      "blurb": "The Field–Körös–Noyes model of the Belousov–Zhabotinsky reaction — chemical relaxation oscillations.",
+      "behavior": [
+        "relaxation"
+      ],
+      "param_roles": {
+        "q": "scaled rate-constant ratio of the bromide-consuming steps",
+        "f": "stoichiometric factor for catalyst regeneration (bifurcation parameter)",
+        "mu": "timescale-separation parameter (stiffness)",
+        "epsilon": "timescale-separation parameter (stiffness)"
+      }
+    },
+    "GlycolyticOscillation": {
+      "blurb": "Sel'kov-type glycolytic oscillations — metabolic limit cycles.",
+      "behavior": [
+        "limit cycle"
+      ],
+      "param_roles": {
+        "d": "cooperativity modulation of the second enzyme",
+        "k": "removal (sink) rate of the final product",
+        "l1": "allosteric constant of the first enzyme",
+        "l2": "allosteric constant of the second enzyme",
+        "nu": "constant input rate of the substrate",
+        "q1": "coupling ratio linking the two enzymatic stages",
+        "q2": "coupling ratio linking the two enzymatic stages",
+        "s1": "maximum rate of the first allosteric enzyme",
+        "s2": "maximum rate of the second allosteric enzyme"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 400.0,
+        "dt": 0.02,
+        "transient": 0.7,
+        "ic": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    "ForcedBrusselator": {
+      "blurb": "The Brusselator under periodic forcing — entrainment and chaos in an autocatalytic reaction.",
+      "behavior": [
+        "forced"
+      ],
+      "param_roles": {
+        "a": "constant feed of the activator x",
+        "b": "control parameter (Hopf at b = 1 + a^2)",
+        "f": "amplitude of the periodic forcing",
+        "w": "angular frequency of the forcing"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 220.0,
+        "ic": [
+          1.0,
+          1.0,
+          0.0
+        ]
+      }
+    },
+    "HastingsPowell": {
+      "blurb": "A three-trophic food chain whose tea-cup attractor is a landmark of ecological chaos.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a1": "maximum attack rate of the consumer on the resource",
+        "a2": "maximum attack rate of the predator on the consumer",
+        "b1": "half-saturation of consumer feeding",
+        "b2": "half-saturation of predator feeding",
+        "d1": "death rate of the consumer",
+        "d2": "death rate of the top predator"
+      }
+    },
+    "CellCycle": {
+      "blurb": "A model of the eukaryotic cell-division oscillator.",
+      "behavior": [
+        "oscillatory"
+      ],
+      "param_roles": {
+        "K": "common Michaelis constant of the modification cycles",
+        "Kc": "threshold for cdk activation by cyclin",
+        "Kd1": "Michaelis constant of cyclin degradation",
+        "Kim": "inhibition constant of the mutual coupling",
+        "V2": "maximum rate of cdk inactivation",
+        "V4": "maximum rate of protease inactivation",
+        "Vm1": "maximum rate of cdk activation",
+        "Vm3": "maximum rate of protease activation",
+        "kd1": "basal rate of cyclin degradation",
+        "vd": "maximum rate of cyclin degradation",
+        "vi": "cyclin synthesis rate"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        3,
+        4
+      ],
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0,
+          4,
+          5
+        ],
+        "final_time": 600.0,
+        "dt": 0.02,
+        "ic": [
+          0.01,
+          0.01,
+          0.01,
+          0.01,
+          0.9,
+          0.9
+        ],
+        "transient": 0.35,
+        "method": "rk45"
+      }
+    },
+    "CircadianRhythm": {
+      "blurb": "A molecular circadian clock — entrainable biochemical oscillation.",
+      "behavior": [
+        "oscillatory"
+      ],
+      "param_roles": {
+        "Ki": "threshold for repression by nuclear PER",
+        "k": "phosphorylation / turnover rate of cytosolic PER",
+        "k1": "transport rate of PER into the nucleus",
+        "k2": "transport rate of PER out of the nucleus",
+        "kd": "Michaelis constant of cytosolic PER degradation",
+        "kdn": "Michaelis constant of nuclear PER degradation",
+        "km": "Michaelis constant of mRNA degradation",
+        "ks": "rate of PER synthesis from mRNA",
+        "n": "Hill coefficient of transcriptional repression",
+        "vd": "maximum degradation rate of cytosolic PER",
+        "vdn": "maximum degradation rate of nuclear PER",
+        "vm": "maximum rate of mRNA degradation",
+        "vmax": "upper bound of the phase-modulated transcription rate",
+        "vmin": "lower bound of the phase-modulated transcription rate",
+        "vs": "maximum rate of mRNA synthesis"
+      },
+      "projection": [
+        0,
+        1,
+        3
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ],
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 200.0,
+        "dt": 0.05,
+        "ic": [
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "method": "rk45"
+      }
+    },
+    "MackeyGlass": {
+      "blurb": "A single delayed feedback loop modeling blood-cell production — the canonical high-dimensional delay chaos.",
+      "featured": true,
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "tau": "feedback delay (raise it to climb the period-doubling cascade into chaos)",
+        "beta": "production gain",
+        "gamma": "decay rate",
+        "n": "Hill exponent"
+      }
+    },
+    "IkedaDelay": {
+      "blurb": "A delayed optical-cavity model — sinusoidal nonlinearity with memory, chaotic for modest delay.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "tau": "round-trip delay",
+        "mu": "feedback strength",
+        "c": "linear relaxation (damping) rate of the cavity field",
+        "x0": "phase offset (detuning) of the nonlinear feedback"
+      }
+    },
+    "SprottDelay": {
+      "blurb": "A minimal scalar delay equation engineered for chaos from one nonlinear term.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "tau": "feedback delay"
+      }
+    },
+    "ScrollDelay": {
+      "blurb": "A delayed feedback circuit producing multi-scroll attractors in the embedding.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "tau": "feedback delay",
+        "alpha": "linear decay rate of the delayed state",
+        "beta": "gain of the saturating tanh feedback"
+      }
+    },
+    "PiecewiseCircuit": {
+      "blurb": "A delayed piecewise-linear circuit — chaos from a saturating nonlinearity with memory.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "tau": "feedback delay",
+        "alpha": "linear decay rate of the delayed state",
+        "beta": "gain of the cubic feedback term",
+        "c": "scale of the cubic nonlinearity (feedback hump width)"
+      }
+    },
+    "OrnsteinUhlenbeck": {
+      "blurb": "The canonical mean-reverting process — linear restoring drift plus additive noise, the Gaussian stationary benchmark.",
+      "featured": true,
+      "behavior": [
+        "mean-reverting"
+      ],
+      "param_roles": {
+        "theta": "reversion rate",
+        "mu": "long-run mean",
+        "sigma": "noise amplitude"
+      }
+    },
+    "GeometricBrownianMotion": {
+      "blurb": "Multiplicative noise — the log-normal process underlying Black–Scholes and population growth under uncertainty.",
+      "featured": true,
+      "behavior": [
+        "multiplicative"
+      ],
+      "param_roles": {
+        "mu": "drift rate",
+        "sigma": "volatility"
+      }
+    },
+    "DoubleWell": {
+      "blurb": "A particle in a bistable potential driven by noise — noise-induced switching between the two wells.",
+      "featured": true,
+      "behavior": [
+        "switching",
+        "bistable"
+      ],
+      "param_roles": {
+        "sigma": "noise amplitude (sets the escape rate)",
+        "a": "curvature of the potential at the origin (barrier / well locations)",
+        "b": "quartic stiffness confining the wells"
+      }
+    },
+    "Logistic": {
+      "blurb": "The logistic map — one quadratic line whose period-doubling cascade is the textbook road to chaos.",
+      "featured": true,
+      "behavior": [
+        "period-doubling",
+        "chaotic"
+      ],
+      "param_roles": {
+        "r": "growth rate (the bifurcation parameter)"
+      }
+    },
+    "Henon": {
+      "blurb": "The Hénon map — a 2-D quadratic map whose folded attractor is the canonical strange attractor of dissipative maps.",
+      "featured": true,
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "stretching",
+        "b": "area contraction"
+      }
+    },
+    "Tent": {
+      "blurb": "The piecewise-linear tent map — exact, fully chaotic, conjugate to the binary shift.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "mu": "peak height (branch slope magnitude 2*mu)"
+      }
+    },
+    "Chirikov": {
+      "blurb": "The Chirikov standard map — the paradigm of Hamiltonian chaos, mixing tori and chaotic seas.",
+      "featured": true,
+      "behavior": [
+        "mixed",
+        "conservative"
+      ],
+      "param_roles": {
+        "K": "kick strength (controls the transition to global chaos)",
+        "k": "stochasticity (kick) strength"
+      }
+    },
+    "Ikeda": {
+      "blurb": "The Ikeda map — a spiral strange attractor from a nonlinear optical ring cavity.",
+      "featured": true,
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "phase-offset constant of the cavity detuning",
+        "b": "nonlinear phase-modulation strength",
+        "u": "round-trip field-loss (dissipation) factor"
+      }
+    },
+    "Tinkerbell": {
+      "blurb": "An ornamental 2-D quadratic map whose attractor resembles a fairy in flight.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "linear coefficient on x",
+        "b": "linear coefficient on y",
+        "c": "cross-coupling coefficient",
+        "d": "cross-coupling coefficient"
+      }
+    },
+    "Gingerbreadman": {
+      "blurb": "A piecewise-linear map tiling the plane with quasiperiodic gingerbread-man cells.",
+      "behavior": [
+        "quasiperiodic"
+      ]
+    },
+    "Ulam": {
+      "blurb": "The Ulam map (logistic at r=4) — exactly chaotic with a known invariant density.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "map offset (a=1 gives the ergodic regime)",
+        "b": "quadratic gain (b=2 gives the ergodic regime)"
+      }
+    },
+    "Baker": {
+      "blurb": "The baker's map — stretch, cut, and stack; the cleanest model of mixing and the horseshoe.",
+      "behavior": [
+        "mixing"
+      ],
+      "param_roles": {
+        "alpha": "fold fraction splitting the height (0.5 = area-preserving)"
+      }
+    },
+    "Circle": {
+      "blurb": "The circle map — mode-locking, Arnold tongues, and the devil's staircase.",
+      "behavior": [
+        "mode-locking"
+      ],
+      "param_roles": {
+        "omega": "bare winding number (rotation without coupling)",
+        "k": "nonlinearity / coupling strength (critical at k=1)"
+      }
+    },
+    "Chebyshev": {
+      "blurb": "Iterated Chebyshev polynomials — exactly chaotic maps of the interval.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "map degree (integer a>=2 gives Lyapunov exponent ln a)"
+      }
+    },
+    "Gauss": {
+      "blurb": "The Gauss (continued-fraction) map — number-theoretic chaos on the unit interval.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "a": "width of the Gaussian (larger a = narrower peak)",
+        "b": "vertical shift controlling the bifurcation cascade"
+      }
+    },
+    "Ricker": {
+      "blurb": "The Ricker recruitment map — over-compensatory density dependence driving fishery population cycles and chaos.",
+      "behavior": [
+        "chaotic",
+        "cycles"
+      ],
+      "param_roles": {
+        "a": "intrinsic growth rate (the bifurcation parameter)"
+      }
+    },
+    "MaynardSmith": {
+      "blurb": "A 2-D ecological recruitment map with delayed density dependence.",
+      "behavior": [
+        "cycles"
+      ],
+      "param_roles": {
+        "a": "damping / linear feedback on the current state",
+        "b": "additive recruitment (forcing) term"
+      }
+    },
+    "DeJong": {
+      "blurb": "A Peter de Jong attractor — a sinusoidal iterated map prized for its lacework structure.",
+      "behavior": [
+        "attractor"
+      ],
+      "param_roles": {
+        "a": "map parameter selecting attractor geometry",
+        "b": "map parameter selecting attractor geometry",
+        "c": "map parameter selecting attractor geometry",
+        "d": "map parameter selecting attractor geometry"
+      }
+    },
+    "KaplanYorke": {
+      "blurb": "The Kaplan–Yorke map — a skew product whose fractal dimension is known in closed form.",
+      "behavior": [
+        "chaotic"
+      ],
+      "param_roles": {
+        "alpha": "contraction rate of the y coordinate (0<alpha<1)"
+      }
+    },
+    "Pickover": {
+      "blurb": "A Pickover (Clifford-style) 3-D ornamental attractor map.",
+      "behavior": [
+        "attractor"
+      ],
+      "param_roles": {
+        "a": "angular frequency scaling the coordinates",
+        "b": "angular frequency scaling the coordinates",
+        "c": "amplitude of the cosine contribution",
+        "d": "amplitude of the cosine contribution"
+      }
+    },
+    "Bedhead": {
+      "blurb": "An ornamental trigonometric attractor map.",
+      "behavior": [
+        "attractor"
+      ],
+      "param_roles": {
+        "a": "phase coefficient in the cos(a*x - y) term",
+        "b": "scale dividing the x*y product and the sin(y) term"
+      }
+    },
+    "GumowskiMira": {
+      "blurb": "The Gumowski–Mira map — accelerator-physics origin, endlessly varied ornamental attractors.",
+      "behavior": [
+        "attractor"
+      ],
+      "param_roles": {
+        "a": "shape coefficient of the rational nonlinearity G",
+        "b": "linear feedback gain mixing the previous y"
+      }
+    },
+    "SprottA": {
+      "blurb": "Case A of Sprott's 1994 minimal-chaos search — a five-term conservative flow identical to the Nosé–Hoover thermostat, its chaotic sea threaded with invariant tori.",
+      "behavior": "conservative",
+      "param_roles": {}
+    },
+    "SprottB": {
+      "blurb": "Case B of Sprott's 1994 search for the algebraically simplest chaotic flows — five terms and two quadratic nonlinearities.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "SprottC": {
+      "blurb": "Case C of Sprott's 1994 search for the algebraically simplest chaotic flows — five terms and two quadratic nonlinearities.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "SprottD": {
+      "blurb": "Case D of Sprott's 1994 search for the algebraically simplest chaotic flows — five terms and two quadratic nonlinearities.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "SprottE": {
+      "blurb": "Case E of Sprott's 1994 search for the algebraically simplest chaotic flows — five terms and two quadratic nonlinearities.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "SprottF": {
+      "blurb": "Case F of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient"
+      }
+    },
+    "SprottG": {
+      "blurb": "Case G of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient"
+      }
+    },
+    "SprottH": {
+      "blurb": "Case H of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient"
+      }
+    },
+    "SprottI": {
+      "blurb": "Case I of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient"
+      }
+    },
+    "SprottJ": {
+      "blurb": "Case J of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "SprottK": {
+      "blurb": "Case K of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient"
+      }
+    },
+    "SprottL": {
+      "blurb": "Case L of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient",
+        "b": "adjustable coefficient"
+      }
+    },
+    "SprottM": {
+      "blurb": "Case M of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient"
+      }
+    },
+    "SprottN": {
+      "blurb": "Case N of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "SprottO": {
+      "blurb": "Case O of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient"
+      }
+    },
+    "SprottP": {
+      "blurb": "Case P of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient"
+      }
+    },
+    "SprottQ": {
+      "blurb": "Case Q of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient",
+        "b": "adjustable coefficient"
+      }
+    },
+    "SprottR": {
+      "blurb": "Case R of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "adjustable coefficient",
+        "b": "adjustable coefficient"
+      }
+    },
+    "SprottS": {
+      "blurb": "Case S of Sprott's 1994 search for minimal chaotic flows — six terms with a single quadratic nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "SprottJerk": {
+      "blurb": "The provably algebraically-simplest dissipative chaotic flow — a single-quadratic jerk system whose Möbius-strip attractor emerges by period doubling near mu ≈ 2.017.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "mu": "damping coefficient (chaos for 2.017 < mu < 2.082)"
+      }
+    },
+    "SprottMore": {
+      "blurb": "A minimal jerk flow built from non-polynomial elementary functions — sign-function Coulomb damping plus a Gaussian nonlinearity.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "SprottTorus": {
+      "blurb": "A time-reversible equilibrium-free flow that is conservative on nested invariant tori for some initial conditions and hosts a hidden strange attractor with a twin repellor for others.",
+      "behavior": "conservative",
+      "param_roles": {}
+    },
+    "Arneodo": {
+      "blurb": "A third-order jerk system with a cubic nonlinearity whose spiral Shilnikov attractor arises from a homoclinic bifurcation.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "linear feedback coefficient",
+        "b": "linear feedback coefficient",
+        "c": "linear feedback coefficient",
+        "d": "cubic nonlinearity coefficient"
+      }
+    },
+    "GuckenheimerHolmes": {
+      "blurb": "A symmetric flow with a structurally stable heteroclinic cycle — the prototype of cycling chaos, slowing near each saddle in turn.",
+      "behavior": "cycling chaos",
+      "param_roles": {
+        "a": "linear growth/rotation coefficient",
+        "b": "linear growth/rotation coefficient",
+        "c": "linear growth/rotation coefficient",
+        "d": "nonlinear coupling coefficient",
+        "e": "nonlinear coupling coefficient",
+        "f": "nonlinear coupling coefficient"
+      }
+    },
+    "HyperLorenz": {
+      "blurb": "A four-dimensional Lorenz extension with a feedback state that lifts the flow into hyperchaos — two positive Lyapunov exponents.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "Lorenz-core coefficient",
+        "b": "Lorenz-core coefficient",
+        "c": "Lorenz-core coefficient",
+        "d": "fourth-variable feedback coefficient"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
+    },
+    "HyperRossler": {
+      "blurb": "Rössler's original four-dimensional flow — the first system shown to be hyperchaotic, with two positive Lyapunov exponents from a single quadratic term.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "flow coefficient",
+        "b": "flow coefficient",
+        "c": "flow coefficient",
+        "d": "flow coefficient"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
+    },
+    "HyperYan": {
+      "blurb": "A four-dimensional flow with multiple cross-product nonlinearities and a feedback variable producing hyperchaos.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "flow coefficient",
+        "b": "flow coefficient",
+        "c": "flow coefficient",
+        "d": "flow coefficient"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        1,
+        2,
+        3
+      ]
+    },
+    "HyperYangChen": {
+      "blurb": "A four-dimensional Chen-like flow with an added linear feedback variable that yields hyperchaotic dynamics.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "flow coefficient",
+        "b": "flow coefficient",
+        "c": "flow coefficient",
+        "d": "flow coefficient"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
+    },
+    "LorenzBounded": {
+      "blurb": "The Lorenz attractor reformulated with polynomial corrections that confine it to a bounded region, recovering the standard flow as r grows.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "sigma": "Prandtl number",
+        "rho": "Rayleigh ratio",
+        "beta": "geometric aspect ratio",
+        "r": "bounding radius (larger r recovers unbounded Lorenz)"
+      }
+    },
+    "LorenzCoupled": {
+      "blurb": "Two identical Lorenz subsystems diffusively coupled through their x-variables — the canonical testbed for chaos synchronization.",
+      "behavior": "synchronization",
+      "param_roles": {
+        "sigma": "Prandtl number (shared)",
+        "rho": "Rayleigh ratio (shared)",
+        "beta": "geometric aspect ratio (shared)",
+        "kappa": "diffusive coupling strength between the two subsystems"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        3,
+        2
+      ]
+    },
+    "MultiChua": {
+      "blurb": "A ring of Chua circuits coupled through their x-variables — multi-scroll chaos and synchronization from linked double-scroll units.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "alpha": "Chua circuit parameter",
+        "beta": "Chua circuit parameter",
+        "m0": "inner slope of the Chua diode",
+        "m1": "outer slope of the Chua diode",
+        "kappa": "ring coupling strength",
+        "n_circuits": "number of circuits in the ring (structural — changing it recompiles)"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        3,
+        6
+      ]
+    },
+    "PehlivanWei": {
+      "blurb": "A parameter-free three-dimensional flow with two quadratic nonlinearities, notable for its simple algebraic form and equilibrium structure.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "ArnoldWeb": {
+      "blurb": "A perturbed three-degree-of-freedom Hamiltonian whose overlapping resonance lines form the Arnold web governing slow chaotic diffusion in nearly integrable systems.",
+      "behavior": "conservative",
+      "param_roles": {
+        "mu": "perturbation strength coupling the three actions through the web",
+        "w": "frequency of the driving angle"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 400.0,
+        "dt": 0.05,
+        "ic": [
+          0.5,
+          0.5,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "method": "rk45"
+      }
+    },
+    "CellularNeuralNetwork": {
+      "blurb": "A three-cell continuous-time cellular neural network with piecewise-linear saturation — a hardware-realizable circuit chaos generator.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "synaptic coupling weight (CNN template feedback)",
+        "b": "synaptic coupling weight (CNN template feedback)",
+        "c": "synaptic coupling weight (CNN template feedback)",
+        "d": "synaptic coupling weight (CNN template feedback)"
+      }
+    },
+    "HyperBao": {
+      "blurb": "A 4-D hyperchaotic flow formed by adding a linear feedback controller to the Lü system, giving two positive Lyapunov exponents.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "coupling rate of the x–y (Lü) subsystem",
+        "b": "damping of the z mode",
+        "c": "self-gain of the y mode",
+        "d": "gain of the y·z term feeding the auxiliary state w",
+        "e": "feedback gain of x onto w"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
+    },
+    "HyperCai": {
+      "blurb": "A 4-D hyperchaotic flow augmenting a Lorenz-like chaotic core with a fourth feedback state, yielding two positive Lyapunov exponents.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "linear coupling rate of the x–y subsystem",
+        "b": "linear gain in the y equation",
+        "c": "linear gain in the y equation",
+        "d": "damping of the z mode (fed by y²)",
+        "e": "feedback gain of the auxiliary state w onto x"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
+    },
+    "HyperJha": {
+      "blurb": "A 4-D hyperchaotic extension of the Lorenz system with a fourth state coupled back through an x·z term, giving two positive Lyapunov exponents.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "Lorenz coupling rate of the x–y subsystem",
+        "b": "Lorenz-like gain in the y equation",
+        "c": "damping of the z mode",
+        "d": "self-gain of the auxiliary feedback state w"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
+    },
+    "HyperLu": {
+      "blurb": "A 4-D hyperchaotic flow from state-feedback control of the Lü system, with two positive Lyapunov exponents verified by an electronic-circuit realization.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "coupling rate of the x–y (Lü) subsystem",
+        "b": "damping of the z mode",
+        "c": "self-gain of the y mode",
+        "d": "self-gain of the auxiliary feedback state w"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
+    },
+    "HyperPang": {
+      "blurb": "A 4-D hyperchaotic flow built by adding a linear controller to the Lü system, with two positive Lyapunov exponents and a studied Hopf bifurcation.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "coupling rate of the x–y (Lü) subsystem",
+        "b": "damping of the z mode",
+        "c": "self-gain of the y mode",
+        "d": "feedback gain of x and y onto the auxiliary state w"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
+    },
+    "HyperQi": {
+      "blurb": "A 4-D smooth quadratic system with two large positive Lyapunov exponents — a much-studied benchmark for hyperchaos synchronization and secure communication.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "coupling rate of the x–y subsystem",
+        "b": "linear gain in the y equation",
+        "c": "damping of the z mode",
+        "d": "damping of the w mode",
+        "e": "cross-coupling gain between the z and w states",
+        "f": "cross-coupling gain between the z and w states"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        1,
+        2,
+        3
+      ]
+    },
+    "HyperWang": {
+      "blurb": "A 4-D hyperchaotic flow with a Lorenz-like core, a quadratic x² drive on the z mode, and a fourth feedback state — two positive Lyapunov exponents.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "coupling rate of the x–y subsystem",
+        "b": "linear gain in the y equation",
+        "c": "damping of the z mode",
+        "d": "feedback gain of x onto the auxiliary state w",
+        "e": "strength of the x² nonlinearity driving z"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
+    },
+    "HyperXu": {
+      "blurb": "A 4-D hyperchaotic flow from state-feedback control of a chaotic core, with two positive Lyapunov exponents and an analog-circuit realization.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "coupling rate of the x–y subsystem",
+        "b": "linear gain in the y equation",
+        "c": "damping of the z mode",
+        "d": "gain of the y feedback in the w equation",
+        "e": "strength of the x·z nonlinearity driving y"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
+    },
+    "LorenzStenflo": {
+      "blurb": "Stenflo's four-dimensional generalization of Lorenz for finite-amplitude acoustic-gravity waves in a rotating atmosphere — hyperchaotic for suitable parameters.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "Prandtl-like number coupling x and y (and damping w)",
+        "b": "geometric damping of the z mode",
+        "c": "Rayleigh-like forcing in the y equation",
+        "d": "rotation parameter coupling the auxiliary state w into x"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        2,
+        3
+      ]
+    },
+    "NewtonLiepnik": {
+      "blurb": "Euler's rigid-body equations with a linear feedback torque, producing two coexisting strange attractors selected by the initial basin.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "linear damping coefficient on the x mode",
+        "b": "linear gain on the z mode (the feedback parameter)"
+      }
+    },
+    "NuclearQuadrupole": {
+      "blurb": "A two-degree-of-freedom Hamiltonian for collective quadrupole vibrations of the nuclear surface, with a mixed regular–chaotic phase space that grows chaotic with energy.",
+      "behavior": "conservative",
+      "param_roles": {
+        "a": "coefficient of the harmonic (quadratic) part",
+        "b": "strength of the cubic anharmonic coupling between the two modes",
+        "d": "strength of the quartic anharmonic terms"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        0,
+        1,
+        3
+      ]
+    },
+    "Qi": {
+      "blurb": "A 4-D flow in which every equation carries a triple cross-product term, giving a four-wing chaotic attractor far more complex than the quadratic Lorenz family.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "coupling rate of the x–y subsystem",
+        "b": "linear gain in the y equation",
+        "c": "damping of the z mode",
+        "d": "damping of the w mode"
+      },
+      "projection": [
+        0,
+        1,
+        2
+      ],
+      "projection2": [
+        1,
+        2,
+        3
+      ]
+    },
+    "Robinson": {
+      "blurb": "A Duffing-like double-well x–y oscillator coupled to a slow z mode driven by x², producing a Lorenz-type chaotic attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "linear damping of the oscillator velocity y",
+        "b": "coefficient of the x²·y nonlinear damping term",
+        "c": "damping of the slow z mode",
+        "d": "gain of the x² forcing on z",
+        "v": "coupling strength of the y·z feedback term"
+      }
+    },
+    "Bouali2": {
+      "blurb": "An extended Van der Pol oscillator with a chaos-inducing feedback loop, proposed by Bouali as an idealised macroeconomic business-cycle model with a stretched-loop strange attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "self-excitation gain of the oscillator core",
+        "y0": "reference level of the x channel",
+        "b": "feedback gain of the z channel into x",
+        "g": "nonlinear damping of the y channel",
+        "m": "z-loop drive gain",
+        "bb": "z-loop x*z cross-product gain",
+        "c": "z-loop linear decay gain"
+      }
+    },
+    "ChenLee": {
+      "blurb": "The governing equations of a gyro with internal-torque feedback, derived from the rigid-body Euler equations, generating a symmetric two-scroll attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "self-feedback gain of the x channel",
+        "b": "self-feedback gain of the y channel",
+        "c": "self-feedback gain of the z channel"
+      }
+    },
+    "DequanLi": {
+      "blurb": "A Lorenz-family quadratic flow whose extra x*z and x**2 terms break the two-scroll structure into a three-scroll attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "x–y channel coupling gain",
+        "d": "x*z cross-product strength in the x equation",
+        "k": "forcing gain of the y channel",
+        "f": "self-feedback gain of the y channel",
+        "c": "self-feedback gain of the z channel",
+        "eps": "x**2 term strength in the z equation"
+      }
+    },
+    "LuChen": {
+      "blurb": "The Lü attractor — a quadratic flow sitting at the transition between the Lorenz and Chen systems yet belonging to neither.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "Prandtl-like x–y coupling gain",
+        "c": "self-feedback gain of the y channel",
+        "b": "linear decay rate of the z channel"
+      }
+    },
+    "LuChenCheng": {
+      "blurb": "A unified one-parameter family that interpolates continuously between the Lorenz and Chen attractors, staying chaotic across the whole transition.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "self-feedback gain of the y channel (sets x-channel decay with b)",
+        "b": "self-feedback gain of the z channel (sets x-channel decay with a)",
+        "c": "constant forcing on the x channel"
+      }
+    },
+    "QiChen": {
+      "blurb": "A Lorenz/Chen-template flow whose extra y*z term gives multiple equilibria and a four-wing chaotic attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "x–y channel coupling gain",
+        "c": "forcing gain of x into y",
+        "b": "linear decay rate of the z channel"
+      }
+    },
+    "Sakarya": {
+      "blurb": "A six-term Lorenz-family flow, realised as an electronic circuit, whose y*z and x*z nonlinearities produce a butterfly-like attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "self-feedback gain on the x channel",
+        "b": "self-feedback gain on the y channel",
+        "c": "self-feedback gain on the z channel",
+        "h": "x–y linear cross-coupling gain",
+        "p": "x–y linear cross-coupling gain",
+        "q": "x*z quadratic term strength",
+        "r": "x*y quadratic term strength",
+        "s": "y*z quadratic term strength"
+      }
+    },
+    "SanUmSrisuchinwong": {
+      "blurb": "A single-parameter chaotic flow built from just a z*tanh(x) term, a quadratic x*y product, and an abs(y) term — convenient for analogue-circuit realisation.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "constant forcing on the z channel (the single tunable parameter)"
+      }
+    },
+    "WangSun": {
+      "blurb": "A Wang–Sun quadratic flow carrying one cross-product nonlinearity per equation (y*z, x*z, x*y), producing a chaotic attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "self-feedback gain on the x channel",
+        "d": "self-feedback gain on the y channel",
+        "e": "self-feedback gain on the z channel",
+        "b": "linear x-into-y coupling gain",
+        "q": "y*z cross-product strength in the x equation",
+        "f": "x*y cross-product strength in the z equation"
+      }
+    },
+    "YuWang": {
+      "blurb": "A Yu–Wang flow whose z equation carries a quadratic-exponential exp(x*y) nonlinearity, yielding a compound mirror-merged attractor unlike the purely quadratic Lorenz family.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "x–y channel coupling gain",
+        "b": "forcing gain of x into y",
+        "c": "x*z cross-product strength in the y equation",
+        "d": "linear decay rate of the z channel"
+      }
+    },
+    "YuWang2": {
+      "blurb": "A variant of the Yu–Wang flow with the exponential replaced by a cosh(x*y) term, again producing a compound chaotic attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "x–y channel coupling gain",
+        "b": "forcing gain of x into y",
+        "c": "x*z cross-product strength in the y equation",
+        "d": "linear decay rate of the z channel"
+      }
+    },
+    "ZhouChen": {
+      "blurb": "A Zhou–Chen quadratic flow carrying paired y*z nonlinearities alongside x*z and x*y terms, producing a chaotic attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "self-feedback gain on the x channel",
+        "c": "self-feedback gain on the y channel",
+        "e": "self-feedback gain on the z channel",
+        "b": "linear y-into-x coupling gain",
+        "d": "y*z cross-product strength in the y equation"
+      }
+    },
+    "ArnoldBeltramiChildress": {
+      "blurb": "An exact steady Beltrami solution of Euler's equations whose streamlines are generically chaotic — the classic example of Lagrangian chaos and fast-dynamo theory.",
+      "behavior": "chaotic advection",
+      "param_roles": {
+        "a": "amplitude of the first Beltrami component",
+        "b": "amplitude of the second Beltrami component",
+        "c": "amplitude of the third Beltrami component"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "wrap": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 120.0,
+        "ic": [
+          0.6,
+          0.3,
+          0.1
+        ]
+      }
+    },
+    "AtmosphericRegime": {
+      "blurb": "Two coupled oscillators with widely spaced frequencies whose timescale separation drives intermittent bursts between quasi-stationary weather regimes.",
+      "behavior": "intermittent",
+      "param_roles": {
+        "alpha": "quadratic slow–fast coupling coefficient",
+        "beta": "quadratic slow–fast coupling coefficient",
+        "mu1": "linear growth/damping of the slow mode",
+        "mu2": "linear growth/damping of the fast oscillator",
+        "omega": "natural frequency of the fast oscillator",
+        "sigma": "bilinear slow–fast feedback strength"
+      }
+    },
+    "BlinkingRotlet": {
+      "blurb": "A passive tracer stirred by two off-centre rotlets that alternate on and off, folding and stretching material lines into chaotic Stokes-flow advection.",
+      "behavior": "chaotic advection",
+      "param_roles": {
+        "a": "cell radius",
+        "b": "rotlet offset radius",
+        "bc": "rotlet strength",
+        "sigma": "rotlet circulation sign/scale",
+        "tau": "blinking period"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "polar",
+        "final_time": 400.0,
+        "dt": 0.05,
+        "ic": [
+          0.8,
+          4.887,
+          0.0
+        ],
+        "method": "rk45"
+      }
+    },
+    "DoubleGyre": {
+      "blurb": "A kinematic pair of counter-rotating gyres with a periodically oscillating separatrix — the canonical benchmark for Lagrangian coherent structures and chaotic advection.",
+      "behavior": "chaotic advection",
+      "param_roles": {
+        "alpha": "overall advection speed",
+        "eps": "amplitude of the gyre-boundary oscillation",
+        "omega": "boundary oscillation frequency"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 140.0,
+        "ic": [
+          1.0,
+          0.5,
+          0.0
+        ]
+      }
+    },
+    "Hadley": {
+      "blurb": "The Lorenz-84 caricature of the mid-latitude westerly circulation — a zonal current coupled to superposed eddies that yields irregular, intransitive weather.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "damping rate of the zonal flow",
+        "b": "nonlinear eddy-displacement coupling",
+        "f": "symmetric thermal forcing of the zonal flow",
+        "g": "asymmetric thermal forcing of the eddies"
+      }
+    },
+    "OscillatingFlow": {
+      "blurb": "A kinematic array of convection rolls with laterally oscillating boundaries whose time-dependent separatrices chaotically transport tracers between adjacent cells.",
+      "behavior": "chaotic advection",
+      "param_roles": {
+        "b": "amplitude of the roll-boundary oscillation",
+        "k": "roll wavenumber (roll size)",
+        "omega": "roll oscillation frequency",
+        "u": "overall flow speed"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 220.0,
+        "ic": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      }
+    },
+    "RayleighBenard": {
+      "blurb": "A three-mode Saltzman truncation of thermal convection heated from below — the convection family from which the Lorenz attractor descends.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "Prandtl-like diffusion ratio",
+        "b": "geometric aspect-ratio damping",
+        "r": "reduced Rayleigh number (convective driving)"
+      }
+    },
+    "SaltonSea": {
+      "blurb": "An eco-epidemiological fish–bird disease model whose period-doubling route to chaos was proposed to explain observed mass die-offs at the Salton Sea.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "predator functional-response half-saturation",
+        "d": "pelican predator death rate",
+        "k": "fish carrying capacity",
+        "lam": "disease transmission rate",
+        "m": "maximum predation rate on infected fish",
+        "mu": "disease-induced death rate of infected fish",
+        "r": "intrinsic fish growth rate",
+        "th": "predator conversion efficiency"
+      }
+    },
+    "VallisElNino": {
+      "blurb": "A Lorenz-like conceptual model of the tropical Pacific ocean–atmosphere that makes El Niño's aperiodicity intrinsic, with no stochastic forcing needed.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "b": "wind-driven ocean coupling gain",
+        "c": "wind-anomaly relaxation rate",
+        "p": "steady external wind forcing"
+      }
+    },
+    "CaTwoPlus": {
+      "blurb": "A calcium-induced calcium-release oscillator with self-modulated InsP₃ signalling that produces spikes, bursting, chaos, and birhythmicity.",
+      "behavior": "bursting",
+      "param_roles": {
+        "V0": "constant Ca²⁺ influx into the cytosol",
+        "V1": "stimulus-dependent Ca²⁺ influx",
+        "beta": "external stimulus saturation",
+        "Vm2": "maximum Ca²⁺ pumping rate into the store",
+        "Vm3": "maximum CICR-mediated release rate",
+        "Vm5": "maximum InsP₃-degrading kinase rate",
+        "V4": "maximum stimulus-induced InsP₃ synthesis rate",
+        "K2": "Michaelis constant of Ca²⁺ pumping",
+        "Kz": "Michaelis constant (cytosolic Ca²⁺)",
+        "Ky": "Michaelis constant (store Ca²⁺)",
+        "Ka": "Michaelis constant of InsP₃ degradation",
+        "K5": "Michaelis constant of the kinase flux",
+        "Kd": "Michaelis constant (InsP₃ degradation)",
+        "m": "Hill coefficient of the CICR term",
+        "n": "Hill coefficient of the CICR term",
+        "p": "Hill coefficient of the InsP₃-degradation term",
+        "kf": "passive Ca²⁺ leak from the store",
+        "k": "linear cytosolic Ca²⁺ removal rate",
+        "eps": "linear InsP₃ degradation rate"
+      }
+    },
+    "ExcitableCell": {
+      "blurb": "The Chay conductance model of a bursting pancreatic β-cell — fast spiking gated by a slow Ca²⁺ wave, with period doubling and chaos across the beating–bursting transition.",
+      "behavior": "bursting",
+      "param_roles": {
+        "gi": "maximum mixed Na⁺/Ca²⁺ inward conductance",
+        "gkv": "maximum voltage-gated K⁺ conductance",
+        "gkc": "maximum Ca²⁺-activated K⁺ conductance",
+        "gl": "leak conductance",
+        "vi": "inward-current reversal potential",
+        "vk": "K⁺ reversal potential",
+        "vl": "leak reversal potential",
+        "vc": "reversal potential driving Ca²⁺ entry",
+        "vm": "half-activation voltage of the gating rate",
+        "vn": "half-activation voltage of the gating rate",
+        "kc": "intracellular Ca²⁺ removal rate",
+        "rho": "slow-timescale factor of the Ca²⁺ dynamics"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "timeseries",
+        "components": [
+          0
+        ],
+        "final_time": 800.0,
+        "dt": 0.1,
+        "ic": [
+          -40.0,
+          0.1,
+          0.5
+        ],
+        "method": "rk45"
+      }
+    },
+    "IsothermalChemical": {
+      "blurb": "The Petrov–Scott–Showalter isothermal autocatalator — cubic autocatalysis feeding a slow species, the canonical route to mixed-mode oscillations and chaos in unforced chemistry.",
+      "behavior": "mixed-mode chaotic",
+      "param_roles": {
+        "mu": "scaled inflow / precursor-decay rate",
+        "kappa": "feedback coupling of the slow species",
+        "sigma": "timescale ratio of the fast autocatalyst",
+        "delta": "timescale ratio of the slow species"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 400.0,
+        "dt": 0.05,
+        "ic": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      }
+    },
+    "ItikBanksTumor": {
+      "blurb": "A Lotka–Volterra-type cancer model of competing tumour, healthy, and immune cell populations whose interactions produce a strange attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a12": "competition of healthy cells on the tumour",
+        "a13": "competition of immune cells on the tumour",
+        "a21": "competition of the tumour on healthy cells",
+        "a31": "inactivation rate of immune cells by the tumour",
+        "r2": "growth rate of healthy host cells",
+        "r3": "maximum immune recruitment rate",
+        "k3": "half-saturation of the immune response",
+        "d3": "death rate of effector immune cells"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 1500.0,
+        "dt": 0.05,
+        "ic": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "method": "rk45"
+      }
+    },
+    "TurchinHanski": {
+      "blurb": "An empirically grounded vole–weasel predator–prey model under seasonal forcing that reproduces the latitudinal gradient from stable cycles to chaos.",
+      "behavior": "chaotic cycles",
+      "param_roles": {
+        "r": "intrinsic prey growth rate",
+        "e": "amplitude of the seasonal modulation",
+        "g": "maximum generalist predation rate",
+        "h": "half-saturation of generalist predation",
+        "a": "specialist predator attack rate",
+        "d": "half-saturation of the specialist response",
+        "s": "specialist predator growth/self-limitation rate"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 320.0,
+        "ic": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      }
+    },
+    "AnishchenkoAstakhov": {
+      "blurb": "A radiophysical self-oscillator with inertial nonlinearity — the canonical model of spiral (saddle-focus) chaos reached by the Feigenbaum period-doubling route.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "eta": "inertial-relaxation rate of the nonlinear element",
+        "mu": "excitation parameter (negative damping of the circuit)"
+      }
+    },
+    "StickSlipOscillator": {
+      "blurb": "A harmonically forced dry-friction oscillator whose Stribeck velocity switch produces alternating stick and slip phases that can turn chaotic.",
+      "behavior": "forced, non-smooth",
+      "param_roles": {
+        "a": "linear stiffness of the Duffing restoring force",
+        "b": "cubic stiffness of the Duffing restoring force",
+        "alpha": "linear velocity coefficient of the friction torque",
+        "beta": "cubic velocity coefficient of the friction torque",
+        "t0": "static (Coulomb) friction level",
+        "vs": "reference Stribeck sliding velocity",
+        "eps": "coupling weight of the friction/forcing term",
+        "gamma": "amplitude of the harmonic drive",
+        "w": "angular frequency of the harmonic drive"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 140.0,
+        "ic": [
+          0.1,
+          0.1,
+          0.1
+        ],
+        "method": "rk45"
+      }
+    },
+    "Blasius": {
+      "blurb": "A three-level food chain with Holling type-II responses whose chaotic \"teacup\" attractor is a landmark of ecological chaos.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "resource growth / interaction rate",
+        "b": "predator-prey interaction rate",
+        "c": "top-predator interaction rate",
+        "alpha1": "half-saturation constant of the lower response",
+        "alpha2": "half-saturation constant of the upper response",
+        "k1": "predator mortality rate",
+        "k2": "top-predator mortality offset",
+        "zs": "top-predator baseline (immigration) level"
+      }
+    },
+    "FluidTrampoline": {
+      "blurb": "A droplet bouncing on a vibrated soap film that acts as a nonlinear spring — increasing forcing drives simple, multi-periodic, then chaotic bouncing.",
+      "behavior": "forced, chaotic",
+      "param_roles": {
+        "gamma": "dimensionless forcing acceleration amplitude",
+        "psi": "quadratic-drag energy-loss coefficient of film contact",
+        "w": "dimensionless forcing angular frequency"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "portrait",
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 200.0,
+        "dt": 0.02,
+        "ic": [
+          0.1,
+          0.1,
+          0.0
+        ],
+        "method": "rk45"
+      }
+    },
+    "CoevolvingPredatorPrey": {
+      "blurb": "An eco-evolutionary predator-prey model where a fast-evolving prey trait feeds back on the populations, generating chaos without external forcing.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a1": "predation / conversion rate coefficient",
+        "a2": "predation / conversion rate coefficient",
+        "a3": "predation / conversion rate coefficient",
+        "b1": "saturation constant of the functional response",
+        "b2": "saturation constant of the functional response",
+        "d1": "prey intrinsic death rate",
+        "d2": "predator intrinsic death rate",
+        "delta": "trait-asymmetry parameter of the fitness landscape",
+        "k1": "coupling strength of the fitness landscape",
+        "k2": "coupling strength of the fitness landscape",
+        "k4": "coupling strength of the fitness landscape",
+        "vv": "relative timescale of trait evolution vs population dynamics"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1,
+          2
+        ],
+        "final_time": 600.0,
+        "dt": 0.05,
+        "ic": [
+          0.5,
+          0.3,
+          0.2
+        ]
+      }
+    },
+    "Finance": {
+      "blurb": "The Ma-Chen macroeconomic system — interest rate, investment demand, and price index whose quadratic couplings yield a low-dimensional chaotic attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "savings amount (interest-rate damping)",
+        "b": "per-unit investment cost (demand damping)",
+        "c": "elasticity of demand (price-index damping)"
+      }
+    },
+    "KawczynskiStrizhak": {
+      "blurb": "A three-variable polynomial reduction of the Belousov-Zhabotinsky reaction reproducing its mixed-mode and period-doubling routes to chaos.",
+      "behavior": "chaotic, bursting",
+      "param_roles": {
+        "beta": "constant drive (offset) of the slow recovery variable",
+        "gamma": "timescale / gain of the fast cubic nullcline",
+        "kappa": "relaxation rate of the slowest variable",
+        "mu": "bifurcation parameter shaping the cubic nullcline"
+      }
+    },
+    "FoldedTowel": {
+      "blurb": "Rössler's folded-towel map — the prototypical hyperchaotic map, the lowest dimension admitting two positive Lyapunov exponents.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "map parameter of the coupled quadratic recurrences",
+        "b": "map parameter of the coupled quadratic recurrences",
+        "c": "map parameter of the coupled quadratic recurrences",
+        "d": "map parameter of the coupled quadratic recurrences",
+        "e": "map parameter of the coupled quadratic recurrences",
+        "f": "map parameter of the coupled quadratic recurrences",
+        "g": "map parameter of the coupled quadratic recurrences"
+      }
+    },
+    "GeneralizedHenon": {
+      "blurb": "The Baier-Klein 3-D generalization of the Hénon map — a single quadratic term chained through a delay line, exhibiting hyperchaos.",
+      "behavior": "hyperchaotic",
+      "param_roles": {
+        "a": "nonlinearity strength of the quadratic term",
+        "b": "coupling to the delayed state (volume contraction rate)"
+      }
+    },
+    "Zaslavskii": {
+      "blurb": "The Zaslavsky dissipative standard map — a damped kicked rotor whose contraction folds the standard-map web onto a fractal strange attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "eps": "kick (perturbation) strength",
+        "nu": "coupling between action and phase advance",
+        "r": "damping rate (exp(-r) is the per-step action contraction)"
+      }
+    },
+    "Bogdanov": {
+      "blurb": "The discrete-time normal form of the Bogdanov-Takens double-zero bifurcation — invariant circles, Arnold tongues, and chaos near a cusp.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "eps": "linear damping/detuning (the Hopf parameter)",
+        "k": "strength of the quadratic x(x-1) nonlinearity",
+        "mu": "coefficient of the mixed x*y term"
+      }
+    },
+    "Hopalong": {
+      "blurb": "Barry Martin's \"Hopalong\" map — a square-root-and-sign nonlinearity that sprays iterates into layered ornamental chaotic attractors.",
+      "behavior": "attractor",
+      "param_roles": {
+        "a": "additive constant in the y-recurrence (overall offset)",
+        "b": "scale inside the square-root argument",
+        "c": "shift inside the square-root argument"
+      }
+    },
+    "Svensson": {
+      "blurb": "A trigonometric planar strange-attractor map whose sines and cosines trace intricate filamentary chaotic attractors.",
+      "behavior": "attractor",
+      "param_roles": {
+        "a": "angular frequency scaling x inside the trig terms",
+        "b": "angular frequency scaling y inside the trig terms",
+        "c": "amplitude of the cosine contribution",
+        "d": "amplitude of the sine contribution"
+      }
+    },
+    "ZeraouliaSprott": {
+      "blurb": "A minimal 2-D rational map whose x-recurrence is a single non-vanishing fraction — one of the simplest rational maps reaching chaos via a quasi-periodic route.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "gain of the rational x-recurrence (primary control parameter)",
+        "b": "linear feedback coefficient of y"
+      }
+    }
+  }
+}
