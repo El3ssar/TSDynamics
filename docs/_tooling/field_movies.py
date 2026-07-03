@@ -83,9 +83,20 @@ MOVIE_VERSION = "2"
 
 #: Output pixel size (square) for the rendered field movie.  720 px is a crisp,
 #: web-light hero; the H.264 mp4 for a 96² field stays well under a couple hundred
-#: KB (a GIF fallback is larger but still bounded).
+#: KB.
 _PX = 720
 _DPI = 100
+
+# --- GIF-fallback caps (ffmpeg-absent path only) ------------------------------
+#: The pillow-GIF fallback (only when ffmpeg is unavailable) is an uncompressed,
+#: per-frame-palettised format, so the full 600-frame / 720-px movie balloons to
+#: ~170 MB — production never hits this (CI installs ffmpeg → the ~0.4 MB mp4), but
+#: a local no-ffmpeg build would silently emit a giant file.  So the GIF branch is
+#: capped: subsample to at most :data:`_GIF_MAX_FRAMES` (evenly, via the animation's
+#: own frame schedule) and downscale to :data:`_GIF_PX`, targeting a GIF well under
+#: ~8 MB.  The mp4 path is untouched (full frames, full resolution).
+_GIF_MAX_FRAMES = 150
+_GIF_PX = 360
 
 # --- Brand background (matches the three.js viewer's dark canvas) -------------
 _BG = "#0B0F14"
@@ -349,6 +360,33 @@ def _write_poster(spec, poster_path: pathlib.Path) -> bool:
         return False
 
 
+def _cap_for_gif(spec) -> None:
+    """Cap the animated ``spec`` for the pillow-GIF fallback (in place).
+
+    A GIF is an uncompressed, per-frame-palettised format, so the full-length,
+    full-resolution field movie extrapolates to ~170 MB — production never emits it
+    (CI installs ffmpeg → the ~0.4 MB mp4), but a local no-ffmpeg build would.  So
+    lower the animation's frame count to at most :data:`_GIF_MAX_FRAMES`; the
+    animation's own :meth:`~tsdynamics.viz.spec.Animation.head_indices` then
+    subsamples the field stack **evenly** across the loop (the whole evolution is
+    still shown, just at a coarser cadence).  The pixel downscale rides on the
+    ``size=`` argument at :func:`~._render_to_cache` (:data:`_GIF_PX`).  A no-op when
+    the spec carries no animation or is already under the cap.
+    """
+    anim = getattr(spec, "animation", None)
+    if anim is None:
+        return
+    with contextlib.suppress(Exception):
+        # Cap the *played* frame count (pingpong doubles the forward sequence), so
+        # the forward n_frames target halves when pingpong is on.
+        target = _GIF_MAX_FRAMES // 2 if getattr(anim, "pingpong", False) else _GIF_MAX_FRAMES
+        current = _stack_frames(spec)
+        if current is None:
+            current = anim.n_frames
+        if current is None or int(current) > target:
+            spec.animate(n_frames=target)
+
+
 def _render_to_cache(entry, recipe: dict) -> tuple[pathlib.Path, pathlib.Path] | None:
     """Render ``entry``'s movie + poster into the cache; return ``(movie, poster)``.
 
@@ -386,7 +424,10 @@ def _render_to_cache(entry, recipe: dict) -> tuple[pathlib.Path, pathlib.Path] |
                 with mpl.rc_context({"animation.ffmpeg_args": extra}):
                     spec.save(str(tmp), fps=fps, dpi=_DPI, size=(_PX, _PX))
             else:
-                spec.save(str(tmp), fps=fps, dpi=_DPI, size=(_PX, _PX))
+                # Pillow-GIF fallback (ffmpeg absent): cap frames + downscale so the
+                # bulky per-frame-palettised GIF stays a few MB, not ~170 MB.
+                _cap_for_gif(spec)
+                spec.save(str(tmp), fps=fps, dpi=_DPI, size=(_GIF_PX, _GIF_PX))
         except Exception:  # noqa: BLE001 — encoder failure → soft-fail to static PNG
             with contextlib.suppress(OSError):
                 tmp.unlink()
