@@ -110,9 +110,9 @@ the from-data-only Python libraries correctly leave these cells blank.
 
 | Task | TSDynamics `interp` | TSDynamics `jit` | SciPy | dysts | DynamicalSystems.jl |
 |---|---:|---:|---:|---:|---:|
-| Integration — short (Lorenz, $T=100$) | **7.78 ms** | **3.58 ms** | 480.47 ms | 1.544 s | 1.72 ms |
-| Integration — long (Lorenz, $T=10000$) | **780.08 ms** | **351.24 ms** | 54.921 s | 156.802 s | 196.03 ms |
-| Poincaré section (Rössler, $y=0$, ≈1000 crossings) | **202.93 ms** | 198.11 ms | 5.306 s | — | 14.11 ms |
+| Integration — short ($T=100$) | **7.78 ms** | **3.58 ms** | 480.47 ms | 1.544 s | 1.72 ms |
+| Integration — long ($T=10000$) | **780.08 ms** | **351.24 ms** | 54.921 s | 156.802 s | 196.03 ms |
+| Poincaré section (Rössler, $y=0$) | **202.93 ms** | 198.11 ms | 5.306 s | — | 14.11 ms |
 
 Reading the ratios:
 
@@ -241,7 +241,7 @@ analytic reference, here is the estimate and its deviation $\Delta$.
 | Correlation dimension — Lorenz $= 2.05$ | 2.054 | **$3.9\times10^{-3}$** | 1.971 ($\Delta\,0.079$) | nolitsa 2.055 · dysts 2.014 · nolds 1.905 |
 | Fixed point — Hénon $x^* = 0.6314$ | 0.6314 | **$1.1\times10^{-16}$** | 0.6314 ($\Delta\,1.1\times10^{-16}$) | SciPy 0.6314 ($\Delta\,2.3\times10^{-14}$) |
 | Maximal Lyapunov — Hénon $= 0.419$ | 0.4231 | $4.1\times10^{-3}$ | 0.4222 ($\Delta\,3.2\times10^{-3}$) | nolitsa 0.4176 · nolds 0.3721 |
-| Lyapunov spectrum — Lorenz $\lambda_\max = 0.9056$ | 0.9288 | $2.3\times10^{-2}$ | 0.9086 ($\Delta\,3.0\times10^{-3}$) | — |
+| Lyapunov spectrum — Lorenz $\lambda_{\max} = 0.9056$ | 0.9288 | $2.3\times10^{-2}$ | 0.9086 ($\Delta\,3.0\times10^{-3}$) | — |
 | Integration accuracy (Lorenz $T=8$) | — | $3.33\times10^{-9}$ | — | SciPy $2.83\times10^{-9}$ · jl $1.77\times10^{-10}$ |
 
 The takeaways:
@@ -266,7 +266,7 @@ The maximal-Lyapunov-**from-data** task is famously method- and
 parameter-sensitive, and it is worth calling out because *every* library misses
 the literature value:
 
-| Method | Estimate ($\lambda_\max$, ref $= 0.9056$) |
+| Method | Estimate ($\lambda_{\max}$, ref $= 0.9056$) |
 |---|---:|
 | TSDynamics (Rosenstein) | 1.29 |
 | nolitsa (Rosenstein) | 1.299 |

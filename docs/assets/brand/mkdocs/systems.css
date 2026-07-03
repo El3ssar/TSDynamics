@@ -334,6 +334,32 @@
   min-width: 100%;
   max-width: none;
 }
+/* A dense multi-column prose table (the 6-column benchmark grid) reads better
+   tighter: trim the roomy catalogue padding so columns are not swimming in blank
+   space, and let the multi-word HEADERS wrap ("TSDynamics interp" on two lines)
+   so a header no longer forces its column wide and squeezes the first column.
+   The right-aligned numeric CELLS keep their nowrap (short values, tidy tabular
+   column); only the headers are allowed to wrap. */
+.md-typeset:not(:has(.ts-count, .ts-stats)) .md-typeset__table > table:not([class]) th,
+.md-typeset:not(:has(.ts-count, .ts-stats)) .md-typeset__table > table:not([class]) td {
+  padding: 0.5em 0.8em;
+}
+.md-typeset:not(:has(.ts-count, .ts-stats)) .md-typeset__table > table:not([class]) th {
+  white-space: normal;
+}
+/* In a DATA table — one that carries right-aligned numeric columns — keep the
+   first-column LABELS on one line: they are short ("Integration — short"), and
+   wrapping them into two or three lines is exactly the squished look to avoid;
+   nowrap lets each row sit on one line and the table scrolls if it must. A
+   pure-prose table (the Conventions colour-map grid has NO right-aligned cell) is
+   excluded by `:has(td[style*="right"])`, so its long-sentence first column still
+   wraps as it should. */
+.md-typeset:not(:has(.ts-count, .ts-stats))
+  .md-typeset__table
+  > table:not([class]):has(td[style*="right"])
+  :is(td, th):first-child {
+  white-space: nowrap;
+}
 
 /* ---- responsive: single-column cards on narrow viewports ---- */
 @media (max-width: 700px) {
