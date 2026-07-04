@@ -73,6 +73,7 @@ class Baker(DiscreteMap):
     params = {"alpha": 0.5}
     dim = 2
     reference = "Hopf (1937), Ergodentheorie (Springer, Berlin)"
+    doi = "10.1007/978-3-642-86630-2"
     # Float doubling collapses the orbit onto the x = 0 discontinuity after
     # ~53 iterations, so finite differences always straddle the jump there.
     _jacobian_fd_check = False
@@ -174,6 +175,7 @@ class Chebyshev(DiscreteMap):
     params = {"a": 6.0}
     dim = 1
     reference = "Adler & Rivlin (1964), Proc. Amer. Math. Soc. 15, 794-796"
+    doi = "10.1090/s0002-9939-1964-0202968-3"
 
     @staticmethod
     def _step(X, a):

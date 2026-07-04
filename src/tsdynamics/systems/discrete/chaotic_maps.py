@@ -20,6 +20,7 @@ class Henon(DiscreteMap):
     dim = 2
     variables = ("x", "y")
     reference = "Hénon (1976), Commun. Math. Phys. 50, 69-77"
+    doi = "10.1007/bf01608556"
     known_lyapunov = {
         "spectrum": (0.419, -1.623),
         "atol": (0.2, 0.4),
@@ -84,6 +85,7 @@ class Ikeda(DiscreteMap):
     params = {"a": 0.4, "b": 6.0, "u": 0.9}
     dim = 2
     reference = "Ikeda (1979), Opt. Commun. 30, 257-261"
+    doi = "10.1016/0030-4018(79)90090-7"
 
     @staticmethod
     def _step(X, a, b, u):
@@ -128,6 +130,7 @@ class Tinkerbell(DiscreteMap):
     default_ic = np.array([-0.72, -0.64])
     variables = ("x", "y")
     reference = "Nusse & Yorke (1994), Dynamics: Numerical Explorations"
+    doi = "10.1007/978-1-4684-0231-5"
     known_lyapunov = {
         "n_positive": 1,
         "kwargs": {"steps": 20_000},
@@ -162,6 +165,7 @@ class Gingerbreadman(DiscreteMap):
     params = {}
     dim = 2
     reference = "Devaney (1984), Physica D 10, 387-393"
+    doi = "10.1016/0167-2789(84)90187-8"
 
     @staticmethod
     def _step(X):
@@ -201,6 +205,7 @@ class Zaslavskii(DiscreteMap):
     params = {"eps": 5.0, "nu": 0.2, "r": 2.0}
     dim = 2
     reference = "Zaslavsky (1978), Phys. Lett. A 69, 145-147"
+    doi = "10.1016/0375-9601(78)90195-0"
 
     @staticmethod
     def _step(X, eps, nu, r):
@@ -255,6 +260,7 @@ class Chirikov(DiscreteMap):
     params = {"k": 0.971635}
     dim = 2
     reference = "Chirikov (1979), Phys. Rep. 52, 263-379"
+    doi = "10.1016/0370-1573(79)90023-1"
 
     @staticmethod
     def _step(X, k):
@@ -357,6 +363,7 @@ class GeneralizedHenon(DiscreteMap):
     }
     dim = 3
     reference = "Baier & Klein (1990), Phys. Lett. A 151, 281-284"
+    doi = "10.1016/0375-9601(90)90283-t"
 
     @staticmethod
     def _step(X, a, b):

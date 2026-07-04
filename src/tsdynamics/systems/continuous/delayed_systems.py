@@ -23,8 +23,8 @@ class MackeyGlass(DelaySystem):
     params = {"beta": 0.2, "gamma": 0.1, "tau": 17.0, "n": 10.0}
     dim = 1
     variables = ("x",)
-    reference = "Glass & Mackey (1979), Ann. N.Y. Acad. Sci. 316, 214-235"
-    doi = "10.1111/j.1749-6632.1979.tb29471.x"
+    reference = "Mackey & Glass (1977), Science 197, 287-289"
+    doi = "10.1126/science.267326"
     known_lyapunov = {
         "n_positive": 1,
         "kwargs": {
@@ -163,7 +163,7 @@ class PiecewiseCircuit(DelaySystem):
     params = {"alpha": 1.0, "beta": 1.0, "c": 2.24, "tau": 4.9}
     dim = 1
     reference = "Tamasevicius, Mykolaitis & Bumeliene (2006), Electron. Lett. 42, 13"
-    doi = "10.5755/j01.eie.21.5.13324"
+    doi = "10.1049/el:20061245"
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, c, tau):

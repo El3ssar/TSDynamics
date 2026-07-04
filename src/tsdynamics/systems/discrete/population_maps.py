@@ -25,6 +25,7 @@ class Logistic(DiscreteMap):
     dim = 1
     variables = ("x",)
     reference = "May (1976), Nature 261, 459-467"
+    doi = "10.1038/261459a0"
     known_lyapunov = {
         "params": {"r": 4.0},
         "spectrum": (0.6931,),  # exactly ln 2 at r = 4
@@ -64,6 +65,7 @@ class Ricker(DiscreteMap):
     params = {"a": 3.3}
     dim = 1
     reference = "Ricker (1954), J. Fish. Res. Board Can. 11, 559-623"
+    doi = "10.1139/f54-039"
 
     @staticmethod
     def _step(X, a):
@@ -101,6 +103,7 @@ class MaynardSmith(DiscreteMap):
     params = {"a": 0.87, "b": 0.75}
     dim = 2
     reference = "Maynard Smith (1968), Mathematical Ideas in Biology (Cambridge University Press)"
+    doi = "10.1017/cbo9780511565144"
 
     @staticmethod
     def _step(X, a, b):

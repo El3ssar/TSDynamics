@@ -27,6 +27,7 @@ class Gauss(DiscreteMap):
     params = {"a": 4.9, "b": -0.5}
     dim = 1
     reference = "Hilborn (2000), Chaos and Nonlinear Dynamics, 2nd ed. (Oxford University Press)"
+    doi = "10.1093/acprof:oso/9780198507239.001.0001"
 
     @staticmethod
     def _step(X, a, b):
@@ -65,6 +66,7 @@ class DeJong(DiscreteMap):
     params = {"a": 1.641, "b": 1.902, "c": 0.316, "d": 1.525}
     dim = 2
     reference = "Dewdney (1987), Scientific American 257(1), 108-111"
+    doi = "10.1038/scientificamerican0787-108"
 
     @staticmethod
     def _step(X, a, b, c, d):
@@ -116,6 +118,7 @@ class KaplanYorke(DiscreteMap):
         "Kaplan & Yorke (1979), Functional Differential Equations and "
         "Approximation of Fixed Points, Lecture Notes in Mathematics 730, 204-227"
     )
+    doi = "10.1007/bfb0064319"
 
     @staticmethod
     def _step(X, alpha):
