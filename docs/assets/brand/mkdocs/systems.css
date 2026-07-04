@@ -152,6 +152,26 @@
   margin-top: 0.55rem;
 }
 
+/* ---- animated spatial-field movie hero (Gray–Scott / Swift–Hohenberg) ----
+   A square heatmap movie, embedded as an autoplaying <video> (mp4) or <img>
+   (gif fallback).  Capped to a tidy centred square so a 720² field never
+   dominates a wide page, on the dark brand canvas like the three.js viewer. */
+.md-typeset .ts-field-movie-fig {
+  text-align: center;
+}
+.md-typeset .ts-field-movie {
+  display: block;
+  width: 100%;
+  max-width: 440px;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  object-fit: contain;
+  border: 1px solid #16202a;
+  border-radius: 14px;
+  background: #0b0f14;
+  box-shadow: 0 28px 56px -34px rgba(11, 20, 30, 0.5);
+}
+
 /* Two-projection layout for a 4-D-plus flow: side-by-side on a wide viewport,
    stacked on a narrow one.  Each panel is a shorter square-ish stage. */
 .md-typeset .ts-attractor-pair {

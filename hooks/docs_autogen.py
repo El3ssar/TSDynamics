@@ -57,6 +57,7 @@ sys.path.insert(0, str(_ROOT / "docs" / "_tooling"))
 
 import catalog as _catalog  # noqa: E402  (docs/_tooling)
 import equations as _equations  # noqa: E402
+import field_movies as _field_movies  # noqa: E402
 import figures as _figures  # noqa: E402
 import plot_dt as _plot_dt  # noqa: E402  (re-exported for downstream tuning)
 import properties as _properties  # noqa: E402
@@ -83,6 +84,10 @@ _SYSTEMS_ROOT = "systems"
 _GENERATED: dict[str, str] = {}
 #: uri → HTML for every generated interactive three.js viewer.
 _VIEWERS: dict[str, str] = {}
+#: site uri → absolute source path for every generated field-movie asset
+#: (the ``.mp4`` / ``.gif`` movie and its poster PNG — binary blobs registered
+#: from disk, not in-memory strings).
+_FIELD_MOVIE_ASSETS: dict[str, str] = {}
 _VERSION = "?"
 
 
@@ -243,16 +248,36 @@ def _static_caption(rec) -> str:
     return "phase portrait"
 
 
-def _attractor_block(
-    rec, uri: str, has_viewer: bool, has_figure: bool, has_viewer2: bool = False
-) -> list[str]:
-    """Build the attractor block: interactive viewer(s), a static figure, or a note.
+#: The caption under an animated spatial-field movie hero.
+_FIELD_MOVIE_CAPTION = "spatiotemporal field — plays automatically"
 
-    A 4-D-plus flow with a second editorial ``projection2`` shows **two** animated
-    viewers over different coordinate combinations, so the reader sees more than one
-    face of a high-dimensional attractor.  Every interactive viewer carries the exact
-    caption "Interactive: drag to rotate"; a static figure gets a short honest label.
+
+def _attractor_block(
+    rec,
+    uri: str,
+    has_viewer: bool,
+    has_figure: bool,
+    has_viewer2: bool = False,
+    field_movie: str | None = None,
+) -> list[str]:
+    """Build the attractor block: a field movie, interactive viewer(s), a static figure, or a note.
+
+    A **spatial-field system** (``_field_shape``) leads with its animated field
+    **movie** — the ``kind="field"`` heatmap evolution embedded as an autoplaying
+    ``<video>`` (its final-frame poster shown until it loads), exactly the hero the
+    three.js viewer is for a 3-D flow.  Otherwise: a 4-D-plus flow with a second
+    editorial ``projection2`` shows **two** animated viewers over different coordinate
+    combinations; every interactive viewer carries the exact caption "Interactive:
+    drag to rotate"; a static figure gets a short honest label.
     """
+    if field_movie is not None:
+        return [
+            '<figure class="ts-attractor-fig ts-field-movie-fig" markdown>',
+            field_movie,
+            f'<figcaption class="ts-attractor-cap">{_FIELD_MOVIE_CAPTION}</figcaption>',
+            "</figure>",
+            "",
+        ]
     if has_viewer:
         primary = _viewer_iframe(
             rec, uri, second=False, projection_label=_projection_caption(rec, second=False)
@@ -507,7 +532,14 @@ def _breadcrumb(rel_fn, links: list[tuple[str, str | None]]) -> str:
     return '<p class="ts-kicker">' + sep.join(crumbs) + "</p>"
 
 
-def _system_page(rec, *, has_viewer: bool, has_figure: bool, has_viewer2: bool = False) -> str:
+def _system_page(
+    rec,
+    *,
+    has_viewer: bool,
+    has_figure: bool,
+    has_viewer2: bool = False,
+    field_movie: str | None = None,
+) -> str:
     """Build the full markdown source for one system's page."""
     uri = _system_uri(rec)
     crumb = _breadcrumb(
@@ -527,8 +559,10 @@ def _system_page(rec, *, has_viewer: bool, has_figure: bool, has_viewer2: bool =
 
     parts += [_tag_pills(rec), ""]
 
-    # Attractor (viewer / figure / note).
-    parts += _attractor_block(rec, uri, has_viewer, has_figure, has_viewer2=has_viewer2)
+    # Attractor (field movie / viewer / figure / note).
+    parts += _attractor_block(
+        rec, uri, has_viewer, has_figure, has_viewer2=has_viewer2, field_movie=field_movie
+    )
 
     # Definition: prose lead-in + the symbolic equations.
     parts += ["## Definition", ""]
@@ -826,8 +860,10 @@ def on_config(config):
     # --- per-system tier (first, so the browser tables know what was built) -
     viewer_names: list[str] = []
     figure_names: list[str] = []
+    movie_names: list[str] = []
     skipped: list[str] = []
     generated_systems: set[str] = set()
+    _FIELD_MOVIE_ASSETS.clear()
 
     for cats in grouped.values():
         for records in cats.values():
@@ -864,11 +900,38 @@ def on_config(config):
                     elif not has_viewer:
                         skipped.append(rec.name)
 
+                # A spatial-field system (``_field_shape``) leads with its animated
+                # field **movie** (the ``kind="field"`` heatmap evolution) instead of
+                # the static field PNG — the field analogue of the three.js hero.
+                # Registered as generated binary assets in ``on_files``; the static
+                # figure stays as the movie's no-video / TSD_DOCS_FIGURES=0 fallback.
+                field_movie_html: str | None = None
+                if WITH_FIGURES:
+                    movie = _field_movies.render(rec)
+                    if movie is not None:
+                        uri = _system_uri(rec)
+                        key = _field_movies.cache_key(rec)
+                        movie_uri = f"assets/field-movies/{rec.name}-{key}.{movie['ext']}"
+                        _FIELD_MOVIE_ASSETS[movie_uri] = str(movie["movie"])
+                        poster_uri: str | None = None
+                        if movie["poster"] is not None:
+                            poster_uri = f"assets/field-movies/{rec.name}-{key}.png"
+                            _FIELD_MOVIE_ASSETS[poster_uri] = str(movie["poster"])
+                        field_movie_html = _field_movies.embed_html(
+                            rec,
+                            uri,
+                            movie_uri=movie_uri,
+                            poster_uri=poster_uri,
+                            ext=movie["ext"],
+                        )
+                        movie_names.append(rec.name)
+
                 _GENERATED[_system_uri(rec)] = _system_page(
                     rec,
                     has_viewer=has_viewer,
                     has_figure=(has_figure and not has_viewer),
                     has_viewer2=has_viewer2,
+                    field_movie=field_movie_html,
                 )
                 generated_systems.add(rec.name)
 
@@ -900,7 +963,9 @@ def on_config(config):
     if WITH_FIGURES:
         print(
             f"docs_autogen: {len(viewer_names)} interactive viewers, "
-            f"{len(figure_names)} static figures"
+            f"{len(figure_names)} static figures, "
+            f"{len(movie_names)} field movies"
+            + (f" ({movie_names})" if movie_names else "")
             + (f", figures skipped for {len(skipped)}: {skipped}" if skipped else "")
         )
     else:
@@ -924,6 +989,17 @@ def on_files(files, config):
         if existing is not None:
             files.remove(existing)
         files.append(File.generated(config, uri, content=content))
+    # Field-movie binary assets (``.mp4`` / ``.gif`` + poster PNG) — registered from
+    # their cached path on disk (``abs_src_path``), never as in-memory strings.  Each
+    # is INCLUDED so mkdocs copies it into the site even though it lives outside the
+    # docs tree; the per-system ``<video>`` embed references it at its site uri.
+    for uri, abs_src in _FIELD_MOVIE_ASSETS.items():
+        existing = files.get_file_from_path(uri)
+        if existing is not None:
+            files.remove(existing)
+        files.append(
+            File.generated(config, uri, abs_src_path=abs_src, inclusion=InclusionLevel.INCLUDED)
+        )
     # The viewers import the shared three.js loader from ``_static/`` — a tree
     # ``exclude_docs`` drops, so mkdocs never copies it.  Emit it as a generated
     # file when any viewer shipped, so the iframe import resolves instead of

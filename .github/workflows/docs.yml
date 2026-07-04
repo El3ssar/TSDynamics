@@ -1,9 +1,11 @@
 # Documentation: build on every PR and push to main (validation),
 # deploy to GitHub Pages only on push to main.
 #
-# System figures are rendered at build time by hooks/docs_autogen.py with an
-# on-disk cache (.cache/docs-figures) keyed by class-source hashes, restored
-# via actions/cache so only new/changed systems re-render.
+# System figures (and the Gray-Scott / Swift-Hohenberg animated field-movie
+# heroes) are rendered at build time by hooks/docs_autogen.py with on-disk caches
+# (.cache/docs-figures, .cache/docs-field-movies) keyed by class-source hashes,
+# restored via actions/cache so only new/changed systems re-render.  The field
+# movies encode an mp4 via ffmpeg (installed below).
 
 name: Documentation
 
@@ -51,6 +53,17 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # The spatial-field systems (Gray-Scott / Swift-Hohenberg) render an animated
+      # field-movie hero (docs/_tooling/field_movies.py) as an H.264 mp4 via
+      # matplotlib's ffmpeg writer.  ffmpeg is not preinstalled on ubuntu-latest, so
+      # install it; a cache hit (below) skips the render entirely, and a cache miss
+      # without ffmpeg would fall back to a (larger) pillow GIF, so this keeps the
+      # hero a small mp4.
+      - name: Install ffmpeg (field-movie encoder)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      # Restore the figure + field-movie caches (both content-addressed by class
+      # source + tooling), so only new/changed systems ever re-render.
       - name: Restore figure cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -58,6 +71,14 @@ jobs:
           key: docs-figures-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/**') }}
           restore-keys: |
             docs-figures-
+
+      - name: Restore field-movie cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .cache/docs-field-movies
+          key: docs-field-movies-${{ hashFiles('src/tsdynamics/systems/**', 'docs/_tooling/field_movies.py', 'src/tsdynamics/viz/render/mpl/**') }}
+          restore-keys: |
+            docs-field-movies-
 
       - name: Sync project + docs deps
         run: uv sync --group docs
