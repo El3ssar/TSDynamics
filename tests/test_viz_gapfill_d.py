@@ -8,7 +8,8 @@ GAPFILL-D:
   imaginary axis for flows), overlaying host-first via ``overlay_on``.
 - :class:`PeriodicOrbit` → a phase-portrait spec plus a Floquet
   ``EIGENVALUE_PLANE`` marking the trivial ``μ ≈ 1`` multiplier distinctly.
-- :class:`OrbitDiagram` → bifurcation onsets carried as ``"vline"`` annotations.
+- :class:`OrbitDiagram` → a clean scatter by default; bifurcation onsets carried
+  as ``"vline"`` annotations only under the opt-in ``to_plot_spec(annotate=True)``.
 - :class:`ReturnMap` → a ``COBWEB`` staircase in addition to its scatter.
 - ``period_diagnostic`` → a ``DIAGNOSTIC_CURVE`` of the autocorrelation / FFT.
 
@@ -210,10 +211,22 @@ def _orbit_diagram_with_doubling() -> OrbitDiagram:
     return OrbitDiagram(param="r", values=values, points=points, components=(0,))
 
 
-def test_orbit_diagram_carries_bifurcation_vlines() -> None:
-    """OrbitDiagram.to_plot_spec annotates detected bifurcation onsets as vlines."""
+def test_orbit_diagram_default_is_clean() -> None:
+    """The default OrbitDiagram plot is a clean scatter — no bifurcation vlines.
+
+    The onset annotations pile into an illegible smear in a chaotic cascade, so
+    they are off by default (opt in with ``annotate=True``).
+    """
     od = _orbit_diagram_with_doubling()
     spec = _assert_valid_spec(od.to_plot_spec())
+    assert spec.kind == PlotKind.ORBIT_DIAGRAM
+    assert not any(a.kind == "vline" for a in spec.annotations)
+
+
+def test_orbit_diagram_annotate_carries_bifurcation_vlines() -> None:
+    """to_plot_spec(annotate=True) annotates detected bifurcation onsets as vlines."""
+    od = _orbit_diagram_with_doubling()
+    spec = _assert_valid_spec(od.to_plot_spec(annotate=True))
     assert spec.kind == PlotKind.ORBIT_DIAGRAM
     vlines = [a for a in spec.annotations if a.kind == "vline"]
     assert vlines, "the period-1 → period-2 onset should be annotated"

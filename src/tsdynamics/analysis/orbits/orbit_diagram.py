@@ -142,23 +142,33 @@ class OrbitDiagram(AnalysisResult):
         (i,) = np.nonzero(changed)
         return cast(np.ndarray, 0.5 * (self.values[i] + self.values[i + 1]))
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def to_plot_spec(self, kind: str | None = None, *, annotate: bool = False) -> Any:
         """Describe this orbit diagram as a backend-agnostic :class:`PlotSpec`.
 
         Builds an ``ORBIT_DIAGRAM`` scatter of the asymptotic state (first
-        recorded component) against the swept parameter — the bifurcation diagram
-        — via :meth:`flat`.  The cascade onsets that :meth:`bifurcation_points`
-        detects are carried as ``"vline"``
-        :class:`~tsdynamics.viz.spec.Annotation` reference lines (each labelled
-        with the period it opens onto), so a renderer draws the period-doubling
-        boundaries over the diagram.  The :mod:`tsdynamics.viz.spec` import is
-        lazy, so building a spec never pulls a plotting library.
+        recorded component) against the swept parameter — the classic
+        bifurcation diagram — via :meth:`flat`.
+
+        **The default plot is clean** (just the scatter of asymptotic states, the
+        textbook bifurcation picture).  A chaotic period-doubling cascade contains
+        *dozens* of onsets, so drawing them all as labelled vertical reference
+        lines smears the figure into an illegible pile of overlapping text.  Pass
+        ``annotate=True`` to overlay the :meth:`bifurcation_points` onsets as
+        ``"vline"`` :class:`~tsdynamics.viz.spec.Annotation` reference lines (each
+        labelled with the period it opens onto) — best kept for a short, low-period
+        sweep where the labels don't collide.  The :mod:`tsdynamics.viz.spec`
+        import is lazy, so building a spec never pulls a plotting library.
 
         Parameters
         ----------
         kind : str, optional
             Override the semantic kind (e.g. ``"bifurcation"``).  ``None`` uses
             ``ORBIT_DIAGRAM``.
+        annotate : bool, default False
+            Overlay the detected period-doubling onsets as labelled vertical
+            reference lines.  Off by default so the default ``.plot()`` is a clean
+            bifurcation scatter; the :meth:`periods` / :meth:`bifurcation_points`
+            quantifiers are unaffected either way.
 
         Returns
         -------
@@ -168,7 +178,7 @@ class OrbitDiagram(AnalysisResult):
 
         x, y = self.flat()
         annotations: list[Any] = []
-        if len(self.values) > 1:
+        if annotate and len(self.values) > 1:
             # Compute the period sweep once and feed it to *both* the onset
             # detection and the per-line period label (instead of recomputing
             # ``periods()`` inside ``bifurcation_points()`` and again here).
