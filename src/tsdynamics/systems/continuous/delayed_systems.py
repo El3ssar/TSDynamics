@@ -170,3 +170,35 @@ class PiecewiseCircuit(DelaySystem):
         xt = Y(0, t - tau)
         f = -((xt / c) ** 3) + 3 * xt / c
         return [-alpha * xt + beta * f]
+
+
+class VossDelay(DelaySystem):
+    """
+    Voss (2002) anticipating-synchronization delay system.
+
+    A scalar delay differential equation ``x' = -alpha x + f(x(t - tau))`` with
+    a cubic feedback nonlinearity ``f(u) = -10.44 u^3 - 13.95 u^2 - 3.63 u +
+    0.85``, realised by Voss as an electronic circuit that anticipates the
+    chaotic state of a drive system.  For the default gain and delay it is
+    chaotic, with a broad Lyapunov spectrum characteristic of a
+    high-dimensional delay attractor.
+
+    Parameters
+    ----------
+    alpha : float
+        Linear relaxation (damping) rate.
+    tau : float
+        Feedback delay.
+    """
+
+    params = {"alpha": 3.24, "tau": 13.28}
+    dim = 1
+    variables = ("x",)
+    reference = "Voss (2002), Int. J. Bifurc. Chaos 12, 1619-1625"
+    doi = "10.1142/s0218127402005340"
+
+    @staticmethod
+    def _equations(Y, t, *, alpha, tau):
+        xt = Y(0, t - tau)
+        f = -10.44 * xt**3 - 13.95 * xt**2 - 3.63 * xt + 0.85
+        return [-alpha * Y(0) + f]

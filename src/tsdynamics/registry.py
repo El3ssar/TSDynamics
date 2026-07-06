@@ -30,12 +30,12 @@ Examples
 --------
 >>> from tsdynamics import registry
 >>> registry.families()
-{'ode': 120, 'dde': 5, 'sde': 3, 'map': 26}
+{'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
 >>> lorenz = registry.get("Lorenz")
 >>> lorenz.family, lorenz.category
 ('ode', 'chaotic_attractors')
 >>> [e.name for e in registry.all_systems(family="dde")]
-['MackeyGlass', 'IkedaDelay', 'SprottDelay', 'ScrollDelay', 'PiecewiseCircuit']
+['MackeyGlass', 'IkedaDelay', 'SprottDelay', 'ScrollDelay', 'PiecewiseCircuit', 'VossDelay']
 """
 
 from __future__ import annotations

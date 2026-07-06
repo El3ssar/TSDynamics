@@ -1,3 +1,5 @@
+from symengine import Min
+
 from tsdynamics.families import ContinuousSystem
 
 
@@ -159,3 +161,80 @@ class Finance(ContinuousSystem):
         row2 = [-2 * x, -b, 0]
         row3 = [-1, 0, -c]
         return row1, row2, row3
+
+
+class MacArthur(ContinuousSystem):
+    r"""MacArthur consumer–resource model (five species, five resources).
+
+    A ten-dimensional consumer–resource competition model in which five
+    consumer species ``N_i`` grow on five substitutable resources ``R_j``
+    following Liebig's law of the minimum — each species' per-capita growth is
+    set by its single scarcest resource:
+
+    .. code-block:: text
+
+        N_i' = N_i (mu_i - m)
+        R_j' = d (S_j - R_j) - sum_i c_ji mu_i N_i
+        mu_i = min_j [ r R_j / (K_ji + R_j) ]
+
+    With the phytoplankton parameters of Huisman & Weissing the model exhibits
+    sustained chaotic competition of more species than resources ("the paradox
+    of the plankton").  State is ``[N_1..N_5, R_1..R_5]``.
+
+    Parameters
+    ----------
+    d : float
+        Resource turnover (supply/dilution) rate.
+    m : float
+        Consumer mortality rate.
+    r : float
+        Maximum per-capita resource-limited growth rate.
+    """
+
+    reference = "MacArthur (1969), Proc. Natl. Acad. Sci. USA 64, 1369-1371"
+    doi = "10.1073/pnas.64.4.1369"
+    params = {"d": 0.25, "m": 0.25, "r": 1.0}
+    dim = 10
+    variables = ("N1", "N2", "N3", "N4", "N5", "R1", "R2", "R3", "R4", "R5")
+    default_ic = [
+        9.43233,
+        18.83865,
+        34.37572,
+        15.08545,
+        42.22843,
+        0.17031,
+        0.10144,
+        0.3148,
+        0.21254,
+        0.22599,
+    ]
+    #: Consumption matrix c[j][i], half-saturation constants K[j][i], and the
+    #: resource supply concentrations S[j] (Huisman & Weissing 1999).
+    _C = (
+        (0.04, 0.04, 0.07, 0.04, 0.04),
+        (0.08, 0.08, 0.08, 0.1, 0.08),
+        (0.1, 0.1, 0.1, 0.1, 0.14),
+        (0.05, 0.03, 0.03, 0.03, 0.03),
+        (0.07, 0.09, 0.07, 0.07, 0.07),
+    )
+    _K = (
+        (0.39, 0.34, 0.3, 0.24, 0.23),
+        (0.22, 0.39, 0.34, 0.3, 0.27),
+        (0.27, 0.22, 0.39, 0.34, 0.3),
+        (0.3, 0.24, 0.22, 0.39, 0.34),
+        (0.34, 0.3, 0.22, 0.2, 0.39),
+    )
+    _S = (6.0, 10.0, 14.0, 4.0, 9.0)
+
+    @staticmethod
+    def _equations(Y, t, *, d, m, r):
+        c, kmat, s = MacArthur._C, MacArthur._K, MacArthur._S
+        nn = [Y(i) for i in range(5)]
+        rr = [Y(5 + j) for j in range(5)]
+        # Liebig minimum: species i is limited by its scarcest resource.
+        mu = [Min(*[r * rr[j] / (kmat[j][i] + rr[j]) for j in range(5)]) for i in range(5)]
+        nndot = [nn[i] * (mu[i] - m) for i in range(5)]
+        rrdot = [
+            d * (s[j] - rr[j]) - sum(c[j][i] * mu[i] * nn[i] for i in range(5)) for j in range(5)
+        ]
+        return tuple(nndot + rrdot)

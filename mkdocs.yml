@@ -12,7 +12,7 @@
 
 site_name: TSDynamics
 site_description: >-
-  154 built-in dynamical systems, compiled integration, and a chaos-analysis
+  171 built-in dynamical systems, compiled integration, and a chaos-analysis
   toolkit for Python
 site_url: https://el3ssar.github.io/TSDynamics/
 site_author: Daniel Estevez

@@ -1956,3 +1956,98 @@ class RikitakeDynamo(ContinuousSystem):
         row2 = [-a + z, -mu, x]
         row3 = [-y, -x, 0]
         return row1, row2, row3
+
+
+class Coullet(Arneodo):
+    """
+    Coullet system — the Arneodo–Coullet–Tresser flow in its Volterra regime.
+
+    The same third-order jerk system as :class:`Arneodo`,
+    ``x' = y``, ``y' = z``, ``z' = -a x - b y - c z + d x^3``, but at the
+    parameter set for which Arneodo, Coullet and Tresser first reported a
+    strange attractor in their study of three-dimensional Volterra equations.
+    It exhibits a spiral-type ("Shilnikov") attractor born from a homoclinic
+    connection.
+
+    Parameters
+    ----------
+    a, b, c : float
+        Linear feedback coefficients.
+    d : float
+        Cubic nonlinearity coefficient.
+    """
+
+    params = {"a": -0.8, "b": 1.1, "c": 0.45, "d": -1.0}
+    variables = ("x", "y", "z")
+    reference = "Arneodo, Coullet & Tresser (1980), Phys. Lett. A 79, 259-263"
+    doi = "10.1016/0375-9601(80)90342-4"
+    default_ic = [0.3454, 0.4285, 0.087]
+
+
+class GenesioTesi(ContinuousSystem):
+    """
+    Genesio–Tesi (1992) chaotic control system.
+
+    A three-dimensional autonomous jerk system with a single quadratic
+    nonlinearity, written in canonical controllable form ``x' = y``,
+    ``y' = z``, ``z' = -c x - b y - a z + x^2``.  Introduced as a benchmark for
+    harmonic-balance methods that predict the onset of chaotic oscillations in
+    nonlinear feedback systems; the default gains give a Shilnikov-type strange
+    attractor.
+
+    Parameters
+    ----------
+    a, b, c : float
+        Feedback gains on the acceleration, velocity and position channels
+        respectively (the characteristic-polynomial coefficients).
+    """
+
+    params = {"a": 0.44, "b": 1.1, "c": 1.0}
+    dim = 3
+    variables = ("x", "y", "z")
+    reference = "Genesio & Tesi (1992), Automatica 28, 531-548"
+    doi = "10.1016/0005-1098(92)90177-h"
+    default_ic = [-0.0538, -0.2616, 0.335]
+
+    @staticmethod
+    def _equations(Y, t, *, a, b, c):
+        x, y, z = Y(0), Y(1), Y(2)
+        xdot = y
+        ydot = z
+        zdot = -c * x - b * y - a * z + x**2
+        return xdot, ydot, zdot
+
+    @staticmethod
+    def _jacobian(Y, t, a, b, c):
+        x, y, z = Y(0), Y(1), Y(2)
+        row1 = [0, 1, 0]
+        row2 = [0, 0, 1]
+        row3 = [-c + 2 * x, -b, -a]
+        return row1, row2, row3
+
+
+class ThomasLabyrinth(Thomas):
+    """
+    Thomas' labyrinth-chaos regime of the cyclically symmetric attractor.
+
+    The same cyclically symmetric flow as :class:`Thomas`,
+    ``x' = -a x + b sin(y)`` (and cyclic permutations), but at the weak damping
+    ``a = 0.5`` for which the trajectory performs a chaotic random walk through
+    the 3-D lattice of unstable equilibria — the "labyrinth chaos" Thomas
+    described.  Lowering ``a`` further approaches a deterministic Brownian-like
+    diffusion across the lattice.
+
+    Parameters
+    ----------
+    a : float
+        Dissipation (friction) coefficient; the small default drives the
+        labyrinth-walk regime.
+    b : float
+        Amplitude of the sinusoidal forcing.
+    """
+
+    params = {"a": 0.5, "b": 10.0}
+    variables = ("x", "y", "z")
+    reference = "Thomas (1999), Int. J. Bifurc. Chaos 9, 1889-1905"
+    doi = "10.1142/s0218127499001383"
+    default_ic = [-4.96, 1.03, -4.688]

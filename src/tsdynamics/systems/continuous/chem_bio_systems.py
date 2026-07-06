@@ -1,4 +1,4 @@
-from symengine import cos, exp, pi, sin
+from symengine import Max, cos, exp, pi, sin, sqrt
 
 from tsdynamics.families import ContinuousSystem
 
@@ -835,3 +835,137 @@ class ItikBanksTumor(ContinuousSystem):
         ydot = r2 * y * (1 - y) - a21 * x * y
         zdot = r3 * x * z / (x + k3) - a31 * x * z - d3 * z
         return xdot, ydot, zdot
+
+
+class CaTwoPlusQuasiperiodic(CaTwoPlus):
+    """Intracellular Ca²⁺ oscillator in its quasiperiodic / chaotic regime.
+
+    The same self-modulated InsP₃ calcium model as :class:`CaTwoPlus` (Houart,
+    Dupont & Goldbeter), at the parameter set for which the CICR feedback yields
+    quasiperiodic and chaotic Ca²⁺ oscillations rather than simple periodic
+    spiking.
+
+    Parameters
+    ----------
+    (all) : float
+        As in :class:`CaTwoPlus`; the defaults select the quasiperiodic regime.
+    """
+
+    reference = "Houart, Dupont & Goldbeter (1999), Bull. Math. Biol. 61, 507-530"
+    doi = "10.1006/bulm.1999.0095"
+    params = {
+        "K2": 0.1,
+        "K5": 0.3,
+        "Ka": 0.2,
+        "Kd": 0.5,
+        "Ky": 0.2,
+        "Kz": 0.5,
+        "V0": 2,
+        "V1": 2,
+        "V4": 5,
+        "Vm2": 6,
+        "Vm3": 20,
+        "Vm5": 30,
+        "beta": 0.51,
+        "eps": 0.1,
+        "k": 10,
+        "kf": 1,
+        "m": 2,
+        "n": 4,
+        "p": 2,
+    }
+    default_ic = [0.2632, 0.8789, 0.3149]
+
+
+class BelousovZhabotinsky(ContinuousSystem):
+    """
+    Györgyi–Field three-variable model of the Belousov–Zhabotinsky reaction.
+
+    A reduced three-variable model of deterministic chaos in the oscillating
+    Belousov–Zhabotinsky reaction, condensed by Györgyi and Field from a
+    detailed mechanism.  The state variables are dimensionless concentrations:
+    ``x`` (the autocatalyst HBrO₂), ``z`` (the oxidised catalyst) and ``v`` (a
+    bromomalonic-acid intermediate).  The rate law involves a square-root
+    (``rf``, the radical-feedback flux) and a positivity clamp on ``x``; the
+    common factor ``t0`` rescales time.
+
+    Parameters
+    ----------
+    c1 … c13 : float
+        Lumped rate coefficients of the reduced mechanism.
+    ci, kf, z0, y0, yb1, yb2, yb3 : float
+        Inflow/outflow and quasi-steady-state constants of the bromide and
+        catalyst balances.
+    t0 : float
+        Overall time-scaling factor.
+    """
+
+    params = {
+        "c1": -8.03474,
+        "c10": 0.0223915,
+        "c11": 7.53559e-05,
+        "c12": 8.07384e-06,
+        "c13": -0.000499825,
+        "c2": 0.05408,
+        "c3": -0.0115886,
+        "c4": 832.587,
+        "c5": -0.029155,
+        "c6": 0.00321617,
+        "c7": -0.01352,
+        "c8": -0.0831709,
+        "c9": -0.0199985,
+        "ci": 0.000833,
+        "kf": 0.00035,
+        "t0": 2308.62,
+        "y0": 7.72571e-06,
+        "yb1": 6.92813e-07,
+        "yb2": 2.00869,
+        "yb3": 0.01352,
+        "z0": 8.33e-06,
+    }
+    dim = 3
+    variables = ("x", "z", "v")
+    reference = "Györgyi & Field (1992), Nature 355, 808-810"
+    doi = "10.1038/355808a0"
+    default_ic = [0.0235, 0.617, 0.8467]
+    #: Very stiff (fast autocatalysis); the adaptive step handles the sharp
+    #: relaxation spikes.
+    _default_method = "rk45"
+
+    @staticmethod
+    def _equations(
+        Y,
+        t,
+        *,
+        c1,
+        c10,
+        c11,
+        c12,
+        c13,
+        c2,
+        c3,
+        c4,
+        c5,
+        c6,
+        c7,
+        c8,
+        c9,
+        ci,
+        kf,
+        t0,
+        y0,
+        yb1,
+        yb2,
+        yb3,
+        z0,
+    ):
+        x, z, v = Y(0), Y(1), Y(2)
+        # ``ybar`` uses the raw ``x`` in its denominator; the remaining terms use
+        # the positivity-clamped ``xc`` (bromous acid cannot go negative).
+        ybar = (1 / y0) * yb1 * z * v / (yb2 * x + yb3 + kf)
+        xc = Max(0, x)
+        rf = (ci - z0 * z) * sqrt(xc)
+        xdot = c1 * xc * ybar + c2 * ybar + c3 * xc**2 + c4 * rf + c5 * xc * z - kf * xc
+        zdot = (c6 / z0) * rf + c7 * xc * z + c8 * z * v + c9 * z - kf * z
+        vdot = c10 * xc * ybar + c11 * ybar + c12 * xc**2 + c13 * z * v - kf * v
+        return xdot * t0, zdot * t0, vdot * t0

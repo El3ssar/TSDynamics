@@ -1,6 +1,6 @@
 # Systems
 
-The catalogue of **154 built-in systems** — 120 continuous flows (ODEs), 5
+The catalogue of **171 built-in systems** — 136 continuous flows (ODEs), 6
 delay systems (DDEs), 3 stochastic systems (SDEs), and 26 discrete maps —
 browsable by family and subcategory.
 

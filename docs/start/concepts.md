@@ -229,7 +229,7 @@ time** — built-ins and your own classes alike:
 ```python
 from tsdynamics import registry
 
-registry.families()        # {'ode': 120, 'dde': 5, 'sde': 3, 'map': 26}
+registry.families()        # {'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
 registry.get("Lorenz")     # SystemEntry(name='Lorenz', family='ode', ...)
 ```
 
@@ -244,7 +244,7 @@ tests and its documentation.
 ## See also
 
 - [Defining systems](defining-systems.md) — the four contracts as one worked example
-- [Systems](../systems/index.md) — the catalogue of 154 built-ins
+- [Systems](../systems/index.md) — the catalogue of 171 built-ins
 - [Analysis](../analysis/index.md) — what to do with a system once you have one
 - [Integration & methods](../analysis/integration-and-methods.md) — solvers, tolerances, and the backends in depth
 </content>

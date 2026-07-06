@@ -29,7 +29,7 @@ uv run pre-commit install    # optional: ruff lint + format enforced at commit t
 ## The everyday loop — change-scoped testing
 
 The test suite is **registry-driven**: every per-system test is parametrised
-over all 154 built-in systems, and every analysis / transform test over the
+over all 171 built-in systems, and every analysis / transform test over the
 whole toolkit. A plain `uv run pytest` is therefore thousands of items and takes
 minutes. **Don't reach for the full suite as your inner loop.** Instead run only
 what your diff touches:

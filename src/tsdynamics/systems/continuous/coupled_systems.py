@@ -59,13 +59,15 @@ class Sakarya(ContinuousSystem):
 
 
 class Bouali2(ContinuousSystem):
-    """Bouali economic-cycle chaotic system.
+    """Bouali economic-cycle chaotic system (second parameter regime).
 
     A three-dimensional flow obtained by adding a feedback loop to an extended
     Van der Pol oscillator, proposed by Bouali as an idealised macroeconomic
     model of business cycles. The 2-D oscillator core (``x``, ``y``) supplies
     the relaxation cycle and the ``z`` feedback channel drives it chaotic for
-    suitable gains, producing a stretched-loop strange attractor.
+    suitable gains, producing a stretched-loop strange attractor. These defaults
+    are the second regime (weak, slow ``z`` feedback with ``bb = c = 0``); the
+    :class:`Bouali` sibling holds the first regime (strong ``x*z`` feedback).
 
     Parameters
     ----------
@@ -88,8 +90,9 @@ class Bouali2(ContinuousSystem):
 
     reference = "Bouali (1999), Int. J. Bifurcation Chaos 9, 745-756"
     doi = "10.1142/s0218127499000535"
-    params = {"a": 1.0, "b": -0.3, "bb": 1.0, "c": 0.05, "g": 1.0, "m": 1, "y0": 4.0}
+    params = {"a": 3.0, "b": 2.2, "bb": 0.0, "c": 0.0, "g": 1.0, "m": -0.0026667, "y0": 1.0}
     dim = 3
+    default_ic = [-0.7939, 1.3618, -0.0306]
 
     @staticmethod
     def _equations(Y, t, *, a, b, bb, c, g, m, y0):
@@ -665,3 +668,87 @@ class DequanLi(ContinuousSystem):
         row2 = [k - z, f, -x]
         row3 = [y - 2 * eps * x, x, c]
         return row1, row2, row3
+
+
+class Bouali(Bouali2):
+    """Bouali economic-cycle chaotic system (first parameter regime).
+
+    The same feedback-augmented Van der Pol flow as :class:`Bouali2`
+    (``x' = a y0 x - a x y - b z``; ``y' = -g y + g y x^2``;
+    ``z' = -1.5 m x + m bb x z - c z``), at Bouali's original parameter set with
+    strong ``x*z`` feedback (``bb = 1``) and linear decay (``c = 0.05``). It
+    produces the stretched-loop "business-cycle" strange attractor.
+
+    Parameters
+    ----------
+    a, y0, b, g, m, bb, c : float
+        As in :class:`Bouali2`.
+    """
+
+    reference = "Bouali (1999), Int. J. Bifurcation Chaos 9, 745-756"
+    doi = "10.1142/s0218127499000535"
+    params = {"a": 1.0, "b": -0.3, "bb": 1.0, "c": 0.05, "g": 1.0, "m": 1.0, "y0": 4.0}
+    default_ic = [0.3867, 3.0544, -0.0068]
+
+
+class LiuChen(Sakarya):
+    """Liu–Chen three-dimensional chaotic system.
+
+    A member of the generalized Lorenz / Sakarya family (same six-term quadratic
+    form ``x' = a x + h y + s y z``; ``y' = -b y - p x + q x z``;
+    ``z' = c z - r x y``) at the Liu–Chen parameters, which collapse the linear
+    cross-coupling (``h = p = 0``) and leave two quadratic cross-products,
+    yielding a double-scroll attractor.
+
+    Parameters
+    ----------
+    a, b, c, h, p, q, r, s : float
+        As in :class:`Sakarya`.
+    """
+
+    reference = "Liu & Chen (2004), Int. J. Bifurc. Chaos 14, 1395-1403"
+    doi = "10.1142/s0218127404009880"
+    params = {"a": 0.4, "b": 12.0, "c": -5.0, "h": 0.0, "p": 0.0, "q": -1.0, "r": 1.0, "s": 1.0}
+    default_ic = [4.6723, 0.01, -0.01]
+
+
+class PanXuZhou(DequanLi):
+    """Pan–Xu–Zhou three-dimensional chaotic attractor.
+
+    A Lorenz-family quadratic flow sharing the :class:`DequanLi` functional form
+    (``x' = a y - a x + d x z``; ``y' = k x + f y - x z``;
+    ``z' = c z + x y - eps x^2``).  At the Pan–Xu–Zhou parameters the extra
+    ``x*z`` / ``x**2`` terms vanish (``d = eps = f = 0``), reducing it to a
+    compact single-scroll chaotic attractor.
+
+    Parameters
+    ----------
+    a, c, d, eps, f, k : float
+        As in :class:`DequanLi`.
+    """
+
+    reference = "Zhou, Wuneng et al. (2008), Phys. Lett. A 372, 5773-5777"
+    doi = "10.1016/j.physleta.2008.07.032"
+    params = {"a": 10.0, "c": -2.6667, "d": 0.0, "eps": 0.0, "f": 0.0, "k": 16.0}
+    default_ic = [-3.038, -1.9805, 14.6567]
+
+
+class Tsucs2(DequanLi):
+    """Three-Scroll Unified Chaotic System 2 (TSUCS-2).
+
+    A three-scroll chaotic system in the :class:`DequanLi` family
+    (``x' = a y - a x + d x z``; ``y' = k x + f y - x z``;
+    ``z' = c z + x y - eps x^2``) at the TSUCS-2 parameters (``k = 0``), a
+    unified model that contains several three-scroll attractors as special
+    cases.
+
+    Parameters
+    ----------
+    a, c, d, eps, f, k : float
+        As in :class:`DequanLi`.
+    """
+
+    reference = "Pan, Zhou & Li (2013), Nonlinear Dyn. 73, 1965-1976"
+    doi = "10.1007/s11071-013-0922-8"
+    params = {"a": 40.0, "c": 0.833, "d": 0.5, "eps": 0.65, "f": 20.0, "k": 0.0}
+    default_ic = [1.297, 1.1214, 50.029]

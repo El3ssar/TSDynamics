@@ -22,8 +22,8 @@ Read it in order, or jump to what you need:
 
 Once you are comfortable, the rest of the site opens up:
 
-- The **[Systems](../systems/index.md)** catalogue — 154 built-in systems
-  (120 ODEs, 5 delay equations, 3 SDEs, and 26 maps), each with its equations,
+- The **[Systems](../systems/index.md)** catalogue — 171 built-in systems
+  (136 ODEs, 6 delay equations, 3 SDEs, and 26 maps), each with its equations,
   a rendered attractor, and its literature reference.
 - The **[Analysis](../analysis/index.md)** toolkit — Lyapunov spectra,
   bifurcation diagrams, Poincaré sections, fractal dimensions, recurrence
