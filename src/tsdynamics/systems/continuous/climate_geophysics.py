@@ -1,4 +1,4 @@
-from symengine import cos, pi, sin, tanh
+from symengine import cos, cosh, pi, sin, sinh, tanh
 
 from tsdynamics.families import ContinuousSystem
 
@@ -435,3 +435,179 @@ class SaltonSea(ContinuousSystem):
         ydot = lam * x * y - m * y * z / (y + a) - mu * y
         zdot = th * y * z / (y + a) - d * z
         return xdot, ydot, zdot
+
+
+class BlinkingVortex(BlinkingRotlet):
+    """Blinking-vortex flow — Aref's paradigm of chaotic advection.
+
+    The blinking-flow model of Aref: a passive tracer in a circular cell stirred
+    by two agitators at ``±b`` that alternately switch on and off with period
+    ``tau``.  It shares the rotlet velocity field and blinking machinery of
+    :class:`BlinkingRotlet`, but at the vortex parameters (``bc = 0``), and is
+    the classic demonstration that a time-periodic two-dimensional Stokes flow
+    can advect tracers chaotically.  State is ``(r, theta, t)`` in polar
+    coordinates with an explicit clock.
+
+    Parameters
+    ----------
+    a, b, bc, sigma, tau : float
+        As in :class:`BlinkingRotlet`; ``bc = 0`` selects the blinking-vortex
+        limit.
+    """
+
+    reference = "Aref (1984), J. Fluid Mech. 143, 1-21"
+    doi = "10.1017/s0022112084001233"
+    params = {"a": 1.0, "b": 0.5, "bc": 0.0, "sigma": -1.0, "tau": 3.0}
+    variables = ("r", "theta", "t")
+    default_ic = [0.8, 4.887, 0.0]
+
+
+class LidDrivenCavityFlow(ContinuousSystem):
+    r"""Time-periodic lid-driven cavity flow (chaotic advection).
+
+    Advection of a passive tracer in a two-dimensional cavity whose walls drive
+    the interior with two spatial Fourier modes, the driving alternating in
+    direction with period ``tau`` (a steep ``tanh`` blinking protocol).  The
+    Stokes stream function is a closed-form combination of hyperbolic profiles;
+    the periodic reversal folds and stretches material lines into a chaotic
+    braid.  State is ``(x, y, t)`` — the tracer position plus an explicit clock.
+
+    Parameters
+    ----------
+    a, b : float
+        Cavity width and half-height.
+    u1, u2 : float
+        Amplitudes of the first and second driving Fourier modes.
+    tau : float
+        Period of the wall-driving reversal.
+    """
+
+    reference = "Grover, Ross, Stremler & Kumar (2012), Chaos 22, 043135"
+    doi = "10.1063/1.4768666"
+    params = {"a": 6.0, "b": 1.0, "tau": 1.1, "u1": 9.92786, "u2": 8.34932}
+    dim = 3
+    variables = ("x", "y", "t")
+    default_ic = [3.9668, 0.1843, 0.0]
+
+    @staticmethod
+    def _lid(x, y, a, b, u1, u2):
+        """Interior velocity field driven from one wall (Stokes stream function)."""
+        prefactor1 = 2 * u1 * sin(pi * x / a) / (2 * b * pi + a * sinh(2 * pi * b / a))
+        prefactor2 = 2 * u2 * sin(2 * pi * x / a) / (4 * b * pi + a * sinh(4 * pi * b / a))
+        vx1 = -b * pi * sinh(pi * b / a) * sinh(pi * y / a) + cosh(pi * b / a) * (
+            pi * y * cosh(pi * y / a) + a * sinh(pi * y / a)
+        )
+        vx2 = -2 * b * pi * sinh(2 * pi * b / a) * sinh(2 * pi * y / a) + cosh(2 * pi * b / a) * (
+            2 * pi * y * cosh(2 * pi * y / a) + a * sinh(2 * pi * y / a)
+        )
+        vx = prefactor1 * vx1 + prefactor2 * vx2
+
+        prefactor1 = 2 * pi * u1 * cos(pi * x / a) / (2 * b * pi + a * sinh(2 * pi * b / a))
+        prefactor2 = 4 * pi * u2 * cos(2 * pi * x / a) / (4 * b * pi + a * sinh(4 * pi * b / a))
+        vy1 = b * sinh(pi * b / a) * cosh(pi * y / a) - cosh(pi * b / a) * y * sinh(pi * y / a)
+        vy2 = b * sinh(2 * pi * b / a) * cosh(2 * pi * y / a) - cosh(2 * pi * b / a) * y * sinh(
+            2 * pi * y / a
+        )
+        vy = prefactor1 * vy1 + prefactor2 * vy2
+        return vx, vy
+
+    @staticmethod
+    def _protocol(tt, tau, stiffness=20):
+        return 0.5 + 0.5 * tanh(tau * stiffness * sin(2 * pi * tt / tau))
+
+    @staticmethod
+    def _equations(Y, t, *, a, b, tau, u1, u2):
+        x, y, tt = Y(0), Y(1), Y(2)
+        weight = LidDrivenCavityFlow._protocol(tt, tau)
+        dx1, dy1 = LidDrivenCavityFlow._lid(x, y, a, b, u1, u2)
+        dx2, dy2 = LidDrivenCavityFlow._lid(x, y, a, b, -u1, u2)
+        dx = weight * dx1 + (1 - weight) * dx2
+        dy = weight * dy1 + (1 - weight) * dy2
+        return dx, dy, 1
+
+
+class BickleyJet(ContinuousSystem):
+    r"""Bickley jet — a kinematic model of a meandering geophysical jet.
+
+    A time-dependent streamfunction model of a Bickley (``sech^2``) zonal jet
+    perturbed by three Rossby-wave modes, used as a benchmark for Lagrangian
+    coherent structures in the atmosphere and ocean.  The state is
+    ``(y, x, z)``: the cross-stream and along-stream tracer coordinates plus a
+    slow phase ``z`` advancing the wave train.  The three wave amplitudes,
+    wavenumbers and phase speeds are fixed at their standard values.
+
+    Parameters
+    ----------
+    ell : float
+        Jet half-width.
+    u : float
+        Characteristic jet speed.
+    omega : float
+        Phase-advance rate of the wave train.
+    """
+
+    reference = "Hadjighasem, Karrasch, Teramoto & Haller (2016), Phys. Rev. E 93, 063107"
+    doi = "10.1103/physreve.93.063107"
+    params = {"ell": 1.77, "omega": 1.0, "u": 6.266e-05}
+    dim = 3
+    variables = ("y", "x", "z")
+    default_ic = [-0.4, 0.3, 0.0]
+    #: Fixed Rossby-wave amplitudes, wavenumbers and phase speeds (three modes).
+    _EPS = (0.0075, 0.15, 0.3)
+    _K = (0.313922, 0.627845, 0.941767)
+    _SIGMA = (9.05854e-06, 1.28453e-05, 2.88863e-05)
+
+    @staticmethod
+    def _equations(Y, t, *, ell, omega, u):
+        y, x, z = Y(0), Y(1), Y(2)
+        sechy = 1 / cosh(y / ell)
+        eps, k, sig = BickleyJet._EPS, BickleyJet._K, BickleyJet._SIGMA
+        un = [k[i] * (x - z * sig[i]) for i in range(3)]
+        dy = ell * u * sechy**2 * sum(eps[i] * k[i] * sin(un[i]) for i in range(3))
+        dx = u * sechy**2 * (-1 - 2 * sum(cos(un[i]) * eps[i] for i in range(3)) * tanh(y / ell))
+        dz = omega
+        return dy, dx, dz
+
+
+class InteriorSquirmer(ContinuousSystem):
+    r"""Streamlines interior to an oscillating squirmer (low-Reynolds swimmer).
+
+    The unsteady interior Stokes flow generated by a cylindrical squirmer whose
+    surface actuation oscillates in time (a steep ``tanh`` protocol switching
+    between two mode sets with period ``tau``).  A passive tracer in polar
+    coordinates ``(r, theta)`` — plus an explicit clock ``t`` — is advected
+    chaotically by the five-mode velocity field.
+
+    Parameters
+    ----------
+    tau : float
+        Period of the surface-actuation protocol.
+    """
+
+    reference = "Blake (1971), Bull. Aust. Math. Soc. 5, 255-264"
+    doi = "10.1017/s0004972700047134"
+    params = {"tau": 3.0}
+    dim = 3
+    variables = ("r", "theta", "t")
+    default_ic = [0.1, 0.1, 0.1]
+    #: The five radial (a) and tangential (g) surface-actuation mode amplitudes.
+    _A = (0.5, 0.5, 0.5, 0.5, 0.5)
+    _G = (0.5, 0.5, 0.5, 0.5, 0.5)
+
+    @staticmethod
+    def _protocol(tt, tau, stiffness=20):
+        return 0.5 + 0.5 * tanh(tau * stiffness * sin(2 * pi * tt / tau))
+
+    @staticmethod
+    def _equations(Y, t, *, tau):
+        r, th, tt = Y(0), Y(1), Y(2)
+        phase = InteriorSquirmer._protocol(tt, tau)
+        dr = 0
+        vth = 0
+        for n in range(1, 6):
+            an = InteriorSquirmer._A[n - 1] * phase
+            gn = InteriorSquirmer._G[n - 1] * (1 - phase)
+            cn, sn, rn = cos(n * th), sin(n * th), r**n
+            dr = dr + (gn * cn + an * sn) * (n * rn * (r**2 - 1)) / r
+            vth = vth + (an * cn - gn * sn) * (2 * r + (r**2 - 1) * n / r) * rn
+        return dr, vth / r, 1

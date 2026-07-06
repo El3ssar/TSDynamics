@@ -1,8 +1,10 @@
 from .chaotic_attractors import (
     Arneodo,
     Chua,
+    Coullet,
     Dadras,
     Duffing,
+    GenesioTesi,
     GuckenheimerHolmes,
     Halvorsen,
     HenonHeiles,
@@ -46,9 +48,12 @@ from .chaotic_attractors import (
     SprottS,
     SprottTorus,
     Thomas,
+    ThomasLabyrinth,
 )
 from .chem_bio_systems import (
+    BelousovZhabotinsky,
     CaTwoPlus,
+    CaTwoPlusQuasiperiodic,
     CellCycle,
     CircadianRhythm,
     ExcitableCell,
@@ -66,25 +71,33 @@ from .chem_bio_systems import (
 from .climate_geophysics import (
     ArnoldBeltramiChildress,
     AtmosphericRegime,
+    BickleyJet,
     BlinkingRotlet,
+    BlinkingVortex,
     DoubleGyre,
     Hadley,
+    InteriorSquirmer,
+    LidDrivenCavityFlow,
     OscillatingFlow,
     RayleighBenard,
     SaltonSea,
     VallisElNino,
 )
 from .coupled_systems import (
+    Bouali,
     Bouali2,
     BurkeShaw,
     Chen,
     ChenLee,
     DequanLi,
+    LiuChen,
     LuChen,
     LuChenCheng,
+    PanXuZhou,
     QiChen,
     Sakarya,
     SanUmSrisuchinwong,
+    Tsucs2,
     WangSun,
     YuWang,
     YuWang2,
@@ -96,10 +109,13 @@ from .delayed_systems import (
     PiecewiseCircuit,
     ScrollDelay,
     SprottDelay,
+    VossDelay,
 )
 from .exotic_systems import (
     ArnoldWeb,
+    BeerRNN,
     CellularNeuralNetwork,
+    Hopfield,
     HyperBao,
     HyperCai,
     HyperJha,
@@ -134,7 +150,12 @@ from .physical_systems import (
     SwingingAtwood,
     WindmiReduced,
 )
-from .population_dynamics import CoevolvingPredatorPrey, Finance, KawczynskiStrizhak
+from .population_dynamics import (
+    CoevolvingPredatorPrey,
+    Finance,
+    KawczynskiStrizhak,
+    MacArthur,
+)
 from .spatial_fields import GrayScott, SwiftHohenberg
 from .stochastic_systems import DoubleWell, GeometricBrownianMotion, OrnsteinUhlenbeck
 
@@ -150,6 +171,9 @@ __all__ += [
     "Lorenz84",
     "Rossler",
     "Thomas",
+    "ThomasLabyrinth",
+    "Coullet",
+    "GenesioTesi",
     "KuramotoSivashinsky",
     "Halvorsen",
     "Chua",
@@ -200,6 +224,8 @@ __all__ += [
     "ForcedBrusselator",
     "CircadianRhythm",
     "CaTwoPlus",
+    "CaTwoPlusQuasiperiodic",
+    "BelousovZhabotinsky",
     "ExcitableCell",
     "CellCycle",
     "HindmarshRose",
@@ -218,7 +244,11 @@ __all__ += [
     "Hadley",
     "DoubleGyre",
     "BlinkingRotlet",
+    "BlinkingVortex",
     "OscillatingFlow",
+    "LidDrivenCavityFlow",
+    "BickleyJet",
+    "InteriorSquirmer",
     "ArnoldBeltramiChildress",
     "AtmosphericRegime",
     "SaltonSea",
@@ -228,9 +258,11 @@ __all__ += [
 # coupled_systems
 __all__ += [
     "Sakarya",
+    "Bouali",
     "Bouali2",
     "LuChenCheng",
     "LuChen",
+    "LiuChen",
     "QiChen",
     "ZhouChen",
     "BurkeShaw",
@@ -241,6 +273,8 @@ __all__ += [
     "YuWang2",
     "SanUmSrisuchinwong",
     "DequanLi",
+    "PanXuZhou",
+    "Tsucs2",
 ]
 
 
@@ -251,6 +285,7 @@ __all__ += [
     "SprottDelay",
     "ScrollDelay",
     "PiecewiseCircuit",
+    "VossDelay",
 ]
 
 
@@ -271,6 +306,8 @@ __all__ += [
     "CellularNeuralNetwork",
     "NewtonLiepnik",
     "Robinson",
+    "BeerRNN",
+    "Hopfield",
 ]
 
 
@@ -301,7 +338,7 @@ __all__ += [
 
 
 # population_dynamics
-__all__ += ["CoevolvingPredatorPrey", "KawczynskiStrizhak", "Finance"]
+__all__ += ["CoevolvingPredatorPrey", "KawczynskiStrizhak", "Finance", "MacArthur"]
 
 # spatial_fields (2-D method-of-lines PDEs — spatial-field movies)
 __all__ += ["GrayScott", "SwiftHohenberg"]

@@ -110,12 +110,17 @@ def _piece_history(s: float) -> list[float]:
     return [0.4 + 0.05 * np.sin(0.15 * s)]
 
 
+def _voss_history(s: float) -> list[float]:
+    return [0.15 + 0.1 * np.sin(0.2 * s)]
+
+
 DDE_HISTORIES: dict[str, object] = {
     "MackeyGlass": _mg_history,
     "IkedaDelay": _ikeda_history,
     "SprottDelay": _sprott_history,
     "ScrollDelay": _scroll_history,
     "PiecewiseCircuit": _piece_history,
+    "VossDelay": _voss_history,
 }
 
 

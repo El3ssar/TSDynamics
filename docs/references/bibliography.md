@@ -28,21 +28,24 @@ the original paper. It has two halves:
 
 ## Systems {#systems}
 
-The 154 built-in systems cite **124 distinct sources**, grouped below by family and ordered alphabetically by first author. A handful of textbook/folklore systems (the Lissajous figures, a couple of purely illustrative maps) carry no single primary source and are omitted from this list.
+The 171 built-in systems cite **137 distinct sources**, grouped below by family and ordered alphabetically by first author. A handful of textbook/folklore systems (the Lissajous figures, a couple of purely illustrative maps) carry no single primary source and are omitted from this list.
 
 ### Ordinary differential equations
 
 - Abooee, Yaghini-Bonabi & Jahed-Motlagh (2013), Commun. Nonlinear Sci. Numer. Simul. 18, 1235-1245. [doi:10.1016/j.cnsns.2012.08.036](https://doi.org/10.1016/j.cnsns.2012.08.036)<br><span class="ts-cite-systems">Cited by: `Laser`</span>
 - Aizawa & Uezu (1982), Prog. Theor. Phys. 67, 982-985. [doi:10.1143/PTP.67.982](https://doi.org/10.1143/PTP.67.982)<br><span class="ts-cite-systems">Cited by: `Aizawa`</span>
 - Anishchenko et al. (2007), Nonlinear Dynamics of Chaotic and Stochastic Systems. [doi:10.1007/978-3-540-38168-6](https://doi.org/10.1007/978-3-540-38168-6)<br><span class="ts-cite-systems">Cited by: `AnishchenkoAstakhov`</span>
+- Aref (1984), J. Fluid Mech. 143, 1-21. [doi:10.1017/s0022112084001233](https://doi.org/10.1017/s0022112084001233)<br><span class="ts-cite-systems">Cited by: `BlinkingVortex`</span>
 - Arena, Caponetto, Fortuna & Porto (1998), Int. J. Bifurc. Chaos 8, 1527. [doi:10.1142/s0218127498001170](https://doi.org/10.1142/s0218127498001170)<br><span class="ts-cite-systems">Cited by: `CellularNeuralNetwork`</span>
-- Arneodo, Coullet & Tresser (1980), Phys. Lett. A 79, 259-263. [doi:10.1016/0375-9601(80)90342-4](https://doi.org/10.1016/0375-9601(80)90342-4)<br><span class="ts-cite-systems">Cited by: `Arneodo`</span>
+- Arneodo, Coullet & Tresser (1980), Phys. Lett. A 79, 259-263. [doi:10.1016/0375-9601(80)90342-4](https://doi.org/10.1016/0375-9601(80)90342-4)<br><span class="ts-cite-systems">Cited by: `Arneodo`, `Coullet`</span>
 - Arnold (1966), J. Appl. Math. Mech. 30, 223-226. [doi:10.1016/0021-8928(66)90070-0](https://doi.org/10.1016/0021-8928(66)90070-0)<br><span class="ts-cite-systems">Cited by: `ArnoldBeltramiChildress`</span>
 - Awrejcewicz & Holicke (1999), Int. J. Bifurc. Chaos. [doi:10.1142/s0218127499000341](https://doi.org/10.1142/s0218127499000341)<br><span class="ts-cite-systems">Cited by: `StickSlipOscillator`</span>
 - Bao & Liu (2008), Chin. Phys. Lett. 25, 2396-2399. [doi:10.1088/0256-307x/25/7/018](https://doi.org/10.1088/0256-307x/25/7/018)<br><span class="ts-cite-systems">Cited by: `HyperBao`</span>
 - Baran & Raduta (1998), Int. J. Mod. Phys. E. [doi:10.1142/s0218301398000282](https://doi.org/10.1142/s0218301398000282)<br><span class="ts-cite-systems">Cited by: `NuclearQuadrupole`</span>
+- Beer (1995), Adapt. Behav. 3, 469-509. [doi:10.1177/105971239500300405](https://doi.org/10.1177/105971239500300405)<br><span class="ts-cite-systems">Cited by: `BeerRNN`</span>
+- Blake (1971), Bull. Aust. Math. Soc. 5, 255-264. [doi:10.1017/s0004972700047134](https://doi.org/10.1017/s0004972700047134)<br><span class="ts-cite-systems">Cited by: `InteriorSquirmer`</span>
 - Blasius, Huppert & Stone (1999), Nature 399, 354-359. [doi:10.1038/20676](https://doi.org/10.1038/20676)<br><span class="ts-cite-systems">Cited by: `Blasius`</span>
-- Bouali (1999), Int. J. Bifurcation Chaos 9, 745-756. [doi:10.1142/s0218127499000535](https://doi.org/10.1142/s0218127499000535)<br><span class="ts-cite-systems">Cited by: `Bouali2`</span>
+- Bouali (1999), Int. J. Bifurcation Chaos 9, 745-756. [doi:10.1142/s0218127499000535](https://doi.org/10.1142/s0218127499000535)<br><span class="ts-cite-systems">Cited by: `Bouali`, `Bouali2`</span>
 - Cai & Huang (2007), Int. J. Nonlinear Sci..<br><span class="ts-cite-systems">Cited by: `HyperCai`</span>
 - Cai & Huang (2007), Int. J. Nonlinear Sci. 3, 235-241.<br><span class="ts-cite-systems">Cited by: `Finance`</span>
 - Chay (1985), Physica D 16, 233-242. [doi:10.1016/0167-2789(85)90060-0](https://doi.org/10.1016/0167-2789(85)90060-0)<br><span class="ts-cite-systems">Cited by: `ExcitableCell`</span>
@@ -55,12 +58,16 @@ The 154 built-in systems cite **124 distinct sources**, grouped below by family 
 - Field & Noyes (1974), J. Chem. Phys. 60, 1877-1884. [doi:10.1063/1.1681288](https://doi.org/10.1063/1.1681288)<br><span class="ts-cite-systems">Cited by: `Oregonator`</span>
 - FitzHugh (1961), Biophys. J. 1, 445-466. [doi:10.1016/s0006-3495(61)86902-6](https://doi.org/10.1016/s0006-3495(61)86902-6)<br><span class="ts-cite-systems">Cited by: `ForcedFitzHughNagumo`</span>
 - Froeschlé, Guzzo & Lega (2000), Science 289, 2108. [doi:10.1126/science.289.5487.2108](https://doi.org/10.1126/science.289.5487.2108)<br><span class="ts-cite-systems">Cited by: `ArnoldWeb`</span>
+- Genesio & Tesi (1992), Automatica 28, 531-548. [doi:10.1016/0005-1098(92)90177-h](https://doi.org/10.1016/0005-1098(92)90177-h)<br><span class="ts-cite-systems">Cited by: `GenesioTesi`</span>
 - Gilet & Bush (2009), J. Fluid Mech. 625, 167-203. [doi:10.1017/s0022112008005442](https://doi.org/10.1017/s0022112008005442)<br><span class="ts-cite-systems">Cited by: `FluidTrampoline`</span>
 - Gilpin & Feldman (2017), PLoS Comput. Biol. 13, e1005644. [doi:10.1371/journal.pcbi.1005644](https://doi.org/10.1371/journal.pcbi.1005644)<br><span class="ts-cite-systems">Cited by: `CoevolvingPredatorPrey`</span>
+- Grover, Ross, Stremler & Kumar (2012), Chaos 22, 043135. [doi:10.1063/1.4768666](https://doi.org/10.1063/1.4768666)<br><span class="ts-cite-systems">Cited by: `LidDrivenCavityFlow`</span>
 - Guckenheimer & Holmes (1988), Math. Proc. Camb. Phil. Soc. 103, 189-192. [doi:10.1017/s0305004100064732](https://doi.org/10.1017/s0305004100064732)<br><span class="ts-cite-systems">Cited by: `GuckenheimerHolmes`</span>
+- Györgyi & Field (1992), Nature 355, 808-810. [doi:10.1038/355808a0](https://doi.org/10.1038/355808a0)<br><span class="ts-cite-systems">Cited by: `BelousovZhabotinsky`</span>
+- Hadjighasem, Karrasch, Teramoto & Haller (2016), Phys. Rev. E 93, 063107. [doi:10.1103/physreve.93.063107](https://doi.org/10.1103/physreve.93.063107)<br><span class="ts-cite-systems">Cited by: `BickleyJet`</span>
 - Hastings & Powell (1991), Ecology 72, 896-903. [doi:10.2307/1940591](https://doi.org/10.2307/1940591)<br><span class="ts-cite-systems">Cited by: `HastingsPowell`</span>
 - Hindmarsh & Rose (1984), Proc. R. Soc. Lond. B 221, 87-102. [doi:10.1098/rspb.1984.0024](https://doi.org/10.1098/rspb.1984.0024)<br><span class="ts-cite-systems">Cited by: `HindmarshRose`</span>
-- Houart, Dupont & Goldbeter (1999), Bull. Math. Biol. 61, 507-530. [doi:10.1006/bulm.1999.0095](https://doi.org/10.1006/bulm.1999.0095)<br><span class="ts-cite-systems">Cited by: `CaTwoPlus`</span>
+- Houart, Dupont & Goldbeter (1999), Bull. Math. Biol. 61, 507-530. [doi:10.1006/bulm.1999.0095](https://doi.org/10.1006/bulm.1999.0095)<br><span class="ts-cite-systems">Cited by: `CaTwoPlus`, `CaTwoPlusQuasiperiodic`</span>
 - Hénon & Heiles (1964), Astron. J. 69, 73-79. [doi:10.1086/109234](https://doi.org/10.1086/109234)<br><span class="ts-cite-systems">Cited by: `HenonHeiles`</span>
 - Itik & Banks (2010), Int. J. Bifurcation Chaos 20, 71-79. [doi:10.1142/s0218127410025417](https://doi.org/10.1142/s0218127410025417)<br><span class="ts-cite-systems">Cited by: `ItikBanksTumor`</span>
 - Kennedy (1994), IEEE Trans. Circuits Syst. I 41, 771-774. [doi:10.1109/81.331536](https://doi.org/10.1109/81.331536)<br><span class="ts-cite-systems">Cited by: `Colpitts`</span>
@@ -68,20 +75,24 @@ The 154 built-in systems cite **124 distinct sources**, grouped below by family 
 - Leipnik & Newton (1981), Phys. Lett. A 86, 63. [doi:10.1016/0375-9601(81)90165-1](https://doi.org/10.1016/0375-9601(81)90165-1)<br><span class="ts-cite-systems">Cited by: `NewtonLiepnik`</span>
 - Leloup, Gonze & Goldbeter (1999); Gonze, Leloup & Goldbeter (2000). [doi:10.1177/074873099129000948](https://doi.org/10.1177/074873099129000948)<br><span class="ts-cite-systems">Cited by: `CircadianRhythm`</span>
 - Letellier & Rössler (2007), Scholarpedia 2(8), 1936. [doi:10.4249/scholarpedia.1936](https://doi.org/10.4249/scholarpedia.1936)<br><span class="ts-cite-systems">Cited by: `HyperXu`</span>
+- Lewis & Glass (1992), Neural Comput. 4, 621-642. [doi:10.1162/neco.1992.4.5.621](https://doi.org/10.1162/neco.1992.4.5.621)<br><span class="ts-cite-systems">Cited by: `Hopfield`</span>
 - Li (2008), Phys. Lett. A 372, 387-393. [doi:10.1016/j.physleta.2007.07.045](https://doi.org/10.1016/j.physleta.2007.07.045)<br><span class="ts-cite-systems">Cited by: `DequanLi`</span>
 - Li et al. (2015), IEICE Electron. Express 12(4), 20141116. [doi:10.1587/elex.12.20141116](https://doi.org/10.1587/elex.12.20141116)<br><span class="ts-cite-systems">Cited by: `Sakarya`</span>
+- Liu & Chen (2004), Int. J. Bifurc. Chaos 14, 1395-1403. [doi:10.1142/s0218127404009880](https://doi.org/10.1142/s0218127404009880)<br><span class="ts-cite-systems">Cited by: `LiuChen`</span>
 - Lorenz (1963), J. Atmos. Sci. 20, 130-141. [doi:10.1175/1520-0469(1963)020&lt;0130:dnf&gt;2.0.co;2](https://doi.org/10.1175/1520-0469(1963)020%3C0130:dnf%3E2.0.co;2)<br><span class="ts-cite-systems">Cited by: `Lorenz`, `LorenzCoupled`</span>
 - Lorenz (1984), 'Irregularity: a fundamental property of the atmosphere', Tellus 36A, 98-110. [doi:10.1111/j.1600-0870.1984.tb00230.x](https://doi.org/10.1111/j.1600-0870.1984.tb00230.x)<br><span class="ts-cite-systems">Cited by: `Hadley`</span>
 - Lorenz (1984), Tellus 36A, 98-110. [doi:10.3402/tellusa.v36i2.11473](https://doi.org/10.3402/tellusa.v36i2.11473)<br><span class="ts-cite-systems">Cited by: `Lorenz84`</span>
 - Lorenz (1996), Proc. ECMWF Seminar on Predictability 1, 1-18.<br><span class="ts-cite-systems">Cited by: `Lorenz96`</span>
 - Lü & Chen (2002), Int. J. Bifurcation Chaos 12, 659-661. [doi:10.1142/s0218127402004620](https://doi.org/10.1142/s0218127402004620)<br><span class="ts-cite-systems">Cited by: `LuChen`</span>
 - Lü, Chen & Cheng (2004), Int. J. Bifurcation Chaos 14, 1507-1537. [doi:10.1142/s021812740401014x](https://doi.org/10.1142/s021812740401014x)<br><span class="ts-cite-systems">Cited by: `LuChenCheng`</span>
+- MacArthur (1969), Proc. Natl. Acad. Sci. USA 64, 1369-1371. [doi:10.1073/pnas.64.4.1369](https://doi.org/10.1073/pnas.64.4.1369)<br><span class="ts-cite-systems">Cited by: `MacArthur`</span>
 - Marion (1965), Classical Dynamics of Particles and Systems, Academic Press. [doi:10.1016/c2013-0-12598-6](https://doi.org/10.1016/c2013-0-12598-6)<br><span class="ts-cite-systems">Cited by: `DoublePendulum`</span>
 - Matsumoto (1984), IEEE Trans. Circuits Syst. 31, 1055-1058. [doi:10.1109/tcs.1984.1085459](https://doi.org/10.1109/tcs.1984.1085459)<br><span class="ts-cite-systems">Cited by: `Chua`</span>
 - Meier (2003), Presentation of Attractors with Cinema.<br><span class="ts-cite-systems">Cited by: `HyperJha`, `HyperLorenz`, `HyperYan`, `HyperYangChen`</span>
 - Meleshko & Aref (1996), Phys. Fluids 8, 3215-3217. [doi:10.1063/1.869128](https://doi.org/10.1063/1.869128)<br><span class="ts-cite-systems">Cited by: `BlinkingRotlet`</span>
 - Moore & Spiegel (1966), Astrophys. J. 143, 871-887. [doi:10.1086/148562](https://doi.org/10.1086/148562)<br><span class="ts-cite-systems">Cited by: `MooreSpiegel`</span>
 - Nosé (1984), J. Chem. Phys. 81, 511-519; Hoover (1985), Phys. Rev. A 31, 1695-1697. [doi:10.1103/physreva.31.1695](https://doi.org/10.1103/physreva.31.1695)<br><span class="ts-cite-systems">Cited by: `NoseHoover`</span>
+- Pan, Zhou & Li (2013), Nonlinear Dyn. 73, 1965-1976. [doi:10.1007/s11071-013-0922-8](https://doi.org/10.1007/s11071-013-0922-8)<br><span class="ts-cite-systems">Cited by: `Tsucs2`</span>
 - Pang & Liu (2011), J. Comput. Appl. Math. 235, 2775. [doi:10.1016/j.cam.2010.11.029](https://doi.org/10.1016/j.cam.2010.11.029)<br><span class="ts-cite-systems">Cited by: `HyperPang`</span>
 - Pearson (1993), Science 261, 189-192. [doi:10.1126/science.261.5118.189](https://doi.org/10.1126/science.261.5118.189)<br><span class="ts-cite-systems">Cited by: `GrayScott`</span>
 - Pehlivan & Wei (2012), Turk. J. Electr. Eng. Comput. Sci. 20, 1229-1239. [doi:10.3906/elk-1103-14](https://doi.org/10.3906/elk-1103-14)<br><span class="ts-cite-systems">Cited by: `PehlivanWei`</span>
@@ -113,7 +124,7 @@ The 154 built-in systems cite **124 distinct sources**, grouped below by family 
 - Strizhak & Kawczynski (1995), J. Phys. Chem. 99, 10830-10833. [doi:10.1021/j100027a024](https://doi.org/10.1021/j100027a024)<br><span class="ts-cite-systems">Cited by: `KawczynskiStrizhak`</span>
 - Strogatz (1994), Nonlinear Dynamics and Chaos.<br><span class="ts-cite-systems">Cited by: `Torus`</span>
 - Swift & Hohenberg (1977), Phys. Rev. A 15, 319-328. [doi:10.1103/physreva.15.319](https://doi.org/10.1103/physreva.15.319)<br><span class="ts-cite-systems">Cited by: `SwiftHohenberg`</span>
-- Thomas (1999), Int. J. Bifurc. Chaos 9, 1889-1905. [doi:10.1142/s0218127499001383](https://doi.org/10.1142/s0218127499001383)<br><span class="ts-cite-systems">Cited by: `Thomas`</span>
+- Thomas (1999), Int. J. Bifurc. Chaos 9, 1889-1905. [doi:10.1142/s0218127499001383](https://doi.org/10.1142/s0218127499001383)<br><span class="ts-cite-systems">Cited by: `Thomas`, `ThomasLabyrinth`</span>
 - Tufillaro, Abbott & Griffiths (1984), Am. J. Phys. 52, 895-903. [doi:10.1119/1.13791](https://doi.org/10.1119/1.13791)<br><span class="ts-cite-systems">Cited by: `SwingingAtwood`</span>
 - Turchin & Hanski (1997), Am. Nat. 149, 842-874. [doi:10.1086/286027](https://doi.org/10.1086/286027)<br><span class="ts-cite-systems">Cited by: `TurchinHanski`</span>
 - Tuwankotta (2006), Int. J. Non-Linear Mech. 41, 180-191. [doi:10.1016/j.ijnonlinmec.2005.02.007](https://doi.org/10.1016/j.ijnonlinmec.2005.02.007)<br><span class="ts-cite-systems">Cited by: `AtmosphericRegime`</span>
@@ -124,6 +135,7 @@ The 154 built-in systems cite **124 distinct sources**, grouped below by family 
 - Yanagita & Kaneko (1995), Physica D 82, 288-313. [doi:10.1016/0167-2789(94)00233-g](https://doi.org/10.1016/0167-2789(94)00233-g)<br><span class="ts-cite-systems">Cited by: `RayleighBenard`</span>
 - Yu & Wang (2012), Eng. Technol. Appl. Sci. Res. 2, 209-215. [doi:10.48084/etasr.86](https://doi.org/10.48084/etasr.86)<br><span class="ts-cite-systems">Cited by: `YuWang`, `YuWang2`</span>
 - Zhou & Chen (2004), Int. J. Bifurcation Chaos. [doi:10.1142/s0218127404010175](https://doi.org/10.1142/s0218127404010175)<br><span class="ts-cite-systems">Cited by: `ZhouChen`</span>
+- Zhou, Wuneng et al. (2008), Phys. Lett. A 372, 5773-5777. [doi:10.1016/j.physleta.2008.07.032](https://doi.org/10.1016/j.physleta.2008.07.032)<br><span class="ts-cite-systems">Cited by: `PanXuZhou`</span>
 
 ### Delay differential equations
 
@@ -132,6 +144,7 @@ The 154 built-in systems cite **124 distinct sources**, grouped below by family 
 - Mackey & Glass (1977), Science 197, 287-289. [doi:10.1126/science.267326](https://doi.org/10.1126/science.267326)<br><span class="ts-cite-systems">Cited by: `MackeyGlass`</span>
 - Sprott (2007), Physics Letters A 366, 397-402. [doi:10.1016/j.physleta.2007.01.083](https://doi.org/10.1016/j.physleta.2007.01.083)<br><span class="ts-cite-systems">Cited by: `SprottDelay`</span>
 - Tamasevicius, Mykolaitis & Bumeliene (2006), Electron. Lett. 42, 13. [doi:10.1049/el:20061245](https://doi.org/10.1049/el:20061245)<br><span class="ts-cite-systems">Cited by: `PiecewiseCircuit`</span>
+- Voss (2002), Int. J. Bifurc. Chaos 12, 1619-1625. [doi:10.1142/s0218127402005340](https://doi.org/10.1142/s0218127402005340)<br><span class="ts-cite-systems">Cited by: `VossDelay`</span>
 
 ### Stochastic differential equations
 

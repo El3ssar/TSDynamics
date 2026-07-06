@@ -134,8 +134,8 @@ module's `__all__`), so a new system needs no manual edit there.
 
 `tsdynamics.__all__` exports:
 
-- The 154 built-in systems are reachable via `tsdynamics.systems` (154 today:
-  120 ODE + 5 DDE + 26 maps + 3 SDE), not the top-level `__all__`
+- The 171 built-in systems are reachable via `tsdynamics.systems` (171 today:
+  136 ODE + 6 DDE + 26 maps + 3 SDE), not the top-level `__all__`
 - Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`,
   `StochasticSystem`; result type `Trajectory`
 - Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
@@ -947,7 +947,7 @@ inner loop** — see below.
 
 ### Change-scoped testing (stream CI-CHANGED) — use this, not the full suite
 
-The bulk suite is registry-driven (every test parametrized over all 154 systems
+The bulk suite is registry-driven (every test parametrized over all 171 systems
 + every analysis/transform), so a plain `uv run pytest` is thousands of items and
 takes minutes. **To check your work, run only what your diff touches:**
 
@@ -1212,5 +1212,5 @@ exps = mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])
 
 # Registry
 from tsdynamics import registry
-registry.families()                         # {'ode': 120, 'dde': 5, 'map': 26, 'sde': 3}
+registry.families()                         # {'ode': 136, 'dde': 6, 'map': 26, 'sde': 3}
 ```

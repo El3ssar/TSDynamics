@@ -289,9 +289,9 @@ class Catalog:
         ::
 
             {
-              "total": 154,
-              "by_family": {"ode": 120, "dde": 5, "sde": 3, "map": 26},
-              "by_category": {"ode": {"chaotic_attractors": 47, ...}, ...},
+              "total": 171,
+              "by_family": {"ode": 136, "dde": 6, "sde": 3, "map": 26},
+              "by_category": {"ode": {"chaotic_attractors": 50, ...}, ...},
             }
         """
         grouped = self.by_type()

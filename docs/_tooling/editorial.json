@@ -2221,6 +2221,226 @@
         "a": "gain of the rational x-recurrence (primary control parameter)",
         "b": "linear feedback coefficient of y"
       }
+    },
+    "Coullet": {
+      "blurb": "The Arneodo–Coullet–Tresser jerk flow in its Volterra regime, whose homoclinic (Shilnikov) connection spawns a spiral strange attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "linear position feedback",
+        "b": "linear velocity feedback",
+        "c": "linear acceleration feedback",
+        "d": "cubic nonlinearity coefficient"
+      }
+    },
+    "GenesioTesi": {
+      "blurb": "A canonical jerk control system whose single quadratic nonlinearity, analysed by harmonic balance, produces a Shilnikov strange attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "acceleration feedback gain",
+        "b": "velocity feedback gain",
+        "c": "position feedback gain"
+      }
+    },
+    "ThomasLabyrinth": {
+      "blurb": "Thomas's cyclically symmetric flow at weak damping — a deterministic random walk (labyrinth chaos) across a 3-D lattice of unstable equilibria.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "dissipation (friction) coefficient",
+        "b": "sinusoidal forcing amplitude"
+      }
+    },
+    "Bouali": {
+      "blurb": "The Bouali business-cycle flow (first regime) — a feedback-augmented Van der Pol oscillator tracing a stretched-loop economic strange attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "oscillator self-excitation",
+        "b": "z→x feedback gain",
+        "bb": "x·z cross-feedback",
+        "c": "z linear decay",
+        "g": "nonlinear damping",
+        "m": "z-loop drive",
+        "y0": "reference level of x"
+      }
+    },
+    "LiuChen": {
+      "blurb": "A generalized-Lorenz double-scroll flow (Sakarya family) at the Liu–Chen parameters, keeping two quadratic cross-products with no linear cross-coupling.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "x self-feedback",
+        "b": "y self-feedback",
+        "c": "z self-feedback",
+        "h": "y→x linear coupling",
+        "p": "x→y linear coupling",
+        "q": "x·z strength",
+        "r": "x·y strength",
+        "s": "y·z strength"
+      }
+    },
+    "PanXuZhou": {
+      "blurb": "A compact single-scroll chaotic attractor in the Dequan-Li family at the Pan–Xu–Zhou parameters, where the x·z and x² terms switch off.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "x–y coupling gain",
+        "c": "z self-feedback",
+        "d": "x·z term strength",
+        "eps": "x² term strength",
+        "f": "y self-feedback",
+        "k": "y forcing gain"
+      }
+    },
+    "Tsucs2": {
+      "blurb": "The Three-Scroll Unified Chaotic System (TSUCS-2), a Dequan-Li-family flow unifying several three-scroll attractors.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "a": "x–y coupling gain",
+        "c": "z self-feedback",
+        "d": "x·z term strength",
+        "eps": "x² term strength",
+        "f": "y self-feedback",
+        "k": "y forcing gain"
+      }
+    },
+    "CaTwoPlusQuasiperiodic": {
+      "blurb": "The Houart–Dupont–Goldbeter intracellular Ca²⁺ oscillator in its quasiperiodic/chaotic regime, driven by self-modulated InsP₃ feedback.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "beta": "external stimulus level",
+        "V0": "constant Ca²⁺ influx",
+        "kf": "store leak rate",
+        "k": "cytosolic Ca²⁺ removal",
+        "eps": "InsP₃ degradation rate"
+      }
+    },
+    "BelousovZhabotinsky": {
+      "blurb": "The Györgyi–Field three-variable model of deterministic chaos in the oscillating Belousov–Zhabotinsky reaction.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "kf": "reactor in/out-flow rate",
+        "t0": "overall time-scaling factor",
+        "ci": "bromate feed concentration"
+      }
+    },
+    "BlinkingVortex": {
+      "blurb": "Aref's blinking-vortex flow — the paradigm of chaotic advection, in which two alternately-active agitators stir a passive tracer chaotically.",
+      "behavior": "chaotic advection",
+      "param_roles": {
+        "a": "cell radius",
+        "b": "vortex offset radius",
+        "bc": "vortex strength",
+        "sigma": "circulation sign/scale",
+        "tau": "blinking period"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "polar",
+        "final_time": 400.0,
+        "dt": 0.05,
+        "ic": [
+          0.8,
+          4.887,
+          0.0
+        ],
+        "method": "rk45"
+      }
+    },
+    "LidDrivenCavityFlow": {
+      "blurb": "A time-periodic lid-driven cavity whose two-mode wall driving reverses each period, braiding passive tracers into topological chaos.",
+      "behavior": "chaotic advection",
+      "param_roles": {
+        "a": "cavity width",
+        "b": "cavity half-height",
+        "u1": "first driving-mode amplitude",
+        "u2": "second driving-mode amplitude",
+        "tau": "wall-reversal period"
+      },
+      "viewer": {
+        "final_time": 300.0,
+        "dt": 0.02,
+        "ic": [
+          3.9668,
+          0.1843,
+          0.0
+        ],
+        "method": "rk45"
+      }
+    },
+    "BickleyJet": {
+      "blurb": "A meandering Bickley (sech²) jet perturbed by three Rossby-wave modes — a benchmark for Lagrangian coherent structures in geophysical flows.",
+      "behavior": "quasiperiodic transport",
+      "param_roles": {
+        "ell": "jet half-width",
+        "u": "characteristic jet speed",
+        "omega": "wave-train phase-advance rate"
+      },
+      "viewer": {
+        "components": [
+          0,
+          1
+        ],
+        "final_time": 40000.0,
+        "dt": 16.0,
+        "integrate_dt": 2.0,
+        "ic": [
+          -0.4,
+          0.3,
+          0.0
+        ],
+        "method": "rk4"
+      }
+    },
+    "InteriorSquirmer": {
+      "blurb": "The unsteady interior Stokes flow of an oscillating cylindrical squirmer, advecting tracers chaotically through a five-mode surface actuation.",
+      "behavior": "chaotic advection",
+      "param_roles": {
+        "tau": "surface-actuation period"
+      },
+      "viewer": {
+        "mode": "static",
+        "static_kind": "polar",
+        "final_time": 250.0,
+        "dt": 0.03,
+        "ic": [
+          0.5,
+          0.1,
+          0.1
+        ],
+        "method": "rk45"
+      }
+    },
+    "BeerRNN": {
+      "blurb": "A three-neuron continuous-time recurrent neural network (CTRNN) whose fixed weights place it on a chaotic attractor.",
+      "behavior": "chaotic",
+      "param_roles": {}
+    },
+    "Hopfield": {
+      "blurb": "A six-neuron continuous Hopfield network whose recurrent inhibition drives the neural activity chaotic (Lewis–Glass).",
+      "behavior": "chaotic",
+      "param_roles": {
+        "beta": "tonic drive",
+        "eps": "synaptic gain",
+        "tau": "membrane time constant"
+      }
+    },
+    "MacArthur": {
+      "blurb": "MacArthur's consumer–resource model — five species competing for five substitutable resources by Liebig's law, sustaining chaotic coexistence (the paradox of the plankton).",
+      "behavior": "chaotic",
+      "param_roles": {
+        "d": "resource turnover rate",
+        "m": "consumer mortality",
+        "r": "maximum growth rate"
+      },
+      "viewer": {
+        "final_time": 800.0,
+        "dt": 0.2
+      }
+    },
+    "VossDelay": {
+      "blurb": "Voss's anticipating-synchronization circuit — a scalar delay system with cubic feedback whose broad Lyapunov spectrum marks a high-dimensional delay attractor.",
+      "behavior": "chaotic",
+      "param_roles": {
+        "alpha": "linear relaxation rate",
+        "tau": "feedback delay"
+      }
     }
   }
 }

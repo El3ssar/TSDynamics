@@ -1,4 +1,4 @@
-from symengine import cos, sin, sqrt
+from symengine import cos, exp, sin, sqrt, tanh
 
 from tsdynamics.families import ContinuousSystem
 
@@ -556,3 +556,82 @@ class CellularNeuralNetwork(ContinuousSystem):
         ydot = -y - b * f(x) + c * f(y) - a * f(z)
         zdot = -z - b * f(x) + a * f(y) + f(z)
         return (xdot, ydot, zdot)
+
+
+class BeerRNN(ContinuousSystem):
+    r"""Beer's continuous-time recurrent neural network (small chaotic CTRNN).
+
+    A three-neuron continuous-time recurrent neural network (CTRNN) of the form
+    ``tau_i x_i' = -x_i + sum_j w_ij sigma(x_j + theta_j)``, with
+    ``sigma(x) = 1/(1 + e^{-x})``.  Beer showed that even three-neuron CTRNNs
+    support rich dynamics; the fixed weight matrix, biases and time constants
+    below place it on a chaotic attractor.  The connection weights are a fixed
+    property of this instance (there are no tunable scalar parameters).
+    """
+
+    reference = "Beer (1995), Adapt. Behav. 3, 469-509"
+    doi = "10.1177/105971239500300405"
+    params = {}
+    dim = 3
+    variables = ("x1", "x2", "x3")
+    default_ic = [1.50145, 2.37428, 0.65819]
+    #: Fixed connection weights, biases and time constants of the network.
+    _W = (
+        (5.422, -0.018, 2.75),
+        (-0.24, 4.59, 1.21),
+        (0.535, -2.25, 3.885),
+    )
+    _THETA = (-4.108, -2.787, -1.114)
+    _TAU = (1.0, 2.5, 1.0)
+
+    @staticmethod
+    def _equations(Y, t):
+        w, theta, tau = BeerRNN._W, BeerRNN._THETA, BeerRNN._TAU
+        sig = [1 / (1 + exp(-(Y(j) + theta[j]))) for j in range(3)]
+        return tuple((-Y(i) + sum(w[i][j] * sig[j] for j in range(3))) / tau[i] for i in range(3))
+
+
+class Hopfield(ContinuousSystem):
+    r"""Continuous Hopfield network (Lewis–Glass chaotic instance).
+
+    A six-neuron continuous Hopfield / Cohen–Grossberg network
+    ``x_i' = -x_i/tau + f(eps sum_j k_ij x_j) - beta`` with a saturating
+    transfer function ``f(x) = (1 + tanh(x))/2`` and a fixed, sparse synaptic
+    matrix ``k`` (entries in ``{-1, 0}``).  Lewis and Glass used such networks to
+    show that recurrent inhibition can drive neural activity chaotic; the
+    defaults give a chaotic attractor.
+
+    Parameters
+    ----------
+    beta : float
+        Constant tonic drive subtracted from every unit.
+    eps : float
+        Gain of the synaptic input to the transfer function.
+    tau : float
+        Membrane time constant (shared across units).
+    """
+
+    reference = "Lewis & Glass (1992), Neural Comput. 4, 621-642"
+    doi = "10.1162/neco.1992.4.5.621"
+    params = {"beta": 0.5, "eps": 10.0, "tau": 2.5}
+    dim = 6
+    variables = ("x1", "x2", "x3", "x4", "x5", "x6")
+    default_ic = [-0.67127, -0.24202, -0.05568, 0.34698, 0.45273, 0.7839]
+    #: Fixed 6x6 synaptic weight matrix (entries in {-1, 0}).
+    _K = (
+        (0, -1, 0, 0, -1, -1),
+        (0, 0, 0, -1, -1, -1),
+        (-1, -1, 0, 0, -1, 0),
+        (-1, -1, -1, 0, 0, 0),
+        (-1, -1, 0, -1, 0, 0),
+        (0, -1, -1, -1, 0, 0),
+    )
+
+    @staticmethod
+    def _equations(Y, t, *, beta, eps, tau):
+        k = Hopfield._K
+        out = []
+        for i in range(6):
+            s = sum(k[i][j] * Y(j) for j in range(6))
+            out.append(-Y(i) / tau + (1 + tanh(eps * s)) / 2 - beta)
+        return tuple(out)

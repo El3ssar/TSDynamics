@@ -54,6 +54,7 @@ def _quiet_numerics(fn):
 
     return wrapper
 
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-figures"
 OUT_DIR = ROOT / "docs" / "assets" / "figures" / "systems"
@@ -91,6 +92,17 @@ FIG_OVERRIDES: dict[str, dict] = {
         "kind": "timeseries",
         "series_labels": ("X", "Y", "Z"),  # scaled HBrO₂ / Br⁻ / Ce⁴⁺ (docstring)
     },
+    # Györgyi–Field BZ model: very fast relaxation spikes (t0 rescales time), and
+    # the ``sqrt(x)``/``max(0,x)`` terms make BDF's Jacobian singular at x=0, so the
+    # engine's *adaptive* rk45 renders the oscillation over a short window.  A
+    # time-series of the three species reads better than a v-thin phase portrait.
+    "BelousovZhabotinsky": {
+        "final_time": 0.3,
+        "dt": 1e-4,
+        "engine_method": "rk45",
+        "kind": "timeseries",
+        "series_labels": ("x", "z", "v"),  # HBrO₂ / oxidised catalyst / BrMA
+    },
     # Finite-basin systems (Blasius, RabinovichFabrikant, Sprott*, Hyper*,
     # HenonHeiles) carry their on-attractor IC as a class ``default_ic`` —
     # the renderer picks it up via ``_resolve_ic``. Only longer integration
@@ -127,6 +139,9 @@ FIG_OVERRIDES: dict[str, dict] = {
     "DoubleWell": {"final_time": 200.0, "seed": 0, "guides": (-1.0, 1.0)},
     "GeometricBrownianMotion": {"final_time": 100.0, "seed": 0},
     "OrnsteinUhlenbeck": {"final_time": 100.0, "seed": 0},
+    # Anticipating-synchronization DDE whose attractor sits near the origin — the
+    # default 0.8-centred history escapes its basin and diverges, so start small.
+    "VossDelay": {"final_time": 500.0, "dt": 0.2, "history_center": 0.15, "history_amp": 0.1},
 }
 
 
@@ -355,9 +370,18 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     # smooth; it would just echo 0.01 back and stay pixelated.  A curated per-system
     # ``dt`` override is still honoured verbatim (``choose_plot_dt`` short-circuits on
     # a figure ``dt``), so those systems keep their editorial step.
-    fine_pilot_dt = float(_plot_dt.FINE_PILOT_DT.get("ode", 0.002))
-    smooth_dt = _plot_dt.choose_plot_dt(entry, final_time=final_time, dt0=None, epsilon=0.01)
-    fine_dt = min(smooth_dt, fine_pilot_dt)
+    # A slow, smooth flow whose meaningful figure needs a *long* window (BickleyJet's
+    # tracer transport) would otherwise integrate 10M+ steps at the 0.002 fine pilot —
+    # and the sagitta pilot inside ``choose_plot_dt`` would itself march the whole
+    # window at that step.  Such a system sets an explicit coarse ``integrate_dt``
+    # (still far finer than its natural step), which bypasses the pilot entirely.
+    if opts.get("integrate_dt"):
+        fine_dt = float(opts["integrate_dt"])
+        smooth_dt = float(opts.get("dt") or fine_dt)
+    else:
+        fine_pilot_dt = float(_plot_dt.FINE_PILOT_DT.get("ode", 0.002))
+        smooth_dt = _plot_dt.choose_plot_dt(entry, final_time=final_time, dt0=None, epsilon=0.01)
+        fine_dt = min(smooth_dt, fine_pilot_dt)
     stride = max(1, int(round(smooth_dt / fine_dt)))
     # Safety floor on the point count: a pathological sagitta dt (a pilot that
     # decayed to a near-fixed manifold) must never sub-sample the drawn attractor
@@ -526,6 +550,7 @@ def _render_ode(entry, plt, opts):
     for k_src, k_dst in (
         ("final_time", "final_time"),
         ("dt", "dt"),
+        ("integrate_dt", "integrate_dt"),
         ("ic", "ic"),
         ("transient", "transient_frac"),
     ):
@@ -700,9 +725,13 @@ def _render_dde(entry, plt, opts):
     sys_obj = entry.cls()
     final_time = opts.get("final_time", 300.0)
     dt = opts.get("dt", 0.25)
+    # Constant-amplitude sinusoidal history; a system whose attractor basin is not
+    # near 0.8 (VossDelay sits near the origin) overrides the centre/amplitude.
+    center = opts.get("history_center", 0.8)
+    amp = opts.get("history_amp", 0.2)
 
     def history(s):
-        return [0.8 + 0.2 * np.sin(0.2 * s)] * sys_obj.dim
+        return [center + amp * np.sin(0.2 * s)] * sys_obj.dim
 
     traj = sys_obj.integrate(final_time=final_time, dt=dt, history=history)
     x = traj.y[:, 0]
