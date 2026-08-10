@@ -90,7 +90,7 @@ jobs:
       # far more reliable than the legacy branch build. Pages source must be set to
       # "GitHub Actions" (build_type: workflow) in the repo settings.
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site/
 
