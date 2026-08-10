@@ -90,7 +90,7 @@ jobs:
 
       # Fetch a prebuilt cargo-audit binary (fast, no from-source compile).
       - name: Install cargo-audit
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2.85.4
         with:
           tool: cargo-audit
 
