@@ -20,6 +20,7 @@ class Lorenz(ContinuousSystem):
 
     params = {"sigma": 10.0, "rho": 28.0, "beta": 8 / 3}
     dim = 3
+    default_ic = (1.0, 1.0, 1.0)  # on-attractor: makes integrate() reproducible by default
     variables = ("x", "y", "z")
     reference = "Lorenz (1963), J. Atmos. Sci. 20, 130-141"
     doi = "10.1175/1520-0469(1963)020<0130:dnf>2.0.co;2"
@@ -252,6 +253,7 @@ class Rossler(ContinuousSystem):
 
     params = {"a": 0.2, "b": 0.2, "c": 5.7}
     dim = 3
+    default_ic = (1.0, 1.0, 1.0)  # on-attractor: makes integrate() reproducible by default
     variables = ("x", "y", "z")
     reference = "Rössler (1976), Phys. Lett. A 57, 397-398"
     doi = "10.1016/0375-9601(76)90101-8"
@@ -710,21 +712,32 @@ class MultiChua(ContinuousSystem):
 
 
 class Duffing(ContinuousSystem):
-    """
+    r"""
     Forced Duffing oscillator (double-well, periodically driven).
 
     The damped, harmonically driven oscillator with a cubic restoring force,
     written as an autonomous 3-D system by carrying the drive phase ``z`` with
-    ``z' = omega``. The cubic nonlinearity makes the potential a double well
-    (for ``beta < 0``), and for suitable forcing the response is chaotic with a
-    strange attractor. The defaults are a standard chaotic regime.
+    ``z' = omega``:
+
+    .. math::
+
+        x' = y, \quad
+        y' = -\delta y - \beta x - \alpha x^3 + \gamma \cos z, \quad
+        z' = \omega .
+
+    The restoring force derives from the potential
+    :math:`V(x) = \tfrac{1}{2}\beta x^2 + \tfrac{1}{4}\alpha x^4`, which is a
+    **double well** when the linear stiffness is negative and the cubic one
+    positive (``beta < 0 < alpha``, the default). For suitable forcing the
+    response is chaotic, with the orbit hopping between the two wells; the
+    defaults are a standard chaotic regime.
 
     Parameters
     ----------
     alpha : float
-        Linear stiffness coefficient.
+        Cubic stiffness coefficient (positive for a confining quartic well).
     beta : float
-        Cubic stiffness coefficient (negative gives a double well).
+        Linear stiffness coefficient (negative gives a double well).
     delta : float
         Linear damping coefficient.
     gamma : float
@@ -739,15 +752,26 @@ class Duffing(ContinuousSystem):
         "Duffing (1918), Erzwungene Schwingungen bei veränderlicher "
         "Eigenfrequenz, Vieweg, Braunschweig"
     )
-    # The explicit default (rk45) fails to integrate this system; an implicit
-    # solver handles it robustly, so make that the default.
-    _default_method = "bdf"
+    default_ic = [-1.1635382, -0.5092374, 0.0]  # on the double-well attractor
+    known_lyapunov = {
+        "n_positive": 1,
+        # The drive phase z contributes an exponent that is *exactly* zero, so
+        # the usual near-zero tolerance band would count it as positive; require
+        # a strictly positive exponent instead.
+        "zero_band": 0.0,
+        "kwargs": {"final_time": 4000.0, "dt": 0.02, "burn_in": 400.0},
+        "source": (
+            "chaotic double-well regime (Ueda 1979); the exact value of the "
+            "leading exponent and the analytic exponent sum -delta are pinned "
+            "in tests/test_catalogue_literature.py"
+        ),
+    }
 
     @staticmethod
     def _equations(Y, t, *, alpha, beta, delta, gamma, omega):
         x, y, z = Y(0), Y(1), Y(2)
         xdot = y
-        ydot = -delta * y - alpha * x - beta * x**3 + gamma * cos(z)
+        ydot = -delta * y - beta * x - alpha * x**3 + gamma * cos(z)
         zdot = omega
         return xdot, ydot, zdot
 
@@ -755,7 +779,7 @@ class Duffing(ContinuousSystem):
     def _jacobian(Y, t, alpha, beta, delta, gamma, omega):
         x, y, z = Y(0), Y(1), Y(2)
         row1 = [0, 1, 0]
-        row2 = [-alpha - 3 * beta * x**2, -delta, -gamma * sin(z)]
+        row2 = [-beta - 3 * alpha * x**2, -delta, -gamma * sin(z)]
         row3 = [0, 0, 0]
         return row1, row2, row3
 

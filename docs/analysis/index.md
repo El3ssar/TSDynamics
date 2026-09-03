@@ -70,12 +70,12 @@ Fast "is this orbit chaotic?" verdicts that stand in for the full spectrum.
 
 - [**Chaos indicators**](chaos.md) — GALI (Skokos), the 0–1 test (Gottwald–Melbourne), and expansion entropy (Hunt–Ott).
 
-### Recurrence & complexity
+### Recurrence
 
-Structure read off the geometry and the symbol statistics of an orbit.
+Structure read off the geometry of an orbit — which states the trajectory
+revisits, and when.
 
 - [**Recurrence & RQA**](recurrence.md) — recurrence matrices and their quantification (determinism, laminarity, entropy).
-- [**Entropy & complexity**](entropy.md) — permutation, dispersion, sample, multiscale entropy, and Lempel–Ziv complexity.
 
 ### Geometry of the attractor
 
@@ -84,12 +84,6 @@ observable.
 
 - [**Fractal dimensions**](dimensions.md) — correlation, generalized Rényi, box-counting and information dimensions with scaling-region fits.
 - [**Delay embeddings**](embedding.md) — reconstructing state space from a scalar signal (Takens), with optimal-delay and embedding-dimension selection.
-
-### Statistical tests
-
-A principled null for "is there nonlinear structure here at all?"
-
-- [**Surrogates**](surrogate.md) — surrogate generators (FT / AAFT / IAAFT) and nonlinearity tests (time-reversal asymmetry, nonlinear prediction error).
 
 ### Attractors & basins
 

@@ -1,7 +1,8 @@
-"""Viz specs for the recurrence + surrogate result types (stream GAPFILL-F).
+"""Viz specs for the recurrence result types (stream GAPFILL-F).
 
-These tests pin the *sparse, non-densifying* contract of the recurrence /
-surrogate ``to_plot_spec`` builders:
+These tests pin the *sparse, non-densifying* contract of the recurrence
+``to_plot_spec`` builders (the surrogate half left with the surrogate estimators
+when the library narrowed to phase-space methods):
 
 - ``RecurrenceMatrix.to_plot_spec`` emits the recurrence plot as a **sparse**
   ``(i, j)`` ``SCATTER`` read straight off the matrix COO — it must **not**
@@ -11,9 +12,6 @@ surrogate ``to_plot_spec`` builders:
   whole call stays under a fixed byte budget.
 - ``WindowedRQA`` is a measure-vs-window ``DIAGNOSTIC_CURVE`` built from the
   already-computed per-window scalars (no nested dense-matrix walk).
-- ``SurrogateEnsemble`` is a ``LINE_FAMILY`` with an ``AREA`` band; the
-  ``SurrogateTest`` null distribution is a ``HISTOGRAM_NULL`` with the data
-  statistic line and the shaded rejection tail.
 - ``RQAResult`` is a small ``CATEGORICAL_BAR`` of the scalar RQA measures.
 
 Engine-free by design (synthetic sparse matrices / arrays — no ``tsdynamics._rust``).
@@ -24,14 +22,11 @@ from __future__ import annotations
 import sys
 
 import numpy as np
-import pytest
 from scipy import sparse
 
 from tsdynamics.analysis.recurrence.matrix import RecurrenceMatrix
 from tsdynamics.analysis.recurrence.rqa import RQAResult
 from tsdynamics.analysis.recurrence.windowed import WindowedRQA
-from tsdynamics.analysis.surrogate.generators import SurrogateEnsemble
-from tsdynamics.analysis.surrogate.hypothesis import SurrogateTest
 from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 # ---------------------------------------------------------------------------
@@ -224,115 +219,4 @@ def test_windowed_rqa_spec_is_measure_vs_window_curve() -> None:
     np.testing.assert_array_equal(layer.data["x"], wr.centers)
     assert layer.data["y"].size == len(wr)
     np.testing.assert_allclose(layer.data["y"], [r.determinism for r in wr.results])
-    PlotSpec.from_dict(spec.to_dict())
-
-
-# ---------------------------------------------------------------------------
-# SurrogateEnsemble: LINE_FAMILY + AREA band
-# ---------------------------------------------------------------------------
-
-
-def test_surrogate_ensemble_spec_has_area_band_and_lines() -> None:
-    """The surrogate ensemble is a LINE_FAMILY: an AREA envelope plus faint lines."""
-    values = np.array([[0.0, 1.0, 0.5, 0.2], [0.1, 0.9, 0.4, 0.3], [-0.1, 1.1, 0.6, 0.1]])
-    ens = SurrogateEnsemble(values=values, meta={"method": "iaaft"})
-    spec = ens.to_plot_spec()
-    assert spec.kind == PlotKind.LINE_FAMILY
-    marks = [lyr.kind for lyr in spec.layers]
-    assert PlotKind.AREA in marks
-    assert PlotKind.LINE in marks
-    band = next(lyr for lyr in spec.layers if lyr.kind == PlotKind.AREA)
-    assert {"x", "y", "lo", "hi"} <= set(band.data)
-    # The band is the per-sample [min, max] envelope of the ensemble.
-    np.testing.assert_allclose(band.data["lo"], values.min(axis=0))
-    np.testing.assert_allclose(band.data["hi"], values.max(axis=0))
-    # One line per surrogate (small ensemble below the cap).
-    n_lines = sum(lyr.kind == PlotKind.LINE for lyr in spec.layers)
-    assert n_lines == values.shape[0]
-    PlotSpec.from_dict(spec.to_dict())
-
-
-def test_surrogate_ensemble_caps_line_count() -> None:
-    """A large ensemble draws only the band plus a bounded number of lines."""
-    values = np.random.default_rng(0).standard_normal((200, 32))
-    ens = SurrogateEnsemble(values=values, meta={"method": "ft"})
-    spec = ens.to_plot_spec()
-    n_lines = sum(lyr.kind == PlotKind.LINE for lyr in spec.layers)
-    assert n_lines == SurrogateEnsemble._MAX_LINES
-    assert any(lyr.kind == PlotKind.AREA for lyr in spec.layers)
-
-
-def test_surrogate_ensemble_single_surrogate_is_one_line() -> None:
-    """A 1-D ensemble (one surrogate) draws the one line with no band."""
-    ens = SurrogateEnsemble(values=np.array([0.0, 1.0, 0.5, 0.2]), meta={"method": "shuffle"})
-    spec = ens.to_plot_spec()
-    assert all(lyr.kind == PlotKind.LINE for lyr in spec.layers)
-    assert len(spec.layers) == 1
-
-
-# ---------------------------------------------------------------------------
-# SurrogateTest: HISTOGRAM_NULL with data line + shaded rejection tail
-# ---------------------------------------------------------------------------
-
-
-def _surrogate_test(tail: str, data_statistic: float) -> SurrogateTest:
-    return SurrogateTest(
-        data_statistic=data_statistic,
-        surrogate_statistics=np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]),
-        p_value=0.05,
-        z_score=2.1,
-        rejected=True,
-        statistic="time_reversal",
-        method="iaaft",
-        n_surrogates=10,
-        tail=tail,
-        alpha=0.1,
-    )
-
-
-def test_surrogate_test_spec_marks_data_and_shades_tail() -> None:
-    """The null histogram carries the data vline and a shaded rejection span."""
-    st = _surrogate_test("greater", data_statistic=1.5)
-    spec = st.to_plot_spec()
-    assert spec.kind == PlotKind.HISTOGRAM_NULL
-    assert spec.layers[0].kind == PlotKind.HISTOGRAM
-    kinds = [a.kind for a in spec.annotations]
-    assert "vline" in kinds  # the data statistic
-    assert "span" in kinds  # the shaded rejection tail
-    data_line = next(a for a in spec.annotations if a.kind == "vline")
-    assert data_line.x == pytest.approx(1.5)
-    PlotSpec.from_dict(spec.to_dict())
-
-
-@pytest.mark.parametrize(
-    "tail,n_spans",
-    [("greater", 1), ("less", 1), ("two", 2)],
-)
-def test_surrogate_test_rejection_tail_count(tail: str, n_spans: int) -> None:
-    """The rejection tail is one span for a one-sided test, two for two-sided."""
-    st = _surrogate_test(tail, data_statistic=1.5)
-    spec = st.to_plot_spec()
-    spans = [a for a in spec.annotations if a.kind == "span"]
-    assert len(spans) == n_spans
-    for span in spans:
-        assert span.span is not None
-        lo, hi = span.span
-        assert lo <= hi
-
-
-def test_surrogate_test_empty_ensemble_has_no_span() -> None:
-    """An empty surrogate ensemble yields the data line but no tail span (no crash)."""
-    st = SurrogateTest(
-        data_statistic=1.5,
-        surrogate_statistics=np.empty(0),
-        p_value=1.0,
-        rejected=False,
-        statistic="time_reversal",
-        method="iaaft",
-        n_surrogates=0,
-        tail="two",
-        alpha=0.05,
-    )
-    spec = st.to_plot_spec()
-    assert [a.kind for a in spec.annotations] == ["vline"]
     PlotSpec.from_dict(spec.to_dict())

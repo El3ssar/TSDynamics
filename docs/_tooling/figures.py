@@ -150,8 +150,9 @@ FIG_OVERRIDES: dict[str, dict] = {
 #: curated initial condition / parameter override / view angle to look right:
 #:
 #: - ``ensemble``: iterate this many short orbits (``ensemble_steps`` each) from
-#:   random ICs and pool the points — the honest way to fill a mixing map (Baker)
-#:   whose single orbit collapses to a fixed point under binary-doubling round-off.
+#:   random ICs and pool the points — the honest way to show the whole phase
+#:   portrait of a *conservative* map (Chirikov, Gingerbreadman), where a single
+#:   orbit only ever traces one invariant set.
 #: - ``ic`` / ``params``: a curated on-attractor start / parameter set for a map
 #:   whose registry default collapses to a point (GumowskiMira).
 #: - ``steps`` / ``burn``: iterate count + burn-in.
@@ -160,26 +161,22 @@ FIG_OVERRIDES: dict[str, dict] = {
 #: - ``bifurcation``: ``(param, lo, hi)`` — a 1-D map also gets a library-generated
 #:   bifurcation diagram (``ts.orbit_diagram``) beside its return map.
 MAP_OVERRIDES: dict[str, dict] = {
-    # Baker's map: 2·x mod 1 exhausts the mantissa and any single orbit collapses
-    # to (0,0) after ~52 iterations.  Pool many short independent orbits so the
-    # points fill the unit square (the true attractor) without the collapse.
-    "Baker": {"ensemble": 500, "ensemble_steps": 40, "burn": 0},
-    # GumowskiMira's registry defaults collapse to a tiny region; a curated
-    # (a, b, ic) gives its signature spread ornamental attractor.
+    # GumowskiMira at the shipped defaults (a=-0.35, b=1.0) is AREA-PRESERVING —
+    # its spectrum sums to zero (+0.097, -0.097), so like Chirikov and
+    # Gingerbreadman a single orbit only ever traces one invariant set.  Pool many
+    # short orbits to show the whole ornamental phase portrait.  (The pre-v6
+    # curated b=0.93 override was a *decaying* chaotic transient: λ₁ falls
+    # +0.186 → +0.069 between 5k and 50k iterates, so it is not a real attractor.)
     "GumowskiMira": {
-        "params": {"a": -0.48, "b": 0.93},
-        "ic": [0.1, 4.0],
-        "steps": 40000,
-        "burn": 100,
+        "ensemble": 120,
+        "ensemble_steps": 1500,
+        "ensemble_span": (-10.0, 10.0),
+        "point_size": 0.05,
+        "burn": 0,
     },
-    # Zaslavskii: the registry defaults (eps=5, nu=0.2, r=2) collapse to a period-2
-    # orbit (the "only ~2 points visible" defect), and the milder (eps=9, nu=0.2,
-    # r=3) folds to a single thin loop.  The classic dissipative-standard-map
-    # parameters (eps=9, nu=0.3, r=2) stretch-and-fold the web onto its signature
-    # multi-band fractal strange attractor; a long orbit fills the bands.
+    # Zaslavskii: a long orbit is needed to fill the bands of the strange
+    # attractor (the catalogue defaults already sit in the chaotic regime).
     "Zaslavskii": {
-        "params": {"eps": 9.0, "nu": 0.3, "r": 2.0},
-        "ic": [0.1, 0.1],
         "steps": 200000,
         "burn": 1000,
         "point_size": 0.12,
@@ -199,10 +196,10 @@ MAP_OVERRIDES: dict[str, dict] = {
         "point_size": 0.06,
         "burn": 0,
     },
-    # Gingerbreadman: a random U[0,1)² start can land on a periodic island (the
-    # figure showed only a handful of points).  Seed the known chaotic sea explicitly
-    # and pool a spray of extra orbits so both the signature "gingerbread man" body
-    # and its surrounding period-6 islands fill in.
+    # Gingerbreadman: the map is conservative, so a single orbit only ever traces
+    # ONE invariant set.  The class default_ic already picks the chaotic sea; pool
+    # a spray of extra orbits on top so the surrounding period-6 islands fill in
+    # too and the full "gingerbread man" phase portrait is visible.
     "Gingerbreadman": {
         "ensemble": 120,
         "ensemble_steps": 1500,
@@ -756,8 +753,8 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
     """Iterate a map into a drawable point cloud, honouring :data:`MAP_OVERRIDES`.
 
     Handles the special cases the plain single-orbit iterate cannot:
-    - ``ensemble`` — pool many short independent orbits (Baker, whose single orbit
-      collapses to a fixed point under binary-doubling round-off);
+    - ``ensemble`` — pool many short independent orbits, the only way to show the
+      whole phase portrait of a conservative map (Chirikov, Gingerbreadman);
     - ``params`` / ``ic`` — a curated on-attractor start / parameters for a map
       whose registry default collapses (GumowskiMira);
     - ``steps`` / ``burn`` — iterate count + burn-in.
@@ -773,8 +770,8 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
         lo, hi = mcfg.get("ensemble_span", (0.001, 0.999))
         rng = np.random.default_rng(0)
         pieces = []
-        # Explicit chaotic-sea seeds first (a map whose default random start can land
-        # on a periodic island — Gingerbreadman — pins its signature orbit here).
+        # Explicit seeds first, so a specific invariant set (Gingerbreadman's
+        # chaotic sea) is always represented and not left to the random spray.
         for seed_ic in mcfg.get("seeds", ()):
             try:
                 tr = sys_obj.iterate(

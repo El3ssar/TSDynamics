@@ -1,17 +1,13 @@
-"""GAPFILL-C: dimensions + entropy ``to_plot_spec`` viz adapters.
+"""GAPFILL-C: fractal-dimension ``to_plot_spec`` viz adapters.
 
-Covers the four acceptance bullets of the GAPFILL-C ticket:
+Covers the dimension half of the GAPFILL-C ticket (the entropy bullets left with
+the estimators themselves when the library narrowed to phase-space methods):
 
 1. a :math:`D_q` spectrum (``dimension_spectrum`` → ``dict[float, DimensionResult]``)
    renders as a ``DIMENSION_SPECTRUM`` with a ``LINE`` of :math:`D_q` vs :math:`q`
    plus an ``ERRORBAR`` whose ``"err"`` channel carries the per-order standard
    error;
-2. a multiscale-entropy profile renders as a ``COMPLEXITY_CURVE`` (entropy vs
-   scale factor);
-3. an entropy outcome distribution (e.g. ordinal-pattern probabilities) renders
-   as a ``CATEGORICAL_BAR`` — a ``BAR`` layer over a categorical axis whose
-   ``categories`` are the pattern labels;
-4. the scalar fractal-dimension estimators keep their ``SCALING_FIT`` wrapper
+2. the scalar fractal-dimension estimators keep their ``SCALING_FIT`` wrapper
    spec (via :class:`DimensionResult` / :class:`ScalingResult`).
 
 Every produced spec must carry a real :class:`PlotKind`, real layer marks, and
@@ -30,13 +26,6 @@ from tsdynamics.analysis.dimensions import (
     dimension_spectrum_plot_spec,
 )
 from tsdynamics.analysis.dimensions._common import DimensionResult
-from tsdynamics.analysis.entropy import (
-    OrdinalPatterns,
-    multiscale_entropy,
-    multiscale_entropy_plot_spec,
-    outcome_distribution_plot_spec,
-    probabilities,
-)
 from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 # ---------------------------------------------------------------------------
@@ -133,122 +122,7 @@ def test_dimension_spectrum_spec_from_real_estimator() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. MultiscaleEntropy -> COMPLEXITY_CURVE (entropy vs scale)
-# ---------------------------------------------------------------------------
-
-
-def test_multiscale_entropy_spec_kind_and_axes() -> None:
-    rng = np.random.default_rng(0)
-    mse = multiscale_entropy(rng.standard_normal(2000), scales=5)
-    spec = multiscale_entropy_plot_spec(mse)
-    assert spec.kind is PlotKind.COMPLEXITY_CURVE
-    assert PlotKind.LINE in [layer.kind for layer in spec.layers]
-    _assert_roundtrips(spec)
-
-
-def test_multiscale_entropy_spec_uses_scale_factors_from_meta() -> None:
-    rng = np.random.default_rng(1)
-    mse = multiscale_entropy(rng.standard_normal(2000), scales=4)
-    spec = multiscale_entropy_plot_spec(mse)
-    line = next(layer for layer in spec.layers if layer.kind is PlotKind.LINE)
-    # scales= 4 → factors 1, 2, 3, 4 read from meta["scales"]
-    np.testing.assert_allclose(line.data["x"], [1.0, 2.0, 3.0, 4.0])
-    np.testing.assert_allclose(line.data["y"], np.asarray(mse.values, dtype=float))
-
-
-def test_multiscale_entropy_spec_kind_override() -> None:
-    rng = np.random.default_rng(2)
-    mse = multiscale_entropy(rng.standard_normal(1500), scales=3)
-    spec = multiscale_entropy_plot_spec(mse, kind="diagnostic_curve")
-    assert spec.kind is PlotKind.DIAGNOSTIC_CURVE
-
-
-def test_multiscale_entropy_spec_falls_back_when_no_scales_meta() -> None:
-    from tsdynamics.analysis._result import ArrayResult
-
-    bare = ArrayResult(values=np.array([1.0, 0.8, 0.6]))
-    spec = multiscale_entropy_plot_spec(bare)
-    line = next(layer for layer in spec.layers if layer.kind is PlotKind.LINE)
-    np.testing.assert_allclose(line.data["x"], [1.0, 2.0, 3.0])
-
-
-def test_multiscale_entropy_spec_empty_raises() -> None:
-    from tsdynamics.analysis._result import ArrayResult
-
-    with pytest.raises(ValueError, match="empty"):
-        multiscale_entropy_plot_spec(ArrayResult(values=np.empty(0)))
-
-
-# ---------------------------------------------------------------------------
-# 3. outcome distribution -> CATEGORICAL_BAR (BAR + categorical Axis.categories)
-# ---------------------------------------------------------------------------
-
-
-def test_outcome_distribution_spec_kind_and_bar_layer() -> None:
-    p = np.array([0.5, 0.2, 0.1, 0.1, 0.05, 0.05])
-    spec = outcome_distribution_plot_spec(p, outcomes=OrdinalPatterns(3))
-    assert spec.kind is PlotKind.CATEGORICAL_BAR
-    (bar,) = spec.layers
-    assert bar.kind is PlotKind.BAR
-    assert "y" in bar.data and "cat" in bar.data
-    np.testing.assert_allclose(bar.data["y"], p)
-    np.testing.assert_allclose(bar.data["cat"], np.arange(p.size))
-
-
-def test_outcome_distribution_spec_has_categorical_axis_with_labels() -> None:
-    space = OrdinalPatterns(3)
-    p = np.full(space.cardinality, 1.0 / space.cardinality)
-    spec = outcome_distribution_plot_spec(p, outcomes=space)
-    assert spec.x.scale == "categorical"
-    assert spec.x.categories is not None
-    assert len(spec.x.categories) == space.cardinality
-    # Ordinal labels are rank tuples rendered compactly; m=3 → 3! = 6 patterns.
-    assert set(spec.x.categories) == {"012", "021", "102", "120", "201", "210"}
-    _assert_roundtrips(spec)
-
-
-def test_outcome_distribution_spec_explicit_labels() -> None:
-    p = np.array([0.7, 0.3])
-    spec = outcome_distribution_plot_spec(p, labels=["heads", "tails"])
-    assert list(spec.x.categories) == ["heads", "tails"]
-
-
-def test_outcome_distribution_spec_default_index_labels() -> None:
-    p = np.array([0.25, 0.25, 0.5])
-    spec = outcome_distribution_plot_spec(p)
-    assert list(spec.x.categories) == ["0", "1", "2"]
-
-
-def test_outcome_distribution_spec_label_length_mismatch_raises() -> None:
-    with pytest.raises(ValueError, match="labels length"):
-        outcome_distribution_plot_spec(np.array([0.5, 0.5]), labels=["only-one"])
-
-
-def test_outcome_distribution_spec_empty_raises() -> None:
-    with pytest.raises(ValueError, match="empty"):
-        outcome_distribution_plot_spec(np.empty(0))
-
-
-def test_outcome_distribution_spec_from_real_probabilities() -> None:
-    rng = np.random.default_rng(0)
-    space = OrdinalPatterns(3)
-    p = probabilities(rng.random(3000), space)
-    np.testing.assert_allclose(p.sum(), 1.0)
-    spec = outcome_distribution_plot_spec(p, outcomes=space)
-    assert spec.kind is PlotKind.CATEGORICAL_BAR
-    _assert_roundtrips(spec)
-
-
-def test_ordinal_pattern_labels_dense_index_order() -> None:
-    space = OrdinalPatterns(3)
-    labels = space.labels()
-    assert len(labels) == space.cardinality
-    # The increasing pattern (rank tuple (0, 1, 2)) sits at dense index 0.
-    assert labels[0] == "012"
-
-
-# ---------------------------------------------------------------------------
-# 4. scalar fractal-dimension estimators keep their SCALING_FIT wrapper spec
+# 2. scalar fractal-dimension estimators keep their SCALING_FIT wrapper spec
 # ---------------------------------------------------------------------------
 
 

@@ -1,6 +1,6 @@
 """The M3 migration gate — Rust engine vs v2, swept over the whole catalogue.
 
-ROADMAP stream **I-XVAL** (§9, decision D1).  Before any v2 backend
+stream **I-XVAL** (decision D1).  Before any v2 backend
 (JiTCODE / JiTCDDE / Numba / diffsol) is removed, the shipping Rust engine
 (:mod:`tsdynamics._rust`) must be shown to reproduce the v2 numeric truth across
 *every* registered system.  This module is that gate: registry-driven, so a new

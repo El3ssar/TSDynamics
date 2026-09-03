@@ -1,6 +1,6 @@
 """Tests for the C-SOLV selection layer — specs, resolution, auto-stiffness.
 
-Covers the C-SOLV acceptance (ROADMAP §6 / §13b):
+Covers the C-SOLV acceptance:
 
 * the in-tree :class:`~tsdynamics.solvers.SolverSpec`s are registered and mirror
   the Rust ``register_solver!`` / ``register_sde_kernel!`` kernels (a parity test

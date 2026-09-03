@@ -27,7 +27,5 @@ Once you are comfortable, the rest of the site opens up:
   a rendered attractor, and its literature reference.
 - The **[Analysis](../analysis/index.md)** toolkit — Lyapunov spectra,
   bifurcation diagrams, Poincaré sections, fractal dimensions, recurrence
-  quantification, surrogate tests, basins of attraction, and more, all composing
+  quantification, delay embeddings, basins of attraction, and more, all composing
   over any built-in or user-defined system.
-</content>
-</invoke>

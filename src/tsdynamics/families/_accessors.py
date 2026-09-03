@@ -14,8 +14,7 @@ toolkit becomes navigable from the object::
 
     sys.lyap.spectrum()          sys.lyap.maximal()
     sys.dims.correlation()       sys.recurrence.rqa()
-    sys.chaos.gali(k=2)          sys.surrogate.test()
-    sys.entropy.permutation()
+    sys.chaos.gali(k=2)          sys.chaos.zero_one()
     sys.fixed_points()           sys.poincare(section="y", at=0.0)
     sys.tangent(k=3)             sys.project("x", "z")     sys.ensemble(states)
 
@@ -25,12 +24,12 @@ name is not yet unified — that is a later stream — so positional delegation 
 the robust choice).  The accessors add **zero behaviour**: a result obtained
 through an accessor is identical to the free-function result on the same input.
 
-Accessors that operate on a *measured series* (dimensions, recurrence, entropy,
-surrogates) accept the data as an optional first positional argument.  When it
-is omitted they first run the system (``system.run(**run_kwargs)``) to produce a
-trajectory and then delegate — a convenience that *generates a trajectory
-implicitly*; pass ``data=`` (or run the system yourself) for full control over
-the integration window.
+Accessors that operate on a *measured series* (dimensions, recurrence) accept
+the data as an optional first positional argument.  When it is omitted they
+first run the system (``system.run(**run_kwargs)``) to produce a trajectory and
+then delegate — a convenience that *generates a trajectory implicitly*; pass
+``data=`` (or run the system yourself) for full control over the integration
+window.
 
 The accessor namespaces are wired onto :class:`~tsdynamics.families.base.SystemBase`
 as cached properties in :mod:`tsdynamics.families.base`, so ``sys.lyap is
@@ -49,10 +48,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "ChaosAccessor",
     "DimensionsAccessor",
-    "EntropyAccessor",
     "LyapunovAccessor",
     "RecurrenceAccessor",
-    "SurrogateAccessor",
     "infer_forcing_period",
 ]
 
@@ -84,9 +81,9 @@ class _Accessor:
     def _resolve_data(self, data: Any, run_kwargs: dict[str, Any]) -> Any:
         """Return ``data`` if given, else a fresh trajectory from the system.
 
-        The data-consuming analyses (dimensions, recurrence, entropy,
-        surrogates) want a measured series.  When the caller passes ``data`` it
-        is delegated verbatim; otherwise the system is run once
+        The data-consuming analyses (dimensions, recurrence) want a measured
+        series.  When the caller passes ``data`` it is delegated verbatim;
+        otherwise the system is run once
         (``system.run(**run_kwargs)``) and the resulting trajectory is used.
         Splitting the run kwargs out keeps the delegation byte-identical to the
         free function for a given series.
@@ -286,124 +283,6 @@ class RecurrenceAccessor(_Accessor):
         from tsdynamics.analysis import windowed_rqa
 
         return windowed_rqa(self._resolve_data(data, run_kwargs or {}), **kwargs)
-
-
-# ---------------------------------------------------------------------------
-# entropy / complexity
-# ---------------------------------------------------------------------------
-
-
-class EntropyAccessor(_Accessor):
-    """Entropy / complexity estimators bound to the system (``sys.entropy``).
-
-    Consumes a scalar series; omitting ``data`` runs the system first (pass
-    ``component=`` on the estimator to select a column of a multi-component
-    trajectory).
-    """
-
-    def permutation(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.permutation_entropy`."""
-        from tsdynamics.analysis import permutation_entropy
-
-        return permutation_entropy(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-    def weighted_permutation(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.weighted_permutation_entropy`."""
-        from tsdynamics.analysis import weighted_permutation_entropy
-
-        return weighted_permutation_entropy(
-            self._resolve_data(data, run_kwargs or {}), *args, **kwargs
-        )
-
-    def dispersion(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.dispersion_entropy`."""
-        from tsdynamics.analysis import dispersion_entropy
-
-        return dispersion_entropy(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-    def sample(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.sample_entropy`."""
-        from tsdynamics.analysis import sample_entropy
-
-        return sample_entropy(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-    def approximate(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.approximate_entropy`."""
-        from tsdynamics.analysis import approximate_entropy
-
-        return approximate_entropy(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-    def multiscale(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.multiscale_entropy`."""
-        from tsdynamics.analysis import multiscale_entropy
-
-        return multiscale_entropy(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-    def lz76(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.lz76_complexity`."""
-        from tsdynamics.analysis import lz76_complexity
-
-        return lz76_complexity(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-
-# ---------------------------------------------------------------------------
-# surrogates / nonlinearity tests
-# ---------------------------------------------------------------------------
-
-
-class SurrogateAccessor(_Accessor):
-    """Surrogate generators + nonlinearity tests bound to the system (``sys.surrogate``).
-
-    Consumes a measured series; omitting ``data`` runs the system first.
-    """
-
-    def test(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.surrogate_test`."""
-        from tsdynamics.analysis import surrogate_test
-
-        return surrogate_test(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-    def generate(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.surrogates`."""
-        from tsdynamics.analysis import surrogates
-
-        return surrogates(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-    def time_reversal_asymmetry(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.time_reversal_asymmetry`."""
-        from tsdynamics.analysis import time_reversal_asymmetry
-
-        return time_reversal_asymmetry(self._resolve_data(data, run_kwargs or {}), *args, **kwargs)
-
-    def nonlinear_prediction_error(
-        self, data: Any = None, *args: Any, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
-        """Delegate to :func:`tsdynamics.analysis.nonlinear_prediction_error`."""
-        from tsdynamics.analysis import nonlinear_prediction_error
-
-        return nonlinear_prediction_error(
-            self._resolve_data(data, run_kwargs or {}), *args, **kwargs
-        )
 
 
 # ---------------------------------------------------------------------------

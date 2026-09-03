@@ -54,7 +54,7 @@ ts.viz.plot(*things, layout="overlay", animate=False, **build_kw)  # -> PlotSpec
 `layout="overlay"` (the default) merges compatible single-panel specs onto **one**
 panel. It is the right layout when the drawables share a coordinate frame — two
 orbits in the same phase plane, several state variables over the same time axis,
-a signal and its surrogate.
+a trajectory and a coarser-`dt` rerun of it.
 
 The overlay figure above is one call:
 

@@ -396,7 +396,7 @@ def dde_lyapunov_spectrum(
             log_sums += log_growth
 
     avg_time = n_avg * chunk  # == (n_chunks - n_burn) * chunk, the full final_time window
-    exps = np.sort(log_sums / avg_time)[::-1]
+    exps = np.asarray(np.sort(log_sums / avg_time)[::-1])
     return exps
 
 

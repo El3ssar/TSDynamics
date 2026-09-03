@@ -1,5 +1,5 @@
 ---
-description: You have one recorded signal x(t) and no equations — reconstruct the attractor by Takens delay embedding, choose the delay and dimension with principled heuristics, measure the correlation dimension and a data-driven Lyapunov exponent, and run a surrogate test to rule out coloured noise.
+description: You have one recorded signal x(t) and no equations — reconstruct the attractor by Takens delay embedding, choose the delay and dimension with principled heuristics, and measure the correlation dimension and a data-driven Lyapunov exponent from the recording alone.
 ---
 
 <span class="ts-kicker">Tutorial · Reconstruction from one signal</span>
@@ -15,10 +15,9 @@ front of you is a deterministic system worth analysing or just filtered noise.
 This tutorial walks the whole inference the other direction: from one scalar
 $x(t)$ back to the geometry and invariants of the system that produced it. We
 will **reconstruct** the attractor from the single channel, choose the two
-reconstruction parameters with principled heuristics, measure the attractor's
-fractal dimension and its largest Lyapunov exponent *from the recording*, and
-finish with the question that should always come first — **is this even
-nonlinear, or could coloured noise fake it?**
+reconstruction parameters with principled heuristics, and measure the
+attractor's fractal dimension and its largest Lyapunov exponent *from the
+recording* — then check every recovered number against the truth we threw away.
 
 To keep it honest and reproducible we *generate* the mystery signal from a known
 system (the Rössler flow) and then immediately throw the model away, keeping only
@@ -26,7 +25,6 @@ one component. Everything after that line uses the scalar alone — so we can ch
 every recovered number against the truth at the end.
 
 ```python
-import numpy as np
 import tsdynamics as ts
 
 # generate a trajectory, then keep ONLY the x channel — pretend this is all you recorded
@@ -188,70 +186,22 @@ $D_2 = 1.74$ from one channel versus $1.75$ from the full state; $\lambda \appro
 $0.071$). One scalar signal, and we recovered both invariants to within their
 estimation error.
 
-## 6. The prior question: is it even nonlinear?
-
-Everything above *assumes* the signal came from a deterministic nonlinear
-system. But a correlation dimension and a Lyapunov exponent will happily return
-finite numbers for *coloured noise* too — a linear stochastic process with a
-spectral peak can mimic a low-dimensional oscillation. Before trusting any of it,
-you should test the null hypothesis that the data is *linear*.
-
-The [surrogate-data method](../analysis/surrogate.md) (Theiler et al., 1992) does
-exactly this: generate an ensemble of **surrogates** that reproduce the data's
-linear fingerprint (its amplitude distribution and power spectrum) but are
-otherwise random, compute a nonlinearity-sensitive statistic on the data and on
-each surrogate, and reject the linear null if the data sits in the tail.
-
-```python
-res = ts.surrogate_test(x, statistic="prediction_error",
-                        method="iaaft", n=39, seed=0)
-
-res.p_value      # ≈ 0.025   — data lands in the tail of the null
-res.z_score      # ≈ -36     — vastly more predictable than any surrogate
-res.rejected     # True      → linear-stochastic null rejected
-```
-
-The `prediction_error` statistic measures how well a locally-constant predictor
-forecasts the series in its embedding. Deterministic data is *more* predictable
-than its phase-randomised surrogates, so the data sits far below the null — the
-linear hypothesis is rejected. The nonlinear analysis was justified.
-
-The control matters just as much: a genuinely linear process must **pass**. A
-resonant AR(2) process is coloured noise with a spectral peak — exactly the thing
-that could fake an attractor — and the test correctly clears it:
-
-```python
-rng = np.random.default_rng(0)
-noise = np.zeros(7000)
-for i in range(2, 7000):                       # AR(2), a resonant linear process
-    noise[i] = 1.6 * noise[i-1] - 0.95 * noise[i-2] + rng.standard_normal()
-
-ts.surrogate_test(noise, statistic="prediction_error",
-                  n=39, seed=1).rejected        # False — linear null NOT rejected
-```
-
-Coloured noise passes; the Rössler signal does not. That contrast is the whole
-point: a surrogate test that "rejects everything" is broken, not sensitive. Run
-the test *first* on real data — it tells you whether the rest of the pipeline is
-measuring dynamics or fitting noise.
-
 ## What you built
 
 Starting from a single scalar channel with the model discarded, you rebuilt the
 attractor by delay embedding, chose $\tau$ and $m$ from mutual information and
 false-nearest-neighbours, measured the correlation dimension ($1.74$) and the
-largest Lyapunov exponent ($0.074$ per unit time) *from the recording*, checked
-both against the ground truth, and — the step that should come first — ruled out
-a linear-stochastic explanation with a surrogate test that a coloured-noise
-control correctly passes. This is the standard route from an experimental time
-series to a defensible statement about the system behind it.
+largest Lyapunov exponent ($0.074$ per unit time) *from the recording*, and
+checked both against the ground truth we had thrown away. This is the standard
+route from an experimental time series to a defensible statement about the
+system behind it.
 
 ## See also
 
 - [Delay embeddings](../analysis/embedding.md) — the full `embed` / `optimal_delay` / `embedding_dimension` API and multivariate embedding
 - [Fractal dimensions](../analysis/dimensions.md) — correlation and the rest of the fractal-geometry estimators (and the Theiler window)
 - [Lyapunov spectra](../analysis/lyapunov.md) — `lyapunov_from_data`, the Kantz / Rosenstein estimators, and reading the stretching curve
-- [Surrogates](../analysis/surrogate.md) — every generator and statistic, and how to match the null to your data
+- [Recurrence & RQA](../analysis/recurrence.md) — another quantifier built straight on the reconstruction
 - [Anatomy of a chaotic attractor](chaotic-attractor.md) — the same invariants, computed from the equations instead
 
 ## References
@@ -262,4 +212,3 @@ series to a defensible statement about the system behind it.
 - Kennel, M. B., Brown, R. & Abarbanel, H. D. I. (1992). Determining embedding dimension for phase-space reconstruction … *Phys. Rev. A* **45**, 3403.
 - Grassberger, P. & Procaccia, I. (1983). Measuring the strangeness of strange attractors. *Physica D* **9**, 189.
 - Kantz, H. (1994). A robust method to estimate the maximal Lyapunov exponent of a time series. *Phys. Lett. A* **185**, 77.
-- Theiler, J., Eubank, S., Longtin, A., Galdrikian, B. & Farmer, J. D. (1992). Testing for nonlinearity in time series: the method of surrogate data. *Physica D* **58**, 77.

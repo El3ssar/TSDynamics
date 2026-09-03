@@ -17,8 +17,7 @@ trust your installed version.
 | Everything importable straight from `tsdynamics` | [Top level](top-level.md) |
 | `ContinuousSystem`, `DelaySystem`, `DiscreteMap`, `StochasticSystem`, `Trajectory`, the `System` protocol | [Base classes](base.md) |
 | `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `EnsembleSystem`, `ProjectedSystem`, `WrappedSystem` | [Derived systems](derived.md) |
-| Lyapunov, chaos indicators, fixed/periodic orbits, orbit diagrams, basins, dimensions, embeddings, entropy, recurrence, surrogates | [Analysis](analysis.md) |
-| `power_spectral_density`, `detrend`, `normalize`, filters, `extract_features` | [Transforms](transforms.md) |
+| Lyapunov, chaos indicators, fixed/periodic orbits, orbit diagrams, basins, dimensions, embeddings, recurrence | [Analysis](analysis.md) |
 | `Box`, `Ball`, `Grid`, `sampler`, `grid_points`, `set_distance` | [Data & state-space](data.md) |
 | `method=` resolution, `SolverSpec`, auto-stiffness, registering a solver | [Solvers](solvers.md) |
 | Programmatic access to the built-in system catalogue | [Registry](registry.md) |

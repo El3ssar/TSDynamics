@@ -152,4 +152,3 @@ a flow.
 [**03 · The mental model**](concepts.md) — the four families, the one stepping
 protocol every system shares, and the derived wrappers that turn a flow into a
 map.
-</content>

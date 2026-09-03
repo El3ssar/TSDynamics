@@ -248,8 +248,8 @@ the automatic region drifts into a curved tail.
   signal before measuring $D$ (and remember the Theiler window on the result)
 - [Lyapunov spectra](lyapunov.md) — the dynamical companion; the Kaplan–Yorke
   dimension is a fractal dimension read straight off the spectrum
-- [Entropy & complexity](entropy.md) — a complementary, scale-based view of the
-  same structure
+- [Recurrence & RQA](recurrence.md) — a complementary, geometry-based view of
+  the same structure
 
 ## References
 

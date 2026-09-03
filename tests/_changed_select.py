@@ -1,7 +1,7 @@
 """Diff- and registry-aware test selection for fast, change-scoped CI.
 
 The bulk suite is *registry-driven*: most tests are parametrized over every
-built-in system (151 today) or every registered analysis/transform, so a run of
+built-in system (171 today) or every registered analysis, so a run of
 the whole ``not full`` tier is thousands of items.  On a PR that only touches one
 system or one analysis area, almost all of that work is irrelevant — yet the old
 CI ran it all, on a 2×2 matrix, twice.  This module narrows a run to the tests a
@@ -32,7 +32,9 @@ Selection model
      as a wheel or editable);
    * a changed ``src/tsdynamics/analysis/<area>/…`` → run that area's test
      files (``_AREA_TESTS``);
-   * a changed ``transforms``/``viz`` source file → that surface's tests;
+   * a changed ``benchmarks/…`` file → the harness gate that imports it
+     (``_AREA_TESTS["benchmarks"]``);
+   * a changed ``viz`` source file → that surface's tests;
    * a cheap set of registry/layout **guard** tests always runs in scoped mode;
    * documentation / planning / tooling paths are ignored (no test impact);
    * **any path that matches none of the above escalates to a full run.**
@@ -81,8 +83,6 @@ _FOUNDATIONAL_FILES: frozenset[str] = frozenset(
         "src/tsdynamics/plugins.py",
         "src/tsdynamics/analysis/__init__.py",
         "src/tsdynamics/analysis/_result.py",
-        "src/tsdynamics/transforms/__init__.py",
-        "src/tsdynamics/transforms/_common.py",
         "tests/conftest.py",
         "tests/_engine_marker.py",
         "tests/_strategies.py",
@@ -97,8 +97,13 @@ _FOUNDATIONAL_FILES: frozenset[str] = frozenset(
 #: Analysis leaf area (``src/tsdynamics/analysis/<area>/``) → its test files.
 #: A changed area not listed here escalates to a full run (and the guard test
 #: ``tests/test_changed_select.py`` flags the omission).
+#:
+#: ``"benchmarks"`` is the one non-analysis key: ``benchmarks/analysis_bench.py``
+#: is not importable as a package but *is* imported by path from
+#: ``test_perf_regression.py``, so editing the harness must select the test that
+#: exercises it rather than escalating the whole suite.
 _AREA_TESTS: dict[str, tuple[str, ...]] = {
-    "entropy": ("test_entropy.py", "test_property_entropy.py"),
+    "benchmarks": ("test_perf_regression.py",),
     "dimensions": (
         "test_dimensions.py",
         "test_property_dimensions.py",
@@ -108,7 +113,6 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
     ),
     "embedding": ("test_embedding.py", "test_property_embedding.py", "test_embedding_theiler.py"),
     "recurrence": ("test_recurrence.py", "test_property_recurrence.py"),
-    "surrogate": ("test_surrogate.py", "test_property_surrogate.py"),
     "chaos": ("test_chaos.py",),
     "fixedpoints": ("test_fixed_points.py", "test_fixed_points_flow_region.py"),
     "orbits": ("test_orbits.py", "test_orbit_diagram_perf.py", "test_poincare_perf.py"),
@@ -124,7 +128,6 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-_TRANSFORM_TESTS: tuple[str, ...] = ("test_transforms.py", "test_property_transforms.py")
 _VIZ_TESTS: tuple[str, ...] = (
     "test_plotspec.py",
     "test_to_plot_spec.py",
@@ -133,8 +136,8 @@ _VIZ_TESTS: tuple[str, ...] = (
 
 #: Cross-cutting analysis tests that exercise functions from *several* areas
 #: (the "regular vs random" cross-quantifier gate; the analysis-pack smoke).
-#: Added whenever ANY analysis area or transform is touched, since a one-area
-#: edit can break the cross-quantifier agreement they assert.
+#: Added whenever ANY analysis area is touched, since a one-area edit can break
+#: the cross-quantifier agreement they assert.
 _CROSSCUT_ANALYSIS_TESTS: tuple[str, ...] = (
     "test_known_quantifiers.py",
     "test_analysis.py",
@@ -176,10 +179,8 @@ _CATALOGUE_GATES: tuple[str, ...] = (
 #: Paths with no bearing on the test suite — ignored, never escalate.
 _IGNORE_PREFIXES: tuple[str, ...] = (
     "docs/",
-    "benches/",
     "planning/",
     ".claude/",
-    "scripts/",
     ".github/ISSUE_TEMPLATE/",
 )
 _IGNORE_SUFFIXES: tuple[str, ...] = (".md", ".rst", ".txt")
@@ -193,8 +194,6 @@ _IGNORE_FILES: frozenset[str] = frozenset(
         "CHANGELOG.md",
         "README.md",
         "CONTRIBUTING.md",
-        "ROADMAP.md",
-        "STREAMS.md",
     }
 )
 
@@ -328,7 +327,7 @@ def classify(changed: set[str] | None) -> Plan:
     system_modules: list[str] = []
     escalate_reasons: list[str] = []
     notes: list[str] = []
-    analysis_or_transform_touched = False
+    analysis_touched = False
 
     for path in files:
         if _is_foundational(path):
@@ -361,11 +360,12 @@ def classify(changed: set[str] | None) -> Plan:
                 escalate_reasons.append(f"unmapped analysis path: {path}")
             else:
                 selected.update(tests)
-                analysis_or_transform_touched = True
+                analysis_touched = True
             continue
-        if path.startswith("src/tsdynamics/transforms/"):
-            selected.update(_TRANSFORM_TESTS)
-            analysis_or_transform_touched = True
+        if path.startswith("benchmarks/"):
+            # The bench harness is imported by path from test_perf_regression.py,
+            # so an edit there selects that gate (not a full run, and not nothing).
+            selected.update(_AREA_TESTS["benchmarks"])
             continue
         if path.startswith("src/tsdynamics/viz/"):
             selected.update(_VIZ_TESTS)
@@ -391,7 +391,7 @@ def classify(changed: set[str] | None) -> Plan:
 
     # A one-area edit can break the cross-quantifier "regular vs random" agreement
     # gate and the analysis-pack smoke, which span several areas → always include.
-    if analysis_or_transform_touched:
+    if analysis_touched:
         selected.update(_CROSSCUT_ANALYSIS_TESTS)
 
     selected |= set(_ALWAYS_GUARDS)

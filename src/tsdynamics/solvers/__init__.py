@@ -12,7 +12,7 @@ auto-populates it from two sources at import time:
 
 1. **a directory scan** of this package's own modules — dropping a module that
    calls :func:`register` makes its solver available with no central table to
-   edit (ROADMAP §4d); and
+   edit; and
 2. **out-of-tree plugins** declared under the ``tsdynamics.solvers`` entry-point
    group (see :mod:`tsdynamics.plugins`).
 

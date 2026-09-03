@@ -179,8 +179,8 @@ this reason.
   consumer; remember the `theiler=tau` window on an embedded flow
 - [Lyapunov spectra](lyapunov.md) — `lyapunov_from_data` estimates the maximal
   exponent from a delay embedding of a measured series
-- [Entropy & complexity](entropy.md) — permutation and sample entropy embed the
-  series internally with the same $(m, \tau)$ choices
+- [Recurrence & RQA](recurrence.md) — recurrence plots are built on the same
+  $(m, \tau)$ reconstruction
 
 ## References
 

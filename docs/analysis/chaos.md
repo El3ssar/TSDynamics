@@ -142,7 +142,8 @@ phase portrait.
     must be **decorrelated** — every iterate for a map, but a *coarse* `dt`
     (or a Poincaré / stroboscopic view) for a flow. Strong observational noise
     pushes $K$ spuriously toward 1, so pre-filter, sample sparsely, or
-    cross-check with a [surrogate test](surrogate.md). The correlation method
+    cross-check with an independent indicator (GALI or the Lyapunov
+    spectrum) before trusting the verdict. The correlation method
     returns a Pearson coefficient, so $K \in [-1, 1]$ in principle (a regular
     orbit can give a small negative $K$); $K > 0.5$ is the usual threshold.
 
@@ -214,7 +215,6 @@ uniformly-expanding maps, the approximate ones for chaotic attractors.
 
 - [Lyapunov spectra](lyapunov.md) — the full quantifier these three indicators stand in for
 - [Recurrence & RQA](recurrence.md) — a complementary, geometry-based chaos diagnostic
-- [Surrogates](surrogate.md) — a statistical null test for nonlinearity, to guard the 0–1 test against noise
 - [Fixed points & periodic orbits](fixed-points.md) — the regular attractors these tests must *not* flag as chaotic
 
 ## References

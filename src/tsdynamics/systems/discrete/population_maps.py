@@ -23,6 +23,9 @@ class Logistic(DiscreteMap):
 
     params = {"r": 3.9}
     dim = 1
+    # 0.2, deliberately NOT 0.5: x=0.5 is the critical point, and at r=4 it maps
+    # 0.5 -> 1 -> 0 and the orbit dies on the fixed point.
+    default_ic = (0.2,)
     variables = ("x",)
     reference = "May (1976), Nature 261, 459-467"
     doi = "10.1038/261459a0"

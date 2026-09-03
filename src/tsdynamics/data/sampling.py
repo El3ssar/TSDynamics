@@ -326,7 +326,10 @@ def sampler(region: Region, *, seed: int | None = None) -> Callable[[], np.ndarr
         lo, hi = region.lo, region.hi
 
         def draw_box() -> np.ndarray:
-            return rng.uniform(lo, hi)
+            # np.asarray: the numpy stubs type the scalar overload of
+            # Generator.uniform as float, so the array-bounds call needs the
+            # explicit coercion to stay ndarray-typed.
+            return np.asarray(rng.uniform(lo, hi))
 
         return draw_box
 
@@ -345,7 +348,8 @@ def sampler(region: Region, *, seed: int | None = None) -> Callable[[], np.ndarr
         lo, hi = region.lo, region.hi
 
         def draw_grid() -> np.ndarray:
-            return rng.uniform(lo, hi)
+            # np.asarray: see draw_box above (numpy stubs' scalar overload).
+            return np.asarray(rng.uniform(lo, hi))
 
         return draw_grid
 

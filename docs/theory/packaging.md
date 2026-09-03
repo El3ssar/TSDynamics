@@ -15,7 +15,7 @@ are produced.
 
 | Distribution | Build backend | Contents | Compiler needed? |
 | ------------ | ------------- | -------- | ---------------- |
-| `tsdynamics` | maturin (wheel + sdist) | the whole library — systems, families, analysis, transforms — **plus** `tsdynamics/_rust.abi3.so`, the zero-warmup tape interpreter + Cranelift JIT + solver kernels | **No** for the prebuilt wheel; building *from the sdist* needs a Rust toolchain |
+| `tsdynamics` | maturin (wheel + sdist) | the whole library — systems, families, analysis, visualization — **plus** `tsdynamics/_rust.abi3.so`, the zero-warmup tape interpreter + Cranelift JIT + solver kernels | **No** for the prebuilt wheel; building *from the sdist* needs a Rust toolchain |
 
 `pip install tsdynamics` pulls a prebuilt `abi3` wheel for your platform, so the
 engine arrives compiled — no Rust toolchain and no C compiler. Every family

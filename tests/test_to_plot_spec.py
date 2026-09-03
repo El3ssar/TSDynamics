@@ -9,7 +9,7 @@ Covers the acceptance pillars:
    ``POINCARE_SECTION`` intent (a ``meta["plot_kind"]`` the trajectory's spec
    reads), so a section is never mistaken for a flow.
 3. ``OrbitDiagram / DimensionResult / RecurrenceMatrix / RQAResult /
-   GALIResult / BasinsResult / ReturnMap / LyapunovFromData / SurrogateTest``
+   GALIResult / BasinsResult / ReturnMap / LyapunovFromData``
    each emit a correct :class:`~tsdynamics.viz.spec.PlotSpec`.
 4. Every emitted spec round-trips through ``to_dict`` / ``from_dict``
    (the property the dossier asks a property test to assert).
@@ -58,7 +58,6 @@ def _result_builders() -> dict[str, object]:
         "GALIResult": ts.gali(ts.Lorenz(), k=2, final_time=20.0, dt=0.05),
         "ReturnMap": ts.return_map(traj, component=2, method="max"),
         "LyapunovFromData": ts.lyapunov_from_data(traj.y[:1000, 0], dt=0.02),
-        "SurrogateTest": ts.surrogate_test(traj.y[:500, 2], n=9, seed=0),
         "BasinsResult": _synthetic_basins(),
     }
 
@@ -82,7 +81,6 @@ _RESULT_NAMES = (
     "GALIResult",
     "ReturnMap",
     "LyapunovFromData",
-    "SurrogateTest",
     "BasinsResult",
 )
 
@@ -515,7 +513,6 @@ def test_result_specs_have_expected_kinds(built_results):
         "GALIResult": PlotKind.DIAGNOSTIC_CURVE,
         "ReturnMap": PlotKind.RETURN_MAP,
         "LyapunovFromData": PlotKind.SCALING_FIT,
-        "SurrogateTest": PlotKind.HISTOGRAM_NULL,
         "BasinsResult": PlotKind.BASINS_IMAGE,
     }
     for name, kind in expected.items():
@@ -571,16 +568,6 @@ def test_return_map_spec_has_diagonal_reference(built_results):
     assert PlotKind.LINE in kinds  # the v_{n+1} = v_n diagonal
 
 
-def test_surrogate_spec_marks_the_data_statistic(built_results):
-    res = built_results["SurrogateTest"]
-    spec = res.to_plot_spec()
-    assert spec.layers[0].kind == PlotKind.HISTOGRAM
-    assert spec.annotations
-    annotation = spec.annotations[0]
-    assert annotation.kind == "vline"
-    assert annotation.x == pytest.approx(float(res.data_statistic))
-
-
 def test_basins_spec_marks_attractor_centres(built_results):
     spec = built_results["BasinsResult"].to_plot_spec()
     assert spec.layers[0].kind == PlotKind.IMAGE
@@ -608,7 +595,6 @@ def test_building_specs_imports_no_plot_library():
         "ts.gali(ts.Lorenz(), k=2, final_time=15.0, dt=0.05).to_plot_spec();"
         "ts.return_map(traj, component=2, method='max').to_plot_spec();"
         "ts.lyapunov_from_data(traj.y[:800, 0], dt=0.02).to_plot_spec();"
-        "ts.surrogate_test(traj.y[:400, 2], n=9, seed=0).to_plot_spec();"
         "a = AttractorSet({1: Attractor(1, np.array([[0.0, 0.0]]), 1)}, 0, 1);"
         "BasinsResult(np.ones((4, 4), int), Grid([-1, -1], [1, 1], (4, 4)), a).to_plot_spec();"
         "bad = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')"

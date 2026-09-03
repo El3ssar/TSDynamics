@@ -30,6 +30,7 @@ classifiers = [
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Mathematics",
   "Topic :: Scientific/Engineering :: Physics",
   "Typing :: Typed",
@@ -63,9 +64,6 @@ Changelog = "https://github.com/El3ssar/TSDynamics/releases"
 viz = ["matplotlib>=3.9,<5"]          # the matplotlib reference renderer (static 2-D + 3-D)
 interactive = ["plotly>=6,<7"]        # the interactive backend + self-contained HTML export
 plot = ["matplotlib>=3.9,<5"]         # back-compat alias of `viz`
-# Optional fast LZ76 provider for analysis.entropy (provider="lzcomplexity").
-# The built-in native parser is the default and needs no extra.
-lz = ["lzcomplexity>=0.9"]
 
 # ── Dependency groups (uv-native, dev-only) ────────────────────────────────────
 

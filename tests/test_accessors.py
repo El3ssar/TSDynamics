@@ -5,8 +5,8 @@ the canonical free function in :mod:`tsdynamics.analysis` (or constructs the
 matching derived wrapper) with the system bound, adding **zero behaviour**.  The
 tests below assert exactly that contract:
 
-* the topical namespaces (``lyap`` / ``dims`` / ``recurrence`` / ``chaos`` /
-  ``surrogate`` / ``entropy``) and the first-class verbs (``fixed_points`` /
+* the topical namespaces (``lyap`` / ``dims`` / ``recurrence`` / ``chaos``)
+  and the first-class verbs (``fixed_points`` /
   ``poincare`` / ``tangent`` / ``project`` / ``ensemble`` / ``stroboscope``) are
   present and grouped (tab-completion discoverability),
 * an accessor is cached on the instance (``sys.lyap is sys.lyap``),
@@ -40,7 +40,7 @@ from tsdynamics.systems import Henon, Lorenz, Rossler
 pytest.importorskip("tsdynamics._rust")
 
 
-TOPICAL = ("lyap", "dims", "recurrence", "chaos", "surrogate", "entropy")
+TOPICAL = ("lyap", "dims", "recurrence", "chaos")
 VERBS = ("fixed_points", "poincare", "tangent", "project", "ensemble", "stroboscope")
 
 
@@ -175,20 +175,6 @@ def test_recurrence_rqa_identical():
     r_free = ts.rqa(data, recurrence_rate=0.05)
     assert r_acc.determinism == r_free.determinism
     assert r_acc.laminarity == r_free.laminarity
-
-
-def test_entropy_permutation_identical():
-    """``sys.entropy.permutation(data)`` == ``ts.permutation_entropy(data)``."""
-    series = _henon_data().y[:, 0]
-    assert Henon().entropy.permutation(series, 3, 1) == ts.permutation_entropy(series, 3, 1)
-
-
-def test_surrogate_test_identical():
-    """``sys.surrogate.test(data, ...)`` == ``ts.surrogate_test(data, ...)``."""
-    series = _henon_data().y[:, 0]
-    s_acc = Henon().surrogate.test(series, n=9, seed=1)
-    s_free = ts.surrogate_test(series, n=9, seed=1)
-    assert s_acc.p_value == s_free.p_value
 
 
 def test_chaos_zero_one_identical():

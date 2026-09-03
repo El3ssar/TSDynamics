@@ -18,6 +18,7 @@ class Henon(DiscreteMap):
 
     params = {"a": 1.4, "b": 0.3}
     dim = 2
+    default_ic = (0.1, 0.1)  # inside the basin: makes iterate() reproducible by default
     variables = ("x", "y")
     reference = "Hénon (1976), Commun. Math. Phys. 50, 69-77"
     doi = "10.1007/bf01608556"
@@ -160,10 +161,19 @@ class Gingerbreadman(DiscreteMap):
     gingerbread-man-shaped region of mixed chaotic seas and periodic islands.
     It has no parameters: the dynamics are fixed by the absolute value, which
     makes it a textbook example of chaos arising from a non-smooth fold.
+
+    Notes
+    -----
+    Because the map is conservative, *which* orbit you get is set entirely by
+    the initial condition: the phase space is a mixture of periodic islands and
+    a chaotic sea, and much of the unit square (including ``[0.5, 0.5]``) sits
+    on a period-6 island. ``default_ic`` seeds the chaotic sea so the default
+    orbit is the one the docstring describes.
     """
 
     params = {}
     dim = 2
+    default_ic = [0.5, 3.7]  # in the chaotic sea; most of [0,1)^2 is a period-6 island
     reference = "Devaney (1984), Physica D 10, 387-393"
     doi = "10.1016/0167-2789(84)90187-8"
 
@@ -192,6 +202,10 @@ class Zaslavskii(DiscreteMap):
     fractal strange attractor — one of the earliest explicit strange-attractor
     models.
 
+    The Jacobian determinant is the constant ``exp(-r)`` (the kick contributes
+    equal and opposite off-diagonal terms), so the two Lyapunov exponents sum to
+    exactly ``-r`` whatever the orbit does.
+
     Parameters
     ----------
     eps : float
@@ -200,12 +214,27 @@ class Zaslavskii(DiscreteMap):
         Coupling between the action and the phase advance.
     r : float
         Damping rate; ``exp(-r)`` is the per-step contraction of the action.
+
+    Notes
+    -----
+    The defaults sit in the strange-attractor regime: they fold the web onto its
+    signature multi-band fractal. Much of the parameter plane does not — a
+    weaker kick collapses the orbit onto a periodic sink (``eps = 5`` gives a
+    stable fixed point here, and a period-2 cycle at the pre-v6 ``nu = 0.2``),
+    so a parameter sweep should check the exponents rather than assume chaos.
     """
 
-    params = {"eps": 5.0, "nu": 0.2, "r": 2.0}
+    params = {"eps": 9.0, "nu": 0.3, "r": 2.0}
     dim = 2
+    default_ic = [0.1, 0.1]
     reference = "Zaslavsky (1978), Phys. Lett. A 69, 145-147"
     doi = "10.1016/0375-9601(78)90195-0"
+    known_lyapunov = {
+        "spectrum": (1.342, -3.342),
+        "atol": (0.05, 0.05),
+        "kwargs": {"steps": 20_000},
+        "source": "measured on the strange attractor; the sum is exactly -r = -2 (det J = exp(-r))",
+    }
 
     @staticmethod
     def _step(X, eps, nu, r):
@@ -303,15 +332,25 @@ class FoldedTowel(DiscreteMap):
     )
     known_lyapunov = {
         "n_positive": 2,
-        "kwargs": {"steps": 20_000},
-        "source": "hyperchaotic map: two positive exponents",
+        "spectrum": (0.43, 0.38, -3.30),
+        "atol": (0.04, 0.04, 0.06),
+        "kwargs": {"steps": 50_000},
+        "source": (
+            "hyperchaotic map: two positive exponents; the widely quoted "
+            "folded-towel spectrum is approximately (0.43, 0.37, -3.30), "
+            "giving a Kaplan-Yorke dimension of about 2.25"
+        ),
     }
 
     @staticmethod
     def _step(X, a, b, c, d, e, f, g):
         x, y, z = X
-        xp = a * x * (1 - x) - b * (y + c) * (1 - 2 * z)
-        yp = d * ((y + c) * (1 + 2 * z) - 1) * (1 - e * x)
+        # Rössler's construction shares the single folded quantity
+        # (y + c) * (1 - 2 z) between the x and y updates; the same factor must
+        # therefore carry the same sign in both.
+        fold = (y + c) * (1 - 2 * z)
+        xp = a * x * (1 - x) - b * fold
+        yp = d * (fold - 1) * (1 - e * x)
         zp = f * z * (1 - z) + g * y
         return xp, yp, zp
 
@@ -321,9 +360,9 @@ class FoldedTowel(DiscreteMap):
         row1 = [a * (1 - 2 * x), -b * (1 - 2 * z), 2 * b * (y + c)]
 
         row2 = [
-            -d * e * ((y + c) * (1 + 2 * z) - 1),
-            d * (1 + 2 * z) * (1 - e * x),
-            2 * d * (y + c) * (1 - e * x),
+            -d * e * ((y + c) * (1 - 2 * z) - 1),
+            d * (1 - 2 * z) * (1 - e * x),
+            -2 * d * (y + c) * (1 - e * x),
         ]
 
         row3 = [0, g, f * (1 - 2 * z)]

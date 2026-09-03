@@ -40,7 +40,6 @@ Sections (one per P4 ``POLISH`` gate stream):
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import inspect
 import json
 import types as _types
@@ -51,7 +50,6 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-import tsdynamics.transforms as _tx  # noqa: F401  (import populates registry.transforms)
 from tsdynamics import registry
 from tsdynamics.analysis._result import (
     AnalysisResult,
@@ -63,7 +61,7 @@ from tsdynamics.analysis._result import (
     VisualizationNotInstalled,
 )
 from tsdynamics.derived.poincare import PoincareSection
-from tsdynamics.errors import InvalidInputError, InvalidParameterError, TSDynamicsError
+from tsdynamics.errors import InvalidParameterError, TSDynamicsError
 from tsdynamics.viz.spec import PlotKind
 
 
@@ -319,17 +317,12 @@ def _runtime_cases() -> list[tuple[str, object]]:
         # -- ArrayResult family --
         ("lyapunov_spectrum", lambda: ts.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1])),
         ("mutual_information", lambda: ts.mutual_information(series, max_delay=20)),
-        ("multiscale_entropy", lambda: ts.multiscale_entropy(series[:400], scales=6)),
         ("embed", lambda: ts.embed(series, 3, 1)),
-        ("surrogates", lambda: ts.surrogates(series, "shuffle", 4, seed=0)),
         # -- ScalarResult family --
         ("max_lyapunov", lambda: ts.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
         ("kaplan_yorke_dimension", lambda: ts.kaplan_yorke_dimension([0.42, -1.62])),
         ("estimate_period", lambda: ts.estimate_period(sine)),
         ("zero_one_test", lambda: ts.zero_one_test(series)),
-        ("permutation_entropy", lambda: ts.permutation_entropy(series)),
-        ("sample_entropy", lambda: ts.sample_entropy(series[:300])),
-        ("lz76_complexity", lambda: ts.lz76_complexity(series)),
         # -- CountResult --
         ("optimal_delay", lambda: ts.optimal_delay(series, max_delay=20)),
         # -- ScalingResult family (canonical scaling-curve schema) --
@@ -352,7 +345,6 @@ def _runtime_cases() -> list[tuple[str, object]]:
                 ts.systems.Logistic(), "r", np.linspace(3.4, 4.0, 40), transient=100, n=60
             ),
         ),
-        ("surrogate_test", lambda: ts.surrogate_test(series, n=19, seed=0)),
         (
             "find_attractors",
             lambda: ts.find_attractors(
@@ -662,7 +654,7 @@ _NAMEGATE_BANNED_PARAMS: dict[str, str] = {
 
 # §5 homonym carve-outs: exact ``(function, parameter)`` pairs that may use a
 # token banned elsewhere.  None of the canonical homonym tokens (``k``/``k_max``/
-# ``step``/``horizon``/``max_steps``/``max_delay``/``fs``) collide with a §2 ban
+# ``step``/``max_steps``/``max_delay``) collide with a §2 ban
 # under exact-name matching (``step`` ≠ ``steps``, ``max_delay`` ≠ ``max_lag``,
 # ``max_steps`` ≠ ``steps``), so this whitelist is empty today — kept as the
 # documented extension point.  ``test_naming_gate_homonym_whitelist_is_sound``
@@ -678,7 +670,6 @@ _NAMEGATE_HOMONYM_CARVE_OUTS: dict[str, tuple[str, ...]] = {
     "k": ("gali", "lyapunov_spectrum"),  # GALI order / count of exponents
     "k_max": ("lyapunov_from_data",),  # scaling-curve abscissa horizon
     "step": ("windowed_rqa",),  # window stride (not the time step dt)
-    "horizon": ("nonlinear_prediction_error",),  # prediction lead-time
     "max_steps": (  # integration safety cap (not the run length n)
         "find_attractors",
         "basins_of_attraction",
@@ -690,14 +681,6 @@ _NAMEGATE_HOMONYM_CARVE_OUTS: dict[str, tuple[str, ...]] = {
         "mutual_information",
         "estimate_period",
         "autocorrelation",
-    ),
-    "fs": (  # sampling frequency (Hz), alongside dt
-        "power_spectral_density",
-        "spectral_entropy",
-        "spectral_centroid",
-        "dominant_frequency",
-        "butter_filter",
-        "extract_features",
     ),
     "skip_crossings": ("poincare_section", "return_map"),  # discarded crossings
 }
@@ -716,6 +699,12 @@ def _namegate_public_callables() -> list[tuple[str, object]]:
     Sweeps **both** ``registry.analyses`` and ``registry.transforms`` (glossary
     §7 rule 4).  Evaluated at import time over the live registries, so a new
     analysis/transform joins the gate with zero test edits.
+
+    ``registry.transforms`` is **empty in-tree** since the scope narrowing (the
+    generic signal/feature transforms moved out of this library); the container
+    is deliberately kept as the ``tsdynamics.transforms`` *entry-point* hook an
+    out-of-tree package registers into, so sweeping it here keeps the naming
+    gate applying to a plugin's callables the day one is installed.
     """
     pairs: list[tuple[str, object]] = []
     for reg in (registry.analyses, registry.transforms):
@@ -982,15 +971,15 @@ def _errgate_unknown_component() -> object:
     return traj["nonexistent"]
 
 
-def _errgate_permutation_entropy_on_system() -> object:
+def _errgate_data_analysis_on_system() -> object:
     """Feed a System where a measured series is required (the type-leak footgun).
 
-    ``entropy`` the function shadows ``entropy`` the subpackage at
-    ``tsdynamics.analysis`` (WS-NAMESPACE), so the estimator is reached through
-    :func:`importlib.import_module`.
+    ``lyapunov_from_data`` estimates the maximal exponent from a *series*; handed
+    a live System it must not silently produce a number.  Today it leaks the raw
+    ``float() argument …`` ``TypeError`` from the array coercion — tier 2 asserts
+    it raises, and the tier-3 open-footgun row tracks the value-naming upgrade.
     """
-    entropy = importlib.import_module("tsdynamics.analysis.entropy")
-    return entropy.permutation_entropy(ts.Lorenz())
+    return ts.lyapunov_from_data(ts.Lorenz())
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1120,14 +1109,6 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
         ("sigmaa",),
         InvalidParameterError,
     ),
-    _ValueNamingCase(
-        "wrong-type-input-entropy",
-        _ERRGATE_WRONG_TYPE,
-        _errgate_permutation_entropy_on_system,
-        TypeError,
-        ("System", "Lorenz"),
-        InvalidInputError,
-    ),
     # Closed by FINISH-ERRADOPT — promoted out of the tier-3 strict-xfail table.
     _ValueNamingCase(
         "short-data-correlation-dimension",
@@ -1226,6 +1207,13 @@ _ERRGATE_NO_SILENT: list[_RaisesCase] = [
         ValueError,
         None,
     ),
+    _RaisesCase(
+        "wrong-type-input-lyapunov-from-data",
+        _ERRGATE_WRONG_TYPE,
+        _errgate_data_analysis_on_system,
+        TypeError,
+        None,
+    ),
 ]
 
 
@@ -1245,6 +1233,22 @@ _ERRGATE_OPEN_FOOTGUNS: list[_OpenFootgun] = [
         "instead of a TSDynamicsError naming the initial condition.",
         TSDynamicsError,
         (),
+    ),
+    # The value-naming guard for "a System where a measured series is wanted"
+    # lived in the entropy estimators, which left the library with the scope
+    # narrowing.  Every surviving data-level analysis still leaks the raw
+    # ``float() argument …`` TypeError from its array coercion, so the standard
+    # is tracked here (tier 2 already asserts it at least raises).
+    _OpenFootgun(
+        "open-wrong-type-input-message",
+        _ERRGATE_WRONG_TYPE,
+        _errgate_data_analysis_on_system,
+        "The data-level analyses share no System-rejecting coercion guard: "
+        "handing a System to lyapunov_from_data leaks a raw NumPy 'float() "
+        "argument' TypeError instead of a TSDynamicsError naming the System. "
+        "Owned by the WS-CONV calling-convention lane.",
+        TSDynamicsError,
+        ("System", "Lorenz"),
     ),
 ]
 

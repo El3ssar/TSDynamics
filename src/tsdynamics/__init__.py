@@ -41,9 +41,6 @@ of :func:`orbit_diagram`), :func:`poincare_section`, :func:`recurrence_matrix`,
 Reachable submodules (bound on the top-level namespace, so they show up in
 ``tsdynamics.<TAB>``):
 
-- :mod:`~tsdynamics.transforms` — signal/feature transforms that feed the
-  analysis layer (``ts.transforms.power_spectral_density``); a headline user
-  capability.
 - :mod:`~tsdynamics.errors` — the :class:`~tsdynamics.errors.TSDynamicsError`
   hierarchy that public entry points raise.
 - :mod:`~tsdynamics.viz` — the backend-agnostic ``PlotSpec`` IR plus its
@@ -72,7 +69,6 @@ from . import (
     registry,
     solvers,
     systems,
-    transforms,
     utils,
 )
 from .analysis import (
@@ -139,9 +135,6 @@ from .analysis import (
     RQAResult as RQAResult,
 )
 from .analysis import (
-    SurrogateTest as SurrogateTest,
-)
-from .analysis import (
     UncertaintyExponent as UncertaintyExponent,
 )
 from .analysis import (
@@ -149,12 +142,6 @@ from .analysis import (
 )
 from .analysis import (
     WindowedRQA as WindowedRQA,
-)
-from .analysis import (
-    aaft_surrogate as aaft_surrogate,
-)
-from .analysis import (
-    approximate_entropy as approximate_entropy,
 )
 from .analysis import (
     autocorrelation as autocorrelation,
@@ -187,16 +174,10 @@ from .analysis import (
     dimension_spectrum as dimension_spectrum,
 )
 from .analysis import (
-    dispersion_entropy as dispersion_entropy,
-)
-from .analysis import (
     embed as embed,
 )
 from .analysis import (
     embedding_dimension as embedding_dimension,
-)
-from .analysis import (
-    entropy as entropy,
 )
 from .analysis import (
     estimate_period as estimate_period,
@@ -217,16 +198,10 @@ from .analysis import (
     fixed_points as fixed_points,
 )
 from .analysis import (
-    fourier_surrogate as fourier_surrogate,
-)
-from .analysis import (
     gali as gali,
 )
 from .analysis import (
     generalized_dimension as generalized_dimension,
-)
-from .analysis import (
-    iaaft_surrogate as iaaft_surrogate,
 )
 from .analysis import (
     information_dimension as information_dimension,
@@ -241,22 +216,10 @@ from .analysis import (
     lyapunov_spectrum as lyapunov_spectrum,
 )
 from .analysis import (
-    lz76_complexity as lz76_complexity,
-)
-from .analysis import (
-    lz76_entropy as lz76_entropy,
-)
-from .analysis import (
     max_lyapunov as max_lyapunov,
 )
 from .analysis import (
-    multiscale_entropy as multiscale_entropy,
-)
-from .analysis import (
     mutual_information as mutual_information,
-)
-from .analysis import (
-    nonlinear_prediction_error as nonlinear_prediction_error,
 )
 from .analysis import (
     optimal_delay as optimal_delay,
@@ -271,13 +234,7 @@ from .analysis import (
     periodic_orbits as periodic_orbits,
 )
 from .analysis import (
-    permutation_entropy as permutation_entropy,
-)
-from .analysis import (
     poincare_section as poincare_section,
-)
-from .analysis import (
-    random_shuffle as random_shuffle,
 )
 from .analysis import (
     recurrence_matrix as recurrence_matrix,
@@ -292,18 +249,6 @@ from .analysis import (
     rqa as rqa,
 )
 from .analysis import (
-    sample_entropy as sample_entropy,
-)
-from .analysis import (
-    surrogate_test as surrogate_test,
-)
-from .analysis import (
-    surrogates as surrogates,
-)
-from .analysis import (
-    time_reversal_asymmetry as time_reversal_asymmetry,
-)
-from .analysis import (
     tipping_points as tipping_points,
 )
 from .analysis import (
@@ -311,9 +256,6 @@ from .analysis import (
 )
 from .analysis import (
     wada_property as wada_property,
-)
-from .analysis import (
-    weighted_permutation_entropy as weighted_permutation_entropy,
 )
 from .analysis import (
     windowed_rqa as windowed_rqa,
@@ -362,6 +304,13 @@ from .families import (
 bifurcation_diagram = orbit_diagram  #: discoverable spelling of :func:`orbit_diagram`
 basins = basins_of_attraction  #: short alias of :func:`basins_of_attraction`
 
+# Fold any out-of-tree transforms into ``registry.transforms``.  No in-tree
+# transforms ship (the generic time-series statistics layer left the library in
+# v6), so this entry-point group is the *only* populator of that registry — it is
+# discovered here, at package import, exactly as the analyses group is discovered
+# inside ``tsdynamics.analysis``.  Plugin load failures are isolated (warn-and-skip).
+registry.discover_transform_plugins()
+
 # Single source of truth for the package version; rewritten by python-semantic-release.
 __version__ = "5.4.0"
 
@@ -406,7 +355,6 @@ __all__ = [
     "fixed_points",
     # Navigable submodules (the depth lives here, scipy-style)
     "analysis",
-    "transforms",
     "data",
     "derived",
     "families",

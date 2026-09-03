@@ -1,6 +1,6 @@
-"""Engine trajectory/RHS cross-validation harness (ROADMAP stream I-XVAL).
+"""Engine trajectory/RHS cross-validation harness (stream I-XVAL).
 
-The migration plan (ROADMAP §9, decision D1) made the Rust engine the sole
+The v3 migration plan (decision D1) made the Rust engine the sole
 integration backend (milestone M3): the v2 backends (JiTCODE/JiTCDDE/Numba/
 diffsol) are deleted. The original removal gate proved, across the whole
 catalogue, that the engine's RHS matched the symbolic RHS to ~1e-10 and that

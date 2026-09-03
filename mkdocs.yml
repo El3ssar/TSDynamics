@@ -171,8 +171,6 @@ nav:
       - "Recurrence & RQA": analysis/recurrence.md
       - "Fractal dimensions": analysis/dimensions.md
       - "Delay embeddings": analysis/embedding.md
-      - "Entropy & complexity": analysis/entropy.md
-      - "Surrogates": analysis/surrogate.md
       - "Attractors & basins": analysis/basins.md
   - Systems:
       - systems/index.md
@@ -202,7 +200,6 @@ nav:
           - "Base classes": reference/base.md
           - "Derived systems": reference/derived.md
           - "Analysis": reference/analysis.md
-          - "Transforms": reference/transforms.md
           - "Data & state-space": reference/data.md
           - "Solvers": reference/solvers.md
           - "Registry": reference/registry.md
@@ -223,7 +220,6 @@ exclude_docs: |
   hero-preview.html
   # old content trees dropped from the new IA (rebuilt in later phases)
   theory/
-  transforms/
   contributing/
   # Phase 0 ships only the per-section index stubs; the old in-section
   # content pages are off-nav and rebuilt section by section in Phase 2.
@@ -244,8 +240,6 @@ exclude_docs: |
   !analysis/recurrence.md
   !analysis/dimensions.md
   !analysis/embedding.md
-  !analysis/entropy.md
-  !analysis/surrogate.md
   !analysis/basins.md
   # The Systems tree is build-generated (hooks/docs_autogen.py emits the new
   # systems/<type>/<subcat>/ IA as virtual files + a fresh systems/index.md).

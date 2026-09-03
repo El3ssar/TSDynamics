@@ -716,32 +716,6 @@ class SystemBase(SystemPlottable):
 
         return self._topical_accessor("recurrence", RecurrenceAccessor)
 
-    @property
-    def entropy(self) -> Any:
-        """Entropy / complexity estimators bound to this system.
-
-        A cached :class:`~tsdynamics.families._accessors.EntropyAccessor`
-        (``.permutation()`` / ``.sample()`` / …) delegating to the entropy free
-        functions.  These consume a scalar series; omitting ``data`` runs the
-        system first.
-        """
-        from tsdynamics.families._accessors import EntropyAccessor
-
-        return self._topical_accessor("entropy", EntropyAccessor)
-
-    @property
-    def surrogate(self) -> Any:
-        """Surrogate generators + nonlinearity tests bound to this system.
-
-        A cached :class:`~tsdynamics.families._accessors.SurrogateAccessor`
-        (``.test()`` / ``.generate()`` / …) delegating to
-        :func:`tsdynamics.analysis.surrogate_test`,
-        :func:`~tsdynamics.analysis.surrogates` and the surrogate statistics.
-        """
-        from tsdynamics.families._accessors import SurrogateAccessor
-
-        return self._topical_accessor("surrogate", SurrogateAccessor)
-
     # --- first-class analysis / derived verbs (additive convenience) ----- #
 
     def fixed_points(self, **kwargs: Any) -> Any:

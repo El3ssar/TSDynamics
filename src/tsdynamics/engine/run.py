@@ -15,7 +15,7 @@ by name:
 - ``"jit"`` — the Cranelift native-code evaluator (``tsdyn-jit``), for large or
   long-running problems.  Numerically identical to the interpreter.
 - ``"auto"`` — resolves to ``"interp"`` today (a size/run-length heuristic for
-  promoting to ``"jit"`` is a later refinement, ROADMAP §11).
+  promoting to ``"jit"`` is a later refinement).
 
 Both run inside the compiled extension :mod:`tsdynamics._rust` (stream E7).
 Until that extension is built, ``"interp"``/``"jit"`` raise

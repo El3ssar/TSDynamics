@@ -16,7 +16,7 @@ bug (a ``p**(1/2)`` written without parentheses lowers to ``p / 2`` because
    so a tautology is impossible and the assertion fails the instant a kernel's
    math drifts from the cited form.
 
-2. **Drift snapshot** (the long-tail layer).  Every catalogue system (all 151
+2. **Drift snapshot** (the long-tail layer).  Every catalogue system (all 171
    today) is lowered to its engine IR tape, and a SHA-256 of the canonical
    string form of that tape is pinned in a committed golden file.  Any
    accidental edit to a kernel changes its lowered tape, flips the hash, and the
@@ -104,10 +104,56 @@ def _halvorsen_expected(u: list[float], p: dict[str, float]) -> list[float]:
 
 
 def _duffing_expected(u: list[float], p: dict[str, float]) -> list[float]:
-    """Forced Duffing (autonomous form): x'=y, y'=−δy−αx−βx³+γcos z, z'=ω."""
+    """Forced Duffing (autonomous form): x'=y, y'=−δy−βx−αx³+γcos z, z'=ω.
+
+    ``beta`` is the *linear* stiffness and ``alpha`` the *cubic* one, so the
+    potential is V(x) = βx²/2 + αx⁴/4 — a double well for β < 0 < α (the
+    catalogue defaults β = −1, α = +1).  The opposite assignment gives
+    V = x²/2 − x⁴/4, which is unbounded below and makes the system escape.
+    """
     x, y, z = u
     alpha, beta, delta, gamma, omega = (p["alpha"], p["beta"], p["delta"], p["gamma"], p["omega"])
-    return [y, -delta * y - alpha * x - beta * x**3 + gamma * math.cos(z), omega]
+    return [y, -delta * y - beta * x - alpha * x**3 + gamma * math.cos(z), omega]
+
+
+def _double_pendulum_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    r"""Planar double pendulum of two uniform rods, from the Lagrangian.
+
+    Re-derived here from scratch rather than transcribed from the kernel.  For
+    two identical uniform rods (mass ``m``, length ``d``) hinged end to end,
+
+        T = (1/6) m d² (4 θ̇₁² + θ̇₂² + 3 θ̇₁θ̇₂ cos(θ₁−θ₂))
+        V = −(1/2) m g d (3 cos θ₁ + cos θ₂)
+
+    (Marion, *Classical Dynamics*, the compound double pendulum).  The *3* in
+    ``V`` sits on ``cos θ₁`` alone — the upper rod carries its own weight plus
+    the whole weight of the rod hanging from it, while the lower rod carries
+    only its own.
+
+    The conjugate momenta are ``p = A(θ) θ̇`` with the mass matrix
+
+        A = (m d²/6) [[8, 3 cos Δ], [3 cos Δ, 2]],   Δ = θ₁ − θ₂,
+
+    so this derivation recovers ``θ̇`` by **solving** that 2×2 system with
+    ``numpy.linalg.solve``, a genuinely different computation from the kernel's
+    closed-form inverse (whose ``16 − 9cos²Δ`` denominator is that matrix's
+    determinant times 36/(m d²)²).  The momentum rates are then
+    ``ṗᵢ = ∂L/∂θᵢ``:
+
+        ṗ₁ = −(1/2) m d² θ̇₁θ̇₂ sin Δ − (3/2) m g d sin θ₁
+        ṗ₂ = +(1/2) m d² θ̇₁θ̇₂ sin Δ − (1/2) m g d sin θ₂ .
+    """
+    th1, th2, p1, p2 = u
+    d, m = p["d"], p["m"]
+    g = 9.82  # DoublePendulum._equations uses this value of g
+    delta = th1 - th2
+    c = math.cos(delta)
+    mass = (m * d**2 / 6.0) * np.array([[8.0, 3.0 * c], [3.0 * c, 2.0]])
+    th1_dot, th2_dot = np.linalg.solve(mass, np.array([p1, p2]))
+    cross = 0.5 * m * d**2 * th1_dot * th2_dot * math.sin(delta)
+    p1_dot = -cross - 1.5 * m * g * d * math.sin(th1)
+    p2_dot = cross - 0.5 * m * g * d * math.sin(th2)
+    return [float(th1_dot), float(th2_dot), p1_dot, p2_dot]
 
 
 def _forced_vdp_expected(u: list[float], p: dict[str, float]) -> list[float]:
@@ -207,14 +253,62 @@ def _ricker_expected(u: list[float], p: dict[str, float]) -> list[float]:
 
 
 def _folded_towel_expected(u: list[float], p: dict[str, float]) -> list[float]:
-    """Rössler folded-towel map (3-D hyperchaotic)."""
+    r"""Rössler folded-towel map (3-D hyperchaotic).
+
+    Rössler (1979) builds the map around a *single* folded quantity
+    ``w = (y + c)(1 − 2z)``, which then appears in **both** the ``x`` and the
+    ``y`` update:
+
+        x' = a x (1 − x) − b w
+        y' = d (w − 1)(1 − e x)
+        z' = f z (1 − z) + g y .
+
+    Writing ``(1 + 2z)`` in the ``y`` line breaks that shared factor and changes
+    the contraction rate (λ₃ ≈ −2.45 instead of the quoted −3.30), so the
+    literature spectrum is not reproduced.  ``w`` is spelled out here from the
+    reference rather than copied from the kernel.
+    """
     x, y, z = u
     a, b, c, d, e, f, g = (p["a"], p["b"], p["c"], p["d"], p["e"], p["f"], p["g"])
+    w = (y + c) * (1 - 2 * z)
     return [
-        a * x * (1 - x) - b * (y + c) * (1 - 2 * z),
-        d * ((y + c) * (1 + 2 * z) - 1) * (1 - e * x),
+        a * x * (1 - x) - b * w,
+        d * (w - 1) * (1 - e * x),
         f * z * (1 - z) + g * y,
     ]
+
+
+def _baker_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    r"""Classical baker's map: x' = 2x mod 1; y' = αy (+ 1−α on the right half).
+
+    Stretch the unit square to twice its width, cut at ``x = 1/2``, and stack
+    the right half on top of the left.  The **x** coordinate selects the branch
+    (not ``y``), ``x`` expands by 2 and ``y`` *contracts* by ``α``, so
+    ``det J = 2α`` (= 1, area-preserving, at the default ``α = 0.5``).
+
+    Written from the definition, so it does not carry the kernel's ``mod
+    0.99999995`` round-off guard; ``_CASE_ATOL`` documents the ~5e-8 that guard
+    introduces on the right branch (on the left branch ``2x < 1`` and the guard
+    is inactive, so that case is exact).
+    """
+    x, y = u
+    alpha = p["alpha"]
+    return [(2.0 * x) % 1.0, alpha * y + (1.0 - alpha if x >= 0.5 else 0.0)]
+
+
+def _zaslavskii_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    r"""Zaslavsky dissipative standard map (Zaslavsky 1978, Phys. Lett. A 69, 145).
+
+    x' = [x + ν(1 + μy) + ε ν μ cos(2πx)] mod 1
+    y' = e^{−r} [y + ε cos(2πx)],   μ = (1 − e^{−r})/r .
+    """
+    x, y = u
+    eps, nu, r = p["eps"], p["nu"], p["r"]
+    mu = (1.0 - math.exp(-r)) / r
+    kick = eps * math.cos(2.0 * math.pi * x)
+    xp = (x + nu * (1.0 + mu * y) + nu * mu * kick) % 1.0
+    yp = math.exp(-r) * (y + kick)
+    return [xp, yp]
 
 
 #: ``(case_id, system_name, state, override-params, expected-fn)``.  ``None``
@@ -229,6 +323,7 @@ CASES: list[tuple[str, str, list[float], dict[str, float] | None, Any]] = [
     ("Thomas", "Thomas", [0.6, 1.1, -0.4], None, _thomas_expected),
     ("Halvorsen", "Halvorsen", [-1.0, 0.5, 0.3], None, _halvorsen_expected),
     ("Duffing", "Duffing", [0.4, -0.7, 1.3], None, _duffing_expected),
+    ("DoublePendulum", "DoublePendulum", [0.7, -0.4, 1.3, -0.6], None, _double_pendulum_expected),
     ("ForcedVanDerPol", "ForcedVanDerPol", [0.3, 1.2, 0.8], None, _forced_vdp_expected),
     ("ForcedFitzHughNagumo", "ForcedFitzHughNagumo", [0.5, 0.2, 1.1], None, _forced_fhn_expected),
     # WindmiReduced twice: a saturated-gate state (isolates v' **(1/2)) and a
@@ -251,7 +346,21 @@ CASES: list[tuple[str, str, list[float], dict[str, float] | None, Any]] = [
     ("Ulam", "Ulam", [0.35], None, _ulam_expected),
     ("Ricker", "Ricker", [0.8], None, _ricker_expected),
     ("FoldedTowel", "FoldedTowel", [0.4, 0.2, 0.5], None, _folded_towel_expected),
+    # Baker twice: both branches of the x-cut (the shipped map used to branch on
+    # y and expand *both* coordinates).  alpha is overridden away from the
+    # symmetric 0.5 so a swapped contraction factor cannot hide.
+    ("Baker[x<0.5]", "Baker", [0.31, 0.62], {"alpha": 0.3}, _baker_expected),
+    ("Baker[x>=0.5]", "Baker", [0.73, 0.62], {"alpha": 0.3}, _baker_expected),
+    ("Zaslavskii", "Zaslavskii", [0.37, 0.42], None, _zaslavskii_expected),
 ]
+
+#: Per-case absolute/relative tolerance, keyed by ``case_id``.  Everything not
+#: listed is held to 1e-12 (an exact re-derivation).  The one exception is
+#: Baker's right branch, where the kernel's documented ``mod 0.99999995``
+#: round-off guard (see :class:`Baker._step`) offsets ``x'`` by ~5e-8 from the
+#: textbook ``mod 1``.
+_CASE_ATOL: dict[str, float] = {"Baker[x>=0.5]": 1e-7}
+_DEFAULT_CASE_TOL = 1e-12
 
 
 def _evaluate_rhs(entry: Any, state: list[float], params: dict[str, float] | None) -> np.ndarray:
@@ -298,7 +407,8 @@ def test_curated_rhs_matches_independent_derivation(
     assert actual.shape == expected.shape, (
         f"{case_id}: RHS returned shape {actual.shape}, expected {expected.shape}"
     )
-    if not np.allclose(actual, expected, rtol=1e-12, atol=1e-12):
+    tol = _CASE_ATOL.get(case_id, _DEFAULT_CASE_TOL)
+    if not np.allclose(actual, expected, rtol=tol, atol=tol):
         diff = actual - expected
         raise AssertionError(
             f"{case_id}: catalogue RHS disagrees with the independent re-derivation.\n"
@@ -422,7 +532,7 @@ def test_golden_snapshot_exists() -> None:
 def test_catalogue_tapes_match_snapshot() -> None:
     """Every catalogue RHS lowers to its pinned tape hash — the drift gate.
 
-    Catches the long tail of transcription bugs across all 151 systems: any
+    Catches the long tail of transcription bugs across the whole catalogue: any
     accidental edit to an ``_equations`` / ``_step`` / ``_drift`` body changes
     its lowered tape, flips the SHA-256, and this test names the offending
     system(s).

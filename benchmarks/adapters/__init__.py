@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from adapters.antropy_adapter import AntropyAdapter
 from adapters.dysts_adapter import DystsAdapter
 from adapters.neurokit2_adapter import NeuroKit2Adapter
 from adapters.nolds_adapter import NoldsAdapter
@@ -29,7 +28,6 @@ REGISTRY: dict[str, tuple[type, dict[str, Any]]] = {
     "pynamical": (PynamicalAdapter, {}),
     "nolds": (NoldsAdapter, {}),
     "nolitsa": (NolitsaAdapter, {}),
-    "antropy": (AntropyAdapter, {}),
     "neurokit2": (NeuroKit2Adapter, {}),
     "pyunicorn": (PyunicornAdapter, {}),
 }

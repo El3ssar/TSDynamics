@@ -312,64 +312,6 @@ _METHODS: dict[str, list[tuple[str, str]]] = {
             "[doi:10.1016/S0167-2789(97)00118-8](https://doi.org/10.1016/S0167-2789(97)00118-8)",
         ),
     ],
-    "Entropy & complexity": [
-        (
-            "bandt2002",
-            "C. Bandt & B. Pompe, “Permutation entropy: a natural "
-            "complexity measure for time series”, *Phys. Rev. Lett.* "
-            "**88**, 174102 (2002). "
-            "[doi:10.1103/PhysRevLett.88.174102](https://doi.org/10.1103/PhysRevLett.88.174102)",
-        ),
-        (
-            "fadlallah2013",
-            "B. Fadlallah, B. Chen, A. Keil & J. Príncipe, "
-            "“Weighted-permutation entropy: a complexity measure for time "
-            "series incorporating amplitude information”, *Phys. Rev. E* "
-            "**87**, 022911 (2013). "
-            "[doi:10.1103/PhysRevE.87.022911](https://doi.org/10.1103/PhysRevE.87.022911)",
-        ),
-        (
-            "rostaghi2016",
-            "M. Rostaghi & H. Azami, “Dispersion entropy: a measure for "
-            "time-series analysis”, *IEEE Signal Process. Lett.* **23**, "
-            "610 (2016). "
-            "[doi:10.1109/LSP.2016.2542881](https://doi.org/10.1109/LSP.2016.2542881)",
-        ),
-        (
-            "pincus1991",
-            "S. M. Pincus, “Approximate entropy as a measure of system "
-            "complexity”, *Proc. Natl. Acad. Sci. USA* **88**, 2297 "
-            "(1991). [doi:10.1073/pnas.88.6.2297](https://doi.org/10.1073/pnas.88.6.2297)",
-        ),
-        (
-            "richman2000",
-            "J. S. Richman & J. R. Moorman, “Physiological time-series "
-            "analysis using approximate entropy and sample entropy”, *Am. "
-            "J. Physiol. Heart Circ. Physiol.* **278**, H2039 (2000). "
-            "[doi:10.1152/ajpheart.2000.278.6.H2039]"
-            "(https://doi.org/10.1152/ajpheart.2000.278.6.H2039)",
-        ),
-        (
-            "costa2002",
-            "M. Costa, A. L. Goldberger & C.-K. Peng, “Multiscale entropy "
-            "analysis of complex physiologic time series”, *Phys. Rev. "
-            "Lett.* **89**, 068102 (2002). "
-            "[doi:10.1103/PhysRevLett.89.068102](https://doi.org/10.1103/PhysRevLett.89.068102)",
-        ),
-        (
-            "lempel1976",
-            'A. Lempel & J. Ziv, "On the complexity of finite sequences", *IEEE '
-            "Trans. Inf. Theory* **22**, 75 (1976). "
-            "[doi:10.1109/TIT.1976.1055501](https://doi.org/10.1109/TIT.1976.1055501)",
-        ),
-        (
-            "kaspar1987",
-            "F. Kaspar & H. G. Schuster, “Easily calculable measure for the "
-            "complexity of spatiotemporal patterns”, *Phys. Rev. A* "
-            "**36**, 842 (1987). "
-            "[doi:10.1103/PhysRevA.36.842](https://doi.org/10.1103/PhysRevA.36.842)",
-        ),
-    ],
     "Recurrence & RQA": [
         (
             "eckmann1987",
@@ -397,47 +339,6 @@ _METHODS: dict[str, list[tuple[str, str]]] = {
             "plots for the analysis of complex systems”, *Phys. Rep.* "
             "**438**, 237 (2007). "
             "[doi:10.1016/j.physrep.2006.11.001](https://doi.org/10.1016/j.physrep.2006.11.001)",
-        ),
-    ],
-    "Surrogates & nonlinearity tests": [
-        (
-            "theiler1992",
-            "J. Theiler, S. Eubank, A. Longtin, B. Galdrikian & J. D. Farmer, "
-            "“Testing for nonlinearity in time series: the method of "
-            "surrogate data”, *Physica D* **58**, 77 (1992). "
-            "[doi:10.1016/0167-2789(92)90102-S](https://doi.org/10.1016/0167-2789(92)90102-S)",
-        ),
-        (
-            "schreiber1996",
-            "T. Schreiber & A. Schmitz, “Improved surrogate data for "
-            "nonlinearity tests”, *Phys. Rev. Lett.* **77**, 635 (1996). "
-            "[doi:10.1103/PhysRevLett.77.635](https://doi.org/10.1103/PhysRevLett.77.635)",
-        ),
-        (
-            "diks1995",
-            "C. Diks, J. C. van Houwelingen, F. Takens & J. DeGoede, "
-            "“Reversibility as a criterion for discriminating time "
-            "series”, *Phys. Lett. A* **201**, 221 (1995). "
-            "[doi:10.1016/0375-9601(95)00239-Y](https://doi.org/10.1016/0375-9601(95)00239-Y)",
-        ),
-        (
-            "sugihara1990",
-            "G. Sugihara & R. M. May, “Nonlinear forecasting as a way of "
-            "distinguishing chaos from measurement error in time series”, "
-            "*Nature* **344**, 734 (1990). "
-            "[doi:10.1038/344734a0](https://doi.org/10.1038/344734a0)",
-        ),
-        (
-            "kantz2004",
-            "H. Kantz & T. Schreiber, *Nonlinear Time Series Analysis*, 2nd ed., "
-            "Cambridge University Press (2004). "
-            "[doi:10.1017/CBO9780511755798](https://doi.org/10.1017/CBO9780511755798)",
-        ),
-        (
-            "theiler1986",
-            'J. Theiler, "Spurious dimension from correlation algorithms applied '
-            'to limited time-series data", *Phys. Rev. A* **34**, 2427 (1986). '
-            "[doi:10.1103/PhysRevA.34.2427](https://doi.org/10.1103/PhysRevA.34.2427)",
         ),
     ],
     "Fixed points, periodic orbits & interval methods": [

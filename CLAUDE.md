@@ -45,7 +45,7 @@ paths have MOVED, no shims):
 ```
 src/tsdynamics/
 ├── __init__.py               # __version__ (managed by python-semantic-release) + re-exports
-├── registry.py               # system registry (SystemEntry + all_systems/…) + reserved generic analyses/transforms (solvers live in tsdynamics.solvers)
+├── registry.py               # system registry (SystemEntry + all_systems/…) + generic analyses/renderers registries + the now-EMPTY transforms registry (the out-of-tree plugin hook; solvers live in tsdynamics.solvers)
 ├── families/                 # base classes + the System protocol (was base/)
 │   ├── base.py               # SystemBase, ParamSet, MetaStore (re-exports Trajectory from data)
 │   ├── protocol.py           # the System runtime Protocol
@@ -81,7 +81,6 @@ src/tsdynamics/
 ├── data/                     # state-space geometry + trajectory lingua franca (was sampling.py)
 │   ├── trajectory.py         # Trajectory (canonical home; re-exported via families + top level)
 │   └── sampling.py           # Box/Ball/Grid, sampler, grid_points, set_distance
-├── _result_common.py         # tiny shared result helper (resolve_plot_kind) for BOTH analysis._result and transforms._result — leaf, no viz import at module scope
 ├── analysis/                 # quantifiers, one subpackage per A-* stream (A-LAYOUT reorg)
 │   ├── __init__.py           # flat re-exports (public API) + analyses plugin discovery
 │   ├── _result.py            # re-exporting FACADE: re-exports the result hierarchy from the _result_* submodules (back-compat import surface)
@@ -96,14 +95,11 @@ src/tsdynamics/
 │   ├── lyapunov/             # A-LYAP: lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
 │   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL + rigorous Krawczyk method="interval" in _interval.py — fixed.py), periodic_orbits/periodic_orbit/PeriodicOrbit + estimate_period (periodic.py), shared primitives (_common.py); self-registers
 │   ├── dimensions/           # A-DIM: correlation/generalized-Rényi/fixed-mass fractal dims + scaling-region fit
-│   ├── entropy/              # A-ENT: permutation/dispersion/sample/multiscale entropy + LZ76 (composable OutcomeSpace×estimator×measure)
 │   ├── chaos/               # A-CHAOS: GALI_k (Skokos) + 0–1 test (Gottwald–Melbourne) + expansion entropy (Hunt–Ott); maps via _jacobian, flows via self-contained RK4 variational core (no engine/compile)
 │   ├── recurrence/          # A-RQA: recurrence_matrix (fixed ε / target rate, sparse cKDTree) + rqa (DET/LAM/L_max/ENTR/TT) + windowed_rqa; self-registers into registry.analyses
-│   ├── surrogate/           # A-SURR: surrogates (shuffle/FT/AAFT/IAAFT generators) + time_reversal_asymmetry/nonlinear_prediction_error stats + surrogate_test→SurrogateTest (rank p + sigma); self-registers into registry.analyses
 │   ├── basins/              # A-BASIN: find_attractors/basins_of_attraction (recurrence-FSM AttractorMapper) + basin_fractions (basin stability) + basin_entropy/uncertainty_exponent/wada_property (boundary structure) + continuation/tipping_points + resilience; cell tessellation in _common.py; self-registers into registry.analyses
 │   ├── embedding/           # owned by A-EMBED
 │   └── sampling/            # sagitta tools: estimate_dt_from_sagitta (output-dt selector) + sagitta_profile (per-point bow, the color_by="sagitta" field). NOT registered into registry.analyses (a sampling tool, not a quantifier); SagittaDt result is hidden (not exported)
-├── transforms/               # signal/feature transforms (stream T-XFORM): spectral.py (PSD/entropy/centroid/dominant freq), preprocessing.py (detrend/normalize/Butterworth filters), features.py (FEATURE_FUNCTIONS + extract_features/Hjorth), _common.py (Trajectory↔array coercion + fs/dt resolution); self-register into registry.transforms
 ├── viz/                      # PlotSpec IR seam + renderers (mpl/plotly/json/threejs) + compose.py (ts.viz.plot)
 ├── systems/
 │   ├── continuous/           # 9 ODE category modules (+ spatial_fields.py 2-D PDEs) + delayed_systems.py (DDEs!)
@@ -157,10 +153,7 @@ module's `__all__`), so a new system needs no manual edit there.
   `gali`, `GALIResult`, `zero_one_test`, `expansion_entropy`,
   `ExpansionEntropyResult`; recurrence & RQA (A-RQA) `recurrence_matrix`,
   `RecurrenceMatrix`, `rqa`, `RQAResult`, `windowed_rqa`, `WindowedRQA`;
-  surrogates & nonlinearity tests (A-SURR) `surrogates`, `random_shuffle`,
-  `fourier_surrogate`, `aaft_surrogate`, `iaaft_surrogate`,
-  `time_reversal_asymmetry`, `nonlinear_prediction_error`, `surrogate_test`,
-  `SurrogateTest`; attractors & basins (A-BASIN) `find_attractors`,
+  attractors & basins (A-BASIN) `find_attractors`,
   `basins_of_attraction`, `basin_fractions`, `basin_entropy`,
   `uncertainty_exponent`, `wada_property`, `continuation`, `tipping_points`,
   `resilience`, `Attractor`, `AttractorSet`, `BasinsResult`, `BasinFractions`,
@@ -173,9 +166,28 @@ module's `__all__`), so a new system needs no manual edit there.
   builds on (Monte-Carlo + full-grid sampling, attractor-matching distances).
   `Trajectory`/`Box`/`Ball`/`Grid` are *defined* in `tsdynamics.data` (the one
   canonical home); the top-level names are convenience re-exports.
-- Submodules: `analysis`, `transforms`, `data`, `derived`, `families`,
+- Submodules: `analysis`, `data`, `derived`, `families`,
   `registry`, `systems`, `utils`, `errors` plus the lazily-resolved `viz` and the
   advanced/internal `engine` / `solvers` (reachable, docstring-flagged internal).
+
+**Scope boundary (v6, stream SCOPE-SURGERY).** TSDynamics is a *dynamical systems*
+library, deliberately **not** a general time-series toolkit. The governing rule is
+**phase-space methods stay; generic series statistics go.** In v6 the following
+were **deleted outright** (no shims — the owner sanctioned the break) and now live
+in a separate, companion time-series library that will integrate through the
+plugin surface below: `analysis/entropy/` (permutation/dispersion/sample/
+multiscale entropy, LZ76, the OutcomeSpace core), `analysis/surrogate/`
+(shuffle/FT/AAFT/IAAFT, `time_reversal_asymmetry`, `nonlinear_prediction_error`,
+`surrogate_test`), and the whole `transforms/` package (PSD, detrend/normalize,
+Butterworth filters, `extract_features`/Hjorth) plus its `_result_common.py` leaf.
+What **stayed** is what reconstructs or measures *phase space*:
+`analysis/embedding` (Takens — the bridge from data back to phase space),
+`analysis/recurrence` (recurrence plots are a phase-space method),
+`analysis/lyapunov/from_data.py`, and `analysis/sampling`.
+Do **not** re-add generic signal processing here. Beware the false friends:
+`expansion_entropy` (A-CHAOS), `basin_entropy` (A-BASIN), RQA's `ENTR`, and
+Benettin's "Kolmogorov entropy" citation are all SURVIVORS and unrelated to the
+deleted entropy package.
 
 **Curated top level (stream WS-NAMESPACE).** As of v4, `tsdynamics.__all__` is
 **curated to ~30 headline names** — the five family bases + `WrappedSystem`,
@@ -189,17 +201,15 @@ and `from tsdynamics import correlation_dimension` both resolve (the flat
 re-export bindings are retained), and the qualified path
 `ts.analysis.dimensions.correlation_dimension` works too. `__dir__` mirrors the
 curated `__all__`, so autocomplete shows the mental model, not a flat dump.
-`ts.analysis.<TAB>` likewise surfaces the **~10 capability subpackages**
-(`lyapunov`/`dimensions`/`chaos`/…) rather than ~75 flat names, while the flat
-re-exports stay importable (`entropy` the subpackage is shadowed by `entropy` the
-function, so `ts.analysis.entropy` is the function — reach the estimators via
-`from tsdynamics.analysis.entropy import permutation_entropy` or
-`importlib.import_module("tsdynamics.analysis.entropy")`).
+`ts.analysis.<TAB>` likewise surfaces the capability subpackages
+(`lyapunov`/`dimensions`/`chaos`/…) rather than a flat dump, while the flat
+re-exports stay importable.  (The old `entropy`-function-shadows-`entropy`-subpackage
+collision is gone with the entropy package itself.)
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.families`.
-The `transforms`, `engine`, `solvers` and `errors` submodules are bound eagerly
-on the top-level namespace and in `__all__` (`transforms`/`errors` headline,
+The `engine`, `solvers` and `errors` submodules are bound eagerly
+on the top-level namespace and in `__all__` (`errors` headline,
 `engine`/`solvers` flagged internal in their docstrings). The `viz` package
 (`PlotSpec` IR + four self-registering renderers — matplotlib/plotly/json/threejs —
 plus the styling/theme system) is bound **lazily** via the module `__getattr__`, so
@@ -215,9 +225,15 @@ generic name→object `Registry` containers — `registry.analyses`,
 `registry.transforms` and `registry.renderers` — for the analysis/transform/
 visualization-backend streams to register into.
 Out-of-tree plugins are wired in (A-LAYOUT): `tsdynamics.analysis`/
-`tsdynamics.transforms` call `plugins.register_entry_points` at import to load
+the top-level `__init__` call `plugins.register_entry_points` at import to load
 the `tsdynamics.analyses`/`tsdynamics.transforms` entry-point groups; in-tree
-analyses/transforms self-register from their own subpackages (the A-* streams).
+analyses self-register from their own subpackages (the A-* streams).
+**`registry.transforms` ships EMPTY by design** — no in-tree transforms exist any
+more (see the scope boundary above); the container and its
+`tsdynamics.transforms` entry-point group are retained purely as the out-of-tree
+plugin surface the companion time-series library registers into, via
+`registry.discover_transform_plugins()`.  Do not delete it, and do not repopulate
+it in-tree.
 **Solvers are not registered here**: they live in the
 richer `tsdynamics.solvers` registry (a `name → SolverSpec` table with
 capability flags + `solvers/` directory and entry-point discovery via
@@ -994,15 +1010,14 @@ systems/analyses join the sweeps with zero test edits:
 - **Registry sweeps.** `tests/conftest.py` parametrizes fixtures over the
   registries: `ode_entry`/`dde_entry`/`map_entry`/`sde_entry`/`system_entry`
   (built-in systems) and `analysis_entry`/`transform_entry` (the D4
-  `registry.analyses`/`registry.transforms` plugin surface — the latter only
-  populates once `tsdynamics.transforms` is imported, which `conftest` does).
+  `registry.analyses`/`registry.transforms` plugin surface — the latter is empty
+  in-tree, so `transform_entry` degenerates to an empty parametrization/skip).
   `tests/test_analysis_registry.py` runs the meta-QA over every registered
   analysis/transform (callable, documented, round-trips, top-level export
   agreement) plus headline-membership guards.
 - **Property tests (Hypothesis).** `tests/test_property_*.py` assert
   *mathematical invariants* of the analysis/transform layer (embed value
-  preservation, PSD non-negativity, permutation-entropy monotone-transform
-  invariance, surrogate spectrum/amplitude preservation, recurrence symmetry +
+  preservation, recurrence symmetry +
   target-rate calibration, dimension-of-a-d-cube ≈ d, …). `hypothesis` is a dev
   dependency; `conftest` registers a profile (deadline off, health checks
   suppressed — required under `filterwarnings=["error"]`). Shared deterministic
@@ -1075,7 +1090,7 @@ reuse `_strategies` and assert a real invariant — never a tautology.
   engine test joins the job with zero CI edits. `tests/test_engine_coverage.py`
   guards the invariant. These engine tests `importorskip("tsdynamics._rust")`, so
   they still skip cleanly anywhere the extension is absent.
-- **Packaging shape (ROADMAP §11):** the project ships as **one maturin wheel** —
+- **Packaging shape:** the project ships as **one maturin wheel** —
   the pure-Python `tsdynamics` package (from `src/`, `python-source="src"`) plus
   the compiled `tsdynamics/_rust` abi3 extension (`module-name="tsdynamics._rust"`,
   `manifest-path="crates/tsdyn-core/Cargo.toml"`) in the same wheel. abi3 (cp312)

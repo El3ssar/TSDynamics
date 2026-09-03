@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import analysis, plugins, registry, transforms
+from tsdynamics import analysis, plugins, registry
 
 # ── public API preservation ─────────────────────────────────────────────────────
 
@@ -38,16 +38,14 @@ _PUBLIC = [
     "orbit_diagram",
     "OrbitDiagram",
     "poincare_section",
-    # entropy & complexity (stream A-ENT)
-    "entropy",
-    "permutation_entropy",
-    "weighted_permutation_entropy",
-    "dispersion_entropy",
-    "sample_entropy",
-    "approximate_entropy",
-    "multiscale_entropy",
-    "lz76_complexity",
-    "lz76_entropy",
+    # chaos indicators (stream A-CHAOS)
+    "gali",
+    "zero_one_test",
+    "expansion_entropy",
+    # recurrence & RQA (stream A-RQA)
+    "recurrence_matrix",
+    "rqa",
+    "windowed_rqa",
 ]
 
 
@@ -60,7 +58,7 @@ def test_top_level_reexports_unchanged(name):
 
 def test_analysis_all_is_stable():
     # The A-LAYOUT public surface must remain exported; analysis streams (A-DIM,
-    # A-ENT, …) append to __all__, so this is a subset check, not equality.
+    # A-CHAOS, …) append to __all__, so this is a subset check, not equality.
     assert set(_PUBLIC) <= set(analysis.__all__)
 
 
@@ -74,9 +72,8 @@ _SUBPACKAGES = [
     "basins",
     "dimensions",
     "embedding",
-    "entropy",
     "recurrence",
-    "surrogate",
+    "sampling",
 ]
 
 
@@ -204,6 +201,12 @@ def test_analysis_discover_plugins_registers_out_of_tree(
 def test_transforms_discover_plugins_registers_out_of_tree(
     tmp_path, monkeypatch, clean_generic_registries
 ):
+    """The ``tsdynamics.transforms`` group is live even though no in-tree transform ships.
+
+    Since the v6 scope surgery the transform registry is *purely* the out-of-tree
+    plugin surface (a companion time-series library registers into it), so this
+    test is the contract that the hook still discovers and registers.
+    """
     site = tmp_path / "site"
     _write_fake_distribution(
         site,
@@ -217,7 +220,8 @@ def test_transforms_discover_plugins_registers_out_of_tree(
     monkeypatch.syspath_prepend(str(site))
     importlib.invalidate_caches()
     try:
-        newly = transforms.discover_plugins(strict=True)
+        assert list(registry.transforms.names()) == []  # empty without a plugin
+        newly = registry.discover_transform_plugins(strict=True)
         assert "toy_double" in newly
         assert "toy_double" in registry.transforms
         assert registry.transforms.get("toy_double")([1, 2, 3]) == [2, 4, 6]

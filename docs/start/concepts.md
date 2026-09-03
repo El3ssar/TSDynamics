@@ -247,4 +247,3 @@ tests and its documentation.
 - [Systems](../systems/index.md) — the catalogue of 171 built-ins
 - [Analysis](../analysis/index.md) — what to do with a system once you have one
 - [Integration & methods](../analysis/integration-and-methods.md) — solvers, tolerances, and the backends in depth
-</content>

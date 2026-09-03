@@ -14,6 +14,21 @@ class DoublePendulum(ContinuousSystem):
     chaotic — exquisitely sensitive to initial conditions — once the energy is
     large enough for the arms to flip over.
 
+    For two uniform rods the gravitational potential is
+
+    .. math::
+
+        V(\theta_1, \theta_2)
+            = -\tfrac{1}{2} m g d \,(3\cos\theta_1 + \cos\theta_2),
+
+    so the upper arm feels three times the restoring torque of the lower one
+    (its own weight plus the whole weight of the arm hanging from it): the
+    factor 3 belongs on :math:`\sin\theta_1` alone. The small-oscillation normal
+    modes follow from :math:`\det(K - \omega^2 A) = 0` with
+    :math:`A = \tfrac{1}{6} m d^2 \begin{pmatrix} 8 & 3 \\ 3 & 2\end{pmatrix}`
+    and :math:`K = m g d\,\mathrm{diag}(3/2,\, 1/2)`, giving 2.6815 and
+    7.1923 rad/s at the defaults.
+
     Parameters
     ----------
     d : float
@@ -36,7 +51,7 @@ class DoublePendulum(ContinuousSystem):
         th1_dot = pre * (2 * p1 - 3 * cos(th1 - th2) * p2) / denom
         th2_dot = pre * (8 * p2 - 3 * cos(th1 - th2) * p1) / denom
         p1_dot = -0.5 * (m * d**2) * (th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th1))
-        p2_dot = -0.5 * (m * d**2) * (-th1_dot * th2_dot * sin(th1 - th2) + 3 * (g / d) * sin(th2))
+        p2_dot = -0.5 * (m * d**2) * (-th1_dot * th2_dot * sin(th1 - th2) + (g / d) * sin(th2))
         return th1_dot, th2_dot, p1_dot, p2_dot
 
 

@@ -7,7 +7,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tsdynamics)](https://pypi.org/project/tsdynamics/)
 [![codecov](https://codecov.io/gh/El3ssar/TSDynamics/graph/badge.svg)](https://codecov.io/gh/El3ssar/TSDynamics)
 
-**Dynamical systems in Python: 151 built-in systems, a native Rust integration
+**Dynamical systems in Python: 171 built-in systems, a native Rust integration
 engine, and a chaos-analysis toolkit — with the simplest system-definition
 contract anywhere.**
 
@@ -26,8 +26,9 @@ import tsdynamics as ts
 lor = ts.Lorenz()
 traj = lor.integrate(final_time=100.0, dt=0.01)
 traj["x"]                              # named component access
-lor.lyapunov_spectrum()                # → [0.91, ~0, -14.57]
-ts.kaplan_yorke_dimension(_)           # → ~2.06
+
+exps = lor.lyapunov_spectrum()         # → [0.91, ~0, -14.58]
+ts.kaplan_yorke_dimension(exps)        # → ~2.06
 ```
 
 📖 **Documentation: <https://el3ssar.github.io/TSDynamics/>**
@@ -120,30 +121,28 @@ import numpy as np, tsdynamics as ts
 section = ts.poincare_section(ts.Rossler(), plane=("y", 0.0, "up"), n=500)
 
 # Fixed points of the Hénon map, with stability
-ts.fixed_points(ts.Henon())
-# [FixedPoint([-1.1314 -0.3394], unstable), FixedPoint([0.6314 0.1894], unstable)]
+list(ts.fixed_points(ts.Henon()))
+# [FixedPoint([-1.131354 -0.339406], unstable, |λ|max=3.2598),
+#  FixedPoint([0.631354 0.189406], unstable, |λ|max=1.9237)]
 
 # Maximal Lyapunov exponent — no Jacobian needed
-ts.max_lyapunov(ts.Lorenz(ic=[1, 1, 1]), dt=0.05)        # ≈ 0.9
+ts.max_lyapunov(ts.Lorenz(ic=[1, 1, 1]), dt=0.05)        # ≈ 0.89
 ```
 
 Plus: **attractors & basins** of any flow or map, correlation/Rényi **fractal
-dimensions**, **permutation/sample/dispersion entropy**, **RQA** (recurrence
-quantification), **surrogate** hypothesis tests, **delay embedding** (Takens,
-optimal τ, Cao/FNN), GALI & the 0–1 chaos test, and Lyapunov exponents **from a
-bare time series** (Kantz/Rosenstein).
+dimensions**, **RQA** (recurrence quantification), **delay embedding** (Takens,
+optimal τ, Cao/FNN), **periodic orbits** (shooting, Davidchack–Lai, rigorous
+interval enclosure), GALI, the 0–1 chaos test & Hunt–Ott expansion entropy, and
+Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
 
 ## Highlights
 
-- **Three families, one interface**
+- **Four families, one interface** — **ODEs**, **DDEs**, **SDEs** and
+  **discrete maps** all implement the same stepping protocol
+  (`reinit` / `step` / `state` / `trajectory`), so every analysis composes over
+  all of them.
 
-  - **ODEs**
-
-  - **DDEs**
-  - **SDEs**
-  - **Discrete Maps**
-
-- **151 built-in systems** with literature parameters.
+- **171 built-in systems** with literature parameters (136 ODEs, 26 maps, 6 DDEs, 3 SDEs).
 
 - **Native engine**: equations lower to a Rust engine (an SSA-tape
   interpreter, with a Cranelift JIT alongside) in-process; parameters are runtime

@@ -21,7 +21,7 @@ The registry itself (``register`` / ``get`` / ``available``) and the kernel
 *specs* live in the package ``__init__`` and the ``explicit`` / ``implicit`` /
 ``stochastic`` spec modules; this module only *reads* the registry, so it stays
 correct as plugins add solvers — a plugin-registered name resolves here exactly
-like a built-in one (ROADMAP §4d / D4).
+like a built-in one (D4).
 """
 
 from __future__ import annotations
@@ -141,8 +141,8 @@ DEFAULT_METHOD: dict[str, str] = {"ode": "rk45", "dde": "rk45", "sde": "euler_ma
 #: family's explicit default.  The ODE entry is the variable-order ``bdf``
 #: (stream E-BDF): it takes far larger steps through a smooth stiff phase than
 #: the fixed-order ``rosenbrock``/``trbdf2`` (which stay selectable by name),
-#: closing the warm-throughput gap to a variable-order BDF reference
-#: (``benches/REPORT.md``).
+#: closing the warm-throughput gap to a variable-order BDF reference (issue #95;
+#: the rationale is recorded in ``CLAUDE.md`` under "Stiff ODE: which method?").
 #:
 #: **DDE has no entry on purpose.**  The DDE method-of-steps drives an *explicit*
 #: ODE stage integrator only (:func:`_spec_supports`), so the implicit stiff
@@ -254,9 +254,9 @@ def _spec_supports(spec: SolverSpec, family: str) -> bool:
     """Whether *spec* can integrate *family* (with the DDE-reuse rule)."""
     if spec.caps.supports_family(family):
         return True
-    # The DDE method-of-steps drives an explicit ODE stage integrator (ROADMAP
-    # E-DDE), so any explicit ODE kernel is usable for a DDE even though the Rust
-    # caps tag it ``ode`` only.
+    # The DDE method-of-steps drives an explicit ODE stage integrator, so any
+    # explicit ODE kernel is usable for a DDE even though the Rust caps tag it
+    # ``ode`` only.
     return family == "dde" and spec.caps.kind == "explicit" and spec.caps.supports_family("ode")
 
 

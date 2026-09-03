@@ -9,7 +9,7 @@ names the Rust kernel the engine dispatches to (here, the kernel name *is* the
 
 Importing this module registers the specs (the F2 directory scan imports it),
 so dropping a kernel here makes it resolvable by ``method=`` with no central
-table to edit (ROADMAP §4d).  The registry-parity test in ``tests/test_solvers.py``
+table to edit.  The registry-parity test in ``tests/test_solvers.py``
 asserts these stay in lock-step with the Rust ``register_solver!`` lines.
 """
 
@@ -19,7 +19,7 @@ from . import SolverCaps, SolverSpec, register
 
 #: The families an explicit RK kernel integrates natively (the Rust caps say
 #: ``ProblemKind::Ode``).  The DDE method-of-steps reuses these ODE stage
-#: integrators, but resolves them as ``family="ode"`` (ROADMAP E-DDE), so the
+#: integrators, but resolves them as ``family="ode"``, so the
 #: mirror stays faithful to the Rust ``supports`` set.
 _ODE = frozenset({"ode"})
 

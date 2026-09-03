@@ -16,7 +16,8 @@ Tiers
 
 The list of *what* is gated lives in ``tests/_doctest_select.py`` (one file per
 thing); this module is just the parametrize wrappers.  The forward contract new
-pages must satisfy to join the curated set is ``docs/contributing/page-template.md``.
+pages must satisfy to join the curated set is "The page-fence contract" in that
+module's docstring.
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ def test_curated_lists_are_disjoint_and_unique() -> None:
 def test_fence_extractor_skips_markers_and_transcripts() -> None:
     """The page extractor yields runnable scripts and skips fragments.
 
-    Asserts the two opt-outs the page-template contract relies on: a fence
+    Asserts the two opt-outs the page-fence contract relies on: a fence
     carrying the ``# skip-doctest`` marker, and a ``>>>`` doctest transcript
     (handled by the module path), are both excluded; a plain block is yielded.
     """

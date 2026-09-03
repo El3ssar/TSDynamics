@@ -2,7 +2,9 @@
 
 Enforces the frozen naming glossary (``docs/contributing/glossary.md``) over the
 *public analysis/transform surface* — every function registered in
-``registry.analyses`` / ``registry.transforms``:
+``registry.analyses`` / ``registry.transforms`` (the latter ships empty since the
+v6 scope surgery; it is the out-of-tree plugin surface, and any plugin registered
+into it is held to the same convention):
 
 1. its **first positional argument** is ``system`` or ``data`` (the two canonical
    input roles), unless the ``(function, first-arg)`` pair names a *prior result*
@@ -22,7 +24,6 @@ import inspect
 
 import pytest
 
-import tsdynamics.transforms  # noqa: F401  (populates registry.transforms)
 from tsdynamics import registry
 
 # ── glossary §1: the two canonical first-argument roles ───────────────────────

@@ -92,13 +92,3 @@ class NolitsaAdapter(BaseAdapter):
             return float(dims[below[0]]) if below.size else float(dims[-1])
 
         return run
-
-    def task_surrogate_generation(self, quick: bool) -> Callable[[], None]:
-        from nolitsa import surrogates
-
-        x = np.ascontiguousarray(series.lorenz_series()[: self.cfg["series"]["entropy_n"]])
-
-        def run() -> None:  # speed-only: generate (timed), no estimate
-            surrogates.iaaft(x)
-
-        return run

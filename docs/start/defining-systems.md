@@ -242,4 +242,3 @@ point — is all declared as class attributes, exactly like `params` and `dim`.
 - [Systems](../systems/index.md) — the 171 built-ins, each defined exactly this way
 - [Analysis](../analysis/index.md) — the quantifiers that compose over any system you define
 - [Fixed & periodic points](../analysis/fixed-points.md) — the equilibria and limit cycles used above
-</content>

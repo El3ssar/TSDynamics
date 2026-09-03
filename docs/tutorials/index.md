@@ -37,9 +37,9 @@ real data*.
 
 - [**Reconstruction from one signal**](reconstruction.md) — you have a single
   recorded channel $x(t)$ and no equations. Rebuild the attractor by delay
-  embedding, choose the delay and dimension with principled heuristics, measure
-  the fractal dimension and a data-driven Lyapunov exponent, then run a surrogate
-  test to rule out coloured noise.
+  embedding, choose the delay and dimension with principled heuristics, then
+  measure the fractal dimension and a data-driven Lyapunov exponent from the
+  recording alone — and check both against the ground truth.
 - [**Poincaré sections & return maps**](poincare-return-maps.md) — section a flow
   to turn it into a discrete map, then expose the one-dimensional map hiding
   inside a strange attractor — the famous Lorenz $z$-maxima cusp.

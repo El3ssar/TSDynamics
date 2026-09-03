@@ -43,6 +43,16 @@ trip such a warning are listed in :data:`RUNTIME_WARNING_MODULES`; for those the
 runner downgrades ``RuntimeWarning`` to a non-error during execution.  Every
 other warning category — and every other module — stays a hard error.
 
+The page-fence contract
+-----------------------
+A page joins :data:`CURATED_PAGES` once **every** one of its ```python``` fences
+either runs clean top-to-bottom as a script (fences on a page share one
+namespace, so a later block may use names an earlier one bound) or opts out by
+carrying the ``# skip-doctest`` marker (:data:`SKIP_MARKER`) — the marker is for
+deliberately-illustrative fragments referencing a placeholder the reader
+supplies.  Fences containing ``>>>`` are doctest transcripts and are likewise
+not executed as a script (the module-doctest path covers those).
+
 Provenance
 ----------
 The curated lists below were produced by running every ``src/tsdynamics``
@@ -50,8 +60,7 @@ module's doctests and every ``docs`` page's python fences under
 ``filterwarnings = error`` and keeping the ones that pass clean.  Modules / pages
 whose narrative docstrings are not yet self-contained doctests are deliberately
 *excluded* (not silenced): closing those gaps is tracked follow-up work, and the
-``docs/contributing/page-template.md`` contract is what new pages must satisfy to
-join the curated set.
+contract above is what a new page must satisfy to join the curated set.
 """
 
 from __future__ import annotations
@@ -84,9 +93,6 @@ OPTIONFLAGS = doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE
 CURATED_MODULES: tuple[str, ...] = (
     "tsdynamics.analysis.chaos.zero_one",
     "tsdynamics.analysis.dimensions.correlation",
-    "tsdynamics.analysis.entropy.core",
-    "tsdynamics.analysis.entropy.lz",
-    "tsdynamics.analysis.entropy.multiscale",
     "tsdynamics.analysis.lyapunov.from_data",
     "tsdynamics.analysis.orbits.return_map",
     "tsdynamics.data.sampling",
@@ -99,7 +105,6 @@ CURATED_MODULES: tuple[str, ...] = (
     "tsdynamics.families.delay",
     "tsdynamics.families.wrapped",
     "tsdynamics.registry",
-    "tsdynamics.transforms.spectral",
     "tsdynamics.utils.grids",
 )
 
@@ -122,19 +127,17 @@ RUNTIME_WARNING_MODULES: frozenset[str] = frozenset(
 # Every page here executes its ```python``` fences top-to-bottom without raising
 # under filterwarnings=error.  Pages with intentionally-illustrative fragments
 # (referencing a placeholder ``system``/``signal`` the reader supplies) are
-# excluded until they adopt the page-template contract (a ``# skip-doctest``
-# marker on the fragment fence).
+# excluded until they adopt the page-fence contract in the module docstring (a
+# ``# skip-doctest`` marker on the fragment fence).
 # ---------------------------------------------------------------------------
 
 CURATED_PAGES: tuple[str, ...] = (
     "analysis/chaos.md",
     "analysis/dimensions.md",
     "analysis/embedding.md",
-    "analysis/entropy.md",
     "analysis/index.md",
     "analysis/poincare.md",
     "analysis/recurrence.md",
-    "analysis/surrogate.md",
     "index.md",
     "project/changelog.md",
     "project/citation.md",
@@ -153,7 +156,7 @@ CURATED_PAGES: tuple[str, ...] = (
 
 # A fenced block carrying this marker is a deliberately-illustrative fragment
 # (pseudo-code or a snippet the reader completes) and is skipped by the page
-# executor.  Documented in ``docs/contributing/page-template.md``.
+# executor.  See "The page-fence contract" in this module's docstring.
 SKIP_MARKER = "# skip-doctest"
 
 # Matches an opening python code fence (```python / ```py / ```pycon, any
@@ -178,7 +181,6 @@ def doctest_namespace() -> dict[str, Any]:
 
     import tsdynamics as ts
     import tsdynamics.systems as systems
-    import tsdynamics.transforms  # noqa: F401  (populates registry.transforms)
 
     ns: dict[str, Any] = {"np": np, "ts": ts}
     for name in dir(systems):

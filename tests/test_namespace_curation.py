@@ -54,7 +54,6 @@ _CURATED_TOP_LEVEL = {
     "fixed_points",
     # navigable submodules
     "analysis",
-    "transforms",
     "data",
     "derived",
     "families",
@@ -98,11 +97,8 @@ _DEMOTED_ANALYSIS = [
     "rqa",
     "windowed_rqa",
     "RQAResult",
-    "permutation_entropy",
-    "sample_entropy",
     "embed",
     "optimal_delay",
-    "surrogate_test",
     "find_attractors",
     "return_map",
     "OrbitDiagram",
@@ -176,9 +172,7 @@ _CATEGORIES = (
     "dimensions",
     "chaos",
     "recurrence",
-    "entropy",
     "embedding",
-    "surrogate",
     "orbits",
     "fixedpoints",
     "basins",
@@ -211,9 +205,7 @@ _FLAT_ANALYSIS_SAMPLE = [
     "lyapunov_spectrum",
     "gali",
     "recurrence_matrix",
-    "permutation_entropy",
     "embed",
-    "surrogate_test",
     "orbit_diagram",
     "fixed_points",
     "basins_of_attraction",
@@ -228,22 +220,57 @@ def test_analysis_flat_reexports_retained(name):
     assert getattr(analysis, name) is getattr(ts, name)
 
 
-def test_entropy_collision_and_documented_escape_hatch():
-    """``ts.analysis.entropy`` is the function; the subpackage is reached by name / importlib.
+_REMOVED_SUBPACKAGES = [
+    "tsdynamics.transforms",
+    "tsdynamics.analysis.entropy",
+    "tsdynamics.analysis.surrogate",
+]
 
-    The ``entropy`` subpackage shares a name with the :func:`entropy` function, so
-    attribute access resolves to the function (the documented, griffe-safe
-    collision).  The estimators stay reachable via the spellings the docstrings
-    advertise — a ``from`` import or :func:`importlib.import_module`.
+
+@pytest.mark.parametrize("path", _REMOVED_SUBPACKAGES)
+def test_generic_series_statistics_layer_is_gone(path):
+    """The v6 scope surgery removed the generic time-series statistics layer.
+
+    TSDynamics is scoped to *dynamical-systems* methods: phase-space quantifiers
+    stay, generic series statistics (entropy estimators, surrogate-data tests,
+    spectra / filters / feature extraction) left the library.  Their modules must
+    be gone outright — no shim, no lazy re-export.
     """
     import importlib
 
-    # attribute access -> the function (not the module)
-    assert callable(analysis.entropy)
-    # the working escape hatches reach the subpackage's estimators
-    from tsdynamics.analysis.entropy import permutation_entropy
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(path)
 
-    assert callable(permutation_entropy)
-    mod = importlib.import_module("tsdynamics.analysis.entropy")
-    assert mod.__name__ == "tsdynamics.analysis.entropy"
-    assert "permutation_entropy" in mod.__all__
+
+_REMOVED_NAMES = [
+    "entropy",
+    "permutation_entropy",
+    "sample_entropy",
+    "lz76_complexity",
+    "surrogates",
+    "surrogate_test",
+    "SurrogateTest",
+    "time_reversal_asymmetry",
+    "nonlinear_prediction_error",
+    "transforms",
+]
+
+
+@pytest.mark.parametrize("name", _REMOVED_NAMES)
+def test_removed_names_are_unreachable(name):
+    """No removed name survives as a top-level or ``analysis`` attribute."""
+    assert not hasattr(ts, name), f"tsdynamics.{name} should have been removed"
+    assert name not in ts.__all__
+    assert not hasattr(analysis, name), f"tsdynamics.analysis.{name} should have been removed"
+
+
+def test_surviving_phase_space_quantifiers_are_untouched():
+    """The dynamics-side names that share a spelling with the removed layer survive.
+
+    ``expansion_entropy`` (A-CHAOS) and ``basin_entropy`` (A-BASIN) are *not* the
+    generic entropy estimators — they are phase-space quantifiers that merely
+    carry "entropy" in their names, and the surgery must not have taken them.
+    """
+    for name in ("expansion_entropy", "basin_entropy", "ExpansionEntropyResult"):
+        assert hasattr(ts, name)
+        assert getattr(ts, name) is getattr(analysis, name)

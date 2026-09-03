@@ -290,43 +290,6 @@ class TSDynamicsAdapter(BaseAdapter):
 
     # -- from-data complexity / scaling / recurrence ------------------------ #
 
-    def task_sample_entropy(self, quick: bool) -> Callable[[], float]:
-        import tsdynamics as ts
-
-        s = self.cfg["series"]
-        x = np.ascontiguousarray(series.lorenz_series()[: s["entropy_n"]])
-
-        def run() -> float:
-            return float(ts.sample_entropy(x, dimension=s["entropy_m"], delay=1).value)
-
-        return run
-
-    def task_permutation_entropy(self, quick: bool) -> Callable[[], float]:
-        import tsdynamics as ts
-
-        s = self.cfg["series"]
-        x = np.ascontiguousarray(series.lorenz_series()[: s["entropy_n"]])
-
-        def run() -> float:
-            return float(
-                ts.permutation_entropy(
-                    x, dimension=s["entropy_m"] + 1, delay=1, normalize=True
-                ).value
-            )
-
-        return run
-
-    def task_multiscale_entropy(self, quick: bool) -> Callable[[], float]:
-        import tsdynamics as ts
-
-        s = self.cfg["series"]
-        x = np.ascontiguousarray(series.lorenz_series()[: s["entropy_n"]])
-
-        def run() -> float:
-            return float(np.mean(np.asarray(ts.multiscale_entropy(x, scales=5)[:])))
-
-        return run
-
     def task_rqa_determinism(self, quick: bool) -> Callable[[], float]:
         import tsdynamics as ts
 
@@ -353,15 +316,5 @@ class TSDynamicsAdapter(BaseAdapter):
                     x, method="cao", delay=s["embed_target_delay"], max_dim=s["embed_max_dim"]
                 ).dimension
             )
-
-        return run
-
-    def task_surrogate_generation(self, quick: bool) -> Callable[[], None]:
-        import tsdynamics as ts
-
-        x = np.ascontiguousarray(series.lorenz_series()[: self.cfg["series"]["entropy_n"]])
-
-        def run() -> None:  # speed-only: generate (timed), no estimate
-            ts.iaaft_surrogate(x, n=1, seed=42)
 
         return run

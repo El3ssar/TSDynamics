@@ -46,7 +46,7 @@ exactly one canonical name per kind:
 the dynamics itself* takes `system` (it produces its own trajectory internally —
 `gali`, `expansion_entropy`, `fixed_points`, `find_attractors`). A function whose
 job is to *operate on an already-measured signal* takes `data` (`recurrence_matrix`,
-`correlation_dimension`, `permutation_entropy`, the transforms).
+`correlation_dimension`, `lyapunov_from_data`, and any registered transform).
 
 **Dual-input functions take `system` as the first argument** and coerce / accept a
 measured series through internal handling or a `data=` overload — they never invent
@@ -172,10 +172,8 @@ pairs; the same token used for a *banned* concept anywhere else still fails.
 | **`k`** | `lyapunov_spectrum.k` | number of **Lyapunov exponents** to compute (was `n_exp`; *may exceed `dim`* for DDEs — a function-space tangent) | a count of *exponents*, not neighbours |
 | **`k_max`** | `lyapunov_from_data.k_max` | length of the divergence / stretching curve `S(k)`, evolved over `k = 0 … k_max` | an *abscissa horizon* of the scaling curve, not a neighbour count |
 | **`step`** | `windowed_rqa.step` | window **stride** in samples | a stride between windows, not the integration time step `dt` |
-| **`horizon`** | `nonlinear_prediction_error.horizon` | prediction **lead-time** in samples | how far ahead to predict, not the run-length horizon (`n` / `final_time`) |
 | **`max_steps`** | `find_attractors`, `basins_of_attraction`, `continuation`, `basin_fractions` | integration **safety cap** — max steps before a trajectory is declared lost / non-recurrent | a divergence/abort bound, not the run length `n` |
 | **`max_delay`** | `optimal_delay`, `mutual_information`, `estimate_period`, `autocorrelation` | the **search ceiling** for a delay scan (supersedes `max_lag`) | a bound on the delay search, distinct from a single embedding `delay`; the `lag`/`tau` tokens stay banned |
-| **`fs`** | the transforms / spectral functions (`power_spectral_density`, `spectral_entropy`, `spectral_centroid`, `dominant_frequency`, `butter_filter`, `extract_features`) | sampling **frequency** (Hz) — accepted *alongside* `dt` (`fs = 1/dt`, mutually exclusive) | a signal-processing convenience, not a competing spelling of the time step |
 
 **New tokens WS-CONV introduces** (not v3 renames — they do not exist yet, so a
 reviewer should not expect to find them in v3 code):

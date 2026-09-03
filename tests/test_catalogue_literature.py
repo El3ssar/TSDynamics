@@ -109,6 +109,74 @@ def test_gingerbreadman_is_area_preserving() -> None:
     assert spec[0] > 0.01
 
 
+def test_gingerbreadman_default_ic_is_in_the_chaotic_sea() -> None:
+    """The class default lands on the chaotic sea, not on a periodic island.
+
+    The map is conservative, so the invariant set is chosen entirely by the
+    initial condition and much of the unit square (e.g. [0.5, 0.5]) sits on a
+    period-6 island. ``default_ic`` must therefore pick the sea.
+    """
+    spec = ts.systems.Gingerbreadman().lyapunov_spectrum(steps=10_000)
+    assert spec[0] > 0.01, f"default IC is not chaotic: {spec}"
+
+
+@pytest.mark.parametrize("alpha", [0.5, 0.3])
+def test_baker_exponents_are_ln2_and_ln_alpha(alpha: float) -> None:
+    """Baker's map has exact exponents (ln 2, ln alpha) and det J = 2*alpha.
+
+    The classical stretch-cut-stack map x' = 2x mod 1,
+    y' = alpha*y (+ 1-alpha on the right half) expands x by exactly 2 and
+    contracts y by exactly alpha at every point (Hopf 1937), so both exponents
+    are constant — no invariant-measure average is needed — and their sum is the
+    constant ln|det J| = ln(2*alpha). At alpha = 0.5 the map is the classic
+    measure-preserving baker's transformation and the sum is exactly 0.
+
+    This is the identity that the pre-v6 implementation violated: it branched on
+    ``y`` and expanded *both* coordinates, giving |det J| = 4 and two positive
+    exponents in an invertible 2-D map.
+    """
+    spec = ts.systems.Baker(params={"alpha": alpha}).lyapunov_spectrum(
+        steps=20_000, ic=[0.31415926535, 0.2718281828]
+    )
+    assert spec.shape == (2,)
+    # Constant slopes → the estimate is exact up to float roundoff.
+    assert spec[0] == pytest.approx(np.log(2.0), abs=1e-6)
+    assert spec[1] == pytest.approx(np.log(alpha), abs=1e-6)
+    assert spec.sum() == pytest.approx(np.log(2.0 * alpha), abs=1e-6)
+
+
+def test_baker_orbits_do_not_collapse() -> None:
+    """A Baker orbit stays non-degenerate for thousands of iterations.
+
+    The exact doubling map ``(2*x) % 1`` drains a float mantissa one bit per
+    step and every orbit reaches the (0, 0) fixed point in ~53 iterations; the
+    kernel wraps just below 1 to avoid it (as :class:`KaplanYorke` does). Check
+    a spread of initial conditions really do survive.
+    """
+    rng = np.random.default_rng(0)
+    baker = ts.systems.Baker()
+    for _ in range(25):
+        traj = baker.iterate(steps=5_000, ic=rng.random(2))
+        uniques = len(np.unique(np.round(traj.y, 9), axis=0))
+        assert uniques > 4_000, f"orbit collapsed to {uniques} distinct points"
+
+
+def test_zaslavskii_exponent_sum_is_minus_r() -> None:
+    """The Zaslavsky map contracts phase-space area at the constant rate ``-r``.
+
+    det J = exp(-r) identically (the kick's two off-diagonal contributions
+    cancel), so lambda_1 + lambda_2 = -r exactly (Zaslavsky 1978, Phys. Lett. A
+    69, 145-147) — whatever the orbit does. Pinned together with a positive
+    leading exponent, since the pre-v6 default parameters (eps=5) collapsed the
+    orbit onto a stable period-2 cycle where the sum identity also holds.
+    """
+    r = ts.systems.Zaslavskii().params["r"]
+    spec = ts.systems.Zaslavskii().lyapunov_spectrum(steps=20_000)
+    assert spec.shape == (2,)
+    assert spec.sum() == pytest.approx(-r, abs=1e-6)
+    assert spec[0] > 0.5, f"default parameters are not chaotic: {spec}"
+
+
 # ---------------------------------------------------------------------------
 # Hamiltonian energy conservation (chaotic_attractors: HenonHeiles)
 # ---------------------------------------------------------------------------
@@ -140,6 +208,61 @@ def test_henon_heiles_energy_is_conserved() -> None:
     # Tolerant of solver drift (rtol/atol 1e-10), strict enough to catch a wrong
     # force term (which would drift by O(1) over 2000 steps).
     assert np.max(np.abs(e - e0)) < 1e-6
+
+
+def test_double_pendulum_conserves_the_compound_rod_hamiltonian() -> None:
+    """The double pendulum conserves the *compound-rod* energy, not some other one.
+
+    For two identical uniform rods (mass m, length d) the Hamiltonian is
+
+        H = (6/(m d^2)) (2 p1^2 + 8 p2^2 - 6 p1 p2 cos(th1-th2))
+            / (2 (16 - 9 cos^2(th1-th2)))
+            - (1/2) m g d (3 cos th1 + cos th2)
+
+    (Marion, *Classical Dynamics*).  The factor 3 sits on cos(th1) alone — the
+    upper rod carries its own weight plus the whole weight of the rod below it.
+    A kernel with the wrong torque coefficient is still Hamiltonian, just for a
+    *different* potential, so this exact H is the discriminating check: with the
+    pre-v6 spurious factor 3 on sin(th2) it drifts by ~0.2 on |H| ~ 19.
+    """
+    system = ts.systems.DoublePendulum()
+    d, m = system.params["d"], system.params["m"]
+    g = 9.82  # the value DoublePendulum._equations uses
+
+    def energy(state: np.ndarray) -> np.ndarray:
+        th1, th2, p1, p2 = state.T
+        c = np.cos(th1 - th2)
+        kinetic = (6.0 / (m * d**2)) * (2 * p1**2 + 8 * p2**2 - 6 * p1 * p2 * c)
+        kinetic /= 2.0 * (16.0 - 9.0 * c**2)
+        potential = -0.5 * m * g * d * (3.0 * np.cos(th1) + np.cos(th2))
+        return kinetic + potential
+
+    ic = [0.3, 0.2, 0.0, 0.0]
+    traj = system.integrate(final_time=50.0, dt=0.01, ic=ic, rtol=1e-11, atol=1e-12)
+    e = energy(traj.y)
+    # Machine-precision conservation at rtol 1e-11; 1e-8 is a comfortable ceiling
+    # and four orders of magnitude below the drift a wrong torque term produces.
+    assert np.max(np.abs(e - e[0])) < 1e-8
+
+
+def test_double_pendulum_normal_modes_match_the_textbook() -> None:
+    """Small-oscillation frequencies equal the equal-rod textbook values.
+
+    Linearising about the hanging equilibrium gives det(K - w^2 A) = 0 with
+    A = (m d^2 / 6) [[8, 3], [3, 2]] and K = m g d diag(3/2, 1/2), whose roots
+    are 2.6815 and 7.1923 rad/s at g = 9.82, d = m = 1.  These frequencies read
+    the potential's *curvature*, so they pin the gravitational torque
+    coefficients directly (a spurious factor 3 on the lower arm moves them to
+    3.0923 and 10.8025 — 15% and 50% high).
+    """
+    system = ts.systems.DoublePendulum()
+    eigs = np.linalg.eigvals(system.jacobian(np.zeros(4), 0.0))
+    # A conservative linearisation: two conjugate pairs on the imaginary axis.
+    assert np.max(np.abs(eigs.real)) < 1e-9
+    freqs = np.unique(np.round(np.abs(eigs.imag), 6))
+    assert freqs.shape == (2,)
+    assert freqs[0] == pytest.approx(2.68147968, abs=1e-6)
+    assert freqs[1] == pytest.approx(7.19233389, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +315,63 @@ def test_halvorsen_exponent_sum_equals_trace() -> None:
     # Chaotic-flow signature: one positive, one near-zero, one negative.
     assert spec[0] > 0.0
     assert spec[2] < 0.0
+
+
+def test_duffing_is_a_bounded_double_well_with_divergence_minus_delta() -> None:
+    """The forced Duffing oscillator is bounded, chaotic, and contracts at -delta.
+
+    In the autonomous 3-D form (x, y, z=drive phase) the Jacobian trace is the
+    state-independent -delta, so sum_i lambda_i = -delta exactly, and the drive
+    phase contributes an exponent that is identically zero.
+
+    The catalogue's defaults (beta = -1 linear, alpha = +1 cubic) give the
+    double-well potential V = beta x^2/2 + alpha x^4/4, whose orbit hops between
+    wells at |x| ~ 1.5 and is chaotic. Swapping the two coefficients gives
+    V = x^2/2 - x^4/4, unbounded below: the orbit escapes and integrate() raises.
+    Both facts are pinned here.
+    """
+    system = ts.systems.Duffing()
+    delta = system.params["delta"]
+
+    traj = system.integrate(final_time=500.0, dt=0.01)
+    assert np.all(np.isfinite(traj.y))
+    # The two wells sit at x = +/-1; the attractor spans both and stays O(1).
+    assert 1.2 < np.max(np.abs(traj.y[:, 0])) < 3.0
+    assert np.min(traj.y[:, 0]) < -0.5 < 0.5 < np.max(traj.y[:, 0])
+
+    spec = system.lyapunov_spectrum(final_time=4000.0, dt=0.02, burn_in=400.0)
+    assert spec.shape == (3,)
+    # Trace(J) = -delta identically, so the sum is exact to estimator roundoff.
+    assert spec.sum() == pytest.approx(-delta, abs=1e-6)
+    # Genuinely chaotic (an independent scipy variational computation of the
+    # same vector field gives lambda_1 = 0.123), and the drive phase is neutral.
+    assert spec.max() == pytest.approx(0.125, abs=0.03)
+    assert np.min(np.abs(spec)) < 1e-6
+
+
+def test_pan_xu_zhou_default_parameters_are_above_the_hopf_threshold() -> None:
+    """PanXuZhou's default ``k`` is in the chaotic regime, not on a stable focus.
+
+    For x' = a(y-x), y' = kx - xz, z' = -bz + xy the non-trivial equilibria are
+    (+/-sqrt(bk), same, k) and the Routh-Hurwitz criterion on
+    lam^3 + (a+b)lam^2 + (ab + bk)lam + 2abk makes them **stable** while
+    k < a(a+b)/(a-b).  Below that threshold every orbit spirals into a focus
+    after a long chaotic transient (the regime the pre-v6 default k=16 shipped).
+    Pin both halves: the analytic threshold, and a genuinely positive exponent
+    at the default parameters.
+    """
+    system = ts.systems.PanXuZhou()
+    a = system.params["a"]
+    b = -system.params["c"]  # z' = c z + x y with c < 0, so b = -c
+    k = system.params["k"]
+    threshold = a * (a + b) / (a - b)
+    assert k > threshold, f"k={k} is below the Hopf threshold {threshold:.3f}"
+
+    spec = system.lyapunov_spectrum(final_time=3000.0, dt=0.005, burn_in=1000.0)
+    assert spec.shape == (3,)
+    assert spec[0] > 0.5, f"default parameters are not chaotic: {spec}"
+    # Divergence is the constant -a + f + c = -(a + b), so the sum is exact.
+    assert spec.sum() == pytest.approx(-(a + b), abs=5e-2)
 
 
 # ---------------------------------------------------------------------------

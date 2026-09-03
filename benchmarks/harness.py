@@ -167,52 +167,7 @@ TASKS: list[TaskSpec] = [
         reference_key=None,
         repeat=3,
     ),
-    # --- from-data complexity / scaling / recurrence (the expanded task set) --- #
-    TaskSpec(
-        "sample_entropy",
-        "Sample entropy (Lorenz x(t))",
-        "entropy",
-        precision=True,
-        reference_key=None,  # no literature constant; cross-library agreement is the check
-        unit="SampEn",
-        repeat=3,
-    ),
-    TaskSpec(
-        "permutation_entropy",
-        "Permutation entropy (Lorenz x(t), normalized)",
-        "entropy",
-        precision=True,
-        reference_key=None,
-        unit="PermEn",
-        repeat=5,
-    ),
-    TaskSpec(
-        "multiscale_entropy",
-        "Multiscale entropy (Lorenz x(t))",
-        "entropy",
-        precision=True,
-        reference_key=None,
-        unit="MSE",
-        repeat=2,
-    ),
-    TaskSpec(
-        "dfa",
-        "Detrended fluctuation analysis (white noise, α=0.5)",
-        "scaling",
-        precision=True,
-        reference_key="dfa_alpha",
-        unit="α",
-        repeat=5,
-    ),
-    TaskSpec(
-        "hurst",
-        "Hurst exponent (white noise, H=0.5)",
-        "scaling",
-        precision=True,
-        reference_key="hurst_exp",
-        unit="H",
-        repeat=5,
-    ),
+    # --- from-data recurrence / embedding (the expanded task set) --- #
     TaskSpec(
         "rqa_determinism",
         "RQA determinism (Lorenz x(t))",
@@ -229,14 +184,6 @@ TASKS: list[TaskSpec] = [
         precision=True,
         reference_key="lorenz_embed_dim",
         unit="m",
-        repeat=3,
-    ),
-    TaskSpec(
-        "surrogate_generation",
-        "Surrogate generation (IAAFT, Lorenz x(t))",
-        "surrogate",
-        precision=False,
-        reference_key=None,
         repeat=3,
     ),
 ]

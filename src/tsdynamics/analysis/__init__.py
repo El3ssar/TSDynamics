@@ -14,11 +14,6 @@ re-exported here so the public surface is flat:
   :func:`max_lyapunov` / :func:`kaplan_yorke_dimension`.
 - :mod:`~tsdynamics.analysis.fixedpoints` — :func:`fixed_points`, multi-start
   Newton fixed-point finding for maps with linear stability.
-- :mod:`~tsdynamics.analysis.entropy` — composable :func:`entropy` plus
-  :func:`permutation_entropy`, :func:`dispersion_entropy`,
-  :func:`sample_entropy` / :func:`approximate_entropy`,
-  :func:`multiscale_entropy`, and Lempel–Ziv :func:`lz76_complexity` /
-  :func:`lz76_entropy`.
 - :mod:`~tsdynamics.analysis.dimensions` — fractal dimensions:
   :func:`correlation_dimension` (Grassberger--Procaccia), the generalized/Rényi
   :func:`generalized_dimension` (with :func:`box_counting_dimension`,
@@ -32,11 +27,6 @@ re-exported here so the public surface is flat:
   :func:`recurrence_matrix` (fixed threshold / target rate, sparse), :func:`rqa`
   (determinism, laminarity, line entropy, trapping time, …) and
   :func:`windowed_rqa` (those measures in a sliding window).
-- :mod:`~tsdynamics.analysis.surrogate` — surrogate-data nonlinearity tests:
-  :func:`surrogates` (shuffle / FT / AAFT / IAAFT generators), the discriminating
-  statistics :func:`time_reversal_asymmetry` / :func:`nonlinear_prediction_error`,
-  and :func:`surrogate_test` (rank p-value + significance via a
-  :class:`SurrogateTest`).
 - :mod:`~tsdynamics.analysis.basins` — attractors & basins: :func:`find_attractors`
   and :func:`basins_of_attraction` (recurrence finder), :func:`basin_fractions`
   (basin stability), :func:`basin_entropy`, :func:`uncertainty_exponent` and
@@ -56,15 +46,10 @@ from .. import registry as _registry
 from ..plugins import ANALYSES_GROUP, register_entry_points
 
 # Bind the capability subpackages as public sub-namespaces so ``ts.analysis.<TAB>``
-# surfaces the ~10 categories (scipy-style), each listing its own estimators,
-# instead of one flat dump of ~75 functions.  ``entropy`` is intentionally absent
-# from this list: that name is shadowed by the :func:`entropy` *function* (a
-# documented, griffe-safe collision), so ``ts.analysis.entropy`` is the function,
-# not the module.  Reach the entropy estimators by name —
-# ``from tsdynamics.analysis.entropy import permutation_entropy`` — or grab the
-# module with ``importlib.import_module("tsdynamics.analysis.entropy")``.  The flat
-# re-exports above are retained, so ``from tsdynamics.analysis import
-# correlation_dimension`` still works.
+# surfaces the capability categories (scipy-style), each listing its own
+# estimators, instead of one flat dump of quantifier names.  The flat re-exports
+# below are retained, so ``from tsdynamics.analysis import correlation_dimension``
+# still works.
 from . import (
     basins,
     chaos,
@@ -75,7 +60,6 @@ from . import (
     orbits,
     recurrence,
     sampling,
-    surrogate,
 )
 
 # The shared result-object model (stream WS-RESULT/WS-SCALING/WS-WRAP): every
@@ -136,17 +120,6 @@ from .embedding import (
     mutual_information,
     optimal_delay,
 )
-from .entropy import (
-    approximate_entropy,
-    dispersion_entropy,
-    entropy,
-    lz76_complexity,
-    lz76_entropy,
-    multiscale_entropy,
-    permutation_entropy,
-    sample_entropy,
-    weighted_permutation_entropy,
-)
 from .fixedpoints import (
     FixedPoint,
     FixedPointSet,
@@ -182,31 +155,15 @@ from .recurrence import (
     windowed_rqa,
 )
 from .sampling import estimate_dt_from_sagitta, sagitta_profile
-from .surrogate import (
-    SurrogateEnsemble,
-    SurrogateTest,
-    aaft_surrogate,
-    fourier_surrogate,
-    iaaft_surrogate,
-    nonlinear_prediction_error,
-    random_shuffle,
-    surrogate_test,
-    surrogates,
-    time_reversal_asymmetry,
-)
 
 #: The capability subpackages, in canonical order — the decluttered
-#: ``ts.analysis.<TAB>`` surface (see :func:`__dir__`).  ``entropy`` resolves to
-#: the function of the same name; reach the entropy estimators via
-#: ``from tsdynamics.analysis.entropy import …`` or ``importlib.import_module``.
+#: ``ts.analysis.<TAB>`` surface (see :func:`__dir__`).
 _CATEGORY_SUBPACKAGES = (
     "lyapunov",
     "dimensions",
     "chaos",
     "recurrence",
-    "entropy",
     "embedding",
-    "surrogate",
     "orbits",
     "fixedpoints",
     "basins",
@@ -242,14 +199,10 @@ __all__ = [
     "ReturnMap",
     "ScalarResult",
     "ScalingResult",
-    "SurrogateEnsemble",
-    "SurrogateTest",
     "UncertaintyExponent",
     "VisualizationNotInstalled",
     "WadaResult",
     "WindowedRQA",
-    "aaft_surrogate",
-    "approximate_entropy",
     "autocorrelation",
     "basin_entropy",
     "basin_fractions",
@@ -261,10 +214,8 @@ __all__ = [
     "correlation_sum",
     "dimension_spectrum",
     "discover_plugins",
-    "dispersion_entropy",
     "embed",
     "embedding_dimension",
-    "entropy",
     "estimate_dt_from_sagitta",
     "estimate_period",
     "expansion_entropy",
@@ -272,44 +223,30 @@ __all__ = [
     "find_attractors",
     "fixed_mass_dimension",
     "fixed_points",
-    "fourier_surrogate",
     "gali",
     "generalized_dimension",
-    "iaaft_surrogate",
     "information_dimension",
     "kaplan_yorke_dimension",
     "lyapunov_from_data",
     "lyapunov_spectrum",
-    "lz76_complexity",
-    "lz76_entropy",
     "max_lyapunov",
-    "multiscale_entropy",
     "mutual_information",
-    "nonlinear_prediction_error",
     "optimal_delay",
     "orbit_diagram",
     "periodic_orbit",
     "periodic_orbits",
-    "permutation_entropy",
     "poincare_section",
-    "random_shuffle",
     "recurrence_matrix",
     "resilience",
     "return_map",
     "rqa",
     "sagitta_profile",
-    "sample_entropy",
-    "surrogate_test",
-    "surrogates",
-    "time_reversal_asymmetry",
     "tipping_points",
     "uncertainty_exponent",
     "wada_property",
-    "weighted_permutation_entropy",
     "windowed_rqa",
     "zero_one_test",
-    # Capability subpackages (the navigable categories; ``entropy`` is the
-    # function-shadowed name already listed above).
+    # Capability subpackages (the navigable categories).
     "basins",
     "chaos",
     "dimensions",
@@ -319,7 +256,6 @@ __all__ = [
     "orbits",
     "recurrence",
     "sampling",
-    "surrogate",
 ]
 
 
@@ -351,11 +287,11 @@ discover_plugins()
 
 
 def __dir__() -> list[str]:
-    """Show the ~10 capability categories to ``dir()`` / autocomplete (scipy-style).
+    """Show the capability categories to ``dir()`` / autocomplete (scipy-style).
 
     ``ts.analysis.<TAB>`` surfaces the navigable category subpackages
     (``lyapunov``, ``dimensions``, ``chaos``, …) plus :func:`discover_plugins`,
-    not the ~75 flat quantifier names.  Those flat names stay fully reachable —
+    not the flat quantifier names.  Those flat names stay fully reachable —
     ``from tsdynamics.analysis import correlation_dimension`` and
     ``ts.analysis.correlation_dimension`` both resolve, and ``__all__`` still
     carries them for ``from tsdynamics.analysis import *`` — they are simply kept

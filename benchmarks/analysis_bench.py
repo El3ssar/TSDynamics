@@ -2,10 +2,10 @@
 
 This benchmark times a representative spread of the analysis toolkit on
 **fixed, deterministic inputs** so that a wall-clock number is comparable from
-run to run. It is the analysis-layer counterpart of the (now historical) engine
-benchmark whose decision record lives in ``benches/REPORT.md``: where that one
-answered "is the Rust engine fast enough to be the default", this one answers
-"did an analysis routine just get slower".
+run to run. Where the cross-library comparison in ``run_benchmarks.py`` answers
+"how do we compare to the other libraries", this one answers the narrower
+regression question: "did an analysis routine just get slower than it was on
+``main``".
 
 Design notes
 ------------
@@ -25,10 +25,10 @@ Design notes
 
 Usage
 -----
-    uv run python benches/analysis_bench.py                 # full, pretty table
-    uv run python benches/analysis_bench.py --quick         # CI-sized, fewer reps
-    uv run python benches/analysis_bench.py --out perf.json # machine-readable
-    uv run python benches/analysis_bench.py --case rqa      # one case (substring)
+    uv run python benchmarks/analysis_bench.py                 # full, pretty table
+    uv run python benchmarks/analysis_bench.py --quick         # CI-sized, fewer reps
+    uv run python benchmarks/analysis_bench.py --out perf.json # machine-readable
+    uv run python benchmarks/analysis_bench.py --case rqa      # one case (substring)
 
 The JSON schema is::
 
@@ -133,8 +133,8 @@ def all_cases() -> list[Case]:
     Returns
     -------
     list of Case
-        Data-driven quantifiers (dimensions / entropy / recurrence / surrogate
-        / data-Lyapunov) plus system-driven analyses (map Lyapunov, 0-1 test,
+        Data-driven quantifiers (dimensions / recurrence / data-Lyapunov) plus
+        system-driven analyses (map Lyapunov, 0-1 test,
         fixed points, orbit diagram). Each is a headline routine of its
         subpackage, so a slowdown anywhere in the layer is likely to surface in
         at least one case.
@@ -153,17 +153,6 @@ def all_cases() -> list[Case]:
             lambda i, q: lambda: ts.correlation_dimension(i.x[: n_dim(q)]),
             lambda i, q: n_dim(q),
         ),
-        # --- entropy (A-ENT) ---
-        Case(
-            "permutation_entropy",
-            lambda i, q: lambda: ts.permutation_entropy(i.x[: n_dim(q)]),
-            lambda i, q: n_dim(q),
-        ),
-        Case(
-            "sample_entropy",
-            lambda i, q: lambda: ts.sample_entropy(i.x[: (1500 if q else 2000)]),
-            lambda i, q: 1500 if q else 2000,
-        ),
         # --- recurrence / RQA (A-RQA) ---
         Case(
             "recurrence_matrix",
@@ -173,12 +162,6 @@ def all_cases() -> list[Case]:
         Case(
             "rqa",
             lambda i, q: lambda: ts.rqa(i.x[: n_recur(q)], recurrence_rate=0.05),
-            lambda i, q: n_recur(q),
-        ),
-        # --- surrogate / nonlinearity (A-SURR) ---
-        Case(
-            "surrogate_test",
-            lambda i, q: lambda: ts.surrogate_test(i.x[: n_recur(q)], n=(9 if q else 19), seed=0),
             lambda i, q: n_recur(q),
         ),
         # --- data-driven Lyapunov (A-LYAP) ---

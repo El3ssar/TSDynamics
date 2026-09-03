@@ -94,7 +94,7 @@ class _CellGrid:
 
     def center(self, key: tuple[int, ...]) -> np.ndarray:
         """Return the centre point of the cell with index ``key``."""
-        return cast(np.ndarray, self.lo + (np.asarray(key, dtype=float) + 0.5) * self.delta)
+        return self.lo + (np.asarray(key, dtype=float) + 0.5) * self.delta
 
 
 # ---------------------------------------------------------------------------

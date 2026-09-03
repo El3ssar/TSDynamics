@@ -12,8 +12,13 @@ default.
 Alongside the system registry, this module hosts three generic name registries —
 :data:`analyses`, :data:`transforms` and :data:`renderers` — :class:`Registry`
 containers (name → object + metadata) for the analysis, transform and
-visualization-backend streams to register into.  The in-tree analyses/transforms
-self-register from their subpackages on import, and :data:`renderers` is populated
+visualization-backend streams to register into.  The in-tree analyses self-register
+from their subpackages on import.  :data:`transforms` carries **no in-tree
+entries**: TSDynamics is scoped to dynamical-systems methods, so the generic
+time-series statistics layer left the library in v6 and the registry survives
+purely as the out-of-tree plugin surface (populated by
+:func:`discover_transform_plugins` from the ``tsdynamics.transforms`` entry-point
+group).  :data:`renderers` is populated
 by the four self-registering :mod:`tsdynamics.viz` backends (matplotlib / Plotly /
 JSON / three.js) when ``tsdynamics.viz`` is first imported — it is created empty
 here and stays empty until then, since ``import tsdynamics`` pulls in no plotting
@@ -53,6 +58,7 @@ __all__ = [
     "analyses",
     "by_family",
     "categories",
+    "discover_transform_plugins",
     "families",
     "get",
     "renderers",
@@ -419,7 +425,13 @@ class Registry:
 
 #: Registered analysis functions (Lyapunov, dimensions, recurrence, …).
 analyses = Registry("analysis")
-#: Registered data/signal transforms (spectral, filters, feature extractors).
+#: Registered data/signal transforms.  **No in-tree transforms ship** — TSDynamics
+#: is scoped to dynamical-systems methods, and the generic time-series statistics
+#: layer (spectra, filters, feature extraction) was removed in v6.  This container
+#: is kept as the *out-of-tree plugin surface*: a third-party package declares its
+#: transforms against the ``tsdynamics.transforms`` entry-point group and
+#: :func:`discover_transform_plugins` folds them in here.  It is therefore empty
+#: until such a plugin is installed.
 transforms = Registry("transform")
 #: Registered visualization renderers (backend name → a callable that consumes a
 #: :class:`~tsdynamics.viz.spec.PlotSpec` and draws it).  Created **empty** and
@@ -430,6 +442,35 @@ transforms = Registry("transform")
 #: resolves a backend through this registry; out-of-tree backends are discovered
 #: via the ``tsdynamics.renderers`` entry-point group (see :mod:`tsdynamics.viz`).
 renderers = Registry("renderer")
+
+
+def discover_transform_plugins(*, strict: bool = False) -> list[str]:
+    """Load out-of-tree transform plugins into :data:`transforms`.
+
+    Walks the ``tsdynamics.transforms`` entry-point group and registers each
+    loaded object under its entry-point name (see
+    :func:`tsdynamics.plugins.register_entry_points`).  Called once when
+    ``tsdynamics`` is imported; safe to re-invoke after installing a plugin.
+
+    Since v6 **every** transform is out-of-tree: the generic time-series
+    statistics layer left the library, so this is the sole populator of
+    :data:`transforms` and the registry stays empty without a plugin installed.
+
+    Parameters
+    ----------
+    strict : bool, default False
+        Re-raise the first plugin load failure instead of warning and skipping.
+
+    Returns
+    -------
+    list[str]
+        The names newly registered by this call.
+    """
+    # Imported lazily: this module is loaded while the package is still
+    # initialising, and it must stay import-light (see the module docstring).
+    from .plugins import TRANSFORMS_GROUP, register_entry_points
+
+    return register_entry_points(transforms, TRANSFORMS_GROUP, strict=strict)
 
 
 def __dir__() -> list[str]:

@@ -16,3 +16,24 @@ updates:
     commit-message:
       prefix: "ci(deps)"
     labels: ["ci", "dependencies"]
+
+  # The Rust engine. Two committed lockfiles: the pure-Rust tsdyn-* workspace
+  # (crates/Cargo.lock) and the PyO3 bridge crate, which is EXCLUDED from that
+  # workspace and so carries its own (crates/tsdyn-core/Cargo.lock).
+  - package-ecosystem: cargo
+    directory: "/crates"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    labels: ["rust", "dependencies"]
+
+  - package-ecosystem: cargo
+    directory: "/crates/tsdyn-core"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    labels: ["rust", "dependencies"]

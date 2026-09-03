@@ -1,13 +1,13 @@
 """Tests for the analysis-layer performance-regression harness.
 
 These tests guard the *harness*, not a wall-clock budget: they assert that
-``benches/analysis_bench.py`` builds its fixed inputs, runs every case to a
+``benchmarks/analysis_bench.py`` builds its fixed inputs, runs every case to a
 finite time on a valid schema, and that the regression-comparison logic flags a
 slowdown beyond tolerance while clearing a noise-level one. The actual timing
 gate is advisory and lives in ``.github/workflows/perf-analysis.yml`` — CI
 wall-clock numbers are too noisy to assert on here.
 
-The harness is imported by file path (``benches/`` is not an installed package)
+The harness is imported by file path (``benchmarks/`` is not an installed package)
 so the test runs from a plain checkout.
 """
 
@@ -19,11 +19,11 @@ import sys
 
 import pytest
 
-_BENCH_PATH = pathlib.Path(__file__).resolve().parents[1] / "benches" / "analysis_bench.py"
+_BENCH_PATH = pathlib.Path(__file__).resolve().parents[1] / "benchmarks" / "analysis_bench.py"
 
 
 def _load_bench():
-    """Import ``benches/analysis_bench.py`` by path (not an installed module)."""
+    """Import ``benchmarks/analysis_bench.py`` by path (not an installed module)."""
     spec = importlib.util.spec_from_file_location("analysis_bench", _BENCH_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

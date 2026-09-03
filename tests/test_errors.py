@@ -191,25 +191,27 @@ def test_unknown_constructor_parameter_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_entropy_on_a_system_raises_domain_error():
-    """Was a leaked ``float() argument`` TypeError; now names the System + the fix."""
-    from tsdynamics.analysis import permutation_entropy
+def test_data_analysis_on_a_system_is_not_silent():
+    """A data-level analysis handed a System rejects it loudly, never silently.
 
+    The half of the standard that is *live* today: the wrong input raises rather
+    than being coerced into a meaningless number.  The value-naming half (a
+    ``TSDynamicsError`` whose message names the System and the fix) is not yet
+    met by the shared array coercion — it is tracked executably by the strict
+    ``xfail`` row ``open-wrong-type-input-message`` in
+    ``tests/test_polish_standards.py``.
+    """
     lor = ts.systems.Lorenz()
-    with pytest.raises(InvalidInputError) as ei:
-        permutation_entropy(lor)
-    msg = str(ei.value)
-    assert "System" in msg and "Lorenz" in msg
-    assert isinstance(ei.value, TypeError)  # back-compat: was a TypeError
+    with pytest.raises(TypeError):
+        ts.lyapunov_from_data(lor)
 
 
-def test_entropy_on_a_series_still_works():
-    from tsdynamics.analysis import permutation_entropy
-
+def test_data_analysis_on_a_series_still_works():
+    """The same estimator on a genuine measured series returns a finite estimate."""
     rng = np.random.default_rng(0)
-    series = rng.standard_normal(500)
-    val = float(permutation_entropy(series))
-    assert 0.0 <= val <= 1.0
+    series = np.cumsum(rng.standard_normal(600)) * 0.01
+    result = ts.lyapunov_from_data(series)
+    assert np.isfinite(float(result))
 
 
 def test_catch_all_via_base_class():

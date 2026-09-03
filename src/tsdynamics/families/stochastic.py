@@ -2,7 +2,7 @@
 Stochastic differential equation family — ``StochasticSystem`` (stream E-SDE).
 
 The home for the SDE family base class. Per the resolved noise contract
-(ROADMAP §11, **diagonal-Itô**), a stochastic system is defined by
+(**diagonal-Itô**), a stochastic system is defined by
 
 - ``_drift(y, t, **params)`` — the deterministic part, exactly like an ODE's
   ``_equations``; and

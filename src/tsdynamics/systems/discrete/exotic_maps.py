@@ -159,14 +159,37 @@ class ZeraouliaSprott(DiscreteMap):
 
     Notes
     -----
-    Default parameters ``(a, b) = (2.7, 0.35)`` lie in the chaotic regime
-    reported by Zeraoulia & Sprott.
+    **Deviation from the cited source.**  The catalogue ships ``a = 4.8``, not
+    the ``a = 2.7`` this system was previously listed with.  At ``(a, b) =
+    (2.7, 0.35)`` the map is *not* chaotic: it settles on an invariant closed
+    curve with a measured spectrum of ``(+0.0003, -0.602)`` — the quasi-periodic
+    stage of the route to chaos, not its destination.  Scanning ``a`` in steps of
+    ``0.02`` along ``b = 0.35`` the first sustained chaotic band opens near
+    ``a = 4``; the shipped ``a = 4.8`` sits mid-band, ``0.14`` away from the
+    nearest periodic window on either side (``a = 4.66`` and ``a = 4.96``).
+
+    At the shipped defaults there is a **single global strange attractor**.  Of
+    2000 random initial conditions in ``[-5, 5]**2`` (5000 iterations after a
+    1000-step transient) none diverge and none is non-chaotic: the leading
+    exponent spans only ``+0.167`` to ``+0.207``.  Sixty of them re-run for
+    ``10**6`` iterations all converge to the same ``(+0.189, -0.644)`` to three
+    digits, so the chaos is asymptotic, not a transient.
     """
 
-    params = {"a": 2.7, "b": 0.35}
+    params = {"a": 4.8, "b": 0.35}
     dim = 2
+    default_ic = [0.1, 0.1]
     reference = "Zeraoulia & Sprott (2011), Int. J. Bifurcation Chaos 21, 155-160"
     doi = "10.1142/s0218127411028325"
+    known_lyapunov = {
+        "spectrum": (0.189, -0.644),
+        "atol": (0.02, 0.02),
+        "kwargs": {"steps": 50_000},
+        "source": (
+            "measured (QR tangent-map spectrum, 10**6 iterations, identical from "
+            "every initial condition tried); the cited a = 2.7 is quasi-periodic"
+        ),
+    }
 
     @staticmethod
     def _step(X, a, b):
@@ -203,12 +226,66 @@ class GumowskiMira(DiscreteMap):
         Coefficient controlling the shape of the rational nonlinearity ``G``.
     b : float
         Linear feedback gain mixing the previous ``y`` into the recurrence.
+        The Jacobian determinant is exactly ``b``, so the two Lyapunov exponents
+        always sum to ``log|b|`` — ``b = 1`` is the area-preserving case.
+
+    Notes
+    -----
+    **Choice of defaults: the conservative case.**  The catalogue ships the
+    *area-preserving* setting ``b = 1``, which is the regime the ornamental
+    Gumowski-Mira figures come from and the only one in which this map has
+    verifiable sustained chaos.  Two earlier parameter sets were rejected by
+    measurement:
+
+    * ``(a, b) = (-1.1, -0.2)`` collapses every orbit onto a period-2 cycle
+      (measured spectrum ``(-0.159, -1.450)``, both exponents negative).
+    * ``(a, b) = (-0.65, 0.99)`` looks strongly chaotic
+      (``lambda_1 ~ +0.30`` over the first ``3 * 10**5`` iterations) but is a
+      **long chaotic transient**: past ``~4 * 10**5`` iterations every orbit
+      tried falls onto a stable focus and the per-block exponents settle at
+      ``log(b)/2 = -0.005`` each.  ``(a, b) = (-0.48, 0.93)`` is the same trap.
+
+    That failure mode is generic for dissipative Gumowski-Mira: a scan of
+    ``a`` in ``[-1.3, 0.7]`` against ``b`` in ``[0.5, 0.99]``, screened on the
+    **last** block of ``2 * 10**6`` iterations rather than on the time average
+    (which a decayed transient still inflates), leaves **no** surviving
+    dissipative strange attractor — every candidate's final block converges to
+    ``log(b)/2``.  At ``b = 1`` the map is measure-preserving, so no sink can
+    exist and no such decay is possible.
+
+    **Measured behaviour at the shipped ``(a, b) = (-0.35, 1.0)``.**  The phase
+    space is the classic mixed one — a chaotic sea threaded by periodic islands
+    — so the exponents depend on where the orbit starts, and
+    ``lambda_1 + lambda_2 = log(1) = 0`` exactly (to ``~10**-17`` in the
+    measurement).  From ``default_ic`` the orbit lies in the chaotic sea with
+    ``lambda_1 ~ +0.13``, stable across ``5 * 10**6`` iterations (first-half
+    mean ``+0.136``, second-half mean ``+0.133``).  Because the dynamics are
+    Hamiltonian the orbit sticks intermittently near island boundaries, so the
+    finite-time estimate wanders over roughly ``+0.10`` to ``+0.15`` depending
+    on the window — the exponent is robustly positive but not tightly
+    convergent, which is why only its **sign** is pinned below.  Of 2000 random
+    initial conditions in ``[-3, 3]**2`` none diverge and 99.5 % are chaotic;
+    the rest start on an island (``lambda_1 = 0``), so an explicit random ``ic``
+    can legitimately give a non-chaotic orbit.
     """
 
-    params = {"a": -1.1, "b": -0.2}
+    params = {"a": -0.35, "b": 1.0}
     dim = 2
+    default_ic = [1.0, 1.0]  # in the chaotic sea; ~0.5 % of the square is islands
     reference = "Gumowski & Mira (1980), Recurrences and Discrete Dynamic Systems"
     doi = "10.1007/bfb0089135"
+    known_lyapunov = {
+        "n_positive": 1,
+        "ic": [1.0, 1.0],
+        "kwargs": {"steps": 50_000},
+        "source": (
+            "measured (QR tangent-map spectrum): lambda_1 ~ +0.13 from the "
+            "chaotic sea, stable over 5*10**6 iterations, with "
+            "lambda_2 = -lambda_1 since det J = b = 1.  Only the sign is pinned: "
+            "Hamiltonian stickiness makes the finite-time value window-dependent "
+            "(+0.10 to +0.15)"
+        ),
+    }
 
     @staticmethod
     def _step(X, a, b):

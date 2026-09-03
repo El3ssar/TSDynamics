@@ -38,37 +38,6 @@ class NoldsAdapter(BaseAdapter):
 
         return run
 
-    def task_sample_entropy(self, quick: bool) -> Callable[[], float]:
-        import nolds
-
-        s = self.cfg["series"]
-        x = np.ascontiguousarray(series.lorenz_series()[: s["entropy_n"]])
-
-        def run() -> float:
-            return float(nolds.sampen(x, emb_dim=s["entropy_m"]))
-
-        return run
-
-    def task_dfa(self, quick: bool) -> Callable[[], float]:
-        import nolds
-
-        x = np.ascontiguousarray(series.white_noise_series()[: self.cfg["series"]["dfa_n"]])
-
-        def run() -> float:
-            return float(nolds.dfa(x))
-
-        return run
-
-    def task_hurst(self, quick: bool) -> Callable[[], float]:
-        import nolds
-
-        x = np.ascontiguousarray(series.white_noise_series()[: self.cfg["series"]["dfa_n"]])
-
-        def run() -> float:
-            return float(nolds.hurst_rs(x))
-
-        return run
-
     def task_lyapunov_from_data(self, quick: bool) -> Callable[[], float]:
         import nolds
 

@@ -62,12 +62,9 @@ the original paper for each method your results depend on:
 | `gali` (chaos indicator) | Skokos, Bountis & Antonopoulos, *Geometrical properties of local dynamics…*, Physica D **231**, 30 (2007) |
 | `zero_one_test` | Gottwald & Melbourne, *A new test for chaos in deterministic systems*, Proc. R. Soc. A **460**, 603 (2004) |
 | `expansion_entropy` | Hunt & Ott, *Defining chaos*, Chaos **25**, 097618 (2015) |
-| `permutation_entropy` | Bandt & Pompe, *Permutation entropy: a natural complexity measure…*, Phys. Rev. Lett. **88**, 174102 (2002) |
-| `sample_entropy` | Richman & Moorman, *Physiological time-series analysis using approximate and sample entropy*, Am. J. Physiol. **278**, H2039 (2000) |
 | `recurrence_matrix` / `rqa` | Marwan, Romano, Thiel & Kurths, *Recurrence plots for the analysis of complex systems*, Phys. Rep. **438**, 237 (2007) |
 | `embed` (delay reconstruction) | Takens, *Detecting strange attractors in turbulence*, LNM **898**, Springer (1981) |
 | `embedding_dimension` (Cao / FNN) | Cao, *Practical method for determining the minimum embedding dimension…*, Physica D **110**, 43 (1997) |
-| `surrogates` (IAAFT) | Schreiber & Schmitz, *Improved surrogate data for nonlinearity tests*, Phys. Rev. Lett. **77**, 635 (1996) |
 | `find_attractors` / `basins_of_attraction` | Datseris & Wagemakers, *Effortless estimation of basins of attraction*, Chaos **32**, 023104 (2022) |
 | `basin_entropy` | Daza, Wagemakers, Georgeot, Guéry-Odelin & Sanjuán, *Basin entropy: a new tool to analyze uncertainty in dynamical systems*, Sci. Rep. **6**, 31416 (2016) |
 

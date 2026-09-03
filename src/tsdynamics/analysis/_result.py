@@ -79,9 +79,6 @@ shared pieces are de-duplicated:
 - :mod:`tsdynamics.analysis._result_json` — the ``to_dict`` / repr helpers
   (``_jsonify`` & co.).
 
-The shared "resolve the semantic plot kind" one-liner the transform results also
-open with lives once in :func:`tsdynamics._result_common.resolve_plot_kind`.
-
 Every public name (and the ``_jsonify`` / ``_PlotAccessor`` helpers some tests
 import directly) is re-exported here, so ``from tsdynamics.analysis._result
 import <X>`` keeps resolving exactly as before the split.

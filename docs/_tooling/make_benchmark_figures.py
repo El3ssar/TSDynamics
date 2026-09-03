@@ -137,15 +137,15 @@ def fig_analysis_speedup(plt, out_path):
 
     Every library is fed the *same* generated series (see the benchmark
     methodology), so this isolates the estimator. Speedup = fastest competitor
-    on that row ÷ TSDynamics. Bars > 1 mean TSDynamics is faster; the two rows
-    where a competitor wins are drawn below the 1× line and coloured amber.
+    on that row ÷ TSDynamics. Bars > 1 mean TSDynamics is faster and are drawn
+    in teal; a row a competitor wins falls below the 1× line and is coloured
+    amber.
     """
     import numpy as np
 
     # (label, tsdynamics ms, [(competitor, ms), ...]) — from RESULTS.md.
     rows = [
         ("Embedding dim\n(Cao / FNN)", 26.84, [("nolitsa", 1678.0), ("neurokit2", 215.65)]),
-        ("Sample entropy", 21.09, [("antropy", 18.09), ("neurokit2", 16.57), ("nolds", 475.90)]),
         (
             "Corr. dimension\n(embedded)",
             210.66,
@@ -153,8 +153,6 @@ def fig_analysis_speedup(plt, out_path):
         ),
         ("Max. Lyapunov\nfrom data", 33.68, [("nolds", 283.17), ("nolitsa", 202.98)]),
         ("RQA determinism", 19.29, [("pyunicorn", 34.91), ("neurokit2", 151.11)]),
-        ("Multiscale entropy", 30.54, [("neurokit2", 186.36)]),
-        ("IAAFT surrogate", 25.01, [("nolitsa", 21.76), ("neurokit2", 14.90)]),
     ]
 
     labels, speeds, wins = [], [], []
@@ -204,7 +202,6 @@ def fig_analysis_speedup(plt, out_path):
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-
 
 
 FIGURES = {

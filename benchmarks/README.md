@@ -12,9 +12,10 @@ It measures **speed** (every task) and, where a task has a ground truth,
 library that does not provide a capability — or that does not install in this
 environment — leaves that cell **blank**, exactly as requested.
 
-> This folder is distinct from the repo's existing `benches/`, which is the
-> internal Rust-engine performance-regression harness. `benchmarks/` is the
-> *external* cross-library comparison.
+> This folder also holds `analysis_bench.py`, the *internal* performance-
+> regression harness driven by `.github/workflows/perf-analysis.yml` — it times
+> the analysis layer against `main` on the same runner. That is a different
+> question from the cross-library comparison documented here.
 
 ---
 
@@ -26,11 +27,10 @@ environment — leaves that cell **blank**, exactly as requested.
 | **DynamicalSystems.jl** | Julia | the most complete competitor — every task | ✅ v3.x (ChaosTools / Attractors) |
 | **SciPy** | Python | the integration baseline (`solve_ivp`), fixed points (`fsolve`), Poincaré (events) | ✅ |
 | **pynamical** | Python (numba) | logistic-map bifurcation diagram | ✅ |
-| **dysts** | Python | GilpinLab chaotic-systems catalogue + SciPy integrator; correlation dimension (`gp_dim`), DFA | ✅ v0.96 |
-| **nolds** | Python | from-data correlation dimension, Rosenstein Lyapunov, sample entropy, DFA, Hurst | ✅ |
-| **nolitsa** | Python (numba) | from-data correlation dimension (`d2`), MLE Lyapunov, FNN embedding dim, IAAFT surrogates | ✅ |
-| **antropy** | Python | sample/permutation entropy, DFA | ✅ v0.2 |
-| **neurokit2** | Python | broad from-data complexity: entropy (sample/perm/multiscale), DFA, Hurst, correlation dim, RQA, embedding dim, surrogates | ✅ v0.2 |
+| **dysts** | Python | GilpinLab chaotic-systems catalogue + SciPy integrator; correlation dimension (`gp_dim`) | ✅ v0.96 |
+| **nolds** | Python | from-data correlation dimension, Rosenstein Lyapunov | ✅ |
+| **nolitsa** | Python (numba) | from-data correlation dimension (`d2`), MLE Lyapunov, FNN embedding dim | ✅ |
+| **neurokit2** | Python | broad from-data complexity: correlation dim, RQA, embedding dim | ✅ v0.2 |
 | **pyunicorn** | Python | recurrence quantification (RQA determinism) | ✅ v0.9 |
 | **PyDSTool** | Python | continuation / generators | ❌ does not import on NumPy ≥ 2 (`numpy.distutils` removed) |
 | **TISEAN** | C / Fortran | `lyap_k`, `lyap_r`, `d2`, `c2` CLI tools | ❌ no binaries; legacy C+Fortran does not build with the current toolchain |
@@ -91,7 +91,7 @@ numba — and therefore pynamical and nolitsa — does not yet support NumPy 2.5
 uv venv --python 3.12 benchmarks/.venv-bench
 BP=benchmarks/.venv-bench/bin/python
 uv pip install --python $BP "numpy<2.5" scipy numba nolds sdeint matplotlib pandas
-uv pip install --python $BP "numpy<2.5" dysts antropy neurokit2 pyunicorn
+uv pip install --python $BP "numpy<2.5" dysts neurokit2 pyunicorn
 uv pip install --python $BP --no-deps pynamical
 uv pip install --python $BP --no-deps "git+https://github.com/manu-mannattil/nolitsa.git"
 uv pip install --python $BP .            # build + install TSDynamics into it
@@ -162,17 +162,11 @@ Outputs land in:
 | Basins of attraction | Newton z³−1 map | 200×200 grid over [−1.5,1.5]² (three cube-root basins) | — (speed) |
 | Fixed points | Hénon | find the saddle on the attractor; report x* | 0.6314 (analytic) |
 | Poincaré section | Rössler | y=0 upward crossings, ~1000 of them | — (speed) |
-| Sample entropy | Lorenz x(t) | shared series (3000 pts), m=2, r=0.2·std | — (cross-library agreement) |
-| Permutation entropy | Lorenz x(t) | order 3, normalized | — (agreement) |
-| Multiscale entropy | Lorenz x(t) | 5 scales | — (conventions differ, see notes) |
-| DFA | white noise | DFA scaling exponent α | 0.5 (white noise has α=0.5) |
-| Hurst | white noise | rescaled-range Hurst H | 0.5 (white noise has H=0.5) |
 | RQA determinism | Lorenz x(t) | shared series (1200 pts), embed dim 3 / τ 5, recurrence rate 0.05 | — (agreement) |
 | Embedding dimension | Lorenz x(t) | FNN (nolitsa) / Cao-AFNN (neurokit2, TSDynamics) | ≈3 (Lorenz; method-dependent) |
-| Surrogate generation | Lorenz x(t) | one IAAFT surrogate | — (speed) |
 
 dysts joins the integration **short/long** rows (it integrates in physical time when
-`m.dt=None`) and the correlation-dimension + DFA rows; box-counting and generalized
+`m.dt=None`) and the correlation-dimension row; box-counting and generalized
 (Rényi) dimensions are **TSDynamics-only** capabilities, so they are noted here rather
 than added as all-blank rows.
 
@@ -194,20 +188,20 @@ than added as all-blank rows.
   (nolds, nolitsa) methods in one row; both target the same exponent and the
   cells are not directly speed-comparable (data methods also pay neighbour
   searches). It is a capability comparison.
-- **Entropy / DFA / Hurst / RQA** feed every library the **same** series with
-  matched parameters, so the cross-library *agreement* is the validation (sample
-  entropy ≈0.143 and permutation entropy ≈0.451 agree to ~3 digits across all
-  libraries; DFA/Hurst land ≈0.5 on white noise; RQA determinism ≈0.99). The one
-  exception is **multiscale entropy**: TSDynamics reports the mean across scales
-  while neurokit2 reports its single MSEn summary index — *different definitions*,
-  so those two numbers are not expected to match (the row shows each library does
-  MSE and how fast, not a like-for-like value).
+- **RQA** feeds every library the **same** series with matched parameters, so
+  the cross-library *agreement* is the validation (determinism ≈0.99 everywhere).
+- **The entropy / DFA / Hurst / surrogate rows were removed in v6.** TSDynamics
+  narrowed its scope to phase-space methods and no longer ships generic
+  series statistics, so those rows had no TSDynamics column left to compare
+  against — a table of other libraries measuring each other is not a benchmark of
+  this library. The **antropy** adapter went with them (it contributed only those
+  rows); nolds / nolitsa / neurokit2 kept their remaining comparable tasks.
 - **dysts** is deliberately **off the Lyapunov and integration-accuracy rows**: it
   rescales each system's time axis per characteristic period (for ML benchmarking),
   so its Lyapunov exponents are in rescaled-time units (Lorenz ≈0.44, not 0.906)
   and its trajectory cannot be pinned to this benchmark's fixed `[1,1,1]`/physical-
   time reference. Its integration **speed** (physical time, `m.dt=None`) and its
-  geometric measures (`gp_dim`, DFA) are clean comparisons.
+  geometric measure (`gp_dim`) are clean comparisons.
 
 ---
 

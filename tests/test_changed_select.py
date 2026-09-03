@@ -89,20 +89,27 @@ def test_system_module_scopes_to_its_own_systems() -> None:
 
 
 def test_analysis_area_selects_its_tests_and_crosscut() -> None:
-    plan = cs.classify({"src/tsdynamics/analysis/entropy/core.py"})
+    plan = cs.classify({"src/tsdynamics/analysis/recurrence/rqa.py"})
     assert not plan.full
-    assert {"test_entropy.py", "test_property_entropy.py"} <= plan.selected_files
+    assert {"test_recurrence.py", "test_property_recurrence.py"} <= plan.selected_files
     # The cross-quantifier / analysis-pack gates span several areas → always run.
     assert set(cs._CROSSCUT_ANALYSIS_TESTS) <= plan.selected_files
     assert not plan.systems
 
 
-def test_transforms_change_selects_transform_and_crosscut_tests() -> None:
-    plan = cs.classify({"src/tsdynamics/transforms/spectral.py"})
-    assert not plan.full
-    assert set(cs._TRANSFORM_TESTS) <= plan.selected_files
-    # test_known_quantifiers also uses a transform (spectral_entropy).
-    assert set(cs._CROSSCUT_ANALYSIS_TESTS) <= plan.selected_files
+def test_removed_series_statistics_paths_escalate() -> None:
+    """The deleted generic-statistics areas are unmapped, so a stray path escalates.
+
+    ``analysis/entropy/`` and ``analysis/surrogate/`` (and ``transforms/``) left the
+    tree in the v6 scope surgery.  Nothing should quietly select a shrunken set if
+    such a path ever reappears in a diff — it must fall through to a full run.
+    """
+    for path in (
+        "src/tsdynamics/analysis/entropy/core.py",
+        "src/tsdynamics/analysis/surrogate/generators.py",
+        "src/tsdynamics/transforms/spectral.py",
+    ):
+        assert cs.classify({path}).full, path
 
 
 def test_orbits_area_includes_orbit_diagram_perf() -> None:
@@ -163,8 +170,8 @@ def _fake_item(filename: str, entry: object | None = None) -> object:
 
 
 def test_keep_item_by_selected_file() -> None:
-    plan = cs.Plan(full=False, reason="t", selected_files={"test_entropy.py"})
-    assert cs.keep_item(_fake_item("test_entropy.py"), plan)
+    plan = cs.Plan(full=False, reason="t", selected_files={"test_recurrence.py"})
+    assert cs.keep_item(_fake_item("test_recurrence.py"), plan)
     assert not cs.keep_item(_fake_item("test_dimensions.py"), plan)
 
 
@@ -250,7 +257,6 @@ def test_referenced_test_files_exist() -> None:
     tests_dir = Path(__file__).parent
     referenced = (
         set(cs._ALWAYS_GUARDS)
-        | set(cs._TRANSFORM_TESTS)
         | set(cs._VIZ_TESTS)
         | set(cs._CROSSCUT_ANALYSIS_TESTS)
         | set(cs._SYSTEM_SWEEP_FILES)
@@ -279,24 +285,15 @@ def test_no_system_name_collides_with_known_non_system_param_strings() -> None:
     assert not (non_system_param_ids & names)
 
 
-def test_scripts_ignore_is_safe_no_test_imports_scripts() -> None:
-    """The selector ignores ``scripts/`` — assert no test module imports from it,
-    so ignoring it cannot hide a real test dependency."""
-    import ast
+def test_benchmarks_edit_selects_the_harness_gate() -> None:
+    """Editing the bench harness selects the test that imports it, not a full run.
 
-    def imports_scripts(node: ast.AST) -> bool:
-        if isinstance(node, ast.Import):
-            return any(a.name.split(".")[0] == "scripts" for a in node.names)
-        if isinstance(node, ast.ImportFrom):
-            return (node.module or "").split(".")[0] == "scripts"
-        return False
-
-    this_file = Path(__file__).name
-    tests_dir = Path(__file__).parent
-    offenders = [
-        f.name
-        for f in tests_dir.glob("test_*.py")
-        if f.name != this_file  # skip self (mentions "scripts" in this assertion)
-        and any(imports_scripts(n) for n in ast.walk(ast.parse(f.read_text(encoding="utf-8"))))
-    ]
-    assert not offenders, f"tests import from scripts/ (ignore would hide changes): {offenders}"
+    ``benchmarks/analysis_bench.py`` is loaded by *path* from
+    ``test_perf_regression.py`` (it is not an installed package), so the selector
+    must recognise ``benchmarks/`` explicitly: ignoring it would hide a real test
+    dependency, and leaving it unrecognised would escalate every harness tweak to
+    the whole suite.
+    """
+    plan = cs.classify(["benchmarks/analysis_bench.py"])
+    assert not plan.full, plan.reason
+    assert "test_perf_regression.py" in plan.selected_files

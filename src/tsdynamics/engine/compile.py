@@ -104,7 +104,7 @@ OP_RECIP = 21
 
 # ---------------------------------------------------------------------------
 # Non-smooth / piecewise opcodes — wire range 50-69 (stream E-OPS).
-# Additive to the frozen IR (range reserved by ROADMAP §13d); they let modular
+# Additive to the frozen IR (range reserved in the frozen IR opcode table); they let modular
 # and piecewise maps (Circle's ``% 1``, Baker's branch) lower onto the engine.
 # Comparisons yield 1.0 (true) / 0.0 (false); ``Min``/``Max`` follow ``f64::min``/
 # ``max`` (NaN returns the other operand); ``Floor``/``Ceil`` are IEEE round to
@@ -1607,7 +1607,7 @@ class LoweredSDE:
 def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredSDE:
     """Lower a diagonal-Itô SDE (``_drift`` + ``_diffusion``) to two tapes.
 
-    Follows the resolved noise contract (ROADMAP §11): ``_drift(y, t, **params)``
+    Follows the resolved noise contract (see CLAUDE.md, StochasticSystem): ``_drift(y, t, **params)``
     is the deterministic part (exactly like an ODE's ``_equations``) and
     ``_diffusion(y, t, **params)`` returns one noise coefficient per state
     component, each multiplying an independent Wiener increment (Itô).  Both

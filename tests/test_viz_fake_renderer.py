@@ -69,8 +69,6 @@ from tsdynamics.analysis.orbits.return_map import ReturnMap
 from tsdynamics.analysis.recurrence.matrix import RecurrenceMatrix
 from tsdynamics.analysis.recurrence.rqa import RQAResult
 from tsdynamics.analysis.recurrence.windowed import WindowedRQA
-from tsdynamics.analysis.surrogate.generators import SurrogateEnsemble
-from tsdynamics.analysis.surrogate.hypothesis import SurrogateTest
 from tsdynamics.data import Grid
 from tsdynamics.viz.render.caps import VisualizationDegraded, style_honoring_gaps
 from tsdynamics.viz.spec import PlotKind, PlotSpec
@@ -218,16 +216,12 @@ def _builders() -> dict[type, object]:
         ),
         # array results
         LyapunovSpectrum: lambda: LyapunovSpectrum(values=np.array([0.91, 0.0, -14.57])),
-        SurrogateEnsemble: lambda: SurrogateEnsemble(
-            values=np.array([[0.0, 1.0, 0.5, 0.2], [0.1, 0.9, 0.4, 0.3]]),
-            meta={"method": "iaaft"},
-        ),
         Embedding: lambda: Embedding(values=np.random.default_rng(0).random((20, 3))),
         # delay-selection diagnostic (mutual information first-minimum)
         MutualInformation: lambda: MutualInformation(
             values=np.array([1.5, 0.9, 0.6, 0.4, 0.5, 0.7]), meta={"analysis": "mutual_information"}
         ),
-        # chaos / recurrence / surrogate dataclasses
+        # chaos / recurrence dataclasses
         ZeroOneResult: lambda: ZeroOneResult(
             value=0.97,
             p=np.cumsum(np.random.default_rng(1).standard_normal(50)),
@@ -235,18 +229,6 @@ def _builders() -> dict[type, object]:
         ),
         GALIResult: lambda: GALIResult(
             k=2, times=np.arange(1.0, 6.0), values=np.array([1.0, 0.6, 0.3, 0.1, 0.02])
-        ),
-        SurrogateTest: lambda: SurrogateTest(
-            data_statistic=1.5,
-            surrogate_statistics=np.array([0.1, 0.2, 0.3, 0.4]),
-            p_value=0.05,
-            z_score=2.1,
-            rejected=True,
-            statistic="time_reversal",
-            method="iaaft",
-            n_surrogates=4,
-            tail="greater",
-            alpha=0.05,
         ),
         RecurrenceMatrix: lambda: RecurrenceMatrix(matrix=_sparse_recurrence(), epsilon=0.5),
         RQAResult: _rqa_result,

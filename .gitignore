@@ -192,7 +192,25 @@ crates/*/.venv/
 
 crates/*/uv.lock
 
-# Per-stream parallel-dev git worktrees (ROADMAP §5). Kept inside the project
-# (not the parent directory, which holds unrelated projects) and ignored so the
-# superproject's `git status` and the parent folder stay clean.
+# Agent git worktrees. Kept inside the project (not the parent directory, which
+# holds unrelated projects) and ignored so the superproject's `git status` and
+# the parent folder stay clean.
 .claude/worktrees/
+
+# Local scratch: design explorations and planning notes, never shipped.
+/design/
+/planning/
+
+# Render output dropped at the repo ROOT by interactive/doc experiments
+# (`traj.plot().save("lorenz.png")`, `.save("orbit.mp4")`, …). Root-scoped on
+# purpose: shipped figures live under docs/, so nothing tracked matches, but an
+# unguarded `git add -A` would otherwise commit tens of MB of scratch art.
+/*.png
+/*.gif
+/*.mp4
+/*.pdf
+/*.svg
+/*.html
+
+# audit/analysis reports — kept out of the repo
+AUDIT-*.md

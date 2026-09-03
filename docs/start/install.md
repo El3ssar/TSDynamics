@@ -51,15 +51,13 @@ Concretely, this means:
 ## Optional extras
 
 The base install pulls in **no plotting library** — `import tsdynamics` stays
-lightweight and imports nothing heavy. Plotting backends and a couple of
-optional accelerators are opt-in extras:
+lightweight and imports nothing heavy. The plotting backends are opt-in extras:
 
 | Extra | Installs | When you want it |
 | ----- | -------- | ---------------- |
 | `tsdynamics[viz]` | `matplotlib` | The reference renderer: static 2-D and 3-D figures, movies (mp4/gif) |
 | `tsdynamics[interactive]` | `plotly` | The interactive backend: rotatable 3-D and self-contained HTML export |
 | `tsdynamics[plot]` | `matplotlib` | A back-compatible alias of `viz` |
-| `tsdynamics[lz]` | `lzcomplexity` | An optional fast provider for Lempel–Ziv complexity (a native parser is built in, so this is never required) |
 
 Combine extras in the usual way:
 
@@ -95,4 +93,3 @@ also returns cleanly, the engine is wired up and you are ready to go.
 
 [**02 · First trajectory**](first-trajectory.md) — instantiate the Lorenz
 system, integrate it, read its components, and compute its Lyapunov spectrum.
-</content>

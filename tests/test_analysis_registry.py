@@ -11,7 +11,11 @@ or a public name disappearing.
 These are pure structural/contract checks (no Hypothesis needed): the
 parametrized fixtures ``analysis_entry`` / ``transform_entry`` (provided by
 ``conftest.py``) yield one :class:`~tsdynamics.registry.RegistryEntry` per
-registered analysis/transform.
+registered analysis/transform.  ``registry.transforms`` carries **no in-tree
+entries** (the generic time-series statistics layer left the library in v6; the
+registry survives as the out-of-tree plugin surface), so the ``transform_entry``
+sweep runs over an empty set unless a plugin is installed — it stays here as the
+contract any such plugin must satisfy.
 """
 
 from __future__ import annotations
@@ -24,7 +28,6 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-import tsdynamics.transforms as tx  # noqa: F401  (import populates registry.transforms)
 from tsdynamics import registry
 from tsdynamics.analysis._result import AnalysisResult
 from tsdynamics.derived import PoincareSection
@@ -106,12 +109,6 @@ def test_transform_entry_roundtrips(transform_entry):
     assert registry.transforms.entry(transform_entry.name).obj is transform_entry.obj
 
 
-def test_transform_entry_top_level_export(transform_entry):
-    """If re-exported on ``tsdynamics.transforms``, the attribute is the same object."""
-    if hasattr(tx, transform_entry.name):
-        assert getattr(tx, transform_entry.name) is transform_entry.obj
-
-
 # ---------------------------------------------------------------------------
 # Non-parametrized guards: headline membership + sane sizes
 #
@@ -120,9 +117,9 @@ def test_transform_entry_top_level_export(transform_entry):
 # loudly instead of the sweep above simply running over fewer entries.
 # ---------------------------------------------------------------------------
 
-#: Headline analyses spanning every Tier-3 A-* stream — Lyapunov, chaos
-#: indicators, fixed points / orbits, dimensions, embedding, entropy,
-#: recurrence, surrogates and basins.  A subset (the registry may carry more).
+#: Headline analyses spanning every surviving A-* stream — Lyapunov, chaos
+#: indicators, fixed points / orbits, dimensions, embedding, recurrence and
+#: basins.  A subset (the registry may carry more).
 _EXPECTED_ANALYSES = frozenset(
     {
         # A-LYAP
@@ -148,38 +145,13 @@ _EXPECTED_ANALYSES = frozenset(
         "embed",
         "optimal_delay",
         "embedding_dimension",
-        # A-ENT
-        "permutation_entropy",
-        "sample_entropy",
-        "lz76_complexity",
         # A-RQA
         "recurrence_matrix",
         "rqa",
         "windowed_rqa",
-        # A-SURR
-        "surrogates",
-        "surrogate_test",
         # A-BASIN
         "find_attractors",
         "basins_of_attraction",
-    }
-)
-
-#: Headline transforms — spectral measures + Butterworth filter family +
-#: feature extraction (stream T-XFORM).
-_EXPECTED_TRANSFORMS = frozenset(
-    {
-        "detrend",
-        "normalize",
-        "power_spectral_density",
-        "spectral_entropy",
-        "spectral_centroid",
-        "dominant_frequency",
-        "lowpass",
-        "highpass",
-        "bandpass",
-        "bandstop",
-        "extract_features",
     }
 )
 
@@ -189,17 +161,22 @@ def test_analyses_registry_has_expected_members():
     names = set(registry.analyses.names())
     missing = _EXPECTED_ANALYSES - names
     assert not missing, f"analyses registry is missing headline members: {sorted(missing)}"
-    # The full A-* fan-out registers well over forty quantifiers; a smaller
+    # The surviving A-* fan-out registers well over thirty quantifiers; a smaller
     # count means a whole subpackage failed to self-register.
-    assert len(registry.analyses) >= 40
+    assert len(registry.analyses) >= 30
 
 
-def test_transforms_registry_has_expected_members():
-    """Every headline transform is registered (after importing tsdynamics.transforms)."""
-    names = set(registry.transforms.names())
-    missing = _EXPECTED_TRANSFORMS - names
-    assert not missing, f"transforms registry is missing headline members: {sorted(missing)}"
-    assert len(registry.transforms) >= 10
+def test_transforms_registry_ships_empty():
+    """No in-tree transform registers: the registry is the out-of-tree plugin surface.
+
+    The generic time-series statistics layer (spectra, filters, features) left the
+    library in v6 — TSDynamics is scoped to dynamical-systems methods.  The
+    container and the ``tsdynamics.transforms`` entry-point group are kept so a
+    companion library can register into them, so the invariant here is *empty by
+    default*, not *populated*.
+    """
+    assert registry.transforms.kind == "transform"
+    assert list(registry.transforms.names()) == []
 
 
 def test_registries_are_distinct_kinds():
@@ -310,15 +287,12 @@ def _runtime_cases() -> list[tuple[str, object]]:
         ("max_lyapunov", lambda: ts.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
         ("kaplan_yorke_dimension", lambda: ts.kaplan_yorke_dimension(spectrum)),
         ("zero_one_test", lambda: ts.zero_one_test(series)),
-        ("permutation_entropy", lambda: ts.permutation_entropy(series)),
-        ("lz76_complexity", lambda: ts.lz76_complexity(series)),
         ("correlation_dimension", lambda: ts.correlation_dimension(traj)),
         ("embed", lambda: ts.embed(series, 3, 1)),
         ("optimal_delay", lambda: ts.optimal_delay(series, max_delay=20)),
         ("mutual_information", lambda: ts.mutual_information(series, max_delay=20)),
-        ("surrogates", lambda: ts.surrogates(series, "shuffle", 4, seed=0)),
-        ("surrogate_test", lambda: ts.surrogate_test(series, n=19, seed=0)),
         ("recurrence_matrix", lambda: ts.recurrence_matrix(traj, recurrence_rate=0.05)),
+        ("rqa", lambda: ts.rqa(traj, recurrence_rate=0.05)),
         ("fixed_points", lambda: ts.fixed_points(_henon(), seed=0)),
     ]
 

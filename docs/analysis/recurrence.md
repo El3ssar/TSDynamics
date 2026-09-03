@@ -197,7 +197,6 @@ per-window `RQAResult` objects if you need every field at once.
 
 - [Lyapunov spectra](lyapunov.md) — $\mathrm{DIV} = 1/\mathrm{L}_{\max}$ tracks the largest exponent
 - [Chaos indicators](chaos.md) — GALI, the 0–1 test, and expansion entropy: complementary chaos verdicts
-- [Surrogates & nonlinearity tests](surrogate.md) — test whether the recurrence structure is genuinely nonlinear
 - [Delay embedding](embedding.md) — reconstruct a phase space before building the plot
 
 ## References

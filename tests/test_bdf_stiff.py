@@ -2,7 +2,7 @@
 
 The ``bdf`` kernel (``crates/tsdyn-solvers/src/implicit/bdf.rs``) is the engine's
 high-order stiff workhorse, added to close the warm-throughput gap to a
-variable-order BDF reference on stiff ODEs (``benches/REPORT.md``, issue #95).
+variable-order BDF reference on stiff ODEs (issue #95).
 These tests check it integrates the canonical stiff benchmarks **as accurately as
 SciPy's own stiff integrators** (``LSODA`` / ``BDF`` / ``Radau``), through the
 public engine seam.

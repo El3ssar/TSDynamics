@@ -713,30 +713,85 @@ class LiuChen(Sakarya):
 
 
 class PanXuZhou(DequanLi):
-    """Pan–Xu–Zhou three-dimensional chaotic attractor.
+    r"""Pan–Xu–Zhou (Pan) three-dimensional chaotic attractor.
 
     A Lorenz-family quadratic flow sharing the :class:`DequanLi` functional form
     (``x' = a y - a x + d x z``; ``y' = k x + f y - x z``;
     ``z' = c z + x y - eps x^2``).  At the Pan–Xu–Zhou parameters the extra
-    ``x*z`` / ``x**2`` terms vanish (``d = eps = f = 0``), reducing it to a
-    compact single-scroll chaotic attractor.
+    ``x*z`` / ``x**2`` terms vanish (``d = eps = f = 0``), leaving the compact
+    Lorenz-like form
+
+    .. math::
+
+        x' = a (y - x), \quad y' = k x - x z, \quad z' = c z + x y ,
+
+    whose attractor has two scrolls symmetric under
+    :math:`(x, y, z) \mapsto (-x, -y, z)`.  It differs from Lorenz only in the
+    missing ``-y`` damping of the ``y`` channel, which the original paper argues
+    makes it topologically non-equivalent to the Lorenz system.
 
     Parameters
     ----------
     a, c, d, eps, f, k : float
         As in :class:`DequanLi`.
+
+    Notes
+    -----
+    **Deviation from the cited source.**  This class ships ``k = 28``.  The
+    cited paper — and the ``dysts`` catalogue entry derived from it — use
+    ``k = 16``.  **At the published ``k = 16`` this system is not chaotic**, so
+    the default was moved rather than shipping a system that contradicts its own
+    description.  Three independent checks agree:
+
+    1. *Linear stability.*  With ``b = -c`` the two non-trivial equilibria sit
+       at :math:`(\pm\sqrt{bk},\, \pm\sqrt{bk},\, k)`, and the Routh–Hurwitz
+       condition on the characteristic polynomial
+       :math:`\lambda^3 + (a+b)\lambda^2 + (ab + bk)\lambda + 2abk` makes them
+       *stable* for
+
+       .. math::
+
+           k < \frac{a\,(a + b)}{a - b} = 17.2729 \quad (a = 10,\ b = 8/3),
+
+       so ``k = 16`` lies **below** the Hopf threshold.
+    2. *Eigenvalues.*  At ``k = 16`` the equilibria are
+       :math:`(\pm 6.532, \pm 6.532, 16)` with spectrum
+       :math:`-12.557,\; -0.0548 \pm 8.243 i` — a stable focus.
+    3. *Measured Lyapunov spectrum.*  A variational-QR run at ``k = 16``
+       (``final_time=3000``, ``dt=0.005``, ``burn_in=1000``) returns
+       :math:`(-0.0548,\, -0.0548,\, -12.557)` — no positive exponent and no
+       zero exponent; it has converged onto the focus above, not onto an
+       attractor.
+
+    At the shipped ``k = 28`` the same measurement gives
+    :math:`(0.999,\, 0.000,\, -13.666)` — one positive, one zero, and the sum
+    matching the constant divergence :math:`-(a - f) + c = -12.667` exactly —
+    from every initial condition tried (five random draws from
+    :math:`[-10, 10]^3`, all landing on the same attractor).  Pass
+    ``params={"k": 16.0}`` to recover the published, non-chaotic parameters.
     """
 
     reference = "Zhou, Wuneng et al. (2008), Phys. Lett. A 372, 5773-5777"
     doi = "10.1016/j.physleta.2008.07.032"
-    params = {"a": 10.0, "c": -2.6667, "d": 0.0, "eps": 0.0, "f": 0.0, "k": 16.0}
+    # k = 28 (not the paper's 16, which is below the Hopf threshold ~17.27 and
+    # decays to a stable focus — see Notes).
+    params = {"a": 10.0, "c": -2.6667, "d": 0.0, "eps": 0.0, "f": 0.0, "k": 28.0}
     default_ic = [-3.038, -1.9805, 14.6567]
+    known_lyapunov = {
+        "spectrum": (1.0, 0.0, -13.67),
+        "atol": (0.15, 0.05, 0.2),
+        "kwargs": {"final_time": 3000.0, "dt": 0.005, "burn_in": 1000.0},
+        "source": (
+            "measured; the sum is pinned analytically by the constant divergence "
+            "-(a - f) + c = -12.667"
+        ),
+    }
 
 
 class Tsucs2(DequanLi):
     """Three-Scroll Unified Chaotic System 2 (TSUCS-2).
 
-    A three-scroll chaotic system in the :class:`DequanLi` family
+    A member of the :class:`DequanLi` family
     (``x' = a y - a x + d x z``; ``y' = k x + f y - x z``;
     ``z' = c z + x y - eps x^2``) at the TSUCS-2 parameters (``k = 0``), a
     unified model that contains several three-scroll attractors as special
@@ -746,6 +801,23 @@ class Tsucs2(DequanLi):
     ----------
     a, c, d, eps, f, k : float
         As in :class:`DequanLi`.
+
+    Warning
+    -------
+    **At the published parameters this system is quasi-periodic, not chaotic.**
+    Unlike :class:`PanXuZhou`, the shipped values here are **unchanged** from the
+    reference, and the attractor they produce is bounded, large
+    (``|x| <~ 68.5``, ``|y| <~ 66.6``, ``|z| <~ 74.8``) and visually
+    three-scroll-like — but it is a 2-torus, not a strange attractor.  The
+    measured Lyapunov spectrum is ``(0.000, 0.000, -1.497)`` — two zero
+    exponents — from every initial
+    condition tried (``final_time=3000``, ``dt=0.002``, ``burn_in=1000``), on
+    both the engine QR estimator and an independent two-trajectory Benettin run
+    at ``rtol = 1e-10``.  Lowering ``f`` restores chaos (``f = 10`` measures
+    ``(0.492, 0.000, -2.727)``), but no literature source for a chaotic TSUCS-2
+    parameter set could be verified, so the published values are kept rather
+    than silently replaced.  Treat any "chaotic" quantity computed from the
+    defaults with suspicion.
     """
 
     reference = "Pan, Zhou & Li (2013), Nonlinear Dyn. 73, 1965-1976"

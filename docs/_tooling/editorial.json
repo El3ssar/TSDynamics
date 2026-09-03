@@ -1037,9 +1037,10 @@
       }
     },
     "GumowskiMira": {
-      "blurb": "The Gumowski–Mira map — accelerator-physics origin, endlessly varied ornamental attractors.",
+      "blurb": "The Gumowski–Mira map — accelerator-physics origin, endlessly varied ornamental phase portraits.  At the shipped defaults it is area-preserving: a chaotic sea threaded with periodic islands rather than an attractor.",
       "behavior": [
-        "attractor"
+        "conservative",
+        "chaotic"
       ],
       "param_roles": {
         "a": "shape coefficient of the rational nonlinearity G",
@@ -2277,7 +2278,7 @@
       }
     },
     "PanXuZhou": {
-      "blurb": "A compact single-scroll chaotic attractor in the Dequan-Li family at the Pan–Xu–Zhou parameters, where the x·z and x² terms switch off.",
+      "blurb": "A two-scroll, Lorenz-like chaotic attractor in the Dequan-Li family at the Pan–Xu–Zhou parameters, where the x·z and x² terms switch off. The catalogue ships k = 28 rather than the paper's k = 16: the published value lies below the Hopf threshold k ≈ 17.27, where the orbit settles onto a stable focus instead of sustaining chaos.",
       "behavior": "chaotic",
       "param_roles": {
         "a": "x–y coupling gain",
@@ -2289,8 +2290,8 @@
       }
     },
     "Tsucs2": {
-      "blurb": "The Three-Scroll Unified Chaotic System (TSUCS-2), a Dequan-Li-family flow unifying several three-scroll attractors.",
-      "behavior": "chaotic",
+      "blurb": "The Three-Scroll Unified Chaotic System (TSUCS-2), a Dequan-Li-family flow unifying several three-scroll attractors. At the published parameters the orbit is a bounded, visually three-scroll-like 2-torus rather than a strange attractor: the measured spectrum is (0, 0, −1.50), so treat any \"chaotic\" quantity from the defaults with suspicion.",
+      "behavior": "quasiperiodic",
       "param_roles": {
         "a": "x–y coupling gain",
         "c": "z self-feedback",

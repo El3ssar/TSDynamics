@@ -1,4 +1,4 @@
-"""Entry-point plugin discovery — the external-plugin half of D4 (ROADMAP §4).
+"""Entry-point plugin discovery — the external-plugin half of D4.
 
 Third-party packages extend TSDynamics *without forking* by declaring Python
 packaging **entry points**.  On import, TSDynamics walks the relevant groups and
@@ -17,7 +17,13 @@ transform *is*.  Each consuming subpackage interprets the loaded objects in its
 own terms (e.g. :mod:`tsdynamics.solvers` turns them into solver specs).
 
 Stream **F2** owns this mechanism; it is consumed by ``tsdynamics.solvers``
-(also F2) and, later, by the analyses/transforms registries.
+(also F2) and by the analyses/transforms registries.
+
+``tsdynamics.transforms`` is a pure *ecosystem* group: since v6 no in-tree
+transform ships (TSDynamics is scoped to dynamical-systems methods, not generic
+time-series statistics), so that group exists solely so an out-of-tree package —
+e.g. a companion time-series library — can register its transforms into
+:data:`tsdynamics.registry.transforms`.
 """
 
 from __future__ import annotations
@@ -34,6 +40,8 @@ from typing import Any, Protocol
 SYSTEMS_GROUP = "tsdynamics.systems"
 SOLVERS_GROUP = "tsdynamics.solvers"
 ANALYSES_GROUP = "tsdynamics.analyses"
+# No in-tree transforms ship (v6 scope surgery) — this group is purely the
+# out-of-tree hook, loaded by ``tsdynamics.registry.discover_transform_plugins``.
 TRANSFORMS_GROUP = "tsdynamics.transforms"
 RENDERERS_GROUP = "tsdynamics.renderers"
 
@@ -105,7 +113,7 @@ def load_plugins(group: str, *, strict: bool = False) -> dict[str, Any]:
 def import_submodules(package: ModuleType) -> dict[str, ModuleType]:
     """Import every public submodule of *package*, returning ``name -> module``.
 
-    This is the "directory scan at import" primitive (ROADMAP §4d): importing a
+    This is the "directory scan at import" primitive: importing a
     submodule runs its top-level code, so a module that registers something on
     import (a solver spec, an analysis, …) becomes active simply by existing in
     the package.  Submodules whose names start with ``_`` are skipped, leaving
