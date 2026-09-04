@@ -45,7 +45,7 @@ paths have MOVED, no shims):
 ```
 src/tsdynamics/
 ├── __init__.py               # __version__ (managed by python-semantic-release) + re-exports
-├── registry.py               # system registry (SystemEntry + all_systems/…) + generic analyses/renderers registries + the now-EMPTY transforms registry (the out-of-tree plugin hook; solvers live in tsdynamics.solvers)
+├── registry.py               # system registry (SystemEntry + all_systems/…) + generic analyses/renderers registries (solvers live in tsdynamics.solvers)
 ├── families/                 # base classes + the System protocol (was base/)
 │   ├── base.py               # SystemBase, ParamSet, MetaStore (re-exports Trajectory from data)
 │   ├── protocol.py           # the System runtime Protocol
@@ -174,8 +174,7 @@ module's `__all__`), so a new system needs no manual edit there.
 library, deliberately **not** a general time-series toolkit. The governing rule is
 **phase-space methods stay; generic series statistics go.** In v6 the following
 were **deleted outright** (no shims — the owner sanctioned the break) and now live
-in a separate, companion time-series library that will integrate through the
-plugin surface below: `analysis/entropy/` (permutation/dispersion/sample/
+in a separate, companion time-series library: `analysis/entropy/` (permutation/dispersion/sample/
 multiscale entropy, LZ76, the OutcomeSpace core), `analysis/surrogate/`
 (shuffle/FT/AAFT/IAAFT, `time_reversal_asymmetry`, `nonlinear_prediction_error`,
 `surrogate_test`), and the whole `transforms/` package (PSD, detrend/normalize,
@@ -220,20 +219,19 @@ a plain `import tsdynamics` pulls in no plotting library at import time —
 
 ## The registry (load-bearing!)
 
-`registry.py` hosts the specialised *system* registry (below) plus three
-generic name→object `Registry` containers — `registry.analyses`,
-`registry.transforms` and `registry.renderers` — for the analysis/transform/
-visualization-backend streams to register into.
-Out-of-tree plugins are wired in (A-LAYOUT): `tsdynamics.analysis`/
-the top-level `__init__` call `plugins.register_entry_points` at import to load
-the `tsdynamics.analyses`/`tsdynamics.transforms` entry-point groups; in-tree
-analyses self-register from their own subpackages (the A-* streams).
-**`registry.transforms` ships EMPTY by design** — no in-tree transforms exist any
-more (see the scope boundary above); the container and its
-`tsdynamics.transforms` entry-point group are retained purely as the out-of-tree
-plugin surface the companion time-series library registers into, via
-`registry.discover_transform_plugins()`.  Do not delete it, and do not repopulate
-it in-tree.
+`registry.py` hosts the specialised *system* registry (below) plus two
+generic name→object `Registry` containers — `registry.analyses` and
+`registry.renderers` — for the analysis and visualization-backend streams to
+register into.
+Out-of-tree plugins are wired in (A-LAYOUT): `tsdynamics.analysis` calls
+`plugins.register_entry_points` at import to load the `tsdynamics.analyses`
+entry-point group, and `tsdynamics.viz` does the same for
+`tsdynamics.renderers`; in-tree analyses self-register from their own
+subpackages (the A-* streams).
+There is **no `transforms` registry / entry-point group** — it was removed in v6
+along with the generic time-series layer (see the scope boundary above). Do not
+re-add one; a companion library's integration surface will be designed when that
+library exists.
 **Solvers are not registered here**: they live in the
 richer `tsdynamics.solvers` registry (a `name → SolverSpec` table with
 capability flags + `solvers/` directory and entry-point discovery via
@@ -964,7 +962,7 @@ inner loop** — see below.
 ### Change-scoped testing (stream CI-CHANGED) — use this, not the full suite
 
 The bulk suite is registry-driven (every test parametrized over all 171 systems
-+ every analysis/transform), so a plain `uv run pytest` is thousands of items and
++ every analysis), so a plain `uv run pytest` is thousands of items and
 takes minutes. **To check your work, run only what your diff touches:**
 
 ```bash
@@ -1009,14 +1007,13 @@ systems/analyses join the sweeps with zero test edits:
 
 - **Registry sweeps.** `tests/conftest.py` parametrizes fixtures over the
   registries: `ode_entry`/`dde_entry`/`map_entry`/`sde_entry`/`system_entry`
-  (built-in systems) and `analysis_entry`/`transform_entry` (the D4
-  `registry.analyses`/`registry.transforms` plugin surface — the latter is empty
-  in-tree, so `transform_entry` degenerates to an empty parametrization/skip).
+  (built-in systems) and `analysis_entry` (the D4 `registry.analyses` plugin
+  surface).
   `tests/test_analysis_registry.py` runs the meta-QA over every registered
-  analysis/transform (callable, documented, round-trips, top-level export
+  analysis (callable, documented, round-trips, top-level export
   agreement) plus headline-membership guards.
 - **Property tests (Hypothesis).** `tests/test_property_*.py` assert
-  *mathematical invariants* of the analysis/transform layer (embed value
+  *mathematical invariants* of the analysis layer (embed value
   preservation, recurrence symmetry +
   target-rate calibration, dimension-of-a-d-cube ≈ d, …). `hypothesis` is a dev
   dependency; `conftest` registers a profile (deadline off, health checks
@@ -1048,7 +1045,7 @@ systems/analyses join the sweeps with zero test edits:
   a structural / map / DDE param change or a monkeypatched kernel is a deliberate
   miss, and a `TSDYNAMICS_NO_TAPE_CACHE` run is value-identical to a cached one.
 
-When adding an analysis/transform, the registry meta-QA picks it up
+When adding an analysis, the registry meta-QA picks it up
 automatically (give it a docstring, register it). When adding a property test,
 reuse `_strategies` and assert a real invariant — never a tautology.
 

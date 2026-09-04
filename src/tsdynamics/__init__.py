@@ -304,13 +304,6 @@ from .families import (
 bifurcation_diagram = orbit_diagram  #: discoverable spelling of :func:`orbit_diagram`
 basins = basins_of_attraction  #: short alias of :func:`basins_of_attraction`
 
-# Fold any out-of-tree transforms into ``registry.transforms``.  No in-tree
-# transforms ship (the generic time-series statistics layer left the library in
-# v6), so this entry-point group is the *only* populator of that registry — it is
-# discovered here, at package import, exactly as the analyses group is discovered
-# inside ``tsdynamics.analysis``.  Plugin load failures are isolated (warn-and-skip).
-registry.discover_transform_plugins()
-
 # Single source of truth for the package version; rewritten by python-semantic-release.
 __version__ = "5.4.0"
 

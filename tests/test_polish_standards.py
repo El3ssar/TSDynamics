@@ -551,9 +551,9 @@ def test_runtime_sweep_covers_every_result_kind():
 #
 # The registry-driven enforcement of the *frozen* naming glossary
 # (``docs/contributing/glossary.md``, stream WS-VOCAB) over the whole public
-# callable surface — every function in ``registry.analyses`` *and*
-# ``registry.transforms``.  Two rules are decidable from ``inspect.signature``
-# alone (glossary §7) and so are CI-enforced here:
+# callable surface — every function in ``registry.analyses``.  Two rules are
+# decidable from ``inspect.signature`` alone (glossary §7) and so are CI-enforced
+# here:
 #
 #   1. the **first positional argument** of every public callable is ``system``
 #      (a System it integrates/iterates) or ``data`` (a measured series it
@@ -694,22 +694,12 @@ _NAMEGATE_DOMAIN_OWNED = {"zero_one_test": "n_cut"}
 
 
 def _namegate_public_callables() -> list[tuple[str, object]]:
-    """Every registered analysis + transform as sorted ``(name, callable)`` pairs.
+    """Every registered analysis as sorted ``(name, callable)`` pairs.
 
-    Sweeps **both** ``registry.analyses`` and ``registry.transforms`` (glossary
-    §7 rule 4).  Evaluated at import time over the live registries, so a new
-    analysis/transform joins the gate with zero test edits.
-
-    ``registry.transforms`` is **empty in-tree** since the scope narrowing (the
-    generic signal/feature transforms moved out of this library); the container
-    is deliberately kept as the ``tsdynamics.transforms`` *entry-point* hook an
-    out-of-tree package registers into, so sweeping it here keeps the naming
-    gate applying to a plugin's callables the day one is installed.
+    Sweeps ``registry.analyses`` (glossary §7 rule 4).  Evaluated at import time
+    over the live registry, so a new analysis joins the gate with zero test edits.
     """
-    pairs: list[tuple[str, object]] = []
-    for reg in (registry.analyses, registry.transforms):
-        for entry in reg.all():
-            pairs.append((entry.name, entry.obj))
+    pairs = [(entry.name, entry.obj) for entry in registry.analyses.all()]
     return sorted(pairs, key=lambda p: p[0])
 
 
@@ -736,9 +726,8 @@ def _namegate_first_arg(fn: object) -> str | None:
 def test_naming_gate_first_argument_is_canonical(name: str, fn: object) -> None:
     """First positional arg is ``system`` / ``data`` (or a §5 prior-result).
 
-    Registry-driven over both ``registry.analyses`` and ``registry.transforms``;
-    a pure keyword-only consumer (no positional parameter) has no first-arg role
-    and is skipped.
+    Registry-driven over ``registry.analyses``; a pure keyword-only consumer
+    (no positional parameter) has no first-arg role and is skipped.
     """
     first = _namegate_first_arg(fn)
     if first is None:
@@ -868,9 +857,7 @@ def test_naming_gate_homonym_whitelist_is_sound() -> None:
             f"whitelist pair ({fn_name!r}, {param!r}) is pointless: {param!r} is not banned."
         )
         fn = _NAMEGATE_BY_NAME.get(fn_name)
-        assert fn is not None, (
-            f"whitelist names {fn_name!r}, which is not a registered analysis/transform."
-        )
+        assert fn is not None, f"whitelist names {fn_name!r}, which is not a registered analysis."
         assert param in set(inspect.signature(fn).parameters), (
             f"{fn_name}: whitelist carves out {param!r}, absent from the live signature."
         )

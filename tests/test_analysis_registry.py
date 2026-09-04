@@ -1,7 +1,7 @@
-"""Registry-driven meta-QA over the generic analysis/transform registries.
+"""Registry-driven meta-QA over the generic analysis registry.
 
-Stream I-QA: these tests sweep the D4 plugin registries
-(:data:`tsdynamics.registry.analyses` / :data:`~tsdynamics.registry.transforms`)
+Stream I-QA: these tests sweep the D4 plugin registry
+(:data:`tsdynamics.registry.analyses`)
 once per registered entry, asserting the invariants every public quantifier must
 satisfy — callable, documented, round-trips through its own registry, and (when
 re-exported) agrees with the top-level package attribute.  A set of curated
@@ -9,13 +9,8 @@ headline-name guards then catches a stream's self-registration silently breaking
 or a public name disappearing.
 
 These are pure structural/contract checks (no Hypothesis needed): the
-parametrized fixtures ``analysis_entry`` / ``transform_entry`` (provided by
-``conftest.py``) yield one :class:`~tsdynamics.registry.RegistryEntry` per
-registered analysis/transform.  ``registry.transforms`` carries **no in-tree
-entries** (the generic time-series statistics layer left the library in v6; the
-registry survives as the out-of-tree plugin surface), so the ``transform_entry``
-sweep runs over an empty set unless a plugin is installed — it stays here as the
-contract any such plugin must satisfy.
+parametrized fixture ``analysis_entry`` (provided by ``conftest.py``) yields one
+:class:`~tsdynamics.registry.RegistryEntry` per registered analysis.
 """
 
 from __future__ import annotations
@@ -77,39 +72,6 @@ def test_analysis_entry_top_level_export(analysis_entry):
 
 
 # ---------------------------------------------------------------------------
-# Parametrized contract: transforms (one run per registered transform)
-# ---------------------------------------------------------------------------
-
-
-def test_transform_entry_is_callable(transform_entry):
-    """Every registered transform must be callable."""
-    assert callable(transform_entry.obj)
-
-
-def test_transform_entry_documented(transform_entry):
-    """Every registered public transform carries a non-empty docstring."""
-    doc = transform_entry.obj.__doc__
-    assert isinstance(doc, str)
-    assert doc.strip(), f"transform {transform_entry.name!r} has an empty docstring"
-
-
-def test_transform_entry_metadata_is_mapping(transform_entry):
-    """Entry name is a non-empty str and metadata behaves as a mapping."""
-    assert isinstance(transform_entry.name, str)
-    assert transform_entry.name.strip()
-    assert isinstance(transform_entry.metadata, Mapping)
-    as_dict = dict(transform_entry.metadata)
-    assert set(as_dict) == set(transform_entry.metadata)
-
-
-def test_transform_entry_roundtrips(transform_entry):
-    """The entry is reachable under its own name and resolves to the same object."""
-    assert transform_entry.name in registry.transforms
-    assert registry.transforms.get(transform_entry.name) is transform_entry.obj
-    assert registry.transforms.entry(transform_entry.name).obj is transform_entry.obj
-
-
-# ---------------------------------------------------------------------------
 # Non-parametrized guards: headline membership + sane sizes
 #
 # These freeze the public surface: if a stream's self-registration regresses
@@ -166,31 +128,17 @@ def test_analyses_registry_has_expected_members():
     assert len(registry.analyses) >= 30
 
 
-def test_transforms_registry_ships_empty():
-    """No in-tree transform registers: the registry is the out-of-tree plugin surface.
-
-    The generic time-series statistics layer (spectra, filters, features) left the
-    library in v6 — TSDynamics is scoped to dynamical-systems methods.  The
-    container and the ``tsdynamics.transforms`` entry-point group are kept so a
-    companion library can register into them, so the invariant here is *empty by
-    default*, not *populated*.
-    """
-    assert registry.transforms.kind == "transform"
-    assert list(registry.transforms.names()) == []
-
-
 def test_registries_are_distinct_kinds():
     """The two generic registries are tagged with their distinct kind labels."""
     assert registry.analyses.kind == "analysis"
-    assert registry.transforms.kind == "transform"
+    assert registry.renderers.kind == "renderer"
     # Distinct container instances — they must not be the same object.
-    assert registry.analyses is not registry.transforms
+    assert registry.analyses is not registry.renderers
 
 
 def test_registry_names_match_entry_names():
     """``names()`` and ``all()`` agree element-for-element (no stale/aliased keys)."""
-    for reg in (registry.analyses, registry.transforms):
-        assert reg.names() == [e.name for e in reg.all()]
+    assert registry.analyses.names() == [e.name for e in registry.analyses.all()]
 
 
 # ---------------------------------------------------------------------------

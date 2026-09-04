@@ -7,8 +7,8 @@ Covers the stream's acceptance:
   ``tsdynamics.analysis`` re-exports are unchanged objects);
 * the new per-stream subpackages exist and the old flat module paths are gone;
 * the canonical (definition-site) paths the docs reference resolve; and
-* the ``tsdynamics.analyses`` / ``tsdynamics.transforms`` plugin kinds now have a
-  consumer — an out-of-tree plugin is discovered into the generic registries.
+* the ``tsdynamics.analyses`` plugin kind now has a consumer — an out-of-tree
+  plugin is discovered into the generic registry.
 
 The out-of-tree tests are hermetic: they synthesize a fake installed
 distribution on a temporary ``sys.path`` entry and let the real
@@ -142,21 +142,17 @@ def test_old_flat_module_paths_are_gone(old_path):
         importlib.import_module(old_path)
 
 
-# ── analyses / transforms plugin discovery (the new consumers) ──────────────────
+# ── analyses plugin discovery (the new consumer) ───────────────────────────────
 
 
 @pytest.fixture
 def clean_generic_registries():
-    """Snapshot the generic analyses/transforms registries; restore afterwards."""
-    before = {
-        "analyses": set(registry.analyses.names()),
-        "transforms": set(registry.transforms.names()),
-    }
+    """Snapshot the generic analyses registry; restore afterwards."""
+    before = set(registry.analyses.names())
     yield
-    for reg, kind in ((registry.analyses, "analyses"), (registry.transforms, "transforms")):
-        for name in list(reg.names()):
-            if name not in before[kind]:
-                reg.unregister(name)
+    for name in list(registry.analyses.names()):
+        if name not in before:
+            registry.analyses.unregister(name)
 
 
 def _write_fake_distribution(
@@ -195,38 +191,6 @@ def test_analysis_discover_plugins_registers_out_of_tree(
         assert analysis.discover_plugins(strict=True) == []
     finally:
         sys.modules.pop("toy_analysis_pkg", None)
-        importlib.invalidate_caches()
-
-
-def test_transforms_discover_plugins_registers_out_of_tree(
-    tmp_path, monkeypatch, clean_generic_registries
-):
-    """The ``tsdynamics.transforms`` group is live even though no in-tree transform ships.
-
-    Since the v6 scope surgery the transform registry is *purely* the out-of-tree
-    plugin surface (a companion time-series library registers into it), so this
-    test is the contract that the hook still discovers and registers.
-    """
-    site = tmp_path / "site"
-    _write_fake_distribution(
-        site,
-        dist="toy-transform",
-        module="toy_transform_pkg",
-        group=plugins.TRANSFORMS_GROUP,
-        ep_name="toy_double",
-        target="toy_transform_pkg:transform",
-        body="def transform(x):\n    return [2 * v for v in x]\n",
-    )
-    monkeypatch.syspath_prepend(str(site))
-    importlib.invalidate_caches()
-    try:
-        assert list(registry.transforms.names()) == []  # empty without a plugin
-        newly = registry.discover_transform_plugins(strict=True)
-        assert "toy_double" in newly
-        assert "toy_double" in registry.transforms
-        assert registry.transforms.get("toy_double")([1, 2, 3]) == [2, 4, 6]
-    finally:
-        sys.modules.pop("toy_transform_pkg", None)
         importlib.invalidate_caches()
 
 

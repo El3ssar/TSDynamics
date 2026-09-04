@@ -44,7 +44,6 @@ def test_import_is_clean():
         "tsdynamics.systems",
         "tsdynamics.solvers",
         "tsdynamics.analyses",
-        "tsdynamics.transforms",
         "tsdynamics.renderers",
     )
 

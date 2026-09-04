@@ -50,17 +50,12 @@ _FAMILY_FIXTURES = {
     "system_entry": None,  # every family
 }
 
-# Registry-driven parametrization over the *generic* D4 registries (the
-# analysis/transform plugin surface).  A test taking ``analysis_entry`` runs
-# once per registered analysis; ``transform_entry`` once per transform.  Adding
-# an analysis therefore sweeps it into the meta-QA with zero edits — the
-# analyses analogue of the per-system sweep above.  ``registry.transforms`` ships
-# **empty** (no in-tree transforms since the v6 scope surgery; it is purely the
-# out-of-tree plugin surface), so ``transform_entry`` parametrizes over an empty
-# set and pytest degenerates those tests to a clean skip.
+# Registry-driven parametrization over the *generic* D4 analysis registry (the
+# analysis plugin surface).  A test taking ``analysis_entry`` runs once per
+# registered analysis, so adding an analysis sweeps it into the meta-QA with zero
+# edits — the analyses analogue of the per-system sweep above.
 _REGISTRY_FIXTURES = {
     "analysis_entry": registry.analyses,
-    "transform_entry": registry.transforms,
 }
 
 

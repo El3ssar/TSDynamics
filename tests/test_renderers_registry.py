@@ -1,8 +1,8 @@
 """Meta-QA over the visualization renderers registry (stream WS-VIZREG / VIZ-MPL-CORE).
 
-The renderers registry (:data:`tsdynamics.registry.renderers`) is the third
+The renderers registry (:data:`tsdynamics.registry.renderers`) is the second
 generic :class:`~tsdynamics.registry.Registry` container, mirroring
-:data:`~tsdynamics.registry.analyses` / :data:`~tsdynamics.registry.transforms`.
+:data:`~tsdynamics.registry.analyses`.
 
 As of stream VIZ-MPL-CORE the matplotlib reference renderer is the **first real
 backend**, which flips visualization from *deferred* to *live*: the registry
@@ -15,12 +15,12 @@ the installed matplotlib backend on the **first render**, so
 These tests freeze that live contract:
 
 - the registry exists, is a :class:`~tsdynamics.registry.Registry` tagged
-  ``"renderer"``, and is a *distinct* instance from the analyses/transforms ones;
+  ``"renderer"``, and is a *distinct* instance from the analyses one;
 - it is **empty at import** — a fresh ``import tsdynamics`` registers no backend
   and pulls in **no plot library** (core stays plotting-free; registration is
   lazy, only on first render);
 - :mod:`tsdynamics.viz` wires entry-point discovery (the ``tsdynamics.renderers``
-  group) exactly like analyses/transforms;
+  group) exactly like analyses;
 - with **no** backend registered (forced empty), resolving through
   :meth:`tsdynamics.viz.spec.PlotSpec.render` raises a *helpful*,
   message-carrying ``VisualizationNotInstalled`` (the canonical named exception,
@@ -65,12 +65,11 @@ def test_renderers_in_registry_all():
 
 
 def test_renderers_registry_is_distinct_instance():
-    """The three generic registries are distinct container instances."""
+    """The two generic registries are distinct container instances."""
     assert registry.renderers is not registry.analyses
-    assert registry.renderers is not registry.transforms
     # …and distinctly tagged.
-    kinds = {registry.analyses.kind, registry.transforms.kind, registry.renderers.kind}
-    assert kinds == {"analysis", "transform", "renderer"}
+    kinds = {registry.analyses.kind, registry.renderers.kind}
+    assert kinds == {"analysis", "renderer"}
 
 
 def test_renderers_registry_empty_at_import():
@@ -136,7 +135,7 @@ def test_importing_viz_pulls_no_plot_library():
 
 
 # ---------------------------------------------------------------------------
-# Entry-point discovery is wired like analyses/transforms
+# Entry-point discovery is wired like analyses
 # ---------------------------------------------------------------------------
 
 

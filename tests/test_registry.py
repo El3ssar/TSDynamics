@@ -145,7 +145,7 @@ def test_sde_samples_complete() -> None:
 def test_solver_registry_is_not_duplicated_in_registry_module() -> None:
     """Solvers register in ``tsdynamics.solvers``, never in ``registry``.
 
-    ``registry`` keeps only the *reserved* generic ``analyses``/``transforms``
+    ``registry`` keeps only the *reserved* generic ``analyses``/``renderers``
     seams; the solver registry is the richer ``SolverSpec`` table in
     ``tsdynamics.solvers``. A stray ``registry.solvers`` would resurrect the
     two-registries-for-one-thing split this guard exists to prevent.
@@ -157,6 +157,6 @@ def test_solver_registry_is_not_duplicated_in_registry_module() -> None:
         "registry.solvers is back — solvers belong in tsdynamics.solvers"
     )
     assert isinstance(registry.analyses, Registry)
-    assert isinstance(registry.transforms, Registry)
+    assert isinstance(registry.renderers, Registry)
     # The real solver registry exposes the SolverSpec-based API.
     assert hasattr(solvers, "register") and hasattr(solvers, "available")

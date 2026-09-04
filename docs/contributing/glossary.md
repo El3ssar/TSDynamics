@@ -18,8 +18,7 @@ surface — prove a single convention is achievable. This glossary makes it the 
 for everything else.
 
 **Scope.** The glossary and the gate cover the whole public callable surface —
-both `tsdynamics.analysis` (`registry.analyses`) **and** `tsdynamics.transforms`
-(`registry.transforms`). It is a v4 change: spellings are corrected outright (the
+`tsdynamics.analysis` (`registry.analyses`). It is a v4 change: spellings are corrected outright (the
 v3→v4 token map in §6 lists every rename; the `_migration` shim raises a precise
 "renamed to *X*" error for one release). **Every ban below targets a parameter
 *name* in a public signature** — never an attribute (`system.dim` is untouched), a
@@ -46,7 +45,7 @@ exactly one canonical name per kind:
 the dynamics itself* takes `system` (it produces its own trajectory internally —
 `gali`, `expansion_entropy`, `fixed_points`, `find_attractors`). A function whose
 job is to *operate on an already-measured signal* takes `data` (`recurrence_matrix`,
-`correlation_dimension`, `lyapunov_from_data`, and any registered transform).
+`correlation_dimension`, `lyapunov_from_data`).
 
 **Dual-input functions take `system` as the first argument** and coerce / accept a
 measured series through internal handling or a `data=` overload — they never invent
@@ -67,7 +66,7 @@ a third name. The three current offenders are pinned:
 | `map_sys` | `system` | a map *is* a `System` |
 | `observable` (as 1st arg) | `system` / `data` | the *quantity observed* is the `component` keyword, not the input |
 | `source` | `system` / `data` | vague |
-| `x` | `data` | the entropy/transforms convention; unify on `data` |
+| `x` | `data` | the data-series convention; unify on `data` |
 | `series` | `data` | synonym |
 
 ---
@@ -208,7 +207,7 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
 | v3 | v4 | Scope |
 |---|---|---|
 | `sys`, `sys_or_traj`, `map_sys`, `source`, `observable` (1st arg) | `system` | `lyapunov_spectrum`, `max_lyapunov`, `orbit_diagram`, `periodic_orbits`, `poincare_section`, `return_map`, `zero_one_test` |
-| `x`, `series` (1st arg) | `data` | entropy family, transforms, `lyapunov_from_data` |
+| `x`, `series` (1st arg) | `data` | `lyapunov_from_data` |
 | `observable` (kwarg) | `component` | `return_map` |
 | `components` | `component` | `orbit_diagram` |
 | `burn_in` | `transient` | `periodic_orbit` |
@@ -243,7 +242,7 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
    `n_internal`, `n_c`, `n_ref`, `n_ks`) are **not** `n` violations — they are
    distinct names, so a prefix check on bare `n` already passes them; they are
    listed here only so the gate author does not special-case them by mistake.
-4. The gate sweeps **both** `registry.analyses` and `registry.transforms`.
+4. The gate sweeps `registry.analyses`.
 
 **Documentation-only rules** (a signature gate cannot see units or semantics, so
 do **not** try to encode these — they are enforced in review, not CI): the

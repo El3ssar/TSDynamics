@@ -1,10 +1,7 @@
 """Signature-lint for the v4 calling convention (stream **WS-CONV**).
 
 Enforces the frozen naming glossary (``docs/contributing/glossary.md``) over the
-*public analysis/transform surface* — every function registered in
-``registry.analyses`` / ``registry.transforms`` (the latter ships empty since the
-v6 scope surgery; it is the out-of-tree plugin surface, and any plugin registered
-into it is held to the same convention):
+*public analysis surface* — every function registered in ``registry.analyses``:
 
 1. its **first positional argument** is ``system`` or ``data`` (the two canonical
    input roles), unless the ``(function, first-arg)`` pair names a *prior result*
@@ -103,12 +100,8 @@ HOMONYM_WHITELIST: frozenset[tuple[str, str]] = frozenset()
 
 
 def _registered() -> list[tuple[str, object]]:
-    """Every registered analysis + transform as ``(name, callable)`` pairs."""
-    pairs: list[tuple[str, object]] = []
-    for reg in (registry.analyses, registry.transforms):
-        for entry in reg.all():
-            pairs.append((entry.name, entry.obj))
-    return pairs
+    """Every registered analysis as ``(name, callable)`` pairs."""
+    return [(entry.name, entry.obj) for entry in registry.analyses.all()]
 
 
 def _params(fn: object) -> list[inspect.Parameter]:

@@ -58,9 +58,8 @@ from .style import (
 )
 
 #: The entry-point group out-of-tree visualization backends declare against
-#: (the renderer analogue of :data:`tsdynamics.plugins.ANALYSES_GROUP` /
-#: :data:`~tsdynamics.plugins.TRANSFORMS_GROUP`).  A backend package wires itself
-#: in with, in its own ``pyproject.toml``::
+#: (the renderer analogue of :data:`tsdynamics.plugins.ANALYSES_GROUP`).
+#: A backend package wires itself in with, in its own ``pyproject.toml``::
 #:
 #:     [project.entry-points."tsdynamics.renderers"]
 #:     matplotlib = "my_pkg.backends:render_matplotlib"

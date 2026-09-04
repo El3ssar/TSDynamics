@@ -3,9 +3,9 @@
 Third-party packages extend TSDynamics *without forking* by declaring Python
 packaging **entry points**.  On import, TSDynamics walks the relevant groups and
 loads whatever it finds, so an installed plugin's systems, solvers, analyses or
-transforms register themselves automatically.
+renderers register themselves automatically.
 
-The five group names below are the frozen contract a plugin author declares
+The four group names below are the frozen contract a plugin author declares
 against in their own ``pyproject.toml``::
 
     [project.entry-points."tsdynamics.solvers"]
@@ -13,17 +13,11 @@ against in their own ``pyproject.toml``::
 
 This module is deliberately *generic*: it discovers and loads entry points and
 imports submodules, but knows nothing about what a system/solver/analysis/
-transform *is*.  Each consuming subpackage interprets the loaded objects in its
+renderer *is*.  Each consuming subpackage interprets the loaded objects in its
 own terms (e.g. :mod:`tsdynamics.solvers` turns them into solver specs).
 
 Stream **F2** owns this mechanism; it is consumed by ``tsdynamics.solvers``
-(also F2) and by the analyses/transforms registries.
-
-``tsdynamics.transforms`` is a pure *ecosystem* group: since v6 no in-tree
-transform ships (TSDynamics is scoped to dynamical-systems methods, not generic
-time-series statistics), so that group exists solely so an out-of-tree package —
-e.g. a companion time-series library — can register its transforms into
-:data:`tsdynamics.registry.transforms`.
+(also F2) and by the analyses/renderers registries.
 """
 
 from __future__ import annotations
@@ -40,9 +34,6 @@ from typing import Any, Protocol
 SYSTEMS_GROUP = "tsdynamics.systems"
 SOLVERS_GROUP = "tsdynamics.solvers"
 ANALYSES_GROUP = "tsdynamics.analyses"
-# No in-tree transforms ship (v6 scope surgery) — this group is purely the
-# out-of-tree hook, loaded by ``tsdynamics.registry.discover_transform_plugins``.
-TRANSFORMS_GROUP = "tsdynamics.transforms"
 RENDERERS_GROUP = "tsdynamics.renderers"
 
 #: Every plugin group TSDynamics recognises.
@@ -50,7 +41,6 @@ ALL_GROUPS: tuple[str, ...] = (
     SYSTEMS_GROUP,
     SOLVERS_GROUP,
     ANALYSES_GROUP,
-    TRANSFORMS_GROUP,
     RENDERERS_GROUP,
 )
 
@@ -159,12 +149,11 @@ def register_entry_points(
 
     The generic-registry counterpart of
     :func:`tsdynamics.solvers.discover_plugins`: it wires the
-    ``tsdynamics.analyses`` and ``tsdynamics.transforms`` plugin kinds into their
-    :class:`~tsdynamics.registry.Registry` consumers (the two of the four D4
-    plugin kinds that otherwise have no consumer).
+    ``tsdynamics.analyses`` and ``tsdynamics.renderers`` plugin kinds into their
+    :class:`~tsdynamics.registry.Registry` consumers.
 
     Each entry point resolves to the object to register **verbatim** under the
-    entry point's own name — an analysis function, a transform callable, … —
+    entry point's own name — an analysis function, a renderer callable, … —
     unlike :mod:`~tsdynamics.solvers`, whose plugins resolve to ``SolverSpec``
     metadata.  Names already present are left untouched, so this is safe to call
     repeatedly (e.g. after installing a new plugin).  Plugin load failures are
@@ -174,10 +163,10 @@ def register_entry_points(
     ----------
     registry : Registry
         The generic registry to populate (``registry.analyses`` /
-        ``registry.transforms``).
+        ``registry.renderers``).
     group : str
         The entry-point group to load (:data:`ANALYSES_GROUP` /
-        :data:`TRANSFORMS_GROUP`).
+        :data:`RENDERERS_GROUP`).
     strict : bool, default False
         Forwarded to :func:`load_plugins`: re-raise the first load failure
         instead of warning and continuing.
@@ -200,7 +189,6 @@ __all__ = [
     "SYSTEMS_GROUP",
     "SOLVERS_GROUP",
     "ANALYSES_GROUP",
-    "TRANSFORMS_GROUP",
     "RENDERERS_GROUP",
     "ALL_GROUPS",
     # The generic discovery / loading primitives the consuming subpackages use.
