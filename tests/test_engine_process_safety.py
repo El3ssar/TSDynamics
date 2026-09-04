@@ -240,6 +240,33 @@ _LONG_CALLS: dict[str, str] = {
             ts.systems.Rossler(), plane=("y", 1e9, "up"), n=1, max_time=1e7, dt=0.001
         )
     """,
+    # The three rayon fan-outs (`ensemble.rs` / `map.rs` / `sde.rs`). These are a
+    # different failure mode from the loops above, which merely lacked a poll
+    # site: the ensembles had one (each trajectory runs the polled per-trajectory
+    # loop) and it could never fire, because `ThreadPool::install` parked the one
+    # armed thread for the whole batch while every worker skipped the hook by
+    # design.  See `test_an_ensemble_is_interruptible`.
+    "ensemble_ode": """
+        import numpy as np
+        from tsdynamics.engine import run as engine_run
+        ics = np.random.default_rng(0).normal(size=(64, 3))
+        engine_run.ensemble(
+            ts.systems.Lorenz(), ics, final_time=200_000.0, dt=0.005, method="rk4"
+        )
+    """,
+    "ensemble_map": """
+        import numpy as np
+        from tsdynamics.engine import run as engine_run
+        ics = np.random.default_rng(0).normal(size=(64, 2)) * 0.1
+        engine_run.ensemble(ts.systems.Henon(), ics, final_time=2_000_000_000)
+    """,
+    "ensemble_sde": """
+        import numpy as np
+        ics = np.full((256, 1), 1.0)
+        ts.systems.OrnsteinUhlenbeck().ensemble(
+            ics, final_time=5_000.0, dt=1e-4, seed=0
+        )
+    """,
 }
 
 
@@ -281,6 +308,71 @@ def test_every_long_engine_call_is_interruptible(name):
     assert "INTERRUPTED" in proc.stdout, proc.stdout + proc.stderr
     elapsed = float(proc.stdout.split("INTERRUPTED")[1].split()[0])
     assert elapsed < 20.0, f"interrupt took {elapsed:.1f}s — signals are being deferred"
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not hasattr(os, "kill"), reason="needs os.kill to raise SIGINT")
+def test_an_ensemble_is_interruptible():
+    """Ctrl-C during a rayon fan-out must land, and land *promptly*.
+
+    The ensembles were uninterruptible for a structural reason the per-loop poll
+    sites above could not fix, and which reading the code made look covered:
+
+    * ``ensemble_final`` entered the pool through ``ThreadPool::install``, which
+      runs the closure on a pool worker and **parks the calling thread**;
+    * the calling thread is the only *armed* one — ``PyErr_CheckSignals`` is a
+      no-op off the main thread, and re-acquiring the GIL per worker would
+      serialise the very loop the ensemble exists to parallelise, so workers are
+      deliberately never armed;
+    * so during a batch the one thread that could see a signal was asleep and
+      every worker's ``Poller::tick`` skipped the hook. ``integrate_final`` *did*
+      build a poller — it simply could never fire.
+
+    The fix is a driver thread (which may park) plus a cancellation ``AtomicBool``
+    the workers read on their normal stride, so no worker touches the GIL and the
+    batch partition — the parallel == serial contract — is unchanged.
+
+    Asserting a *tight* bound here, rather than the 20 s the sweep above allows:
+    the batch is sized to run for well over a minute, so anything near the signal
+    time proves cancellation propagated rather than the batch merely finishing.
+    """
+    proc = _run_isolated(
+        """
+        import os
+        import signal
+        import threading
+        import time
+
+        import numpy as np
+
+        import tsdynamics as ts
+        from tsdynamics.engine import run as engine_run
+
+        lor = ts.systems.Lorenz()
+        ics = np.random.default_rng(0).normal(size=(64, 3))
+
+        threading.Timer(2.0, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
+        t0 = time.perf_counter()
+        try:
+            # ~4e7 rk4 steps per trajectory, 64 of them: minutes of engine time.
+            engine_run.ensemble(
+                lor, ics, final_time=200_000.0, dt=0.005, method="rk4"
+            )
+        except KeyboardInterrupt:
+            print(f"INTERRUPTED {time.perf_counter() - t0:.3f}")
+        else:
+            raise AssertionError("the batch ran to completion instead of stopping")
+        """,
+        timeout=180.0,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "INTERRUPTED" in proc.stdout, proc.stdout + proc.stderr
+    elapsed = float(proc.stdout.split("INTERRUPTED")[1].split()[0])
+    # The signal fires at 2.0 s. The driver polls every 5 ms and a worker notices
+    # within one poll stride, so this lands in milliseconds; a couple of seconds
+    # of slack keeps it insensitive to machine speed while still failing loudly
+    # if the batch is once again only interruptible at its end.
+    assert elapsed < 4.0, f"interrupt took {elapsed:.1f}s — the batch is not cancelling"
 
 
 def test_an_absurd_orbit_diagram_raises_instead_of_killing_the_process():

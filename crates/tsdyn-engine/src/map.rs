@@ -34,8 +34,8 @@ use rayon::prelude::*;
 use tsdyn_ir::Evaluator;
 
 use crate::alloc::{try_zeroed, AllocFailed};
-use crate::interrupt::Poller;
-use crate::pool::with_pool;
+use crate::interrupt::{self, Cancel, Poller};
+use crate::pool::with_pool_interruptible;
 
 /// Why a map iteration stopped short of its requested step count.
 ///
@@ -232,6 +232,10 @@ pub struct MapEnsembleFinal {
     pub states: Vec<f64>,
     /// Per-trajectory fate, length `n_ic`, in input order.
     pub status: Vec<MapTrajStatus>,
+    /// Whether the batch was cut short by the embedder's interrupt hook — see
+    /// [`EnsembleFinal::interrupted`](crate::EnsembleFinal::interrupted) for why
+    /// it is the union of the cancellation flag and an `Interrupted` status.
+    pub interrupted: bool,
 }
 
 impl MapEnsembleFinal {
@@ -288,15 +292,26 @@ pub fn iterate_ensemble_final(
     // (maps carry no per-step randomness, so this is identical run to run).
     let mut states = vec![0.0; n_ic * dim];
     let mut status = vec![MapTrajStatus::Ok; n_ic];
-    // `with_pool`, not the ambient global pool: the engine's own pool is
-    // PID-tagged and rebuilt after a `fork()`, so a `multiprocessing` child
-    // gets live workers instead of deadlocking on the parent's dead ones.
-    with_pool(|| {
+    // `with_pool_interruptible`: the fork-safe PID-tagged pool, entered without
+    // parking the calling thread — the one armed thread has to stay awake to turn
+    // a Ctrl-C into a cancellation (see `crate::pool`). The partition is
+    // unchanged, so the thread-count-independent result is too.
+    let cancel = Cancel::new();
+    with_pool_interruptible(&cancel, || {
         states
             .par_chunks_mut(dim)
             .zip(status.par_iter_mut())
             .enumerate()
             .for_each(|(i, (row, st))| {
+                // Already cancelled: abandon before doing any work.
+                if cancel.is_cancelled() {
+                    row.fill(f64::NAN);
+                    *st = MapTrajStatus::Failed(MapError::Interrupted { step: 0 });
+                    return;
+                }
+                // Workers are never armed for the signal hook; this relaxed flag
+                // is how a Ctrl-C reaches the iterate loop.
+                let _watch = interrupt::watch(&cancel);
                 let u0 = &u0_batch[i * dim..(i + 1) * dim];
                 match iterate_final(ev, u0, p, n_steps) {
                     Ok(uf) => {
@@ -310,10 +325,15 @@ pub fn iterate_ensemble_final(
                 }
             });
     });
+    let interrupted = cancel.is_cancelled()
+        || status
+            .iter()
+            .any(|s| matches!(s, MapTrajStatus::Failed(MapError::Interrupted { .. })));
     MapEnsembleFinal {
         dim,
         states,
         status,
+        interrupted,
     }
 }
 
@@ -593,6 +613,44 @@ mod tests {
         assert!(ens.status[2].is_ok());
         assert_eq!(ens.row(2), &[0.0]);
         assert_eq!(ens.n_failed(), 1);
+    }
+
+    /// Ctrl-C during a map fan-out must stop it — the same defect the ODE
+    /// ensemble had, in the loop that is *cheapest* per step and therefore runs
+    /// the largest step counts.
+    ///
+    /// The logistic map at `r = 2` converges to `x = 1/2` and stays there, so
+    /// nothing here diverges: every `Failed` is an interrupt, and a regression
+    /// terminates (after 32 million iterates) rather than hanging.
+    #[test]
+    fn an_armed_interrupt_stops_the_map_fan_out() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        let ev = VmEval::new(logistic(2.0));
+        let u0 = vec![0.1; 16];
+        let ens = iterate_ensemble_final(&ev, &u0, &[], 2_000_000);
+
+        assert!(
+            ens.interrupted,
+            "the map batch ignored the interrupt hook entirely"
+        );
+        assert!(
+            ens.status
+                .iter()
+                .any(|s| matches!(s, MapTrajStatus::Failed(MapError::Interrupted { .. }))),
+            "no worker observed the cancellation flag: {:?}",
+            &ens.status[..4]
+        );
+    }
+
+    /// The flag stays down when nothing interrupts.
+    #[test]
+    fn an_uninterrupted_map_batch_is_not_marked() {
+        let ev = VmEval::new(logistic(2.0));
+        let ens = iterate_ensemble_final(&ev, &[0.1, 0.2, 0.3], &[], 50);
+        assert!(!ens.interrupted);
+        assert_eq!(ens.n_failed(), 0);
     }
 
     #[test]

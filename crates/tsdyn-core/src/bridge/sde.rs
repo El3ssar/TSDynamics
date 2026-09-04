@@ -211,5 +211,11 @@ pub fn sde_ensemble_final(
         t1,
         &cfg,
     );
+    // A cancelled batch is an interrupt, not a batch of `NaN`s (see the ODE
+    // ensemble): the signal has already been consumed by the poll that cancelled
+    // it, so it has to be re-raised here.
+    if result.interrupted {
+        return Err(EngineError::Interrupted);
+    }
     Ok(result.states)
 }

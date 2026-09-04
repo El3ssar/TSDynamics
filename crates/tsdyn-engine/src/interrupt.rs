@@ -35,9 +35,26 @@
 //! [`arm`] inside the closure it hands to `Python::detach`, which runs on the
 //! Python thread that made the call, and worker threads — never armed — skip
 //! the hook entirely for the price of one thread-local read per stride.
+//!
+//! # Parallel loops: the [`Cancel`] flag
+//!
+//! Those two properties together left one hole, and it was a big one: the
+//! *ensembles*. A rayon fan-out runs every trajectory on a worker, and workers
+//! are deliberately never armed — so no thread inside an ensemble ever consulted
+//! the hook, and Ctrl-C during a thousand-trajectory batch did nothing at all.
+//!
+//! [`Cancel`] closes it without giving up either property. It is a plain shared
+//! `AtomicBool` that a worker [`watch`]es for the life of one trajectory and
+//! reads — **relaxed, no GIL, no shared lock** — on the same stride it would
+//! otherwise have consulted the hook on. Nothing sets it but the *calling*
+//! thread, which stays armed, stays unparked (see
+//! [`crate::pool::with_pool_interruptible`]) and keeps polling signals while the
+//! batch runs. The signal handshake therefore still happens on exactly one
+//! thread; all the workers ever do is read a bool.
 
-use std::cell::Cell;
-use std::sync::OnceLock;
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 /// How many loop iterations pass between two consultations of the hook.
 ///
@@ -116,6 +133,69 @@ pub fn is_armed() -> bool {
     ARMED.with(Cell::get)
 }
 
+/// A cancellation flag shared by one parallel batch and its workers.
+///
+/// The GIL-free half of the interrupt story (see the [module docs](self)): the
+/// armed calling thread raises it, and every worker [`watch`]ing it stops at its
+/// next [`Poller::tick`] stride. Cloning is an `Arc` bump, so handing one to each
+/// of a thousand trajectories costs nothing measurable.
+///
+/// [`Ordering::Relaxed`] is the right and sufficient ordering: the flag publishes
+/// no data of its own — the batch's results are handed back across a thread
+/// `join`, which is a full happens-before edge — so all it has to be is
+/// *eventually visible*, which relaxed atomics guarantee.
+#[derive(Clone, Debug, Default)]
+pub struct Cancel(Arc<AtomicBool>);
+
+impl Cancel {
+    /// A fresh, un-raised flag.
+    pub fn new() -> Self {
+        Cancel::default()
+    }
+
+    /// Ask every thread watching this flag to stop at its next poll.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+thread_local! {
+    /// The cancellation flag *this* thread is currently working under, if any.
+    static WATCHED: RefCell<Option<Cancel>> = const { RefCell::new(None) };
+}
+
+/// Watches a [`Cancel`] on the current thread until it is dropped.
+///
+/// Restores the previous flag rather than clearing, so nesting is safe.
+#[derive(Debug)]
+pub struct WatchGuard {
+    previous: Option<Cancel>,
+}
+
+impl Drop for WatchGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        WATCHED.with(|w| *w.borrow_mut() = previous);
+    }
+}
+
+/// Make the calling thread stop when `flag` is raised, for the guard's lifetime.
+///
+/// Call this on a *worker* at the top of the unit of work it should be able to
+/// abandon — one ensemble trajectory. The cost is one `Arc` clone per unit of
+/// work, never per step.
+#[must_use = "the flag is watched only while the guard is alive"]
+pub fn watch(flag: &Cancel) -> WatchGuard {
+    WatchGuard {
+        previous: WATCHED.with(|w| w.borrow_mut().replace(flag.clone())),
+    }
+}
+
 /// A strided interrupt poll, one per long-running loop.
 ///
 /// Keep one in the loop's frame and call [`tick`](Poller::tick) once per
@@ -147,10 +227,27 @@ impl Poller {
     }
 }
 
-/// Consult the hook, if this thread is armed and a hook exists.
+/// The strided stop check: a watched cancellation flag, then the hook.
+///
+/// The flag is tested first and unconditionally, because it is the *worker's*
+/// only channel — a worker is never armed, so [`poll_hook`] is a single
+/// thread-local read that always returns `false` there.
 #[cold]
 #[inline(never)]
 fn check() -> bool {
+    if WATCHED.with(|w| w.borrow().as_ref().is_some_and(Cancel::is_cancelled)) {
+        return true;
+    }
+    poll_hook()
+}
+
+/// Consult the embedder's hook, if this thread is armed and a hook exists.
+///
+/// Public because the ensemble driver ([`crate::pool::with_pool_interruptible`])
+/// polls it directly from its wait loop rather than through a [`Poller`]: it is
+/// running no numerical loop of its own to count strides against, so it polls on
+/// a wall-clock cadence instead.
+pub fn poll_hook() -> bool {
     if !ARMED.with(Cell::get) {
         return false;
     }

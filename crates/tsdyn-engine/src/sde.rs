@@ -40,7 +40,8 @@
 use rayon::prelude::*;
 
 use crate::alloc::AllocFailed;
-use crate::pool::with_pool;
+use crate::interrupt::{self, Cancel};
+use crate::pool::with_pool_interruptible;
 use tsdyn_ir::Evaluator;
 use tsdyn_solvers::sde::SdeKernel;
 use tsdyn_solvers::{SolverState, StepOutcome};
@@ -333,6 +334,10 @@ pub struct SdeEnsembleFinal {
     pub states: Vec<f64>,
     /// Per-trajectory fate, length `n_ic`, in input order.
     pub status: Vec<SdeTrajStatus>,
+    /// Whether the batch was cut short by the embedder's interrupt hook — see
+    /// [`EnsembleFinal::interrupted`](crate::EnsembleFinal::interrupted) for why
+    /// it is the union of the cancellation flag and an `Interrupted` status.
+    pub interrupted: bool,
 }
 
 impl SdeEnsembleFinal {
@@ -407,16 +412,29 @@ where
     // on thread count — parallel == serial bit-for-bit (the determinism contract).
     let mut states = vec![0.0; n_ic * dim];
     let mut status = vec![SdeTrajStatus::Ok; n_ic];
-    // `with_pool`, not the ambient global pool: the engine's own pool is
-    // PID-tagged and rebuilt after a `fork()`, so a `multiprocessing` child
-    // gets live workers instead of deadlocking on the parent's dead ones. The
-    // per-index seeding above is untouched, so parallel == serial still holds.
-    with_pool(|| {
+    // `with_pool_interruptible`: the fork-safe PID-tagged pool, entered without
+    // parking the calling thread so a Ctrl-C during the batch is still seen (see
+    // `crate::pool`). Neither the partition nor the per-index seeding above is
+    // touched, so parallel == serial still holds bit-for-bit — cancellation only
+    // ever *stops* a trajectory, it never perturbs one that completes.
+    let cancel = Cancel::new();
+    with_pool_interruptible(&cancel, || {
         states
             .par_chunks_mut(dim)
             .zip(status.par_iter_mut())
             .enumerate()
             .for_each(|(i, (row, st))| {
+                // Already cancelled: abandon before drawing a single increment.
+                if cancel.is_cancelled() {
+                    row.fill(f64::NAN);
+                    *st = SdeTrajStatus::Failed(SdeError::Interrupted { t: t0 });
+                    return;
+                }
+                // Workers are never armed for the signal hook; this relaxed flag
+                // is how a Ctrl-C reaches the fixed-step loop. The poll is
+                // abort-only and consumes no RNG draw, so an uninterrupted run's
+                // Wiener stream is byte-identical.
+                let _watch = interrupt::watch(&cancel);
                 let u0 = &u0_batch[i * dim..(i + 1) * dim];
                 let mut kernel = make_kernel();
                 // Randomness keyed by trajectory index — the determinism contract.
@@ -443,10 +461,15 @@ where
                 }
             });
     });
+    let interrupted = cancel.is_cancelled()
+        || status
+            .iter()
+            .any(|s| matches!(s, SdeTrajStatus::Failed(SdeError::Interrupted { .. })));
     SdeEnsembleFinal {
         dim,
         states,
         status,
+        interrupted,
     }
 }
 
@@ -843,6 +866,48 @@ mod tests {
             a.row(0)[0].to_bits(),
             a.row(1)[0].to_bits(),
             "distinct indices gave identical draws"
+        );
+    }
+
+    /// Ctrl-C during an SDE fan-out must stop it — the third `with_pool` call
+    /// site, and it shared the defect exactly.
+    ///
+    /// Ornstein–Uhlenbeck is mean-reverting and cannot diverge, so every `Failed`
+    /// here is an interrupt; a regression terminates (after 16 million
+    /// fixed steps) rather than hanging.
+    #[test]
+    fn an_armed_interrupt_stops_the_sde_fan_out() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        let drift = ou_drift(1.0, 0.0);
+        let diffusion = const_diffusion(0.4);
+        // 1e6 fixed steps per trajectory: far longer than the driver's poll.
+        let cfg = SdeConfig::new(1e-6);
+        let u0 = vec![1.0; 16];
+
+        let ens = sde_ensemble_final(
+            &drift,
+            &diffusion,
+            || Box::new(EulerMaruyama::new()),
+            7,
+            &u0,
+            &[],
+            0.0,
+            1.0,
+            &cfg,
+        );
+
+        assert!(
+            ens.interrupted,
+            "the SDE batch ignored the interrupt hook entirely"
+        );
+        assert!(
+            ens.status
+                .iter()
+                .any(|s| matches!(s, SdeTrajStatus::Failed(SdeError::Interrupted { .. }))),
+            "no worker observed the cancellation flag: {:?}",
+            &ens.status[..4]
         );
     }
 

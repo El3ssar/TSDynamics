@@ -46,13 +46,30 @@ Rust-vs-``jitcdde_lyap`` parity gate ran before JiTCDDE was removed.)
 
 from __future__ import annotations
 
+import operator
 from typing import Any
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidParameterError
+from tsdynamics.errors import ConvergenceError, InvalidParameterError, invalid_value
 
 __all__ = ["dde_lyapunov_spectrum"]
+
+#: Ceiling on the extended system's dimension, ``dim * (1 + n_exp)``.
+#:
+#: :func:`_build_extended_tape` loops *symbolically* over ``n_exp``, emitting
+#: ``dim`` variational expressions per deviation, so its cost grows with the
+#: extended dimension and it burns that cost in SymEngine long before any Rust
+#: code runs.  An absurd request (``n_exp=2**34``) therefore did not fail — it
+#: sat in the symbolic builder indefinitely, which reads to a user as a hang.
+#:
+#: 10 000 is deliberately far above any defensible request and still lowers in
+#: seconds: a DDE's tangent space is infinite-dimensional, but the exponents are
+#: only resolvable up to the delay-window sampling ``(n_seg+1)·dim`` (checked
+#: separately below), and nobody interprets the ten-thousandth exponent of a
+#: delay system.  It exists to turn a hang into a message, not to police
+#: modelling choices.
+_MAX_EXTENDED_DIM = 10_000
 
 
 def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
@@ -277,9 +294,37 @@ def dde_lyapunov_spectrum(
     from tsdynamics.engine.problem import DDEProblem
     from tsdynamics.engine.run import integrate, resolve_backend
 
-    n_exp = int(n_exp)
+    # Bound `n_exp` BEFORE `_build_extended_tape`, which is where an absurd value
+    # is spent: it loops symbolically over `n_exp` building the extended DDE, so
+    # `n_exp=2**34` never reached Rust — it disappeared into SymEngine and looked
+    # like a hang.  All three checks are up-front and name the offending value.
+    try:
+        n_exp = operator.index(n_exp)
+    except TypeError:
+        # `int(n_exp)` used to silently truncate here, so `n_exp=2.7` quietly
+        # computed 2 exponents. A non-integer count is a mistake, not a rounding.
+        raise invalid_value(
+            "n_exp",
+            n_exp,
+            rule="must be an integer (a count of exponents)",
+        ) from None
     if n_exp < 1:
-        raise InvalidParameterError(f"n_exp must be >= 1, got {n_exp}")
+        raise invalid_value("n_exp", n_exp, rule="must be >= 1 (a count of exponents)")
+    n_ext_requested = int(system.dim) * (1 + n_exp)
+    if n_ext_requested > _MAX_EXTENDED_DIM:
+        raise invalid_value(
+            "n_exp",
+            n_exp,
+            rule=(
+                f"would build an extended system of dimension dim*(1+n_exp)="
+                f"{n_ext_requested}, over the {_MAX_EXTENDED_DIM} ceiling"
+            ),
+            hint=(
+                "The extended DDE carries the base state plus one deviation state "
+                "per exponent and is built symbolically, so this would take "
+                "effectively forever. Request fewer exponents."
+            ),
+        )
     backend = resolve_backend(backend)
     if backend == "reference":
         raise NotImplementedError(

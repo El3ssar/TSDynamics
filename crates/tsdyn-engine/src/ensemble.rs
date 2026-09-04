@@ -23,7 +23,8 @@
 
 use rayon::prelude::*;
 
-use crate::pool::with_pool;
+use crate::interrupt::{self, Cancel};
+use crate::pool::with_pool_interruptible;
 use tsdyn_ir::Evaluator;
 use tsdyn_solvers::Solver;
 
@@ -61,6 +62,25 @@ pub struct EnsembleFinal {
     pub states: Vec<f64>,
     /// Per-trajectory fate, length `n_ic`, in input order.
     pub status: Vec<TrajStatus>,
+    /// Whether the batch was cut short by the embedder's interrupt hook (a
+    /// Ctrl-C at the Python prompt). The embedder raises `KeyboardInterrupt`
+    /// on this flag.
+    ///
+    /// It is the **union** of the two ways an interrupt can show up, because
+    /// each misses a case the other catches:
+    ///
+    /// * the *cancellation flag*, for a batch cancelled so late that no
+    ///   trajectory was left to abort — the signal has still been consumed by
+    ///   the poll that cancelled it, so failing to report it would swallow the
+    ///   user's Ctrl-C entirely;
+    /// * a trajectory carrying `Interrupted`, for the degenerate path where
+    ///   neither the rayon pool nor the driver thread could be built and the
+    ///   batch ran inline on the *armed* calling thread — there the hook fires
+    ///   directly in a trajectory and nothing ever raises the flag.
+    ///
+    /// A diverged trajectory is a `Failed` carrying some *other* variant, so
+    /// the second term cannot false-positive on a blow-up.
+    pub interrupted: bool,
 }
 
 impl EnsembleFinal {
@@ -135,15 +155,32 @@ where
     // determinism contract above).
     let mut states = vec![0.0; n_ic * dim];
     let mut status = vec![TrajStatus::Ok; n_ic];
-    // `with_pool`, not the ambient global pool: the engine's own pool is
-    // PID-tagged and rebuilt after a `fork()`, so a `multiprocessing` child
-    // gets live workers instead of deadlocking on the parent's dead ones.
-    with_pool(|| {
+    // `with_pool_interruptible`, not the ambient global pool and not a plain
+    // `install`: the engine's own pool is PID-tagged and rebuilt after a `fork()`
+    // (so a `multiprocessing` child gets live workers instead of deadlocking on
+    // the parent's dead ones), and the driver-thread indirection keeps the
+    // *calling* thread awake to field a Ctrl-C — `install` would park the one
+    // thread that can see signals. Neither changes how the batch is partitioned,
+    // so parallel == serial is untouched.
+    let cancel = Cancel::new();
+    with_pool_interruptible(&cancel, || {
         states
             .par_chunks_mut(dim)
             .zip(status.par_iter_mut())
             .enumerate()
             .for_each(|(i, (row, st))| {
+                // Already cancelled: abandon the trajectory before doing any work
+                // at all, so the tail of a cancelled batch costs a flag read per
+                // row rather than a stride of integration per row.
+                if cancel.is_cancelled() {
+                    row.fill(f64::NAN);
+                    *st = TrajStatus::Failed(IntegrateError::Interrupted { t: t0 });
+                    return;
+                }
+                // Watch the batch flag for the life of this trajectory: a worker
+                // is never armed for the (GIL-taking, main-thread-only) signal
+                // hook, so this relaxed flag is how a Ctrl-C reaches its step loop.
+                let _watch = interrupt::watch(&cancel);
                 let u0 = &u0_batch[i * dim..(i + 1) * dim];
                 let mut solver = make_solver(i);
                 match integrate_final(ev, &mut *solver, u0, p, t0, t1, cfg) {
@@ -158,10 +195,15 @@ where
                 }
             });
     });
+    let interrupted = cancel.is_cancelled()
+        || status
+            .iter()
+            .any(|s| matches!(s, TrajStatus::Failed(IntegrateError::Interrupted { .. })));
     EnsembleFinal {
         dim,
         states,
         status,
+        interrupted,
     }
 }
 
@@ -308,6 +350,60 @@ mod tests {
         assert!(ens.status[1].is_ok());
         assert!(ens.row(1)[0].is_finite());
         assert_eq!(ens.n_failed(), 1);
+    }
+
+    /// Ctrl-C during a fan-out must stop it — the defect this whole mechanism
+    /// exists for.
+    ///
+    /// Before the driver-thread restructure the calling thread was parked inside
+    /// `ThreadPool::install` for the entire batch, and it is the *only* armed
+    /// thread; workers are deliberately never armed (a GIL handshake per worker
+    /// would serialise the loop), so nothing anywhere consulted the hook and an
+    /// ensemble ran to completion no matter how hard the user hit Ctrl-C. Both
+    /// assertions matter and check different halves: `interrupted` is what the
+    /// binding layer raises `KeyboardInterrupt` on, and a trajectory carrying
+    /// `Interrupted` proves the *workers* saw the flag rather than the batch
+    /// merely being marked after the fact.
+    ///
+    /// Sized so a regression fails slowly rather than hanging: with the hook
+    /// ignored the batch still terminates, it just runs all 32 million steps
+    /// first.
+    #[test]
+    fn an_armed_interrupt_stops_the_fan_out() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        let ev = VmEval::new(decay());
+        // 1e6 rk4 steps per trajectory: far longer than the driver's poll
+        // interval, so cancellation lands mid-flight.
+        let cfg = IntegrateConfig::new(1e-6);
+        let u0 = vec![1.0; 32];
+
+        let ens = ensemble_final(&ev, |_| Box::new(Rk4::new()), &u0, &[], 0.0, 1.0, &cfg);
+
+        assert!(
+            ens.interrupted,
+            "the batch ignored the interrupt hook entirely"
+        );
+        assert!(
+            ens.status
+                .iter()
+                .any(|s| matches!(s, TrajStatus::Failed(IntegrateError::Interrupted { .. }))),
+            "no worker observed the cancellation flag: {:?}",
+            &ens.status[..4]
+        );
+    }
+
+    /// The flag must stay down when nothing interrupts — otherwise every batch
+    /// would raise `KeyboardInterrupt`.
+    #[test]
+    fn an_uninterrupted_batch_is_not_marked() {
+        let ev = VmEval::new(decay());
+        let cfg = IntegrateConfig::new(0.01);
+        let u0 = vec![1.0; 8];
+        let ens = ensemble_final(&ev, |_| Box::new(Rk4::new()), &u0, &[], 0.0, 1.0, &cfg);
+        assert!(!ens.interrupted);
+        assert_eq!(ens.n_failed(), 0);
     }
 
     #[test]

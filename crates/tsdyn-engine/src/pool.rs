@@ -48,9 +48,14 @@
 //! warns about the general hazard (`DeprecationWarning: This process is
 //! multi-threaded, use of fork() may lead to deadlocks in the child`).
 
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 
 use rayon::{ThreadPool, ThreadPoolBuilder};
+
+use crate::interrupt::{self, Cancel};
 
 /// A built pool and the PID it belongs to. The pairing is the whole mechanism:
 /// a pool is only reusable in the process that created its threads.
@@ -107,6 +112,113 @@ where
     }
 }
 
+/// How long the driver waits for the batch before consulting the interrupt hook.
+///
+/// This bounds only how late a Ctrl-C is *noticed*, not how long the call takes:
+/// the wait is a channel `recv_timeout`, so a batch that finishes wakes the
+/// driver immediately and pays no part of this. 5 ms keeps the handshake
+/// (which re-acquires the GIL) at 200/s — invisible next to a batch worth
+/// parallelising — while staying two orders of magnitude inside the "a Ctrl-C
+/// must land within a second or two" bar.
+const HOOK_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+/// Run `f` on the engine's pool **without parking the calling thread**, so a
+/// Ctrl-C during a parallel batch is still seen.
+///
+/// # The defect this exists to fix
+///
+/// [`with_pool`] ends in `ThreadPool::install`, which runs the closure on a pool
+/// *worker* and blocks the caller on a latch until it finishes. That is fatal
+/// for interruption, because the calling thread is the only armed one (see
+/// [`crate::interrupt`]): during an ensemble the one thread that could turn a
+/// signal into a `KeyboardInterrupt` was asleep, and every worker skipped the
+/// hook by design. So an ensemble ignored Ctrl-C completely — the exact
+/// "mistyped `final_time` costs you the session" failure the interrupt work
+/// existed to remove, on the calls most likely to run for minutes.
+///
+/// # The fix
+///
+/// Hand the fan-out to a scoped driver thread (which may park in `install` as
+/// much as it likes) and keep the calling thread in a `recv_timeout` loop. It
+/// wakes on completion, or every [`HOOK_POLL_INTERVAL`] to consult the hook; on
+/// a stop it raises `cancel`, which the workers are already
+/// [`watch`](crate::interrupt::watch)ing and poll on their normal stride. No
+/// worker ever touches the GIL, and the batch's positional partition — the
+/// parallel == serial contract — is untouched: this changes *which thread waits*,
+/// not how the work is divided.
+///
+/// The driver thread is only spawned when the caller is armed, i.e. when there
+/// is an embedder that could raise something; an unarmed caller (every in-crate
+/// Rust test, any non-Python embedder) takes [`with_pool`] unchanged and pays
+/// nothing. If the driver thread cannot be spawned at all, the work runs inline
+/// — the same graceful degradation [`with_pool`] already does when the rayon
+/// pool itself cannot be built.
+pub fn with_pool_interruptible<R, F>(cancel: &Cancel, f: F) -> R
+where
+    F: FnOnce() -> R + Send,
+    R: Send,
+{
+    // Nothing here can turn a cancellation into an exception, so a driver thread
+    // would be pure overhead.
+    if !interrupt::is_armed() {
+        return with_pool(f);
+    }
+    let (tx, rx) = mpsc::channel::<()>();
+    // `Mutex<Option<F>>` rather than moving `f` straight into the closure, so the
+    // job can be reclaimed and run inline should the spawn fail. Declared outside
+    // the scope because the driver closure borrows it for all of `'scope`.
+    let job = Mutex::new(Some(f));
+    // A `&Mutex` (Copy) so the closure below can be `move` — which it MUST be, to
+    // take ownership of `tx`. `Sender::send` needs only `&self`, so a non-`move`
+    // closure would capture the sender by *reference* and leave it alive on this
+    // frame: the receiver would then never see `Disconnected`, and a panicking
+    // batch (which never reaches the `send`) would leave this thread polling for
+    // a completion that can no longer arrive. `move` alone is not enough either —
+    // it would swallow `job`, which the spawn-failure path still needs.
+    let job_ref = &job;
+    thread::scope(|scope| {
+        let spawned = thread::Builder::new()
+            .name("tsdyn-batch".to_string())
+            .spawn_scoped(scope, move || {
+                let out = with_pool(take_job(job_ref));
+                // Wake the caller the instant the batch is done, so a short batch
+                // pays none of HOOK_POLL_INTERVAL. A panic in `f` skips this and
+                // drops the sender instead, which the loop reads as
+                // `Disconnected` — it stops waiting either way.
+                let _ = tx.send(());
+                out
+            });
+        let Ok(handle) = spawned else {
+            return with_pool(take_job(job_ref));
+        };
+        loop {
+            match rx.recv_timeout(HOOK_POLL_INTERVAL) {
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {
+                    if interrupt::poll_hook() {
+                        cancel.cancel();
+                    }
+                }
+            }
+        }
+        match handle.join() {
+            Ok(out) => out,
+            // Carry a worker panic across the thread boundary rather than
+            // swallowing it into a `thread::scope` abort at the end of the block.
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
+}
+
+/// Take the one-shot job out of its slot (it is claimed exactly once, by
+/// whichever of the driver thread or the fallback path gets there).
+fn take_job<F>(job: &Mutex<Option<F>>) -> F {
+    job.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .expect("the batch job is claimed exactly once")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +256,74 @@ mod tests {
             !Arc::ptr_eq(&before, &after),
             "a pool tagged with another PID must be discarded, not reused"
         );
+    }
+
+    /// The headline property: the calling thread stays awake and *cancels*.
+    ///
+    /// This is the regression test for the parked-caller defect. The batch stands
+    /// in for a long fan-out by waiting for the flag; under the old
+    /// `install`-and-park the calling thread would have been asleep for the whole
+    /// wait, nothing would ever have raised it, and the closure would return
+    /// `false` at its deadline (a *failure*, deliberately, rather than a hang).
+    #[test]
+    fn the_calling_thread_polls_and_cancels_while_the_batch_runs() {
+        let _stop = interrupt::testing::force_stop();
+        let _armed = interrupt::arm();
+
+        let cancel = Cancel::new();
+        let observed = with_pool_interruptible(&cancel, || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !cancel.is_cancelled() && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(1));
+            }
+            cancel.is_cancelled()
+        });
+
+        assert!(
+            observed,
+            "the armed calling thread never raised the cancellation flag — it is \
+             parked inside the pool again"
+        );
+        assert!(cancel.is_cancelled());
+    }
+
+    /// An unarmed caller takes the old path exactly: same answer, no flag, and
+    /// (the point) no driver thread to pay for.
+    #[test]
+    fn an_unarmed_caller_runs_the_batch_unchanged() {
+        assert!(!interrupt::is_armed());
+        let cancel = Cancel::new();
+        let sum: i64 = with_pool_interruptible(&cancel, || (0..1000i64).into_par_iter().sum());
+        assert_eq!(sum, 499_500);
+        assert!(
+            !cancel.is_cancelled(),
+            "nothing should cancel a quiet batch"
+        );
+    }
+
+    /// A hook that never stops must leave the batch alone — the poll loop is a
+    /// watchdog, not a deadline.
+    #[test]
+    fn a_quiet_hook_does_not_disturb_an_armed_batch() {
+        interrupt::testing::install_hook();
+        let _armed = interrupt::arm();
+        let cancel = Cancel::new();
+        // Long enough to cross HOOK_POLL_INTERVAL many times over.
+        let sum: i64 = with_pool_interruptible(&cancel, || {
+            thread::sleep(Duration::from_millis(60));
+            (0..1000i64).into_par_iter().sum()
+        });
+        assert_eq!(sum, 499_500);
+        assert!(!cancel.is_cancelled());
+    }
+
+    /// A panic inside the batch must reach the caller, not be swallowed by the
+    /// driver thread (or turned into a `thread::scope` abort).
+    #[test]
+    #[should_panic(expected = "a trajectory panicked")]
+    fn a_panic_in_the_batch_propagates_to_the_caller() {
+        let _armed = interrupt::arm();
+        let cancel = Cancel::new();
+        with_pool_interruptible(&cancel, || panic!("a trajectory panicked"));
     }
 }

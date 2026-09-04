@@ -126,6 +126,12 @@ pub fn map_ensemble_final(
     // Maps fold their parameters into the tape, so the parameter slice is empty.
     let ev = build_evaluator(tape, jit)?;
     let result = engine_iterate_ensemble(&*ev, ics, &[], steps);
+    // A cancelled batch is an interrupt, not a batch of `NaN`s (see the ODE
+    // ensemble): the signal has already been consumed by the poll that cancelled
+    // it, so it has to be re-raised here.
+    if result.interrupted {
+        return Err(EngineError::Interrupted);
+    }
     Ok(result.states)
 }
 

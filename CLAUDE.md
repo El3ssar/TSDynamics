@@ -981,6 +981,29 @@ import is deferred to first render.
     `integrate_grid_polled`, which threads **one** poller through many short
     segments — `lyapunov`. A per-segment poller would reset before reaching a
     stride, which is exactly why that variant exists.
+  - **The three ensembles cancel through a flag, not the hook**
+    (`interrupt::Cancel` + `pool::with_pool_interruptible`). A fan-out runs every
+    trajectory on a *worker*, and workers are never armed, so the per-trajectory
+    poller could never fire — and `ThreadPool::install` additionally **parked the
+    one armed thread** for the whole batch. So an ensemble ignored Ctrl-C
+    entirely, on precisely the calls most likely to run for minutes. The fix has
+    two halves, and both are required: the fan-out is handed to a **scoped driver
+    thread** (which may park), leaving the calling thread in a `recv_timeout` loop
+    that consults the hook every 5 ms and raises a shared `Cancel`; and each
+    worker `interrupt::watch`es that flag for the life of one trajectory, reading
+    it — a **relaxed atomic load, no GIL, no shared lock** — on its normal
+    `Poller` stride. `ensemble_final` / `iterate_ensemble_final` /
+    `sde_ensemble_final` return an `interrupted: bool`, which the bridge turns
+    into `EngineError::Interrupted`; the flag is authoritative rather than a scan
+    of `status`, because a batch cancelled at the very end has already consumed
+    the signal and must still report it. **The batch partition is untouched**, so
+    parallel == serial stays bit-for-bit (verified: an N-IC batch equals N
+    one-at-a-time calls with `max|diff| == 0.0` on interp and jit, ODE and map, at
+    1/4/8 threads, and SDE member `i` still depends only on `seed_for(seed, i)`).
+    Cost on the headline path (1000 Lorenz ICs, interleaved same-binary A/B):
+    **+0.9% / +0.7% / +1.0% / −0.2%** at 1/2/4/8 threads; the driver thread is a
+    fixed ~35–55 µs per *call*, so it is only visible on sub-millisecond batches,
+    and it is skipped entirely when the caller is not armed.
   - Each family has its own `Interrupted` variant that unwinds to
     `EngineError::Interrupted`. Two loops must **not** fold it into a divergence:
     the Lyapunov chunk loop (`lyapunov::classify`) and the basin march (whose

@@ -21,6 +21,8 @@ import pytest
 from _sampling import DDE_HISTORIES
 
 import tsdynamics as ts
+from tsdynamics.errors import InvalidParameterError
+from tsdynamics.families._dde_lyapunov import _MAX_EXTENDED_DIM
 
 _rust = pytest.importorskip("tsdynamics._rust")
 
@@ -108,6 +110,55 @@ def test_extra_kwargs_rejected_on_engine_path() -> None:
     """A stray integration keyword is rejected on the engine path, not silently ignored."""
     with pytest.raises(TypeError, match="extra integration keyword"):
         ts.MackeyGlass().lyapunov_spectrum(backend="interp", max_step=0.1)
+
+
+@pytest.mark.parametrize(
+    ("bad", "expect"),
+    [
+        (2**34, "ceiling"),  # the value that used to hang
+        (10_001, "ceiling"),  # dim == 1, so this is the first rejected count
+        (0, "must be >= 1"),
+        (-3, "must be >= 1"),
+        (2.5, "must be an integer"),  # `int(n_exp)` used to truncate this to 2
+        ("many", "must be an integer"),
+    ],
+)
+def test_absurd_n_exp_is_rejected_up_front(bad, expect) -> None:
+    """An unbuildable ``n_exp`` must be a message, not an indefinite wait.
+
+    ``_build_extended_tape`` loops *symbolically* over ``n_exp``, emitting ``dim``
+    variational expressions per deviation, so ``n_exp=2**34`` never reached Rust:
+    it disappeared into SymEngine and read to the user as a hang.  (Python-side
+    and so Ctrl-C-able, hence a usability wart rather than the safety defect the
+    ensembles had — but a wart on a public keyword.)
+
+    The bound is checked *before* the tape is built, which is what makes the
+    rejection instant; ``2.5`` is here because the old ``int(n_exp)`` coercion
+    silently computed two exponents for it instead of rejecting a non-integer
+    count.
+    """
+    with pytest.raises(InvalidParameterError, match=expect) as excinfo:
+        ts.MackeyGlass().lyapunov_spectrum(n_exp=bad)
+    # The v4 error standard: name the parameter and quote the offending value.
+    message = str(excinfo.value)
+    assert "n_exp" in message
+    assert repr(bad) in message, message
+
+
+def test_the_largest_admissible_n_exp_is_not_rejected() -> None:
+    """The ceiling rejects only what is over it — the boundary itself builds.
+
+    Guards against an off-by-one that would quietly cap a legitimate request.
+    ``dim * (1 + n_exp) == 10_000`` is admissible; only the delay-window
+    resolution check beyond it may complain, which is a *different* error.
+    """
+    sys = ts.MackeyGlass()
+    at_ceiling = _MAX_EXTENDED_DIM // sys.dim - 1
+    with pytest.raises(InvalidParameterError) as excinfo:
+        sys.lyapunov_spectrum(n_exp=at_ceiling, dt=0.1)
+    # It got past the ceiling and failed on the *resolution* bound instead.
+    assert "ceiling" not in str(excinfo.value)
+    assert "delay-window resolution" in str(excinfo.value)
 
 
 def _two_dim_delay():

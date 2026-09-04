@@ -186,5 +186,12 @@ pub fn ensemble_final(
     let cfg = IntegrateConfig::new(first_step);
     let ev = build_evaluator(tape, jit)?;
     let result = engine_ensemble(&*ev, |_i| build_solver(name, tol), ics, p, t0, t1, &cfg);
+    // A cancelled batch is an interrupt, not a batch of `NaN`s: the signal has
+    // already been consumed by the poll that cancelled it, so returning the
+    // partial states would swallow the user's Ctrl-C *and* pass off abandoned
+    // trajectories as diverged ones.
+    if result.interrupted {
+        return Err(EngineError::Interrupted);
+    }
     Ok(result.states)
 }
