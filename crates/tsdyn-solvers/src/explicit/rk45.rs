@@ -345,6 +345,117 @@ mod tests {
     use crate::explicit::testkit::{
         converges_at_order, fixed_propagate, integrate_adaptive, max_abs_diff, HarmonicEval,
     };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A wrapper that counts RHS evaluations through the `Evaluator` seam.
+    ///
+    /// `Evaluator: Sync`, so the counter is an [`AtomicUsize`].
+    struct Counting<'e> {
+        inner: &'e dyn Evaluator,
+        evals: AtomicUsize,
+    }
+
+    impl Evaluator for Counting<'_> {
+        fn dim(&self) -> usize {
+            self.inner.dim()
+        }
+        fn n_param(&self) -> usize {
+            self.inner.n_param()
+        }
+        fn n_scratch(&self) -> usize {
+            self.inner.n_scratch()
+        }
+        fn has_jacobian(&self) -> bool {
+            self.inner.has_jacobian()
+        }
+        fn eval(&self, u: &[f64], p: &[f64], t: f64, scratch: &mut [f64], deriv: &mut [f64]) {
+            self.evals.fetch_add(1, Ordering::Relaxed);
+            self.inner.eval(u, p, t, scratch, deriv);
+        }
+        fn eval_jac(
+            &self,
+            u: &[f64],
+            p: &[f64],
+            t: f64,
+            scratch: &mut [f64],
+            deriv: &mut [f64],
+            jac: &mut [f64],
+        ) {
+            self.inner.eval_jac(u, p, t, scratch, deriv, jac);
+        }
+    }
+
+    /// FSAL is a *performance* contract, and performance contracts are invisible
+    /// to the numerical tests: deleting the stage reuse changes no result, so the
+    /// whole suite would stay green while every adaptive run got ~17% more
+    /// expensive. This pins the eval count instead, which is exact and
+    /// machine-independent — unlike the criterion bench in `benches/kernels.rs`,
+    /// which measures the same saving in wall time and so can only be advisory.
+    ///
+    /// Dormand–Prince 5(4) has 7 stages. The first accepted step must evaluate
+    /// all 7; every later step that continues from the accepted point reuses the
+    /// cached last stage as its stage 0 and evaluates only 6.
+    #[test]
+    fn fsal_reuse_saves_one_rhs_eval_per_continued_step() {
+        let inner = HarmonicEval { omega: 1.0 };
+        let ev = Counting {
+            inner: &inner,
+            evals: AtomicUsize::new(0),
+        };
+        let mut solver = Rk45::new();
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+
+        // A step small enough that the controller accepts it every time, so the
+        // count is deterministic.
+        let h = 1e-3;
+        assert!(matches!(
+            solver.step(&ev, &mut st, h),
+            StepOutcome::Accepted { .. }
+        ));
+        assert_eq!(
+            ev.evals.load(Ordering::Relaxed),
+            C.len(),
+            "the first step has no cached stage and must evaluate every stage"
+        );
+
+        for i in 1..5 {
+            assert!(matches!(
+                solver.step(&ev, &mut st, h),
+                StepOutcome::Accepted { .. }
+            ));
+            assert_eq!(
+                ev.evals.load(Ordering::Relaxed),
+                C.len() + i * (C.len() - 1),
+                "step {i} must reuse the previous step's last stage as its stage 0"
+            );
+        }
+    }
+
+    /// The reuse is keyed on the *point*, not on "did the last step accept?", so
+    /// re-seating the state must invalidate it — otherwise a `set_state` (or a
+    /// fresh integration from a new IC) would propagate a stale derivative.
+    #[test]
+    fn re_seating_the_state_invalidates_the_fsal_cache() {
+        let inner = HarmonicEval { omega: 1.0 };
+        let ev = Counting {
+            inner: &inner,
+            evals: AtomicUsize::new(0),
+        };
+        let mut solver = Rk45::new();
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+        solver.step(&ev, &mut st, 1e-3);
+        let after_first = ev.evals.load(Ordering::Relaxed);
+
+        // Move the point somewhere the cache does not describe.
+        st.u = vec![0.0, 1.0];
+        st.t = 5.0;
+        solver.step(&ev, &mut st, 1e-3);
+        assert_eq!(
+            ev.evals.load(Ordering::Relaxed) - after_first,
+            C.len(),
+            "a re-seated point must recompute stage 0, not reuse a stale derivative"
+        );
+    }
 
     #[test]
     fn caps_are_explicit_adaptive_ode() {

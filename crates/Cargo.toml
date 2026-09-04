@@ -72,5 +72,17 @@ tsdyn-jit = { path = "tsdyn-jit" }
 tsdyn-solvers = { path = "tsdyn-solvers" }
 tsdyn-engine = { path = "tsdyn-engine" }
 rayon = "1.10"
+# Criterion drives the engine's performance benches (`crates/*/benches/**`), the
+# speed-side counterpart to the correctness suites: the kernel optimisations the
+# docs promise (FSAL stage reuse, frozen-Jacobian/LU reuse, interpreter dead-
+# register elimination) are all invisible to a correctness test, so a refactor
+# could undo any of them with `cargo test` fully green. Shared by three crates,
+# hence pinned here. `default-features = false` drops the plotters/rayon HTML
+# report machinery — the benches are read as numbers in CI, not as charts — which
+# keeps the dev-dependency tree (and CI build time) small; `cargo_bench_support`
+# is the one feature `cargo bench` needs.
+criterion = { version = "0.8", default-features = false, features = [
+    "cargo_bench_support",
+] }
 pyo3 = { version = "0.26", features = ["extension-module", "abi3-py312"] }
 numpy = "0.26"

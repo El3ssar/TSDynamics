@@ -344,7 +344,9 @@ pub fn integrate_dde_grid(
 ) -> Result<Vec<f64>, IntegrateError> {
     let n_slots = slots.len();
     let n_state = dim + n_slots;
-    let mut out = vec![0.0; t_eval.len() * dim];
+    // Checked: `t_eval.len() * dim` is caller-sized (see `crate::alloc`).
+    let mut out =
+        crate::alloc::try_zeroed(t_eval.len(), dim).map_err(IntegrateError::AllocFailed)?;
     if t_eval.is_empty() {
         return Ok(out);
     }
@@ -391,6 +393,10 @@ pub fn integrate_dde_grid(
     };
     let mut h = cfg.first_step.min(tau_min);
 
+    // ONE poller for the whole grid, not one per segment: a dense grid calls
+    // `advance_to` once per output point, often for a single step, so a
+    // per-segment poller would reset before it ever reached a poll stride.
+    let mut poll = crate::interrupt::Poller::new();
     for (k, &target) in t_eval.iter().enumerate() {
         if k == 0 {
             continue;
@@ -409,6 +415,7 @@ pub fn integrate_dde_grid(
             tau_min,
             cfg,
             &mut dy,
+            &mut poll,
         )?;
         out[k * dim..(k + 1) * dim].copy_from_slice(&st.u);
     }
@@ -433,6 +440,7 @@ fn advance_to(
     tau_min: f64,
     cfg: &IntegrateConfig,
     dy: &mut [f64],
+    poll: &mut crate::interrupt::Poller,
 ) -> Result<(), IntegrateError> {
     assert!(
         h.is_finite() && *h > 0.0,
@@ -442,6 +450,9 @@ fn advance_to(
     while st.t < t_end {
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
+        }
+        if poll.tick() {
+            return Err(IntegrateError::Interrupted { t: st.t });
         }
         let remaining = t_end - st.t;
         // The natural step, never larger than the smallest delay.

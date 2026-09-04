@@ -21,3 +21,8 @@ inventory = "0.3.24"
 # seam they consume in production. A dev-only edge: `tsdyn-vm` depends on
 # `tsdyn-ir` alone, so it adds no cycle and keeps test builds light (no Cranelift).
 tsdyn-vm.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "kernels"
+harness = false

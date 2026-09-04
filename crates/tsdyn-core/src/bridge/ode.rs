@@ -11,8 +11,9 @@ use tsdyn_ir::Tape;
 use tsdyn_vm::Interpreter;
 
 use super::marshal::{
-    build_evaluator, build_solver, check_inputs, diverge_msg, first_step_from_grid,
-    guard_continuous, require_jacobian_if_needed, resolve_solver, validate_grid, EngineError,
+    build_evaluator, build_solver, check_inputs, first_step_from_grid, guard_continuous,
+    integrate_failure, require_jacobian_if_needed, resolve_solver, validate_grid, EngineError,
+    Tolerances,
 };
 
 // ---------------------------------------------------------------------------
@@ -68,14 +69,31 @@ pub fn integrate_dense(
             "system dimension is zero (the tape has no outputs)".to_string(),
         ));
     }
+    // A non-finite initial state is a *bad input*, not a blow-up: without this
+    // guard the first RHS evaluation produces `NaN` and the run is reported as
+    // "integration diverged … non-finite state at t = 0", which sends the caller
+    // hunting a stiffness problem in a model that was never integrated. The
+    // events and stepper entry points already rejected it; this makes the dense
+    // path agree with them.
+    //
+    // `InvalidParameter`, not `BadShape`: by this module's own dividing line a
+    // `NaN` is the *value* of what the caller passed, not the *geometry* of the
+    // call — reshaping `ic` will never fix it. That keeps every inadmissible
+    // *value* on one Python type (`InvalidParameterError`), so the `t0`/`dt`
+    // guards and the state guard beside them no longer disagree.
+    if let Some(&bad) = ic.iter().take(tape.dim()).find(|x| !x.is_finite()) {
+        return Err(EngineError::InvalidParameter(format!(
+            "initial state must be finite, found {bad}"
+        )));
+    }
     validate_grid(t_eval)?;
+    let tol = Tolerances::new(rtol, atol)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
     let ev = build_evaluator(tape, jit)?;
-    let mut solver = build_solver(name, rtol, atol);
+    let mut solver = build_solver(name, tol);
     let cfg = IntegrateConfig::new(first_step_from_grid(t_eval));
-    integrate_grid(&*ev, &mut *solver, &ic[..ev.dim()], p, t_eval, &cfg)
-        .map_err(|e| EngineError::Diverged(diverge_msg(&e)))
+    integrate_grid(&*ev, &mut *solver, &ic[..ev.dim()], p, t_eval, &cfg).map_err(integrate_failure)
 }
 
 /// Integrate a batch of initial conditions to `t1` in parallel, returning each
@@ -120,7 +138,7 @@ pub fn ensemble_final(
     // non-finite first step as a hard-`assert!` caller error, which would surface
     // as a `PanicException` rather than a clean exception.
     if !(t0.is_finite() && t1.is_finite()) {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "integration times must be finite; got t0 = {t0}, t1 = {t1}"
         )));
     }
@@ -129,7 +147,7 @@ pub fn ensemble_final(
     // the unchanged initial conditions as a successful batch. Reject it loudly
     // until a backward-time path lands, rather than return stale ICs as `Ok`.
     if t1 < t0 {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "backward integration is not supported (t1 = {t1} < t0 = {t0}); the engine integrates \
              forward in time. Request t1 >= t0."
         )));
@@ -148,7 +166,9 @@ pub fn ensemble_final(
             ics.len()
         )));
     }
-    // Validate the method up front (one clear error before the rayon fan-out).
+    // Validate the method and the tolerances up front (one clear error before the
+    // rayon fan-out, rather than n_ic degenerate workers).
+    let tol = Tolerances::new(rtol, atol)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
     // The cadence is the caller's (the user's `dt`), no longer a `span/100` guess:
@@ -157,22 +177,14 @@ pub fn ensemble_final(
     // two entry points disagree (the bug this fixes). The engine treats a
     // non-finite or non-positive first step as a hard-`assert!` caller error
     // (it would spin to the step limit or step the wrong way), so reject it here
-    // as a clean `BadShape`, mirroring the SDE path's `check_sde_dt`.
+    // as a clean `InvalidParameter`, mirroring the SDE path's `check_sde_dt`.
     if !(first_step.is_finite() && first_step > 0.0) {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "integration cadence (first_step) must be finite and positive; got {first_step}"
         )));
     }
     let cfg = IntegrateConfig::new(first_step);
     let ev = build_evaluator(tape, jit)?;
-    let result = engine_ensemble(
-        &*ev,
-        |_i| build_solver(name, rtol, atol),
-        ics,
-        p,
-        t0,
-        t1,
-        &cfg,
-    );
+    let result = engine_ensemble(&*ev, |_i| build_solver(name, tol), ics, p, t0, t1, &cfg);
     Ok(result.states)
 }

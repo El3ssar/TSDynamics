@@ -289,16 +289,15 @@ def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray,
                 ),
                 dtype=np.float64,
             )
-        except RuntimeError as exc:
-            # The compiled map loop raises (EngineError::Diverged → RuntimeError)
-            # at the first non-finite iterate — the engine's diverge-loudly
-            # contract. Re-raise *that* with the system name so the message matches
-            # every other boundary (ODE/DDE/reference). A non-divergence
-            # RuntimeError (e.g. a JIT compile failure from backend="jit") is a
-            # different fault and must propagate unchanged, not be mislabelled as a
-            # numerical blow-up.
-            if "diverg" not in str(exc).lower():
-                raise
+        except ConvergenceError as exc:
+            # The compiled map loop raises (EngineError::Diverged →
+            # ConvergenceError, mapped in the bridge) at the first non-finite
+            # iterate — the engine's diverge-loudly contract. Re-raise *that* with
+            # the system name so the message matches every other boundary
+            # (ODE/DDE/reference). Catching the *type* (not sniffing the message
+            # for "diverg") is what keeps a non-divergence RuntimeError — e.g. a
+            # JIT compile failure from backend="jit" — propagating unchanged
+            # instead of being mislabelled as a numerical blow-up.
             raise ConvergenceError(diverged_msg) from exc
         # Defense-in-depth: should the binding ever return NaN instead of raising,
         # still refuse to hand back a silently poisoned trajectory.

@@ -12,10 +12,22 @@ It measures **speed** (every task) and, where a task has a ground truth,
 library that does not provide a capability — or that does not install in this
 environment — leaves that cell **blank**, exactly as requested.
 
-> This folder also holds `analysis_bench.py`, the *internal* performance-
-> regression harness driven by `.github/workflows/perf-analysis.yml` — it times
-> the analysis layer against `main` on the same runner. That is a different
-> question from the cross-library comparison documented here.
+> This folder also holds two *internal* performance-regression harnesses, which
+> answer a different question from the cross-library comparison documented here:
+>
+> - `analysis_bench.py` — the **analysis layer**, driven by
+>   `.github/workflows/perf-analysis.yml`; it times the analyses against `main` on
+>   the same runner and is advisory.
+> - `check_engine_bench.py` + `engine_bench_baseline.json` — the **Rust engine's**
+>   hot path, driven by `.github/workflows/perf-engine.yml`. It reads the criterion
+>   benches in `crates/*/benches/**` (`cd crates && cargo bench --workspace`) and
+>   fails a PR whose case exceeds a committed ceiling. The ceilings are 10× the
+>   reference, so it catches order-of-magnitude regressions only — deliberately, so
+>   it can block without flaking. The fine-grained kernel optimisations (FSAL stage
+>   reuse, frozen-Jacobian/LU reuse, interpreter dead-register elimination) are
+>   pinned instead by deterministic *counting* tests inside the Rust crates.
+>   Regenerate the ceilings with
+>   `python benchmarks/check_engine_bench.py --update crates/target/criterion`.
 
 ---
 

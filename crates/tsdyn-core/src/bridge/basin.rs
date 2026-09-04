@@ -19,7 +19,7 @@ use tsdyn_solvers::Solver;
 
 use super::marshal::{
     build_evaluator, build_solver, guard_continuous, require_jacobian_if_needed, resolve_solver,
-    EngineError,
+    EngineError, Tolerances,
 };
 
 /// Map a [`BasinError`] (a kernel-side shape/grid failure) to the bridge's
@@ -28,6 +28,7 @@ use super::marshal::{
 fn to_engine_err(e: BasinError) -> EngineError {
     match e {
         BasinError::BadShape(m) => EngineError::BadShape(m),
+        BasinError::Interrupted { .. } => EngineError::Interrupted,
     }
 }
 
@@ -56,12 +57,14 @@ pub fn basin_march_flow_bridge(
     // An ODE-shaped tape only (a DDE/SDE tape has its own family path; the Python
     // wiring already excludes DDE/SDE, but guard at the boundary too).
     guard_continuous(&tape)?;
+    let tol = Tolerances::new(rtol, atol)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
     let ev = build_evaluator(tape, jit)?;
     // A fresh kernel per `dt` segment (mirrors `OdeStepper::advance`); the name is
-    // a registry name, so `build_solver` always succeeds.
-    let factory = move || -> Box<dyn Solver> { build_solver(name, rtol, atol) };
+    // a registry name and the tolerances are validated, so `build_solver` always
+    // succeeds.
+    let factory = move || -> Box<dyn Solver> { build_solver(name, tol) };
     basin_march_flow(
         &*ev,
         factory,
@@ -220,5 +223,39 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+    }
+
+    /// The flow march drives the adaptive kernels, so it must reject the
+    /// tolerances the controller cannot act on (a sign typo would silently paint
+    /// a basin image at four orders less accuracy).
+    #[test]
+    fn flow_bridge_rejects_bad_tolerances() {
+        let build = || {
+            let mut b = TapeBuilder::new();
+            let x = b.state(0);
+            let dx = b.neg(x);
+            b.finish(&[dx], &[], 1, 0).unwrap()
+        };
+        for (rtol, atol) in [(-1.0, 1e-9), (1e-6, f64::NAN), (0.0, 0.0)] {
+            let err = basin_march_flow_bridge(
+                build(),
+                &[],
+                "rk45",
+                rtol,
+                atol,
+                0.1,
+                &[-1.0],
+                &[1.0],
+                &[10],
+                &[0.5],
+                cfg(),
+                false,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, EngineError::InvalidParameter(_)),
+                "rtol = {rtol}, atol = {atol}: got {err:?}"
+            );
+        }
     }
 }

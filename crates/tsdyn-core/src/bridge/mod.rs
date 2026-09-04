@@ -65,7 +65,7 @@ mod tests {
     // family submodules (not via the crate::bridge re-export), so the tests
     // import them straight from marshal too rather than widening the public
     // re-export with test-only names.
-    use super::marshal::{build_solver, resolve_solver};
+    use super::marshal::{build_solver, resolve_solver, Tolerances};
     use tsdyn_ir::Tape;
     use tsdyn_ir::TapeBuilder;
 
@@ -208,7 +208,7 @@ mod tests {
             "bdf",
         ] {
             let resolved = resolve_solver(name).unwrap();
-            let s = build_solver(resolved, 1e-9, 1e-12);
+            let s = build_solver(resolved, Tolerances::new(1e-9, 1e-12).unwrap());
             assert_eq!(s.name(), name);
         }
     }
@@ -459,7 +459,8 @@ mod tests {
     #[test]
     fn ensemble_rejects_non_positive_cadence() {
         // The first_step validation: a non-finite or non-positive cadence is a clean
-        // BadShape (→ ValueError), not a PanicException from the engine's hard assert.
+        // InvalidParameter (→ InvalidParameterError, a ValueError), not a
+        // PanicException from the engine's hard assert.
         for bad in [0.0, -0.1, f64::NAN, f64::INFINITY] {
             let err = ensemble_final(
                 decay_tape(),
@@ -475,7 +476,7 @@ mod tests {
             )
             .unwrap_err();
             assert!(
-                matches!(err, EngineError::BadShape(_)),
+                matches!(err, EngineError::InvalidParameter(_)),
                 "cadence {bad}: got {err:?}"
             );
         }
@@ -606,7 +607,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(bad_inf, EngineError::BadShape(_)),
+            matches!(bad_inf, EngineError::InvalidParameter(_)),
             "got {bad_inf:?}"
         );
         // Descending grid → clean BadShape (not a silently-stale row in release).
@@ -622,7 +623,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(bad_desc, EngineError::BadShape(_)),
+            matches!(bad_desc, EngineError::InvalidParameter(_)),
             "got {bad_desc:?}"
         );
     }
@@ -642,7 +643,10 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+        assert!(
+            matches!(err, EngineError::InvalidParameter(_)),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -769,7 +773,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(bad_delay, EngineError::BadShape(_)),
+            matches!(bad_delay, EngineError::InvalidParameter(_)),
             "got {bad_delay:?}"
         );
     }
@@ -862,7 +866,10 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+        assert!(
+            matches!(err, EngineError::InvalidParameter(_)),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -1110,7 +1117,7 @@ mod tests {
                 false,
             )
             .unwrap_err(),
-            EngineError::BadShape(_)
+            EngineError::InvalidParameter(_)
         ));
         assert!(matches!(
             sde_ensemble_final(
@@ -1126,7 +1133,7 @@ mod tests {
                 false,
             )
             .unwrap_err(),
-            EngineError::BadShape(_)
+            EngineError::InvalidParameter(_)
         ));
     }
 
@@ -1569,7 +1576,235 @@ mod tests {
         // Rejects a non-finite reseat.
         assert!(matches!(
             s.set_state(&[f64::NAN, 0.0], 0.0).unwrap_err(),
-            EngineError::BadShape(_)
+            EngineError::InvalidParameter(_)
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Tolerance validation across the whole tolerance-taking FFI surface (WP1)
+    // -----------------------------------------------------------------------
+
+    /// The single-output event tape `g(u) = u0` over the 2-D oscillator — the
+    /// section `x = 0`, used to reach the events entry point.
+    fn x_zero_event_tape() -> Tape {
+        let mut b = TapeBuilder::new();
+        let x = b.state(0);
+        let _v = b.state(1);
+        b.finish(&[x], &[], 2, 0).unwrap()
+    }
+
+    /// The three tolerance pairs no adaptive controller can act on: a sign typo,
+    /// a `NaN`, and the unsatisfiable all-zero pair.
+    ///
+    /// Before this guard the first pair silently produced an always-accept
+    /// controller (bit-identical to `rtol = 1e6`) and the last two collapsed the
+    /// step to zero and were misreported as a *divergence*.
+    const BAD_TOLERANCES: [(f64, f64); 4] =
+        [(-1.0, 1e-9), (1e-6, -1e-9), (f64::NAN, 1e-9), (0.0, 0.0)];
+
+    #[test]
+    fn every_tolerance_surface_rejects_a_bad_tolerance() {
+        let t_eval: Vec<f64> = (0..=4).map(|i| i as f64 * 0.25).collect();
+        for (rtol, atol) in BAD_TOLERANCES {
+            let label = format!("rtol = {rtol}, atol = {atol}");
+
+            // Every entry point that takes tolerances must reject the pair, and
+            // the message must name the parameter it rejected.
+            let mut errs: Vec<EngineError> = Vec::new();
+
+            errs.push(
+                integrate_dense(
+                    decay_tape(),
+                    &[1.0],
+                    &[2.0],
+                    &t_eval,
+                    "rk45",
+                    rtol,
+                    atol,
+                    false,
+                )
+                .expect_err("integrate_dense"),
+            );
+            errs.push(
+                ensemble_final(
+                    decay_tape(),
+                    &[1.0, 2.0],
+                    &[2.0],
+                    0.0,
+                    1.0,
+                    0.1,
+                    "rk45",
+                    rtol,
+                    atol,
+                    false,
+                )
+                .expect_err("ensemble_final"),
+            );
+            errs.push(
+                integrate_dde_dense(
+                    neg_delay_dde_tape(),
+                    &[0],
+                    &[1.0],
+                    &[1.0],
+                    &[0.0],
+                    &[1.0],
+                    &t_eval,
+                    "rk45",
+                    rtol,
+                    atol,
+                    false,
+                )
+                .expect_err("integrate_dde_dense"),
+            );
+            errs.push(
+                integrate_events_dense(
+                    oscillator_tape(),
+                    x_zero_event_tape(),
+                    &[1.0, 0.0],
+                    &[],
+                    0.0,
+                    4.0,
+                    0.05,
+                    0,
+                    false,
+                    "rk45",
+                    rtol,
+                    atol,
+                    false,
+                )
+                .expect_err("integrate_events_dense"),
+            );
+            errs.push(
+                OdeStepper::new(decay_tape(), &[1.0], 0.0, "rk45", rtol, atol, false)
+                    .err()
+                    .expect("OdeStepper::new"),
+            );
+
+            for err in errs {
+                assert!(
+                    matches!(err, EngineError::InvalidParameter(_)),
+                    "{label}: got {err:?}"
+                );
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("rtol") || msg.contains("atol"),
+                    "{label}: message must name the parameter, got {msg:?}"
+                );
+            }
+        }
+    }
+
+    /// The tolerance guard must not reject the pairs that *are* admissible —
+    /// including the pure-relative (`atol = 0`) and pure-absolute (`rtol = 0`)
+    /// controls SciPy also accepts.
+    #[test]
+    fn tolerance_guard_accepts_one_sided_error_control() {
+        let t_eval: Vec<f64> = (0..=4).map(|i| i as f64 * 0.25).collect();
+        for (rtol, atol) in [(1e-8, 0.0), (0.0, 1e-10), (1e-8, 1e-10)] {
+            let y = integrate_dense(
+                decay_tape(),
+                &[1.0],
+                &[2.0],
+                &t_eval,
+                "rk45",
+                rtol,
+                atol,
+                false,
+            )
+            .unwrap_or_else(|e| panic!("rtol = {rtol}, atol = {atol}: {e}"));
+            let want = (-2.0_f64 * t_eval[4]).exp();
+            assert!((y[4] - want).abs() < 1e-6, "{} vs {want}", y[4]);
+        }
+    }
+
+    /// An empty output grid cannot honour the documented "first row is the
+    /// initial condition"; it used to return a `(0, dim)` buffer.
+    #[test]
+    fn dense_entry_points_reject_an_empty_grid() {
+        let err = integrate_dense(decay_tape(), &[1.0], &[2.0], &[], "rk45", 1e-6, 1e-9, false)
+            .expect_err("integrate_dense");
+        assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+        assert!(err.to_string().contains("t_eval"), "{err}");
+
+        let err = integrate_dde_dense(
+            neg_delay_dde_tape(),
+            &[0],
+            &[1.0],
+            &[1.0],
+            &[0.0],
+            &[1.0],
+            &[],
+            "rk45",
+            1e-6,
+            1e-9,
+            false,
+        )
+        .expect_err("integrate_dde_dense");
+        assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+    }
+
+    /// A non-finite initial state (or DDE past) is a bad *input*: it used to be
+    /// accepted, produce a `NaN` on the first RHS evaluation, and be reported as
+    /// "integration diverged … at t = 0" — a blow-up of a run that never ran.
+    #[test]
+    fn dense_entry_points_reject_a_non_finite_start() {
+        let t_eval: Vec<f64> = (0..=4).map(|i| i as f64 * 0.25).collect();
+        for bad in [f64::NAN, f64::INFINITY] {
+            let err = integrate_dense(
+                decay_tape(),
+                &[bad],
+                &[2.0],
+                &t_eval,
+                "rk45",
+                1e-6,
+                1e-9,
+                false,
+            )
+            .expect_err("integrate_dense");
+            assert!(
+                matches!(err, EngineError::InvalidParameter(_)),
+                "got {err:?}"
+            );
+            assert!(err.to_string().contains("finite"), "{err}");
+
+            let err = integrate_dde_dense(
+                neg_delay_dde_tape(),
+                &[0],
+                &[1.0],
+                &[bad],
+                &[0.0],
+                &[1.0],
+                &t_eval,
+                "rk45",
+                1e-6,
+                1e-9,
+                false,
+            )
+            .expect_err("dde ic");
+            assert!(
+                matches!(err, EngineError::InvalidParameter(_)),
+                "got {err:?}"
+            );
+
+            let err = integrate_dde_dense(
+                neg_delay_dde_tape(),
+                &[0],
+                &[1.0],
+                &[1.0],
+                &[0.0],
+                &[bad],
+                &t_eval,
+                "rk45",
+                1e-6,
+                1e-9,
+                false,
+            )
+            .expect_err("dde past_y");
+            assert!(
+                matches!(err, EngineError::InvalidParameter(_)),
+                "got {err:?}"
+            );
+            assert!(err.to_string().contains("past_y"), "{err}");
+        }
     }
 }

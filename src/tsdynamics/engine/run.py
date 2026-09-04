@@ -142,12 +142,14 @@ __all__ = [
     "EngineNotAvailableError",
     "Event",
     "EventSolution",
+    "clear_jit_cache",
     "crossings",
     "ensemble",
     "eval_jac",
     "eval_rhs",
     "integrate",
     "integrate_events",
+    "jit_cache_stats",
     "make_ode_stepper",
     "map_lyapunov",
     "resolve_backend",
@@ -228,6 +230,46 @@ def _engine() -> Any:
             "reinstall the compiled wheel (`pip install tsdynamics`)."
         ) from err
     return _rust
+
+
+def jit_cache_stats() -> dict[str, int]:
+    """Return the engine's compiled-evaluator (JIT) cache counters.
+
+    ``backend="jit"`` compiles a tape to native code with Cranelift.  That is a
+    *per-call* cost — ~0.13 ms for Lorenz, ~0.3 s for a Gray–Scott field — so the
+    engine memoises the compiled evaluator on the tape's identity, exactly as
+    :func:`tsdynamics.engine.compile.lower_ode_cached` memoises the tape itself.
+    This is that cache's ``{"hits", "misses", "size", "maxsize"}``.
+
+    Set ``TSDYNAMICS_NO_JIT_CACHE=1`` to bypass the cache process-wide (every
+    call re-compiles); the counters then stay put, since nothing is stored.
+
+    Returns
+    -------
+    dict[str, int]
+        ``{"hits", "misses", "size", "maxsize"}``.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If the compiled engine is not installed (there is no JIT without it).
+    """
+    return cast("dict[str, int]", _engine().jit_cache_stats())
+
+
+def clear_jit_cache() -> None:
+    """Drop every cached compiled evaluator and reset the counters.
+
+    The twin of :func:`tsdynamics.engine.compile.clear_tape_cache`: the hook that
+    makes a following ``backend="jit"`` call a guaranteed compile (for tests and
+    timings), and the way to release the native code of a large system.
+
+    Raises
+    ------
+    EngineNotAvailableError
+        If the compiled engine is not installed.
+    """
+    _engine().clear_jit_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -703,14 +745,13 @@ def map_lyapunov(
             int(reortho_interval),
             bool(jit),
         )
-    except RuntimeError as exc:
-        # The engine raises EngineError::Diverged → RuntimeError at the first
-        # non-finite iterate (the "diverge loudly" contract).  Re-raise that as the
-        # canonical ConvergenceError with the system name; any other RuntimeError
-        # (e.g. a backend="jit" compile failure) is a different fault and must
-        # propagate unchanged, not be mislabelled as a numerical blow-up.
-        if "diverg" not in str(exc).lower():
-            raise
+    except ConvergenceError as exc:
+        # The engine raises EngineError::Diverged → ConvergenceError (mapped in
+        # the bridge) at the first non-finite iterate (the "diverge loudly"
+        # contract).  Re-raise that with the system name; catching the *type*
+        # rather than sniffing the message for "diverg" is what keeps any other
+        # RuntimeError (e.g. a backend="jit" compile failure) propagating
+        # unchanged, not mislabelled as a numerical blow-up.
         raise ConvergenceError(
             f"{name}: map Lyapunov iteration diverged or produced a non-finite "
             f"state before reaching {steps} iterations."

@@ -335,9 +335,9 @@ def test_ensemble_rejects_nonpositive_dt() -> None:
     from tsdynamics.errors import InvalidParameterError
 
     ics = np.array([[1.0, 1.0, 1.0], [0.5, 0.5, 0.5]])
-    with pytest.raises(InvalidParameterError, match=r"dt must be > 0"):
+    with pytest.raises(InvalidParameterError, match=r"dt must be finite and > 0"):
         run.ensemble(ts.Lorenz(), ics, final_time=1.0, dt=0.0, backend="reference")
-    with pytest.raises(ValueError, match=r"dt must be > 0"):
+    with pytest.raises(ValueError, match=r"dt must be finite and > 0"):
         run.ensemble(ts.Lorenz(), ics, final_time=1.0, dt=-0.01, backend="reference")
 
 

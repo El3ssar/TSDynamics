@@ -933,6 +933,69 @@ import is deferred to first render.
   (divergence → `ConvergenceError`; an out-of-range `dt`/unknown backend/bad
   argument → `InvalidParameterError` / `InvalidInputError`) so a `RuntimeError` /
   `ValueError` / `TypeError` `except` keeps catching the same failure.
+  **The mapping is raised at the FFI boundary itself** (v6 WP1,
+  `crates/tsdyn-core/src/lib.rs::to_py_err`): `EngineError::Diverged` →
+  `ConvergenceError` and `EngineError::InvalidParameter` → `InvalidParameterError`
+  are constructed by importing `tsdynamics.errors` from the binding, so **every**
+  engine surface (integrate / DDE / SDE / map / events / stepper / basin /
+  Lyapunov) inherits the typed error and no call site sniffs a message for
+  `"diverg"`. The bridge's split is deliberate: `EngineError::BadShape` is call
+  *geometry* (lengths / dims / tape structure → plain `ValueError`),
+  `EngineError::InvalidParameter` is a scalar *option value* (`rtol`/`atol`, a
+  step/cadence/delay, the integration window, the event direction).
+  **Tolerances are validated by construction**: `build_solver` takes a
+  `marshal::Tolerances`, whose only constructor rejects a non-finite or negative
+  `rtol`/`atol` and the unsatisfiable `rtol == atol == 0` (exactly one zero is
+  legal — pure relative / pure absolute control), so a new tolerance-taking
+  surface cannot forget the guard. `utils/grids.make_output_grid` likewise
+  requires a **finite** `dt`/`t0`/`final_time`, not merely `dt > 0`.
+  **`StepBudgetError`** (a `ConvergenceError` subclass, v6 WP2) is the *stalled*
+  half of "did not reach the final time": hitting the engine's per-segment step
+  cap with a **finite** state is a solver-settings problem (looser tolerance,
+  an implicit method), not a blow-up, and the engine no longer calls it one
+  (`EngineError::StepBudget`). An engine allocation failure raises `MemoryError`;
+  an interrupt re-raises the signal handler's own `KeyboardInterrupt`.
+- **Process safety (stream v6 WP2, `crates/tsdyn-engine/src/{alloc,pool,interrupt}.rs`):**
+  three infrastructure modules exist so that an engine call can never damage the
+  *process* hosting it. Keep new engine code inside them.
+  - **`alloc::try_zeroed(rows, cols)`** is how every caller-sized **output**
+    buffer is allocated (map orbits, dense grids, DDE/SDE grids, the sweep's
+    point buffer). `vec![0.0; rows * cols]` either panics `capacity overflow` or
+    — worse — calls `handle_alloc_error`, which **aborts the interpreter**;
+    `try_zeroed` does `checked_mul` + `try_reserve_exact` and returns an error
+    the bridge maps to `MemoryError`. The engine's *working* buffers are sized by
+    the (bridge-validated) tape and stay on the infallible `vec![]` form.
+  - **`pool::with_pool`** owns the engine's rayon pool, **PID-tagged and rebuilt
+    after a `fork()`**. Every parallel loop goes through it; the ambient global
+    pool must not be used, because its workers do not survive a fork and the
+    first parallel call in a `multiprocessing` child hangs forever on them.
+  - **`interrupt::Poller`** makes long calls Ctrl-C-able. Engine calls run with
+    the GIL **released** (`tsdyn-core`'s `detached()` wraps `py.detach` *and*
+    arms the thread), so CPython only sees the signal when the call returns; the
+    loops therefore poll a hook — installed once by the binding, calling
+    `py.check_signals()` — every `POLL_STRIDE` (4096) **units of engine work**
+    (one solver step / one map iterate), on the calling thread only (never a
+    rayon worker). Measured cost on a 1e6-step run: none above noise. Every
+    long-running loop polls: `integrate`, `map`, `dde`, `sde`, `event` (both
+    marches), `param_sweep`, `map_lyapunov`, `basin`, and — via
+    `integrate_grid_polled`, which threads **one** poller through many short
+    segments — `lyapunov`. A per-segment poller would reset before reaching a
+    stride, which is exactly why that variant exists.
+  - Each family has its own `Interrupted` variant that unwinds to
+    `EngineError::Interrupted`. Two loops must **not** fold it into a divergence:
+    the Lyapunov chunk loop (`lyapunov::classify`) and the basin march (whose
+    `Advance` enum replaced a `bool` so an interrupt cannot be painted into the
+    basin image as a diverged IC).
+  - **Divergence is caught by magnitude, not by waiting for `inf`:**
+    `integrate::OVERFLOW_SCALE = 1e150` (`√f64::MAX`, an *overflow* scale, not a
+    tuned physical one) — the same one-comparison-per-component guard runs in the
+    event marches. `bdf` shares the implicit kernels' `STEP_FLOOR_REL`; without
+    it a blow-up took ~18 s to report where the others took ~0.02 s.
+  - Non-test `debug_assert!`s stay debug-only **except** in
+    `tsdyn-jit::JitEvaluator`, whose three buffer checks guard raw-pointer writes
+    from compiled native code and so are real `assert!`s. Everything else is
+    either validated at the bridge (`marshal::validate_grid`, the per-entry-point
+    shape checks) or fails as a bounds-checked panic, not memory unsafety.
 - **Docstrings:** NumPy convention; cite the **original paper** for each method.
   This is a code-style norm — keep code/docstrings pointing at the source
   literature rather than at whichever library we consulted. It is **not** a veto
@@ -1156,8 +1219,58 @@ run; nothing to wipe.
   counters), `tape_cache_stats()` → `{"hits","misses","size","maxsize"}`, and the
   `TSDYNAMICS_NO_TAPE_CACHE` env var (truthy ⇒ always re-lower — the bypass that
   proves WITH-cache == WITHOUT-cache).
+- **Compiled-evaluator (JIT) cache — the Rust twin, one layer down (v6 WP3-perf,
+  `crates/tsdyn-jit/src/cache.rs`):** the tape cache above stops the *lowering*
+  being repeated; this stops the *Cranelift compile* being repeated. Every FFI
+  entry point builds its evaluator through `bridge/marshal.rs::build_evaluator`,
+  which used to call `JitEvaluator::new` afresh on every call — so a
+  `backend="jit"` run paid the whole compile before its first step (~0.13 ms for
+  Lorenz, ~296 ms for a Gray–Scott field, making `jit` *slower* than `interp`
+  below ~1000 Lorenz steps and burning ~29 s on a 100-value Gray–Scott sweep).
+  `tsdyn_jit::cached_evaluator` memoises the compiled evaluator and hands out an
+  `Arc` (wrapped back into the engine's `&dyn Evaluator` seam by
+  `SharedJitEvaluator`). The key is the **whole `Tape`**: a hash selects a
+  candidate and full `Tape` equality accepts it, so a changed immediate / opcode
+  / `with_jacobian` flag is always a miss and a hash collision costs a compile,
+  never a stale hit. Bounded LRU (`CACHE_MAXSIZE = 64` — smaller than the tape
+  cache's 256 because an entry holds executable pages), thread-safe, compiles
+  outside the lock. Surface: `tsdynamics.engine.run.jit_cache_stats()` /
+  `clear_jit_cache()` (→ the `_rust` functions of the same names) and the
+  `TSDYNAMICS_NO_JIT_CACHE` env var (truthy ⇒ always re-compile — the bypass that
+  proves WITH-cache == WITHOUT-cache, `tests/test_jit_cache.py`). Answer-preserving:
+  the same tape compiles to the same code, so `interp == jit` stays bit-for-bit.
+  Measured: Lorenz 10-step 0.237 → 0.064 ms, Gray–Scott 10-step 306 → 4.2 ms
+  (73×), a 20-value Gray–Scott sweep 6.23 → 0.10 s (63×); `jit` is now faster
+  than `interp` at *every* run length (the old ~1000-step crossover is gone).
 - The docs figure cache is unrelated and still exists: `.cache/docs-figures`,
   keyed by class source hash (CI persists it via actions/cache).
+
+### Engine performance benches & the regression gate (v6 WP3-perf)
+
+The engine's optimisations are all **answer-preserving**, so the correctness
+suite cannot see them — a refactor could undo any one with `cargo test` green.
+Two layers now cover them:
+
+- **Deterministic counting tests** (the actual gate, cannot flake):
+  `explicit::rk45::tests::fsal_reuse_saves_one_rhs_eval_per_continued_step` pins
+  the FSAL stage reuse at the RHS-evaluation count (7 stages on the first step, 6
+  on each continued one) and its sibling proves a re-seated state invalidates the
+  cache; `implicit::sdirk2::tests::frozen_jacobian_is_reused_across_substages_sharing_a_shift`
+  pins the frozen-Jacobian/LU reuse at **two** factorizations per step (one per
+  distinct substage shift) where the always-re-form path would do six; the
+  interpreter's dead-register elimination was already pinned structurally by
+  `interp::tests::rhs_live_mask_is_the_shared_reachable_from_pass`.
+- **Criterion benches** (`crates/{tsdyn-vm,tsdyn-solvers,tsdyn-engine,tsdyn-jit}/benches/`,
+  run with `cd crates && cargo bench --workspace`) quantify what those savings are
+  worth, plus a full `integrate_grid` / `iterate_dense` and the JIT
+  compile-vs-cache-hit ratio. `benchmarks/check_engine_bench.py` compares a run
+  with the ceilings in `benchmarks/engine_bench_baseline.json` and
+  `.github/workflows/perf-engine.yml` enforces it. The ceilings are **10× the
+  reference**, so the gate catches order-of-magnitude regressions (a cache that
+  stopped caching, an allocation in a hot loop) and *nothing finer* — deliberately,
+  because criterion wall-clock on a shared runner varies 2–3× and a flaky blocking
+  gate is worse than none. Regenerate with
+  `python benchmarks/check_engine_bench.py --update crates/target/criterion`.
 
 ---
 

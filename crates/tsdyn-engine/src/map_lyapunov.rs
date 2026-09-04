@@ -61,6 +61,14 @@ pub enum MapLyapunovError {
     /// The iteration diverged: a non-finite iterate, Jacobian, deviation frame, or
     /// reorthonormalisation before completing all steps. → `RuntimeError`.
     Diverged(String),
+    /// The embedder's interrupt hook stopped the run (see [`crate::interrupt`])
+    /// — normally a Ctrl-C at the Python prompt. A `steps`-heavy spectrum is one
+    /// of the longest single calls the engine offers, so it is one of the calls
+    /// that most needs to be escapable.
+    Interrupted {
+        /// The iterate index reached when the interrupt was observed.
+        step: usize,
+    },
 }
 
 impl core::fmt::Display for MapLyapunovError {
@@ -72,6 +80,9 @@ impl core::fmt::Display for MapLyapunovError {
                  (with_jacobian=False)",
             ),
             MapLyapunovError::Diverged(m) => f.write_str(m),
+            MapLyapunovError::Interrupted { step } => {
+                write!(f, "interrupted at iterate {step}")
+            }
         }
     }
 }
@@ -218,8 +229,14 @@ pub fn map_lyapunov(
 
     let mut sums = vec![0.0; k];
     let mut intervals = 0usize;
+    // One iterate is a Jacobian evaluation plus a `dim × k` propagation — the
+    // per-step scale the default stride is sized for.
+    let mut poll = crate::interrupt::Poller::new();
 
     for i in 0..steps {
+        if poll.tick() {
+            return Err(MapLyapunovError::Interrupted { step: i });
+        }
         // (1) Jacobian at the pre-image x_n, plus the next state in one pass.
         ev.eval_jac(&x, p, 0.0, &mut scratch, &mut x_next, &mut jac);
         if !jac.iter().all(|v| v.is_finite()) {
@@ -419,6 +436,23 @@ mod tests {
             map_lyapunov(&ev, &[], &[0.1, 0.1], 100, 3, 1).unwrap_err(),
             MapLyapunovError::BadShape(_)
         ));
+    }
+
+    /// An armed interrupt stops the QR iteration. A `steps`-heavy map spectrum
+    /// is one of the longest single calls the engine offers, so it has to be
+    /// escapable.
+    #[test]
+    fn an_armed_interrupt_stops_the_qr_iteration() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        let ev = VmEval::new(henon_jac(1.4, 0.3));
+        let steps = 50 * crate::interrupt::POLL_STRIDE;
+        let err = map_lyapunov(&ev, &[], &[0.1, 0.1], steps, 2, 1).unwrap_err();
+        assert!(
+            matches!(err, MapLyapunovError::Interrupted { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]

@@ -44,20 +44,43 @@
 
 use tsdyn_ir::Evaluator;
 
-/// Why a parameter sweep could not be set up (a shape validation failure). The
-/// sweep itself never errors — a diverged value is a [`SweepStatus::Diverged`]
-/// marker, not an error — so this only covers caller-side mistakes the binding
-/// maps to `ValueError`.
+use crate::alloc::{try_zeroed, AllocFailed};
+use crate::interrupt::Poller;
+
+/// Why a parameter sweep could not be set up or completed.
+///
+/// A *diverged value* is still not an error — it is a [`SweepStatus::Diverged`]
+/// marker, and the sweep continues — so the variants here are the whole-call
+/// failures: a caller-side shape mistake the binding maps to `ValueError`, an
+/// unservable output buffer, and an interrupt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SweepError {
     /// A buffer length / index invariant disagrees with the tape or itself.
     BadShape(String),
+    /// The `(n_values · n_record, n_components)` point buffer could not be
+    /// allocated — see [`AllocFailed`].
+    ///
+    /// This is the sweep's exposure to the abort described in [`crate::alloc`],
+    /// and it was a live one: `orbit_diagram(map, …, n=2**40)` is an ordinary
+    /// public call, and it took the interpreter down with `SIGABRT` — no
+    /// traceback, nothing to catch.
+    AllocFailed(AllocFailed),
+    /// The embedder's interrupt hook stopped the sweep (see
+    /// [`crate::interrupt`]) — normally a Ctrl-C at the Python prompt.
+    Interrupted {
+        /// The index of the swept value being run when the interrupt was seen.
+        value: usize,
+    },
 }
 
 impl core::fmt::Display for SweepError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             SweepError::BadShape(m) => f.write_str(m),
+            SweepError::AllocFailed(e) => e.fmt(f),
+            SweepError::Interrupted { value } => {
+                write!(f, "interrupted while sweeping value {value}")
+            }
         }
     }
 }
@@ -161,7 +184,15 @@ pub fn map_orbit_sweep(
 
     let n_values = values.len();
     let n_components = components.len();
-    let mut points = vec![0.0; n_values * n_record * n_components];
+    // Checked: `n_record` is a bare caller-supplied count with no backing array
+    // to bound it, so this triple product is the sweep's exposure to the
+    // `capacity overflow` panic / allocator abort (see `crate::alloc`). The row
+    // count is itself a product; `saturating_mul` keeps the whole rejection in
+    // `try_zeroed` (one place that decides, one message) — a saturated row count
+    // is `usize::MAX`, which understates a truly astronomical request but is
+    // just as unservable, so the call still fails with the right diagnosis.
+    let rows = n_values.saturating_mul(n_record);
+    let mut points = try_zeroed(rows, n_components).map_err(SweepError::AllocFailed)?;
     let mut status = vec![SweepStatus::Ok; n_values];
 
     // Reusable buffers (the loop allocates nothing per value/iterate).
@@ -173,6 +204,12 @@ pub fn map_orbit_sweep(
     // The carry-over state across values (the previous value's final state); seeded
     // from `ic` and reset to `ic` after a divergence — the Python `state`/`None`.
     let mut carry = ic[..dim].to_vec();
+
+    // ONE poller across the whole sweep, ticked per *iterate*: an orbit diagram
+    // is `n_values · (transient + n)` map applications — routinely a billion,
+    // and the single longest map call in the library — so the per-step stride is
+    // the right cadence and a per-value poller would be far too coarse.
+    let mut poll = Poller::new();
 
     for (k, &value) in values.iter().enumerate() {
         p[sweep_index] = value;
@@ -187,6 +224,9 @@ pub fn map_orbit_sweep(
         let mut diverged = false;
         let total = transient + n_record;
         for it in 0..total {
+            if poll.tick() {
+                return Err(SweepError::Interrupted { value: k });
+            }
             // One map application; t = 0.0 (maps are autonomous in the IR), matching
             // the engine map loop and the reference path.
             ev.eval(&cur, &p, 0.0, &mut scratch, &mut next);
@@ -258,6 +298,52 @@ mod tests {
         let rx = b.mul(rc, x);
         let nx = b.mul(rx, omx);
         Interpreter::new(b.finish(&[nx], &[], 1, 0).unwrap())
+    }
+
+    /// A sweep whose point buffer cannot be allocated must be an ordinary
+    /// `Err`. This was a *process-level* failure through a plain public call:
+    /// `orbit_diagram(map, …, n=2**40)` reached `vec![0.0; n_values · n_record ·
+    /// n_components]`, whose allocation-error handler aborts the interpreter.
+    #[test]
+    fn an_unservable_point_buffer_is_an_error_not_an_abort() {
+        let ev = VmEval::new(logistic_param());
+        let values = [3.5, 3.6, 3.7];
+        for n_record in [1usize << 40, usize::MAX] {
+            let err = map_orbit_sweep(&ev, &[3.5], 0, &values, &[0.5], &[0], 0, n_record, false)
+                .expect_err("an unservable point buffer must not be allocated");
+            assert!(
+                matches!(err, SweepError::AllocFailed(_)),
+                "got {err:?} for n_record = {n_record}"
+            );
+            assert!(err.to_string().contains("cannot allocate"));
+        }
+    }
+
+    /// An armed interrupt stops the sweep — a full orbit diagram is
+    /// `n_values · (transient + n)` map applications and routinely the longest
+    /// map call in the library.
+    #[test]
+    fn an_armed_interrupt_stops_the_sweep() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        let ev = VmEval::new(logistic_param());
+        let values = [3.9, 3.91];
+        // Far more than one poll stride of iterates, so the sweep cannot finish
+        // before the first check.
+        let err = map_orbit_sweep(
+            &ev,
+            &[3.9],
+            0,
+            &values,
+            &[0.5],
+            &[0],
+            50 * crate::interrupt::POLL_STRIDE,
+            1,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(err, SweepError::Interrupted { .. }), "got {err:?}");
     }
 
     #[test]

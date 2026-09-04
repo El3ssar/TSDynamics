@@ -40,6 +40,7 @@ Class                        Stdlib base         Raised for
 :class:`InvalidParameterError` :class:`ValueError` a bad *value* (range/choice)
 :class:`InvalidInputError`   :class:`TypeError`  a bad argument *type*/*shape*
 :class:`ConvergenceError`    :class:`RuntimeError` divergence / non-convergence
+:class:`StepBudgetError`     :class:`ConvergenceError` a *stalled* run (finite state)
 :class:`BackendError`        :class:`RuntimeError` a compute-backend failure
 ============================ =================== ===========================
 
@@ -84,6 +85,7 @@ __all__ = [
     "ConvergenceError",
     "InvalidInputError",
     "InvalidParameterError",
+    "StepBudgetError",
     "TSDynamicsError",
     "invalid_value",
 ]
@@ -127,6 +129,23 @@ class ConvergenceError(TSDynamicsError, RuntimeError):
     budget, and for an integration that diverged.  Subclasses
     :class:`RuntimeError` so existing ``except RuntimeError`` handlers (the
     divergence convention) keep working.
+    """
+
+
+class StepBudgetError(ConvergenceError):
+    """An integration ran out of solver steps while its state stayed finite.
+
+    The *stalled*, not *diverged*, half of "the run did not reach the final
+    time".  The engine caps the number of solver steps it will spend on one
+    output segment; hitting that cap with a perfectly finite state means the
+    model is fine and the **solver settings** are not — an explicit method on a
+    stiff problem, or a tolerance tighter than the dynamics can meet.  The
+    remedy is a looser ``rtol``/``atol``, an implicit ``method="bdf"``, or a
+    shorter span; it is *not* to go hunting for a blow-up.
+
+    Subclasses :class:`ConvergenceError` (and so :class:`RuntimeError`), so
+    every handler that already catches engine divergence keeps catching this —
+    the split is additive, for callers that want to tell the two apart.
     """
 
 

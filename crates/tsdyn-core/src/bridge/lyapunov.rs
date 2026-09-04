@@ -18,6 +18,7 @@ use tsdyn_solvers::Solver;
 
 use super::marshal::{
     build_evaluator, build_solver, require_jacobian_if_needed, resolve_solver, EngineError,
+    Tolerances,
 };
 
 /// Map a [`LyapunovError`] (a kernel-side shape / divergence failure) to the
@@ -27,6 +28,8 @@ fn to_engine_err(e: LyapunovError) -> EngineError {
     match e {
         LyapunovError::BadShape(m) => EngineError::BadShape(m),
         LyapunovError::Diverged(m) => EngineError::Diverged(m),
+        LyapunovError::StepBudget(m) => EngineError::StepBudget(m),
+        LyapunovError::Interrupted => EngineError::Interrupted,
     }
 }
 
@@ -60,12 +63,14 @@ pub fn lyapunov_spectrum_ode_bridge(
     // The extended tape is `n_state == ev.dim()` (a plain ODE-shaped tape over the
     // stacked state), validated by the kernel against `dim*(k+1)`. Resolve the
     // method + the Jacobian guard exactly like the integrate / basin paths.
+    let tol = Tolerances::new(rtol, atol)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
     let ev = build_evaluator(tape, jit)?;
     // A fresh kernel per `dt` chunk (mirrors `OdeStepper::advance` / the basin
-    // march); the name is a registry name, so `build_solver` always succeeds.
-    let factory = move || -> Box<dyn Solver> { build_solver(name, rtol, atol) };
+    // march); the name is a registry name and the tolerances are validated, so
+    // `build_solver` always succeeds.
+    let factory = move || -> Box<dyn Solver> { build_solver(name, tol) };
     lyapunov_spectrum_ode(&*ev, factory, p, dim, k, z0, t0, dt, burn_in, final_time)
         .map_err(to_engine_err)
 }
@@ -158,5 +163,35 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, EngineError::UnknownMethod(_)), "got {err:?}");
+    }
+
+    /// The Benettin loop integrates each `dt` chunk with the requested kernel, so
+    /// an inadmissible tolerance must be rejected up front rather than yielding a
+    /// plausible-looking but under-resolved spectrum.
+    #[test]
+    fn bridge_rejects_bad_tolerances() {
+        let z0 = vec![1.0, 1.0, 1.0, 0.0, 0.0, 1.0];
+        for (rtol, atol) in [(-1.0, 1e-9), (1e-6, f64::NAN), (0.0, 0.0)] {
+            let err = lyapunov_spectrum_ode_bridge(
+                linear_extended(0.5, -2.0, 2),
+                &[],
+                "rk45",
+                rtol,
+                atol,
+                2,
+                2,
+                &z0,
+                0.0,
+                0.1,
+                1.0,
+                1.0,
+                false,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, EngineError::InvalidParameter(_)),
+                "rtol = {rtol}, atol = {atol}: got {err:?}"
+            );
+        }
     }
 }

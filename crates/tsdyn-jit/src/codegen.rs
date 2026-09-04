@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 
-use cranelift_codegen::ir::{types, AbiParam, FuncRef, InstBuilder, MemFlags, Value};
+use cranelift_codegen::ir::{types, AbiParam, FuncRef, InstBuilder, MemFlagsData, Value};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -288,6 +288,8 @@ fn build_body(
     ctx: &mut Context,
     fctx: &mut FunctionBuilderContext,
 ) {
+    // Read before `bcx` borrows `ctx.func`: `finalize` needs it (cranelift 0.135).
+    let target_config = module.target_config();
     let mut bcx = FunctionBuilder::new(&mut ctx.func, fctx);
 
     let entry = bcx.create_block();
@@ -315,7 +317,13 @@ fn build_body(
     // reachability guarantees any register read by a needed instruction is `Some`.
     let mut regs: Vec<Option<Value>> = vec![None; n];
     let mut frefs: HashMap<Op, FuncRef> = HashMap::new();
-    let flags = MemFlags::trusted();
+    // cranelift 0.135 split memory-operation flags into the value type
+    // `MemFlagsData` and an interned handle `MemFlags`; `InstBuilder::load` /
+    // `store` take `impl Into<MemFlagsData>`, so the value is passed directly.
+    // `trusted()` is unchanged in meaning — aligned and non-trapping — which is
+    // what every load/store here is: a packed `f64` array element whose bounds
+    // the FFI boundary has already checked.
+    let flags = MemFlagsData::trusted();
 
     let ops = tape.ops();
     let a = tape.a();
@@ -415,7 +423,7 @@ fn build_body(
     }
 
     bcx.ins().return_(&[]);
-    bcx.finalize();
+    bcx.finalize(target_config);
 }
 
 /// Byte offset of the `index`-th `f64` in a packed array.

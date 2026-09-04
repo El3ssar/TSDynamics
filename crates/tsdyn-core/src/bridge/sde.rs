@@ -11,7 +11,7 @@ use tsdyn_engine::{sde_ensemble_final as engine_sde_ensemble, sde_integrate_grid
 use tsdyn_ir::Tape;
 use tsdyn_solvers::sde::{self, SdeKernel};
 
-use super::marshal::{build_evaluator, sde_diverge_msg, validate_grid, EngineError};
+use super::marshal::{build_evaluator, sde_failure, validate_grid, EngineError};
 
 /// Resolve a `method=` string to an SDE-kernel factory (case-insensitively),
 /// validating that the diffusion tape carries `∂g/∂u` when the scheme needs it.
@@ -96,7 +96,7 @@ fn check_sde_tapes(drift: &Tape, diffusion: &Tape, p: &[f64]) -> Result<usize, E
 /// validate at the boundary so it is a clean error, not a `PanicException`.
 fn check_sde_dt(dt: f64) -> Result<(), EngineError> {
     if !(dt.is_finite() && dt > 0.0) {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "SDE step dt must be finite and positive; got {dt}"
         )));
     }
@@ -150,7 +150,7 @@ pub fn sde_integrate_dense(
         t_eval,
         &cfg,
     )
-    .map_err(|e| EngineError::Diverged(sde_diverge_msg(&e)))
+    .map_err(sde_failure)
 }
 
 /// Integrate a batch of SDE initial conditions to `t1` in parallel, returning
@@ -178,7 +178,7 @@ pub fn sde_ensemble_final(
     let dim = check_sde_tapes(&drift, &diffusion, p)?;
     check_sde_dt(dt)?;
     if !(t0.is_finite() && t1.is_finite()) {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "integration times must be finite; got t0 = {t0}, t1 = {t1}"
         )));
     }
@@ -186,7 +186,7 @@ pub fn sde_ensemble_final(
     // step and silently return the unchanged ICs. Reject it (mirroring the ODE
     // ensemble) rather than return stale ICs as a successful batch.
     if t1 < t0 {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "backward integration is not supported (t1 = {t1} < t0 = {t0}); request t1 >= t0."
         )));
     }

@@ -10,7 +10,7 @@
 
 use tsdyn_engine::{EventDirection, IntegrateError, MapError, SdeError};
 use tsdyn_ir::{Evaluator, Op, Tape};
-use tsdyn_jit::JitEvaluator;
+use tsdyn_jit::{cached_evaluator, SharedJitEvaluator};
 use tsdyn_solvers::explicit::{Bs3, CashKarp, Dop853, HeunEuler, Rk45, Rkf45, Tsit5};
 use tsdyn_solvers::implicit::{
     BackwardEuler, Bdf, ImplicitMidpoint, RosenbrockW, Sdirk2, TrBdf2, Trapezoid,
@@ -22,7 +22,11 @@ use tsdyn_vm::Interpreter;
 ///
 /// Python-free so the numeric core stays testable without pyo3; the binding
 /// layer ([`crate::to_py_err`]) maps each variant to the matching Python
-/// exception (`ValueError` / `NotImplementedError` / `RuntimeError`).
+/// exception — the stdlib `ValueError` / `NotImplementedError` / `RuntimeError`
+/// for the structural failures, and the library's own typed
+/// `tsdynamics.errors.InvalidParameterError` / `ConvergenceError` (subclasses of
+/// `ValueError` / `RuntimeError`, so the stdlib `except` clauses keep working)
+/// for a rejected option value and for divergence.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EngineError {
     /// The wire arrays do not form a well-formed tape (the [`tsdyn_ir::IrError`]
@@ -31,6 +35,18 @@ pub enum EngineError {
     /// A buffer length disagrees with the tape (state/param width, ODE shape). →
     /// `ValueError`.
     BadShape(String),
+    /// A scalar *option* is outside its admissible domain — a non-finite or
+    /// negative `rtol`/`atol`, an unsatisfiable tolerance pair, a non-positive
+    /// step / cadence / delay, a non-finite or backwards integration window, an
+    /// out-of-range event direction. →
+    /// `tsdynamics.errors.InvalidParameterError` (a `ValueError` subclass).
+    ///
+    /// The dividing line against [`BadShape`](EngineError::BadShape) is
+    /// deliberate and worth keeping: `BadShape` is about the *geometry* of the
+    /// call (buffer lengths, dimensions, tape structure — what a caller fixes by
+    /// reshaping), `InvalidParameter` about the *value* of a knob (what a caller
+    /// fixes by passing a different number).
+    InvalidParameter(String),
     /// No solver kernel is registered under the requested `method=` name. →
     /// `ValueError`.
     UnknownMethod(String),
@@ -41,8 +57,32 @@ pub enum EngineError {
     /// or codegen failure, distinct from a malformed tape. → `RuntimeError`.
     JitCompile(String),
     /// The trajectory diverged or the step collapsed before the target time (the
-    /// "diverge loudly" contract). → `RuntimeError`.
+    /// "diverge loudly" contract). → `tsdynamics.errors.ConvergenceError` (a
+    /// `RuntimeError` subclass).
     Diverged(String),
+    /// The run exhausted its per-segment step budget **with a finite state** —
+    /// it stalled, it did not blow up. →
+    /// `tsdynamics.errors.StepBudgetError` (a `ConvergenceError` subclass,
+    /// so `except ConvergenceError` / `except RuntimeError` keep catching it).
+    ///
+    /// Kept distinct from [`Diverged`](EngineError::Diverged) because the two
+    /// have different remedies: a divergence means the equations or the initial
+    /// condition are wrong, a step-budget exhaustion means the *solver settings*
+    /// are wrong for a model that is perfectly well behaved.
+    StepBudget(String),
+    /// The embedder's interrupt hook stopped the run — a Ctrl-C at the Python
+    /// prompt. → whatever the signal handler raised (normally
+    /// `KeyboardInterrupt`), re-raised verbatim by the binding layer.
+    ///
+    /// Carries no message: the exception is the embedder's, not the engine's.
+    Interrupted,
+    /// An output buffer could not be allocated. → `MemoryError`.
+    ///
+    /// The failure this replaces was not an exception at all: an unservable
+    /// `steps × dim` request reached `vec![0.0; n]`, whose allocation-error
+    /// handler **aborts the process**. `MemoryError` is what Python raises for
+    /// a failed allocation, so a caller can catch it and back off.
+    OutOfMemory(String),
 }
 
 impl core::fmt::Display for EngineError {
@@ -50,10 +90,14 @@ impl core::fmt::Display for EngineError {
         match self {
             EngineError::BadTape(m)
             | EngineError::BadShape(m)
+            | EngineError::InvalidParameter(m)
             | EngineError::UnknownMethod(m)
             | EngineError::Unsupported(m)
             | EngineError::JitCompile(m)
-            | EngineError::Diverged(m) => f.write_str(m),
+            | EngineError::Diverged(m)
+            | EngineError::StepBudget(m)
+            | EngineError::OutOfMemory(m) => f.write_str(m),
+            EngineError::Interrupted => f.write_str("the engine call was interrupted"),
         }
     }
 }
@@ -111,7 +155,8 @@ impl Evaluator for VmEvaluator {
     }
 }
 
-/// Build the [`Evaluator`] a run drives: the Cranelift JIT ([`JitEvaluator`])
+/// Build the [`Evaluator`] a run drives: the Cranelift JIT
+/// ([`JitEvaluator`](tsdyn_jit::JitEvaluator))
 /// when `jit`, else the zero-warmup interpreter ([`VmEvaluator`]).
 ///
 /// This is the seam decision D2 hangs on — both back the *same* [`Evaluator`]
@@ -123,10 +168,22 @@ impl Evaluator for VmEvaluator {
 /// freely across the rayon ensemble workers. A Cranelift build failure (host ISA
 /// / codegen) surfaces as [`EngineError::JitCompile`]; the interpreter never
 /// fails to build.
+///
+/// # The JIT branch goes through the compiled-evaluator cache
+///
+/// Every FFI entry point builds its evaluator here, so a bare
+/// `JitEvaluator::new` meant Cranelift re-ran over the whole tape on *every*
+/// call — ~0.13 ms for Lorenz, ~296 ms for a Gray–Scott field, paid before the
+/// first step. [`tsdyn_jit::cached_evaluator`] compiles once per distinct tape
+/// and shares the result (keyed on full [`Tape`] equality, so a changed constant
+/// / opcode / Jacobian flag is a miss, never a stale hit). It is the exact
+/// analogue of the Python `lower_*_cached` tape cache one layer up, and it is
+/// answer-preserving: the same tape compiles to the same code, so `interp ==
+/// jit` stays bit-for-bit.
 pub(super) fn build_evaluator(tape: Tape, jit: bool) -> Result<Box<dyn Evaluator>, EngineError> {
     if jit {
-        let ev = JitEvaluator::new(&tape).map_err(|e| EngineError::JitCompile(e.to_string()))?;
-        Ok(Box::new(ev))
+        let ev = cached_evaluator(&tape).map_err(|e| EngineError::JitCompile(e.to_string()))?;
+        Ok(Box::new(SharedJitEvaluator::new(ev)))
     } else {
         Ok(Box::new(VmEvaluator::new(tape)))
     }
@@ -146,8 +203,8 @@ pub(super) fn build_evaluator_send(
     jit: bool,
 ) -> Result<Box<dyn Evaluator + Send>, EngineError> {
     if jit {
-        let ev = JitEvaluator::new(&tape).map_err(|e| EngineError::JitCompile(e.to_string()))?;
-        Ok(Box::new(ev))
+        let ev = cached_evaluator(&tape).map_err(|e| EngineError::JitCompile(e.to_string()))?;
+        Ok(Box::new(SharedJitEvaluator::new(ev)))
     } else {
         Ok(Box::new(VmEvaluator::new(tape)))
     }
@@ -235,10 +292,77 @@ pub fn resolve_solver(method: &str) -> Result<&'static str, EngineError> {
     )))
 }
 
-/// Build a fresh boxed solver for a **registered** name, applying the user's
-/// tolerances where the kernel supports them.
+/// A **validated** adaptive-controller tolerance pair.
 ///
-/// `name` must already be a registry name (from [`resolve_solver`]). Every
+/// A newtype rather than a bare `(f64, f64)` so that a solver cannot be built
+/// from unchecked tolerances: [`build_solver`] takes `Tolerances`, and the only
+/// way to obtain one is [`Tolerances::new`]. Every continuous entry point
+/// (ODE / DDE / events / stepper / ensemble / basin / Lyapunov) therefore
+/// validates its `rtol`/`atol` by construction — the guard cannot be forgotten on
+/// a new surface, which is exactly how it came to be missing everywhere.
+///
+/// # Why these rules
+///
+/// The built-in adaptive controllers form the per-component error scale
+/// `sc_i = atol + rtol·|u_i|` and accept a step when the scaled RMS of the
+/// embedded error estimate is `≤ 1`. That gives two admissibility rules:
+///
+/// * **Each tolerance must be finite and non-negative.** A *negative* `rtol` (a
+///   sign typo) makes `sc_i` negative, the scaled error negative, and the test
+///   `err ≤ 1` vacuously true — the controller degenerates to *always accept* and
+///   silently returns a low-order answer indistinguishable from `rtol = 1e6`. A
+///   `NaN` makes every comparison false, so every step is rejected and the step
+///   size collapses to zero, which surfaces as a bogus "diverged" report.
+/// * **They must not both be zero.** `rtol = atol = 0` makes `sc_i = 0` and the
+///   error test unsatisfiable, so the step collapses to zero at `t0` and the run
+///   is reported as a divergence that never happened.
+///
+/// Exactly one of the two *may* be zero: `atol = 0` is pure relative control and
+/// `rtol = 0` pure absolute control, both standard (and both accepted by SciPy),
+/// so neither is rejected here.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tolerances {
+    rtol: f64,
+    atol: f64,
+}
+
+impl Tolerances {
+    /// Validate a `(rtol, atol)` pair, rejecting the values the error controller
+    /// cannot act on (see the type docs) as [`EngineError::InvalidParameter`].
+    pub fn new(rtol: f64, atol: f64) -> Result<Self, EngineError> {
+        for (name, value) in [("rtol", rtol), ("atol", atol)] {
+            if !(value.is_finite() && value >= 0.0) {
+                return Err(EngineError::InvalidParameter(format!(
+                    "{name} must be finite and >= 0; got {value}"
+                )));
+            }
+        }
+        if rtol == 0.0 && atol == 0.0 {
+            return Err(EngineError::InvalidParameter(
+                "rtol and atol must not both be 0 (the error test would be unsatisfiable and \
+                 the step size would collapse to zero); got rtol = 0, atol = 0"
+                    .to_string(),
+            ));
+        }
+        Ok(Tolerances { rtol, atol })
+    }
+
+    /// The validated relative tolerance.
+    pub fn rtol(&self) -> f64 {
+        self.rtol
+    }
+
+    /// The validated absolute tolerance.
+    pub fn atol(&self) -> f64 {
+        self.atol
+    }
+}
+
+/// Build a fresh boxed solver for a **registered** name, applying the user's
+/// (already validated) tolerances where the kernel supports them.
+///
+/// `name` must already be a registry name (from [`resolve_solver`]) and `tol` a
+/// checked [`Tolerances`]. Every
 /// built-in *adaptive* kernel — the explicit family (`rk45`/`tsit5`/`dop853`) and
 /// the implicit family (`rosenbrock`/`trbdf2`/`bdf`) — owns its `rtol`/`atol` (the
 /// frozen `Solver::step` carries none), so each is constructed through its
@@ -248,7 +372,8 @@ pub fn resolve_solver(method: &str) -> Result<&'static str, EngineError> {
 /// plugin generically is the `solvers` layer's job (stream C-SOLV). This keeps the
 /// open registry intact (a new kernel is still selectable) while no built-in
 /// adaptive method silently ignores the user's tolerances.
-pub fn build_solver(name: &'static str, rtol: f64, atol: f64) -> Box<dyn Solver> {
+pub fn build_solver(name: &'static str, tol: Tolerances) -> Box<dyn Solver> {
+    let (rtol, atol) = (tol.rtol(), tol.atol());
     match name {
         // Every built-in *adaptive* kernel — explicit and implicit — owns its
         // error tolerances, so build it through `with_tolerances` to honour the
@@ -359,23 +484,39 @@ pub(super) fn first_step_from_grid(t_eval: &[f64]) -> f64 {
         .unwrap_or(1e-3)
 }
 
-/// Validate an output grid: every time finite and the grid non-decreasing.
+/// Validate an output grid: non-empty, every time finite, and non-decreasing.
 ///
 /// The engine enforces monotonicity only with a `debug_assert!` (stripped from
 /// the shipped release wheel) and treats a non-finite first step as a
 /// hard-`assert!` caller error. Without this check a descending grid would
 /// silently return stale rows in release, and a non-finite time (e.g. an `inf`
 /// grid gap) would trip the engine assert into a `PanicException`. Validating
-/// here turns both into a clean `EngineError::BadShape` (→ `ValueError`).
+/// here turns both into a clean [`EngineError::InvalidParameter`]
+/// (→ `tsdynamics.errors.InvalidParameterError`): the *values* in the grid are
+/// wrong, and no amount of reshaping fixes an `inf` or an out-of-order time.
+///
+/// An **empty** grid is rejected too, and that one *is* a
+/// [`BadShape`](EngineError::BadShape): every dense entry point documents that
+/// the first returned row is the initial condition, which an empty grid cannot
+/// honour — it returns a `(0, dim)` buffer, so the caller silently loses the ICs
+/// it asked to integrate from instead of being told the grid is degenerate. The
+/// fix there is to pass a grid with samples in it, i.e. to change its shape.
 pub(super) fn validate_grid(t_eval: &[f64]) -> Result<(), EngineError> {
+    if t_eval.is_empty() {
+        return Err(EngineError::BadShape(
+            "t_eval must have at least one sample (the first output row is the initial \
+             condition); got an empty grid"
+                .to_string(),
+        ));
+    }
     if let Some(&t) = t_eval.iter().find(|t| !t.is_finite()) {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "t_eval must be all finite; found {t}"
         )));
     }
     for (i, w) in t_eval.windows(2).enumerate() {
         if w[1] < w[0] {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "t_eval must be non-decreasing; t_eval[{}] = {} < t_eval[{i}] = {}",
                 i + 1,
                 w[1],
@@ -392,29 +533,75 @@ pub(super) fn event_direction(direction: i32) -> Result<EventDirection, EngineEr
         1 => Ok(EventDirection::Rising),
         -1 => Ok(EventDirection::Falling),
         0 => Ok(EventDirection::Either),
-        other => Err(EngineError::BadShape(format!(
+        other => Err(EngineError::InvalidParameter(format!(
             "event direction must be +1 (rising), -1 (falling) or 0 (either), got {other}"
         ))),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Divergence messages
+// Classifying an engine failure
 // ---------------------------------------------------------------------------
 
-/// Prefix the engine's diverge message so the Python `RuntimeError` reads clearly.
-pub(super) fn diverge_msg(e: &IntegrateError) -> String {
-    format!("integration diverged before reaching the final time: {e}")
+/// What a caller should try when a run exhausted its step budget.
+///
+/// Deliberately part of the message rather than left to the docs: the whole
+/// point of separating this from divergence is that the *remedy* differs, so
+/// the error has to say what it is.
+const STEP_BUDGET_ADVICE: &str = "the state is still finite, so this is a stalled run rather than \
+     a divergence: the kernel is taking steps far smaller than the span needs. \
+     Try a looser rtol/atol, an implicit method (method='bdf') if the system is \
+     stiff, or a shorter integration span";
+
+/// Classify an [`IntegrateError`] into the [`EngineError`] its cause implies.
+///
+/// The distinction this function exists to draw is
+/// [`IntegrateError::StepLimit`] vs everything else. Hitting the per-segment
+/// step cap **with a finite state** is not a divergence — the model is fine and
+/// the budget ran out — but it used to be reported as
+/// `"integration diverged before reaching the final time: hit the 100000000-step
+/// limit"`, which tells a user with a merely stiff or over-tight problem to go
+/// looking for a blow-up that is not there (and, since the cap is per output
+/// segment, only after tens of seconds of grinding). It now gets its own
+/// variant and its own advice.
+pub(super) fn integrate_failure(e: IntegrateError) -> EngineError {
+    match e {
+        IntegrateError::StepLimit { .. } => EngineError::StepBudget(format!(
+            "integration did not reach the final time: {e} — {STEP_BUDGET_ADVICE}"
+        )),
+        IntegrateError::Interrupted { .. } => EngineError::Interrupted,
+        IntegrateError::AllocFailed(a) => EngineError::OutOfMemory(a.to_string()),
+        IntegrateError::NonFinite { .. }
+        | IntegrateError::StepCollapsed { .. }
+        | IntegrateError::Escaped { .. } => EngineError::Diverged(format!(
+            "integration diverged before reaching the final time: {e}"
+        )),
+    }
 }
 
-/// Prefix the engine's map-divergence message, mirroring [`diverge_msg`].
-pub(super) fn map_diverge_msg(e: &MapError) -> String {
-    format!("map diverged before completing all iterations: {e}")
+/// Classify a [`MapError`], mirroring [`integrate_failure`].
+pub(super) fn map_failure(e: MapError) -> EngineError {
+    match e {
+        MapError::Interrupted { .. } => EngineError::Interrupted,
+        MapError::AllocFailed(a) => EngineError::OutOfMemory(a.to_string()),
+        MapError::NonFinite { .. } => EngineError::Diverged(format!(
+            "map diverged before completing all iterations: {e}"
+        )),
+    }
 }
 
-/// Prefix the engine's SDE-divergence message, mirroring [`diverge_msg`].
-pub(super) fn sde_diverge_msg(e: &SdeError) -> String {
-    format!("SDE integration diverged before reaching the final time: {e}")
+/// Classify an [`SdeError`], mirroring [`integrate_failure`].
+pub(super) fn sde_failure(e: SdeError) -> EngineError {
+    match e {
+        SdeError::StepLimit { .. } => EngineError::StepBudget(format!(
+            "SDE integration did not reach the final time: {e} — {STEP_BUDGET_ADVICE}"
+        )),
+        SdeError::Interrupted { .. } => EngineError::Interrupted,
+        SdeError::AllocFailed(a) => EngineError::OutOfMemory(a.to_string()),
+        SdeError::NonFinite { .. } => EngineError::Diverged(format!(
+            "SDE integration diverged before reaching the final time: {e}"
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -487,5 +674,101 @@ mod tests {
 
         assert!(matches!(slice_err, EngineError::BadTape(_)));
         assert_eq!(slice_err, move_err);
+    }
+
+    // -----------------------------------------------------------------------
+    // Tolerance validation (WP1)
+    // -----------------------------------------------------------------------
+
+    /// A negative tolerance makes the controller's error scale negative and the
+    /// step test vacuously true — it would always accept, silently degrading the
+    /// answer with no diagnostic. Reject it, naming the value.
+    #[test]
+    fn tolerances_reject_negative() {
+        for (rtol, atol, offender) in [(-1.0, 1e-9, "rtol"), (1e-6, -1e-9, "atol")] {
+            let err = Tolerances::new(rtol, atol).expect_err("must reject");
+            let msg = err.to_string();
+            assert!(
+                matches!(err, EngineError::InvalidParameter(_)),
+                "got {err:?}"
+            );
+            assert!(msg.starts_with(offender), "message must name it: {msg}");
+            assert!(
+                msg.contains(if offender == "rtol" {
+                    "-1"
+                } else {
+                    "-0.000000001"
+                }),
+                "message must quote the value: {msg}"
+            );
+        }
+    }
+
+    /// A non-finite tolerance makes every comparison false, so every step is
+    /// rejected and the step collapses — reported today as a bogus divergence.
+    #[test]
+    fn tolerances_reject_non_finite() {
+        for (rtol, atol) in [
+            (f64::NAN, 1e-9),
+            (1e-6, f64::NAN),
+            (f64::INFINITY, 1e-9),
+            (1e-6, f64::INFINITY),
+        ] {
+            let err = Tolerances::new(rtol, atol).expect_err("must reject");
+            assert!(
+                matches!(err, EngineError::InvalidParameter(_)),
+                "got {err:?}"
+            );
+        }
+    }
+
+    /// `rtol = atol = 0` is unsatisfiable, not a divergence.
+    #[test]
+    fn tolerances_reject_both_zero() {
+        let err = Tolerances::new(0.0, 0.0).expect_err("must reject");
+        let msg = err.to_string();
+        assert!(
+            matches!(err, EngineError::InvalidParameter(_)),
+            "got {err:?}"
+        );
+        assert!(msg.contains("rtol") && msg.contains("atol"), "{msg}");
+    }
+
+    /// Exactly one zero is legitimate error control (pure relative / pure
+    /// absolute), so it must stay accepted.
+    #[test]
+    fn tolerances_accept_one_zero_and_ordinary_values() {
+        for (rtol, atol) in [(1e-6, 0.0), (0.0, 1e-9), (1e-6, 1e-9)] {
+            let tol = Tolerances::new(rtol, atol).expect("must accept");
+            assert_eq!(tol.rtol(), rtol);
+            assert_eq!(tol.atol(), atol);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Output-grid validation
+    // -----------------------------------------------------------------------
+
+    /// An empty grid cannot honour "the first row is the initial condition"; it
+    /// used to be accepted and return a `(0, dim)` buffer.
+    #[test]
+    fn validate_grid_rejects_empty() {
+        let err = validate_grid(&[]).expect_err("must reject");
+        assert!(matches!(err, EngineError::BadShape(_)), "got {err:?}");
+        assert!(err.to_string().contains("t_eval"), "{err}");
+    }
+
+    /// The pre-existing grid rules still hold (a single sample is fine).
+    #[test]
+    fn validate_grid_accepts_single_sample_and_rejects_descending() {
+        validate_grid(&[0.0]).expect("one sample is a valid grid");
+        assert!(matches!(
+            validate_grid(&[0.0, 1.0, 0.5]).expect_err("descending"),
+            EngineError::InvalidParameter(_)
+        ));
+        assert!(matches!(
+            validate_grid(&[0.0, f64::INFINITY]).expect_err("non-finite"),
+            EngineError::InvalidParameter(_)
+        ));
     }
 }

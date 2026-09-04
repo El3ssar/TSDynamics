@@ -47,7 +47,8 @@
 use tsdyn_ir::Evaluator;
 use tsdyn_solvers::{Solver, SolverState, StepOutcome};
 
-use crate::integrate::{IntegrateConfig, IntegrateError};
+use crate::integrate::{classify_escape, IntegrateConfig, IntegrateError, OVERFLOW_SCALE};
+use crate::interrupt::Poller;
 
 /// Abscissa tolerance for the in-bracket crossing solve, in the local step
 /// fraction `s ∈ [0, 1]`. Tight enough that the O(h⁴) interpolation error — not
@@ -378,10 +379,17 @@ pub fn advance_to_event(
     let mut u0_local = vec![0.0; dim];
     let mut ubuf = vec![0.0; dim];
     let mut steps = 0usize;
+    // The event march is a step loop like `integrate::advance_to`, and gets the
+    // same interrupt cadence: a Poincaré section over a long span is one of the
+    // engine calls most likely to be waiting on a Ctrl-C.
+    let mut poll = Poller::new();
 
     while st.t < t1 {
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
+        }
+        if poll.tick() {
+            return Err(IntegrateError::Interrupted { t: st.t });
         }
         let t0_local = st.t;
         u0_local.copy_from_slice(&st.u);
@@ -392,8 +400,12 @@ pub fn advance_to_event(
 
         match solver.step(ev, st, h_try) {
             StepOutcome::Accepted { h_next } => {
-                if !st.u.iter().all(|x| x.is_finite()) || !st.t.is_finite() {
-                    return Err(IntegrateError::NonFinite { t: st.t });
+                // The same one-comparison-per-component escape guard the
+                // integrate loop runs (see `integrate::advance_to`): `NaN`,
+                // `±inf` and a merely escaping state all fail `|x| <
+                // OVERFLOW_SCALE`, and the cold `classify_escape` says which.
+                if !st.u.iter().all(|x| x.abs() < OVERFLOW_SCALE) || !st.t.is_finite() {
+                    return Err(classify_escape(&st.u, st.t));
                 }
                 if landing {
                     st.t = t1;
@@ -565,10 +577,15 @@ pub fn integrate_events(
     // each hit's owned `u` is a single copy of the identical refined state.
     let mut u_cross = vec![0.0; dim];
     let mut steps = 0usize;
+    // Same cadence and same escape guard as the single-event march above.
+    let mut poll = Poller::new();
 
     while st.t < t1 {
         if steps >= cfg.max_steps {
             return Err(IntegrateError::StepLimit { t: st.t, steps });
+        }
+        if poll.tick() {
+            return Err(IntegrateError::Interrupted { t: st.t });
         }
         let t0_local = st.t;
         u0_local.copy_from_slice(&st.u);
@@ -579,8 +596,8 @@ pub fn integrate_events(
 
         match solver.step(ev, &mut st, h_try) {
             StepOutcome::Accepted { h_next } => {
-                if !st.u.iter().all(|x| x.is_finite()) || !st.t.is_finite() {
-                    return Err(IntegrateError::NonFinite { t: st.t });
+                if !st.u.iter().all(|x| x.abs() < OVERFLOW_SCALE) || !st.t.is_finite() {
+                    return Err(classify_escape(&st.u, st.t));
                 }
                 if landing {
                     // Pin the time to the target so grid points never drift, and
@@ -1040,6 +1057,57 @@ mod tests {
         }
     }
 
+    /// An armed interrupt stops both event marches. A Poincaré section over a
+    /// long span is one of the engine's longest calls, and it has its own step
+    /// loops — the integrate loop's poller does not cover them.
+    #[test]
+    fn an_armed_interrupt_stops_both_event_marches() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        let ev = oscillator();
+        // A plane the harmonic oscillator (|x| <= 1) never reaches, so the march
+        // runs the whole span — far more than one poll stride at this step size.
+        let g = plane_event(2, 0, 1e9);
+        let conf = cfg(1e-3);
+
+        let mut s = Rk4::new();
+        let err = integrate_events(
+            &ev,
+            &mut s,
+            &[1.0, 0.0],
+            &[],
+            0.0,
+            1e4,
+            &[EventSpec::new(&g, EventDirection::Rising)],
+            &conf,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, IntegrateError::Interrupted { .. }),
+            "integrate_events: got {err:?}"
+        );
+
+        let mut s = Rk4::new();
+        let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+        let mut h = conf.first_step;
+        let err = advance_to_event(
+            &ev,
+            &mut s,
+            &mut st,
+            &mut h,
+            1e4,
+            &g,
+            EventDirection::Rising,
+            &conf,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, IntegrateError::Interrupted { .. }),
+            "advance_to_event: got {err:?}"
+        );
+    }
+
     #[test]
     fn divergence_during_event_search_is_reported() {
         // dx/dt = x² blows up at t = 1; integrating past it must error, not
@@ -1061,8 +1129,15 @@ mod tests {
             &cfg(0.01),
         )
         .unwrap_err();
+        // The event march runs the integrate loop's escape guard, so a blow-up
+        // is normally caught at `OVERFLOW_SCALE` (`Escaped`) rather than at an
+        // actual `inf` (`NonFinite`) — both are correct reports of the same
+        // divergence; what must never happen is a silent finite answer.
         assert!(
-            matches!(err, IntegrateError::NonFinite { .. }),
+            matches!(
+                err,
+                IntegrateError::NonFinite { .. } | IntegrateError::Escaped { .. }
+            ),
             "got {err:?}"
         );
     }
@@ -1552,8 +1627,12 @@ mod tests {
             &conf,
         )
         .unwrap_err();
+        // Either escape report is correct — see the note on the sibling test.
         assert!(
-            matches!(err, IntegrateError::NonFinite { .. }),
+            matches!(
+                err,
+                IntegrateError::NonFinite { .. } | IntegrateError::Escaped { .. }
+            ),
             "got {err:?}"
         );
     }

@@ -11,7 +11,7 @@ use tsdyn_engine::{
 };
 use tsdyn_ir::Tape;
 
-use super::marshal::{build_evaluator, map_diverge_msg, EngineError};
+use super::marshal::{build_evaluator, map_failure, EngineError};
 
 /// Iterate a discrete-map tape for `steps` steps from `ic`, returning the state
 /// after each step as a flat row-major `(steps, dim)` buffer.
@@ -72,8 +72,7 @@ pub fn iterate_map(
     // so the parameter slice is empty; the guards above stand in for the engine
     // loop's release-stripped `debug_assert!`s.
     let ev = build_evaluator(tape, jit)?;
-    iterate_dense(&*ev, &ic[..dim], &[], steps)
-        .map_err(|e| EngineError::Diverged(map_diverge_msg(&e)))
+    iterate_dense(&*ev, &ic[..dim], &[], steps).map_err(map_failure)
 }
 
 /// Iterate a batch of map initial conditions to their `f^{steps}` in parallel,
@@ -136,6 +135,8 @@ pub fn map_ensemble_final(
 fn sweep_to_engine_err(e: SweepError) -> EngineError {
     match e {
         SweepError::BadShape(m) => EngineError::BadShape(m),
+        SweepError::AllocFailed(a) => EngineError::OutOfMemory(a.to_string()),
+        SweepError::Interrupted { .. } => EngineError::Interrupted,
     }
 }
 

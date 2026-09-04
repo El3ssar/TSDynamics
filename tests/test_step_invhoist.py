@@ -132,7 +132,7 @@ def test_step_keeps_make_output_grid_footgun_guards():
     sys = ts.Rossler()
     sys.reinit([1.0, 1.0, 1.0])
     for bad in (0.0, -1.0):
-        with pytest.raises(InvalidParameterError, match="dt must be > 0"):
+        with pytest.raises(InvalidParameterError, match="dt must be finite and > 0"):
             sys.step(bad)
 
     # A start time so large that ``t0 + dt == t0`` is a non-forward window — the

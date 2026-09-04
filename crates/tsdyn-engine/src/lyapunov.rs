@@ -31,7 +31,8 @@
 use tsdyn_ir::Evaluator;
 use tsdyn_solvers::Solver;
 
-use crate::integrate::{integrate_grid, IntegrateConfig, IntegrateError};
+use crate::integrate::{integrate_grid_polled, IntegrateConfig, IntegrateError};
+use crate::interrupt::Poller;
 
 /// Why a Lyapunov run could not be set up or completed.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,12 +43,27 @@ pub enum LyapunovError {
     /// The extended variational integration diverged or the step collapsed before
     /// the run completed (the "diverge loudly" contract).
     Diverged(String),
+    /// The run exhausted a chunk's solver-step budget with a finite state — it
+    /// stalled rather than blew up. Distinct from
+    /// [`Diverged`](LyapunovError::Diverged) for the same reason the integrate
+    /// loop distinguishes them: the remedy is a solver knob, not a fix to the
+    /// equations.
+    StepBudget(String),
+    /// The embedder's interrupt hook stopped the run (a Ctrl-C at the Python
+    /// prompt). This used to be *reported as a divergence*: the chunk loop
+    /// funnelled every [`IntegrateError`] into
+    /// [`Diverged`](LyapunovError::Diverged), so an interrupted spectrum came
+    /// back as "your system blew up".
+    Interrupted,
 }
 
 impl core::fmt::Display for LyapunovError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            LyapunovError::BadShape(m) | LyapunovError::Diverged(m) => f.write_str(m),
+            LyapunovError::BadShape(m)
+            | LyapunovError::Diverged(m)
+            | LyapunovError::StepBudget(m) => f.write_str(m),
+            LyapunovError::Interrupted => f.write_str("interrupted"),
         }
     }
 }
@@ -122,6 +138,7 @@ fn advance_chunk<F>(
     t: f64,
     dt: f64,
     p: &[f64],
+    poll: &mut Poller,
 ) -> Result<(), IntegrateError>
 where
     F: Fn() -> Box<dyn Solver>,
@@ -133,7 +150,10 @@ where
     // First step is the grid-derived `tf - t` (NOT raw `dt`), matching
     // `OdeStepper::advance` / the basin march exactly.
     let cfg = IntegrateConfig::new(tf - t);
-    let out = integrate_grid(ev, &mut *solver, &z[..n], p, &t_eval, &cfg)?;
+    // The caller's poller, not a fresh one: a chunk is a handful of solver
+    // steps, so a per-chunk poller would reset long before a stride and a
+    // multi-minute spectrum would never check for signals.
+    let out = integrate_grid_polled(ev, &mut *solver, &z[..n], p, &t_eval, &cfg, poll)?;
     // `out` is the flat `(2, n)` buffer; the last row is the advanced state.
     z.copy_from_slice(&out[n..2 * n]);
     Ok(())
@@ -247,12 +267,16 @@ where
     // 1e-12`), so the chunk count / residual-step structure is identical.
     const EPS: f64 = 1e-12;
 
+    // ONE poller for the whole run — burn-in and averaging window alike — so
+    // the polling cadence is one check per `POLL_STRIDE` *solver steps*, not
+    // per chunk (see `advance_chunk`).
+    let mut poll = Poller::new();
+
     // --- burn-in: advance + QR, no accumulation ---
     let t_burn = t0 + burn_in.max(0.0);
     while t < t_burn - EPS {
         let h = dt.min(t_burn - t);
-        advance_chunk(ev, &solver_factory, &mut z, t, h, p)
-            .map_err(|e| LyapunovError::Diverged(diverge_msg(&e)))?;
+        advance_chunk(ev, &solver_factory, &mut z, t, h, p, &mut poll).map_err(classify)?;
         if !renorm_step(&mut z, dim, k, &mut last_growths)? {
             return Err(LyapunovError::Diverged(
                 "extended variational state went non-finite during burn-in".to_string(),
@@ -266,8 +290,7 @@ where
     let t_end = t + final_time;
     while t < t_end - EPS {
         let h = dt.min(t_end - t);
-        advance_chunk(ev, &solver_factory, &mut z, t, h, p)
-            .map_err(|e| LyapunovError::Diverged(diverge_msg(&e)))?;
+        advance_chunk(ev, &solver_factory, &mut z, t, h, p, &mut poll).map_err(classify)?;
         if !renorm_step(&mut z, dim, k, &mut last_growths)? {
             return Err(LyapunovError::Diverged(
                 "extended variational state went non-finite during the averaging window"
@@ -318,6 +341,23 @@ fn renorm_step(
 /// `ConvergenceError` reads clearly.
 fn diverge_msg(e: &IntegrateError) -> String {
     format!("Lyapunov extended variational integration diverged: {e}")
+}
+
+/// Lift a chunk's [`IntegrateError`] to the Lyapunov error it actually means.
+///
+/// The chunk loop used to collapse *every* integrate failure into
+/// [`LyapunovError::Diverged`]. That was already wrong for a step-budget stall
+/// and became actively misleading once the loop could be interrupted: a Ctrl-C
+/// would have been reported to the user as a numerical blow-up.
+fn classify(e: IntegrateError) -> LyapunovError {
+    match e {
+        IntegrateError::Interrupted { .. } => LyapunovError::Interrupted,
+        IntegrateError::StepLimit { .. } => LyapunovError::StepBudget(format!(
+            "Lyapunov extended variational integration did not reach the end of a \
+             renormalisation chunk: {e}"
+        )),
+        other => LyapunovError::Diverged(diverge_msg(&other)),
+    }
 }
 
 #[cfg(test)]
@@ -472,5 +512,28 @@ mod tests {
         let err = lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, 1, &z0, 0.0, 0.05, 0.0, 10.0)
             .unwrap_err();
         assert!(matches!(err, LyapunovError::Diverged(_)), "got {err:?}");
+    }
+
+    /// An armed interrupt stops the chunk loop — and is reported *as* an
+    /// interrupt, not as the divergence this loop used to collapse every
+    /// integrate failure into.
+    ///
+    /// The poller is threaded down into the per-chunk `integrate_grid_polled`,
+    /// which is what makes this work at all: each chunk is a handful of solver
+    /// steps, so a poller created per chunk would reset before ever reaching a
+    /// stride and a multi-minute spectrum would never poll.
+    #[test]
+    fn an_armed_interrupt_stops_the_chunk_loop_and_is_not_called_a_divergence() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        // A stable 2-D linear flow (no divergence anywhere) integrated over a
+        // long window in tiny chunks, so the run needs far more than one poll
+        // stride of solver steps.
+        let ev = VmEval::new(linear_extended(-0.5, -1.0, 1));
+        let z0 = vec![1.0, 1.0, 1.0, 0.0];
+        let err = lyapunov_spectrum_ode(&ev, rk45_factory, &[], 2, 1, &z0, 0.0, 1e-3, 0.0, 1e4)
+            .unwrap_err();
+        assert_eq!(err, LyapunovError::Interrupted, "got {err:?}");
     }
 }

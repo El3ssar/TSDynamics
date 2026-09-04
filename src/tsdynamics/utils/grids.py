@@ -10,6 +10,8 @@ drift apart.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 __all__ = ["make_output_grid"]
@@ -40,11 +42,19 @@ def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:
     1e-12 is already rejected upstream as physically meaningless.)
 
     This is the one chokepoint every flow family (ODE / DDE / SDE) and the
-    engine run layer build their grid through, so it is also where the two
+    engine run layer build their grid through, so it is also where the
     silent-footgun horizons are caught early with a domain message: a
     non-positive ``dt`` (which used to surface as a bare ``ZeroDivisionError``
     from this helper) and a window that does not run forward in time (which used
     to yield a one-sample garbage trajectory).
+
+    Every bound must additionally be **finite**.  ``dt`` and ``final_time`` were
+    guarded only by ``> 0`` / ``> t0``, which ``+inf`` satisfies: an infinite
+    ``dt`` slipped through to a two-sample ``[t0, tf]`` grid (a "trajectory" of
+    one giant step, silently nothing like the requested sampling), and an
+    infinite ``final_time`` reached :func:`numpy.arange`, which raised the
+    unhelpful ``ValueError: Maximum allowed size exceeded``.  Both are rejected
+    here instead, naming the offending value.
 
     Parameters
     ----------
@@ -61,9 +71,10 @@ def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:
     Raises
     ------
     tsdynamics.errors.InvalidParameterError
-        If ``dt`` is not strictly positive, or if ``tf`` is not strictly after
-        ``t0`` (an empty / backwards window).  Both subclass :class:`ValueError`,
-        so ``except ValueError`` still catches them.
+        If ``dt`` is not finite and strictly positive, if ``t0`` is not finite,
+        or if ``tf`` is not finite and strictly after ``t0`` (an empty /
+        backwards / unbounded window).  All subclass :class:`ValueError`, so
+        ``except ValueError`` still catches them.
 
     Examples
     --------
@@ -72,8 +83,16 @@ def make_output_grid(t0: float, tf: float, dt: float) -> np.ndarray:
     """
     from tsdynamics.errors import invalid_value
 
-    if not dt > 0:
-        raise invalid_value("dt", dt, rule="must be > 0 (the output sampling interval)")
+    if not (math.isfinite(dt) and dt > 0):
+        raise invalid_value("dt", dt, rule="must be finite and > 0 (the output sampling interval)")
+    if not math.isfinite(t0):
+        raise invalid_value("t0", t0, rule="must be finite (the start of the window)")
+    if not math.isfinite(tf):
+        raise invalid_value(
+            "final_time",
+            tf,
+            rule="must be finite (the window has to have an end to sample)",
+        )
     if not tf > t0:
         raise invalid_value(
             "final_time",

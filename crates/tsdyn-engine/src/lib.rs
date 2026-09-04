@@ -56,6 +56,11 @@ pub mod lyapunov;
 // Appended by stream perf/param-sweep-kernel (the map orbit-diagram parameter
 // sweep — the whole sweep in one engine call).
 pub mod param_sweep;
+// Appended by stream v6 WP2-safety (process-safety infrastructure: an engine
+// call must never abort, hang or ignore the interpreter it is embedded in).
+pub mod alloc;
+pub mod interrupt;
+pub mod pool;
 
 #[cfg(test)]
 mod testkit;
@@ -88,6 +93,8 @@ pub use map_lyapunov::{map_lyapunov, MapLyapunovError, MapLyapunovOutcome};
 pub use lyapunov::{lyapunov_spectrum_ode, LyapunovError, LyapunovOutcome};
 // Appended by stream perf/param-sweep-kernel.
 pub use param_sweep::{map_orbit_sweep, SweepError, SweepOutcome, SweepStatus};
+// Appended by stream v6 WP2-safety.
+pub use alloc::{try_zeroed, AllocFailed};
 
 /// Check that the linked solver registry has no duplicate names, returning the
 /// clashing names if any.

@@ -67,7 +67,13 @@ const MAX_FACTOR: f64 = 5.0;
 /// treated as a genuine divergence (e.g. finite-time blow-up) and reported as
 /// [`StepOutcome::Failed`], so the run fails loudly and fast instead of grinding
 /// to the engine's per-segment step limit. Mirrors the v2 kernel's `h`-floor.
-const STEP_FLOOR_REL: f64 = 1e-13;
+///
+/// Shared with [`super::bdf`] (stream v6 WP2-safety), which shipped without a
+/// floor and so took tens of seconds to report a blow-up every other implicit
+/// kernel reported in well under one. There is only ever one floor: a caller
+/// must not have to know which implicit kernel they picked to predict how long
+/// a divergence takes to surface.
+pub(super) const STEP_FLOOR_REL: f64 = 1e-13;
 
 /// The outcome of one base-method step (before error control).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

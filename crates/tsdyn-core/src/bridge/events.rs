@@ -10,8 +10,8 @@ use tsdyn_engine::{integrate_events, EventSpec, IntegrateConfig};
 use tsdyn_ir::Tape;
 
 use super::marshal::{
-    build_evaluator, build_solver, check_inputs, diverge_msg, event_direction, guard_continuous,
-    require_jacobian_if_needed, resolve_solver, EngineError,
+    build_evaluator, build_solver, check_inputs, event_direction, guard_continuous,
+    integrate_failure, require_jacobian_if_needed, resolve_solver, EngineError, Tolerances,
 };
 
 /// Integrate `[t0, t1]` and return every crossing of the event function
@@ -49,7 +49,7 @@ pub fn integrate_events_dense(
     guard_continuous(&rhs)?;
     check_inputs(&rhs, ic, p)?;
     if let Some(&bad) = ic.iter().find(|x| !x.is_finite()) {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "initial state must be finite, found {bad}"
         )));
     }
@@ -83,29 +83,30 @@ pub fn integrate_events_dense(
         )));
     }
     if !(t0.is_finite() && t1.is_finite()) {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "event integration span must be finite, got t0 = {t0}, t1 = {t1}"
         )));
     }
     if t1 < t0 {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "integrate_events is forward only: need t1 >= t0, got t0 = {t0}, t1 = {t1}"
         )));
     }
     // The engine asserts a finite, positive first step (a hard `assert!`, not a
     // debug one) — turn a bad value into a clean error at the boundary.
     if !(first_step.is_finite() && first_step > 0.0) {
-        return Err(EngineError::BadShape(format!(
+        return Err(EngineError::InvalidParameter(format!(
             "first step (the detection dt) must be finite and positive, got {first_step}"
         )));
     }
+    let tol = Tolerances::new(rtol, atol)?;
     let dir = event_direction(direction)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&rhs, name)?;
 
     let rhs_ev = build_evaluator(rhs, jit)?;
     let g_ev = build_evaluator(g, jit)?;
-    let mut solver = build_solver(name, rtol, atol);
+    let mut solver = build_solver(name, tol);
     let cfg = IntegrateConfig::new(first_step);
 
     let spec = if terminal {
@@ -114,7 +115,7 @@ pub fn integrate_events_dense(
         EventSpec::new(&*g_ev, dir)
     };
     let outcome = integrate_events(&*rhs_ev, &mut *solver, &ic[..dim], p, t0, t1, &[spec], &cfg)
-        .map_err(|e| EngineError::Diverged(diverge_msg(&e)))?;
+        .map_err(integrate_failure)?;
 
     let mut times = Vec::with_capacity(outcome.hits.len());
     let mut states = Vec::with_capacity(outcome.hits.len() * dim);

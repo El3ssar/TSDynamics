@@ -36,10 +36,14 @@
 //!
 //! [`Evaluator`]: tsdyn_ir::Evaluator
 
+mod cache;
 mod codegen;
 mod error;
 mod evaluator;
 mod shims;
 
+pub use cache::{
+    cache_stats, cached_evaluator, clear_cache, JitCacheStats, CACHE_DISABLE_ENV, CACHE_MAXSIZE,
+};
 pub use error::JitError;
-pub use evaluator::JitEvaluator;
+pub use evaluator::{JitEvaluator, SharedJitEvaluator};

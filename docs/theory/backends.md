@@ -18,10 +18,18 @@ evaluates with no Python callbacks, no runtime compiler, and **no warmup**. The
 | `"reference"` | a dependency-light **pure-Python** oracle (SciPy on the lowered tape) | no |
 
 `"interp"` and `"jit"` are numerically **identical by contract** (bit-for-bit);
-`"jit"` trades a small one-time compile for faster steady-state throughput on
-long or large runs. `"reference"` is the validation oracle — it reproduces the
-engine without the compiled extension, so it runs anywhere (ODE and maps only;
-it raises for DDE/SDE, which have no pure-Python integrator).
+`"jit"` trades a one-time compile for faster steady-state throughput.
+`"reference"` is the validation oracle — it reproduces the engine without the
+compiled extension, so it runs anywhere (ODE and maps only; it raises for
+DDE/SDE, which have no pure-Python integrator).
+
+The compile is **once per distinct system**, not once per call: the engine
+memoises the compiled evaluator on the tape's identity, so a repeat run, a
+parameter sweep or an ensemble reuses it (`tsdynamics.engine.run.jit_cache_stats()`
+reports hits/misses; `clear_jit_cache()` empties it, and
+`TSDYNAMICS_NO_JIT_CACHE=1` disables it). With the compile amortised, `"jit"` is
+the faster backend at essentially any run length — most dramatically for the
+large method-of-lines systems, where the compile is the expensive part.
 
 ```python
 import tsdynamics as ts

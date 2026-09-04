@@ -10,8 +10,8 @@ use tsdyn_ir::Tape;
 use tsdyn_solvers::SolverKind;
 
 use super::marshal::{
-    build_evaluator, build_solver, diverge_msg, first_step_from_grid, resolve_solver,
-    validate_grid, EngineError,
+    build_evaluator, build_solver, first_step_from_grid, integrate_failure, resolve_solver,
+    validate_grid, EngineError, Tolerances,
 };
 
 /// Integrate a delay differential equation through the output grid `t_eval`,
@@ -71,6 +71,14 @@ pub fn integrate_dde_dense(
             ic.len()
         )));
     }
+    // As on the ODE dense path: a non-finite initial state (or past sample) is a
+    // bad input, and must not be reported as a divergence of a run that never
+    // started. `past_t` was already checked; `past_y` was not.
+    if let Some(&bad) = ic.iter().take(dim).find(|x| !x.is_finite()) {
+        return Err(EngineError::InvalidParameter(format!(
+            "initial state must be finite, found {bad}"
+        )));
+    }
     // The past buffer: at least one sample, finite ascending times, (n_past, dim).
     let n_past = past_t.len();
     if n_past == 0 {
@@ -89,6 +97,11 @@ pub fn integrate_dde_dense(
             "past_t must be all finite".to_string(),
         ));
     }
+    if let Some(&bad) = past_y.iter().find(|y| !y.is_finite()) {
+        return Err(EngineError::InvalidParameter(format!(
+            "past_y must be all finite, found {bad}"
+        )));
+    }
     for w in past_t.windows(2) {
         if w[1] < w[0] {
             return Err(EngineError::BadShape(
@@ -105,7 +118,7 @@ pub fn integrate_dde_dense(
             )));
         }
         if d <= 0.0 || !d.is_finite() {
-            return Err(EngineError::BadShape(format!(
+            return Err(EngineError::InvalidParameter(format!(
                 "delay slot {k} has a non-positive or non-finite delay {d}"
             )));
         }
@@ -115,6 +128,7 @@ pub fn integrate_dde_dense(
         });
     }
     validate_grid(t_eval)?;
+    let tol = Tolerances::new(rtol, atol)?;
     // The method of steps drives explicit kernels only (no delayed Jacobian here).
     let name = resolve_solver(method)?;
     let reg = tsdyn_solvers::find(name).expect("resolve_solver returns a registered name");
@@ -125,7 +139,7 @@ pub fn integrate_dde_dense(
         )));
     }
     let ev = build_evaluator(tape, jit)?;
-    let mut solver = build_solver(name, rtol, atol);
+    let mut solver = build_solver(name, tol);
     let cfg = IntegrateConfig::new(first_step_from_grid(t_eval));
     integrate_dde_grid(
         &*ev,
@@ -138,5 +152,5 @@ pub fn integrate_dde_dense(
         t_eval,
         &cfg,
     )
-    .map_err(|e| EngineError::Diverged(diverge_msg(&e)))
+    .map_err(integrate_failure)
 }

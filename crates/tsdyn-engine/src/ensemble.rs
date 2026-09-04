@@ -22,6 +22,8 @@
 //! kernels become reproducible under parallelism.
 
 use rayon::prelude::*;
+
+use crate::pool::with_pool;
 use tsdyn_ir::Evaluator;
 use tsdyn_solvers::Solver;
 
@@ -133,24 +135,29 @@ where
     // determinism contract above).
     let mut states = vec![0.0; n_ic * dim];
     let mut status = vec![TrajStatus::Ok; n_ic];
-    states
-        .par_chunks_mut(dim)
-        .zip(status.par_iter_mut())
-        .enumerate()
-        .for_each(|(i, (row, st))| {
-            let u0 = &u0_batch[i * dim..(i + 1) * dim];
-            let mut solver = make_solver(i);
-            match integrate_final(ev, &mut *solver, u0, p, t0, t1, cfg) {
-                Ok(uf) => {
-                    row.copy_from_slice(&uf);
-                    *st = TrajStatus::Ok;
+    // `with_pool`, not the ambient global pool: the engine's own pool is
+    // PID-tagged and rebuilt after a `fork()`, so a `multiprocessing` child
+    // gets live workers instead of deadlocking on the parent's dead ones.
+    with_pool(|| {
+        states
+            .par_chunks_mut(dim)
+            .zip(status.par_iter_mut())
+            .enumerate()
+            .for_each(|(i, (row, st))| {
+                let u0 = &u0_batch[i * dim..(i + 1) * dim];
+                let mut solver = make_solver(i);
+                match integrate_final(ev, &mut *solver, u0, p, t0, t1, cfg) {
+                    Ok(uf) => {
+                        row.copy_from_slice(&uf);
+                        *st = TrajStatus::Ok;
+                    }
+                    Err(e) => {
+                        row.fill(f64::NAN);
+                        *st = TrajStatus::Failed(e);
+                    }
                 }
-                Err(e) => {
-                    row.fill(f64::NAN);
-                    *st = TrajStatus::Failed(e);
-                }
-            }
-        });
+            });
+    });
     EnsembleFinal {
         dim,
         states,

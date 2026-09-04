@@ -33,6 +33,10 @@
 use rayon::prelude::*;
 use tsdyn_ir::Evaluator;
 
+use crate::alloc::{try_zeroed, AllocFailed};
+use crate::interrupt::Poller;
+use crate::pool::with_pool;
+
 /// Why a map iteration stopped short of its requested step count.
 ///
 /// The single failure mode for a (deterministic, step-free) map is a non-finite
@@ -48,6 +52,17 @@ pub enum MapError {
         /// The iterate index (0-based) at which non-finiteness was detected.
         step: usize,
     },
+    /// The embedder's interrupt hook asked the iteration to stop (see
+    /// [`crate::interrupt`]) — normally a Ctrl-C at the Python prompt.
+    Interrupted {
+        /// The iterate index reached when the interrupt was observed.
+        step: usize,
+    },
+    /// The `(n_steps, dim)` output buffer could not be allocated — see
+    /// [`AllocFailed`]. Requesting a huge `steps` used to *abort the process*
+    /// here (the allocator cannot serve it and Rust's allocation-error handler
+    /// calls `abort`), which is uncatchable from Python.
+    AllocFailed(AllocFailed),
 }
 
 impl core::fmt::Display for MapError {
@@ -56,6 +71,10 @@ impl core::fmt::Display for MapError {
             MapError::NonFinite { step } => {
                 write!(f, "non-finite state at iterate {step} (the map diverged)")
             }
+            MapError::Interrupted { step } => {
+                write!(f, "interrupted at iterate {step}")
+            }
+            MapError::AllocFailed(e) => e.fmt(f),
         }
     }
 }
@@ -120,16 +139,24 @@ pub fn iterate_dense(
     debug_assert_eq!(u0.len(), dim, "u0 length must equal the system dimension");
     debug_assert_eq!(p.len(), ev.n_param(), "p length must equal n_param");
 
-    let mut out = vec![0.0; n_steps * dim];
+    // Checked: `n_steps` is a bare caller-supplied integer with no backing
+    // array to bound it, so `n_steps * dim` is the engine's most exposed
+    // allocation — `vec![0.0; n_steps * dim]` used to panic with `capacity
+    // overflow` or abort the interpreter outright (see `crate::alloc`).
+    let mut out = try_zeroed(n_steps, dim).map_err(MapError::AllocFailed)?;
     if n_steps == 0 {
         return Ok(out);
     }
+    let mut poll = Poller::new();
     let mut scratch = vec![0.0; ev.n_scratch()];
     // Ping-pong the current state through the output buffer: write iterate `i`
     // into its row, then read that row as the input for iterate `i + 1`. This
     // keeps the loop allocation-free and avoids a separate `cur` copy per step.
     let mut cur = u0.to_vec();
     for i in 0..n_steps {
+        if poll.tick() {
+            return Err(MapError::Interrupted { step: i });
+        }
         let (head, tail) = out.split_at_mut(i * dim);
         let next = &mut tail[..dim];
         let prev: &[f64] = if i == 0 { &cur } else { &head[(i - 1) * dim..] };
@@ -164,7 +191,11 @@ pub fn iterate_final(
     }
     let mut scratch = vec![0.0; ev.n_scratch()];
     let mut next = vec![0.0; dim];
+    let mut poll = Poller::new();
     for i in 0..n_steps {
+        if poll.tick() {
+            return Err(MapError::Interrupted { step: i });
+        }
         map_step(ev, &cur, p, &mut scratch, &mut next, i)?;
         std::mem::swap(&mut cur, &mut next);
     }
@@ -257,23 +288,28 @@ pub fn iterate_ensemble_final(
     // (maps carry no per-step randomness, so this is identical run to run).
     let mut states = vec![0.0; n_ic * dim];
     let mut status = vec![MapTrajStatus::Ok; n_ic];
-    states
-        .par_chunks_mut(dim)
-        .zip(status.par_iter_mut())
-        .enumerate()
-        .for_each(|(i, (row, st))| {
-            let u0 = &u0_batch[i * dim..(i + 1) * dim];
-            match iterate_final(ev, u0, p, n_steps) {
-                Ok(uf) => {
-                    row.copy_from_slice(&uf);
-                    *st = MapTrajStatus::Ok;
+    // `with_pool`, not the ambient global pool: the engine's own pool is
+    // PID-tagged and rebuilt after a `fork()`, so a `multiprocessing` child
+    // gets live workers instead of deadlocking on the parent's dead ones.
+    with_pool(|| {
+        states
+            .par_chunks_mut(dim)
+            .zip(status.par_iter_mut())
+            .enumerate()
+            .for_each(|(i, (row, st))| {
+                let u0 = &u0_batch[i * dim..(i + 1) * dim];
+                match iterate_final(ev, u0, p, n_steps) {
+                    Ok(uf) => {
+                        row.copy_from_slice(&uf);
+                        *st = MapTrajStatus::Ok;
+                    }
+                    Err(e) => {
+                        row.fill(f64::NAN);
+                        *st = MapTrajStatus::Failed(e);
+                    }
                 }
-                Err(e) => {
-                    row.fill(f64::NAN);
-                    *st = MapTrajStatus::Failed(e);
-                }
-            }
-        });
+            });
+    });
     MapEnsembleFinal {
         dim,
         states,
@@ -452,8 +488,46 @@ mod tests {
         assert!(matches!(err, MapError::NonFinite { .. }), "got {err:?}");
         // The dense path reports the same way and stops at the offending iterate.
         let err = iterate_dense(&ev, &[1.0], &[], 100_000).unwrap_err();
-        let MapError::NonFinite { step } = err;
+        let MapError::NonFinite { step } = err else {
+            panic!("expected a divergence, got {err:?}")
+        };
         assert!(step < 100_000, "should fail before the full horizon");
+    }
+
+    /// An absurd `steps` must be an ordinary `Err`. Before the checked
+    /// allocation this pair of calls was two *process-level* failures:
+    /// `usize::MAX` panicked with `capacity overflow`, and `1 << 50` aborted the
+    /// interpreter outright via `handle_alloc_error`.
+    #[test]
+    fn an_unservable_step_count_is_an_error_not_a_panic_or_an_abort() {
+        let ev = VmEval::new(doubling());
+        for steps in [usize::MAX, 1usize << 50] {
+            let err = iterate_dense(&ev, &[1.0], &[], steps)
+                .expect_err("an unservable output buffer must not be allocated");
+            assert!(
+                matches!(err, MapError::AllocFailed(_)),
+                "got {err:?} for steps = {steps}"
+            );
+            assert!(err.to_string().contains("cannot allocate"));
+        }
+    }
+
+    /// The interrupt hook stops a long iteration, on both map loops.
+    #[test]
+    fn an_armed_interrupt_stops_both_map_loops() {
+        let _stop = crate::interrupt::testing::force_stop();
+        let _armed = crate::interrupt::arm();
+
+        let ev = VmEval::new(doubling());
+        // Well under the ~1024 iterates it takes `doubling` to overflow would
+        // finish before the first poll, so ask for far more than one stride.
+        let n = 50 * crate::interrupt::POLL_STRIDE;
+        for err in [
+            iterate_dense(&ev, &[0.0], &[], n).unwrap_err(),
+            iterate_final(&ev, &[0.0], &[], n).unwrap_err(),
+        ] {
+            assert!(matches!(err, MapError::Interrupted { .. }), "got {err:?}");
+        }
     }
 
     #[test]

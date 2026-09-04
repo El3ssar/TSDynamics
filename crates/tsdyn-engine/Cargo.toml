@@ -19,3 +19,8 @@ tsdyn-solvers.workspace = true
 # The ensemble fan-out (ensemble.rs) lives here as of stream E5; rayon is
 # pre-pinned in the workspace so the whole engine agrees on one version.
 rayon.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "engine"
+harness = false
