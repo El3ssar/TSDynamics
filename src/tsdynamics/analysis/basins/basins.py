@@ -402,7 +402,7 @@ def basins_of_attraction(
     points = grid_points(region)
     from ...engine.run import resolve_backend
 
-    backend = resolve_backend(getattr(system, "_default_backend", "interp"))
+    backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, points, backend=backend, jit=backend == "jit")
     diverged = int(np.sum(labels == DIVERGED))
 
@@ -490,7 +490,7 @@ def basin_fractions(
     samples = np.array([draw() for _ in range(n)], dtype=np.float64).reshape(-1, cellgrid.dim)
     from ...engine.run import resolve_backend
 
-    backend = resolve_backend(getattr(system, "_default_backend", "interp"))
+    backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, samples, backend=backend, jit=backend == "jit")
     diverged = int(np.sum(labels == DIVERGED))
     counts: dict[int, int] = {}

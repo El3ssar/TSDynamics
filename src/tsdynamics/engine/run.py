@@ -10,12 +10,15 @@ Backends
 The two production evaluators behind the frozen ``Evaluator`` seam are selected
 by name:
 
-- ``"interp"`` — the zero-warmup tape interpreter (``tsdyn-vm``).  The default:
-  no compilation latency, ideal for sweeps, tests, and small/medium systems.
-- ``"jit"`` — the Cranelift native-code evaluator (``tsdyn-jit``), for large or
-  long-running problems.  Numerically identical to the interpreter.
-- ``"auto"`` — resolves to ``"interp"`` today (a size/run-length heuristic for
-  promoting to ``"jit"`` is a later refinement).
+- ``"jit"`` — the Cranelift native-code evaluator (``tsdyn-jit``).  **The
+  default** since v6: the tape is compiled to native code once per distinct
+  system and served from a process-wide compiled-evaluator cache
+  (:func:`jit_cache_stats`), so the compile is paid once, not per call.
+- ``"interp"`` — the SSA-tape interpreter (``tsdyn-vm``).  Numerically identical
+  to the JIT, bit-for-bit; marginally faster on very small tapes, and the way to
+  avoid the one-off compile altogether.
+- ``"auto"`` — resolves to ``"jit"``, i.e. the same evaluator every concrete
+  family defaults to.
 
 Both run inside the compiled extension :mod:`tsdynamics._rust` (stream E7).
 Until that extension is built, ``"interp"``/``"jit"`` raise
@@ -220,8 +223,12 @@ class EngineNotAvailableError(BackendError):
 def resolve_backend(backend: str) -> str:
     """Normalise a backend name to one of :data:`BACKENDS`.
 
-    ``"auto"`` resolves to ``"interp"`` (the zero-warmup default; a heuristic
-    promotion to ``"jit"`` is a later refinement).
+    ``"auto"`` resolves to ``"jit"`` — the same evaluator every concrete family
+    uses by default, so ``backend="auto"`` and ``backend=None`` agree.
+
+    .. versionchanged:: 6.0
+       ``"auto"`` resolved to ``"interp"`` before v6.  It follows the family
+       default, which the compiled-evaluator cache moved to ``"jit"``.
 
     Parameters
     ----------
@@ -241,7 +248,7 @@ def resolve_backend(backend: str) -> str:
     """
     name = str(backend).lower()
     if name == "auto":
-        return "interp"
+        return "jit"
     if name not in BACKENDS:
         from tsdynamics.errors import invalid_value
 
@@ -430,7 +437,7 @@ def integrate(
     rtol: float = DEFAULT_RTOL,
     atol: float = DEFAULT_ATOL,
     max_step: float | None = None,
-    backend: str = "interp",
+    backend: str = "jit",
     history: Any = None,
     **build_kwargs: Any,
 ) -> Trajectory:
@@ -505,9 +512,17 @@ def integrate(
         and is not exposed here.  A ``max_step`` far below the tolerance-driven
         natural step multiplies cost with no accuracy benefit and can trip
         :class:`~tsdynamics.errors.StepBudgetError`.
-    backend : str, default "interp"
-        ``"interp"``, ``"jit"`` (compiled engine), or ``"reference"``
-        (pure-Python; ODE and map only).
+    backend : {"jit", "interp", "reference"}, default "jit"
+        ``"jit"`` (the Cranelift JIT, compiled once per distinct system and served
+        from the process-wide compiled-evaluator cache), ``"interp"`` (the
+        bit-for-bit identical SSA-tape interpreter), or ``"reference"`` (the
+        dependency-light pure-Python/SciPy oracle; ODE and map only, and not
+        intended for production use).
+
+        .. versionchanged:: 6.0
+           Default moved from ``"interp"`` to ``"jit"``, matching every concrete
+           family's ``_default_backend``.  Before v6 the JIT recompiled the tape
+           on every call; the v6 compiled-evaluator cache removed that.
     history : callable, optional
         For a DDE only — ``h(s) -> sequence`` defining the past for ``s <= 0``;
         ``None`` is a constant past equal to the resolved initial state.
@@ -950,7 +965,7 @@ def ensemble(
     rtol: float = DEFAULT_RTOL,
     atol: float = DEFAULT_ATOL,
     max_step: float | None = None,
-    backend: str = "interp",
+    backend: str = "jit",
     **build_kwargs: Any,
 ) -> np.ndarray:
     """Integrate a batch of initial conditions and return their final states.

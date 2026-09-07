@@ -600,7 +600,7 @@ def classify_seeds(
     mapper: _AttractorMapper,
     seeds: np.ndarray,
     *,
-    backend: str = "interp",
+    backend: str = "jit",
     jit: bool = False,
 ) -> np.ndarray:
     """Classify a batch of seeds, accelerating the per-IC march in Rust when possible.
@@ -629,8 +629,8 @@ def classify_seeds(
         Initial conditions to classify, in the order the shared labelling
         accumulates in (kept strictly serial — see the kernel's why-sequential
         note).
-    backend : str, default "interp"
-        ``"interp"`` / ``"jit"`` drive the Rust kernel (when supported);
+    backend : {"jit", "interp", "reference"}, default "jit"
+        ``"jit"`` / ``"interp"`` drive the Rust kernel (when supported);
         ``"reference"`` (or any other) forces the Python loop.
     jit : bool, default False
         Select the Cranelift evaluator for the supported Rust path.
@@ -847,7 +847,7 @@ def find_attractors(
     seeds = np.array([draw() for _ in range(int(n_seeds))], dtype=np.float64).reshape(-1, grid.dim)
     from ...engine.run import resolve_backend
 
-    backend = resolve_backend(getattr(system, "_default_backend", "interp"))
+    backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, seeds, backend=backend, jit=backend == "jit")
     diverged = int(np.sum(labels == DIVERGED))
     merge = mapper.merge_map(resolve_merge_tol(grid, merge_tol))

@@ -9,7 +9,7 @@ fresh `pip install` to defining a system of your own.
 Read it in order, or jump to what you need:
 
 - **[01 · Install](install.md)** — one `pip install`; the compiled engine ships
-  in the wheel, so there is no build step, no compiler, and no warmup.
+  in the wheel, so there is no build step and no compiler toolchain.
 - **[02 · First trajectory](first-trajectory.md)** — instantiate the Lorenz
   system, integrate it, read named components off the result, plot it, and
   compute its Lyapunov spectrum.

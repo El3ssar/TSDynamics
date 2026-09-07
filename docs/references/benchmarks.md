@@ -15,9 +15,9 @@ references: the **Python ecosystem** a user would actually reach for, and
 thing in the field.
 
 The headline against Python is the integration engine: on the Lorenz system
-TSDynamics' Rust backend produces the whole dense trajectory **~62× faster than
-SciPy's `solve_ivp`** with the interpreter, **~134× faster** with the JIT, and
-**~200–450× faster than dysts** — at the same accuracy. Against
+TSDynamics' Rust backend produces the whole dense trajectory **~134× faster than
+SciPy's `solve_ivp`** on the default `jit` backend (**~62×** on the `interp`
+one), and **~200–450× faster than dysts** — at the same accuracy. Against
 DynamicalSystems.jl the story is different and, for a Python-facing library,
 telling: on the tasks with substantial work — integration, the embedded
 correlation dimension — it is within ~2× of Julia and often **as accurate or more
@@ -40,8 +40,10 @@ be fair to every library and reproducible on any machine.
 - **Best-of-N wall time.** Each task is timed $N$ times and the **minimum** is
   kept — the most reproducible estimator of intrinsic cost, since the machine can
   only ever *add* noise, never remove it. A warm-up call is made **before** timing,
-  so one-time compilation (TSDynamics' tape lowering, numba's JIT, Julia's method
-  compilation) is paid once and excluded from the measured time.
+  so one-time compilation (TSDynamics' tape lowering and Cranelift compile,
+  numba's JIT, Julia's method compilation) is paid once and excluded from the
+  measured time.  For TSDynamics that one-time cost is a median of well under a
+  millisecond per system, and it is memoised, so a real session pays it once too.
 - **The library's own code, each task.** The integration tasks each use the
   library's *own* integrator — that is the entire point of an integration
   benchmark. The from-data analysis tasks feed **every** library the *same*
@@ -107,7 +109,7 @@ The core task. Integrate the Lorenz system with DOP853 at `rtol=atol=1e-9` and
 return the trajectory. dysts and DynamicalSystems.jl join the integration rows;
 the from-data-only Python libraries correctly leave these cells blank.
 
-| Task | TSDynamics `interp` | TSDynamics `jit` | SciPy | dysts | DynamicalSystems.jl |
+| Task | TSDynamics `interp` | TSDynamics `jit` (default) | SciPy | dysts | DynamicalSystems.jl |
 |---|---:|---:|---:|---:|---:|
 | Integration — short ($T=100$) | **7.78 ms** | **3.58 ms** | 480.47 ms | 1.544 s | 1.72 ms |
 | Integration — long ($T=10000$) | **780.08 ms** | **351.24 ms** | 54.921 s | 156.802 s | 196.03 ms |
@@ -115,9 +117,10 @@ the from-data-only Python libraries correctly leave these cells blank.
 
 Reading the ratios:
 
-- **vs Python:** short integration is **62×** (`interp`) / **134×** (`jit`) faster
-  than SciPy and **198×** / **431×** faster than dysts; the long run holds the win
-  at **70×** / **156×** vs SciPy and **201×** / **446×** vs dysts. The Poincaré
+- **vs Python:** short integration is **134×** faster than SciPy on the default
+  `jit` backend (**62×** on `interp`) and **431×** / **198×** faster than dysts;
+  the long run holds the win at **156×** / **70×** vs SciPy and **446×** / **201×**
+  vs dysts. The Poincaré
   section marches the whole attractor and refines every crossing in one call,
   **~26×** faster than SciPy's event-based `solve_ivp`.
 - **vs Julia:** DynamicalSystems.jl is faster — but only by **~2×** on both the
@@ -126,9 +129,10 @@ Reading the ratios:
   narrow gap. On the Poincaré section Julia's compiled event handling keeps a
   wider **~14×** edge.
 
-The `jit` backend (Cranelift) roughly **halves** the interpreter's time on the
-raw integration tasks; on the event-driven Poincaré task, where crossing
-refinement dominates, the two backends are within noise of each other.
+The `jit` backend (Cranelift) — the default since v6 — roughly **halves** the
+interpreter's time on the raw integration tasks; on the event-driven Poincaré
+task, where crossing refinement dominates, the two backends are within noise of
+each other.
 
 ## Integration accuracy
 
@@ -136,14 +140,14 @@ Speed is only half the story. Integrated to $T=8$ with DOP853 at
 `rtol=atol=1e-10`, how close is the final state to a $10^{-13}$ reference
 trajectory (itself a SciPy DOP853 run at that tolerance)?
 
-| Task | TSDynamics `interp` | TSDynamics `jit` | SciPy | DynamicalSystems.jl |
+| Task | TSDynamics `interp` | TSDynamics `jit` (default) | SciPy | DynamicalSystems.jl |
 |---|---:|---:|---:|---:|
 | $\lVert \Delta \rVert_\infty$ vs $10^{-13}$ reference | $3.33\times10^{-9}$ | $3.33\times10^{-9}$ | $2.83\times10^{-9}$ | $1.77\times10^{-10}$ |
 | Wall time for that run | 299 µs | 308 µs | 25.64 ms | 55 µs |
 
 Every adaptive integrator hits the reference trajectory to $\lesssim 10^{-9}$ at
 matched tolerance. TSDynamics costs **nothing** in accuracy for its ~86× speed
-advantage over SciPy — `interp` and `jit` are bit-for-bit identical here.
+advantage over SciPy — `jit` and `interp` are bit-for-bit identical here.
 DynamicalSystems.jl lands about an order of magnitude tighter ($1.8\times10^{-10}$)
 in about a fifth of the time; both are far below any practically meaningful error
 for a chaotic Lorenz trajectory.

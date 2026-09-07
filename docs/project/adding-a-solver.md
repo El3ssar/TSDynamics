@@ -16,7 +16,9 @@ page is the end-to-end recipe at a level a contributor can follow.
     a solver touches the Rust engine, so you need a
     [Rust toolchain](https://rustup.rs/) and the editable dev install
     (`uv sync --group dev`). The `reference` backend is a SciPy oracle that does
-    **not** run our kernels; test a new kernel with `backend="interp"`.
+    **not** run our kernels; test a new kernel on the engine backends —
+    `backend="jit"` (the default) and `backend="interp"`, which must agree
+    bit-for-bit.
 
 ## The mental model
 

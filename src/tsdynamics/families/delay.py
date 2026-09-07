@@ -48,7 +48,8 @@ class DelaySystem(SystemBase, ABC):
 
     Lowering
     --------
-    Each system is lowered once to an in-process IR tape with no warmup.  Delay
+    Each system is lowered once to an in-process IR tape, then JIT-compiled on
+    first use (both memoised, so neither cost repeats).  Delay
     values directly affect the history-buffer structure, so they are baked into
     the tape rather than read live like the other parameters; a delay change
     re-lowers, while ordinary parameters are read live with no re-lowering.
@@ -100,9 +101,11 @@ class DelaySystem(SystemBase, ABC):
     _default_atol: ClassVar[float] = DDE_ATOL
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"interp"`` — the Rust method-of-steps DDE engine (the sole DDE backend
-    #: since the M3 migration retired the v2 backends).
-    _default_backend: ClassVar[str] = "interp"
+    #: ``"jit"`` — the Rust method-of-steps DDE engine driven by the Cranelift
+    #: JIT, with the compiled-evaluator cache paying the compile once per
+    #: distinct system.  Was ``"interp"`` before v6.  There is no ``"reference"``
+    #: DDE integrator, so the two engine evaluators are the only options.
+    _default_backend: ClassVar[str] = "jit"
 
     #: Names of parameters that hold delay values (must be positive floats).
     #: Subclasses with custom delay-naming conventions should override this.
@@ -389,15 +392,25 @@ class DelaySystem(SystemBase, ABC):
             the step and the tolerance is largely inert.  See the class
             docstring for the measurement.  Tightening is *safe* (no stall) if
             you need it.
-        backend : str, optional
-            Which engine integrates the DDE.  Defaults to ``_default_backend``
-            (``"interp"``).  ``"interp"`` / ``"jit"`` route — through the shared
+        backend : {"jit", "interp"}, optional
+            Which evaluator drives the DDE engine.  Defaults to
+            ``_default_backend`` (``"jit"``).  Both route — through the shared
             engine seam (:func:`tsdynamics.engine.run.integrate`) — to the Rust
             method-of-steps engine (history ring buffer + cubic-Hermite dense
             interpolation; stream E-DDE), reusing the explicit solver kernels.
+
+            - ``"jit"`` (default) — the Cranelift JIT, compiled once per distinct
+              system and served from the process-wide compiled-evaluator cache.
+            - ``"interp"`` — the SSA-tape interpreter; bit-for-bit identical, and
+              the way to avoid the one-off compile.
+
             Only **constant** delays lower; a state-dependent delay raises.
             ``backend="reference"`` is unsupported for DDEs (there is no
             pure-Python delay integrator).
+
+            .. versionchanged:: 6.0
+               The default moved from ``"interp"`` to ``"jit"``, once the v6
+               compiled-evaluator cache removed the JIT's per-call recompile.
         method : str, default "rk45"
             The explicit kernel (``"rk45"``, ``"tsit5"``, ``"dop853"``,
             ``"rk4"``); the method of steps drives explicit kernels only.
@@ -496,8 +509,8 @@ class DelaySystem(SystemBase, ABC):
         ``self.meta['lyapunov_spectrum']``) integrates the extended variational
         DDE on the Rust engine with a function-space Benettin renormalisation
         (:func:`tsdynamics.families._dde_lyapunov.dde_lyapunov_spectrum`):
-        ``backend="interp"`` / ``"jit"``.  ``"reference"`` is rejected (the engine
-        has no pure-Python DDE integrator).
+        ``backend="jit"`` (the default) / ``"interp"``.  ``"reference"`` is
+        rejected (the engine has no pure-Python DDE integrator).
 
         Parameters
         ----------
@@ -521,9 +534,14 @@ class DelaySystem(SystemBase, ABC):
             ``1e-9``) — tighter than plain DDE integration, looser than the ODE
             default, and measured to agree with ``1e-9``/``1e-12`` to within the
             estimator's own finite-time scatter on all six built-in DDEs.
-        backend : str, optional
-            ``"interp"`` or ``"jit"``.  Defaults to :attr:`_default_backend`
-            (``"interp"``).
+        backend : {"jit", "interp"}, optional
+            Which evaluator drives the engine.  Defaults to
+            :attr:`_default_backend` (``"jit"``, the Cranelift JIT);
+            ``"interp"`` is the bit-for-bit identical SSA-tape interpreter.
+
+            .. versionchanged:: 6.0
+               Default moved from ``"interp"`` to ``"jit"`` (see
+               :meth:`integrate`).
 
         Notes
         -----

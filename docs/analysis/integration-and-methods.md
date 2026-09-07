@@ -71,7 +71,7 @@ condition used:
 ```python
 traj.meta
 # {'system': 'Lorenz', 'params': {...}, 'tsdynamics': '5.2.6', 'engine': 'rust',
-#  'family': 'ode', 'method': 'rk45', 'backend': 'interp', 'dt': 0.01, 't0': 0.0,
+#  'family': 'ode', 'method': 'rk45', 'backend': 'jit', 'dt': 0.01, 't0': 0.0,
 #  'rtol': 1e-09, 'atol': 1e-12, 'ic': array([...])}
 ```
 
@@ -209,22 +209,22 @@ dependent**: it is a convenience, not an oracle. A system you *know* to be
 reliably stiff should still declare `_default_method = "bdf"` rather than lean on
 `"auto"`. For maps, which have no solver kernel, `"auto"` is a harmless no-op.
 
-## Backends: `interp`, `jit`, `reference`
+## Backends: `jit`, `interp`, `reference`
 
 Orthogonal to *which* solver runs is *what* executes it. The same `method=` runs
 on any of three backends, selected with `backend=`:
 
 | `backend` | What it is | When to use it |
 | --------- | ---------- | -------------- |
-| `"interp"` | The Rust SSA-tape interpreter (the default) | Everyday integration — no warmup, no compile step |
-| `"jit"` | The Cranelift JIT — compiles the tape to native code | Long or repeated runs where the per-step compiled speed pays for itself; bit-for-bit identical results to `interp` |
+| `"jit"` | The Cranelift JIT — compiles the tape to native code — **the default** | Everyday integration. The compile is memoised per distinct system, so it is paid once and the steady state is ~1.5× faster than the interpreter |
+| `"interp"` | The Rust SSA-tape interpreter | When you want to skip the compile entirely; bit-for-bit identical results to `jit` |
 | `"reference"` | A dependency-light pure-Python SciPy oracle (ODEs + maps) | Cross-validation and wheel-free environments — the answer key, not the fast path |
 
 ```python
-traj = sys.integrate(final_time=100.0, dt=0.01, backend="jit")
+traj = sys.integrate(final_time=100.0, dt=0.01, backend="interp")
 ```
 
-`interp` and `jit` lower the *same* tape, so they agree bit-for-bit; `reference`
+`jit` and `interp` lower the *same* tape, so they agree bit-for-bit; `reference`
 is an independent implementation kept as a correctness oracle. Not every family
 supports `reference` — DDEs have no pure-Python integrator and reject it loudly
 rather than silently degrading.

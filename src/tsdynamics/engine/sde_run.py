@@ -9,7 +9,7 @@ these carry the two SDE-specific knobs — the fixed step ``dt`` (which *is* the
 noise scale ``√dt``) and the noise ``seed`` — and drive the two-tape engine call
 (drift + diffusion).  The family base class
 (:class:`~tsdynamics.families.stochastic.StochasticSystem`) calls these for its
-``backend="interp"/"jit"`` path and wraps the result as a Trajectory with
+``backend="jit"`` (default) / ``"interp"`` path and wraps the result as a Trajectory with
 provenance; the pure-Python reference path stays in the family.
 
 The backend resolver + engine accessor (``resolve_backend``/``_engine``) are
@@ -31,7 +31,7 @@ def sde_integrate_dense(
     dt: float,
     method: str,
     seed: int,
-    backend: str = "interp",
+    backend: str = "jit",
 ) -> np.ndarray:
     """Integrate one diagonal-Itô SDE trajectory on the engine.
 
@@ -47,9 +47,13 @@ def sde_integrate_dense(
         SDE kernel name (``"euler_maruyama"`` / ``"milstein"``).
     seed : int
         Seed for the noise stream (a ``u64``).
-    backend : str, default "interp"
-        ``"interp"`` or ``"jit"``.  ``"reference"`` has no engine SDE integrator
-        (the pure-Python reference lives in the family).
+    backend : {"jit", "interp"}, default "jit"
+        The Cranelift JIT (default) or the bit-for-bit identical SSA-tape
+        interpreter.  ``"reference"`` has no engine SDE integrator (the
+        pure-Python reference lives in the family).
+
+        .. versionchanged:: 6.0
+           Default moved from ``"interp"`` to ``"jit"``.
 
     Returns
     -------
@@ -96,7 +100,7 @@ def sde_ensemble_final(
     dt: float,
     method: str,
     seed: int,
-    backend: str = "interp",
+    backend: str = "jit",
 ) -> np.ndarray:
     """Integrate a batch of SDE initial conditions to ``t1`` and return final states.
 

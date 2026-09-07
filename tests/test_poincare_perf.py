@@ -198,7 +198,9 @@ def test_repeated_trajectory_advances() -> None:
 def test_dde_keeps_the_python_fallback() -> None:
     """A DDE has no numeric RHS → not engine-eligible → Python crossing loop."""
     mg = ts.MackeyGlass()
+    # Rejected on both engine evaluators, incl. the production default ("jit").
     assert engine_eligible(mg, "interp") is False
+    assert engine_eligible(mg, "jit") is False
     tr = mg.integrate(final_time=300.0, dt=0.5, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
     sec = ts.PoincareMap(mg, plane=(0, 1.0), direction=+1, dt=0.5, max_time=2000.0).trajectory(
         10, ic=tr.y[-1]
@@ -213,6 +215,7 @@ def test_stiff_default_keeps_the_python_fallback() -> None:
         _default_method = "bdf"
 
     assert engine_eligible(_Stiff(), "interp") is False
+    assert engine_eligible(_Stiff(), "jit") is False
 
 
 def test_reference_backend_forces_the_python_loop() -> None:

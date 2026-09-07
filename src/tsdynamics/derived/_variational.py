@@ -9,9 +9,9 @@ This module is the engine path for ODE Lyapunov: it constructs the **extended**
 ODE — base state stacked with ``k`` tangent vectors — symbolically and lowers it
 to an engine :class:`Tape` through the public
 :func:`tsdynamics.engine.compile.lower_expressions`.  That tape runs on any
-evaluator behind the frozen ``Evaluator`` seam (the zero-warmup interpreter, the
-Cranelift JIT, or the pure-Python reference oracle), so the Rust engine is the
-variational integrator.
+evaluator behind the frozen ``Evaluator`` seam (the Cranelift JIT — the default
+since v6 — the SSA-tape interpreter, or the pure-Python reference oracle), so the
+Rust engine is the variational integrator.
 
 The renormalisation loop that consumes the extended flow (QR every step,
 accumulate ``log|diag R|``) lives in :class:`~tsdynamics.derived.tangent.TangentSystem`,

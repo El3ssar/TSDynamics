@@ -160,7 +160,11 @@ def test_divergence_raises():
 
 
 def test_default_backend_is_the_engine():
-    """The default DDE backend is the Rust method-of-steps engine (post-M3)."""
+    """The default DDE backend is the Rust method-of-steps engine, on the JIT.
+
+    ``"interp"`` until v6; the compiled-evaluator cache made ``"jit"`` the
+    default for every concrete family.
+    """
     traj = _LinearDDE().integrate(final_time=1.0, dt=0.5, ic=[1.0])
     assert traj.meta.get("engine") == "rust"
-    assert traj.meta.get("backend") == "interp"
+    assert traj.meta.get("backend") == "jit"

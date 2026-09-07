@@ -3,8 +3,10 @@ Build-time figure rendering for the per-system documentation pages.
 
 Strategy
 --------
-- **ODE** figures integrate with the **shipped Rust engine** (the same
-  ``integrate(backend="interp")`` path the library exposes) for every
+- **ODE** figures integrate with the **shipped Rust engine**, pinned to
+  ``integrate(backend="interp")``.  The interpreter is bit-for-bit identical to
+  the library's default ``"jit"`` backend, and pinning it keeps the cached figure
+  goldens stable independently of which evaluator is the default, for every
   non-stiff, non-discontinuous system — so the docs picture is rendered by the
   code that ships, not an out-of-band SciPy reimplementation.  The handful of
   **stiff** systems (those declaring a ``_default_method``, e.g. ``"bdf"``) and
@@ -484,8 +486,9 @@ def _ode_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     """Render-time ODE trajectory: shipped engine for the common case, else SciPy.
 
     Non-stiff, non-discontinuous systems integrate through the shipped Rust
-    engine (``integrate(backend="interp")``) so the docs figure is produced by
-    the code that ships.  Stiff / discontinuous systems use the commented
+    engine, pinned to ``integrate(backend="interp")`` — bit-for-bit identical to
+    the default ``"jit"`` backend, so the docs figure is still produced by the
+    code that ships.  Stiff / discontinuous systems use the commented
     SciPy ``solve_ivp`` fallback (:func:`_ode_trajectory_scipy`).
 
     An explicit ``engine_method`` override (a stiff system that wants the engine's
@@ -682,9 +685,10 @@ def _sde_sample_path(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     """Integrate one **seeded** sample path of a (scalar) SDE for the figure.
 
     Runs the shipped SDE integrator with a fixed ``seed`` so the rendered path is
-    reproducible (hence cacheable).  The default ``reference`` backend (pure
-    Python) needs no compiled wheel and reproduces the engine to float tolerance —
-    the right choice for a deterministic, portable docs figure.  Honours a
+    reproducible (hence cacheable).  This path pins ``backend="reference"`` (pure
+    Python; *not* the family default, which is ``"jit"``): it needs no compiled
+    wheel and reproduces the engine to float tolerance — the right choice for a
+    deterministic, portable docs figure.  Honours a
     per-system ``final_time`` / ``dt`` override (the switching double well wants a
     longer window than a mean-reverting OU path).
     """

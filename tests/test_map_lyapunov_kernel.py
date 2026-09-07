@@ -136,7 +136,7 @@ def test_non_lowering_map_falls_back_to_numpy() -> None:
     class BranchingMap(DiscreteMap):
         # A tent-like map written with a Python ``if`` on the state, so ``_step``
         # cannot trace to a straight-line tape (it raises TapeCompileError); the
-        # default ``interp`` backend must fall back to the NumPy QR loop.
+        # default ``jit`` backend must fall back to the NumPy QR loop.
         params = {"r": 1.9}
         dim = 1
 

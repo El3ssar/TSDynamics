@@ -17,9 +17,10 @@ the diffusion carrying ``∂g/∂u`` for Milstein).
 
 Solvers (the real engine, ``tsdyn-solvers``/``tsdyn-engine``): **Euler–Maruyama**
 (strong order 0.5) and **Milstein** (strong order 1.0, which reads ``∂g/∂u``).
-The default ``backend="interp"`` (and ``"jit"``) dispatches the two-tape SDE call
+The default ``backend="jit"`` (and ``"interp"``) dispatches the two-tape SDE call
 to the compiled Rust engine (``tsdynamics._rust``, the FFI surface in
-``tsdyn-core``; stream E-WIRE) — the interpreter and the Cranelift JIT.
+``tsdyn-core``; stream E-WIRE) — the Cranelift JIT and the SSA-tape interpreter,
+which agree bit-for-bit.
 ``backend="reference"`` runs a dependency-light **pure-Python reference
 integrator** that mirrors the engine's semantics — the same drift/diffusion
 tapes, the same diagonal Wiener substrate (a faithful port of the engine's
@@ -293,12 +294,14 @@ class StochasticSystem(SystemBase, ABC):
     _default_step_dt: ClassVar[float] = 0.01
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"interp"`` — the Rust SDE engine.  Unlike the other families the SDE
-    #: engine path does not go through ``run.integrate`` (which cannot carry the
-    #: noise seed/step); it uses the dedicated ``run.sde_integrate_dense`` /
+    #: ``"jit"`` — the Rust SDE engine on Cranelift-compiled code, with the
+    #: compiled-evaluator cache paying the compile once per distinct system (it
+    #: was ``"interp"`` before v6).  Unlike the other families the SDE engine
+    #: path does not go through ``run.integrate`` (which cannot carry the noise
+    #: seed/step); it uses the dedicated ``run.sde_integrate_dense`` /
     #: ``run.sde_ensemble_final`` seam.  ``"reference"`` is the wheel-free
     #: pure-Python oracle.
-    _default_backend: ClassVar[str] = "interp"
+    _default_backend: ClassVar[str] = "jit"
 
     #: Parameters whose values affect the symbolic *structure* of the dynamics
     #: (e.g. integer loop bounds); baked in at lowering time, like the ODE family.
@@ -544,15 +547,20 @@ class StochasticSystem(SystemBase, ABC):
                paths for the same ``s`` — by design, not a bug.  To reproduce one
                ``ensemble`` trajectory standalone, integrate with that index's
                derived seed.
-        backend : str, optional
-            Defaults to ``_default_backend`` (``"interp"``).  ``"interp"`` /
-            ``"jit"`` dispatch the two-tape
-            SDE call to the compiled Rust engine (:mod:`tsdynamics._rust`) via the
+        backend : {"jit", "interp", "reference"}, optional
+            Defaults to ``_default_backend`` (``"jit"``, the Cranelift JIT served
+            from the compiled-evaluator cache).  ``"jit"`` / ``"interp"`` (the
+            bit-for-bit identical SSA-tape interpreter) dispatch the two-tape SDE
+            call to the compiled Rust engine (:mod:`tsdynamics._rust`) via the
             dedicated ``run.sde_integrate_dense`` seam.  The engine path reproduces
-            the reference to floating-point tolerance under a fixed seed (see the
-            module docstring on the Box–Muller ULP) and raises
-            :class:`~tsdynamics.engine.run.EngineNotAvailableError` if the
-            extension is not built.
+            the ``"reference"`` pure-Python oracle to floating-point tolerance
+            under a fixed seed (see the module docstring on the Box–Muller ULP)
+            and raises :class:`~tsdynamics.engine.run.EngineNotAvailableError` if
+            the extension is not built.
+
+            .. versionchanged:: 6.0
+               The default moved from ``"interp"`` to ``"jit"``, once the v6
+               compiled-evaluator cache removed the JIT's per-call recompile.
 
         Returns
         -------
@@ -630,11 +638,16 @@ class StochasticSystem(SystemBase, ABC):
             The batch of initial conditions.
         final_time, dt, t0, method, seed
             As in :meth:`integrate` (``seed`` is the ensemble's base seed).
-        backend : str, optional
-            Defaults to ``_default_backend`` (``"interp"``).  ``"interp"`` /
-            ``"jit"`` fan the batch out on the compiled engine's rayon pool;
-            ``"reference"`` is a pure-Python loop.  All seed each trajectory by index, so the final
-            states match across backends to floating-point tolerance.
+        backend : {"jit", "interp", "reference"}, optional
+            Defaults to ``_default_backend`` (``"jit"``).  ``"jit"`` / ``"interp"``
+            fan the batch out on the compiled engine's rayon pool;
+            ``"reference"`` is a pure-Python loop.  All seed each trajectory by
+            index, so the final states match across backends to floating-point
+            tolerance.
+
+            .. versionchanged:: 6.0
+               Default moved from ``"interp"`` to ``"jit"`` (see
+               :meth:`integrate`).
 
         Returns
         -------

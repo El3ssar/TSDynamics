@@ -47,13 +47,17 @@ class _SeamGBM(ts.StochasticSystem):
 
 
 def test_default_backend_per_family() -> None:
-    """Post-M3 every family defaults to the Rust engine interpreter (the one knob)."""
-    assert ts.ContinuousSystem._default_backend == "interp"
-    assert ts.DelaySystem._default_backend == "interp"
-    assert ts.DiscreteMap._default_backend == "interp"
-    assert ts.StochasticSystem._default_backend == "interp"
+    """Every concrete family defaults to the Rust engine's Cranelift JIT (the one knob).
+
+    Was ``"interp"`` until v6, when the compiled-evaluator cache removed the
+    JIT's per-call recompile and made it the faster default.
+    """
+    assert ts.ContinuousSystem._default_backend == "jit"
+    assert ts.DelaySystem._default_backend == "jit"
+    assert ts.DiscreteMap._default_backend == "jit"
+    assert ts.StochasticSystem._default_backend == "jit"
     # The abstract base keeps the wheel-free oracle as its default; every concrete
-    # family overrides it to the engine interpreter above.
+    # family overrides it to the engine JIT above.
     from tsdynamics.families.base import SystemBase
 
     assert SystemBase._default_backend == "reference"
@@ -64,7 +68,7 @@ def test_backend_none_resolves_to_family_default_ode() -> None:
     pytest.importorskip("tsdynamics._rust")
     lor = ts.Lorenz()
     kw = dict(final_time=1.0, dt=0.5, ic=[1.0, 1.0, 1.0])
-    explicit = lor.integrate(backend="interp", **kw)
+    explicit = lor.integrate(backend=ts.ContinuousSystem._default_backend, **kw)
     implicit = lor.integrate(backend=None, **kw)
     np.testing.assert_array_equal(explicit.y, implicit.y)
     # The default path now *is* the engine seam.

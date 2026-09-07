@@ -440,7 +440,7 @@ class PoincareMap(DerivedSystem):
         self, steps: int, transient: int, backend: str | None
     ) -> tuple[np.ndarray, np.ndarray]:
         """Collect crossings with the wired Rust event engine (one call)."""
-        be = backend if backend is not None else getattr(self.system, "_default_backend", "interp")
+        be = backend if backend is not None else getattr(self.system, "_default_backend", "jit")
         ic = self.system.state()
         t0 = self.system.time()
         times, points, t_final, u_final = _crossings.section_crossings(
@@ -497,9 +497,10 @@ class PoincareMap(DerivedSystem):
             Number of crossings to collect.
         transient : int
             Number of leading crossings to discard.
-        backend : {"interp", "jit", "reference"}, optional
+        backend : {"jit", "interp", "reference"}, optional
             Engine evaluator for the fast path; defaults to the inner system's
-            backend.  ``"reference"`` forces the pure-Python loop.
+            ``_default_backend`` (``"jit"`` for every concrete family since v6).
+            ``"reference"`` forces the pure-Python loop.
 
         Returns
         -------

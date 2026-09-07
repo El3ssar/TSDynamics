@@ -55,7 +55,7 @@ class TangentSystem(DerivedSystem):
       :mod:`tsdynamics.derived._variational`) is lowered to an engine tape and
       integrated per step on the Rust engine (or the pure-Python reference
       oracle), then QR-reorthonormalised here.  Select the variational backend
-      with ``backend=``: ``"interp"`` (default), ``"jit"``, or ``"reference"``.
+      with ``backend=``: ``"jit"`` (default), ``"interp"``, or ``"reference"``.
     - **DDEs**: not supported — tangent dynamics of a DDE lives in an
       infinite-dimensional history space; use
       ``DelaySystem.lyapunov_spectrum`` (the engine DDE Lyapunov estimator).
@@ -67,9 +67,15 @@ class TangentSystem(DerivedSystem):
     k : int, optional
         Number of deviation vectors (``1 ≤ k ≤ system.dim``).  Defaults to the
         full state dimension.
-    backend : str, optional
-        ODE variational backend (ignored for maps): ``"interp"`` (default),
-        ``"jit"``, or ``"reference"``.
+    backend : {"jit", "interp", "reference"}, optional
+        ODE variational backend (ignored for maps): ``"jit"`` (default, the
+        Cranelift JIT served from the compiled-evaluator cache), ``"interp"``
+        (the bit-for-bit identical SSA-tape interpreter), or ``"reference"``
+        (the pure-Python oracle — not for production use).
+
+        .. versionchanged:: 6.0
+           Default moved from ``"interp"`` to ``"jit"``, once the v6
+           compiled-evaluator cache removed the JIT's per-call recompile.
 
     Examples
     --------
@@ -103,13 +109,14 @@ class TangentSystem(DerivedSystem):
             raise ValueError(f"k must be in [1, {system.dim}], got {self.k}")
 
         # Both maps and ODEs select among the same three backends: the compiled
-        # engine (``interp``/``jit``) or the pure-Python ``reference`` oracle.  For
-        # maps ``interp``/``jit`` run the Rust QR tangent-map kernel (stream
+        # engine (``jit``, the default, or ``interp``) or the pure-Python
+        # ``reference`` oracle.  For maps the two engine evaluators run the Rust
+        # QR tangent-map kernel (stream
         # perf/map-lyapunov-kernel) and ``reference`` the pure-NumPy QR loop (also
         # the transparent fallback when the engine declines — a non-lowering
         # ``_step`` or an absent wheel); for ODEs they select the variational
         # integration backend as before.
-        self._backend = (backend or "interp").lower()
+        self._backend = (backend or "jit").lower()
         if self._backend not in _ENGINE_BACKENDS:
             raise ValueError(
                 f"unknown {'map' if self._mode == 'map' else 'ODE'} tangent backend "
@@ -623,7 +630,7 @@ class TangentSystem(DerivedSystem):
     ) -> np.ndarray:
         """QR tangent-map spectrum for a map, with random-IC retry on divergence.
 
-        For the compiled-engine backends (``interp``/``jit``, the default) the whole
+        For the compiled-engine backends (``jit`` — the default — and ``interp``) the whole
         QR tangent-map iteration runs in one Rust kernel call
         (:func:`~tsdynamics.engine.run.map_lyapunov`) — no per-step Python→FFI
         round-trip, ~thousands of times faster than the NumPy loop it supersedes.

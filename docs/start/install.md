@@ -1,5 +1,5 @@
 ---
-description: Install TSDynamics with pip or uv from a prebuilt wheel — the compiled Rust engine ships inside it, so there is no build step, no compiler, and no warmup.
+description: Install TSDynamics with pip or uv from a prebuilt wheel — the compiled Rust engine ships inside it, so there is no build step and no compiler toolchain.
 ---
 
 <span class="ts-kicker">Start · 01</span>
@@ -32,15 +32,17 @@ covers every CPython ≥ 3.12.
 Concretely, this means:
 
 - **No toolchain.** Installing and running the library never invokes a compiler.
-- **No warmup, no compile cache.** Every family — ODEs, delay equations,
+- **No build step, nothing on disk.** Every family — ODEs, delay equations,
   stochastic equations, and maps — lowers its symbolic equations to an
-  in-process engine *tape* the first time you run it, in a fraction of a second.
-  There is no ahead-of-time compilation step and nothing written to disk. Editing
-  a system's equations simply takes effect on the next run; there is no cache to
-  wipe.
-- **The same numbers everywhere.** The tape is executed by a Rust interpreter (or
-  optionally a JIT — see [backends](concepts.md#backends-interp-jit-reference)),
-  so results do not depend on which BLAS or Python build you happen to have.
+  in-process engine *tape* the first time you run it, in a fraction of a second,
+  and the tape is compiled to native code by the built-in JIT. Both steps are
+  in-process and memoised per system; there is no ahead-of-time compilation and
+  nothing is written to disk. Editing a system's equations simply takes effect on
+  the next run; there is no cache to wipe.
+- **The same numbers everywhere.** The tape runs on a Cranelift JIT by default,
+  or on a Rust interpreter that is bit-for-bit identical — see
+  [backends](concepts.md#backends-jit-interp-reference) — so results do not
+  depend on which BLAS or Python build you happen to have.
 
 !!! note "Building from source"
     Only building *from the source distribution* — the `sdist`, the fallback for

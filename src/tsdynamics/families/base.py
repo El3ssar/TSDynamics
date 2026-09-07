@@ -377,11 +377,12 @@ class SystemBase(SystemPlottable):
     known_lyapunov: ClassVar[dict[str, Any] | None] = None
 
     #: The runtime backend this family's engine-dispatch seam uses when a caller
-    #: does not name one.  Every concrete family sets it to ``"interp"`` (the Rust
-    #: engine interpreter — the sole integration backend post-M3); the abstract
-    #: base keeps ``"reference"`` (the wheel-free pure-Python oracle).  Read by the
-    #: family ``integrate`` / ``iterate`` methods and by :meth:`_dispatch`, so "the
-    #: default backend" lives in exactly one place.
+    #: does not name one.  Every concrete family sets it to ``"jit"`` (the Rust
+    #: engine's Cranelift JIT, with the compiled-evaluator cache paying the
+    #: compile once per distinct system — it was ``"interp"`` before v6); the
+    #: abstract base keeps ``"reference"`` (the wheel-free pure-Python oracle).
+    #: Read by the family ``integrate`` / ``iterate`` methods and by
+    #: :meth:`_dispatch`, so "the default backend" lives in exactly one place.
     _default_backend: ClassVar[str] = "reference"
 
     def __init_subclass__(cls, **kwargs: Any) -> None:

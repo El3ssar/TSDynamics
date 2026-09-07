@@ -144,9 +144,10 @@ Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
 
 - **171 built-in systems** with literature parameters (136 ODEs, 26 maps, 6 DDEs, 3 SDEs).
 
-- **Native engine**: equations lower to a Rust engine (an SSA-tape
-  interpreter, with a Cranelift JIT alongside) in-process; parameters are runtime
-  values, so changing them is free and there is no compile step or cache.
+- **Native engine**: equations lower to a Rust engine in-process and run on a
+  built-in Cranelift JIT (or a bit-for-bit identical SSA-tape interpreter);
+  parameters are runtime values, so changing them is free, and nothing is ever
+  written to disk.
 
 - **Composition** — a `PoincareMap` of a flow *is* a discrete map, so
   `orbit_diagram(PoincareMap(Rossler(), ("y", 0.0)), "c", values)` draws the

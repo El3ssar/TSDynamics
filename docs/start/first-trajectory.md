@@ -45,8 +45,9 @@ traj.y.shape      # (10001, 3) — state at each time
 `dt` is only the **output grid** — where the solution is sampled into the
 returned arrays. The internal solver is adaptive, choosing its own steps to meet
 the error tolerances, so a coarse `dt` costs resolution but never accuracy. The
-right-hand side is lowered to the Rust engine in-process and runs with no warmup;
-the very first call is already at full speed.
+right-hand side is lowered to the Rust engine in-process and JIT-compiled to
+native code on first use — both steps happen in milliseconds and are memoised, so
+there is no build step to wait for and nothing is written to disk.
 
 Prefer explicit control? Pass `method=`, `rtol=`/`atol=`, `ic=`, or a
 `backend=`. All of that is covered in

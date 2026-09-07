@@ -10,7 +10,7 @@ hide:
 # TSDynamics
 
 Dynamical systems and chaos analysis for Python, on a native Rust engine —
-171 built-in systems, compiled integration with no warmup, and a full
+171 built-in systems, JIT-compiled integration with no build step, and a full
 chaos-analysis toolkit. Define the math once; get the rest.
 
 <!-- The landing page (hero, install, cards) is rendered by the

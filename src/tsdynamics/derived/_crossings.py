@@ -122,7 +122,7 @@ def section_crossings(
     max_time: float,
     rtol: float = DEFAULT_RTOL,
     atol: float = DEFAULT_ATOL,
-    backend: str = "interp",
+    backend: str = "jit",
     t0: float = 0.0,
     ic: Any,
 ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray]:

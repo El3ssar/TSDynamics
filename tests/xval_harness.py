@@ -126,8 +126,9 @@ class RustEngine:
     Parameters
     ----------
     backend
-        ``"interp"`` (the SSA-tape interpreter, default) or ``"jit"`` (the
-        Cranelift JIT).  The two are numerically identical by contract, so a
+        ``"interp"`` (the SSA-tape interpreter — this harness's own default,
+        chosen to pin the oracle against the *interpreter*) or ``"jit"`` (the
+        Cranelift JIT, which is the library's default backend since v6).  The two are numerically identical by contract, so a
         sweep can run the same comparison through either and an ``interp``-vs-
         ``jit`` cross-check pins that contract.
     method, rtol, atol

@@ -78,7 +78,7 @@ Python `if` on the state do not belong here (they cannot be traced).
 
 ### It just works
 
-There is no registration call, no build step, and no warmup. The class is a fully
+There is no registration call and no build step. The class is a fully
 functional system the moment it is defined:
 
 ```python

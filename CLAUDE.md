@@ -15,9 +15,10 @@ provides:
 
 - ODE / DDE / SDE integration and discrete-map iteration on the Rust engine
   (`ContinuousSystem`, `DelaySystem`, `StochasticSystem`, `DiscreteMap`), reached
-  through `backend="interp"` (the SSA-tape interpreter, default), `"jit"` (the
-  Cranelift JIT), or `"reference"` (a dependency-light pure-Python SciPy oracle,
-  ODE + maps only)
+  through `backend="jit"` (the Cranelift JIT, **the default since v6**),
+  `"interp"` (the SSA-tape interpreter, bit-for-bit identical), or `"reference"`
+  (a dependency-light pure-Python SciPy oracle, ODE + maps only — the
+  cross-check, not for production use)
 - A uniform stepping protocol (`System`) implemented by all families
 - Derived-system wrappers (`PoincareMap`, `StroboscopicMap`, `TangentSystem`,
   `EnsembleSystem`, `ProjectedSystem`)
@@ -294,10 +295,12 @@ plus:
   integration branch funnels through `_dispatch` → `engine.run.integrate`, so the
   FFI marshalling, divergence guards and engine-path provenance live once in
   `run.integrate` instead of being re-implemented per family. `_default_backend`
-  is each family's default integrator — `"interp"` (the Rust engine interpreter)
-  for every concrete family; the abstract `SystemBase` keeps `"reference"` (the
-  wheel-free oracle). Passing `backend=None` to a family's `integrate` /
-  `iterate` resolves to it. `run.integrate` also resolves the `method=` string
+  is each family's default integrator — **`"jit"` (the Cranelift JIT) for every
+  concrete family since v6** (it was `"interp"`; see "Which backend is the
+  default" below for the measurement that drove the flip); the abstract
+  `SystemBase` keeps `"reference"` (the wheel-free oracle). Passing
+  `backend=None` to a family's `integrate` / `iterate` resolves to it, and
+  `backend="auto"` resolves to the same `"jit"`. `run.integrate` also resolves the `method=` string
   through the shared `_resolve_method_for` contract (so an alias `"RK45"`/
   `"dopri5"` → `"rk45"`, a rejected v2-only name `"LSODA"`, and the auto-stiffness
   `method="auto"` all behave identically in **`integrate` and `ensemble`**) and
@@ -381,8 +384,8 @@ All three families + all derived wrappers implement:
   active extremum, so a symengine `Min`/`Max` ODE (or an `np.minimum`/`np.maximum`
   map lowering to `OP_MIN`/`OP_MAX`) lowers `with_jacobian=True` for the stiff
   (`bdf`/`rosenbrock`/`trbdf2`) and map-Lyapunov paths instead of raising.
-- `integrate(backend=)` defaults to `_default_backend` (`"interp"`). `"interp"`
-  / `"jit"` / `"reference"` route through the shared C-FAM seam (`_dispatch` →
+- `integrate(backend=)` defaults to `_default_backend` (`"jit"`). `"jit"`
+  / `"interp"` / `"reference"` route through the shared C-FAM seam (`_dispatch` →
   `engine.run.integrate`) to the Rust engine (or its pure-Python oracle).
   `run.integrate` resolves `method=` through the solver registry and lowers the
   tape `with_jacobian=True` for the implicit stiff kernels (`bdf` /`rosenbrock` /
@@ -517,8 +520,8 @@ interior points).
 - `_jacobian_fd_check = False` ClassVar opts a map out of the
   finite-difference Jacobian test (only for orbits living on discontinuities,
   e.g. Baker).
-- `iterate(backend=...)` runs the iteration on the Rust engine (`"interp"`
-  default / `"jit"` / `"reference"` pure-Python oracle). The engine loop lives in
+- `iterate(backend=...)` runs the iteration on the Rust engine (`"jit"`
+  default / `"interp"` / `"reference"` pure-Python oracle). The engine loop lives in
   `crates/tsdyn-engine/src/map.rs`; all backends lower `_step` to the IR, so
   piecewise/`numpy`-ufunc steps raise `TapeCompileError`. The engine path
   diverges loudly (raises); the random-IC retry still applies when `iterate` is
@@ -536,8 +539,9 @@ interior points).
   the noise scale `√dt` (so `dt` sets both the discretisation and the output grid).
   `method`: `"euler_maruyama"` (order 0.5, default) or `"milstein"` (order 1.0).
   `seed` makes the noise realisation reproducible (recorded in `traj.meta`).
-  `backend`: `"reference"` (default, pure Python) or `"interp"`/`"jit"` — the
-  compiled engine via `tsdynamics._rust` (stream E-WIRE).
+  `backend`: `"jit"` (the default, like every other family) / `"interp"` — the
+  compiled engine via `tsdynamics._rust` (stream E-WIRE) — or `"reference"` (pure
+  Python). (This line said `"reference"` was the SDE default; it never was.)
 - `ensemble(ics, ..., backend=)` seeds trajectory `i` from `seed_for(seed, i)` —
   depending only on the index — so a batch is reproducible and mirrors the Rust
   engine's parallel-equals-serial contract; a diverged trajectory becomes a `NaN`
@@ -546,8 +550,8 @@ interior points).
   (own `SdeKernel` trait, RNG-free — the engine hands them a pre-drawn `dw`),
   loop + seeded RNG in `crates/tsdyn-engine/src/sde.rs`. The two-tape SDE FFI
   (`integrate_sde_dense` / `integrate_sde_ensemble_final` in `tsdyn-core`) is
-  wired (stream E-WIRE): `backend="interp"/"jit"` (the default) dispatches the
-  drift+diffusion call to the engine (interpreter or Cranelift JIT). The
+  wired (stream E-WIRE): `backend="jit"` (the default) / `"interp"` dispatches
+  the drift+diffusion call to the engine (Cranelift JIT or interpreter). The
   pure-Python **reference** integrator (a faithful `SplitMix64` port, sharing the
   engine's tolerant fixed-step landing) reproduces the engine **to floating-point
   tolerance** under a fixed seed — the integer RNG stream and draw order are
@@ -1336,7 +1340,7 @@ reuse `_strategies` and assert a real invariant — never a tautology.
 
 ---
 
-## Tape lowering & the in-process tape cache (zero warmup)
+## Tape lowering & the in-process tape cache (no on-disk cache)
 
 The engine lowers each system to an in-process IR tape on first use — there is
 **no on-disk compile cache** and no C-compilation step (the old
@@ -1390,6 +1394,60 @@ run; nothing to wipe.
   than `interp` at *every* run length (the old ~1000-step crossover is gone).
 - The docs figure cache is unrelated and still exists: `.cache/docs-figures`,
   keyed by class source hash (CI persists it via actions/cache).
+
+### Which backend is the default (and when to revisit)
+
+`_default_backend` is **`"jit"`** on all four concrete families (v6). It was
+`"interp"` for the whole v3–v5 line, and the flip was **measurement-driven**, not
+a preference — record the numbers here so a future reader can re-litigate it
+without re-deriving them.
+
+*Why it used to be `interp`:* the Cranelift JIT recompiled the whole tape on
+**every FFI call**, so `jit` was slower than `interp` below ~1000 Lorenz steps.
+The v6 compiled-evaluator cache (above) removed that per-call compile, which
+invalidated the original reason.
+
+*The re-measurement* (all 136 catalogue ODE systems, warm process, JIT **and**
+tape caches emptied per system, so the "first call" column is a genuine cold
+cost):
+
+| quantity | median | p90 | max |
+|---|---|---|---|
+| `jit` first-call cost over `interp` | **+0.65 ms** | +4.57 ms | +639 ms (GrayScott, dim 4608) |
+
+| quantity | median | p10 | min |
+|---|---|---|---|
+| steady-state speedup (T=5, dt=0.01) | **1.55×** | 1.13× | 0.75× |
+
+That sweep flagged `jit` as **slower on 3 of 136 systems** — `PehlivanWei` 0.99×,
+`SprottB` 0.75×, `SprottF` 0.95×. **That result did not survive a controlled
+re-measurement.** Re-timed with a *pinned* IC, interleaved A/B and min-of-25, all
+three are **faster** on `jit`: 1.55× / 1.19× / 1.19×. The cause is a measurement
+trap worth remembering: **those three declare no `default_ic`, so
+`resolve_ic(None)` draws a fresh random start on every call** — different ICs take
+different numbers of adaptive steps, so an un-pinned A/B is comparing different
+amounts of work, not two backends. (The same trap bit the bit-identity check:
+`interp` vs `interp` also "differs" on a system with no `default_ic`.) **Always
+pin `ic=` when timing or diffing.**
+
+So there is **no per-system `_default_backend = "interp"` override**, and none is
+warranted: no catalogue system is known to be genuinely slower on the JIT, and a
+per-system override would be a maintenance liability re-validated on every
+machine and kernel change. Users who want the interpreter pass `backend="interp"`.
+
+*Memory:* the compiled-evaluator cache is a bounded 64-entry LRU. Measured over
+two passes across 97 distinct catalogue ODEs: RSS 59 → 104 MB, cache saturating at
+exactly 64/64, and the **second pass added +0.2 MB** — it plateaus, it does not
+leak. Note the corollary: a session cycling round-robin through >64 distinct
+systems is the LRU worst case and re-compiles on nearly every visit (measured 22
+hits / 172 misses over 2×97 systems). Bounded, but not free.
+
+*When to revisit:* if the p90 first-call cost grows materially (a Cranelift
+regression, or a jump in the number of catalogue systems with huge tapes), or if a
+system turns up that is genuinely slower on `jit` under a *pinned-IC* A/B. The
+measurement harness is the one described above — clear both caches per system, pin
+the IC, and time the first call plus a T=5/dt=0.01 steady-state run on each
+backend.
 
 ### Engine performance benches & the regression gate (v6 WP3-perf)
 
@@ -1453,8 +1511,9 @@ traj["x"]                                   # named component
 exps = lor.lyapunov_spectrum(final_time=300.0)   # → [0.91, ~0, -14.57]
 ts.kaplan_yorke_dimension(exps)             # → ~2.06
 
-# Backends: "interp" (default) / "jit" (Cranelift) / "reference" (pure-Python oracle)
-traj = lor.integrate(final_time=100.0, dt=0.01, backend="jit")
+# Backends: "jit" (Cranelift, default) / "interp" (SSA interpreter, bit-identical)
+#           / "reference" (pure-Python oracle — the cross-check, not for production)
+traj = lor.integrate(final_time=100.0, dt=0.01, backend="interp")
 
 # dt is OUTPUT SAMPLING ONLY; rtol/atol set accuracy (default 1e-9/1e-12 since
 # v6 — see "Solver tolerances"), max_step bounds the step

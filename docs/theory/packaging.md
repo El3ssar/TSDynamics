@@ -15,13 +15,13 @@ are produced.
 
 | Distribution | Build backend | Contents | Compiler needed? |
 | ------------ | ------------- | -------- | ---------------- |
-| `tsdynamics` | maturin (wheel + sdist) | the whole library — systems, families, analysis, visualization — **plus** `tsdynamics/_rust.abi3.so`, the zero-warmup tape interpreter + Cranelift JIT + solver kernels | **No** for the prebuilt wheel; building *from the sdist* needs a Rust toolchain |
+| `tsdynamics` | maturin (wheel + sdist) | the whole library — systems, families, analysis, visualization — **plus** `tsdynamics/_rust.abi3.so`, the Cranelift JIT + SSA-tape interpreter + solver kernels | **No** for the prebuilt wheel; building *from the sdist* needs a Rust toolchain |
 
 `pip install tsdynamics` pulls a prebuilt `abi3` wheel for your platform, so the
 engine arrives compiled — no Rust toolchain and no C compiler. Every family
 (ODEs, DDEs, maps) lowers its symbolic equations to the engine in-process and
-runs with no warmup, reached through `backend="interp"` (the default) or
-`backend="jit"` (see the [compilation pipeline](compilation.md)).
+runs in-process, reached through `backend="jit"` (the default) or
+`backend="interp"` (see the [compilation pipeline](compilation.md)).
 
 ## One wheel, one layout
 
@@ -71,4 +71,4 @@ no-compiler path.
 
 The platform wheels are published to PyPI as part of the release flow, so
 `pip install tsdynamics` delivers the engine prebuilt on every listed platform,
-with no compiler and no warmup.
+with no toolchain required at install or run time.

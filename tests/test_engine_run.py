@@ -52,7 +52,8 @@ class _OU(ts.ContinuousSystem):
 
 
 def test_resolve_backend_canonicalises() -> None:
-    assert resolve_backend("auto") == "interp"
+    # "auto" follows the family default, which v6 moved to the Cranelift JIT.
+    assert resolve_backend("auto") == "jit"
     assert resolve_backend("interp") == "interp"
     assert resolve_backend("JIT") == "jit"
     assert resolve_backend("Reference") == "reference"

@@ -10,7 +10,7 @@ The largest family: **136 ODE systems**, all subclasses of
 [`ContinuousSystem`](../../reference/base.md). Each declares its parameters
 and dimension at class level and defines the vector field in one symbolic
 `_equations` method; it is lowered to the native Rust engine in-process and
-runs with no warmup (see
+JIT-compiled on first use, with no build step (see
 [the compilation pipeline](../../theory/compilation.md)).
 
 ```python

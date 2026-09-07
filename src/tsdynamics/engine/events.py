@@ -89,8 +89,9 @@ def crossings(
         without it the controller is free to grow the step past a narrow
         crossing.  With ``method="rk4"`` the step is already ``first_step``, so
         the ceiling is inert.
-    backend : {"interp", "jit"}
-        The engine evaluator.  ``"reference"`` is rejected — the crossing engine is
+    backend : {"jit", "interp"}
+        The engine evaluator (``"jit"`` by default, as elsewhere).
+        ``"reference"`` is rejected — the crossing engine is
         compiled-only; callers fall back to the Python loop for the no-engine case.
     terminal : bool, default False
         Stop at the first crossing (a terminal event) instead of collecting all.
@@ -459,7 +460,7 @@ def integrate_events(
     rtol: float = DEFAULT_RTOL,
     atol: float = DEFAULT_ATOL,
     max_step: float | None = None,
-    backend: str = "interp",
+    backend: str = "jit",
 ) -> EventSolution:
     """Integrate an ODE while detecting a list of events — the ``events=`` engine seam.
 

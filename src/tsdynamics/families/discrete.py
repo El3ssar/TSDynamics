@@ -85,7 +85,8 @@ class DiscreteMap(SystemBase):
     Iteration
     ---------
     ``iterate`` lowers ``_step`` to an in-process IR tape and runs the engine's
-    native map loop, with no warmup.  The engine reads the current parameter
+    native map loop, on a tape lowered and JIT-compiled once per system (both
+    memoised).  The engine reads the current parameter
     values live on every run, so a parameter change never triggers a
     re-lowering.
 
@@ -109,9 +110,10 @@ class DiscreteMap(SystemBase):
     _jacobian_fd_check: ClassVar[bool] = True
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"interp"`` — the Rust engine's native map loop (the sole map backend
-    #: since the M3 migration retired the v2 backends).
-    _default_backend: ClassVar[str] = "interp"
+    #: ``"jit"`` — the Rust engine's native map loop driven by the Cranelift JIT,
+    #: with the compiled-evaluator cache paying the compile once per distinct
+    #: system.  Was ``"interp"`` before v6.
+    _default_backend: ClassVar[str] = "jit"
 
     # Protocol stepping state (instances shadow these class defaults).
     _state_now: np.ndarray | None = None
@@ -367,17 +369,27 @@ class DiscreteMap(SystemBase):
         max_retries : int
             Retry with a new random IC if divergence is detected (only when no
             explicit ``ic`` was given; an explicit ic that diverges raises).
-        backend : str, optional
+        backend : {"jit", "interp", "reference"}, optional
             Where the iteration runs.  Defaults to ``_default_backend``
-            (``"interp"``).
+            (``"jit"``).
 
-            - ``"interp"`` (default) / ``"jit"`` — the Rust engine's native
-              map loop (interpreter or Cranelift JIT).  Requires the compiled
-              extension (:mod:`tsdynamics._rust`); until it is built these
-              raise :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
+            - ``"jit"`` (default) — the Rust engine's native map loop driven by
+              the **Cranelift JIT**: the lowered tape compiled to native code and
+              served from a process-wide compiled-evaluator cache, so the compile
+              is paid once per distinct system rather than on every call.
+            - ``"interp"`` — the same native map loop driven by the **SSA-tape
+              interpreter**.  Bit-for-bit identical to the JIT; marginally faster
+              on very small tapes, and the way to skip the one-off compile.
+              Both require the compiled extension (:mod:`tsdynamics._rust`);
+              until it is built they raise
+              :class:`~tsdynamics.engine.run.EngineNotAvailableError`.
             - ``"reference"`` — the lowered next-state tape, iterated in pure
-              Python (the dependency-light oracle the engine is validated
-              against).
+              Python.  Not for production use: it is the dependency-light oracle
+              the engine is validated against.
+
+            .. versionchanged:: 6.0
+               The default moved from ``"interp"`` to ``"jit"``, once the v6
+               compiled-evaluator cache removed the JIT's per-call recompile.
 
             Every backend lowers ``_step`` to the engine IR, so it requires a
             map whose step traces symbolically (see
@@ -494,7 +506,7 @@ class DiscreteMap(SystemBase):
         QR-reorthonormalising every ``reortho_interval`` steps, with a random-IC
         retry on divergence.
 
-        On the compiled-engine backends (``"interp"`` default / ``"jit"``) the whole
+        On the compiled-engine backends (``"jit"`` default / ``"interp"``) the whole
         QR tangent-map iteration runs in one Rust kernel call
         (:func:`tsdynamics.engine.run.map_lyapunov`) — no per-step Python→FFI
         round-trip, so it is dramatically faster than the per-step NumPy loop.
@@ -514,9 +526,14 @@ class DiscreteMap(SystemBase):
             Number of exponents. Defaults to ``dim``.
         reortho_interval : int
             Reorthonormalise every this many steps. Default 1.
-        backend : str, optional
-            ``"interp"`` (default, the Rust kernel) / ``"jit"`` (Cranelift) /
-            ``"reference"`` (the pure-Python QR loop).
+        backend : {"jit", "interp", "reference"}, optional
+            ``"jit"`` (default, the Rust kernel on Cranelift-compiled code) /
+            ``"interp"`` (the same kernel on the SSA-tape interpreter,
+            bit-for-bit identical) / ``"reference"`` (the pure-Python QR loop —
+            the oracle, not for production use).
+
+            .. versionchanged:: 6.0
+               Default moved from ``"interp"`` to ``"jit"`` (see :meth:`iterate`).
 
         Returns
         -------

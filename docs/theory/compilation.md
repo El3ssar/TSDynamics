@@ -1,12 +1,12 @@
 ---
-description: How TSDynamics turns one symbolic method into an engine IR tape — zero warmup, no compiler, with symbolic Jacobians for free.
+description: How TSDynamics turns one symbolic method into an engine IR tape — no toolchain, no on-disk cache, with symbolic Jacobians for free.
 ---
 
 <span class="ts-kicker">Theory · 01</span>
 
 # Lowering pipeline
 
-## Symbolic → IR tape (no compiler, no warmup)
+## Symbolic → IR tape (no toolchain, no on-disk cache)
 
 When you first integrate or iterate a system, its one symbolic method is
 **lowered** to an instruction-tape the Rust engine evaluates directly:
@@ -21,12 +21,14 @@ SymEngine expression list           dim expressions, params as symbols
 IR tape                             a flat list of SSA instructions (+ the
         │                           analytic Jacobian when a stiff method needs it)
         ▼
-the engine                          interpreted (interp) or Cranelift-JITed (jit)
+the engine                          Cranelift-JITed (jit, default) or interpreted (interp)
 ```
 
 There is **no C/LLVM compilation step and no on-disk cache** — lowering happens
-in-process and is effectively instantaneous, so cold start is flat (sub-second)
-and editing a system's `_equations` simply takes effect on the next run. The
+in-process and is effectively instantaneous, and the JIT compile that follows it
+is memoised per system (median well under a millisecond for a typical flow), so
+cold start is flat (sub-second) and editing a system's `_equations` simply takes
+effect on the next run. The
 maps path (`_step`) and the DDE / SDE paths lower the same way
 (`lower_map` / `lower_dde` / `lower_sde`).
 

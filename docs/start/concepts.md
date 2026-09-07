@@ -127,13 +127,13 @@ auto-registered system — is on [Defining systems](defining-systems.md).
 
 ## Lower once, sweep for free
 
-A continuous system lowers its equations to the Rust engine in-process, with no
-warmup and nothing cached on disk. Ordinary parameters become *control
-parameters* of the lowered tape — changing them is free:
+A continuous system lowers its equations to the Rust engine in-process, with
+nothing cached on disk and no ahead-of-time build step. Ordinary parameters
+become *control parameters* of the lowered tape — changing them is free:
 
 ```python
 lor = ts.systems.Lorenz()
-lor.integrate(final_time=10)     # runs immediately (no warmup)
+lor.integrate(final_time=10)     # lowers + compiles once, in milliseconds
 lor.rho = 35.0                   # zero cost
 lor.integrate(final_time=10)     # same tape, new parameter value
 ```
@@ -173,19 +173,19 @@ u2 = lor.step(0.01)          # continue from there
 `integrate` and `iterate` are the convenience verbs on top of this protocol for
 the common "run a whole trajectory" case.
 
-## Backends: `interp`, `jit`, `reference`
+## Backends: `jit`, `interp`, `reference`
 
 Orthogonal to *what* a system is is *how* the engine executes its tape. The same
 run works on any of three backends, chosen with `backend=`:
 
 | `backend` | What it is | When to use it |
 | --------- | ---------- | -------------- |
-| `"interp"` | The Rust tape interpreter — the default | Everyday integration; no warmup, no compile step |
-| `"jit"` | The Cranelift JIT, which compiles the tape to native code | Long or repeated runs where the compiled speed pays off; **bit-for-bit identical** to `interp` |
+| `"jit"` | The Cranelift JIT, which compiles the tape to native code — **the default** | Everyday integration. The compile is cached per distinct system, so it is paid once (sub-millisecond for a typical flow) and the runs are ~1.5× faster |
+| `"interp"` | The Rust SSA-tape interpreter | When you want no compile at all — a very short one-shot run, or one of the handful of tiny systems the interpreter wins on; **bit-for-bit identical** to `jit` |
 | `"reference"` | A dependency-light pure-Python oracle (ODEs, SDEs, maps) | Cross-validation and wheel-free environments — the answer key, not the fast path |
 
 ```python
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01, backend="jit")
+traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01, backend="interp")
 ```
 
 `interp` and `jit` lower the *same* tape, so they agree to the last bit.

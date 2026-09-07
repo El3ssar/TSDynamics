@@ -250,7 +250,7 @@ def dde_lyapunov_spectrum(
     dt: float = 0.1,
     burn_in: float = 50.0,
     ic: Any = None,
-    backend: str = "interp",
+    backend: str = "jit",
     rtol: float = DDE_LYAPUNOV_RTOL,
     atol: float = DDE_LYAPUNOV_ATOL,
 ) -> np.ndarray:
@@ -278,10 +278,14 @@ def dde_lyapunov_spectrum(
     ic : array-like, optional
         Base initial state; pass the end state of a prior ``integrate`` so the
         run starts on the attractor (strongly recommended).
-    backend : str, default "interp"
-        ``"interp"`` or ``"jit"`` — the compiled engine.  ``"reference"`` is
-        rejected (the engine has no pure-Python DDE integrator), matching DDE
-        integration.
+    backend : {"jit", "interp"}, default "jit"
+        The compiled engine's Cranelift JIT (default, served from the
+        compiled-evaluator cache) or its bit-for-bit identical SSA-tape
+        interpreter.  ``"reference"`` is rejected (the engine has no pure-Python
+        DDE integrator), matching DDE integration.
+
+        .. versionchanged:: 6.0
+           Default moved from ``"interp"`` to ``"jit"``.
     rtol, atol : float
         Engine integration tolerances.  Default
         :data:`~tsdynamics.utils.tolerances.DDE_LYAPUNOV_RTOL` /

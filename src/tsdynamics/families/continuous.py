@@ -171,7 +171,8 @@ class ContinuousSystem(SystemBase, ABC):
 
     Lowering
     --------
-    Each system is lowered once to an in-process IR tape with no warmup; the
+    Each system is lowered once to an in-process IR tape, then JIT-compiled on
+    first use (both memoised, so neither cost repeats); the
     engine reads non-structural parameters live from the system on every run,
     so a parameter change never triggers a re-lowering.
 
@@ -201,9 +202,10 @@ class ContinuousSystem(SystemBase, ABC):
     _default_method: ClassVar[str] = "RK45"
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
-    #: ``"interp"`` — the zero-warmup Rust engine interpreter (the sole engine
-    #: since the M3 migration retired the v2 backends).
-    _default_backend: ClassVar[str] = "interp"
+    #: ``"jit"`` — the Cranelift JIT, with the process-wide compiled-evaluator
+    #: cache paying the compile once per distinct system.  Was ``"interp"``
+    #: before v6, when every call recompiled the tape.
+    _default_backend: ClassVar[str] = "jit"
 
     #: Parameters whose values affect the symbolic *structure* of _equations
     #: (e.g. integer loop bounds). These are baked in at lowering time.
@@ -1001,16 +1003,27 @@ class ContinuousSystem(SystemBase, ABC):
             ``max_step`` far below the tolerance-driven natural step multiplies
             cost with no accuracy benefit and can trip
             :class:`~tsdynamics.errors.StepBudgetError`.
-        backend : {"interp", "jit", "reference"}, optional
+        backend : {"jit", "interp", "reference"}, optional
             Where the ODE is integrated.  Defaults to ``_default_backend``
-            (``"interp"``).
+            (``"jit"``).  The first two go through the shared engine seam
+            (:func:`tsdynamics.engine.run.integrate`).
 
-            - ``"interp"`` / ``"jit"`` — the **Rust engine** (the zero-warmup
-              SSA-tape interpreter or the Cranelift JIT) via the shared engine
-              seam (:func:`tsdynamics.engine.run.integrate`).
-            - ``"reference"`` — the dependency-light pure-Python oracle (the
-              lowered tape integrated with SciPy); the engine's validation
-              backend, usable without the compiled wheel.
+            - ``"jit"`` (default) — the **Cranelift JIT**: the lowered tape
+              compiled to native code, with a process-wide compiled-evaluator
+              cache, so the compile is paid once per distinct system rather than
+              on every call.
+            - ``"interp"`` — the **SSA-tape interpreter**.  Same answers as the
+              JIT, bit-for-bit; marginally faster on very small tapes, and the
+              way to avoid the one-off compile.
+            - ``"reference"`` — the dependency-light pure-Python/SciPy oracle.
+              Not for production use: it is the independent cross-check the
+              engine is validated against, and the wheel-free fallback.
+
+            .. versionchanged:: 6.0
+               The default moved from ``"interp"`` to ``"jit"``.  Before v6 the
+               JIT recompiled the whole tape on every FFI call, which made it
+               slower than the interpreter for short runs; the v6
+               compiled-evaluator cache removed that per-call compile.
         events : sequence, optional
             Detect events along the flow (the SciPy-shaped ``events=`` API; see
             :meth:`run`).  Each element is an
@@ -1083,7 +1096,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = DEFAULT_RTOL,
         atol: float = DEFAULT_ATOL,
-        backend: str = "interp",
+        backend: str = "jit",
         **integrator_kwargs: Any,
     ) -> np.ndarray:
         """
@@ -1114,12 +1127,18 @@ class ContinuousSystem(SystemBase, ABC):
             Integrator (default ``"RK45"``).
         rtol, atol : float
             Tolerances.
-        backend : {"interp", "jit", "reference"}, optional
+        backend : {"jit", "interp", "reference"}, optional
             Backend on which the extended variational ODE is integrated.
-            Defaults to ``"interp"`` (the zero-warmup Rust engine interpreter).
-            ``"reference"`` is the dependency-light pure-Python oracle (usable
-            without the compiled wheel); ``"jit"`` is the Cranelift JIT.  Any
-            other name is rejected by :class:`~tsdynamics.derived.tangent.TangentSystem`.
+            Defaults to ``"jit"`` (the Cranelift JIT, served from the
+            compiled-evaluator cache).  ``"interp"`` is the SSA-tape interpreter
+            (bit-for-bit identical); ``"reference"`` is the dependency-light
+            pure-Python oracle, usable without the compiled wheel but not
+            intended for production.  Any other name is rejected by
+            :class:`~tsdynamics.derived.tangent.TangentSystem`.
+
+            .. versionchanged:: 6.0
+               Default moved from ``"interp"`` to ``"jit"`` (see
+               :meth:`integrate`).
 
         Returns
         -------
