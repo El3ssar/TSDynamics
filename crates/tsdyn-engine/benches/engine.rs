@@ -106,7 +106,80 @@ fn bench_integrate(c: &mut Criterion) {
             black_box(y[0])
         })
     });
+
+    // The v6 dense-output win, on the same span and grid: with `cfg.dense` the
+    // adaptive controller steps freely and interior samples are interpolated, so
+    // the RHS-evaluation count stops scaling with the output resolution (6001 ->
+    // 805 on a comparable problem). The *gate* is the deterministic counting test
+    // `dense_grid_rhs_evals_are_independent_of_output_dt`; this quantifies it.
+    let dense_cfg = cfg.with_dense(true);
+    group.bench_function("integrate_grid_dense/lorenz_rk45_1000pts", |b| {
+        b.iter(|| {
+            let mut solver = Rk45::new();
+            let y = integrate_grid(&ev, &mut solver, &u0, &p, &t_eval, &dense_cfg).unwrap();
+            black_box(y[0])
+        })
+    });
+
+    // A high-dimensional method-of-lines field: the one case where the
+    // interpolation cost itself (~7 flops per component per sample) could in
+    // principle outweigh the RHS evaluations it saves. Benched rather than
+    // assumed, because nobody had measured it.
+    let field_ev = VmEval(Interpreter::new(diffusion_field(400)));
+    let field_u0: Vec<f64> = (0..1200).map(|i| ((i as f64) * 0.01).sin()).collect();
+    let field_grid: Vec<f64> = (0..400).map(|i| i as f64 * 0.005).collect();
+    let field_cfg = IntegrateConfig::new(0.005);
+    group.bench_function("integrate_grid/field1200_rk45_400pts", |b| {
+        b.iter(|| {
+            let mut solver = Rk45::new();
+            let y = integrate_grid(
+                &field_ev,
+                &mut solver,
+                &field_u0,
+                &[],
+                &field_grid,
+                &field_cfg,
+            )
+            .unwrap();
+            black_box(y[0])
+        })
+    });
+    group.bench_function("integrate_grid_dense/field1200_rk45_400pts", |b| {
+        b.iter(|| {
+            let mut solver = Rk45::new();
+            let y = integrate_grid(
+                &field_ev,
+                &mut solver,
+                &field_u0,
+                &[],
+                &field_grid,
+                &field_cfg.with_dense(true),
+            )
+            .unwrap();
+            black_box(y[0])
+        })
+    });
     group.finish();
+}
+
+/// A `3n`-component method-of-lines diffusion field `du_i/dt = u_{i-1} - 2u_i +
+/// u_{i+1}` on a periodic line — a stand-in for the catalogue's spatial-field
+/// systems, whose whole point here is that `dim` is large.
+fn diffusion_field(n: usize) -> tsdyn_ir::Tape {
+    let dim = 3 * n;
+    let mut b = TapeBuilder::new();
+    let two = b.constant(2.0);
+    let states: Vec<_> = (0..dim).map(|i| b.state(i)).collect();
+    let outs: Vec<_> = (0..dim)
+        .map(|i| {
+            let left = states[(i + dim - 1) % dim];
+            let right = states[(i + 1) % dim];
+            let mid = b.mul(two, states[i]);
+            let sum = b.add(left, right);
+            b.sub(sum, mid)
+        })
+        .collect();
+    b.finish(&outs, &[], dim, 0).unwrap()
 }
 
 fn bench_iterate(c: &mut Criterion) {

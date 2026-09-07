@@ -358,6 +358,27 @@ impl Tolerances {
     }
 }
 
+/// Validate a `max_step` ceiling — the per-step *size* bound
+/// ([`IntegrateConfig::max_step`](tsdyn_engine::IntegrateConfig::max_step)).
+///
+/// `f64::INFINITY` is the "no ceiling" default and is accepted; anything `<= 0`
+/// (or `NaN`) is rejected. A non-positive ceiling would clamp every trial step to
+/// zero or a negative size, which the engine's `assert!` would turn into a
+/// `PanicException` (or an infinite loop that never advances), so it must be
+/// refused at the boundary.
+///
+/// [`EngineError::InvalidParameter`], not [`EngineError::BadShape`]: by this
+/// module's own dividing line this is a scalar *option value* like `rtol`, not
+/// the *geometry* of the call.
+pub(crate) fn validate_max_step(max_step: f64) -> Result<(), EngineError> {
+    if max_step.is_nan() || max_step <= 0.0 {
+        return Err(EngineError::InvalidParameter(format!(
+            "max_step must be positive (or infinite for no ceiling); got {max_step}"
+        )));
+    }
+    Ok(())
+}
+
 /// Build a fresh boxed solver for a **registered** name, applying the user's
 /// (already validated) tolerances where the kernel supports them.
 ///

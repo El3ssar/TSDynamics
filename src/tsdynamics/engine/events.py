@@ -21,6 +21,7 @@ them, so importing this module does not create an import cycle.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,6 +45,7 @@ def crossings(
     rtol: float,
     atol: float,
     backend: str,
+    max_step: float | None = None,
     terminal: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, bool]:
     """Detect crossings of an event function on the Rust engine (one span).
@@ -80,6 +82,12 @@ def crossings(
         Count rising (``+1``), falling (``-1``) or either (``0``) crossings.
     method, rtol, atol : str, float, float
         Solver configuration, resolved as in :func:`integrate`.
+    max_step : float, optional
+        Upper bound on any single internal solver step (``None`` = no ceiling).
+        For an *adaptive* march this is what bounds the detection resolution:
+        without it the controller is free to grow the step past a narrow
+        crossing.  With ``method="rk4"`` the step is already ``first_step``, so
+        the ceiling is inert.
     backend : {"interp", "jit"}
         The engine evaluator.  ``"reference"`` is rejected — the crossing engine is
         compiled-only; callers fall back to the Python loop for the no-engine case.
@@ -136,6 +144,7 @@ def crossings(
         method,
         float(rtol),
         float(atol),
+        math.inf if max_step is None else float(max_step),
         name == "jit",
     )
     times = np.asarray(times, dtype=np.float64)
@@ -448,6 +457,7 @@ def integrate_events(
     method: str = "RK45",
     rtol: float = 1e-6,
     atol: float = 1e-9,
+    max_step: float | None = None,
     backend: str = "interp",
 ) -> EventSolution:
     """Integrate an ODE while detecting a list of events — the ``events=`` engine seam.
@@ -465,8 +475,10 @@ def integrate_events(
     events : sequence
         :class:`Event` instances, bare ``g(y, t)`` callables (SciPy convention),
         or plane tuples — each coerced via :meth:`Event.coerce`.
-    final_time, dt, t0, method, rtol, atol, backend
-        As in :func:`integrate` (``method`` is resolved by the solver registry).
+    final_time, dt, t0, method, rtol, atol, max_step, backend
+        As in :func:`integrate` (``method`` is resolved by the solver registry;
+        ``max_step`` bounds the internal step of the event march *and* of the
+        dense trajectory).
 
     Returns
     -------
@@ -542,6 +554,7 @@ def integrate_events(
                 method=method,
                 rtol=rtol,
                 atol=atol,
+                max_step=max_step,
                 backend=backend,
             )
         except EngineNotAvailableError:
@@ -556,6 +569,7 @@ def integrate_events(
         method=method,
         rtol=rtol,
         atol=atol,
+        max_step=max_step,
     )
 
 
@@ -570,6 +584,7 @@ def _engine_events(
     method: str,
     rtol: float,
     atol: float,
+    max_step: float | None,
     backend: str,
 ) -> EventSolution:
     """Collect each event's crossings on the compiled engine + a dense trajectory.
@@ -629,6 +644,7 @@ def _engine_events(
             rtol=rtol,
             atol=atol,
             backend=backend,
+            max_step=max_step,
             terminal=True,
         )
         if term and times.size:
@@ -661,6 +677,7 @@ def _engine_events(
             rtol=rtol,
             atol=atol,
             backend=backend,
+            max_step=max_step,
             terminal=False,
         )
         t_events[i] = np.asarray(times, dtype=float)
@@ -668,7 +685,18 @@ def _engine_events(
 
     # Phase 3 — the dense trajectory on the (possibly truncated) span.
     t_eval = make_output_grid(t0, t_stop, dt)
-    y = _run_continuous(problem, t_eval, method=method, rtol=rtol, atol=atol, backend=backend)
+    from .run import _dense_output_enabled
+
+    y = _run_continuous(
+        problem,
+        t_eval,
+        method=method,
+        rtol=rtol,
+        atol=atol,
+        backend=backend,
+        max_step=math.inf if max_step is None else float(max_step),
+        dense=_dense_output_enabled(),
+    )
     return EventSolution(
         t=t_eval, y=y, t_events=t_events, y_events=y_events, terminated=terminated, events=evs
     )
@@ -685,6 +713,7 @@ def _reference_events(
     method: str,
     rtol: float,
     atol: float,
+    max_step: float | None = None,
 ) -> EventSolution:
     """Detect events with SciPy's ``solve_ivp(events=...)`` — the wheel-free oracle.
 
@@ -763,6 +792,7 @@ def _reference_events(
         atol=atol,
         events=scipy_events,
         dense_output=True,
+        **({} if max_step is None else {"max_step": float(max_step)}),
     )
     if not sol.success:
         raise ConvergenceError(f"reference event integration failed: {sol.message}")

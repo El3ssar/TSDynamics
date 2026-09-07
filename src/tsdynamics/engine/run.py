@@ -57,6 +57,8 @@ its historical path ``tsdynamics.engine.run.<name>``:
 
 from __future__ import annotations
 
+import math
+import os
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -162,6 +164,43 @@ __all__ = [
 #: The selectable backend names.  ``"interp"`` / ``"jit"`` run on the compiled
 #: engine; ``"reference"`` is the pure-Python oracle/fallback.
 BACKENDS: frozenset[str] = frozenset({"interp", "jit", "reference"})
+
+#: env var: set truthy to force the pre-v6 land-on-every-output-sample march
+#: process-wide (see :func:`_dense_output_enabled`).
+_DENSE_OUTPUT_ENV = "TSDYNAMICS_NO_DENSE_OUTPUT"
+
+
+def _dense_output_enabled() -> bool:
+    """Whether interior output samples are produced by interpolation.
+
+    Dense output is **on** unless ``TSDYNAMICS_NO_DENSE_OUTPUT`` is truthy,
+    mirroring the ``TSDYNAMICS_NO_TAPE_CACHE`` / ``TSDYNAMICS_NO_JIT_CACHE``
+    bypasses exactly.  The bypass exists so a test can prove WITH-dense ==
+    WITHOUT-dense on the paths that must not move (two-node grids, kernels with
+    no continuous extension).
+
+    It is deliberately an env var and **not** a public keyword: the library has
+    ONE output semantics.  The legitimate per-call need — "bound my internal step
+    at my sampling rate" — is served by ``max_step=``, which is a real numerical
+    knob rather than a second set of semantics to maintain forever.
+
+    Scope, precisely
+    ----------------
+    This flag gates the **grid output** path (``integrate`` / ``run``) only, and
+    there only for a kernel carrying a native continuous extension (``rk45`` /
+    ``tsit5`` / ``dop853``); every other kernel lands on every sample either way.
+
+    It does **not** reach *event refinement*.  A crossing is refined with the
+    kernel's own interpolant whenever the kernel reports ``Caps::dense`` — a Rust
+    property of the kernel, which no environment variable can switch off — so the
+    crossing times reported by ``run(events=...)`` moved in v6 (they became more
+    accurate: measured ~2e-13 against the analytic zeros of a harmonic
+    oscillator, against a cubic-Hermite fallback before) and this bypass will
+    **not** restore the old ones.  To reproduce a pre-v6 crossing exactly, pin a
+    kernel that has no native interpolant.  So: "reproduce pre-v6 numbers" is
+    true of dense grid output, not of the whole v6 change.
+    """
+    return os.environ.get(_DENSE_OUTPUT_ENV, "").strip().lower() not in ("1", "true", "yes", "on")
 
 
 class EngineNotAvailableError(BackendError):
@@ -389,6 +428,7 @@ def integrate(
     method: str = "RK45",
     rtol: float = 1e-6,
     atol: float = 1e-9,
+    max_step: float | None = None,
     backend: str = "interp",
     history: Any = None,
     **build_kwargs: Any,
@@ -411,8 +451,18 @@ def integrate(
         End of the integration window.  For a map this is the (rounded) number of
         iterations.
     dt : float, default 0.02
-        Output sampling interval (the internal stepper is adaptive for adaptive
-        methods).  Ignored for a map.
+        Output sampling interval — the spacing of the returned grid.  **It does
+        not set the integration accuracy:** the internal stepper is adaptive and
+        controlled by ``rtol``/``atol``, and interior samples come from the
+        kernel's own continuous extension.  Use ``max_step`` to bound the
+        internal step.  Ignored for a map.
+
+        .. versionchanged:: 6.0
+            Before v6 the stepper was forced to land on every output sample, so a
+            fine ``dt`` silently bought extra accuracy and a coarse one silently
+            lost it.  It no longer does.  Kernels without a native continuous
+            extension (everything but ``rk45``/``tsit5``/``dop853``) still land on
+            every sample, so their numbers are unchanged.
     t0 : float, optional
         Start time; defaults to the Problem's ``t0``.
     ic : array-like, optional
@@ -433,6 +483,16 @@ def integrate(
         default — see :func:`_recommend_method`.
     rtol, atol : float
         Solver tolerances.
+    max_step : float, optional
+        Upper bound on any single internal solver step, in time units.  ``None``
+        (default) means no ceiling — the adaptive controller chooses freely from
+        ``rtol``/``atol``.  Use it to stop an adaptive kernel stepping over a
+        narrow feature (a thin resonance, a fast transient) in an otherwise
+        smooth region, or to bound the detection resolution of an event march.
+        Note this is a step *size*; the engine's ``max_steps`` is a step *count*
+        and is not exposed here.  A ``max_step`` far below the tolerance-driven
+        natural step multiplies cost with no accuracy benefit and can trip
+        :class:`~tsdynamics.errors.StepBudgetError`.
     backend : str, default "interp"
         ``"interp"``, ``"jit"`` (compiled engine), or ``"reference"``
         (pure-Python; ODE and map only).
@@ -517,8 +577,21 @@ def integrate(
                 history="callable" if history is not None else "constant",
             )
         else:  # ODEProblem (an SDEProblem is rejected inside _run_continuous)
+            ceiling = math.inf if max_step is None else float(max_step)
+            # Dense output is the library's ONE output semantics (bypassable only
+            # by the env var).  The engine additionally gates it on the kernel
+            # carrying a continuous extension and the grid having an interior
+            # point, so this flag is inert for every other kernel/grid.
+            dense = _dense_output_enabled()
             y = _run_continuous(
-                problem, t_eval, method=method, rtol=rtol, atol=atol, backend=backend
+                problem,
+                t_eval,
+                method=method,
+                rtol=rtol,
+                atol=atol,
+                backend=backend,
+                max_step=ceiling,
+                dense=dense,
             )
             meta = _provenance(
                 problem,
@@ -528,6 +601,8 @@ def integrate(
                 t0=start,
                 rtol=rtol,
                 atol=atol,
+                max_step=ceiling,
+                dense_output=dense,
                 ic=np.asarray(problem.ic, dtype=np.float64).copy(),
             )
 
@@ -862,6 +937,7 @@ def ensemble(
     method: str = "RK45",
     rtol: float = 1e-6,
     atol: float = 1e-9,
+    max_step: float | None = None,
     backend: str = "interp",
     **build_kwargs: Any,
 ) -> np.ndarray:
@@ -982,9 +1058,17 @@ def ensemble(
     # discarded (the ensemble engine call needs only ``t0``/``t1``/``first_step``).
     make_output_grid(start, float(final_time), dt)
 
+    ceiling = math.inf if max_step is None else float(max_step)
     if backend == "reference":
         return _reference_ensemble(
-            problem, ics, start, final_time, method=method, rtol=rtol, atol=atol
+            problem,
+            ics,
+            start,
+            final_time,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            max_step=ceiling,
         )
     eng = _engine()
     return np.asarray(
@@ -998,6 +1082,7 @@ def ensemble(
             method=method,
             rtol=rtol,
             atol=atol,
+            max_step=ceiling,
             jit=(backend == "jit"),
         ),
         dtype=np.float64,

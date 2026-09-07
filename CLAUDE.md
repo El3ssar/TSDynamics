@@ -400,6 +400,61 @@ All three families + all derived wrappers implement:
   and records the canonical resolved kernel (e.g. `"rk45"`) in `traj.meta["method"]`
   / the event solution. (Earlier only `integrate`/`ensemble` understood it.)
 
+### Dense output and `max_step` (v6, `eng-no-dense-output` / `perf-no-max-step`)
+
+**`dt` is an output sampling interval, not an accuracy knob.** Before v6
+`integrate_grid` had no dense output: the adaptive stepper was *forced to land on
+every requested output sample*, so the answer depended on the output grid (Lorenz
+to T=10 at `rtol=1e-6` gave error 1.30e-3 at `dt=10` but 4.3e-10 at `dt=0.001` — a
+**3.0e6x** spread) and `rtol` was inert on a fine grid (`rtol=1e-4`, `1e-6`, `1e-8`
+and `1e-10` returned **bit-identical** arrays at `dt=0.001`). Both are fixed:
+after v6 the grid spread is **1.004x** and the delivered error tracks `rtol` across
+six decades.
+
+- **`Caps::dense` gates whether dense output happens at all**, not merely which
+  interpolant is used. There is deliberately **no universal cubic-Hermite
+  fallback**: measured, an endpoint Hermite extension is 13-384x worse than the
+  native one for the order-5 kernels and 4.8e3-2.2e7x worse than `contd8` for
+  `dop853`, so a Hermite floor would trade a contract bug for an accuracy bug.
+- **Blast radius = `{rk45, tsit5, dop853}` on `integrate`/`run` with a >=3-point
+  grid.** Every other kernel (`rk4`, `bs3`, `cashkarp`, `rkf45`, `heun_euler`,
+  every fixed-step and every implicit/stiff kernel) keeps land-on-every-sample,
+  **bit-for-bit**. `bdf`'s stiff over-resolution tax is *not* fixed here — a
+  fixed-order extension of a variable-order method is order-inconsistent by
+  construction and needs its own design.
+- **Two structural rules make the two-node callers provably untouched**: the dense
+  march *lands exactly on `t_eval.last()`* (so the final row is always the
+  integrated state, bit-identical to `integrate_final`) and *interpolates strictly
+  interior points only*. A two-node grid has no interior point, so
+  `lyapunov::classify`, the basin cell march and the resumable
+  `OdeStepper::advance` (all `[t, tf]`) are unchanged with no opt-out flag.
+- **Kernels.** `rk45` uses Shampine's DP5 continuous extension and `tsit5`
+  Tsitouras' — both **free** (a linear combination of the seven stages the step
+  already computed, zero extra RHS evals), order 4 (local O(h^5)). `dop853` uses
+  Hairer's **`contd8`**, order 7 (measured local order 8.00), which needs four
+  extra stages — so it is built in the new **defaulted** `Solver::prepare_dense`
+  trait method, called at most once per accepted step and only when that step is
+  actually sampled inside (12 -> 16 RHS evals, +33%, on interpolated steps only).
+  `interpolate` stays `&self` and RHS-free because the event root-finder calls it
+  10-30x per step.
+- **`max_step`** (`IntegrateConfig::max_step`, and `max_step=` on `integrate` /
+  `run` / `reinit` / `ensemble` / `crossings` / `integrate_events`) bounds any
+  single internal step; `None`/`f64::INFINITY` (the default) is provably inert
+  (`h.min(INFINITY) == h`). It is a step **size**; `max_steps` is a step **count**
+  — one character apart, opposite units, so keep them documented adjacently. It is
+  the honest replacement for the accidental bound the forced landing used to
+  provide: `max_step=dt` reproduces the pre-v6 step regime explicitly.
+- **Bypass:** `TSDYNAMICS_NO_DENSE_OUTPUT` (truthy => the pre-v6 forced-landing
+  march), mirroring `TSDYNAMICS_NO_TAPE_CACHE`/`TSDYNAMICS_NO_JIT_CACHE`. There is
+  deliberately **no public `dense_output=` kwarg**: the library has one output
+  semantics, and the legitimate per-call need is served by `max_step`.
+  `traj.meta` records `max_step` and `dense_output`.
+- **Measured cost** (Lorenz T=100, `rk45`, `rtol=1e-6`): `dt=0.02` 4.63 -> 2.70 ms,
+  `dt=0.001` 60.5 -> 8.3 ms (7.3x), `dt=1e-4` 592 -> 72.5 ms (8.2x); RHS
+  evaluations on a 1001-point grid 6001 -> 805 and now **independent of the output
+  resolution** (pinned by a counting test, which cannot flake). `dop853` at
+  `dt=0.001`: 126.7 -> 17.5 ms.
+
 ### `DiscreteMap` extras
 
 - `__init_subclass__` validates that `_step`/`_jacobian` positional parameter
@@ -529,11 +584,18 @@ documented tolerance):
   inherit it; `orbit_diagram` over a `PoincareMap` drives the wrapper with `step()`
   and so is **not** accelerated here (that needs a resumable `step()` — WS-STEPPER —
   or `orbit_diagram` to call `trajectory` — WS-MAPITER). The engine march uses the
-  **fixed-step `rk4` kernel
-  at the detection `dt`** (the engine's adaptive kernels carry no step ceiling, so
-  an adaptive march would grow the step, skip crossings and degrade the O(h⁴)
-  Hermite refinement); it is answer-identical to the Python loop driven at the
-  same `rk4`/`dt` discretisation (the engine event refinement reproduces
+  **fixed-step `rk4` kernel at the detection `dt`**. That is a **workaround, not a
+  design property**: it was adopted because the engine's adaptive kernels carried
+  no step ceiling, so an adaptive march would grow the step, skip crossings and
+  degrade the O(h⁴) Hermite refinement. Since v6 the engine *has* a `max_step`
+  ceiling (see "Dense output and `max_step`" above), so an adaptive march is now
+  possible and the `_EXPLICIT_METHODS` restriction (which excludes the 5
+  stiff-default flows from the fast path) could be lifted with `max_step = dt`.
+  **Repointing the march is a separate ticket** — it would move every Poincaré
+  number and break the answer-identity contract below — so as of v6 nothing here
+  changed: `rk4` carries no `Caps::dense`, so the whole
+  Poincaré/`return_map(kind="poincare")` surface is byte-identical. It is
+  answer-identical to the Python loop driven at the same `rk4`/`dt` discretisation (the engine event refinement reproduces
   `PoincareMap._refine` to ~machine precision per crossing; over many crossings of
   a chaotic flow the two float-distinct computations diverge by roundoff, as any
   two would — the section is the same attractor). DDEs (no `_rhs_numeric`), stiff
@@ -556,8 +618,15 @@ documented tolerance):
   per event (explicit methods) and coordinates terminal stop; an implicit/stiff
   method or `backend="reference"` routes to `scipy.integrate.solve_ivp(events=)` —
   an independent oracle the tests cross-check (early Lorenz crossings agree to
-  ~1e-8; a non-chaotic oscillator to ~1e-6, plus an analytic `cos t` zero-crossing
-  check). `PoincareMap.as_events()` returns the section as one `Event`, so the
+  ~1e-10; a non-chaotic oscillator to ~2e-13, plus an analytic `cos t`
+  zero-crossing check). **Since v6 the engine refines crossings with the kernel's
+  own continuous extension** rather than the endpoint cubic-Hermite fallback,
+  because `rk45`/`tsit5`/`dop853` now carry `Caps::dense` — that turned on ~40
+  lines of engine code which had never executed outside one `#[cfg(test)]` kernel,
+  and the SciPy cross-check tightened accordingly (oscillator 1e-6 -> 1e-11,
+  Lorenz early crossings 1e-3 -> 1e-8). `PoincareMap` is unaffected: it is pinned
+  to `rk4`, which is not dense.
+  `PoincareMap.as_events()` returns the section as one `Event`, so the
   section is reproduced through this seam (`PoincareMap` is one consumer).
   Restricted to ODEs (maps have no continuous crossings; DDE/SDE raise).
 - **`TangentSystem` is the one Lyapunov engine** (stream C-DERIV): the
@@ -1306,6 +1375,8 @@ Two layers now cover them:
 | Map params order ≠ `_step` signature order | **Raises `TypeError` at import**. |
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |
 | Tight tolerances on DDE | `rtol=atol=1e-3` is the safe start. |
+| "My results got less accurate in v6" | `dt` is now **sampling only** — it no longer secretly bounds the internal step (see "Dense output and `max_step`"). Tighten `rtol`/`atol`, which now actually work; or pass `max_step=dt` to reproduce the old step regime; or set `TSDYNAMICS_NO_DENSE_OUTPUT=1` to reproduce pre-v6 numbers exactly. |
+| An adaptive kernel strides over a narrow feature | Pass `max_step=`. (A step *size* — `max_steps` is a step *count*.) |
 | `set_state` on a DDE | Raises by design — use `reinit(u)`. |
 | Stiff ODE: which method? | `"bdf"` is the **variable-order (1–5) BDF** and the right default for stiff ODEs (far faster than the fixed-order `rosenbrock`/`trbdf2`, which stay selectable). `run.integrate` auto-builds the Jacobian-carrying tape for the implicit kernels, so `integrate(method="bdf")` "just works". The legacy SciPy name `"LSODA"` is no longer a method — declare `_default_method = "bdf"`. Pass `method="auto"` to let `solvers.recommend` probe stiffness and pick `bdf`/`rk45` — a one-point heuristic, so prefer `_default_method` for a system known to be stiff. |
 | Param change ignored by a live stepper | `reinit()` after parameter changes (or use `with_params`). |
@@ -1329,6 +1400,10 @@ ts.kaplan_yorke_dimension(exps)             # → ~2.06
 
 # Backends: "interp" (default) / "jit" (Cranelift) / "reference" (pure-Python oracle)
 traj = lor.integrate(final_time=100.0, dt=0.01, backend="jit")
+
+# dt is OUTPUT SAMPLING ONLY; rtol/atol set accuracy, max_step bounds the step
+traj = lor.integrate(final_time=100.0, dt=0.001, rtol=1e-10, atol=1e-13)
+traj = lor.integrate(final_time=100.0, dt=0.01, max_step=0.01)   # bound the step
 
 # Protocol stepping
 lor.reinit([1.0, 1.0, 1.0])

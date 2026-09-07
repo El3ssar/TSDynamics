@@ -11,7 +11,8 @@ use tsdyn_ir::Tape;
 
 use super::marshal::{
     build_evaluator, build_solver, check_inputs, event_direction, guard_continuous,
-    integrate_failure, require_jacobian_if_needed, resolve_solver, EngineError, Tolerances,
+    integrate_failure, require_jacobian_if_needed, resolve_solver, validate_max_step, EngineError,
+    Tolerances,
 };
 
 /// Integrate `[t0, t1]` and return every crossing of the event function
@@ -44,6 +45,7 @@ pub fn integrate_events_dense(
     method: &str,
     rtol: f64,
     atol: f64,
+    max_step: f64,
     jit: bool,
 ) -> Result<(Vec<f64>, Vec<f64>, f64, Vec<f64>, bool), EngineError> {
     guard_continuous(&rhs)?;
@@ -100,6 +102,7 @@ pub fn integrate_events_dense(
         )));
     }
     let tol = Tolerances::new(rtol, atol)?;
+    validate_max_step(max_step)?;
     let dir = event_direction(direction)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&rhs, name)?;
@@ -107,7 +110,7 @@ pub fn integrate_events_dense(
     let rhs_ev = build_evaluator(rhs, jit)?;
     let g_ev = build_evaluator(g, jit)?;
     let mut solver = build_solver(name, tol);
-    let cfg = IntegrateConfig::new(first_step);
+    let cfg = IntegrateConfig::new(first_step).with_max_step(max_step);
 
     let spec = if terminal {
         EventSpec::terminal(&*g_ev, dir)

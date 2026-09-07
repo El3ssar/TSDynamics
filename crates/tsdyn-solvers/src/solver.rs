@@ -149,10 +149,12 @@ pub trait Solver: Send {
     /// [`SolverState::dim`](SolverState::dim).
     ///
     /// The default returns `false` and writes nothing: the kernel has no native
-    /// interpolant. The engine then falls back to a cubic-Hermite continuous
-    /// extension built from the step endpoints and their derivatives — which
-    /// needs only the [`Evaluator`] — so every kernel gets O(h⁴) dense output
-    /// regardless, and existing kernels need no change.
+    /// interpolant. *Event detection* then falls back to a cubic-Hermite
+    /// continuous extension built from the step endpoints and their derivatives —
+    /// which needs only the [`Evaluator`] — so every kernel gets O(h⁴) crossing
+    /// refinement regardless. *Grid output* does **not** fall back; it keeps the
+    /// land-on-every-sample march. See [`Caps::dense`](crate::Caps::dense) for
+    /// why the two differ. Either way, existing kernels need no change.
     ///
     /// This is the additive event/dense-output capability of ROADMAP §13d: a new
     /// **defaulted** method behind a [`Caps`](crate::Caps) flag, never a change
@@ -160,8 +162,52 @@ pub trait Solver: Send {
     /// `step` returned [`Accepted`](StepOutcome::Accepted) for a kernel whose
     /// [`caps`](Solver::caps) report `dense == true`; the engine checks the flag
     /// before calling, and treats a `false` return as "use the Hermite fallback".
+    ///
+    /// # Validity window
+    ///
+    /// The interpolant is valid **only** between an `Accepted`
+    /// [`step`](Solver::step) and the next `step` call on the same kernel, and
+    /// only with the `u0`/`h` that step was taken from: a kernel's stage buffers
+    /// are overwritten by every trial, **including rejected ones**. Debug builds
+    /// assert this.
     fn interpolate(&self, u0: &[f64], h: f64, theta: f64, out: &mut [f64]) -> bool {
         let _ = (u0, h, theta, out);
         false
+    }
+
+    /// Prepare the dense interpolant for the step just accepted.
+    ///
+    /// Called by the engine **at most once per accepted step**, and always before
+    /// any [`interpolate`](Solver::interpolate) for that step — and only for a
+    /// kernel reporting [`Caps::dense`](crate::Caps::dense), and only when the
+    /// step actually needs interpolating (it covers an interior output point, or
+    /// it brackets an event crossing), so a step nobody samples inside pays
+    /// nothing.
+    ///
+    /// A kernel whose interpolant needs *extra stages* beyond the propagation
+    /// stages computes them here — `interpolate` takes `&self` and is called
+    /// 10–30× per step by the event root-finder, so it must not evaluate the RHS.
+    /// A kernel whose interpolant is a pure function of the propagation stages
+    /// (the `rk45`/`tsit5` case) takes the default and does nothing.
+    ///
+    /// `u0`/`t0`/`h` describe the step that was just accepted. `st.p` and
+    /// `st.scratch` are available for evaluation; `st.u`/`st.t` are the state at
+    /// the **end** of the step (useful — `dop853` needs it — but not the base
+    /// point).
+    ///
+    /// Returns `false` if the interpolant could not be built. A kernel that
+    /// advertises `Caps::dense` is contracted to be able to build it, so the
+    /// engine treats `false` as a kernel bug (debug builds assert), not as a
+    /// recoverable condition.
+    fn prepare_dense(
+        &mut self,
+        ev: &dyn Evaluator,
+        st: &mut SolverState,
+        u0: &[f64],
+        t0: f64,
+        h: f64,
+    ) -> bool {
+        let _ = (ev, st, u0, t0, h);
+        true
     }
 }

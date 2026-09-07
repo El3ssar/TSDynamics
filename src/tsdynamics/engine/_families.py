@@ -23,6 +23,7 @@ import cycle.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -41,8 +42,16 @@ def _run_continuous(
     rtol: float,
     atol: float,
     backend: str,
+    max_step: float = math.inf,
+    dense: bool = False,
 ) -> np.ndarray:
-    """Integrate a continuous-time problem (ODE) and sample at ``t_eval``."""
+    """Integrate a continuous-time problem (ODE) and sample at ``t_eval``.
+
+    ``max_step`` bounds any single internal solver step (``math.inf`` = no
+    ceiling) and ``dense`` asks the engine for interpolated interior samples
+    rather than a forced landing on every grid point.  The defaults are the
+    pre-v6 behaviour, so a caller that does not opt in is unchanged.
+    """
     from .reference import _reference_ode
     from .run import _engine, _name, _primary_tape
 
@@ -53,7 +62,9 @@ def _run_continuous(
                 f"{problem.family!r}; use backend='interp'/'jit' (the Rust engine) for "
                 f"DDE integration, or StochasticSystem.integrate for SDEs."
             )
-        return _reference_ode(problem, t_eval, method=method, rtol=rtol, atol=atol)
+        return _reference_ode(
+            problem, t_eval, method=method, rtol=rtol, atol=atol, max_step=max_step
+        )
 
     if isinstance(problem, SDEProblem):
         # On the engine path: the generic integrate seam carries neither the SDE
@@ -80,6 +91,8 @@ def _run_continuous(
         method=method,
         rtol=rtol,
         atol=atol,
+        max_step=max_step,
+        dense=dense,
         jit=(backend == "jit"),
     )
     if not np.all(np.isfinite(y)):
@@ -101,6 +114,7 @@ def _step_continuous(
     atol: float,
     jit: bool,
     name: str,
+    max_step: float = math.inf,
 ) -> np.ndarray:
     """Integrate one dense ODE span from pre-marshalled tape arrays — the per-step seam.
 
@@ -149,9 +163,23 @@ def _step_continuous(
     from .run import _engine
 
     eng = _engine()
+    # `dense=False` deliberately: this seam serves the one- or two-node stepping
+    # spans, which have no strictly-interior output point, so dense output could
+    # not apply anyway — pinning it here documents that the per-``dt``
+    # byte-identity contract is out of the v6 dense-output blast radius.
     y = np.asarray(
         _engine_integrate_dense(
-            eng, tape_arrays, ic, params_vec, t_eval, method=method, rtol=rtol, atol=atol, jit=jit
+            eng,
+            tape_arrays,
+            ic,
+            params_vec,
+            t_eval,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            max_step=max_step,
+            dense=False,
+            jit=jit,
         ),
         dtype=np.float64,
     )
@@ -327,6 +355,8 @@ def _engine_integrate_dense(
     rtol: float,
     atol: float,
     jit: bool,
+    max_step: float = math.inf,
+    dense: bool = False,
 ) -> np.ndarray:
     """Dispatch a dense single-trajectory integration to the engine.
 
@@ -349,6 +379,8 @@ def _engine_integrate_dense(
             method,
             float(rtol),
             float(atol),
+            float(max_step),
+            bool(dense),
             bool(jit),
         ),
         dtype=np.float64,
@@ -367,6 +399,7 @@ def _engine_ensemble_final(
     rtol: float,
     atol: float,
     jit: bool,
+    max_step: float = math.inf,
 ) -> np.ndarray:
     """Dispatch a parallel ensemble integration (final states) to the engine.
 
@@ -388,6 +421,7 @@ def _engine_ensemble_final(
             method,
             float(rtol),
             float(atol),
+            float(max_step),
             bool(jit),
         )
     )

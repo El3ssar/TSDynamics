@@ -25,6 +25,17 @@
     "  interp::tests::rhs_live_mask_is_the_shared_reachable_from_pass",
     "The benches quantify what those savings are worth; the tests are the gate.",
     "",
+    "The v6 dense-output pair ('integrate_grid' vs 'integrate_grid_dense') is here",
+    "for the same reason: the deterministic gate is the counting test",
+    "  integrate::tests::dense_grid_rhs_evals_are_independent_of_output_dt",
+    "which pins the RHS-evaluation count as *exactly equal* across a 100x output-grid",
+    "refinement. These two pairs quantify it in wall time (5.7x on Lorenz at 1000",
+    "output points; 12.7x on a dim-1200 method-of-lines field at 400 points). The",
+    "field pair also answers the one question nobody had measured before shipping",
+    "dense output: whether the per-sample interpolation cost (~7 flops per component)",
+    "could outweigh the RHS evaluations it saves on a high-dimensional system. It",
+    "does not, by an order of magnitude.",
+    "",
     "REFERENCE MACHINE: the numbers in 'reference_ns' were measured on a developer",
     "workstation (x86_64, Linux, release profile with lto=thin / codegen-units=1).",
     "They are recorded for context only - nothing compares against them. Only",
@@ -38,9 +49,21 @@
   ],
   "multiplier": 10.0,
   "cases": {
+    "engine/integrate_grid/field1200_rk45_400pts": {
+      "reference_ns": 57239000.0,
+      "ceiling_ns": 572390000.0
+    },
     "engine/integrate_grid/lorenz_rk45_1000pts": {
       "reference_ns": 429854.8,
       "ceiling_ns": 4298548.2
+    },
+    "engine/integrate_grid_dense/field1200_rk45_400pts": {
+      "reference_ns": 4518700.0,
+      "ceiling_ns": 45187000.0
+    },
+    "engine/integrate_grid_dense/lorenz_rk45_1000pts": {
+      "reference_ns": 114410.0,
+      "ceiling_ns": 1144100.0
     },
     "engine/iterate_dense/henon_10000_steps": {
       "reference_ns": 304124.4,

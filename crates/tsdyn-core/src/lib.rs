@@ -508,6 +508,8 @@ fn integrate_dense<'py>(
     method: String,
     rtol: f64,
     atol: f64,
+    max_step: f64,
+    dense: bool,
     jit: bool,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
@@ -517,7 +519,18 @@ fn integrate_dense<'py>(
     let t_eval = vec_f64("t_eval", &t_eval)?;
     let n_t = t_eval.len();
     let flat = detached(py, || {
-        bridge::integrate_dense(tape.build()?, &ic, &p, &t_eval, &method, rtol, atol, jit)
+        bridge::integrate_dense(
+            tape.build()?,
+            &ic,
+            &p,
+            &t_eval,
+            &method,
+            rtol,
+            atol,
+            max_step,
+            dense,
+            jit,
+        )
     })
     .map_err(to_py_err)?;
     PyArray1::from_vec(py, flat).reshape([n_t, dim])
@@ -613,6 +626,7 @@ fn integrate_ensemble_final<'py>(
     method: String,
     rtol: f64,
     atol: f64,
+    max_step: f64,
     jit: bool,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let tape = OwnedTape::copy_in(&ops, &a, &b, &imm, &outputs, &jac_outputs, n_state, n_param)?;
@@ -634,6 +648,7 @@ fn integrate_ensemble_final<'py>(
             &method,
             rtol,
             atol,
+            max_step,
             jit,
         )
     })
@@ -856,6 +871,7 @@ fn integrate_events_dense<'py>(
     method: String,
     rtol: f64,
     atol: f64,
+    max_step: f64,
     jit: bool,
 ) -> PyResult<(
     Bound<'py, PyArray1<f64>>,
@@ -892,6 +908,7 @@ fn integrate_events_dense<'py>(
             &method,
             rtol,
             atol,
+            max_step,
             jit,
         )
     })
@@ -1389,10 +1406,11 @@ impl PyOdeStepper {
         &mut self,
         py: Python<'py>,
         dt: f64,
+        max_step: f64,
         p: PyReadonlyArray1<f64>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let p = vec_f64("p", &p)?;
-        let u = detached(py, || self.inner.advance(dt, &p)).map_err(to_py_err)?;
+        let u = detached(py, || self.inner.advance(dt, max_step, &p)).map_err(to_py_err)?;
         Ok(u.into_pyarray(py))
     }
 
@@ -1422,6 +1440,7 @@ impl PyOdeStepper {
         n_param_g: usize,
         max_span: f64,
         first_step: f64,
+        max_step: f64,
         direction: i32,
         p: PyReadonlyArray1<f64>,
     ) -> PyResult<(bool, f64, Bound<'py, PyArray1<f64>>, i32)> {
@@ -1438,7 +1457,7 @@ impl PyOdeStepper {
         let p = vec_f64("p", &p)?;
         let (found, t_cross, u_cross, dir) = detached(py, || {
             self.inner
-                .advance_to_event(g.build()?, max_span, first_step, direction, &p)
+                .advance_to_event(g.build()?, max_span, first_step, max_step, direction, &p)
         })
         .map_err(to_py_err)?;
         Ok((found, t_cross, u_cross.into_pyarray(py), dir))

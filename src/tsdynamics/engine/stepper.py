@@ -22,6 +22,7 @@ module does not create an import cycle.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -89,7 +90,14 @@ def make_ode_stepper(
     )
 
 
-def step_advance(stepper: Any, dt: float, params_vec: np.ndarray, *, name: str) -> np.ndarray:
+def step_advance(
+    stepper: Any,
+    dt: float,
+    params_vec: np.ndarray,
+    *,
+    name: str,
+    max_step: float | None = None,
+) -> np.ndarray:
     """Advance an :class:`OdeStepper` handle by one ``dt`` and return the new state.
 
     The lean per-step seam :meth:`ContinuousSystem.step` calls: it advances the
@@ -106,7 +114,15 @@ def step_advance(stepper: Any, dt: float, params_vec: np.ndarray, *, name: str) 
         Subclasses :class:`RuntimeError`, so existing ``except RuntimeError``
         divergence handlers keep catching it.
     """
-    u = np.asarray(stepper.advance(float(dt), params_vec), dtype=np.float64)
+    # `advance` integrates a two-node grid, which has no strictly-interior output
+    # point, so dense output cannot apply here even for a dense-capable kernel:
+    # the per-``dt`` byte-identity contract this seam exists to preserve is
+    # untouched by the v6 dense-output change.  `max_step` (``None`` = no ceiling)
+    # is honoured.
+    u = np.asarray(
+        stepper.advance(float(dt), math.inf if max_step is None else float(max_step), params_vec),
+        dtype=np.float64,
+    )
     if not np.isfinite(u).all():
         raise ConvergenceError(
             f"{name}: integration diverged or the step collapsed before reaching the final time."
@@ -122,6 +138,7 @@ def step_advance_to_event(
     first_step: float,
     direction: int,
     params_vec: np.ndarray,
+    max_step: float | None = None,
 ) -> tuple[bool, float, np.ndarray, int]:
     """March an :class:`OdeStepper` handle to the next crossing of ``g_tape``.
 
@@ -150,6 +167,7 @@ def step_advance_to_event(
         *g_tape.to_arrays(),
         float(max_span),
         float(first_step),
+        math.inf if max_step is None else float(max_step),
         int(direction),
         params_vec,
     )

@@ -359,6 +359,17 @@ def test_ode_trajectory_matches_reference_early(name) -> None:
     systems.  The comparison window is short: two correct integrators of a chaotic
     flow diverge exponentially, so agreement is only expected before Lyapunov
     amplification dominates (the harness ``window=`` convention).
+
+    ``atol`` was tightened from ``1e-3`` to ``1e-5`` in v6.  The old bound carried
+    ~1300x of unused slack, which made this leg unable to notice a real
+    regression.  Measured worst-case over the whole sample: **7.7e-7**
+    (``Colpitts``) with dense output and **9.1e-7** without it — so the new bound
+    keeps a ~13x margin and would still pass on the pre-v6 numbers.  Note the
+    residual here is dominated by ``rk45@1e-10`` vs ``DOP853@1e-12`` solver
+    disagreement, *not* by output semantics: the two now also agree in *kind*
+    (both produce ``t_eval`` samples by interpolation), which is the structural
+    improvement this leg gains from the change even though the number barely
+    moves.
     """
     sys = getattr(ts, name)()
     ic = _resolve_ic(sys, name)
@@ -372,7 +383,7 @@ def test_ode_trajectory_matches_reference_early(name) -> None:
         ic=ic,
         t_eval=t_eval,
         window=(0.0, 1.0),
-        atol=1e-3,
+        atol=1e-5,
     )
     assert rep.passed, rep.summary()
 

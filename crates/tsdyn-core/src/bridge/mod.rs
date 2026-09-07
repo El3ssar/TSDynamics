@@ -69,6 +69,108 @@ mod tests {
     use tsdyn_ir::Tape;
     use tsdyn_ir::TapeBuilder;
 
+    // ---------------------------------------------------------------------
+    // Signature shims for the two v6 dense-output knobs
+    // ---------------------------------------------------------------------
+    //
+    // `max_step` (a per-step size ceiling) and `dense` (interpolated interior
+    // output) are new trailing arguments on the ODE entry points. These local
+    // wrappers shadow the glob-imported functions with the *pre-change*
+    // signature and the inert defaults — `max_step = ∞`, `dense = false` — so
+    // every case below keeps asserting exactly what it asserted before, and a
+    // test that wants either knob calls the real entry point by its qualified
+    // path (`super::ode::integrate_dense`, …). That keeps the golden fixtures
+    // here (`integrate_dense_matches_closed_form_decay`,
+    // `integrate_dense_tracks_oscillator`, the stepper byte-identity cases) as
+    // the "nothing moved" control for the dense-output change.
+
+    #[allow(clippy::too_many_arguments)]
+    fn integrate_dense(
+        tape: Tape,
+        ic: &[f64],
+        p: &[f64],
+        t_eval: &[f64],
+        method: &str,
+        rtol: f64,
+        atol: f64,
+        jit: bool,
+    ) -> Result<Vec<f64>, EngineError> {
+        super::ode::integrate_dense(
+            tape,
+            ic,
+            p,
+            t_eval,
+            method,
+            rtol,
+            atol,
+            f64::INFINITY,
+            false,
+            jit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ensemble_final(
+        tape: Tape,
+        ics: &[f64],
+        p: &[f64],
+        t0: f64,
+        t1: f64,
+        first_step: f64,
+        method: &str,
+        rtol: f64,
+        atol: f64,
+        jit: bool,
+    ) -> Result<Vec<f64>, EngineError> {
+        super::ode::ensemble_final(
+            tape,
+            ics,
+            p,
+            t0,
+            t1,
+            first_step,
+            method,
+            rtol,
+            atol,
+            f64::INFINITY,
+            jit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn integrate_events_dense(
+        rhs: Tape,
+        g: Tape,
+        ic: &[f64],
+        p: &[f64],
+        t0: f64,
+        t1: f64,
+        first_step: f64,
+        direction: i32,
+        terminal: bool,
+        method: &str,
+        rtol: f64,
+        atol: f64,
+        jit: bool,
+    ) -> Result<(Vec<f64>, Vec<f64>, f64, Vec<f64>, bool), EngineError> {
+        super::events::integrate_events_dense(
+            rhs,
+            g,
+            ic,
+            p,
+            t0,
+            t1,
+            first_step,
+            direction,
+            terminal,
+            method,
+            rtol,
+            atol,
+            f64::INFINITY,
+            jit,
+        )
+    }
+
     /// dx/dt = -k x ⇒ x(t) = x0 e^{-k t}; one parameter, one state. No Jacobian
     /// (jac_outputs empty), so `has_jacobian()` is false — the case an implicit
     /// kernel must refuse.
@@ -1315,7 +1417,7 @@ mod tests {
             ref_state = seg[dim..2 * dim].to_vec();
             t = tf;
 
-            let u = stepper.advance(dt, &p).unwrap();
+            let u = stepper.advance(dt, f64::INFINITY, &p).unwrap();
             for (d, (a, b)) in u.iter().zip(ref_state.iter()).enumerate() {
                 assert_eq!(
                     a.to_bits(),
@@ -1359,7 +1461,7 @@ mod tests {
         .unwrap();
         let mut last = vec![0.0; 2];
         for _ in 0..n {
-            last = stepper.advance(dt, &[]).unwrap();
+            last = stepper.advance(dt, f64::INFINITY, &[]).unwrap();
         }
         assert!(
             (stepper.time() - t1).abs() < 1e-12,
@@ -1405,7 +1507,7 @@ mod tests {
             .unwrap();
             let mut out = Vec::new();
             for _ in 0..30 {
-                out.extend(s.advance(dt, &p).unwrap());
+                out.extend(s.advance(dt, f64::INFINITY, &p).unwrap());
             }
             out
         };
@@ -1432,7 +1534,9 @@ mod tests {
             false,
         )
         .unwrap();
-        let (found, t_cross, u_cross, dir) = s.advance_to_event(g, 3.0, 0.01, -1, &[]).unwrap();
+        let (found, t_cross, u_cross, dir) = s
+            .advance_to_event(g, 3.0, 0.01, f64::INFINITY, -1, &[])
+            .unwrap();
         assert!(found, "a falling crossing exists in [0, 3]");
         assert_eq!(dir, -1);
         assert!(
@@ -1466,7 +1570,7 @@ mod tests {
         let mut times = Vec::new();
         for _ in 0..4 {
             let (found, t_cross, _u, _d) = s
-                .advance_to_event(plane_tape(2, 0, 0.0), 10.0, 0.01, 0, &[])
+                .advance_to_event(plane_tape(2, 0, 0.0), 10.0, 0.01, f64::INFINITY, 0, &[])
                 .unwrap();
             assert!(found);
             times.push(t_cross);
@@ -1496,7 +1600,9 @@ mod tests {
             false,
         )
         .unwrap();
-        let (found, _t, _u, _d) = s.advance_to_event(g, 1.0, 0.01, 0, &[]).unwrap();
+        let (found, _t, _u, _d) = s
+            .advance_to_event(g, 1.0, 0.01, f64::INFINITY, 0, &[])
+            .unwrap();
         assert!(!found, "no crossing expected");
         assert!(
             (s.time() - 1.0).abs() < 1e-12,
@@ -1513,7 +1619,7 @@ mod tests {
         // March up to the singularity; one of these segments must report divergence.
         let mut diverged = false;
         for _ in 0..200 {
-            match s.advance(0.01, &[]) {
+            match s.advance(0.01, f64::INFINITY, &[]) {
                 Ok(_) => {}
                 Err(EngineError::Diverged(_)) => {
                     diverged = true;
@@ -1532,9 +1638,9 @@ mod tests {
         // dx/dt = -k x: a larger k decays faster.
         let mut slow =
             OdeStepper::new(decay_tape(), &[1.0], 0.0, "rk45", 1e-9, 1e-11, false).unwrap();
-        let a = slow.advance(0.5, &[1.0]).unwrap()[0]; // k = 1 for this segment
-        let b = slow.advance(0.5, &[5.0]).unwrap()[0]; // k = 5 for the next segment
-                                                       // After [0,0.5] at k=1 then [0.5,1.0] at k=5: x = e^{-0.5} · e^{-2.5}.
+        let a = slow.advance(0.5, f64::INFINITY, &[1.0]).unwrap()[0]; // k = 1 for this segment
+        let b = slow.advance(0.5, f64::INFINITY, &[5.0]).unwrap()[0]; // k = 5 for the next segment
+                                                                      // After [0,0.5] at k=1 then [0.5,1.0] at k=5: x = e^{-0.5} · e^{-2.5}.
         let want = (-0.5_f64).exp() * (-2.5_f64).exp();
         assert!((b - want).abs() < 1e-7, "live-param decay: {b} vs {want}");
         assert!(a > b, "second (faster) segment decays further: {a} -> {b}");
@@ -1553,7 +1659,7 @@ mod tests {
         // With the Jacobian present, the implicit stepper builds and advances.
         let mut ok =
             OdeStepper::new(decay_tape_jac(), &[1.0], 0.0, "bdf", 1e-9, 1e-11, false).unwrap();
-        let x = ok.advance(0.4, &[2.0]).unwrap()[0];
+        let x = ok.advance(0.4, f64::INFINITY, &[2.0]).unwrap()[0];
         assert!((x - (-0.8_f64).exp()).abs() < 1e-6, "bdf decay: {x}");
     }
 
@@ -1569,7 +1675,7 @@ mod tests {
             false,
         )
         .unwrap();
-        s.advance(0.3, &[]).unwrap();
+        s.advance(0.3, f64::INFINITY, &[]).unwrap();
         s.set_state(&[0.5, -0.5], 2.0).unwrap();
         assert_eq!(s.state(), vec![0.5, -0.5]);
         assert_eq!(s.time(), 2.0);
@@ -1805,6 +1911,149 @@ mod tests {
                 "got {err:?}"
             );
             assert!(err.to_string().contains("past_y"), "{err}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // v6: max_step validation + the dense-output flag round-trip
+    // -----------------------------------------------------------------------
+
+    /// **C1.** The `max_step` ceiling is validated at the FFI boundary as an
+    /// `InvalidParameter` (a scalar *option value*, not call geometry — the same
+    /// dividing line `Tolerances` sits on), and `f64::INFINITY` — the "no
+    /// ceiling" default — is accepted.
+    #[test]
+    fn integrate_dense_rejects_a_bad_max_step() {
+        let t_eval: Vec<f64> = (0..=4).map(|i| i as f64 * 0.25).collect();
+        for bad in [0.0, -1.0, f64::NAN] {
+            let err = super::ode::integrate_dense(
+                decay_tape(),
+                &[1.0],
+                &[2.0],
+                &t_eval,
+                "rk45",
+                1e-8,
+                1e-10,
+                bad,
+                false,
+                false,
+            )
+            .expect_err("a non-positive/NaN ceiling must be rejected");
+            assert!(
+                matches!(err, EngineError::InvalidParameter(ref m) if m.contains("max_step")),
+                "got {err:?} for max_step = {bad}"
+            );
+        }
+        // Infinity is the documented "no ceiling" value and must be accepted.
+        assert!(super::ode::integrate_dense(
+            decay_tape(),
+            &[1.0],
+            &[2.0],
+            &t_eval,
+            "rk45",
+            1e-8,
+            1e-10,
+            f64::INFINITY,
+            false,
+            false,
+        )
+        .is_ok());
+        // ... on the ensemble and event entry points too.
+        assert!(matches!(
+            super::ode::ensemble_final(
+                decay_tape(),
+                &[1.0, 2.0],
+                &[2.0],
+                0.0,
+                1.0,
+                0.1,
+                "rk45",
+                1e-8,
+                1e-10,
+                -1.0,
+                false,
+            ),
+            Err(EngineError::InvalidParameter(_))
+        ));
+    }
+
+    /// **C2.** `dense = false` reproduces the pre-change numbers exactly, and
+    /// `dense = true` is (a) a real change on a grid with interior points and
+    /// (b) still correct against the closed form.
+    ///
+    /// The `dense = false` leg is the *control* for the whole v6 change: the two
+    /// golden fixtures above (`integrate_dense_matches_closed_form_decay`,
+    /// `integrate_dense_tracks_oscillator`) run through the shim with
+    /// `dense = false`, so they pin the landing path unchanged.
+    #[test]
+    fn integrate_dense_dense_flag_round_trips() {
+        let t_eval: Vec<f64> = (0..=200).map(|i| i as f64 * 0.015).collect();
+        let run = |dense: bool| {
+            super::ode::integrate_dense(
+                decay_tape(),
+                &[1.0],
+                &[2.0],
+                &t_eval,
+                "rk45",
+                1e-7,
+                1e-10,
+                f64::INFINITY,
+                dense,
+                false,
+            )
+            .unwrap()
+        };
+        let landing = run(false);
+        let dense = run(true);
+        // Both track the closed form to the requested tolerance...
+        for (i, &t) in t_eval.iter().enumerate() {
+            let want = (-2.0 * t).exp();
+            assert!((landing[i] - want).abs() < 1e-7, "landing row {i}");
+            assert!((dense[i] - want).abs() < 1e-7, "dense row {i}");
+        }
+        // ...the first row is the IC and the last row is the same integrated
+        // endpoint in both (dense lands on `t_eval.last()`)...
+        assert_eq!(dense[0].to_bits(), landing[0].to_bits());
+        // ...but the interior samples are genuinely produced differently.
+        assert!(
+            dense
+                .iter()
+                .zip(&landing)
+                .any(|(a, b)| a.to_bits() != b.to_bits()),
+            "dense output changed nothing on a 201-point grid"
+        );
+        // A two-node grid, by contrast, is bit-for-bit identical (no interior
+        // point to interpolate) — the guarantee the stepper/lyapunov/basin
+        // callers rely on.
+        let pair = [0.0, 1.0];
+        let a = super::ode::integrate_dense(
+            decay_tape(),
+            &[1.0],
+            &[2.0],
+            &pair,
+            "rk45",
+            1e-7,
+            1e-10,
+            f64::INFINITY,
+            false,
+            false,
+        )
+        .unwrap();
+        let b = super::ode::integrate_dense(
+            decay_tape(),
+            &[1.0],
+            &[2.0],
+            &pair,
+            "rk45",
+            1e-7,
+            1e-10,
+            f64::INFINITY,
+            true,
+            false,
+        )
+        .unwrap();
+        for (x, y) in a.iter().zip(&b) {
+            assert_eq!(x.to_bits(), y.to_bits());
         }
     }
 }

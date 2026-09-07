@@ -9,6 +9,8 @@ path in pure Python, and the engine seam is checked through a fake module so the
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -293,14 +295,35 @@ def test_engine_integrate_dispatch_payload(monkeypatch) -> None:
     )
     assert len(fake.integrate_calls) == 1
     args = fake.integrate_calls[0]
-    ops, a, b, imm, outputs, jac, n_state, n_param, ic, params, t_eval, method, rtol, atol, jit = (
-        args
-    )
+    # v6 added two trailing scalars to the FFI: the `max_step` size ceiling and
+    # the `dense` (interpolated interior output) flag.
+    (
+        ops,
+        a,
+        b,
+        imm,
+        outputs,
+        jac,
+        n_state,
+        n_param,
+        ic,
+        params,
+        t_eval,
+        method,
+        rtol,
+        atol,
+        max_step,
+        dense,
+        jit,
+    ) = args
     assert (n_state, n_param) == (3, 3)
     np.testing.assert_array_equal(ic, [1.0, 1.0, 1.0])
     np.testing.assert_allclose(params, [10.0, 28.0, 8.0 / 3.0])
     # The solver registry canonicalises the method name before dispatch ("RK45" → "rk45").
     assert method == "rk45" and jit is True
+    # No ceiling was requested, and dense output is the default output semantics.
+    assert max_step == math.inf
+    assert dense is True
     assert outputs.size == 3
     assert traj.y.shape == (t_eval.size, 3)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
@@ -240,6 +241,9 @@ class ContinuousSystem(SystemBase, ABC):
     # loop reuses them rather than re-marshalling the tuple each call (WS-INVHOIST).
     _step_method_canonical: str | None = None
     _step_tape_arrays: Any = None
+    #: The per-step size ceiling ``reinit`` recorded (``None`` = no ceiling); every
+    #: subsequent ``step`` forwards it to the engine.
+    _step_max_step: float | None = None
 
     # The durable resumable engine stepper handle (stream WS-STEPPER): an opaque
     # ``tsdynamics._rust.OdeStepper`` that owns the built tape evaluator + solver
@@ -350,6 +354,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
+        max_step: float | None = None,
         backend: str | None = None,
     ) -> None:
         """
@@ -363,8 +368,9 @@ class ContinuousSystem(SystemBase, ABC):
             Start time (default 0.0).
         params : dict, optional
             Parameter overrides applied (in place) before restarting.
-        method, rtol, atol, backend
-            Stepper configuration, as in :meth:`integrate`.
+        method, rtol, atol, max_step, backend
+            Stepper configuration, as in :meth:`integrate`.  ``max_step`` is
+            stored and applied to every subsequent :meth:`step`.
         """
         if params:
             for k, v in params.items():
@@ -422,6 +428,7 @@ class ContinuousSystem(SystemBase, ABC):
         self._step_tape_arrays = step_arrays
         self._step_rtol = float(rtol)
         self._step_atol = float(atol)
+        self._step_max_step = max_step
         self._state_now = ic_arr.copy()
         self._t_now = t0
         # Drop any prior durable stepper handle: the next ``step`` rebuilds it from
@@ -518,6 +525,7 @@ class ContinuousSystem(SystemBase, ABC):
                 method=self._step_method_canonical,
                 rtol=self._step_rtol,
                 atol=self._step_atol,
+                max_step=math.inf if self._step_max_step is None else float(self._step_max_step),
                 jit=self._step_backend == "jit",
                 name=type(self).__name__,
             )
@@ -550,6 +558,7 @@ class ContinuousSystem(SystemBase, ABC):
             dt,
             self._engine_problem.params_vec(),
             name=type(self).__name__,
+            max_step=self._step_max_step,
         )
         # The state/time advance writes private framework attributes that always pass
         # straight through ``SystemBase.__setattr__`` (underscore-prefixed) — go direct
@@ -602,6 +611,7 @@ class ContinuousSystem(SystemBase, ABC):
             rtol=self._step_rtol,
             atol=self._step_atol,
             backend="reference",
+            max_step=math.inf if self._step_max_step is None else float(self._step_max_step),
         )
         state = np.asarray(y[-1], dtype=float)
         object.__setattr__(self, "_t_now", tf)
@@ -801,7 +811,9 @@ class ContinuousSystem(SystemBase, ABC):
         final_time : float
             End of the integration window. Default 100.0.
         dt : float
-            Output sampling interval. The internal stepper is adaptive.
+            Output sampling interval — the spacing of the returned grid; the
+            internal stepper is adaptive and controlled by ``rtol``/``atol``
+            (see :meth:`integrate`).
         events : sequence, optional
             Detect events along the flow (a SciPy-shaped ``events=`` API).  Each
             element is an :class:`~tsdynamics.engine.run.Event`, a bare
@@ -816,7 +828,7 @@ class ContinuousSystem(SystemBase, ABC):
             ``PoincareMap.as_events()`` shows the section as one such event.
         **kwargs
             Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
-            ``rtol``, ``atol``, ``backend``, …).
+            ``rtol``, ``atol``, ``max_step``, ``backend``, …).
 
         Returns
         -------
@@ -851,6 +863,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
+        max_step: float | None = None,
         backend: str | None = None,
     ) -> Trajectory:
         """Integrate with event detection and wrap the result as a Trajectory.
@@ -885,6 +898,7 @@ class ContinuousSystem(SystemBase, ABC):
             method=meth,
             rtol=rtol,
             atol=atol,
+            max_step=max_step,
             backend=be,
         )
         meta = self._provenance(
@@ -896,6 +910,7 @@ class ContinuousSystem(SystemBase, ABC):
             t0=float(t0),
             rtol=rtol,
             atol=atol,
+            max_step=math.inf if max_step is None else float(max_step),
             ic=np.asarray(ic_arr, dtype=float).copy(),
             n_events=len(sol.events),
             terminated=sol.terminated,
@@ -922,6 +937,7 @@ class ContinuousSystem(SystemBase, ABC):
         method: str | None = None,
         rtol: float = 1e-6,
         atol: float = 1e-9,
+        max_step: float | None = None,
         backend: str | None = None,
         events: Any = None,
         **integrator_kwargs: Any,
@@ -934,7 +950,19 @@ class ContinuousSystem(SystemBase, ABC):
         final_time : float
             End of integration window. Default 100.0.
         dt : float
-            Output sampling interval. The internal stepper is adaptive.
+            Output sampling interval — the spacing of the returned grid.  **It
+            does not set the integration accuracy:** the internal stepper is
+            adaptive and controlled by ``rtol``/``atol``; interior samples are
+            produced by the kernel's own continuous extension.  Use ``rtol`` /
+            ``atol`` to control accuracy and ``max_step`` to bound the internal
+            step.
+
+            .. versionchanged:: 6.0
+                Before v6 the stepper was forced to land on every output sample,
+                so a fine ``dt`` silently bought extra accuracy and a coarse one
+                silently lost it.  It no longer does.  Kernels without a native
+                continuous extension (everything but ``rk45`` / ``tsit5`` /
+                ``dop853``) still land on every sample.
         t0 : float
             Start time. Default 0.0. Allows warm restarts from a non-zero
             time (the IC is interpreted as the state at ``t0``).
@@ -951,6 +979,17 @@ class ContinuousSystem(SystemBase, ABC):
             so a reliably-stiff system should still declare ``_default_method``).
         rtol, atol : float
             Solver tolerances (default 1e-6 / 1e-9).
+        max_step : float, optional
+            Upper bound on any single internal solver step, in time units.
+            ``None`` (default) means no ceiling — the adaptive controller chooses
+            freely from ``rtol``/``atol``.  Use it to stop an adaptive kernel
+            stepping over a narrow feature (a thin resonance, a fast transient)
+            in an otherwise smooth region, or to bound the detection resolution
+            of an event march.  Note this is a step *size*; the engine's
+            ``max_steps`` is a step *count* and is not exposed here.  A
+            ``max_step`` far below the tolerance-driven natural step multiplies
+            cost with no accuracy benefit and can trip
+            :class:`~tsdynamics.errors.StepBudgetError`.
         backend : {"interp", "jit", "reference"}, optional
             Where the ODE is integrated.  Defaults to ``_default_backend``
             (``"interp"``).
@@ -987,7 +1026,10 @@ class ContinuousSystem(SystemBase, ABC):
                 bad,
                 integrator_kwargs[bad],
                 rule="is not a valid integrate()/run() keyword",
-                hint="check the keyword spelling (e.g. final_time, dt, t0, ic, method, rtol, atol).",
+                hint=(
+                    "check the keyword spelling (e.g. final_time, dt, t0, ic, method, "
+                    "rtol, atol, max_step)."
+                ),
             )
         if events is not None:
             return self._run_events(
@@ -999,6 +1041,7 @@ class ContinuousSystem(SystemBase, ABC):
                 method=method,
                 rtol=rtol,
                 atol=atol,
+                max_step=max_step,
                 backend=backend,
             )
         backend = backend if backend is not None else self._default_backend
@@ -1011,6 +1054,7 @@ class ContinuousSystem(SystemBase, ABC):
             method=method or self._default_method,
             rtol=rtol,
             atol=atol,
+            max_step=max_step,
         )
 
     # ------------------------------------------------------------------ #

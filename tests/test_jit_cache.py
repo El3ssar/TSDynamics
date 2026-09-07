@@ -24,6 +24,8 @@ halves:
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -58,6 +60,8 @@ def _integrate_tape(tape, ic, p, t_eval, *, jit: bool) -> np.ndarray:
             "rk4",
             1e-8,
             1e-8,
+            math.inf,  # max_step: no ceiling (v6)
+            False,  # dense: rk4 has no continuous extension anyway (v6)
             jit,
         )
     )

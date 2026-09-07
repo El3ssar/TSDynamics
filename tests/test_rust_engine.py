@@ -15,6 +15,8 @@ The correctness bar:
   same tape) on short, non-chaotic windows; maps match exactly.
 """
 
+import math
+
 import numpy as np
 import pytest
 
@@ -185,7 +187,9 @@ def test_unknown_method_raises_value_error():
     p = np.array([10.0, 28.0, 8.0 / 3.0])
     t_eval = np.array([0.0, 0.1])
     with pytest.raises(ValueError, match="unknown method"):
-        _rust.integrate_dense(*arrays, ic, p, t_eval, "no-such-method", 1e-6, 1e-9, False)
+        _rust.integrate_dense(
+            *arrays, ic, p, t_eval, "no-such-method", 1e-6, 1e-9, math.inf, False, False
+        )
 
 
 def test_jit_backend_matches_interpreter_bit_for_bit():
@@ -197,8 +201,12 @@ def test_jit_backend_matches_interpreter_bit_for_bit():
     ic = np.array([1.0, 1.0, 1.0])
     p = np.array([10.0, 28.0, 8.0 / 3.0])
     t_eval = np.linspace(0.0, 2.0, 11)
-    interp = np.asarray(_rust.integrate_dense(*arrays, ic, p, t_eval, "dop853", 1e-9, 1e-11, False))
-    jit = np.asarray(_rust.integrate_dense(*arrays, ic, p, t_eval, "dop853", 1e-9, 1e-11, True))
+    interp = np.asarray(
+        _rust.integrate_dense(*arrays, ic, p, t_eval, "dop853", 1e-9, 1e-11, math.inf, True, False)
+    )
+    jit = np.asarray(
+        _rust.integrate_dense(*arrays, ic, p, t_eval, "dop853", 1e-9, 1e-11, math.inf, True, True)
+    )
     np.testing.assert_array_equal(interp, jit)
 
 
@@ -231,5 +239,21 @@ def test_divergence_raises_runtime_error():
     t_eval = np.array([0.0, 0.5, 1.5, 2.0])
     with pytest.raises(RuntimeError, match="diverged"):
         _rust.integrate_dense(
-            ops, a, b, imm, outputs, jac, 1, 0, ic, p, t_eval, "rk45", 1e-8, 1e-10, False
+            ops,
+            a,
+            b,
+            imm,
+            outputs,
+            jac,
+            1,
+            0,
+            ic,
+            p,
+            t_eval,
+            "rk45",
+            1e-8,
+            1e-10,
+            math.inf,  # max_step: no ceiling (v6)
+            False,  # dense: keep the landing march (v6)
+            False,
         )

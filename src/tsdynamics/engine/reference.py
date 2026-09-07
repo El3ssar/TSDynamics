@@ -12,9 +12,11 @@ a pure move.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError
+from tsdynamics.errors import ConvergenceError, InvalidParameterError
 
 from .compile import eval_tape
 from .problem import MapProblem, ODEProblem, Problem
@@ -27,6 +29,7 @@ def _reference_ode(
     method: str,
     rtol: float,
     atol: float,
+    max_step: float = math.inf,
 ) -> np.ndarray:
     """Integrate the lowered ODE tape with SciPy (the dependency-light oracle).
 
@@ -34,9 +37,29 @@ def _reference_ode(
     reference-evaluated tape RHS — the same pattern the cross-validation harness
     uses for its reference backend.  This is *not* one of the engine's solver
     kernels; it is the pure-Python validation/fallback path.
+
+    ``max_step`` forwards to ``solve_ivp(max_step=)`` when finite.  There is
+    deliberately **no** implicit ``max_step = dt`` default here: SciPy already
+    produces its ``t_eval`` samples by interpolation, and since v6 so does the
+    engine for the kernels that carry a continuous extension — so the two agree
+    *in kind*, and pinning the oracle to the output grid would make it the odd
+    one out rather than an independent check.
+
+    It is validated here rather than left to SciPy so that all three backends
+    reject the same values with the same type.  SciPy raises a bare
+    :class:`ValueError` for ``max_step <= 0`` and — worse — **silently accepts**
+    ``nan`` (every ``h > max_step`` comparison is then false, so the ceiling just
+    never binds), whereas the engine rejects all three at the FFI boundary with
+    :class:`~tsdynamics.errors.InvalidParameterError`.  Without this guard a
+    typo'd ceiling would raise on ``interp``/``jit`` and quietly do nothing on
+    ``reference``.
     """
     from scipy.integrate import solve_ivp
 
+    if math.isnan(max_step) or max_step <= 0.0:
+        raise InvalidParameterError(
+            f"max_step must be positive (or infinite for no ceiling); got {max_step}"
+        )
     t_eval = np.ascontiguousarray(t_eval, dtype=np.float64)
     if t_eval.size == 0:
         return np.empty((0, problem.dim), dtype=np.float64)
@@ -55,6 +78,7 @@ def _reference_ode(
         method=scipy_method,
         rtol=rtol,
         atol=atol,
+        **({} if math.isinf(max_step) else {"max_step": float(max_step)}),
     )
     if not sol.success:
         raise ConvergenceError(f"reference ODE integration failed: {sol.message}")
@@ -126,6 +150,7 @@ def _reference_ensemble(
     method: str,
     rtol: float,
     atol: float,
+    max_step: float = math.inf,
 ) -> np.ndarray:
     """Loop the reference ODE integrator over a batch; NaN row on divergence.
 
@@ -144,7 +169,7 @@ def _reference_ensemble(
     for i, ic in enumerate(ics):
         sub = ODEProblem(tape=problem.tape, ic=ic, t0=t0, system=problem.system)
         try:
-            y = _reference_ode(sub, t_eval, method=method, rtol=rtol, atol=atol)
+            y = _reference_ode(sub, t_eval, method=method, rtol=rtol, atol=atol, max_step=max_step)
             out[i] = y[-1]
         except ConvergenceError:
             out[i] = np.nan

@@ -12,8 +12,8 @@ use tsdyn_vm::Interpreter;
 
 use super::marshal::{
     build_evaluator, build_solver, check_inputs, first_step_from_grid, guard_continuous,
-    integrate_failure, require_jacobian_if_needed, resolve_solver, validate_grid, EngineError,
-    Tolerances,
+    integrate_failure, require_jacobian_if_needed, resolve_solver, validate_grid,
+    validate_max_step, EngineError, Tolerances,
 };
 
 // ---------------------------------------------------------------------------
@@ -51,6 +51,12 @@ pub fn eval_jac(
 ///
 /// Divergence raises ([`EngineError::Diverged`]) rather than returning plausible
 /// numbers — the single-trajectory analogue of the ensemble's NaN row.
+///
+/// `max_step` bounds any single internal step (`f64::INFINITY` = no ceiling), and
+/// `dense` asks for interpolated interior samples instead of a forced landing on
+/// every grid point. `dense` is honoured only for a kernel carrying a native
+/// continuous extension and a grid with an interior point; otherwise the engine
+/// keeps the land-on-every-sample march, bit-for-bit.
 #[allow(clippy::too_many_arguments)]
 pub fn integrate_dense(
     tape: Tape,
@@ -60,6 +66,8 @@ pub fn integrate_dense(
     method: &str,
     rtol: f64,
     atol: f64,
+    max_step: f64,
+    dense: bool,
     jit: bool,
 ) -> Result<Vec<f64>, EngineError> {
     guard_continuous(&tape)?;
@@ -88,11 +96,14 @@ pub fn integrate_dense(
     }
     validate_grid(t_eval)?;
     let tol = Tolerances::new(rtol, atol)?;
+    validate_max_step(max_step)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
     let ev = build_evaluator(tape, jit)?;
     let mut solver = build_solver(name, tol);
-    let cfg = IntegrateConfig::new(first_step_from_grid(t_eval));
+    let cfg = IntegrateConfig::new(first_step_from_grid(t_eval))
+        .with_max_step(max_step)
+        .with_dense(dense);
     integrate_grid(&*ev, &mut *solver, &ic[..ev.dim()], p, t_eval, &cfg).map_err(integrate_failure)
 }
 
@@ -124,6 +135,7 @@ pub fn ensemble_final(
     method: &str,
     rtol: f64,
     atol: f64,
+    max_step: f64,
     jit: bool,
 ) -> Result<Vec<f64>, EngineError> {
     guard_continuous(&tape)?;
@@ -169,6 +181,7 @@ pub fn ensemble_final(
     // Validate the method and the tolerances up front (one clear error before the
     // rayon fan-out, rather than n_ic degenerate workers).
     let tol = Tolerances::new(rtol, atol)?;
+    validate_max_step(max_step)?;
     let name = resolve_solver(method)?;
     require_jacobian_if_needed(&tape, name)?;
     // The cadence is the caller's (the user's `dt`), no longer a `span/100` guess:
@@ -183,7 +196,9 @@ pub fn ensemble_final(
             "integration cadence (first_step) must be finite and positive; got {first_step}"
         )));
     }
-    let cfg = IntegrateConfig::new(first_step);
+    // No `with_dense` here: the ensemble returns *final* states only — there is
+    // no output grid to interpolate onto, so dense output has nothing to do.
+    let cfg = IntegrateConfig::new(first_step).with_max_step(max_step);
     let ev = build_evaluator(tape, jit)?;
     let result = engine_ensemble(&*ev, |_i| build_solver(name, tol), ics, p, t0, t1, &cfg);
     // A cancelled batch is an interrupt, not a batch of `NaN`s: the signal has

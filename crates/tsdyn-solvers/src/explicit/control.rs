@@ -105,6 +105,17 @@ pub(crate) fn step_factor(err: f64, exponent: f64) -> f64 {
 pub(crate) struct RkWork {
     /// Stage derivatives `k_0..k_{s-1}`, each length `dim`.
     pub k: Vec<Vec<f64>>,
+    /// Debug-only guard for the dense-output contract: `true` exactly between an
+    /// accepted [`Solver::step`](crate::Solver::step) and the next `step` call.
+    ///
+    /// [`Solver::interpolate`](crate::Solver::interpolate) reads `k`, which every
+    /// trial — **including a rejected one** — overwrites, so an interpolation
+    /// taken at any other moment silently reads stage data from a discarded
+    /// trial. Cleared on entry to every step helper and set on acceptance, so a
+    /// future "batch the steps ahead" refactor fails loudly in debug builds
+    /// instead of corrupting output. Debug-only: it costs nothing in release.
+    #[cfg(debug_assertions)]
+    pub dense_valid: bool,
     /// Scratch state for the stage being evaluated, length `dim`.
     pub utmp: Vec<f64>,
     /// Proposed next state, length `dim`.
@@ -120,10 +131,31 @@ impl RkWork {
     pub(crate) fn new() -> Self {
         RkWork {
             k: Vec::new(),
+            #[cfg(debug_assertions)]
+            dense_valid: false,
             utmp: Vec::new(),
             u_new: Vec::new(),
             err: Vec::new(),
             scale: Vec::new(),
+        }
+    }
+
+    /// Mark the stage buffers as *not* describing an accepted step. Called on
+    /// entry to every step helper (see [`dense_valid`](RkWork::dense_valid)).
+    #[inline]
+    pub(crate) fn invalidate_dense(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            self.dense_valid = false;
+        }
+    }
+
+    /// Mark the stage buffers as describing the step just accepted.
+    #[inline]
+    pub(crate) fn validate_dense(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            self.dense_valid = true;
         }
     }
 
@@ -139,6 +171,70 @@ impl RkWork {
             self.err = vec![0.0; dim];
             self.scale = vec![0.0; dim];
         }
+    }
+}
+
+/// The largest stage count [`dense_poly`] can weight without allocating.
+///
+/// 7 covers every FSAL 5(4) pair; 16 leaves room for an extended dop853-style
+/// interpolant. A tableau larger than this is a compile-time-visible
+/// `debug_assert` failure, not silent truncation.
+const MAX_DENSE_STAGES: usize = 16;
+
+/// Evaluate a Runge–Kutta *continuous extension* (dense output) at `theta`.
+///
+/// `p[i]` are stage `i`'s polynomial coefficients in `theta`, **lowest power
+/// first and with no constant term**, so stage `i` contributes
+/// `k[i] · (p[i][0]·θ + p[i][1]·θ² + … + p[i][q−1]·θ^q)` and
+///
+/// ```text
+/// out = u0 + h · Σ_i k[i] · P_i(θ)
+/// ```
+///
+/// This is exactly SciPy's `RkDenseOutput` shape (`Q = Kᵀ·P`,
+/// `y = y_old + h·Q·[θ, θ², …]`), so a published `P` matrix transcribes directly
+/// and can be pinned against the reference table (see each kernel's
+/// `dense_p_matrix_matches_published_coefficients` test).
+///
+/// Two identities every correct `P` satisfies, and which the tests pin:
+/// `θ = 0` reproduces `u0` **bit-for-bit** (there is no constant term, so the
+/// whole sum is multiplied by zero), and `θ = 1` reproduces the propagated
+/// solution `u0 + h·Σ b_i k_i` (because each row of `P` sums to `b_i`).
+///
+/// Called once per interpolated output sample and 10–30× per step by the event
+/// root-finder, so it takes no allocation: the per-stage θ-weights live in a
+/// fixed-size stack array.
+#[inline]
+pub(crate) fn dense_poly(
+    u0: &[f64],
+    h: f64,
+    theta: f64,
+    k: &[Vec<f64>],
+    p: &[&[f64]],
+    out: &mut [f64],
+) {
+    debug_assert_eq!(k.len(), p.len(), "one coefficient row per stage");
+    debug_assert!(
+        k.len() <= MAX_DENSE_STAGES,
+        "stage count exceeds the buffer"
+    );
+    debug_assert_eq!(out.len(), u0.len());
+    let mut w = [0.0f64; MAX_DENSE_STAGES];
+    for (i, pi) in p.iter().enumerate() {
+        // Horner in θ over the coefficient row, then one more multiply by θ:
+        // the polynomials carry no constant term.
+        let mut acc = 0.0;
+        for &c in pi.iter().rev() {
+            acc = acc * theta + c;
+        }
+        w[i] = acc * theta;
+    }
+    for (d, out_d) in out.iter_mut().enumerate() {
+        let mut s = 0.0;
+        for (i, ki) in k.iter().enumerate() {
+            s += w[i] * ki[d];
+        }
+        *out_d = u0[d] + h * s;
     }
 }
 
@@ -227,6 +323,7 @@ pub(crate) fn adaptive_step(
 ) -> StepOutcome {
     let dim = st.u.len();
     work.ensure(c.len(), dim);
+    work.invalidate_dense();
     compute_stages(ev, st, h, c, a, work);
     // f at the current (committed, finite) point is non-finite ⇒ unrecoverable.
     if work.k[0].iter().any(|x| !x.is_finite()) {
@@ -248,6 +345,7 @@ pub(crate) fn adaptive_step(
     if err <= 1.0 {
         st.u.copy_from_slice(&work.u_new);
         st.t += h;
+        work.validate_dense();
         StepOutcome::Accepted {
             h_next: h * step_factor(err, err_exponent),
         }
@@ -274,6 +372,7 @@ pub(crate) fn fixed_step(
 ) -> StepOutcome {
     let dim = st.u.len();
     work.ensure(c.len(), dim);
+    work.invalidate_dense();
     compute_stages(ev, st, h, c, a, work);
     if work.k[0].iter().any(|x| !x.is_finite()) {
         return StepOutcome::Failed;
@@ -284,6 +383,7 @@ pub(crate) fn fixed_step(
     }
     st.u.copy_from_slice(&work.u_new);
     st.t += h;
+    work.validate_dense();
     StepOutcome::Accepted { h_next: h }
 }
 

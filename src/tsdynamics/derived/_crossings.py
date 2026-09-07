@@ -19,10 +19,24 @@ awaits a resumable ``PoincareMap.step()`` (WS-STEPPER) or routing
 
 Accuracy / answer-preservation
 ------------------------------
-The march uses the **fixed-step** ``rk4`` kernel at the detection step ``dt`` (the
-engine's adaptive kernels carry no step ceiling, so an adaptive march would grow
-the step, skip crossings, and degrade the O(h⁴) Hermite refinement that pins the
-crossing).  With ``rk4`` at ``dt`` the engine marches the exact same ``dt`` grid
+The march uses the **fixed-step** ``rk4`` kernel at the detection step ``dt``.
+
+This is a *workaround*, not a design property.  It was adopted because the
+engine's adaptive kernels carried **no step ceiling**, so an adaptive march would
+grow the step, skip crossings, and degrade the O(h⁴) Hermite refinement that pins
+the crossing.  Since v6 the engine has an explicit ``max_step`` ceiling
+(:attr:`tsdyn_engine::IntegrateConfig::max_step`, reachable from Python as
+``crossings(..., max_step=)``), so an adaptive march *is* now possible — and with
+it the ``_EXPLICIT_METHODS`` restriction below could be lifted, since
+``max_step = dt`` makes an implicit/stiff march safe too.  **Repointing this
+module at an adaptive march is deliberately a separate ticket**: it would move
+every Poincaré number in the library and break the "answer-identical to the
+Python ``rk4`` loop" contract stated here, so it needs its own evidence rather
+than riding along with the dense-output change (which leaves ``rk4`` — and
+therefore this whole module — byte-identical, because ``rk4`` carries no
+``Caps::dense``).
+
+With ``rk4`` at ``dt`` the engine marches the exact same ``dt`` grid
 as the Python ``PoincareMap`` and refines with the identical cubic-Hermite
 formula, so the crossings are answer-identical to that reference to ~1e-9 (only
 the bracketed root solver differs — Illinois vs ``brentq``, both to ``xtol=1e-14``).

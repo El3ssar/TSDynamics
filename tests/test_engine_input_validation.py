@@ -25,6 +25,8 @@ contract and forced two call sites to sniff the message text for ``"diverg"``.
 The mapping now lives in the binding layer, so every family inherits it.
 """
 
+import math
+
 import numpy as np
 import pytest
 
@@ -163,10 +165,23 @@ def test_one_sided_error_control_is_still_accepted(tol):
 def test_negative_rtol_no_longer_silently_matches_a_huge_one():
     """The measured symptom: ``rtol=-1`` used to be bit-identical to ``rtol=1e6``.
 
-    ``rtol=1e6`` stays legal (it is merely a loose request); ``rtol=-1`` is not.
+    ``rtol=1e6`` stays *legal* — it is merely a loose request, so it is accepted
+    rather than rejected; ``rtol=-1`` is inadmissible and is rejected.  That
+    accept/reject split is what this test pins.
+
+    The ``max_step=dt`` on the loose leg is deliberate and is **not** a
+    re-baselining.  Before v6 the stepper was forced to land on every output
+    sample, so ``dt`` silently doubled as a step ceiling and an absurdly loose
+    ``rtol`` could not blow the step up.  Since v6 ``dt`` is sampling-only, so
+    "I do not care about accuracy" now genuinely means the controller grows the
+    step without bound — and an unbounded explicit step on a chaotic flow
+    diverges, correctly and loudly.  ``max_step=dt`` states the old implicit
+    bound explicitly and reproduces the old behaviour exactly (verified: the run
+    is finite and on the attractor).  The assertion is unchanged; only the
+    *mechanism* that bounds the step is now written down instead of accidental.
     """
     lorenz = ts.Lorenz()
-    loose = lorenz.integrate(final_time=5.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=1e6)
+    loose = lorenz.integrate(final_time=5.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=1e6, max_step=0.01)
     assert np.isfinite(loose.y).all()
     with pytest.raises(InvalidParameterError):
         lorenz.integrate(final_time=5.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=-1.0)
@@ -228,6 +243,8 @@ def test_raw_ffi_divergence_is_typed_not_a_bare_runtime_error():
             "rk45",
             1e-6,
             1e-9,
+            math.inf,  # max_step: no ceiling (v6)
+            False,  # dense: keep the landing march (v6)
             False,
         )
     assert type(exc.value) is ConvergenceError
@@ -261,6 +278,8 @@ def test_empty_output_grid_is_rejected():
             "rk45",
             1e-6,
             1e-9,
+            math.inf,  # max_step: no ceiling (v6)
+            False,  # dense: keep the landing march (v6)
             False,
         )
 
@@ -323,6 +342,8 @@ def test_non_finite_initial_state_is_rejected_not_called_a_divergence(bad):
             "rk45",
             1e-6,
             1e-9,
+            math.inf,  # max_step: no ceiling (v6)
+            False,  # dense: keep the landing march (v6)
             False,
         )
     assert not isinstance(exc.value, ConvergenceError)
@@ -356,6 +377,8 @@ def _lorenz_ffi_args(*, ic, t_eval):
         "rk45",
         1e-6,
         1e-9,
+        math.inf,  # max_step: no ceiling (v6)
+        False,  # dense: keep the landing march (v6)
         False,
     )
 

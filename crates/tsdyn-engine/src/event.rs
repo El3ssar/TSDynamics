@@ -47,7 +47,9 @@
 use tsdyn_ir::Evaluator;
 use tsdyn_solvers::{Solver, SolverState, StepOutcome};
 
-use crate::integrate::{classify_escape, IntegrateConfig, IntegrateError, OVERFLOW_SCALE};
+use crate::integrate::{
+    classify_escape, trial_step, IntegrateConfig, IntegrateError, OVERFLOW_SCALE,
+};
 use crate::interrupt::Poller;
 
 /// Abscissa tolerance for the in-bracket crossing solve, in the local step
@@ -394,8 +396,7 @@ pub fn advance_to_event(
         let t0_local = st.t;
         u0_local.copy_from_slice(&st.u);
         let remaining = t1 - st.t;
-        let landing = *h >= remaining;
-        let h_try = if landing { remaining } else { *h };
+        let (landing, h_try) = trial_step(*h, cfg.max_step, remaining);
         steps += 1;
 
         match solver.step(ev, st, h_try) {
@@ -426,6 +427,17 @@ pub fn advance_to_event(
                 if let Some(dir) = direction.crosses(g_prev, g1) {
                     let g0 = g_prev;
                     let mut u_cross = vec![0.0; dim];
+                    // A kernel whose interpolant needs extra stages (`dop853`)
+                    // builds them here — only for a step that actually brackets a
+                    // crossing, never for the many steps that do not, and never
+                    // inside the root-finder's own 10-30 `interpolate` calls.
+                    if use_native && !solver.prepare_dense(ev, st, &u0_local, t0_local, h_step) {
+                        debug_assert!(
+                            false,
+                            "kernel advertises Caps::dense but prepare_dense() returned false"
+                        );
+                        return Err(IntegrateError::NonFinite { t: t0_local });
+                    }
                     let s_star = if use_native {
                         let s = bracketed_root(
                             |s| {
@@ -590,8 +602,7 @@ pub fn integrate_events(
         let t0_local = st.t;
         u0_local.copy_from_slice(&st.u);
         let remaining = t1 - st.t;
-        let landing = h >= remaining;
-        let h_try = if landing { remaining } else { h };
+        let (landing, h_try) = trial_step(h, cfg.max_step, remaining);
         steps += 1;
 
         match solver.step(ev, &mut st, h_try) {
@@ -627,6 +638,20 @@ pub fn integrate_events(
                     // `g0`/`g1` entering the refinement are guaranteed finite.
                     if let Some(dir) = ev_spec.direction.crosses(g_prev[e_idx], g1) {
                         let g0 = g_prev[e_idx];
+                        // As in `advance_to_event`: extra interpolant stages are
+                        // built once, for a step that brackets a crossing.
+                        // `prepare_dense` is idempotent for the step it was
+                        // called on, so a second event crossing inside the same
+                        // step simply re-prepares the identical interpolant.
+                        if use_native
+                            && !solver.prepare_dense(ev, &mut st, &u0_local, t0_local, h_step)
+                        {
+                            debug_assert!(
+                                false,
+                                "kernel advertises Caps::dense but prepare_dense() returned false"
+                            );
+                            return Err(IntegrateError::NonFinite { t: t0_local });
+                        }
                         // `u_cross` is the hoisted scratch; the branches below
                         // overwrite all `dim` elements via `interpolate` /
                         // `HermiteStep::eval` (each writes every component), so
@@ -1683,6 +1708,290 @@ mod tests {
         );
         for (a, b) in hit.u.iter().zip(batch.hits[0].u.iter()) {
             assert!((a - b).abs() < 1e-12, "{a} vs {b}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // v6: the max_step ceiling on both event marches; the native-dense branch
+    // -----------------------------------------------------------------------
+
+    /// **E6b.** `max_step` bounds the step of *both* event marches — the batch
+    /// `integrate_events` loop and the resumable `advance_to_event` loop — and
+    /// the default `f64::INFINITY` is bit-for-bit inert on both.
+    ///
+    /// The bound is observed *directly*, by counting RHS evaluations: a ceiling
+    /// of `c` over a span `T` forces at least `T/c` steps whatever the error
+    /// controller wants, so the count scales like `T/c`. (Observing it instead
+    /// through a *missed* crossing is not reliable — an adaptive kernel on a
+    /// smooth oscillator keeps its step below the crossing spacing even at a
+    /// deliberately absurd tolerance, so that variant of the test passes
+    /// vacuously. The eval count is the honest, deterministic observable.)
+    #[test]
+    fn max_step_bounds_the_event_march() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tsdyn_solvers::explicit::Rk45;
+
+        struct Counting<'e> {
+            inner: &'e dyn Evaluator,
+            evals: AtomicUsize,
+        }
+        impl Evaluator for Counting<'_> {
+            fn dim(&self) -> usize {
+                self.inner.dim()
+            }
+            fn n_param(&self) -> usize {
+                self.inner.n_param()
+            }
+            fn n_scratch(&self) -> usize {
+                self.inner.n_scratch()
+            }
+            fn has_jacobian(&self) -> bool {
+                self.inner.has_jacobian()
+            }
+            fn eval(&self, u: &[f64], p: &[f64], t: f64, s: &mut [f64], d: &mut [f64]) {
+                self.evals.fetch_add(1, Ordering::Relaxed);
+                self.inner.eval(u, p, t, s, d);
+            }
+            fn eval_jac(
+                &self,
+                u: &[f64],
+                p: &[f64],
+                t: f64,
+                s: &mut [f64],
+                d: &mut [f64],
+                j: &mut [f64],
+            ) {
+                self.inner.eval_jac(u, p, t, s, d, j);
+            }
+        }
+
+        let base_ev = oscillator();
+        let g = plane_event(2, 0, 0.0); // x = 0: crossings at pi/2 + k*pi
+        let span = 40.0;
+        let expected =
+            ((span - std::f64::consts::FRAC_PI_2) / std::f64::consts::PI).floor() as usize + 1;
+
+        // --- the batch march -------------------------------------------------
+        let mut batch_counts = Vec::new();
+        // The ceilings are chosen well BELOW the kernel's natural step at this
+        // tolerance (~0.2 on the oscillator). A ceiling near the natural step is
+        // not monotone in cost — clamping can also avoid a rejection — so the
+        // observable is only meaningful once the ceiling is what binds.
+        for cap in [f64::INFINITY, 0.05, 0.01] {
+            let ev = Counting {
+                inner: &base_ev,
+                evals: AtomicUsize::new(0),
+            };
+            let mut s = Rk45::with_tolerances(1e-6, 1e-9);
+            let out = integrate_events(
+                &ev,
+                &mut s,
+                &[1.0, 0.0],
+                &[],
+                0.0,
+                span,
+                &[EventSpec::new(&g, EventDirection::Either)],
+                &cfg(0.5).with_max_step(cap),
+            )
+            .unwrap();
+            // Bounding the step must not change *what* is found — only how
+            // finely the march resolves it.
+            assert_eq!(out.hits.len(), expected, "cap={cap}: crossings changed");
+            batch_counts.push(ev.evals.load(Ordering::Relaxed));
+        }
+        assert!(
+            batch_counts[0] < batch_counts[1] && batch_counts[1] < batch_counts[2],
+            "max_step did not bound the batch event march: {batch_counts:?}"
+        );
+        // 40 time units at <= 0.01 per step is >= 4000 steps, i.e. >= ~24000
+        // evals for a 7-stage FSAL kernel.
+        assert!(
+            batch_counts[2] >= 24_000,
+            "a 0.01 ceiling should force ~4000 steps, got {} evals",
+            batch_counts[2]
+        );
+
+        // --- the resumable march --------------------------------------------
+        let mut resume_counts = Vec::new();
+        for cap in [f64::INFINITY, 0.01] {
+            let ev = Counting {
+                inner: &base_ev,
+                evals: AtomicUsize::new(0),
+            };
+            let conf = cfg(0.5).with_max_step(cap);
+            let mut s = Rk45::with_tolerances(1e-6, 1e-9);
+            let mut st = SolverState::for_evaluator(&ev, vec![1.0, 0.0], 0.0, vec![]);
+            let mut h = conf.first_step;
+            // March past the LAST crossing so the whole span is walked.
+            let mut found = 0usize;
+            while st.t < span {
+                match advance_to_event(
+                    &ev,
+                    &mut s,
+                    &mut st,
+                    &mut h,
+                    span,
+                    &g,
+                    EventDirection::Either,
+                    &conf,
+                )
+                .unwrap()
+                {
+                    Some(_) => found += 1,
+                    None => break,
+                }
+            }
+            assert_eq!(found, expected, "cap={cap}: resumable crossings changed");
+            resume_counts.push(ev.evals.load(Ordering::Relaxed));
+        }
+        assert!(
+            resume_counts[0] < resume_counts[1],
+            "max_step did not bound the resumable event march: {resume_counts:?}"
+        );
+
+        // --- inertness -------------------------------------------------------
+        // An explicit infinite ceiling reproduces the default config bit for bit.
+        let base = cfg(0.5);
+        let run = |conf: &IntegrateConfig| {
+            let mut s = Rk45::with_tolerances(1e-6, 1e-9);
+            integrate_events(
+                &base_ev,
+                &mut s,
+                &[1.0, 0.0],
+                &[],
+                0.0,
+                span,
+                &[EventSpec::new(&g, EventDirection::Either)],
+                conf,
+            )
+            .unwrap()
+        };
+        let plain = run(&base);
+        let inf = run(&base.with_max_step(f64::INFINITY));
+        assert_eq!(plain.hits.len(), inf.hits.len());
+        for (a, b) in plain.hits.iter().zip(&inf.hits) {
+            assert_eq!(
+                a.t.to_bits(),
+                b.t.to_bits(),
+                "an infinite ceiling moved a crossing"
+            );
+            for (x, y) in a.u.iter().zip(&b.u) {
+                assert_eq!(x.to_bits(), y.to_bits());
+            }
+        }
+    }
+
+    /// The two production dense kernels are the ones the event march now refines
+    /// with (rather than the endpoint cubic-Hermite fallback). Pin that the flag
+    /// is actually set on them, and that `rk4` — the kernel the Poincaré march is
+    /// pinned to — is deliberately NOT dense, so `PoincareMap` stays byte-identical.
+    #[test]
+    fn caps_dense_is_set_exactly_on_the_native_interpolant_kernels() {
+        use tsdyn_solvers::explicit::{Rk45, Tsit5};
+        assert!(Rk45::new().caps().dense);
+        assert!(Tsit5::new().caps().dense);
+        assert!(
+            !Rk4::new().caps().dense,
+            "rk4 must stay non-dense: the Poincare/crossing march is pinned to it \
+             and is contracted to be answer-identical to the Python rk4 loop"
+        );
+    }
+
+    /// **E7 (commit 4).** The event march now refines with the kernel's *native*
+    /// continuous extension instead of the endpoint cubic-Hermite fallback,
+    /// because `rk45`/`tsit5` acquired `Caps::dense`. Pin the improvement.
+    ///
+    /// Controlled comparison: take one accepted `rk45` step at a pinned size and
+    /// evaluate *both* interpolants over its interior — the kernel's own
+    /// `interpolate` (what the march now uses) and a `HermiteStep` built from the
+    /// same step's endpoints and derivatives (what it used before) — against the
+    /// analytic solution. Same step, same samples: the only difference is the
+    /// interpolant.
+    ///
+    /// The native extension is order 4 (local `O(h⁵)`), cubic Hermite order 3
+    /// (local `O(h⁴)`), so the advantage grows like `1/h`: measured ~21x at
+    /// `h = 0.4` and ~337x at `h = 0.025`. The crossing-level check below is
+    /// deliberately weaker (native must merely not be worse), because at a coarse
+    /// step the *propagated endpoint's* own error — which both interpolants
+    /// inherit — dominates the refined crossing time, so a crossing-time ratio
+    /// would measure the step, not the interpolant.
+    #[test]
+    fn native_dense_event_refinement_beats_hermite() {
+        use tsdyn_solvers::explicit::Rk45;
+
+        let ev = oscillator();
+        let t0 = 0.3_f64;
+
+        for (h, want_ratio) in [(0.4_f64, 10.0), (0.1, 50.0)] {
+            let u0 = vec![t0.cos(), -t0.sin()];
+            let mut s = Rk45::with_tolerances(1.0, 1.0); // accept the pinned step
+            let mut st = SolverState::for_evaluator(&ev, u0.clone(), t0, vec![]);
+            let mut f0 = vec![0.0; 2];
+            ev.eval(&st.u, &st.p, st.t, &mut st.scratch, &mut f0);
+            assert!(matches!(
+                s.step(&ev, &mut st, h),
+                StepOutcome::Accepted { .. }
+            ));
+            let u1 = st.u.clone();
+            let mut f1 = vec![0.0; 2];
+            ev.eval(&u1, &st.p, t0 + h, &mut st.scratch, &mut f1);
+            let hermite = HermiteStep::new(&u0, &f0, &u1, &f1, h);
+
+            let mut nat = vec![0.0; 2];
+            let mut her = vec![0.0; 2];
+            let (mut e_nat, mut e_her) = (0.0_f64, 0.0_f64);
+            for j in 1..20 {
+                let theta = j as f64 / 20.0;
+                let t = t0 + theta * h;
+                assert!(s.interpolate(&u0, h, theta, &mut nat));
+                hermite.eval(theta, &mut her);
+                e_nat = e_nat
+                    .max((nat[0] - t.cos()).abs())
+                    .max((nat[1] + t.sin()).abs());
+                e_her = e_her
+                    .max((her[0] - t.cos()).abs())
+                    .max((her[1] + t.sin()).abs());
+            }
+            assert!(
+                e_nat * want_ratio < e_her,
+                "h={h}: the native interpolant must beat Hermite by >={want_ratio}x, \
+                 got native {e_nat:.3e} vs hermite {e_her:.3e}"
+            );
+        }
+    }
+
+    /// The event march's refined crossing must land on the analytic root, and the
+    /// native branch must not be worse than the Hermite branch was. (See E7 for
+    /// why this is stated as "not worse" rather than as a ratio.)
+    #[test]
+    fn native_dense_event_march_lands_on_the_analytic_root() {
+        use tsdyn_solvers::explicit::Rk45;
+
+        let ev = oscillator(); // x(t) = cos t, zeros at pi/2 + k*pi
+        let g = plane_event(2, 0, 0.0);
+        let mut s = Rk45::with_tolerances(1e-10, 1e-12);
+        assert!(s.caps().dense, "rk45 must take the native branch");
+        let out = integrate_events(
+            &ev,
+            &mut s,
+            &[1.0, 0.0],
+            &[],
+            0.0,
+            10.0,
+            &[EventSpec::new(&g, EventDirection::Either)],
+            &cfg(0.1),
+        )
+        .unwrap();
+        assert!(out.hits.len() >= 3);
+        for (k, hit) in out.hits.iter().enumerate() {
+            let exact = std::f64::consts::FRAC_PI_2 + k as f64 * std::f64::consts::PI;
+            assert!(
+                (hit.t - exact).abs() < 1e-9,
+                "crossing {k}: {} vs {exact}",
+                hit.t
+            );
+            // The refined *state* must sit on the section to machine precision.
+            assert!(hit.u[0].abs() < 1e-12, "g(u_cross) = {}", hit.u[0]);
         }
     }
 }

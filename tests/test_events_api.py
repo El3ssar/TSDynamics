@@ -227,7 +227,18 @@ class TestEngineVsReference:
         te, tr = eng.meta["t_events"][0], ref.meta["t_events"][0]
         assert te.size == tr.size > 0
         # Non-chaotic flow: two independent integrators + root finders agree.
-        assert np.allclose(te, tr, atol=1e-6)
+        #
+        # Tightened in v6 from 1e-6.  `rk45` now carries `Caps::dense`, so the
+        # engine refines the crossing with the kernel's own order-4 continuous
+        # extension instead of an endpoint cubic-Hermite fallback, and the
+        # measured residual dropped to ~2e-13.  The bound is set ~50x above that
+        # rather than left at the old slack: an assertion loose enough to pass
+        # both before and after cannot notice the branch regressing.
+        assert np.allclose(te, tr, atol=1e-11)
+        # Absolute check too, against the analytic zeros of x(t) = cos t — so
+        # this is pinned to truth, not merely to backend agreement.
+        exact = np.array([1.5 * np.pi + 2 * np.pi * k for k in range(te.size)])
+        assert np.allclose(te, exact, atol=1e-9)
 
     def test_lorenz_early_crossings_agree(self):
         lor = ts.Lorenz()
@@ -239,7 +250,10 @@ class TestEngineVsReference:
         assert n >= 1
         # Compare only the first few crossings (Lorenz is chaotic: independent
         # integrators diverge later, but early crossings track the same orbit).
-        assert np.allclose(te[:n], tr[:n], atol=1e-3)
+        #
+        # Tightened in v6 from 1e-3 for the same reason as the oscillator above
+        # (native dense-output refinement); the measured residual is ~1e-10.
+        assert np.allclose(te[:n], tr[:n], atol=1e-8)
 
 
 # ---------------------------------------------------------------------------
