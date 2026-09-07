@@ -29,6 +29,7 @@ import numpy as np
 
 from tsdynamics.errors import ConvergenceError
 from tsdynamics.utils.grids import make_output_grid
+from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from .problem import ODEProblem, Problem
 
@@ -455,8 +456,8 @@ def integrate_events(
     dt: float = 0.02,
     t0: float | None = None,
     method: str = "RK45",
-    rtol: float = 1e-6,
-    atol: float = 1e-9,
+    rtol: float = DEFAULT_RTOL,
+    atol: float = DEFAULT_ATOL,
     max_step: float | None = None,
     backend: str = "interp",
 ) -> EventSolution:

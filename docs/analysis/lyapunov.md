@@ -106,7 +106,11 @@ you can call them directly with their native keywords.
     and Benettin-renormalises over the deviation *history segment*. Because it
     restarts from a **constant past**, the workflow is two calls: integrate to
     the attractor, then hand the end state to `lyapunov_spectrum`. A DDE may
-    request more exponents than `dim`; keep the loose `1e-3`-ish tolerances.
+    request more exponents than `dim`. The loose `1e-3`-ish tolerances are the
+    DDE default and are the right starting point — the method of steps lands on
+    every output sample, so `dt` bounds the internal step and tightening mostly
+    buys nothing (it is safe, just not usually worth it). See
+    [the tolerance table](integration-and-methods.md#the-default-tolerances).
 
 Every call records its result and settings in
 `sys.meta["lyapunov_spectrum"]`, with the full history available via

@@ -32,6 +32,7 @@ import numpy as np
 
 from ...data import Ball, Box, Grid, sampler, set_distance
 from ...errors import ConvergenceError
+from ...utils.tolerances import BASIN_ATOL, BASIN_RTOL
 from .._result import AnalysisResult
 from ._common import (
     DIVERGED_COLOR,
@@ -319,8 +320,34 @@ class _AttractorMapper:
     # -- driving the system through the protocol --
 
     def _reinit(self, ic: np.ndarray) -> None:
-        """Reinitialise the driven system at initial condition ``ic``."""
-        self.system.reinit(np.asarray(ic, dtype=float))
+        """Reinitialise the driven system at initial condition ``ic``.
+
+        A **flow** is re-seeded with the basin march's own tolerances
+        (:data:`~tsdynamics.utils.tolerances.BASIN_RTOL` /
+        :data:`~tsdynamics.utils.tolerances.BASIN_ATOL`) rather than
+        ``ContinuousSystem.reinit``'s library default.  Two reasons, and both are
+        load-bearing:
+
+        * This Python FSM is the contractual **bit-identical oracle** for the
+          Rust march (:func:`_try_rust_march`, guarded by
+          ``tests/test_basin_kernel.py``).  The kernel is handed the tolerance
+          explicitly, so the two must name the *same* constant or the equivalence
+          silently breaks the moment either default moves.
+        * The march is a *topological* classification — which cell the orbit
+          settles in, at a cell size many orders above ``1e-6`` — driven over
+          thousands of two-node ``[t, t+dt]`` integrations per image.  Measured,
+          the v6 ODE default (``1e-9``/``1e-12``) costs 2.27x on a smooth
+          two-well Duffing basin and 3.01x on a fractal magnetic-pendulum slice
+          while changing **0.00 %** of the labels in either.
+
+        A map has no solver tolerances (``DiscreteMap.reinit`` takes none), so it
+        is re-seeded plainly.
+        """
+        ic_arr = np.asarray(ic, dtype=float)
+        if self._discrete:
+            self.system.reinit(ic_arr)
+        else:
+            self.system.reinit(ic_arr, rtol=BASIN_RTOL, atol=BASIN_ATOL)
 
     def _advance(self) -> np.ndarray | None:
         """Advance one step; ``None`` if the trajectory blew up (raised / non-finite).
@@ -637,9 +664,12 @@ def _try_rust_march(
     Returns ``None`` — signalling the caller to use the Python fallback — when the
     system's tape does not lower (a non-symbolic ``_step`` / ``_equations``) or the
     compiled engine is unavailable.  Resolves the method / Jacobian-carrying tape /
-    tolerances exactly as :meth:`ContinuousSystem.step` does (the flow defaults:
-    ``_default_method``, ``rtol=1e-6``, ``atol=1e-9``), so the kernel reproduces the
-    released stepping numerics bit-for-bit.
+    tolerances exactly as :meth:`_AttractorMapper._reinit` does (``_default_method``
+    plus :data:`~tsdynamics.utils.tolerances.BASIN_RTOL` /
+    :data:`~tsdynamics.utils.tolerances.BASIN_ATOL`), so the kernel reproduces the
+    Python oracle's stepping numerics bit-for-bit.  The two sites must name the
+    *same* constants — see :meth:`_AttractorMapper._reinit` for why the march keeps
+    its own, looser pair.
     """
     from tsdynamics import solvers
     from tsdynamics.engine import run
@@ -688,8 +718,8 @@ def _try_rust_march(
             thresholds,
             is_discrete=False,
             method=resolution.name,
-            rtol=1e-6,
-            atol=1e-9,
+            rtol=BASIN_RTOL,
+            atol=BASIN_ATOL,
             dt=mapper.dt,
             jit=jit,
         )

@@ -276,17 +276,48 @@ class TestTangentEngineLyapunov:
         )
 
     def test_engine_matches_reference_to_tolerance(self) -> None:
-        # The compiled-engine kernel and the pure-Python reference oracle (the
-        # per-chunk loop with NumPy-Householder QR) are two float-distinct
-        # computations of the same Benettin estimate; over a chaotic flow they
-        # diverge only by roundoff — the same-attractor tolerance.
+        """The engine kernel and the pure-Python oracle find the same attractor.
+
+        Two float-distinct computations of the *same* finite-time Benettin
+        estimate over a chaotic flow.  They trace different trajectories on the
+        same attractor, so the comparable quantity is the attractor, not the
+        digits.
+
+        The raw-spectrum bound is set by the **finite-time statistical scatter**,
+        not by the integration tolerance.  Measured over 8 initial conditions at
+        these settings (``T=300``): ``max|engine - reference|`` has median 0.0056
+        / max 0.0286 at the v6 default ``rtol=1e-9``, and median 0.0094 / max
+        0.0155 at the pre-v6 ``rtol=1e-6``.  The two distributions overlap and
+        **both exceed 1e-2** — the old ``atol=1e-2`` was a latent flake that held
+        only for this one pinned initial condition, not a contract.  Sweeping
+        ``rtol`` from ``1e-5`` to ``1e-10`` at the pinned IC gives 0.0041, 0.0040,
+        0.0165, 0.0087, 0.0257, 0.0076: non-monotonic, i.e. scatter.  Widening
+        ``dt``/``final_time`` is the only thing that shrinks it (``T=1000`` →
+        0.0089, ``T=3000`` → 0.0040), and tripling this slow test is not worth it.
+
+        So the raw bound is loosened to the measured scatter, and the test is
+        *strengthened* with two quantities that are not scatter-dominated: the
+        Kaplan–Yorke dimension (max measured gap 0.0015, a 6x margin on 1e-2) and
+        the **exact** trace identity — for Lorenz, ``sum(lambda)`` must equal the
+        constant divergence ``-(sigma + 1 + beta)``.  That residual *does* track
+        the solver tolerance monotonically (2.1e-6 / 2.4e-7 / 2.3e-8 / 2.2e-9 /
+        2.2e-10 at ``rtol=1e-6 … 1e-10``), so it cannot be satisfied by luck.
+        """
         pytest.importorskip("tsdynamics._rust")
         kw = dict(dt=0.05, burn_in=50.0, final_time=300.0, ic=[1.0, 1.0, 1.0])
         engine = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
         reference = ts.Lorenz().lyapunov_spectrum(backend="reference", **kw)
-        np.testing.assert_allclose(engine, reference, rtol=0.0, atol=1e-2)
+        np.testing.assert_allclose(engine, reference, rtol=0.0, atol=5e-2)
         # Kaplan–Yorke dimension is preserved across the two paths.
         assert abs(ts.kaplan_yorke_dimension(engine) - ts.kaplan_yorke_dimension(reference)) < 1e-2
+        # The exact invariant: the Lorenz flow's divergence is the constant
+        # -(sigma + 1 + beta), so the spectrum must sum to it on BOTH paths.
+        lor = ts.Lorenz()
+        trace = -(lor.params["sigma"] + 1.0 + lor.params["beta"])
+        for name, spec in (("engine", engine), ("reference", reference)):
+            assert abs(float(np.sum(spec)) - trace) < 1e-5, (
+                f"{name}: sum(lambda) = {np.sum(spec)!r} != divergence {trace!r}"
+            )
 
     def test_partial_spectrum_k_less_than_dim(self) -> None:
         # k < dim takes the same engine kernel (the leading exponent is positive).

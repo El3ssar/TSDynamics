@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import numpy as np
 
 from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap
+from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from ._base import DerivedSystem
 from ._variational import build_variational_tape, embed_extended, split_extended
@@ -123,8 +124,8 @@ class TangentSystem(DerivedSystem):
         self._t = 0.0
         # ODE integration options (engine mode), captured at reinit.
         self._method: str | None = None
-        self._rtol = 1e-6
-        self._atol = 1e-9
+        self._rtol = DEFAULT_RTOL
+        self._atol = DEFAULT_ATOL
         self._integrator_kwargs: dict[str, Any] = {}
         # Resumable engine stepper amortisation (stream perf/lyapunov-stepper): when
         # the resolved kernel is *explicit* and the backend is the compiled engine
@@ -186,8 +187,8 @@ class TangentSystem(DerivedSystem):
         t0 = float(t) if t is not None else 0.0
         self._t = t0
         self._method = kwargs.pop("method", None)
-        self._rtol = kwargs.pop("rtol", 1e-6)
-        self._atol = kwargs.pop("atol", 1e-9)
+        self._rtol = kwargs.pop("rtol", DEFAULT_RTOL)
+        self._atol = kwargs.pop("atol", DEFAULT_ATOL)
         self._integrator_kwargs = dict(kwargs)
 
         self._reinit_ode_engine(ic_arr)
@@ -597,8 +598,10 @@ class TangentSystem(DerivedSystem):
 
         - **maps**: ``steps`` (default 5000), ``ic``, ``reortho_interval`` (1).
         - **ODEs**: ``final_time`` (200.0), ``dt`` (0.1), ``ic``, ``burn_in``
-          (50.0), ``method``, ``rtol`` (1e-6), ``atol`` (1e-9), and any extra
-          integrator keywords.
+          (50.0), ``method``, ``rtol`` / ``atol``
+          (:data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
+          :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL`, ``1e-9`` /
+          ``1e-12``), and any extra integrator keywords.
 
         The estimate is recorded in ``self.meta['lyapunov_spectrum']`` (the inner
         system's :class:`~tsdynamics.families.base.MetaStore`).
@@ -822,8 +825,8 @@ class TangentSystem(DerivedSystem):
         ic: Any | None = None,
         burn_in: float = 50.0,
         method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
         **integrator_kwargs: Any,
     ) -> np.ndarray:
         """Burn-in then time-averaged spectrum for a flow (either ODE backend).

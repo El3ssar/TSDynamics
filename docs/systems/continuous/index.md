@@ -46,9 +46,19 @@ sys.integrate(
     t0=0.0,              # start time (warm restarts allowed)
     ic=None,             # initial state; falls back to self.ic, then random
     method="rk45",       # "rk45" (default), "dop853", "tsit5", "rk4", "bdf", ...
-    rtol=1e-6, atol=1e-9,
+    rtol=1e-9, atol=1e-12,   # the accuracy knob (tightened in v6 — see below)
 ) -> Trajectory
 ```
+
+!!! info "Changed in v6: `rtol` is now the accuracy knob"
+    Before v6 the adaptive stepper was forced to land on every output sample, so
+    a fine `dt` silently bought accuracy `rtol` never asked for. Now `dt` is
+    purely an output grid and `rtol` alone sets accuracy — so the default
+    tightened from `1e-6`/`1e-9` to `1e-9`/`1e-12` to carry the accuracy the old
+    forced landing supplied for free. Measured over a fifteen-system sample at
+    the defaults, that is a **median 1459×** improvement in the delivered error
+    for a **median 1.74×** wall-clock cost. Pass `rtol=1e-6, atol=1e-9` for the
+    pre-v6 trade.
 
 `lyapunov_spectrum(final_time=200.0, dt=0.1, burn_in=50.0, n_exp=None, ...)`
 computes the spectrum from the variational equations — see

@@ -52,6 +52,7 @@ from typing import Any
 import numpy as np
 
 from tsdynamics.errors import ConvergenceError, InvalidParameterError, invalid_value
+from tsdynamics.utils.tolerances import DDE_LYAPUNOV_ATOL, DDE_LYAPUNOV_RTOL
 
 __all__ = ["dde_lyapunov_spectrum"]
 
@@ -250,8 +251,8 @@ def dde_lyapunov_spectrum(
     burn_in: float = 50.0,
     ic: Any = None,
     backend: str = "interp",
-    rtol: float = 1e-7,
-    atol: float = 1e-9,
+    rtol: float = DDE_LYAPUNOV_RTOL,
+    atol: float = DDE_LYAPUNOV_ATOL,
 ) -> np.ndarray:
     """Estimate the ``n_exp`` leading Lyapunov exponents of a DDE on the engine.
 
@@ -282,7 +283,9 @@ def dde_lyapunov_spectrum(
         rejected (the engine has no pure-Python DDE integrator), matching DDE
         integration.
     rtol, atol : float
-        Engine integration tolerances.
+        Engine integration tolerances.  Default
+        :data:`~tsdynamics.utils.tolerances.DDE_LYAPUNOV_RTOL` /
+        :data:`~tsdynamics.utils.tolerances.DDE_LYAPUNOV_ATOL`.
 
     Returns
     -------

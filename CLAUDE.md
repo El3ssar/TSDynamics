@@ -104,8 +104,9 @@ src/tsdynamics/
 ├── systems/
 │   ├── continuous/           # 9 ODE category modules (+ spatial_fields.py 2-D PDEs) + delayed_systems.py (DDEs!)
 │   └── discrete/             # 5 map category modules
-└── utils/
-    └── grids.py              # make_output_grid (the single hoisted output-grid builder; sagitta tooling moved to analysis/sampling/)
+└── utils/                    # the LEAF package: values both families/ and engine/ must agree on
+    ├── grids.py              # make_output_grid (the single hoisted output-grid builder; sagitta tooling moved to analysis/sampling/)
+    └── tolerances.py         # the single hoisted rtol/atol defaults (DEFAULT_/DDE_/DDE_LYAPUNOV_/BASIN_); see "Solver tolerances"
 
 hooks/docs_autogen.py          # mkdocs hook: per-system pages + figures/viewers (TSD_DOCS_ONLY= subset preview)
 docs/_tooling/equations.py     # symbolic → LaTeX rendering for docs
@@ -454,6 +455,59 @@ six decades.
   evaluations on a 1001-point grid 6001 -> 805 and now **independent of the output
   resolution** (pinned by a counting test, which cannot flake). `dop853` at
   `dt=0.001`: 126.7 -> 17.5 ms.
+
+### Solver tolerances (v6, `utils/tolerances.py`)
+
+**Every `rtol=`/`atol=` default in the library is a named constant in the leaf
+module `utils/tolerances.py`.** Before v6 the pair `1e-6`/`1e-9` was duplicated
+as bare literals across ~16 sites in five subpackages plus the docstrings that
+quoted them — which is exactly how two "same" defaults drift apart. The module
+is a leaf (imports nothing from `tsdynamics`), so `families/` (which imports the
+engine only lazily) and `engine/run.py` both take it at module scope with no
+cycle; `engine/run.py` was rejected as the home for precisely that reason. A
+polish gate (`test_polish_standards.py::test_no_bare_tolerance_literal_in_the_library`,
+AST-based) fails on any bare `rtol`/`atol` numeric literal in a signature, a call
+keyword or a `self._rtol = …` assignment; genuine homonyms (FNN's `R_tol`/`A_tol`,
+the orbit-diagram branch-clustering `rtol`) are an explicit, liveness-checked
+carve-out table.
+
+**The ODE default tightened to `rtol=1e-9` / `atol=1e-12`** (from `1e-6`/`1e-9`).
+This is the other half of dense output: the forced landing used to subsidise
+accuracy `rtol` never asked for, so removing it would silently cost a user who
+never touched `rtol` 2x-9600x of delivered accuracy. Measured at the defaults
+(`dt=0.02`, `T=5`, error at final time vs SciPy `DOP853` @ `rtol=1e-13`) over 15
+catalogue systems: **median 1459x more accurate for a median 1.74x cost**
+(Lorenz `2.2e-4 -> 1.9e-7`, Halvorsen `1.5e-3 -> 2.9e-7`, Chua `1.1e-1 ->
+1.6e-5`). Against dense output's own ~1.7x speedup that is roughly cost-neutral
+versus pre-v6, at ~100x the pre-v6 accuracy.
+
+**Three drivers keep their own, looser number** — all documented, all measured,
+none accidental. The rule that decides is: *the bump is owed only to surfaces
+dense output changed* (the adaptive explicit kernels sampling a grid with
+interior points).
+
+| Constant | Value | Driver | Measured impact of following the global default |
+|---|---|---|---|
+| `DEFAULT_RTOL`/`DEFAULT_ATOL` | `1e-9`/`1e-12` | ODE `integrate`/`run`/`ensemble`/`reinit`+`step`/events/ODE Lyapunov/crossings | (the default) |
+| `DDE_RTOL`/`DDE_ATOL` | `1e-3`/`1e-3` | `DelaySystem._default_rtol/_atol` | method of steps lands on every sample -> tolerance inert: **5 of 6 built-in DDEs bit-identical** from `1e-3` to `1e-9` at the default `dt`; `IkedaDelay` 1.4x cost |
+| `DDE_LYAPUNOV_RTOL`/`_ATOL` | `1e-7`/`1e-9` | `dde_lyapunov_spectrum` | same march; agrees with `1e-9`/`1e-12` inside the estimator's finite-time scatter, same cost |
+| `BASIN_RTOL`/`BASIN_ATOL` | `1e-6`/`1e-9` | basin cell march (**both** `_AttractorMapper._reinit` and `run.basin_march`) | 2.27x (Duffing 60x60) / 3.01x (magnetic pendulum 35x35) slower for **0.00% of labels changing** |
+
+- The **basin pair is load-bearing in two places at once**: the Rust march is
+  contractually bit-identical to the Python `_AttractorMapper` oracle
+  (`tests/test_basin_kernel.py`), so `_reinit` now passes the tolerance
+  *explicitly* for a flow instead of inheriting `ContinuousSystem.reinit`'s
+  default. If those two sites ever name different constants the equivalence
+  breaks silently; `test_basin_march_python_and_rust_name_the_same_tolerance`
+  guards it. (A map takes no tolerances — `DiscreteMap.reinit` has none.)
+- The **section-crossing march** (`derived/_crossings.py`) is also outside the
+  blast radius but keeps *no* private number: it pins fixed-step `rk4`, which has
+  no error control, so its tolerances are genuinely **inert** (measured: a
+  400-crossing Rössler section is bit-identical at 1.01x cost). Nothing to trade,
+  so it follows the global constant.
+- The DDE "tight tolerances stall the solver" folklore is **withdrawn**: it was a
+  v2 JiTCDDE property. All 6 built-in DDEs complete at `rtol=1e-12`/`atol=1e-15`
+  over `T=500` on the Rust engine.
 
 ### `DiscreteMap` extras
 
@@ -1374,8 +1428,9 @@ Two layers now cover them:
 | Variable-dim system without `_structural_params` | Lowering-time `range(N)` fails. Add `_structural_params = frozenset({"N"})`. |
 | Map params order ≠ `_step` signature order | **Raises `TypeError` at import**. |
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |
-| Tight tolerances on DDE | `rtol=atol=1e-3` is the safe start. |
-| "My results got less accurate in v6" | `dt` is now **sampling only** — it no longer secretly bounds the internal step (see "Dense output and `max_step`"). Tighten `rtol`/`atol`, which now actually work; or pass `max_step=dt` to reproduce the old step regime; or set `TSDYNAMICS_NO_DENSE_OUTPUT=1` to reproduce pre-v6 numbers exactly. |
+| Tight tolerances on DDE | `rtol=atol=1e-3` is the DDE default and the right start — **not** because tightening stalls the solver (measured: all 6 built-in DDEs complete at `1e-12`/`1e-15`, T=500) but because the method of steps lands on every sample, so `dt` bounds the step and the tolerance is inert (5 of 6 are bit-identical from `1e-3` to `1e-9`). |
+| Adding a new `rtol=`/`atol=` default | Don't write a literal — name a constant in `utils/tolerances.py`. A gate (`test_polish_standards.py::test_no_bare_tolerance_literal_in_the_library`) fails on a bare literal in any signature, call keyword or `self._rtol =` assignment. |
+| "My results got less accurate in v6" | `dt` is now **sampling only** — it no longer secretly bounds the internal step (see "Dense output and `max_step`"). The default `rtol`/`atol` tightened to `1e-9`/`1e-12` to compensate, so a plain `.integrate()` is *more* accurate than pre-v6, not less. If you pinned `rtol=1e-6` explicitly you kept the old accuracy on a coarser step — tighten it; or pass `max_step=dt` to reproduce the old step regime; or set `TSDYNAMICS_NO_DENSE_OUTPUT=1` to reproduce pre-v6 numbers exactly. |
 | An adaptive kernel strides over a narrow feature | Pass `max_step=`. (A step *size* — `max_steps` is a step *count*.) |
 | `set_state` on a DDE | Raises by design — use `reinit(u)`. |
 | Stiff ODE: which method? | `"bdf"` is the **variable-order (1–5) BDF** and the right default for stiff ODEs (far faster than the fixed-order `rosenbrock`/`trbdf2`, which stay selectable). `run.integrate` auto-builds the Jacobian-carrying tape for the implicit kernels, so `integrate(method="bdf")` "just works". The legacy SciPy name `"LSODA"` is no longer a method — declare `_default_method = "bdf"`. Pass `method="auto"` to let `solvers.recommend` probe stiffness and pick `bdf`/`rk45` — a one-point heuristic, so prefer `_default_method` for a system known to be stiff. |
@@ -1401,7 +1456,8 @@ ts.kaplan_yorke_dimension(exps)             # → ~2.06
 # Backends: "interp" (default) / "jit" (Cranelift) / "reference" (pure-Python oracle)
 traj = lor.integrate(final_time=100.0, dt=0.01, backend="jit")
 
-# dt is OUTPUT SAMPLING ONLY; rtol/atol set accuracy, max_step bounds the step
+# dt is OUTPUT SAMPLING ONLY; rtol/atol set accuracy (default 1e-9/1e-12 since
+# v6 — see "Solver tolerances"), max_step bounds the step
 traj = lor.integrate(final_time=100.0, dt=0.001, rtol=1e-10, atol=1e-13)
 traj = lor.integrate(final_time=100.0, dt=0.01, max_step=0.01)   # bound the step
 

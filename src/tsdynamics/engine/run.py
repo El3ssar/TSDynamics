@@ -65,6 +65,7 @@ import numpy as np
 
 from tsdynamics.errors import BackendError, ConvergenceError
 from tsdynamics.utils.grids import make_output_grid
+from tsdynamics.utils.tolerances import BASIN_ATOL, BASIN_RTOL, DEFAULT_ATOL, DEFAULT_RTOL
 
 if TYPE_CHECKING:
     from tsdynamics.families import Trajectory
@@ -426,8 +427,8 @@ def integrate(
     t0: float | None = None,
     ic: Any = None,
     method: str = "RK45",
-    rtol: float = 1e-6,
-    atol: float = 1e-9,
+    rtol: float = DEFAULT_RTOL,
+    atol: float = DEFAULT_ATOL,
     max_step: float | None = None,
     backend: str = "interp",
     history: Any = None,
@@ -482,7 +483,18 @@ def integrate(
         ignore the delay terms), ``"auto"`` is a no-op resolving to the family
         default — see :func:`_recommend_method`.
     rtol, atol : float
-        Solver tolerances.
+        Solver tolerances — the accuracy knob (see
+        :mod:`tsdynamics.utils.tolerances`).  Default
+        :data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
+        :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL`.
+
+        .. versionchanged:: 6.0
+            Tightened from ``1e-6``/``1e-9`` to ``1e-9``/``1e-12``.  Now that
+            ``dt`` no longer forces the stepper to land on every sample, ``rtol``
+            is the *only* accuracy knob, so the default had to carry the accuracy
+            the forced landing used to supply for free.  Measured median 1459x
+            more accurate for 1.74x the cost; pass ``rtol=1e-6`` for the old
+            trade.
     max_step : float, optional
         Upper bound on any single internal solver step, in time units.  ``None``
         (default) means no ceiling — the adaptive controller chooses freely from
@@ -620,8 +632,8 @@ def basin_march(
     *,
     is_discrete: bool,
     method: str = "rk45",
-    rtol: float = 1e-6,
-    atol: float = 1e-9,
+    rtol: float = BASIN_RTOL,
+    atol: float = BASIN_ATOL,
     dt: float = 1.0,
     jit: bool = False,
 ) -> dict[str, Any]:
@@ -935,8 +947,8 @@ def ensemble(
     dt: float = 0.02,
     t0: float | None = None,
     method: str = "RK45",
-    rtol: float = 1e-6,
-    atol: float = 1e-9,
+    rtol: float = DEFAULT_RTOL,
+    atol: float = DEFAULT_ATOL,
     max_step: float | None = None,
     backend: str = "interp",
     **build_kwargs: Any,

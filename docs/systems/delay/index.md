@@ -59,14 +59,29 @@ chooses how many leading ones to estimate (default 1).
 
 ## Tolerances
 
-DDE defaults are `rtol=atol=1e-3`, looser than the ODE defaults — and that
-is deliberate:
+DDE defaults are `rtol=atol=1e-3`, looser than the ODE defaults (`1e-9`/`1e-12`)
+— and that is deliberate.
 
-!!! warning "Do not use ODE-style tight tolerances"
-    Values like `rtol=1e-6, atol=1e-9` routinely stall the DDE solver, and
-    in Lyapunov runs they can corrupt the variational state before the
-    first renormalization, producing `inf`/`nan` exponents. Start at
-    `1e-3` and tighten only with evidence.
+!!! info "Why the DDE default did not follow the v6 ODE bump"
+    The ODE default tightened in v6 to compensate for native dense output: the
+    adaptive stepper no longer lands on every output sample, so `rtol` had to
+    take over the accuracy the forced landing used to supply. **The DDE method of
+    steps never had dense output** — it still lands on every sample — so it lost
+    nothing and needs no compensation.
+
+    The tolerance is in fact largely *inert* here, because `dt` already bounds
+    the internal step below the natural error. Measured over all six built-in
+    DDEs at the default `dt=0.02` to `T=10`, five return a **bit-identical**
+    final state at `rtol=1e-3` and at `rtol=1e-9`; only `IkedaDelay` — the one
+    system whose step is genuinely tolerance-bound — differs, costing 1.4× for a
+    6× accuracy gain.
+
+    Tightening is **safe**: all six complete at `rtol=1e-12, atol=1e-15` over
+    `T=500`. (An earlier version of this page warned that tight tolerances
+    "routinely stall the DDE solver". That was true of the v2 JiTCDDE backend;
+    it is not true of the Rust method-of-steps engine, and the claim has been
+    withdrawn.) You simply gain little by default, so `1e-3` stays the starting
+    point — tighten with evidence, as always.
 
 ## Lowering note
 

@@ -11,6 +11,7 @@ from typing import Any, ClassVar, cast
 import numpy as np
 
 from tsdynamics.errors import InvalidParameterError
+from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from .base import SystemBase, Trajectory
 
@@ -352,8 +353,8 @@ class ContinuousSystem(SystemBase, ABC):
         t: float | None = None,
         params: dict[str, Any] | None = None,
         method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
         max_step: float | None = None,
         backend: str | None = None,
     ) -> None:
@@ -861,8 +862,8 @@ class ContinuousSystem(SystemBase, ABC):
         t0: float = 0.0,
         ic: Any | None = None,
         method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
         max_step: float | None = None,
         backend: str | None = None,
     ) -> Trajectory:
@@ -935,8 +936,8 @@ class ContinuousSystem(SystemBase, ABC):
         t0: float = 0.0,
         ic: Any | None = None,
         method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
         max_step: float | None = None,
         backend: str | None = None,
         events: Any = None,
@@ -978,7 +979,17 @@ class ContinuousSystem(SystemBase, ABC):
             otherwise (:func:`tsdynamics.solvers.recommend`; a one-point heuristic,
             so a reliably-stiff system should still declare ``_default_method``).
         rtol, atol : float
-            Solver tolerances (default 1e-6 / 1e-9).
+            Solver tolerances — the accuracy knob.  Default
+            :data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
+            :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL` (``1e-9`` /
+            ``1e-12``).
+
+            .. versionchanged:: 6.0
+                Tightened from ``1e-6`` / ``1e-9``.  ``dt`` is now purely an
+                output grid, so ``rtol`` is the *only* accuracy knob and the
+                default had to carry the accuracy the old forced landing supplied
+                for free.  Measured median 1459x more accurate for 1.74x the
+                cost; pass ``rtol=1e-6`` for the pre-v6 trade.
         max_step : float, optional
             Upper bound on any single internal solver step, in time units.
             ``None`` (default) means no ceiling — the adaptive controller chooses
@@ -1070,8 +1081,8 @@ class ContinuousSystem(SystemBase, ABC):
         n_exp: int | None = None,
         burn_in: float = 50.0,
         method: str | None = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
         backend: str = "interp",
         **integrator_kwargs: Any,
     ) -> np.ndarray:

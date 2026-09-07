@@ -94,8 +94,22 @@ def test_utils_public_surface() -> None:
     from tsdynamics.utils import make_output_grid  # noqa: F401
 
     # The sagitta tooling moved to ``tsdynamics.analysis.sampling`` (and ``SagittaDt``
-    # is hidden); ``utils`` now exposes only the output-grid helper.
-    assert set(u.__all__) == {"make_output_grid"}
+    # is hidden).  ``utils`` is the leaf package holding the values BOTH the family
+    # layer and the engine layer must agree on: the output grid
+    # (``make_output_grid``) and, since v6, the solver-tolerance defaults
+    # (``utils/tolerances.py`` — hoisted out of sixteen duplicated literals).  Both
+    # are documented contract, so both are on the surface.
+    assert set(u.__all__) == {
+        "make_output_grid",
+        "DEFAULT_RTOL",
+        "DEFAULT_ATOL",
+        "DDE_RTOL",
+        "DDE_ATOL",
+        "DDE_LYAPUNOV_RTOL",
+        "DDE_LYAPUNOV_ATOL",
+        "BASIN_RTOL",
+        "BASIN_ATOL",
+    }
     from tsdynamics.analysis.sampling import estimate_dt_from_sagitta  # noqa: F401
 
 

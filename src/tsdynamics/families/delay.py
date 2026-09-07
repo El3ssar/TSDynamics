@@ -9,6 +9,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import numpy as np
 
 from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
+from tsdynamics.utils.tolerances import (
+    DDE_ATOL,
+    DDE_LYAPUNOV_ATOL,
+    DDE_LYAPUNOV_RTOL,
+    DDE_RTOL,
+)
 
 from .base import SystemBase, Trajectory
 
@@ -47,7 +53,27 @@ class DelaySystem(SystemBase, ABC):
     the tape rather than read live like the other parameters; a delay change
     re-lowers, while ordinary parameters are read live with no re-lowering.
 
-    DDEs typically need looser tolerances than ODEs (start with ``rtol=atol=1e-3``).
+    Tolerances
+    ----------
+    The DDE family keeps its **own**, looser default —
+    :data:`~tsdynamics.utils.tolerances.DDE_RTOL` /
+    :data:`~tsdynamics.utils.tolerances.DDE_ATOL` (``1e-3`` / ``1e-3``) — rather
+    than the ODE :data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
+    :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL`.  The reason is *not* that
+    the solver struggles when tightened (it does not: all six built-in DDEs
+    complete at ``rtol=1e-12``/``atol=1e-15``).  It is that the tolerance is
+    largely **inert** here: the method of steps lands on every output sample, so
+    ``dt`` already bounds the internal step below the natural error.  Measured
+    over all six built-in DDEs at the default ``dt=0.02`` to ``T=10``, five
+    return a **bit-identical** final state at ``rtol=1e-3`` and at
+    ``rtol=1e-9``; the sixth (``IkedaDelay``, the only one whose step is
+    tolerance-bound) costs 1.4x for a 6x accuracy gain.  Tighten it explicitly if
+    you need that.
+
+    .. versionchanged:: 6.0
+        The ODE default tightened to ``1e-9``/``1e-12`` to compensate for native
+        dense output.  DDEs never had dense output — the march always landed on
+        every sample — so they lost nothing and this default is unchanged.
 
     History
     -------
@@ -68,8 +94,10 @@ class DelaySystem(SystemBase, ABC):
     >>> exps = mg.lyapunov_spectrum(n_exp=2, ic=traj.y[-1])
     """
 
-    _default_rtol: ClassVar[float] = 1e-3
-    _default_atol: ClassVar[float] = 1e-3
+    #: The DDE family's own integration tolerances (see the class docstring for
+    #: the measurement that justifies keeping them looser than the ODE default).
+    _default_rtol: ClassVar[float] = DDE_RTOL
+    _default_atol: ClassVar[float] = DDE_ATOL
 
     #: The default runtime backend (see :attr:`SystemBase._default_backend`).
     #: ``"interp"`` — the Rust method-of-steps DDE engine (the sole DDE backend
@@ -353,8 +381,14 @@ class DelaySystem(SystemBase, ABC):
             ``h(s) → sequence`` of length ``dim`` for ``s ≤ 0``.
             If ``None``, a constant past equal to ``ic`` is used.
         rtol, atol : float
-            Integration tolerances.  DDEs typically need 1e-3; very tight
-            tolerances can stall the solver.
+            Integration tolerances.  Default
+            :data:`~tsdynamics.utils.tolerances.DDE_RTOL` /
+            :data:`~tsdynamics.utils.tolerances.DDE_ATOL` (both ``1e-3``) — the
+            DDE family's own, deliberately looser than the ODE default because
+            the method of steps lands on every output sample, so ``dt`` bounds
+            the step and the tolerance is largely inert.  See the class
+            docstring for the measurement.  Tightening is *safe* (no stall) if
+            you need it.
         backend : str, optional
             Which engine integrates the DDE.  Defaults to ``_default_backend``
             (``"interp"``).  ``"interp"`` / ``"jit"`` route — through the shared
@@ -419,10 +453,11 @@ class DelaySystem(SystemBase, ABC):
         ``TapeCompileError``, and ``backend="reference"`` raises (there is no
         pure-Python delay integrator).
 
-        DDE tolerances default to ``_default_rtol`` / ``_default_atol`` (both
-        ``1e-3``) and are resolved here before handing off, since the generic
-        seam's ODE-style ``1e-6`` / ``1e-9`` defaults are too tight for delay
-        systems.
+        DDE tolerances default to ``_default_rtol`` / ``_default_atol``
+        (:data:`~tsdynamics.utils.tolerances.DDE_RTOL` /
+        :data:`~tsdynamics.utils.tolerances.DDE_ATOL`, both ``1e-3``) and are
+        resolved here before handing off, so the generic seam's ODE-style
+        ``1e-9`` / ``1e-12`` default never reaches a delay system.
         """
         rtol = rtol if rtol is not None else self._default_rtol
         atol = atol if atol is not None else self._default_atol
@@ -480,7 +515,12 @@ class DelaySystem(SystemBase, ABC):
             Discard interval. Default 50.0.
         rtol, atol : float, optional
             Integration tolerances.  The engine path renormalises every delay
-            window and uses defaults of ``1e-7`` / ``1e-9``.
+            window and defaults to
+            :data:`~tsdynamics.utils.tolerances.DDE_LYAPUNOV_RTOL` /
+            :data:`~tsdynamics.utils.tolerances.DDE_LYAPUNOV_ATOL` (``1e-7`` /
+            ``1e-9``) — tighter than plain DDE integration, looser than the ODE
+            default, and measured to agree with ``1e-9``/``1e-12`` to within the
+            estimator's own finite-time scatter on all six built-in DDEs.
         backend : str, optional
             ``"interp"`` or ``"jit"``.  Defaults to :attr:`_default_backend`
             (``"interp"``).
@@ -511,8 +551,8 @@ class DelaySystem(SystemBase, ABC):
             burn_in=burn_in,
             ic=ic,
             backend=backend,
-            rtol=rtol if rtol is not None else 1e-7,
-            atol=atol if atol is not None else 1e-9,
+            rtol=rtol if rtol is not None else DDE_LYAPUNOV_RTOL,
+            atol=atol if atol is not None else DDE_LYAPUNOV_ATOL,
         )
         self.meta.record(
             "lyapunov_spectrum",

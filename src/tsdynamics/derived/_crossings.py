@@ -53,6 +53,7 @@ from typing import Any
 import numpy as np
 
 from tsdynamics.errors import ConvergenceError
+from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 #: The first span to probe, in time units, before the crossing rate is known.
 _INITIAL_SPAN_TIME: float = 50.0
@@ -119,13 +120,22 @@ def section_crossings(
     transient: int = 0,
     dt: float,
     max_time: float,
-    rtol: float = 1e-6,
-    atol: float = 1e-9,
+    rtol: float = DEFAULT_RTOL,
+    atol: float = DEFAULT_ATOL,
     backend: str = "interp",
     t0: float = 0.0,
     ic: Any,
 ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray]:
     """Collect ``n_crossings`` section crossings on the Rust engine.
+
+    ``rtol``/``atol`` are carried for signature parity with the rest of the
+    engine surface but are **inert here**: the march is pinned to the fixed-step
+    ``rk4`` kernel (an adaptive kernel would grow its step, skip crossings and
+    degrade the O(h⁴) Hermite refinement), and a non-adaptive kernel has no error
+    control to spend them on.  Measured: tightening them from ``1e-6``/``1e-9``
+    to ``1e-9``/``1e-12`` leaves a 400-crossing Rössler section bit-identical at
+    1.01x the cost.  They therefore track the global default rather than carrying
+    a private number.
 
     Returns ``(times, states, t_final, u_final)``: the crossing times and
     ``(n_crossings, dim)`` states after ``transient`` are discarded, plus the

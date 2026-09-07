@@ -39,9 +39,11 @@ Sections (one per P4 ``POLISH`` gate stream):
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import inspect
 import json
+import pathlib
 import types as _types
 import typing
 from collections.abc import Mapping
@@ -1340,3 +1342,190 @@ def test_errgate_open_footgun_reasons_cite_a_lane() -> None:
         assert "WS-" in case.reason or "defer" in case.reason.lower(), (
             f"{case.cid}: an open-footgun reason must cite the deferring lane."
         )
+
+
+# ===========================================================================
+# Tolerance-default gate (stream v6 WP3-tol)
+# ===========================================================================
+#
+# ``rtol=1e-6`` / ``atol=1e-9`` used to be duplicated as bare literals across
+# sixteen call sites in five subpackages, which is precisely how two "the same"
+# defaults drift apart unnoticed.  They now all name a constant in
+# :mod:`tsdynamics.utils.tolerances`.  This gate walks the source of every
+# module under ``src/tsdynamics`` (excluding the catalogue, whose per-system
+# ``known_lyapunov`` kwargs are deliberate literature-reproduction pins) and
+# fails if any ``rtol=`` / ``atol=`` *parameter default* or keyword *argument* is
+# a bare numeric literal again.
+
+
+_TOLERANCE_PARAM_NAMES = frozenset({"rtol", "atol"})
+
+#: Modules exempt from the gate.  ``utils/tolerances.py`` is where the numbers
+#: are *supposed* to live; ``systems/`` holds per-system ``known_lyapunov``
+#: metadata dicts (deliberate, reviewed, per-system tolerance pins that
+#: reproduce a specific literature spectrum — not defaults).
+_TOLERANCE_GATE_EXEMPT = ("utils/tolerances.py", "systems/")
+
+#: ``rtol``/``atol`` **homonyms**: parameters that spell the same name but are not
+#: solver tolerances at all, so they must not track the solver constants.  Keyed
+#: ``"<relative module path>::<function name>"`` with the reason.  Kept explicit
+#: (and asserted live by :func:`test_tolerance_gate_homonyms_are_live`) so an
+#: entry cannot silently outlive the code it excuses.
+_TOLERANCE_GATE_HOMONYMS: dict[str, str] = {
+    "analysis/embedding/dimension.py::false_nearest_neighbors": (
+        "Kennel, Brown & Abarbanel (1992) FNN criteria: R_tol (a distance-growth "
+        "ratio, default 15) and A_tol (a multiple of the attractor size, default 2). "
+        "Neither is a solver tolerance."
+    ),
+    "analysis/orbits/orbit_diagram.py::periods": (
+        "relative branch-clustering tolerance for the cascade quantifier "
+        "(scale-free branch separation), not a solver tolerance."
+    ),
+    "analysis/orbits/orbit_diagram.py::bifurcation_points": (
+        "relative branch-clustering tolerance, as in periods()."
+    ),
+}
+
+
+def _tsdynamics_source_files() -> list[pathlib.Path]:
+    root = pathlib.Path(ts.__file__).parent
+    out = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if any(rel.startswith(x) or rel == x for x in _TOLERANCE_GATE_EXEMPT):
+            continue
+        out.append(path)
+    return out
+
+
+def _bare_tolerance_literals(path: pathlib.Path, rel: str) -> list[str]:
+    """Return a description of every bare ``rtol=``/``atol=`` numeric literal."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: list[str] = []
+
+    def _is_bare(node: ast.expr | None) -> bool:
+        # A bare literal, or a unary-minus literal.  ``None`` (resolve-later) and
+        # any Name/Attribute (a named constant) are fine.
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, (int, float)) and not isinstance(node.value, bool)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return _is_bare(node.operand)
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if f"{rel}::{node.name}" in _TOLERANCE_GATE_HOMONYMS:
+                continue
+            args = node.args
+            names = [a.arg for a in (*args.posonlyargs, *args.args)]
+            padded = [None] * (len(names) - len(args.defaults)) + list(args.defaults)
+            for name, default in zip(names, padded, strict=True):
+                if name in _TOLERANCE_PARAM_NAMES and _is_bare(default):
+                    found.append(f"{node.name}() parameter default {name}={ast.unparse(default)}")
+            for name_node, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
+                if name_node.arg in _TOLERANCE_PARAM_NAMES and _is_bare(default):
+                    found.append(
+                        f"{node.name}() parameter default {name_node.arg}={ast.unparse(default)}"
+                    )
+        elif isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg in _TOLERANCE_PARAM_NAMES and _is_bare(kw.value):
+                    found.append(f"call keyword {kw.arg}={ast.unparse(kw.value)}")
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            value = node.value
+            for target in targets:
+                name = None
+                if isinstance(target, ast.Name):
+                    name = target.id
+                elif isinstance(target, ast.Attribute):
+                    name = target.attr
+                if name is None:
+                    continue
+                stem = name.lstrip("_").removeprefix("default_").removeprefix("step_")
+                if stem in _TOLERANCE_PARAM_NAMES and _is_bare(value):
+                    found.append(f"assignment {name} = {ast.unparse(value)}")
+    return found
+
+
+def test_no_bare_tolerance_literal_in_the_library() -> None:
+    """Every ``rtol``/``atol`` default names a :mod:`tsdynamics.utils.tolerances` constant.
+
+    Regression gate for the v6 tolerance hoist: the sixteen duplicated
+    ``1e-6``/``1e-9`` literals are gone, and a new one must not creep back into a
+    signature, a call site, or a ``self._rtol = ...`` assignment.  If you need a
+    genuinely different number for one driver, add a *named* constant to
+    :mod:`tsdynamics.utils.tolerances` documenting the measurement that justifies
+    it — that is the whole point of the module.
+    """
+    offenders: dict[str, list[str]] = {}
+    root = pathlib.Path(ts.__file__).parent
+    for path in _tsdynamics_source_files():
+        rel = path.relative_to(root).as_posix()
+        hits = _bare_tolerance_literals(path, rel)
+        if hits:
+            offenders[rel] = hits
+    assert not offenders, (
+        "bare rtol/atol numeric literals found (name a constant in "
+        "tsdynamics.utils.tolerances instead):\n"
+        + "\n".join(f"  {mod}: {', '.join(hits)}" for mod, hits in sorted(offenders.items()))
+    )
+
+
+def test_tolerance_gate_homonyms_are_live() -> None:
+    """Every carved-out ``rtol``/``atol`` homonym still exists and still is one.
+
+    A stale carve-out is worse than none: it would silently excuse a *real* solver
+    tolerance that later took the same qualified name.
+    """
+    root = pathlib.Path(ts.__file__).parent
+    for key, reason in _TOLERANCE_GATE_HOMONYMS.items():
+        rel, _, func = key.partition("::")
+        path = root / rel
+        assert path.is_file(), f"carve-out {key}: module {rel} no longer exists"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        defs = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func
+        ]
+        assert defs, f"carve-out {key}: function {func} no longer exists in {rel}"
+        params = {
+            a.arg
+            for node in defs
+            for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+        }
+        assert params & _TOLERANCE_PARAM_NAMES, (
+            f"carve-out {key}: {func} no longer takes an rtol/atol parameter — drop it"
+        )
+        assert len(reason) > 30, f"carve-out {key}: reason must explain the homonym"
+
+
+def test_tolerance_constants_are_the_documented_values() -> None:
+    """Pin the canonical tolerance constants so a bump is a deliberate, reviewed edit."""
+    from tsdynamics.utils import tolerances as tol
+
+    assert (tol.DEFAULT_RTOL, tol.DEFAULT_ATOL) == (1e-9, 1e-12)
+    assert (tol.DDE_RTOL, tol.DDE_ATOL) == (1e-3, 1e-3)
+    assert (tol.DDE_LYAPUNOV_RTOL, tol.DDE_LYAPUNOV_ATOL) == (1e-7, 1e-9)
+    assert (tol.BASIN_RTOL, tol.BASIN_ATOL) == (1e-6, 1e-9)
+
+
+def test_basin_march_python_and_rust_name_the_same_tolerance() -> None:
+    """The basin march's two paths are contractually bit-identical.
+
+    ``_AttractorMapper._reinit`` (the Python oracle) and ``_try_rust_march`` (the
+    kernel) must hand the *same* tolerances to the same stepper.  They both read
+    ``BASIN_RTOL``/``BASIN_ATOL``; this asserts neither drifted onto the library
+    default, which is what would silently break ``tests/test_basin_kernel.py``'s
+    equivalence.
+    """
+    from tsdynamics.analysis.basins import attractors as att
+    from tsdynamics.utils.tolerances import BASIN_ATOL, BASIN_RTOL
+
+    for fn in (att._AttractorMapper._reinit, att._try_rust_march):
+        src = inspect.getsource(fn)
+        assert "BASIN_RTOL" in src and "BASIN_ATOL" in src, (
+            f"{fn.__qualname__} no longer names the basin tolerance constants"
+        )
+    assert att.BASIN_RTOL is BASIN_RTOL and att.BASIN_ATOL is BASIN_ATOL

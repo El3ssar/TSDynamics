@@ -72,7 +72,7 @@ condition used:
 traj.meta
 # {'system': 'Lorenz', 'params': {...}, 'tsdynamics': '5.2.6', 'engine': 'rust',
 #  'family': 'ode', 'method': 'rk45', 'backend': 'interp', 'dt': 0.01, 't0': 0.0,
-#  'rtol': 1e-06, 'atol': 1e-09, 'ic': array([...])}
+#  'rtol': 1e-09, 'atol': 1e-12, 'ic': array([...])}
 ```
 
 A result you cannot trace is a result you cannot reproduce; the snapshot makes
@@ -149,9 +149,44 @@ Several catalogue systems already do (e.g. `KuramotoSivashinsky`, `Duffing`).
 !!! note "Tolerances tune accuracy, not the output grid"
     `rtol` / `atol` govern the **internal** adaptive steps. Tightening them
     refines the path the solver actually traces; it does not change where the
-    result is sampled. To sample more densely, shrink `dt`. DDEs start from
-    looser defaults (`rtol = atol = 1e-3`) — delay systems are sensitive, and
-    that is the safe starting point.
+    result is sampled. To sample more densely, shrink `dt`.
+
+### The default tolerances
+
+| Surface | `rtol` | `atol` | Why |
+| --- | --- | --- | --- |
+| ODE `integrate` / `run` / `ensemble` / `step` / events / ODE Lyapunov | `1e-9` | `1e-12` | the library default |
+| DDE `integrate` | `1e-3` | `1e-3` | the method of steps lands on every sample, so `dt` bounds the step and the tolerance is inert |
+| DDE `lyapunov_spectrum` | `1e-7` | `1e-9` | same march, tighter for the variational renormalisation |
+| basin cell march | `1e-6` | `1e-9` | thousands of two-node integrations for a *topological* classification |
+
+Every one of these is a named constant in `tsdynamics.utils.tolerances`
+(`DEFAULT_RTOL`, `DDE_RTOL`, `BASIN_RTOL`, …) rather than a literal repeated
+across the code, so "what is the default?" has exactly one answer per surface and
+a deliberate exception is visible rather than accidental.
+
+!!! info "Changed in v6: the ODE default tightened to `1e-9` / `1e-12`"
+    This is the other half of the dense-output change. Before v6 the adaptive
+    stepper was *forced to land on every output sample*, so a fine `dt` silently
+    bought accuracy `rtol` had never asked for — Lorenz to `T=10` at `rtol=1e-6`
+    delivered `1.3e-3` at `dt=10` but `4.3e-10` at `dt=0.001`, and `rtol=1e-4`
+    through `1e-10` returned *bit-identical* arrays on a fine grid. With native
+    continuous extensions, `dt` is honestly an output grid and `rtol` honestly
+    sets accuracy — but a user who never touched `rtol` would therefore have
+    *lost* the subsidy. The default was tightened to give it back.
+
+    Measured at the defaults (`dt=0.02`, `T=5`, error at the final time versus
+    SciPy `DOP853` at `rtol=1e-13`) over fifteen catalogue systems: a **median
+    1459×** accuracy improvement for a **median 1.74×** wall-clock cost. Lorenz
+    goes `2.2e-4 → 1.9e-7`, Halvorsen `1.5e-3 → 2.9e-7`. Chaotic systems amplify
+    integration error exponentially and are this library's core subject, so the
+    trade is taken. Pass `rtol=1e-6, atol=1e-9` explicitly for the old one.
+
+    The three surfaces in the table above that kept a looser number are the ones
+    dense output never touched, and for each the tighter tolerance was measured
+    to change nothing while costing 2–3×: the basin march, for instance, runs
+    2.27× (smooth Duffing) to 3.01× (fractal magnetic pendulum) slower at
+    `1e-9`/`1e-12` for **0.00 %** of basin labels changing.
 
 ## Automatic stiffness selection
 

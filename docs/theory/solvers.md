@@ -37,6 +37,10 @@ against a registry before the engine runs it. For the programmatic registry API
     `dt` *is* the step) and the stochastic schemes (where `dt` *is* the noise
     increment $\sqrt{\mathrm{d}t}$).
 
+    Since `rtol` is therefore the *only* accuracy knob, v6 tightened its default
+    to `1e-9` (`atol=1e-12`) — see
+    [the tolerance table](../analysis/integration-and-methods.md#the-default-tolerances).
+
 ## The catalogue
 
 | `method=` | Family | Kind | Order | Adaptive | Needs Jacobian | Use when |
