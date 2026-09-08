@@ -36,6 +36,7 @@ middle-thirds Cantor set, :math:`D_q = \log 2/\log 3` for all :math:`q`).
 
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from typing import Any
 
@@ -99,8 +100,13 @@ class NonMonotoneSpectrumWarning(UserWarning):
     not about the attractor: at least one order (in practice the small-\ :math:`q`
     end, which is dominated by the rarely-visited boxes) has not resolved.
 
-    Raised as a :class:`~tsdynamics.errors.ConvergenceError` by default; the
-    estimators downgrade it to this warning under ``strict=False``.
+    Emitted as this warning by default, with the estimate returned but marked
+    ``trusted=False`` (its ``repr`` says ``UNTRUSTED``).  Refusing outright would
+    make the estimator useless on exactly the systems people reach for — a Lorenz
+    trajectory is under-resolved for :math:`D_0` at any realistic sample size —
+    so the number is handed back with the violation stated, and cannot be mistaken
+    for a resolved answer.  Pass ``strict=True`` to raise
+    :class:`~tsdynamics.errors.ConvergenceError` instead.
     """
 
 
@@ -372,8 +378,11 @@ def _monotonicity_violations(
 
 def _report_monotonicity(
     spectrum: dict[float, DimensionResult], *, strict: bool, what: str
-) -> None:
+) -> bool:
     r"""Raise (or warn) when a computed :math:`D_q` spectrum increases with :math:`q`.
+
+    Returns ``True`` when the spectrum is admissible (the estimate resolved) and
+    ``False`` when it was reported as unresolved via a warning.
 
     The estimate, not the attractor, is what such a spectrum describes: see
     :class:`NonMonotoneSpectrumWarning`.  Almost always the small-\ :math:`q` end
@@ -383,7 +392,7 @@ def _report_monotonicity(
     """
     bad = _monotonicity_violations(spectrum)
     if not bad:
-        return
+        return True
     detail = "; ".join(f"D_{a:g}={da:.4g} < D_{b:g}={db:.4g}" for a, b, da, db in bad)
     message = (
         f"{what}: the computed Renyi spectrum increases with q ({detail}), which is impossible "
@@ -401,6 +410,7 @@ def _report_monotonicity(
     if strict:
         raise ConvergenceError(message)
     warnings.warn(message, NonMonotoneSpectrumWarning, stacklevel=3)
+    return False
 
 
 def _spectrum_core(
@@ -557,7 +567,7 @@ def generalized_dimension(
     )[float(q)]
 
 
-def box_counting_dimension(data: Any, *, strict: bool = True, **kwargs: Any) -> DimensionResult:
+def box_counting_dimension(data: Any, *, strict: bool = False, **kwargs: Any) -> DimensionResult:
     r"""Box-counting (capacity) dimension :math:`D_0`, with a self-consistency check.
 
     :math:`D_0` is the count of occupied boxes,
@@ -571,8 +581,8 @@ def box_counting_dimension(data: Any, *, strict: bool = True, **kwargs: Any) -> 
     :math:`D_1` and :math:`D_2` from the *same* box partition (free — the
     occupancies are already there) and checks the exact inequality
     :math:`D_0 \ge D_1 \ge D_2`.  A violation means the estimate has not
-    resolved, and is reported as such rather than returned; see
-    :class:`NonMonotoneSpectrumWarning`.  On an 8000-point Lorenz trajectory, for
+    resolved: the number is still returned, but marked ``trusted=False`` and
+    accompanied by a :class:`NonMonotoneSpectrumWarning` naming the violation.  On an 8000-point Lorenz trajectory, for
     instance, this fires: :math:`D_0 = 1.75` against :math:`D_2 = 2.00`, and the
     :math:`D_0` end is the one that is wrong -- an independent box count of the
     same points puts the :math:`\log N(\epsilon)` slope at ~1.75 and the
@@ -583,10 +593,11 @@ def box_counting_dimension(data: Any, *, strict: bool = True, **kwargs: Any) -> 
     ----------
     data : Trajectory or array-like, shape (N, dim)
         The point set.
-    strict : bool, default True
-        Raise :class:`~tsdynamics.errors.ConvergenceError` when the
-        :math:`D_0 \ge D_1 \ge D_2` check fails.  ``False`` downgrades it to a
-        :class:`NonMonotoneSpectrumWarning` and returns the (unreliable) number.
+    strict : bool, default False
+        ``True`` raises :class:`~tsdynamics.errors.ConvergenceError` when the
+        :math:`D_0 \ge D_1 \ge D_2` check fails.  The default warns
+        (:class:`NonMonotoneSpectrumWarning`) and returns the number with
+        ``trusted=False``.
     **kwargs
         Forwarded to :func:`generalized_dimension` (``scales``, ``n_scales``,
         ``min_occupancy``, ``min_resolution``, ``min_window``, ``tol``, ``offsets``).
@@ -600,14 +611,15 @@ def box_counting_dimension(data: Any, *, strict: bool = True, **kwargs: Any) -> 
     Raises
     ------
     ConvergenceError
-        If the shared-partition spectrum increases with ``q`` (``strict=True``).
+        Only when ``strict=True`` and the shared-partition spectrum increases
+        with ``q``.
     """
     spectrum = _spectrum_for_wrapper(data, [0.0, 1.0, 2.0], "box_counting_dimension", kwargs)
-    _report_monotonicity(spectrum, strict=strict, what="box_counting_dimension")
-    return spectrum[0.0]
+    resolved = _report_monotonicity(spectrum, strict=strict, what="box_counting_dimension")
+    return dataclasses.replace(spectrum[0.0], trusted=resolved)
 
 
-def information_dimension(data: Any, *, strict: bool = True, **kwargs: Any) -> DimensionResult:
+def information_dimension(data: Any, *, strict: bool = False, **kwargs: Any) -> DimensionResult:
     r"""Information dimension :math:`D_1`, with a self-consistency check.
 
     The :math:`q \to 1` limit of the Rényi family: the slope of the Shannon
@@ -639,8 +651,8 @@ def information_dimension(data: Any, *, strict: bool = True, **kwargs: Any) -> D
         If the shared-partition spectrum increases with ``q`` (``strict=True``).
     """
     spectrum = _spectrum_for_wrapper(data, [0.0, 1.0, 2.0], "information_dimension", kwargs)
-    _report_monotonicity(spectrum, strict=strict, what="information_dimension")
-    return spectrum[1.0]
+    resolved = _report_monotonicity(spectrum, strict=strict, what="information_dimension")
+    return dataclasses.replace(spectrum[1.0], trusted=resolved)
 
 
 def _spectrum_for_wrapper(

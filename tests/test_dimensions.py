@@ -434,21 +434,39 @@ def test_lorenz_box_counting_is_reported_as_unresolved(lorenz):
     exceeds ~1.85 and plateaus near 1.75, while the q = 2 ordinate plateaus near
     2.0.  So the computed spectrum *rises* with q — impossible for any measure,
     since D_q is non-increasing in q — which means the D_0 end has not converged.
-    The estimate must therefore be reported as a failure, not returned as 1.75.
+    The estimate must therefore be marked unresolved rather than passed off as an
+    answer.  It is still *returned*: refusing outright would make the estimator
+    useless on exactly the systems people reach for, since a Lorenz trajectory is
+    under-resolved for D_0 at any realistic sample size.  So the contract is
+    "return it, warn, and flag it" — the caller cannot mistake it for resolved.
     """
-    from tsdynamics.errors import ConvergenceError
-
-    with pytest.raises(ConvergenceError, match="increases with q"):
-        dim.box_counting_dimension(lorenz)
-
-
-def test_unresolved_spectrum_can_be_downgraded_to_a_warning(lorenz):
-    """``strict=False`` returns the (documented-unreliable) number with a warning."""
     from tsdynamics.analysis.dimensions.generalized import NonMonotoneSpectrumWarning
 
     with pytest.warns(NonMonotoneSpectrumWarning, match="increases with q"):
-        d = dim.box_counting_dimension(lorenz, strict=False)
+        d = dim.box_counting_dimension(lorenz)
+    assert d.trusted is False
+    assert "UNTRUSTED" in repr(d)
     assert float(d) < 1.9  # the under-resolved value the warning is about
+
+
+def test_unresolved_spectrum_can_be_escalated_to_a_raise(lorenz):
+    """``strict=True`` refuses instead, for callers who want a hard failure."""
+    from tsdynamics.errors import ConvergenceError
+
+    with pytest.raises(ConvergenceError, match="increases with q"):
+        dim.box_counting_dimension(lorenz, strict=True)
+
+
+def test_a_resolved_estimate_is_trusted_and_silent():
+    """The flag is not decoration: a set box counting *can* resolve comes back clean."""
+    rng = np.random.default_rng(0)
+    square = rng.random((20000, 2))  # D_0 = 2, well within box counting's reach
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning here fails the test
+        d = dim.box_counting_dimension(square)
+    assert d.trusted is True
+    assert "UNTRUSTED" not in repr(d)
+    assert abs(float(d) - 2.0) < 0.15
 
 
 def test_monotone_spectra_pass_the_guard():

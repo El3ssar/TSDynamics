@@ -369,6 +369,13 @@ class DimensionResult(ScalingResult):
 
     kind: str = ""
     q: float | None = None
+    #: ``False`` when the estimate is self-evidently unresolved — currently, when the
+    #: shared-partition Renyi spectrum increases with ``q``, which is impossible for
+    #: any measure and therefore proves the box count has not converged at the scales
+    #: used.  The number is still returned (refusing outright would make the estimator
+    #: useless on exactly the systems people reach for), but it must not be read as an
+    #: answer.  Mirrors ``LyapunovFromData.trusted``.
+    trusted: bool = True
 
     @property
     def dimension(self) -> float:
@@ -450,10 +457,11 @@ class DimensionResult(ScalingResult):
 
     def __repr__(self) -> str:  # noqa: D105
         q = "" if self.q is None else f", q={self.q:g}"
+        flag = "" if self.trusted else ", UNTRUSTED (unresolved: D_q rises with q)"
         return (
             f"DimensionResult(kind={self.kind!r}{q}, "
             f"dimension={self.dimension:.4g} ± {self.stderr:.2g}, "
-            f"n_fit={self.fit_slice[1] - self.fit_slice[0] + 1})"
+            f"n_fit={self.fit_slice[1] - self.fit_slice[0] + 1}{flag})"
         )
 
 

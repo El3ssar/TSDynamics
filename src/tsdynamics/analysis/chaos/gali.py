@@ -315,16 +315,23 @@ def gali(
     # result for an orbit the caller never asked about.  Raise instead, so the
     # caller learns their ``ic`` does not stay on the attractor.
     if ic is not None:
-        x = np.asarray(system.resolve_ic(ic), dtype=float).ravel()
-        result = _run(x)
-        if result is not None:
-            return _wrap(result)
-        raise InvalidInputError(
-            f"gali: the explicit ic {x.tolist()!r} diverges to a non-finite state for "
-            f"{type(system).__name__} (it escapes the attractor's basin), so GALI cannot "
-            "be measured for that orbit. Pass an `ic` from a known basin point, shorten "
-            "the burn-in via `transient`, or omit `ic` to roll a random one."
-        )
+        # ``resolve_ic`` commits the resolved IC to ``system.ic`` before the run, so
+        # a run that then fails would leave the bad IC latched and silently poison
+        # every later, unrelated analysis.  Same guard the family layer uses.
+        with system._ic_rollback():
+            x = np.asarray(system.resolve_ic(ic), dtype=float).ravel()
+            result = _run(x)
+            if result is not None:
+                return _wrap(result)
+            # Raise INSIDE the guard: ``_run`` signals divergence by returning
+            # None rather than raising, so leaving the raise outside would exit the
+            # block cleanly and latch the bad IC anyway.
+            raise InvalidInputError(
+                f"gali: the explicit ic {x.tolist()!r} diverges to a non-finite state for "
+                f"{type(system).__name__} (it escapes the attractor's basin), so GALI cannot "
+                "be measured for that orbit. Pass an `ic` from a known basin point, shorten "
+                "the burn-in via `transient`, or omit `ic` to roll a random one."
+            )
 
     # With ``ic=None`` the initial condition is the system's own resolution (its
     # ``self.ic`` / ``default_ic`` if any, else a random draw — many systems carry
@@ -334,12 +341,13 @@ def gali(
     # reproducible).  Only the off-basin *default-draw* case re-rolls.
     max_retries = 10
     for attempt in range(max_retries):
-        x = (
-            np.asarray(system.resolve_ic(None), dtype=float).ravel()
-            if attempt == 0
-            else rng.random(dim)
-        )
-        result = _run(x)
+        with system._ic_rollback():
+            x = (
+                np.asarray(system.resolve_ic(None), dtype=float).ravel()
+                if attempt == 0
+                else rng.random(dim)
+            )
+            result = _run(x)
         if result is not None:
             return _wrap(result)
 

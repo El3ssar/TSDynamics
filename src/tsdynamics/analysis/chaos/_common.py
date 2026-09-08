@@ -204,7 +204,8 @@ def _sample_orbit_box(system: SystemBase, n: int = 2000, transient: int = 500) -
     """Collect a burn-in orbit to bound an auto-region (backend-free)."""
     from tsdynamics.families import ContinuousSystem, DiscreteMap
 
-    x = np.asarray(system.resolve_ic(None), dtype=float).ravel()
+    with system._ic_rollback():
+        x = np.asarray(system.resolve_ic(None), dtype=float).ravel()
     if isinstance(system, DiscreteMap):
         step, _ = _map_fns(system)
         for _ in range(transient):
