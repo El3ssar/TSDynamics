@@ -41,6 +41,19 @@ Family coverage
 The ``abs``/``sign`` Jacobian convention is resolved a.e. (``d|u|/du = sign u``,
 ``d sign/du = 0``) via :func:`tsdynamics.families.continuous._resolve_derivative_nodes`,
 the same convention the symbolic Jacobian autogen uses.
+
+Two emitters, one tape
+----------------------
+The symbolic frontend is SymEngine, so :class:`_SymEngineEmitter` reads the
+SymEngine tree **directly** — no ``._sympy_()`` round-trip, hence no ~260 ms
+SymPy import on the first lowering in a process (Lorenz: 300 ms → 0.4 ms; a cold
+``integrate()``: 208 ms → 1.6 ms; Gray–Scott: 2.5 s → 0.63 s).  Where SymEngine's
+canonical form differs from SymPy's it is reproduced exactly, because the tape is
+a **byte** contract (``tests/_equation_reference_golden.txt``); where reproducing
+it would mean re-implementing ``signsimp`` / ``default_sort_key``, the node kind
+is *gated* and the whole tape falls back to :class:`_SymPyEmitter`, which is
+unchanged.  ``TSDYNAMICS_NO_NATIVE_LOWERING=1`` forces the fallback everywhere —
+the bypass that proves the two emitters agree.
 """
 
 from __future__ import annotations
@@ -466,13 +479,18 @@ def _check_reg(at: int, reg: int) -> None:
 
 
 class _Emitter:
-    """Lower SymPy expression DAGs to SSA instructions, sharing subexpressions.
+    """Lower expression DAGs to SSA instructions, sharing subexpressions.
 
     Leaves (state/param/time symbols) are resolved through ``leaf_for_name``: a
     map from a symbol's name to a ``(op, index)`` pair.  All other nodes —
     ``Add``/``Mul``/``Pow`` and the elementary functions — are emitted
     structurally.  The ``_cache`` keyed on the expression object makes shared
     subexpressions (the whole point of an SSA tape) emit once.
+
+    This base class owns the SSA machinery (register file, CSE cache) and the
+    node-kind-agnostic blends; the per-node dispatch lives in the two concrete
+    subclasses, :class:`_SymEngineEmitter` (the native path) and
+    :class:`_SymPyEmitter` (the fallback / oracle).
     """
 
     def __init__(self, leaf_for_name: dict[str, tuple[int, int]]) -> None:
@@ -500,57 +518,165 @@ class _Emitter:
         self._cache[expr] = idx
         return idx
 
+    #: The emitter's own spelling of the literal ``1`` (set by each subclass).
+    #: Routed through :meth:`emit` so the CSE cache shares one ``Const 1``.
+    _const_one: Any = None
+
     def _one(self) -> int:
         """Return the register holding the constant ``1.0`` (CSE-shared).
 
         The piecewise / boolean blends need a literal one (``1 - mask``).  Routing
-        it through :meth:`emit` of ``sympy.Integer(1)`` — rather than a raw
+        it through :meth:`emit` of the backend's ``Integer(1)`` — rather than a raw
         ``_push(OP_CONST, imm=1.0)`` — lets the CSE cache dedup it across every
         branch, so a tape with several piecewise selections carries a single
         ``Const 1`` register instead of one per branch.
         """
-        import sympy
-
-        return self.emit(sympy.Integer(1))
+        return self.emit(self._const_one)
 
     def _emit(self, expr: Any) -> int:
+        raise NotImplementedError  # pragma: no cover - abstract
+
+    # -- node-kind-agnostic folds (shared by both emitters) ------------------
+
+    def _fold_binary(self, op: int, args: Sequence[Any]) -> int:
+        """Left-fold an n-ary commutative node (``Add``/``Mul``/``Min``/``Max``)."""
+        acc = self.emit(args[0])
+        for term in args[1:]:
+            acc = self._push(op, a=acc, b=self.emit(term))
+        return acc
+
+    def _fold_and(self, args: Sequence[Any]) -> int:
+        """``c1 ∧ c2 ∧ …`` over 0/1-valued conditions → a product."""
+        acc = self.emit(args[0])
+        for term in args[1:]:
+            acc = self._push(OP_MUL, a=acc, b=self.emit(term))
+        return acc
+
+    def _fold_or(self, args: Sequence[Any]) -> int:
+        """``c1 ∨ c2 ∨ …`` → ``a + b - a*b``, folded so the accumulator stays 0/1."""
+        acc = self.emit(args[0])
+        for term in args[1:]:
+            t = self.emit(term)
+            s = self._push(OP_ADD, a=acc, b=t)
+            p = self._push(OP_MUL, a=acc, b=t)
+            acc = self._push(OP_SUB, a=s, b=p)
+        return acc
+
+    def _emit_not(self, arg: Any) -> int:
+        """``¬c`` → ``1 - c`` (the input is already 0/1-valued)."""
+        return self._push(OP_SUB, a=self._one(), b=self.emit(arg))
+
+    def _blend_piecewise(self, pairs: Sequence[tuple[Any, Any]]) -> int:
+        """Lower ``[(e0, c0), …, (en, True)]`` to a comparison-masked blend.
+
+        Each condition ``ck`` emits to a 1.0/0.0 mask; the value is built from
+        the last (default) branch backwards as ``mk*ek + (1 - mk)*acc``.
+
+        .. important::
+           Because the blend is *arithmetic*, **every branch is evaluated on
+           every input**, then masked.  The IR has no control flow that could
+           skip the unselected arm.  So each branch expression must be **finite
+           on the whole domain**, not merely on the region its condition
+           selects: a branch that is singular off its own region (``±inf`` or
+           ``NaN`` there) poisons the result through ``0 * inf = NaN`` /
+           ``0 * inf + finite = NaN``.  This holds for the finite-branch
+           piecewise maps this targets (Baker's modular branches), but a
+           ``Piecewise((1/u, u != 0), (0, True))``-style guard against a
+           singularity would *not* lower correctly — rewrite it so both arms are
+           finite (e.g. blend on a regularised expression).
+        """
+        acc = self.emit(pairs[-1][0])
+        for value, cond in reversed(pairs[:-1]):
+            mask = self.emit(cond)
+            val = self.emit(value)
+            inv = self._push(OP_SUB, a=self._one(), b=mask)  # 1 - mask
+            sel = self._push(OP_MUL, a=mask, b=val)  # mask * value
+            other = self._push(OP_MUL, a=inv, b=acc)  # (1 - mask) * acc
+            acc = self._push(OP_ADD, a=sel, b=other)
+        return acc
+
+    def _emit_leaf_symbol(self, name: str) -> int:
+        """Emit a declared state / parameter / time input by symbol name."""
+        leaf = self._leaf.get(name)
+        if leaf is None:
+            raise TapeCompileError(
+                f"unexpected symbol {name!r} in symbolic definition — "
+                f"not a declared state/parameter/time input"
+            )
+        op, idx = leaf
+        if op == OP_TIME:
+            return self._push(OP_TIME)
+        return self._push(op, a=idx)
+
+    def _emit_pow_parts(self, base_reg: int, exp_is_int: bool, exp_int: int, exp: Any) -> int:
+        """Emit ``base ** exp`` given the already-emitted base register.
+
+        ``exp_is_int`` selects the integer-exponent fast paths (``Recip`` /
+        ``PowI``); otherwise ``exp`` is inspected for ``±1/2`` (``Sqrt``) and
+        falls back to the general two-register ``Pow``.
+        """
+        if exp_is_int:
+            if exp_int == -1:
+                return self._push(OP_RECIP, a=base_reg)
+            return self._push(OP_POWI, a=base_reg, b=exp_int)
+        half = self._exponent_half(exp)
+        if half == 1:
+            return self._push(_OP_SQRT, a=base_reg)
+        if half == -1:
+            sqrt_reg = self._push(_OP_SQRT, a=base_reg)
+            return self._push(OP_RECIP, a=sqrt_reg)
+        # General exponent: a non-integer constant power or a symbolic exponent.
+        return self._push(OP_POW, a=base_reg, b=self.emit(exp))
+
+    def _exponent_half(self, exp: Any) -> int:
+        """Return ``1`` for a ``1/2`` exponent, ``-1`` for ``-1/2``, else ``0``."""
+        raise NotImplementedError  # pragma: no cover - abstract
+
+
+# ---------------------------------------------------------------------------
+# The SymPy emitter — the fallback path and the lowering oracle
+# ---------------------------------------------------------------------------
+
+
+class _SymPyEmitter(_Emitter):
+    """Lower **SymPy** expression DAGs (the fallback / reference emitter).
+
+    Reached by converting each SymEngine expression with ``._sympy_()``, which
+    imports SymPy (~260 ms) and rebuilds the whole tree through SymPy's
+    constructors.  :class:`_SymEngineEmitter` is the native path that avoids
+    both; this one stays as the oracle it is validated against, and as the
+    escape hatch for a node kind the native path declines
+    (:class:`_NativeLoweringUnsupportedError`).
+    """
+
+    def __init__(self, leaf_for_name: dict[str, tuple[int, int]]) -> None:
+        super().__init__(leaf_for_name)
         import sympy
+
+        self._sympy = sympy
+        self._const_one = sympy.Integer(1)
+
+    def _emit(self, expr: Any) -> int:
+        sympy = self._sympy
 
         # Any symbol-free subexpression (numbers, pi, e, constant folds).
         if not expr.free_symbols:
             return self._push(OP_CONST, imm=float(expr))
 
         if isinstance(expr, sympy.Symbol):
-            leaf = self._leaf.get(expr.name)
-            if leaf is None:
-                raise TapeCompileError(
-                    f"unexpected symbol {expr.name!r} in symbolic definition — "
-                    f"not a declared state/parameter/time input"
-                )
-            op, idx = leaf
-            if op == OP_TIME:
-                return self._push(OP_TIME)
-            return self._push(op, a=idx)
+            return self._emit_leaf_symbol(expr.name)
 
         if isinstance(expr, sympy.Add):
-            args = expr.args
-            acc = self.emit(args[0])
-            for term in args[1:]:
-                acc = self._push(OP_ADD, a=acc, b=self.emit(term))
-            return acc
+            return self._fold_binary(OP_ADD, expr.args)
 
         if isinstance(expr, sympy.Mul):
-            args = expr.args
-            acc = self.emit(args[0])
-            for fac in args[1:]:
-                acc = self._push(OP_MUL, a=acc, b=self.emit(fac))
-            return acc
+            return self._fold_binary(OP_MUL, expr.args)
 
         if isinstance(expr, sympy.Pow):
             return self._emit_pow(expr)
 
         # Piecewise / selection (maps with ``np.where`` or a branch).  Lowered
-        # to a comparison-masked arithmetic blend; see ``_emit_piecewise``.
+        # to a comparison-masked arithmetic blend; see ``_blend_piecewise``.
         if isinstance(expr, sympy.Piecewise):
             return self._emit_piecewise(expr)
 
@@ -569,12 +695,7 @@ class _Emitter:
 
         # n-ary Min / Max fold left into binary OP_MIN / OP_MAX.
         if name == "Min" or name == "Max":
-            op = OP_MIN if name == "Min" else OP_MAX
-            args = expr.args
-            acc = self.emit(args[0])
-            for term in args[1:]:
-                acc = self._push(op, a=acc, b=self.emit(term))
-            return acc
+            return self._fold_binary(OP_MIN if name == "Min" else OP_MAX, expr.args)
 
         # Floored modulo ``Mod(a, b)`` (SymPy's ``%``; the maps' bare ``%`` is
         # canonicalised to ``a - floor(a/b)*b`` instead, but a literal Mod node
@@ -604,83 +725,609 @@ class _Emitter:
 
     def _emit_boolean(self, expr: Any) -> int:
         """Lower And/Or/Not over 0/1-valued conditions to arithmetic."""
-        import sympy
+        sympy = self._sympy
 
         if isinstance(expr, sympy.And):
-            acc = self.emit(expr.args[0])
-            for term in expr.args[1:]:
-                acc = self._push(OP_MUL, a=acc, b=self.emit(term))  # c1 * c2 * …
-            return acc
+            return self._fold_and(expr.args)
         if isinstance(expr, sympy.Or):
-            # a + b - a*b, folded so the running accumulator stays in {0, 1}.
-            acc = self.emit(expr.args[0])
-            for term in expr.args[1:]:
-                t = self.emit(term)
-                s = self._push(OP_ADD, a=acc, b=t)
-                p = self._push(OP_MUL, a=acc, b=t)
-                acc = self._push(OP_SUB, a=s, b=p)
-            return acc
+            return self._fold_or(expr.args)
         if isinstance(expr, sympy.Not):
-            return self._push(OP_SUB, a=self._one(), b=self.emit(expr.args[0]))
+            return self._emit_not(expr.args[0])
         raise TapeCompileError(
             f"the instruction tape has no equivalent for boolean {type(expr).__name__!r}."
         )
 
     def _emit_piecewise(self, expr: Any) -> int:
-        """Lower ``Piecewise((e0, c0), …, (en, True))`` to a masked blend.
-
-        Each condition ``ck`` emits to a 1.0/0.0 mask; the value is built from
-        the last (default) branch backwards as ``mk*ek + (1 - mk)*acc``.
-
-        .. important::
-           Because the blend is *arithmetic*, **every branch is evaluated on
-           every input**, then masked.  The IR has no control flow that could
-           skip the unselected arm.  So each branch expression must be **finite
-           on the whole domain**, not merely on the region its condition
-           selects: a branch that is singular off its own region (``±inf`` or
-           ``NaN`` there) poisons the result through ``0 * inf = NaN`` /
-           ``0 * inf + finite = NaN``.  This holds for the finite-branch
-           piecewise maps this targets (Baker's modular branches), but a
-           ``Piecewise((1/u, u != 0), (0, True))``-style guard against a
-           singularity would *not* lower correctly — rewrite it so both arms are
-           finite (e.g. blend on a regularised expression).
-        """
-        import sympy
-
+        """Lower ``Piecewise((e0, c0), …, (en, True))`` to a masked blend."""
         pairs = [(p.args[0], p.args[1]) for p in expr.args]
-        if pairs[-1][1] != sympy.true:
+        if pairs[-1][1] != self._sympy.true:
             raise TapeCompileError(
                 "Piecewise must end with a default (True) branch to lower to a tape "
                 f"(got condition {pairs[-1][1]!r}); the engine cannot represent a "
                 "partial/undefined region."
             )
-        acc = self.emit(pairs[-1][0])
-        for value, cond in reversed(pairs[:-1]):
-            mask = self.emit(cond)
-            val = self.emit(value)
-            inv = self._push(OP_SUB, a=self._one(), b=mask)  # 1 - mask
-            sel = self._push(OP_MUL, a=mask, b=val)  # mask * value
-            other = self._push(OP_MUL, a=inv, b=acc)  # (1 - mask) * acc
-            acc = self._push(OP_ADD, a=sel, b=other)
-        return acc
+        return self._blend_piecewise(pairs)
 
     def _emit_pow(self, expr: Any) -> int:
-        import sympy
-
         base, exp = expr.base, expr.exp
         base_reg = self.emit(base)
-        if isinstance(exp, sympy.Integer):
-            e = int(exp)
-            if e == -1:
-                return self._push(OP_RECIP, a=base_reg)
-            return self._push(OP_POWI, a=base_reg, b=e)
+        is_int = isinstance(exp, self._sympy.Integer)
+        return self._emit_pow_parts(base_reg, is_int, int(exp) if is_int else 0, exp)
+
+    def _exponent_half(self, exp: Any) -> int:
+        sympy = self._sympy
         if exp == sympy.Rational(1, 2):
-            return self._push(_OP_SQRT, a=base_reg)
+            return 1
         if exp == sympy.Rational(-1, 2):
-            sqrt_reg = self._push(_OP_SQRT, a=base_reg)
-            return self._push(OP_RECIP, a=sqrt_reg)
-        # General exponent: a non-integer constant power or a symbolic exponent.
-        return self._push(OP_POW, a=base_reg, b=self.emit(exp))
+            return -1
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# The SymEngine emitter — the native (SymPy-free) lowering path
+# ---------------------------------------------------------------------------
+#
+# Everything upstream of the tape is already SymEngine: ``_equations`` /
+# ``_drift`` / the traced ``_step`` build SymEngine trees and ``.diff`` takes the
+# Jacobian on them.  Converting each node to SymPy with ``._sympy_()`` just to
+# read its structure back out cost a ~260 ms SymPy import on the first lowering
+# in every process, plus the whole tree rebuilt through SymPy's constructors
+# (measured: 5.1 s of Gray–Scott's 6.3 s profiled lowering).  This emitter reads
+# the SymEngine tree directly.
+#
+# The hard constraint is that the emitted tape must stay **byte-identical**: the
+# register layout is the emission order, so the tape encodes SymPy's canonical
+# form, not merely the mathematics.  SymEngine's canonical form differs from
+# SymPy's in exactly three ways, and this emitter reproduces all three:
+#
+# 1. **Commutative argument order.**  Both sort ``Add``/``Mul`` arguments, but by
+#    different keys (SymEngine by its internal hash, SymPy by ``Basic.compare``).
+#    :func:`_sympy_compare_key` reproduces SymPy's key; see its docstring.
+# 2. **``Number * Add`` distributes in SymPy** (``Mul.flatten``'s "2*(1+a) ->
+#    2 + 2*a" rule) but not in SymEngine.  :meth:`_SymEngineEmitter._canon`
+#    rewrites it — in SymEngine, so SymEngine's own ``Add`` constructor does the
+#    re-flattening.
+# 3. **SymEngine has no ``exp`` node**: ``exp(x)`` is ``Pow(E, x)``.  The emitter
+#    recognises that base and emits ``OP_EXP``.
+#
+# Anything outside the validated subset raises :class:`_NativeLoweringUnsupportedError`
+# and the whole tape falls back to :class:`_SymPyEmitter` — the fallback is
+# per-*tape*, never per-node, because a half-native emitter would key its CSE
+# cache on two different node types and share nothing between them.
+
+
+class _NativeLoweringUnsupportedError(Exception):
+    """The SymEngine-native emitter declines this tree; fall back to SymPy.
+
+    Internal control flow only — never surfaces to a caller.  Raised for node
+    kinds whose SymPy canonical ordering this module does not reproduce
+    (``And`` / ``Or`` / ``Not``, whose SymPy argument order comes from
+    ``LatticeOp``'s ``default_sort_key`` rather than ``Basic.compare``), and for
+    a node kind the canonicaliser cannot rebuild.
+    """
+
+
+#: ``sympy.core.basic.ordering_of_classes`` — the class-name precedence
+#: ``Basic.compare`` consults before falling back to a plain name comparison.
+#: Vendored (not imported) because importing it would import SymPy, which is the
+#: whole point of this path; ``test_engine_compile.py`` pins it against the
+#: installed SymPy so a SymPy release that reorders it fails loudly here rather
+#: than silently moving every lowered tape.
+_ORDERING_OF_CLASSES: tuple[str, ...] = (
+    "Zero",
+    "One",
+    "Half",
+    "Infinity",
+    "NaN",
+    "NegativeOne",
+    "NegativeInfinity",
+    "Integer",
+    "Rational",
+    "Float",
+    "Exp1",
+    "Pi",
+    "ImaginaryUnit",
+    "Symbol",
+    "Wild",
+    "Pow",
+    "Mul",
+    "Add",
+    "Derivative",
+    "Integral",
+    "Abs",
+    "Sign",
+    "Sqrt",
+    "Floor",
+    "Ceiling",
+    "Re",
+    "Im",
+    "Arg",
+    "Conjugate",
+    "Exp",
+    "Log",
+    "Sin",
+    "Cos",
+    "Tan",
+    "Cot",
+    "ASin",
+    "ACos",
+    "ATan",
+    "ACot",
+    "Sinh",
+    "Cosh",
+    "Tanh",
+    "Coth",
+    "ASinh",
+    "ACosh",
+    "ATanh",
+    "ACoth",
+    "RisingFactorial",
+    "FallingFactorial",
+    "factorial",
+    "binomial",
+    "Gamma",
+    "LowerGamma",
+    "UpperGamma",
+    "PolyGamma",
+    "Erf",
+    "Chebyshev",
+    "Chebyshev2",
+    "Function",
+    "WildFunction",
+    "Lambda",
+    "Order",
+    "Equality",
+    "Unequality",
+    "StrictGreaterThan",
+    "StrictLessThan",
+    "GreaterThan",
+    "LessThan",
+)
+
+_CLASS_RANK: dict[str, int] = {name: i for i, name in enumerate(_ORDERING_OF_CLASSES)}
+#: ``_cmp_name``'s rank for a class name absent from the table above.
+_UNKNOWN_CLASS_RANK: int = len(_ORDERING_OF_CLASSES) + 1
+
+#: SymEngine relational class name → the SymPy ``rel_op`` string.  SymEngine
+#: already canonicalises ``a > b`` to ``StrictLessThan(b, a)`` exactly as SymPy
+#: does, so ``GreaterThan``/``StrictGreaterThan`` never reach the emitter.
+_SE_REL_NAMES: dict[str, str] = {
+    "StrictLessThan": "<",
+    "LessThan": "<=",
+    "Equality": "==",
+    "Unequality": "!=",
+}
+
+
+def _mpf_tuple(x: float) -> tuple[int, int, int, int]:
+    """Return mpmath's normalised ``(sign, man, exp, bc)`` for a finite float.
+
+    ``sympy.Float._hashable_content()`` is ``(self._mpf_, self._prec)``, and
+    ``Basic.compare`` orders two ``Float``s by that tuple (lexicographically —
+    *not* numerically).  Reproducing it needs only bit twiddling: ``mpmath``'s
+    ``from_float`` takes the IEEE mantissa/exponent and strips trailing zero
+    bits so the mantissa is odd.
+    """
+    if x == 0.0:
+        return (0, 0, 0, 0)
+    sign = 1 if x < 0.0 else 0
+    frac, exp2 = math.frexp(abs(x))
+    man = int(frac * (1 << 53))
+    exp = exp2 - 53
+    trailing = (man & -man).bit_length() - 1
+    man >>= trailing
+    exp += trailing
+    return (sign, man, exp, man.bit_length())
+
+
+def _number_class_name(value: Any) -> str:
+    """SymPy's class name for a SymEngine number.
+
+    SymPy gives the distinguished small rationals their own classes, and
+    ``ordering_of_classes`` ranks those *before* the generic ``Integer`` /
+    ``Rational`` — so ``One`` sorts before ``Integer(7)``.  SymEngine spells them
+    identically (``Zero`` / ``One`` / ``NegativeOne`` / ``Half`` / ``Integer`` /
+    ``Rational`` / ``Pi`` / ``Exp1`` / ``NaN`` / ``Infinity``), so the only
+    rename needed is the float type.
+    """
+    name = type(value).__name__
+    if name in ("RealDouble", "RealMPFR"):
+        return "Float"
+    return name
+
+
+def _sympy_compare_key(expr: Any, memo: dict[Any, Any]) -> Any:
+    """Return a sort key reproducing SymPy's ``Basic.compare`` on a SymEngine tree.
+
+    ``Add``/``Mul`` arguments are stored in SymPy's canonical order, which is
+    ``[Number coefficient] + sorted(rest, key=cmp_to_key(Basic.compare))`` — so
+    the emitted register layout (hence the tape bytes) depends on that order and
+    this module has to reproduce it exactly.
+
+    ``Basic.compare`` compares, in order: the class name (via
+    ``ordering_of_classes``, else a plain string comparison), then the length of
+    ``_hashable_content()``, then its elements — recursing into the ones that are
+    themselves expressions.  That is a lexicographic comparison, so it maps onto
+    a plain sort *key*: ``(rank, name, len(content), content)``.  Two keys only
+    ever compare their ``content`` when the class names matched, so the content
+    tuples are type-homogeneous and Python's tuple ordering is well defined.
+
+    Raises
+    ------
+    _NativeLoweringUnsupportedError
+        For a node whose SymPy hashable content this function does not model.
+    """
+    hit = memo.get(expr)
+    if hit is not None:
+        return hit
+
+    name = type(expr).__name__
+    content: tuple[Any, ...]
+
+    if name == "Symbol":
+        # SymPy: ``(self.name,) + tuple(sorted(self.assumptions0.items()))``.  A
+        # SymEngine-born symbol carries only ``commutative=True``, so the second
+        # element is a constant and only the name discriminates; it is kept so
+        # the content length matches SymPy's.
+        sname = "Symbol"
+        content = (str(expr.name), 0)
+    elif expr.is_Number:
+        sname = _number_class_name(expr)
+        if sname != "Float" and sname not in _SE_EXACT_RATIONAL_CLASSES:
+            # SymEngine reports ``is_Number`` for several classes that carry no
+            # ``.p``/``.q`` and no real ``float()``: ``ImaginaryUnit`` /
+            # ``Complex`` / ``ComplexDouble`` (from e.g. ``sqrt(-1)``),
+            # ``Infinity``, ``ComplexInfinity`` and ``NaN``.  Decline so the whole
+            # tape falls back to the SymPy emitter, which reports the same
+            # ``TypeError: Cannot convert complex to float`` it always has,
+            # instead of leaking an ``AttributeError`` from this module.
+            raise _NativeLoweringUnsupportedError(f"unmodelled number node {sname!r}")
+        content = (_mpf_tuple(float(expr)), 53) if sname == "Float" else (int(expr.p), int(expr.q))
+    elif name in ("Pi", "Exp1", "ImaginaryUnit"):
+        # SymPy's ``NumberSymbol`` singletons: ``is_Number`` but not ``Number``,
+        # so they sort as their own class with empty hashable content.
+        sname = name
+        content = ()
+    elif name == "BooleanTrue" or name == "BooleanFalse":
+        sname = name
+        content = ()
+    elif name == "Add" or name == "Mul":
+        sname = name
+        content = tuple(_sympy_compare_key(a, memo) for a in _canonical_args(expr, memo))
+    elif name == "Pow":
+        base, exponent = expr.args
+        if _is_exp_base(base):
+            sname = "exp"
+            content = (_sympy_compare_key(exponent, memo),)
+        else:
+            sname = "Pow"
+            content = (
+                _sympy_compare_key(base, memo),
+                _sympy_compare_key(exponent, memo),
+            )
+    elif name in _NATIVE_GATED_NAMES:
+        raise _NativeLoweringUnsupportedError(f"no SymPy ordering model for {name!r}")
+    elif name in _FUNC_OPS:
+        sname = name
+        content = tuple(_sympy_compare_key(a, memo) for a in expr.args)
+    else:
+        raise _NativeLoweringUnsupportedError(f"no SymPy ordering model for {name!r}")
+
+    key = (_CLASS_RANK.get(sname, _UNKNOWN_CLASS_RANK), sname, len(content), content)
+    memo[expr] = key
+    return key
+
+
+def _is_exp_base(node: Any) -> bool:
+    """Whether ``node`` is SymEngine's ``E`` (so ``Pow(E, x)`` is SymPy's ``exp``)."""
+    return type(node).__name__ == "Exp1"
+
+
+#: SymEngine leaf numbers whose ``float()`` is the correctly-rounded double of an
+#: exactly-representable value, hence bit-identical to SymPy's.  A *compound*
+#: symbol-free subtree is **not** on this list: SymPy folds it through ``evalf``
+#: (mpmath, guard digits, one final rounding) while SymEngine folds it through
+#: ``eval_double`` (a C double per operation), and the two disagree by an ULP for
+#: e.g. ``pi/12`` (0.2617993877991494 vs 0.26179938779914946 — measured on
+#: ``CircadianRhythm``).  Since an ULP in the immediate pool is a changed tape,
+#: the native path folds only these leaves and hands anything compound back to
+#: the SymPy emitter.
+_FOLDABLE_NUMBER_CLASSES: frozenset[str] = frozenset(
+    {
+        "Zero",
+        "One",
+        "NegativeOne",
+        "Half",
+        "Integer",
+        "Rational",
+        "RealDouble",
+        "RealMPFR",
+        "Pi",
+        "Exp1",
+    }
+)
+
+#: Node kinds the native path declines outright, because SymPy's ``eval`` for
+#: them rewrites the node in a way SymEngine does not mirror:
+#:
+#: - ``Abs`` / ``sign`` run SymPy's ``signsimp`` on their argument and may flip
+#:   its sign (``Abs(1 - x)`` → ``Abs(x - 1)``), choosing the representative with
+#:   ``could_extract_minus_sign``, whose tie-break is ``default_sort_key``.
+#: - ``Piecewise`` collapses branches SymEngine keeps (``Piecewise((0, c), (0,
+#:   True))`` → ``0``).
+#: - ``Min`` / ``Max`` and the boolean connectives order their arguments with
+#:   ``default_sort_key`` (via ``MinMaxBase`` / ``LatticeOp``), not
+#:   ``Basic.compare``.
+#: - The relationals disagree on the canonical direction (SymEngine's
+#:   ``0 <= x`` is SymPy's ``x >= 0``).
+#:
+#: All five appear only in a handful of catalogue kernels, so the fallback is
+#: cheap; modelling ``default_sort_key`` and ``signsimp`` would not be.
+_NATIVE_GATED_NAMES: frozenset[str] = frozenset(
+    {
+        "Abs",
+        "sign",
+        "Piecewise",
+        "Min",
+        "Max",
+        "And",
+        "Or",
+        "Not",
+        "StrictLessThan",
+        "LessThan",
+        "StrictGreaterThan",
+        "GreaterThan",
+        "Equality",
+        "Unequality",
+    }
+)
+
+#: Unary functions SymPy folds a leading minus through (odd → ``f(-x) = -f(x)``,
+#: even → ``f(-x) = f(x)``).  Both libraries do this, but they can pick opposite
+#: representatives of ``±arg`` when the argument is a *sum* — SymPy decides with
+#: ``could_extract_minus_sign``, SymEngine with its own internal ordering.  So
+#: the native path declines these when the argument is sign-ambiguous
+#: (:func:`_sign_ambiguous`); a plain symbol / product argument has one
+#: representative in both and is emitted natively.
+_SIGN_FOLDING_FUNCS: frozenset[str] = frozenset(
+    {
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "sinh",
+        "cosh",
+        "tanh",
+        "asinh",
+        "acosh",
+        "atanh",
+    }
+)
+
+
+#: SymEngine class names for an exact integer.  SymEngine (like SymPy) gives
+#: ``0`` / ``1`` / ``-1`` their own singleton classes, so a bare ``== "Integer"``
+#: test would miss the ``x**-1`` → ``Recip`` fast path.
+_SE_INTEGER_CLASSES: frozenset[str] = frozenset({"Integer", "Zero", "One", "NegativeOne"})
+#: SymEngine class names for an exact non-integer rational (``1/2`` is ``Half``).
+_SE_RATIONAL_CLASSES: frozenset[str] = frozenset({"Rational", "Half"})
+#: Every SymEngine number class that exposes the ``.p`` / ``.q`` pair
+#: :func:`_sympy_compare_key` reads.  ``is_Number`` is *broader* than this —
+#: ``ImaginaryUnit`` / ``Complex`` / ``Infinity`` / ``NaN`` all report it and
+#: carry neither — so the ordering key tests membership here, not ``is_Number``.
+_SE_EXACT_RATIONAL_CLASSES: frozenset[str] = _SE_INTEGER_CLASSES | _SE_RATIONAL_CLASSES
+
+
+def _sign_ambiguous(arg: Any) -> bool:
+    """Whether ``±arg`` has two representatives SymPy and SymEngine may disagree on.
+
+    A sum is ambiguous (``1 - x`` vs ``x - 1``), and so is a product with a sum
+    factor (``a*(x - y)``).  Everything else — a symbol, a power, a nested
+    function, a product of those, a product with a negative numeric coefficient —
+    has a single canonical spelling in both libraries.
+    """
+    name = type(arg).__name__
+    if name == "Add":
+        return True
+    if name == "Mul":
+        return any(type(f).__name__ == "Add" for f in arg.args)
+    return False
+
+
+def _canonical_args(expr: Any, memo: dict[Any, Any]) -> list[Any]:
+    """Return an ``Add``/``Mul``'s arguments in SymPy's canonical order.
+
+    SymPy's ``Add.flatten`` / ``Mul.flatten`` sort the non-numeric arguments with
+    ``Basic.compare`` and then ``insert(0, coeff)`` — the numeric coefficient is
+    first and is *not* part of the sort.  SymEngine's ``get_args`` already puts
+    its coefficient first (when it is not the identity), so the coefficient is
+    detected positionally and only the tail is re-sorted.
+    """
+    args = list(expr.args)
+    if not args:
+        return args
+    head: list[Any] = []
+    if args[0].is_Number:
+        head = [args[0]]
+        args = args[1:]
+    if len(args) > 1:
+        args.sort(key=lambda a: _sympy_compare_key(a, memo))
+    return head + args
+
+
+class _SymEngineEmitter(_Emitter):
+    """Lower **SymEngine** expression DAGs straight to SSA (no SymPy round-trip).
+
+    See the module-level commentary above the class for the three canonical-form
+    differences between SymEngine and SymPy that this emitter reproduces so the
+    tape stays byte-identical to the SymPy path's.
+    """
+
+    def __init__(self, leaf_for_name: dict[str, tuple[int, int]]) -> None:
+        super().__init__(leaf_for_name)
+        import symengine
+
+        self._se = symengine
+        self._const_one = symengine.Integer(1)
+        self._key_memo: dict[Any, Any] = {}
+        self._canon_memo: dict[Any, Any] = {}
+
+    # -- canonicalisation ----------------------------------------------------
+
+    def _canon(self, expr: Any) -> Any:
+        """Rewrite ``expr`` into SymPy's canonical *structure* (still SymEngine).
+
+        The only structural rewrite needed is SymPy ``Mul.flatten``'s
+        ``Number * Add`` distribution ("2*(1+a) -> 2 + 2*a"), which SymEngine does
+        not perform.  Rebuilding the distributed sum through SymEngine's own
+        ``Add`` constructor also re-flattens it into any enclosing sum, matching
+        what SymPy's ``Add.flatten`` would have seen.
+        """
+        hit = self._canon_memo.get(expr)
+        if hit is not None:
+            return hit
+        out = self._canon_impl(expr)
+        self._canon_memo[expr] = out
+        return out
+
+    def _canon_impl(self, expr: Any) -> Any:
+        se = self._se
+        name = type(expr).__name__
+        # Decline early so a gated node deep in a large tree aborts the native
+        # attempt before the whole tree has been walked twice.
+        if name in _NATIVE_GATED_NAMES:
+            raise _NativeLoweringUnsupportedError(f"gated node kind {name!r}")
+        if name == "Pow":
+            self._check_pow_base(expr.args[0])
+        if name == "Mul":
+            args = expr.args
+            if len(args) == 2 and args[0].is_Number and type(args[1]).__name__ == "Add":
+                return self._canon(se.Add(*[args[0] * term for term in args[1].args]))
+        args = expr.args
+        if not args:
+            return expr
+        new = [self._canon(a) for a in args]
+        if all(n is o or n == o for n, o in zip(new, args, strict=True)):
+            return expr
+        return self._rebuild(expr, name, new)
+
+    @staticmethod
+    def _check_pow_base(base: Any) -> None:
+        """Decline the ``Pow`` bases whose exponent SymPy redistributes.
+
+        ``Pow.eval`` rewrites a power in two ways SymEngine does not mirror, and
+        both change the emitted *structure*, not just the register order:
+
+        - a **nested power** collapses its exponents when the inner one is a
+          rational of magnitude ``<= 1`` (``sqrt(x)**(-1/2)`` → ``x**(-1/4)``,
+          ``sqrt(sqrt(x))`` → ``x**(1/4)``) — but not always (``(x**2)**(-1/2)``
+          stays put, since ``x`` may be negative);
+        - an **exact constant inside a product base** is extracted, because SymPy
+          knows it is positive (``sqrt(pi*x)`` → ``sqrt(pi)*sqrt(x)``, which then
+          folds ``sqrt(pi)`` to a ``Float``, so the *value* differs in the last
+          bit as well as the layout).
+
+        Modelling either would mean re-implementing ``Pow.eval``'s positivity
+        reasoning, which is exactly what the gate exists to avoid.  No catalogue
+        system uses either construct, so the fallback is never taken for the
+        catalogue and this costs nothing.
+        """
+        bname = type(base).__name__
+        if bname == "Pow":
+            raise _NativeLoweringUnsupportedError("nested power base")
+        if bname == "Mul" and any(type(f).__name__ in ("Pi", "Exp1") for f in base.args):
+            raise _NativeLoweringUnsupportedError("exact constant inside a power base")
+
+    def _rebuild(self, expr: Any, name: str, args: list[Any]) -> Any:
+        """Rebuild ``expr`` from canonicalised children (only on an actual change)."""
+        se = self._se
+        if name == "Add":
+            return se.Add(*args)
+        if name == "Mul":
+            return se.Mul(*args)
+        if name == "Pow":
+            return se.Pow(args[0], args[1])
+        if name == "Piecewise":
+            return se.Piecewise(*[(args[i], args[i + 1]) for i in range(0, len(args), 2)])
+        if name in _SE_REL_NAMES:
+            builder = {"<": se.Lt, "<=": se.Le, "==": se.Eq, "!=": se.Ne}[_SE_REL_NAMES[name]]
+            return builder(args[0], args[1])
+        func = getattr(expr, "func", None)
+        if func is None:
+            raise _NativeLoweringUnsupportedError(f"cannot rebuild a {name!r} node")
+        return func(*args)
+
+    # -- emission ------------------------------------------------------------
+
+    def emit(self, expr: Any) -> int:
+        """Emit ``expr`` (canonicalised first), returning its register."""
+        return super().emit(self._canon(expr))
+
+    def _emit(self, expr: Any) -> int:
+        name = type(expr).__name__
+
+        # A symbol-free subexpression folds to one ``Const`` register, exactly as
+        # the SymPy emitter does — but only for the leaves whose ``float()`` is
+        # provably SymPy's (see ``_FOLDABLE_NUMBER_CLASSES``).
+        if not expr.free_symbols:
+            if name not in _FOLDABLE_NUMBER_CLASSES:
+                raise _NativeLoweringUnsupportedError(f"compound constant subtree {name!r}")
+            return self._push(OP_CONST, imm=float(expr))
+
+        if name == "Symbol":
+            return self._emit_leaf_symbol(str(expr.name))
+
+        if name == "Add":
+            return self._fold_binary(OP_ADD, _canonical_args(expr, self._key_memo))
+
+        if name == "Mul":
+            return self._fold_binary(OP_MUL, _canonical_args(expr, self._key_memo))
+
+        if name == "Pow":
+            return self._emit_pow(expr)
+
+        if name in _NATIVE_GATED_NAMES:
+            raise _NativeLoweringUnsupportedError(f"gated node kind {name!r}")
+
+        func_op = _FUNC_OPS.get(name)
+        if func_op is not None:
+            if len(expr.args) != 1:
+                raise TapeCompileError(
+                    f"function {name!r} expects 1 argument, got {len(expr.args)}"
+                )
+            arg = expr.args[0]
+            if name in _SIGN_FOLDING_FUNCS and _sign_ambiguous(arg):
+                raise _NativeLoweringUnsupportedError(f"sign-ambiguous argument to {name!r}")
+            return self._push(func_op, a=self.emit(arg))
+
+        raise TapeCompileError(f"the instruction tape has no equivalent for {name!r}.")
+
+    def _emit_pow(self, expr: Any) -> int:
+        base, exponent = expr.args
+        # SymEngine has no ``exp`` node: ``exp(x)`` is ``Pow(E, x)``.
+        if _is_exp_base(base):
+            # SymPy's ``exp.eval`` splits a sum whose terms evaluate to a number
+            # out of the exponent — ``exp(4.108 - x)`` becomes
+            # ``60.82…*exp(-x)`` — which SymEngine does not do.  Decline the
+            # whole tape rather than model which terms SymPy would peel off.
+            if type(exponent).__name__ == "Add" and any(not t.free_symbols for t in exponent.args):
+                raise _NativeLoweringUnsupportedError("exp of a sum with a constant term")
+            return self._push(_FUNC_OPS["exp"], a=self.emit(exponent))
+        base_reg = self.emit(base)
+        is_int = type(exponent).__name__ in _SE_INTEGER_CLASSES
+        return self._emit_pow_parts(base_reg, is_int, int(exponent) if is_int else 0, exponent)
+
+    def _exponent_half(self, exp: Any) -> int:
+        if type(exp).__name__ not in _SE_RATIONAL_CLASSES:
+            return 0
+        p, q = int(exp.p), int(exp.q)
+        if q == 2 and p == 1:
+            return 1
+        if q == 2 and p == -1:
+            return -1
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -751,15 +1398,38 @@ def lower_expressions(
 
     rhs = [symengine.sympify(e) for e in exprs]
 
-    em = _Emitter(leaf_for_name)
-    outputs = [em.emit(e._sympy_()) for e in rhs]
+    def run(em: _Emitter, to_sympy: bool) -> tuple[list[int], list[int]]:
+        """Emit the RHS (and Jacobian) with ``em``; ``to_sympy`` picks the path.
 
-    jac_outputs: list[int] = []
-    if jacobian:
-        # Row-major dim×dim: ∂f_k/∂u_j with abs/sign derivatives resolved a.e.
-        for e in rhs:
-            for s in state_syms:
-                jac_outputs.append(em.emit(_resolve_derivative_nodes(e.diff(s))._sympy_()))
+        The Jacobian expressions are differentiated *inside* the loop rather than
+        materialised as a ``dim × dim`` list: Gray–Scott's 4608² entries would not
+        fit in memory.  A fallback therefore re-differentiates, which is why the
+        fallback is (measurably) never taken for the catalogue.
+        """
+        conv: Callable[[Any], Any] = (lambda e: e._sympy_()) if to_sympy else (lambda e: e)
+        outs = [em.emit(conv(e)) for e in rhs]
+        jac: list[int] = []
+        if jacobian:
+            # Row-major dim×dim: ∂f_k/∂u_j with abs/sign derivatives resolved a.e.
+            for e in rhs:
+                for s in state_syms:
+                    jac.append(em.emit(conv(_resolve_derivative_nodes(e.diff(s)))))
+        return outs, jac
+
+    em: _Emitter
+    if _native_lowering_enabled():
+        em = _SymEngineEmitter(leaf_for_name)
+        try:
+            outputs, jac_outputs = run(em, to_sympy=False)
+        except _NativeLoweringUnsupportedError:
+            # Whole-tape fallback: a half-native emitter would key its CSE cache
+            # on two node types and share nothing across them, so the partially
+            # built emitter is discarded rather than continued.
+            em = _SymPyEmitter(leaf_for_name)
+            outputs, jac_outputs = run(em, to_sympy=True)
+    else:
+        em = _SymPyEmitter(leaf_for_name)
+        outputs, jac_outputs = run(em, to_sympy=True)
 
     tape = Tape(
         ops=np.asarray(em.ops, dtype=np.int32),
@@ -779,6 +1449,19 @@ def lower_expressions(
 def _sym_name(sym: Any) -> str:
     """Return a SymEngine symbol's name (``.name`` attr, else ``str``)."""
     return getattr(sym, "name", None) or str(sym)
+
+
+#: env var: set truthy to force every lowering through the SymPy emitter.  The
+#: bypass that proves NATIVE == SYMPY (``tests/test_engine_compile.py``) and the
+#: escape hatch if a user's exotic kernel ever lowers differently on the two
+#: paths.  Mirrors ``TSDYNAMICS_NO_TAPE_CACHE`` / ``TSDYNAMICS_NO_JIT_CACHE``.
+_NATIVE_LOWERING_ENV = "TSDYNAMICS_NO_NATIVE_LOWERING"
+
+
+def _native_lowering_enabled() -> bool:
+    """Whether the SymEngine-native emitter is used (off if the env var is truthy)."""
+    val = os.environ.get(_NATIVE_LOWERING_ENV, "")
+    return val.strip().lower() not in ("1", "true", "yes", "on")
 
 
 # ---------------------------------------------------------------------------

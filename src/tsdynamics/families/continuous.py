@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
 import math
+import weakref
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
@@ -14,6 +16,44 @@ from tsdynamics.errors import InvalidParameterError
 from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from .base import SystemBase, Trajectory
+
+#: Memo for :meth:`ContinuousSystem._equations_hash`, keyed by the ``_equations``
+#: kernel **function object itself** — the same key discipline the lowered-tape
+#: cache uses (``engine/compile.py``), and for the same reason: a kernel's source
+#: text cannot change without the function object being replaced, so identity is
+#: both cheap and exactly as invalidating as re-reading the source would be.
+#: A monkeypatched or redefined ``_equations`` is a *different* object, hence a
+#: miss, hence a fresh token and a fresh ``_cache_key`` — so the numeric-evaluator
+#: cache still rebuilds.  Weak keys mean the memo dies with the function (a
+#: notebook redefining a class in a loop cannot leak entries).
+_EQUATIONS_HASH_MEMO: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+
+#: Per-kernel-object serial, appended to the source hash so the token identifies
+#: the *function object*, not merely its source text.  Source alone is not
+#: injective: a factory that closes over a value (``def make(m): def _eq(y, t, a,
+#: _m=m): ...``) produces distinct kernels with byte-identical source, which
+#: previously collided on one ``_lambdified`` entry — so the second system
+#: silently evaluated the first one's RHS/Jacobian.  Identity is the correct
+#: discriminator and is what the lowered-tape cache already uses; the serial is
+#: how it is expressed inside a string cache key.
+_EQUATIONS_HASH_SERIAL = itertools.count()
+
+
+def _kernel_token(fn: Any) -> str:
+    """Return the source content hash of ``fn`` (the un-memoised core).
+
+    Eight hex digits of md5 over the kernel's source text, or — for a kernel
+    with no retrievable source — over its bytecode.
+    """
+    import hashlib
+    import inspect
+
+    try:
+        src = inspect.getsource(fn)
+    except (OSError, TypeError):  # dynamically defined without source
+        code = getattr(fn, "__code__", None)
+        src = repr(code.co_code) if code is not None else repr(fn)
+    return hashlib.md5(src.encode()).hexdigest()[:8]
 
 
 def _resolve_extremum_derivative(
@@ -297,23 +337,47 @@ class ContinuousSystem(SystemBase, ABC):
 
     def _equations_hash(self) -> str:
         """
-        Content hash of the RHS definition, part of every compile-cache key.
+        Identity token for the RHS definition, part of every compile-cache key.
 
         Without it, two same-named classes (user shadowing a builtin, or a
         notebook cell redefining a class with edited equations) would silently
         reuse each other's compiled dynamics.
-        """
-        import hashlib
-        import inspect
 
+        The token is **memoised on the kernel function object**, and identifies
+        that object rather than only its source text.  Two properties follow:
+
+        * It is *cheap*.  Reading and hashing the source on every call defeated
+          the very cache this key serves — ``inspect.getsource`` dominated
+          :meth:`jacobian` (69 µs of a 92 µs Lorenz call, a 2.9x tax on every
+          flow variational analysis).  A warm call now costs one weak-dict
+          lookup.
+        * It is *at least as invalidating*.  A monkeypatched or redefined
+          ``_equations`` is a different object, so it misses the memo, re-reads
+          the source and gets a fresh token — and because the token carries a
+          per-object serial it is injective in the function object, where the
+          bare source hash was not (a factory closing over a value produces
+          distinct kernels with byte-identical source; those used to collide on
+          one :attr:`_lambdified` entry, so the second system silently evaluated
+          the first one's RHS and Jacobian).
+
+        This is the key discipline the lowered-tape cache already uses.
+        """
         fn = type(self)._equations
         fn = getattr(fn, "__func__", fn)
         try:
-            src = inspect.getsource(fn)
-        except (OSError, TypeError):  # dynamically defined without source
-            code = getattr(fn, "__code__", None)
-            src = repr(code.co_code) if code is not None else repr(fn)
-        return hashlib.md5(src.encode()).hexdigest()[:8]
+            memo = _EQUATIONS_HASH_MEMO.get(fn)
+        except TypeError:
+            # Neither hashable nor weak-referenceable (a builtin / C callable).
+            # It cannot be memoised, so it cannot carry a stable serial either —
+            # minting a fresh one per call would make *every* lookup a miss and
+            # rebuild the evaluator.  Fall back to the bare source hash, i.e.
+            # exactly the pre-memo behaviour for this (exotic) kernel shape.
+            return _kernel_token(fn)
+        if memo is not None:
+            return memo
+        token = f"{_kernel_token(fn)}{next(_EQUATIONS_HASH_SERIAL):x}"
+        _EQUATIONS_HASH_MEMO[fn] = token
+        return token
 
     def _control_params(self) -> dict[str, Any]:
         """Return the non-structural parameters (the engine's live control parameters)."""

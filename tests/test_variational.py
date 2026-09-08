@@ -13,10 +13,12 @@ import pytest
 import tsdynamics as ts
 from tsdynamics.derived._variational import (
     build_variational_tape,
+    build_variational_tape_cached,
     embed_extended,
     split_extended,
 )
 from tsdynamics.derived.tangent import TangentSystem
+from tsdynamics.engine.compile import clear_tape_cache, tape_cache_stats
 from tsdynamics.families import ContinuousSystem
 
 
@@ -203,28 +205,50 @@ def test_stiff_default_ode_lyapunov_does_not_raise() -> None:
     np.testing.assert_allclose(spec, [-1.0, -2.0], atol=0.05)
 
 
-def test_structural_change_rebuilds_extended_tape() -> None:
+def test_structural_change_rebuilds_extended_tape(monkeypatch) -> None:
     """A live structural-parameter change re-lowers the cached extended tape.
 
     The extended tape bakes in structural parameters; a stale cache would carry
     the wrong dimension/structure.  Reinitialising after a structural change must
-    rebuild it (the cache is keyed on the structural values).
+    take the rebuild branch (the per-instance cache is keyed on the structural
+    values).
+
+    The *rebuild* is asserted by counting the builder call, not by object
+    identity: since the ``perf/variational-tape-cache`` stream the build itself is
+    memoised process-wide, so re-lowering the same math legitimately hands back the
+    same shared ``Tape`` object.  What must still hold is that the branch runs — a
+    genuine structural change would then key a different cache entry and get a
+    structurally different tape.
     """
+    from tsdynamics.derived import tangent as tangent_mod
+
+    builds = {"n": 0}
+    real = tangent_mod.build_variational_tape_cached
+
+    def counting(system, k):
+        builds["n"] += 1
+        return real(system, k)
+
+    monkeypatch.setattr(tangent_mod, "build_variational_tape_cached", counting)
+
     tang = TangentSystem(LinOsc(), k=2, backend="reference")
     tang.reinit([1.0, 0.5])
     first_tape = tang._ext_tape
     first_key = tang._ext_tape_key
+    assert builds["n"] == 1
+
     # No structural params on LinOsc → key is the empty tuple and the tape is
     # reused across reinit (a control/IC change is not a structural change).
     tang.reinit([0.2, 0.3])
     assert tang._ext_tape is first_tape
     assert tang._ext_tape_key == first_key
+    assert builds["n"] == 1  # no rebuild
 
     # Simulate a structural change by poking the cached key stale; the next
-    # reinit must rebuild (key mismatch path).
+    # reinit must take the rebuild branch (key mismatch path).
     tang._ext_tape_key = (("N", 99),)
     tang.reinit([0.2, 0.3])
-    assert tang._ext_tape is not first_tape
+    assert builds["n"] == 2
     assert tang._ext_tape_key == ()
 
 
@@ -302,3 +326,149 @@ def test_backend_neutral_lorenz_spectrum_reference() -> None:
     assert abs(ref[0] - 0.906) < 0.1
     assert abs(ref[1]) < 0.1
     assert abs(ref[2] + 14.57) < 1.0
+
+
+# ---------------------------------------------------------------------------
+# The variational lowering is memoised (stream perf/variational-tape-cache)
+# ---------------------------------------------------------------------------
+
+
+def _tape_fields_equal(a, b) -> bool:
+    """Whether two lowered tapes are field-for-field identical (the wire contract)."""
+    return (
+        np.array_equal(a.ops, b.ops)
+        and np.array_equal(a.a, b.a)
+        and np.array_equal(a.b, b.b)
+        and np.array_equal(a.imm, b.imm)
+        and np.array_equal(a.outputs, b.outputs)
+        and np.array_equal(a.jac_outputs, b.jac_outputs)
+        and a.n_state == b.n_state
+        and a.n_param == b.n_param
+    )
+
+
+def test_variational_tape_cache_hits_on_a_repeat_build() -> None:
+    """A second build of the same (system, k) is served from the cache."""
+    clear_tape_cache()
+    sysm = LinOsc()
+    build_variational_tape_cached(sysm, 2)
+    first = tape_cache_stats()
+    build_variational_tape_cached(sysm, 2)
+    second = tape_cache_stats()
+    assert second["hits"] == first["hits"] + 1
+    assert second["misses"] == first["misses"]
+
+
+def test_variational_tape_cache_k_change_is_a_miss() -> None:
+    """A different number of deviation vectors is a structurally different tape.
+
+    ``k`` sets how many blocks of ``dim`` tangent equations the extended system
+    carries, so it MUST be a key part — serving a ``k=1`` tape to a ``k=2`` caller
+    would hand the engine a state vector of the wrong length.
+    """
+    clear_tape_cache()
+    sysm = LinOsc()
+    t1 = build_variational_tape_cached(sysm, 1)
+    after_first = tape_cache_stats()
+    t2 = build_variational_tape_cached(sysm, 2)
+    after_second = tape_cache_stats()
+    assert after_second["misses"] == after_first["misses"] + 1
+    assert after_second["hits"] == after_first["hits"]
+    assert t1.n_state != t2.n_state  # dim*(k+1): 4 vs 6
+
+
+def test_variational_tape_cache_control_param_change_is_a_hit() -> None:
+    """A control-parameter change reuses the tape (parameters feed it live).
+
+    This is the design the other ``lower_*_cached`` helpers share and the reason a
+    Lyapunov parameter sweep stays cheap.
+    """
+    clear_tape_cache()
+    build_variational_tape_cached(LinOsc(), 2)
+    before = tape_cache_stats()
+    build_variational_tape_cached(LinOsc().with_params(k=5.0), 2)
+    after = tape_cache_stats()
+    assert after["hits"] == before["hits"] + 1
+    assert after["misses"] == before["misses"]
+
+
+def test_variational_tape_cache_monkeypatched_kernel_is_a_miss(monkeypatch) -> None:
+    """Redefining ``_equations`` invalidates the entry — never a stale tape."""
+    clear_tape_cache()
+    build_variational_tape_cached(LinOsc(), 2)
+    before = tape_cache_stats()
+
+    original = LinOsc.__dict__["_equations"].__func__
+
+    def patched(y, t, k, c):
+        return original(y, t, k, c)
+
+    monkeypatch.setattr(LinOsc, "_equations", staticmethod(patched))
+    build_variational_tape_cached(LinOsc(), 2)
+    after = tape_cache_stats()
+    assert after["misses"] == before["misses"] + 1
+    assert after["hits"] == before["hits"]
+
+
+def test_variational_cached_tape_equals_a_fresh_build() -> None:
+    """The memoised tape is field-for-field the tape ``build_variational_tape`` makes."""
+    clear_tape_cache()
+    for sysm, k in ((LinOsc(), 2), (ts.Lorenz(), 3), (ts.Rossler(), 2)):
+        fresh = build_variational_tape(sysm, k)
+        cached = build_variational_tape_cached(sysm, k)
+        assert _tape_fields_equal(fresh, cached), type(sysm).__name__
+
+
+def test_variational_spectrum_is_identical_with_the_cache_disabled(monkeypatch) -> None:
+    """``TSDYNAMICS_NO_TAPE_CACHE`` gives a value-identical spectrum (the bypass proof)."""
+    pytest.importorskip("tsdynamics._rust")
+    kw = dict(final_time=40.0, dt=0.1, burn_in=10.0, ic=[1.0, 1.0, 1.0])
+
+    clear_tape_cache()
+    cached = ts.Lorenz().lyapunov_spectrum(**kw)
+
+    monkeypatch.setenv("TSDYNAMICS_NO_TAPE_CACHE", "1")
+    clear_tape_cache()
+    uncached = ts.Lorenz().lyapunov_spectrum(**kw)
+
+    assert np.array_equal(cached, uncached)
+
+
+def test_cached_variational_path_keeps_interp_equals_jit() -> None:
+    """The memoised tape preserves the ``interp == jit`` bit-for-bit contract."""
+    pytest.importorskip("tsdynamics._rust")
+    clear_tape_cache()
+    kw = dict(final_time=40.0, dt=0.1, burn_in=10.0, ic=[1.0, 1.0, 1.0])
+    jit = ts.Lorenz().lyapunov_spectrum(backend="jit", **kw)
+    interp = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
+    assert np.array_equal(jit, interp)
+
+
+def test_repeat_ode_lyapunov_reuses_one_variational_tape() -> None:
+    """Two ``lyapunov_spectrum`` calls build the variational tape exactly ONCE.
+
+    ``ContinuousSystem.lyapunov_spectrum`` constructs a fresh ``TangentSystem`` per
+    call, so before this stream every call re-lowered the extended tape (measured
+    ~17 s for a 32-D field system).  Count the *uncached* builder to pin the fix.
+    """
+    pytest.importorskip("tsdynamics._rust")
+    import tsdynamics.derived._variational as var_mod
+
+    clear_tape_cache()
+    calls = {"n": 0}
+    real = var_mod.build_variational_tape
+
+    def counting(system, k):
+        calls["n"] += 1
+        return real(system, k)
+
+    kw = dict(final_time=20.0, dt=0.1, burn_in=5.0, ic=[1.0, 1.0, 1.0])
+    original = var_mod.build_variational_tape
+    var_mod.build_variational_tape = counting
+    try:
+        ts.Lorenz().lyapunov_spectrum(**kw)
+        ts.Lorenz().lyapunov_spectrum(**kw)
+        ts.Lorenz().with_params(rho=29.0).lyapunov_spectrum(**kw)
+    finally:
+        var_mod.build_variational_tape = original
+    assert calls["n"] == 1, f"expected one variational lowering, got {calls['n']}"

@@ -303,13 +303,11 @@ def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray,
     from .run import _engine, _name
 
     if backend == "reference":
+        # The pure-Python iterator raises per-iterate (`_reference_map`), so it
+        # has already diverged loudly by the time it returns.
         y = _reference_map(problem, steps)
     else:
         eng = _engine()
-        diverged_msg = (
-            f"{_name(problem)}: map diverged or produced a non-finite state before "
-            f"reaching {steps} iterations."
-        )
         try:
             y = np.asarray(
                 eng.iterate_map(
@@ -326,11 +324,29 @@ def _run_map(problem: MapProblem, steps: int, backend: str) -> tuple[np.ndarray,
             # for "diverg") is what keeps a non-divergence RuntimeError — e.g. a
             # JIT compile failure from backend="jit" — propagating unchanged
             # instead of being mislabelled as a numerical blow-up.
-            raise ConvergenceError(diverged_msg) from exc
-        # Defense-in-depth: should the binding ever return NaN instead of raising,
-        # still refuse to hand back a silently poisoned trajectory.
-        if not np.all(np.isfinite(y)):
-            raise ConvergenceError(diverged_msg)
+            raise ConvergenceError(
+                f"{_name(problem)}: map diverged or produced a non-finite state before "
+                f"reaching {steps} iterations."
+            ) from exc
+    # THE finiteness guard for the map path — deliberately the only one.
+    #
+    # Both backends already diverge loudly (the engine raises
+    # ``EngineError::Diverged`` → ``ConvergenceError`` at the first non-finite
+    # iterate; ``_reference_map`` raises per-iterate), so this scan is
+    # defense-in-depth against a binding that ever returns NaN instead of
+    # raising.  It lives *here*, at the engine seam, because that covers every
+    # caller of the map path — not just ``DiscreteMap.iterate`` — and because one
+    # ``np.all(np.isfinite(...))`` over the whole block is the cheapest correct
+    # form (measured: 1.1 ms on a 1e6x2 orbit, vs 15 ms for a row-wise
+    # ``.all(axis=1)``).  ``DiscreteMap._iterate_engine`` used to run a *second*,
+    # row-wise scan on top of this one; that duplicate cost 12 ms of a 25 ms
+    # 1e6-step Hénon run and could never fire, so it is gone.  Keep it that way:
+    # add a scan here, never at the family boundary.
+    if not np.all(np.isfinite(y)):
+        raise ConvergenceError(
+            f"{_name(problem)}: map diverged or produced a non-finite state before "
+            f"reaching {steps} iterations."
+        )
     return np.arange(problem.n0, problem.n0 + steps), y
 
 

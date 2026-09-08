@@ -464,25 +464,25 @@ class DiscreteMap(SystemBase):
         Divergence is reported (it is not silently returned and there is no
         random-IC retry — the engine's "diverge loudly" contract); the
         random-IC retry lives in :meth:`iterate` for the implicit-ic case.
+
+        Notes
+        -----
+        There is deliberately **no finiteness scan here**.  Every backend already
+        diverges loudly *before* returning — the Rust map loop raises
+        ``EngineError::Diverged`` → :class:`~tsdynamics.errors.ConvergenceError`
+        at the first non-finite iterate, ``_reference_map`` raises per-iterate,
+        and :func:`tsdynamics.engine._families._run_map` keeps one full
+        ``np.all(np.isfinite(...))`` guard at the engine seam covering *all*
+        callers of the map path.  A second, row-wise
+        ``np.isfinite(traj.y).all(axis=1)`` here was unreachable (no backend has
+        ever reached it) and cost ~12 ms of a 25 ms 1e6-step Hénon run — a 48%
+        Python tax over a 9 ms Rust kernel — so it was removed.  Divergence
+        behaviour is unchanged: the message a caller sees is, as before, the one
+        ``_run_map`` (engine) or ``_reference_map`` (reference) raises, and the
+        random-IC retry in :meth:`iterate` catches the same
+        :class:`ConvergenceError` type from the same place.
         """
-        traj = self._dispatch(backend=backend, final_time=steps, ic=ic)
-        # Enforce "diverge loudly" at the family boundary so every backend behaves
-        # alike: the Rust engine path raises on a non-finite iterate, but the
-        # pure-Python reference iterator returns the offending rows as-is — catch
-        # those here rather than handing back a quietly poisoned trajectory.
-        finite_rows = np.isfinite(traj.y).all(axis=1)
-        if not finite_rows.all():
-            bad = int(np.argmin(finite_rows))
-            # Report the trajectory's own step-index axis (``traj.t``), which for a
-            # warm-restart problem (n0 > 0) is ``arange(n0, n0 + steps)`` — so the
-            # iteration number is consistent with the trajectory rather than the bare
-            # 0-based row offset ``bad``.
-            iteration = int(traj.t[bad]) if bad < traj.t.size else bad
-            raise ConvergenceError(
-                f"{type(self).__name__}: map diverged at iteration {iteration} "
-                f"(backend={backend!r})."
-            )
-        return traj
+        return self._dispatch(backend=backend, final_time=steps, ic=ic)
 
     # ------------------------------------------------------------------ #
     # Lyapunov spectrum

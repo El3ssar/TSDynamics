@@ -29,7 +29,12 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["build_variational_tape", "embed_extended", "split_extended"]
+__all__ = [
+    "build_variational_tape",
+    "build_variational_tape_cached",
+    "embed_extended",
+    "split_extended",
+]
 
 
 def build_variational_tape(system: Any, k: int) -> Any:
@@ -128,6 +133,55 @@ def build_variational_tape(system: Any, k: int) -> Any:
         jacobian=True,
         control_names=control_names,
     )
+
+
+def build_variational_tape_cached(system: Any, k: int) -> Any:
+    """Return a memoised :func:`build_variational_tape` tape (the ODE Lyapunov tape).
+
+    The variational lowering is by far the most expensive symbolic step in the
+    library — it differentiates the RHS ``dim`` times and then materialises
+    ``dim·k`` symbolic dot products, so its cost grows like ``O(dim² · k)`` in the
+    number of expressions *and* is lowered ``with_jacobian=True`` on top.  Measured
+    on ``KuramotoSivashinsky`` (``dim=32``, ``k=32``) a single build is ~17 s, and
+    every ``lyapunov_spectrum`` call built a fresh one because
+    :class:`~tsdynamics.derived.tangent.TangentSystem` is constructed per call.
+
+    Lowering is a pure function of the *math*, so this routes through the same
+    bounded-LRU store the other ``lower_*_cached`` helpers use
+    (:mod:`tsdynamics.engine.compile`) — sharing its size bound, its thread lock,
+    its ``clear_tape_cache()`` / ``tape_cache_stats()`` surface, and the
+    ``TSDYNAMICS_NO_TAPE_CACHE`` bypass.
+
+    Key parts
+    ---------
+    The system **class**, its ``dim``, the number of deviation vectors ``k`` (a
+    different ``k`` is a structurally different tape, with ``k`` extra blocks of
+    ``dim`` equations), the **structural** parameters (folded into the tape as
+    constants), and the ``_equations`` kernel **object** (so a monkeypatched or
+    redefined kernel is a deliberate miss — never a stale tape).
+
+    **Control-parameter values are deliberately absent**: they become ``Param``
+    inputs read live from the system, exactly as in :func:`lower_ode_cached`, so a
+    control-parameter sweep (a Lyapunov sweep, a continuation) reuses one tape.
+    The tape's ``control_names`` layout needs no key part of its own — it is a pure
+    function of the class, so the class captures it transitively (the same
+    invariant :func:`lower_ode_cached` documents).
+    """
+    from tsdynamics.engine.compile import (
+        _cache_get_or_build,
+        _kernel_identity,
+        _structural_key,
+    )
+
+    key = (
+        "variational",
+        type(system),
+        int(system.dim),
+        int(k),
+        _structural_key(system),
+        _kernel_identity(type(system), "_equations"),
+    )
+    return _cache_get_or_build(key, lambda: build_variational_tape(system, k))
 
 
 def embed_extended(x: Any, w: np.ndarray) -> np.ndarray:

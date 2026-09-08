@@ -157,3 +157,135 @@ def test_non_lowerable_set_is_exhaustive() -> None:
         except TapeCompileError:
             actual_nonlowerable.add(entry.name)
     assert actual_nonlowerable == set(NON_LOWERABLE)
+
+
+# ---------------------------------------------------------------------------
+# The map iterate path runs exactly ONE full-array finiteness scan
+# (perf: the duplicate row-wise scan in ``DiscreteMap._iterate_engine`` cost
+# ~12 ms of a 25 ms 1e6-step Hénon run — a 48% Python tax over the Rust kernel)
+# ---------------------------------------------------------------------------
+
+
+def _count_full_array_scans(monkeypatch, shape: tuple[int, int], fn) -> int:
+    """Run ``fn`` counting ``np.isfinite`` calls over an array of exactly ``shape``."""
+    calls = {"n": 0}
+    real = np.isfinite
+
+    def counting(x, *args, **kwargs):
+        arr = x if isinstance(x, np.ndarray) else None
+        if arr is not None and arr.shape == shape:
+            calls["n"] += 1
+        return real(x, *args, **kwargs)
+
+    monkeypatch.setattr(np, "isfinite", counting)
+    fn()
+    return calls["n"]
+
+
+@pytest.mark.parametrize("backend", ["interp", "jit", "reference"])
+def test_map_iterate_runs_exactly_one_full_orbit_finiteness_scan(monkeypatch, backend) -> None:
+    """One scan of the whole orbit block, not two.
+
+    Every backend already diverges loudly *before* returning (the Rust map loop
+    raises ``EngineError::Diverged`` → ``ConvergenceError`` at the first
+    non-finite iterate; ``_reference_map`` raises per-iterate), so the single
+    remaining scan in :func:`tsdynamics.engine._families._run_map` is
+    defense-in-depth.  A second scan at the family boundary was unreachable and
+    was pure O(steps x dim) tax — this counting test pins it at one and cannot
+    flake.  (``reference`` also scans per-iterate on a ``(dim,)`` state; those
+    are not full-orbit scans and are not counted.)
+    """
+    import tsdynamics as ts
+
+    henon = ts.systems.Henon()
+    steps = 400
+    n = _count_full_array_scans(
+        monkeypatch,
+        (steps, 2),
+        lambda: henon.iterate(steps=steps, ic=[0.1, 0.1], backend=backend),
+    )
+    assert n == 1, f"{backend}: {n} full-orbit scans (expected exactly 1)"
+
+
+# ---------------------------------------------------------------------------
+# Divergence behaviour is unchanged by the scan removal
+# ---------------------------------------------------------------------------
+
+
+class _Blowup(__import__("tsdynamics").DiscreteMap):
+    """``x -> 10 x`` in 2-D: overflows to ``inf`` within a few hundred iterates."""
+
+    dim = 2
+    params = {"a": 10.0}  # noqa: RUF012
+    default_ic = [1.0, 1.0]  # noqa: RUF012
+
+    @staticmethod
+    def _step(x, a):
+        return [a * x[0], a * x[1]]
+
+    @staticmethod
+    def _jacobian(x, a):
+        return [[a, 0.0], [0.0, a]]
+
+
+@pytest.mark.parametrize("backend", ["interp", "jit"])
+def test_engine_map_divergence_message_is_the_engine_seam_message(backend) -> None:
+    """A diverging engine map raises ``ConvergenceError`` from ``_run_map``.
+
+    Pins the exact message the user sees, so removing the (unreachable) family
+    boundary scan cannot silently change the divergence report.
+    """
+    from tsdynamics.errors import ConvergenceError
+
+    with pytest.raises(ConvergenceError) as exc:
+        _Blowup().iterate(steps=1000, ic=[1.0, 1.0], backend=backend)
+    assert str(exc.value) == (
+        "_Blowup: map diverged or produced a non-finite state before reaching 1000 iterations."
+    )
+
+
+def test_reference_map_divergence_message_is_the_per_iterate_message() -> None:
+    """The reference oracle keeps its own per-iterate divergence report."""
+    from tsdynamics.errors import ConvergenceError
+
+    with pytest.raises(ConvergenceError, match=r"non-finite state at iteration \d+ \(0-based"):
+        _Blowup().iterate(steps=1000, ic=[1.0, 1.0], backend="reference")
+
+
+def test_diverging_map_with_explicit_ic_does_not_retry(monkeypatch) -> None:
+    """An explicit ``ic`` raises on the first attempt — retry policy unchanged."""
+    from tsdynamics.errors import ConvergenceError
+
+    calls = {"n": 0}
+    real = type(_Blowup())._iterate_engine
+
+    def counting(self, **kwargs):
+        calls["n"] += 1
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(_Blowup, "_iterate_engine", counting)
+    with pytest.raises(ConvergenceError):
+        _Blowup().iterate(steps=1000, ic=[1.0, 1.0], max_retries=5)
+    assert calls["n"] == 1
+
+
+def test_diverging_map_without_explicit_ic_still_retries(monkeypatch) -> None:
+    """No explicit ``ic`` → the random-IC retry budget is still spent, then raises."""
+    from tsdynamics.errors import ConvergenceError
+
+    calls = {"n": 0}
+    real = type(_Blowup())._iterate_engine
+
+    def counting(self, **kwargs):
+        calls["n"] += 1
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(_Blowup, "_iterate_engine", counting)
+    m = _Blowup()
+    m.ic = None
+    with (
+        pytest.warns(RuntimeWarning, match="Retrying from a new random"),
+        pytest.raises(ConvergenceError),
+    ):
+        m.iterate(steps=1000, max_retries=3)
+    assert calls["n"] == 3

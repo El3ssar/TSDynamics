@@ -349,9 +349,9 @@ def _record_via_step(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Record one parameter value via the per-step protocol path (a ``step()`` loop).
 
-    The fallback for flow wrappers (``PoincareMap`` / ``StroboscopicMap``), maps
-    whose ``_step`` will not lower to the engine IR, and wheel-free environments.
-    Returns the recorded points and the final state.
+    The fallback for flow wrappers (``StroboscopicMap``, a degenerate ``n == 0``
+    ``PoincareMap``), maps whose ``_step`` will not lower to the engine IR, and
+    wheel-free environments.  Returns the recorded points and the final state.
     """
     current.reinit(start)
     for _ in range(transient):
@@ -360,6 +360,49 @@ def _record_via_step(
     for i in range(n):
         rec[i] = current.step()[idx]
     return rec, current.state()
+
+
+def _record_via_trajectory(
+    current: Any, start: Any, transient: int, n: int, idx: list[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Record one ``PoincareMap`` value through :meth:`PoincareMap.trajectory`.
+
+    ``trajectory`` collects the whole section in **one** engine call (the wired
+    Rust event march, stream WS-CROSSKERNEL) rather than re-entering the flow
+    integrator once per detection ``dt``, which is what the ``step()`` loop above
+    does — the documented "``orbit_diagram`` over a ``PoincareMap`` is *not*
+    accelerated" gap.  Measured on a Rössler ``c``-sweep (40 values, 80 crossings
+    each) this is **75x** faster: 64.8 s -> 0.86 s, 1620 -> 21.5 ms per value.
+
+    The semantics map exactly: ``trajectory(n, transient=transient)`` discards
+    ``transient`` crossings and returns the next ``n``, which is precisely what the
+    ``step()`` loop records, and it leaves ``state()`` at the last collected
+    crossing — the same value the loop carries into the next parameter value.
+    ``trajectory`` itself decides whether the engine march applies (a DDE, a stiff
+    ``_default_method``, ``backend="reference"``, or an absent wheel keep the
+    Python loop), and its Python fallback is the *same* ``_advance_to_crossing``
+    the ``step()`` loop drives — byte-identical.  So this needs no eligibility
+    check of its own.
+
+    Where the engine march *does* apply it is faster but **not** identical: it is
+    the fixed-step ``rk4`` kernel at the detection ``dt``, where the ``step()``
+    loop drove the flow's adaptive default (see the ``orbit_diagram`` Notes).  Two
+    consequences a caller should know about:
+
+    * **Accuracy.**  Measured on a Rössler period-1 window at the default
+      ``dt=0.01``, the recorded crossing carries ~1.2e-8 absolute error against a
+      converged reference where the adaptive loop carried ~1.6e-10; both converge
+      as ``O(dt⁴)``, so ``PoincareMap(..., dt=...)`` buys the difference back.
+    * **Stiffness.**  ``rk4`` has a bounded stability region (``|λh| ≲ 2.785``), so
+      a parameter value that makes the flow stiff *relative to* ``dt`` blows the
+      march up where the adaptive loop simply shrank its step.  On the Rössler
+      ``c``-sweep at ``dt=0.01`` that threshold is ``c ≈ 200``.  The failure is
+      loud, not silent — the resulting :class:`ConvergenceError` is caught by the
+      sweep, which records an empty point set and warns for that value.
+    """
+    current.reinit(start)
+    section = current.trajectory(n, transient=transient)
+    return np.asarray(section.y, dtype=float)[:, idx], current.state()
 
 
 def orbit_diagram(
@@ -384,6 +427,40 @@ def orbit_diagram(
     the bifurcation diagram of the flow.  ODE parameter changes reuse the
     compiled module (control parameters), so flow sweeps stay cheap; DDE
     sweeps recompile per value (their structure depends on all parameters).
+
+    Notes
+    -----
+    **How each value is run.**  A genuine :class:`~tsdynamics.families.DiscreteMap`
+    sweeps the *whole* parameter array in one Rust kernel call.  A
+    :class:`~tsdynamics.derived.PoincareMap` collects each value's section in one
+    engine call through :meth:`~tsdynamics.derived.PoincareMap.trajectory` (the
+    wired Rust event march) — ~70x faster than the per-``dt`` ``step()`` loop it
+    replaces.  Everything else (``StroboscopicMap``, a map whose ``_step`` will not
+    lower, a wheel-free environment) drives the per-step protocol loop.
+
+    The Poincaré fast path marches the fixed-step ``rk4`` kernel at the map's
+    detection ``dt`` (see :mod:`tsdynamics.derived._crossings`), which is the same
+    discretisation :func:`~tsdynamics.analysis.poincare_section` and
+    :func:`~tsdynamics.analysis.return_map` already use — so an orbit diagram and
+    a section of the same flow are now consistent with each other.  It is a
+    *different* discretisation from the flow's adaptive default that the old
+    ``step()`` loop used.  Measured over a 40-value Rössler ``c``-cascade at the
+    default ``dt=0.01``: in a periodic window the branch values shift by ~5e-8
+    (up to ~3e-3 for a value sitting right at a window edge, where a tiny shift
+    in the orbit is amplified), and on a chaotic band the two are the same
+    attractor rather than the same points (support bounds agree to ~6e-2).  The
+    detected branch structure — ``OrbitDiagram.periods()`` and
+    ``bifurcation_points()`` — is unchanged, at both a short and a long
+    ``transient``.
+
+    ``rk4`` is fixed-step, so its stability region is bounded (``|λh| ≲ 2.785``).
+    A sweep that runs into a regime where the flow is stiff *relative to* the
+    detection ``dt`` therefore records an empty point set with a
+    ``RuntimeWarning`` for those values, where the old adaptive ``step()`` loop
+    would have shrunk its step and carried on (on the Rössler ``c``-sweep at
+    ``dt=0.01`` this starts at ``c ≈ 200``).  Pass a smaller ``dt`` to
+    :class:`~tsdynamics.derived.PoincareMap` when sweeping into a fast-timescale
+    regime.
 
     Parameters
     ----------
@@ -476,6 +553,7 @@ def orbit_diagram(
 
     import warnings
 
+    from tsdynamics.derived.poincare import PoincareMap
     from tsdynamics.errors import BackendError
     from tsdynamics.families import DiscreteMap
 
@@ -525,6 +603,18 @@ def orbit_diagram(
             # leaf types) and fall back to the per-value/per-step loop below.
             points = []
 
+    # A ``PoincareMap`` collects each value's section in ONE engine call through
+    # ``trajectory`` (the wired Rust event march) instead of re-entering the flow
+    # integrator per detection ``dt`` — the flagship "bifurcation diagram of a flow"
+    # path, previously ~70x slower than necessary (the gap CLAUDE.md and
+    # ``derived/_crossings`` both call out).  ``trajectory`` owns the eligibility
+    # decision and falls back to the very ``_advance_to_crossing`` loop
+    # ``_record_via_step`` drives, so the answer is unchanged where the fast path
+    # declines.  A degenerate ``n == 0`` keeps the step loop: ``trajectory`` records
+    # nothing, so it cannot leave ``state()`` at the last *discarded* transient
+    # crossing the way the step loop does, and ``carry_state`` would drift.
+    use_trajectory = isinstance(system, PoincareMap) and n > 0
+
     # The per-value protocol path: flow wrappers and the engine-sweep fallback.
     for v in values_arr:
         current = system.with_params(**{param: v})
@@ -534,7 +624,8 @@ def orbit_diagram(
             # fallback (a non-lowerable map / wheel-free env) both drive the
             # per-step protocol loop — byte-identical to the engine path on a
             # lowerable map.
-            rec, last = _record_via_step(current, start, transient, n, idx)
+            record = _record_via_trajectory if use_trajectory else _record_via_step
+            rec, last = record(current, start, transient, n, idx)
         except RuntimeError as exc:
             # One divergent value must not discard the whole sweep: record an
             # empty point set and restart the next value from `ic`.

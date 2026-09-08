@@ -10,7 +10,7 @@ from tsdynamics.families import ContinuousSystem, DelaySystem, DiscreteMap
 from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
 from ._base import DerivedSystem
-from ._variational import build_variational_tape, embed_extended, split_extended
+from ._variational import build_variational_tape_cached, embed_extended, split_extended
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.viz.spec import PlotSpec
@@ -209,10 +209,17 @@ class TangentSystem(DerivedSystem):
         current structural values and rebuilt when they differ; an ordinary
         *control*-parameter change reads live from the system and needs no
         rebuild.
+
+        The per-instance key above only spares a *repeat* ``reinit`` on the **same**
+        ``TangentSystem``; every ``ContinuousSystem.lyapunov_spectrum`` call
+        constructs a fresh one, so the build itself is memoised process-wide by
+        :func:`~tsdynamics.derived._variational.build_variational_tape_cached` (the
+        shared bounded-LRU tape cache).  That turns a repeat spectrum into a cache
+        hit — worth ~17 s per call on a 32-D field system.
         """
         key = tuple(sorted(self.system._structural_vals().items()))
         if self._ext_tape is None or key != self._ext_tape_key:
-            self._ext_tape = build_variational_tape(self.system, self.k)
+            self._ext_tape = build_variational_tape_cached(self.system, self.k)
             self._ext_tape_key = key
             self._ext_tape_arrays = None  # re-marshal the wire arrays for the new tape
         w0 = np.eye(self.system.dim)[:, : self.k]
