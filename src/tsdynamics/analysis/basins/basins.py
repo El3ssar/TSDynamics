@@ -381,6 +381,15 @@ def basins_of_attraction(
         If ``system`` is a delay or stochastic system (unsupported by the
         recurrence finder).
 
+    Warns
+    -----
+    UserWarning
+        When a located set fails the invariance audit and is discarded — the
+        recurrence predicate mistook slow motion for convergence (``dt`` too
+        small for the cell size).  Every located attractor is verified before it
+        is returned; see
+        :func:`~tsdynamics.analysis.basins.attractors.audit_attractors`.
+
     References
     ----------
     G. Datseris and A. Wagemakers, "Effortless estimation of basins of
@@ -471,6 +480,15 @@ def basin_fractions(
     TypeError
         If ``system`` is a delay or stochastic system (unsupported by the
         recurrence finder).
+
+    Warns
+    -----
+    UserWarning
+        When a located set fails the invariance audit and is discarded — the
+        recurrence predicate mistook slow motion for convergence (``dt`` too
+        small for the cell size).  Every located attractor is verified before it
+        is returned; see
+        :func:`~tsdynamics.analysis.basins.attractors.audit_attractors`.
 
     References
     ----------

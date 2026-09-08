@@ -307,3 +307,89 @@ def test_zero_one_short_series_raises_typed_error():
         zero_one_test(np.zeros(50))
     with pytest.raises(InvalidParameterError, match="long series"):
         zero_one_test(np.empty(0))
+
+
+# ---------------------------------------------------------------------------
+# 0–1 test: the oversampling guard
+#
+# The Gottwald–Melbourne test needs an observable sampled about once per
+# oscillation.  Handed an oversampled flow it does not degrade gracefully — it
+# reports a plainly chaotic orbit as REGULAR: Lorenz x(t) at dt = 0.02 gave
+# K = -0.02.  The library walked straight into that with no guard at all.
+# ---------------------------------------------------------------------------
+
+
+def _lorenz_x(dt: float, final_time: float = 650.0) -> np.ndarray:
+    lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+    return lor.integrate(final_time=final_time, dt=dt, ic=[1.0, 1.0, 1.0]).after(50.0).y[:, 0]
+
+
+@pytest.mark.parametrize("dt", [0.01, 0.02, 0.05, 0.1])
+def test_zero_one_chaotic_flow_is_chaotic_at_every_sampling_rate(dt: float):
+    """A chaotic Lorenz must give K ≈ 1 however finely it was sampled.
+
+    Regression: at dt = 0.02 this returned K = -0.02 ("regular").
+    """
+    result = zero_one_test(_lorenz_x(dt, final_time=350.0))
+    assert float(result) > 0.9, (float(result), result.meta)
+    assert result.meta["samples_per_oscillation"] > 10.0
+    assert result.meta["stride"] > 1, "an oversampled flow must have been decimated"
+
+
+def test_zero_one_oversampling_ignore_reproduces_the_defect():
+    """``oversampling='ignore'`` pins the failure the guard exists to prevent."""
+    result = zero_one_test(_lorenz_x(0.02, final_time=130.0)[:4000], oversampling="ignore")
+    assert float(result) < 0.5, float(result)
+
+
+def test_zero_one_oversampling_warn_says_so_and_does_not_touch_the_data():
+    from tsdynamics.analysis.chaos.zero_one import OversamplingWarning
+
+    x = _lorenz_x(0.02, final_time=130.0)[:4000]
+    with pytest.warns(OversamplingWarning, match="samples per oscillation"):
+        result = zero_one_test(x, oversampling="warn")
+    assert result.meta["stride"] == 1
+    assert result.meta["n_samples"] == 4000
+
+
+def test_zero_one_warns_when_the_record_is_too_short_to_decimate_enough():
+    """Decimation is capped at a floor of kept samples; when that is not enough, say so."""
+    from tsdynamics.analysis.chaos.zero_one import OversamplingWarning
+
+    with pytest.warns(OversamplingWarning, match="too short to decimate"):
+        zero_one_test(_lorenz_x(0.02, final_time=80.0)[:1200])
+
+
+@pytest.mark.parametrize("dt", [0.02, 0.2])
+def test_zero_one_periodic_flow_stays_regular(dt: float):
+    """The guard must not manufacture chaos: a limit cycle keeps K ≈ 0."""
+    periodic = ts.systems.Rossler(params={"a": 0.1, "b": 0.1, "c": 6.0}, ic=[1.0, 1.0, 1.0])
+    result = zero_one_test(periodic, component=0, dt=dt, final_time=2000.0, transient=400.0)
+    assert abs(float(result)) < 0.1, float(result)
+
+
+def test_zero_one_oversampled_quasiperiodic_stays_regular():
+    """An *oversampled* 2-torus is regular before and after the guard decimates it."""
+    t = np.arange(200_000) * 0.02
+    result = zero_one_test(np.sin(t) + np.sin(np.sqrt(2.0) * t))
+    assert result.meta["stride"] > 1
+    assert abs(float(result)) < 0.1, float(result)
+
+
+@pytest.mark.parametrize(
+    ("system", "expected_chaotic"),
+    [
+        (ts.systems.Logistic(params={"r": 4.0}, ic=[0.1]), True),
+        (ts.systems.Logistic(params={"r": 3.5}, ic=[0.1]), False),
+    ],
+)
+def test_zero_one_maps_are_left_alone_by_the_guard(system, expected_chaotic):
+    """A map is already sampled once per iteration — stride must stay 1."""
+    result = zero_one_test(system, n=5000, transient=1000)
+    assert result.meta["stride"] == 1
+    assert (float(result) > 0.9) is expected_chaotic
+
+
+def test_zero_one_rejects_an_unknown_oversampling_policy():
+    with pytest.raises(InvalidParameterError, match="oversampling"):
+        zero_one_test(np.zeros(500), oversampling="maybe")

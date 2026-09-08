@@ -89,6 +89,81 @@ class DuffingTwoWell(ts.ContinuousSystem):
         return (y, x - x**3 - delta * y)
 
 
+class NestedLimitCycles(ts.ContinuousSystem):
+    r"""Two **concentric** attracting limit cycles: the textbook coincident-centroid case.
+
+    In polar form :math:`\dot r = -r(r-1)(r-2)(r-3)`, :math:`\dot\theta = 1`, so
+    :math:`r = 1` and :math:`r = 3` are attracting cycles and :math:`r = 2` is the
+    repelling separatrix between their basins.  Ground truth: **2** attractors,
+    verified by integration (``r0 = 0.5, 1.5 -> 1.0``; ``r0 = 2.5, 3.5 -> 3.0``).
+
+    Both rings are centred on the origin, so their point clouds have the *same*
+    centroid — which is why a centroid-only proximity merge cannot tell them
+    apart (see :meth:`_AttractorMapper.merge_map`).
+    """
+
+    params: dict[str, float] = {}
+    dim = 2
+    variables = ("x", "y")
+
+    @staticmethod
+    def _equations(Y, t):
+        import symengine as se
+
+        x, y = Y(0), Y(1)
+        r = se.sqrt(x * x + y * y + 1e-30)
+        g = -(r - 1) * (r - 2) * (r - 3) / r
+        return (x * g - y, y * g + x)
+
+
+class SaddleNodeGhost(ts.ContinuousSystem):
+    r"""``x' = mu + x**2`` with ``mu > 0`` — a system with provably NO attractor.
+
+    Past the saddle-node bifurcation the right-hand side is strictly positive
+    (``mu + x**2 >= mu > 0``), so every orbit increases monotonically and escapes
+    to ``+inf``: the ground truth is *zero* attractors and every initial
+    condition diverged.  What makes it the sharp test for the recurrence machine
+    is the **bottleneck** near ``x = 0``, where ``x' = mu`` is tiny: an orbit
+    crawls there for many steps without leaving its cell, which the raw
+    "consecutive steps into an already-visited cell" predicate cannot tell from
+    convergence.
+    """
+
+    name = "SaddleNodeGhost"
+    dim = 1
+    params = {"mu": 0.01}
+    default_ic = [-0.9]
+
+    @staticmethod
+    def _equations(Y, t, mu):
+        return (mu + Y(0) ** 2,)
+
+
+class SaddleNodePair(ts.ContinuousSystem):
+    r"""``x' = -0.01 + x**2`` — ONE attractor and one repellor, in closed form.
+
+    Before the saddle-node bifurcation the right-hand side has two roots,
+    :math:`x = \pm 0.1`, with :math:`f'(x) = 2x`:
+
+    * :math:`x = -0.1` is **stable** (:math:`f' = -0.2 < 0`) — the single
+      attractor, whose basin is :math:`(-\infty, +0.1)`;
+    * :math:`x = +0.1` is **unstable** (:math:`f' = +0.2 > 0`) — a repellor.
+      Everything above it escapes to :math:`+\infty`.
+
+    Ground truth: **1** attractor.  Both roots are *invariant*, though, and on a
+    grid whose lattice contains them a seed lands on each exactly and sits still,
+    so an audit that tests only invariance certifies both.
+    """
+
+    dim = 1
+    params = {"mu": -0.01}
+    default_ic = [-0.5]
+
+    @staticmethod
+    def _equations(Y, t, mu):
+        return (mu + Y(0) ** 2,)
+
+
 _MAGNETS = ((1.0, 0.0), (-0.5, 0.8660254037844386), (-0.5, -0.8660254037844386))
 
 
@@ -427,6 +502,126 @@ def test_find_attractors_rejects_unsupported_system():
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("dt", [0.05, 0.02])
+def test_slow_transient_is_not_reported_as_an_attractor(dt):
+    r"""A bottleneck crawl is not an attractor, however slowly it is sampled.
+
+    On ``x' = mu + x**2`` (``mu = 0.01``) no attractor exists, yet the raw
+    recurrence predicate declared **2** at ``dt = 0.05`` and **4** at
+    ``dt = 0.02`` — and ``basin_fractions`` handed 45 % of the region to them.
+    Refining ``dt`` made it worse, because the crawl then covers even less of a
+    cell per step.  The invariance audit re-marches from each located set: the
+    crawl leaves the region and never comes back, so it is discarded (loudly) and
+    its initial conditions are reported as diverged, which is the truth.
+    """
+    with pytest.warns(UserWarning, match="invariance check"):
+        ats = bas.find_attractors(
+            SaddleNodeGhost(), Box([-1.0], [1.0]), n_seeds=200, resolution=100, dt=dt, seed=0
+        )
+    assert len(ats) == 0
+    assert ats.diverged == ats.seeds == 200
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("resolution", [401, 201])
+def test_unstable_equilibrium_is_not_reported_as_an_attractor(resolution):
+    r"""``x' = -0.01 + x**2`` has ONE attractor; the repellor must not be counted.
+
+    Closed form: roots at :math:`\pm 0.1` with :math:`f'(x) = 2x`, so
+    :math:`-0.1` is stable and :math:`+0.1` is unstable.  The grids used here put
+    a lattice point on :math:`+0.1` exactly (``2 / 400 = 0.005`` and
+    ``2 / 200 = 0.01`` both divide ``0.1``), that seed sits still, and the
+    recurrence predicate calls it an attractor.  Invariance cannot separate the
+    two — both roots are invariant — so this is exactly the case the *attraction*
+    half of the audit exists for: one cell either side of :math:`+0.1` escapes
+    upward and falls to :math:`-0.1` downward, so neither neighbour comes back.
+    """
+    with pytest.warns(UserWarning) as caught:
+        res = bas.basins_of_attraction(
+            SaddleNodePair(), Grid([-1.0], [1.0], (resolution,)), dt=0.05
+        )
+    # the repellor is rejected by the ATTRACTION check specifically (the crawl
+    # just above it is separately rejected by the invariance check)
+    assert any("attraction check" in str(w.message) for w in caught)
+    assert res.n_attractors == 1
+    (only,) = res.attractors
+    assert float(only.points.mean()) == pytest.approx(-0.1, abs=1e-3)
+
+
+@pytest.mark.slow
+def test_stable_equilibrium_of_the_same_system_survives_the_audit():
+    """The attraction check keeps the *stable* root, and its whole basin.
+
+    The counterpart of the test above: the basin of :math:`x = -0.1` is
+    :math:`(-\\infty, +0.1)`, i.e. 55 % of ``[-1, 1]``, and every one of those
+    cells must still be labelled after the audit — a guard that the fix rejects
+    repellors without also eating attractors.
+    """
+    with pytest.warns(UserWarning) as caught:
+        res = bas.basins_of_attraction(SaddleNodePair(), Grid([-1.0], [1.0], (401,)), dt=0.05)
+    assert any("attraction check" in str(w.message) for w in caught)
+    (att_id,) = res.attractors.ids
+    captured = float(np.mean(res.labels == att_id))
+    # analytic basin share of [-1, 1]: (0.1 - (-1)) / 2 = 0.55
+    assert captured == pytest.approx(0.55, abs=0.02)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("dt", [1.0, 0.1, 0.05, 0.01])
+def test_lorenz_attractor_is_not_fragmented_by_the_recurrence_machine(dt):
+    """The Lorenz attractor is ONE attractor at every sampling step.
+
+    The orbit crawls past the unstable ``C+`` spiral, which the raw predicate
+    reported as a *second* attractor (centre ``~[8.5, 8.6, 27.1]``, i.e.
+    ``sqrt(beta(rho-1)) = 8.485``) at ``dt <= 0.1`` — 2 attractors at
+    ``dt = 0.1 / 0.05`` and 4 at ``dt = 0.01``, with ``basin_fractions``
+    splitting the region between them.  The fragments are mutually reachable (an
+    orbit on one enters the other's cells), which the centroid-proximity merge
+    cannot see but the audit's reachability grouping does.
+    """
+    ats = bas.find_attractors(
+        ts.systems.Lorenz(),
+        Box([-25.0, -30.0, 0.0], [25.0, 30.0, 55.0]),
+        n_seeds=200,
+        resolution=30,
+        dt=dt,
+        max_steps=3000,
+        seed=0,
+    )
+    assert len(ats) == 1
+    assert ats.diverged == 0
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("resolution", [30, 60, 120])
+def test_concentric_attractors_are_not_merged_by_a_shared_centroid(resolution):
+    """Two nested limit cycles are TWO attractors, at every resolution.
+
+    The proximity dedup used to compare *centroids* only.  Concentric attractors
+    share one exactly — both rings of :class:`NestedLimitCycles` centre on the
+    origin — so at ``resolution = 30`` and ``60`` (where two cell diagonals
+    exceed nothing at all, the centroid distance being ~0) the two cycles were
+    merged into a single reported attractor whose pooled cloud sits at mean
+    radius **2.0**: the midpoint of a ring at 1 and a ring at 3, a state the
+    system never visits.  Requiring the clouds to *touch* as well separates them;
+    for fixed-point attractors the two distances coincide, so nothing that
+    merged before stops.
+    """
+    ats = bas.find_attractors(
+        NestedLimitCycles(),
+        Box([-4.0, -4.0], [4.0, 4.0]),
+        n_seeds=200,
+        resolution=resolution,
+        dt=0.5,
+        max_steps=4000,
+        seed=0,
+    )
+    assert len(ats) == 2
+    radii = sorted(float(np.mean(np.linalg.norm(a.points, axis=1))) for a in ats)
+    np.testing.assert_allclose(radii, [1.0, 3.0], atol=1e-3)
+
+
+@pytest.mark.slow
 def test_newton_map_thirds_basin_fractions():
     """Newton ``z**3 = 1``: three Wada basins, each 1/3 by C3 symmetry."""
     nm = NewtonMap()
@@ -547,21 +742,35 @@ def test_magnetic_pendulum_three_attractors():
 
 @pytest.mark.slow
 def test_magnetic_pendulum_fractal_basin_image():
+    r"""Exactly the three magnets, with the on-axis saddle rejected by the audit.
+
+    The ``y = v_y = 0`` plane is invariant under the pendulum's reflection
+    symmetry, and it carries an unstable equilibrium between the magnet at
+    :math:`(1, 0)` and the other two (measured here at :math:`x \approx -0.126`).
+    Five seeds of the 35x35 slice land on it and sit still, so the recurrence
+    predicate declares it an attractor; it is invariant but does not attract, and
+    the attraction audit discards it — which is why this call warns.
+    """
     mp = MagneticPendulum()
     slice_grid = Grid([-1.3, -1.3, 0.0, 0.0], [1.3, 1.3, 0.0, 0.0], (35, 35, 1, 1))
     rbox = Box([-1.6, -1.6, -3.0, -3.0], [1.6, 1.6, 3.0, 3.0])
-    res = bas.basins_of_attraction(
-        mp,
-        slice_grid,
-        recurrence=rbox,
-        recurrence_resolution=(64, 64, 48, 48),
-        dt=0.5,
-        max_steps=1000,
-        consecutive_recurrences=20,
-        attractor_locate_steps=12,
-    )
-    assert res.n_attractors >= 3
-    # the three magnet basins dominate the slice.
+    with pytest.warns(UserWarning, match="attraction check"):
+        res = bas.basins_of_attraction(
+            mp,
+            slice_grid,
+            recurrence=rbox,
+            recurrence_resolution=(64, 64, 48, 48),
+            dt=0.5,
+            max_steps=1000,
+            consecutive_recurrences=20,
+            attractor_locate_steps=12,
+        )
+    assert res.n_attractors == 3
+    # the three surviving attractors ARE the three magnets ...
+    centers = np.array([a.points.mean(axis=0)[:2] for a in res.attractors])
+    for mag in _MAGNETS:
+        assert np.linalg.norm(centers - np.array(mag), axis=1).min() < 0.1
+    # ... and their basins dominate the slice.
     top3 = sum(sorted((v for k, v in res.fractions.items() if k >= 1), reverse=True)[:3])
     assert top3 > 0.95
     be = bas.basin_entropy(res, box_size=4)

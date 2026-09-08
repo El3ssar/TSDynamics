@@ -21,6 +21,8 @@ flows) so they stay in the fast tier.
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 
@@ -31,6 +33,14 @@ from tsdynamics.derived import (
     ProjectedSystem,
     StroboscopicMap,
     TangentSystem,
+)
+from tsdynamics.families._accessors import (
+    ACCESSOR_DELEGATIONS,
+    ChaosAccessor,
+    DimensionsAccessor,
+    LyapunovAccessor,
+    RecurrenceAccessor,
+    subject_kind,
 )
 from tsdynamics.systems import Henon, Lorenz, Rossler
 
@@ -262,3 +272,222 @@ def test_accessor_repr():
     """The accessor repr names its kind and its system (helps in a notebook)."""
     assert repr(Lorenz().lyap) == "LyapunovAccessor(Lorenz)"
     assert repr(Henon().dims) == "DimensionsAccessor(Henon)"
+
+
+# --------------------------------------------------------------------------- #
+# the delegation contract (stream v6 api-core)
+# --------------------------------------------------------------------------- #
+#
+# ``sys.chaos.zero_one()`` used to pre-run the system with the *family's*
+# ``run()`` defaults (dt = 0.01) and hand the resulting oversampled trajectory to
+# the SYSTEM-first ``zero_one_test`` as if it were measured data.  Successive
+# samples were then heavily correlated and the 0-1 test collapsed: Lorenz —
+# unambiguously chaotic — measured K = -0.026 through the accessor against
+# K = 0.999 through the free function.  Plausible number, qualitatively wrong
+# answer, no warning.
+#
+# The tests below close the whole class of bug rather than that one instance:
+# every accessor method is checked *programmatically* against the signature of
+# the free function it delegates to.
+
+
+def test_every_accessor_method_is_declared():
+    """Every public accessor method appears in ``ACCESSOR_DELEGATIONS``.
+
+    The delegation table is what the agreement tests below iterate, so a new
+    accessor method must be registered (and thereby checked) to pass.
+    """
+    for cls in (LyapunovAccessor, ChaosAccessor, DimensionsAccessor, RecurrenceAccessor):
+        declared = set(ACCESSOR_DELEGATIONS[cls.__name__])
+        public = {
+            name for name, obj in vars(cls).items() if callable(obj) and not name.startswith("_")
+        }
+        assert public == declared, f"{cls.__name__}: {public ^ declared} undeclared/stale"
+
+
+def test_declared_free_functions_exist_and_are_the_public_ones():
+    """Each declared target resolves to the same object the top level exports."""
+    for methods in ACCESSOR_DELEGATIONS.values():
+        for free_name in methods.values():
+            free = getattr(ts.analysis, free_name)
+            assert callable(free)
+            assert getattr(ts, free_name) is free
+
+
+@pytest.mark.parametrize(
+    ("accessor", "method", "free_name"),
+    [
+        (acc, meth, free)
+        for acc, methods in ACCESSOR_DELEGATIONS.items()
+        for meth, free in methods.items()
+    ],
+)
+def test_accessor_first_argument_matches_the_free_function(accessor, method, free_name):
+    """The accessor hands the free function the subject *its signature asks for*.
+
+    A ``system``-first free function drives the system itself (with the horizon
+    defaults its own method needs); a ``data``-first one consumes a measured
+    point set.  The accessor's routing is read off the signature, so it can never
+    disagree — this asserts the two agree for every registered pair.
+    """
+    free = getattr(ts.analysis, free_name)
+    kind = subject_kind(free)
+    first = next(iter(inspect.signature(free).parameters))
+    assert kind == ("system" if first == "system" else "data")
+
+    # A ``system``-first accessor method must NOT accept ``run_kwargs``: pre-running
+    # the system is exactly the mistake that produced the zero_one defect.
+    acc_cls = {
+        c.__name__: c
+        for c in (LyapunovAccessor, ChaosAccessor, DimensionsAccessor, RecurrenceAccessor)
+    }[accessor]
+    acc_params = inspect.signature(getattr(acc_cls, method)).parameters
+    if kind == "system":
+        assert "run_kwargs" not in acc_params, (
+            f"{accessor}.{method} takes run_kwargs but {free_name} drives the system itself"
+        )
+
+
+def test_chaos_zero_one_agrees_with_the_free_function_on_a_flow():
+    """``lor.chaos.zero_one()`` == ``ts.zero_one_test(lor)`` — the regression.
+
+    Independent truth: the Lorenz attractor at the standard parameters is chaotic,
+    so the Gottwald-Melbourne indicator must land near 1.  Before the fix the
+    accessor returned K = -0.026 ("regular") while the free function returned
+    K = 0.999 ("chaotic").
+    """
+    lor = Lorenz(ic=[1.0, 1.0, 1.0])
+    free = ts.zero_one_test(lor, component=0)
+    acc = lor.chaos.zero_one(component=0)
+    assert float(acc) == float(free)
+    assert float(acc) > 0.9  # chaotic, the literature answer
+
+
+def test_chaos_zero_one_agrees_with_the_free_function_on_a_map():
+    """The same agreement on a discrete map, both branches of the K threshold."""
+    chaotic = ts.systems.Logistic(params={"r": 4.0}, ic=[0.4])
+    periodic = ts.systems.Logistic(params={"r": 3.2}, ic=[0.4])
+    for sys_, expect_chaos in ((chaotic, True), (periodic, False)):
+        free = float(ts.zero_one_test(sys_, n=3000, component=0))
+        acc = float(sys_.chaos.zero_one(n=3000, component=0))
+        assert acc == free
+        assert (acc > 0.5) is expect_chaos
+
+
+def test_chaos_zero_one_rejects_run_kwargs():
+    """``run_kwargs`` is gone: the free function owns the sampling grid.
+
+    Pre-running the system is exactly the mistake that produced the wrong K, so
+    asking for it is refused loudly rather than silently ignored.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="drives the system itself"):
+        Lorenz().chaos.zero_one(run_kwargs={"final_time": 200.0})
+
+
+def test_data_first_accessors_still_accept_a_measured_series():
+    """The ``data``-first accessors keep delegating a supplied series verbatim."""
+    data = _henon_data()
+    h = Henon()
+    assert float(h.dims.correlation(data)) == float(ts.correlation_dimension(data))
+    assert h.recurrence.rqa(data, recurrence_rate=0.05).determinism == (
+        ts.rqa(data, recurrence_rate=0.05).determinism
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The delegation contract, checked BEHAVIOURALLY (v6 api-core follow-up)
+# --------------------------------------------------------------------------- #
+#
+# ``test_accessor_first_argument_matches_the_free_function`` above asserts
+# ``subject_kind(free) == ("system" if first == "system" else "data")`` — which is
+# the definition of ``subject_kind``, i.e. a tautology that would still pass if
+# ``_delegate`` handed every free function the wrong subject.  The test below
+# closes the loop for real: it replaces each free function with a recorder and
+# asserts what the accessor ACTUALLY passed as the first argument.
+
+
+def _record_call(monkeypatch, free_name):
+    """Patch ``ts.analysis.<free_name>`` with a recorder and return the record.
+
+    The recorder borrows the real function's ``__signature__`` because
+    ``_delegate`` routes on it (:func:`subject_kind` reads the first parameter's
+    name) — a stub with a differently named first argument would silently be
+    treated as ``data``-first and the test would prove nothing.
+    """
+    seen: dict[str, object] = {}
+    real_sig = inspect.signature(getattr(ts.analysis, free_name))
+
+    def _recorder(subject, *args, **kwargs):
+        seen["subject"] = subject
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return "sentinel"
+
+    _recorder.__signature__ = real_sig  # type: ignore[attr-defined]
+    monkeypatch.setattr(ts.analysis, free_name, _recorder, raising=True)
+    return seen
+
+
+@pytest.mark.parametrize(
+    ("accessor", "method", "free_name"),
+    [
+        (acc, meth, free)
+        for acc, methods in ACCESSOR_DELEGATIONS.items()
+        for meth, free in methods.items()
+    ],
+)
+def test_accessor_actually_passes_the_declared_subject(monkeypatch, accessor, method, free_name):
+    """Every accessor hands its free function the subject that function asks for.
+
+    ``system``-first free functions must receive the *bound system itself* (they
+    drive the integration with the horizon their own method needs — pre-running
+    the system is precisely the mistake that made ``chaos.zero_one`` call Lorenz
+    regular).  ``data``-first ones must receive the measured point set: verbatim
+    when the caller supplies one, and a freshly-run Trajectory otherwise.
+    """
+    system = Henon(ic=[0.1, 0.1])
+    bound = getattr(
+        {
+            "lyap": system.lyap,
+            "chaos": system.chaos,
+            "dims": system.dims,
+            "recurrence": system.recurrence,
+        }[
+            {
+                "LyapunovAccessor": "lyap",
+                "ChaosAccessor": "chaos",
+                "DimensionsAccessor": "dims",
+                "RecurrenceAccessor": "recurrence",
+            }[accessor]
+        ],
+        method,
+    )
+    # The expectation is read from the ANALYSIS layer's own signature, not from
+    # ``subject_kind`` — otherwise a broken ``subject_kind`` would move the
+    # expectation with the behaviour and the test would pass through the bug.
+    system_first = next(iter(inspect.signature(getattr(ts.analysis, free_name)).parameters)) == (
+        "system"
+    )
+
+    # 1. no data supplied
+    seen = _record_call(monkeypatch, free_name)
+    assert bound() == "sentinel"
+    if system_first:
+        assert seen["subject"] is system, f"{accessor}.{method} did not pass the system"
+    else:
+        assert isinstance(seen["subject"], (np.ndarray, ts.Trajectory)), (
+            f"{accessor}.{method} passed {type(seen['subject'])!r}, not a point set"
+        )
+
+    # 2. an accessor that exposes ``data`` forwards it verbatim, whatever the kind
+    #    (``lyap.spectrum`` / ``lyap.maximal`` take none; ``chaos.gali`` /
+    #    ``chaos.expansion_entropy`` spend their first positional slot on ``k`` /
+    #    ``region``, so there is nothing to forward there).
+    acc_params = list(inspect.signature(bound).parameters)
+    if acc_params and acc_params[0] == "data":
+        data = np.asarray(_henon_data(), dtype=float)
+        seen = _record_call(monkeypatch, free_name)
+        assert bound(data) == "sentinel"
+        assert seen["subject"] is data, f"{accessor}.{method} did not forward the supplied data"

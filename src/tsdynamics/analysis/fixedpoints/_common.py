@@ -337,27 +337,107 @@ def dedup_points(points: list[np.ndarray], tol: float) -> list[np.ndarray]:
     return kept
 
 
+#: Samples kept from the burn-in orbit that seeds the automatic search box, and
+#: the discarded transient before them.  At the fixed ``h = 0.01`` RK4 step this
+#: is **20 time units** of flow after a 5-unit transient (a map takes the same
+#: counts in iterations).  The v5 values were ``200`` / ``50`` — 2.0 time units,
+#: which for anything slower than Lorenz is a short *arc*, not the attractor:
+#: Rossler (period ~6) produced the hull ``lo=[-1.58, -0.14, 0.03]``,
+#: ``hi=[1.05, 1.09, 0.04]`` and ``fixed_points`` then found 1 of its 2
+#: equilibria at every seed, silently.
+#:
+#: **This is a fixed budget on purpose; an adaptive one was tried and rejected.**
+#: The measurements, so the next reader does not have to redo them:
+#:
+#: * cost — the burn-in is **0.11 s** for Lorenz (dim 3) and **0.13 s** for
+#:   KuramotoSivashinsky (dim 32), against 0.011 s / 0.013 s at the v5 counts.
+#:   It is Python-loop bound, not dimension bound (a 10x jump in ``dim`` costs
+#:   16 %), so "scale the budget with ``dim``" is not the lever it looks like.
+#: * it is not the bottleneck — 25 ``fixed_points`` calls over five catalogue
+#:   flows take **11.4 s** at ``200``/``50`` and **10.2 s** at ``2000``/``500``.
+#:   The short budget is *slower end to end*: a poorer box costs more in
+#:   root-finding than the shorter orbit saves.
+#: * "stop when the hull stops growing" is **unsafe** — a chaotic hull grows in
+#:   bursts.  Rossler's is unchanged to 0.3 % of a span from sample 100 to 1200,
+#:   then grows **0.92 spans** between 1600 and 2000; any patience rule stops in
+#:   that quiet stretch, and ``fixed_points(Rossler())`` then finds 1 of its 2
+#:   equilibria (measured over seeds 0-4 at ``n <= 1200``).
+#: * "stop when the state stops moving" is **not exact** — the natural relative
+#:   test floors its scale at 1, so on an orbit converging to the origin it fires
+#:   while the state is still travelling: on ``x' = -x, y' = -2y`` it fires at
+#:   sample 1803 of 2000 with ``8.5e-11`` of travel still to come, i.e. it moves
+#:   the hull for a 9 % saving on the few systems where it fires at all.
+#:
+#: The honest lever, if this ever does become hot, is to run the burn-in on the
+#: Rust engine instead of this pure-Python RK4 loop — which changes the sampled
+#: orbit and so every seed, and needs its own validation pass.
+ORBIT_SAMPLES = 2000
+ORBIT_TRANSIENT = 500
+
+#: Fractional padding of the orbit hull for the *outer* seed box, and the share
+#: of ``n_seeds`` spent on it.  The **inner** box is the bare hull (pad ``0``).
+#:
+#: The two boxes answer the two places a flow's equilibria are found, and the
+#: split is what keeps both reachable at one seed budget:
+#:
+#: * **inside the hull** — Thomas has 27 equilibria, Lorenz 3 and Chua 3, all
+#:   within the attractor's own bounding box.  Density here is the binding
+#:   constraint, so the bare hull gets the full ``n_seeds``.
+#: * **outside it** — Rossler's second equilibrium is at
+#:   ``(5.69, -28.47, 28.47)`` while its attractor never leaves ``|y| < 12``.
+#:   The padded box reaches those for ``HULL_PAD_FRACTION`` of the budget.
+#:
+#: **Padding is expensive and buys little, so it is kept small.** A box padded by
+#: ``p`` spans has ``(1 + 2p)**dim`` times the volume of the hull — at ``p = 4``
+#: that is 729x in 3-D and ``9**32`` in 32-D, i.e. the seeds land nowhere near
+#: anything.  Measured over 17 catalogue flows x 3-4 seeds: an extra box at
+#: ``p = 4`` (a ``WIDE_PAD`` that used to live here) changed **no** count on any
+#: system, including the Rossler case it was introduced for — the long burn-in
+#: hull already reaches that equilibrium through ``p = 0.5``.  Spending the same
+#: seeds on the bare hull instead takes Thomas from 19/23/19 recovered to
+#: **27/27/27** (the rigorous Krawczyk count) and lifts KuramotoSivashinsky
+#: (dim 32) off zero, while Lorenz / Rossler / Chua / Halvorsen / Aizawa /
+#: RabinovichFabrikant / Dadras / ChenLee / … are unchanged, at 11 % less wall
+#: time.
+HULL_PAD = 0.5
+
+#: Outer-box seeds as a fraction of ``n_seeds`` (see :data:`HULL_PAD`).  Total
+#: seed count is unchanged from the two-box scheme this replaced: ``1.5 *
+#: n_seeds`` plus 20 on-orbit points.
+HULL_PAD_FRACTION = 0.5
+
+
+def hull_box(orbit: np.ndarray, dim: int, pad: float) -> tuple[np.ndarray, np.ndarray]:
+    """Bounding box of ``orbit`` grown by ``pad`` spans on each side.
+
+    Falls back to ``[-2, 2]^dim`` for an empty orbit (one that diverged or could
+    not be sampled).  A degenerate axis (span below ``1e-3``, e.g. a coordinate
+    that is constant along the orbit) is given unit span so the box is never
+    flat.
+    """
+    if orbit.size == 0:
+        return -2.0 * np.ones(dim), 2.0 * np.ones(dim)
+    lo, hi = orbit.min(axis=0), orbit.max(axis=0)
+    span = np.where(hi - lo < 1e-3, 1.0, hi - lo)
+    return lo - pad * span, hi + pad * span
+
+
 def resolve_box(
     system: SystemBase, region: Any, dim: int, rng: np.random.Generator
 ) -> tuple[np.ndarray, np.ndarray]:
     """Resolve the search ``region`` to ``(lo, hi)`` arrays of length ``dim``.
 
     Accepts a :class:`~tsdynamics.data.Box` / :class:`~tsdynamics.data.Grid`
-    (reads its ``lo`` / ``hi``), a ``(lo, hi)`` tuple, or ``None`` — which uses a
-    burn-in orbit's bounding box padded by 50 % (falling back to ``[-2, 2]^dim``
-    if the orbit diverges or cannot be sampled).
+    (reads its ``lo`` / ``hi``), a ``(lo, hi)`` tuple, or ``None`` — which uses
+    the burn-in orbit's bounding box padded by :data:`HULL_PAD` (falling back to
+    ``[-2, 2]^dim`` if the orbit diverges or cannot be sampled).
     """
     if region is not None:
         lo_src, hi_src = (region.lo, region.hi) if hasattr(region, "lo") else (region[0], region[1])
         lo = np.asarray(lo_src, dtype=float).reshape(dim)
         hi = np.asarray(hi_src, dtype=float).reshape(dim)
         return lo, hi
-    orbit = sample_orbit_box(system, dim, rng=rng)
-    if orbit.size:
-        lo, hi = orbit.min(axis=0), orbit.max(axis=0)
-        span = np.where(hi - lo < 1e-3, 1.0, hi - lo)
-        return lo - 0.5 * span, hi + 0.5 * span
-    return -2.0 * np.ones(dim), 2.0 * np.ones(dim)
+    return hull_box(sample_orbit_box(system, dim, rng=rng), dim, HULL_PAD)
 
 
 def _orbit_start_ic(system: SystemBase, dim: int, rng: np.random.Generator) -> np.ndarray:
@@ -379,17 +459,19 @@ def _orbit_start_ic(system: SystemBase, dim: int, rng: np.random.Generator) -> n
 def sample_orbit_box(
     system: SystemBase,
     dim: int,
-    n: int = 200,
-    transient: int = 50,
+    n: int = ORBIT_SAMPLES,
+    transient: int = ORBIT_TRANSIENT,
     *,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Collect a short burn-in orbit to bound an auto search box (backend-free).
+    """Collect a burn-in orbit to bound an auto search box (backend-free).
 
-    Returns an empty array if the orbit cannot be produced (e.g. it diverges);
-    callers fall back to a default box.  The starting state is resolved through
-    :func:`_orbit_start_ic`, so its random fallback draws from the seeded ``rng``
-    rather than the global ``numpy.random`` state (issue #487).
+    Returns an empty array when the orbit does not settle on a bounded set — it
+    went non-finite, raised, **or** is still escaping at the end
+    (:func:`_orbit_escapes`) — and callers then fall back to a default box.  The
+    starting state is resolved through :func:`_orbit_start_ic`, so its random
+    fallback draws from the seeded ``rng`` rather than the process-global
+    ``numpy.random`` state (issue #487).
     """
     from tsdynamics.families import ContinuousSystem, DiscreteMap
 
@@ -406,7 +488,12 @@ def sample_orbit_box(
             for _ in range(n):
                 x = step(x)
                 if not np.all(np.isfinite(x)):
-                    break
+                    # The orbit blew up mid-sample: it demonstrably does not
+                    # settle, so the partial hull is an escape trajectory's, not
+                    # an attractor's.  Keeping it is how ``JerkCircuit`` produced
+                    # a "settled" box of +-1.2e8 from 79 samples (seed 5) and
+                    # ``fixed_points`` then missed its single equilibrium.
+                    return np.empty((0, dim))
                 pts.append(x.copy())
         elif isinstance(system, ContinuousSystem):
             rhs, _ = flow_fns(system)
@@ -418,10 +505,63 @@ def sample_orbit_box(
                 x = rk4_state(rhs, x, t, h)
                 t += h
                 if not np.all(np.isfinite(x)):
-                    break
+                    return np.empty((0, dim))  # blew up mid-sample; see above
                 pts.append(x.copy())
         else:
             return np.empty((0, dim))
     except Exception:  # noqa: BLE001
         return np.empty((0, dim))
-    return np.array(pts) if pts else np.empty((0, dim))
+    if not pts:
+        return np.empty((0, dim))
+    orbit = np.array(pts)
+    return np.empty((0, dim)) if _orbit_escapes(orbit) else orbit
+
+
+#: An orbit whose last quarter reaches more than this many times the magnitude of
+#: its first quarter is still growing: it has not settled on a bounded set, so its
+#: bounding box describes an escape trajectory, not an attractor.  Measured over
+#: the catalogue flows, the separation is wide and unambiguous — every bounded
+#: system sits at a ratio of 0.55–6.4 (Lorenz 1.3, Thomas 1.0, Rossler 6.3 while
+#: its transient is still settling) while Chua from a random off-attractor start
+#: sits at 87–109.  The consequence of missing this: a 20-time-unit Chua escape
+#: gives the hull ``|x| < 3.5e3``, ``|z| < 7.7e3``, whose seeds are so diffuse
+#: that ``fixed_points`` loses the origin equilibrium (3 -> 2) — the shorter v5
+#: orbit only avoided that by stopping before the blow-up became visible.
+ESCAPE_RATIO = 20.0
+
+#: Absolute magnitude beyond which an orbit is an escape whatever its *growth
+#: rate* says.  :data:`ESCAPE_RATIO` compares the orbit's last quarter with its
+#: first, so it is blind to a blow-up that finishes inside the **discarded
+#: transient**: both quarters are then equally astronomical and the ratio is
+#: ``~1``.  ``JerkCircuit`` does exactly that — its ``exp(y / 0.026)`` term
+#: detonates within the burn-in, giving a "settled" orbit at ``|state| = 3.5e164``
+#: (ratio 1.115, and ``np.linalg.norm`` overflowing to ``inf`` so that even
+#: ``inf > 20 * inf`` is ``False``).  The resulting hull spans ``+-2.9e164``, and
+#: ``fixed_points(JerkCircuit(), seed=1)`` returned **0** equilibria where the
+#: truth is exactly 1 (the origin: ``y = z = 0`` forces ``x = 0``).
+#:
+#: The threshold has ~10 orders of margin on both sides: over the catalogue
+#: flows x 3 seeds the largest *genuine* attractor magnitude is 6.3e2
+#: (``WindmiReduced``), with a median of 10.6, while the one real escape is
+#: 3.5e164.
+ESCAPE_MAGNITUDE = 1e12
+
+
+def _orbit_escapes(orbit: np.ndarray) -> bool:
+    """Whether ``orbit`` failed to settle on a bounded set.
+
+    Two independent tests, because neither alone is sufficient (see
+    :data:`ESCAPE_RATIO` and :data:`ESCAPE_MAGNITUDE`): the orbit is still
+    *growing* at its end, or it is simply *enormous*.  The magnitude test is
+    taken in the overflow-free sup norm, so an orbit that has already run past
+    ``sqrt(f64::MAX)`` is still measured rather than collapsing to ``inf``.
+    """
+    q = orbit.shape[0] // 4
+    if q < 1:
+        return False
+    if not np.all(np.isfinite(orbit)) or float(np.max(np.abs(orbit))) > ESCAPE_MAGNITUDE:
+        return True
+    mag = np.linalg.norm(orbit, axis=1)
+    head = float(mag[:q].max())
+    tail = float(mag[-q:].max())
+    return tail > ESCAPE_RATIO * max(head, np.finfo(float).tiny)

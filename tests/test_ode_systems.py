@@ -99,6 +99,64 @@ def test_multichua_dim_follows_n_circuits() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Constructor parameter keywords
+#
+# The five variable-dimension systems own a custom ``__init__`` (it has to
+# resolve ``dim`` from a structural parameter).  A custom ``__init__`` must not
+# *shadow* the constructor-keyword front door — every declared parameter has to
+# stay reachable as a plain keyword, and an unknown one has to be rejected by
+# name.  ``MultiChua`` used to accept only ``n_circuits``, so
+# ``MultiChua(alpha=10.0)`` raised ``TypeError: unexpected keyword argument``.
+# ---------------------------------------------------------------------------
+
+_CUSTOM_INIT_SYSTEMS = (
+    "Lorenz96",
+    "KuramotoSivashinsky",
+    "MultiChua",
+    "GrayScott",
+    "SwiftHohenberg",
+)
+
+
+@pytest.mark.parametrize("name", _CUSTOM_INIT_SYSTEMS)
+def test_custom_init_systems_accept_every_declared_parameter(name: str) -> None:
+    """Each declared parameter of a custom-``__init__`` system is a keyword."""
+    entry = registry.get(name)
+    for key, default in entry.params.items():
+        # Perturb structurally-safe parameters only: a wrong N would change dim.
+        value = default
+        instance = entry.cls(**{key: value})
+        assert instance.params[key] == value, f"{name}: {key}= did not reach params"
+
+
+@pytest.mark.parametrize("name", _CUSTOM_INIT_SYSTEMS)
+def test_custom_init_systems_reject_an_unknown_parameter_by_name(name: str) -> None:
+    """A misspelled parameter raises ``InvalidParameterError`` naming the valid ones."""
+    from tsdynamics.errors import InvalidParameterError
+
+    entry = registry.get(name)
+    real = next(iter(entry.params))
+    typo = real + "x"
+    with pytest.raises(InvalidParameterError) as excinfo:
+        entry.cls(**{typo: 1.0})
+    message = str(excinfo.value)
+    assert typo in message, f"{name}: message does not name the offending parameter"
+    assert real in message, f"{name}: message does not list the declared parameters"
+
+
+def test_multichua_circuit_parameters_are_constructor_keywords() -> None:
+    """The worked example: ``MultiChua(2, alpha=10.0)`` (used to be a TypeError)."""
+    import tsdynamics as ts
+
+    mc = ts.MultiChua(2, alpha=10.0, kappa=0.5)
+    assert mc.dim == 6
+    assert mc.params["alpha"] == 10.0
+    assert mc.params["kappa"] == 0.5
+    # Untouched parameters keep their class defaults.
+    assert mc.params["beta"] == ts.MultiChua.params["beta"]
+
+
+# ---------------------------------------------------------------------------
 # Integration — slow tier: curated representative sample
 # ---------------------------------------------------------------------------
 

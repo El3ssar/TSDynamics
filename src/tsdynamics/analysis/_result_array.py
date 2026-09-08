@@ -132,7 +132,8 @@ class ArrayResult(AnalysisResult):
         ``meta`` rides on ``frame.attrs["meta"]`` like the other subclasses.
 
         ``pandas`` is a soft dependency, imported lazily; a missing install raises
-        an :class:`ImportError` naming the ``tsdynamics[frame]`` extra.
+        an :class:`ImportError` pointing at ``pip install pandas`` (there is no
+        ``tsdynamics[frame]`` extra — this docstring used to name one).
 
         Returns
         -------
@@ -143,7 +144,8 @@ class ArrayResult(AnalysisResult):
         Raises
         ------
         ImportError
-            If :mod:`pandas` is not installed.
+            If :mod:`pandas` is not installed (the message points at
+            ``pip install pandas``).
         """
         pd = self._require_pandas()
         arr = np.asarray(self.values)

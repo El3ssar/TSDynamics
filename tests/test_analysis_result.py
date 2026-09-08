@@ -176,8 +176,16 @@ def test_to_frame_missing_pandas_gives_install_hint(monkeypatch):
         return real_import(name, *args, **kw)
 
     monkeypatch.setattr(builtins, "__import__", _fail)
-    with pytest.raises(ImportError, match=r"tsdynamics\[frame\]"):
+    # The hint must name an install that actually exists: `tsdynamics[frame]`
+    # was never a declared extra (Provides-Extra is viz / interactive / plot),
+    # so following the old message failed with "no matching distribution".
+    with pytest.raises(ImportError, match=r"pip install pandas"):
         _spectrum().to_frame()
+    with pytest.raises(ImportError) as excinfo:
+        _spectrum().to_frame()
+    assert "tsdynamics[" not in str(excinfo.value), (
+        "the hint must not name a tsdynamics extra unless it is declared in pyproject.toml"
+    )
 
 
 def test_to_frame_with_pandas_builds_scalar_row():

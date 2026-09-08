@@ -28,6 +28,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from .._common import reject_system
 from .._result import AnalysisResult
 from ._common import _as_series, _delay_columns
 
@@ -298,7 +299,7 @@ def cao_dimension(
     >>> int(cao_dimension(x, delay=10, max_dim=8)) >= 2
     True
     """
-    x = _as_series(data, component=component)
+    x = _as_series(data, component=component, analysis="cao_dimension")
     tau, max_dim = int(delay), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
@@ -411,7 +412,7 @@ def false_nearest_neighbors(
     >>> int(false_nearest_neighbors(x, delay=10, max_dim=8)) >= 2
     True
     """
-    x = _as_series(data, component=component)
+    x = _as_series(data, component=component, analysis="false_nearest_neighbors")
     tau, max_dim = int(delay), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
@@ -499,6 +500,7 @@ def embedding_dimension(
     cao_dimension : Cao's averaged false-neighbour estimator.
     false_nearest_neighbors : Kennel's false-nearest-neighbour estimator.
     """
+    reject_system(data, analysis="embedding_dimension")
     method = method.lower()
     if method == "cao":
         return cao_dimension(data, delay=delay, max_dim=max_dim, component=component, **kwargs)

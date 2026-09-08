@@ -33,6 +33,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from .._common import reject_system
 from .._result import AnalysisResult
 from ._common import _as_points, _metric_p, _threshold_for_rate
 
@@ -181,6 +182,9 @@ def recurrence_matrix(
 
     Raises
     ------
+    InvalidInputError
+        If ``data`` is a ``System``: this is a *data-first* analysis, so run the
+        system and pass its trajectory.
     ValueError
         If neither or both of ``threshold`` / ``recurrence_rate`` are given, if
         either is out of range, or if the Theiler window leaves no valid pairs.
@@ -193,9 +197,13 @@ def recurrence_matrix(
     from scipy import sparse
     from scipy.spatial import cKDTree
 
+    # Before any keyword validation: handing a System to a data-first analysis is
+    # the mistake to name, and "pass exactly one of threshold=/recurrence_rate="
+    # would send the caller down the wrong path entirely.
+    reject_system(data, analysis="recurrence_matrix")
     if (threshold is None) == (recurrence_rate is None):
         raise ValueError("pass exactly one of threshold= or recurrence_rate=.")
-    points = _as_points(data)
+    points = _as_points(data, analysis="recurrence_matrix")
     n = points.shape[0]
     p = _metric_p(metric)
     w = int(theiler)

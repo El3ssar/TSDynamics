@@ -27,6 +27,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from .._common import reject_system
 from .._result import ArrayResult, CountResult
 from ._common import _as_series
 
@@ -56,18 +57,24 @@ class MutualInformation(ArrayResult):
 
     @property
     def optimal_lag(self) -> int:
-        r"""The recommended delay — the first local minimum of :math:`I(\tau)`.
+        r"""The recommended delay — the first *significant* local minimum of :math:`I(\tau)`.
 
-        The first interior lag that is strictly below its left neighbour and no
+        The first interior lag that is strictly below its left neighbour, no
         greater than its right (the Fraser--Swinney rule, taken at the *onset* of
-        the dip so a flat-bottomed valley is not over-estimated).  Falls back to
-        the global minimum lag (``>= 1``) when the curve has no interior dip.
+        the dip so a flat-bottomed valley is not over-estimated), **and** that
+        still carries information — see :func:`_select_delay` for the noise floor
+        and for what happens when no such lag exists.
+
+        The floor needs the estimator's bin count and sample size; both are
+        recorded in ``meta`` by :func:`mutual_information`.  A curve built by hand
+        (no such ``meta``) is treated as noise-free, which is the pre-v6
+        behaviour.
         """
         curve = np.asarray(self.values, dtype=float)
-        k = _first_local_min(curve)
-        if k is None:
-            k = int(np.argmin(curve[1:])) + 1 if curve.size > 1 else 1
-        return max(int(k), 1)
+        bins = self.meta.get("bins")
+        n = self.meta.get("n_samples")
+        floor = 0.0 if bins is None or n is None else _mi_noise_floor(int(bins), int(n))
+        return _select_delay(curve, floor=floor)
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe the mutual-information diagnostic as a :class:`PlotSpec`.
@@ -139,7 +146,7 @@ def autocorrelation(
     the full zero-lag variance (not by the shrinking overlap count at that lag) —
     which is positive-definite and the conventional choice for delay selection.
     """
-    x = _as_series(data, component=component)
+    x = _as_series(data, component=component, analysis="autocorrelation")
     n = x.size
     max_delay = int(max_delay)
     if max_delay < 0:
@@ -227,7 +234,7 @@ def mutual_information(
     >>> int(mi.optimal_lag) >= 1
     True
     """
-    x = _as_series(data, component=component)
+    x = _as_series(data, component=component, analysis="mutual_information")
     n = x.size
     max_delay = int(max_delay)
     if max_delay < 0:
@@ -265,7 +272,15 @@ def mutual_information(
         outer = p_a[:, None] * p_b[None, :]
         mi[tau] = float(np.sum(joint[mask] * log(joint[mask] / outer[mask])))
     return MutualInformation(
-        values=mi, meta={"analysis": "mutual_information", "max_delay": max_delay}
+        values=mi,
+        meta={
+            "analysis": "mutual_information",
+            "max_delay": max_delay,
+            # Recorded so ``optimal_lag`` can rebuild the estimator's independence
+            # floor (``_mi_noise_floor``) without re-deriving the binning rule.
+            "bins": nbins,
+            "n_samples": n,
+        },
     )
 
 
@@ -278,11 +293,89 @@ def _first_local_min(curve: np.ndarray) -> int | None:
     valley returns the *first* lag of its plateau (the onset) rather than its far
     edge.  On strictly shaped curves this is identical to the strict-on-both-sides
     rule; on a quantised / flat curve it no longer over-estimates the delay.
+
+    Shape only — no significance test.  :func:`_select_delay` is the caller that
+    adds the noise floor.
     """
     for k in range(1, curve.size - 1):
         if curve[k] < curve[k - 1] and curve[k] <= curve[k + 1]:
             return k
     return None
+
+
+#: How many times the independence bias a minimum's mutual information must
+#: exceed to count as a real dip rather than a fluctuation of the noise floor.
+#: Measured margins on the reference series (20k-point Hénon, 8k-point Lorenz at
+#: ``dt = 0.02``): the *spurious* Hénon minimum sits at 1.09 floors and the
+#: *genuine* Lorenz one at 9.97, so ``2`` separates them with an order of
+#: magnitude of headroom on both sides.
+_MI_FLOOR_FACTOR = 2.0
+
+
+def _mi_noise_floor(bins: int, n: int) -> float:
+    r"""Mutual information the histogram estimator reports for *independent* data.
+
+    The plug-in (maximum-likelihood) estimate of :math:`I` on a ``bins x bins``
+    contingency table is biased upward: for genuinely independent variables
+    :math:`2 N \hat{I}` is asymptotically :math:`\chi^2` with
+    :math:`(\text{bins}-1)^2` degrees of freedom, so
+    :math:`\langle\hat I\rangle \approx (\text{bins}-1)^2 / 2N` — the Miller--Madow
+    bias.  Below a few times this value the curve is flat noise and *any* wiggle
+    in it is an artefact of the binning, not a feature of the dynamics.
+
+    References
+    ----------
+    G. A. Miller, "Note on the bias of information estimates", in *Information
+    Theory in Psychology* (1955), pp. 95-100.
+    """
+    return (bins - 1.0) ** 2 / (2.0 * max(n, 1))
+
+
+def _select_delay(curve: np.ndarray, *, floor: float) -> int:
+    r"""Fraser--Swinney delay from a mutual-information curve, with a noise guard.
+
+    A local minimum of :math:`I(\tau)` is only meaningful while :math:`I` is still
+    above the level the estimator would report for *independent* variables
+    (:func:`_mi_noise_floor`).  Past that point the curve is a flat noise floor
+    whose wiggles are binning artefacts, and taking the first of them is how a
+    **map** used to get a wildly wrong delay: on a 20 000-point Hénon orbit
+    :math:`I(\tau)` decays monotonically to the floor by :math:`\tau \approx 20`,
+    a fluctuation at :math:`\tau = 23` was read as "the" first minimum, and
+    ``embedding_dimension`` then returned 8 (its ``max_dim``) instead of 2.
+
+    When no significant minimum exists the fallback distinguishes the two ways
+    that can happen, because they want opposite answers:
+
+    * **The curve has reached the floor** (a map, or any fully decorrelated
+      series).  Every lag beyond the decay is equally uninformative, so the
+      smallest lag is the most informative one: :math:`\tau = 1`.  For Hénon that
+      restores ``embedding_dimension`` :math:`= 2`.
+    * **The curve is still well above the floor at the largest lag probed**
+      (a monotone decay truncated by ``max_delay`` — an oversampled flow).  The
+      series has *not* decorrelated within the window, so the longest available
+      lag is the best available answer: :math:`\tau = \text{max\_delay}`.
+
+    Parameters
+    ----------
+    curve : ndarray
+        :math:`I(\tau)` at lags :math:`\tau = 0, 1, \dots`.
+    floor : float
+        The independence bias of the estimator.  ``0.0`` disables the guard
+        (every local minimum is accepted), which is the pre-v6 behaviour.
+
+    Returns
+    -------
+    int
+        The recommended delay, always ``>= 1``.
+    """
+    if curve.size < 2:
+        return 1
+    significant = curve > _MI_FLOOR_FACTOR * floor
+    for k in range(1, curve.size - 1):
+        if significant[k] and curve[k] < curve[k - 1] and curve[k] <= curve[k + 1]:
+            return k
+    # No significant dip: informative-but-truncated -> longest lag; decayed -> 1.
+    return int(curve.size - 1) if significant[-1] else 1
 
 
 def optimal_delay(
@@ -353,15 +446,11 @@ def optimal_delay(
     >>> int(optimal_delay(x, method="mi", max_delay=60)) >= 1
     True
     """
+    reject_system(data, analysis="optimal_delay")
     method = method.lower()
     if method == "mi":
-        mi = np.asarray(
-            mutual_information(data, max_delay=max_delay, bins=bins, component=component)
-        )
-        k = _first_local_min(mi)
-        if k is None:  # monotone / no interior dip: fall back to the global minimum
-            k = int(np.argmin(mi[1:])) + 1 if mi.size > 1 else 1
-        tau = max(int(k), 1)
+        curve = mutual_information(data, max_delay=max_delay, bins=bins, component=component)
+        tau = curve.optimal_lag
     elif method in ("acf", "acf_zero"):
         acf = autocorrelation(data, max_delay=max_delay, component=component)
         if method == "acf":

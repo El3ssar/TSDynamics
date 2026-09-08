@@ -23,6 +23,7 @@ class ShimizuMorioka(ContinuousSystem):
 
     params = {"a": 0.85, "b": 0.5}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Shimizu & Morioka (1980), Phys. Lett. A 76, 201-204"
     doi = "10.1016/0375-9601(80)90466-1"
 
@@ -64,6 +65,7 @@ class MooreSpiegel(ContinuousSystem):
 
     params = {"a": 10, "b": 4, "eps": 9}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Moore & Spiegel (1966), Astrophys. J. 143, 871-887"
     doi = "10.1086/148562"
 
@@ -108,6 +110,7 @@ class AnishchenkoAstakhov(ContinuousSystem):
 
     params = {"eta": 0.5, "mu": 1.2}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Anishchenko et al. (2007), Nonlinear Dynamics of Chaotic and Stochastic Systems"
     doi = "10.1007/978-3-540-38168-6"
 
@@ -139,6 +142,7 @@ class Aizawa(ContinuousSystem):
 
     params = {"a": 0.95, "b": 0.7, "c": 0.6, "d": 3.5, "e": 0.25, "f": 0.1}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Aizawa & Uezu (1982), Prog. Theor. Phys. 67, 982-985"
     doi = "10.1143/PTP.67.982"
 
@@ -191,6 +195,7 @@ class StickSlipOscillator(ContinuousSystem):
         "w": 2,
     }
     dim = 3
+    variables = ("x", "v", "th")
     reference = "Awrejcewicz & Holicke (1999), Int. J. Bifurc. Chaos"
     doi = "10.1142/s0218127499000341"
 
@@ -226,6 +231,7 @@ class Torus(ContinuousSystem):
 
     params = {"a": 0.5, "n": 15.3, "r": 1}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Strogatz (1994), Nonlinear Dynamics and Chaos"
 
     @staticmethod
@@ -276,6 +282,7 @@ class Lissajous3D(ContinuousSystem):
         "delta_z": pi / 4,
     }
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, A, B, C, a, b, c, delta_y, delta_z):
@@ -337,6 +344,7 @@ class Lissajous2D(ContinuousSystem):
 
     params = {"A": 1, "B": 1, "a": 3, "b": 2, "delta": pi / 2}
     dim = 2
+    variables = ("x", "y")
 
     @staticmethod
     def _equations(Y, t, *, A, B, a, b, delta):

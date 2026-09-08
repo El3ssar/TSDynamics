@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from tsdynamics.analysis._common import reject_system
 from tsdynamics.analysis.embedding import embedding_dimension, optimal_delay
 from tsdynamics.errors import invalid_value
 
@@ -162,6 +163,7 @@ def sagitta_profile(
     np.ndarray, shape (n,)
         The per-point sagitta, aligned to ``samples``.
     """
+    reject_system(samples, analysis="sagitta_profile")
     s = np.asarray(samples, dtype=float)
     if s.ndim == 1:
         s = s[:, None]
@@ -368,6 +370,7 @@ def estimate_dt_from_sagitta(
         use_relative = needs_embedding
 
     # -------- per-feature σ-normalization (scale invariance) --------
+    reject_system(y, analysis="estimate_dt_from_sagitta")
     y = np.asarray(y, dtype=float)
     feature_std = y.std(axis=0, ddof=1)
     feature_std[~np.isfinite(feature_std) | (feature_std == 0.0)] = 1.0

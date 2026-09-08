@@ -18,12 +18,17 @@ returned :math:`K` is the median of :math:`K_c` over many frequencies, obtained
 by the regularised mean-square displacement + correlation method of the 2009
 paper (more robust than fitting a growth exponent).
 
-The observable should be sampled so successive values are not strongly
-correlated (every iterate for a map; a suitable stride for a flow).
+The observable must be sampled so successive values are not strongly correlated
+— every iterate for a map, a coarse stride for a flow.  This is not a nicety: an
+oversampled flow makes :math:`(p_c, q_c)` drift smoothly instead of diffusing and
+the test then reports a *chaotic* orbit as regular.  :func:`zero_one_test`
+therefore measures the sampling density and decimates by default; see its
+``oversampling`` argument and :class:`OversamplingWarning`.
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -34,7 +39,41 @@ from tsdynamics.errors import InvalidParameterError
 from .._result import AnalysisResult, ScalarResult
 from . import _common as _c
 
-__all__ = ["ZeroOneResult", "zero_one_test"]
+__all__ = ["OversamplingWarning", "ZeroOneResult", "zero_one_test"]
+
+# ── oversampling guard ───────────────────────────────────────────────────────
+# The 0-1 test needs an observable whose successive values are not strongly
+# correlated: Gottwald & Melbourne (2009, §"Choice of sampling time") show that
+# an oversampled flow makes the skew translation (p_c, q_c) trace a smooth
+# ballistic curve instead of a random walk, and the correlation method then
+# reports K ~ 0 — "regular" — for a plainly chaotic orbit.
+#
+# The condition is measured as the mean number of samples per oscillation of the
+# observable (twice the mean spacing of its mean-crossings).  Measured on Lorenz
+# (lambda_1 = 0.906, K must be ~1): at 308 samples/oscillation K = -0.018, at 138
+# K = -0.023, at 62 K = +0.61, at 33 K = +0.998.  Decimating toward ~5
+# samples/oscillation is the fix Gottwald & Melbourne prescribe and it is
+# uniformly safe here: Rössler at c = 5.7 needs it (K = -0.004 at 286
+# samples/oscillation, +0.97 at 3.9), a periodic/quasi-periodic orbit keeps
+# K ~ 0 either way, and a map already sits near 4 so it is untouched.
+_OVERSAMPLED_ABOVE = 10.0
+_TARGET_SAMPLES_PER_OSCILLATION = 5.0
+# Never decimate below this many samples: a short record is worth more than a
+# perfectly-decorrelated one (the test itself refuses below 200 points).
+_MIN_KEPT_SAMPLES = 250
+
+
+class OversamplingWarning(UserWarning):
+    r"""The 0--1 test was handed an observable sampled far too finely.
+
+    The Gottwald--Melbourne test requires roughly one sample per oscillation of
+    the observable; an oversampled flow makes the skew translation drift
+    smoothly rather than diffuse, and the test then reports a *chaotic* orbit as
+    regular (:math:`K \approx 0`).  :func:`zero_one_test` normally repairs this
+    by decimating (``oversampling="resample"``, the default); the warning is
+    emitted when it is asked not to, or when the record is too short to decimate
+    far enough to fix the problem.
+    """
 
 
 @dataclass(frozen=True, eq=False)
@@ -102,6 +141,70 @@ class ZeroOneResult(ScalarResult):
             title=f"0--1 test translation plane ($K$ = {float(self):.3g})",
             meta=self.meta,
         )
+
+
+def _samples_per_oscillation(phi: np.ndarray) -> float:
+    """Mean samples per oscillation of ``phi``, from its mean-crossing rate.
+
+    A full oscillation crosses the mean twice, so the mean spacing between sign
+    changes of ``phi - mean(phi)`` is half a period.  Chosen over an FFT peak
+    because a chaotic flow's spectrum is broadband (the FFT estimate scatters by
+    an order of magnitude on Lorenz, the crossing rate does not) and over the
+    lag-1 autocorrelation because that saturates near 1 and cannot say *how far*
+    to decimate.  ``inf`` when the observable never crosses its mean (a constant
+    or monotone record — nothing to fix).
+    """
+    y = np.asarray(phi, dtype=float)
+    if y.size < 2:  # nothing to oscillate (guard before ``mean`` of an empty slice)
+        return float("inf")
+    y = y - y.mean()
+    sign = np.signbit(y)
+    crossings = int(np.count_nonzero(sign[1:] != sign[:-1]))
+    if crossings == 0:
+        return float("inf")
+    return 2.0 * float(y.size - 1) / crossings
+
+
+def _apply_oversampling_guard(phi: np.ndarray, policy: str) -> tuple[np.ndarray, int, float]:
+    """Detect (and by default repair) an oversampled observable.
+
+    Returns the observable to test, the stride applied, and the measured
+    samples-per-oscillation of the *input*.  Under ``"resample"`` the series is
+    decimated toward :data:`_TARGET_SAMPLES_PER_OSCILLATION`, never below
+    :data:`_MIN_KEPT_SAMPLES` points; when that cap leaves it still oversampled,
+    an :class:`OversamplingWarning` says so rather than letting a chaotic orbit
+    be reported as regular.
+    """
+    spo = _samples_per_oscillation(phi)
+    if policy == "ignore" or not np.isfinite(spo) or spo <= _OVERSAMPLED_ABOVE:
+        return phi, 1, spo
+    advice = (
+        f"the observable is oversampled (~{spo:.0f} samples per oscillation): the 0-1 "
+        "test needs roughly one sample per oscillation, and an oversampled series "
+        "drives K toward 0 even for a chaotic orbit"
+    )
+    if policy == "warn":
+        warnings.warn(
+            f"zero_one_test: {advice}. Sample the flow more coarsely (a larger dt), "
+            "pass a Poincare/stroboscopic view as `system`, or use the default "
+            "oversampling='resample'.",
+            OversamplingWarning,
+            stacklevel=3,
+        )
+        return phi, 1, spo
+    wanted = max(1, int(round(spo / _TARGET_SAMPLES_PER_OSCILLATION)))
+    stride = min(wanted, max(1, phi.size // _MIN_KEPT_SAMPLES))
+    out = phi[::stride] if stride > 1 else phi
+    if _samples_per_oscillation(out) > _OVERSAMPLED_ABOVE:
+        warnings.warn(
+            f"zero_one_test: {advice}, and the record is too short to decimate far "
+            f"enough to fix it (stride {stride} of the {wanted} needed leaves "
+            f"{out.size} points). K is biased toward 0 — use a longer record, or "
+            "sample the flow more coarsely to begin with.",
+            OversamplingWarning,
+            stacklevel=3,
+        )
+    return out, stride, spo
 
 
 def _observable(
@@ -176,6 +279,7 @@ def zero_one_test(
     c_range: tuple[float, float] = (np.pi / 5.0, 4.0 * np.pi / 5.0),
     n_cut: int | None = None,
     seed: int | None = 0,
+    oversampling: str = "resample",
     return_distribution: bool = False,
 ) -> ZeroOneResult | tuple[ZeroOneResult, np.ndarray]:
     r"""Run the 0--1 test for chaos on a system or a measured observable.
@@ -212,6 +316,18 @@ def zero_one_test(
         ``N // 10`` (the rule of thumb: stay well below the series length).
     seed : int, optional
         Seed for the frequency draw (makes :math:`K` reproducible).
+    oversampling : {"resample", "warn", "ignore"}, default "resample"
+        What to do when the observable is **oversampled** — the classic misuse of
+        this test, and one it fails silently: an observable sampled many times
+        per oscillation makes :math:`(p_c, q_c)` drift smoothly instead of
+        diffusing, and :math:`K` collapses toward ``0`` for a chaotic orbit
+        (Lorenz at ``dt = 0.02`` gives :math:`K = -0.02`).  ``"resample"``
+        decimates the observable to about five samples per oscillation — the
+        remedy Gottwald & Melbourne prescribe — and records the stride in
+        ``result.meta``; if the record is too short to decimate that far it
+        decimates as far as it can and warns.  ``"warn"`` leaves the observable
+        alone and raises an :class:`OversamplingWarning`.  ``"ignore"`` disables
+        the guard entirely (you are then on your own).
     return_distribution : bool, default False
         If true, also return the per-frequency :math:`K_c` array.
 
@@ -228,12 +344,20 @@ def zero_one_test(
         give a small negative :math:`K`); it concentrates near ``0`` (regular) or
         ``1`` (chaotic), so ``K > 0.5`` is the usual chaos threshold.
 
+    Warns
+    -----
+    OversamplingWarning
+        When the observable is oversampled and the guard could not (or was asked
+        not to) fix it — see ``oversampling``.  :math:`K` is then biased toward
+        ``0`` and a chaotic orbit may be reported as regular.
+
     Raises
     ------
     InvalidParameterError
         If the observable is shorter than 200 points (too short for the test to
-        be meaningful); if ``n_c < 1``; if horizon keywords are passed for a
-        measured-series input; or if ``n`` is passed for a flow.
+        be meaningful); if ``n_c < 1``; if ``oversampling`` is not one of
+        ``"resample"`` / ``"warn"`` / ``"ignore"``; if horizon keywords are
+        passed for a measured-series input; or if ``n`` is passed for a flow.
 
     Examples
     --------
@@ -241,6 +365,9 @@ def zero_one_test(
     True
     >>> x = Logistic(params={"r": 4.0}).iterate(steps=5000).component("x")
     >>> zero_one_test(x) > 0.9          # the data overload
+    True
+    >>> lorenz = Lorenz(ic=[1.0, 1.0, 1.0])                  # a flow, sampled fine
+    >>> zero_one_test(lorenz, component=0, dt=0.02, final_time=600.0) > 0.9
     True
 
     References
@@ -251,9 +378,14 @@ def zero_one_test(
     Gottwald & Melbourne, "On the implementation of the 0--1 test for chaos",
     *SIAM J. Appl. Dyn. Syst.* **8** (2009) 129--145.
     """
+    if oversampling not in {"resample", "warn", "ignore"}:
+        raise InvalidParameterError(
+            f"oversampling must be 'resample', 'warn' or 'ignore', got {oversampling!r}."
+        )
     phi = _observable(
         system, component, final_time=final_time, n=n, dt=dt, transient=transient, ic=ic
     )
+    phi, stride, spo = _apply_oversampling_guard(phi, oversampling)
     n_pts = phi.size
     if n_pts < 200:
         raise InvalidParameterError(
@@ -307,12 +439,11 @@ def zero_one_test(
     idx_rep = int(np.argmin(np.abs(k_c - k)))
     p_rep = p_all[:, idx_rep]
     q_rep = q_all[:, idx_rep]
-    result = ZeroOneResult(
-        value=k,
-        p=p_rep,
-        q=q_rep,
-        meta=AnalysisResult.build_meta(system, analysis="zero_one_test"),
-    )
+    meta = AnalysisResult.build_meta(system, analysis="zero_one_test")
+    meta["samples_per_oscillation"] = float(spo)
+    meta["stride"] = int(stride)
+    meta["n_samples"] = int(n_pts)
+    result = ZeroOneResult(value=k, p=p_rep, q=q_rep, meta=meta)
     return (result, k_c) if return_distribution else result
 
 

@@ -253,3 +253,153 @@ class TestDDEStepping:
         traj = mg.trajectory(final_time=5.0, dt=0.5, transient=2.0, ic=[1.2])
         assert traj.t[0] >= 2.0
         assert np.all(np.isfinite(traj.y))
+
+
+# ---------------------------------------------------------------------------
+# "A failed run leaves the object as it was" — every entry point, all four families
+# ---------------------------------------------------------------------------
+
+
+def _ic_survives(system, call) -> bool:
+    """Run ``call``, expect it to raise, and report whether ``system.ic`` is intact."""
+    before = None if system.ic is None else system.ic.copy()
+    try:
+        call()
+    except BaseException:  # noqa: BLE001 - the point is that *anything* rolls back
+        after = None if system.ic is None else system.ic.copy()
+        if before is None or after is None:
+            return before is after
+        return bool(np.array_equal(before, after))
+    raise AssertionError("the probe call was expected to fail")
+
+
+class TestFailedRunLeavesTheIcUntouched:
+    """``resolve_ic`` commits before the run; a failure must not latch the bad IC.
+
+    The guard was originally applied only to ``_dispatch`` (integrate/run) and
+    ``DiscreteMap.iterate``; the sibling entry points below resolved the IC
+    *outside* it and so latched it on failure.
+    """
+
+    def test_continuous_integrate(self) -> None:
+        sys = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+        assert _ic_survives(sys, lambda: sys.integrate(final_time=1.0, dt=0.1, ic=[1e9] * 3))
+
+    def test_continuous_run_with_events(self) -> None:
+        sys = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+        assert _ic_survives(
+            sys,
+            lambda: sys.run(final_time=1.0, dt=0.1, ic=[1e9] * 3, events=[("z", 27.0, "up")]),
+        )
+
+    def test_continuous_reinit(self) -> None:
+        sys = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+        assert _ic_survives(sys, lambda: sys.reinit([5.0, 5.0, 5.0], backend="no-such-backend"))
+
+    def test_continuous_reinit_bad_shape(self) -> None:
+        sys = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+        assert _ic_survives(sys, lambda: sys.reinit([5.0, 5.0]))
+
+    def test_map_iterate(self) -> None:
+        sys = ts.systems.Henon(ic=[0.1, 0.1])
+        assert _ic_survives(sys, lambda: sys.iterate(steps=200, ic=[1e6, 1e6]))
+
+    def test_map_reinit_bad_shape(self) -> None:
+        sys = ts.systems.Henon(ic=[0.1, 0.1])
+        assert _ic_survives(sys, lambda: sys.reinit([1.0, 2.0, 3.0]))
+
+    def test_dde_reinit_bad_shape(self) -> None:
+        sys = ts.systems.MackeyGlass(ic=[1.0])
+        assert _ic_survives(sys, lambda: sys.reinit([1.0, 2.0]))
+
+    def test_dde_integrate_rejects_reference_backend(self) -> None:
+        sys = ts.systems.MackeyGlass(ic=[1.0])
+        assert _ic_survives(sys, lambda: sys.integrate(final_time=1.0, dt=0.1, backend="reference"))
+
+    def test_sde_reinit(self) -> None:
+        sys = ts.systems.OrnsteinUhlenbeck(ic=[1.0])
+        assert _ic_survives(sys, lambda: sys.reinit([2.0], method="no-such-method"))
+
+    def test_sde_integrate(self) -> None:
+        sys = ts.systems.OrnsteinUhlenbeck(ic=[1.0])
+        assert _ic_survives(
+            sys, lambda: sys.integrate(final_time=1.0, dt=0.1, ic=[7.0], backend="no-such-backend")
+        )
+
+
+# ---------------------------------------------------------------------------
+# ``seed=`` means the same thing on every family's trajectory producer
+# ---------------------------------------------------------------------------
+
+
+class _SeedProbeODE(ts.families.ContinuousSystem):
+    """No ``default_ic``, so ``resolve_ic`` must draw — which is what ``seed=`` seeds."""
+
+    params = {"a": 1.0}
+    dim = 2
+
+    @staticmethod
+    def _equations(y, t, *, a):
+        return [-a * y(0), -a * y(1)]
+
+
+class _SeedProbeSDE(ts.families.StochasticSystem):
+    params = {"theta": 1.0, "sigma": 0.5}
+    dim = 1
+
+    @staticmethod
+    def _drift(y, t, *, theta, sigma):
+        return [-theta * y(0)]
+
+    @staticmethod
+    def _diffusion(y, t, *, theta, sigma):
+        return [sigma]
+
+
+class TestSeedIsSymmetricAcrossFamilies:
+    """``seed=`` used to exist only on ``DiscreteMap.iterate``; a flow rejected it."""
+
+    def test_ode_integrate_accepts_seed_and_is_reproducible(self) -> None:
+        a = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=42)
+        b = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=42)
+        np.testing.assert_array_equal(a.y, b.y)
+        assert a.meta["ic_seed"] == 42
+
+    def test_ode_a_different_seed_gives_a_different_ic(self) -> None:
+        a = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=42)
+        c = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=43)
+        assert not np.array_equal(a.y[0], c.y[0])
+
+    def test_ode_run_and_events_paths_honour_seed(self) -> None:
+        base = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=42)
+        np.testing.assert_array_equal(
+            _SeedProbeODE().run(final_time=1.0, dt=0.5, seed=42).y, base.y
+        )
+        with_events = _SeedProbeODE().run(
+            final_time=1.0, dt=0.5, seed=42, events=[(0, 0.5, "down")]
+        )
+        np.testing.assert_array_equal(with_events.y[0], base.y[0])
+
+    def test_map_iterate_seed(self) -> None:
+        a = ts.systems.Henon().iterate(steps=20, seed=1)
+        b = ts.systems.Henon().iterate(steps=20, seed=1)
+        np.testing.assert_array_equal(a.y, b.y)
+
+    def test_dde_integrate_seed(self) -> None:
+        a = ts.systems.MackeyGlass().integrate(final_time=2.0, dt=0.5, seed=5)
+        b = ts.systems.MackeyGlass().integrate(final_time=2.0, dt=0.5, seed=5)
+        np.testing.assert_array_equal(a.y, b.y)
+        assert a.meta["ic_seed"] == 5
+
+    def test_sde_integrate_seed_covers_ic_and_noise(self) -> None:
+        a = _SeedProbeSDE().integrate(final_time=1.0, dt=0.1, seed=9)
+        b = _SeedProbeSDE().integrate(final_time=1.0, dt=0.1, seed=9)
+        np.testing.assert_array_equal(a.y, b.y)
+        assert a.meta["ic_seed"] == 9
+
+    def test_seed_is_inert_when_an_explicit_ic_is_given(self) -> None:
+        # An explicit ic outranks the draw, so seeding must not change anything.
+        pinned = [0.3, 0.4]
+        a = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, ic=pinned, seed=1)
+        b = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, ic=pinned, seed=2)
+        np.testing.assert_array_equal(a.y, b.y)

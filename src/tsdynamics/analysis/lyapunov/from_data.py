@@ -26,6 +26,7 @@ calculating largest Lyapunov exponents from small data sets", *Physica D*
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -33,11 +34,74 @@ import numpy as np
 
 from tsdynamics.errors import ConvergenceError, InvalidParameterError
 
+from .._common import reject_system
 from .._result import ScalingResult
 
-__all__ = ["LyapunovFromData", "lyapunov_from_data"]
+__all__ = ["LyapunovFromData", "ScalingRegionWarning", "lyapunov_from_data"]
 
 _TINY = float(np.finfo(float).tiny)
+
+# ── automatic scaling-region selection: the tuned constants ──────────────────
+# A plateau is admissible when every local slope inside it stays within
+# ``_PLATEAU_TOL`` (relative) of the plateau mean...
+_PLATEAU_TOL = 0.2
+# ...and when that mean clears ``_SLOPE_FLOOR`` times the largest local slope on
+# the curve.  The floor is what stops the *saturated tail* — a long, dead-flat,
+# perfectly "stable-slope" plateau at slope ~0 — from being selected as the
+# scaling region (it would report an exponent of ~0 for a chaotic series).
+_SLOPE_FLOOR = 0.05
+# Local slopes are read from a least-squares window this fraction of the curve
+# wide (at least 3 points), so a single noisy sample cannot break a plateau.
+_SLOPE_WINDOW_FRACTION = 20
+# A plateau must span at least this fraction of the curve, and never fewer than
+# _MIN_REGION_POINTS samples: on a short curve any three or four consecutive
+# points of a smoothly-bending transient look "stable" at any usable tolerance.
+_MIN_REGION_FRACTION = 10
+_MIN_REGION_POINTS = 5
+
+# Automatic reconstruction defaults (used when ``delay`` / ``k_max`` are None).
+# The look-ahead is expressed in units of the embedding delay: the scaling region
+# of every system measured for this module lives between roughly 5 and 20 delays,
+# so 25 delays covers it with margin (Lorenz, Rössler, Hénon, logistic).
+_KMAX_DELAYS = 25
+_KMAX_FLOOR = 20
+# Cost ceiling on the *automatic* look-ahead.  ``25 * delay`` is unbounded in the
+# oversampling factor, and both estimators are unbounded in ``k_max``: the Kantz
+# loop is linear in it and the Rosenstein path materialises an
+# ``(n_ref, k_max + 1, m)`` array.  Measured on a Lorenz x-series, the automatic
+# value is 425 at dt = 0.02 but 4125 at dt = 0.002 and 8225 at dt = 0.001 — the
+# last is ~90 GB on the Rosenstein path and hours on the Kantz one, from a call
+# that passed no ``k_max`` at all.  Where the cap binds it costs nothing in
+# accuracy (Lorenz at dt = 0.005: 0.7396 at k_max = 1650 in 77 s versus 0.7523 at
+# k_max = 500 in 22 s, against a true 0.9076), and where the capped look-ahead is
+# genuinely too short the plateau search refuses (``trusted`` False) instead of
+# reporting a transient slope.  A caller who wants the longer curve passes
+# ``k_max`` explicitly and accepts the cost.
+_KMAX_CEILING = 500
+# An explicit `delay` this many times shorter than the data's own decorrelation
+# time makes the delay embedding near-collinear — "neighbours" then are not
+# dynamical neighbours and the exponent is badly biased.
+_DEGENERATE_DELAY_FACTOR = 4
+
+
+class ScalingRegionWarning(UserWarning):
+    """The delay reconstruction cannot support a Lyapunov estimate.
+
+    Emitted by :func:`lyapunov_from_data` when the requested ``delay`` is far
+    shorter than the series' own decorrelation time: the delay embedding is then
+    **near-collinear**, its "neighbours" are consecutive samples of one
+    trajectory rather than dynamical neighbours, and the exponent read off it is
+    badly biased.  This is the reconstruction that made an oversampled Lorenz
+    series report 11.34 against a true 0.906.
+
+    The *other* untrustworthy outcome — the automatic search finding no
+    stable-slope plateau — is reported through the result rather than a warning
+    (``result.trusted`` is ``False``, ``repr`` says ``UNTRUSTED``, and
+    ``meta["scaling_region"]`` says what happened).  It is deliberately not a
+    warning: a regular signal has no exponential scaling region *by definition*,
+    so warning on it would fire on correct answers and train callers to suppress
+    the category.
+    """
 
 
 @dataclass(frozen=True, eq=False)
@@ -73,6 +137,15 @@ class LyapunovFromData(ScalingResult):
         Number of reference points that contributed (had a usable neighbour).
     method : str
         ``"kantz"`` or ``"rosenstein"``.
+    trusted : bool
+        ``False`` when the estimate is not a reading of a scaling region — the
+        automatic search found no stable-slope plateau (the slope was then fitted
+        over the whole curve as a fallback), or the delay embedding is
+        near-collinear (which also raises a :class:`ScalingRegionWarning`).
+        ``repr`` then says ``UNTRUSTED`` and ``meta["scaling_region"]`` records
+        which happened.  **Check this flag** before believing an exponent from an
+        unattended run.  An explicit ``fit=(lo, hi)`` takes ownership of the
+        region, so it is always ``trusted`` unless the embedding is degenerate.
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("lyapunov", "method")
@@ -82,6 +155,7 @@ class LyapunovFromData(ScalingResult):
     theiler: int = 0
     n_reference: int = 0
     method: str = "kantz"
+    trusted: bool = True
 
     @property
     def lyapunov(self) -> float:
@@ -145,10 +219,11 @@ class LyapunovFromData(ScalingResult):
 
     def __repr__(self) -> str:  # noqa: D105
         lo, hi = self.fit_region
+        flag = "" if self.trusted else ", UNTRUSTED (no scaling region)"
         return (
             f"LyapunovFromData(lyapunov={self.lyapunov:.4g}, method={self.method!r}, "
             f"m={self.embedding_dim}, tau={self.delay}, fit_region=({lo}, {hi}), "
-            f"n_reference={self.n_reference})"
+            f"n_reference={self.n_reference}{flag})"
         )
 
 
@@ -170,7 +245,7 @@ def _delay_embed(series: np.ndarray, m: int, tau: int) -> np.ndarray:
     if rows <= 0:
         raise InvalidParameterError(
             f"series too short: {n} samples cannot fill an m={m}, tau={tau} embedding "
-            f"(needs more than {span})."
+            f"(needs more than {span}). Use a longer series, or reduce dimension/delay."
         )
     emb = np.empty((rows, m * d), dtype=float)
     for j in range(m):
@@ -197,37 +272,159 @@ def _slope_stderr(x: np.ndarray, y: np.ndarray, slope: float, intercept: float) 
     return float(np.sqrt(sse / (n - 2) / sxx))
 
 
-def _auto_fit_region(divergence: np.ndarray, *, min_len: int) -> tuple[int, int]:
-    """Pick ``[0, knee]`` — the initial rise before the curve saturates.
+def _auto_delay(series: np.ndarray) -> tuple[int, bool]:
+    """Embedding delay: the first lag whose autocorrelation has fallen to ``1/e``.
 
-    The stretching curve rises roughly linearly while neighbours separate
-    exponentially, then bends over as they reach the attractor's size.  The knee
-    is the first sample whose local slope drops below half the initial slope.
+    Returns ``(delay, found)``.  ``found`` is ``False`` when the autocorrelation
+    never reached ``1/e`` within the searched range (a monotone or very
+    long-correlated record): the capped lag is still returned as the best
+    available default, but no *diagnosis* may be based on it — the series has no
+    measured decorrelation time to compare a caller's ``delay`` against.
+
+    The classical linear decorrelation-time criterion.  It is ``1`` for a map —
+    successive iterates are already decorrelated — and grows with the
+    oversampling factor of a flow, which is exactly the failure the old fixed
+    ``delay=1`` default walked into: at ``dt = 0.02`` a Lorenz embedding
+    ``[x(t), x(t+dt), x(t+2dt)]`` is very nearly collinear, so "neighbours" are
+    not dynamical neighbours and the stretching curve has no scaling region at
+    all.
+
+    The ``1/e`` rule is preferred here over the first *zero* crossing (which a
+    slowly-decorrelating flow reaches only after a full turn of the attractor —
+    ``2.4`` time units for Lorenz, an order of magnitude too long) and over the
+    first minimum of the mutual information (the standard nonlinear criterion for
+    a flow, but meaningless on a map, where the estimator has no clean dip to
+    find and returns noise).  Pass ``delay=`` explicitly to use
+    :func:`~tsdynamics.analysis.embedding.optimal_delay` or any other rule.
     """
-    n = divergence.size
-    if n <= min_len:
-        return (0, n - 1)
-    k = np.arange(n, dtype=float)
-    s0 = float(np.polyfit(k[:min_len], divergence[:min_len], 1)[0])
-    if not np.isfinite(s0) or s0 <= 0.0:
-        return (0, n - 1)
-    diffs = np.diff(divergence)
-    hi = n - 1
-    for i in range(min_len, diffs.size + 1):
-        if diffs[i - 1] < 0.5 * s0:
-            hi = i - 1
+    x = np.asarray(series, dtype=float)
+    if x.ndim > 1:
+        x = x[:, 0]
+    x = x - x.mean()
+    denom = float(np.dot(x, x))
+    if denom <= 0.0:  # constant series — nothing to decorrelate
+        return 1, False
+    # Look no further than a tenth of the record: a delay longer than that
+    # cannot be estimated reliably (and would leave too few embedded rows).
+    max_lag = max(1, min(x.size // 10, 1000))
+    threshold = 1.0 / np.e
+    for lag in range(1, max_lag + 1):
+        if float(np.dot(x[lag:], x[:-lag])) / denom <= threshold:
+            return lag, True
+    return max_lag, False
+
+
+def _local_slopes(x: np.ndarray, y: np.ndarray, window: int) -> np.ndarray:
+    """Least-squares slope of ``y`` vs ``x`` over a sliding ``window``-point window.
+
+    The window is centred where it fits and clamped at the ends, so the returned
+    array is the same length as the curve.  Smoothing over a window (rather than
+    taking raw differences) keeps one noisy sample from puncturing an otherwise
+    flat plateau.
+    """
+    n = y.size
+    out = np.empty(n)
+    half = window // 2
+    for i in range(n):
+        hi = min(n, max(i - half, 0) + window)
+        lo = max(0, hi - window)
+        xs = x[lo:hi]
+        xm = xs.mean()
+        dx = xs - xm
+        sxx = float(np.dot(dx, dx))
+        out[i] = float(np.dot(dx, y[lo:hi] - y[lo:hi].mean()) / sxx) if sxx > 0.0 else np.nan
+    return out
+
+
+def _auto_fit_region(x: np.ndarray, y: np.ndarray) -> tuple[tuple[int, int] | None, float]:
+    """Find the linear scaling region of a stretching curve.
+
+    Returns ``(region, peak_local_slope)``; ``region`` is ``None`` when there is
+    none.  ``peak_local_slope`` is the largest local slope on the curve — the
+    curve's own scale of "fast divergence", against which :data:`_SLOPE_FLOOR`
+    is measured; it is returned for inspection and for the unit tests, and the
+    estimator itself only uses ``region``.
+
+    The curve ``S(k)`` has three parts: an initial **transient** (the neighbour
+    ball is not yet aligned with the unstable manifold — the local slope is large
+    and falling fast), the **scaling region** (a genuine plateau of the local
+    slope, whose height is the maximal Lyapunov exponent), and **saturation**
+    (neighbours have reached the attractor diameter — the local slope decays to
+    zero).  Anchoring the fit at ``k = 0``, as this function used to, fits the
+    transient and biases the exponent high by up to an order of magnitude.
+
+    The search returns the **longest** index window whose local slopes all stay
+    within :data:`_PLATEAU_TOL` of the window's mean slope (ties broken toward
+    the flatter, then the earlier window) *and* whose mean slope clears
+    :data:`_SLOPE_FLOOR` times the largest local slope on the curve — the second
+    condition is what rejects the saturated tail, which is otherwise the longest
+    and flattest "plateau" on the curve.
+
+    A plateau that runs to the **last** sample of the curve is rejected too: the
+    scaling region is bounded above by the onset of saturation, and a window
+    reaching the end of a truncated curve is indistinguishable from a transient
+    that simply has not finished decaying.  That guard is what refuses the old
+    ``dimension=3, delay=1, k_max=20`` Lorenz reconstruction instead of reading a
+    4x-too-high exponent off its still-decaying transient.
+
+    **Exactly what that guard is, and is not.**  It excludes the single final
+    index — ``hi`` never reaches ``n - 1`` — so a window ending at ``n - 2`` is
+    still accepted.  It is not a margin, and it does not keep the last sample out
+    of the fit: :func:`_local_slopes` is a *centred* window clamped at the ends,
+    so ``slopes[n - 2]`` already reads the final point.  The guard is the minimum
+    that refuses a curve whose plateau is still running when the data stop; a
+    genuinely conservative version would drop a whole window's worth of tail,
+    which would move every reported exponent and is deliberately not done here.
+
+    ``None`` means the curve has no such plateau: either it is entirely
+    transient (too small a ``k_max``, or a degenerate embedding) or entirely
+    saturated.  The caller must not silently report a slope in that case.
+    """
+    n = y.size
+    min_len = max(_MIN_REGION_POINTS, -(-n // _MIN_REGION_FRACTION))
+    if n < min_len:
+        return None, 0.0
+    window = max(3, n // _SLOPE_WINDOW_FRACTION)
+    slopes = _local_slopes(x, y, window)
+    if not np.all(np.isfinite(slopes)):
+        return None, 0.0
+    peak = float(np.max(slopes))
+    if peak <= 0.0:
+        return None, max(peak, 0.0)
+    floor = _SLOPE_FLOOR * peak
+
+    best: tuple[int, float, int, int] | None = None
+    for lo in range(0, n - min_len):
+        # Longest first: the first `hi` that qualifies for this `lo` is the
+        # longest window starting there, so the inner loop breaks immediately.
+        # `hi` stops at n - 2: a window touching the last sample is rejected
+        # (the curve was truncated before saturation, so we cannot tell a
+        # plateau from an unfinished transient).
+        for hi in range(n - 2, lo + min_len - 2, -1):
+            seg = slopes[lo : hi + 1]
+            mean = float(seg.mean())
+            if mean <= floor:
+                continue
+            dev = float(np.max(np.abs(seg - mean))) / mean
+            if dev > _PLATEAU_TOL:
+                continue
+            length = hi - lo + 1
+            if best is None or length > best[0] or (length == best[0] and dev < best[1]):
+                best = (length, dev, lo, hi)
             break
-    return (0, max(hi, min_len - 1))
+    if best is None:
+        return None, peak
+    return (best[2], best[3]), peak
 
 
 def lyapunov_from_data(
     data: np.ndarray,
     *,
     dt: float = 1.0,
-    dimension: int = 3,
-    delay: int = 1,
+    dimension: int = 5,
+    delay: int | None = None,
     theiler: int | None = None,
-    k_max: int = 20,
+    k_max: int | None = None,
     eps: float | None = None,
     n_neighbors: int = 1,
     method: str = "kantz",
@@ -247,21 +444,33 @@ def lyapunov_from_data(
     dt : float, default 1.0
         Sampling interval (time between consecutive samples).  Use ``1.0`` for a
         map (the exponent is then per iteration).
-    dimension : int, default 3
-        Embedding dimension.  Choose it from the data — large enough to unfold
-        the attractor (e.g. a false-nearest-neighbour estimate); too small
-        underestimates the exponent.
-    delay : int, default 1
-        Embedding delay, in samples.  For oversampled flows pick it near the
-        first minimum of the mutual information / first zero of the
-        autocorrelation.
+    dimension : int, default 5
+        Embedding dimension.  Should be large enough to unfold the attractor
+        (Takens' sufficient condition is ``m > 2 D``; a false-nearest-neighbour
+        estimate is the data-driven choice) — too small underestimates the
+        exponent and roughens the scaling region.
+    delay : int, optional
+        Embedding delay, in samples.  ``None`` (the default) reads it from the
+        data: the first lag at which the autocorrelation has fallen to
+        :math:`1/e` (see :func:`_auto_delay`, which also explains why that rule
+        rather than the first zero crossing or the mutual-information minimum).
+        That is ``1`` for a map and grows with the oversampling factor of a
+        flow; the old fixed
+        ``delay=1`` default produced a near-collinear embedding for any
+        finely-sampled flow and, with it, a badly biased exponent.
     theiler : int, optional
         Theiler window (Theiler 1986): neighbours with ``|n - j| <= theiler`` are
         rejected so temporally-correlated points are not mistaken for dynamical
         neighbours.  Defaults to ``(dimension - 1) * delay`` (the embedding span).
-    k_max : int, default 20
+    k_max : int, optional
         Number of forward samples over which divergence is tracked; the curve
-        spans ``k = 0 … k_max``.
+        spans ``k = 0 … k_max``.  ``None`` (the default) uses ``25 * delay``
+        (at least 20, never more than the series can support, and never more than
+        :data:`_KMAX_CEILING` — both estimators cost time, and Rosenstein memory,
+        linearly in ``k_max``, so an oversampling-driven value is capped with a
+        :class:`ScalingRegionWarning`): the scaling region lives a few
+        decorrelation times out, so a look-ahead fixed in *samples* is
+        meaningless while one fixed in *delays* transfers between systems.
     eps : float, optional
         Neighbour-ball radius for ``method="kantz"``.  Defaults to ``0.1`` times
         the standard deviation pooled over *all* embedded coordinates.  This
@@ -277,15 +486,35 @@ def lyapunov_from_data(
     method : {"kantz", "rosenstein"}, default "kantz"
         Divergence estimator (see module docstring).
     fit : tuple[int, int], optional
-        Inclusive sample range ``(lo, hi)`` over which the slope is fit.  Defaults
-        to an automatic scaling region (the initial linear rise).  Inspect the
-        returned curve and set this explicitly for a reliable estimate.
+        Inclusive sample range ``(lo, hi)`` over which the slope is fit.  ``None``
+        (the default) locates the linear scaling region automatically
+        (:func:`_auto_fit_region`: the longest stable-local-slope plateau, above
+        the transient and below saturation).  Passing ``fit`` explicitly takes
+        ownership of the choice — no plateau search runs and no
+        :class:`ScalingRegionWarning` is raised for it, whatever the window
+        contains.
 
     Returns
     -------
     LyapunovFromData
         The estimated exponent, the full divergence curve, and the parameters
         used.  Casts to ``float`` as the exponent.
+
+    Warns
+    -----
+    ScalingRegionWarning
+        When the requested ``delay`` is far below the series' own decorrelation
+        time — a near-collinear embedding, whose exponent is badly biased — or
+        when the series is so heavily oversampled that the automatic ``k_max``
+        had to be capped at :data:`_KMAX_CEILING` to stay affordable.
+
+        The other untrustworthy outcome, a curve with **no** stable-slope plateau
+        (all transient and/or all saturation, so the slope is a fallback fit over
+        the whole curve), is reported through ``result.trusted`` /
+        ``repr(result)`` / ``result.meta["scaling_region"]`` rather than a
+        warning — see :class:`ScalingRegionWarning` for why.  Either way, do not
+        use an untrusted number: inspect the curve and pass an explicit ``fit``,
+        or improve the reconstruction.
 
     Raises
     ------
@@ -306,6 +535,15 @@ def lyapunov_from_data(
     The estimate is only as good as the embedding and the chosen scaling region.
     Always look at ``result.times`` vs ``result.divergence``: a trustworthy
     estimate comes from a clear straight segment before the curve saturates.
+    Measured at the defaults against independent truth (logistic ``r = 4``, where
+    the exponent is exactly :math:`\ln 2`; Hénon, Lorenz, Chen and Rössler
+    against variational spectra), the automatic region lands within **1 % on a
+    map** and within **−22 % to +9 % on a flow**, depending on the observable and
+    the sampling rate — a Kantz/Rosenstein reading of a scalar flow observable is
+    a ~20 %-accurate quantity, not a precision one.  Treat it as "is there a
+    positive exponent, and roughly how large", and use
+    :func:`~tsdynamics.analysis.lyapunov.lyapunov_spectrum` when the system (not
+    just a measured series) is in hand.
 
     Examples
     --------
@@ -324,16 +562,67 @@ def lyapunov_from_data(
     calculating largest Lyapunov exponents from small data sets", *Physica D*
     **65** (1993) 117--134.
     """
+    reject_system(data, analysis="lyapunov_from_data")
     dimension = int(dimension)
-    delay = int(delay)
-    k_max = int(k_max)
     n_neighbors = int(n_neighbors)
     dt = float(dt)
     method = method.lower()
     if dimension < 1:
         raise InvalidParameterError("dimension (embedding dimension) must be >= 1.")
+    # Reconstruction defaults are read from the data, not fixed in samples: a
+    # delay and a look-ahead that are right for a map are wrong for the same
+    # dynamics sampled 100x finer (see the `delay` / `k_max` docstrings).
+    auto_delay, delay_measured = _auto_delay(data)
+    delay = auto_delay if delay is None else int(delay)
     if delay < 1:
         raise InvalidParameterError("delay (embedding delay) must be >= 1.")
+    degenerate_embedding = delay_measured and delay * _DEGENERATE_DELAY_FACTOR < auto_delay
+    if degenerate_embedding:
+        warnings.warn(
+            f"lyapunov_from_data: delay={delay} is far below this series' own "
+            f"decorrelation time (~{auto_delay} samples), so the delay embedding is "
+            "near-collinear: its 'neighbours' are consecutive samples of one "
+            "trajectory rather than dynamical neighbours, and the exponent read "
+            "off it is badly biased (result.trusted is False). Leave delay unset "
+            "to use the data-driven value, or pass a delay of that order.",
+            ScalingRegionWarning,
+            stacklevel=2,
+        )
+    if k_max is None:
+        # The look-ahead is set by the *dynamics'* own decorrelation time, not by
+        # whatever embedding delay the caller chose: an over-long delay on a map
+        # (e.g. delay=5 on the logistic map, whose stretching curve saturates by
+        # k = 10) would otherwise stretch k_max to 125 and drown the scaling
+        # region in saturation.
+        scale = auto_delay if delay_measured else delay
+        span = (dimension - 1) * delay
+        rows = int(np.shape(np.asarray(data))[0]) - span
+        wanted = max(_KMAX_FLOOR, _KMAX_DELAYS * scale)
+        # Every row within k_max of the end is unusable as a reference OR as a
+        # neighbour (its k-ahead image does not exist), so a look-ahead of half
+        # the rows throws away half the point cloud — and on a short, heavily
+        # oversampled series (whose Theiler window is ``(m - 1) * delay``, itself
+        # large) the survivors are too sparse for any of them to have a neighbour
+        # inside ``eps``: a 1000-sample Lorenz x-series at dt = 0.02 raised
+        # ConvergenceError at ``(rows - 2) // 2`` and estimates fine at a quarter.
+        k_max = int(min(wanted, _KMAX_CEILING, max(2, (rows - 1) // 4)))
+        if wanted > _KMAX_CEILING and k_max == _KMAX_CEILING:
+            # The cap bound: say so, because it is the sampling rate that made the
+            # automatic look-ahead unaffordable, and decimating is the real remedy.
+            warnings.warn(
+                f"lyapunov_from_data: this series decorrelates only after ~{auto_delay} "
+                f"samples, so the automatic look-ahead would be k_max={wanted}; it is "
+                f"capped at {_KMAX_CEILING} because the cost of both estimators grows "
+                "with k_max (and the Rosenstein path's memory with it). The series is "
+                "heavily oversampled for this estimator: decimate it (keep every "
+                f"~{max(1, auto_delay // 10)}th sample and scale dt by the same "
+                "factor), or pass k_max explicitly and accept the cost. Check "
+                "result.trusted.",
+                ScalingRegionWarning,
+                stacklevel=2,
+            )
+    else:
+        k_max = int(k_max)
     if k_max < 2:
         raise InvalidParameterError("k_max must be >= 2 to fit a slope.")
     if n_neighbors < 1:
@@ -345,6 +634,12 @@ def lyapunov_from_data(
     theiler = (dimension - 1) * delay if theiler is None else int(theiler)
     if theiler < 0:
         raise InvalidParameterError("theiler must be >= 0.")
+    if fit is not None and not (0 <= int(fit[0]) < int(fit[1]) <= k_max):
+        # Validated up front: an out-of-range window is a caller error and must
+        # not be reported only after the (potentially minutes-long) neighbour search.
+        raise InvalidParameterError(
+            f"fit region {fit!r} must satisfy 0 <= lo < hi <= k_max ({k_max})."
+        )
 
     from scipy.spatial import cKDTree
 
@@ -450,14 +745,22 @@ def lyapunov_from_data(
         n_reference = int(ref_arr.size)
 
     times = np.arange(k_max + 1, dtype=float) * dt
+    trusted = not degenerate_embedding
     if fit is None:
-        lo, hi = _auto_fit_region(divergence, min_len=max(3, (k_max + 1) // 3))
+        region, _peak_slope = _auto_fit_region(times, divergence)
+        if region is None:
+            # No plateau: the curve is all transient and/or all saturation, so no
+            # slope read off it is a scaling-region reading.  Fall back to the
+            # whole curve and flag the result untrusted.
+            trusted = False
+            lo, hi = 0, k_max
+            region_source = "none (fallback: fitted over the whole curve)"
+        else:
+            lo, hi = region
+            region_source = "auto (stable-slope plateau)"
     else:
-        lo, hi = int(fit[0]), int(fit[1])
-        if not (0 <= lo < hi <= k_max):
-            raise InvalidParameterError(
-                f"fit region {fit!r} must satisfy 0 <= lo < hi <= k_max ({k_max})."
-            )
+        lo, hi = int(fit[0]), int(fit[1])  # bounds already validated above
+        region_source = "explicit"
     xfit = times[lo : hi + 1]
     yfit = divergence[lo : hi + 1]
     # The divergence curve is floored at ``log(_TINY)``, so it is always finite;
@@ -483,12 +786,16 @@ def lyapunov_from_data(
         theiler=theiler,
         n_reference=n_reference,
         method=method,
+        trusted=trusted,
         meta={
             "method": method,
             "dimension": dimension,
             "delay": delay,
             "theiler": theiler,
+            "k_max": k_max,
             "n_reference": n_reference,
+            "trusted": trusted,
+            "scaling_region": region_source,
         },
     )
 

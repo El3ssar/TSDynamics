@@ -200,9 +200,9 @@ class AnalysisResult:
             import pandas as pd
         except ImportError as exc:  # pragma: no cover - depends on environment
             raise ImportError(
-                "to_frame() needs pandas, which is an optional dependency. "
-                "Install it with `pip install tsdynamics[frame]` (or "
-                "`pip install pandas`). Use .to_dict() for a stdlib-only export."
+                "to_frame() needs pandas, which TSDynamics does not depend on. "
+                "Install it with `pip install pandas`. Use .to_dict() for a "
+                "stdlib-only export of the same fields."
             ) from exc
         return pd
 
@@ -210,7 +210,7 @@ class AnalysisResult:
         """Return a :class:`pandas.DataFrame` view of the result.
 
         ``pandas`` is a soft dependency, imported lazily; a missing install
-        raises an :class:`ImportError` naming the ``tsdynamics[frame]`` extra.
+        raises an :class:`ImportError` pointing at ``pip install pandas``.
 
         The base produces a single-row frame of the scalar display fields, with
         ``meta`` carried on ``frame.attrs["meta"]``.  Subclasses that carry a
@@ -224,8 +224,8 @@ class AnalysisResult:
         Raises
         ------
         ImportError
-            If :mod:`pandas` is not installed (the message names the
-            ``tsdynamics[frame]`` extra).
+            If :mod:`pandas` is not installed (the message points at
+            ``pip install pandas``).
         """
         pd = self._require_pandas()
         row: dict[str, Any] = {}

@@ -46,6 +46,7 @@ class GlycolyticOscillation(ContinuousSystem):
         "s2": 22.2222,
     }
     dim = 3
+    variables = ("a", "b", "c")
     reference = "Decroly & Goldbeter (1982), Proc. Natl. Acad. Sci. U.S.A. 79, 6917-6921"
     doi = "10.1073/pnas.79.22.6917"
 
@@ -92,6 +93,7 @@ class Oregonator(ContinuousSystem):
         "epsilon": 1e-2,
     }
     dim = 3  # Three variables: X, Y, Z (reduced forms of the chemical species)
+    variables = ("x", "y", "z")
     reference = "Field & Noyes (1974), J. Chem. Phys. 60, 1877-1884"
     doi = "10.1063/1.1681288"
     # Classic stiff system (Field–Noyes); an explicit solver cannot integrate
@@ -148,6 +150,7 @@ class IsothermalChemical(ContinuousSystem):
 
     params = {"delta": 1.0, "kappa": 2.5, "mu": 0.29786, "sigma": 0.013}
     dim = 3
+    variables = ("alpha", "beta", "gamma")
     reference = "Petrov, Scott & Showalter (1992), J. Chem. Phys. 97, 6191-6198"
     doi = "10.1063/1.463727"
 
@@ -190,6 +193,7 @@ class ForcedBrusselator(ContinuousSystem):
 
     params = {"a": 0.4, "b": 1.2, "f": 0.05, "w": 0.81}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Prigogine (1980), From Being to Becoming, W.H. Freeman"
 
     @staticmethod
@@ -257,6 +261,7 @@ class CircadianRhythm(ContinuousSystem):
         "vs": 6,
     }
     dim = 5
+    variables = ("m", "fc", "fs", "fn", "th")
     reference = "Leloup, Gonze & Goldbeter (1999); Gonze, Leloup & Goldbeter (2000)"
     doi = "10.1177/074873099129000948"
 
@@ -352,6 +357,7 @@ class CaTwoPlus(ContinuousSystem):
         "p": 1,
     }
     dim = 3
+    variables = ("z", "y", "a")
     reference = "Houart, Dupont & Goldbeter (1999), Bull. Math. Biol. 61, 507-530"
     doi = "10.1006/bulm.1999.0095"
 
@@ -437,6 +443,7 @@ class ExcitableCell(ContinuousSystem):
         "vn": -30,
     }
     dim = 3
+    variables = ("v", "n", "c")
     reference = "Chay (1985), Physica D 16, 233-242"
     doi = "10.1016/0167-2789(85)90060-0"
 
@@ -517,6 +524,7 @@ class CellCycle(ContinuousSystem):
         "vi": 0.05,
     }
     dim = 6
+    variables = ("c1", "m1", "x1", "c2", "m2", "x2")
     reference = "Romond, Rustici, Gonze & Goldbeter (1999), Ann. N.Y. Acad. Sci. 879, 180-193"
     doi = "10.1111/j.1749-6632.1999.tb10419.x"
 
@@ -586,6 +594,7 @@ class HindmarshRose(ContinuousSystem):
         "tz": 0.8,
     }
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Hindmarsh & Rose (1984), Proc. R. Soc. Lond. B 221, 87-102"
     doi = "10.1098/rspb.1984.0024"
 
@@ -633,6 +642,7 @@ class ForcedVanDerPol(ContinuousSystem):
 
     params = {"a": 1.2, "mu": 8.53, "w": 0.63}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "van der Pol (1926), London Edinburgh Dublin Philos. Mag. J. Sci. 2, 978-992"
     doi = "10.1080/14786442608564127"
 
@@ -683,6 +693,7 @@ class ForcedFitzHughNagumo(ContinuousSystem):
         "omega": 0.043650793650793655,
     }
     dim = 3
+    variables = ("v", "w", "z")
     reference = "FitzHugh (1961), Biophys. J. 1, 445-466"
     doi = "10.1016/s0006-3495(61)86902-6"
 
@@ -728,6 +739,7 @@ class TurchinHanski(ContinuousSystem):
 
     params = {"a": 8, "d": 0.04, "e": 0.5, "g": 0.1, "h": 0.8, "r": 8.12, "s": 1.25}
     dim = 3
+    variables = ("n", "p", "z")
     reference = "Turchin & Hanski (1997), Am. Nat. 149, 842-874"
     doi = "10.1086/286027"
 
@@ -770,6 +782,7 @@ class HastingsPowell(ContinuousSystem):
 
     params = {"a1": 5.0, "a2": 0.1, "b1": 3.0, "b2": 2.0, "d1": 0.4, "d2": 0.01}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Hastings & Powell (1991), Ecology 72, 896-903"
     doi = "10.2307/1940591"
 
@@ -825,6 +838,7 @@ class ItikBanksTumor(ContinuousSystem):
         "r3": 4.5,
     }
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Itik & Banks (2010), Int. J. Bifurcation Chaos 20, 71-79"
     doi = "10.1142/s0218127410025417"
 

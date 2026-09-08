@@ -56,6 +56,37 @@ def _kernel_token(fn: Any) -> str:
     return hashlib.md5(src.encode()).hexdigest()[:8]
 
 
+class _NumericRHS:
+    """A picklable ``f(u, t) -> ndarray`` over a SymEngine-lambdified RHS.
+
+    The numeric-RHS helper used to be a closure over ``rhs_fn`` / ``vals``
+    defined inside :meth:`ContinuousSystem._rhs_numeric`.  A local function
+    cannot be pickled, so every object that *cached* one became unpicklable —
+    most visibly :class:`~tsdynamics.derived.poincare.PoincareMap`, the wrapper
+    a user reaches for to parallelise a bifurcation sweep.  Hoisting the closure
+    into a module-level callable with the same behaviour fixes that without
+    changing a single number: the two ``__call__`` bodies are identical, and both
+    the lambdified callable and the captured parameter vector pickle natively.
+    """
+
+    __slots__ = ("_rhs_fn", "_vals")
+
+    def __init__(self, rhs_fn: Any, vals: np.ndarray) -> None:
+        self._rhs_fn = rhs_fn
+        self._vals = vals
+
+    def __call__(self, u: Any, t: float = 0.0) -> np.ndarray:
+        arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], self._vals])
+        return np.asarray(self._rhs_fn(arg), dtype=float).ravel()
+
+    # ``__slots__`` classes get no ``__dict__``, so spell the pickle protocol out.
+    def __getstate__(self) -> tuple[Any, np.ndarray]:
+        return (self._rhs_fn, self._vals)
+
+    def __setstate__(self, state: tuple[Any, np.ndarray]) -> None:
+        self._rhs_fn, self._vals = state
+
+
 def _resolve_extremum_derivative(
     is_max: bool, args: Sequence[Any], wrt: Any, walk: Callable[[Any], Any]
 ) -> Any:
@@ -234,7 +265,7 @@ class ContinuousSystem(SystemBase, ABC):
     --------
     >>> lor = Lorenz()
     >>> traj = lor.integrate(final_time=100, dt=0.01)
-    >>> t, y = traj          # tuple-unpack
+    >>> t, y = traj.unpack()   # the two columns
     >>> lor.sigma = 15.0     # change param — zero recompile cost
     >>> traj2 = lor.integrate(final_time=100)
     """
@@ -438,10 +469,37 @@ class ContinuousSystem(SystemBase, ABC):
         method, rtol, atol, max_step, backend
             Stepper configuration, as in :meth:`integrate`.  ``max_step`` is
             stored and applied to every subsequent :meth:`step`.
+
+        Notes
+        -----
+        A ``reinit`` that raises leaves the system exactly as it was — ``self.ic``
+        is rolled back rather than left holding the initial condition that failed.
         """
         if params:
             for k, v in params.items():
                 self.params[k] = v
+        # ``resolve_ic`` commits the resolved IC to ``self.ic`` before any of the
+        # work below happens, and plenty below can raise (an unknown backend, an
+        # unresolvable method, a tape that will not lower, an unavailable engine).
+        # Without the guard a failed ``reinit`` latched the offending IC onto the
+        # instance and every later, unrelated call silently started from it.
+        with self._ic_rollback():
+            self._reinit_resolved(
+                u, t=t, method=method, rtol=rtol, atol=atol, max_step=max_step, backend=backend
+            )
+
+    def _reinit_resolved(
+        self,
+        u: Any | None,
+        *,
+        t: float | None,
+        method: str | None,
+        rtol: float,
+        atol: float,
+        max_step: float | None,
+        backend: str | None,
+    ) -> None:
+        """Run :meth:`reinit`'s body (wrapped by its IC rollback guard)."""
         t0 = float(t) if t is not None else 0.0
         ic_arr = self.resolve_ic(u)
         from tsdynamics.engine.run import resolve_backend
@@ -842,15 +900,16 @@ class ContinuousSystem(SystemBase, ABC):
         fresh callable after changing parameters.  Used by figure tooling,
         Poincaré crossing refinement, and backend cross-validation — the
         engine remains the integrator of record.
+
+        The returned object is a module-level :class:`_NumericRHS` instance, not
+        a closure, so it **pickles**: a wrapper holding one (notably
+        :class:`~tsdynamics.derived.poincare.PoincareMap`, which caches it for
+        Hermite refinement) can cross a ``multiprocessing`` / ``joblib`` boundary,
+        which is exactly what a parallel bifurcation sweep needs.
         """
         rhs_fn, _, control_names = self._build_lambdified()
         vals = np.array([float(self.params[k]) for k in control_names])
-
-        def rhs(u: Any, t: float = 0.0) -> np.ndarray:
-            arg = np.concatenate([np.asarray(u, dtype=float).ravel(), [t], vals])
-            return np.asarray(rhs_fn(arg), dtype=float).ravel()
-
-        return rhs
+        return _NumericRHS(rhs_fn, vals)
 
     # ------------------------------------------------------------------ #
     # Trajectory production — the canonical ``run`` verb
@@ -895,7 +954,7 @@ class ContinuousSystem(SystemBase, ABC):
             ``PoincareMap.as_events()`` shows the section as one such event.
         **kwargs
             Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
-            ``rtol``, ``atol``, ``max_step``, ``backend``, …).
+            ``rtol``, ``atol``, ``max_step``, ``backend``, ``seed``, …).
 
         Returns
         -------
@@ -932,6 +991,7 @@ class ContinuousSystem(SystemBase, ABC):
         atol: float = DEFAULT_ATOL,
         max_step: float | None = None,
         backend: str | None = None,
+        seed: int | None = None,
     ) -> Trajectory:
         """Integrate with event detection and wrap the result as a Trajectory.
 
@@ -940,12 +1000,48 @@ class ContinuousSystem(SystemBase, ABC):
         per-event crossings to ``meta`` (the SciPy-shaped ``t_events`` /
         ``y_events``).
         """
+        # ``resolve_ic`` commits the IC before the engine march runs, so an event
+        # run that diverges (or is interrupted) must not leave it latched — the
+        # same contract ``_dispatch`` gives plain ``integrate``.
+        with self._ic_rollback():
+            return self._run_events_resolved(
+                final_time=final_time,
+                dt=dt,
+                events=events,
+                t0=t0,
+                ic=ic,
+                method=method,
+                rtol=rtol,
+                atol=atol,
+                max_step=max_step,
+                backend=backend,
+                seed=seed,
+            )
+
+    def _run_events_resolved(
+        self,
+        *,
+        final_time: float,
+        dt: float,
+        events: Any,
+        t0: float,
+        ic: Any | None,
+        method: str | None,
+        rtol: float,
+        atol: float,
+        max_step: float | None,
+        backend: str | None,
+        seed: int | None,
+    ) -> Trajectory:
+        """Run :meth:`_run_events`' body (wrapped by its IC rollback guard)."""
         from tsdynamics.engine import run as engine_run
         from tsdynamics.engine.problem import ode_problem
 
         be = backend if backend is not None else self._default_backend
         meth = method or self._default_method
-        ic_arr = self.resolve_ic(ic)
+        # ``seed=`` is the initial-condition seed (inert unless a draw happens) —
+        # the same contract ``integrate``/``_dispatch`` honour.
+        ic_arr = self.resolve_ic(ic, seed=seed)
         prob = ode_problem(self, ic=ic_arr, t0=float(t0))
         # Resolve ``method=`` through the shared ``auto``-aware contract so the
         # events path honours ``method="auto"`` identically to integrate/ensemble
@@ -1006,6 +1102,7 @@ class ContinuousSystem(SystemBase, ABC):
         atol: float = DEFAULT_ATOL,
         max_step: float | None = None,
         backend: str | None = None,
+        seed: int | None = None,
         events: Any = None,
         **integrator_kwargs: Any,
     ) -> Trajectory:
@@ -1088,6 +1185,16 @@ class ContinuousSystem(SystemBase, ABC):
                JIT recompiled the whole tape on every FFI call, which made it
                slower than the interpreter for short runs; the v6
                compiled-evaluator cache removed that per-call compile.
+        seed : int, optional
+            Seed for the **random initial-condition draw** — the same meaning it
+            has on :meth:`DiscreteMap.iterate` and on the constructor
+            (:meth:`SystemBase.ic_generator`), so ``seed=`` reads identically on
+            every family.  It only bites when a draw actually happens: an
+            explicit ``ic``, an ``ic`` already resolved onto the system, and a
+            class-level ``default_ic`` all take priority.  The resolved seed is
+            recorded on ``traj.meta["ic_seed"]``.
+
+            .. versionadded:: 6.0
         events : sequence, optional
             Detect events along the flow (the SciPy-shaped ``events=`` API; see
             :meth:`run`).  Each element is an
@@ -1101,7 +1208,9 @@ class ContinuousSystem(SystemBase, ABC):
         Returns
         -------
         Trajectory
-            Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
+            A container of samples: ``len(traj)`` time points, iterating
+            yields ``(t_i, y_i)`` pairs; ``traj.unpack()`` gives the two
+            column arrays ``(t, y)``.
         """
         if integrator_kwargs:
             # Anything left in **integrator_kwargs is an unrecognised keyword (every
@@ -1116,7 +1225,7 @@ class ContinuousSystem(SystemBase, ABC):
                 rule="is not a valid integrate()/run() keyword",
                 hint=(
                     "check the keyword spelling (e.g. final_time, dt, t0, ic, method, "
-                    "rtol, atol, max_step)."
+                    "rtol, atol, max_step, seed)."
                 ),
             )
         if events is not None:
@@ -1131,10 +1240,12 @@ class ContinuousSystem(SystemBase, ABC):
                 atol=atol,
                 max_step=max_step,
                 backend=backend,
+                seed=seed,
             )
         backend = backend if backend is not None else self._default_backend
         return self._dispatch(
             backend=backend,
+            seed=seed,
             final_time=final_time,
             dt=dt,
             t0=t0,

@@ -69,6 +69,7 @@ class LorenzBounded(ContinuousSystem):
 
     params = {"beta": 2.667, "r": 64, "rho": 28, "sigma": 10}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott & Xiong (2015), Chaos 25, 083101"
     doi = "10.1063/1.4927643"
 
@@ -131,6 +132,7 @@ class LorenzCoupled(ContinuousSystem):
 
     params = {"beta": 8 / 3, "kappa": 2.85, "rho": 28, "sigma": 10}
     dim = 6
+    variables = ("x1", "y1", "z1", "x2", "y2", "z2")
     reference = "Lorenz (1963), J. Atmos. Sci. 20, 130-141"
     doi = "10.1175/1520-0469(1963)020<0130:dnf>2.0.co;2"
 
@@ -173,11 +175,16 @@ class Lorenz96(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        **param_kwargs: float,
     ):
         p = dict(type(self).params)
+        # ``params=``, the explicit ``N``/``f`` arguments and free parameter
+        # keywords are all accepted; super().__init__ validates unknown names
+        # (InvalidParameterError, naming the declared ones).
         if params:
-            # super().__init__ validates unknown parameters (InvalidParameterError).
             p.update(params)
+        if param_kwargs:
+            p.update(param_kwargs)
         if N is not None:
             p["N"] = int(N)
         if f is not None:
@@ -213,6 +220,7 @@ class Lorenz84(ContinuousSystem):
 
     params = {"a": 1.32, "b": 7.91, "f": 4.83, "g": 4.194}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Lorenz (1984), Tellus 36A, 98-110"
     doi = "10.3402/tellusa.v36i2.11473"
 
@@ -303,6 +311,7 @@ class Thomas(ContinuousSystem):
 
     params = {"a": 1.85, "b": 10}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Thomas (1999), Int. J. Bifurc. Chaos 9, 1889-1905"
     doi = "10.1142/s0218127499001383"
 
@@ -386,20 +395,23 @@ class KuramotoSivashinsky(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        **param_kwargs: float,
     ):
         p = dict(type(self).params)
-        if params:
+        overrides = {**(params or {}), **param_kwargs}
+        if overrides:
             # Validate before the N>=7 / IC-build steps below so an unknown
             # parameter surfaces first (super().__init__ would also reject it,
             # but only after those steps). Raise the project error type to match
-            # SystemBase.__init__ (InvalidParameterError, a ValueError subclass).
-            unknown = set(params) - set(p)
+            # SystemBase.__init__ (InvalidParameterError, a ValueError subclass)
+            # rather than the bare TypeError a fixed signature would give.
+            unknown = set(overrides) - set(p)
             if unknown:
                 raise InvalidParameterError(
                     f"KuramotoSivashinsky: unknown parameter(s) {sorted(unknown)}. "
                     f"Declared: {sorted(p)}"
                 )
-            p.update(params)
+            p.update(overrides)
         if N is not None:
             p["N"] = int(N)
         if L is not None:
@@ -545,6 +557,7 @@ class Halvorsen(ContinuousSystem):
     # documented (without a formal primary paper) by Sprott (2003).
     params = {"a": 1.4, "b": 4}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (2010), Elegant Chaos, World Scientific"
     doi = "10.1142/9789812838827"
 
@@ -585,6 +598,7 @@ class Chua(ContinuousSystem):
 
     params = {"alpha": 15.6, "beta": 28.0, "m0": -1.142857, "m1": -0.71429}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Matsumoto (1984), IEEE Trans. Circuits Syst. 31, 1055-1058"
     doi = "10.1109/tcs.1984.1085459"
     # Classic double-scroll Chua circuit (α=15.6, β=28, m0=-8/7, m1=-5/7). The
@@ -661,11 +675,18 @@ class MultiChua(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        **param_kwargs: float,
     ):
         p = dict(type(self).params)
+        # The circuit parameters (alpha, beta, m0, m1, kappa) reach the
+        # constructor as plain keywords, like every other system's — this custom
+        # ``__init__`` exists only to resolve ``dim`` from ``n_circuits``, so it
+        # must not shadow that front door.  Unknown names are rejected by
+        # ``super().__init__`` (InvalidParameterError, naming the valid ones).
         if params:
-            # super().__init__ validates unknown parameters (InvalidParameterError).
             p.update(params)
+        if param_kwargs:
+            p.update(param_kwargs)
         if n_circuits is not None:
             p["n_circuits"] = int(n_circuits)
         super().__init__(dim=3 * int(p["n_circuits"]), params=p, ic=ic)
@@ -748,6 +769,7 @@ class Duffing(ContinuousSystem):
 
     params = {"alpha": 1.0, "beta": -1.0, "delta": 0.1, "gamma": 0.35, "omega": 1.4}
     dim = 3
+    variables = ("x", "y", "z")
     reference = (
         "Duffing (1918), Erzwungene Schwingungen bei veränderlicher "
         "Eigenfrequenz, Vieweg, Braunschweig"
@@ -804,6 +826,7 @@ class RabinovichFabrikant(ContinuousSystem):
 
     params = {"a": 1.1, "g": 0.87}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Rabinovich & Fabrikant (1979), Sov. Phys. JETP 50, 311-317"
     default_ic = [-1.0, 0.0, 0.5]  # random U[0,1)^3 escapes the basin
 
@@ -842,6 +865,7 @@ class Dadras(ContinuousSystem):
 
     params = {"c": 2.0, "e": 9.0, "o": 2.7, "p": 3.0, "r": 1.7}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Dadras & Momeni (2009), Phys. Lett. A 373, 3637-3642"
     doi = "10.1016/j.physleta.2009.07.088"
 
@@ -874,6 +898,7 @@ class PehlivanWei(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Pehlivan & Wei (2012), Turk. J. Electr. Eng. Comput. Sci. 20, 1229-1239"
     doi = "10.3906/elk-1103-14"
 
@@ -910,6 +935,7 @@ class SprottTorus(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (2014), Phys. Lett. A 378, 1361-1363"
     doi = "10.1016/j.physleta.2013.11.004"
 
@@ -943,6 +969,7 @@ class SprottA(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -973,6 +1000,7 @@ class SprottB(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1003,6 +1031,7 @@ class SprottC(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1033,6 +1062,7 @@ class SprottD(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
@@ -1064,6 +1094,7 @@ class SprottE(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1099,6 +1130,7 @@ class SprottF(ContinuousSystem):
 
     params = {"a": 0.5}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1134,6 +1166,7 @@ class SprottG(ContinuousSystem):
 
     params = {"a": 0.4}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1169,6 +1202,7 @@ class SprottH(ContinuousSystem):
 
     params = {"a": 0.5}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1204,6 +1238,7 @@ class SprottI(ContinuousSystem):
 
     params = {"a": 0.2}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
@@ -1235,6 +1270,7 @@ class SprottJ(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1270,6 +1306,7 @@ class SprottK(ContinuousSystem):
 
     params = {"a": 0.3}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1305,6 +1342,7 @@ class SprottL(ContinuousSystem):
 
     params = {"a": 0.9, "b": 3.9}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
@@ -1341,6 +1379,7 @@ class SprottM(ContinuousSystem):
 
     params = {"a": 1.7}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
@@ -1372,6 +1411,7 @@ class SprottN(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1407,6 +1447,7 @@ class SprottO(ContinuousSystem):
 
     params = {"a": 2.7}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
     default_ic = [0.1, 0.05, 0.05]  # random U[0,1)^3 escapes the basin
@@ -1443,6 +1484,7 @@ class SprottP(ContinuousSystem):
 
     params = {"a": 2.7}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
@@ -1479,6 +1521,7 @@ class SprottQ(ContinuousSystem):
 
     params = {"a": 3.1, "b": 0.5}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1514,6 +1557,7 @@ class SprottR(ContinuousSystem):
 
     params = {"a": 0.9, "b": 0.4}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1544,6 +1588,7 @@ class SprottS(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1994), Phys. Rev. E 50, R647-R650"
     doi = "10.1103/physreve.50.r647"
 
@@ -1576,6 +1621,7 @@ class SprottMore(ContinuousSystem):
 
     params = {}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (2020), Chaos Theory Appl. 2, 1-3"
     doi = "10.1016/j.chaos.2020.109990"
 
@@ -1615,6 +1661,7 @@ class SprottJerk(ContinuousSystem):
 
     params = {"mu": 2.017}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Sprott (1997), Phys. Lett. A 228, 271-274"
     doi = "10.1016/s0375-9601(97)00088-1"
     _default_method = "bdf"  # explicit default solver fails; use an implicit one
@@ -1658,6 +1705,7 @@ class Arneodo(ContinuousSystem):
 
     params = {"a": -5.5, "b": 4.5, "c": 1.0, "d": -1.0}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Arneodo, Coullet & Tresser (1980), Phys. Lett. A 79, 259-263"
     doi = "10.1016/0375-9601(80)90342-4"
 
@@ -1697,6 +1745,7 @@ class Rucklidge(ContinuousSystem):
 
     params = {"a": 2.0, "b": 6.7}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Rucklidge (1992), J. Fluid Mech. 237, 209-229"
     doi = "10.1017/s0022112092003392"
 
@@ -1734,6 +1783,7 @@ class HyperRossler(ContinuousSystem):
 
     params = {"a": 0.25, "b": 3.0, "c": 0.5, "d": 0.05}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Rössler (1979), Phys. Lett. A 71, 155-157"
     doi = "10.1016/0375-9601(79)90150-6"
     default_ic = [-10.0, -6.0, 0.0, 10.0]  # random U[0,1)^4 escapes the basin
@@ -1775,6 +1825,7 @@ class HyperLorenz(ContinuousSystem):
 
     params = {"a": 10, "b": 2.667, "c": 28, "d": 1.1}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Meier (2003), Presentation of Attractors with Cinema"
 
     @staticmethod
@@ -1802,6 +1853,7 @@ class HyperYangChen(ContinuousSystem):
 
     params = {"a": 30, "b": 3, "c": 35, "d": 8}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Meier (2003), Presentation of Attractors with Cinema"
 
     @staticmethod
@@ -1830,6 +1882,7 @@ class HyperYan(ContinuousSystem):
 
     params = {"a": 37, "b": 3, "c": 26, "d": 38}
     dim = 4
+    variables = ("x", "y", "z", "w")
     reference = "Meier (2003), Presentation of Attractors with Cinema"
 
     @staticmethod
@@ -1860,6 +1913,7 @@ class GuckenheimerHolmes(ContinuousSystem):
 
     params = {"a": 0.4, "b": 20.25, "c": 3, "d": 1.6, "e": 1.7, "f": 0.44}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Guckenheimer & Holmes (1988), Math. Proc. Camb. Phil. Soc. 103, 189-192"
     doi = "10.1017/s0305004100064732"
 
@@ -1890,6 +1944,7 @@ class HenonHeiles(ContinuousSystem):
 
     params = {"lam": 1}
     dim = 4
+    variables = ("x", "y", "px", "py")
     reference = "Hénon & Heiles (1964), Astron. J. 69, 73-79"
     doi = "10.1086/109234"
     default_ic = [0.1, 0.1, 0.1, 0.1]  # low-energy bounded orbit; random U[0,1)^4 can be unbound
@@ -1931,6 +1986,7 @@ class NoseHoover(ContinuousSystem):
 
     params = {"a": 1.5}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Nosé (1984), J. Chem. Phys. 81, 511-519; Hoover (1985), Phys. Rev. A 31, 1695-1697"
     doi = "10.1103/physreva.31.1695"
 
@@ -1962,6 +2018,7 @@ class RikitakeDynamo(ContinuousSystem):
 
     params = {"a": 1.0, "mu": 1.0}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Rikitake (1958), Proc. Cambridge Philos. Soc. 54, 89-105"
     doi = "10.1017/s0305004100033223"
 

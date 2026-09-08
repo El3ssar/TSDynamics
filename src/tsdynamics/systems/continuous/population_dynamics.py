@@ -50,6 +50,7 @@ class CoevolvingPredatorPrey(ContinuousSystem):
         "vv": 0.33333,
     }
     dim = 3
+    variables = ("x", "y", "alpha")
 
     @staticmethod
     def _equations(Y, t, *, a1, a2, a3, b1, b2, d1, d2, delta, k1, k2, k4, vv):
@@ -101,6 +102,7 @@ class KawczynskiStrizhak(ContinuousSystem):
     doi = "10.1021/j100027a024"
     params = {"beta": -0.4, "gamma": 0.49, "kappa": 0.2, "mu": 2.1}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, beta, gamma, kappa, mu):
@@ -145,6 +147,7 @@ class Finance(ContinuousSystem):
     reference = "Cai & Huang (2007), Int. J. Nonlinear Sci. 3, 235-241"
     params = {"a": 0.001, "b": 0.2, "c": 1.1}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):

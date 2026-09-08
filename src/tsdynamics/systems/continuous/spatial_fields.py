@@ -123,15 +123,22 @@ class GrayScott(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        **param_kwargs: float,
     ):
         p = dict(type(self).params)
-        if params:
-            unknown = set(params) - set(p)
+        # ``params=``, the explicit per-parameter arguments and free parameter
+        # keywords are all accepted, so this custom ``__init__`` (which exists
+        # only to resolve ``dim`` from ``N``) does not shadow the constructor
+        # front door.  Unknown names raise InvalidParameterError, matching
+        # SystemBase, rather than the bare TypeError a fixed signature gives.
+        overrides = {**(params or {}), **param_kwargs}
+        if overrides:
+            unknown = set(overrides) - set(p)
             if unknown:
                 raise InvalidParameterError(
                     f"GrayScott: unknown parameter(s) {sorted(unknown)}. Declared: {sorted(p)}"
                 )
-            p.update(params)
+            p.update(overrides)
         if N is not None:
             p["N"] = int(N)
         if Du is not None:
@@ -282,15 +289,19 @@ class SwiftHohenberg(ContinuousSystem):
         *,
         params: dict[str, float] | None = None,
         ic=None,
+        **param_kwargs: float,
     ):
         p = dict(type(self).params)
-        if params:
-            unknown = set(params) - set(p)
+        # See GrayScott.__init__: free parameter keywords stay reachable and an
+        # unknown name raises InvalidParameterError, not a bare TypeError.
+        overrides = {**(params or {}), **param_kwargs}
+        if overrides:
+            unknown = set(overrides) - set(p)
             if unknown:
                 raise InvalidParameterError(
                     f"SwiftHohenberg: unknown parameter(s) {sorted(unknown)}. Declared: {sorted(p)}"
                 )
-            p.update(params)
+            p.update(overrides)
         if N is not None:
             p["N"] = int(N)
         if L is not None:

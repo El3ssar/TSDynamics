@@ -40,6 +40,7 @@ class Sakarya(ContinuousSystem):
         "s": 1.0,
     }
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, h, p, q, r, s):
@@ -92,6 +93,7 @@ class Bouali2(ContinuousSystem):
     doi = "10.1142/s0218127499000535"
     params = {"a": 3.0, "b": 2.2, "bb": 0.0, "c": 0.0, "g": 1.0, "m": -0.0026667, "y0": 1.0}
     dim = 3
+    variables = ("x", "y", "z")
     default_ic = [-0.7939, 1.3618, -0.0306]
 
     @staticmethod
@@ -137,6 +139,7 @@ class LuChenCheng(ContinuousSystem):
     doi = "10.1142/s021812740401014x"
     params = {"a": -10, "b": -4, "c": 18.1}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -181,6 +184,7 @@ class LuChen(ContinuousSystem):
     doi = "10.1142/s0218127402004620"
     params = {"a": 36, "b": 3, "c": 18}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -226,6 +230,7 @@ class QiChen(ContinuousSystem):
     doi = "10.1016/j.chaos.2006.09.012"
     params = {"a": 38, "b": 2.666, "c": 80}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -270,6 +275,7 @@ class ZhouChen(ContinuousSystem):
     doi = "10.1142/s0218127404010175"
     params = {"a": 2.97, "b": 0.15, "c": -3.0, "d": 1, "e": -8.78}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):
@@ -314,6 +320,7 @@ class BurkeShaw(ContinuousSystem):
     doi = "10.1515/zna-1981-0115"
     params = {"e": 13, "n": 10}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, e, n):
@@ -360,6 +367,7 @@ class Chen(ContinuousSystem):
 
     params = {"a": 35, "b": 3, "c": 28}
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Chen & Ueta (1999), Int. J. Bifurcation Chaos 9, 1465-1466"
     doi = "10.1142/s0218127499001024"
     # Canonical Chen attractor (a=35, b=3, c=28). The Lyapunov spectrum is
@@ -425,6 +433,7 @@ class ChenLee(ContinuousSystem):
     doi = "10.1016/j.chaos.2003.12.034"
     params = {"a": 5, "b": -10, "c": -0.38}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c):
@@ -469,6 +478,7 @@ class WangSun(ContinuousSystem):
     doi = "10.1590/s0103-97332009000500007"
     params = {"a": 0.2, "b": -0.01, "d": -0.4, "e": -1.0, "f": -1.0, "q": 1.0}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, d, e, f, q):
@@ -516,6 +526,7 @@ class YuWang(ContinuousSystem):
     doi = "10.48084/etasr.86"
     params = {"a": 10, "b": 40, "c": 2, "d": 2.5}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -562,6 +573,7 @@ class YuWang2(ContinuousSystem):
     doi = "10.48084/etasr.86"
     params = {"a": 10, "b": 30, "c": 2, "d": 2.5}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d):
@@ -603,6 +615,7 @@ class SanUmSrisuchinwong(ContinuousSystem):
     doi = "10.4304/jcp.7.4.1041-1047"
     params = {"a": 2}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a):
@@ -652,6 +665,7 @@ class DequanLi(ContinuousSystem):
     doi = "10.1016/j.physleta.2007.07.045"
     params = {"a": 40, "c": 1.833, "d": 0.16, "eps": 0.65, "f": 20, "k": 55}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, c, d, eps, f, k):

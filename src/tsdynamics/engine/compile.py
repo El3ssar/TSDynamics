@@ -61,6 +61,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 import threading
 import types
 from collections import OrderedDict
@@ -255,6 +256,203 @@ class TapeCompileError(NotImplementedError):
     declared state/parameter/time input, or a map ``_step`` that branches on its
     state (and so cannot be traced to a single straight-line expression).
     """
+
+
+# ---------------------------------------------------------------------------
+# Kernel-tracing diagnostics
+#
+# The #1 documented pitfall is calling ``math.*`` / ``numpy.*`` / ``scipy.*``
+# inside a symbolic kernel: those routines try to convert a SymEngine symbol to
+# a float, and the raw failure ("RuntimeError: Symbol cannot be evaluated.", or
+# a ufunc ``TypeError``) says nothing about what to do instead.  Every family's
+# kernel call is wrapped in :func:`_trace_kernel`, which locates the offending
+# source line and raises one actionable :class:`TapeCompileError`.
+# ---------------------------------------------------------------------------
+
+#: Modules whose functions are *numeric* and therefore cannot be traced.  The
+#: aliases are the spellings that actually appear in user code.
+_NUMERIC_MODULES = ("np", "numpy", "math", "scipy", "sp", "cmath")
+
+#: The same list for a map ``_step``, whose ``np`` global *is* traced through the
+#: :class:`_SymbolicNumpy` shim — so a ``np.`` call is not the culprit there.
+_MAP_NUMERIC_MODULES = ("math", "scipy", "sp", "cmath")
+
+
+def _numeric_call_re(modules: Sequence[str]) -> re.Pattern[str]:
+    """Regex matching ``<module>.<attr>(`` for any alias in ``modules``."""
+    return re.compile(r"\b(" + "|".join(modules) + r")\.([A-Za-z_][A-Za-z_0-9.]*)\s*\(")
+
+
+#: The SymEngine functions the tape can express — quoted verbatim in the hint so
+#: a user has the replacement in front of them.
+_SYMENGINE_HINT = (
+    "symengine.sin/cos/tan/asin/acos/atan/exp/log/sqrt/sinh/cosh/tanh/"
+    "Abs/sign/Min/Max (and the plain operators + - * / ** for arithmetic and powers)"
+)
+
+#: A control parameter reaches the kernel as a *symbol*, so using it where Python
+#: needs a concrete ``int`` (``range(N)``, an index, ``%``) fails with one of
+#: these.  That is the second documented pitfall — a missing
+#: ``_structural_params`` — and its fix has nothing to do with numeric routines,
+#: so it must never be answered with the SymEngine-replacement advice.
+_INT_COERCION_RE = re.compile(
+    r"cannot be interpreted as an integer|"
+    r"list indices must be integers|"
+    r"tuple indices must be integers|"
+    r"only integer scalar arrays"
+)
+
+
+def _kernel_source_frame(err: BaseException) -> tuple[str, int, str] | None:
+    """Locate the deepest *user* frame of ``err`` as ``(file, lineno, source)``.
+
+    Walks the traceback from the raise site back towards the caller and returns
+    the deepest frame that is not inside this module or a third-party numeric
+    library (SymEngine / NumPy internals), i.e. the line of the kernel body (or
+    of a helper it called) that actually made the untraceable call.  Returns
+    ``None`` when no such frame can be identified or its source is unavailable
+    (e.g. a kernel defined in an interactive session).
+    """
+    import linecache
+
+    frames: list[tuple[str, int]] = []
+    tb = err.__traceback__
+    while tb is not None:
+        name = tb.tb_frame.f_code.co_filename
+        frames.append((name, tb.tb_lineno))
+        tb = tb.tb_next
+
+    skip = (
+        os.path.join("symengine", ""),
+        os.path.join("numpy", ""),
+        os.path.join("scipy", ""),
+    )
+    this_file = os.path.abspath(__file__)
+    for filename, lineno in reversed(frames):
+        if os.path.abspath(filename) == this_file:
+            continue
+        if any(part in filename for part in skip) or filename.startswith("<"):
+            continue
+        line = linecache.getline(filename, lineno).strip()
+        if line:
+            return filename, lineno, line
+    return None
+
+
+def _trace_kernel(
+    system: Any,
+    kernel: str,
+    call: Callable[[], Any],
+    *,
+    numeric_modules: Sequence[str] = _NUMERIC_MODULES,
+    hint: str = "",
+) -> Any:
+    """Run a symbolic kernel call, converting any failure into a guided error.
+
+    Parameters
+    ----------
+    system : SystemBase
+        The system being lowered (named in the message).
+    kernel : str
+        The kernel attribute name, e.g. ``"_equations"`` / ``"_step"``.
+    call : callable
+        A zero-argument thunk that invokes the kernel on symbolic arguments.
+    numeric_modules : sequence of str, optional
+        Module aliases whose functions are numeric (and so untraceable) *in this
+        kernel*.  A map's ``_step`` traces ``np`` through a symbolic shim, so
+        ``np``/``numpy`` are excluded there.
+    hint : str, optional
+        An extra family-specific paragraph appended to the message.
+
+    Returns
+    -------
+    Any
+        Whatever ``call()`` returned.
+
+    Raises
+    ------
+    TapeCompileError
+        If ``call()`` raised anything at all.  The message names the system, the
+        kernel, the offending source line, the numeric call detected on it (when
+        one is), and the SymEngine replacements.
+    """
+    try:
+        return call()
+    except TapeCompileError:
+        raise
+    except Exception as err:  # noqa: BLE001 - any kernel failure means "not lowerable"
+        name = type(system).__name__
+        parts = [f"{name}: `{kernel}` could not be lowered to an engine tape."]
+        frame = _kernel_source_frame(err)
+        offender = None
+        if frame is not None:
+            filename, lineno, line = frame
+            parts.append(f"  {filename}:{lineno}: {line}")
+            match = _numeric_call_re(numeric_modules).search(line)
+            if match is not None:
+                offender = f"{match.group(1)}.{match.group(2)}"
+        parts.append(f"  raised {type(err).__name__}: {err}")
+        listed = ", ".join(f"{m}.*" for m in numeric_modules)
+        if offender is not None:
+            parts.append(
+                f"`{offender}(...)` is a *numeric* function: it converts its argument to a "
+                f"float, but `{kernel}` is called with SymEngine symbols, not numbers."
+            )
+            parts.append(f"Use the SymEngine equivalents instead: {_SYMENGINE_HINT}.")
+        elif _INT_COERCION_RE.search(str(err)) is not None:
+            # A *different* documented pitfall: a control parameter arrives as a
+            # symbol, so `range(N)` / `x[N]` / `i % N` cannot work.  Diagnosing
+            # this as "don't use numeric routines" would send the user the wrong
+            # way entirely, so name the real fix and the candidate parameters.
+            parts.append(
+                f"A parameter was used where Python needs a concrete integer. Control "
+                f"parameters reach `{kernel}` as SymEngine *symbols*, so `range(N)`, an "
+                f"index or `%` on one cannot work."
+            )
+            parts.append(_structural_params_hint(system))
+        else:
+            parts.append(
+                f"`{kernel}` is traced *symbolically* — it is called with SymEngine symbols, "
+                f"not numbers — so it cannot use numeric routines ({listed}), branch on the "
+                f"state with a Python `if`, or use a parameter as a concrete int."
+            )
+            parts.append(
+                f"If it calls a numeric routine, use the SymEngine equivalents: {_SYMENGINE_HINT}."
+            )
+            parts.append(_structural_params_hint(system))
+        if hint:
+            parts.append(hint)
+        raise TapeCompileError("\n".join(parts)) from err
+
+
+def _structural_params_hint(system: Any) -> str:
+    """Return the ``_structural_params`` advice, naming the integer-valued candidates.
+
+    A parameter that fixes the *shape* of the equations (a lattice size, a mode
+    count) must be declared structural so lowering sees its value rather than a
+    symbol.  The candidates are the control parameters currently holding an
+    ``int``, which is what a shape parameter looks like.
+    """
+    declared = frozenset(getattr(type(system), "_structural_params", frozenset()))
+    try:
+        control = system._control_params()
+    except Exception:  # noqa: BLE001 - the hint is best-effort, never the failure
+        control = {
+            k: v for k, v in dict(getattr(system, "params", {})).items() if k not in declared
+        }
+    candidates = [k for k, v in control.items() if isinstance(v, int) and not isinstance(v, bool)]
+    name = type(system).__name__
+    if candidates:
+        listed = ", ".join(repr(c) for c in sorted(candidates))
+        return (
+            f"If one of them fixes the *shape* of the equations, declare it structural so "
+            f"lowering bakes in its value: on {name}, "
+            f"`_structural_params = frozenset({{{listed}}})` (integer-valued candidates)."
+        )
+    return (
+        f"If one of them fixes the *shape* of the equations, declare it structural so "
+        f"lowering bakes in its value: `_structural_params = frozenset({{'N'}})` on {name}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1795,7 +1993,13 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
     def y(i: int) -> Any:
         return u_syms[i]
 
-    exprs = list(type(system)._equations(y, t_canon, **{**struct_vals, **control_syms}))
+    exprs = list(
+        _trace_kernel(
+            system,
+            "_equations",
+            lambda: type(system)._equations(y, t_canon, **{**struct_vals, **control_syms}),
+        )
+    )
     if len(exprs) != dim:
         raise ValueError(f"_equations must return {dim} expressions, got {len(exprs)}")
     rhs = [symengine.sympify(e) for e in exprs]
@@ -1977,24 +2181,24 @@ def lower_map(system: Any, *, with_jacobian: bool = False) -> Tape:
     step = _trace_step(_unwrap_static(type(system)._step))
     params = system.params.as_tuple()
 
-    try:
-        out = step(state, *params)
-        exprs = [symengine.sympify(e) for e in list(out)]
-    except TapeCompileError:
-        raise
-    except Exception as err:  # noqa: BLE001 - any tracing failure means "not lowerable"
-        # A numeric ``_step`` can still fail to trace on symbolic state: a Python
-        # ``if`` on the state (``TypeError`` on a Relational's truth value — use
-        # ``np.where`` for a branchless step instead), a NumPy routine the
-        # symbolic shim does not cover, shape/index errors, etc.  Whatever the
-        # cause, it means this map cannot lower to a straight-line tape — surface
-        # one clear error type.
-        raise TapeCompileError(
-            f"{type(system).__name__}: _step cannot be traced symbolically "
-            f"({type(err).__name__}: {err}). Maps that branch on the state with a "
-            f"Python ``if`` (rewrite the branch with ``np.where``) or call a NumPy "
-            f"routine the tracer does not model cannot lower to a straight-line tape."
-        ) from err
+    # A numeric ``_step`` can still fail to trace on symbolic state: a Python
+    # ``if`` on the state (``TypeError`` on a Relational's truth value — use
+    # ``np.where`` for a branchless step instead), a NumPy routine the symbolic
+    # shim does not cover, shape/index errors, etc.  Whatever the cause, it means
+    # this map cannot lower to a straight-line tape.  ``np`` *is* traced here (the
+    # ``_SymbolicNumpy`` shim), so it is not listed as a numeric module.
+    out = _trace_kernel(
+        system,
+        "_step",
+        lambda: step(state, *params),
+        numeric_modules=_MAP_NUMERIC_MODULES,
+        hint=(
+            "A map `_step` may use `np.*` (it is traced through a symbolic shim), but it "
+            "must not branch on the state with a Python `if` — rewrite the branch with "
+            "`np.where` — and the shim only models the routines the tape has opcodes for."
+        ),
+    )
+    exprs = _trace_kernel(system, "_step", lambda: [symengine.sympify(e) for e in list(out)])
 
     if len(exprs) != dim:
         raise TapeCompileError(f"_step traced to {len(exprs)} components, expected dim={dim}")
@@ -2068,18 +2272,18 @@ def lower_map_sweep(system: Any, sweep_param: str) -> Tape:
         sweep_sym if name == sweep_param else system.params[name] for name in param_names
     ]
 
-    try:
-        out = step(state, *args)
-        exprs = [symengine.sympify(e) for e in list(out)]
-    except TapeCompileError:
-        raise
-    except Exception as err:  # noqa: BLE001 - any tracing failure means "not lowerable"
-        raise TapeCompileError(
-            f"{type(system).__name__}: _step cannot be traced symbolically "
-            f"({type(err).__name__}: {err}). Maps that branch on the state with a "
-            f"Python ``if`` (rewrite the branch with ``np.where``) or call a NumPy "
-            f"routine the tracer does not model cannot lower to a straight-line tape."
-        ) from err
+    out = _trace_kernel(
+        system,
+        "_step",
+        lambda: step(state, *args),
+        numeric_modules=_MAP_NUMERIC_MODULES,
+        hint=(
+            "A map `_step` may use `np.*` (it is traced through a symbolic shim), but it "
+            "must not branch on the state with a Python `if` — rewrite the branch with "
+            "`np.where` — and the shim only models the routines the tape has opcodes for."
+        ),
+    )
+    exprs = _trace_kernel(system, "_step", lambda: [symengine.sympify(e) for e in list(out)])
 
     if len(exprs) != dim:
         raise TapeCompileError(f"_step traced to {len(exprs)} components, expected dim={dim}")
@@ -2160,7 +2364,17 @@ def lower_dde(system: Any) -> tuple[Tape, list[DelaySlot]]:
     y, t_sym = state_time_symbols()
 
     dim = system.dim
-    exprs = list(type(system)._equations(y, t_sym, **system.params.as_dict()))
+    exprs = list(
+        _trace_kernel(
+            system,
+            "_equations",
+            lambda: type(system)._equations(y, t_sym, **system.params.as_dict()),
+            hint=(
+                "A delayed access is spelled `y(i, t - tau)`; it is a symbolic node too, so "
+                "it cannot be fed to a numeric routine either."
+            ),
+        )
+    )
     if len(exprs) != dim:
         raise ValueError(f"_equations must return {dim} expressions, got {len(exprs)}")
 
@@ -2343,8 +2557,14 @@ def lower_sde(system: Any, *, with_diffusion_jacobian: bool = False) -> LoweredS
     control_syms = {k: symengine.Symbol(f"p{i}") for i, k in enumerate(control_names)}
     call_kwargs = {**struct_vals, **control_syms}
 
-    drift_exprs = list(_unwrap_static(drift_fn)(y, t_sym, **call_kwargs))
-    diff_exprs = list(_unwrap_static(diff_fn)(y, t_sym, **call_kwargs))
+    drift_exprs = list(
+        _trace_kernel(system, "_drift", lambda: _unwrap_static(drift_fn)(y, t_sym, **call_kwargs))
+    )
+    diff_exprs = list(
+        _trace_kernel(
+            system, "_diffusion", lambda: _unwrap_static(diff_fn)(y, t_sym, **call_kwargs)
+        )
+    )
     if len(drift_exprs) != dim:
         raise TapeCompileError(f"_drift must return {dim} expressions, got {len(drift_exprs)}")
     if len(diff_exprs) != dim:

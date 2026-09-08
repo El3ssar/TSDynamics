@@ -17,6 +17,8 @@ from typing import Any
 
 import numpy as np
 
+from .._common import reject_system
+
 __all__: list[str] = []
 
 
@@ -25,7 +27,9 @@ def _is_trajectory(x: Any) -> bool:
     return hasattr(x, "y") and hasattr(x, "component") and not isinstance(x, np.ndarray)
 
 
-def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
+def _as_series(
+    x: Any, component: int | str | None = None, *, analysis: str | None = None
+) -> np.ndarray:
     """Coerce ``x`` into a contiguous 1-D ``float64`` array (one scalar series).
 
     Parameters
@@ -38,6 +42,9 @@ def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
         Which column/component to extract from a multi-component input.  Required
         when the input has more than one component; for a single-component input
         it must be left ``None`` (or ``0``).
+    analysis : str, optional
+        Name of the calling public function, used only to open the
+        ``System``-was-passed error message.
 
     Returns
     -------
@@ -46,10 +53,15 @@ def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
 
     Raises
     ------
+    InvalidInputError
+        If ``x`` is a ``System`` rather than measured data
+        (:func:`~tsdynamics.analysis._common.reject_system`) -- every embedding
+        routine is data-first.
     ValueError
         If ``component`` is ambiguous/meaningless, the series is not 1-D after
         selection, has fewer than two samples, or contains non-finite values.
     """
+    reject_system(x, analysis=analysis)
     if _is_trajectory(x):
         if component is None:
             if x.y.ndim == 1 or x.y.shape[1] == 1:
@@ -85,7 +97,7 @@ def _as_series(x: Any, component: int | str | None = None) -> np.ndarray:
     return arr
 
 
-def _as_channels(x: Any) -> np.ndarray:
+def _as_channels(x: Any, *, analysis: str | None = None) -> np.ndarray:
     """Coerce ``x`` into a contiguous ``(N, d)`` array of synchronous channels.
 
     Used by multivariate embedding.  Accepts a
@@ -96,6 +108,9 @@ def _as_channels(x: Any) -> np.ndarray:
     Parameters
     ----------
     x : array-like or Trajectory
+    analysis : str, optional
+        Name of the calling public function, used only to open the
+        ``System``-was-passed error message.
 
     Returns
     -------
@@ -103,10 +118,14 @@ def _as_channels(x: Any) -> np.ndarray:
 
     Raises
     ------
+    InvalidInputError
+        If ``x`` is a ``System`` rather than measured data
+        (:func:`~tsdynamics.analysis._common.reject_system`).
     ValueError
         If the channels have unequal length, the result is not 2-D, there are
         fewer than two samples, or any value is non-finite.
     """
+    reject_system(x, analysis=analysis)
     if _is_trajectory(x):
         arr = np.asarray(x.y, dtype=float)
     else:

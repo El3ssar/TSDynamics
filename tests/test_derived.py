@@ -335,3 +335,57 @@ class TestTangentEngineLyapunov:
         sys = ts.systems.Oregonator()
         exps = sys.lyapunov_spectrum(dt=0.05, burn_in=10.0, final_time=40.0, n_exp=2)
         assert np.all(np.isfinite(exps))
+
+
+# ---------------------------------------------------------------------------
+# Pickling — every derived wrapper must cross a process boundary
+# ---------------------------------------------------------------------------
+
+
+def _wrappers() -> dict[str, object]:
+    """One instance of each derived wrapper, all around the same pinned flow."""
+    inner = ts.systems.Rossler(ic=[1.0, 1.0, 1.0])
+    return {
+        "PoincareMap": ts.PoincareMap(inner.copy(), plane=("y", 0.0, "up")),
+        "StroboscopicMap": ts.StroboscopicMap(inner.copy(), period=6.0),
+        "TangentSystem": ts.TangentSystem(inner.copy(), k=2),
+        "EnsembleSystem": ts.EnsembleSystem(inner.copy(), np.arange(12.0).reshape(4, 3)),
+        "ProjectedSystem": ts.ProjectedSystem(inner.copy(), [0, 1]),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_wrappers()))
+def test_derived_wrappers_round_trip_through_pickle(name: str) -> None:
+    """A parallel bifurcation sweep pickles its wrapper to reach the workers.
+
+    ``PoincareMap`` used to fail here: it caches ``system._rhs_numeric()`` for
+    Hermite refinement, and that used to be a *local function*, which pickle
+    refuses.  The cached RHS is now a module-level callable.
+    """
+    import pickle
+
+    wrapper = _wrappers()[name]
+    restored = pickle.loads(pickle.dumps(wrapper))
+    assert type(restored) is type(wrapper)
+    # ``EnsembleSystem`` names its inner system ``template``; the rest ``system``.
+    inner_attr = "system" if hasattr(wrapper, "system") else "template"
+    inner, restored_inner = getattr(wrapper, inner_attr), getattr(restored, inner_attr)
+    assert type(restored_inner) is type(inner)
+    assert restored.dim == wrapper.dim
+    np.testing.assert_array_equal(restored_inner.params.as_tuple(), inner.params.as_tuple())
+
+
+def test_pickled_poincare_map_keeps_its_hermite_rhs_and_the_same_section() -> None:
+    """The restored wrapper must not silently degrade to linear refinement."""
+    import pickle
+
+    pmap = ts.PoincareMap(ts.systems.Rossler(ic=[1.0, 1.0, 1.0]), plane=("y", 0.0, "up"))
+    restored = pickle.loads(pickle.dumps(pmap))
+    assert restored._rhs is not None, "the Hermite RHS must survive the round trip"
+
+    # Independent truth for the RHS itself: Rossler at (1, 2, 3) with the
+    # default a=0.2, b=0.2, c=5.7 is (-y-z, x+a*y, b+z*(x-c)) = (-5, 1.4, -13.9).
+    np.testing.assert_allclose(restored._rhs(np.array([1.0, 2.0, 3.0]), 0.0), [-5.0, 1.4, -13.9])
+
+    # ... and end to end: the same 50 crossings, bit for bit.
+    np.testing.assert_array_equal(pmap.trajectory(50).y, restored.trajectory(50).y)

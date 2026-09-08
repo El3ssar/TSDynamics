@@ -338,6 +338,33 @@ class TestMapPeriodicOrbits:
         np.testing.assert_allclose(xs, [0.0, 0.6], atol=1e-8)
         assert all(o.period == 1 for o in orbs)
 
+    def test_default_method_is_newton(self) -> None:
+        """The default flipped from ``"dl"`` to ``"newton"`` in v6 (see below)."""
+        import inspect
+
+        assert inspect.signature(periodic_orbits).parameters["method"].default == "newton"
+
+    @pytest.mark.parametrize(
+        ("period", "n_prime"),
+        # Exact prime-cycle counts of the full 2-shift, (1/p) * sum_{d|p} mu(d) 2^(p/d):
+        # the r=4 logistic map is conjugate to it, so these are analytic truth.
+        [(1, 2), (2, 1), (3, 2), (4, 3), (5, 6), (6, 9), (7, 18)],
+    )
+    def test_newton_recovers_the_exact_logistic_prime_cycle_counts(self, period, n_prime) -> None:
+        """Newton at the default seeding is *complete* over ``p <= 7`` on r=4.
+
+        This is the arithmetic behind the v6 default flip.  Davidchack--Lai was
+        the default on the reasoning that it reaches orbits Newton misses; here
+        Newton finds every one of the analytically known cycles, and on
+        Henon(1.4, 0.3) the two agree on the count at every ``p <= 10`` while
+        Newton is 112-323x faster (``p=7``: 0.09 s against 29.0 s).
+        """
+        orbs = periodic_orbits(
+            ts.Logistic(params={"r": 4.0}), period, region=([0.0], [1.0]), seed=0
+        )
+        assert len(orbs) == n_prime
+        assert all(o.period == period for o in orbs)
+
     def test_prime_filter_excludes_lower_period(self) -> None:
         # the period-2 orbit is a fixed point of f⁴; with prime=True it must NOT
         # appear in a period-4 search.
@@ -546,22 +573,48 @@ def test_periodic_orbits_monodromy_shared_per_iterate() -> None:
     Newton step; before the fix each rebuilt the full p-fold orbit + monodromy, so
     a step cost two sweeps.  We monkeypatch the sweep to count distinct iterates
     vs total calls and assert no iterate is swept twice in a row (the cache hit).
+
+    Only the sweeps driven by the **search** are counted.  ``periodic_orbits``
+    also sweeps once per *accepted* orbit, from the classification pass at the
+    end, and that one is deliberately outside the cache's contract: it runs at
+    the orbit's **minimal** period ``m`` (which the search never used) on the
+    lexicographically smallest representative, so its result is a different
+    computation even when the input vector happens to coincide with the last
+    iterate.  Counting it made this assert a statement about the search *and* an
+    unrelated one-shot call — and it fires whenever the search happens to
+    converge onto the representative, which is not a cache miss.
     """
     from tsdynamics.analysis.fixedpoints import _common as _c
 
     seen: list[bytes] = []
     orig = _c.map_orbit_monodromy
+    real_solve = _c.solve_roots
+    in_search = [False]
 
     def counting(step: Any, jac: Any, x: np.ndarray, period: int, dim: int) -> Any:
-        seen.append(np.asarray(x, dtype=float).ravel().tobytes())
+        if in_search[0]:
+            seen.append(np.asarray(x, dtype=float).ravel().tobytes())
         return orig(step, jac, x, period, dim)
 
+    # Mark the sweeps driven by the search, so the end-of-run classification
+    # sweep (outside ``solve_roots``) is not mistaken for one.
+    def traced_solve(*a: Any, **k: Any) -> Any:
+        in_search[0] = True
+        try:
+            return real_solve(*a, **k)
+        finally:
+            in_search[0] = False
+
     _c.map_orbit_monodromy = counting  # type: ignore[assignment]
+    _c.solve_roots = traced_solve  # type: ignore[assignment]
     try:
         periodic_orbits(ts.Logistic(params={"r": 3.2}), 2, method="dl", seed=3, max_iter=50)
     finally:
         _c.map_orbit_monodromy = orig  # type: ignore[assignment]
+        _c.solve_roots = real_solve  # type: ignore[assignment]
 
+    # The search really did run (otherwise the assert below is vacuous).
+    assert len(seen) > 100
     # No iterate triggers two *consecutive* sweeps (residual then Jacobian on the
     # same x): the second is served from the per-iterate cache.  Pre-fix, every
     # such pair produced two identical consecutive keys.
@@ -661,3 +714,49 @@ class TestSeedDeterminism:
         seeded = ts.Thomas(ic=[1.0, 2.0, 3.0])
         y = _orbit_start_ic(seeded, 3, np.random.default_rng(0))
         assert np.array_equal(y, [1.0, 2.0, 3.0])
+
+
+# ---------------------------------------------------------------------------
+# Burn-in budget: it is load-bearing, not padding
+# ---------------------------------------------------------------------------
+
+
+class TestBurnInBudget:
+    """The fixed burn-in budget is what the answers depend on.
+
+    This class exists because "make the burn-in adaptive" is a recurring and
+    reasonable-sounding idea; these are the measurements that say no.  See the
+    ``ORBIT_SAMPLES`` comment in ``analysis/fixedpoints/_common.py``.
+    """
+
+    @pytest.mark.parametrize("name", ["Lorenz", "Rossler", "Thomas"])
+    def test_a_chaotic_burn_in_uses_the_whole_budget(self, name) -> None:
+        """No shortcut is taken on a chaotic orbit — its hull is still growing."""
+        from tsdynamics.analysis.fixedpoints import _common as _c
+
+        system = getattr(ts.systems, name)()
+        orbit = _c.sample_orbit_box(system, system.dim, rng=np.random.default_rng(0))
+        assert orbit.shape[0] == _c.ORBIT_SAMPLES
+
+    def test_the_budget_is_what_finds_rosslers_second_equilibrium(self) -> None:
+        r"""Truncating the burn-in loses an equilibrium — the budget is not padding.
+
+        Rossler has exactly two equilibria (solve ``-y - z = 0``, ``x + a y = 0``,
+        ``b + z(x - c) = 0``): one near the attractor and one at
+        ``(5.69, -28.47, 28.47)``, far outside it.  Reaching the second needs the
+        hull the *full* orbit gives.
+
+        The second assertion is the reason a "stop when the box stops growing"
+        rule is unsafe: the hull grows **late**, so a patience-based rule stops
+        in the long quiet stretch before the growth and never sees it.
+        """
+        ros = ts.systems.Rossler()
+        assert len(fixed_points(ros, seed=0)) == 2
+
+        from tsdynamics.analysis.fixedpoints import _common as _c
+
+        short = _c.sample_orbit_box(ros, 3, 500, 125, rng=np.random.default_rng(0))
+        full = _c.sample_orbit_box(ros, 3, rng=np.random.default_rng(0))
+        span = full.max(axis=0) - full.min(axis=0)
+        grew = np.max((full.max(axis=0) - short.max(axis=0)) / span)
+        assert grew > 0.5, "the hull grows late: a patience rule would stop before it"

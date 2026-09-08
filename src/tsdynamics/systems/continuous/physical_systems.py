@@ -41,6 +41,7 @@ class DoublePendulum(ContinuousSystem):
     doi = "10.1016/c2013-0-12598-6"
     params = {"d": 1.0, "m": 1.0}
     dim = 4
+    variables = ("th1", "th2", "p1", "p2")
 
     @staticmethod
     def _equations(Y, t, *, d, m):
@@ -79,6 +80,7 @@ class SwingingAtwood(ContinuousSystem):
     doi = "10.1119/1.13791"
     params = {"m1": 1.0, "m2": 4.5}
     dim = 4
+    variables = ("r", "th", "pr", "pth")
 
     @staticmethod
     def _equations(Y, t, *, m1, m2):
@@ -119,6 +121,7 @@ class Colpitts(ContinuousSystem):
     doi = "10.1109/81.331536"
     params = {"a": 30, "b": 0.8, "c": 20, "d": 0.08, "e": 10}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, e):
@@ -162,6 +165,7 @@ class Laser(ContinuousSystem):
     doi = "10.1016/j.cnsns.2012.08.036"
     params = {"a": 10.0, "b": 1.0, "c": 5.0, "d": -1.0, "h": -5.0, "k": -6.0}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, a, b, c, d, h, k):
@@ -204,6 +208,7 @@ class Blasius(ContinuousSystem):
         "zs": 0.006,
     }
     dim = 3
+    variables = ("x", "y", "z")
     default_ic = [4.031713, 5.1113788, 0.016508812]
 
     @staticmethod
@@ -240,6 +245,7 @@ class FluidTrampoline(ContinuousSystem):
     doi = "10.1017/s0022112008005442"
     params = {"gamma": 1.82, "psi": 0.01019, "w": 1.21}
     dim = 3
+    variables = ("x", "y", "th")
 
     @staticmethod
     def _equations(Y, t, *, gamma, psi, w):
@@ -271,6 +277,7 @@ class JerkCircuit(ContinuousSystem):
     doi = "10.1109/tcsii.2011.2124490"
     params = {"eps": 1e-9, "y0": 0.026}
     dim = 3
+    variables = ("x", "y", "z")
 
     @staticmethod
     def _equations(Y, t, *, eps, y0):

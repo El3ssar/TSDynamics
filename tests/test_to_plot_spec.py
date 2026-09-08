@@ -47,6 +47,12 @@ def _lorenz_traj(final_time: float = 30.0, dt: float = 0.02) -> Trajectory:
 def _result_builders() -> dict[str, object]:
     """One instance of each result type that must emit a spec."""
     traj = _lorenz_traj()
+    # `lyapunov_from_data` needs enough record to find a scaling region at all —
+    # its embedding delay, look-ahead and neighbour radius are all read from the
+    # data.  Build its input separately and long enough to be *trusted*
+    # (lambda ~ 0.96 against Lorenz's 0.906) rather than trimming the short
+    # shared trajectory to a length whose neighbours it then has to refuse.
+    lyap_series = ts.Lorenz().integrate(final_time=120.0, dt=0.02).after(20.0).y[:, 0]
     rm = ts.recurrence_matrix(traj.y[:200], recurrence_rate=0.05)
     return {
         "OrbitDiagram": ts.orbit_diagram(
@@ -57,7 +63,7 @@ def _result_builders() -> dict[str, object]:
         "RQAResult": ts.rqa(rm),
         "GALIResult": ts.gali(ts.Lorenz(), k=2, final_time=20.0, dt=0.05),
         "ReturnMap": ts.return_map(traj, component=2, method="max"),
-        "LyapunovFromData": ts.lyapunov_from_data(traj.y[:1000, 0], dt=0.02),
+        "LyapunovFromData": ts.lyapunov_from_data(lyap_series, dt=0.02),
         "BasinsResult": _synthetic_basins(),
     }
 
@@ -587,6 +593,9 @@ def test_building_specs_imports_no_plot_library():
         "from tsdynamics.analysis.basins.basins import BasinsResult;"
         "from tsdynamics.data import Grid;"
         "traj = ts.Lorenz().integrate(final_time=20.0, dt=0.05).after(5.0);"
+        # a separate, longer record for the estimator that reads its own
+        # parameters off the data (see `_result_builders`)
+        "lyap = ts.Lorenz().integrate(final_time=120.0, dt=0.02).after(20.0).y[:, 0];"
         "traj.to_plot_spec(); traj.to_plot_spec(kind='time_series');"
         "ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=40).to_plot_spec();"
         "rm = ts.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.to_plot_spec();"
@@ -594,7 +603,7 @@ def test_building_specs_imports_no_plot_library():
         "ts.correlation_dimension(traj).to_plot_spec();"
         "ts.gali(ts.Lorenz(), k=2, final_time=15.0, dt=0.05).to_plot_spec();"
         "ts.return_map(traj, component=2, method='max').to_plot_spec();"
-        "ts.lyapunov_from_data(traj.y[:800, 0], dt=0.02).to_plot_spec();"
+        "ts.lyapunov_from_data(lyap, dt=0.02).to_plot_spec();"
         "a = AttractorSet({1: Attractor(1, np.array([[0.0, 0.0]]), 1)}, 0, 1);"
         "BasinsResult(np.ones((4, 4), int), Grid([-1, -1], [1, 1], (4, 4)), a).to_plot_spec();"
         "bad = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')"

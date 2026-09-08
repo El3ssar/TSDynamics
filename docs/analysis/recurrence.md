@@ -148,6 +148,22 @@ $2$) for the ratio and mean measures (DET / LAM / L / TT / ENTR); the maxima
 survive on `res.diagonal_lengths` / `res.vertical_lengths` if you want to fit
 them yourself.
 
+!!! warning "The Theiler window and the vertical measures"
+    The **vertical** measures (LAM / TT / V_max) are defined on the matrix that
+    carries the line of identity, $R_{ii} = 1$ (Marwan et al. 2007, §3.5): a
+    laminar sojourn is one vertical line *through* the diagonal. At the default
+    `theiler=0` — where the excluded band $|i-j| \le 0$ *is* the line of identity
+    — `rqa` restores it, and LAM / TT / V_max are the textbook values.
+
+    At `theiler=w > 0` the line of identity sits **inside** the band you excluded,
+    so it is *not* put back: fabricating those $N$ points in a band that was
+    deliberately removed would give a matrix that is neither the textbook one nor
+    the one you asked for. The vertical measures are then read off the
+    Theiler-filtered matrix, consistently, and are **not** comparable to published
+    values — a nonzero window punches a hole through every vertical line. The
+    Theiler window is a *diagonal*-line correction (Theiler 1986): use it for
+    DET / L / L_max / DIV, and quantify laminarity at `theiler=0`.
+
 !!! note "DET separates order from chaos"
     A periodic orbit recurs on perfectly parallel diagonals, so
     $\mathrm{DET} = 1$; deterministic chaos breaks them up. Verified here: the

@@ -17,6 +17,8 @@ fake-renderer gate enforces).  Engine-free, fast tier.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -26,6 +28,7 @@ from tsdynamics.analysis.dimensions import (
     dimension_spectrum_plot_spec,
 )
 from tsdynamics.analysis.dimensions._common import DimensionResult
+from tsdynamics.analysis.dimensions.generalized import NonMonotoneSpectrumWarning
 from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 # ---------------------------------------------------------------------------
@@ -114,7 +117,12 @@ def test_dimension_spectrum_spec_empty_raises() -> None:
 
 
 def test_dimension_spectrum_spec_from_real_estimator() -> None:
-    spectrum = dimension_spectrum(_cantor_like_points(), qs=[0.0, 1.0, 2.0])
+    # Structural test: the point cloud is small, so box counting need not resolve
+    # D_0 and may warn that the spectrum is unresolved.  What is under test is the
+    # plot spec built from the result, not the dimension values.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", NonMonotoneSpectrumWarning)
+        spectrum = dimension_spectrum(_cantor_like_points(), qs=[0.0, 1.0, 2.0])
     assert set(spectrum) == {0.0, 1.0, 2.0}
     spec = dimension_spectrum_plot_spec(spectrum)
     assert spec.kind is PlotKind.DIMENSION_SPECTRUM

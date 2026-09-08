@@ -383,12 +383,15 @@ class StochasticSystem(SystemBase, ABC):
             for k, v in params.items():
                 self.params[k] = v
         t0 = float(t) if t is not None else 0.0
-        ic_arr = self.resolve_ic(u)
-        canon = self._resolve_method(method)
-        base_seed = _resolve_seed(seed)
-        step_dt = float(dt) if dt is not None else type(self)._default_step_dt
-
-        problem = self._problem(ic=ic_arr, t0=t0, method=canon)
+        # ``resolve_ic`` commits the IC before the method resolution and the tape
+        # lowering below, either of which can raise — a failed ``reinit`` must
+        # leave the object exactly as it was.
+        with self._ic_rollback():
+            ic_arr = self.resolve_ic(u)
+            canon = self._resolve_method(method)
+            base_seed = _resolve_seed(seed)
+            step_dt = float(dt) if dt is not None else type(self)._default_step_dt
+            problem = self._problem(ic=ic_arr, t0=t0, method=canon)
         self._stepper = {
             "method": canon,
             "drift": problem.drift,
@@ -565,14 +568,46 @@ class StochasticSystem(SystemBase, ABC):
         Returns
         -------
         Trajectory
-            Supports tuple-unpacking: ``t, y = sys.integrate(...)``.
+            A container of samples: ``len(traj)`` time points, iterating
+            yields ``(t_i, y_i)`` pairs; ``traj.unpack()`` gives the two
+            column arrays ``(t, y)``.
         """
+        # The SDE family does not route through ``_dispatch`` (the generic seam
+        # cannot carry the noise seed), so it needs the IC rollback guard of its
+        # own: a diverging / interrupted path must leave ``self.ic`` untouched.
+        with self._ic_rollback():
+            return self._integrate_resolved(
+                final_time=final_time,
+                dt=dt,
+                t0=t0,
+                ic=ic,
+                method=method,
+                seed=seed,
+                backend=backend,
+            )
+
+    def _integrate_resolved(
+        self,
+        *,
+        final_time: float,
+        dt: float,
+        t0: float,
+        ic: Any | None,
+        method: str | None,
+        seed: int | None,
+        backend: str | None,
+    ) -> Trajectory:
+        """Run :meth:`integrate`'s body (wrapped by its IC rollback guard)."""
         from tsdynamics.engine import run
 
         backend = backend if backend is not None else self._default_backend
         canon = self._resolve_method(method)
         base_seed = _resolve_seed(seed)
-        ic_arr = self.resolve_ic(ic)
+        # ``seed=`` makes the *whole run* reproducible, so it seeds the random-IC
+        # draw as well as the noise stream — the uniform contract every family's
+        # trajectory producer now honours.  It is inert unless a draw actually
+        # happens (an explicit ``ic``, ``self.ic`` or ``default_ic`` all win).
+        ic_arr = self.resolve_ic(ic, seed=seed)
         problem = self._problem(ic=ic_arr, t0=t0, method=canon)
         t_eval = make_output_grid(t0, final_time, dt)
 

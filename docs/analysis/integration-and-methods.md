@@ -49,7 +49,7 @@ wrapper produces one.
 ```python
 traj.t, traj.y               # the arrays: (T,) and (T, dim)
 traj.dim, traj.n_steps       # 3, 10001
-t, y = traj                  # tuple-unpacking compatibility
+t, y = traj.unpack()         # the two arrays in one go
 
 traj["x"]                    # named component → (T,)   (needs class `variables`)
 traj[["x", "z"]]             # multiple components → (T, 2)

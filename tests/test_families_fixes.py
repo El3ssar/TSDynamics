@@ -220,3 +220,244 @@ def test_iterate_explicit_ic_divergence_raises(monkeypatch: Any) -> None:
     with pytest.raises(ConvergenceError):
         m.iterate(steps=4, ic=[0.5], max_retries=5)
     assert calls["n"] == 1  # explicit ic → no retry
+
+
+# ---------------------------------------------------------------------------
+# v6 api-core: the map family contract, IC honesty, and the plot front door
+# ---------------------------------------------------------------------------
+
+
+class TestDiscreteMapIsAbstract:
+    """``DiscreteMap`` is an ``abc.ABC`` like every other family base.
+
+    It used to be the only one that was not, so its ``@abstractmethod`` markers
+    on ``_step`` / ``_jacobian`` were inert: a subclass missing a kernel
+    instantiated happily and failed much later, during lowering, as a
+    ``TapeCompileError`` complaining that the step "cannot be traced
+    symbolically" — a thoroughly misleading diagnosis of a missing method.
+    """
+
+    def test_missing_step_cannot_be_instantiated(self) -> None:
+        class _NoStep(ts.DiscreteMap):
+            params: ClassVar[dict[str, Any]] = {"a": 1.0}
+            dim = 1
+
+            @staticmethod
+            def _jacobian(X, a):
+                return ((a,),)
+
+        with pytest.raises(TypeError, match="_step"):
+            _NoStep()
+
+    def test_missing_jacobian_cannot_be_instantiated(self) -> None:
+        class _NoJacobian(ts.DiscreteMap):
+            params: ClassVar[dict[str, Any]] = {"a": 1.0}
+            dim = 1
+
+            @staticmethod
+            def _step(X, a):
+                return (a * X[0],)
+
+        with pytest.raises(TypeError, match="_jacobian"):
+            _NoJacobian()
+
+    def test_every_catalogue_map_still_instantiates(self) -> None:
+        """The contract is met by all built-in maps (the ABC is not a regression)."""
+        from tsdynamics import registry
+
+        for entry in registry.all_systems(family="map"):
+            entry.cls()
+
+
+class TestExplicitICIsNeverSwapped:
+    """A user-chosen initial condition must not be replaced by a random one.
+
+    ``iterate`` retried from a fresh random IC whenever the orbit diverged and no
+    ``ic=`` argument was passed — but an IC set on the **constructor** looks
+    exactly like that case, so ``Henon(ic=[1e6, 1e6]).iterate()`` silently
+    returned the orbit of a completely different, randomly drawn initial state.
+    """
+
+    def test_constructor_ic_that_diverges_raises(self) -> None:
+        h = ts.Henon(ic=[1e6, 1e6])
+        with pytest.raises(ConvergenceError):
+            h.iterate(steps=100)
+        # ... and the IC the user set is still there, unswapped.
+        np.testing.assert_array_equal(h.ic, [1e6, 1e6])
+
+    def test_argument_ic_that_diverges_raises(self) -> None:
+        h = ts.Henon(ic=[0.1, 0.1])
+        with pytest.raises(ConvergenceError):
+            h.iterate(steps=100, ic=[1e6, 1e6])
+
+    def test_a_good_constructor_ic_is_honoured(self) -> None:
+        h = ts.Henon(ic=[0.1, 0.1])
+        # The orbit starts from the IC the user gave (``y[0]`` is its first image).
+        np.testing.assert_array_equal(h.iterate(steps=50).meta["ic"], [0.1, 0.1])
+
+
+class TestFailedRunLeavesTheSystemUntouched:
+    """A run that raises must not latch its bad IC onto the instance.
+
+    ``resolve_ic`` commits the resolved IC to ``self.ic`` *before* the run, so a
+    divergence used to leave the offending state on the object — and every later,
+    unrelated analysis silently started from it, returning wrong answers with no
+    warning at all.
+    """
+
+    def test_ode_integrate_failure_restores_ic(self) -> None:
+        lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+        with pytest.raises(ConvergenceError):
+            lor.integrate(final_time=10.0, dt=0.1, ic=[1e300, 1e300, 1e300])
+        np.testing.assert_array_equal(lor.ic, [1.0, 1.0, 1.0])
+        # The later, unrelated run is unaffected.
+        np.testing.assert_array_equal(
+            lor.integrate(final_time=0.1, dt=0.1).meta["ic"], [1.0, 1.0, 1.0]
+        )
+
+    def test_map_iterate_failure_restores_ic(self) -> None:
+        h = ts.Henon(ic=[0.1, 0.1])
+        with pytest.raises(ConvergenceError):
+            h.iterate(steps=100, ic=[1e6, 1e6])
+        np.testing.assert_array_equal(h.ic, [0.1, 0.1])
+        np.testing.assert_array_equal(h.iterate(steps=10).meta["ic"], [0.1, 0.1])
+
+
+class TestSeededIntegration:
+    """A run from a random IC is reproducible and leaves the global RNG alone."""
+
+    def test_map_iterate_seed_is_reproducible(self) -> None:
+        a = ts.Henon(seed=5).iterate(steps=50)
+        b = ts.Henon(seed=5).iterate(steps=50)
+        np.testing.assert_array_equal(a.y, b.y)
+
+    def test_map_iterate_seed_keyword(self) -> None:
+        a = ts.Henon().iterate(steps=50, seed=5)
+        b = ts.Henon().iterate(steps=50, seed=5)
+        np.testing.assert_array_equal(a.y, b.y)
+
+    def test_run_does_not_perturb_the_global_rng(self) -> None:
+        np.random.seed(0)
+        expected = np.random.rand(3)
+        np.random.seed(0)
+        ts.SprottB().integrate(final_time=0.5, dt=0.1)
+        np.testing.assert_array_equal(expected, np.random.rand(3))
+
+    def test_meta_carries_the_seed_needed_to_reproduce_the_run(self) -> None:
+        first = ts.SprottB().integrate(final_time=0.5, dt=0.1)
+        replay = ts.SprottB(seed=first.meta["ic_seed"]).integrate(final_time=0.5, dt=0.1)
+        np.testing.assert_array_equal(first.y, replay.y)
+
+
+class TestSystemPlotForwardsIntegrationKeywords:
+    """``system.plot(final_time=..., dt=...)`` must not be a silent no-op.
+
+    Every keyword that was neither plot-shaping nor an inline tweak used to be
+    handed to the renderer, whose ``**kwargs`` swallowed it — so the integration
+    keywords were dropped on the floor and a typo was silently accepted.
+    """
+
+    def test_integration_keywords_reach_the_integrator(self) -> None:
+        spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec(final_time=2.0, dt=0.1, components="x")
+        assert spec.layers[0].data["x"].shape == (21,)
+
+    def test_plot_honours_integration_keywords(self) -> None:
+        pytest.importorskip("matplotlib")
+        fig = ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(final_time=2.0, dt=0.1, components="x")
+        assert [len(line.get_xdata()) for line in fig.axes[0].lines] == [21]
+
+    def test_plot_rejects_an_unknown_keyword(self) -> None:
+        pytest.importorskip("matplotlib")
+        with pytest.raises(InvalidParameterError, match="finaltime"):
+            ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(finaltime=2.0)
+
+    def test_plot_still_accepts_tweaks_and_renderer_options(self) -> None:
+        pytest.importorskip("matplotlib")
+        fig = ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(
+            final_time=2.0, dt=0.1, components="x", title="T", figsize=(4.0, 3.0)
+        )
+        assert fig.axes[0].get_title() == "T"
+        assert tuple(fig.get_size_inches()) == (4.0, 3.0)
+
+    def test_backend_kwargs_escape_hatch(self) -> None:
+        pytest.importorskip("matplotlib")
+        fig = ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(
+            final_time=1.0, dt=0.1, components="x", backend_kwargs={"figsize": (5.0, 2.0)}
+        )
+        assert tuple(fig.get_size_inches()) == (5.0, 2.0)
+
+
+# ---------------------------------------------------------------------------
+# v6 api-core, adversarial follow-up: an internally *drawn* IC must not be
+# promoted to a user choice.
+#
+# ``resolve_ic(ic)`` marks ``self.ic`` as user-chosen, and the engine problem
+# builders (``ode_problem`` / ``map_problem``) hand the array ``resolve_ic`` just
+# returned straight back into ``resolve_ic``.  That round-trip flipped the flag
+# on every run, with two visible consequences on a map:
+#
+#   * the random-IC retry was silently dead from the SECOND ``iterate()`` call
+#     onwards (at HEAD it was alive on every call), and
+#   * the divergence diagnostic asserted the initial condition "was supplied
+#     explicitly" about an IC the library itself had drawn at random.
+# ---------------------------------------------------------------------------
+
+
+class _Divergent(ts.DiscreteMap):
+    """``x -> 4 a x``: diverges from any non-zero state once ``a`` reaches 1."""
+
+    params: ClassVar[dict[str, Any]] = {"a": 1.0}
+    dim = 1
+
+    @staticmethod
+    def _step(X, a):  # type: ignore[no-untyped-def]
+        return (4.0 * a * X[0],)
+
+    @staticmethod
+    def _jacobian(X, a):  # type: ignore[no-untyped-def]
+        return ((4.0 * a,),)
+
+
+def test_a_drawn_ic_stays_non_explicit_across_runs() -> None:
+    """A run must not promote its own random draw to "user-chosen"."""
+    m = _Divergent(params={"a": 0.05}, seed=3)
+    m.iterate(steps=20)
+    assert m._ic_explicit is False
+
+
+def test_the_random_ic_retry_survives_the_first_run() -> None:
+    """The second ``iterate`` still retries from a fresh random IC."""
+    m = _Divergent(params={"a": 0.05}, seed=3)
+    m.iterate(steps=20)
+    m.a = 1.0  # now divergent from the drawn IC
+    with (
+        pytest.warns(RuntimeWarning, match="diverged") as rec,
+        pytest.raises(ConvergenceError) as exc,
+    ):
+        m.iterate(steps=2000, max_retries=3)
+    # Two fresh random ICs were tried before the final attempt raised, i.e. the
+    # retry loop is alive on a second run (it was dead: ``ic_explicit`` was True).
+    assert len(rec) == 2
+    # ... and the diagnostic does NOT claim the user supplied the IC.
+    assert not any("supplied explicitly" in n for n in getattr(exc.value, "__notes__", []))
+
+
+def test_an_explicit_ic_stays_explicit_across_runs() -> None:
+    """The genuine user choice is still recorded (and still never swapped)."""
+    h = ts.Henon(ic=[0.1, 0.1])
+    h.iterate(steps=10)
+    assert h._ic_explicit is True
+
+
+def test_system_plot_accepts_the_in_tree_renderer_keywords() -> None:
+    """``system.plot`` takes the same backend options as ``Trajectory.plot``.
+
+    The routing sends every unrecognised keyword to the integration, so a
+    renderer option that was not in the allow-list used to raise on a system
+    while working on a trajectory.
+    """
+    pytest.importorskip("plotly")
+    lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+    traj_fig = lor.integrate(final_time=1.0, dt=0.05).plot(backend="plotly", html=True)
+    sys_fig = lor.plot(backend="plotly", html=True, final_time=1.0, dt=0.05)
+    assert type(sys_fig) is type(traj_fig)

@@ -67,6 +67,7 @@ class Ricker(DiscreteMap):
 
     params = {"a": 3.3}
     dim = 1
+    variables = ("x",)
     reference = "Ricker (1954), J. Fish. Res. Board Can. 11, 559-623"
     doi = "10.1139/f54-039"
 
@@ -105,6 +106,7 @@ class MaynardSmith(DiscreteMap):
 
     params = {"a": 0.87, "b": 0.75}
     dim = 2
+    variables = ("x", "y")
     reference = "Maynard Smith (1968), Mathematical Ideas in Biology (Cambridge University Press)"
     doi = "10.1017/cbo9780511565144"
 

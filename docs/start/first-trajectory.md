@@ -71,8 +71,12 @@ transient, or unpack it into `(t, y)` arrays:
 x   = traj["x"]              # (10001,)   — one named component
 xz  = traj[["x", "z"]]       # (10001, 2) — several, in order
 tail = traj.after(20.0)      # drop the transient before t = 20
-t, y = traj                  # tuple-unpacking: t is (10001,), y is (10001, 3)
+t, y = traj.unpack()         # the two arrays: t is (10001,), y is (10001, 3)
 ```
+
+Iterating a trajectory yields one `(t, state)` pair per sample, and `len(traj)` is
+the number of samples — so `len()` and iteration agree, as they should for any
+Python container. Use `traj.unpack()` when you want the two whole arrays.
 
 The trajectory also carries its full provenance in `traj.meta` — the system, its
 parameters, the solver, `dt`, tolerances, the initial condition, and the library

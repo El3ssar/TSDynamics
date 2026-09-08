@@ -196,11 +196,11 @@ def embed(
             raise ValueError("a per-channel `dimension` sequence needs a multivariate input.")
         if not isinstance(delay, (int, np.integer)):
             raise ValueError("a per-channel `delay` sequence needs a multivariate input.")
-        series = _as_series(data, component=component)
+        series = _as_series(data, component=component, analysis="embed")
         embedded = _embed_single(series, int(dimension), int(delay))
         return Embedding(values=embedded, meta=_embed_meta(dimension, delay))
 
-    channels = _as_channels(data)
+    channels = _as_channels(data, analysis="embed")
     n_channels = channels.shape[1]
     dims = _as_per_channel(dimension, n_channels, "dimension")
     delays = _as_per_channel(delay, n_channels, "delay")

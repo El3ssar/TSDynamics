@@ -35,7 +35,7 @@ from typing import Any
 
 import numpy as np
 
-from ._common import DimensionResult, _as_points, _metric_p
+from ._common import DimensionResult, _as_points, _metric_p, _resolve_theiler
 from ._scaling import fit_scaling_region
 
 __all__ = ["fixed_mass_dimension"]
@@ -67,7 +67,7 @@ def fixed_mass_dimension(
     data: Any,
     *,
     ks: np.ndarray | None = None,
-    theiler: int = 0,
+    theiler: int | str = "auto",
     metric: str | float = "euclidean",
     n_ref: int | None = 1500,
     n_ks: int = 16,
@@ -84,8 +84,12 @@ def fixed_mass_dimension(
     ks : array-like of int, optional
         Neighbour counts (masses) to probe.  Default: a log-spaced integer grid
         from 1 to ``N // 10``.
-    theiler : int, default 0
-        Exclude neighbours with :math:`|i - j| \le w` (set for dense flows).
+    theiler : int or "auto", default "auto"
+        Exclude neighbours with :math:`|i - j| \le w`.  ``"auto"`` reads the
+        window off the space--time separation profile of the data, exactly as in
+        :func:`~tsdynamics.analysis.dimensions.correlation.correlation_sum`; pass
+        ``0`` for the uncorrected estimate.  The resolved window is recorded in
+        ``result.meta["theiler"]``.
     metric : str or float, default "euclidean"
         Distance metric.
     n_ref : int or None, default 1500
@@ -127,11 +131,9 @@ def fixed_mass_dimension(
     from scipy.spatial import cKDTree
     from scipy.special import digamma
 
-    points = _as_points(data)
+    points = _as_points(data, analysis="fixed_mass_dimension")
     n = points.shape[0]
-    w = int(theiler)
-    if w < 0:
-        raise ValueError("theiler must be non-negative.")
+    w = _resolve_theiler(theiler, points)
     p = _metric_p(metric)
 
     if ks is None:
@@ -194,7 +196,12 @@ def fixed_mass_dimension(
         fit_region=(fit.lo, fit.hi),
         intercept=fit.intercept,
         q=None,
-        meta={"analysis": "fixed_mass_dimension", "kind": "fixed_mass", "q": None},
+        meta={
+            "analysis": "fixed_mass_dimension",
+            "kind": "fixed_mass",
+            "q": None,
+            "theiler": w,
+        },
     )
 
 

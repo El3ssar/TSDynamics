@@ -26,9 +26,27 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 
 import tsdynamics as ts
 from tsdynamics import fixed_points
+
+
+def _rossler_equilibria() -> list[np.ndarray]:
+    """Rossler's two analytic equilibria at ``(a, b, c) = (0.2, 0.2, 5.7)``."""
+    a, b, c = 0.2, 0.2, 5.7
+    out = []
+    for sign in (+1.0, -1.0):
+        x = (c + sign * math.sqrt(c * c - 4.0 * a * b)) / 2.0
+        out.append(np.array([x, -x / a, x / a]))
+    return out
+
+
+def _shimizu_morioka_equilibria() -> list[np.ndarray]:
+    """Shimizu-Morioka's three analytic equilibria: ``(0,0,0)`` and ``(±√b, 0, 1)``."""
+    b = float(ts.systems.ShimizuMorioka().params["b"])
+    r = math.sqrt(b)
+    return [np.zeros(3), np.array([r, 0.0, 1.0]), np.array([-r, 0.0, 1.0])]
 
 
 def _lorenz_equilibria() -> list[np.ndarray]:
@@ -62,6 +80,98 @@ class TestFlowEquilibriaNoRegion:
         # is the equilibrium the pre-fix box-clip dropped.
         origin = next(fp for fp in fps if np.linalg.norm(fp.x) < 1e-5)
         assert origin.eigenvalues.real.max() > 0.0
+
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3])
+    @pytest.mark.parametrize(
+        ("name", "equilibria"),
+        [
+            # Rossler x' = -y-z, y' = x+ay, z' = b + z(x-c): equilibria at
+            # x = (c ± sqrt(c^2 - 4ab))/2, y = -x/a, z = x/a.  (a,b,c)=(.2,.2,5.7)
+            # puts the second at (5.693, -28.465, 28.465) — far outside the
+            # attractor's |y| < 12 hull, and the one v5 lost at every seed.
+            ("Rossler", _rossler_equilibria()),
+            # Shimizu-Morioka x'=y, y'=x(1-z)-ay, z'=x^2-bz: (0,0,0) and
+            # (±sqrt(b), 0, 1).
+            ("ShimizuMorioka", _shimizu_morioka_equilibria()),
+        ],
+    )
+    def test_analytic_flow_equilibria_are_complete_without_region(self, name, equilibria, seed):
+        """The auto seed box must reach every analytic equilibrium, at every seed.
+
+        Before v6 the auto box was the hull of a **2.0-time-unit** RK4 arc padded
+        by 50 %: for Rossler that is ``lo=[-1.58, -0.14, 0.03]``,
+        ``hi=[1.05, 1.09, 0.04]``, an arc rather than the attractor.  Measured
+        over seeds 0-7, ``fixed_points`` then returned 1 of Rossler's 2
+        equilibria **every time**, 1 of HyperRossler's 2 every time, and 1-3 of
+        Shimizu-Morioka's 3 depending on the seed — silently, with no warning.
+        """
+        fps = fixed_points(getattr(ts.systems, name)(), seed=seed)
+        coords = [fp.x for fp in fps]
+        assert len(fps) == len(equilibria)
+        for eq in equilibria:
+            assert _match(coords, eq, tol=1e-4), f"missing {eq} from {coords}"
+
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3])
+    def test_hyperrossler_finds_both_equilibria_without_region(self, seed) -> None:
+        """The 4-D hyperchaotic Rossler has exactly 2 equilibria (v5 found 1)."""
+        fps = fixed_points(ts.systems.HyperRossler(), seed=seed)
+        assert len(fps) == 2
+
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3])
+    def test_chua_keeps_its_three_equilibria_when_the_burn_in_escapes(self, seed) -> None:
+        r"""An escaping burn-in orbit must not poison the seed box.
+
+        ``Chua`` declares no ``default_ic``, so the burn-in starts off-attractor
+        and blows up: over 20 time units its hull reaches ``|x| ~ 3.5e3``,
+        ``|z| ~ 7.7e3``, and seeds drawn from *that* are far too diffuse to find
+        the origin saddle (3 equilibria -> 2 on half the seeds).  The escape guard
+        (:data:`~tsdynamics.analysis.fixedpoints._common.ESCAPE_RATIO`) discards
+        such an orbit, falling back to the neutral ``[-2, 2]^dim`` box, which
+        contains all three of Chua's equilibria (``0`` and ``±(1.5, 0, -1.5)``).
+        """
+        fps = fixed_points(ts.systems.Chua(), seed=seed)
+        assert len(fps) == 3
+
+    def test_escaping_burn_in_orbit_is_rejected(self) -> None:
+        """The escape guard itself: a blow-up yields no hull, a bounded run does."""
+        from tsdynamics.analysis.fixedpoints import _common as _c
+
+        escaping = _c.sample_orbit_box(ts.systems.Chua(), 3, rng=np.random.default_rng(1))
+        assert escaping.size == 0
+        bounded = _c.sample_orbit_box(ts.Lorenz(), 3, rng=np.random.default_rng(1))
+        assert bounded.shape == (_c.ORBIT_SAMPLES, 3)
+
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4, 5, 6, 7])
+    def test_jerk_circuit_finds_its_single_equilibrium(self, seed) -> None:
+        r"""``JerkCircuit`` has exactly one equilibrium, and the guard must not lose it.
+
+        Truth is analytic and unambiguous: :math:`\dot x = y`, :math:`\dot y = z`,
+        :math:`\dot z = -z - x - \epsilon(e^{y/y_0} - 1)` forces ``y = z = 0`` and
+        then ``x = 0`` — the origin, and nothing else.
+
+        It is the counter-example to a *growth-rate-only* escape test, in two
+        different ways, and each one silently cost the equilibrium:
+
+        * at ``seed=1`` the ``exp(y / 0.026)`` term detonates inside the discarded
+          burn-in transient, so the orbit's last quarter is no bigger than its
+          first (ratio 1.115) and it looks *settled* — at
+          ``|state| = 3.5e164``, where ``np.linalg.norm`` overflows to ``inf`` and
+          even ``inf > 20 * inf`` is ``False``.  Seeds drawn from that
+          ``+-2.9e164`` hull found **0** equilibria.
+        * at ``seed=5`` the orbit goes non-finite after 79 of the 2000 samples,
+          and the partial hull (``+-1.2e8``, ratio 1.155) was likewise accepted;
+          that too returned **0**.
+        """
+        fps = fixed_points(ts.systems.JerkCircuit(), seed=seed)
+        assert len(fps) == 1
+        np.testing.assert_allclose(fps[0].x, np.zeros(3), atol=1e-6)
+
+    def test_a_partially_sampled_orbit_is_not_a_hull(self) -> None:
+        """An orbit that goes non-finite mid-sample yields no box at all."""
+        from tsdynamics.analysis.fixedpoints import _common as _c
+
+        orbit = _c.sample_orbit_box(ts.systems.JerkCircuit(), 3, rng=np.random.default_rng(5))
+        assert orbit.size == 0
 
     def test_explicit_region_still_clips_roots(self) -> None:
         """An explicit region remains a hard search domain (the complement)."""

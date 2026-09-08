@@ -59,6 +59,7 @@ class Ulam(DiscreteMap):
 
     params = {"a": 1.0, "b": 2.0}
     dim = 1
+    variables = ("x",)
     reference = "Ulam & von Neumann (1947), Bull. Amer. Math. Soc. 53, 1120"
 
     @staticmethod
@@ -85,6 +86,7 @@ class Ikeda(DiscreteMap):
 
     params = {"a": 0.4, "b": 6.0, "u": 0.9}
     dim = 2
+    variables = ("x", "y")
     reference = "Ikeda (1979), Opt. Commun. 30, 257-261"
     doi = "10.1016/0030-4018(79)90090-7"
 
@@ -173,6 +175,7 @@ class Gingerbreadman(DiscreteMap):
 
     params = {}
     dim = 2
+    variables = ("x", "y")
     default_ic = [0.5, 3.7]  # in the chaotic sea; most of [0,1)^2 is a period-6 island
     reference = "Devaney (1984), Physica D 10, 387-393"
     doi = "10.1016/0167-2789(84)90187-8"
@@ -226,6 +229,7 @@ class Zaslavskii(DiscreteMap):
 
     params = {"eps": 9.0, "nu": 0.3, "r": 2.0}
     dim = 2
+    variables = ("x", "y")
     default_ic = [0.1, 0.1]
     reference = "Zaslavsky (1978), Phys. Lett. A 69, 145-147"
     doi = "10.1016/0375-9601(78)90195-0"
@@ -288,6 +292,7 @@ class Chirikov(DiscreteMap):
 
     params = {"k": 0.971635}
     dim = 2
+    variables = ("p", "x")
     reference = "Chirikov (1979), Phys. Rep. 52, 263-379"
     doi = "10.1016/0370-1573(79)90023-1"
 
@@ -326,6 +331,7 @@ class FoldedTowel(DiscreteMap):
 
     params = {"a": 3.8, "b": 0.05, "c": 0.35, "d": 0.1, "e": 1.9, "f": 3.78, "g": 0.2}
     dim = 3
+    variables = ("x", "y", "z")
     reference = (
         "Rössler (1979), 'Chaotic oscillations: an example of hyperchaos', "
         "Lectures in Applied Mathematics 17, 141-156"
@@ -401,6 +407,7 @@ class GeneralizedHenon(DiscreteMap):
         "b": 0.03,
     }
     dim = 3
+    variables = ("x", "y", "z")
     reference = "Baier & Klein (1990), Phys. Lett. A 151, 281-284"
     doi = "10.1016/0375-9601(90)90283-t"
 

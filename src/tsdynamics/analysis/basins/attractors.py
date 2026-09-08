@@ -24,6 +24,7 @@ basin and continuation layers drive over a full grid.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
@@ -54,6 +55,20 @@ __all__ = [
 
 #: Label returned for an initial condition that leaves the region / never settles.
 DIVERGED = -1
+
+#: Relative step size below which the invariance march calls a state *stationary*
+#: and stops early: the orbit has converged onto a fixed point, which is
+#: invariant and can reach nothing further.  This is a convergence test on the
+#: state, **not** a solver tolerance — the march's integration accuracy is
+#: :data:`~tsdynamics.utils.tolerances.BASIN_RTOL` /
+#: :data:`~tsdynamics.utils.tolerances.BASIN_ATOL`.
+_STATIONARY_REL = 1e-12
+
+
+def _is_stationary(state: np.ndarray, prev: np.ndarray) -> bool:
+    """Whether ``state`` is unchanged from ``prev`` to :data:`_STATIONARY_REL`."""
+    scale = max(float(np.max(np.abs(state))), 1.0)
+    return bool(float(np.max(np.abs(state - prev))) <= _STATIONARY_REL * scale)
 
 
 # ---------------------------------------------------------------------------
@@ -468,12 +483,16 @@ class _AttractorMapper:
 
     def merge_map(self, tol: float) -> dict[int, int]:
         """
-        Group attractor ids whose point clouds sit within ``tol`` (centroid).
+        Group attractor ids whose point clouds are near-coincident *as sets*.
 
         The recurrence machine occasionally splits one attractor into two cell
         sets (e.g. a chaotic set approached from two sides).  A small ``tol``
         unions only near-coincident ids, leaving genuinely distinct attractors
-        apart.  Returns ``{old_id: canonical_id}``.
+        apart.  Two ids are merged when their clouds are within ``tol`` **both**
+        by centroid and by closest approach (``set_distance(..., "minimum")``):
+        a centroid alone cannot separate *concentric* attractors, which share
+        one exactly — see the comment at the test.  Returns
+        ``{old_id: canonical_id}``.
         """
         ids = sorted(self._att_points)
         parent = {k: k for k in ids}
@@ -485,12 +504,24 @@ class _AttractorMapper:
                 a = parent[a]
             return a
 
-        centers = {k: _representative(np.asarray(self._att_points[k], dtype=float)) for k in ids}
+        clouds = {k: np.asarray(self._att_points[k], dtype=float) for k in ids}
+        centers = {k: _representative(clouds[k]) for k in ids}
         for i, a in enumerate(ids):
             for c in ids[i + 1 :]:
                 if find(a) == find(c):
                     continue
-                if float(np.linalg.norm(centers[a] - centers[c])) <= tol:
+                if float(np.linalg.norm(centers[a] - centers[c])) > tol:
+                    continue
+                # A coincident centroid does NOT mean a coincident set: two
+                # *concentric* attractors share a centroid exactly.  Two nested
+                # limit cycles (r = 1 and r = 3 of
+                # ``r' = -r(r-1)(r-2)(r-3)``, ``theta' = 1``) both centre on the
+                # origin, so the centroid test alone merged them into one
+                # "attractor" whose point cloud straddles both rings — 1 reported
+                # where the truth is 2.  Require the sets to actually touch as
+                # well; for the point clouds of fixed-point attractors the two
+                # distances coincide, so nothing that merged before stops.
+                if set_distance(clouds[a], clouds[c], method="minimum") <= tol:
                     parent[find(c)] = find(a)
         return {k: find(k) for k in ids}
 
@@ -525,6 +556,184 @@ class _AttractorMapper:
             for cid, pts in pooled.items()
         }
         return AttractorSet(attractors=attractors, diverged=diverged, seeds=seeds)
+
+    # -- post-march invariance audit (see ``audit_attractors``) --
+
+    def _verify(
+        self,
+        own: set[tuple[int, ...]],
+        others: dict[tuple[int, ...], int],
+        start: np.ndarray,
+        budget: int,
+    ) -> tuple[bool, set[int], str | None]:
+        r"""March and report ``(is_invariant, other ids reached, failure cause)``.
+
+        The recurrence FSM declares an attractor from *consecutive steps into
+        already-visited cells*, which a merely **slow** orbit satisfies without
+        recurring at all: a bottleneck crawl sits in one cell for more than
+        ``consecutive_recurrences`` steps simply because ``dt`` moves it less than
+        a cell width.  This march is the invariance test that tells the two apart
+        — it asks the only question that distinguishes them, namely *does the
+        orbit come back*:
+
+        * it **left the region / blew up** → not invariant (a crawl on its way
+          out; no invariant set can leave the region it is claimed to live in);
+        * it **left the cell set and returned** → invariant (a genuine recurrent
+          set: fixed point approached from outside, cycle, or chaotic set);
+        * it **never left** within ``budget`` steps → invariant (trapped);
+        * it **left and never returned** within ``budget`` → not invariant.
+
+        Along the way every *other* located attractor's cell it enters is
+        recorded.  An orbit *on* an attractor can never reach a different
+        attractor (invariance), so a hit means the recurrence machine split one
+        set into fragments — which is what :func:`audit_attractors` uses to fuse
+        them, and what the centroid-proximity :meth:`merge_map` cannot see when
+        the fragments are far apart (the Lorenz case).
+
+        A state that stops changing to ``1e-12`` relative is a converged fixed
+        point: it is invariant and can reach nothing, so the march exits early.
+
+        The third element separates the two ways invariance can fail, because
+        they call for opposite remedies and are indistinguishable in the result:
+        ``"escape"`` — the orbit walked out of the caller's **region** (or blew
+        up) — versus ``"transient"`` — it stayed inside the region but left the
+        cell set and never came back.  Only the second is the slow-crawl case a
+        coarser sampling fixes; the first is either a region that genuinely holds
+        no attractor or one that merely *clips* a real one (a Lorenz box capped
+        at ``z <= 40`` while the attractor reaches ``z ~ 48`` discards it and
+        labels the whole grid diverged), and those two are **not** distinguishable
+        from inside, so the warning names both rather than guessing.  ``None``
+        when the set is invariant.
+        """
+        self._reinit(start)
+        left = returned = False
+        reached: set[int] = set()
+        prev: np.ndarray | None = None
+        for _ in range(budget):
+            state = self._advance()
+            if state is None:
+                return False, reached, "escape"
+            cell = self.grid.index(state)
+            if cell is None:
+                return False, reached, "escape"
+            other = others.get(cell)
+            if other is not None:
+                reached.add(other)
+            if cell in own:
+                returned = returned or left
+            else:
+                left = True
+            if not left and prev is not None and _is_stationary(state, prev):
+                return True, reached, None  # numerically stationary: a converged fixed point
+            if returned and (reached or not others):
+                return True, reached, None  # verdict settled; nothing more to learn
+            prev = state
+        ok = returned or not left
+        return ok, reached, None if ok else "transient"
+
+    def _settles_to(self, start: np.ndarray, budget: int) -> int | None:
+        r"""March from ``start`` and report which located attractor it settles onto.
+
+        A **read-only** replay of :meth:`map_ic`'s settle rule — the same
+        ``attractor_revisits`` / ``basin_revisits`` counters against the same
+        persistent cell labels — with the two side effects removed: it never
+        writes a basin label and never *locates* a new attractor.  So calling it
+        during the audit cannot invent ids, reorder the ones already found, or
+        change the label state the caller's basin image is built from.
+
+        Consulting the **basin** labels as well as the attractor cells is not an
+        optimisation, it is what makes the test usable on a chaotic set: after
+        the march an attractor owns only the ~``attractor_locate_steps`` cells
+        the locate pass walked, and demanding two *consecutive* iterates inside
+        that handful is a test the Hénon attractor itself fails (measured: 2714
+        of its own basin's seeds rejected).  The basin cells are exactly the
+        "leads here" evidence the FSM already accumulated.
+
+        Returns ``None`` when the orbit blows up, leaves the region for
+        ``lost_steps`` consecutive steps, or reaches no labelled cell within
+        ``budget``.
+
+        This is the question the *attraction* half of the audit asks: it is run
+        from points perturbed **off** a located set, and an attractor is
+        precisely a set that pulls its whole neighbourhood back (see
+        :func:`audit_attractors`).
+        """
+        self._reinit(start)
+        att_hit = bas_hit = lost = 0
+        for _ in range(budget):
+            state = self._advance()
+            if state is None:
+                return None
+            cell = self.grid.index(state)
+            if cell is None:
+                lost += 1
+                att_hit = bas_hit = 0
+                if lost >= self.mx_lost:
+                    return None
+                continue
+            lost = 0
+            known = self._att_cells.get(cell)
+            if known is not None:
+                att_hit += 1
+                bas_hit = 0
+                if att_hit >= self.mx_att:
+                    return known
+                continue
+            known = self._bas_cells.get(cell)
+            if known is not None:
+                bas_hit += 1
+                att_hit = 0
+                if bas_hit >= self.mx_bas:
+                    return known
+                continue
+            att_hit = bas_hit = 0
+        return None
+
+    def _attracts(self, group: set[int], start: np.ndarray, budget: int) -> bool:
+        r"""Whether a *neighbourhood* of ``start`` is pulled back onto ``group``.
+
+        Perturbs ``start`` by one cell width along :math:`\pm` each axis and asks
+        :meth:`_settles_to` where each perturbed orbit ends up.  The set attracts
+        when a **strict majority** of the probes that stay inside the region come
+        back to some member of ``group``.
+
+        Why a majority and not all of them.  An attractor has a basin of
+        *positive measure* around it, so almost every point of a small sphere
+        returns; a saddle or a repellor is approached only along its stable set,
+        which has measure zero, so an axis probe returns only in the accident
+        that the stable manifold is axis-aligned — at most half of the ``2*dim``
+        probes.  Demanding *all* of them instead is not a stricter version of the
+        same statement, it is a different and false one: measured, one of the
+        four cell-scale probes off a point of the **Hénon** attractor
+        (``y + 0.05`` at ``(0.023, 0.267)``) leaves the basin and escapes,
+        because the basin is genuinely not one cell wide there — an all-probes
+        rule discards the Hénon attractor and every one of its 2714 captured
+        seeds.  The 1-D saddle-node case the audit exists for, in contrast,
+        returns on **zero** probes: :math:`x = +0.1` of
+        :math:`\dot x = -0.01 + x^2` escapes upward and falls to the *other*
+        attractor downward.
+
+        One cell width is the natural probe scale: it is the smallest
+        displacement the march can resolve, and it is what the basin image is
+        drawn at.  A smaller probe would not do — the orbit would still be inside
+        the set's own cells while its deviation grew, and the labels would report
+        it "settled" on the very set it is running away from.
+
+        A perturbation that lands outside the region is skipped rather than
+        counted as a failure: a set sitting on the boundary of the box the caller
+        chose must not be condemned for the box.  When *every* probe lands
+        outside there is nothing to test and the set is kept.
+        """
+        probes = returned = 0
+        for axis in range(self.grid.dim):
+            for sign in (1.0, -1.0):
+                probe = np.array(start, dtype=float, copy=True)
+                probe[axis] += sign * float(self.grid.delta[axis])
+                if self.grid.index(probe) is None:
+                    continue  # outside the caller's region: not this set's fault
+                probes += 1
+                returned += int(self._settles_to(probe, budget) in group)
+        return probes == 0 or 2 * returned > probes
 
     # -- Rust-kernel reconstruction (stream perf/basin-march) --
 
@@ -576,6 +785,295 @@ def _unflatten_cell(flat: int, counts: tuple[int, ...]) -> tuple[int, ...]:
         key[i] = f % counts[i]
         f //= counts[i]
     return tuple(key)
+
+
+def audit_attractors(mapper: _AttractorMapper, labels: np.ndarray) -> np.ndarray:
+    r"""Verify every located set is an *attractor*; fuse fragments, drop phantoms.
+
+    The recurrence machine's only detection predicate is *``mx_fnd`` consecutive
+    steps into already-visited cells*.  That is satisfied by a genuine attractor
+    **and** by an orbit that is merely moving slower than one cell per ``dt`` — a
+    saddle-node bottleneck, a slow manifold, the crawl past an unstable spiral.
+    On :math:`\dot x = \mu + x^2` with :math:`\mu > 0`, where :math:`\dot x > 0`
+    everywhere so **no** attractor exists and every orbit escapes, the undefended
+    machine reports 2 attractors at ``dt=0.05`` and 4 at ``dt=0.02`` (and
+    ``basin_fractions`` hands 45 % of the region to them).  Refining ``dt`` — the
+    natural instinct — makes it *worse*, because the crawl covers less of a cell
+    per step.
+
+    This pass runs after the march (on the Rust and Python paths alike, so their
+    bit-identity is untouched) and re-marches from each located set.  It asks
+    **two** questions, and a set has to answer both:
+
+    1. *Is it invariant?*  :meth:`~_AttractorMapper._verify` re-marches from the
+       set and checks the orbit stays in it or comes back.  A crawl on its way
+       out fails here.
+    2. *Does it attract?*  :meth:`~_AttractorMapper._attracts` perturbs one cell
+       width along :math:`\pm` each axis and checks every perturbed orbit is
+       pulled back onto the set.  **Invariance alone is not attraction**, and
+       testing only the first certifies every invariant set the march happens to
+       land on exactly — including unstable ones.  On
+       :math:`\dot x = -0.01 + x^2` over ``Grid([-1], [1], (401,))`` the two
+       equilibria are :math:`x = -0.1` (stable, :math:`f' = -0.2`) and
+       :math:`x = +0.1` (**unstable**, :math:`f' = +0.2`); the grid puts a seed
+       on each of them exactly, both sit still, and an invariance-only audit
+       reports 2 attractors where the truth is 1.  Perturbing off :math:`+0.1`
+       escapes to :math:`+\infty` on one side and falls to :math:`-0.1` on the
+       other, so the attraction test rejects it.
+
+    Ids are then grouped by mutual reachability and each group resolved:
+
+    * a group with at least one invariant member **that attracts** is **one**
+      attractor — its members are fused into the lowest id (the non-invariant
+      members contribute their *cells* as basin cells but not their *points*,
+      since those are transient).  This is what collapses the Lorenz
+      fragmentation (2–4 reported attractors at ``dt <= 0.1`` where the truth is
+      1) that the centroid-proximity :meth:`~_AttractorMapper.merge_map` cannot
+      see.  Attraction is required of *some* member rather than all of them: a
+      fragment is only part of the set, so one certified neighbourhood is enough
+      to establish that the group attracts, and demanding it of every fragment
+      would risk discarding a real attractor.
+    * a group with **no** invariant member, or none that attracts, is deleted and
+      the initial conditions that were assigned to it become :data:`DIVERGED` —
+      the honest label, since the march never certified them as settling onto an
+      attractor.
+
+    Parameters
+    ----------
+    mapper : _AttractorMapper
+        The marched machine; its label state is mutated in place.
+    labels : ndarray of int
+        Per-seed ids from the march, remapped in place-equivalent fashion.
+
+    Returns
+    -------
+    ndarray of int
+        ``labels`` with fused ids rewritten and rejected ids set to
+        :data:`DIVERGED`.
+
+    Warns
+    -----
+    UserWarning
+        When a group fails the **invariance** check by leaving the caller's
+        region — either the region holds no attractor or it *clips* a real one,
+        so the remedy is a bigger region, not ``dt`` / ``resolution``.
+    UserWarning
+        When a group fails the **invariance** check inside the region — the
+        recurrence FSM was fooled by slow motion, i.e. ``dt`` is too small for
+        the cell size (the orbit does not cross a cell per step).  Raise ``dt``,
+        coarsen ``resolution``, or accept that the region holds no attractor.
+    UserWarning
+        When a group is invariant but fails the **attraction** check — a saddle
+        or a repellor that a seed landed on exactly.  Nothing is wrong with the
+        settings; the set is simply not an attractor.
+    """
+    cellsets: dict[int, set[tuple[int, ...]]] = {}
+    for cell, aid in mapper._att_cells.items():
+        cellsets.setdefault(aid, set()).add(cell)
+    if not cellsets:
+        return labels
+
+    budget = max(int(mapper.max_steps), 1)
+    invariant: dict[int, bool] = {}
+    causes: dict[int, str] = {}
+    edges: dict[int, set[int]] = {}
+    starts: dict[int, np.ndarray] = {}
+    for aid in sorted(cellsets):
+        own = cellsets[aid]
+        others = {c: a for c, a in mapper._att_cells.items() if a != aid}
+        points = mapper._att_points.get(aid) or []
+        start = np.asarray(points[-1] if points else mapper.grid.center(min(own)), dtype=float)
+        starts[aid] = start
+        ok, reached, cause = mapper._verify(own, others, start, budget)
+        invariant[aid] = ok
+        edges[aid] = reached
+        if cause is not None:
+            causes[aid] = cause
+
+    verdicts: list[tuple[list[int], str | None]] = []
+    for group in _reachability_groups(sorted(cellsets), edges):
+        certified = [k for k in group if invariant[k]]
+        if not certified:
+            # "escape" (the orbit left the caller's region) and "transient" (it
+            # stayed inside but never came back) both mean "not invariant", but
+            # they need opposite remedies, so they are reported apart.
+            escaped = any(causes.get(k) == "escape" for k in group)
+            verdicts.append((group, "escape" if escaped else "invariance"))
+            continue
+        accept = _accepting_ids(mapper, group)
+        attracts = any(mapper._attracts(accept, starts[k], budget) for k in certified)
+        verdicts.append((group, None if attracts else "attraction"))
+    return _resolve_groups(mapper, labels, verdicts, invariant)
+
+
+def _accepting_ids(mapper: _AttractorMapper, group: list[int]) -> set[int]:
+    r"""``group`` plus every located id whose cloud lies within one cell of it.
+
+    A probe that comes back to a *touching* fragment has come back to the same
+    set: the proximity merge (:meth:`~_AttractorMapper.merge_map`) runs only
+    after this audit, so at audit time one attractor may still be carried under
+    two ids — and a fixed point that lands exactly on a cell boundary is the
+    ordinary way that happens.  Measured on a globally attracting 1-D map
+    ``x -> 0.5 x`` over ``Box([-1], [1])`` at 100 cells: the fixed point sits on
+    the boundary between cells 49 and 50, successive orbits pin it at
+    :math:`+2 \times 10^{-6}` and :math:`-1.8 \times 10^{-6}`, and the two ids
+    each recapture only their *own* side — 1 probe of 2, short of a majority, so
+    both halves of a provably global attractor were discarded.
+
+    One cell is the right radius, and no larger: it is the resolution at which
+    the whole march is defined, so two clouds inside it are indistinguishable to
+    everything downstream.  Widening it toward ``merge_tol`` is not wanted — a
+    caller who set a small ``merge_tol`` asked for those sets to stay *separate*,
+    and this must not quietly certify one by the other's basin.
+    """
+    reach = float(np.linalg.norm(mapper.grid.delta))
+    own = np.atleast_2d(
+        np.asarray([p for k in group for p in mapper._att_points.get(k, [])], dtype=float)
+    )
+    accept = set(group)
+    if own.size == 0:
+        return accept
+    for aid, pts in mapper._att_points.items():
+        if aid in accept or not pts:
+            continue
+        if (
+            set_distance(np.atleast_2d(np.asarray(pts, dtype=float)), own, method="minimum")
+            <= reach
+        ):
+            accept.add(aid)
+    return accept
+
+
+def _reachability_groups(ids: list[int], edges: dict[int, set[int]]) -> list[list[int]]:
+    """Group ids into connected components of the reachability graph (union-find)."""
+    parent = {k: k for k in ids}
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for a in ids:
+        for b in sorted(edges.get(a, ())):
+            if b in parent and find(a) != find(b):
+                parent[find(b)] = find(a)
+    out: dict[int, list[int]] = {}
+    for k in ids:
+        out.setdefault(find(k), []).append(k)
+    return [sorted(g) for g in sorted(out.values(), key=min)]
+
+
+def _resolve_groups(
+    mapper: _AttractorMapper,
+    labels: np.ndarray,
+    verdicts: list[tuple[list[int], str | None]],
+    invariant: dict[int, bool],
+) -> np.ndarray:
+    """Fuse each surviving reachability group; drop the rejected ones.
+
+    ``verdicts`` pairs each group with ``None`` (it is an attractor) or the name
+    of the check it failed — ``"escape"``, ``"invariance"`` or ``"attraction"``
+    — which selects the warning the caller is given.
+    """
+    rewrite: dict[int, int] = {}
+    dropped: dict[str, list[int]] = {"invariance": [], "escape": [], "attraction": []}
+    for group, reason in verdicts:
+        if reason is not None:
+            dropped[reason].extend(group)
+            continue
+        keep = [k for k in group if invariant[k]]
+        canonical = keep[0]
+        for k in group:
+            if k == canonical:
+                continue
+            rewrite[k] = canonical
+            # A non-invariant fragment's *cells* are transient (basin) cells of the
+            # canonical attractor; only an invariant fragment's points belong to
+            # the attractor's cloud, so pooling is restricted to those.
+            if invariant[k]:
+                mapper._att_points[canonical].extend(mapper._att_points.pop(k, []))
+            else:
+                mapper._att_points.pop(k, None)
+
+    gone = dropped["invariance"] + dropped["escape"] + dropped["attraction"]
+    for cell, aid in list(mapper._att_cells.items()):
+        if aid in gone:
+            del mapper._att_cells[cell]
+        elif aid in rewrite:
+            if invariant[aid]:
+                mapper._att_cells[cell] = rewrite[aid]
+            else:
+                del mapper._att_cells[cell]
+                mapper._bas_cells.setdefault(cell, rewrite[aid])
+    for cell, aid in list(mapper._bas_cells.items()):
+        if aid in gone:
+            del mapper._bas_cells[cell]
+        elif aid in rewrite:
+            mapper._bas_cells[cell] = rewrite[aid]
+    for aid in gone:
+        mapper._att_points.pop(aid, None)
+
+    out = labels
+    if rewrite or gone:
+        out = labels.copy()
+        for old, new in rewrite.items():
+            out[labels == old] = new
+        for old in gone:
+            out[labels == old] = DIVERGED
+    _warn_dropped(labels, dropped)
+    return out
+
+
+#: What each audit rejection means, and what (if anything) the caller should do.
+_DROP_ADVICE: dict[str, str] = {
+    "invariance": (
+        "re-marching from them stays inside the region but leaves the set and never "
+        "returns, so they are slow transients (a bottleneck / slow manifold), not "
+        "attractors. The recurrence machine mistakes slow motion for recurrence when dt "
+        "is too small for the cell size — raise dt, coarsen resolution, or accept that "
+        "this region holds no attractor."
+    ),
+    "escape": (
+        "re-marching from them leaves the region you asked about (or diverges), so they "
+        "are not invariant *in it*. Two situations look identical from inside and only "
+        "you can tell them apart: the region genuinely holds no attractor (every orbit "
+        "escapes), or the region CLIPS one that is real — so enlarge it and re-run "
+        "before concluding there is nothing here. Changing dt or resolution addresses "
+        "neither."
+    ),
+    "attraction": (
+        "they are invariant but do not attract: perturbing one cell width off them "
+        "escapes, stalls, or falls to a different attractor. That is a saddle or a "
+        "repellor a seed landed on exactly (the recurrence predicate cannot tell an "
+        "unstable invariant set from an attractor), not a settings problem."
+    ),
+}
+
+
+#: How each rejection reason is *named* in the warning.  ``"escape"`` is a
+#: sub-case of the invariance check, not a third check, so it carries the same
+#: name; only the remedy text differs.
+_DROP_LABEL: dict[str, str] = {
+    "invariance": "invariance",
+    "escape": "invariance",
+    "attraction": "attraction",
+}
+
+
+def _warn_dropped(labels: np.ndarray, dropped: dict[str, list[int]]) -> None:
+    """Emit one ``UserWarning`` per audit-rejection reason that fired."""
+    for reason, ids in dropped.items():
+        if not ids:
+            continue
+        n_seeds = int(np.sum(np.isin(labels, ids)))
+        warnings.warn(
+            f"discarded {len(ids)} located set(s) that failed the "
+            f"{_DROP_LABEL[reason]} check: {_DROP_ADVICE[reason]} {n_seeds} initial "
+            "condition(s) assigned to them are reported as diverged.",
+            UserWarning,
+            stacklevel=5,
+        )
 
 
 def _march_supported(system: Any, backend: str) -> bool:
@@ -643,17 +1141,22 @@ def classify_seeds(
     seeds = np.ascontiguousarray(seeds, dtype=np.float64).reshape(-1, mapper.grid.dim)
     system = mapper.system
 
+    labels: np.ndarray | None = None
     if _march_supported(system, backend):
         outcome = _try_rust_march(mapper, seeds, jit=jit)
         if outcome is not None:
             mapper._load_march(outcome)
-            return np.asarray(outcome["labels"], dtype=np.int64)
+            labels = np.asarray(outcome["labels"], dtype=np.int64)
 
-    # Fallback (the oracle): the per-seed Python FSM loop.
-    labels = np.empty(seeds.shape[0], dtype=np.int64)
-    for i, ic in enumerate(seeds):
-        labels[i] = mapper.map_ic(ic)
-    return labels
+    if labels is None:
+        # Fallback (the oracle): the per-seed Python FSM loop.
+        labels = np.empty(seeds.shape[0], dtype=np.int64)
+        for i, ic in enumerate(seeds):
+            labels[i] = mapper.map_ic(ic)
+
+    # The invariance audit runs on *both* paths, from the same reloaded label
+    # state, so the Rust/Python bit-identity contract is untouched.
+    return audit_attractors(mapper, labels)
 
 
 def _try_rust_march(
@@ -794,8 +1297,25 @@ def find_attractors(
         If ``system`` is a delay or stochastic system (their state is not a
         finite-dimensional point the cell tessellation can bin).
 
+    Warns
+    -----
+    UserWarning
+        When a located set fails the invariance audit and is discarded — the
+        recurrence predicate was fooled by slow motion (``dt`` too small for the
+        cell size).  See :func:`audit_attractors`.
+
     Notes
     -----
+    **Every located attractor is verified before it is returned**
+    (:func:`audit_attractors`).  The bare recurrence predicate — ``mx_fnd``
+    consecutive steps into already-visited cells — is also satisfied by an orbit
+    that merely moves less than one cell per ``dt``, so a bottleneck, a slow
+    manifold or the crawl past an unstable spiral would otherwise be reported as
+    an attractor (measured: 2–4 phantom attractors on :math:`\dot x = \mu + x^2`,
+    which provably has none; 2–4 fragments of the *one* Lorenz attractor at
+    ``dt <= 0.1``).  The audit re-marches from each located set, fuses mutually
+    reachable fragments and drops sets the orbit leaves and never returns to.
+
     The seed march is **sequential by design**, not a parallelism oversight: each
     seed is followed cell-by-cell, and the persistent cell labels (``_att_cells`` /
     ``_bas_cells``) accumulated by earlier seeds let later seeds settle cheaply by

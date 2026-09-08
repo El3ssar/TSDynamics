@@ -63,7 +63,7 @@ from tsdynamics.analysis._result import (
     VisualizationNotInstalled,
 )
 from tsdynamics.derived.poincare import PoincareSection
-from tsdynamics.errors import InvalidParameterError, TSDynamicsError
+from tsdynamics.errors import InvalidInputError, InvalidParameterError, TSDynamicsError
 from tsdynamics.viz.spec import PlotKind
 
 
@@ -964,9 +964,11 @@ def _errgate_data_analysis_on_system() -> object:
     """Feed a System where a measured series is required (the type-leak footgun).
 
     ``lyapunov_from_data`` estimates the maximal exponent from a *series*; handed
-    a live System it must not silently produce a number.  Today it leaks the raw
-    ``float() argument …`` ``TypeError`` from the array coercion — tier 2 asserts
-    it raises, and the tier-3 open-footgun row tracks the value-naming upgrade.
+    a live System it must not silently produce a number.  Until v6 it leaked the
+    raw ``float() argument …`` ``TypeError`` from the array coercion; the shared
+    ``analysis/_common.py::reject_system`` guard now raises an
+    ``InvalidInputError`` naming the system and the call that fixes it, so this
+    thunk backs a tier-2 "it raises" row *and* a value-naming row.
     """
     return ts.lyapunov_from_data(ts.Lorenz())
 
@@ -1115,6 +1117,19 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
         ("nonsense",),
         InvalidParameterError,
     ),
+    # Closed in v6 by the shared System-rejecting guard
+    # (``analysis/_common.py::reject_system``), which every data-first analysis
+    # now calls before it coerces its input to an array.  Promoted out of the
+    # tier-3 strict-xfail table; the message must name the *system* and give a
+    # runnable next step, not leak NumPy's ``float() argument …``.
+    _ValueNamingCase(
+        "wrong-type-input-message",
+        _ERRGATE_WRONG_TYPE,
+        _errgate_data_analysis_on_system,
+        TypeError,
+        ("System", "Lorenz", "integrate"),
+        InvalidInputError,
+    ),
     # Curated exemplars — already-excellent value-naming messages (stock stdlib
     # types) that WS-ERRORS set out to make the law rather than the exception.
     _ValueNamingCase(
@@ -1208,7 +1223,9 @@ _ERRGATE_NO_SILENT: list[_RaisesCase] = [
 
 # ── tier 3: still-open footguns, tracked under a strict xfail ───────────────
 # (FINISH-ERRADOPT closed `open-short-data-correlation-dimension` and
-# `open-unknown-keyword-run`; both were promoted into the value-naming table above.)
+# `open-unknown-keyword-run`; v6's shared `reject_system` guard closed
+# `open-wrong-type-input-message`.  All three were promoted into the
+# value-naming table above.)
 _ERRGATE_OPEN_FOOTGUNS: list[_OpenFootgun] = [
     # The same wrong-ic input is asserted at tier 2 (`wrong-ic-dimension`, "it
     # raises") and here at tier 3 ("it should raise a TSDynamicsError naming the
@@ -1222,22 +1239,6 @@ _ERRGATE_OPEN_FOOTGUNS: list[_OpenFootgun] = [
         "instead of a TSDynamicsError naming the initial condition.",
         TSDynamicsError,
         (),
-    ),
-    # The value-naming guard for "a System where a measured series is wanted"
-    # lived in the entropy estimators, which left the library with the scope
-    # narrowing.  Every surviving data-level analysis still leaks the raw
-    # ``float() argument …`` TypeError from its array coercion, so the standard
-    # is tracked here (tier 2 already asserts it at least raises).
-    _OpenFootgun(
-        "open-wrong-type-input-message",
-        _ERRGATE_WRONG_TYPE,
-        _errgate_data_analysis_on_system,
-        "The data-level analyses share no System-rejecting coercion guard: "
-        "handing a System to lyapunov_from_data leaks a raw NumPy 'float() "
-        "argument' TypeError instead of a TSDynamicsError naming the System. "
-        "Owned by the WS-CONV calling-convention lane.",
-        TSDynamicsError,
-        ("System", "Lorenz"),
     ),
 ]
 

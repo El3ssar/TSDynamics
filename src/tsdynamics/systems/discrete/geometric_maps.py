@@ -35,6 +35,7 @@ class Tent(DiscreteMap):
     reference = "Classical map; see e.g. Strogatz, Nonlinear Dynamics and Chaos"
     params = {"mu": 0.95}
     dim = 1
+    variables = ("x",)
 
     @staticmethod
     def _step(X, mu):
@@ -94,6 +95,7 @@ class Baker(DiscreteMap):
 
     params = {"alpha": 0.5}
     dim = 2
+    variables = ("x", "y")
     reference = "Hopf (1937), Ergodentheorie (Springer, Berlin)"
     doi = "10.1007/978-3-642-86630-2"
 
@@ -157,6 +159,7 @@ class Circle(DiscreteMap):
 
     params = {"omega": 0.333, "k": 5.7}
     dim = 1
+    variables = ("theta",)
     reference = "Arnold (1965), Amer. Math. Soc. Transl. 46, 213-284"
 
     @staticmethod
@@ -194,6 +197,7 @@ class Chebyshev(DiscreteMap):
 
     params = {"a": 6.0}
     dim = 1
+    variables = ("x",)
     reference = "Adler & Rivlin (1964), Proc. Amer. Math. Soc. 15, 794-796"
     doi = "10.1090/s0002-9939-1964-0202968-3"
 

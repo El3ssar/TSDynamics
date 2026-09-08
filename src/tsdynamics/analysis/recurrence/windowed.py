@@ -153,7 +153,11 @@ def windowed_rqa(
     metric : str or float, default "euclidean"
         Distance metric.
     theiler : int, default 0
-        Excluded near-diagonal band, applied within each window.
+        Excluded near-diagonal band, applied within each window.  Same caveats as
+        :func:`~tsdynamics.analysis.rqa`: ``0`` is required for textbook
+        ``LAM``/``TT``, a nonzero window is required for a meaningful ``L_max``
+        on a densely sampled flow (each window warns when its ``L_max``
+        saturates).
     min_diagonal, min_vertical : int
         Minimum line lengths (see :func:`~tsdynamics.analysis.rqa`).
 
@@ -163,10 +167,13 @@ def windowed_rqa(
 
     Raises
     ------
+    InvalidInputError
+        If ``data`` is a ``System``: this is a *data-first* analysis, so run the
+        system and pass its trajectory.
     ValueError
         If ``window`` is out of range or ``step < 1``.
     """
-    points = _as_points(data)
+    points = _as_points(data, analysis="windowed_rqa")
     n = points.shape[0]
     window = int(window)
     if window < 2:

@@ -82,6 +82,88 @@ def test_variables_metadata_matches_dim() -> None:
 
 
 # ---------------------------------------------------------------------------
+# `variables` completeness gate
+#
+# ``traj["x"]`` — the named-component access sold in the README, in the docs and
+# on every per-system page — only works for a class that declares ``variables``.
+# Before v6 only 23 of 171 catalogue systems did, so the documented front door
+# raised ``KeyError`` for 86% of the catalogue.  This gate keeps it at 100%: a
+# new system either names its components or is added to the exemption table
+# below *with a reason*.
+# ---------------------------------------------------------------------------
+
+#: Systems deliberately shipped without ``variables``, and why.  Every entry is a
+#: **variable-dimension** system whose state is a lattice / discretised field:
+#: the components are indexed sites, not named quantities, and ``dim`` is not
+#: known until an instance is built, so no fixed-length tuple could be correct.
+#: Field-valued systems name their *blocks* with ``field_labels`` instead.
+VARIABLES_EXEMPT: dict[str, str] = {
+    "Lorenz96": "N ring sites; the state is a lattice, not named quantities",
+    "MultiChua": "3 * n_circuits lattice of coupled Chua circuits",
+    "KuramotoSivashinsky": "method-of-lines PDE: N grid samples of the field u(x)",
+    "GrayScott": "method-of-lines PDE: 2 * N**2 grid samples (see field_labels)",
+    "SwiftHohenberg": "method-of-lines PDE: N**2 grid samples of the field u(x, y)",
+}
+
+
+def test_every_system_declares_variables_or_is_exempt() -> None:
+    """Every catalogue system names its components (or is a justified exemption).
+
+    Registry-driven, so a newly added system joins the gate with zero test
+    edits: give it a ``variables`` ClassVar of length ``dim``, or add it to
+    :data:`VARIABLES_EXEMPT` with the reason it cannot have one.
+    """
+    undeclared = {
+        entry.name for entry in registry.all_systems() if not getattr(entry.cls, "variables", None)
+    }
+    unexplained = sorted(undeclared - set(VARIABLES_EXEMPT))
+    assert not unexplained, (
+        "these systems declare no `variables`, so traj['x'] raises for them: "
+        f"{unexplained}. Add a `variables = (...)` ClassVar naming each component "
+        "(names taken from the system's own equations / docstring), or add the "
+        "system to VARIABLES_EXEMPT with the reason."
+    )
+
+
+def test_variables_exemptions_are_live_and_justified() -> None:
+    """Every exemption still exists, is still undeclared, and is variable-dim."""
+    for name, reason in VARIABLES_EXEMPT.items():
+        entry = registry.get(name)
+        assert not getattr(entry.cls, "variables", None), (
+            f"{name} now declares `variables` — drop it from VARIABLES_EXEMPT."
+        )
+        assert entry.dim is None, (
+            f"{name} has a fixed dim={entry.dim}; a fixed-dim system can name its "
+            "components, so it must not be exempt."
+        )
+        assert reason.strip(), f"{name}: exemption needs a reason."
+
+
+def test_named_component_access_works_for_every_declaring_system(system_entry) -> None:
+    """``traj[name]`` resolves for every declared name (the README's front door).
+
+    Exercised on a synthetic trajectory so the gate stays in the fast tier and
+    covers *all* 166 declaring systems rather than an integrable subset.
+    """
+    names = getattr(system_entry.cls, "variables", None)
+    if not names:
+        assert system_entry.name in VARIABLES_EXEMPT
+        return
+
+    import numpy as np
+
+    from tsdynamics.data import Trajectory
+
+    dim = len(names)
+    y = np.arange(6 * dim, dtype=float).reshape(6, dim)
+    traj = Trajectory(t=np.arange(6, dtype=float), y=y, system=system_entry.cls())
+    assert traj.variables == tuple(names)
+    for i, name in enumerate(names):
+        np.testing.assert_array_equal(traj[name], y[:, i])
+    assert len(set(names)) == dim, f"{system_entry.name}: duplicate component names {names}"
+
+
+# ---------------------------------------------------------------------------
 # Curated-sample guards — keep the slow tier representative
 # ---------------------------------------------------------------------------
 

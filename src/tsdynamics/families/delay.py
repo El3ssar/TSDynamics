@@ -253,7 +253,12 @@ class DelaySystem(SystemBase, ABC):
             raise NotImplementedError(
                 "DelaySystem.reinit only supports t=0 (the past starts there)."
             )
-        self._past_ic = self.resolve_ic(u)
+        # ``resolve_ic`` commits the resolved IC to ``self.ic`` before anything
+        # else, so a malformed ``u`` must leave the object exactly as it was —
+        # the same contract ``integrate`` gets from ``_dispatch``.
+        with self._ic_rollback():
+            past_ic = self.resolve_ic(u)
+        self._past_ic = past_ic
         self._step_rtol = rtol
         self._step_atol = atol
         self._state_now = self._past_ic.copy()
@@ -338,7 +343,7 @@ class DelaySystem(SystemBase, ABC):
             Output sampling interval.
         **kwargs
             Forwarded verbatim to :meth:`integrate` (``ic``, ``history``,
-            ``rtol``, ``atol``, ``backend``, ``method``).
+            ``rtol``, ``atol``, ``backend``, ``method``, ``seed``).
 
         Returns
         -------
@@ -366,6 +371,7 @@ class DelaySystem(SystemBase, ABC):
         atol: float | None = None,
         backend: str | None = None,
         method: str = "rk45",
+        seed: int | None = None,
         **kwargs: Any,
     ) -> Trajectory:
         """
@@ -421,6 +427,16 @@ class DelaySystem(SystemBase, ABC):
             DDE's spectrum (it could even select an implicit kernel the
             method-of-steps engine cannot drive), so pass another explicit
             ``method=`` directly if you need one.
+        seed : int, optional
+            Seed for the **random initial-condition draw** (the constant past when
+            ``history`` is ``None``) — the same meaning ``seed=`` has on every
+            other family's trajectory producer and on the constructor
+            (:meth:`SystemBase.ic_generator`).  Inert unless a draw actually
+            happens: an explicit ``ic``, an already-resolved ``self.ic`` and a
+            class-level ``default_ic`` all take priority.  The resolved seed is
+            recorded on ``traj.meta["ic_seed"]``.
+
+            .. versionadded:: 6.0
 
         Returns
         -------
@@ -436,6 +452,7 @@ class DelaySystem(SystemBase, ABC):
             atol=atol,
             backend=backend,
             method=method,
+            seed=seed,
         )
 
     # ------------------------------------------------------------------ #
@@ -453,6 +470,7 @@ class DelaySystem(SystemBase, ABC):
         atol: float | None,
         backend: str,
         method: str,
+        seed: int | None = None,
     ) -> Trajectory:
         """Integrate the DDE on the Rust method-of-steps engine (stream E-DDE).
 
@@ -476,6 +494,7 @@ class DelaySystem(SystemBase, ABC):
         atol = atol if atol is not None else self._default_atol
         return self._dispatch(
             backend=backend,
+            seed=seed,
             final_time=final_time,
             dt=dt,
             ic=ic,

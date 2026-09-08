@@ -174,7 +174,7 @@ def test_rqa_accepts_prebuilt_matrix_unchanged():
     """rqa(RM) reuses the matrix and reproduces its recurrence rate."""
     x = sinusoid(300, freq=0.03)
     pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
-    rm = ts.recurrence_matrix(pts, recurrence_rate=0.15)
+    rm = ts.recurrence_matrix(pts, recurrence_rate=0.15, theiler=_EMB_TAU)
     res = ts.rqa(rm)
     # Same matrix => identical density and book-keeping.
     assert res.recurrence_rate == pytest.approx(rm.recurrence_rate)
@@ -209,8 +209,11 @@ def test_periodic_determinism_exceeds_noise(seed, freq):
     periodic = ts.embed(sinusoid(n, freq=freq), _EMB_DIM, _EMB_TAU)
     noise = ts.embed(white_noise(n, seed=seed), _EMB_DIM, _EMB_TAU)
     rate = 0.1  # fixed so the comparison is at equal density
-    det_p = ts.rqa(periodic, recurrence_rate=rate).determinism
-    det_n = ts.rqa(noise, recurrence_rate=rate).determinism
+    # A Theiler window is mandatory on a smooth, densely sampled signal: at
+    # theiler=0 the k=1 diagonal is recurrent end to end (tangential motion), so
+    # ``rqa`` rightly warns that L_max/DIV have saturated.
+    det_p = ts.rqa(periodic, recurrence_rate=rate, theiler=_EMB_TAU).determinism
+    det_n = ts.rqa(noise, recurrence_rate=rate, theiler=_EMB_TAU).determinism
     assert det_p > 0.9  # clean periodic signal
     # The separation is the primary invariant: noise DET stays ~0.2, so a 0.4
     # margin is robust to the seed and frequency while still meaningful.
@@ -255,7 +258,7 @@ def test_windowed_centers_are_increasing():
     """Window centres advance by exactly `step` and stay within the series."""
     x = sinusoid(400, freq=0.03)
     pts = ts.embed(x, _EMB_DIM, _EMB_TAU)
-    w = ts.windowed_rqa(pts, window=100, step=40, recurrence_rate=0.1)
+    w = ts.windowed_rqa(pts, window=100, step=40, recurrence_rate=0.1, theiler=_EMB_TAU)
     centers = w.centers
     diffs = np.diff(centers)
     # Consecutive windows are `step` apart.

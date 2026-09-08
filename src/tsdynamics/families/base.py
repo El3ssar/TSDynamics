@@ -116,6 +116,26 @@ class ParamSet(MutableMapping[str, Any]):
         """Return a shallow copy as a plain dict."""
         return dict(self._data)
 
+    # --- pickling / copying ---
+    #
+    # ``__slots__`` plus a validating ``__setattr__`` defeats the default
+    # ``object.__reduce_ex__`` path: the generic slot restorer calls
+    # ``setattr(inst, "_data", ...)`` on a *fresh* instance whose ``_data`` does
+    # not exist yet, so :meth:`__setattr__` raises ``AttributeError: '...ParamSet'
+    # object has no attribute '_data'``.  That single AttributeError made every
+    # system, and every trajectory holding one, impossible to pickle **or**
+    # deep-copy — which blocks ``multiprocessing`` / ``joblib`` parameter sweeps
+    # and disk caching.  Declaring the state protocol explicitly fixes both
+    # (``copy.deepcopy`` goes through the same ``__reduce_ex__``).
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return the picklable state (a plain dict of the parameter values)."""
+        return dict(self._data)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore from :meth:`__getstate__`, bypassing the validating setattr."""
+        object.__setattr__(self, "_data", dict(state))
+
     def param_hash(self) -> int:
         """
         Return a process-stable 64-bit integer hash of the current parameter values.
@@ -231,6 +251,27 @@ class MetaStore(MutableMapping[str, Any]):
         """Return a plain dict of the latest value per key."""
         return {k: recs[-1]["value"] for k, recs in self._records.items()}
 
+    def copy(self) -> MetaStore:
+        """Return an independent store holding the same records.
+
+        The record *lists* are fresh, so recording on the copy never appends to
+        the original's history; the recorded values themselves are shared (a
+        shallow copy, matching :func:`copy.copy` semantics).
+        """
+        clone = MetaStore()
+        clone._records = {k: [dict(r) for r in recs] for k, recs in self._records.items()}
+        return clone
+
+    # --- pickling (``__slots__`` needs an explicit state protocol) ---
+
+    def __getstate__(self) -> dict[str, list[dict[str, Any]]]:
+        """Return the picklable state (the full record history)."""
+        return self._records
+
+    def __setstate__(self, state: dict[str, list[dict[str, Any]]]) -> None:
+        """Restore from :meth:`__getstate__`."""
+        object.__setattr__(self, "_records", dict(state))
+
     # --- MutableMapping protocol (operates on latest values) ---
 
     def __setitem__(self, key: str, value: Any) -> None:
@@ -284,6 +325,14 @@ class MetaStore(MutableMapping[str, Any]):
 # SystemBase
 # ---------------------------------------------------------------------------
 
+#: The named keyword arguments of :meth:`SystemBase.__init__`.  Because the
+#: constructor also accepts free ``**param_kwargs`` (``Lorenz(sigma=12.0)``), a
+#: declared parameter sharing one of these names could never be reached as a
+#: keyword — :meth:`SystemBase.__init_subclass__` refuses such a class outright.
+#: Filled in from the real signature immediately after the class body, so it can
+#: never drift from the constructor it describes.
+_RESERVED_INIT_KEYWORDS: frozenset[str] = frozenset()
+
 
 class SystemBase(SystemPlottable):
     """
@@ -308,14 +357,28 @@ class SystemBase(SystemPlottable):
 
     Constructor overrides
     ---------------------
-    Individual instances can override params and/or ic::
+    Every declared parameter is a plain constructor keyword — the most natural
+    line a user will type::
+
+        lor = Lorenz(rho=30.0, ic=[1.0, 0.0, 0.0])
+
+    The ``params=`` dict spelling stays supported and means exactly the same
+    thing (it is the way to pass a name computed at runtime)::
 
         lor = Lorenz(params={"rho": 30.0}, ic=[1.0, 0.0, 0.0])
 
     The constructor raises
     :class:`~tsdynamics.errors.InvalidParameterError` (a ``ValueError``
-    subclass) for any unknown parameter key, so a typo such as
-    ``params={"rhoo": 30.0}`` fails loudly instead of being silently ignored.
+    subclass) for any unknown parameter key — whether it arrives as
+    ``params={"rhoo": 30.0}`` or as ``rhoo=30.0`` — so a typo fails loudly,
+    naming the declared parameters, instead of being silently ignored.  Giving
+    the *same* parameter through both channels is also an error: there is
+    deliberately no precedence rule to memorise.
+
+    The five keywords :meth:`__init__` reserves for itself (``params``, ``ic``,
+    ``dim``, ``field_shape``, ``seed``) cannot also be parameter names — a class
+    declaring one is refused at definition time by :meth:`__init_subclass__`
+    rather than silently shadowing it.
 
     See Also
     --------
@@ -385,8 +448,45 @@ class SystemBase(SystemPlottable):
     #: :meth:`_dispatch`, so "the default backend" lives in exactly one place.
     _default_backend: ClassVar[str] = "reference"
 
+    #: Instance-dict keys that are **runtime caches / live stepping state**, not
+    #: part of a system's identity.  They are dropped by :meth:`__getstate__`
+    #: (pickle / ``copy.deepcopy``) and by :meth:`__copy__`, because several hold
+    #: objects that cannot be pickled at all — most notably the Rust
+    #: ``OdeStepper`` behind ``_ode_stepper`` and the compiled problem behind
+    #: ``_engine_problem``.  A restored system is *cold*: call ``reinit()`` to
+    #: resume stepping.  **Any new per-instance runtime cache added by a family
+    #: must be listed here**, or pickling that family will start failing.
+    _TRANSIENT_STATE: ClassVar[frozenset[str]] = frozenset(
+        {
+            "_accessor_cache",  # SystemBase topical accessors (hold self)
+            "_ic_rng",  # the IC Generator (rebuilt from ``_ic_seed``)
+            "_ode_stepper",  # ContinuousSystem: the Rust resumable stepper
+            "_engine_problem",  # ContinuousSystem: the lowered Problem
+            "_step_tape_arrays",  # ContinuousSystem: the FFI tape arrays
+            "_stepper",  # StochasticSystem: the per-step SDE context
+        }
+    )
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        # A declared parameter whose name collides with one of this constructor's
+        # own keyword arguments would be *unreachable* as a constructor keyword —
+        # ``Sys(dim=3)`` would silently set the state-space dimension instead of
+        # the parameter ``dim``.  Refuse the class at definition time (the same
+        # moment ``DiscreteMap`` rejects a params/_step signature mismatch) rather
+        # than shipping a silent shadow.  Only classes that actually *use* this
+        # constructor are checked: a subclass with its own ``__init__`` (the
+        # variable-dimension systems) owns its own signature.
+        if cls.__init__ is SystemBase.__init__:
+            shadowed = sorted(_RESERVED_INIT_KEYWORDS & set(cls.params or {}))
+            if shadowed:
+                raise TypeError(
+                    f"{cls.__name__}: parameter name(s) {shadowed} collide with "
+                    f"SystemBase.__init__'s own keyword argument(s) "
+                    f"{sorted(_RESERVED_INIT_KEYWORDS)}, so they could never be "
+                    f"passed as constructor keywords. Rename the parameter(s), or "
+                    f"give the class its own __init__."
+                )
         # The framework bases (ContinuousSystem, DelaySystem, DiscreteMap, ...)
         # live under tsdynamics.families and are not registrable systems themselves.
         if not cls.__module__.startswith("tsdynamics.families"):
@@ -400,6 +500,8 @@ class SystemBase(SystemPlottable):
         ic: Any | None = None,
         dim: int | None = None,
         field_shape: tuple[int, ...] | None = None,
+        seed: int | None = None,
+        **param_kwargs: Any,
     ) -> None:
         """Initialise a system from its class defaults plus instance overrides.
 
@@ -411,22 +513,61 @@ class SystemBase(SystemPlottable):
         ic : array-like, optional
             Initial conditions.  Stored on ``self.ic`` (as a ``float`` array) and
             used by :meth:`resolve_ic` when no explicit ``ic`` is later supplied.
+            An ``ic`` given here is **explicit**: it is never silently replaced by
+            a random draw (a diverging one raises instead).
         dim : int, optional
             State-space dimension override for variable-dimension systems.  Falls
             back to the class-level :attr:`dim` when omitted.
         field_shape : tuple of int, optional
             Spatial grid shape override for a spatially-extended system (see
             :attr:`_field_shape`).  Falls back to the class-level value.
+        seed : int, optional
+            Seed for the **initial-condition draw** used when neither ``ic`` nor
+            :attr:`default_ic` supplies one.  The draw runs on a private
+            :class:`numpy.random.Generator`, so it is reproducible *and* never
+            touches the global ``numpy.random`` stream.  When omitted a fresh
+            OS-entropy seed is drawn on first use and recorded on
+            ``traj.meta["ic_seed"]``, so any run can be reproduced exactly by
+            passing that value back as ``seed=``.
+        **param_kwargs
+            Per-parameter overrides given as plain keywords — ``Lorenz(sigma=12.0)``
+            is exactly ``Lorenz(params={"sigma": 12.0})``.  Each name must be a
+            declared parameter of this class; an unknown one raises and names the
+            valid options.  A name given **both** here and inside ``params=`` is an
+            error rather than a silent precedence rule.
 
         Raises
         ------
         InvalidParameterError
-            If ``params`` contains a key that is not a declared parameter.
+            If ``params`` or ``**param_kwargs`` contains a key that is not a
+            declared parameter, or if the same parameter is given twice (once in
+            ``params=`` and once as a keyword).
+
+        Examples
+        --------
+        >>> Lorenz(sigma=12.0).sigma            # the natural spelling
+        12.0
+        >>> Lorenz(params={"sigma": 12.0}).sigma   # equivalent, still supported
+        12.0
         """
-        # Build ParamSet from class defaults + constructor overrides
+        # Build ParamSet from class defaults + constructor overrides.  The two
+        # override channels (``params=`` and free keywords) are merged here, and
+        # both are validated against the *declared* parameter names.
         defaults = dict(type(self).params)
-        if params:
-            unknown = set(params) - set(defaults)
+        overrides: dict[str, Any] = dict(params) if params else {}
+        if param_kwargs:
+            duplicated = sorted(set(param_kwargs) & set(overrides))
+            if duplicated:
+                from tsdynamics.errors import InvalidParameterError
+
+                raise InvalidParameterError(
+                    f"{type(self).__name__}: parameter(s) {duplicated} given twice — "
+                    f"once in params= and once as a keyword. Pass each parameter "
+                    f"exactly once (there is deliberately no precedence rule)."
+                )
+            overrides.update(param_kwargs)
+        if overrides:
+            unknown = set(overrides) - set(defaults)
             if unknown:
                 from tsdynamics.errors import InvalidParameterError
 
@@ -434,7 +575,7 @@ class SystemBase(SystemPlottable):
                     f"{type(self).__name__}: unknown parameter(s) "
                     f"{sorted(unknown)}. Declared: {sorted(defaults)}"
                 )
-            defaults.update(params)
+            defaults.update(overrides)
         object.__setattr__(self, "params", ParamSet(defaults))
 
         # dim: constructor arg > class attribute
@@ -448,9 +589,23 @@ class SystemBase(SystemPlottable):
         resolved_field_shape = field_shape if field_shape is not None else type(self)._field_shape
         object.__setattr__(self, "_field_shape", resolved_field_shape)
 
-        # Initial conditions
-        ic_arr = np.asarray(ic, dtype=float) if ic is not None else None
+        # Initial conditions.  ``_ic_explicit`` records whether the CURRENT
+        # ``self.ic`` was chosen by the user (constructor / an explicit ``ic=``)
+        # or merely auto-resolved (a random draw).  A user-chosen IC must never
+        # be silently swapped for a random one — see ``DiscreteMap.iterate``.
+        # ``np.array(..., copy=True)``, not ``asarray``: a float64 array passed in
+        # would otherwise be *shared* with the caller, so mutating either side
+        # silently moved the other's initial condition.  It is also what made
+        # ``with_params`` (which forwards ``ic=self.ic``) hand back a system
+        # aliasing the source's ic array.
+        ic_arr = np.array(ic, dtype=float, copy=True) if ic is not None else None
         object.__setattr__(self, "ic", ic_arr)
+        object.__setattr__(self, "_ic_explicit", ic is not None)
+
+        # The private initial-condition RNG (see ``resolve_ic``).  Only the seed
+        # is persisted; the Generator itself is a transient cache.
+        object.__setattr__(self, "_ic_seed", None if seed is None else int(seed))
+        object.__setattr__(self, "_ic_rng", None)
 
         # Metadata store: computed properties (Lyapunov, etc.) accumulate here
         # with history — repeated runs append instead of overwriting.
@@ -502,7 +657,7 @@ class SystemBase(SystemPlottable):
             )
         object.__setattr__(self, name, value)
 
-    # --- cloning ---
+    # --- cloning / pickling ---
 
     def copy(self) -> SystemBase:
         """
@@ -517,11 +672,77 @@ class SystemBase(SystemPlottable):
         SystemBase
             A fresh instance of the same subclass with copied ``params`` and
             ``ic`` and an empty ``meta`` store.
+
+        See Also
+        --------
+        __copy__ : ``copy.copy(system)`` — the same independence, but it *keeps*
+            the recorded ``meta`` (and does not re-run ``__init__``).
         """
         return type(self)(
             params=cast(ParamSet, self.params).as_dict(),
             ic=self.ic.copy() if self.ic is not None else None,
         )
+
+    def _clone_state(self) -> dict[str, Any]:
+        """Return the identity-defining instance state, with fresh containers.
+
+        The mutable containers (``params`` / ``meta`` / ``ic``) are rebuilt so a
+        clone can never write through to the original, and the runtime caches in
+        :attr:`_TRANSIENT_STATE` (the Rust stepper, the lowered problem, the
+        accessor cache, the IC Generator) are dropped — they are rebuilt on
+        demand and several cannot be pickled at all.
+        """
+        state = {k: v for k, v in self.__dict__.items() if k not in self._TRANSIENT_STATE}
+        state["params"] = ParamSet(cast(ParamSet, self.params).as_dict())
+        meta = self.__dict__.get("meta")
+        state["meta"] = meta.copy() if isinstance(meta, MetaStore) else MetaStore()
+        ic = self.__dict__.get("ic")
+        state["ic"] = None if ic is None else np.array(ic, dtype=float, copy=True)
+        return state
+
+    def __copy__(self) -> SystemBase:
+        """Return an **independent** shallow copy (``copy.copy(system)``).
+
+        Historically the default ``copy.copy`` produced an *aliased* system: the
+        clone shared the original's :class:`ParamSet`, :class:`MetaStore` and
+        ``ic`` array, so ``copy.copy(lor).sigma = 99`` silently rewrote the
+        original's ``sigma``.  The copy now owns those three containers (the
+        recorded *values* are still shared, which is what a shallow copy means),
+        so mutating a copy can never reach back into the original.
+        """
+        clone = type(self).__new__(type(self))
+        clone.__dict__.update(self._clone_state())
+        return clone
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SystemBase:
+        """Return a fully independent deep copy (``copy.deepcopy(system)``)."""
+        import copy as _copy
+
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        clone.__dict__.update(_copy.deepcopy(self._clone_state(), memo))
+        return clone
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return the picklable state — identity only, no runtime caches.
+
+        A pickled/unpickled system is **cold**: the live stepping state
+        (``reinit``/``step``) is not carried over, because it is backed by a Rust
+        stepper handle that cannot cross a process boundary.  Call ``reinit()``
+        on the restored system to resume stepping.  Everything that defines the
+        system — class, ``params``, ``ic``, ``dim``, ``meta``, the IC seed — is
+        preserved, which is what a ``multiprocessing`` / ``joblib`` parameter
+        sweep or an on-disk cache needs.
+        """
+        return {k: v for k, v in self.__dict__.items() if k not in self._TRANSIENT_STATE}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore from :meth:`__getstate__`, bypassing the validating setattr."""
+        self.__dict__.update(state)
+        # Older pickles / hand-built states may predate these fields.
+        self.__dict__.setdefault("_ic_explicit", self.__dict__.get("ic") is not None)
+        self.__dict__.setdefault("_ic_seed", None)
+        self.__dict__["_ic_rng"] = None
 
     def with_params(self, **overrides: Any) -> SystemBase:
         """
@@ -547,7 +768,48 @@ class SystemBase(SystemPlottable):
 
     # --- IC resolution ---
 
-    def resolve_ic(self, ic: Any | None = None) -> np.ndarray:
+    def ic_generator(self, seed: int | None = None) -> np.random.Generator:
+        """Return this system's **private** initial-condition ``Generator``.
+
+        The random-IC fallback in :meth:`resolve_ic` draws from here, never from
+        the global ``numpy.random`` stream: a plain ``system.run()`` must not
+        perturb a caller's own ``np.random.seed(0)`` reproducibility.
+
+        The generator is seeded from (in priority order) the ``seed`` argument,
+        the ``seed=`` given to the constructor, or — when neither is supplied — a
+        fresh OS-entropy seed drawn once per instance.  Whichever it is, the
+        resolved seed is remembered and published on ``traj.meta["ic_seed"]``, so
+        a run started from a random IC can always be reproduced by constructing
+        the system again with that ``seed=``.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Re-seed the generator (and adopt this seed as the system's).
+
+        Returns
+        -------
+        numpy.random.Generator
+        """
+        if seed is not None:
+            gen = np.random.default_rng(int(seed))
+            object.__setattr__(self, "_ic_seed", int(seed))
+            object.__setattr__(self, "_ic_rng", gen)
+            return gen
+        cached: np.random.Generator | None = self.__dict__.get("_ic_rng")
+        if cached is not None:
+            return cached
+        resolved = self.__dict__.get("_ic_seed")
+        if resolved is None:
+            # No seed was asked for: draw one from OS entropy *and record it*,
+            # so the run stays as random as before but is now reproducible.
+            resolved = int(cast(int, np.random.SeedSequence().entropy))
+            object.__setattr__(self, "_ic_seed", resolved)
+        gen = np.random.default_rng(resolved)
+        object.__setattr__(self, "_ic_rng", gen)
+        return gen
+
+    def resolve_ic(self, ic: Any | None = None, *, seed: int | None = None) -> np.ndarray:
         """
         Resolve initial conditions consistently.
 
@@ -556,7 +818,8 @@ class SystemBase(SystemPlottable):
         1. ``ic`` argument (if provided)
         2. ``self.ic`` (set by a previous integration / iteration)
         3. ``type(self).default_ic`` (class-level default, if declared)
-        4. Random ``U[0, 1)^dim``
+        4. Random ``U[0, 1)^dim`` from the system's **private**
+           :meth:`ic_generator` (never the global ``numpy.random`` stream)
 
         The resolved IC is stored in ``self.ic`` so subsequent calls without
         an explicit ``ic`` reproduce the same initial state.
@@ -564,25 +827,75 @@ class SystemBase(SystemPlottable):
         Parameters
         ----------
         ic : array-like or None
+            An explicit initial condition.  Marks ``self.ic`` as user-chosen, so
+            it is never silently replaced by a random draw — *unless* it is
+            bit-for-bit the value already on ``self.ic``, which is an internal
+            re-resolution (the engine problem builders round-trip the resolved
+            array) and leaves the existing user-chosen/auto-drawn flag alone.
+        seed : int, optional
+            Seed for the random-IC fallback (cases 1–3 ignore it, since no draw
+            happens).  Equivalent to the constructor's ``seed=``, applied here.
 
         Returns
         -------
         ndarray, shape (dim,)
         """
+        explicit = True
         if ic is not None:
             arr = np.asarray(ic, dtype=float).reshape(self.dim)
+            # A *re-resolution of the value already on the instance* is not a new
+            # user choice.  The engine problem builders (``ode_problem`` /
+            # ``map_problem``) hand the array ``resolve_ic`` just returned straight
+            # back into ``resolve_ic``, so without this an internally drawn random
+            # IC was promoted to "user-chosen" the moment it was used — which
+            # silently disabled ``DiscreteMap.iterate``'s random-IC retry from the
+            # second call onwards, and made its diagnostic claim the IC "was
+            # supplied explicitly" about an IC the library itself had drawn.
+            prior = self.__dict__.get("ic")
+            if prior is not None and prior.shape == arr.shape and np.array_equal(prior, arr):
+                explicit = bool(self.__dict__.get("_ic_explicit", True))
         elif self.ic is not None:
             arr = np.asarray(self.ic, dtype=float).reshape(self.dim)
+            explicit = bool(self.__dict__.get("_ic_explicit", False))
         elif type(self).default_ic is not None:
             arr = np.asarray(type(self).default_ic, dtype=float).reshape(self.dim)
+            # A class-declared default is not a *user* choice: a system whose
+            # declared default lands off-basin keeps the random-IC retry.
+            explicit = False
         else:
-            arr = np.random.rand(cast(int, self.dim))
+            arr = self.ic_generator(seed).random(cast(int, self.dim))
+            explicit = False
         object.__setattr__(self, "ic", arr.copy())
+        object.__setattr__(self, "_ic_explicit", explicit)
         return arr
+
+    def _ic_rollback(self) -> Any:
+        """Return a context manager restoring ``ic`` if the block raises.
+
+        :meth:`resolve_ic` commits the resolved initial condition to ``self.ic``
+        *before* the run happens, so a run that then fails used to leave the bad
+        IC latched on the instance — and every later, unrelated analysis silently
+        started from it.  Wrapping a run in this guard makes a failure leave the
+        object exactly as it was.
+        """
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _guard() -> Iterator[None]:
+            prior_ic = self.__dict__.get("ic")
+            prior_flag = self.__dict__.get("_ic_explicit", False)
+            try:
+                yield
+            except BaseException:
+                object.__setattr__(self, "ic", prior_ic)
+                object.__setattr__(self, "_ic_explicit", prior_flag)
+                raise
+
+        return _guard()
 
     # --- engine-dispatch seam ---
 
-    def _dispatch(self, *, backend: str, **kwargs: Any) -> Trajectory:
+    def _dispatch(self, *, backend: str, seed: int | None = None, **kwargs: Any) -> Trajectory:
         """Route this system's engine-path run through the one engine seam.
 
         Every family's ``interp`` / ``jit`` / ``reference`` integration branch
@@ -599,10 +912,29 @@ class SystemBase(SystemPlottable):
         :class:`~tsdynamics.families.stochastic.StochasticSystem` drives the
         dedicated ``run.sde_integrate_dense`` / ``run.sde_ensemble_final`` seam
         instead (and ``run.integrate`` refuses an SDE problem).
+
+        ``seed`` is the **initial-condition** seed — the one every family's
+        trajectory producer accepts (``DiscreteMap.iterate(seed=)`` has always
+        had it; the flow families gained it for symmetry).  It is resolved here,
+        *inside* the rollback guard, and only bites when a random draw actually
+        happens: an explicit ``ic``, a previously resolved ``self.ic`` and a
+        class-level ``default_ic`` all take priority, exactly as in
+        :meth:`resolve_ic`.  The resolved array is then handed down as ``ic=``,
+        which ``run.integrate``'s own ``resolve_ic`` recognises as a
+        re-resolution of the value already on the instance (so the
+        user-chosen/auto-drawn flag is preserved and the random-IC retry logic
+        is unaffected).
+
+        The call is wrapped in :meth:`_ic_rollback`, so a run that raises (a
+        divergence, an interrupt, an engine fault) leaves ``self.ic`` untouched
+        instead of latching the offending initial condition onto the instance.
         """
         from tsdynamics.engine import run
 
-        return run.integrate(self, backend=backend, **kwargs)
+        with self._ic_rollback():
+            if seed is not None:
+                kwargs["ic"] = self.resolve_ic(kwargs.get("ic"), seed=seed)
+            return run.integrate(self, backend=backend, **kwargs)
 
     # --- misc ---
 
@@ -614,8 +946,15 @@ class SystemBase(SystemPlottable):
             "system": type(self).__name__,
             "params": cast(ParamSet, self.params).as_dict(),
             "tsdynamics": __version__,
-            **extra,
         }
+        # The initial-condition seed, whenever one exists (the user passed
+        # ``seed=``, or a random draw happened and recorded its OS-entropy seed).
+        # With it and ``meta["ic"]`` a run started from a random IC is exactly
+        # reproducible: ``type(sys)(params=..., seed=meta["ic_seed"])``.
+        ic_seed = self.__dict__.get("_ic_seed")
+        if ic_seed is not None:
+            prov["ic_seed"] = int(ic_seed)
+        prov.update(extra)
         # A spatially-extended system carries its grid shape (and field-block
         # labels) so a bare Trajectory can be played as a spatial-field movie
         # (stream VIZ-SPATIAL-FIELD) without the producing system in hand.  Read
@@ -873,6 +1212,20 @@ class SystemBase(SystemPlottable):
         from tsdynamics.derived import EnsembleSystem
 
         return EnsembleSystem(self, states)
+
+
+def _reserved_init_keywords() -> frozenset[str]:
+    """Return the named (non-``**``) keyword arguments of ``SystemBase.__init__``."""
+    import inspect
+
+    return frozenset(
+        name
+        for name, p in inspect.signature(SystemBase.__init__).parameters.items()
+        if name != "self" and p.kind is not inspect.Parameter.VAR_KEYWORD
+    )
+
+
+_RESERVED_INIT_KEYWORDS = _reserved_init_keywords()
 
 
 def __dir__() -> list[str]:

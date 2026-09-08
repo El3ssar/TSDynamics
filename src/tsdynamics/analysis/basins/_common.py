@@ -26,6 +26,7 @@ from typing import Any, cast
 import numpy as np
 
 from ...data import Ball, Box, Grid
+from .._common import reject_system
 
 __all__: list[str] = []
 
@@ -142,7 +143,17 @@ def _recurrence_grid(
 # ---------------------------------------------------------------------------
 
 
-def _as_label_array(basins: Any) -> np.ndarray:
+#: The remedy the basin *metrics* need: they read an already computed label
+#: image, so the generic "pass its trajectory" advice would send the caller the
+#: wrong way entirely.
+_BASIN_HINT = (
+    "Compute the basins first and pass the result (or its label array):\n"
+    "    res = basins_of_attraction(system, Grid(lo, hi, counts))\n"
+    "    {who}(res)"
+)
+
+
+def _as_label_array(basins: Any, *, analysis: str | None = None) -> np.ndarray:
     """
     Coerce a basin diagram to an integer label array.
 
@@ -150,7 +161,12 @@ def _as_label_array(basins: Any) -> np.ndarray:
     ``.labels``) or a raw integer array.  Labels are attractor ids ``>= 1`` with
     ``-1`` marking diverged / unlabelled cells (the convention every quantifier
     in this subpackage reads).
+
+    A ``System`` is rejected up front: the basin *metrics* read an already
+    computed label image, so the fix is to run
+    :func:`~tsdynamics.analysis.basins_of_attraction` first.
     """
+    reject_system(basins, analysis=analysis, hint=_BASIN_HINT.format(who=analysis or "metric"))
     labels = getattr(basins, "labels", basins)
     arr = np.asarray(labels)
     if not np.issubdtype(arr.dtype, np.integer):

@@ -12,17 +12,39 @@ from tsdynamics.errors import ConvergenceError, InvalidParameterError
 from tsdynamics.families import DelaySystem, DiscreteMap
 
 from ... import registry as _registry
+from .._common import reject_system
 from .._result import AnalysisResult, ArrayResult, ScalarResult
-from .from_data import LyapunovFromData, lyapunov_from_data
+from .from_data import LyapunovFromData, ScalingRegionWarning, lyapunov_from_data
 
 __all__ = [
     "LyapunovFromData",
     "LyapunovSpectrum",
+    "ScalingRegionWarning",
     "kaplan_yorke_dimension",
     "lyapunov_from_data",
     "lyapunov_spectrum",
     "max_lyapunov",
 ]
+
+#: Fraction of ``max_lyapunov``'s cycles run as an *unaveraged* alignment
+#: warm-up, so the random initial perturbation has settled onto the leading
+#: Lyapunov direction before the accumulation begins.
+_ALIGN_FRACTION = 0.05
+
+#: Default averaging window for ``max_lyapunov`` on a **flow**, in time units.
+#: The window — not a cycle count — is what sets the accuracy of a Benettin
+#: average, so this is what the default holds fixed across ``dt``.  Measured on
+#: Lorenz against an independent variational integration (true 0.90763): window
+#: 20 -> 0.659, 40 -> 0.747, 100 -> 0.890, 200 -> 0.889, 400 -> 0.907.
+_DEFAULT_WINDOW = 200.0
+
+#: Default number of measured cycles for ``max_lyapunov`` on a **map** (a map has
+#: no ``dt``, so a cycle count already *is* a fixed window).
+_DEFAULT_MAP_CYCLES = 2000
+
+#: Floor on the automatically-sized cycle count, so a coarsely-stepped flow still
+#: averages over enough independent rescalings.
+_MIN_CYCLES = 200
 
 
 @dataclass(frozen=True, eq=False)
@@ -125,20 +147,44 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
     Parameters
     ----------
     spectrum : array-like
-        Lyapunov exponents (any order; sorted descending internally).
+        Lyapunov exponents (any order; sorted descending internally).  Must be
+        non-empty and finite — an empty spectrum has no dimension to report and a
+        ``nan``/``inf`` exponent means the estimator did not converge, so both
+        raise rather than return a plausible number.
 
     Returns
     -------
     ScalarResult
         The dimension, a drop-in for its ``float`` value (``float(result)`` /
-        comparisons work): ``0.0`` when every exponent is negative;
-        ``len(spectrum)`` when the cumulative sum never turns negative (spectrum
-        incomplete).
+        comparisons work).  The documented conventions at the edges of the
+        definition:
+
+        * every exponent negative (:math:`\lambda_1 < 0`) — a stable fixed point:
+          ``0.0``;
+        * the cumulative sum never turns negative — the spectrum is *incomplete*
+          (a truncated ``k < dim`` spectrum, or a conservative system whose
+          exponents sum to zero, e.g. ``[1, -1]``): saturates at
+          ``len(spectrum)``, since :math:`D_{KY}` cannot exceed the number of
+          directions supplied.
+
+        :math:`\lambda_{j+1}` cannot be zero at the interpolation step: if it
+        were, the cumulative sum at ``j + 1`` would equal the one at ``j`` and
+        still be non-negative, so ``j`` would not have been the last such index.
+
+    Raises
+    ------
+    InvalidParameterError
+        If ``spectrum`` is empty, is not one-dimensional, or holds a non-finite
+        exponent.
 
     Examples
     --------
     >>> float(kaplan_yorke_dimension([0.906, 0.0, -14.57]))   # Lorenz
     2.062...
+    >>> float(kaplan_yorke_dimension([-0.5, -1.0]))           # stable fixed point
+    0.0
+    >>> float(kaplan_yorke_dimension([1.0, -1.0]))            # conservative: saturates
+    2.0
 
     References
     ----------
@@ -146,8 +192,33 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
     equations", in *Functional Differential Equations and Approximation of Fixed
     Points*, Lecture Notes in Mathematics **730**, Springer (1979) 204--227.
     """
-    s = np.sort(np.asarray(spectrum, dtype=float))[::-1]
-    if s.size == 0 or s[0] < 0.0:
+    reject_system(
+        spectrum,
+        analysis="kaplan_yorke_dimension",
+        hint=(
+            "It takes an already computed Lyapunov spectrum:\n"
+            "    exps = lyapunov_spectrum(system)\n"
+            "    kaplan_yorke_dimension(exps)"
+        ),
+    )
+    s = np.atleast_1d(np.asarray(spectrum, dtype=float))
+    if s.ndim != 1:
+        raise InvalidParameterError(
+            f"kaplan_yorke_dimension: spectrum must be one-dimensional, got shape {s.shape}."
+        )
+    if s.size == 0:
+        raise InvalidParameterError(
+            "kaplan_yorke_dimension: the spectrum is empty — there is no dimension to "
+            "report. Pass at least one Lyapunov exponent."
+        )
+    if not np.all(np.isfinite(s)):
+        raise InvalidParameterError(
+            f"kaplan_yorke_dimension: the spectrum holds a non-finite exponent "
+            f"({np.array2string(s, precision=4)}); the estimator did not converge, so "
+            "any dimension read off it would be meaningless."
+        )
+    s = np.sort(s)[::-1]
+    if s[0] < 0.0:
         dky = 0.0
     else:
         cum = np.cumsum(s)
@@ -390,8 +461,8 @@ def max_lyapunov(
     system: Any,
     *,
     d0: float = 1e-9,
-    n: int = 400,
-    steps_per: int = 5,
+    n: int | None = None,
+    steps_per: int = 10,
     dt: float | None = None,
     transient: int = 500,
     ic: Any | None = None,
@@ -407,15 +478,39 @@ def max_lyapunov(
     available for DDEs (their state cannot be ``set_state``-ed); use
     ``DelaySystem.lyapunov_spectrum`` instead.
 
+    The perturbation starts in a *random* direction, so its first cycles measure
+    a mixture of every exponent — for a dissipative flow it initially **shrinks**
+    (Lorenz's first ten cycles contribute a negative log-ratio) and only then
+    aligns with the leading Lyapunov direction.  Those alignment cycles are run
+    and rescaled but **not** averaged (:data:`_ALIGN_FRACTION` of the cycle count,
+    the standard Benettin warm-up); counting them, as this function used to,
+    biased a short flow run low by ~25 %.
+
+    The accuracy of the average is set by the **length of the averaging window in
+    time**, so for a flow that is what the default holds fixed — see ``n``.
+
     Parameters
     ----------
     system : System
         ODE or map.
     d0 : float
         Perturbation size restored at every rescaling.
-    n : int
-        Number of rescaling cycles (more → better averaging).
-    steps_per : int
+    n : int, optional
+        Number of *measured* rescaling cycles.  ``None`` (the default) sizes the
+        averaging **window**, not the cycle count: a flow runs however many
+        cycles cover :data:`_DEFAULT_WINDOW` time units (measured from the
+        reference clock, so it is right whatever ``dt`` and whatever per-step
+        advance the system makes), a map runs
+        :data:`_DEFAULT_MAP_CYCLES` iterating cycles.  That is what makes the
+        estimate independent of ``dt``: a *count* of cycles is a window of
+        ``n * steps_per * dt`` **time**, so a fixed count silently shortens the
+        window as ``dt`` shrinks — with the pre-fix ``n = 2000`` default,
+        ``dt = 0.001`` averaged over 20 time units and returned 0.659 for Lorenz
+        against a true 0.906 (27 % low), exactly the bias the v6 defaults were
+        raised to remove at ``dt = 0.01``.  Pass ``n`` explicitly to fix the
+        cycle count instead (and then keep ``n * steps_per * dt`` well above
+        ~100 time units, or accept that bias).
+    steps_per : int, default 10
         Protocol steps between rescalings.
     dt : float, optional
         Step size for continuous systems (default: the system's step default).
@@ -442,11 +537,12 @@ def max_lyapunov(
         If ``dt`` is passed for a discrete map.
     ConvergenceError
         If the two trajectories collapse or diverge (zero / non-finite
-        separation), or a continuous system's clock does not advance.
+        separation), or a continuous system's clock does not advance (so neither
+        the averaging window nor the elapsed time can be read from it).
 
     Examples
     --------
-    >>> max_lyapunov(Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)   # ≈ 0.91
+    >>> max_lyapunov(Lorenz(ic=[1.0, 1.0, 1.0]))   # ≈ 0.89, literature 0.906
 
     References
     ----------
@@ -471,29 +567,52 @@ def max_lyapunov(
     # ``_step`` will not lower, or a wheel-free environment, falls back to the
     # two-trajectory loop transparently.
     if system.is_discrete:
+        n_cycles = _DEFAULT_MAP_CYCLES if n is None else int(n)
         mle = _max_lyapunov_map(
-            system, n=n, steps_per=steps_per, transient=transient, ic=ic, seed=seed
+            system, n=n_cycles, steps_per=steps_per, transient=transient, ic=ic, seed=seed
         )
         if mle is not None:
             meta = AnalysisResult.build_meta(
-                system, analysis="max_lyapunov", n=n, transient=transient
+                system, analysis="max_lyapunov", n=n_cycles, transient=transient
             )
             return ScalarResult(value=mle, meta=meta)
+    else:
+        n_cycles = 0 if n is None else int(n)  # resolved from the clock below
 
     rng = np.random.default_rng(seed)
     ref = system.copy()
     ref.reinit(ic)
+    t_burn = float(ref.time())
     for _ in range(transient):
         ref.step(dt)
+
+    if n is None:
+        if system.is_discrete:
+            n_cycles = _DEFAULT_MAP_CYCLES
+        else:
+            # Size the averaging window in TIME, read off the reference clock —
+            # the per-step advance is whatever the system actually makes (an
+            # explicit ``dt``, a family default, a WrappedSystem's own step), and
+            # guessing it is what made the estimate dt-dependent.
+            per_step = (float(ref.time()) - t_burn) / transient if transient > 0 else 0.0
+            if not np.isfinite(per_step) or per_step <= 0.0:
+                t_probe = float(ref.time())  # transient=0: one probe step
+                ref.step(dt)
+                per_step = float(ref.time()) - t_probe
+            if not np.isfinite(per_step) or per_step <= 0.0:
+                raise ConvergenceError(
+                    "max_lyapunov: the reference clock did not advance, so the "
+                    "averaging window cannot be sized — pass an explicit n (and dt)."
+                )
+            n_cycles = max(_MIN_CYCLES, int(np.ceil(_DEFAULT_WINDOW / (steps_per * per_step))))
 
     pert = system.copy()
     direction = rng.normal(size=system.dim)
     direction *= d0 / np.linalg.norm(direction)
     pert.reinit(ref.state() + direction)
 
-    t_start = ref.time()
-    log_sum = 0.0
-    for _ in range(n):
+    def cycle() -> float:
+        """Advance both trajectories one cycle, rescale, return ``ln(d / d0)``."""
         for _ in range(steps_per):
             ref.step(dt)
             pert.step(dt)
@@ -504,11 +623,21 @@ def max_lyapunov(
                 "max_lyapunov: trajectories collapsed or diverged — "
                 "try a larger d0 or smaller steps_per."
             )
-        log_sum += np.log(d / d0)
         pert.set_state(ref.state() + (d0 / d) * delta)
+        return float(np.log(d / d0))
+
+    # Alignment warm-up: rescale but do not average, so the random initial
+    # direction has collapsed onto the leading Lyapunov direction before the
+    # accumulation starts (see the docstring).  The clock starts after it.
+    for _ in range(max(1, int(n_cycles * _ALIGN_FRACTION))):
+        cycle()
+    t_start = ref.time()
+    log_sum = 0.0
+    for _ in range(n_cycles):
+        log_sum += cycle()
 
     if system.is_discrete:
-        elapsed = float(n * steps_per)
+        elapsed = float(n_cycles * steps_per)
     else:
         # Normalize by the *actual* elapsed integration time, read from the
         # reference trajectory's clock — robust to whatever per-step advance the
@@ -523,7 +652,9 @@ def max_lyapunov(
                 "system must report elapsed time through time(); pass an explicit dt."
             )
     mle = float(log_sum / elapsed)
-    meta = AnalysisResult.build_meta(system, analysis="max_lyapunov", n=n, transient=transient)
+    meta = AnalysisResult.build_meta(
+        system, analysis="max_lyapunov", n=n_cycles, transient=transient
+    )
     return ScalarResult(value=mle, meta=meta)
 
 

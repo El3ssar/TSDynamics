@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from ...data import Ball, Box, Grid, set_distance
+from .._common import reject_system
 from .._result import AnalysisResult, CollectionResult
 from ._common import DIVERGED_COLOR, PALETTE, _palette_indices
 from .attractors import Attractor, _reject_unsupported
@@ -350,6 +351,15 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> Col
         ``{"value", "attractor", "kind", "before", "after"}`` with ``kind`` in
         ``{"appear", "disappear"}``, sorted by parameter value.
     """
+    reject_system(
+        result,
+        analysis="tipping_points",
+        hint=(
+            "It reads an already computed continuation:\n"
+            "    cont = continuation(system, param, values, region)\n"
+            "    tipping_points(cont)"
+        ),
+    )
     events: list[dict[str, Any]] = []
     vals = result.values
     for gid, frac in result.fractions.items():

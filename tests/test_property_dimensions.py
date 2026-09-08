@@ -25,12 +25,15 @@ are expensive, so ``@settings(max_examples=...)`` caps the example count.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from _strategies import henon_series, seeds
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import tsdynamics as ts
+from tsdynamics.analysis.dimensions.generalized import NonMonotoneSpectrumWarning
 
 # Tolerances are sized empirically (see commit message / brief): finite-N edge
 # effects bias the correlation dimension of a unit cube *downward*, so the bands
@@ -173,7 +176,13 @@ def test_dimension_spectrum_keys_and_finiteness(seed: int) -> None:
     """dimension_spectrum(qs=[...]) returns one finite, correctly q-tagged result per q."""
     pts = _uniform_cube(2, 2000, seed)
     qs = [0.0, 1.0, 2.0, 3.0]
-    spectrum = ts.dimension_spectrum(pts, qs=qs)
+    # This test pins the SHAPE of the result (keys, tagging, finiteness), not its
+    # accuracy.  2000 points is far too few for box counting to resolve D_0, so the
+    # spectrum legitimately warns that it has not converged; that behaviour has its
+    # own test.  Suppress it here so a structural check is not coupled to sample size.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", NonMonotoneSpectrumWarning)
+        spectrum = ts.dimension_spectrum(pts, qs=qs)
 
     # The spectrum maps each requested q -> its DimensionResult (in request order).
     assert list(spectrum.keys()) == qs
@@ -201,7 +210,9 @@ def test_generalized_dimension_nonincreasing_in_q(seed: int) -> None:
     cloud = ts.embed(series, 2, 1)  # 2-D Takens reconstruction of the attractor
 
     q_grid = [0.0, 2.0, 4.0]
-    spectrum = ts.dimension_spectrum(cloud, qs=q_grid)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", NonMonotoneSpectrumWarning)
+        spectrum = ts.dimension_spectrum(cloud, qs=q_grid)
     dims = [float(spectrum[q]) for q in q_grid]
 
     # D_q is theoretically non-increasing in q; allow estimator noise via tol.

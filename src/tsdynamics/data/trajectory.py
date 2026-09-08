@@ -98,9 +98,18 @@ class Trajectory:
     """
     The result of integrating or iterating a dynamical system.
 
-    Supports tuple-unpacking for backward compatibility::
+    A trajectory is a **container of samples**: ``len(traj)`` is the number of
+    time samples and iterating it yields that many ``(t_i, y_i)`` pairs.
 
-        t, y = system.integrate(final_time=100)
+    .. versionchanged:: 6.0
+        ``__iter__`` used to be a tuple-unpacking convenience yielding the two
+        *columns* ``(t, y)``, which put it in direct contradiction with
+        ``__len__`` (``len(traj)`` said ``n_steps``, ``len(list(traj))`` said 2)
+        and broke the container contract for any code that sizes an iterable and
+        then walks it.  Iteration now yields samples; the column unpacking moved
+        to the explicit :meth:`unpack`::
+
+            t, y = traj.unpack()          # was: t, y = traj
 
     Attributes
     ----------
@@ -122,7 +131,9 @@ class Trajectory:
     array([...])
     >>> traj.after(20.0)     # drop transient
     Trajectory(n_steps=..., dim=3, t=[20.0, 100.0])
-    >>> t, y = traj          # tuple-unpack still works
+    >>> t, y = traj.unpack()          # the two columns
+    >>> for t_i, y_i in traj:         # ... or walk the samples
+    ...     pass
     """
 
     __slots__ = ("t", "y", "system", "meta", "_kdtree")
@@ -142,9 +153,55 @@ class Trajectory:
 
     # --- compatibility / convenience ---
 
-    def __iter__(self) -> Iterator[np.ndarray]:
-        """Allow ``t, y = trajectory``."""
-        return iter((self.t, self.y))
+    def __iter__(self) -> Iterator[tuple[Any, np.ndarray]]:
+        """Yield one ``(t_i, y_i)`` sample per time point.
+
+        Consistent with :meth:`__len__` by construction — the two used to
+        disagree (``len(traj)`` counted samples while iteration yielded the two
+        *columns*), which is a broken container contract.  For the columns use
+        :meth:`unpack`.
+        """
+        return zip(self.t, self.y, strict=True)
+
+    def unpack(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the two column arrays ``(t, y)``.
+
+        The explicit spelling of what ``t, y = traj`` used to do implicitly (see
+        :meth:`__iter__`)::
+
+            t, y = system.run(final_time=100).unpack()
+
+        Returns
+        -------
+        tuple of (ndarray, ndarray)
+            ``t`` of shape ``(T,)`` and ``y`` of shape ``(T, dim)`` — the live
+            arrays, not copies.
+        """
+        return self.t, self.y
+
+    def __len__(self) -> int:
+        """Return the number of time samples — ``len(traj) == traj.n_steps``."""
+        return int(self.t.shape[0])
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Expose the state array to NumPy — ``np.asarray(traj) is traj.y``.
+
+        Without this hook NumPy fell back to treating a trajectory as an opaque
+        scalar object: ``np.asarray(traj)`` returned a **0-d object array**, so
+        any downstream ``arr.shape`` / ``arr[:, 0]`` on it failed far from the
+        cause.  The array interface returns the ``(T, dim)`` state block ``y``
+        (the time vector stays on ``traj.t``), matching what every analysis in
+        the library already consumes.
+        """
+        arr = self.y if dtype is None else np.asarray(self.y, dtype=dtype)
+        if copy is True:
+            return arr.copy()
+        if copy is False and arr is not self.y:
+            raise ValueError(
+                "np.array(trajectory, copy=False) cannot avoid a copy for "
+                f"dtype={dtype!r}; the state array is {self.y.dtype}."
+            )
+        return arr
 
     def __getitem__(self, key: Any) -> Any:
         """
@@ -236,6 +293,57 @@ class Trajectory:
         """
         mask = self.t >= t0
         return Trajectory(self.t[mask], self.y[mask], self.system, meta=self.meta)
+
+    # --- tabular export ---
+
+    @staticmethod
+    def _require_pandas() -> Any:
+        """Import :mod:`pandas` lazily, raising a friendly hint if it is absent."""
+        try:
+            import pandas as pd
+        except ImportError as exc:  # pragma: no cover - depends on environment
+            raise ImportError(
+                "Trajectory.to_frame() needs pandas, which is not a dependency of "
+                "tsdynamics. Install it with `pip install pandas`. Without it, "
+                "`traj.t` / `traj.y` (or `np.asarray(traj)`) give you the same data "
+                "as plain NumPy arrays."
+            ) from exc
+        return pd
+
+    def to_frame(self) -> Any:
+        """Return a :class:`pandas.DataFrame` view of the trajectory.
+
+        One row per time sample: the time vector becomes the index (named
+        ``"t"``) and each state component a column, named from the system's
+        ``variables`` when it declares them and ``y0…y{dim-1}`` otherwise.  The
+        provenance travels along on ``frame.attrs["meta"]``.
+
+        ``pandas`` is a **soft** dependency imported lazily here, so importing
+        tsdynamics never pulls it in; a missing install raises an
+        :class:`ImportError` pointing at ``pip install pandas`` (and at the
+        ``traj.t`` / ``traj.y`` arrays, which need nothing extra).
+
+        Returns
+        -------
+        pandas.DataFrame
+            Shape ``(n_steps, dim)``.
+
+        Raises
+        ------
+        ImportError
+            If :mod:`pandas` is not installed.
+        """
+        pd = self._require_pandas()
+        names = self.variables or tuple(f"y{i}" for i in range(self.dim))
+        if len(names) != self.dim:  # a mis-declared ``variables`` must not silently truncate
+            names = tuple(f"y{i}" for i in range(self.dim))
+        frame = pd.DataFrame(
+            self.y,
+            index=pd.Index(self.t, name="t"),
+            columns=list(names),
+        )
+        frame.attrs["meta"] = dict(self.meta)
+        return frame
 
     # --- visualization seam ---
 
@@ -842,6 +950,20 @@ class Trajectory:
         return set_distance(
             self, other, method=cast('Literal["centroid", "hausdorff", "minimum"]', method)
         )
+
+    # --- pickling (``__slots__`` needs an explicit state protocol) ---
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return the picklable state; the lazy KD-tree cache is dropped."""
+        return {"t": self.t, "y": self.y, "system": self.system, "meta": self.meta}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore from :meth:`__getstate__` (the KD-tree rebuilds on demand)."""
+        self.t = state["t"]
+        self.y = state["y"]
+        self.system = state["system"]
+        self.meta = state["meta"]
+        self._kdtree = None
 
     def __repr__(self) -> str:
         return (

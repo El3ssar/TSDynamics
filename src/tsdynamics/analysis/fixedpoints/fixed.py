@@ -278,10 +278,25 @@ def fixed_points(
         A discrete map (fixed points) or a continuous flow (equilibria).  Delay
         and stochastic systems are not supported.
     region : Box, Grid, (lo, hi) tuple, optional
-        Search region; defaults to a burn-in orbit's bounding box padded by 50 %,
-        or ``[-2, 2]^dim`` if the orbit diverges.
+        Search region.  An explicit region is a hard search **domain**: seeds are
+        drawn in it and converged roots outside it are discarded.  ``None`` (the
+        default) is a pure *seeding* heuristic instead — nothing is clipped — and
+        seeds two boxes derived from a 20-time-unit burn-in orbit: its bare
+        bounding box (``n_seeds`` draws, where equilibria cluster) *and* the same
+        box padded by 50 % (a further ``n_seeds / 2``, which reaches the ones
+        outside the attractor), plus 20 on-orbit points.  The padded box is what
+        finds equilibria the orbit never approaches: Rossler's second one is at
+        ``(5.69, -28.47, 28.47)`` while its attractor never leaves ``|y| < 12``,
+        and before v6 (a 2.0-time-unit hull) ``fixed_points(Rossler())`` returned
+        1 of 2 for **every** seed, with no warning.  If the burn-in orbit escapes
+        instead of settling, both boxes fall back to ``[-2, 2]^dim``.
     n_seeds : int
-        Random seeds (orbit points are added on top).
+        Random seeds in the hull box; the padded box takes half as many again,
+        and 20 orbit points are added on top.  This is a
+        completeness knob, and the cheap one: multi-start Newton is a heuristic
+        that can always miss a root, so raise it when the count matters.  For a
+        *guaranteed* complete set use ``method="interval"`` (which recovers all
+        27 of Thomas's equilibria with a per-box existence certificate).
     tol : float
         Residual tolerance (``‖f(x) − x‖`` for maps, ``‖f(x)‖`` for flows).
     max_iter : int
@@ -403,8 +418,15 @@ def fixed_points(
                 x=r, eigenvalues=eig, stable=bool(np.all(np.abs(eig) < 1.0)), continuous=False
             )
 
-    lo, hi = _c.resolve_box(system, region, dim, rng)
-    seeds = _build_seeds(system, dim, lo, hi, n_seeds, rng)
+    # One burn-in orbit serves both the automatic box and the on-orbit seeds (it
+    # is 2500 RK4 steps of pure Python — sampling it twice was pure waste).
+    orbit = _c.sample_orbit_box(system, dim, rng=rng) if region is None else None
+    lo, hi = (
+        _c.hull_box(orbit, dim, _c.HULL_PAD)
+        if orbit is not None
+        else _c.resolve_box(system, region, dim, rng)
+    )
+    seeds = _build_seeds(dim, lo, hi, n_seeds, rng, orbit=orbit)
     c_mats = _stabilising_matrices(method, dim, max_c)
 
     # The box only *seeds* the search.  An explicit ``region`` is also a hard
@@ -510,19 +532,54 @@ def _interval_fixed_points(
 
 
 def _build_seeds(
-    system: Any,
     dim: int,
     lo: np.ndarray,
     hi: np.ndarray,
     n_seeds: int,
     rng: np.random.Generator,
+    *,
+    orbit: np.ndarray | None,
 ) -> np.ndarray:
-    """Random box seeds augmented with a subsample of an on-orbit burn-in."""
+    r"""Random box seeds augmented with a subsample of an on-orbit burn-in.
+
+    ``orbit is None`` means the caller supplied an explicit ``region``: that box
+    is the search domain, so it is seeded uniformly and nothing is added outside
+    it.
+
+    ``orbit`` given means the box was derived automatically from that burn-in
+    orbit, and it is only a *seeding* aid (roots outside it are kept — see
+    :func:`fixed_points`).  Two scales are then drawn, because a flow's
+    equilibria sit in two different places:
+
+    * the **hull** — the orbit's bare bounding box, seeded with the full
+      ``n_seeds``.  This is where equilibria cluster (Thomas has 27 inside its
+      attractor's hull, Lorenz 3, Chua 3), and density is the binding constraint
+      there, so it gets the larger share.
+    * the **padded** box — the same hull grown by :data:`~_common.HULL_PAD`
+      spans, seeded with :data:`~_common.HULL_PAD_FRACTION` of ``n_seeds`` —
+      reaches the saddles that sit outside the attractor.  Rossler's second
+      equilibrium is at ``(5.69, -28.47, 28.47)`` while its attractor never
+      leaves ``|y| < 12``; against the pre-v6 2.0-time-unit hull
+      ``fixed_points(Rossler())`` returned 1 of 2 equilibria for **every** seed,
+      with no warning.
+
+    Padding costs volume as ``(1 + 2 * pad) ** dim``, so it is bought sparingly:
+    seeding the *bare* hull rather than a heavily padded third box is what takes
+    Thomas from 19/23/19 recovered equilibria to 27/27/27 (see
+    :data:`~_common.HULL_PAD`).
+    """
     seeds = rng.uniform(lo, hi, size=(int(n_seeds), dim))
-    orbit = _c.sample_orbit_box(system, dim, rng=rng)
-    if orbit.size:
-        seeds = np.vstack([seeds, orbit[:: max(1, len(orbit) // 20)]])
-    return seeds
+    if orbit is None or not orbit.size:
+        return seeds
+    tight_lo, tight_hi = _c.hull_box(orbit, dim, 0.0)
+    n_pad = max(1, int(int(n_seeds) * _c.HULL_PAD_FRACTION))
+    return np.vstack(
+        [
+            rng.uniform(tight_lo, tight_hi, size=(int(n_seeds), dim)),
+            seeds[:n_pad],
+            orbit[:: max(1, len(orbit) // 20)],
+        ]
+    )
 
 
 def _stabilising_matrices(method: str, dim: int, max_c: int | None) -> list[np.ndarray]:

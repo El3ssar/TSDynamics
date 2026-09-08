@@ -19,17 +19,21 @@ toolkit becomes navigable from the object::
     sys.tangent(k=3)             sys.project("x", "z")     sys.ensemble(states)
 
 Every accessor method forwards to the same free function the user would call by
-hand, with the system passed *positionally* (the free-function first-argument
-name is not yet unified — that is a later stream — so positional delegation is
-the robust choice).  The accessors add **zero behaviour**: a result obtained
-through an accessor is identical to the free-function result on the same input.
+hand, passing it *positionally* whichever subject its own signature asks for —
+the **system** for a ``system``-first function (it drives the integration
+itself), a measured point set for a ``data``-first one.  That routing is read
+off the free function's signature by :func:`subject_kind`, not hand-maintained,
+so an accessor cannot drift away from the function it delegates to (see "the
+delegation contract" below).  The accessors add **zero behaviour**: a result
+obtained through an accessor is identical to the free-function result on the
+same input.
 
-Accessors that operate on a *measured series* (dimensions, recurrence) accept
-the data as an optional first positional argument.  When it is omitted they
-first run the system (``system.run(**run_kwargs)``) to produce a trajectory and
-then delegate — a convenience that *generates a trajectory implicitly*; pass
-``data=`` (or run the system yourself) for full control over the integration
-window.
+Accessors that operate on a *measured series* (dimensions, recurrence,
+``lyap.from_data``) accept the data as an optional first positional argument.
+When it is omitted they first run the system (``system.run(**run_kwargs)``) to
+produce a trajectory and then delegate — a convenience that *generates a
+trajectory implicitly*; pass ``data=`` (or run the system yourself) for full
+control over the integration window.
 
 The accessor namespaces are wired onto :class:`~tsdynamics.families.base.SystemBase`
 as cached properties in :mod:`tsdynamics.families.base`, so ``sys.lyap is
@@ -40,18 +44,94 @@ analysis / derived imports are **function-local** to keep
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from collections.abc import Callable
+
     from tsdynamics.families.base import SystemBase
 
 __all__ = [
+    "ACCESSOR_DELEGATIONS",
     "ChaosAccessor",
     "DimensionsAccessor",
     "LyapunovAccessor",
     "RecurrenceAccessor",
     "infer_forcing_period",
+    "subject_kind",
 ]
+
+
+# ---------------------------------------------------------------------------
+# the delegation contract
+# ---------------------------------------------------------------------------
+#
+# The free functions in ``tsdynamics.analysis`` come in exactly two shapes, told
+# apart by the name of their FIRST parameter:
+#
+#   * ``system``-first  — the function drives the system itself (it integrates /
+#     iterates with its own, method-appropriate defaults).  The accessor must
+#     hand it the **system**.
+#   * ``data``-first    — the function consumes a measured point set.  The
+#     accessor may run the system first to produce one.
+#
+# Getting that wrong is not a cosmetic slip: ``sys.chaos.zero_one()`` used to
+# pre-run the system with the *family's* ``run()`` defaults (dt = 0.01) and pass
+# the resulting oversampled trajectory to the system-first ``zero_one_test`` as
+# data.  Successive samples were then heavily correlated, and Lorenz —
+# unambiguously chaotic — measured K = -0.026 through the accessor against
+# K = 0.999 through the free function: a qualitatively wrong answer, silently.
+#
+# :func:`subject_kind` reads the shape off the free function's signature and
+# :meth:`_Accessor._delegate` routes on it, so the accessor cannot disagree with
+# the function it delegates to.  ``ACCESSOR_DELEGATIONS`` names the pairing for
+# the test suite (``tests/test_accessors.py``), which checks every accessor
+# method against its free function programmatically.
+
+
+def subject_kind(free: Callable[..., Any]) -> str:
+    """Return ``"system"`` or ``"data"`` — what ``free`` wants as first argument.
+
+    Read off the free function's signature (its first parameter's name), so the
+    accessor layer follows the analysis layer rather than duplicating a hand-kept
+    table that can drift.
+    """
+    try:
+        params = list(inspect.signature(free).parameters)
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return "data"
+    return "system" if params and params[0] == "system" else "data"
+
+
+#: ``accessor class name → {accessor method name: free-function name}``.  Every
+#: public accessor method must appear here; the accessor meta-test iterates it.
+ACCESSOR_DELEGATIONS: dict[str, dict[str, str]] = {
+    "LyapunovAccessor": {
+        "spectrum": "lyapunov_spectrum",
+        "maximal": "max_lyapunov",
+        "from_data": "lyapunov_from_data",
+    },
+    "ChaosAccessor": {
+        "gali": "gali",
+        "expansion_entropy": "expansion_entropy",
+        "zero_one": "zero_one_test",
+    },
+    "DimensionsAccessor": {
+        "correlation": "correlation_dimension",
+        "correlation_sum": "correlation_sum",
+        "generalized": "generalized_dimension",
+        "box_counting": "box_counting_dimension",
+        "information": "information_dimension",
+        "spectrum": "dimension_spectrum",
+        "fixed_mass": "fixed_mass_dimension",
+    },
+    "RecurrenceAccessor": {
+        "matrix": "recurrence_matrix",
+        "rqa": "rqa",
+        "windowed": "windowed_rqa",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +172,38 @@ class _Accessor:
             return data
         return self._system.run(**run_kwargs)
 
+    def _delegate(
+        self,
+        free: Callable[..., Any],
+        *args: Any,
+        data: Any = None,
+        run_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Call ``free`` with the right *first argument* for its signature.
+
+        A ``system``-first free function receives the bound system (or ``data``
+        verbatim when the caller supplies one — those functions accept a measured
+        series too, and drive their own integration otherwise).  A ``data``-first
+        one receives the measured series, running the system when needed.  The
+        choice is read off ``free``'s signature by :func:`subject_kind`, so an
+        accessor can never quietly feed a pre-run trajectory to a function that
+        wanted to drive the system itself (see the module note).
+        """
+        if subject_kind(free) == "system":
+            if run_kwargs:
+                from tsdynamics.errors import InvalidParameterError
+
+                raise InvalidParameterError(
+                    f"{free.__name__}() drives the system itself, so it takes no "
+                    f"run_kwargs; pass its own horizon keywords instead "
+                    f"(e.g. {sorted(run_kwargs)} → direct keyword arguments)."
+                )
+            subject = self._system if data is None else data
+        else:
+            subject = self._resolve_data(data, run_kwargs or {})
+        return free(subject, *args, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # lyapunov
@@ -110,13 +222,13 @@ class LyapunovAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.lyapunov_spectrum`."""
         from tsdynamics.analysis import lyapunov_spectrum
 
-        return lyapunov_spectrum(self._system, **kwargs)
+        return self._delegate(lyapunov_spectrum, **kwargs)
 
     def maximal(self, **kwargs: Any) -> Any:
         """Delegate to :func:`tsdynamics.analysis.max_lyapunov`."""
         from tsdynamics.analysis import max_lyapunov
 
-        return max_lyapunov(self._system, **kwargs)
+        return self._delegate(max_lyapunov, **kwargs)
 
     def from_data(
         self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
@@ -130,8 +242,7 @@ class LyapunovAccessor(_Accessor):
         """
         from tsdynamics.analysis import lyapunov_from_data
 
-        series = self._resolve_data(data, run_kwargs or {})
-        return lyapunov_from_data(series, **kwargs)
+        return self._delegate(lyapunov_from_data, data=data, run_kwargs=run_kwargs, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -142,36 +253,44 @@ class LyapunovAccessor(_Accessor):
 class ChaosAccessor(_Accessor):
     """Chaos indicators bound to the system (``sys.chaos``).
 
-    ``gali`` and ``expansion_entropy`` take the *system* (they integrate its
-    tangent dynamics internally); ``zero_one`` takes a measured scalar series,
-    so it runs the system first when no ``data`` is supplied.
+    All three take the *system*: ``gali`` and ``expansion_entropy`` integrate its
+    tangent dynamics internally, and ``zero_one`` lets
+    :func:`~tsdynamics.analysis.zero_one_test` sample the observable itself (a
+    measured series may still be passed as ``data``).
     """
 
     def gali(self, k: int = 2, **kwargs: Any) -> Any:
         """Delegate to :func:`tsdynamics.analysis.gali`."""
         from tsdynamics.analysis import gali
 
-        return gali(self._system, k, **kwargs)
+        return self._delegate(gali, k, **kwargs)
 
     def expansion_entropy(self, region: Any = None, **kwargs: Any) -> Any:
         """Delegate to :func:`tsdynamics.analysis.expansion_entropy`."""
         from tsdynamics.analysis import expansion_entropy
 
-        return expansion_entropy(self._system, region, **kwargs)
+        return self._delegate(expansion_entropy, region, **kwargs)
 
-    def zero_one(
-        self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
-    ) -> Any:
+    def zero_one(self, data: Any = None, **kwargs: Any) -> Any:
         """Delegate to :func:`tsdynamics.analysis.zero_one_test`.
 
-        The 0--1 test consumes a scalar observable, not a live system; when
-        ``data`` is omitted the system is run first to provide one (pass
-        ``component=`` to select a column).
+        The **system itself** is handed to the free function, which samples the
+        observable with the coarse, decorrelated grid the 0--1 test needs
+        (``final_time`` / ``dt`` / ``n`` / ``transient`` / ``ic`` are its own
+        keywords; pass ``component=`` to pick a column).  A measured 1-D series
+        may be supplied as ``data`` instead — the free function's data overload.
+
+        .. versionchanged:: 6.0
+           This used to pre-run the system with the *family's* ``run()`` defaults
+           and pass the resulting trajectory as data.  On a flow that grid is far
+           too fine for the test's skew-translation statistic, so the accessor
+           reported Lorenz as regular (``K = -0.026``) where the free function
+           reported it chaotic (``K = 0.999``).  The ``run_kwargs=`` keyword is
+           gone with it — use the free function's own horizon keywords.
         """
         from tsdynamics.analysis import zero_one_test
 
-        observable = self._resolve_data(data, run_kwargs or {})
-        return zero_one_test(observable, **kwargs)
+        return self._delegate(zero_one_test, data=data, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +312,7 @@ class DimensionsAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.correlation_dimension`."""
         from tsdynamics.analysis import correlation_dimension
 
-        return correlation_dimension(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(correlation_dimension, data=data, run_kwargs=run_kwargs, **kwargs)
 
     def correlation_sum(
         self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
@@ -201,7 +320,7 @@ class DimensionsAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.correlation_sum`."""
         from tsdynamics.analysis import correlation_sum
 
-        return correlation_sum(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(correlation_sum, data=data, run_kwargs=run_kwargs, **kwargs)
 
     def generalized(
         self,
@@ -214,7 +333,7 @@ class DimensionsAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.generalized_dimension`."""
         from tsdynamics.analysis import generalized_dimension
 
-        return generalized_dimension(self._resolve_data(data, run_kwargs or {}), q, **kwargs)
+        return self._delegate(generalized_dimension, q, data=data, run_kwargs=run_kwargs, **kwargs)
 
     def box_counting(
         self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
@@ -222,7 +341,7 @@ class DimensionsAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.box_counting_dimension`."""
         from tsdynamics.analysis import box_counting_dimension
 
-        return box_counting_dimension(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(box_counting_dimension, data=data, run_kwargs=run_kwargs, **kwargs)
 
     def information(
         self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
@@ -230,7 +349,7 @@ class DimensionsAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.information_dimension`."""
         from tsdynamics.analysis import information_dimension
 
-        return information_dimension(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(information_dimension, data=data, run_kwargs=run_kwargs, **kwargs)
 
     def spectrum(
         self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
@@ -238,7 +357,7 @@ class DimensionsAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.dimension_spectrum`."""
         from tsdynamics.analysis import dimension_spectrum
 
-        return dimension_spectrum(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(dimension_spectrum, data=data, run_kwargs=run_kwargs, **kwargs)
 
     def fixed_mass(
         self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
@@ -246,7 +365,7 @@ class DimensionsAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.fixed_mass_dimension`."""
         from tsdynamics.analysis import fixed_mass_dimension
 
-        return fixed_mass_dimension(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(fixed_mass_dimension, data=data, run_kwargs=run_kwargs, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +385,7 @@ class RecurrenceAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.recurrence_matrix`."""
         from tsdynamics.analysis import recurrence_matrix
 
-        return recurrence_matrix(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(recurrence_matrix, data=data, run_kwargs=run_kwargs, **kwargs)
 
     def rqa(
         self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
@@ -274,7 +393,7 @@ class RecurrenceAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.rqa`."""
         from tsdynamics.analysis import rqa
 
-        return rqa(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(rqa, data=data, run_kwargs=run_kwargs, **kwargs)
 
     def windowed(
         self, data: Any = None, *, run_kwargs: dict[str, Any] | None = None, **kwargs: Any
@@ -282,7 +401,7 @@ class RecurrenceAccessor(_Accessor):
         """Delegate to :func:`tsdynamics.analysis.windowed_rqa`."""
         from tsdynamics.analysis import windowed_rqa
 
-        return windowed_rqa(self._resolve_data(data, run_kwargs or {}), **kwargs)
+        return self._delegate(windowed_rqa, data=data, run_kwargs=run_kwargs, **kwargs)
 
 
 # ---------------------------------------------------------------------------

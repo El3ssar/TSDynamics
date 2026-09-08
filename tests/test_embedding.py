@@ -358,3 +358,137 @@ def test_estimators_self_register(name):
 def test_public_api_reexported(name):
     assert getattr(ts, name) is getattr(emb, name)
     assert name in ts.analysis.__all__
+
+
+# ── v6: the mutual-information noise guard (audit FIX-MI-NOISE) ─────────────────
+#
+# ``optimal_delay(method="mi")`` used to take the first *shape* minimum of
+# I(tau).  On a chaotic map I(tau) decays monotonically to the histogram
+# estimator's independence floor and then wobbles there; the first of those
+# wobbles was read as "the" first minimum, and ``embedding_dimension`` reported
+# ``max_dim`` instead of the true dimension.  The fix rejects minima at the
+# floor; the fallback then splits on *why* no minimum was found.
+
+
+def _henon_series(n=20000, transient=1000, a=1.4, b=0.3):
+    """The x-component of a Henon orbit (minimum embedding dimension 2)."""
+    x, y = 0.1, 0.1
+    out = np.empty(n + transient)
+    for i in range(n + transient):
+        x, y = 1.0 - a * x * x + y, b * x
+        out[i] = x
+    return out[transient:]
+
+
+@pytest.fixture(scope="module")
+def henon_series():
+    return _henon_series()
+
+
+def test_mi_curve_of_a_map_has_no_significant_minimum(henon_series):
+    """Truth: I(tau) for the Henon map decays monotonically to the noise floor.
+
+    Independently of the selection rule, the curve is checked to have (a) no
+    genuine dip in its informative part and (b) an interior *shape* minimum out
+    in its floor region.  That is exactly the configuration the pre-fix rule
+    mis-read, so it anchors the regression rather than restating the fix.
+    """
+    from tsdynamics.analysis.embedding.delay import _first_local_min, _mi_noise_floor
+
+    mi = emb.mutual_information(henon_series, max_delay=50)
+    curve = np.asarray(mi, dtype=float)
+    floor = _mi_noise_floor(int(mi.meta["bins"]), int(mi.meta["n_samples"]))
+
+    shape_min = _first_local_min(curve)
+    assert shape_min is not None, "no interior shape minimum — regression premise gone"
+    # ... and it sits down at the estimator's independence floor, i.e. it is noise.
+    assert curve[shape_min] < 2.0 * floor
+    # The informative part of the curve (above the floor) is strictly decreasing,
+    # so there is no real dip for the criterion to find.
+    informative = curve[curve > 2.0 * floor]
+    assert np.all(np.diff(informative) < 0.0)
+
+
+def test_optimal_delay_is_one_for_a_map(henon_series):
+    """A fully decorrelated series gets tau = 1, not a floor-level artefact."""
+    assert int(emb.optimal_delay(henon_series, method="mi", max_delay=50)) == 1
+
+
+def test_henon_embedding_dimension_is_two(henon_series):
+    """Headline: the automatic delay -> dimension chain recovers m = 2 for Henon.
+
+    Pre-fix the delay came back as 23 (a noise-floor wobble) and both estimators
+    returned ``max_dim``; the true minimum embedding dimension of the Henon
+    attractor is 2.
+    """
+    tau = int(emb.optimal_delay(henon_series, method="mi", max_delay=50))
+    assert int(emb.cao_dimension(henon_series, delay=tau, max_dim=8, theiler=tau)) == 2
+    assert int(emb.false_nearest_neighbors(henon_series, delay=tau, max_dim=8, theiler=tau)) == 2
+
+
+def test_lorenz_embedding_dimension_is_three(lorenz):
+    """The same chain on a densely sampled flow keeps the genuine first minimum.
+
+    The companion to the Henon case: here I(tau) *does* dip well above the noise
+    floor, the guard must not reject it, and m = 3 must survive.
+    """
+    x = lorenz[:, 0]
+    mi = emb.mutual_information(x, max_delay=60)
+    from tsdynamics.analysis.embedding.delay import _mi_noise_floor
+
+    floor = _mi_noise_floor(int(mi.meta["bins"]), int(mi.meta["n_samples"]))
+    tau = int(emb.optimal_delay(x, method="mi", max_delay=60))
+    assert tau > 1
+    assert np.asarray(mi)[tau] > 5.0 * floor, "the genuine Lorenz dip is far above the floor"
+    assert int(emb.false_nearest_neighbors(x, delay=tau, max_dim=8, theiler=tau)) == 3
+
+
+def test_oversampled_flow_falls_back_to_the_longest_lag():
+    """A monotone curve that is still informative at max_delay gets max_delay.
+
+    The other half of the fallback: an oversampled Lorenz (dt = 0.002) does not
+    decorrelate within 50 samples, so I(50) is still far above the floor.  Taking
+    tau = 1 there would be the *opposite* error to the Henon one, so the two
+    branches are pinned separately.
+    """
+    from tsdynamics.analysis.embedding.delay import _mi_noise_floor
+
+    x = _lorenz(n=8000, dt=0.002)[:, 0]
+    mi = emb.mutual_information(x, max_delay=50)
+    curve = np.asarray(mi, dtype=float)
+    floor = _mi_noise_floor(int(mi.meta["bins"]), int(mi.meta["n_samples"]))
+    assert np.all(np.diff(curve[1:]) < 0.0), "premise: the curve is monotone over the window"
+    assert curve[-1] > 2.0 * floor, "premise: still informative at the longest lag"
+    assert int(emb.optimal_delay(x, method="mi", max_delay=50)) == 50
+
+
+def test_mi_noise_floor_matches_the_chi_squared_bias():
+    """The floor is the Miller-Madow bias, checked against a Monte-Carlo draw.
+
+    For independent uniforms the plug-in mutual information over a ``B x B``
+    table has expectation ``(B-1)**2 / (2N)``.  Checked directly against the
+    estimator on independent noise, so the constant is not merely asserted.
+    """
+    from tsdynamics.analysis.embedding.delay import _mi_noise_floor
+
+    rng = np.random.default_rng(0)
+    n, bins = 20000, 32
+    x = rng.uniform(0.0, 1.0, n)
+    # Lags 1.. of white noise are independent pairs, so I(tau>0) is pure bias.
+    curve = np.asarray(emb.mutual_information(x, max_delay=30, bins=bins))[1:]
+    predicted = _mi_noise_floor(bins, n)
+    assert abs(float(curve.mean()) - predicted) < 0.15 * predicted
+
+
+def test_embedding_rejects_a_system_with_a_named_error():
+    """A System handed to a data-first embedding routine names itself and the fix."""
+    from tsdynamics.errors import InvalidInputError
+
+    for call in (
+        lambda: emb.optimal_delay(ts.Lorenz()),
+        lambda: emb.embedding_dimension(ts.systems.Henon()),
+        lambda: emb.mutual_information(ts.Lorenz()),
+        lambda: emb.embed(ts.Lorenz(), dimension=3, delay=1),
+    ):
+        with pytest.raises(InvalidInputError, match="expects measured data, not a System"):
+            call()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
@@ -71,7 +71,7 @@ def _positional_param_names(fn: Any) -> list[str] | None:
 # ---------------------------------------------------------------------------
 
 
-class DiscreteMap(SystemBase):
+class DiscreteMap(SystemBase, ABC):
     """
     Base class for discrete maps iterated on the engine.
 
@@ -80,7 +80,12 @@ class DiscreteMap(SystemBase):
     1. Declare ``params = {...}`` and ``dim = N``.
     2. Implement ``_step`` and ``_jacobian`` as ``@staticmethod`` static methods.
        Parameters arrive as **positional arguments** in the order they appear
-       in the class-level ``params`` dict.
+       in the class-level ``params`` dict.  Both are :func:`abc.abstractmethod`
+       and — since this class is an :class:`abc.ABC`, like every other family
+       base — a subclass that omits one **cannot be instantiated**.  (Before v6
+       ``DiscreteMap`` was the one family base that was *not* an ABC, so the
+       abstract markers were inert and a missing kernel surfaced far downstream
+       as a mystifying ``TapeCompileError`` from the lowering pass.)
 
     Iteration
     ---------
@@ -99,7 +104,7 @@ class DiscreteMap(SystemBase):
     --------
     >>> h = Henon()
     >>> traj = h.iterate(steps=10_000)
-    >>> t_idx, X = traj          # tuple-unpack
+    >>> t_idx, X = traj.unpack()   # the two columns
     >>> exps = h.lyapunov_spectrum(steps=5_000)
     >>> h_variant = h.with_params(a=1.2)
     >>> traj2 = h_variant.iterate(steps=10_000)
@@ -216,8 +221,15 @@ class DiscreteMap(SystemBase):
         if params:
             for k, v in params.items():
                 self.params[k] = v
-        self._state_now = self.resolve_ic(u)
-        self._n_now = int(t) if t is not None else 0
+        # ``resolve_ic`` commits the resolved IC to ``self.ic`` up front, so a
+        # malformed ``u`` (wrong length → a reshape ValueError) or a malformed
+        # ``t`` must not leave a half-applied IC behind (the ``_dispatch`` /
+        # ``iterate`` contract, applied to the stepping entry point).
+        with self._ic_rollback():
+            state = self.resolve_ic(u)
+            n_now = int(t) if t is not None else 0
+        self._state_now = state
+        self._n_now = n_now
 
     def step(self, n_or_dt: int | None = None) -> np.ndarray:
         """
@@ -327,7 +339,7 @@ class DiscreteMap(SystemBase):
             Number of iterations. Default 1000.
         **kwargs
             Forwarded verbatim to :meth:`iterate` (``ic``, ``max_retries``,
-            ``backend``).
+            ``backend``, ``seed``).
 
         Returns
         -------
@@ -356,6 +368,7 @@ class DiscreteMap(SystemBase):
         max_retries: int = 10,
         *,
         backend: str | None = None,
+        seed: int | None = None,
     ) -> Trajectory:
         """
         Iterate the map for ``steps`` steps on the engine.
@@ -367,8 +380,15 @@ class DiscreteMap(SystemBase):
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
         max_retries : int
-            Retry with a new random IC if divergence is detected (only when no
-            explicit ``ic`` was given; an explicit ic that diverges raises).
+            Retry with a new random IC if divergence is detected — only when the
+            initial condition was **not chosen by the user**.  An explicit ``ic``
+            (here *or* on the constructor) that diverges raises instead of being
+            silently swapped for a random one that traces a different orbit.
+        seed : int, optional
+            Seed for the random-IC fallback and for the divergence retries, so an
+            unseeded-IC run is reproducible.  Equivalent to the constructor's
+            ``seed=`` (see :meth:`SystemBase.ic_generator`); the resolved seed is
+            recorded on ``traj.meta["ic_seed"]``.
         backend : {"jit", "interp", "reference"}, optional
             Where the iteration runs.  Defaults to ``_default_backend``
             (``"jit"``).
@@ -415,11 +435,22 @@ class DiscreteMap(SystemBase):
         """
         backend = backend if backend is not None else self._default_backend
 
-        # Iterate on the Rust engine.  Preserve the random-IC retry only when no
-        # explicit ``ic`` was given (a random draw can land off-basin); an
-        # explicit ic that diverges raises loudly, the engine's contract.
-        ic_explicit = ic is not None
-        ic_arr = self.resolve_ic(ic)
+        with self._ic_rollback():
+            return self._iterate_with_retries(
+                steps=steps, ic=ic, max_retries=max_retries, backend=backend, seed=seed
+            )
+
+    def _iterate_with_retries(
+        self, *, steps: int, ic: Any | None, max_retries: int, backend: str, seed: int | None
+    ) -> Trajectory:
+        """Run :meth:`iterate`'s retry loop (wrapped by its IC rollback guard)."""
+        # Iterate on the Rust engine.  Preserve the random-IC retry only when the
+        # initial condition was not chosen by the user (a random draw can land
+        # off-basin); a *user* ic — passed here or to the constructor — that
+        # diverges raises loudly, the engine's contract.  ``resolve_ic`` records
+        # which of the two it resolved on ``_ic_explicit``.
+        ic_arr = self.resolve_ic(ic, seed=seed)
+        ic_explicit = bool(self.__dict__.get("_ic_explicit", ic is not None))
         for attempt in range(max_retries):
             try:
                 return self._iterate_engine(steps=steps, ic=ic_arr, backend=backend)
@@ -435,7 +466,20 @@ class DiscreteMap(SystemBase):
                 # other genuine fault, e.g. a ``backend="jit"`` compile failure —
                 # propagate loudly instead of being mistaken for divergence and
                 # silently burning the whole retry budget.
-                if ic_explicit or attempt == max_retries - 1:
+                if ic_explicit:
+                    # Re-raise the engine seam's own message verbatim (callers pin
+                    # it) and *annotate* why no retry happened: the initial
+                    # condition was chosen by the user — here or on the
+                    # constructor — and an explicit IC is never silently swapped
+                    # for a random one that would trace a different orbit.
+                    exc.add_note(
+                        f"The initial condition {np.array2string(ic_arr, precision=6)} "
+                        f"was supplied explicitly, so {type(self).__name__}.iterate did "
+                        f"not retry from a random one: pass a different ic=, or omit it "
+                        f"to let the random-IC retry find the attractor."
+                    )
+                    raise
+                if attempt == max_retries - 1:
                     raise
                 # Off-basin random draw diverged; warn (not stdout) and retry from
                 # a fresh random IC. Final exhaustion raises loudly below.
@@ -445,8 +489,9 @@ class DiscreteMap(SystemBase):
                     RuntimeWarning,
                     stacklevel=2,
                 )
-                ic_arr = np.random.rand(cast(int, self.dim))
+                ic_arr = self.ic_generator().random(cast(int, self.dim))
                 object.__setattr__(self, "ic", ic_arr.copy())
+                object.__setattr__(self, "_ic_explicit", False)
         raise ConvergenceError(
             f"{type(self).__name__}.iterate exhausted {max_retries} "
             f"retries without a finite trajectory."

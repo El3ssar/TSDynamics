@@ -24,6 +24,7 @@ class Bogdanov(DiscreteMap):
 
     params = {"eps": 0.0, "k": 1.2, "mu": 0.0}
     dim = 2
+    variables = ("x", "y")
     reference = "Bogdanov (1981), Selecta Math. Soviet. 1, 389-421"
 
     @staticmethod
@@ -75,6 +76,7 @@ class Svensson(DiscreteMap):
 
     params = {"a": 1.5, "b": -1.8, "c": 1.6, "d": 0.9}
     dim = 2
+    variables = ("x", "y")
 
     @staticmethod
     def _step(X, a, b, c, d):
@@ -122,6 +124,7 @@ class Bedhead(DiscreteMap):
 
     params = {"a": -0.67, "b": 0.83}
     dim = 2
+    variables = ("x", "y")
 
     @staticmethod
     def _step(X, a, b):
@@ -178,6 +181,7 @@ class ZeraouliaSprott(DiscreteMap):
 
     params = {"a": 4.8, "b": 0.35}
     dim = 2
+    variables = ("x", "y")
     default_ic = [0.1, 0.1]
     reference = "Zeraoulia & Sprott (2011), Int. J. Bifurcation Chaos 21, 155-160"
     doi = "10.1142/s0218127411028325"
@@ -271,6 +275,7 @@ class GumowskiMira(DiscreteMap):
 
     params = {"a": -0.35, "b": 1.0}
     dim = 2
+    variables = ("x", "y")
     default_ic = [1.0, 1.0]  # in the chaotic sea; ~0.5 % of the square is islands
     reference = "Gumowski & Mira (1980), Recurrences and Discrete Dynamic Systems"
     doi = "10.1007/bfb0089135"
@@ -345,6 +350,7 @@ class Hopalong(DiscreteMap):
 
     params = {"a": 3.1, "b": 2.5, "c": 4.2}
     dim = 2
+    variables = ("x", "y")
     reference = "Dewdney (1986), Scientific American 255(3), 14-20"
     doi = "10.1038/scientificamerican0986-14"
 
@@ -391,6 +397,7 @@ class Pickover(DiscreteMap):
 
     params = {"a": -1.4, "b": 1.6, "c": 1.0, "d": 0.7}
     dim = 2
+    variables = ("x", "y")
     reference = "Pickover (1990), Computers, Pattern, Chaos and Beauty (St. Martin's Press)"
 
     @staticmethod

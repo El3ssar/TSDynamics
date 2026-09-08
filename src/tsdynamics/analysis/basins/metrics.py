@@ -27,8 +27,9 @@ from typing import Any
 
 import numpy as np
 
+from .._common import reject_system as _reject_system
 from .._result import AnalysisResult, ScalarResult
-from ._common import _as_label_array
+from ._common import _BASIN_HINT, _as_label_array
 from .basins import BasinsResult
 
 __all__ = [
@@ -264,7 +265,7 @@ def basin_entropy(
     "Basin entropy: a new tool to analyze uncertainty in dynamical systems",
     *Scientific Reports* **6**, 31416 (2016).
     """
-    labels = _as_label_array(basins)
+    labels = _as_label_array(basins, analysis="basin_entropy")
     if box_size < 1:
         raise ValueError(f"box_size must be >= 1, got {box_size}")
     log = np.log(base)
@@ -387,7 +388,7 @@ def uncertainty_exponent(
     C. Grebogi, S. W. McDonald, E. Ott and J. A. Yorke, "Final state sensitivity:
     an obstruction to predictability", *Physics Letters A* **99**, 415 (1983).
     """
-    labels = _as_label_array(basins)
+    labels = _as_label_array(basins, analysis="uncertainty_exponent")
     radii = tuple(int(r) for r in radii)
     if len(radii) < 2:
         raise ValueError("need at least two radii to fit a slope.")
@@ -515,7 +516,7 @@ def wada_property(
     """
     from scipy.ndimage import maximum_filter
 
-    labels = _as_label_array(basins)
+    labels = _as_label_array(basins, analysis="wada_property")
     colors = [int(c) for c in np.unique(labels) if c >= 1]
     radii = tuple(int(r) for r in radii)
     valid = None if include_diverged else (labels != -1)  # -1 == DIVERGED/escape
@@ -608,6 +609,11 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     """
     from scipy.ndimage import distance_transform_edt
 
+    _reject_system(
+        result,
+        analysis="resilience",
+        hint=_BASIN_HINT.format(who="resilience") + "  # then resilience(res, attractor_id)",
+    )
     if not isinstance(result, BasinsResult):
         raise TypeError("resilience needs a BasinsResult (it requires the grid + attractors).")
     labels = result.labels
