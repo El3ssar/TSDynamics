@@ -333,7 +333,9 @@ class AnalysisResult:
             meta=self.meta,
         )
 
-    def overlay_on(self, base: PlotSpec, *, kind: str | None = None) -> PlotSpec:
+    def overlay_on(
+        self, base: PlotSpec, *, kind: str | None = None, on: str | None = None, **build_kw: Any
+    ) -> PlotSpec:
         """Overlay this result's figure onto a host ``base`` spec (host drawn first).
 
         The ``base=`` overlay convention, as a method that does not perturb the
@@ -342,31 +344,65 @@ class AnalysisResult:
         fixed-point markers land over a phase portrait or an attractor scatter
         over a basin image.  The merged ``base`` is mutated and returned.
 
+        **Frame-checked (v6).**  The host and the overlay must be drawings of the
+        same space on the same axes (see
+        :attr:`~tsdynamics.viz.spec.PlotSpec.resolved_frame`), which is the same
+        rule :func:`tsdynamics.viz.plot` applies — before v6 the two doors
+        disagreed, and this one accepted, for instance, a recurrence scatter
+        spliced onto a time series, producing a spec *labelled* ``time_series``
+        containing a recurrence plot.  That now raises.
+
+        Every keyword other than ``on`` is forwarded to :meth:`to_plot_spec`, so
+        an overlay that has to be told which plane to draw on (``components=``)
+        can be, without each such result re-implementing this method.
+
         Parameters
         ----------
         base : PlotSpec
             The host spec to draw under this result.
         kind : str, optional
             Forwarded to :meth:`to_plot_spec`.
+        on : {"force"}, optional
+            ``"force"`` overlays a deliberate frame mismatch with a one-time
+            :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` warning
+            instead of raising.
+        **build_kw
+            Forwarded to :meth:`to_plot_spec` (e.g. ``components=`` /
+            ``annotate=`` on a fixed-point set).
 
         Returns
         -------
         PlotSpec
             ``base``, with this result's layers / annotations appended.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            If the host and this result draw in incompatible frames and ``on``
+            is not ``"force"``.
         """
-        return self._overlay_on(self.to_plot_spec(kind=kind), base)
+        return self._overlay_on(self.to_plot_spec(kind=kind, **build_kw), base, on=on)
 
     @staticmethod
-    def _overlay_on(spec: PlotSpec, base: PlotSpec | None) -> PlotSpec:
+    def _overlay_on(spec: PlotSpec, base: PlotSpec | None, *, on: str | None = None) -> PlotSpec:
         """Overlay ``spec``'s layers/annotations onto ``base`` (host first), or pass through.
 
         The ``base=`` overlay convention: when a host ``base`` spec is given, its
         layers are drawn first and ``spec``'s layers/annotations are appended, so
         e.g. fixed-point markers land *over* a phase portrait.  Returns ``spec``
         unchanged when ``base`` is ``None``.
+
+        The frame check is :func:`tsdynamics.viz._frames.check_overlay` — the
+        *same* function :func:`tsdynamics.viz.plot` calls, so the library has one
+        overlay policy rather than two that disagree.  The merge itself stays
+        host-first append (rather than ``compose``'s role sort) because this
+        method's contract is that it mutates and returns the host you handed it.
         """
         if base is None:
             return spec
+        from tsdynamics.viz._frames import check_overlay, force_requested
+
+        check_overlay([base, spec], force=force_requested(on))
         base.layers = list(base.layers) + list(spec.layers)
         base.annotations = list(base.annotations) + list(spec.annotations)
         if base.legend is None and len(base.layers) > 1:

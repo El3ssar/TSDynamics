@@ -132,8 +132,8 @@ module's `__all__`), so a new system needs no manual edit there.
 
 `tsdynamics.__all__` exports:
 
-- The 171 built-in systems are reachable via `tsdynamics.systems` (171 today:
-  136 ODE + 6 DDE + 26 maps + 3 SDE), not the top-level `__all__`
+- The 177 built-in systems are reachable via `tsdynamics.systems` (177 today:
+  142 ODE + 6 DDE + 26 maps + 3 SDE), not the top-level `__all__`
 - Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`,
   `StochasticSystem`; result type `Trajectory`
 - Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
@@ -233,7 +233,12 @@ subpackages (the A-* streams).
 There is **no `transforms` registry / entry-point group** — it was removed in v6
 along with the generic time-series layer (see the scope boundary above). Do not
 re-add one; a companion library's integration surface will be designed when that
-library exists.
+library exists.  **This prohibition is about the deleted generic time-series
+package, and nothing else.** It does NOT cover `registry.plot_transforms` (the
+viz layer's transform→geometry registry, entry-point group
+`tsdynamics.plot_transforms`), which is a different concept that happens to share
+the word: a *plot* transform turns a system or trajectory into plottable
+geometry, and never ships a signal-processing estimator.
 **Solvers are not registered here**: they live in the
 richer `tsdynamics.solvers` registry (a `name → SolverSpec` table with
 capability flags + `solvers/` directory and entry-point discovery via
@@ -1174,7 +1179,7 @@ inner loop** — see below.
 
 ### Change-scoped testing (stream CI-CHANGED) — use this, not the full suite
 
-The bulk suite is registry-driven (every test parametrized over all 171 systems
+The bulk suite is registry-driven (every test parametrized over all 177 systems
 + every analysis), so a plain `uv run pytest` is thousands of items and
 takes minutes. **To check your work, run only what your diff touches:**
 
@@ -1550,5 +1555,5 @@ exps = mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])
 
 # Registry
 from tsdynamics import registry
-registry.families()                         # {'ode': 136, 'dde': 6, 'map': 26, 'sde': 3}
+registry.families()                         # {'ode': 142, 'dde': 6, 'map': 26, 'sde': 3}
 ```

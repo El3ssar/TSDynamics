@@ -326,4 +326,4 @@ kernels from out-of-tree contributions; today every solver is `builtin`.
 ## See also
 
 - [Analysis toolkit](index.md) — the `Trajectory` object, the stepping protocol, and the quantifiers
-- [Systems](../systems/index.md) — the 171 built-in systems you can integrate
+- [Systems](../systems/index.md) — the 177 built-in systems you can integrate

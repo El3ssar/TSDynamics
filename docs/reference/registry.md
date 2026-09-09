@@ -7,7 +7,7 @@ description: API reference for tsdynamics.registry — programmatic discovery of
 # Registry
 
 Runtime registry of system classes. Every concrete subclass of a family
-base auto-registers at class-definition time — the 171 built-ins and your
+base auto-registers at class-definition time — the 177 built-ins and your
 own classes alike. The registry is what the bulk test suite and the
 documentation generator iterate over.
 

@@ -16,7 +16,7 @@ bug (a ``p**(1/2)`` written without parentheses lowers to ``p / 2`` because
    so a tautology is impossible and the assertion fails the instant a kernel's
    math drifts from the cited form.
 
-2. **Drift snapshot** (the long-tail layer).  Every catalogue system (all 171
+2. **Drift snapshot** (the long-tail layer).  Every catalogue system (all 177
    today) is lowered to its engine IR tape, and a SHA-256 of the canonical
    string form of that tape is pinned in a committed golden file.  Any
    accidental edit to a kernel changes its lowered tape, flips the hash, and the
@@ -177,6 +177,78 @@ def _forced_fhn_expected(u: list[float], p: dict[str, float]) -> list[float]:
     return [v - v**3 / 3 - w + curr + f * math.sin(z), gamma * (v + a - b * w), omega]
 
 
+def _van_der_pol_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    """Van der Pol (1926) as a planar system: x'=y, y'=μ(1−x²)y−x.
+
+    The unforced twin of :func:`_forced_vdp_expected`; the only difference is the
+    absent drive, so a copy-paste that left the forcing in (or dropped the −x)
+    fails here.
+    """
+    x, y = u
+    mu = p["mu"]
+    return [y, mu * (1 - x**2) * y - x]
+
+
+def _brusselator_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    """Brusselator (Prigogine & Lefever 1968): x'=a−(b+1)x+x²y, y'=bx−x²y.
+
+    The two autocatalytic terms are equal and opposite (mass is only exchanged),
+    so a sign slip on either breaks the ``x'+y' = a − x`` identity this expected
+    vector encodes implicitly.
+    """
+    x, y = u
+    a, b = p["a"], p["b"]
+    return [a - (b + 1) * x + x**2 * y, b * x - x**2 * y]
+
+
+def _fitzhugh_nagumo_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    """FitzHugh (1961) planar: v'=v−v³/3−w+I, w'=γ(v+a−bw).
+
+    ``v**3 / 3`` is a near miss of the ``p**1/2`` family.  Here the precedence
+    happens to be the intended one — ``v**3/3`` binds as ``(v**3)/3``, the cubic
+    over three — but the same keystroke one line over (``v**3/3`` written as
+    ``v**(3/3)``, i.e. plain ``v``) is the bug that shipped in ``WindmiReduced``.
+    This hand-derivation pins the intended cubic either way.
+    """
+    v, w = u
+    a, b, curr, gamma = p["a"], p["b"], p["curr"], p["gamma"]
+    return [v - v**3 / 3 - w + curr, gamma * (v + a - b * w)]
+
+
+def _selkov_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    """Sel'kov (1968) glycolysis, dimensionless: x'=−x+ay+x²y, y'=b−ay−x²y."""
+    x, y = u
+    a, b = p["a"], p["b"]
+    return [-x + a * y + x**2 * y, b - a * y - x**2 * y]
+
+
+def _lotka_volterra_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    """Lotka (1920) / Volterra (1926): x'=αx−βxy, y'=δxy−γy.
+
+    The catalogue defaults give ``beta == gamma == 0.4``, which would mask a
+    swap of the two, so the case that uses this derivation overrides ``beta``.
+    """
+    x, y = u
+    alpha, beta, delta, gamma = p["alpha"], p["beta"], p["delta"], p["gamma"]
+    return [alpha * x - beta * x * y, delta * x * y - gamma * y]
+
+
+def _stuart_landau_expected(u: list[float], p: dict[str, float]) -> list[float]:
+    """Stuart–Landau A'=(μ+iω)A−(1+ib)|A|²A, expanded independently in complex form.
+
+    Rather than transcribing the real-valued kernel, this evaluates the complex
+    normal form with Python ``complex`` arithmetic and splits the result — a
+    genuinely different computation, so a mis-expanded real form (the easy bug:
+    dropping the ``b`` term from one component, or attaching it to the wrong
+    one) cannot agree with it.
+    """
+    x, y = u
+    b, mu, omega = p["b"], p["mu"], p["omega"]
+    A = complex(x, y)
+    dA = (mu + 1j * omega) * A - (1 + 1j * b) * abs(A) ** 2 * A
+    return [dA.real, dA.imag]
+
+
 def _windmi_expected(u: list[float], p: dict[str, float]) -> list[float]:
     """Reduced WINDMI (Horton 2001) — the system that carried the ``p**1/2`` bug.
 
@@ -326,6 +398,21 @@ CASES: list[tuple[str, str, list[float], dict[str, float] | None, Any]] = [
     ("DoublePendulum", "DoublePendulum", [0.7, -0.4, 1.3, -0.6], None, _double_pendulum_expected),
     ("ForcedVanDerPol", "ForcedVanDerPol", [0.3, 1.2, 0.8], None, _forced_vdp_expected),
     ("ForcedFitzHughNagumo", "ForcedFitzHughNagumo", [0.5, 0.2, 1.1], None, _forced_fhn_expected),
+    # Unforced planar classics.  Where two catalogue defaults coincide (or are
+    # both 1.0) a parameter override separates them, so a swapped coefficient
+    # cannot hide behind equal values.
+    ("VanDerPol", "VanDerPol", [0.4, -1.3], {"mu": 2.3}, _van_der_pol_expected),
+    ("Brusselator", "Brusselator", [1.3, 0.6], {"a": 0.7, "b": 2.6}, _brusselator_expected),
+    ("FitzHughNagumo", "FitzHughNagumo", [0.9, -0.4], None, _fitzhugh_nagumo_expected),
+    ("Selkov", "Selkov", [0.8, 1.4], None, _selkov_expected),
+    ("LotkaVolterra", "LotkaVolterra", [3.2, 1.7], {"beta": 0.35}, _lotka_volterra_expected),
+    (
+        "StuartLandau",
+        "StuartLandau",
+        [0.6, -0.8],
+        {"mu": 1.4, "omega": 0.9},
+        _stuart_landau_expected,
+    ),
     # WindmiReduced twice: a saturated-gate state (isolates v' **(1/2)) and a
     # near-i=1 state with a param override (interior gate exercises p' **(5/4)
     # and covers the parameter-override path).

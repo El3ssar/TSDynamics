@@ -7,7 +7,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tsdynamics)](https://pypi.org/project/tsdynamics/)
 [![codecov](https://codecov.io/gh/El3ssar/TSDynamics/graph/badge.svg)](https://codecov.io/gh/El3ssar/TSDynamics)
 
-**Dynamical systems in Python: 171 built-in systems, a native Rust integration
+**Dynamical systems in Python: 177 built-in systems, a native Rust integration
 engine, and a chaos-analysis toolkit — with the simplest system-definition
 contract anywhere.**
 
@@ -142,7 +142,7 @@ Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
   (`reinit` / `step` / `state` / `trajectory`), so every analysis composes over
   all of them.
 
-- **171 built-in systems** with literature parameters (136 ODEs, 26 maps, 6 DDEs, 3 SDEs).
+- **177 built-in systems** with literature parameters (142 ODEs, 26 maps, 6 DDEs, 3 SDEs).
 
 - **Native engine**: equations lower to a Rust engine in-process and run on a
   built-in Cranelift JIT (or a bit-for-bit identical SSA-tape interpreter);

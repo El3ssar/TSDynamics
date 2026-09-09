@@ -109,7 +109,10 @@ class FixedPoint(AnalysisResult):
             The two state-vector coordinates to project onto, as indices
             (``(0, 2)``) or as the names the system declares (``("x", "z")``).
             Defaults to the first two.  Pass the same pair to the host portrait so
-            the overlay lands on the plane it was drawn for.
+            the overlay lands on the plane it was drawn for — since v6 an overlay
+            onto a host drawn on a *different* plane raises rather than silently
+            putting the equilibria in the wrong place (the frame check in
+            :meth:`~tsdynamics.analysis._result.AnalysisResult.overlay_on`).
         annotate : bool, optional
             Label the marker with its leading eigenvalue (largest real part for a
             flow, largest modulus for a map).  ``None`` (default) means *on* for a
@@ -150,28 +153,6 @@ class FixedPoint(AnalysisResult):
             xlimits=xlim,
             ylimits=ylim,
             meta=self.meta,
-        )
-
-    def overlay_on(
-        self,
-        base: Any,
-        *,
-        kind: str | None = None,
-        components: Sequence[int | str] | None = None,
-        annotate: bool | None = None,
-    ) -> Any:
-        """Overlay this fixed point on a host spec, forwarding the projection plane.
-
-        The base :meth:`~tsdynamics.analysis._result.AnalysisResult.overlay_on`
-        forwards only ``kind``, so an overlay always defaulted to the ``(0, 1)``
-        plane: drop it on an ``("x", "z")`` portrait of Lorenz and the equilibria
-        landed at ``(±8.5, ±8.5)`` instead of ``(±8.5, 27)`` — markers in the wrong
-        place, with nothing to say so.  This override passes ``components`` (and
-        ``annotate``) through, so the overlay can be drawn on the same plane as its
-        host.
-        """
-        return self._overlay_on(
-            self.to_plot_spec(kind=kind, components=components, annotate=annotate), base
         )
 
     def eigenvalue_plane(self, kind: str | None = None) -> Any:
@@ -298,24 +279,6 @@ class FixedPointSet(CollectionResult):
             xlimits=xlim,
             ylimits=ylim,
             meta=self.meta,
-        )
-
-    def overlay_on(
-        self,
-        base: Any,
-        *,
-        kind: str | None = None,
-        components: Sequence[int | str] | None = None,
-        annotate: bool | None = None,
-    ) -> Any:
-        """Overlay this set on a host spec, forwarding the projection plane.
-
-        See :meth:`FixedPoint.overlay_on` — the base implementation forwards only
-        ``kind``, which silently drew the markers on the wrong plane whenever the
-        host portrait was not the default ``(0, 1)`` one.
-        """
-        return self._overlay_on(
-            self.to_plot_spec(kind=kind, components=components, annotate=annotate), base
         )
 
     def eigenvalue_plane(self, kind: str | None = None) -> Any:
@@ -872,7 +835,8 @@ def _eigenvalue_annotations(
     two symmetric equilibria of Lorenz's ``(x, z)`` projection — same height,
     opposite sides — write their labels straight through each other.
 
-    Widening the limits is safe for the overlay path: :meth:`overlay_on` merges only
+    Widening the limits is safe for the overlay path:
+    :meth:`~tsdynamics.analysis._result.AnalysisResult.overlay_on` merges only
     layers and annotations onto the host spec and discards the overlay's own axes,
     so these limits apply exactly when this spec is drawn on its own.
 

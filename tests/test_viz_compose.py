@@ -82,16 +82,21 @@ def test_overlay_forwards_build_kwargs_to_each_thing():
     assert len(spec.layers) == 2
 
 
-def test_overlay_of_incompatible_kinds_raises():
-    # a spacetime image cannot share axes with a 3-D portrait
-    with pytest.raises(InvalidParameterError):
+def test_overlay_of_incompatible_frames_raises():
+    """A spacetime lattice and a 3-D phase portrait are different spaces.
+
+    Still refused after the v6 widening — but now for the *reason* rather than
+    because a three-member kind whitelist happened to exclude both.
+    """
+    with pytest.raises(InvalidParameterError, match="different spaces"):
         viz.plot(_l96(), _lorenz())
 
 
 def test_overlay_mixing_2d_and_3d_portrait_raises():
+    """Same space family, different dimension — ``state2`` is not ``state3``."""
     two_d = _lorenz().to_plot_spec(components=["x", "y"])  # PHASE_PORTRAIT_2D
     three_d = _lorenz().to_plot_spec()  # PHASE_PORTRAIT_3D
-    with pytest.raises(InvalidParameterError):
+    with pytest.raises(InvalidParameterError, match="different spaces"):
         viz.plot(two_d, three_d)
 
 
@@ -391,3 +396,375 @@ def test_composite_tweaks_reach_the_panels_end_to_end():
     assert [p.layers[0].style["color"] for p in spec.panels] == ["red", "blue"]
     assert all(p.x.limits == (0.0, 5.0) and p.x.label == "t" for p in spec.panels)
     assert spec.title == "two views" and all(p.title != "two views" for p in spec.panels)
+
+
+# ---------------------------------------------------------------------------
+# P0 — COMPOSABILITY: overlay legality is FRAME identity, not kind identity
+# ---------------------------------------------------------------------------
+
+
+class _DuffingTwoWell(ts.ContinuousSystem):
+    """Damped two-well Duffing ``x'' = x - x**3 - delta x'`` — wells at ``x = ±1``.
+
+    Test-local (like the copy in ``tests/test_basins.py``): the catalogue has
+    exactly one unforced planar ODE, and the flagship overlay needs a 2-D flow
+    with two basins, equilibria and an attractor set.
+    """
+
+    params = {"delta": 0.3}
+    dim = 2
+    variables = ("x", "v")
+
+    @staticmethod
+    def _equations(Y, t, *, delta):
+        x, v = Y(0), Y(1)
+        return (v, x - x**3 - delta * v)
+
+
+def _image_spec(label="basins", kind=PlotKind.BASINS_IMAGE, xlabel="x", ylabel="v"):
+    """A minimal field spec on the ``(x, v)`` plane (a basin image, in miniature)."""
+    from tsdynamics.viz.spec import Axis, Layer
+
+    g = np.add.outer(np.linspace(0.0, 1.0, 8), np.linspace(0.0, 1.0, 8))
+    return PlotSpec(
+        kind=kind,
+        aspect="equal",
+        x=Axis(label=xlabel),
+        y=Axis(label=ylabel),
+        layers=[
+            Layer(PlotKind.IMAGE, {"x": np.arange(8.0), "y": np.arange(8.0), "c": g}, label=label)
+        ],
+        title=label,
+    )
+
+
+def _curve_spec(label="trajectory", xlabel="x", ylabel="v"):
+    """A minimal ``PHASE_PORTRAIT_2D`` curve on the ``(x, v)`` plane."""
+    from tsdynamics.viz.spec import Axis, Layer
+
+    t = np.linspace(0.0, 6.0, 32)
+    return PlotSpec(
+        kind=PlotKind.PHASE_PORTRAIT_2D,
+        x=Axis(label=xlabel),
+        y=Axis(label=ylabel),
+        layers=[Layer(PlotKind.LINE, {"x": np.cos(t), "y": np.sin(t)}, label=label)],
+        title=label,
+    )
+
+
+def _marker_spec(label="equilibria", xlabel="x", ylabel="v"):
+    """A minimal ``FIXED_POINTS_OVERLAY`` on the ``(x, v)`` plane."""
+    from tsdynamics.viz.spec import Annotation, Axis, Layer
+
+    return PlotSpec(
+        kind=PlotKind.FIXED_POINTS_OVERLAY,
+        x=Axis(label=xlabel),
+        y=Axis(label=ylabel),
+        layers=[Layer(PlotKind.SCATTER, {"x": np.zeros(1), "y": np.zeros(1)}, label=label)],
+        annotations=[Annotation(kind="text", text="lambda=+0.86", x=0.0, y=0.0)],
+        title=label,
+    )
+
+
+def _png(spec: PlotSpec) -> bytes:
+    import io
+
+    fig = spec.render("matplotlib")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=72)
+    return buf.getvalue()
+
+
+def test_the_flagship_overlay_of_four_different_kinds_on_one_axes():
+    """Four kinds, one plane, one set of axes — the defect this phase closes.
+
+    Before v6 this raised ``InvalidParameterError: cannot overlay specs of kinds
+    ['fixed_points_overlay', 'phase_portrait_2d']`` — a *policy* refusal, since
+    the renderers already drew image + line + scatter on one axes correctly.
+    """
+    spec = viz.plot(_image_spec(), _curve_spec(), _marker_spec())
+    assert not spec.is_composite
+    assert [lyr.kind for lyr in spec.layers] == [
+        PlotKind.IMAGE,
+        PlotKind.LINE,
+        PlotKind.SCATTER,
+    ]
+    # the field owns the merged identity: a basin image keeps its own kind (and
+    # therefore its categorical presentation) with curves drawn over it
+    assert spec.kind == PlotKind.BASINS_IMAGE
+    assert str(spec.resolved_frame) == "state2(x, v)"
+    _roundtrips(spec)
+
+
+def test_overlay_z_order_is_by_role_not_argument_order():
+    """``plot(basins, traj)`` and ``plot(traj, basins)`` are the same picture.
+
+    Byte-identical PNGs, not merely the same layer set: the field draws under
+    the curve because of what those things *are*, so the call is order-free.
+    """
+    pytest.importorskip("matplotlib")
+    forward = viz.plot(_image_spec(), _curve_spec())
+    reversed_ = viz.plot(_curve_spec(), _image_spec())
+    assert [lyr.kind for lyr in forward.layers] == [PlotKind.IMAGE, PlotKind.LINE]
+    assert [lyr.kind for lyr in reversed_.layers] == [PlotKind.IMAGE, PlotKind.LINE]
+    assert _png(forward) == _png(reversed_)
+
+
+def test_equal_role_specs_keep_their_argument_order():
+    """Role sorting is *stable*: it orders roles, never same-role siblings.
+
+    This is what keeps every overlay that was legal before v6 byte-identical —
+    those were all same-kind (and therefore same-role) merges.
+    """
+    a, b = _curve_spec("a"), _curve_spec("b")
+    assert [lyr.label for lyr in viz.plot(a, b).layers] == ["a: a", "b: b"]
+    assert [lyr.label for lyr in viz.plot(b, a).layers] == ["b: b", "a: a"]
+
+
+def test_overlay_onto_a_different_plane_raises_naming_both():
+    """The wrong-plane bug, now structurally impossible.
+
+    ``fixedpoints/fixed.py`` used to patch this by hand for its own overlay path
+    (forwarding ``components=``); the frame check subsumes it and covers every
+    producer, not just that one.
+    """
+    with pytest.raises(InvalidParameterError, match="axes mismatch"):
+        viz.plot(_curve_spec(ylabel="v"), _marker_spec(ylabel="z"))
+
+
+def test_overlay_of_different_spaces_raises_naming_both_frames():
+    """A recurrence plot is not a drawing of a phase plane."""
+    from tsdynamics.viz.spec import Axis, Layer
+
+    recurrence = PlotSpec(
+        kind=PlotKind.RECURRENCE_PLOT,
+        x=Axis(label="i"),
+        y=Axis(label="j"),
+        layers=[Layer(PlotKind.SCATTER, {"x": np.zeros(3), "y": np.zeros(3)})],
+    )
+    with pytest.raises(InvalidParameterError, match="different spaces"):
+        viz.plot(_curve_spec(), recurrence)
+
+
+def test_time_series_of_different_components_still_overlay():
+    """A ``time`` frame is ONE coordinate: the y axis is free, so x(t) + y(t) is legal."""
+    spec = viz.plot(_lorenz(), _lorenz(), components="x")
+    assert spec.kind == PlotKind.TIME_SERIES
+    px = viz.plot(_lorenz(), components="x")
+    py = viz.plot(_lorenz(), components="y")
+    merged = viz.plot(px, py)
+    assert len(merged.layers) == 2
+
+
+def test_on_force_overlays_a_deliberate_mismatch_with_one_warning():
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    with pytest.warns(VisualizationDegraded, match="on='force'"):
+        spec = viz.plot(_curve_spec(ylabel="v"), _marker_spec(ylabel="z"), on="force")
+    assert len(spec.layers) == 2
+
+
+def test_unknown_on_value_raises():
+    with pytest.raises(InvalidParameterError, match="unknown on="):
+        viz.plot(_curve_spec(), _marker_spec(), on="forse")
+
+
+def test_on_is_rejected_for_a_panelled_layout():
+    with pytest.raises(InvalidParameterError, match="nothing to force"):
+        viz.plot(_curve_spec(), _marker_spec(), layout="stack", on="force")
+
+
+def test_overlay_keeps_the_annotations_of_every_source():
+    """Annotations used to be dropped by ``plot`` (``overlay_on`` kept them)."""
+    spec = viz.plot(_curve_spec(), _marker_spec())
+    assert [a.text for a in spec.annotations] == ["lambda=+0.86"]
+
+
+def test_overlay_keeps_the_first_argument_s_theme_and_animation():
+    """Presentation context is the caller's; z-order is the data's.
+
+    ``_theme`` / ``animation`` follow *argument* order (the first thing you named
+    is the figure you are building), while layers follow *role* order.
+    """
+    base = _curve_spec().theme("dark")
+    base.animate(fps=15.0)
+    spec = viz.plot(base, _image_spec())
+    assert spec.resolved_theme.name == "dark"
+    assert spec.animation is not None and spec.animation.fps == 15.0
+
+
+# ---------------------------------------------------------------------------
+# PlotSpec.add — the incremental (Makie-style) build
+# ---------------------------------------------------------------------------
+
+
+def test_add_chains_and_equals_the_one_shot_call():
+    """``plot(a).add(b).add(c)`` is the same spec as ``plot(a, b, c)``.
+
+    Same merge, same frame check, same role ordering — so the incremental and
+    the one-shot spellings cannot drift apart (including the legend labels,
+    which an earlier draft double-prefixed on the second ``add``).
+    """
+    one_shot = viz.plot(_image_spec(), _curve_spec(), _marker_spec())
+    built = viz.plot(_image_spec()).add(_curve_spec()).add(_marker_spec())
+    assert built.to_dict() == one_shot.to_dict()
+
+
+def test_add_mutates_in_place_and_returns_self():
+    spec = viz.plot(_image_spec())
+    assert spec.add(_curve_spec()) is spec
+    assert len(spec.layers) == 2
+
+
+def test_add_accepts_plottables_and_build_kwargs():
+    spec = viz.plot(_lorenz(), components="x").add(_lorenz([1.1, 1.0, 1.0]), components="x")
+    assert spec.kind == PlotKind.TIME_SERIES
+    assert len(spec.layers) == 2
+
+
+def test_add_frame_check_and_force():
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    with pytest.raises(InvalidParameterError, match="axes mismatch"):
+        viz.plot(_curve_spec(ylabel="v")).add(_marker_spec(ylabel="z"))
+    with pytest.warns(VisualizationDegraded):
+        forced = viz.plot(_curve_spec(ylabel="v")).add(_marker_spec(ylabel="z"), on="force")
+    assert len(forced.layers) == 2
+
+
+def test_add_to_a_composite_raises_pointing_at_the_panels():
+    composite = viz.plot(_curve_spec("a"), _curve_spec("b"), layout="stack")
+    with pytest.raises(InvalidParameterError, match="panels"):
+        composite.add(_marker_spec())
+
+
+def test_add_with_nothing_raises():
+    with pytest.raises(InvalidParameterError, match="at least one"):
+        viz.plot(_curve_spec()).add()
+
+
+# ---------------------------------------------------------------------------
+# End-to-end acceptance: basins + attractors + trajectory + equilibria
+# ---------------------------------------------------------------------------
+
+
+def test_acceptance_basins_attractors_trajectory_and_equilibria_on_one_axes(tmp_path):
+    """The owner's flagship call, end to end, on real computed results.
+
+    Asserts the *picture*, not just the spec: the basin image underneath, the
+    trajectory over it, the equilibria on top — and the equilibria in the right
+    place (``x = 0, ±1`` for the two-well Duffing, ``v = 0``).
+    """
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("tsdynamics._rust")
+
+    duffing = _DuffingTwoWell()
+    grid = ts.data.Grid([-2.0, -2.0], [2.0, 2.0], (40, 40))
+    basins = ts.basins_of_attraction(duffing, grid, dt=0.5)
+    traj = duffing.integrate(final_time=30.0, dt=0.02, ic=[1.6, 1.2])
+    fps = ts.fixed_points(duffing, region=ts.data.Box([-2.0, -2.0], [2.0, 2.0]), seed=0)
+    assert len(fps) == 3
+
+    spec = viz.plot(basins, basins.attractors, traj, fps)
+    assert spec.kind == PlotKind.BASINS_IMAGE
+    assert str(spec.resolved_frame) == "state2(x, v)"
+
+    marks = [lyr.kind for lyr in spec.layers]
+    assert marks.index(PlotKind.IMAGE) == 0  # the field is the backdrop
+    assert marks.index(PlotKind.LINE) < len(marks) - 1  # the orbit is over it
+    assert marks[-1] == PlotKind.SCATTER  # the equilibria are on top
+
+    fig = spec.render("matplotlib")
+    ax = fig.axes[0]
+    assert len(ax.images) == 1 and len(ax.lines) == 1
+    equilibria = np.concatenate(
+        [
+            c.get_offsets()
+            for c in ax.collections
+            if len(c.get_offsets()) and c.get_offsets()[0][1] == 0.0
+        ]
+    )
+    xs = sorted({round(float(p[0]), 6) for p in equilibria})
+    assert xs == pytest.approx([-1.0, 0.0, 1.0], abs=1e-6)
+
+    out = tmp_path / "fig.png"
+    assert spec.save(str(out)) == str(out)
+    assert out.stat().st_size > 5000
+
+
+# ---------------------------------------------------------------------------
+# One overlay policy, not two — ``plot`` and ``AnalysisResult.overlay_on``
+# ---------------------------------------------------------------------------
+
+
+def test_plot_and_overlay_on_agree_on_what_is_legal():
+    """The two doors used to disagree; they now share one check.
+
+    Before v6 ``fps.overlay_on(portrait)`` *succeeded* on the exact pair
+    ``viz.plot(portrait, fps)`` refused.  Both now go through
+    ``_frames.check_overlay``, so a pair is legal at both doors or neither.
+    """
+    lorenz = ts.systems.Lorenz()
+    traj = lorenz.integrate(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    fps = ts.fixed_points(lorenz, seed=0)
+
+    same_plane = traj.to_plot_spec(components=("x", "z"))
+    n_host = len(same_plane.layers)
+    merged = fps.overlay_on(same_plane, components=("x", "z"))
+    assert merged is same_plane  # host-first, mutate-and-return
+    assert len(merged.layers) > n_host
+    assert viz.plot(traj, fps, components=("x", "z")) is not None
+
+    wrong_plane = traj.to_plot_spec(components=("x", "y"))
+    with pytest.raises(InvalidParameterError, match="axes mismatch"):
+        fps.overlay_on(wrong_plane, components=("x", "z"))
+    with pytest.raises(InvalidParameterError, match="axes mismatch"):
+        viz.plot(wrong_plane, fps.to_plot_spec(components=("x", "z")))
+
+
+def test_the_generic_overlay_on_forwards_build_keywords():
+    """The base method carries ``components=``, so no result re-implements it.
+
+    ``FixedPoint`` / ``FixedPointSet`` each carried a hand-written
+    ``overlay_on`` override whose only job was forwarding ``components`` past a
+    base that dropped it.  The base forwards ``**build_kw`` now, and the frame
+    check catches the mistake those overrides were patching around.
+    """
+    from tsdynamics.analysis.fixedpoints.fixed import FixedPoint, FixedPointSet
+
+    assert "overlay_on" not in vars(FixedPoint)
+    assert "overlay_on" not in vars(FixedPointSet)
+
+    lorenz = ts.systems.Lorenz()
+    traj = lorenz.integrate(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    fps = ts.fixed_points(lorenz, seed=0)
+    host = traj.to_plot_spec(components=("x", "z"))
+    n_host = len(host.layers)
+    merged = fps.overlay_on(host, components=("x", "z"))
+    zs = [float(v) for layer in merged.layers[n_host:] for v in layer.data["y"]]
+    assert sorted(zs)[-2:] == pytest.approx([27.0, 27.0], abs=1e-6)
+
+
+def test_a_recurrence_scatter_can_no_longer_be_spliced_onto_a_time_series():
+    """The one deliberate behaviour break of this phase (release-note worthy).
+
+    ``recurrence_matrix(...).overlay_on(time_series_spec)`` used to be accepted
+    and produced a spec *labelled* ``time_series`` containing a recurrence
+    scatter — a plot of one thing presented as another.  The frames genuinely
+    differ (``index`` vs ``time``), so it now raises.
+    """
+    traj = ts.systems.Lorenz().integrate(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    rm = ts.recurrence_matrix(np.asarray(traj["x"])[:150], threshold=1.0)
+    with pytest.raises(InvalidParameterError, match="different spaces"):
+        rm.overlay_on(traj.to_plot_spec(components="x"))
+
+
+def test_a_merged_overlay_never_aliases_its_inputs():
+    """Styling the composition must not reach back into the specs you passed in."""
+    field, curve = _image_spec(), _curve_spec()
+    spec = viz.plot(field, curve)
+    spec.recolor("magenta", "cyan")
+    spec.relabel(x="X", title="merged")
+    assert field.layers[0].style.get("color") is None
+    assert curve.layers[0].style.get("color") is None
+    assert field.x.label == "x" and field.title == "basins"

@@ -3,6 +3,82 @@ from symengine import Min
 from tsdynamics.families import ContinuousSystem
 
 
+class LotkaVolterra(ContinuousSystem):
+    """Lotka-Volterra predator-prey equations - the classic planar ecology model.
+
+    The original two-species model of coupled population oscillations: prey
+    ``x`` grow exponentially and are eaten on encounter, predators ``y`` die
+    off exponentially and are born from what they eat.
+
+    .. code-block:: text
+
+        x' = alpha x - beta x y
+        y' = delta x y - gamma y
+
+    The system is **conservative**, not dissipative: away from the axes it has
+    the constant of motion ``V = delta x - gamma ln x + beta y - alpha ln y``,
+    so the coexistence equilibrium ``(gamma/delta, alpha/beta)`` is a neutrally
+    stable *center* surrounded by a one-parameter family of closed orbits - one
+    through every initial condition, each with its own amplitude and period.
+    There is no limit cycle and no attractor; the prey peak always leads the
+    predator peak by a quarter cycle.  At the defaults the center sits at
+    ``(4.0, 2.75)`` and the orbit through the default initial condition has
+    period ~9.926.
+
+    Because every orbit is closed, both Lyapunov exponents are **exactly zero**:
+    one along the flow, and the other because the time average of the divergence
+    ``(alpha - beta y) + (delta x - gamma)`` over a closed orbit is the average
+    of ``d/dt [ln x + ln y]``, which vanishes over a period.
+
+    Parameters
+    ----------
+    alpha : float
+        Intrinsic per-capita growth rate of the prey.
+    beta : float
+        Predation rate - prey lost per predator-prey encounter.
+    delta : float
+        Conversion efficiency of consumed prey into new predators.
+    gamma : float
+        Per-capita death rate of the predators.
+
+    Notes
+    -----
+    Formulated independently by Lotka (1920, cited here) and by Volterra
+    (*Nature* **118**, 558-560, 1926; doi:10.1038/118558a0) to explain the
+    post-war fluctuations in Adriatic fish catches.
+    """
+
+    reference = "Lotka (1920), Proc. Natl. Acad. Sci. U.S.A. 6, 410-415"
+    doi = "10.1073/pnas.6.7.410"
+    params = {"alpha": 1.1, "beta": 0.4, "delta": 0.1, "gamma": 0.4}
+    dim = 2
+    variables = ("x", "y")
+    default_ic = [4.0, 1.5]
+    #: Analytic: every orbit is closed, so the spectrum is exactly (0, 0) - one
+    #: exponent along the flow and one from the vanishing average divergence
+    #: (see the class docstring).  Not a measured value.
+    known_lyapunov = {
+        "spectrum": [0.0, 0.0],
+        "atol": 0.02,
+        "source": "analytic: closed orbits of a conservative planar flow",
+        "kwargs": {"final_time": 2000.0, "dt": 0.05},
+    }
+
+    @staticmethod
+    def _equations(Y, t, *, alpha, beta, delta, gamma):
+        x, y = Y(0), Y(1)
+        xdot = alpha * x - beta * x * y
+        ydot = delta * x * y - gamma * y
+        return xdot, ydot
+
+    @staticmethod
+    def _jacobian(Y, t, alpha, beta, delta, gamma):
+        x, y = Y(0), Y(1)
+        row1 = [alpha - beta * y, -beta * x]
+        row2 = [delta * y, delta * x - gamma]
+        return row1, row2
+
+
 class CoevolvingPredatorPrey(ContinuousSystem):
     """Eco-evolutionary predator-prey model with an evolving prey trait.
 

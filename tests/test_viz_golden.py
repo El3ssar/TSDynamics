@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 
 from tsdynamics import registry
-from tsdynamics.viz.spec import Axis, Colorbar, Layer, PlotKind, PlotSpec
+from tsdynamics.viz.spec import Axis, Colorbar, Layer, Legend, PlotKind, PlotSpec
 
 pytest.importorskip("matplotlib")
 
@@ -138,3 +138,112 @@ def test_lorenz_attractor_showcase_renders_in_3d():
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=72)
     _assert_valid_png(buf.getvalue(), min_bytes=3000)
+
+
+# ---------------------------------------------------------------------------
+# Overlay showcase (P0 composability) — the merged spec is a real figure, and
+# the merge itself changes no pixels
+# ---------------------------------------------------------------------------
+
+
+def _field_spec() -> PlotSpec:
+    """A basin-image-shaped field spec on the ``(x, v)`` plane."""
+    g = np.add.outer(np.linspace(0, 1, 24), np.linspace(0, 1, 24))
+    return PlotSpec(
+        kind=PlotKind.BASINS_IMAGE,
+        aspect="equal",
+        x=Axis(label="x"),
+        y=Axis(label="v"),
+        clim=(0.0, 2.0),
+        colorbar=Colorbar(label="basin", cmap="tab20", discrete=True),
+        layers=[
+            Layer(
+                PlotKind.IMAGE,
+                {"x": np.arange(24.0), "y": np.arange(24.0), "c": g},
+                label="basins",
+            )
+        ],
+        title="basins",
+    )
+
+
+def _orbit_spec(label: str = "orbit") -> PlotSpec:
+    t = np.linspace(0.0, 6.0, 64)
+    return PlotSpec(
+        kind=PlotKind.PHASE_PORTRAIT_2D,
+        x=Axis(label="x"),
+        y=Axis(label="v"),
+        layers=[
+            Layer(PlotKind.LINE, {"x": 8 + 6 * np.cos(t), "y": 12 + 6 * np.sin(t)}, label=label)
+        ],
+        title=label,
+    )
+
+
+def _equilibria_spec() -> PlotSpec:
+    return PlotSpec(
+        kind=PlotKind.FIXED_POINTS_OVERLAY,
+        x=Axis(label="x"),
+        y=Axis(label="v"),
+        layers=[
+            Layer(
+                PlotKind.SCATTER,
+                {"x": np.array([6.0, 12.0]), "y": np.array([12.0, 12.0])},
+                label="equilibria",
+            )
+        ],
+        title="equilibria",
+    )
+
+
+def test_overlay_showcase_draws_field_curve_and_markers_on_one_axes():
+    """The flagship composition renders as one real, non-degenerate figure."""
+    import tsdynamics.viz as viz
+
+    spec = viz.plot(_field_spec(), _orbit_spec(), _equilibria_spec())
+    fig = spec.render("matplotlib")
+    ax = fig.axes[0]
+    assert len(ax.images) == 1  # the field, underneath
+    assert len(ax.lines) == 1  # the orbit, over it
+    assert len(ax.collections) == 1  # the equilibria, on top
+    assert len(fig.axes) >= 2  # the field kept its colorbar
+    _assert_valid_png(_png(spec))
+
+
+def test_overlay_render_is_invariant_under_argument_order():
+    """Z-order is by role, so the picture does not depend on the call order.
+
+    Byte-identical PNGs — the strongest form of the claim, and the one that
+    would break the moment draw order started following argument order again.
+    """
+    import tsdynamics.viz as viz
+
+    forward = _png(viz.plot(_field_spec(), _orbit_spec(), _equilibria_spec()))
+    backward = _png(viz.plot(_equilibria_spec(), _orbit_spec(), _field_spec()))
+    _assert_valid_png(forward)
+    assert forward == backward
+
+
+def test_merging_two_same_kind_specs_draws_exactly_the_hand_built_merge():
+    """The regression bar: composing changes no pixels it did not have to.
+
+    A same-kind overlay is the only shape that was legal before v6.  Rendering
+    one is byte-identical to rendering a hand-built spec carrying the same
+    layers, so the frame check, the role sort and the two new spec fields are
+    provably inert on the paths that already worked.
+    """
+    import tsdynamics.viz as viz
+
+    a, b = _orbit_spec("a"), _orbit_spec("b")
+    composed = viz.plot(_orbit_spec("a"), _orbit_spec("b"))
+    hand_built = PlotSpec(
+        kind=PlotKind.PHASE_PORTRAIT_2D,
+        x=Axis(label="x"),
+        y=Axis(label="v"),
+        layers=[
+            Layer(a.layers[0].kind, dict(a.layers[0].data), label="a: a"),
+            Layer(b.layers[0].kind, dict(b.layers[0].data), label="b: b"),
+        ],
+        legend=Legend(),
+    )
+    assert _png(composed) == _png(hand_built)

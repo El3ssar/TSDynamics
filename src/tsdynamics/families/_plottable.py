@@ -44,6 +44,7 @@ __all__ = ["SystemPlottable"]
 #: out-of-tree renderer's own options go through ``backend_kwargs=``.
 _RENDER_KEYS: frozenset[str] = frozenset(
     {
+        "ax",
         "figsize",
         "dpi",
         "fps",

@@ -74,6 +74,6 @@ More journeys are added as the library grows.
 ## See also
 
 - [Analysis](../analysis/index.md) — the quantifier reference each tutorial draws on
-- [Systems](../systems/index.md) — the 171 built-in models the journeys run on
+- [Systems](../systems/index.md) — the 177 built-in models the journeys run on
 - [The mental model](../start/concepts.md) — the definition contract in depth
 - [Visualization](../visualization/index.md) — the plotting layer every figure is built with

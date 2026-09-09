@@ -244,6 +244,6 @@ tests and its documentation.
 ## See also
 
 - [Defining systems](defining-systems.md) — the four contracts as one worked example
-- [Systems](../systems/index.md) — the catalogue of 171 built-ins
+- [Systems](../systems/index.md) — the catalogue of 177 built-ins
 - [Analysis](../analysis/index.md) — what to do with a system once you have one
 - [Integration & methods](../analysis/integration-and-methods.md) — solvers, tolerances, and the backends in depth

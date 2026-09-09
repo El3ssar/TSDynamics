@@ -267,10 +267,13 @@
       }
     },
     "VanDerPol": {
-      "blurb": "The archetypal relaxation oscillator — nonlinear damping pumps a stable limit cycle.",
+      "blurb": "The archetypal relaxation oscillator — nonlinear damping pumps small swings and bleeds large ones, so every orbit lands on one and the same limit cycle.",
       "behavior": [
         "limit cycle"
-      ]
+      ],
+      "param_roles": {
+        "mu": "nonlinear damping strength (0 = harmonic, >> 1 = relaxation oscillator)"
+      }
     },
     "ForcedVanDerPol": {
       "blurb": "Van der Pol under periodic forcing — frequency entrainment and the route to chaos.",
@@ -331,6 +334,18 @@
         "a": "coupling / stiffness parameter",
         "b": "linear restoring parameter",
         "eps": "tension / heat-transfer parameter"
+      }
+    },
+    "StuartLandau": {
+      "blurb": "The normal form of a supercritical Hopf bifurcation — an exactly circular limit cycle of radius √mu, the reference case for every limit-cycle method.",
+      "behavior": [
+        "limit cycle",
+        "normal form"
+      ],
+      "param_roles": {
+        "b": "nonlinear frequency shift (shear); b = 0 is isochronous",
+        "mu": "distance past the Hopf bifurcation (cycle radius √mu)",
+        "omega": "linear angular frequency at the bifurcation"
       }
     },
     "ShimizuMorioka": {
@@ -547,6 +562,19 @@
         ]
       }
     },
+    "FitzHughNagumo": {
+      "blurb": "The two-variable nerve membrane — a fast cubic voltage coupled to a slow recovery current: excitable at rest, spiking under an applied current.",
+      "behavior": [
+        "excitable",
+        "relaxation"
+      ],
+      "param_roles": {
+        "a": "offset of the linear recovery nullcline",
+        "b": "slope of the linear recovery nullcline",
+        "curr": "applied stimulus current (0 = excitable, 0.5 = oscillatory)",
+        "gamma": "recovery timescale (small ⇒ slow–fast dynamics)"
+      }
+    },
     "ForcedFitzHughNagumo": {
       "blurb": "The forced FitzHugh–Nagumo excitable cell — periodic stimulation of a spiking neuron.",
       "behavior": [
@@ -586,8 +614,18 @@
         "epsilon": "timescale-separation parameter (stiffness)"
       }
     },
+    "Selkov": {
+      "blurb": "The minimal glycolytic clock — one product-activation loop, and a limit cycle for every substrate supply inside the Hopf window.",
+      "behavior": [
+        "limit cycle"
+      ],
+      "param_roles": {
+        "a": "scaled reverse rate of the enzyme (oscillations need a < 1/8)",
+        "b": "scaled substrate supply rate — the bifurcation parameter"
+      }
+    },
     "GlycolyticOscillation": {
-      "blurb": "Sel'kov-type glycolytic oscillations — metabolic limit cycles.",
+      "blurb": "Decroly and Goldbeter's multiply-regulated glycolytic oscillator — two product-activated enzymes in series, giving birhythmicity and chaos (the three-variable extension of the planar Selkov model).",
       "behavior": [
         "limit cycle"
       ],
@@ -617,6 +655,16 @@
           1.0,
           1.0
         ]
+      }
+    },
+    "Brusselator": {
+      "blurb": "Prigogine and Lefever's autocatalytic reaction — the textbook dissipative structure, oscillating for b above the Hopf threshold 1 + a².",
+      "behavior": [
+        "limit cycle"
+      ],
+      "param_roles": {
+        "a": "constant feed of the activator x",
+        "b": "feed driving the autocatalytic loop (Hopf at b = 1 + a²)"
       }
     },
     "ForcedBrusselator": {
@@ -2104,6 +2152,19 @@
           0.0
         ],
         "method": "rk45"
+      }
+    },
+    "LotkaVolterra": {
+      "blurb": "Predator and prey circling a neutrally stable centre — a conserved first integral, so every initial condition rides its own closed orbit.",
+      "behavior": [
+        "conservative",
+        "cycles"
+      ],
+      "param_roles": {
+        "alpha": "intrinsic growth rate of the prey",
+        "beta": "predation rate",
+        "delta": "conversion of consumed prey into predators",
+        "gamma": "predator death rate"
       }
     },
     "CoevolvingPredatorPrey": {

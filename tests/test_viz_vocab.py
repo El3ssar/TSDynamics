@@ -373,3 +373,40 @@ def test_old_serialized_dict_without_new_keys_still_loads():
     assert spec.colorbar.cmap is None
     assert spec.colorbar.norm is None
     assert spec.colorbar.discrete is False
+
+
+# ── every semantic kind must declare what its axes MEAN ───────────────────────
+
+
+def test_every_semantic_kind_declares_a_frame() -> None:
+    """A semantic kind without a ``_KIND_FRAME`` row silently overlays wrongly.
+
+    Overlay legality is decided by :class:`~tsdynamics.viz._frames.Frame`, and a
+    kind with no row falls through to ``_DEFAULT_KIND_FRAME`` — ``(SCALING, 1)``.
+    That default is *plausible* for a scaling fit and wrong for everything else,
+    and the failure is silent: the spec composes onto axes it has nothing to do
+    with instead of raising.  So the frame table has to be exhaustive over the
+    semantic kinds, and a new kind must not be able to skip it.
+
+    Layer *marks* are deliberately exempt: a mark is a drawing primitive and
+    carries no claim about what the axes mean, so it legitimately takes the
+    default when someone hand-builds a spec whose kind is a bare mark.
+    """
+    from tsdynamics.viz._frames import _KIND_FRAME
+    from tsdynamics.viz.spec import PlotKind
+
+    # Two semantic kinds resolve their frame from the spec's own contents rather
+    # than from a static table, so a row would be meaningless for them.
+    frame_resolved_dynamically = {"spatial_field", "composite"}
+
+    missing = sorted(
+        k.value
+        for k in PlotKind.semantic_kinds()
+        if k.value not in _KIND_FRAME and k.value not in frame_resolved_dynamically
+    )
+    assert not missing, (
+        f"semantic kinds with no _KIND_FRAME row: {missing}. Add a row to "
+        "viz/_frames.py::_KIND_FRAME saying what the axes of this kind MEAN, or "
+        "— if the frame genuinely depends on the spec's contents — handle it in "
+        "frame_of() and add it to frame_resolved_dynamically here."
+    )

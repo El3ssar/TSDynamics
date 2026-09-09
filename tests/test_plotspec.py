@@ -338,3 +338,160 @@ def test_a_saved_json_file_loads_back_through_the_public_reader(tmp_path):
     restored = ts.viz.from_json(path.read_text())
     assert restored.kind is spec.kind
     assert restored.to_dict() == spec.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# 5. Frame — what the axes *mean* (P0 composability)
+# ---------------------------------------------------------------------------
+
+
+def test_frame_space_vocabulary_is_frozen():
+    """``FrameSpace`` is a closed, reviewed contract — like ``PlotKind``.
+
+    Overlay legality is decided by the frame's ``space``, so adding one is a
+    semantic change to what may share an axes, not an implementation detail.
+    Changing this set is a deliberate edit of this gate.
+    """
+    from tsdynamics.viz._frames import FRAME_SPACES, FrameSpace
+
+    assert {s.value for s in FrameSpace} == {
+        "time",
+        "state2",
+        "state3",
+        "param1",
+        "param2",
+        "index",
+        "grid2",
+        "complex",
+        "scaling",
+        "category",
+    }
+    assert frozenset(FrameSpace) == FRAME_SPACES
+    assert FrameSpace.STATE2 == "state2"  # StrEnum: a member is its value
+
+
+def test_frame_requires_its_axes_at_construction():
+    """A frame that names no axes would silently overlay onto anything."""
+    from tsdynamics.errors import InvalidParameterError
+    from tsdynamics.viz.spec import Frame, FrameSpace
+
+    with pytest.raises(InvalidParameterError, match="axis name"):
+        Frame(FrameSpace.STATE2, 2, ("x",))
+    with pytest.raises(InvalidParameterError, match="axis name"):
+        Frame(FrameSpace.STATE2, 2, ())
+    assert Frame("state2", 2, ("x", "v")).describe() == "state2(x, v)"
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("x", "x"),
+        ("$x$", "x"),  # the LaTeX spelling and the bare one are one coordinate
+        ("$x_{0}$", "#0"),  # an indexed fallback keeps its index
+        ("x_1", "#1"),
+        ("y0", ""),  # a bare positional placeholder claims nothing
+        ("x2", ""),
+        ("", ""),
+        (None, ""),
+        ("$\\theta$", "\\theta"),
+    ],
+)
+def test_axis_name_normalization(label, expected):
+    """Three producers spell one coordinate three ways; the frame compares one."""
+    from tsdynamics.viz._frames import axis_name
+
+    assert axis_name(label) == expected
+
+
+def test_frame_compatibility_is_not_equality():
+    """An *unnamed* axis is compatible with a named one; two names must match."""
+    from tsdynamics.viz.spec import Frame
+
+    named = Frame("state2", 2, ("x", "v"))
+    other = Frame("state2", 2, ("x", "z"))
+    unnamed = Frame("state2", 2, ("", ""))
+    ordinals = Frame("state2", 2, ("#0", "#1"))
+    shifted = Frame("state2", 2, ("#0", "#2"))
+    three_d = Frame("state3", 3, ("x", "y", "z"))
+
+    assert named.compatible_with(named)
+    assert not named.compatible_with(other)
+    assert named.compatible_with(unnamed) and unnamed.compatible_with(named)
+    assert not named.compatible_with(three_d)
+    # a NAME and an ORDINAL do not contradict each other (nothing says which
+    # ordinal "v" is), but two ordinals must agree
+    assert named.compatible_with(ordinals)
+    assert not ordinals.compatible_with(shifted)
+    # merging keeps the most informative axis: name > ordinal > nothing
+    assert named.merge(unnamed).axes == ("x", "v")
+    assert unnamed.merge(named).axes == ("x", "v")
+    assert ordinals.merge(named).axes == ("x", "v")
+    assert ordinals.merge(unnamed).axes == ("#0", "#1")
+
+
+def test_resolved_frame_is_derived_from_kind_and_labels():
+    """Every spec has a frame, including one that declares none."""
+    from tsdynamics.viz.spec import Frame
+
+    portrait = PlotSpec(kind=PlotKind.PHASE_PORTRAIT_2D, x=Axis(label="x"), y=Axis(label="v"))
+    assert portrait.frame is None
+    assert portrait.resolved_frame == Frame("state2", 2, ("x", "v"))
+
+    # a time series is a ONE-coordinate frame: the y axis is free, so x(t) and
+    # y(t) legitimately overlay
+    series = PlotSpec(kind=PlotKind.TIME_SERIES, x=Axis(label="t"), y=Axis(label="x"))
+    assert series.resolved_frame == Frame("time", 1, ("t",))
+
+    # a declared frame is taken at its word
+    declared = PlotSpec(kind=PlotKind.TIME_SERIES, frame=Frame("index", 2, ("i", "j")))
+    assert declared.resolved_frame == Frame("index", 2, ("i", "j"))
+
+
+def test_a_composite_has_no_frame():
+    """A multi-panel figure owns no single set of axes."""
+    from tsdynamics.errors import InvalidParameterError
+
+    panel = PlotSpec(kind=PlotKind.TIME_SERIES)
+    composite = PlotSpec(kind=PlotKind.COMPOSITE, panels=[panel])
+    with pytest.raises(InvalidParameterError, match="no frame"):
+        _ = composite.resolved_frame
+
+
+# ---------------------------------------------------------------------------
+# 6. The two additive fields stay additive
+# ---------------------------------------------------------------------------
+
+
+def test_layer_transform_defaults_to_none_and_round_trips():
+    layer = Layer(PlotKind.LINE, {"x": [0.0, 1.0], "y": [0.0, 1.0]})
+    assert layer.transform is None
+    tagged = Layer(PlotKind.LINE, {"x": [0.0]}, transform="basins")
+    assert Layer.from_dict(tagged.to_dict()).transform == "basins"
+
+
+def test_from_dict_accepts_a_payload_written_before_frame_and_transform():
+    """Additivity, proven the only way that counts: load an *old* payload.
+
+    Both new fields are read with a default, so a spec serialized by a release
+    that did not have them still loads — and a payload carrying an unknown key
+    (a *newer* writer) loads too.
+    """
+    old = _sample_spec().to_dict()
+    del old["frame"]
+    for layer in old["layers"]:
+        del layer["transform"]
+    old["some_future_key"] = 42
+
+    rebuilt = PlotSpec.from_dict(old)
+    assert rebuilt.frame is None
+    assert all(lyr.transform is None for lyr in rebuilt.layers)
+    assert rebuilt.kind == PlotKind.PHASE_PORTRAIT_3D
+    assert len(rebuilt.layers) == len(_sample_spec().layers)
+
+
+def test_frame_round_trips_through_to_dict():
+    from tsdynamics.viz.spec import Frame
+
+    spec = PlotSpec(kind=PlotKind.PHASE_PORTRAIT_2D, frame=Frame("state2", 2, ("x", "v")))
+    assert spec.to_dict()["frame"] == {"space": "state2", "ndim": 2, "axes": ["x", "v"]}
+    assert PlotSpec.from_dict(spec.to_dict()).frame == spec.frame

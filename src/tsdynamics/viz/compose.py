@@ -18,6 +18,19 @@ describes **one panel**, :func:`plot` arranges one or more things into a figure:
       py = ts.viz.plot(lor1, lor2, components="y")
       ts.viz.plot(px, py, layout="stack")            # two stacked panels
 
+**What may share one set of axes (v6).**  Overlay legality is *frame*
+compatibility — the same coordinate space, the same dimension, the same axes
+(:class:`tsdynamics.viz._frames.Frame`) — replacing the hard-coded three-kind
+whitelist that used to decide it.  So::
+
+      ts.viz.plot(basins, attractors, traj, fixed_points)   # one plane, one axes
+      ts.viz.plot(traj_xy, fixed_points_xz)                 # raises: different planes
+
+and the draw order is fixed **by role** (fields under curves under markers), not
+by argument order, so the call is order-free.  Pass ``on="force"`` to overlay a
+deliberate mismatch with a warning.  Grow a figure incrementally with
+:meth:`~tsdynamics.viz.spec.PlotSpec.add`, which goes through the same merge.
+
 The returned spec renders itself (notebook display, ``.plot()``, ``.save(...)``,
 ``.render(...)``); see :class:`tsdynamics.viz.spec.PlotSpec`.
 
@@ -29,16 +42,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .spec import Animation, Layer, Layout, Legend, PlotKind, PlotSpec
+from ._frames import check_overlay, force_requested, role_of
+from .spec import Animation, Annotation, Layer, Layout, Legend, PlotKind, PlotSpec
 
 __all__ = ["plot"]
-
-#: The semantic kinds that can share **one** set of axes (an overlay).  Image /
-#: section / composite kinds each need their own axes + colorbar, so they are
-#: arranged into panels (``layout="stack"`` / …) rather than overlaid.
-_OVERLAYABLE: frozenset[PlotKind] = frozenset(
-    {PlotKind.TIME_SERIES, PlotKind.PHASE_PORTRAIT_2D, PlotKind.PHASE_PORTRAIT_3D}
-)
 
 #: Panel arrangements (``layout=``) that build a :data:`PlotKind.COMPOSITE`.
 _COMPOSITE_MODES: frozenset[str] = frozenset({"stack", "row", "grid"})
@@ -48,6 +55,7 @@ def plot(
     *things: Any,
     layout: str = "overlay",
     animate: bool | dict[str, Any] | Animation = False,
+    on: str | None = None,
     rows: int | None = None,
     cols: int | None = None,
     share_x: bool | None = None,
@@ -69,6 +77,18 @@ def plot(
         ``"overlay"`` (default) draws everything on one set of axes (a single
         panel); ``"stack"`` / ``"row"`` / ``"grid"`` give each thing its own panel
         in a :data:`~tsdynamics.viz.spec.PlotKind.COMPOSITE` figure.
+
+        An overlay is legal when every thing draws in a **compatible frame** —
+        the same coordinate space, the same dimension, the same axes (see
+        :class:`tsdynamics.viz._frames.Frame`).  That is what lets a basin image,
+        its attractors, a trajectory and the equilibria share one axes, and what
+        refuses an ``(x, y)`` portrait under an ``(x, z)`` overlay.
+    on : {"force"}, optional
+        ``"force"`` overlays a deliberate frame mismatch anyway, warning once
+        (:class:`~tsdynamics.viz.render.caps.VisualizationDegraded`) instead of
+        raising.  Only meaningful for ``layout="overlay"``.
+
+        .. versionadded:: 6.0
     animate : bool or dict or Animation, optional
         Animate the **whole figure**.  A composite plays every panel in lockstep on
         one shared clock (each panel keeps its own per-kind head default); an
@@ -138,8 +158,13 @@ def plot(
 
     if layout == "overlay":
         _reject_layout_kw_for_overlay(layout_kw)
-        result = _overlay(specs)
+        result = _overlay(specs, on=on)
     elif layout in _COMPOSITE_MODES:
+        if on is not None:
+            raise InvalidParameterError(
+                f"on={on!r} applies to layout='overlay' (one set of axes); panelled "
+                "layouts draw each thing in its own frame, so there is nothing to force."
+            )
         result = _composite(specs, layout, layout_kw)
     else:
         raise InvalidParameterError(
@@ -229,30 +254,63 @@ def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
 # ---------------------------------------------------------------------------
 
 
-def _overlay(specs: list[PlotSpec]) -> PlotSpec:
-    """Merge overlay-compatible specs into one single-panel spec."""
-    from dataclasses import replace
+def _overlay(specs: list[PlotSpec], *, on: str | None = None) -> PlotSpec:
+    """Merge frame-compatible specs into one single-panel spec.
 
-    from tsdynamics.errors import InvalidParameterError
+    Two policy decisions live here, and they are the whole of the v6 composability
+    work:
+
+    **Legality is frame identity, not kind identity.**  The old rule was a
+    hard-coded three-member whitelist of :class:`PlotKind` values, which refused
+    the flagship overlay (a basin image + its attractors + a trajectory + the
+    equilibria are four *kinds* of one *plane*) while happily accepting an
+    ``(x, y)`` portrait under an ``(x, z)`` fixed-point overlay — markers in the
+    wrong place with nothing to say so.  Both are decided correctly by comparing
+    :attr:`~tsdynamics.viz.spec.PlotSpec.resolved_frame`.
+
+    **Z-order is by role, not by argument order.**  A field (image / quiver)
+    draws under a curve, which draws under markers, because that is what those
+    things *are* — so ``plot(basins, traj)`` and ``plot(traj, basins)`` produce
+    the same picture.  The sort is stable, so specs of equal role keep their
+    argument order (and an overlay of same-kind specs, the only kind that was
+    legal before v6, is byte-identical to what it produced then).
+
+    The **axis base** (axes, aspect, colorbar, clim, semantic kind) is the
+    first spec in *role* order — the field owns the frame it is a picture of, so
+    a basin image keeps its categorical colorbar and its ``basins_image`` kind
+    when a trajectory is drawn over it.  The **figure context** (theme,
+    animation) comes from the first spec in *argument* order: presentation is the
+    caller's, z-order is the data's.
+    """
+    from dataclasses import replace
 
     if len(specs) == 1:
         return specs[0]
 
-    kinds = {s.kind for s in specs}
-    if not kinds <= _OVERLAYABLE or len(kinds) != 1:
-        raise InvalidParameterError(
-            f"cannot overlay specs of kinds {sorted(k.value for k in kinds)} on one "
-            "set of axes; use layout='stack' (or 'row' / 'grid') to give each its "
-            "own panel."
-        )
+    frame = check_overlay(specs, force=force_requested(on))
 
-    base = specs[0]
+    # Stable sort by role: field (0) < base (1) < overlay (2).
+    order = sorted(range(len(specs)), key=lambda i: (int(role_of(specs[i])), i))
+    base = specs[order[0]]
+    context = specs[0]
+
     tags = _source_tags(specs)
     multi = len(specs) > 1
     layers: list[Layer] = []
-    for tag, spec in zip(tags, specs, strict=True):
-        for layer in spec.layers:
-            layers.append(_relabel_for_overlay(layer, tag, multi=multi))
+    annotations: list[Annotation] = []
+    composed: list[str] = []
+    for i in order:
+        # A spec that is *itself* an overlay already carries per-source labels
+        # (and its own source list).  Re-tagging them would double-prefix every
+        # legend entry, which is what made an incremental ``.add()`` chain
+        # disagree with the equivalent one-shot ``plot(...)`` call.
+        done = list(specs[i].meta.get("composed", ()))
+        for layer in specs[i].layers:
+            layers.append(
+                _copy_layer(layer) if done else _relabel_for_overlay(layer, tags[i], multi=multi)
+            )
+        annotations.extend(replace(a) for a in specs[i].annotations)
+        composed.extend(done or [tags[i]])
 
     # Deep-copy the carried-over presentation objects (Axis / Colorbar / Legend
     # are mutable dataclasses, and PlotSpec's in-place tweaks — relabel / rescale /
@@ -271,8 +329,47 @@ def _overlay(specs: list[PlotSpec]) -> PlotSpec:
         legend=Legend() if len(layers) > 1 else _copy_legend(base.legend),
         title=_common_title(specs),
         layers=layers,
-        meta={**dict(base.meta), "composed": list(tags)},
+        annotations=annotations,
+        meta={**dict(base.meta), "composed": composed},
+        animation=context.animation,
+        _theme=context._theme,
+        frame=frame,
     )
+
+
+#: The :class:`PlotSpec` fields :func:`_merge_into` copies from a freshly merged
+#: overlay onto an existing spec.  Deliberately **not** ``animation`` / ``_theme``
+#: (the target already owns the figure context — it is the first argument of its
+#: own ``add`` call) and not ``panels`` / ``layout`` (an overlay has neither).
+_MERGE_FIELDS: tuple[str, ...] = (
+    "kind",
+    "layers",
+    "x",
+    "y",
+    "z",
+    "clim",
+    "colorbar",
+    "legend",
+    "title",
+    "ndim",
+    "aspect",
+    "annotations",
+    "meta",
+    "frame",
+)
+
+
+def _merge_into(target: PlotSpec, merged: PlotSpec) -> PlotSpec:
+    """Write a merged overlay's fields back onto ``target`` in place.
+
+    The engine behind :meth:`tsdynamics.viz.spec.PlotSpec.add`: ``add`` must
+    mutate-and-return-``self`` like every other tweak (so it chains and so a
+    reference held elsewhere sees the addition), while the merge itself is a
+    pure function that builds a fresh spec.  This is the one place the two meet.
+    """
+    for name in _MERGE_FIELDS:
+        setattr(target, name, getattr(merged, name))
+    return target
 
 
 def _copy_legend(legend: Legend | None) -> Legend | None:
@@ -282,12 +379,27 @@ def _copy_legend(legend: Legend | None) -> Legend | None:
     return replace(legend) if legend is not None else None
 
 
+def _copy_layer(layer: Layer, *, label: str | None = None) -> Layer:
+    """Shallow-copy a layer (channel arrays are shared, the containers are not).
+
+    A merged spec must never alias an input's mutable ``Layer``: a later
+    ``.style()`` / ``.recolor()`` on the composition would otherwise reach back
+    and rewrite the spec the caller passed in.
+    """
+    return Layer(
+        layer.kind,
+        dict(layer.data),
+        label=layer.label if label is None else label,
+        style=dict(layer.style),
+        transform=layer.transform,
+    )
+
+
 def _relabel_for_overlay(layer: Layer, tag: str, *, multi: bool) -> Layer:
     """Copy ``layer``, disambiguating its legend label by source ``tag``."""
     if not multi:
         return layer
-    label = f"{tag}: {layer.label}" if layer.label else tag
-    return Layer(layer.kind, dict(layer.data), label=label, style=dict(layer.style))
+    return _copy_layer(layer, label=f"{tag}: {layer.label}" if layer.label else tag)
 
 
 def _source_tags(specs: list[PlotSpec]) -> list[str]:
@@ -305,8 +417,14 @@ def _source_tags(specs: list[PlotSpec]) -> list[str]:
 
 
 def _common_title(specs: list[PlotSpec]) -> str:
-    """Return the shared title if every source agrees, else empty."""
-    titles = {s.title for s in specs if s.title}
+    """Return the shared title if every source agrees, else empty.
+
+    An untitled source is skipped — *unless* it is itself an overlay
+    (``meta["composed"]``), whose empty title is the considered result of this
+    same rule rather than an absence.  Counting it keeps an incremental
+    ``.add()`` chain titled exactly like the one-shot ``plot(...)`` call.
+    """
+    titles = {s.title for s in specs if s.title or s.meta.get("composed")}
     return next(iter(titles)) if len(titles) == 1 else ""
 
 

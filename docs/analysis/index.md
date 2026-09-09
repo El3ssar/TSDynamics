@@ -110,6 +110,6 @@ for _ in range(1000):
 
 ## See also
 
-- [Systems](../systems/index.md) — the 171 built-in systems every analysis composes over
+- [Systems](../systems/index.md) — the 177 built-in systems every analysis composes over
 - [Integration & methods](integration-and-methods.md) — the march underneath every quantifier
 - [Lyapunov spectra](lyapunov.md) — the natural first stop for a new attractor

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy.spatial import cKDTree
 
 import tsdynamics as ts
 from tsdynamics.data import Box
@@ -404,3 +405,230 @@ def test_thomas_origin_is_an_equilibrium() -> None:
     nearest = float(np.min(np.linalg.norm(locations, axis=1)))
     # Newton converges to the root to full tolerance; 1e-6 is the dedup scale.
     assert nearest < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Planar classics (chem_bio_systems / population_dynamics / oscillatory_systems)
+#
+# The unforced two-dimensional systems are exactly the ones whose qualitative
+# claims are analytically checkable: a Hopf threshold in closed form, an exact
+# limit cycle, a conserved quantity.  Each check below re-derives its expected
+# value from the cited equations here in the test, never from the kernel.
+# ---------------------------------------------------------------------------
+
+
+def test_stuart_landau_cycle_is_the_analytic_circle() -> None:
+    """Stuart-Landau relaxes onto r = sqrt(mu) turning at omega - b*mu.
+
+    The normal form A' = (mu + i omega) A - (1 + i b) |A|^2 A decouples exactly
+    into r' = mu r - r^3 and theta' = omega - b r^2 (Stuart 1960, J. Fluid Mech.
+    9, 353-370), so the limit cycle is the *circle* of radius sqrt(mu) traversed
+    at the constant angular velocity omega - b*mu.  Both numbers are closed
+    form, which makes this the sharpest available end-to-end check of a
+    limit-cycle integration: a mis-expanded real form (the b term attached to
+    the wrong component) breaks the constant radius immediately.
+    """
+    mu, omega, b = 1.4, 0.9, 0.5
+    s = ts.systems.StuartLandau(params={"mu": mu, "omega": omega, "b": b})
+    traj = s.integrate(final_time=200.0, dt=0.005, ic=[0.3, 0.1], rtol=1e-11, atol=1e-13)
+    settled = traj.y[traj.t > 100.0]
+    t_settled = traj.t[traj.t > 100.0]
+
+    r = np.linalg.norm(settled, axis=1)
+    assert np.max(np.abs(r - np.sqrt(mu))) < 1e-8
+
+    theta = np.unwrap(np.arctan2(settled[:, 1], settled[:, 0]))
+    rate = np.polyfit(t_settled, theta, 1)[0]
+    assert rate == pytest.approx(omega - b * mu, abs=1e-8)
+
+
+def test_stuart_landau_spectrum_is_zero_and_minus_two_mu() -> None:
+    """The transverse exponent is exactly -2*mu, for any mu > 0.
+
+    d/dr (mu r - r^3) at r = sqrt(mu) is mu - 3 mu = -2 mu, and the tangential
+    exponent of any limit cycle is 0.  Sweeping mu turns the identity into a
+    *line* rather than a single number, so a coincidence cannot pass it.
+    """
+    for mu in (0.6, 1.0, 1.7):
+        spec = ts.systems.StuartLandau(params={"mu": mu}).lyapunov_spectrum(
+            final_time=2000.0, dt=0.05
+        )
+        assert spec.shape == (2,)
+        assert spec[0] == pytest.approx(0.0, abs=1e-3)
+        assert spec[1] == pytest.approx(-2.0 * mu, abs=1e-3)
+
+
+def test_stuart_landau_below_the_hopf_bifurcation_decays_to_the_origin() -> None:
+    """For mu < 0 the origin is globally attracting (r' = mu r - r^3 < 0)."""
+    traj = ts.systems.StuartLandau(params={"mu": -0.3}).integrate(
+        final_time=200.0, dt=0.5, ic=[0.8, 0.2]
+    )
+    assert np.linalg.norm(traj.y[-1]) < 1e-9
+
+
+def test_lotka_volterra_conserves_its_first_integral() -> None:
+    """Lotka-Volterra orbits are closed level sets of V, not a limit cycle.
+
+    V = delta x - gamma ln x + beta y - alpha ln y is a constant of motion
+    (Volterra 1926, Nature 118, 558-560): dV/dt = (delta - gamma/x) x' +
+    (beta - alpha/y) y' = 0 identically.  So the coexistence equilibrium is a
+    neutrally stable *center* and each initial condition has its own orbit —
+    the two halves pinned here.  A dissipative transcription error (a sign slip,
+    or a self-limitation term that does not belong) would make V drift.
+    """
+    s = ts.systems.LotkaVolterra()
+    p = s.params
+    traj = s.integrate(final_time=500.0, dt=0.01, rtol=1e-11, atol=1e-13)
+    x, y = traj.y[:, 0], traj.y[:, 1]
+    v = p["delta"] * x - p["gamma"] * np.log(x) + p["beta"] * y - p["alpha"] * np.log(y)
+    assert np.max(np.abs(v - v[0])) < 1e-7
+
+    # The center is exactly (gamma/delta, alpha/beta) — the RHS vanishes there.
+    center = np.array([p["gamma"] / p["delta"], p["alpha"] / p["beta"]])
+    assert np.allclose(s._rhs_numeric()(center, 0.0), 0.0, atol=1e-12)
+
+    # A different initial condition traces a *different* closed orbit (a center,
+    # not an attractor): the amplitudes must not coincide.
+    other = s.integrate(final_time=500.0, dt=0.01, ic=[4.0, 2.2])
+    assert np.ptp(other.y[:, 0]) < 0.5 * np.ptp(x)
+
+
+def test_brusselator_hopf_threshold_is_one_plus_a_squared() -> None:
+    """The Brusselator oscillates exactly for b > 1 + a^2.
+
+    At the equilibrium (a, b/a) the Jacobian is [[b-1, a^2], [-b, -a^2]], with
+    determinant a^2 > 0 and trace b - 1 - a^2 (Prigogine & Lefever 1968,
+    J. Chem. Phys. 48, 1695), so the steady state loses stability in a Hopf
+    bifurcation precisely at b = 1 + a^2.  Straddle it.
+    """
+    a = 1.0
+    threshold = 1.0 + a**2
+    s = ts.systems.Brusselator(params={"a": a, "b": threshold})
+    # The equilibrium claim itself, checked against the RHS.
+    eq = np.array([a, threshold / a])
+    assert np.allclose(s._rhs_numeric()(eq, 0.0), 0.0, atol=1e-12)
+
+    below = ts.systems.Brusselator(params={"a": a, "b": threshold - 0.5}).integrate(
+        final_time=400.0, dt=0.05, ic=[1.3, 2.0]
+    )
+    above = ts.systems.Brusselator(params={"a": a, "b": threshold + 1.0}).integrate(
+        final_time=400.0, dt=0.05, ic=[1.3, 2.0]
+    )
+    assert np.ptp(below.y[below.t > 350.0][:, 0]) < 1e-4  # decays to the focus
+    assert np.ptp(above.y[above.t > 350.0][:, 0]) > 1.0  # sustained limit cycle
+
+
+def test_selkov_oscillates_only_inside_its_analytic_hopf_window() -> None:
+    """Sel'kov's limit cycle exists exactly for b^2 between the two Hopf roots.
+
+    At the equilibrium (b, b/(a+b^2)) the Jacobian trace is
+    (b^2 - a - b^2 (a + b^2)) / (a + b^2)... equivalently the steady state is
+    unstable for b^2 in ((1 - 2a -+ sqrt(1 - 8a)) / 2) (Sel'kov 1968, Eur. J.
+    Biochem. 4, 79-86, in the dimensionless form of Strogatz §7.3).  The roots
+    are computed here in closed form and straddled on both sides.
+    """
+    a = 0.1
+    disc = np.sqrt(1.0 - 8.0 * a)
+    lo, hi = np.sqrt((1.0 - 2.0 * a - disc) / 2.0), np.sqrt((1.0 - 2.0 * a + disc) / 2.0)
+    assert lo < ts.systems.Selkov().params["b"] < hi  # the shipped default oscillates
+
+    for b, expect_cycle in ((lo - 0.12, False), (0.5 * (lo + hi), True), (hi + 0.12, False)):
+        s = ts.systems.Selkov(params={"a": a, "b": float(b)})
+        # The equilibrium claim, checked against the RHS.
+        eq = np.array([b, b / (a + b**2)])
+        assert np.allclose(s._rhs_numeric()(eq, 0.0), 0.0, atol=1e-12)
+        traj = s.integrate(final_time=800.0, dt=0.05, ic=[0.6, 0.8])
+        amplitude = float(np.ptp(traj.y[traj.t > 700.0][:, 0]))
+        assert (amplitude > 0.1) is expect_cycle, f"b={b}: amplitude {amplitude:.2e}"
+
+
+def test_van_der_pol_has_a_unique_globally_attracting_limit_cycle() -> None:
+    """Every non-equilibrium van der Pol orbit lands on the *same* cycle.
+
+    Uniqueness of the limit cycle is the defining property of the van der Pol
+    oscillator (van der Pol 1926; Liénard's theorem).  Two initial conditions
+    started far apart — one inside the cycle, one well outside — must converge
+    to a single closed curve, so the Hausdorff distance between their settled
+    orbits is ~0.  A system with a spurious second attractor, or one whose
+    "cycle" is really a slow spiral, fails this.
+
+    The two orbits are sampled polylines, so the achievable floor is set by the
+    sampling: a point of one orbit can sit up to half a sample-spacing from the
+    nearest *sampled* point of the other even when the curves coincide exactly.
+    The bound is therefore derived from the measured spacing rather than being a
+    magic constant — and is additionally required to be small in absolute terms,
+    so it cannot become vacuous if the sampling is coarsened.
+    """
+    s = ts.systems.VanDerPol()
+    tails = []
+    for ic in ([0.05, 0.0], [3.0, 3.0]):
+        traj = s.integrate(final_time=300.0, dt=0.0005, ic=ic, rtol=1e-11, atol=1e-13)
+        # Two limit-cycle periods (~6.66 each) is a whole closed curve, twice.
+        tails.append(traj.y[traj.t > 286.0])
+    a_pts, b_pts = tails
+    d_ab = float(np.max(cKDTree(b_pts).query(a_pts)[0]))
+    d_ba = float(np.max(cKDTree(a_pts).query(b_pts)[0]))
+    spacing = max(
+        float(np.max(np.linalg.norm(np.diff(a_pts, axis=0), axis=1))),
+        float(np.max(np.linalg.norm(np.diff(b_pts, axis=0), axis=1))),
+    )
+    assert spacing < 5e-3, f"sampling too coarse to be a meaningful test: {spacing}"
+    assert max(d_ab, d_ba) < spacing, (
+        f"the two orbits are not the same curve: Hausdorff {max(d_ab, d_ba):.2e} "
+        f"exceeds the {spacing:.2e} sample spacing"
+    )
+
+    # ...and the cycle really is a cycle: the orbit returns to its own start.
+    assert np.min(np.linalg.norm(a_pts[200:] - a_pts[0], axis=1)) < spacing
+
+
+def test_van_der_pol_becomes_relaxational_at_large_mu() -> None:
+    """Large mu gives slow-fast structure; mu ~ 1 does not.
+
+    The relaxation regime is the *reason* van der Pol's 1926 paper is titled
+    "On relaxation-oscillations": for mu >> 1 the orbit crawls along the outer
+    branches of the cubic Lienard nullcline and jumps between them, so the peak
+    speed |x'| towers over its median.  At mu = 1 the cycle is nearly harmonic
+    and that ratio is small.  Pinned as an order-of-magnitude separation, which
+    is what the docstring claims.
+    """
+    ratios = {}
+    for mu in (1.0, 10.0):
+        traj = ts.systems.VanDerPol(params={"mu": mu}).integrate(
+            final_time=300.0, dt=0.002, ic=[2.0, 0.0], rtol=1e-10, atol=1e-12
+        )
+        x = traj.y[traj.t > 260.0, 0]
+        speed = np.abs(np.gradient(x, 0.002))
+        ratios[mu] = float(np.max(speed) / np.median(speed))
+    assert ratios[1.0] < 5.0, ratios
+    assert ratios[10.0] > 50.0, ratios
+
+
+def test_fitzhugh_nagumo_is_excitable_at_zero_current_and_oscillatory_at_half() -> None:
+    """The applied current selects excitable rest vs sustained spiking.
+
+    The equilibrium is the intersection of the cubic v-nullcline
+    w = v - v^3/3 + curr with the line w = (v + a)/b (FitzHugh 1961, Biophys. J.
+    1, 445-466).  At curr = 0 it lies on the stable left branch, so the model
+    rests; at curr = 0.5 it has moved onto the unstable middle branch and the
+    model fires periodically.  The resting state is located here by solving the
+    nullcline intersection independently of the integration.
+    """
+    p = dict(ts.systems.FitzHughNagumo().params)
+    a, b = p["a"], p["b"]
+
+    # Independent root of the two nullclines at curr = 0: v - v^3/3 = (v + a)/b.
+    roots = np.roots([-1.0 / 3.0, 0.0, 1.0 - 1.0 / b, -a / b])
+    v_rest = float(np.min(roots[np.abs(roots.imag) < 1e-9].real))
+    w_rest = (v_rest + a) / b
+
+    rest = ts.systems.FitzHughNagumo(params={**p, "curr": 0.0}).integrate(
+        final_time=600.0, dt=0.05, ic=[0.0, 0.0]
+    )
+    assert np.ptp(rest.y[rest.t > 500.0][:, 0]) < 1e-4
+    assert rest.y[-1] == pytest.approx([v_rest, w_rest], abs=1e-4)
+
+    firing = ts.systems.FitzHughNagumo(params={**p, "curr": 0.5}).integrate(
+        final_time=600.0, dt=0.05, ic=[0.0, 0.0]
+    )
+    assert np.ptp(firing.y[firing.t > 500.0][:, 0]) > 3.0

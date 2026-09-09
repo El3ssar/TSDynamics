@@ -289,8 +289,8 @@ class Catalog:
         ::
 
             {
-              "total": 171,
-              "by_family": {"ode": 136, "dde": 6, "sde": 3, "map": 26},
+              "total": 177,
+              "by_family": {"ode": 142, "dde": 6, "sde": 3, "map": 26},
               "by_category": {"ode": {"chaotic_attractors": 50, ...}, ...},
             }
         """

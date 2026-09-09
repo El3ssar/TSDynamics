@@ -30,7 +30,7 @@ Examples
 --------
 >>> from tsdynamics import registry
 >>> registry.families()
-{'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
+{'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
 >>> lorenz = registry.get("Lorenz")
 >>> lorenz.family, lorenz.category
 ('ode', 'chaotic_attractors')

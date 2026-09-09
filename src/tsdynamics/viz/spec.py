@@ -57,10 +57,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, Self
 
 import numpy as np
 
+from ._frames import Frame, FrameSpace, frame_of
 from ._tweaks import figure_scoped, panel_scoped, panel_scoped_custom
 from .style import Theme, get_theme, normalize_style
 
@@ -69,6 +70,8 @@ __all__ = [
     "Annotation",
     "Axis",
     "Colorbar",
+    "Frame",
+    "FrameSpace",
     "Layer",
     "Layout",
     "Legend",
@@ -1004,12 +1007,32 @@ class Layer:
         Backend-neutral style keys — ``color``, ``cmap``, ``lw``, ``alpha``,
         ``marker``, ``s``.  Renderers map these to their own idioms; unknown
         keys are ignored by a renderer rather than erroring.
+    transform : str, optional
+        **Provenance**: the name of the thing that produced this layer
+        (``"basins"``, ``"trajectory"``, ``"fixed_points"``, …), or ``None`` when
+        it is unknown.  A layer that cannot say where it came from cannot be
+        addressed after the fact, which is what blocks per-source restyling
+        inside an overlay (``spec.style("basins", cmap=...)`` rather than
+        today's all-or-nothing ``.style()``), legend grouping by source, and
+        telling a renderer that *this* ``IMAGE`` is a categorical basin image
+        rather than a continuous spacetime one.  Purely additive: it defaults to
+        ``None``, is the **last** field (so positional construction is
+        unchanged), and :meth:`from_dict` accepts a payload written before it
+        existed.
+
+        .. versionadded:: 6.0
+
+    Notes
+    -----
+    ``kind`` / ``data`` / ``label`` / ``style`` are positional-compatible with
+    every earlier release — ``transform`` was appended, never inserted.
     """
 
     kind: PlotKind
     data: dict[str, np.ndarray] = field(default_factory=dict)
     label: str | None = None
     style: dict[str, Any] = field(default_factory=dict)
+    transform: str | None = None
 
     def __post_init__(self) -> None:
         """Normalize ``kind`` to :class:`PlotKind` and coerce data to arrays."""
@@ -1023,16 +1046,22 @@ class Layer:
             "data": {k: np.asarray(v).tolist() for k, v in self.data.items()},
             "label": self.label,
             "style": dict(self.style),
+            "transform": self.transform,
         }
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Layer:
-        """Rebuild a :class:`Layer` from :meth:`to_dict` output (lists → arrays)."""
+        """Rebuild a :class:`Layer` from :meth:`to_dict` output (lists → arrays).
+
+        Tolerant of a payload written before ``transform`` existed (the key is
+        read with a default), so old serialized specs load unchanged.
+        """
         return cls(
             kind=PlotKind(d["kind"]),
             data={k: np.asarray(v) for k, v in d.get("data", {}).items()},
             label=d.get("label"),
             style=dict(d.get("style", {})),
+            transform=d.get("transform"),
         )
 
 
@@ -1091,6 +1120,16 @@ class PlotSpec:
         defaults).  ``None`` (default) defers to the active global default theme
         (renderers call :func:`~tsdynamics.viz.style.get_theme` when
         :attr:`theme` is ``None``).
+    frame : Frame, optional
+        What these axes *mean* — the coordinate space, its dimension, and one
+        normalized name per coordinate axis.  ``None`` (default) derives it from
+        :attr:`kind` plus the axis labels; read the resolved value via
+        :attr:`resolved_frame`.  Overlay legality is frame compatibility, not
+        kind identity, which is what lets a basin image, its attractors, a
+        trajectory and the equilibria share one set of axes while an ``(x, y)``
+        portrait and an ``(x, z)`` overlay are refused.
+
+        .. versionadded:: 6.0
 
     Notes
     -----
@@ -1168,6 +1207,13 @@ class PlotSpec:
     # :attr:`resolved_theme` property or :meth:`theme_or_default`; renderers read
     # the raw ``Theme | None`` via the :attr:`_theme` field.
     _theme: Theme | None = None
+    # Frame: what this spec's axes *mean* (a coordinate space, its dimension, its
+    # axis names).  ``None`` (the default, and what every in-tree producer leaves
+    # it as today) means "derive it from the kind and the axis labels" — see
+    # :attr:`resolved_frame`.  Overlay legality is frame compatibility, so a
+    # producer that states its frame explicitly gets an exact answer instead of a
+    # derived one.  Appended last, so positional construction is unchanged.
+    frame: Frame | None = None
 
     def __post_init__(self) -> None:
         """Normalize ``kind`` / ``clim`` and enforce the ``COMPOSITE`` ⟺ ``panels`` invariant.
@@ -1242,6 +1288,103 @@ class PlotSpec:
         if self.ndim == 3 or self.z is not None:
             return True
         return any(lyr.kind in _THREE_D_MARKS for lyr in self.layers)
+
+    @property
+    def resolved_frame(self) -> Frame:
+        """The :class:`~tsdynamics.viz._frames.Frame` this spec draws in.
+
+        The spec's own :attr:`frame` when it declares one, else derived from the
+        semantic :attr:`kind` and the axis labels (see
+        :func:`tsdynamics.viz._frames.frame_of`) — so every spec, including a
+        hand-built one and every spec the library builds today, has a frame.
+
+        Two specs may share one set of axes iff their frames are *compatible*
+        (:meth:`~tsdynamics.viz._frames.Frame.compatible_with`); that is the one
+        overlay rule, used by :func:`tsdynamics.viz.plot`, :meth:`add`, and
+        :meth:`tsdynamics.analysis.AnalysisResult.overlay_on` alike.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            If this is a composite (a multi-panel figure owns no single axes).
+        """
+        return frame_of(self)
+
+    # NOTE: ``add`` is deliberately **outside** the panel/figure tweak partition
+    # (:mod:`tsdynamics.viz._tweaks`) and returns ``Self`` rather than
+    # ``PlotSpec``.  That partition exists to force a forwarding decision for
+    # tweaks that would otherwise be *silent* no-ops on a composite; ``add`` is
+    # not a tweak — it is the incremental form of ``tsdynamics.viz.plot``, it
+    # describes neither a panel's presentation nor the figure's, and on a
+    # composite it **raises** (adding one thing to every panel is not what anyone
+    # means).  ``Self`` is also simply the truer annotation: it returns *this*
+    # object, not some ``PlotSpec``.
+    def add(self, *things: Any, on: str | None = None, **build_kw: Any) -> Self:
+        """Overlay more things onto this spec **in place**, and return it.
+
+        The incremental half of the composition API (Makie's ``plot!`` in a
+        chainable spelling): where :func:`tsdynamics.viz.plot` composes in one
+        call, :meth:`add` grows a figure a piece at a time, and — like every
+        other tweak — it mutates and returns ``self``, so it chains::
+
+            (ts.viz.plot(basins)
+                .add(attractors)
+                .add(traj)
+                .add(fps)
+                .theme("publication")
+                .save("fig.pdf"))
+
+        The result is **identical** to passing everything to
+        :func:`~tsdynamics.viz.plot` at once, because both go through the same
+        merge: the same frame check, and the same z-ordering *by role* (fields
+        under curves under markers), so moving a thing **between** roles — adding
+        the basin image first or last — does not change the picture.  The sort is
+        stable, so things of the *same* role (two curves, say) keep the order they
+        were added in, exactly as they keep their argument order in
+        :func:`~tsdynamics.viz.plot`.
+
+        Parameters
+        ----------
+        *things
+            Anything :func:`tsdynamics.viz.plot` accepts — a
+            :class:`~tsdynamics.data.Trajectory`, a system, an analysis result,
+            or an already-built :class:`PlotSpec`.
+        on : {"force"}, optional
+            ``"force"`` overlays a deliberate frame mismatch with a one-time
+            :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` warning
+            instead of raising.
+        **build_kw
+            Forwarded to each non-spec thing's ``to_plot_spec`` (``components``
+            / ``kind`` / per-kind options), exactly as in
+            :func:`tsdynamics.viz.plot`.
+
+        Returns
+        -------
+        PlotSpec
+            ``self``, with the new layers merged in.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            If ``self`` is a composite (add to one of its ``panels`` instead), if
+            a thing's frame is incompatible and ``on`` is not ``"force"``, or if
+            ``on`` is neither ``None`` nor ``"force"``.
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        from .compose import _merge_into, _overlay, _to_spec
+
+        if self.is_composite:
+            raise InvalidParameterError(
+                "cannot add() to a COMPOSITE figure: it owns no axes of its own. "
+                "Add to one of its panels (spec.panels[i].add(...)), or compose the "
+                "panel first and arrange with tsdynamics.viz.plot(..., layout=...)."
+            )
+        if not things:
+            raise InvalidParameterError("add() needs at least one thing to add.")
+        specs = [_to_spec(thing, build_kw) for thing in things]
+        _merge_into(self, _overlay([self, *specs], on=on))
+        return self
 
     def resolved_panels(self) -> list[PlotSpec]:
         """Return this composite's panels with the figure-level context pushed down.
@@ -2391,6 +2534,7 @@ class PlotSpec:
             "layout": self.layout.to_dict() if self.layout is not None else None,
             "animation": self.animation.to_dict() if self.animation is not None else None,
             "theme": self._theme.to_dict() if self._theme is not None else None,
+            "frame": self.frame.to_dict() if self.frame is not None else None,
         }
 
     @classmethod
@@ -2434,6 +2578,7 @@ class PlotSpec:
             if d.get("animation") is not None
             else None,
             _theme=Theme.from_dict(d["theme"]) if d.get("theme") is not None else None,
+            frame=Frame.from_dict(d["frame"]) if d.get("frame") is not None else None,
         )
 
 

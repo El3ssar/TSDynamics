@@ -502,3 +502,101 @@ def test_capability_check_uses_the_spec_three_d_property():
     assert not hasattr(RendererCapabilities, "_is_three_d")  # the copy is gone
     assert caps.can_render_spec(_spec_for_kind(PlotKind.PHASE_PORTRAIT_3D)) is False
     assert caps.can_render_spec(_spec_for_kind(PlotKind.TIME_SERIES)) is True
+
+
+# ---------------------------------------------------------------------------
+# render(ax=) — drawing into a user-owned Axes (the P0 escape hatch)
+# ---------------------------------------------------------------------------
+
+
+def _ax_pair(**subplot_kw):
+    """Return ``(fig, ax)`` from a user-style ``plt.subplots`` call."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt.subplots(**subplot_kw)
+
+
+def test_render_into_a_user_owned_axes():
+    """``render(ax=...)`` draws into your figure and returns it.
+
+    The single-panel drawing body always worked on an arbitrary axes (it is what
+    the composite renderer calls per panel); only the ``ax=`` plumbing and its
+    keyword blessing were missing, which blocked every "put this in my paper
+    figure" workflow.
+    """
+    fig, axs = _ax_pair(ncols=2)
+    line = _spec_for_kind(PlotKind.TIME_SERIES)
+    returned = line.render("matplotlib", ax=axs[0])
+    assert returned is fig
+    assert len(axs[0].lines) == 1
+    assert len(axs[1].lines) == 0  # only the axes we named was touched
+    assert axs[0].get_xlabel() == line.x.label
+
+
+def test_render_into_a_user_axes_applies_the_axes_and_the_theme():
+    fig, ax = _ax_pair()
+    spec = _spec_for_kind(PlotKind.TIME_SERIES).relabel(x="tau", y="u").limits(x=(0.0, 1.0))
+    spec.render("matplotlib", ax=ax)
+    assert (ax.get_xlabel(), ax.get_ylabel()) == ("tau", "u")
+    assert ax.get_xlim() == (0.0, 1.0)
+
+
+def test_render_into_a_user_owned_3d_axes():
+    fig, ax = _ax_pair(subplot_kw={"projection": "3d"})
+    _spec_for_kind(PlotKind.PHASE_PORTRAIT_3D).render("matplotlib", ax=ax)
+    assert ax.name == "3d"
+    assert len(ax.lines) >= 1
+
+
+def test_render_ax_refuses_a_dimension_mismatch():
+    """A 3-D spec on a 2-D axes would silently drop the depth coordinate."""
+    from tsdynamics.errors import InvalidParameterError
+
+    _, flat = _ax_pair()
+    with pytest.raises(InvalidParameterError, match="projection"):
+        _spec_for_kind(PlotKind.PHASE_PORTRAIT_3D).render("matplotlib", ax=flat)
+
+    _, deep = _ax_pair(subplot_kw={"projection": "3d"})
+    with pytest.raises(InvalidParameterError, match="2-D spec"):
+        _spec_for_kind(PlotKind.TIME_SERIES).render("matplotlib", ax=deep)
+
+
+def test_render_ax_refuses_a_composite_and_an_animation():
+    """Both drive a whole *figure*, so one axes cannot hold them."""
+    from tsdynamics.errors import InvalidParameterError
+
+    _, ax = _ax_pair()
+    panel = _spec_for_kind(PlotKind.TIME_SERIES)
+    composite = PlotSpec(kind=PlotKind.COMPOSITE, panels=[panel, _spec_for_kind(PlotKind.LINE)])
+    with pytest.raises(InvalidParameterError, match="one axes per panel"):
+        composite.render("matplotlib", ax=ax)
+
+    animated = _spec_for_kind(PlotKind.TIME_SERIES)
+    animated.animate(fps=10.0)
+    with pytest.raises(InvalidParameterError, match="frame loop"):
+        animated.render("matplotlib", ax=ax)
+
+
+def test_ax_is_matplotlibs_keyword_alone():
+    """``ax=`` on another backend raises naming that backend's accepted set.
+
+    ``ax`` *is* a matplotlib Axes, so this is the correct answer rather than an
+    oversight — and it comes free from the render-keyword gate.
+    """
+    pytest.importorskip("plotly")
+    from tsdynamics.errors import InvalidParameterError
+
+    _, ax = _ax_pair()
+    with pytest.raises(InvalidParameterError, match="unexpected render keyword"):
+        _spec_for_kind(PlotKind.TIME_SERIES).render("plotly", ax=ax)
+
+
+def test_ax_reaches_the_renderer_through_the_plot_sugar():
+    """``spec.plot(ax=...)`` forwards it (it is a backend kwarg, not a tweak)."""
+    _, ax = _ax_pair()
+    _spec_for_kind(PlotKind.TIME_SERIES).plot("matplotlib", ax=ax, title="mine")
+    assert ax.get_title() == "mine"
+    assert len(ax.lines) == 1

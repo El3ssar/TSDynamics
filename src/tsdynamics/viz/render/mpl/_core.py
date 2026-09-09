@@ -53,7 +53,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -208,9 +208,48 @@ def _apply_theme_to_figure(fig: Any, ax: Any, theme: Theme) -> None:
             ax.title.set_color(theme.foreground)
 
 
-def _apply_theme_color_cycle(ax: Any, theme: Theme) -> None:
-    """Set the axes color cycle from the theme's palette."""
-    ax.set_prop_cycle(color=list(theme.palette))
+#: Colours tried, in order, for an unstyled curve drawn ON TOP OF a field layer.
+#: White then black covers a dark and a light backdrop; the remaining two give a
+#: second and third curve something distinguishable.  Deliberately not palette
+#: colours: a palette is chosen to separate curves *from each other*, which says
+#: nothing about separating them from an image underneath.
+_ON_FIELD_CYCLE: tuple[str, ...] = ("#ffffff", "#000000", "#ff3b30", "#ffcc00")
+
+
+def _apply_theme_color_cycle(ax: Any, theme: Theme, spec: PlotSpec | None = None) -> None:
+    """Set the axes colour cycle, avoiding a collision with a field layer.
+
+    Normally the cycle is the theme's palette.  But when the spec draws a curve or
+    markers *over* a field (a basin image, a recurrence plot, a spacetime image),
+    the palette is the wrong source: ``basins_image`` renders through ``tab20``,
+    whose first swatch is ``#1f77b4`` — byte-identical to the default palette's
+    first colour.  An unstyled trajectory over basin 0 was therefore drawn in
+    exactly the basin's own colour and was invisible, which is what the flagship
+    composition call produces if nothing intervenes.
+
+    So when a field layer is present the cycle switches to :data:`_ON_FIELD_CYCLE`,
+    chosen for contrast against an arbitrary image rather than against other
+    curves.  An explicit per-layer ``color`` always wins over either cycle, so this
+    only ever decides what an *unstyled* overlay looks like.
+    """
+    palette = list(theme.palette)
+    if spec is not None and _draws_over_a_field(spec):
+        palette = [*_ON_FIELD_CYCLE, *palette]
+    ax.set_prop_cycle(color=palette)
+
+
+#: Layer *marks* that paint a backdrop the rest of the figure is drawn on top of.
+#: Note this is a mark test, not a semantic-kind test: ``Layer.kind`` holds the
+#: mark (``image``), while ``PlotSpec.kind`` holds the semantic kind
+#: (``basins_image``), and a hand-built or composed spec may carry an image layer
+#: under any semantic kind at all.
+_FIELD_MARKS: frozenset[PlotKind] = frozenset({PlotKind.IMAGE, PlotKind.QUIVER})
+
+
+def _draws_over_a_field(spec: PlotSpec) -> bool:
+    """Report whether ``spec`` has a field layer AND something drawn on top of it."""
+    marks = {layer.kind for layer in spec.layers}
+    return bool(marks & _FIELD_MARKS) and bool(marks - _FIELD_MARKS)
 
 
 def _apply_theme_grid(ax: Any, spec: PlotSpec, theme: Theme) -> None:
@@ -1226,6 +1265,7 @@ def render(
     *,
     figsize: tuple[float, float] | None = None,
     path: str | Path | None = None,
+    ax: Axes | None = None,
     **_kw: Any,
 ) -> Figure | FuncAnimation | Path:
     """Render a 2-D :class:`~tsdynamics.viz.spec.PlotSpec` to a matplotlib Figure.
@@ -1256,6 +1296,25 @@ def render(
         the request, returned a Figure and wrote **nothing**.  A raster / vector
         extension goes through ``Figure.savefig``; ``.mp4`` / ``.gif`` on an
         animated spec go through the animation's own writer.
+    ax : matplotlib.axes.Axes, optional
+        Draw into an axes **you** own instead of building a figure — the escape
+        hatch for "put this plot in my paper figure"::
+
+            fig, axs = plt.subplots(1, 2)
+            ts.viz.plot(duffing_basins).render(ax=axs[0])
+            traj.plot(ax=axs[1])
+
+        The single-panel drawing body already worked on any axes (it is what the
+        composite renderer calls per panel); only the plumbing was missing.  The
+        spec's theme is still applied **figure-locally** to your figure, and the
+        return value is that figure, so ``ax=`` composes with the rest of your
+        matplotlib code rather than replacing it.
+
+        A 3-D spec needs a 3-D axes (``subplot_kw={"projection": "3d"}``); an
+        animated or composite spec drives a whole figure and so cannot be given
+        one axes.  Both raise rather than drawing something misleading.
+
+        .. versionadded:: 6.0
     **_kw
         Forwarded but unused backend keywords (kept for a uniform renderer
         signature).
@@ -1266,9 +1325,18 @@ def render(
         The rendered figure (a single axes), ready to ``savefig`` / embed — or
         the written ``path`` when one was given.  A 3-D spec (``ndim == 3`` / a
         ``z`` axis / a ``LINE3D`` / ``SURFACE3D`` mark) is dispatched to the
-        :mod:`._threed` renderer.
+        :mod:`._threed` renderer.  With ``ax=``, the axes' own figure.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If ``ax`` is given for an animated or composite spec, or for a 3-D spec
+        on a 2-D axes (or vice versa).
     """
     from . import _threed
+
+    if ax is not None:
+        return _render_into(spec, ax, path)
 
     result: Figure | FuncAnimation
     if spec.is_animated:
@@ -1288,6 +1356,48 @@ def render(
     if path is None:
         return result
     return _write(result, path)
+
+
+def _render_into(spec: PlotSpec, ax: Axes, path: str | Path | None) -> Figure | Path:
+    """Draw ``spec`` into a caller-owned ``ax`` and return its figure (or ``path``).
+
+    The ``render(ax=...)`` body.  Everything it refuses, it refuses because the
+    alternative is a plausible-looking wrong picture: an animation and a composite
+    each drive a *figure* (many axes / a frame loop), and a 3-D spec on a 2-D axes
+    would silently drop the depth coordinate.
+    """
+    from . import _threed
+
+    if spec.is_animated:
+        raise InvalidParameterError(
+            "ax= cannot render an animated spec: an animation drives a whole figure "
+            "(it owns the frame loop). Render it without ax= and use the returned "
+            "FuncAnimation, or drop the animation with spec.animation = None."
+        )
+    if spec.is_composite:
+        raise InvalidParameterError(
+            "ax= cannot render a COMPOSITE spec: it needs one axes per panel. "
+            "Render a single panel into your axes — spec.panels[i].render(ax=ax)."
+        )
+    is_3d_axes = getattr(ax, "name", "") == "3d"
+    if _threed.is_three_d(spec) and not is_3d_axes:
+        raise InvalidParameterError(
+            "ax= got a 2-D axes for a 3-D spec; the depth coordinate would be "
+            'dropped. Create one with plt.subplots(subplot_kw={"projection": "3d"}).'
+        )
+    if is_3d_axes and not _threed.is_three_d(spec):
+        raise InvalidParameterError(
+            "ax= got a 3-D axes for a 2-D spec. Create a plain axes with plt.subplots()."
+        )
+
+    figure = cast("Figure", ax.get_figure())
+    if is_3d_axes:
+        _threed._draw_3d_panel(figure, ax, spec)
+    else:
+        _draw_2d_panel(figure, ax, spec)
+    if path is None:
+        return figure
+    return _write(figure, path)
 
 
 def _write(result: Figure | FuncAnimation, path: str | Path) -> Path:
@@ -1332,7 +1442,7 @@ def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = 
 
     # Step 1: apply theme presentation
     _apply_theme_to_figure(fig, ax, theme)
-    _apply_theme_color_cycle(ax, theme)
+    _apply_theme_color_cycle(ax, theme, spec)
 
     # Step 2: draw layers
     mappable: ScalarMappable | None = None

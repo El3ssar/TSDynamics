@@ -95,7 +95,7 @@ ts.systems.Lorenz.doi
 # '10.1175/1520-0469(1963)020<0130:dnf>2.0.co;2'
 ```
 
-Of the 171 built-in systems, 166 declare a literature `reference` and 149 carry
+Of the 177 built-in systems, 172 declare a literature `reference` and 155 carry
 a `doi`. To pull the reference for every system you touched — the makings of a
 `\bibliography` — sweep the registry:
 

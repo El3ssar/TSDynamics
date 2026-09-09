@@ -334,12 +334,23 @@ That is on by default for a handful of points and off above eight of them (label
 that hide the markers they describe are worse than no labels); `annotate=True` /
 `annotate=False` overrides.
 
-Overlaying on a portrait takes the same keywords, and **you must pass the host's
-plane**, or the markers land somewhere plausible and wrong:
+Overlaying on a portrait takes the same keywords. Pass the host's plane so the
+two agree:
 
 ```python
 portrait = traj.to_plot_spec(components=("x", "z"))
 fps.overlay_on(portrait, components=("x", "z")).plot()
+```
+
+If you forget, the overlay **raises** rather than drawing markers in the wrong
+place — the frame check compares what each spec's axes *mean*, so an `(x, z)`
+portrait will not silently accept `(x, y)` equilibria:
+
+```pycon
+>>> fps.overlay_on(portrait).plot()
+InvalidParameterError: axes mismatch state2(x, z) vs state2(x, y) — the two are
+different planes, so the fixed_points_overlay would land in the wrong place.
+Pass the same components= to both, or on='force' to overlay them anyway.
 ```
 
 ## Rendering and saving

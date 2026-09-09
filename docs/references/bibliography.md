@@ -28,7 +28,7 @@ the original paper. It has two halves:
 
 ## Systems {#systems}
 
-The 171 built-in systems cite **137 distinct sources**, grouped below by family and ordered alphabetically by first author. A handful of textbook/folklore systems (the Lissajous figures, a couple of purely illustrative maps) carry no single primary source and are omitted from this list.
+The 177 built-in systems cite **137 distinct sources**, grouped below by family and ordered alphabetically by first author. A handful of textbook/folklore systems (the Lissajous figures, a couple of purely illustrative maps) carry no single primary source and are omitted from this list.
 
 ### Ordinary differential equations
 

@@ -652,7 +652,7 @@ class TestConstructorParameterKeywords:
             for key, value in declared.items():
                 assert sys.params[key] == value, f"{entry.name}.{key}"
             checked[entry.family] = checked.get(entry.family, 0) + 1
-        assert sum(checked.values()) == 158
+        assert sum(checked.values()) == 164
         assert set(checked) == {"ode", "dde", "map", "sde"}
 
 

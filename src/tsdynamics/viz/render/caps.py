@@ -82,6 +82,11 @@ class VisualizationDegraded(UserWarning):
        fields carried by the spec.  The dispatcher emits **one** consolidated
        warning naming all the ignored knobs before calling the renderer;
        renderers then run with ``warn=False`` (the user has already been told).
+    3. **A forced frame mismatch**: ``on="force"`` overlaid two specs that are
+       drawings of *different* spaces or planes (see
+       :func:`tsdynamics.viz._frames.check_overlay`).  The figure is drawn as
+       asked; the warning records that the axes mean two things at once, so the
+       picture may not mean what it looks like.
 
     It is a :class:`UserWarning` (not an error) so the call still returns a
     figure; a *hard* failure (no capable backend at all) raises instead.
@@ -213,7 +218,10 @@ _DISPATCHER_INJECTED_KWARGS: frozenset[str] = frozenset({"warn"})
 #: ``**kwargs`` keeps its documented free pass-through.
 _BUILTIN_RENDER_KWARGS: dict[str, frozenset[str]] = {
     # tsdynamics.viz.render.mpl._core.render
-    "matplotlib": frozenset({"figsize", "path"}),
+    # ``ax`` is matplotlib's alone by construction: it *is* a matplotlib Axes, so
+    # ``spec.render(backend="plotly", ax=...)`` raising here (naming plotly's
+    # accepted set) is the correct answer rather than an oversight.
+    "matplotlib": frozenset({"figsize", "path", "ax"}),
     # tsdynamics.viz.render.plotly._core.render
     "plotly": frozenset({"html", "path", "full_html", "include_plotlyjs"}),
     # tsdynamics.viz.render.json (the registered closure)
