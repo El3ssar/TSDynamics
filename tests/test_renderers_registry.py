@@ -318,11 +318,12 @@ def test_render_matplotlib_returns_a_figure():
 # An Agg golden/smoke pass: a minimal spec for *every* 2-D semantic PlotKind must
 # render to a Figure with axes and no exception.  3-D phase-portrait kinds (whose
 # only sensible layer is a 3-D mark) are excluded — they are the VIZ-MPL-3D
-# follow-up — as are the deferred animation kinds.
+# follow-up.  (The two legacy animation kinds that were also excluded here are
+# gone from the vocabulary in v6 — animation is the orthogonal ``Animation``
+# modifier — so there is nothing left to subtract for them.)
 _THREE_D_KINDS = frozenset({PlotKind.PHASE_PORTRAIT_3D})
-_ANIMATION_KINDS = frozenset({PlotKind.TRAJECTORY_ANIMATION, PlotKind.ENSEMBLE_ANIMATION})
 _TWO_D_SEMANTIC_KINDS = sorted(
-    PlotKind.semantic_kinds() - _THREE_D_KINDS - _ANIMATION_KINDS,
+    PlotKind.semantic_kinds() - _THREE_D_KINDS,
     key=lambda k: k.value,
 )
 
@@ -336,7 +337,6 @@ def _minimal_layers_for(kind: PlotKind) -> list[Layer]:
     if kind in (
         PlotKind.IMAGE,
         PlotKind.SPACETIME,
-        PlotKind.SPECTROGRAM,
         PlotKind.RECURRENCE_PLOT,
         PlotKind.BASINS_IMAGE,
     ):
@@ -344,14 +344,12 @@ def _minimal_layers_for(kind: PlotKind) -> list[Layer]:
         return [Layer(PlotKind.IMAGE, {"z": img})]
     if kind in (PlotKind.VECTOR_FIELD, PlotKind.PHASE_PORTRAIT_FIELD):
         return [Layer(PlotKind.QUIVER, {"x": x, "y": y, "u": y, "v": x, "c": y})]
-    if kind in (PlotKind.CATEGORICAL_BAR, PlotKind.FEATURE_BARS):
+    if kind is PlotKind.CATEGORICAL_BAR:
         return [Layer(PlotKind.BAR, {"cat": np.arange(3.0), "y": np.array([1.0, 2.0, 3.0])})]
     if kind == PlotKind.ENSEMBLE_FAN:
         return [Layer(PlotKind.AREA, {"x": x, "lo": y - 0.1, "hi": y + 0.1, "y": y})]
     if kind in (PlotKind.DIMENSION_SPECTRUM, PlotKind.SCALING_FIT):
         return [Layer(PlotKind.ERRORBAR, {"x": x, "y": y, "err": np.full_like(x, 0.05)})]
-    if kind == PlotKind.HISTOGRAM_NULL:
-        return [Layer(PlotKind.HISTOGRAM, {"x": y})]
     if kind in (
         PlotKind.PHASE_PORTRAIT_2D,
         PlotKind.POINCARE_SECTION,
@@ -362,8 +360,8 @@ def _minimal_layers_for(kind: PlotKind) -> list[Layer]:
         PlotKind.FIXED_POINTS_OVERLAY,
     ):
         return [Layer(PlotKind.SCATTER, {"x": x, "y": y})]
-    # default: a line (TIME_SERIES, COBWEB, POWER_SPECTRUM, DIAGNOSTIC_CURVE,
-    # COMPLEXITY_CURVE, LINE_FAMILY, LYAPUNOV_SPECTRUM, CONTINUATION, …)
+    # default: a line (TIME_SERIES, COBWEB, DIAGNOSTIC_CURVE, LINE_FAMILY,
+    # LYAPUNOV_SPECTRUM, CONTINUATION, …)
     return [Layer(PlotKind.LINE, {"x": x, "y": y})]
 
 
@@ -378,7 +376,15 @@ def test_every_2d_kind_renders_on_agg(kind):
         from tsdynamics.viz.spec import Colorbar
 
         colorbar = Colorbar()
-    spec = PlotSpec(kind=kind, layers=_minimal_layers_for(kind), colorbar=colorbar)
+    # Since v6 a COMPOSITE *must* carry at least one panel (the construction
+    # invariant in ``PlotSpec.__post_init__`` — a panel-less composite used to
+    # render as a blank figure).  Give it one; every other kind is single-panel.
+    panels = (
+        [PlotSpec(kind=PlotKind.TIME_SERIES, layers=_minimal_layers_for(PlotKind.TIME_SERIES))]
+        if kind is PlotKind.COMPOSITE
+        else []
+    )
+    spec = PlotSpec(kind=kind, layers=_minimal_layers_for(kind), colorbar=colorbar, panels=panels)
     fig = spec.render("matplotlib")
     try:
         assert isinstance(fig, Figure)

@@ -760,3 +760,129 @@ class TestBurnInBudget:
         span = full.max(axis=0) - full.min(axis=0)
         grew = np.max((full.max(axis=0) - short.max(axis=0)) / span)
         assert grew > 0.5, "the hull grows late: a patience rule would stop before it"
+
+
+class TestFixedPointPlotSpec:
+    """The two deliverables a fixed-point plot owes beyond colour and fill.
+
+    Colouring by stability and distinguishing it by marker fill say *which* points
+    are stable.  These two say *by how much* (the leading eigenvalue) and *seen from
+    where* (the projection plane) — without them the plot is a scatter of anonymous
+    dots on whichever two coordinates happen to come first.
+    """
+
+    def test_the_projection_plane_is_the_callers_choice(self) -> None:
+        """``components=`` picks which two coordinates are drawn, by name or index.
+
+        Lorenz is the case that makes this load-bearing: its two nontrivial
+        equilibria are ``(±√(β(ρ−1)), ±√(β(ρ−1)), ρ−1)``, so on the default
+        ``(x, y)`` plane they are two points on the diagonal while on ``(x, z)``
+        they sit side by side at the same height — the same three equilibria
+        telling a visibly different story.
+        """
+        fps = fixed_points(ts.systems.Lorenz(), seed=0)
+        assert len(fps) == 3
+
+        default = fps.to_plot_spec()
+        by_name = fps.to_plot_spec(components=("x", "z"))
+        by_index = fps.to_plot_spec(components=(0, 2))
+
+        def ys(spec):
+            return sorted(float(v) for layer in spec.layers for v in layer.data["y"])
+
+        assert ys(by_name) == ys(by_index), "names and indices must resolve alike"
+        assert ys(default) != ys(by_name)
+        # On (x, z) the two C± equilibria share z = rho - 1 = 27.
+        assert ys(by_name)[-2:] == pytest.approx([27.0, 27.0], abs=1e-6)
+        assert by_name.x.label == "$x$" and by_name.y.label == "$z$"
+
+    def test_an_unknown_or_malformed_projection_is_refused(self) -> None:
+        """A bad ``components=`` raises rather than drawing the wrong plane."""
+        from tsdynamics.errors import InvalidParameterError
+
+        fps = fixed_points(ts.systems.Lorenz(), seed=0)
+        with pytest.raises(InvalidParameterError, match="unknown component"):
+            fps.to_plot_spec(components=("x", "w"))
+        with pytest.raises(InvalidParameterError, match="exactly two"):
+            fps.to_plot_spec(components=("x",))
+        with pytest.raises(InvalidParameterError, match="out of range"):
+            fps.to_plot_spec(components=(0, 7))
+
+    def test_each_marker_is_annotated_with_its_leading_eigenvalue(self) -> None:
+        """The number that decides the classification is written next to the marker.
+
+        For a flow the leading eigenvalue is the largest **real part**; Lorenz's
+        origin is a saddle with ``λ ≈ +11.83`` and its ``C±`` pair has a complex
+        pair with ``Re λ ≈ +0.094``.  Both must appear, and no label may sit on top
+        of the marker it describes.
+        """
+        fps = fixed_points(ts.systems.Lorenz(), seed=0)
+        spec = fps.to_plot_spec()
+        texts = [a.text for a in spec.annotations if a.kind == "text"]
+        assert len(texts) == 3
+        assert any("11.8" in t for t in texts)
+        assert sum("0.094" in t for t in texts) == 2
+        assert all(t.startswith(r"$\lambda=") for t in texts)
+
+        marker_xy = {
+            (round(float(x), 9), round(float(y), 9))
+            for layer in spec.layers
+            for x, y in zip(layer.data["x"], layer.data["y"], strict=True)
+        }
+        for ann in spec.annotations:
+            if ann.kind == "text":
+                assert (round(float(ann.x), 9), round(float(ann.y), 9)) not in marker_xy
+
+    def test_a_map_annotates_the_largest_multiplier_not_the_largest_real_part(self) -> None:
+        """A map's stability gauge is ``|λ|``, so that is the number annotated.
+
+        The Hénon saddles have multipliers of opposite sign and very different
+        magnitude; reading the largest *real part* off a map would name the wrong
+        one and invert the plot's meaning.
+        """
+        fps = fixed_points(ts.systems.Henon(), seed=0)
+        assert len(fps) == 2
+        for fp in fps:
+            spec = fp.to_plot_spec()
+            (text,) = [a.text for a in spec.annotations if a.kind == "text"]
+            expected = fp.eigenvalues[np.argmax(np.abs(fp.eigenvalues))]
+            assert f"{float(expected.real):+.3g}" in text
+
+    def test_annotation_is_automatic_only_while_it_stays_readable(self) -> None:
+        """Auto-annotation switches off for a crowded set; ``annotate=`` forces either way.
+
+        Thomas' attractor has 27 equilibria — 27 eigenvalue labels would obscure the
+        markers they describe — so the default is *off* above the threshold, and a
+        caller who wants them anyway says so.
+        """
+        from tsdynamics.analysis.fixedpoints.fixed import _ANNOTATE_AUTO_MAX
+
+        fps = fixed_points(ts.systems.Thomas(), region=ts.Box([-5.0] * 3, [5.0] * 3), seed=0)
+        assert len(fps) > _ANNOTATE_AUTO_MAX
+
+        assert [a for a in fps.to_plot_spec().annotations if a.kind == "text"] == []
+        forced = [a for a in fps.to_plot_spec(annotate=True).annotations if a.kind == "text"]
+        assert len(forced) == len(fps)
+
+        small = fixed_points(ts.systems.Rossler(), seed=0)
+        assert len(small) <= _ANNOTATE_AUTO_MAX
+        assert len(small.to_plot_spec().annotations) == len(small)
+        assert small.to_plot_spec(annotate=False).annotations == []
+
+    def test_overlay_on_forwards_the_projection_to_the_host_plane(self) -> None:
+        """An overlay must land on the plane the host portrait was drawn for.
+
+        The base ``overlay_on`` forwards only ``kind``, so fixed points dropped onto
+        an ``(x, z)`` Lorenz portrait were drawn at ``(±8.5, ±8.5)`` — inside the
+        frame, plausible-looking, and wrong.
+        """
+        fps = fixed_points(ts.systems.Lorenz(), seed=0)
+        traj = ts.systems.Lorenz().integrate(final_time=10.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+        base = traj.to_plot_spec(components=("x", "z"))
+        n_host = len(base.layers)
+
+        merged = fps.overlay_on(base, components=("x", "z"))
+        overlaid = merged.layers[n_host:]
+        assert overlaid, "the overlay contributed no layers"
+        zs = [float(v) for layer in overlaid for v in layer.data["y"]]
+        assert sorted(zs)[-2:] == pytest.approx([27.0, 27.0], abs=1e-6)

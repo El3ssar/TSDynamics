@@ -48,6 +48,11 @@ def plot(
     *things: Any,
     layout: str = "overlay",
     animate: bool | dict[str, Any] | Animation = False,
+    rows: int | None = None,
+    cols: int | None = None,
+    share_x: bool | None = None,
+    share_y: bool | None = None,
+    share_color: bool | None = None,
     **build_kw: Any,
 ) -> PlotSpec:
     """Compose one or more things into a single (possibly multi-panel) spec.
@@ -70,6 +75,23 @@ def plot(
         overlay animates the merged panel.  ``True`` uses defaults, a dict / an
         :class:`~tsdynamics.viz.spec.Animation` configures it.  Tweak further with
         the chainable ``.animate()`` / ``.trail()`` / … methods on the result.
+    rows, cols : int, optional
+        Explicit grid shape for ``layout="grid"``.  ``None`` (both) derives a
+        near-square grid.  Ignored by ``"overlay"`` (one panel) and by
+        ``"stack"`` / ``"row"`` (whose shape is fixed by the mode).
+
+        .. versionadded:: 6.0
+           :class:`~tsdynamics.viz.spec.Layout` always had these fields, but
+           ``plot()`` had no way to set them, so a 4-panel grid was stuck on the
+           auto-derived 2x2 and a 2x3 could not be asked for at all.
+    share_x, share_y : bool, optional
+        Force shared x / y axes across the panels.  ``None`` keeps the
+        conservative auto-default (a *stack* of time-series panels naming the
+        same x axis shares x; nothing else does).
+    share_color : bool, optional
+        Draw **one** figure-level colorbar rather than one per panel — the right
+        presentation for a row of basin images across a parameter, where the
+        per-panel colorbars repeat the same scale.  Default ``False``.
     **build_kw
         Forwarded to each non-spec thing's ``to_plot_spec`` (``components`` /
         ``kind`` / the per-kind options), so ``plot(a, b, components="x")``
@@ -106,11 +128,19 @@ def plot(
         raise InvalidParameterError("plot() needs at least one thing to plot.")
 
     specs = [_to_spec(item, build_kw) for item in items]
+    layout_kw = {
+        "rows": rows,
+        "cols": cols,
+        "share_x": share_x,
+        "share_y": share_y,
+        "share_color": share_color,
+    }
 
     if layout == "overlay":
+        _reject_layout_kw_for_overlay(layout_kw)
         result = _overlay(specs)
     elif layout in _COMPOSITE_MODES:
-        result = _composite(specs, layout)
+        result = _composite(specs, layout, layout_kw)
     else:
         raise InvalidParameterError(
             f"unknown layout {layout!r}; use 'overlay', 'stack', 'row', or 'grid'."
@@ -118,6 +148,24 @@ def plot(
     if animate is not False and animate is not None:
         _apply_figure_animation(result, animate)
     return result
+
+
+def _reject_layout_kw_for_overlay(layout_kw: dict[str, Any]) -> None:
+    """Raise if a panel-arrangement keyword was passed to ``layout="overlay"``.
+
+    An overlay is *one* set of axes, so a grid shape or a shared axis has no
+    meaning there.  Accepting it silently would be the same class of defect this
+    phase is closing everywhere else: the caller sees a plot and believes the
+    keyword landed.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    given = sorted(k for k, v in layout_kw.items() if v is not None)
+    if given:
+        raise InvalidParameterError(
+            f"{given} apply to a panelled figure, not to layout='overlay' (one set "
+            "of axes); pass layout='stack' / 'row' / 'grid'."
+        )
 
 
 def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | Animation) -> None:
@@ -267,12 +315,27 @@ def _common_title(specs: list[PlotSpec]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _composite(specs: list[PlotSpec], mode: str) -> PlotSpec:
-    """Arrange specs into a ``COMPOSITE`` figure (one panel each; composites flattened)."""
+def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> PlotSpec:
+    """Arrange specs into a ``COMPOSITE`` figure (one panel each; composites flattened).
+
+    A child composite is flattened one level.  Flattening used to **discard** the
+    child's ``_theme`` and ``animation``, so ``plot(plot(a, b).theme("dark"), c,
+    layout="stack")`` lost the dark theme without a word; the child's context is
+    now pushed down onto its own panels first (via
+    :meth:`~tsdynamics.viz.spec.PlotSpec.resolved_panels`, the same inheritance
+    the renderers apply).  Its ``layout`` genuinely cannot survive — a flat panel
+    list has one arrangement — so the dropped modes are recorded in
+    ``meta["flattened_layouts"]`` instead of vanishing.
+    """
     panels: list[PlotSpec] = []
+    dropped_layouts: list[str] = []
     for spec in specs:
         if spec.is_composite:
-            panels.extend(spec.panels)  # flatten one level
+            # Push the child's figure-level context (theme / animation) onto its
+            # panels before they are absorbed, then note the arrangement we lose.
+            panels.extend(spec.resolved_panels())
+            if spec.layout is not None and spec.layout.mode != mode:
+                dropped_layouts.append(spec.layout.mode)
         else:
             panels.append(spec)
     if not panels:  # pragma: no cover - defensive (every spec had empty panels)
@@ -282,19 +345,30 @@ def _composite(specs: list[PlotSpec], mode: str) -> PlotSpec:
 
     # Auto-share the x axis only for a *stack* of time-series panels that name the
     # same x axis (the canonical "x1 & x2 over t, then y1 & y2 over t" case) — a
-    # conservative default; arbitrary kinds / a row / grid keep independent axes
-    # (build a Layout by hand to override).
-    share_x = (
+    # conservative default; arbitrary kinds / a row / grid keep independent axes.
+    # An explicit ``share_x=`` / ``share_y=`` / ``share_color=`` overrides it.
+    auto_share_x = (
         mode == "stack"
         and all(p.kind == PlotKind.TIME_SERIES for p in panels)
         and len({p.x.label for p in panels}) == 1
     )
-    layout = Layout(mode=mode, share_x=share_x)  # type: ignore[arg-type]
+    share_x = layout_kw["share_x"] if layout_kw["share_x"] is not None else auto_share_x
+    layout = Layout(
+        mode=mode,  # type: ignore[arg-type]
+        rows=layout_kw["rows"],
+        cols=layout_kw["cols"],
+        share_x=bool(share_x),
+        share_y=bool(layout_kw["share_y"]),
+        share_color=bool(layout_kw["share_color"]),
+    )
+    meta: dict[str, Any] = {"n_panels": len(panels)}
+    if dropped_layouts:
+        meta["flattened_layouts"] = dropped_layouts
     return PlotSpec(
         kind=PlotKind.COMPOSITE,
         ndim=2,
         title=_common_title(panels),
         panels=panels,
         layout=layout,
-        meta={"n_panels": len(panels)},
+        meta=meta,
     )

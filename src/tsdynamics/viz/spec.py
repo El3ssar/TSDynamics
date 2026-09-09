@@ -61,6 +61,7 @@ from typing import Any, ClassVar, Literal
 
 import numpy as np
 
+from ._tweaks import figure_scoped, panel_scoped, panel_scoped_custom
 from .style import Theme, get_theme, normalize_style
 
 __all__ = [
@@ -121,15 +122,11 @@ class PlotKind(StrEnum):
     POINCARE_SECTION = "poincare_section"
     BASINS_IMAGE = "basins_image"
     RECURRENCE_PLOT = "recurrence_plot"
-    POWER_SPECTRUM = "power_spectrum"
-    SPECTROGRAM = "spectrogram"
     SCALING_FIT = "scaling_fit"
     DIMENSION_SPECTRUM = "dimension_spectrum"
     DIAGNOSTIC_CURVE = "diagnostic_curve"
-    COMPLEXITY_CURVE = "complexity_curve"
     LINE_FAMILY = "line_family"
     ENSEMBLE_FAN = "ensemble_fan"
-    HISTOGRAM_NULL = "histogram_null"
     LYAPUNOV_SPECTRUM = "lyapunov_spectrum"
     EIGENVALUE_PLANE = "eigenvalue_plane"
     FIXED_POINTS_OVERLAY = "fixed_points_overlay"
@@ -137,13 +134,12 @@ class PlotKind(StrEnum):
     PHASE_PORTRAIT_FIELD = "phase_portrait_field"
     CONTINUATION = "continuation"
     CATEGORICAL_BAR = "categorical_bar"
-    FEATURE_BARS = "feature_bars"
-    # animation kinds are the same spec + a leading ``frame`` axis on the data
-    # (animation rendering is deferred; a non-animating backend draws the final
-    # frame — these members stay in the frozen vocabulary so such a spec still
-    # round-trips, even though no shipped backend animates):
-    TRAJECTORY_ANIMATION = "trajectory_animation"
-    ENSEMBLE_ANIMATION = "ensemble_animation"
+    # ── removed in v6 (see tests/test_viz_vocab.py for the reviewed rationale) ──
+    # POWER_SPECTRUM / SPECTROGRAM / HISTOGRAM_NULL / FEATURE_BARS / COMPLEXITY_CURVE
+    # named analyses the v6 scope surgery deleted (transforms / entropy /
+    # surrogate); TRAJECTORY_ANIMATION / ENSEMBLE_ANIMATION were superseded by the
+    # orthogonal ``Animation`` modifier (PR #463).  None of the seven was ever
+    # produced by any code path.
 
     # ── layer marks ───────────────────────────────────────────────────────
     LINE = "line"
@@ -215,10 +211,121 @@ _LAYER_MARKS: frozenset[PlotKind] = frozenset(
 #: Every enum member that is not a layer mark; the two sets partition the enum.
 _SEMANTIC_KINDS: frozenset[PlotKind] = frozenset(set(PlotKind) - _LAYER_MARKS)
 
+#: The layer marks that require 3-D drawing support (see :attr:`PlotSpec.is_three_d`).
+_THREE_D_MARKS: frozenset[PlotKind] = frozenset({PlotKind.LINE3D, PlotKind.SURFACE3D})
+
+
+# ---------------------------------------------------------------------------
+# The save() extension contract (see :meth:`PlotSpec.save`)
+# ---------------------------------------------------------------------------
+
+#: Raster / vector image extensions — written by matplotlib's ``savefig``.
+_IMAGE_EXT: frozenset[str] = frozenset(
+    {".png", ".pdf", ".svg", ".svgz", ".jpg", ".jpeg", ".eps", ".ps", ".pgf", ".tif", ".tiff"}
+)
+#: Movie extensions — written by matplotlib's ``FuncAnimation.save`` (ffmpeg / pillow).
+_MOVIE_EXT: frozenset[str] = frozenset({".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng"})
+#: Web-page extensions — written by a backend's own file writer (plotly / three.js).
+_HTML_EXT: frozenset[str] = frozenset({".html", ".htm"})
+#: Data-export extensions — the PlotSpec IR envelope, or a backend geometry payload.
+_DATA_EXT: frozenset[str] = frozenset({".json"})
+
+#: Every extension :meth:`PlotSpec.save` knows how to write.  An extension outside
+#: this set is rejected up front rather than handed to a backend that will fail
+#: obscurely (or, worse, quietly).
+_WRITABLE_EXT: frozenset[str] = _IMAGE_EXT | _MOVIE_EXT | _HTML_EXT | _DATA_EXT
+
+
+def _extension_of(path: Any) -> str:
+    """Return ``path``'s lower-cased extension including the dot (``""`` if none)."""
+    text = str(path)
+    dot = text.rfind(".")
+    slash = max(text.rfind("/"), text.rfind("\\"))
+    return text[dot:].lower() if dot > slash else ""
+
+
+def _registered_renderer_names() -> set[str] | None:
+    """Return the registered renderer names, or ``None`` if the registry is unusable."""
+    try:
+        from tsdynamics import registry
+        from tsdynamics.viz.render import register_builtin_renderers
+
+        register_builtin_renderers()
+        return set(registry.renderers.names())
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
+def _first_char(path: str) -> str:
+    """Return the first non-whitespace character of the file at ``path`` (``""`` if none).
+
+    The shared primitive behind the two format sniffs below.  Reading a fixed
+    512-byte prefix is enough to classify every format :meth:`PlotSpec.save`
+    writes, and costs nothing next to producing the file.
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(512).lstrip()
+    except OSError:  # pragma: no cover - defensive
+        return ""
+    return head[:1]
+
+
+def _looks_like_markup(path: str) -> bool:
+    """Whether the file at ``path`` opens like an HTML document (``<!doctype`` / ``<``).
+
+    A deliberately dumb sniff on the first non-whitespace character: it is enough
+    to separate a real page from the JSON payload a data-export backend produces,
+    and it stays true for whatever page a backend emits next (it asserts a
+    *format*, not a fixed template).
+    """
+    return _first_char(path) == "<"
+
+
+def _looks_like_json(path: str) -> bool:
+    """Whether the file at ``path`` opens like a JSON document (``{`` / ``[``).
+
+    Used to catch a *data-export* payload written under an image extension.  The
+    sniff cannot false-positive on any image format this library writes: the text
+    ones open with ``<`` (SVG) or ``%`` (EPS / PS / PGF), and the binary ones with
+    their own magic bytes.
+    """
+    return _first_char(path) in ("{", "[")
+
+
+def _renderer_can_save(backend: str, ext: str) -> bool:
+    """Whether ``backend`` advertises that it can write ``ext`` itself.
+
+    The forward-compatible half of the save contract: a backend declares its file
+    formats by exposing ``can_save(ext) -> bool`` on its
+    :class:`~tsdynamics.viz.render.caps.RendererCapabilities` (or on the renderer
+    callable).  A backend that declares nothing answers ``False`` — deliberately,
+    so a format nobody has claimed is rejected loudly instead of silently
+    producing a file with the wrong contents inside it (which is exactly what
+    ``save("x.html", backend="threejs")`` used to do: a JSON document with an
+    ``.html`` name).
+    """
+    try:
+        from tsdynamics import registry
+        from tsdynamics.viz.render import register_builtin_renderers
+
+        register_builtin_renderers()
+        renderer = registry.renderers.get(backend)
+    except Exception:  # pragma: no cover - defensive
+        return False
+    for holder in (getattr(renderer, "capabilities", None), renderer):
+        can_save = getattr(holder, "can_save", None)
+        if callable(can_save):
+            try:
+                return bool(can_save(ext))
+            except Exception:  # pragma: no cover - a backend's own predicate failed
+                return False
+    return False
+
 
 # Type aliases for the public tweak API (one spelling each).  ``"categorical"``
-# joins the numeric scales for a categorical axis (a CATEGORICAL_BAR / FEATURE_BARS
-# x-axis whose tick positions index :attr:`Axis.categories`).
+# joins the numeric scales for a categorical axis (a CATEGORICAL_BAR x-axis whose
+# tick positions index :attr:`Axis.categories`).
 _Scale = Literal["linear", "log", "symlog", "categorical"]
 # A colour *norm* is numeric only (categorical colour is :attr:`Colorbar.discrete`).
 _Norm = Literal["linear", "log", "symlog"]
@@ -265,7 +372,7 @@ class Axis:
     scale : {"linear", "log", "symlog", "categorical"}, optional
         The axis scale.  Default ``"linear"``.  ``"categorical"`` marks an axis
         whose integer tick positions index :attr:`categories` (a
-        ``CATEGORICAL_BAR`` / ``FEATURE_BARS`` category axis).
+        ``CATEGORICAL_BAR`` category axis).
     limits : tuple of float, optional
         ``(lo, hi)`` view limits, or ``None`` to auto-scale.
     ticks : sequence of float, optional
@@ -579,11 +686,16 @@ class Layout:
         New arrangements (picture-in-picture, …) are added here as new modes —
         the structure (``panels`` + ``Layout``) does not change.
     rows, cols : int, optional
-        Explicit grid shape for ``mode="grid"``; ``None`` lets the renderer pick.
+        Explicit grid shape for ``mode="grid"``; ``None`` lets :meth:`grid` pick.
     share_x, share_y : bool, optional
         Whether the panels share an x / y axis (a stacked time-series column
         typically shares x).  Defaults: ``share_x`` follows the mode (stack → True),
         ``share_y`` ``False``.
+    share_color : bool, optional
+        Whether the panels share **one** figure-level colorbar instead of drawing
+        one apiece — the right presentation for a row of basin images across a
+        parameter, where per-panel colorbars repeat the same categorical scale.
+        Default ``False``.
     """
 
     mode: Literal["stack", "row", "grid"] = "stack"
@@ -591,6 +703,43 @@ class Layout:
     cols: int | None = None
     share_x: bool = False
     share_y: bool = False
+    share_color: bool = False
+
+    def grid(self, n_panels: int) -> tuple[int, int]:
+        """Resolve the ``(rows, cols)`` subplot grid for ``n_panels`` panels.
+
+        The **one** implementation of the panel-tiling arithmetic every renderer
+        needs (it lived, byte-identical, in the matplotlib, plotly and three.js
+        backends).  ``"stack"`` is one column, ``"row"`` one row, and ``"grid"``
+        honours whichever of :attr:`rows` / :attr:`cols` is set — filling in the
+        other by ceiling division — or, with neither set, a near-square grid
+        ``cols = ceil(sqrt(n))``.
+
+        Parameters
+        ----------
+        n_panels : int
+            How many panels to tile (at least 1).
+
+        Returns
+        -------
+        tuple of int
+            ``(rows, cols)``, always large enough that ``rows * cols >= n_panels``.
+        """
+        n = max(1, int(n_panels))
+        if self.mode == "stack":
+            return (n, 1)
+        if self.mode == "row":
+            return (1, n)
+        if self.rows is not None and self.cols is not None:
+            return (max(1, int(self.rows)), max(1, int(self.cols)))
+        if self.cols is not None:
+            cols = max(1, int(self.cols))
+            return (-(-n // cols), cols)
+        if self.rows is not None:
+            rows = max(1, int(self.rows))
+            return (rows, -(-n // rows))
+        cols = int(np.ceil(np.sqrt(n)))
+        return (-(-n // cols), cols)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this layout."""
@@ -600,6 +749,7 @@ class Layout:
             "cols": self.cols,
             "share_x": bool(self.share_x),
             "share_y": bool(self.share_y),
+            "share_color": bool(self.share_color),
         }
 
     @classmethod
@@ -611,6 +761,7 @@ class Layout:
             cols=d.get("cols"),
             share_x=bool(d.get("share_x", False)),
             share_y=bool(d.get("share_y", False)),
+            share_color=bool(d.get("share_color", False)),
         )
 
 
@@ -841,7 +992,7 @@ class Layer:
         - ``"err"`` — symmetric error magnitudes for an ``ERRORBAR`` (the error
           bars on a ``DIMENSION_SPECTRUM`` ``D(q)``).
         - ``"cat"`` — integer category indices pairing with the categorical
-          :attr:`Axis.categories` (a ``BAR`` / ``CATEGORICAL_BAR`` / ``FEATURE_BARS``).
+          :attr:`Axis.categories` (a ``BAR`` / ``CATEGORICAL_BAR``).
         - ``"size"`` — per-point marker size for a ``SCATTER``.
         - ``"frames"`` — the per-time field stack of a ``SPATIAL_FIELD`` layer
           (shape ``(T, *spatial)`` — ``(T, Nx)`` for a 1-D profile, ``(T, Ny, Nx)``
@@ -953,6 +1104,35 @@ class PlotSpec:
 
     Because they touch the spec rather than a renderer, the same tweak renders
     identically on every backend.
+
+    **Composite scoping.** Every tweak is classified *panel-scoped* or
+    *figure-scoped* (see :mod:`tsdynamics.viz._tweaks`), and on a
+    :data:`PlotKind.COMPOSITE` a panel-scoped tweak **recurses into every
+    panel** — a composite owns no axes and no layers of its own, so before v6
+    all twelve of them were silent no-ops::
+
+        ts.viz.plot(a, b, layout="stack").recolor("red", "blue").limits(x=(0, 10))
+
+    - panel-scoped (forwarded): :meth:`relabel` (axis labels), :meth:`rescale`,
+      :meth:`limits`, :meth:`ticks`, :meth:`style`, :meth:`recolor`,
+      :meth:`palette`, :meth:`grid`, :meth:`font`, :meth:`colorize`,
+      :meth:`autocolor`, :meth:`camera` (``elev`` / ``azim``).
+    - figure-scoped (not forwarded — panels inherit or must not carry them):
+      ``relabel(title=)``, :meth:`theme`, :meth:`background`, :meth:`size`,
+      :meth:`animate`, :meth:`trail`, :meth:`head`, :meth:`clock`,
+      ``camera(spin=)``.
+
+    Because :meth:`palette` / :meth:`font` / ``grid(color=, alpha=)`` write a
+    *theme* override onto each panel, and a panel's own theme wins over the
+    composite's, set the composite theme **first**:
+    ``spec.theme("dark").palette(...)``, not the other way round.  Taken in that
+    order the panels inherit the composite's theme before overriding it (the
+    forwarding wrapper seeds them — see ``_tweaks.panel_scoped(writes_theme=)``),
+    so a dark composite stays dark.  The reverse order —
+    ``spec.palette(...).theme("dark")`` — still pins a *default*-based theme on
+    each panel that the later composite ``theme()`` cannot rebase, and renders
+    dark figure chrome around light panel axes.  Removing that last trap needs
+    panels to record theme *deltas* rather than materialised themes.
     """
 
     kind: PlotKind
@@ -990,13 +1170,50 @@ class PlotSpec:
     _theme: Theme | None = None
 
     def __post_init__(self) -> None:
-        """Normalize ``kind`` and the optional ``clim`` color range."""
+        """Normalize ``kind`` / ``clim`` and enforce the ``COMPOSITE`` ⟺ ``panels`` invariant.
+
+        Raises
+        ------
+        InvalidParameterError
+            If ``kind`` is :data:`PlotKind.COMPOSITE` but ``panels`` is empty, or
+            ``panels`` is non-empty but ``kind`` is not ``COMPOSITE``.
+        """
         self.kind = PlotKind(self.kind)
         self.clim = _as_pair(self.clim)
+        self._check_composite_invariant()
+
+    def _check_composite_invariant(self) -> None:
+        """Raise unless ``kind is COMPOSITE`` and ``panels`` non-empty agree.
+
+        A composite *is* its panels.  Letting the two drift apart produced the
+        two failure modes this guard closes: a ``COMPOSITE`` with no panels
+        rendered as a blank figure (which is how ``to_plot_spec(kind="composite")``
+        silently threw a trajectory away and saved an empty PNG), and a
+        panel-bearing spec labelled something else had its panels ignored by every
+        renderer.  Both are silent — hence a construction-time error, not a
+        render-time one.
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        if self.kind is PlotKind.COMPOSITE and not self.panels:
+            raise InvalidParameterError(
+                "a COMPOSITE PlotSpec must carry at least one panel; build one with "
+                "tsdynamics.viz.plot(..., layout='stack'/'row'/'grid'). "
+                "(A composite is its panels — an empty one renders as a blank figure.)"
+            )
+        if self.panels and self.kind is not PlotKind.COMPOSITE:
+            raise InvalidParameterError(
+                f"a PlotSpec with panels must have kind=COMPOSITE, got {self.kind.value!r}; "
+                "every renderer dispatches on the kind, so these panels would be ignored."
+            )
 
     @property
     def is_composite(self) -> bool:
-        """Whether this spec is a multi-panel composite (has child ``panels``)."""
+        """Whether this spec is a multi-panel composite (has child ``panels``).
+
+        By the construction invariant the two halves are equivalent — a
+        ``COMPOSITE`` kind always has panels and vice versa.
+        """
         return bool(self.panels) or self.kind == PlotKind.COMPOSITE
 
     @property
@@ -1004,8 +1221,58 @@ class PlotSpec:
         """Whether this spec carries an :class:`Animation` directive."""
         return self.animation is not None
 
+    @property
+    def is_three_d(self) -> bool:
+        """Whether this spec draws in 3-D (the one definition every backend shares).
+
+        True when the spec declares ``ndim == 3``, carries a ``z`` axis, or holds
+        any 3-D mark (``LINE3D`` / ``SURFACE3D``) — and, for a composite, when
+        **any** panel is 3-D.
+
+        This predicate lived in three byte-identical copies (the capability
+        check, the matplotlib renderer and the plotly renderer).  It is a property
+        of the *spec*, so it belongs here; a renderer that disagreed with the
+        capability check about what "3-D" means is a dispatch bug waiting to
+        happen.  The single-panel answer is deliberately **identical** to those
+        copies (the panel recursion is the only addition — it is what the copies
+        got by being called once per panel).
+        """
+        if self.panels:
+            return any(p.is_three_d for p in self.panels)
+        if self.ndim == 3 or self.z is not None:
+            return True
+        return any(lyr.kind in _THREE_D_MARKS for lyr in self.layers)
+
+    def resolved_panels(self) -> list[PlotSpec]:
+        """Return this composite's panels with the figure-level context pushed down.
+
+        The composite's :attr:`_theme` and :attr:`animation` are *inherited* by a
+        panel that declares none of its own — the documented resolution order
+        (``panel.theme or composite.theme or get_theme(None)``, and one lockstep
+        master clock).  Every renderer used to hand-copy that inheritance at its
+        own composite site; this is the single implementation they iterate.
+
+        The panels are **copies** (``dataclasses.replace``), so pushing the
+        context down never mutates the spec the caller holds.  A non-composite
+        spec returns ``[]``.
+
+        Returns
+        -------
+        list of PlotSpec
+            One resolved panel per :attr:`panels` entry, in order.
+        """
+        from dataclasses import replace as _dc_replace
+
+        out: list[PlotSpec] = []
+        for panel in self.panels:
+            theme = panel._theme if panel._theme is not None else self._theme
+            animation = panel.animation if panel.animation is not None else self.animation
+            out.append(_dc_replace(panel, _theme=theme, animation=animation))
+        return out
+
     # -- uniform, backend-independent tweaks (mutate + return self) ---------
 
+    @panel_scoped(figure_only=("title",))
     def relabel(
         self,
         *,
@@ -1038,6 +1305,7 @@ class PlotSpec:
             self.title = title
         return self
 
+    @panel_scoped()
     def rescale(
         self,
         *,
@@ -1065,6 +1333,7 @@ class PlotSpec:
             self.z.scale = z
         return self
 
+    @panel_scoped()
     def limits(
         self,
         *,
@@ -1092,6 +1361,7 @@ class PlotSpec:
             self.z.limits = z
         return self
 
+    @panel_scoped()
     def ticks(
         self,
         *,
@@ -1119,6 +1389,7 @@ class PlotSpec:
             self.z.ticks = list(z)
         return self
 
+    @panel_scoped()
     def style(self, *, layer: int | None = None, axes: bool | None = None, **kw: Any) -> PlotSpec:
         """Merge backend-neutral style keys into one layer or every layer.
 
@@ -1153,8 +1424,18 @@ class PlotSpec:
             lyr.style.update(canon)
         return self
 
+    @panel_scoped_custom
     def recolor(self, *colors: str, layer: int | None = None) -> PlotSpec:
         """Assign explicit colors to layers (the per-layer color shorthand).
+
+        Parameters
+        ----------
+        On a **composite** the unit of colour is a *panel*, not a layer: colour
+        ``i`` goes to panel ``i`` (cycling), so
+        ``ts.viz.plot(a, b, layout="stack").recolor("red", "blue")`` gives a red
+        figure on top of a blue one — the obvious reading, and the only one that
+        can be expressed (the composite owns no layers of its own).  Pass
+        ``layer=`` to address a layer *within* every panel instead.
 
         Parameters
         ----------
@@ -1171,6 +1452,14 @@ class PlotSpec:
             ``self``, for chaining.
         """
         if not colors:
+            return self
+        if self.panels:
+            n_c = len(colors)
+            for i, panel in enumerate(self.panels):
+                if layer is not None:
+                    panel.recolor(colors[i % n_c], layer=layer)
+                else:
+                    panel.recolor(colors[i % n_c])
             return self
         if layer is not None:
             self.layers[layer].style["color"] = colors[0]
@@ -1197,6 +1486,7 @@ class PlotSpec:
         """
         return self._theme if self._theme is not None else get_theme(None)
 
+    @figure_scoped
     def theme(self, theme: str | Theme | None = None, /, **overrides: Any) -> PlotSpec:
         """Set this spec's figure-level :class:`~tsdynamics.viz.style.Theme`.
 
@@ -1250,6 +1540,7 @@ class PlotSpec:
         self._theme = base.merged(**overrides) if overrides else base
         return self
 
+    @panel_scoped(writes_theme=True)
     def palette(self, colors: str | Sequence[str]) -> PlotSpec:
         """Set the theme's color cycle (a named palette or an explicit list).
 
@@ -1270,6 +1561,7 @@ class PlotSpec:
         self._theme = base.merged(palette=resolve_palette(colors))
         return self
 
+    @panel_scoped(writes_theme=True)
     def grid(
         self,
         show: bool = True,
@@ -1314,6 +1606,7 @@ class PlotSpec:
             self._theme = base.merged(**overrides)
         return self
 
+    @panel_scoped(writes_theme=True)
     def font(self, family: str | None = None, size: float | None = None) -> PlotSpec:
         """Set the theme font family and/or size.
 
@@ -1339,6 +1632,7 @@ class PlotSpec:
             self._theme = base.merged(**overrides)
         return self
 
+    @figure_scoped
     def background(self, color: str) -> PlotSpec:
         """Set the theme background (figure / axes facecolor).
 
@@ -1356,6 +1650,7 @@ class PlotSpec:
         self._theme = base.merged(background=color)
         return self
 
+    @figure_scoped
     def size(
         self,
         width: float | None = None,
@@ -1394,10 +1689,14 @@ class PlotSpec:
         """Whether ``style(axes=False)`` asked to hide the axes (renderer helper)."""
         return isinstance(self.meta, dict) and self.meta.get("axes_visible") is False
 
+    @panel_scoped()
     def colorize(
         self,
         *,
         clim: tuple[float, float] | None = None,
+        cmap: str | None = None,
+        norm: _Norm | None = None,
+        discrete: bool | None = None,
         colorbar: Colorbar | bool | None = None,
         legend: Legend | bool | None = None,
     ) -> PlotSpec:
@@ -1411,6 +1710,17 @@ class PlotSpec:
         clim : tuple of float, optional
             ``(vmin, vmax)`` color range, coerced to floats.  Leaves
             :attr:`clim` unchanged when omitted.
+        cmap : str, optional
+            Colormap name for the color channel (``"viridis"``, ``"tab20"``, …).
+            Written onto the spec's :class:`Colorbar` — **creating** one if the
+            spec has none, because a colormap is meaningless without the color
+            legend that documents it.  This is the spelling every caller reaches
+            for first; before v6 it raised ``TypeError``.
+        norm : {"linear", "log", "symlog"}, optional
+            How the color *data* maps onto the colormap.
+        discrete : bool, optional
+            Whether the color channel is categorical (one swatch per label — a
+            basin / attractor index image) rather than a continuous ramp.
         colorbar : Colorbar or bool, optional
             A :class:`Colorbar` to attach, or ``True`` to attach a default one /
             ``False`` to drop it.  Omitting it leaves :attr:`colorbar`
@@ -1430,6 +1740,15 @@ class PlotSpec:
             self.colorbar = Colorbar() if colorbar is True else (colorbar or None)
         if legend is not None:
             self.legend = Legend() if legend is True else (legend or None)
+        if cmap is not None or norm is not None or discrete is not None:
+            if self.colorbar is None:
+                self.colorbar = Colorbar()
+            if cmap is not None:
+                self.colorbar.cmap = cmap
+            if norm is not None:
+                self.colorbar.norm = norm
+            if discrete is not None:
+                self.colorbar.discrete = bool(discrete)
         return self
 
     # -- animation tweaks (mutate + return self; also turn animation on) ----
@@ -1440,6 +1759,7 @@ class PlotSpec:
             self.animation = Animation()
         return self.animation
 
+    @figure_scoped
     def animate(
         self,
         *,
@@ -1491,6 +1811,7 @@ class PlotSpec:
             a.mode = mode
         return self
 
+    @figure_scoped
     def trail(
         self,
         length: tuple[Literal["time", "steps"], float] | None = _UNSET,
@@ -1524,6 +1845,7 @@ class PlotSpec:
             a.trail_fade = bool(fade)
         return self
 
+    @figure_scoped
     def head(
         self,
         show: bool | None = None,
@@ -1561,6 +1883,10 @@ class PlotSpec:
             a.head_symbol = symbol
         return self
 
+    # ``elev`` / ``azim`` are a *panel*'s viewing angle (each 3-D axes has its
+    # own camera) and forward; ``spin`` is the figure's animation timeline and
+    # must not become one desynchronised per-panel Animation.
+    @panel_scoped(figure_only=("spin",))
     def camera(
         self,
         *,
@@ -1597,6 +1923,7 @@ class PlotSpec:
             self._ensure_animation().spin = float(spin)
         return self
 
+    @figure_scoped
     def clock(self, show: bool = True, *, fmt: str | None = None) -> PlotSpec:
         """Show (or hide) a live time readout that updates each frame.
 
@@ -1627,7 +1954,6 @@ class PlotSpec:
             PlotKind.BASINS_IMAGE,
             PlotKind.RECURRENCE_PLOT,
             PlotKind.SPACETIME,
-            PlotKind.SPECTROGRAM,
         }
     )
 
@@ -1646,6 +1972,7 @@ class PlotSpec:
                 return True
         return False
 
+    @panel_scoped()
     def autocolor(self) -> PlotSpec:
         """Attach a :class:`Colorbar` and infer :attr:`clim` for a colored spec.
 
@@ -1748,6 +2075,17 @@ class PlotSpec:
     ) -> str:
         """Render and write the figure (or animation) to ``path``; return the path.
 
+        **The contract (v6): this method never returns a path it did not write.**
+        It resolves ``(extension, backend)`` to a writer and either writes the
+        file or raises :class:`~tsdynamics.errors.InvalidParameterError` naming a
+        combination that works.  Previously an unsupported pair — an animated
+        composite to ``.html``, say — returned the path having written nothing,
+        which is the worst failure mode in this layer: the caller believes a
+        figure exists.  The guarantee is enforced twice: unsupported pairs are
+        rejected up front, and the written file is **verified to exist and be
+        non-empty** afterwards, so a backend that silently declines is caught even
+        if this table does not know about it.
+
         When ``backend`` is not given, one is chosen from the file extension. For a
         **static** spec: a raster / vector image (``.png`` / ``.pdf`` / ``.svg`` /
         ``.jpg``) prefers the always-present matplotlib reference renderer,
@@ -1756,6 +2094,19 @@ class PlotSpec:
         ``.html`` prefers plotly (an interactive scrubber), while ``.mp4`` / ``.gif``
         go to matplotlib (its :class:`~matplotlib.animation.FuncAnimation` writes
         them via ffmpeg / pillow); a still image renders the final frame.
+
+        ``.html`` is written through the renderer's own file writer
+        (``render(path=...)``), **not** by materialising a figure and inlining a
+        JavaScript bundle into it: the same 2-D Lorenz spec is 0.05 MB the first
+        way and 4.90 MB the second (**98x**), because plotly's default embeds its
+        whole library in every page.
+
+        .. note::
+           ``.json`` is **two** formats behind one extension.  The default
+           (``backend="json"``) writes the :class:`PlotSpec` **IR envelope** — the
+           thing :meth:`from_dict` reads back.  ``backend="threejs"`` writes the
+           three.js **geometry payload** (buffers + metadata), which is not a
+           PlotSpec.  Pass ``backend=`` to disambiguate.
 
         Parameters
         ----------
@@ -1774,40 +2125,64 @@ class PlotSpec:
         **backend_kw
             Forwarded to the renderer.
 
+        Returns
+        -------
+        str
+            ``path`` — and the file at ``path`` exists.
+
         Raises
         ------
+        InvalidParameterError
+            If the extension is not a format this library writes, if the
+            ``(extension, backend)`` pair has no writer, or if the chosen backend
+            returned without writing the file.
         TypeError
             If the produced result is neither a savable figure / animation nor a
             data-export write.
         """
+        ext = _extension_of(path)
         if backend is None:
             backend = self._preferred_save_backend(path)
+        self._check_save_supported(ext, backend)
+        self._write(path, ext, backend, fps=fps, dpi=dpi, size=size, **backend_kw)
+        self._verify_written(path, ext, backend)
+        return path
+
+    def _write(
+        self,
+        path: str,
+        ext: str,
+        backend: str | None,
+        *,
+        fps: float | None,
+        dpi: float | None,
+        size: tuple[float, float] | None,
+        **backend_kw: Any,
+    ) -> None:
+        """Perform the write for a resolved ``(extension, backend)`` pair."""
         if backend in ("json", "threejs"):
-            # The data-export backends write the file themselves (and return the path).
+            # The data-export backends write the file themselves.
             self.render(backend, path=path, **backend_kw)
-            return path
-        _lower = str(path).lower()
-        _movie = (".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng")
-        if self.is_animated and backend == "plotly" and _lower.endswith((".html", ".htm")):
-            # Animated HTML → the plotly backend's real-time (rAF + restyle) export,
-            # which writes the file itself (a smooth, rotatable-while-playing page).
+            return
+        if ext in _HTML_EXT and backend == "plotly":
+            # Route through the renderer's own writer: it emits a CDN-referencing
+            # page (0.05 MB) instead of plotly's bundle-inlining default (4.90 MB),
+            # and it is the same code path for a static figure and the animated
+            # real-time (rAF + extendTraces) export.
             self.render("plotly", path=path, **backend_kw)
-            return path
-        if (
-            self.is_animated
-            and not _lower.endswith(_movie)
-            and not _lower.endswith((".html", ".htm"))
-        ):
-            # A still image (.png / .pdf / .svg / …) of an animated spec is its
+            return
+        if self.is_animated and ext not in _MOVIE_EXT and ext not in _HTML_EXT:
+            # A still image (.png / .pdf / .svg / ...) of an animated spec is its
             # final, fully-revealed frame: render the static spec and write that.
             static = PlotSpec.from_dict({**self.to_dict(), "animation": None})
-            return static.save(path, backend=backend, dpi=dpi, size=size, **backend_kw)
+            static.save(path, backend=backend, dpi=dpi, size=size, **backend_kw)
+            return
         if size is not None and "figsize" not in backend_kw:
             w, h = size
             scale = float(dpi) if dpi else 100.0
             backend_kw["figsize"] = (float(w) / scale, float(h) / scale)
         result = self.render(backend, **backend_kw)
-        # A matplotlib animation (FuncAnimation — uniquely carries ``to_jshtml``)
+        # A matplotlib animation (FuncAnimation - uniquely carries ``to_jshtml``)
         # writes mp4 / gif via its own ``.save`` (writer inferred from the extension).
         if hasattr(result, "to_jshtml") and callable(getattr(result, "save", None)):
             anim_kw: dict[str, Any] = {}
@@ -1816,51 +2191,155 @@ class PlotSpec:
             if dpi is not None:
                 anim_kw["dpi"] = float(dpi)
             result.save(path, **anim_kw)
-            return path
+            return
         figure = getattr(result, "figure", result)
         savefig = getattr(figure, "savefig", None)
         if callable(savefig):
             savefig(path, **({"dpi": float(dpi)} if dpi is not None else {}))
-            return path
-        if str(path).endswith((".html", ".htm")):
+            return
+        if ext in _HTML_EXT:
             write_html = getattr(figure, "write_html", None)
             if callable(write_html):
                 write_html(path)
-                return path
+                return
         write_image = getattr(figure, "write_image", None)
         if callable(write_image):
             write_image(path)
-            return path
+            return
         raise TypeError(
             f"the {backend or 'selected'} backend produced a non-savable result "
             f"({type(figure).__name__}); use .to_dict() to serialize it instead."
         )
 
+    def _check_save_supported(self, ext: str, backend: str | None) -> None:
+        """Reject an ``(extension, backend)`` pair that has no writer.
+
+        The *up-front* half of the save contract (:meth:`_verify_written` is the
+        after-the-fact half).  Rejecting early lets the message name a
+        combination that works instead of reporting a missing file.
+
+        A backend can **override** any pair below by declaring
+        ``can_save(ext) -> True`` on its capabilities (see
+        :func:`_renderer_can_save`) — that is the published extension point, so a
+        backend that grows a new writer does not need this table edited.
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        if ext not in _WRITABLE_EXT:
+            raise InvalidParameterError(
+                f"cannot save to {ext or '(no extension)'!r}: unsupported format. "
+                f"Writable extensions are {', '.join(sorted(_WRITABLE_EXT))}."
+            )
+        if self.is_animated and self.is_composite and ext in _HTML_EXT and backend == "plotly":
+            # A *spec*-level decline, checked before the ``can_save`` escape hatch:
+            # plotly can write .html in general (so it claims the format), but its
+            # animation export is single-panel.  Previously the decline was
+            # swallowed and ``save`` returned the path having written nothing.
+            raise InvalidParameterError(
+                "plotly cannot animate a composite (its animation export is "
+                "single-panel); save to .mp4 / .gif (matplotlib writes them), or "
+                "render the panels separately and save each to .html."
+            )
+        if backend is not None and _renderer_can_save(backend, ext):
+            return  # the backend claims this format outright
+        if backend is None:  # dispatch default - let render() report a missing backend
+            return
+        if ext in _DATA_EXT and backend not in ("json", "threejs"):
+            raise InvalidParameterError(
+                f"the {backend!r} backend does not write {ext}; use backend='json' "
+                "(the PlotSpec IR envelope) or backend='threejs' (the geometry payload)."
+            )
+        if ext in _IMAGE_EXT and backend in ("json", "threejs"):
+            # The mirror image of the rule above, and the one that was missing: the
+            # data-export backends *serialize*, they do not draw.  Handed an image
+            # path they used to write their JSON payload into it verbatim, so
+            # ``save("attractor.png", backend="threejs")`` produced a JSON document
+            # named ``.png`` — the same silent wrong-format write that
+            # ``save("x.html", backend="threejs")`` used to make, one extension over.
+            raise InvalidParameterError(
+                f"the {backend!r} backend does not draw, so it cannot write {ext} "
+                "(it serializes the figure). Use backend='matplotlib' for a raster / "
+                f"vector image, or keep backend={backend!r} and save to .json "
+                "(backend='threejs' also writes an embeddable .html viewer page)."
+            )
+        if ext in _MOVIE_EXT and backend != "matplotlib":
+            raise InvalidParameterError(
+                f"the {backend!r} backend cannot write {ext}; animations are written "
+                "by matplotlib (ffmpeg / pillow) - use backend='matplotlib', or save "
+                "to .html for the plotly interactive export."
+            )
+        if ext in _HTML_EXT and backend == "matplotlib":
+            raise InvalidParameterError(
+                "the matplotlib backend does not write .html; use backend='plotly' "
+                "(an interactive page) or backend='threejs' (an embeddable 3-D "
+                "viewer), or save to .png / .pdf / .svg."
+            )
+
+    @staticmethod
+    def _verify_written(path: str, ext: str, backend: str | None) -> None:
+        """Raise unless ``path`` now holds a non-empty file of the right *format*.
+
+        The backstop that makes "``save`` never returns a path it did not write"
+        true *by construction* rather than by the completeness of a table: a
+        backend that declines a spec and returns quietly is caught here, and so is
+        a backend that writes the **wrong kind of document** under the requested
+        extension — which is what ``save("x.html", backend="threejs")`` did (a
+        142 KB JSON payload named ``.html``, which no browser can open).  A
+        mis-formatted file is removed before raising, so a failed ``save`` never
+        leaves a misleading artifact behind.
+        """
+        import os
+
+        from tsdynamics.errors import InvalidParameterError
+
+        try:
+            written = os.path.getsize(path) > 0
+        except OSError:
+            written = False
+        if not written:
+            raise InvalidParameterError(
+                f"the {backend or 'selected'} backend did not write {path!r} "
+                f"(no file, or an empty one) - it cannot produce {ext}. "
+                "Choose another backend= or another extension; save() never "
+                "reports success for a file it did not write."
+            )
+        if ext in _HTML_EXT and not _looks_like_markup(path):
+            os.unlink(path)
+            raise InvalidParameterError(
+                f"the {backend or 'selected'} backend wrote {path!r}, but it is not an "
+                "HTML document (it does not begin with markup) - a browser cannot open "
+                "it. Use backend='plotly' for an interactive page, or save the payload "
+                "to .json. The file has been removed."
+            )
+        if ext in _IMAGE_EXT and _looks_like_json(path):
+            os.unlink(path)
+            raise InvalidParameterError(
+                f"the {backend or 'selected'} backend wrote {path!r}, but it is a JSON "
+                f"document, not {ext} - it serialized the figure instead of drawing it. "
+                "Use backend='matplotlib' for an image, or save to .json. The file has "
+                "been removed."
+            )
+
     def _preferred_save_backend(self, path: str) -> str | None:
         """Pick a save backend from ``path``'s extension (``None`` = dispatch default).
 
-        Static specs: ``.json`` → json exporter, ``.html`` → plotly, everything else
-        → the matplotlib reference renderer.  Animated specs: ``.html`` → plotly (an
+        Static specs: ``.json`` -> json exporter, ``.html`` -> plotly, everything else
+        -> the matplotlib reference renderer.  Animated specs: ``.html`` -> plotly (an
         interactive scrubber), everything else (``.mp4`` / ``.gif`` / a still frame)
-        → matplotlib.  Falls back to the dispatch default when the preferred backend
+        -> matplotlib.  Falls back to the dispatch default when the preferred backend
         is not registered.
         """
-        try:
-            from tsdynamics import registry
-            from tsdynamics.viz.render import register_builtin_renderers
-
-            register_builtin_renderers()
-            names = set(registry.renderers.names())
-        except Exception:  # pragma: no cover - defensive
+        names = _registered_renderer_names()
+        if names is None:
             return None
-        p = str(path).lower()
+        ext = _extension_of(path)
         if self.is_animated:
-            if p.endswith((".html", ".htm")) and "plotly" in names:
+            if ext in _HTML_EXT and "plotly" in names:
                 return "plotly"
             return "matplotlib" if "matplotlib" in names else None
-        if p.endswith(".json") and "json" in names:
+        if ext in _DATA_EXT and "json" in names:
             return "json"
-        if p.endswith((".html", ".htm")) and "plotly" in names:
+        if ext in _HTML_EXT and "plotly" in names:
             return "plotly"
         if "matplotlib" in names:
             return "matplotlib"

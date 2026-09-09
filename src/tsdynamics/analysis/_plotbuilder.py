@@ -52,6 +52,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "area",
+    "axis_labels",
     "bar",
     "diagonal",
     "errorbar",
@@ -67,6 +68,55 @@ __all__ = [
     "text",
     "vline",
 ]
+
+
+# ---------------------------------------------------------------------------
+# State-space axis labels
+# ---------------------------------------------------------------------------
+
+
+def axis_labels(
+    meta: Mapping[str, Any] | None,
+    indices: Sequence[int],
+    *,
+    fallback: str = "x",
+) -> list[str]:
+    """Resolve state-space axis labels for ``indices`` from a result's ``meta``.
+
+    A system that declares ``variables`` knows its coordinates are ``x`` / ``y`` /
+    ``z`` (or ``theta`` / ``omega``, or ``S`` / ``I`` / ``R``); a result plot that
+    labels them ``$x_0$`` / ``$x_1$`` throws that away and leaves the reader to
+    relabel the figure by hand.  This helper reads the ``variables`` tuple a
+    result records in its provenance and falls back to the indexed spelling
+    (``$x_0$``) only when the system genuinely declares no names.
+
+    Parameters
+    ----------
+    meta : mapping, optional
+        The result's provenance (``AnalysisResult.meta``).
+    indices : sequence of int
+        The state-vector component indices being plotted, in axis order.
+    fallback : str, optional
+        Symbol used for the indexed fallback spelling.  Default ``"x"``.
+
+    Returns
+    -------
+    list of str
+        One label per requested index, ready for
+        :class:`~tsdynamics.viz.spec.Axis`.
+    """
+    names: Sequence[Any] | None = None
+    if meta is not None:
+        candidate = meta.get("variables")
+        if isinstance(candidate, (list, tuple)) and candidate:
+            names = candidate
+    out: list[str] = []
+    for i in indices:
+        if names is not None and 0 <= i < len(names) and names[i]:
+            out.append(f"${names[i]}$")
+        else:
+            out.append(f"${fallback}_{{{i}}}$")
+    return out
 
 
 # ---------------------------------------------------------------------------

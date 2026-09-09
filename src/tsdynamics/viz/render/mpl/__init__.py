@@ -33,6 +33,17 @@ __all__ = ["register"]
 #: The registry name the matplotlib backend registers under.
 _BACKEND_NAME = "matplotlib"
 
+#: The file extensions this backend can **write** (see
+#: :meth:`~tsdynamics.viz.render.caps.RendererCapabilities.can_save`).  The raster
+#: / vector formats go through ``Figure.savefig``; ``.mp4`` / ``.gif`` go through
+#: :class:`~matplotlib.animation.FuncAnimation`'s own ``save`` (ffmpeg / pillow)
+#: and are the **only** way this library writes a movie — plotly's animation core
+#: is single-panel HTML, so an animated composite must land here.
+_WRITES: frozenset[str] = frozenset(
+    {".png", ".pdf", ".svg", ".svgz", ".jpg", ".jpeg", ".eps", ".ps", ".tif", ".tiff", ".webp"}
+    | {".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng"}
+)
+
 
 def _matplotlib_available() -> bool:
     """Whether matplotlib can be imported (the backend only registers if so)."""
@@ -83,7 +94,7 @@ def register(registry: Registry) -> bool:
     if _BACKEND_NAME in registry:
         return False
 
-    capabilities = RendererCapabilities.all_kinds(_BACKEND_NAME, supports_3d=True)
+    capabilities = RendererCapabilities.all_kinds(_BACKEND_NAME, supports_3d=True, writes=_WRITES)
 
     def _render(spec: Any, /, **kw: Any) -> Any:
         # Import the drawing core lazily so registration pulls matplotlib in only

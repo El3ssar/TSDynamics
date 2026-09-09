@@ -97,6 +97,12 @@ module-name = "tsdynamics._rust"
 python-source = "src"
 manifest-path = "crates/tsdyn-core/Cargo.toml"
 features = ["extension-module"]
+# Non-Python package data that MUST travel in the wheel.  The three.js reference
+# loader is library code, not documentation: `spec.save("x.html", backend="threejs")`
+# inlines it into the emitted page, so a wheel without it cannot produce a working
+# web export.  (Before v6 the loader lived only under docs/, i.e. in no wheel at
+# all, while the docs told users to copy it.)
+include = ["tsdynamics/viz/render/threejs/_assets/*.js"]
 
 # ── Release automation — python-semantic-release ───────────────────────────────
 # Version bumps are computed from conventional commit messages on main:
@@ -201,13 +207,12 @@ disable_error_code = ["override", "no-untyped-def", "no-untyped-call"]
 
 [tool.coverage.run]
 source = ["src/tsdynamics"]
-# The mpl and plotly renderer backends require optional packages that are not
-# installed in CI.  Their test modules already skip via pytest.importorskip, so
-# excluding them from measurement avoids an artificial coverage gap.
-omit = [
-  "*/viz/render/mpl/*",
-  "*/viz/render/plotly/*",
-]
+# NOTE: there is deliberately no `omit` here.  An earlier `omit` excluded
+# `*/viz/render/mpl/*` and `*/viz/render/plotly/*` on the premise that matplotlib
+# and plotly "are not installed in CI".  That premise was stale — both are
+# installed (the `viz` extra), both renderer packages are 83-95% covered, and the
+# exclusion hid ~2,186 statements from the report.  Since `viz` is a headline
+# feature, its coverage is measured like everything else.
 
 [tool.coverage.report]
 show_missing = true

@@ -313,3 +313,81 @@ def test_composing_imports_no_plot_library():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert "NO_PLOT_LIBS" in out.stdout
+
+
+# ---------------------------------------------------------------------------
+# H3 — composite as a first-class figure (v6 Phase 5, Owner A)
+# ---------------------------------------------------------------------------
+
+
+def test_grid_layout_accepts_an_explicit_shape():
+    """``rows=`` / ``cols=`` reach the Layout.
+
+    ``Layout`` always carried the fields, but ``plot()`` had no way to set them —
+    so a 4-panel grid was stuck on the auto-derived 2x2 and a 1x4 could not be
+    asked for at all.
+    """
+    panels = [viz.plot(_lorenz(), components=c) for c in ("x", "y", "z")]
+    spec = viz.plot(*panels, layout="grid", rows=1, cols=3)
+    assert (spec.layout.rows, spec.layout.cols) == (1, 3)
+    assert spec.layout.grid(3) == (1, 3)
+
+
+def test_grid_without_a_shape_stays_near_square():
+    panels = [viz.plot(_lorenz(), components=c) for c in ("x", "y", "z")]
+    spec = viz.plot(*panels, layout="grid")
+    assert spec.layout.grid(3) == (2, 2)
+
+
+def test_explicit_share_flags_override_the_auto_default():
+    tsx = viz.plot(_lorenz(), components="x")
+    tsy = viz.plot(_lorenz(), components="y")
+    # auto would say True for a same-x time-series stack; the explicit flag wins
+    assert viz.plot(tsx, tsy, layout="stack", share_x=False).layout.share_x is False
+    assert viz.plot(tsx, tsy, layout="row", share_y=True).layout.share_y is True
+    assert viz.plot(tsx, tsy, layout="row", share_color=True).layout.share_color is True
+
+
+def test_layout_keywords_are_rejected_for_an_overlay():
+    """An overlay is one set of axes — a grid shape there has no meaning."""
+    with pytest.raises(InvalidParameterError, match="layout='overlay'"):
+        viz.plot(_lorenz(), _lorenz(), rows=2)
+
+
+def test_flattening_a_child_composite_keeps_its_theme_and_animation():
+    """A flattened child's figure-level context is pushed down, not discarded.
+
+    Before v6 ``plot(plot(a, b).theme("dark"), c, layout="stack")`` silently lost
+    the dark theme: ``_composite`` extended with ``spec.panels`` directly, so the
+    child's ``_theme`` / ``animation`` (which live on the child, not its panels)
+    went nowhere.
+    """
+    inner = viz.plot(
+        viz.plot(_lorenz(), components="x"),
+        viz.plot(_lorenz(), components="y"),
+        layout="row",
+    ).theme("dark")
+    inner.animate(fps=15.0)
+    outer = viz.plot(inner, viz.plot(_lorenz(), components="z"), layout="stack")
+    assert len(outer.panels) == 3
+    inherited = outer.panels[:2]
+    assert all(p.resolved_theme.name == "dark" for p in inherited)
+    assert all(p.animation is not None and p.animation.fps == 15.0 for p in inherited)
+    # ... and the arrangement it could not keep is recorded, not vanished.
+    assert outer.meta["flattened_layouts"] == ["row"]
+
+
+def test_composite_tweaks_reach_the_panels_end_to_end():
+    """The user-facing spelling of F1: a tweak chained on ``ts.viz.plot(...)`` lands."""
+    spec = viz.plot(
+        viz.plot(_lorenz(), components="x"),
+        viz.plot(_lorenz(), components="y"),
+        layout="stack",
+    )
+    before = [p.to_dict() for p in spec.panels]
+    spec.recolor("red", "blue").limits(x=(0.0, 5.0)).relabel(x="t", title="two views")
+    after = [p.to_dict() for p in spec.panels]
+    assert all(b != a for b, a in zip(before, after, strict=True))
+    assert [p.layers[0].style["color"] for p in spec.panels] == ["red", "blue"]
+    assert all(p.x.limits == (0.0, 5.0) and p.x.label == "t" for p in spec.panels)
+    assert spec.title == "two views" and all(p.title != "two views" for p in spec.panels)

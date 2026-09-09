@@ -296,3 +296,45 @@ def test_import_tsdynamics_pulls_no_plot_library():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "ok"
+
+
+# ---------------------------------------------------------------------------
+# The versioned JSON envelope is a public, reachable round trip
+# ---------------------------------------------------------------------------
+#
+# ``viz/export.py`` writes the envelope that ``spec.save("fig.json")`` and
+# ``spec.render("json")`` produce, but its *load* half had no non-test caller and
+# ``ts.viz.from_json`` did not resolve — so the round trip was one-way in
+# practice.  Reading a saved spec back is half the "ship a plot to the web"
+# story, so the pair is promoted to the public ``tsdynamics.viz`` API rather than
+# deleted.
+
+
+def test_export_round_trip_is_reachable_from_the_public_viz_namespace():
+    """``ts.viz.to_json`` / ``from_json`` resolve and round-trip a spec losslessly."""
+    import tsdynamics as ts
+
+    spec = _sample_spec()
+    restored = ts.viz.from_json(ts.viz.to_json(spec))
+    assert restored.to_dict() == spec.to_dict()
+
+
+def test_export_names_are_in_the_curated_viz_all():
+    """The loader half is *listed*, not merely importable (it shows in ``dir()``)."""
+    import tsdynamics as ts
+
+    for name in ("to_json", "from_json", "to_dict_envelope", "from_dict_envelope"):
+        assert name in ts.viz.__all__, name
+        assert name in dir(ts.viz), name
+    assert ts.viz.SCHEMA_VERSION >= 3
+
+
+def test_a_saved_json_file_loads_back_through_the_public_reader(tmp_path):
+    """The file ``spec.save(...json)`` writes is exactly what ``from_json`` reads."""
+    import tsdynamics as ts
+
+    spec = _sample_spec()
+    path = spec.save(tmp_path / "fig.json", backend="json")
+    restored = ts.viz.from_json(path.read_text())
+    assert restored.kind is spec.kind
+    assert restored.to_dict() == spec.to_dict()

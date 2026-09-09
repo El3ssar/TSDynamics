@@ -68,7 +68,29 @@ __all__ = [
 #:       (``label_size``).  All new fields are optional with
 #:       :meth:`~tsdynamics.viz.spec.PlotSpec.from_dict`-tolerated defaults, so a
 #:       v1 payload loads without error (old fields are absent → default values).
-SCHEMA_VERSION = 2
+#:   3 — web-export overhaul (stream VIZ-WEB-EXPORT).  This bump is about the
+#:       **threejs geometry payload**, which stamps the same version: it gained a
+#:       vertex cap (``metadata.resample``) and shed three redundant blocks — a
+#:       ``"line"`` geometry no longer carries an ``indices`` buffer (a polyline's
+#:       vertex order is its draw order), a scalar ``"c"`` channel replaces the
+#:       pre-expanded per-vertex ``"colors"`` RGB, and ``metadata.units`` (which
+#:       carried axis *tickformats*, not units, and which no consumer read) is
+#:       gone.  A v2 threejs payload still loads in the reference loader, which
+#:       accepts both spellings.  The ``PlotSpec`` envelope itself is unchanged,
+#:       so :func:`from_json` reads a v1 / v2 / v3 document identically.
+#:
+#: **Not a bump — the v6 vocabulary narrowing.**  The v6 surgery removed seven
+#: never-produced semantic kinds from :class:`~tsdynamics.viz.spec.PlotKind`
+#: (``power_spectrum`` / ``spectrogram`` / ``histogram_null`` / ``feature_bars`` /
+#: ``complexity_curve`` / ``trajectory_animation`` / ``ensemble_animation``; see
+#: ``tests/test_viz_vocab.py``).  The *envelope* is untouched and every field is
+#: read exactly as before, so the version does not move.  The one visible
+#: consequence: an old document whose ``"kind"`` names one of the seven now fails
+#: :func:`from_dict_envelope` with ``ValueError: '<kind>' is not a valid PlotKind``
+#: rather than loading.  That is the intended, loud behaviour for a sanctioned v6
+#: break — nothing in any released version ever *wrote* one of those kinds, so a
+#: real payload carrying one would have to be hand-authored.
+SCHEMA_VERSION = 3
 
 #: The envelope key carrying the integer schema version.
 _VERSION_KEY = "schema_version"

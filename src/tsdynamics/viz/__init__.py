@@ -27,6 +27,16 @@ What it ships:
 - the **renderers registry** (:data:`tsdynamics.registry.renderers`) — a backend
   name → renderer-callable map.  A backend self-registers on first use;
   :meth:`~tsdynamics.viz.spec.PlotSpec.render` looks it up by name.
+- :func:`to_json` / :func:`from_json` (and the mapping-level
+  :func:`to_dict_envelope` / :func:`from_dict_envelope`, plus
+  :data:`SCHEMA_VERSION`) — the **versioned JSON envelope** for a
+  :class:`~tsdynamics.viz.spec.PlotSpec`.  ``spec.save("fig.json")`` and
+  ``spec.render("json")`` both write this envelope; these are the matching
+  *readers*, so a spec computed on a cluster can be shipped, cached, and replotted
+  elsewhere without re-running the analysis or installing a plotting library.
+  (The read half existed but was unreachable — ``ts.viz.from_json`` did not
+  resolve — which made the round trip one-way in practice.  Serialization is half
+  the "embed plots in web" story, so it is promoted rather than deleted.)
 
 Out-of-tree renderers register through the ``tsdynamics.renderers`` entry-point
 group; :func:`discover_plugins` loads them into
@@ -36,6 +46,7 @@ group; :func:`discover_plugins` loads them into
 from .. import registry as _registry
 from ..plugins import register_entry_points
 from .compose import plot
+from .export import SCHEMA_VERSION, from_dict_envelope, from_json, to_dict_envelope, to_json
 from .spec import (
     Animation,
     Annotation,
@@ -74,16 +85,21 @@ __all__ = [
     "PlotKind",
     "PlotSpec",
     "Plottable",
+    "SCHEMA_VERSION",
     "STYLE_KEYS",
     "THEMES",
     "Theme",
     "discover_plugins",
+    "from_dict_envelope",
+    "from_json",
     "get_theme",
     "normalize_style",
     "plot",
     "register_theme",
     "set_theme",
     "themes",
+    "to_dict_envelope",
+    "to_json",
 ]
 
 

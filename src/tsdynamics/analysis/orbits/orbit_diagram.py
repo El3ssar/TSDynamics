@@ -194,7 +194,7 @@ class OrbitDiagram(AnalysisResult):
         return pb.spec(
             kind,
             "orbit_diagram",
-            layers=[pb.scatter(x, y, style={"s": 1.0})],
+            layers=[pb.scatter(x, y, style={"markersize": 1.0})],
             xlabel=self.param,
             ylabel="asymptotic state",
             title="orbit diagram",

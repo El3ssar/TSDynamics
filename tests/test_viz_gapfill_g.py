@@ -214,9 +214,13 @@ def test_basins_result_3d_slice_squeezes_to_a_2d_image() -> None:
     # the degenerate (counts == 1) axis is dropped: a 3-D slice paints 2-D.
     assert image.ndim == 2
     assert image.shape == (4, 4)
-    # the axes label the two *free* coordinates (x1 and x3), not the pinned one.
-    assert spec.x.label == "x1"
-    assert spec.y.label == "x3"
+    # The axes label the two *free* coordinates (indices 0 and 2), not the pinned
+    # one.  With no ``variables`` in the result's provenance the labels fall back
+    # to the indexed spelling, which is now **0-based** — matching ``y(0)`` in the
+    # kernels, ``traj.y[:, 0]``, and the fixed-point overlay's own ``$x_0$``.
+    # (It used to be 1-based here and 0-based there: two conventions for one thing.)
+    assert spec.x.label == "$x_{0}$"
+    assert spec.y.label == "$x_{2}$"
     _roundtrips(spec)
 
 

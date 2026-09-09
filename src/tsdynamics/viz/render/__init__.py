@@ -15,7 +15,10 @@ reference renderer when the chosen backend cannot draw a spec's kind:
   **matplotlib is the default** — it is the universal reference renderer and is
   always preferred over partial backends (plotly, json, threejs).
 - :func:`render_spec` — the one entry point :meth:`PlotSpec.render` calls.
-  Before calling the renderer it emits **one consolidated**
+  Before calling the renderer it **validates the render keywords** against what
+  that backend actually reads (:func:`~tsdynamics.viz.render.caps.check_render_kwargs`),
+  so a typo raises instead of being swallowed by a backend's ``**kw`` catch-all,
+  then emits **one consolidated**
   :class:`~tsdynamics.viz.render.caps.VisualizationDegraded` warning (via
   :func:`~tsdynamics.viz.render.caps.style_honoring_gaps`) naming every style
   key, animation knob, or theme/axis field that the chosen backend will ignore.
@@ -46,6 +49,8 @@ from .caps import (
     RenderResult,
     VisualizationDegraded,
     _normalize_backend_name,
+    accepted_render_kwargs,
+    check_render_kwargs,
     style_honoring_gaps,
 )
 
@@ -54,6 +59,8 @@ __all__ = [
     "RendererCapabilities",
     "RenderResult",
     "VisualizationDegraded",
+    "accepted_render_kwargs",
+    "check_render_kwargs",
     "normalize_kind",
     "register_builtin_renderers",
     "render_spec",
@@ -85,9 +92,11 @@ _KIND_ALIAS: dict[str, PlotKind] = {
     "phase3d": PlotKind.PHASE_PORTRAIT_3D,
     "phase_portrait_field": PlotKind.PHASE_PORTRAIT_FIELD,
     "image": PlotKind.IMAGE,
-    "spectrum": PlotKind.POWER_SPECTRUM,
-    "psd": PlotKind.POWER_SPECTRUM,
-    "histogram": PlotKind.HISTOGRAM_NULL,
+    # NOTE (v6): ``"spectrum"`` / ``"psd"`` / ``"histogram"`` used to alias
+    # ``POWER_SPECTRUM`` / ``HISTOGRAM_NULL``.  Those kinds were removed from the
+    # vocabulary with the analyses that would have produced them, so the aliases
+    # went with them — an alias to a kind nothing draws is a name that resolves
+    # and then means nothing.
     "section": PlotKind.POINCARE_SECTION,
     "bifurcation_diagram": PlotKind.BIFURCATION,
     "diagnostic": PlotKind.DIAGNOSTIC_CURVE,
@@ -344,9 +353,21 @@ def render_spec(spec: PlotSpec, backend: str | None = None, **backend_kw: Any) -
         If no rendering backend is registered.
     KeyError
         If ``backend`` names an unregistered backend.
+    tsdynamics.errors.InvalidParameterError
+        If ``backend_kw`` carries a keyword the **chosen** backend does not read.
     """
     register_builtin_renderers()
     chosen_name, renderer = select_renderer(spec, backend)
+
+    # An unknown render keyword is a TYPO, not an option: before this check all
+    # four in-tree backends swallowed one in silence (three of the four cores end
+    # in a ``**_kw`` catch-all), so ``render(backend=b, totally_bogus_kwarg=42)``
+    # returned a figure and said nothing.  Validated against the *chosen* backend
+    # — the one that will actually receive the keywords — because backends
+    # legitimately differ (``figsize`` is matplotlib's, ``include_plotlyjs``
+    # plotly's, ``max_points`` three.js's).  An out-of-tree backend that declares
+    # no accepted set and takes ``**kwargs`` keeps its documented pass-through.
+    check_render_kwargs(chosen_name, renderer, backend_kw)
 
     # Emit ONE consolidated degradation warning for all the knobs the chosen
     # backend will silently ignore (style keys, animation, theme/axis fields).

@@ -30,6 +30,7 @@ power) raises :class:`~tsdynamics.errors.InvalidInputError`, pointing back at
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -80,22 +81,39 @@ class FixedPoint(AnalysisResult):
             gauge = f"|λ|max={np.abs(self.eigenvalues).max():.4f}"
         return f"FixedPoint({np.round(self.x, 6)}, {kind}, {gauge})"
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def to_plot_spec(
+        self,
+        kind: str | None = None,
+        *,
+        components: Sequence[int | str] | None = None,
+        annotate: bool | None = None,
+    ) -> Any:
         r"""Describe this fixed point as a backend-agnostic :class:`PlotSpec`.
 
-        Builds a ``FIXED_POINTS_OVERLAY``: a single ``SCATTER`` point at the first
-        two coordinates of :attr:`x`, styled by stability (a filled marker for a
-        stable point, an open marker for an unstable one).  Designed to be drawn
-        *over* a phase portrait via :meth:`AnalysisResult.overlay_on`, which keeps
-        the host layers first.  For the eigenvalue/multiplier picture use
-        :meth:`eigenvalue_plane`.  The :mod:`tsdynamics.viz.spec` import is lazy,
-        so building a spec never pulls a plotting library.
+        Builds a ``FIXED_POINTS_OVERLAY``: a single ``SCATTER`` point in the chosen
+        projection plane, styled by stability (a filled marker for a stable point,
+        an open marker for an unstable one) and annotated with its **leading
+        eigenvalue** — the number that decides the classification the marker is
+        drawing.  Designed to be drawn *over* a phase portrait via
+        :meth:`AnalysisResult.overlay_on`, which keeps the host layers first.  For
+        the eigenvalue/multiplier picture use :meth:`eigenvalue_plane`.  The
+        :mod:`tsdynamics.viz.spec` import is lazy, so building a spec never pulls a
+        plotting library.
 
         Parameters
         ----------
         kind : str, optional
             Override the semantic kind (a :class:`~tsdynamics.viz.spec.PlotKind`
             value).  ``None`` uses ``FIXED_POINTS_OVERLAY``.
+        components : sequence, optional
+            The two state-vector coordinates to project onto, as indices
+            (``(0, 2)``) or as the names the system declares (``("x", "z")``).
+            Defaults to the first two.  Pass the same pair to the host portrait so
+            the overlay lands on the plane it was drawn for.
+        annotate : bool, optional
+            Label the marker with its leading eigenvalue (largest real part for a
+            flow, largest modulus for a map).  ``None`` (default) means *on* for a
+            single point.
 
         Returns
         -------
@@ -106,23 +124,54 @@ class FixedPoint(AnalysisResult):
         x = np.asarray(self.x, dtype=float).ravel()
         label = "stable" if self.stable else "unstable"
         style = _fixed_point_style(self.stable)
+        i, j = _resolve_components(self.meta, int(x.size), components)
         if x.size >= 2:
-            layer = pb.scatter(np.array([x[0]]), np.array([x[1]]), label=label, style=style)
-            ylabel = "$x_1$"
+            px, py = float(x[i]), float(x[j])
+            layer = pb.scatter(np.array([px]), np.array([py]), label=label, style=style)
+            xlabel, ylabel = pb.axis_labels(self.meta, (i, j))
         else:
-            layer = pb.scatter(
-                np.array([0.0]), np.array([x[0] if x.size else 0.0]), label=label, style=style
-            )
-            ylabel = "$x$"
+            px, py = 0.0, float(x[0]) if x.size else 0.0
+            layer = pb.scatter(np.array([px]), np.array([py]), label=label, style=style)
+            xlabel, ylabel = "", pb.axis_labels(self.meta, (0,))[0]
+        annotations, xlim, ylim = _eigenvalue_annotations(
+            [(px, py, np.asarray(self.eigenvalues))],
+            continuous=self.continuous,
+            enabled=True if annotate is None else annotate,
+        )
         return pb.spec(
             kind,
             "fixed_points_overlay",
             layers=[layer],
             aspect="equal",
-            xlabel="$x_0$",
+            xlabel=xlabel,
             ylabel=ylabel,
             title=f"{label} fixed point",
+            annotations=annotations,
+            xlimits=xlim,
+            ylimits=ylim,
             meta=self.meta,
+        )
+
+    def overlay_on(
+        self,
+        base: Any,
+        *,
+        kind: str | None = None,
+        components: Sequence[int | str] | None = None,
+        annotate: bool | None = None,
+    ) -> Any:
+        """Overlay this fixed point on a host spec, forwarding the projection plane.
+
+        The base :meth:`~tsdynamics.analysis._result.AnalysisResult.overlay_on`
+        forwards only ``kind``, so an overlay always defaulted to the ``(0, 1)``
+        plane: drop it on an ``("x", "z")`` portrait of Lorenz and the equilibria
+        landed at ``(±8.5, ±8.5)`` instead of ``(±8.5, 27)`` — markers in the wrong
+        place, with nothing to say so.  This override passes ``components`` (and
+        ``annotate``) through, so the overlay can be drawn on the same plane as its
+        host.
+        """
+        return self._overlay_on(
+            self.to_plot_spec(kind=kind, components=components, annotate=annotate), base
         )
 
     def eigenvalue_plane(self, kind: str | None = None) -> Any:
@@ -172,12 +221,19 @@ class FixedPointSet(CollectionResult):
         """The unstable fixed points / equilibria in the set."""
         return [fp for fp in self.items if not fp.stable]
 
-    def to_plot_spec(self, kind: str | None = None) -> Any:
+    def to_plot_spec(
+        self,
+        kind: str | None = None,
+        *,
+        components: Sequence[int | str] | None = None,
+        annotate: bool | None = None,
+    ) -> Any:
         r"""Describe the whole set as one ``FIXED_POINTS_OVERLAY`` :class:`PlotSpec`.
 
         Draws the stable and the unstable fixed points as two separately styled
-        ``SCATTER`` layers (filled vs open markers) at the first two coordinates,
-        so the set reads at a glance — the overlay a phase portrait hosts via
+        ``SCATTER`` layers (filled vs open markers) in the chosen projection plane,
+        each annotated with its **leading eigenvalue**, so the set reads at a
+        glance — the overlay a phase portrait hosts via
         :meth:`AnalysisResult.overlay_on` (host layers first).  A 1-D set scatters
         against a zero baseline.  An empty set yields a valid layer-less spec.
         For the spectrum picture use :meth:`eigenvalue_plane`.  The
@@ -187,6 +243,17 @@ class FixedPointSet(CollectionResult):
         ----------
         kind : str, optional
             Override the semantic kind.  ``None`` uses ``FIXED_POINTS_OVERLAY``.
+        components : sequence, optional
+            The two state-vector coordinates to project onto, as indices
+            (``(0, 2)``) or as the names the system declares (``("x", "z")``).
+            Defaults to the first two.  Lorenz's two nontrivial equilibria coincide
+            under the ``(x, y)`` default only up to a sign and separate cleanly in
+            ``("x", "z")`` — the projection is a real choice, not a formality.
+        annotate : bool, optional
+            Label each marker with its leading eigenvalue (largest real part for a
+            flow, largest modulus for a map).  ``None`` (default) annotates while
+            the set has at most :data:`_ANNOTATE_AUTO_MAX` members, above which the
+            labels would obscure the markers they describe.
 
         Returns
         -------
@@ -194,28 +261,61 @@ class FixedPointSet(CollectionResult):
         """
         from .. import _plotbuilder as pb
 
+        dim = min((np.asarray(fp.x).size for fp in self.items), default=0)
+        i, j = _resolve_components(self.meta, int(dim), components) if dim else (0, 0)
+
         layers = []
+        placed: list[tuple[float, float, np.ndarray]] = []
         for stable, label in ((True, "stable"), (False, "unstable")):
             pts = [
                 np.asarray(fp.x, dtype=float).ravel() for fp in self.items if fp.stable is stable
             ]
+            eigs = [np.asarray(fp.eigenvalues) for fp in self.items if fp.stable is stable]
             if not pts:
                 continue
-            dim = min(p.size for p in pts)
             arr = np.asarray([p[:dim] for p in pts], dtype=float)
-            xs = arr[:, 0]
-            ys = arr[:, 1] if dim >= 2 else np.zeros(arr.shape[0])
+            xs = arr[:, i]
+            ys = arr[:, j] if dim >= 2 else np.zeros(arr.shape[0])
             layers.append(pb.scatter(xs, ys, label=label, style=_fixed_point_style(stable)))
+            placed.extend(zip(xs.tolist(), ys.tolist(), eigs, strict=False))
+
+        continuous = bool(self.items[0].continuous) if self.items else False
+        enabled = len(placed) <= _ANNOTATE_AUTO_MAX if annotate is None else annotate
+        annotations, xlim, ylim = _eigenvalue_annotations(
+            placed, continuous=continuous, enabled=enabled
+        )
+        labels = pb.axis_labels(self.meta, (i, j))
         return pb.spec(
             kind,
             "fixed_points_overlay",
             layers=layers,
             aspect="equal",
-            xlabel="$x_0$",
-            ylabel="$x_1$",
+            xlabel=labels[0] if dim >= 2 else "",
+            ylabel=labels[1] if dim >= 2 else labels[0],
             title=f"fixed points ({len(self.items)} found)",
             legend=len(layers) > 1,
+            annotations=annotations,
+            xlimits=xlim,
+            ylimits=ylim,
             meta=self.meta,
+        )
+
+    def overlay_on(
+        self,
+        base: Any,
+        *,
+        kind: str | None = None,
+        components: Sequence[int | str] | None = None,
+        annotate: bool | None = None,
+    ) -> Any:
+        """Overlay this set on a host spec, forwarding the projection plane.
+
+        See :meth:`FixedPoint.overlay_on` — the base implementation forwards only
+        ``kind``, which silently drew the markers on the wrong plane whenever the
+        host portrait was not the default ``(0, 1)`` one.
+        """
+        return self._overlay_on(
+            self.to_plot_spec(kind=kind, components=components, annotate=annotate), base
         )
 
     def eigenvalue_plane(self, kind: str | None = None) -> Any:
@@ -456,7 +556,12 @@ def fixed_points(
     out.sort(key=lambda fp: tuple(fp.x))
     return FixedPointSet(
         items=tuple(out),
-        meta=AnalysisResult.build_meta(system, analysis="fixed_points", method=method),
+        meta=AnalysisResult.build_meta(
+            system,
+            analysis="fixed_points",
+            method=method,
+            variables=_variable_names(system),
+        ),
     )
 
 
@@ -527,7 +632,12 @@ def _interval_fixed_points(
     out.sort(key=lambda fp: tuple(fp.x))
     return FixedPointSet(
         items=tuple(out),
-        meta=AnalysisResult.build_meta(system, analysis="fixed_points", method="interval"),
+        meta=AnalysisResult.build_meta(
+            system,
+            analysis="fixed_points",
+            method="interval",
+            variables=_variable_names(system),
+        ),
     )
 
 
@@ -602,16 +712,235 @@ def _stabilising_matrices(method: str, dim: int, max_c: int | None) -> list[np.n
 # ── visualization helpers (shared with periodic.py) ──────────────────────────
 
 
+def _variable_names(system: Any) -> tuple[str, ...] | None:
+    """Return a system's declared component names, or ``None``.
+
+    Recorded into the result's provenance so the plot can label its axes ``x`` /
+    ``y`` rather than ``$x_0$`` / ``$x_1$`` — the difference between a figure you
+    can publish and one you must relabel by hand.
+    """
+    names = getattr(system, "variables", None)
+    if isinstance(names, (list, tuple)) and names:
+        return tuple(str(n) for n in names)
+    return None
+
+
+#: Marker *diameter* (pt) for a fixed-point / equilibrium marker.
+#:
+#: These emitters used to speak matplotlib's ``s`` (a marker **area**, pt²) —
+#: ``{"s": 40.0}``.  ``s`` is no longer a canonical style key, and the canonical
+#: ``markersize`` is a **diameter**, so the value must be ``sqrt(40) ~= 6.3``, not
+#: ``40``.  Emitting 40 made the renderer square it to ``s=1600``: markers 40x too
+#: large linearly, 1600x by area — the "three enormous discs" a Lorenz equilibrium
+#: plot used to be.
+_FIXED_POINT_MARKERSIZE: float = 6.3
+
+#: Colour for a **stable** fixed point / equilibrium (Okabe-Ito blue).
+_STABLE_COLOR = "#0173b2"
+
+#: Colour for an **unstable** one (Okabe-Ito vermilion).
+_UNSTABLE_COLOR = "#d55e00"
+
+
+#: Above this many points a set's plot annotates nothing unless asked.
+#:
+#: Annotation is worth its ink only while each label is readable.  Thomas' attractor
+#: has 27 equilibria; 27 eigenvalue labels over a 5-inch axes is a grey smear that
+#: hides the very markers it describes.  Lorenz (3) and Rössler (2) are comfortably
+#: under, which is why ``annotate=None`` means *auto* rather than *on*.
+_ANNOTATE_AUTO_MAX = 8
+
+
+def _resolve_components(
+    meta: Mapping[str, Any] | None,
+    dim: int,
+    components: Sequence[int | str] | None,
+) -> tuple[int, int]:
+    """Resolve a requested projection plane to a pair of state-vector indices.
+
+    A fixed-point plot of a 3-D flow has to choose two of the three coordinates, and
+    silently always choosing ``(0, 1)`` is a real loss: Lorenz's two nontrivial
+    equilibria are symmetric under ``(x, y) -> (-x, -y)`` and differ visibly in
+    ``z``, so the ``(x, z)`` projection says something the default one does not.
+
+    Accepts indices (``(0, 2)``) or the component *names* a system declares
+    (``("x", "z")``), resolved against ``meta["variables"]`` — the same provenance
+    :func:`~tsdynamics.analysis._plotbuilder.axis_labels` reads, so a named
+    projection and its axis labels can never disagree.
+
+    Parameters
+    ----------
+    meta : mapping, optional
+        The result's provenance.
+    dim : int
+        Length of the state vectors being plotted.
+    components : sequence, optional
+        Two indices or names.  ``None`` gives ``(0, 1)`` (or ``(0, 0)`` in 1-D,
+        which the callers draw against a zero baseline).
+
+    Returns
+    -------
+    tuple of int
+
+    Raises
+    ------
+    InvalidParameterError
+        If the request is not a pair, names a component the system does not
+        declare, or indexes past the state vector — all of which would otherwise
+        surface as a silently wrong projection.
+    """
+    if components is None:
+        return (0, 1 if dim >= 2 else 0)
+    items = list(components)
+    if len(items) != 2:
+        raise InvalidParameterError(
+            f"components must name exactly two coordinates for a 2-D projection, "
+            f"got {len(items)}: {components!r}."
+        )
+    names_raw = meta.get("variables") if meta else None
+    names = list(names_raw) if isinstance(names_raw, (list, tuple)) else []
+    out: list[int] = []
+    for item in items:
+        if isinstance(item, str):
+            if item not in names:
+                raise InvalidParameterError(
+                    f"unknown component {item!r}; this result declares "
+                    f"{names or 'no component names'}. Use an integer index instead."
+                )
+            out.append(names.index(item))
+        else:
+            out.append(int(item))
+    for idx in out:
+        if not 0 <= idx < dim:
+            raise InvalidParameterError(
+                f"component index {idx} is out of range for a {dim}-D state vector."
+            )
+    return (out[0], out[1])
+
+
+def _leading_eigenvalue(eigenvalues: np.ndarray, *, continuous: bool) -> complex | None:
+    """Return the eigenvalue that decides stability, or ``None`` for an empty spectrum.
+
+    For a **flow** that is the largest real part (the slowest-decaying / fastest-
+    growing direction); for a **map** the largest modulus.  The two conventions are
+    the two stability criteria (``Re λ < 0`` versus ``|λ| < 1``), so reading the
+    wrong one off a plot inverts its meaning.
+    """
+    eig = np.asarray(eigenvalues).ravel()
+    if eig.size == 0:
+        return None
+    eig = eig.astype(complex)
+    order = eig.real if continuous else np.abs(eig)
+    return complex(eig[int(np.argmax(order))])
+
+
+def _eigenvalue_label(value: complex) -> str:
+    r"""Format a leading eigenvalue compactly enough to sit next to a marker.
+
+    A complex pair collapses to ``λ=a±bi`` rather than printing the conjugate
+    twice, and a real eigenvalue drops the imaginary part entirely — a label with a
+    dead ``+0.0000i`` on it is a label people stop reading.
+    """
+    re = float(value.real)
+    im = float(value.imag)
+    if abs(im) <= 1e-12 * max(1.0, abs(re)):
+        return rf"$\lambda={re:+.3g}$"
+    return rf"$\lambda={re:+.3g}\pm{abs(im):.3g}i$"
+
+
+def _eigenvalue_annotations(
+    placed: Sequence[tuple[float, float, np.ndarray]],
+    *,
+    continuous: bool,
+    enabled: bool,
+) -> tuple[list[Any], tuple[float, float] | None, tuple[float, float] | None]:
+    """Build one leading-eigenvalue text label per plotted marker.
+
+    The offset is the part worth explaining.  A label written *at* the marker's
+    coordinates sits on top of the marker, so it is nudged along ``+x`` by a
+    fraction of the plotted spread — a data-coordinate offset, because it must
+    survive every backend, and plotly drops an annotation's style entirely (so an
+    ``ha``/``va`` nudge would work in matplotlib and silently not in plotly).  When
+    the spread is zero — a single point, the common case for
+    :meth:`FixedPoint.to_plot_spec` — the offset falls back to a fraction of the
+    point's own magnitude, and finally to a bare constant at the origin.
+
+    Labels are pushed **outward**, away from the centre of the point cloud, and the
+    returned x limits are widened to hold them.  Both halves are needed: pointing
+    every label the same way runs the right-most one off the canvas (Lorenz's
+    ``C+`` equilibrium did exactly that), while pointing them all inward makes the
+    two symmetric equilibria of Lorenz's ``(x, z)`` projection — same height,
+    opposite sides — write their labels straight through each other.
+
+    Widening the limits is safe for the overlay path: :meth:`overlay_on` merges only
+    layers and annotations onto the host spec and discards the overlay's own axes,
+    so these limits apply exactly when this spec is drawn on its own.
+
+    Returns
+    -------
+    (list, tuple or None, tuple or None)
+        The annotations, and the x / y limits that keep them on the canvas.
+    """
+    if not enabled or not placed:
+        return [], None, None
+    from .. import _plotbuilder as pb
+
+    xs = [p[0] for p in placed]
+    ys = [p[1] for p in placed]
+    spread = max(max(xs) - min(xs), max(ys) - min(ys))
+    if spread <= 0.0:
+        spread = max(abs(xs[0]), abs(ys[0]), 1.0)
+    dx = 0.045 * spread
+    midx = 0.5 * (min(xs) + max(xs))
+
+    out = []
+    for px, py, eig in placed:
+        value = _leading_eigenvalue(eig, continuous=continuous)
+        if value is None:
+            continue
+        left = px < midx
+        out.append(
+            pb.text(
+                px - dx if left else px + dx,
+                py,
+                _eigenvalue_label(value),
+                style={"fontsize": 8, "ha": "right" if left else "left", "va": "center"},
+            )
+        )
+    if not out:
+        return [], None, None
+    # Room for the widest label (~22 glyphs at 8 pt) on either side, plus a little
+    # air above and below so a marker never sits on the frame.
+    xlim = (min(xs) - 0.45 * spread, max(xs) + 0.45 * spread)
+    ylim = (min(ys) - 0.12 * spread, max(ys) + 0.12 * spread)
+    return out, xlim, ylim
+
+
 def _fixed_point_style(stable: bool) -> dict[str, Any]:
     """Backend-neutral marker style distinguishing a stable from an unstable point.
 
-    A stable point gets a filled disc; an unstable one an open circle — the
-    convention a renderer maps to its own marker idioms (unknown keys are
-    ignored, per the :class:`~tsdynamics.viz.spec.Layer` contract).
+    Stability is the *meaning* of a fixed-point plot, so it is encoded twice —
+    redundantly and deliberately:
+
+    - ``filled``: a stable point is a filled disc, an unstable one an open circle
+      (the textbook convention).
+    - ``color``: a colourblind-safe blue / vermilion pair, so the distinction
+      survives a backend that does not honor ``filled`` (three.js) and a
+      greyscale print.
+
+    Both keys are canonical members of
+    :data:`~tsdynamics.viz.style.STYLE_KEYS`, so they survive
+    :func:`~tsdynamics.viz.style.normalize_style` and the two styles are
+    genuinely distinguishable after normalization — they were not: the old style
+    dicts differed *only* in ``filled``, which was not a style key and was
+    dropped, making ``normalize_style(stable) == normalize_style(unstable)``.
     """
-    if stable:
-        return {"marker": "o", "filled": True, "s": 40.0}
-    return {"marker": "o", "filled": False, "s": 40.0}
+    return {
+        "marker": "circle",
+        "filled": bool(stable),
+        "color": _STABLE_COLOR if stable else _UNSTABLE_COLOR,
+        "markersize": _FIXED_POINT_MARKERSIZE,
+    }
 
 
 def _eigenvalue_plane_spec(
@@ -642,7 +971,13 @@ def _eigenvalue_plane_spec(
 
     # The stability-boundary reference geometry.
     if continuous:
-        annotations.append(pb.vline(0.0, text=r"$\mathrm{Re}\,\lambda = 0$"))
+        # Deliberately *untitled*.  A ``vline``'s text is drawn rotated against the
+        # top of the axes, which on this plot is exactly where a complex conjugate
+        # pair near the imaginary axis sits — on Lorenz the label ran straight
+        # through the eigenvalue at ``+0.094 + 10.2i``.  The criterion goes in the
+        # title instead, where nothing can collide with it, and the axis is already
+        # labelled ``Re λ``, so the line needs no gloss.
+        annotations.append(pb.vline(0.0, style={"color": "gray", "alpha": 0.6}))
     else:
         theta = np.linspace(0.0, 2.0 * np.pi, 200)
         layers.append(
@@ -664,7 +999,7 @@ def _eigenvalue_plane_spec(
                     np.array([tv.real]),
                     np.array([tv.imag]),
                     label=r"trivial $\mu \approx 1$",
-                    style={"marker": "x", "s": 60.0},
+                    style={"marker": "x", "markersize": 7.75},
                 )
             )
         rest = eig[keep]
@@ -674,7 +1009,7 @@ def _eigenvalue_plane_spec(
                     rest.real.astype(float),
                     rest.imag.astype(float),
                     label="multipliers" if not continuous else "eigenvalues",
-                    style={"marker": "o", "s": 40.0},
+                    style={"marker": "circle", "markersize": _FIXED_POINT_MARKERSIZE},
                 )
             )
 
@@ -685,7 +1020,13 @@ def _eigenvalue_plane_spec(
         aspect="equal",
         xlabel=r"$\mathrm{Re}\,\lambda$",
         ylabel=r"$\mathrm{Im}\,\lambda$",
-        title=title,
+        # The stability criterion belongs in the title: it is what the reference
+        # geometry *means*, and the title is the one place on this plot where no
+        # eigenvalue can land on top of it.
+        title=(
+            f"{title} — stable if "
+            + (r"$\mathrm{Re}\,\lambda<0$" if continuous else r"$|\lambda|<1$")
+        ),
         legend=len(layers) > 1,
         annotations=annotations,
         meta=meta,

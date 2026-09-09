@@ -36,7 +36,13 @@ import numpy as np
 
 from ...spec import Animation, PlotKind, PlotSpec
 from .. import normalize_kind
-from ._core import _apply_theme_color_cycle, _apply_theme_to_figure, _resolve_theme
+from ._core import (
+    _apply_theme_color_cycle,
+    _apply_theme_to_figure,
+    _resolve_theme,
+    figure_geometry,
+    new_figure,
+)
 
 if TYPE_CHECKING:
     from matplotlib.animation import FuncAnimation
@@ -80,8 +86,6 @@ def render_animation(
     composite specs animate every panel in lockstep on one shared frame clock.
     """
     from matplotlib.animation import FuncAnimation
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
 
     if spec.is_composite:
         return _render_composite_animation(spec, figsize=figsize)
@@ -91,19 +95,9 @@ def render_animation(
     anim = spec.animation
     assert anim is not None  # guaranteed by the dispatch (is_animated)
 
-    # Resolve meta figsize / dpi
-    meta_figsize = spec.meta.get("figsize") if isinstance(spec.meta, dict) else None
-    if figsize is None and meta_figsize is not None:
-        w, h = meta_figsize
-        if w is not None and h is not None:
-            figsize = (float(w), float(h))
-    dpi: float | None = None
-    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
-        dpi = float(spec.meta["dpi"])
-
     theme = _resolve_theme(spec)
-    fig = Figure(figsize=figsize, dpi=dpi)
-    FigureCanvasAgg(fig)
+    figsize, dpi, layout = figure_geometry(spec, figsize, theme=theme)
+    fig = new_figure(figsize, dpi, layout)
     three_d = _threed.is_three_d(spec)
     ax = fig.add_subplot(1, 1, 1, projection="3d" if three_d else None)
     _apply_theme_to_figure(fig, ax, theme)
@@ -614,8 +608,6 @@ def _render_composite_animation(
 ) -> FuncAnimation:
     """Animate a composite: tile the panels and advance them all on one clock."""
     from matplotlib.animation import FuncAnimation
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
 
     from . import _threed
     from ._core import _composite_grid
@@ -623,17 +615,12 @@ def _render_composite_animation(
     anim = spec.animation or Animation()
     panels = spec.panels
     rows, cols = _composite_grid(spec.layout, len(panels))
+    composite_theme = _resolve_theme(spec)
+    figsize, dpi, layout_engine = figure_geometry(spec, figsize, theme=composite_theme)
     if figsize is None:
         figsize = (cols * 5.0, rows * 3.2)
 
-    composite_theme = _resolve_theme(spec)
-
-    dpi: float | None = None
-    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
-        dpi = float(spec.meta["dpi"])
-
-    fig = Figure(figsize=figsize, dpi=dpi)
-    FigureCanvasAgg(fig)
+    fig = new_figure(figsize, dpi, layout_engine)
     if composite_theme.background is not None:
         fig.patch.set_facecolor(composite_theme.background)
 

@@ -108,7 +108,19 @@ def test_round_trip_preserves_array_data() -> None:
 def test_every_kind_smoke_round_trips() -> None:
     """A minimal spec of *every* PlotKind round-trips through JSON."""
     for kind in PlotKind:
-        spec = PlotSpec(kind=kind, layers=[Layer(kind=PlotKind.LINE, data={"x": [0.0, 1.0]})])
+        # A COMPOSITE must carry at least one panel since v6 (the construction
+        # invariant in ``PlotSpec.__post_init__``); panels have to survive the
+        # JSON round-trip too, so this is the stronger case anyway.
+        panels = (
+            [PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": [0.0, 1.0]})])]
+            if kind is PlotKind.COMPOSITE
+            else []
+        )
+        spec = PlotSpec(
+            kind=kind,
+            layers=[Layer(kind=PlotKind.LINE, data={"x": [0.0, 1.0]})],
+            panels=panels,
+        )
         restored = from_json(to_json(spec))
         assert restored.kind is kind
         _assert_specs_equal(spec, restored)

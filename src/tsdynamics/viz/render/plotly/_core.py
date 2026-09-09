@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ...producers import autostyle_enabled, autostyle_line
 from ...spec import Annotation, Axis, Layer, PlotKind, PlotSpec
 from ...style import Theme, normalize_style
 from .. import normalize_kind
@@ -118,10 +119,20 @@ def _channel(layer: Layer, name: str) -> np.ndarray | None:
     return np.asarray(arr, dtype=float)
 
 
-def _line_style(layer: Layer, theme: Theme | None = None) -> dict[str, Any]:
+def _line_style(
+    layer: Layer,
+    theme: Theme | None = None,
+    *,
+    n: int | None = None,
+    autostyle: bool = True,
+) -> dict[str, Any]:
     """Build a plotly ``line`` dict from a layer's canonical style keys.
 
     Falls back to theme-level ``line_width`` when no per-layer width is set.
+    When ``n`` (the curve's sample count) is given that fallback is resolved
+    through :func:`~tsdynamics.viz.producers.autostyle_line`, so a dense
+    trajectory is drawn with a thinner stroke instead of a solid blob.  An
+    explicit per-layer ``linewidth`` always wins.
     """
     style = _canon_style(layer)
     line: dict[str, Any] = {}
@@ -129,8 +140,11 @@ def _line_style(layer: Layer, theme: Theme | None = None) -> dict[str, Any]:
     if color is not None:
         line["color"] = color
     width = style.get("linewidth")
-    if width is None and theme is not None and theme.line_width is not None:
-        width = theme.line_width
+    if width is None and theme is not None:
+        if n is None:
+            width = theme.line_width
+        else:
+            width, _ = autostyle_line(n, line_width=theme.line_width, enabled=autostyle)
     if width is not None:
         line["width"] = float(width)
     dash = _DASH_MAP.get(str(style.get("linestyle", "")))
@@ -139,23 +153,116 @@ def _line_style(layer: Layer, theme: Theme | None = None) -> dict[str, Any]:
     return line
 
 
+def _line_opacity(style: dict[str, Any], n: int | None = None, *, autostyle: bool = True) -> float:
+    """Resolve a *line* layer's opacity, applying the density-aware default.
+
+    Identical to :func:`_opacity` when the layer sets ``alpha`` explicitly or the
+    curve is short; a dense curve with no explicit alpha gets the
+    :func:`~tsdynamics.viz.producers.autostyle_line` value so the plotly artifact
+    matches the matplotlib one.
+    """
+    if "alpha" in style or n is None:
+        return _opacity(style)
+    _, auto_alpha = autostyle_line(n, line_width=None, enabled=autostyle)
+    return 1.0 if auto_alpha is None else float(auto_alpha)
+
+
 def _marker_symbol(style: dict[str, Any]) -> str | None:
-    """Map a canonical marker name to a plotly symbol (``None`` ⇒ omit from trace)."""
+    """Map a canonical marker name to a plotly symbol (``None`` ⇒ omit from trace).
+
+    Honors the canonical ``filled`` key: plotly spells a hollow marker as the
+    ``"-open"`` symbol variant (``"circle-open"``), which is how the
+    stable-vs-unstable fixed-point convention survives on this backend.
+    """
     marker = style.get("marker")
     if marker is None:
         return None
-    return _MARKER_MAP.get(str(marker), "circle")
+    symbol = _MARKER_MAP.get(str(marker), "circle")
+    if style.get("filled") is False and not symbol.endswith("-open"):
+        # ``cross`` / ``x`` / ``star`` have no meaningful fill; plotly still
+        # accepts the "-open" variant for every one of these base symbols.
+        symbol = f"{symbol}-open"
+    return symbol
 
 
-def _colorscale(spec: PlotSpec, layer: Layer) -> str | None:
-    """Pick the plotly colorscale: layer style > spec colorbar cmap > ``None``."""
+def _plotly_named_colorscales() -> frozenset[str]:
+    """Lowercased set of the colorscale names plotly accepts as a bare string."""
+    global _NAMED_COLORSCALES
+    if _NAMED_COLORSCALES is None:
+        import plotly.colors as pc
+
+        names: set[str] = set()
+        for module in (pc.sequential, pc.diverging, pc.cyclical):
+            names.update(n.lower().removesuffix("_r") for n in dir(module) if not n.startswith("_"))
+        _NAMED_COLORSCALES = frozenset(names)
+    return _NAMED_COLORSCALES
+
+
+#: Lazily-built cache for :func:`_plotly_named_colorscales`.
+_NAMED_COLORSCALES: frozenset[str] | None = None
+
+#: Number of stops sampled when translating a matplotlib colormap plotly does not
+#: know by name into an explicit ``[(position, "#rrggbb"), ...]`` colorscale.
+_COLORSCALE_STOPS: int = 32
+
+
+def _translate_cmap(name: str) -> str | list[list[Any]] | None:
+    """Return a colorscale plotly will accept for the matplotlib colormap ``name``.
+
+    plotly only accepts a *bare string* for the colorscales it ships (``Viridis``,
+    ``Cividis``, …).  Every other matplotlib name — notably the **qualitative**
+    maps, of which ``"tab20"`` is the basin/attractor palette this library uses
+    everywhere — makes plotly raise a raw ``ValueError`` deep inside trace
+    validation.  That is how ``basins_of_attraction(...).plot(backend="plotly")``
+    and ``spec.save("basins.html")`` came to crash with an un-actionable plotly
+    message instead of drawing (or degrading).
+
+    So an unknown name is *translated*: sample the matplotlib colormap at
+    :data:`_COLORSCALE_STOPS` positions and hand plotly the explicit stop list.
+    If matplotlib is not importable there is nothing to sample, so the colorscale
+    is dropped with a :class:`~tsdynamics.viz.VisualizationDegraded` warning —
+    the plot still draws, in plotly's default colours, and says so.
+    """
+    if name.lower().removesuffix("_r") in _plotly_named_colorscales():
+        return name
+    try:
+        from matplotlib import colormaps
+        from matplotlib.colors import to_hex
+    except ImportError:  # pragma: no cover - plotly present, matplotlib absent
+        _warn_degraded(f"colormap {name!r} is not a plotly colorscale and cannot be translated")
+        return None
+    try:
+        cmap = colormaps[name]
+    except KeyError:
+        _warn_degraded(f"unknown colormap {name!r}")
+        return None
+    n = _COLORSCALE_STOPS
+    return [[i / (n - 1), to_hex(cmap(i / (n - 1)))] for i in range(n)]
+
+
+def _warn_degraded(message: str) -> None:
+    """Emit the library's own degradation warning (lazy import: no cycle)."""
+    import warnings
+
+    from ..caps import VisualizationDegraded
+
+    warnings.warn(f"plotly: {message}; drawing without it.", VisualizationDegraded, stacklevel=3)
+
+
+def _colorscale(spec: PlotSpec, layer: Layer) -> str | list[list[Any]] | None:
+    """Pick the plotly colorscale: layer style > spec colorbar cmap > ``None``.
+
+    The chosen name is passed through :func:`_translate_cmap`, so a matplotlib
+    colormap plotly does not ship is converted to an explicit stop list rather
+    than raising out of plotly's validator.
+    """
     style = _canon_style(layer)
     cmap = style.get("cmap")
-    if cmap is not None:
-        return str(cmap)
-    if spec.colorbar is not None and spec.colorbar.cmap is not None:
-        return spec.colorbar.cmap
-    return None
+    if cmap is None and spec.colorbar is not None and spec.colorbar.cmap is not None:
+        cmap = spec.colorbar.cmap
+    if cmap is None:
+        return None
+    return _translate_cmap(str(cmap))
 
 
 def _colorbar_dict(spec: PlotSpec) -> dict[str, Any] | None:
@@ -243,6 +350,8 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
     x, y = xy
     style = _canon_style(layer)
     theme = _resolve_theme(spec)
+    n = int(np.asarray(y).size)
+    auto = autostyle_enabled(spec)
     c = _channel(layer, "c")
     if c is not None and c.size == y.size:
         # Colour-by-``c``: plotly colours markers, not line segments, so render a
@@ -261,7 +370,7 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
                 x=x,
                 y=y,
                 mode="lines+markers",
-                line=_line_style(layer, theme),
+                line=_line_style(layer, theme, n=n, autostyle=auto),
                 marker=marker,
                 name=layer.label,
                 showlegend=layer.label is not None,
@@ -275,10 +384,10 @@ def _build_line(layer: Layer, spec: PlotSpec) -> list[go.BaseTraceType]:
             x=x,
             y=y,
             mode="lines",
-            line=_line_style(layer, theme),
+            line=_line_style(layer, theme, n=n, autostyle=auto),
             name=layer.label,
             showlegend=layer.label is not None,
-            opacity=_opacity(style),
+            opacity=_line_opacity(style, n, autostyle=auto),
         )
     ]
     _apply_zorder(traces, style)
@@ -1024,7 +1133,13 @@ def render(
             **_kw,
         )
     if _threed.is_three_d(spec):
-        return _threed.render_3d(spec, **_kw)
+        # NOTE: the 3-D branch **falls through** to the shared HTML export below
+        # rather than returning here.  It used to return the Figure immediately,
+        # which silently dropped ``path=`` / ``html=`` on every 3-D spec — no file
+        # was written and the return type was a Figure where the caller was
+        # promised a Path / str.  3-D is 106 of the 136 catalogue ODEs, so that
+        # was the majority of this library's plots.
+        fig = _threed.render_3d(spec, **_kw)
     else:
         fig = go.Figure()
         for trace in build_2d_traces(spec):

@@ -155,3 +155,33 @@ def test_invalid_kind_would_fail(fake_renderer) -> None:
     with pytest.raises(ValueError):
         # mimic what a broken typed method would do inside the seam
         bad.plot(kind="phase_portrait")  # not a PlotKind member
+
+
+def test_no_typed_method_forces_a_kind_that_left_the_vocabulary(fake_renderer) -> None:
+    """No accessor method may name a kind the v6 vocabulary surgery removed.
+
+    ``.histogram()`` and ``.spectrum()`` were deleted earlier in this phase when
+    their data producers left with the generic time-series layer; the seven
+    semantic kinds behind them (``power_spectrum`` / ``spectrogram`` /
+    ``histogram_null`` / ``feature_bars`` / ``complexity_curve`` and the two legacy
+    animation kinds) are now gone from ``PlotKind`` too.  Driving every typed
+    method end-to-end proves none of them is still reaching for one: a method that
+    did would raise ``ValueError`` from ``PlotKind(kind)`` inside the seam.
+    """
+    name, _captured = fake_renderer
+    removed = {
+        "power_spectrum",
+        "spectrogram",
+        "histogram_null",
+        "feature_bars",
+        "complexity_curve",
+        "trajectory_animation",
+        "ensemble_animation",
+    }
+    for method_name in _TYPED_METHODS:
+        result = _KindCapturingResult()
+        getattr(result.plot, method_name)(backend=name)  # raises if the kind is dead
+        assert result.seen[-1].value not in removed, method_name
+    # And the methods whose kinds died are themselves absent.
+    for gone in ("histogram", "spectrum"):
+        assert not hasattr(_PlotAccessor, gone), gone

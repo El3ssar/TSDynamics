@@ -32,6 +32,7 @@ figure.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from typing import TYPE_CHECKING, Any
@@ -363,7 +364,10 @@ def build_animated_figure(spec: PlotSpec) -> go.Figure:
         # Nothing to reveal — hand back a static figure (the final frame).
         from ._core import render as _static_render
 
-        static = PlotSpec.from_dict({**spec.to_dict(), "animation": None})
+        # ``dataclasses.replace`` clones the spec by reference; the old
+        # ``from_dict(to_dict())`` idiom round-tripped every float array through a
+        # dict just to drop one field.
+        static = dataclasses.replace(spec, animation=None)
         return _static_render(static)
 
     n = _sample_count(curves)
@@ -635,7 +639,10 @@ def animated_html(
     )
     curves = _curve_layers(spec)
     if not curves:  # nothing to animate — write the static figure
-        static = PlotSpec.from_dict({**spec.to_dict(), "animation": None})
+        # ``dataclasses.replace`` clones the spec by reference; the old
+        # ``from_dict(to_dict())`` idiom round-tripped every float array through a
+        # dict just to drop one field.
+        static = dataclasses.replace(spec, animation=None)
         if path is not None:
             return _write_html(
                 static, path, full_html=full_html is not False, include_plotlyjs=include_plotlyjs

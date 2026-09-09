@@ -70,9 +70,26 @@ class _PlotlyCapabilities(RendererCapabilities):
             return False
         return super().can_render_spec(spec)
 
+    def can_save(self, ext: str, *, animated: bool = False) -> bool:
+        """Whether plotly writes ``ext``; ``.html`` only, and never a *movie*.
+
+        plotly's animated export is an HTML page with a ``requestAnimationFrame``
+        loop — it cannot encode a video container.  A caller asking for ``.mp4`` /
+        ``.gif`` must go to matplotlib; ``PlotSpec.save`` raises naming that
+        alternative rather than returning a path it did not write.
+        """
+        del animated
+        return super().can_save(ext)
+
 
 #: The registry name the plotly backend registers under.
 _BACKEND_NAME = "plotly"
+
+#: The file extensions this backend can **write**: an interactive HTML page, and
+#: nothing else.  Static image export would need ``kaleido`` (deliberately not a
+#: dependency — matplotlib writes the rasters), and a movie container is out of
+#: reach entirely.
+_WRITES: frozenset[str] = frozenset({".html", ".htm"})
 
 #: The 2-D layer **marks** the core renderer draws; the 3-D marks live in
 #: :data:`_KINDS_3D` and route through :mod:`._threed`.
@@ -101,18 +118,19 @@ _KINDS_3D: frozenset[PlotKind] = frozenset(
 )
 
 #: The semantic kinds plotly declines, so a spec of these kinds falls back to
-#: matplotlib: only the animation kinds (deferred everywhere).  ``COMPOSITE``
-#: (the multi-panel figure) is now drawn natively by :mod:`._composite` — a
+#: matplotlib.  **Empty since v6**: the two legacy animation kinds that used to
+#: live here (``TRAJECTORY_ANIMATION`` / ``ENSEMBLE_ANIMATION``) were removed from
+#: the :class:`~tsdynamics.viz.spec.PlotKind` vocabulary — animation is the
+#: orthogonal :class:`~tsdynamics.viz.spec.Animation` modifier, and plotly's
+#: refusal of an animated *composite* is expressed by
+#: :meth:`_PlotlyCapabilities.can_render_spec`, not by a kind.  ``COMPOSITE``
+#: (the multi-panel figure) is drawn natively by :mod:`._composite` — a
 #: :func:`plotly.subplots.make_subplots` grid tiling each panel onto its own
 #: ``xy`` / ``scene`` cell — so it is **not** declined; the per-panel capability
 #: recursion (:meth:`~tsdynamics.viz.render.caps.RendererCapabilities.can_render_spec`)
-#: still falls back when a panel uses a kind plotly cannot draw.
-_DECLINED_KINDS: frozenset[PlotKind] = frozenset(
-    {
-        PlotKind.TRAJECTORY_ANIMATION,
-        PlotKind.ENSEMBLE_ANIMATION,
-    }
-)
+#: still falls back when a panel uses a kind plotly cannot draw.  The name is kept
+#: as the declared seam for a future declined kind.
+_DECLINED_KINDS: frozenset[PlotKind] = frozenset()
 
 #: The 2-D **semantic kinds** plotly supports: every semantic kind that is not a
 #: 3-D / animation kind.  A semantic-kind spec whose layer marks are all in
@@ -175,6 +193,7 @@ def register(registry: Registry) -> bool:
         supports_3d=True,
         interactive=True,
         web_export=True,
+        writes=_WRITES,
     )
 
     def _render(spec: Any, /, **kw: Any) -> Any:

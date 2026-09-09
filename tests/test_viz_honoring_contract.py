@@ -64,6 +64,7 @@ _PROBE_VALUE: dict[str, object] = {
     "markersize": 11.0,
     "alpha": 0.4,
     "cmap": "viridis",
+    "filled": False,
     "fill": False,
     "fillalpha": 0.7,
     "zorder": 7,
@@ -155,6 +156,25 @@ def _assert_mpl_honors(key: str, value: object) -> None:
     pytest.importorskip("matplotlib")
     from matplotlib.colors import to_rgba
 
+    if key == "filled":
+        # ``filled=False`` is the hollow/open marker (stable vs unstable fixed
+        # point).  matplotlib spells it as a scatter with no facecolor: the
+        # PathCollection's face is fully transparent while its edge carries ink.
+        fig = _scatter_spec({"filled": value, "marker": "o", "color": "#112233"}).render(
+            backend="matplotlib"
+        )
+        colls = [c for ax in fig.axes for c in ax.collections]
+        assert colls, "expected a scatter collection for the filled probe"
+        faces = colls[0].get_facecolors()
+        edges = colls[0].get_edgecolors()
+        assert len(faces) == 0 or float(faces[0][3]) == pytest.approx(0.0), (
+            f"filled=False must leave the marker face unpainted, got {faces!r}"
+        )
+        assert len(edges) and to_rgba(edges[0]) == to_rgba("#112233"), (
+            f"filled=False must ink the marker edge with the layer colour, got {edges!r}"
+        )
+        return
+
     if key in ("fill", "fillalpha"):
         fig = _area_spec({"color": "#0000ff", key: value}).render(backend="matplotlib")
         poly = _mpl_area_poly(fig)
@@ -213,6 +233,16 @@ def _assert_mpl_honors(key: str, value: object) -> None:
 def _assert_plotly_honors(key: str, value: object) -> None:
     """Render on plotly and assert the trace/layout reflects ``style[key] = value``."""
     pytest.importorskip("plotly")
+
+    if key == "filled":
+        # plotly spells a hollow marker as the "-open" symbol variant.
+        fig = _scatter_spec({"filled": value, "marker": "o", "color": "#ff0000"}).render(
+            backend="plotly"
+        )
+        assert fig.data[0].marker.symbol == "circle-open", (
+            f"filled=False must select the open plotly symbol, got {fig.data[0].marker.symbol!r}"
+        )
+        return
 
     if key in ("fill", "fillalpha"):
         fig = _area_spec({"color": "blue", key: value}).render(backend="plotly")

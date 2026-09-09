@@ -309,6 +309,39 @@ cluttering the signature. Passing one to the wrong kind raises
 | `time_series`, `phase_portrait_2d`/`_3d` | `color_by` | colour the line by a scalar (above) |
 | `spacetime` | `transpose` | swap the time / component axes |
 
+## Result plots pick their own plane
+
+Analysis results have a `to_plot_spec` too, and the ones that draw *state-space*
+markers take the same `components=` spelling as a trajectory — the projection is a
+choice, not a formality:
+
+```python
+fps = ts.fixed_points(ts.Lorenz())
+
+fps.to_plot_spec()                          # the (x, y) plane
+fps.to_plot_spec(components=("x", "z"))     # …or (x, z), where C± separate
+fps.to_plot_spec(components=(0, 2))         # indices work too
+```
+
+Lorenz's two nontrivial equilibria are at `(±√(β(ρ−1)), ±√(β(ρ−1)), ρ−1)`: on
+`(x, y)` they lie on the diagonal, on `(x, z)` they sit side by side at `z = 27`,
+one in the centre of each wing of the attractor. Same three points, different
+picture.
+
+Each marker is annotated with the **leading eigenvalue** that decides its
+classification — the largest real part for a flow, the largest modulus for a map.
+That is on by default for a handful of points and off above eight of them (labels
+that hide the markers they describe are worse than no labels); `annotate=True` /
+`annotate=False` overrides.
+
+Overlaying on a portrait takes the same keywords, and **you must pass the host's
+plane**, or the markers land somewhere plausible and wrong:
+
+```python
+portrait = traj.to_plot_spec(components=("x", "z"))
+fps.overlay_on(portrait, components=("x", "z")).plot()
+```
+
 ## Rendering and saving
 
 A built `PlotSpec` renders itself. `.save(path)` picks the backend from the file

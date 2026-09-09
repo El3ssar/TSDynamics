@@ -115,7 +115,6 @@ def test_normalize_style_resolves_aliases():
         {
             "lw": 2.0,
             "c": "red",
-            "s": 8.0,
             "ms": 9.0,
             "opacity": 0.25,
             "ls": "--",
@@ -126,13 +125,44 @@ def test_normalize_style_resolves_aliases():
     assert out == {
         "linewidth": 2.0,
         "color": "red",
-        # both ``s`` and ``ms`` alias markersize — last write wins on dict build
         "markersize": 9.0,
         "alpha": 0.25,
         "linestyle": "dashed",
         "marker": "circle",
         "cmap": "viridis",
     }
+
+
+def test_s_is_not_a_markersize_alias() -> None:
+    """``"s"`` is rejected as a style key (v6 break) — it meant *area*, not diameter.
+
+    ``s`` collided with two other meanings at once: matplotlib's ``s`` is a marker
+    **area** in pt² (which is what every in-tree emitter assumed when it wrote
+    ``{"s": 40.0}``, and why the fixed-point overlay rendered 1600x too large by
+    area), while ``markersize`` is a **diameter** in pt; and the single-character
+    marker *value* ``"s"`` means *square*, so ``{"s": 1, "marker": "s"}`` used one
+    letter as both a size key and a shape value.  One canonical spelling now.
+    """
+    assert "s" not in {alias for key in STYLE_KEYS.values() for alias in key.aliases}
+    with pytest.warns(VisualizationDegraded, match="unknown style key"):
+        assert normalize_style({"s": 40.0}) == {}
+    # The marker *value* "s" (square) is untouched — only the *key* is gone.
+    assert normalize_style({"marker": "s"}) == {"marker": "square"}
+
+
+def test_filled_distinguishes_two_marker_styles() -> None:
+    """``filled`` survives normalization, so a hollow marker differs from a solid one.
+
+    The concrete defect this closes: ``_fixed_point_style`` emitted
+    ``{"marker": "o", "filled": <bool>, "s": 40.0}``, ``filled`` was not a
+    ``STYLE_KEY`` and was silently dropped, and the two dicts normalized to the
+    **same** thing — so a stable and an unstable fixed point rendered identically.
+    """
+    stable = normalize_style({"marker": "o", "filled": True, "markersize": 8.0})
+    unstable = normalize_style({"marker": "o", "filled": False, "markersize": 8.0})
+    assert stable["filled"] is True
+    assert unstable["filled"] is False
+    assert stable != unstable
 
 
 @pytest.mark.parametrize(

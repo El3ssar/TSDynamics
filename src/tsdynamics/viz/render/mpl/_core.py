@@ -52,10 +52,14 @@ by that module.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from tsdynamics.errors import InvalidParameterError
+
+from ...producers import autostyle_enabled, autostyle_line
 from ...spec import Annotation, Axis, Colorbar, Layer, PlotKind, PlotSpec
 from ...style import Theme, normalize_style
 from .. import normalize_kind
@@ -129,7 +133,6 @@ KIND_PRESETS: dict[PlotKind, _KindPreset] = {
     PlotKind.BASINS_IMAGE: _KindPreset(aspect="equal", cmap="tab20"),
     PlotKind.IMAGE: _KindPreset(cmap="viridis"),
     PlotKind.SPACETIME: _KindPreset(cmap="viridis"),
-    PlotKind.SPECTROGRAM: _KindPreset(cmap="magma", norm="log"),
     # a 2-D spatial field is a viridis heatmap (its equal aspect rides on the
     # spec, set by the producer for the 2-D case only); a 1-D field is a plain
     # auto-aspect line, which ignores the cmap.  See stream VIZ-SPATIAL-FIELD.
@@ -244,11 +247,113 @@ def _apply_theme_grid(ax: Any, spec: PlotSpec, theme: Theme) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Figure construction (the one place a Figure is built)
+# ---------------------------------------------------------------------------
+
+#: The matplotlib layout engine every figure this backend produces is built with.
+#:
+#: Without one, matplotlib places axes on a fixed fractional grid and simply lets
+#: decorations overflow: a 2x2 composite collides row-2 titles into row-1 tick
+#: labels and **clips the row-1 x-axis labels off the artifact entirely** — the
+#: label is not merely cramped, it is absent from the saved PNG.  A single-panel
+#: figure with a long y-label or a colorbar loses text the same way.
+#: ``"constrained"`` solves the layout instead of assuming it, and (unlike
+#: ``tight_layout``) works with shared axes, 3-D axes and colorbars.
+_LAYOUT_ENGINE: Literal["constrained", "compressed", "tight"] | None = "constrained"
+
+#: Extensions that ``render(path=...)`` routes to an animation's own writer
+#: (ffmpeg / pillow) rather than to ``Figure.savefig``.
+_MOVIE_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng"})
+
+
+def new_figure(
+    figsize: tuple[float, float] | None = None,
+    dpi: float | None = None,
+    layout: Literal["constrained", "compressed", "tight"] | None = None,
+) -> Figure:
+    """Build the backend's :class:`~matplotlib.figure.Figure` (Agg, constrained).
+
+    Every figure this backend returns — single panel, 3-D, composite, animated —
+    is built here, so the Agg canvas attachment and the :data:`_LAYOUT_ENGINE`
+    are applied exactly once and cannot be forgotten at a new construction site.
+    Uses matplotlib's object-oriented API only (no ``pyplot``).
+
+    Parameters
+    ----------
+    figsize, dpi : optional
+        Already-resolved geometry (see :func:`figure_geometry`); ``None`` leaves
+        matplotlib's own default.
+    layout : {"constrained", "compressed", "tight"}, optional
+        The layout engine; ``None`` uses :data:`_LAYOUT_ENGINE`.
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure as _Figure
+
+    fig = _Figure(figsize=figsize, dpi=dpi, layout=layout if layout is not None else _LAYOUT_ENGINE)
+    FigureCanvasAgg(fig)
+    return fig
+
+
+def figure_geometry(
+    spec: PlotSpec,
+    figsize: tuple[float, float] | None = None,
+    *,
+    theme: Theme | None = None,
+) -> tuple[
+    tuple[float, float] | None, float | None, Literal["constrained", "compressed", "tight"] | None
+]:
+    """Resolve ``(figsize, dpi, layout_engine)`` for ``spec``, honouring the theme.
+
+    Precedence, most specific first:
+
+    1. the explicit ``figsize=`` render keyword,
+    2. ``spec.meta["figsize"]`` / ``spec.meta["dpi"]`` (what ``spec.size(...)``
+       and ``save(size=..., dpi=...)`` write),
+    3. the resolved :class:`~tsdynamics.viz.style.Theme`'s :attr:`~tsdynamics.viz.style.Theme.figsize`
+       / :attr:`~tsdynamics.viz.style.Theme.dpi` / :attr:`~tsdynamics.viz.style.Theme.layout_engine`,
+    4. matplotlib's own defaults.
+
+    Step 3 is the point of this helper.  ``Theme`` grew those three fields
+    precisely so a theme could carry its output geometry — the ``"publication"``
+    theme declares ``figsize=(5.0, 3.5)`` at ``dpi=300`` — but nothing read them,
+    so ``spec.theme("publication").render()`` still produced matplotlib's default
+    6.4x4.8 in at 100 dpi.  A documented theme field that silently does nothing is
+    the failure mode this layer exists to eliminate, so every figure the backend
+    builds resolves its geometry here.
+    """
+    theme = theme if theme is not None else _resolve_theme(spec)
+    meta = spec.meta if isinstance(spec.meta, dict) else {}
+
+    if figsize is None:
+        meta_figsize = meta.get("figsize")
+        if meta_figsize is not None:
+            w, h = meta_figsize
+            if w is not None and h is not None:
+                figsize = (float(w), float(h))
+    if figsize is None and theme.figsize is not None:
+        figsize = (float(theme.figsize[0]), float(theme.figsize[1]))
+
+    dpi: float | None = None
+    if "dpi" in meta and meta["dpi"] is not None:
+        dpi = float(meta["dpi"])
+    elif theme.dpi is not None:
+        dpi = float(theme.dpi)
+
+    return figsize, dpi, theme.layout_engine
+
+
+# ---------------------------------------------------------------------------
 # Style coercion helpers
 # ---------------------------------------------------------------------------
 
 
-def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
+def _canon_style(
+    layer: Layer,
+    theme: Theme,
+    *,
+    n: int | None = None,
+    autostyle: bool = True,
+) -> dict[str, Any]:
     """Return a dict of mpl-ready style kwargs from the layer's canonical style + theme defaults.
 
     Calls ``normalize_style(warn=False)`` on the layer's raw style dict (the
@@ -261,6 +366,16 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     layer : Layer
     theme : Theme
         The resolved theme (provides default line_width / marker_size).
+    n : int, optional
+        Sample count of the curve being drawn.  When given, the theme's
+        ``line_width`` / full opacity defaults are resolved through
+        :func:`~tsdynamics.viz.producers.autostyle_line` so a dense trajectory
+        gets a thinner, slightly translucent stroke instead of a solid blob.
+        **Only the defaults** are affected — an explicit ``linewidth`` / ``alpha``
+        on the layer always wins.
+    autostyle : bool, optional
+        Whether density-aware resolution applies (the
+        ``spec.meta["autostyle"] = False`` escape hatch).  Default ``True``.
 
     Returns
     -------
@@ -270,11 +385,18 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     """
     canon = normalize_style(layer.style, warn=False)
     kw: dict[str, Any] = {}
+    auto_lw, auto_alpha = (
+        autostyle_line(n, line_width=theme.line_width, enabled=autostyle)
+        if n is not None
+        else (theme.line_width, None)
+    )
 
     if "color" in canon:
         kw["color"] = canon["color"]
     if "alpha" in canon:
         kw["alpha"] = float(canon["alpha"])
+    elif auto_alpha is not None:
+        kw["alpha"] = auto_alpha
     if "zorder" in canon:
         kw["zorder"] = int(canon["zorder"])
     # NOTE: ``fill`` / ``fillalpha`` are AREA/ENSEMBLE_FAN-only knobs and are
@@ -283,11 +405,11 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     # ``PathCollection`` (``ax.scatter``) both reject a ``fill=`` kwarg, so
     # leaking it crashes a fully-styled LINE/SCATTER layer.
 
-    # linewidth: canonical key → mpl "linewidth"
+    # linewidth: canonical key → mpl "linewidth" (density-resolved default)
     if "linewidth" in canon:
         kw["linewidth"] = float(canon["linewidth"])
-    elif theme.line_width is not None:
-        kw["linewidth"] = float(theme.line_width)
+    elif auto_lw is not None:
+        kw["linewidth"] = float(auto_lw)
 
     # linestyle: canonical → mpl spelling
     if "linestyle" in canon:
@@ -296,6 +418,10 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     # marker: canonical → mpl spelling
     if "marker" in canon:
         kw["marker"] = _MARKER_MPL.get(str(canon["marker"]), canon["marker"])
+        # ``filled=False`` → a hollow marker on a Line2D (the scatter path spells
+        # the same thing with facecolors/edgecolors; see ``_draw_scatter``).
+        if canon.get("filled") is False:
+            kw["markerfacecolor"] = "none"
 
     # markersize: canonical key → mpl "markersize"
     if "markersize" in canon:
@@ -306,9 +432,11 @@ def _canon_style(layer: Layer, theme: Theme) -> dict[str, Any]:
     return kw
 
 
-def _line_kwargs(layer: Layer, theme: Theme) -> dict[str, Any]:
+def _line_kwargs(
+    layer: Layer, theme: Theme, *, n: int | None = None, autostyle: bool = True
+) -> dict[str, Any]:
     """Collect matplotlib line kwargs from a layer's style + theme defaults."""
-    kw = _canon_style(layer, theme)
+    kw = _canon_style(layer, theme, n=n, autostyle=autostyle)
     if layer.label is not None:
         kw["label"] = layer.label
     return kw
@@ -383,7 +511,7 @@ def _draw_line(
     c = _channel(layer, "c")
     if c is not None and c.size == y.size and y.size >= 2:
         return _draw_colored_line(ax, x, y, c, spec, layer, preset, theme)
-    kw = _line_kwargs(layer, theme)
+    kw = _line_kwargs(layer, theme, n=int(y.size), autostyle=autostyle_enabled(spec))
     ax.plot(x, y, **kw)
     return None
 
@@ -410,13 +538,18 @@ def _draw_colored_line(
     lc = LineCollection(list(segments), cmap=cmap, norm=norm)
     lc.set_array(c[:-1])
     canon = normalize_style(layer.style, warn=False)
-    lw = canon.get("linewidth") or (theme.line_width if theme.line_width is not None else None)
+    auto_lw, auto_alpha = autostyle_line(
+        int(y.size), line_width=theme.line_width, enabled=autostyle_enabled(spec)
+    )
+    lw = canon.get("linewidth") or auto_lw
     if lw is not None:
         lc.set_linewidth(float(lw))
     if "zorder" in canon:
         lc.set_zorder(int(canon["zorder"]))
     if "alpha" in canon:
         lc.set_alpha(float(canon["alpha"]))
+    elif auto_alpha is not None:
+        lc.set_alpha(auto_alpha)
     if layer.label is not None:
         lc.set_label(layer.label)
     ax.add_collection(lc)
@@ -460,7 +593,16 @@ def _draw_scatter(
         kw["cmap"] = _resolve_cmap(spec, layer, preset)
         kw["norm"] = _make_norm(_resolve_norm(spec, preset), spec.clim)
         return ax.scatter(x, y, **kw)
-    if "color" in canon:
+    # ``filled=False`` draws a hollow/open marker — the textbook unstable-fixed-point
+    # convention.  matplotlib spells it "no facecolor, ink in the edge", so the
+    # layer's colour has to move from ``color`` to ``edgecolors``: passing both
+    # ``color`` and ``facecolors`` to ``scatter`` is a conflict it silently resolves
+    # in favour of ``color``, which would fill the marker anyway.
+    if canon.get("filled") is False:
+        kw["facecolors"] = "none"
+        kw["edgecolors"] = canon.get("color", theme.foreground or "C0")
+        kw.setdefault("linewidths", 1.2)
+    elif "color" in canon:
         kw["color"] = canon["color"]
     ax.scatter(x, y, **kw)
     return None
@@ -902,11 +1044,25 @@ def _apply_axes(ax: Axes, spec: PlotSpec, preset: _KindPreset, theme: Theme) -> 
 
 
 def _apply_colorbar(
-    fig: Figure, ax: Axes, mappable: ScalarMappable | None, colorbar: Colorbar | None
+    fig: Figure,
+    ax: Axes,
+    mappable: ScalarMappable | None,
+    colorbar: Colorbar | None,
+    meta: dict[str, Any] | None = None,
 ) -> None:
     """Attach a colorbar for ``mappable`` honouring a :class:`Colorbar` spec.
 
-    Now also honors ``colorbar.label_size`` (the new enriched field).
+    Honors ``colorbar.label_size``, and — for a **discrete** (categorical)
+    colorbar — turns the numeric ramp into a genuine categorical legend: one tick
+    at the centre of each swatch, labelled with the category's own name.
+
+    A basin diagram is the motivating case.  Its colour channel is an *attractor
+    id*, not a quantity, but the colorbar read ``0.5 / 1.5 / 2.5`` — the
+    :class:`~matplotlib.colors.BoundaryNorm` bin edges — which names nothing and
+    implies an ordering the data does not have.  The category names come from
+    ``spec.meta["category_labels"]`` (``{value: label}``), which the emitter
+    records alongside the ``palette_index`` mapping it already carries; absent
+    that, the integer value itself is the label.
     """
     if mappable is None or colorbar is None or not colorbar.show:
         return
@@ -918,6 +1074,8 @@ def _apply_colorbar(
         cb.set_label(colorbar.label, **label_kw)
     if colorbar.ticks is not None:
         cb.set_ticks(list(colorbar.ticks))
+    elif colorbar.discrete:
+        _apply_categorical_ticks(cb, mappable, meta)
     if colorbar.tickformat is not None:
         import matplotlib.ticker as mticker
 
@@ -928,6 +1086,40 @@ def _apply_colorbar(
             cb.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter(fmt_str))
     if colorbar.label_size is not None:
         cb.ax.tick_params(labelsize=float(colorbar.label_size))
+
+
+def _apply_categorical_ticks(
+    cb: Any, mappable: ScalarMappable, meta: dict[str, Any] | None
+) -> None:
+    """Tick a discrete colorbar once per swatch, labelled by category name.
+
+    Reads the :class:`~matplotlib.colors.BoundaryNorm` the discrete image built
+    (:func:`_make_discrete_cmap_norm`): its boundaries are ``value ± 0.5``, so the
+    swatch centres are the integer category values themselves.  Labels come from
+    ``meta["category_labels"]`` when the emitter supplied them.
+    """
+    import matplotlib.colors as mcolors
+
+    norm = getattr(mappable, "norm", None)
+    if not isinstance(norm, mcolors.BoundaryNorm):
+        return
+    bounds = np.asarray(norm.boundaries, dtype=float)
+    if bounds.size < 2:
+        return
+    centres = 0.5 * (bounds[:-1] + bounds[1:])
+    # ``_make_discrete_cmap_norm`` builds the boundaries as ``value + 0.5`` per
+    # unique value, so bin ``i`` represents ``bounds[i + 1] - 0.5``.  Recover the
+    # category from the *upper* edge, not from the bin centre: with
+    # non-contiguous labels (a basin field of ``[-1, 1, 2]``) the bins are uneven
+    # and a centre rounds to the wrong value (0.5 -> "0" instead of "1").
+    values = [int(round(float(b) - 0.5)) for b in bounds[1:]]
+    labels_map: dict[int, str] = {}
+    if meta:
+        raw = meta.get("category_labels")
+        if isinstance(raw, dict):
+            labels_map = {int(k): str(v) for k, v in raw.items()}
+    cb.set_ticks(list(centres))
+    cb.set_ticklabels([labels_map.get(v, str(v)) for v in values])
 
 
 def _apply_legend(ax: Axes, spec: PlotSpec, theme: Theme) -> None:
@@ -1030,8 +1222,12 @@ def _apply_annotations(ax: Axes, annotations: list[Annotation]) -> None:
 
 
 def render(
-    spec: PlotSpec, *, figsize: tuple[float, float] | None = None, **_kw: Any
-) -> Figure | FuncAnimation:
+    spec: PlotSpec,
+    *,
+    figsize: tuple[float, float] | None = None,
+    path: str | Path | None = None,
+    **_kw: Any,
+) -> Figure | FuncAnimation | Path:
     """Render a 2-D :class:`~tsdynamics.viz.spec.PlotSpec` to a matplotlib Figure.
 
     Builds a :class:`~matplotlib.figure.Figure` with the Agg canvas (no
@@ -1051,49 +1247,70 @@ def render(
         honours the tweaks.
     figsize : tuple of float, optional
         ``(width, height)`` in inches; matplotlib's default when ``None``.
+    path : str or Path, optional
+        Write the artifact here and return the :class:`~pathlib.Path` instead of
+        the figure — the same ``render(path=...)`` contract the plotly and data
+        backends already honored.  matplotlib is the **default** backend, so
+        without this ``spec.render(path=...)`` (and therefore
+        ``result.plot(path=...)``, whose keyword table blesses ``path``) accepted
+        the request, returned a Figure and wrote **nothing**.  A raster / vector
+        extension goes through ``Figure.savefig``; ``.mp4`` / ``.gif`` on an
+        animated spec go through the animation's own writer.
     **_kw
         Forwarded but unused backend keywords (kept for a uniform renderer
         signature).
 
     Returns
     -------
-    matplotlib.figure.Figure
-        The rendered figure (a single axes), ready to ``savefig`` / embed.  A
-        3-D spec (``ndim == 3`` / a ``z`` axis / a ``LINE3D`` / ``SURFACE3D``
-        mark) is dispatched to the :mod:`._threed` renderer.
+    matplotlib.figure.Figure or pathlib.Path
+        The rendered figure (a single axes), ready to ``savefig`` / embed — or
+        the written ``path`` when one was given.  A 3-D spec (``ndim == 3`` / a
+        ``z`` axis / a ``LINE3D`` / ``SURFACE3D`` mark) is dispatched to the
+        :mod:`._threed` renderer.
     """
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
-
     from . import _threed
 
+    result: Figure | FuncAnimation
     if spec.is_animated:
         from . import _anim
 
-        return _anim.render_animation(spec, figsize=figsize)
+        result = _anim.render_animation(spec, figsize=figsize)
+    elif spec.is_composite:
+        result = _render_composite(spec, figsize=figsize)
+    elif _threed.is_three_d(spec):
+        result = _threed.render_3d(spec, figsize=figsize)
+    else:
+        figsize, dpi, layout = figure_geometry(spec, figsize)
+        fig = new_figure(figsize, dpi, layout)
+        ax = fig.add_subplot(1, 1, 1)
+        _draw_2d_panel(fig, ax, spec)
+        result = fig
+    if path is None:
+        return result
+    return _write(result, path)
 
-    if spec.is_composite:
-        return _render_composite(spec, figsize=figsize)
 
-    if _threed.is_three_d(spec):
-        return _threed.render_3d(spec, figsize=figsize)
+def _write(result: Figure | FuncAnimation, path: str | Path) -> Path:
+    """Write a rendered figure / animation to ``path`` and return it.
 
-    # Resolve meta figsize / dpi
-    meta_figsize = spec.meta.get("figsize") if isinstance(spec.meta, dict) else None
-    if figsize is None and meta_figsize is not None:
-        w, h = meta_figsize
-        if w is not None and h is not None:
-            figsize = (float(w), float(h))
-
-    dpi: float | None = None
-    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
-        dpi = float(spec.meta["dpi"])
-
-    fig = Figure(figsize=figsize, dpi=dpi)
-    FigureCanvasAgg(fig)
-    ax = fig.add_subplot(1, 1, 1)
-    _draw_2d_panel(fig, ax, spec)
-    return fig
+    A ``FuncAnimation`` (uniquely carrying ``to_jshtml``) writes a movie through
+    its own ``save`` when the extension is one; anything else is a still of the
+    animation's underlying figure.  Raises rather than silently producing an
+    empty file for an extension matplotlib cannot write.
+    """
+    out = Path(path)
+    ext = out.suffix.lower()
+    if hasattr(result, "to_jshtml") and ext in _MOVIE_EXTENSIONS:
+        result.save(str(out))  # type: ignore[union-attr]
+        return out
+    figure = getattr(result, "_fig", None) or getattr(result, "figure", result)
+    savefig = getattr(figure, "savefig", None)
+    if savefig is None:  # pragma: no cover - defensive
+        raise InvalidParameterError(
+            f"the matplotlib backend cannot write {out.name}: no savable figure was produced."
+        )
+    savefig(str(out))
+    return out
 
 
 def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = None) -> None:
@@ -1130,7 +1347,7 @@ def _draw_2d_panel(fig: Figure, ax: Axes, spec: PlotSpec, theme: Theme | None = 
     # Step 3: apply axes (grid, labels, ticks, tickformat, …), colorbar, legend, annotations
     _apply_theme_grid(ax, spec, theme)
     _apply_axes(ax, spec, preset, theme)
-    _apply_colorbar(fig, ax, mappable, spec.colorbar)
+    _apply_colorbar(fig, ax, mappable, spec.colorbar, spec.meta)
     _apply_legend(ax, spec, theme)
     _apply_annotations(ax, spec.annotations)
 
@@ -1161,8 +1378,6 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     A composite spec may carry its own ``theme``; each panel inherits it when the
     panel has no theme of its own (``panel.theme or composite.theme or get_theme()``).
     """
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
     from mpl_toolkits import mplot3d  # noqa: F401 — registers the "3d" projection
 
     from . import _threed
@@ -1173,22 +1388,25 @@ def _render_composite(spec: PlotSpec, *, figsize: tuple[float, float] | None) ->
     panels = spec.panels
     layout = spec.layout
     if not panels:
-        # A composite with no panels is degenerate; emit a valid (empty) figure.
-        fig = Figure(figsize=figsize)
-        FigureCanvasAgg(fig)
-        fig.add_subplot(1, 1, 1)
-        return fig
+        # A 0-panel COMPOSITE used to render as a blank figure — a silent no-op
+        # that told the caller nothing while looking like a successful plot (it
+        # is what ``to_plot_spec(kind="composite")`` produced, discarding the
+        # trajectory).  Fail loudly instead.  ``PlotSpec`` enforces the
+        # COMPOSITE <=> panels invariant at construction, so this is a backstop.
+        raise InvalidParameterError(
+            "cannot render a COMPOSITE spec with no panels: build it with "
+            "tsdynamics.viz.plot(..., layout=...), which always attaches panels."
+        )
     rows, cols = _composite_grid(layout, len(panels))
+    # Explicit figsize > spec.meta["figsize"] > theme.figsize > the grid-derived
+    # default.  (A theme's figsize is a *panel-independent* page size, so it is
+    # deliberately allowed to win over the grid heuristic but not over an
+    # explicit request.)
+    figsize, dpi, layout_engine = figure_geometry(spec, figsize, theme=composite_theme)
     if figsize is None:
         figsize = (cols * 5.0, rows * 3.2)
 
-    # Composite-level dpi
-    dpi: float | None = None
-    if isinstance(spec.meta, dict) and "dpi" in spec.meta:
-        dpi = float(spec.meta["dpi"])
-
-    fig = Figure(figsize=figsize, dpi=dpi)
-    FigureCanvasAgg(fig)
+    fig = new_figure(figsize, dpi, layout_engine)
 
     # Apply composite-level background to the figure
     if composite_theme.background is not None:

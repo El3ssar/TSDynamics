@@ -122,7 +122,10 @@ class RecurrenceMatrix(AnalysisResult):
             "recurrence_plot",
             layers=[
                 pb.scatter(
-                    i, j, label="recurrence", style={"color": "black", "s": 1, "marker": "s"}
+                    i,
+                    j,
+                    label="recurrence",
+                    style={"color": "black", "markersize": 1.0, "marker": "square"},
                 )
             ],
             aspect="equal",

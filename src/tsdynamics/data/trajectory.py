@@ -68,6 +68,9 @@ _KIND_KW: dict[str, frozenset[str]] = {
     # system's ``_field_shape`` (via meta), and the field-block selector rides on
     # the main ``components=`` argument.
     "spatial_field": frozenset(),
+    # A section is a point cloud of recorded crossings; the in-plane axes come
+    # from the section plane in ``meta``, so there is nothing to configure here.
+    "poincare_section": frozenset(),
 }
 
 #: The keywords ``plot()`` peels off and forwards to :meth:`Trajectory.to_plot_spec`
@@ -76,6 +79,53 @@ _KIND_KW: dict[str, frozenset[str]] = {
 _PLOT_SPEC_KEYS: frozenset[str] = frozenset({"kind", "components", "animate"}).union(
     *_KIND_KW.values()
 )
+
+#: The routing keys :meth:`Trajectory.to_plot_spec` can actually **build** — the
+#: auto-dispatch targets plus the recipes in :data:`_KIND_ALIASES`.  Validation
+#: keys off *this*, not off :class:`~tsdynamics.viz.spec.PlotKind` membership:
+#: the enum is the vocabulary of every plot the *library* can describe, while
+#: this front door builds exactly one panel from one trajectory.  Before v6
+#: ``kind=`` was resolved straight through ``PlotKind(route)``, so
+#: ``to_plot_spec(kind="basins_image")`` returned a spec **labelled**
+#: ``basins_image`` whose only layer was a plain ``LINE`` — a mislabelled plot,
+#: rendered with a basin-image preset — and ``kind="composite"`` produced a
+#: zero-panel composite that silently discarded the trajectory.  A kind this
+#: front door cannot build now raises.
+_BUILDABLE_ROUTES: frozenset[str] = frozenset(
+    {
+        "time_series",
+        "phase_portrait_2d",
+        "phase_portrait_3d",
+        "spacetime",
+        "poincare_section",
+        "spatial_field",
+        "delay_embedding",
+    }
+)
+
+
+def _reject_unbuildable_kind(kind: str, route: str) -> None:
+    """Raise unless ``route`` names a view this front door can build from a trajectory.
+
+    Parameters
+    ----------
+    kind : str
+        The spelling the caller passed (quoted back in the message).
+    route : str
+        ``kind`` after :data:`_KIND_ALIASES` resolution.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    if route in _BUILDABLE_ROUTES:
+        return
+    accepted = sorted(_BUILDABLE_ROUTES | set(_KIND_ALIASES))
+    raise InvalidParameterError(
+        f"kind={kind!r} is not a view a Trajectory can be plotted as; "
+        f"accepted kinds are {accepted}. "
+        "(Other PlotKind values name plots built by an analysis result — "
+        "e.g. basins_image by basins_of_attraction, recurrence_plot by "
+        "recurrence_matrix — or by tsdynamics.viz.plot for a composite.)"
+    )
 
 
 def _auto_route(n_components: int) -> str:
@@ -405,8 +455,24 @@ class Trajectory:
         Parameters
         ----------
         kind : str, optional
-            Override the auto-dispatched kind (a ``PlotKind`` value, or the
-            ``"delay"`` recipe).  ``None`` auto-dispatches.
+            Override the auto-dispatched kind.  ``None`` auto-dispatches on the
+            number of selected components.  Accepted values are the views a
+            trajectory can actually *be* — ``"time_series"``,
+            ``"phase_portrait_2d"``, ``"phase_portrait_3d"``, ``"spacetime"``,
+            ``"poincare_section"``, ``"spatial_field"`` — plus the ``"delay"`` and
+            ``"field"`` recipes.  Any other ``PlotKind`` value raises
+            :class:`~tsdynamics.errors.InvalidParameterError`: those kinds are
+            built by an analysis result (``basins_image`` by
+            ``basins_of_attraction``, ``recurrence_plot`` by
+            ``recurrence_matrix``, …) or by ``tsdynamics.viz.plot``, not from a
+            trajectory.
+
+            .. versionchanged:: 6.0
+               Previously *every* ``PlotKind`` spelling (and even a layer mark
+               like ``"line"``) was accepted and produced a spec **labelled**
+               with the requested kind whose only layer was a plain line —
+               a mislabelled plot; ``kind="composite"`` additionally returned a
+               zero-panel composite, silently discarding the trajectory.
         components : int or str or sequence of int/str, optional
             Which state components to draw (names or indices).  ``None`` uses all.
         animate : bool or dict or Animation, optional
@@ -442,10 +508,22 @@ class Trajectory:
         # resolution: here ``components=`` selects a *field block* (e.g. Gray–
         # Scott's "u"/"v"), not a state component, so it must not be resolved
         # against the per-cell labels.
-        if kind is not None and _KIND_ALIASES.get(kind, kind) == "spatial_field":
-            self._validate_kind_kw("spatial_field", kind_kw)
-            field = self._spatial_field_spec(components)
-            return self._with_animation(field, animate)
+        if kind is not None:
+            explicit_route = _KIND_ALIASES.get(kind, kind)
+            _reject_unbuildable_kind(kind, explicit_route)
+            if explicit_route == "spatial_field":
+                self._validate_kind_kw("spatial_field", kind_kw)
+                field = self._spatial_field_spec(components)
+                return self._with_animation(field, animate)
+            if explicit_route == "poincare_section":
+                # A section is a *point cloud of crossings*, not a portrait: route
+                # to the section builder (which projects onto the plane recorded in
+                # meta, else the first two components) rather than letting the
+                # kind fall through to ``_phase_portrait_spec`` — which used to
+                # return a LINE-layer portrait merely *labelled* POINCARE_SECTION.
+                self._validate_kind_kw("poincare_section", kind_kw)
+                section = self._poincare_section_spec(all_names)
+                return self._with_animation(section, animate)
 
         sel = self._resolve_components(components, all_names)
         sel_names = tuple(all_names[i] for i in sel)

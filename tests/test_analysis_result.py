@@ -18,6 +18,7 @@ from tsdynamics.analysis._result import (
     ScalarResult,
     VisualizationNotInstalled,
 )
+from tsdynamics.errors import InvalidParameterError
 
 # ---------------------------------------------------------------------------
 # Test result subclasses
@@ -245,8 +246,6 @@ def test_plot_call_raises_without_backend(_no_backend):
         "image",
         "bifurcation",
         "return_map",
-        "histogram",
-        "spectrum",
         "section",
     ],
 )
@@ -255,6 +254,20 @@ def test_plot_typed_methods_raise_without_backend(method, _no_backend):
     assert hasattr(accessor, method)
     with pytest.raises(VisualizationNotInstalled):
         getattr(accessor, method)()
+
+
+@pytest.mark.parametrize("method", ["histogram", "spectrum"])
+def test_removed_typed_plot_methods_are_gone(method):
+    """``.plot.histogram()`` / ``.plot.spectrum()`` were removed in v6.
+
+    Their data producers left with the generic time-series layer in the v6 scope
+    surgery, so neither kind has anything to build.  The methods did not fail —
+    ``_render(kind=...)`` only relabels the spec — so they drew the result's
+    ordinary layers under a histogram / spectrum name: a plot of the wrong thing
+    presented as the right thing.  An absent method is strictly better, and this
+    pins the removal so they cannot come back without a producer.
+    """
+    assert not hasattr(_spectrum().plot, method)
 
 
 def test_plot_accessor_repr():
@@ -319,10 +332,16 @@ def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     out = r.plot(backend="plotly")
     assert out == {"backend": "plotly", "kind": None, "backend_kw": {}}
     # A typed method routes its kind into to_plot_spec; backend kwargs reach render.
-    out2 = r.plot.scaling(backend="mpl", ax="axes-handle")
+    # ``figsize`` is a real backend keyword; ``ax`` used to ride through here too,
+    # but no shipped backend accepts it — ``.plot()`` now rejects a keyword neither
+    # ``to_plot_spec`` nor the backend contract declares, instead of silently
+    # dropping it into a ``**_kw`` catch-all (sanctioned v6 break).
+    out2 = r.plot.scaling(backend="mpl", figsize=(4.0, 3.0))
     assert out2["kind"] == "scaling_fit"
     assert out2["backend"] == "mpl"
-    assert out2["backend_kw"] == {"ax": "axes-handle"}
+    assert out2["backend_kw"] == {"figsize": (4.0, 3.0)}
+    with pytest.raises(InvalidParameterError):
+        r.plot.scaling(backend="mpl", not_a_real_keyword="x")
 
 
 def test_empty_renderer_registry_still_raises(monkeypatch):

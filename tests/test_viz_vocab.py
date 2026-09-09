@@ -17,6 +17,50 @@ vocabulary frozen and the schema backward-compatible:
    serialized dicts (without the new ``Axis.categories`` / ``Colorbar.cmap``…
    keys) still load — the schema additions are additive.
 
+v6 vocabulary surgery — why seven semantic kinds left
+-----------------------------------------------------
+Editing this gate is the deliberate act it exists to force, so the reasoning is
+recorded here rather than in a commit message.  An AST scan of every
+``PlotSpec(...)`` / ``pb.spec(...)`` construction outside ``viz/render`` (plus a
+value-literal cross-check) found **eight** semantic kinds that no code path in the
+library ever produced.  Seven were removed; one was kept.
+
+Removed, with the reason each was already dead:
+
+- ``power_spectrum``, ``spectrogram``, ``histogram_null``, ``feature_bars`` —
+  these name the PSD, the spectrogram, the surrogate null distribution and the
+  Hjorth/feature bar chart.  Their producers left the library in the v6 scope
+  surgery (commit ``5d841149`` deleted ``transforms/`` / ``entropy/`` /
+  ``surrogate/``), and ``CLAUDE.md`` now explicitly forbids re-adding generic
+  time-series statistics here.  A vocabulary member for an analysis the project
+  has ruled out of scope is a promise the library will never keep.
+- ``complexity_curve`` — same batch; nothing has produced it since.
+- ``trajectory_animation``, ``ensemble_animation`` — superseded by the orthogonal
+  :class:`~tsdynamics.viz.spec.Animation` modifier (PR #463).  A spec of *any*
+  kind animates by carrying an ``Animation``, so animation stopped being a kind;
+  these two survived only as "kept so an old serialized spec round-trips", and a
+  payload naming them has never been written by any released version that also
+  had the ``Animation`` modifier.
+
+**Kept:** ``bifurcation``.  The scan flags it as unproduced by a *default* path,
+but it is genuinely reachable and genuinely drawn — ``OrbitDiagram.plot.bifurcation()``
+routes ``kind="bifurcation"`` through ``to_plot_spec`` into ``pb.spec``, and the
+dispatcher's ``"bifurcation_diagram"`` alias resolves to it.  Verified by
+rendering: it returns a real ``Figure`` of the cascade.
+
+Also kept, deliberately, though neither has a producer:
+
+- the ``surface3d`` **mark** — the only 3-D mark all three drawing backends
+  already implement end to end (~103 lines in mpl / plotly / three.js).  The plan
+  is to give it a producer, not to delete the implementation.  No producer was
+  added in this pass, so it stays a hand-buildable primitive.
+- the ``histogram`` **mark** — ``_plotbuilder.histogram()`` has zero callers now
+  that the surrogate null distribution is gone, but a *mark* is a drawing
+  primitive rather than an analysis name: matplotlib and plotly both draw it, and
+  a user hand-building a ``Layer`` can use it today.  A dead mark is a spare
+  primitive; a dead semantic kind is a false advertisement.  That asymmetry is the
+  line this surgery drew.
+
 Engine-free, fast tier (imports only the backend-agnostic spec IR).
 """
 
@@ -50,15 +94,11 @@ EXPECTED_SEMANTIC_KINDS: frozenset[str] = frozenset(
         "poincare_section",
         "basins_image",
         "recurrence_plot",
-        "power_spectrum",
-        "spectrogram",
         "scaling_fit",
         "dimension_spectrum",
         "diagnostic_curve",
-        "complexity_curve",
         "line_family",
         "ensemble_fan",
-        "histogram_null",
         "lyapunov_spectrum",
         "eigenvalue_plane",
         "fixed_points_overlay",
@@ -66,9 +106,6 @@ EXPECTED_SEMANTIC_KINDS: frozenset[str] = frozenset(
         "phase_portrait_field",
         "continuation",
         "categorical_bar",
-        "feature_bars",
-        "trajectory_animation",
-        "ensemble_animation",
     }
 )
 
@@ -123,23 +160,95 @@ def test_no_new_member_escapes_a_set():
 
 
 def test_gapfill_required_kinds_present():
-    """The kinds the gap-fill batches name must all exist (forward guarantee)."""
+    """The kinds the gap-fill batches name must all exist (forward guarantee).
+
+    Trimmed in v6: ``spectrogram`` / ``feature_bars`` / ``complexity_curve`` were
+    dropped from this list together with the enum members, because the analyses
+    that would have filled those gaps are out of scope (see the module docstring).
+    """
     required = {
         "dimension_spectrum",
         "eigenvalue_plane",
         "lyapunov_spectrum",
         "vector_field",
         "phase_portrait_field",
-        "spectrogram",
         "fixed_points_overlay",
         "ensemble_fan",
         "categorical_bar",
-        "feature_bars",
-        "complexity_curve",
         "continuation",
     }
     values = {k.value for k in PlotKind}
     assert required <= values
+
+
+def test_removed_kinds_stay_removed():
+    """The seven kinds the v6 surgery deleted must not creep back unreviewed.
+
+    The other half of the freeze: the membership guards above would also pass if
+    someone re-added a member *and* re-listed it, so this names the seven
+    explicitly.  Re-adding one means giving it a producer and editing this test —
+    exactly the review the gate exists to force.
+    """
+    removed = {
+        "power_spectrum",
+        "spectrogram",
+        "histogram_null",
+        "feature_bars",
+        "complexity_curve",
+        "trajectory_animation",
+        "ensemble_animation",
+    }
+    values = {k.value for k in PlotKind}
+    assert removed.isdisjoint(values)
+    for name in ("POWER_SPECTRUM", "SPECTROGRAM", "HISTOGRAM_NULL", "FEATURE_BARS"):
+        assert not hasattr(PlotKind, name)
+
+
+def test_every_semantic_kind_has_a_producer_or_a_recorded_exemption():
+    """No semantic kind may exist purely because this gate says it exists.
+
+    The invariant the surgery established, kept live: every semantic kind is
+    either **produced** somewhere in the library (an AST scan for
+    ``PlotKind.<NAME>`` / its string value outside ``viz/render`` and outside the
+    enum's own definition site) or listed in the exemption table below with a
+    reason.  Without this, a kind can be added, never wired to anything, and
+    survive forever on the strength of a membership assertion — which is how the
+    seven removed kinds lasted as long as they did.
+    """
+    import ast
+    import pathlib
+
+    import tsdynamics
+
+    root = pathlib.Path(tsdynamics.__file__).parent
+    by_value = {k.value: k.name for k in PlotKind}
+    produced: set[str] = set()
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith("viz/render/") or rel == "viz/spec.py":
+            continue  # a renderer *consumes* kinds; spec.py *defines* them
+        tree = ast.parse(path.read_text(), str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "PlotKind"
+                and node.attr in PlotKind.__members__
+            ):
+                produced.add(node.attr)
+            elif isinstance(node, ast.Constant) and node.value in by_value:
+                produced.add(by_value[node.value])
+
+    # Kinds with no in-library producer, each for a recorded reason.  **Empty**
+    # after the v6 surgery: all 25 surviving semantic kinds are produced.  The
+    # table is the documented escape hatch — a kind that legitimately has no
+    # producer goes here with its reason, in review, rather than silently.
+    exempt: set[str] = set()
+    orphans = {k.name for k in PlotKind.semantic_kinds()} - produced - exempt
+    assert not orphans, (
+        f"semantic kind(s) {sorted(orphans)} are produced by nothing in the library. "
+        "Give them a producer, remove them, or add a recorded exemption here."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +274,15 @@ def test_every_kind_spec_round_trips_byte_identical(kind: PlotKind):
     """A spec built with each kind round-trips byte-identical through to_dict."""
     mark = kind if PlotKind.is_mark(kind) else PlotKind.LINE
     ndim = 3 if kind in (PlotKind.PHASE_PORTRAIT_3D,) else 2
+    # ``COMPOSITE`` is the one kind whose *structure* is constrained: since v6 a
+    # composite must carry at least one panel (``PlotSpec.__post_init__``), because
+    # a panel-less composite rendered as a blank figure.  Give it one so the
+    # round-trip still covers the kind — panels must survive to_dict/from_dict too.
+    panels = (
+        [PlotSpec(kind=PlotKind.TIME_SERIES, layers=[_minimal_layer(PlotKind.LINE)])]
+        if kind is PlotKind.COMPOSITE
+        else []
+    )
     spec = PlotSpec(
         kind=kind,
         layers=[_minimal_layer(mark)],
@@ -172,6 +290,7 @@ def test_every_kind_spec_round_trips_byte_identical(kind: PlotKind):
         y=Axis(label="y"),
         z=Axis(label="z") if ndim == 3 else None,
         ndim=ndim,
+        panels=panels,
     )
     once = spec.to_dict()
     twice = PlotSpec.from_dict(once).to_dict()

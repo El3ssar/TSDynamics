@@ -34,6 +34,7 @@ from ._common import (
     DIVERGED_COLOR,
     PALETTE,
     _apply_merge,
+    _category_labels,
     _palette_indices,
     _recurrence_grid,
 )
@@ -156,7 +157,20 @@ class BasinsResult(AnalysisResult):
         else:
             axes = list(range(min(labels.ndim, 2)))
 
-        layers = [pb.image(labels, style={"cmap": PALETTE})]
+        # An IMAGE channel is indexed ``[row, column]`` == ``[y, x]`` by every
+        # backend (matplotlib's ``imshow``, plotly's ``Heatmap``), but the label
+        # field is indexed ``[state axis 0, state axis 1]`` — and this spec puts
+        # state axis ``ax0`` on **x** (it is what ``xlimits`` and the attractor
+        # marker layer below both use).  Without the transpose the image is drawn
+        # rotated a quarter turn relative to its own axis labels, limits and
+        # markers: paint attractor 2 over ``x > 0.8`` and the figure shows a band
+        # at ``y > 0.8`` with the attractor-2 star sitting in attractor 1's colour.
+        # The two layers of one plot contradicting each other is the proof; the
+        # defect was invisible while the axes were labelled ``x1`` / ``x2`` and
+        # became publishable-wrong once they carry the system's real variable
+        # names.
+        image = labels.T if labels.ndim == 2 else labels
+        layers = [pb.image(image, style={"cmap": PALETTE})]
 
         # Mark the attractor representatives on a 2-D image, projected onto the
         # two free axes.  Lower-dim grids skip the overlay.
@@ -182,15 +196,19 @@ class BasinsResult(AnalysisResult):
             palette=PALETTE,
             diverged_color=DIVERGED_COLOR,
             palette_index=_palette_indices(self.attractors.ids),
+            # The colour channel is an attractor *id*, not a quantity — name each
+            # swatch so the colorbar reads as a categorical legend rather than a
+            # numeric ramp over BoundaryNorm bin edges (0.5 / 1.5 / 2.5 ...).
+            category_labels=_category_labels(np.asarray(self.labels)),
         )
         return pb.spec(
             kind,
             "basins_image",
             layers=layers,
             aspect="equal",
-            xlabel=f"x{ax0 + 1}",
+            xlabel=pb.axis_labels(self.meta, (ax0, ax1))[0],
             xlimits=x_lim,
-            ylabel=f"x{ax1 + 1}",
+            ylabel=pb.axis_labels(self.meta, (ax0, ax1))[1],
             ylimits=y_lim,
             title=f"basins ({self.n_attractors} attractors)",
             colorbar=Colorbar(label="attractor", cmap=PALETTE, discrete=True),
@@ -422,7 +440,12 @@ def basins_of_attraction(
         labels=labels,
         grid=region,
         attractors=attractors,
-        meta=AnalysisResult.build_meta(system, analysis="basins_of_attraction", seed=seed),
+        meta=AnalysisResult.build_meta(
+            system,
+            analysis="basins_of_attraction",
+            seed=seed,
+            variables=getattr(system, "variables", None),
+        ),
     )
 
 

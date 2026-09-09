@@ -28,6 +28,7 @@ import pytest
 
 import tsdynamics as ts
 import tsdynamics.viz as viz
+from tsdynamics.errors import InvalidParameterError
 from tsdynamics.viz.render.caps import VisualizationDegraded
 from tsdynamics.viz.spec import Axis, Colorbar, Layer, Layout, PlotKind, PlotSpec
 
@@ -240,10 +241,13 @@ def test_no_visualization_degraded_warning_for_composite():
     assert not [w for w in caught if issubclass(w.category, VisualizationDegraded)]
 
 
-def test_empty_composite_renders_a_figure():
-    spec = PlotSpec(kind=PlotKind.COMPOSITE, panels=[], layout=Layout(mode="stack"))
-    fig = _render(spec)
-    assert _is_plotly_figure(fig)
+def test_empty_composite_is_rejected_at_construction():
+    # A 0-panel COMPOSITE used to render as a blank figure on every backend — a
+    # silent no-op that looked like a successful plot (it is what
+    # ``to_plot_spec(kind="composite")`` produced, discarding the trajectory).
+    # The COMPOSITE <=> panels invariant now rejects it at construction.
+    with pytest.raises(InvalidParameterError):
+        PlotSpec(kind=PlotKind.COMPOSITE, panels=[], layout=Layout(mode="stack"))
 
 
 def test_animated_composite_declines_to_matplotlib():

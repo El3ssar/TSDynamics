@@ -31,7 +31,12 @@ import numbers
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal, cast
+
+#: The figure layout algorithms a renderer may be asked to apply.  Spelled as a
+#: closed literal (not a bare ``str``) so a backend can pass it straight through
+#: to matplotlib's ``Figure(layout=...)``, whose accepted set is exactly these.
+LayoutEngineName = Literal["constrained", "compressed", "tight"]
 
 __all__ = [
     "DEFAULT_PALETTE",
@@ -249,10 +254,18 @@ def _build_style_keys() -> dict[str, StyleKey]:
         ),
         StyleKey(
             name="markersize",
-            aliases=("ms", "s"),
+            # ``"s"`` is deliberately **NOT** an alias (removed in v6).  It collided
+            # head-on with two other meanings: matplotlib's ``s`` is a marker *area*
+            # (pt²) — which is what every in-tree emitter assumed when it wrote
+            # ``{"s": 40.0}`` — while ``markersize`` is a *diameter* (pt); and the
+            # single-character marker **value** ``"s"`` means *square*, so
+            # ``{"s": 1, "marker": "s"}`` used one letter for both a size key and a
+            # shape value.  One canonical spelling, one unit: ``markersize``, pt
+            # diameter.
+            aliases=("ms",),
             honored_by=_ALL_BACKENDS,
             validate=_validate_positive,
-            doc="marker size (pt)",
+            doc="marker size (pt diameter; 's' is NOT accepted — it meant area)",
         ),
         StyleKey(
             name="alpha",
@@ -268,6 +281,16 @@ def _build_style_keys() -> dict[str, StyleKey]:
             doc=(
                 "colormap name for the c / image channel (threejs uses a fixed "
                 "built-in ramp — an arbitrary cmap name is not honored)"
+            ),
+        ),
+        StyleKey(
+            name="filled",
+            honored_by=frozenset({"matplotlib", "plotly"}),
+            validate=_validate_bool,
+            doc=(
+                "whether a marker is filled (True) or hollow/open (False) — the "
+                "stable-vs-unstable distinction on a fixed-point overlay "
+                "(threejs draws points only — fill is not honored)"
             ),
         ),
         StyleKey(
@@ -417,8 +440,17 @@ class Theme:
     per-layer style: the background facecolor, the default ink (text / axes /
     ticks color), the font family + sizes, whether gridlines show, and the default
     line / marker sizes.  Layers that carry no explicit ``color`` are auto-colored
-    from :attr:`palette` (the color cycle).  ``figsize`` / ``dpi`` are **not** on a
-    theme — they live in ``PlotSpec.meta`` (set by ``PlotSpec.size``).
+    from :attr:`palette` (the color cycle).
+
+    .. versionchanged:: 6.0
+       :attr:`figsize` / :attr:`dpi` / :attr:`layout_engine` **are** theme fields
+       now.  They used to live only in ``PlotSpec.meta`` (set by
+       :meth:`~tsdynamics.viz.spec.PlotSpec.size`), which meant the
+       ``"publication"`` theme produced matplotlib's default 6.4×4.8 in @ 100 dpi
+       figure — publication *ink* on a screenshot-resolution canvas.  A theme now
+       carries its output geometry too.  ``PlotSpec.meta["figsize"]`` /
+       ``meta["dpi"]`` still **win** when set (an explicit ``spec.size(...)`` beats
+       the theme); the theme is the default underneath.
 
     Parameters
     ----------
@@ -446,6 +478,21 @@ class Theme:
         Default line width, or ``None``.
     marker_size : float, optional
         Default marker size, or ``None``.
+    figsize : tuple of float, optional
+        Default figure size ``(width, height)`` in inches, or ``None`` for the
+        backend default.  Overridden by ``PlotSpec.meta["figsize"]``.
+    dpi : float, optional
+        Default output resolution (dots per inch), or ``None``.  Overridden by
+        ``PlotSpec.meta["dpi"]``.
+    layout_engine : {"constrained", "compressed", "tight"}, optional
+        The figure layout algorithm a renderer should apply.  ``None`` (default)
+        defers to the renderer's own default — which, since v6, is
+        ``"constrained"``, so axis labels are never clipped out of the artifact.
+    autostyle : bool, optional
+        Whether renderers may derive density-aware line resolution (thinner,
+        slightly transparent lines for a very densely sampled curve) when the
+        caller set no explicit ``linewidth`` / ``alpha``.  Default ``True``; set
+        ``False`` for a constant-width line at every sample count.
     """
 
     name: str = "default"
@@ -460,6 +507,10 @@ class Theme:
     grid_alpha: float | None = None
     line_width: float | None = None
     marker_size: float | None = None
+    figsize: tuple[float, float] | None = None
+    dpi: float | None = None
+    layout_engine: LayoutEngineName | None = None
+    autostyle: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of this theme."""
@@ -476,12 +527,17 @@ class Theme:
             "grid_alpha": None if self.grid_alpha is None else float(self.grid_alpha),
             "line_width": None if self.line_width is None else float(self.line_width),
             "marker_size": None if self.marker_size is None else float(self.marker_size),
+            "figsize": None if self.figsize is None else [float(v) for v in self.figsize],
+            "dpi": None if self.dpi is None else float(self.dpi),
+            "layout_engine": self.layout_engine,
+            "autostyle": bool(self.autostyle),
         }
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Theme:
         """Rebuild a :class:`Theme` from :meth:`to_dict` output (tolerates missing keys)."""
         palette = d.get("palette")
+        figsize = d.get("figsize")
         return cls(
             name=d.get("name", "default"),
             palette=tuple(palette) if palette is not None else DEFAULT_PALETTE,
@@ -495,6 +551,10 @@ class Theme:
             grid_alpha=d.get("grid_alpha"),
             line_width=d.get("line_width"),
             marker_size=d.get("marker_size"),
+            figsize=(float(figsize[0]), float(figsize[1])) if figsize is not None else None,
+            dpi=d.get("dpi"),
+            layout_engine=cast("LayoutEngineName | None", d.get("layout_engine")),
+            autostyle=bool(d.get("autostyle", True)),
         )
 
     def merged(self, **overrides: Any) -> Theme:
@@ -617,6 +677,12 @@ def _build_builtin_themes() -> dict[str, Theme]:
             grid_alpha=0.5,
             line_width=1.5,
             marker_size=6.0,
+            # The point of the "publication" theme is publication *output*, not
+            # only publication ink: a single-column figure at print resolution.
+            # Without these it rendered at matplotlib's 6.4x4.8 in @ 100 dpi.
+            figsize=(5.0, 3.5),
+            dpi=300.0,
+            layout_engine="constrained",
         ),
     }
 

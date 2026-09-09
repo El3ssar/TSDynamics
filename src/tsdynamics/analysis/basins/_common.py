@@ -222,6 +222,22 @@ def _palette_indices(ids: Any) -> dict[int, int]:
     return {int(k): _palette_index(k) for k in ids}
 
 
+def _category_labels(labels: Any) -> dict[int, str]:
+    """Return ``{label value: display name}`` for a basin label field.
+
+    A basin colour channel is an attractor *id*, so its colorbar should read as a
+    categorical legend ("attractor 1", "attractor 2", "diverged") rather than as a
+    numeric ramp over the ``BoundaryNorm`` bin edges.  Renderers pick this up from
+    ``spec.meta["category_labels"]``.
+    """
+    _DIVERGED = -1  # attractors.DIVERGED; inlined to keep this leaf module import-free
+    out: dict[int, str] = {}
+    for v in np.unique(np.asarray(labels)):
+        iv = int(v)
+        out[iv] = "diverged" if iv == _DIVERGED else f"attractor {iv}"
+    return out
+
+
 def _apply_merge(labels: np.ndarray, merge: dict[int, int]) -> np.ndarray:
     """Remap a label array through ``{old_id: canonical_id}`` (others unchanged)."""
     if not merge:
