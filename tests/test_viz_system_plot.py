@@ -81,10 +81,22 @@ def _no_backend(monkeypatch):
             registry.renderers.register(entry.name, entry.obj, replace=True)
 
 
-def test_plot_raises_without_a_backend(_no_backend):
-    """`.plot()` resolves end-to-end to the render seam (no backend → documented error)."""
+def test_render_raises_without_a_backend(_no_backend):
+    """`.plot().render()` resolves end-to-end to the render seam (no backend → error).
+
+    ``.plot()`` itself is backend-free since v6: it *builds* the
+    :class:`~tsdynamics.viz.spec.PlotSpec` (the same thing ``ts.plot(system)``
+    returns), and ``.render()`` is what needs a backend.
+    """
     with pytest.raises(VisualizationNotInstalled):
-        ts.Lorenz().plot()
+        ts.Lorenz().plot().render()
+
+
+def test_system_plot_returns_a_spec_like_every_other_door(_no_backend):
+    """``system.plot()`` and ``ts.plot(system)`` are the same kind of thing."""
+    from tsdynamics.viz.spec import PlotSpec
+
+    assert isinstance(ts.Lorenz().plot(final_time=2.0, dt=0.05), PlotSpec)
 
 
 def test_repr_mimebundle_is_noop_without_backend(_no_backend):

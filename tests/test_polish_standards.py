@@ -62,8 +62,9 @@ from tsdynamics.analysis._result import (
     ScalingResult,
     VisualizationNotInstalled,
 )
+from tsdynamics.analysis.basins.basins import BasinsResult
 from tsdynamics.derived.poincare import PoincareSection
-from tsdynamics.errors import InvalidInputError, InvalidParameterError, TSDynamicsError
+from tsdynamics.errors import InvalidInputError, InvalidParameterError
 from tsdynamics.viz.spec import PlotKind
 
 
@@ -404,9 +405,15 @@ def test_runtime_result_contract(name, thunk, _no_render_backend):
         except TypeError as exc:  # pragma: no cover - a failure here is the gate firing
             pytest.fail(f"{name}.to_dict() is not JSON-serializable: {exc}")
 
-    # the deferred visualization seam (raises until a rendering backend registers)
+    # the deferred visualization seam (raises until a rendering backend registers).
+    # A Trajectory-shaped result's ``.plot()`` only *builds* the spec since v6, so
+    # the backend is reached through ``.render()``; an AnalysisResult's ``.plot``
+    # accessor still renders directly.
     with pytest.raises(VisualizationNotInstalled):
-        result.plot()
+        if isinstance(result, AnalysisResult):
+            result.plot()
+        else:
+            result.plot().render()
     if isinstance(result, AnalysisResult):
         with pytest.raises(VisualizationNotInstalled):
             result.plot.scaling()
@@ -1130,6 +1137,19 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
         ("System", "Lorenz", "integrate"),
         InvalidInputError,
     ),
+    # Closed by v6 FRESH-EYES: ``SystemBase._coerce_ic`` is now the one place the
+    # three initial-condition sources are normalised, so a wrong-length ``ic``
+    # names the system's dimension and its component names instead of leaking
+    # NumPy's ``cannot reshape array of size 2 into shape (3,)``.  Promoted out of
+    # the tier-3 strict-xfail table (``open-wrong-ic-message``).
+    _ValueNamingCase(
+        "wrong-ic-message",
+        _ERRGATE_WRONG_IC,
+        lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
+        TypeError,
+        ("Lorenz", "3 state components", "got 2"),
+        InvalidInputError,
+    ),
     # Curated exemplars — already-excellent value-naming messages (stock stdlib
     # types) that WS-ERRORS set out to make the law rather than the exception.
     _ValueNamingCase(
@@ -1208,7 +1228,7 @@ _ERRGATE_NO_SILENT: list[_RaisesCase] = [
         "wrong-ic-dimension",
         _ERRGATE_WRONG_IC,
         lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
-        ValueError,
+        TypeError,
         None,
     ),
     _RaisesCase(
@@ -1222,25 +1242,14 @@ _ERRGATE_NO_SILENT: list[_RaisesCase] = [
 
 
 # ── tier 3: still-open footguns, tracked under a strict xfail ───────────────
-# (FINISH-ERRADOPT closed `open-short-data-correlation-dimension` and
-# `open-unknown-keyword-run`; v6's shared `reject_system` guard closed
-# `open-wrong-type-input-message`.  All three were promoted into the
-# value-naming table above.)
-_ERRGATE_OPEN_FOOTGUNS: list[_OpenFootgun] = [
-    # The same wrong-ic input is asserted at tier 2 (`wrong-ic-dimension`, "it
-    # raises") and here at tier 3 ("it should raise a TSDynamicsError naming the
-    # ic") — a deliberate dual standard for one input, not a copy-paste duplicate.
-    _OpenFootgun(
-        "open-wrong-ic-message",
-        _ERRGATE_WRONG_IC,
-        lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
-        "WS-ERRORS left initial-condition normalization to a later lane: a "
-        "wrong-length ic leaks a raw NumPy 'cannot reshape array' ValueError "
-        "instead of a TSDynamicsError naming the initial condition.",
-        TSDynamicsError,
-        (),
-    ),
-]
+# Empty, and that is the point: every footgun this table ever tracked has been
+# closed and promoted into one of the tables above — `open-short-data-
+# correlation-dimension` and `open-unknown-keyword-run` by FINISH-ERRADOPT,
+# `open-wrong-type-input-message` by v6's shared `reject_system` guard, and
+# `open-wrong-ic-message` by v6 FRESH-EYES (`SystemBase._coerce_ic`).  Add a row
+# here only for a footgun a lane has *explicitly deferred*; the strict xfail then
+# turns red the moment it is fixed, forcing the promotion.
+_ERRGATE_OPEN_FOOTGUNS: list[_OpenFootgun] = []
 
 _ERRGATE_OPEN_PARAMS = [
     pytest.param(case, id=case.cid, marks=pytest.mark.xfail(reason=case.reason, strict=True))
@@ -1343,6 +1352,343 @@ def test_errgate_open_footgun_reasons_cite_a_lane() -> None:
         assert "WS-" in case.reason or "defer" in case.reason.lower(), (
             f"{case.cid}: an open-footgun reason must cite the deferring lane."
         )
+
+
+# ===========================================================================
+# Runnable-line gate (stream v6 FRESH-EYES)
+# ===========================================================================
+#
+# The error-message gate above enforces that a message *names the offending
+# value*.  Naming it is necessary and not sufficient: the owner's v6 session hit
+# a wall of messages that described the mistake perfectly and left him with
+# nothing to type.  The bar this section adds is decidable —
+#
+#   when a call fails because the caller typed the wrong *shape* of call, the
+#   message must contain a line that parses as Python and is a call,
+#
+# — so a regression is caught mechanically rather than by taste.  ``remedy()``
+# (``tsdynamics.errors``) is the formatter that produces such a block, and
+# :func:`_runnable_lines` below is its inverse: it reads a message back and
+# returns the statements a user could paste.  A message that merely *mentions* a
+# function ("use periodic_orbits for maps") yields nothing and fails the bar.
+#
+# Two further properties are asserted, because a line that parses is not yet a
+# line that helps:
+#
+#   * it must be **runnable in the user's REPL**, so it is spelled against the
+#     public surface (``ts.`` / ``system.`` / ``traj``), never a private helper;
+#     and
+#   * it must **not name a different function than the one the caller reached
+#     for** without also naming that one — the exact defect the owner reported
+#     ("orbit_diagram needs …" answering a ``bifurcation_diagram`` call).
+#
+# The table is curated for the same reason the errgate table is: whether a
+# message is *useful* is not decidable from a signature.  Every row is a call a
+# real session made.
+
+
+def _runnable_lines(message: str) -> list[str]:
+    """Return the indented lines of ``message`` that parse as a Python call.
+
+    A remedy line is either a bare call (``ts.basins(system, region)``) or an
+    assignment whose value is a call (``traj = system.run(...)``); anything else
+    — prose, a fragment, a bare name — is not something to paste and is not
+    counted.  Trailing comments are fine (the tokenizer drops them).
+    """
+    found: list[str] = []
+    for raw in message.splitlines():
+        line = raw.strip()
+        if not line or not raw.startswith(" "):
+            continue
+        try:
+            tree = ast.parse(line)
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            value = node.value if isinstance(node, (ast.Expr, ast.Assign)) else None
+            if isinstance(value, ast.Call):
+                found.append(line)
+                break
+    return found
+
+
+@dataclasses.dataclass(frozen=True)
+class _RunnableCase:
+    """A wrong call whose error must hand back the line to type instead.
+
+    ``thunk`` makes the mistake; ``called`` is the public name the user typed (so
+    the gate can check the answer is not about some other function); ``mentions``
+    are substrings at least one runnable line must contain — normally the fixed
+    call, so the row pins *which* fix is offered, not merely that one is.
+    """
+
+    cid: str
+    thunk: object
+    called: str
+    mentions: tuple[str, ...]
+
+
+def _undeclared_dim_system() -> object:
+    """Instantiate a system class that forgot ``dim`` -- the first-timer's error.
+
+    Defined as a function rather than a lambda because the mistake is in the
+    *class body*, and the class must be built fresh inside the thunk so the
+    registry sees one definition per call.
+    """
+
+    class NoDimension(ts.ContinuousSystem):
+        params = {"a": 1.0}
+
+        @staticmethod
+        def _equations(y, t, *, a):  # type: ignore[no-untyped-def]
+            return [-a * y(0)]
+
+    return NoDimension()
+
+
+#: Deterministic inputs for the rows below.
+_RUNNABLE_SERIES = np.linspace(0.0, 1.0, 8)
+_RUNNABLE_TRAJ = ts.Lorenz().run(final_time=2.0, dt=0.1, backend="reference")
+#: A two-basin label image, built directly rather than integrated: ``resilience``
+#: reads labels + grid, and the point of this row is the *ambiguity* (which of the
+#: two?), which a synthetic image states exactly and a real system only
+#: approximately (and slowly).
+_RUNNABLE_BASINS = BasinsResult(
+    labels=np.where(np.arange(64).reshape(8, 8) % 8 < 4, 1, 2),
+    grid=ts.data.Grid([-1.0, -1.0], [1.0, 1.0], (8, 8)),
+)
+
+_ERRGATE_RUNNABLE: list[_RunnableCase] = [
+    # ── wrong shape of call: a model where data belongs, and the reverse ──
+    _RunnableCase(
+        "system-first-analysis-given-data",
+        lambda: ts.max_lyapunov(np.asarray(_RUNNABLE_TRAJ.y[:, 0])),
+        "max_lyapunov",
+        ("lyapunov_from_data",),
+    ),
+    _RunnableCase(
+        "lyapunov-spectrum-given-a-trajectory",
+        lambda: ts.lyapunov_spectrum(_RUNNABLE_TRAJ),
+        "lyapunov_spectrum",
+        ("lyapunov_from_data(traj)",),
+    ),
+    _RunnableCase(
+        "data-first-analysis-given-a-system",
+        lambda: ts.correlation_dimension(ts.Lorenz()),
+        "correlation_dimension",
+        ("correlation_dimension(traj",),
+    ),
+    _RunnableCase(
+        "fixed-points-given-data",
+        lambda: ts.fixed_points(np.zeros((10, 2))),
+        "fixed_points",
+        ("ts.fixed_points(",),
+    ),
+    # ── a required argument with no natural default ──
+    _RunnableCase(
+        "basins-without-a-region",
+        lambda: ts.basins(ts.Henon()),
+        "ts.basins",
+        ("ts.basins(system,",),
+    ),
+    # The same function reached through its canonical (long) name: the message
+    # must name *that* spelling too, so neither caller is answered about a name
+    # they never typed.
+    _RunnableCase(
+        "basins-long-name-without-a-region",
+        lambda: ts.basins_of_attraction(ts.Henon()),
+        "basins_of_attraction",
+        ("ts.basins(system,",),
+    ),
+    _RunnableCase(
+        "recurrence-matrix-without-a-scale",
+        lambda: ts.recurrence_matrix(_RUNNABLE_TRAJ),
+        "recurrence_matrix",
+        ("recurrence_rate=",),
+    ),
+    _RunnableCase(
+        "windowed-rqa-without-a-window",
+        lambda: ts.windowed_rqa(_RUNNABLE_TRAJ),
+        "windowed_rqa",
+        ("window=",),
+    ),
+    _RunnableCase(
+        "continuation-without-a-region",
+        lambda: ts.continuation(ts.Henon(), "a", [1.2, 1.4]),
+        "continuation",
+        ("ts.continuation(system, param, values,",),
+    ),
+    _RunnableCase(
+        "resilience-without-an-attractor-id",
+        lambda: ts.resilience(_RUNNABLE_BASINS),
+        "resilience",
+        ("attractor_id=",),
+    ),
+    _RunnableCase(
+        "tipping-points-given-a-trajectory",
+        lambda: ts.tipping_points(_RUNNABLE_TRAJ),
+        "tipping_points",
+        ("ts.tipping_points(cont)",),
+    ),
+    # ── a flow keyword aimed at a map ──
+    _RunnableCase(
+        "map-given-a-flow-keyword",
+        lambda: ts.Henon().run(n=10, dt=0.01),
+        "run",
+        ("Henon().run(n=",),
+    ),
+    # ── right idea, wrong family ──
+    _RunnableCase(
+        "periodic-orbits-on-a-flow",
+        lambda: ts.periodic_orbits(ts.Lorenz(), 2),
+        "periodic_orbits",
+        ("ts.periodic_orbit(",),
+    ),
+    _RunnableCase(
+        "periodic-orbit-on-a-map",
+        lambda: ts.periodic_orbit(ts.Henon()),
+        "periodic_orbit",
+        ("ts.periodic_orbits(",),
+    ),
+    # ── a value the caller can only fix by being told the right one ──
+    _RunnableCase(
+        "wrong-length-initial-condition",
+        lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
+        "run",
+        ("ic=[1.0, 1.0, 1.0]",),
+    ),
+    _RunnableCase(
+        "too-short-series-for-a-dimension",
+        lambda: ts.correlation_dimension(_RUNNABLE_SERIES),
+        "correlation_dimension",
+        ("ts.correlation_dimension(traj)",),
+    ),
+    _RunnableCase(
+        "too-short-series-for-fixed-mass",
+        lambda: ts.fixed_mass_dimension(_RUNNABLE_SERIES),
+        "fixed_mass_dimension",
+        ("ts.fixed_mass_dimension(traj)",),
+    ),
+    _RunnableCase(
+        "non-numeric-renyi-order",
+        lambda: ts.generalized_dimension(_RUNNABLE_TRAJ, q="two"),
+        "generalized_dimension",
+        ("q=2.0",),
+    ),
+    # ── writing a system class: the very first thing a new user does, and the
+    # place a leaked internal error is most expensive ──
+    _RunnableCase(
+        "system-class-without-a-dimension",
+        _undeclared_dim_system,
+        "dim",
+        ("(dim=3)",),
+    ),
+    # ── shooting must escalate, not repeat the line the caller just ran ──
+    _RunnableCase(
+        "periodic-orbits-given-a-flow",
+        lambda: ts.periodic_orbits(ts.Lorenz(), 2),
+        "periodic_orbits",
+        ("ts.periodic_orbit(system, ic=traj.y[-1]",),
+    ),
+    # ── a near-miss name: the fix is one character, so spell the whole call ──
+    _RunnableCase(
+        "misspelt-parameter-keyword",
+        lambda: ts.Lorenz(sigmaa=10.0),
+        "Lorenz",
+        ("Lorenz(sigma=10.0)",),
+    ),
+    _RunnableCase(
+        "unknown-fixed-points-method",
+        lambda: ts.fixed_points(ts.Lorenz(), method="nooton"),
+        "method",
+        ("ts.fixed_points(system, method='newton')",),
+    ),
+    # ── a single exponent is not a spectrum: refuse, do not saturate to 1.0 ──
+    _RunnableCase(
+        "kaplan-yorke-given-one-exponent",
+        lambda: ts.kaplan_yorke_dimension(0.9),
+        "kaplan_yorke_dimension",
+        ("ts.kaplan_yorke_dimension(exps)",),
+    ),
+    # ── a basin is a property of the model, so data cannot reach the FSM ──
+    _RunnableCase(
+        "basins-given-a-trajectory",
+        lambda: ts.basins(_RUNNABLE_TRAJ, [(-2.0, 2.0, 8), (-2.0, 2.0, 8)]),
+        "basins_of_attraction",
+        ("ts.basins_of_attraction(system)",),
+    ),
+    # ── a transposed point set must not be diagnosed as a short one ──
+    _RunnableCase(
+        "transposed-point-set",
+        lambda: ts.correlation_dimension(np.zeros((3, 500))),
+        "correlation_dimension",
+        ("ts.correlation_dimension(data.T)",),
+    ),
+]
+
+#: Spellings that are *not* runnable in a user's REPL: a private helper, an
+#: internal module path, or a placeholder that has to be decoded first.
+_NOT_A_USER_CALL = ("_", "tsdynamics.analysis._", "self.", "<")
+
+
+@pytest.mark.parametrize("case", _ERRGATE_RUNNABLE, ids=lambda c: c.cid)
+def test_errgate_message_hands_back_a_runnable_line(case: _RunnableCase) -> None:
+    """A wrong-shaped call is answered with the line to type, not a description.
+
+    This is the bar the v6 owner session set: ``"X needs a discrete-time view"``
+    fails it; ``"wrap the flow first:\\n    ts.bifurcation_diagram(...)"`` passes.
+    """
+    with pytest.raises(Exception) as excinfo:  # noqa: PT011 - the type is gated elsewhere
+        case.thunk()
+    message = str(excinfo.value)
+    lines = _runnable_lines(message)
+    assert lines, (
+        f"{case.cid}: the message describes the mistake but hands back no line to "
+        f"type. Append one with errors.remedy(...): {message!r}"
+    )
+    for token in case.mentions:
+        assert any(token in line for line in lines), (
+            f"{case.cid}: no runnable line offers {token!r}; got {lines!r}"
+        )
+    for line in lines:
+        assert not line.startswith(_NOT_A_USER_CALL), (
+            f"{case.cid}: the remedy must be spelled against the public API, got {line!r}"
+        )
+
+
+@pytest.mark.parametrize("case", _ERRGATE_RUNNABLE, ids=lambda c: c.cid)
+def test_errgate_message_answers_the_call_the_user_made(case: _RunnableCase) -> None:
+    """The message never talks about a *different* function without naming this one.
+
+    The owner's report: calling ``ts.bifurcation_diagram`` and being refused by a
+    message about ``orbit_diagram`` — an internal name the caller never typed.  A
+    message may of course *redirect* to another function; it must simply also
+    acknowledge the call that was made.
+    """
+    with pytest.raises(Exception) as excinfo:  # noqa: PT011 - the type is gated elsewhere
+        case.thunk()
+    message = str(excinfo.value)
+    assert case.called in message, (
+        f"{case.cid}: the message must name {case.called!r} — the call the user "
+        f"actually made: {message!r}"
+    )
+
+
+def test_errgate_runnable_lines_detects_prose_and_code() -> None:
+    """The detector itself: indented calls count, prose and fragments do not."""
+    from tsdynamics.errors import remedy
+
+    assert _runnable_lines("no fix here at all") == []
+    assert _runnable_lines("use periodic_orbits for maps") == []
+    assert _runnable_lines("try this:\n    ts.basins(system, region)") == [
+        "ts.basins(system, region)"
+    ]
+    assert _runnable_lines("x" + remedy("traj = system.run(final_time=1.0)")) == [
+        "traj = system.run(final_time=1.0)"
+    ]
+    # a bare name is not a call, and an unindented line is prose, not a remedy
+    assert _runnable_lines("do:\n    periodic_orbits") == []
+    assert _runnable_lines("ts.basins(system, region)") == []
 
 
 # ===========================================================================

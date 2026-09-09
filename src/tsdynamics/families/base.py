@@ -18,6 +18,7 @@ import numpy as np
 # tsdynamics.data is a leaf package (no top-level tsdynamics imports), so this
 # is cycle-safe.
 from tsdynamics.data.trajectory import Trajectory
+from tsdynamics.errors import InvalidInputError, remedy
 
 # The Plottable mixin (stream VIZ-SYSTEM-PLOT) gives every system a ``.plot()`` /
 # ``to_plot_spec()``.  It imports tsdynamics.viz only lazily (inside its methods),
@@ -569,17 +570,66 @@ class SystemBase(SystemPlottable):
         if overrides:
             unknown = set(overrides) - set(defaults)
             if unknown:
+                # A misspelt parameter is nearly always one character off a
+                # declared one, so name the closest match and spell the whole
+                # constructor call rather than only listing what was valid.
+                import difflib
+
                 from tsdynamics.errors import InvalidParameterError
 
+                cls_name = type(self).__name__
+                guesses = {
+                    bad: (
+                        [n for n in sorted(defaults) if n.lower() == bad.lower()]
+                        or difflib.get_close_matches(bad, sorted(defaults), n=1, cutoff=0.5)
+                    )
+                    for bad in sorted(unknown)
+                }
+                fixed = {bad: g[0] for bad, g in guesses.items() if g}
+                did_you_mean = (
+                    " Did you mean " + ", ".join(f"{b!r} -> {g!r}" for b, g in fixed.items()) + "?"
+                    if fixed
+                    else ""
+                )
+                call = ", ".join(
+                    f"{fixed.get(bad, bad)}={overrides[bad]!r}" for bad in sorted(unknown)
+                )
                 raise InvalidParameterError(
-                    f"{type(self).__name__}: unknown parameter(s) "
-                    f"{sorted(unknown)}. Declared: {sorted(defaults)}"
+                    f"{cls_name}: unknown parameter(s) {sorted(unknown)}. "
+                    f"Declared: {sorted(defaults)}.{did_you_mean}"
+                    + remedy(
+                        f"{cls_name}({call})"
+                        if fixed
+                        else f"{cls_name}({sorted(defaults)[0]}={defaults[sorted(defaults)[0]]!r})",
+                        lead="Spell it as:" if fixed else "The declared parameters are set like:",
+                    )
                 )
             defaults.update(overrides)
         object.__setattr__(self, "params", ParamSet(defaults))
 
         # dim: constructor arg > class attribute
         resolved_dim = dim if dim is not None else type(self).dim
+        if resolved_dim is None:
+            # Every downstream consumer does ``int(self.dim)``, so an undeclared
+            # dimension used to surface as NumPy's ``int() argument must be ...
+            # not 'NoneType'`` from deep inside resolve_ic -- which names neither
+            # the class nor the attribute.  Writing a system class is the first
+            # thing a new user does, so refuse it here, where the fix is one line.
+            raise InvalidInputError(
+                f"{type(self).__name__} does not declare its state-space dimension, "
+                f"so the library cannot tell how many components its state has. "
+                f"`dim` is the number of equations `_equations` returns."
+                + remedy(
+                    f"class {type(self).__name__}({type(self).__bases__[0].__name__}):",
+                    "    dim = 3                       # the number of state components",
+                    '    variables = ("x", "y", "z")   # optional, names them',
+                    lead="Declare it on the class:",
+                )
+                + remedy(
+                    f"{type(self).__name__}(dim=3)",
+                    lead="...or pass it for this one instance:",
+                )
+            )
         object.__setattr__(self, "dim", resolved_dim)
 
         # field_shape (spatially-extended systems): constructor arg > class
@@ -809,6 +859,71 @@ class SystemBase(SystemPlottable):
         object.__setattr__(self, "_ic_rng", gen)
         return gen
 
+    def _coerce_ic(self, value: Any, source: str) -> np.ndarray:
+        """Coerce one initial-condition candidate to a ``(dim,)`` float array.
+
+        The single place a wrong-length / non-numeric initial condition is
+        rejected, so the three sources :meth:`resolve_ic` draws from (the ``ic=``
+        argument, the latched ``self.ic``, the class-level ``default_ic``) all
+        answer with one message that names the system's dimension, its component
+        names, and the line to type — instead of leaking NumPy's
+        ``cannot reshape array of size 2 into shape (3,)``.
+
+        Parameters
+        ----------
+        value : array-like
+            The candidate initial condition.
+        source : str
+            Where it came from, quoted back to the user (``"ic="`` /
+            ``"system.ic"`` / ``"default_ic"``) so a stale latched IC is not
+            mistaken for the one just passed.
+
+        Returns
+        -------
+        ndarray, shape (dim,)
+
+        Raises
+        ------
+        InvalidInputError
+            If the value has the wrong number of components or is not numeric.
+        """
+        dim = int(cast(int, self.dim))
+        name = type(self).__name__
+        try:
+            arr = np.asarray(value, dtype=float)
+        except (TypeError, ValueError) as err:
+            raise InvalidInputError(
+                f"{name}: {source} must be {dim} numbers (one per state component), "
+                f"got {value!r}." + self._ic_example(dim)
+            ) from err
+        if arr.size != dim:
+            names = getattr(type(self), "variables", None)
+            components = f" ({', '.join(names)})" if names and len(names) == dim else ""
+            raise InvalidInputError(
+                f"{name} has {dim} state components{components}, so {source} needs "
+                f"{dim} numbers — got {arr.size}: {np.asarray(value).tolist()!r}."
+                + self._ic_example(dim)
+            )
+        return arr.reshape(dim)
+
+    def _ic_example(self, dim: int) -> str:
+        """Return the runnable one-liner showing a correctly sized ``ic=`` for this system.
+
+        The receiver is spelled as the class constructor (``Lorenz()``) so the
+        line pastes into a bare REPL — except for a variable-dimension system,
+        whose dimension comes from a structural parameter the constructor would
+        have to repeat, where ``system`` keeps the line honest.
+        """
+        example = "[" + ", ".join(["1.0"] * dim) + "]" if dim <= 8 else f"np.ones({dim})"
+        run = (
+            f"iterate(steps=1000, ic={example})"
+            if callable(getattr(self, "iterate", None))
+            else f"run(final_time=100.0, ic={example})"
+        )
+        structural: frozenset[str] = getattr(type(self), "_structural_params", frozenset())
+        who = "system" if structural else f"{type(self).__name__}()"
+        return remedy(f"{who}.{run}")
+
     def resolve_ic(self, ic: Any | None = None, *, seed: int | None = None) -> np.ndarray:
         """
         Resolve initial conditions consistently.
@@ -842,7 +957,7 @@ class SystemBase(SystemPlottable):
         """
         explicit = True
         if ic is not None:
-            arr = np.asarray(ic, dtype=float).reshape(self.dim)
+            arr = self._coerce_ic(ic, "ic=")
             # A *re-resolution of the value already on the instance* is not a new
             # user choice.  The engine problem builders (``ode_problem`` /
             # ``map_problem``) hand the array ``resolve_ic`` just returned straight
@@ -855,10 +970,10 @@ class SystemBase(SystemPlottable):
             if prior is not None and prior.shape == arr.shape and np.array_equal(prior, arr):
                 explicit = bool(self.__dict__.get("_ic_explicit", True))
         elif self.ic is not None:
-            arr = np.asarray(self.ic, dtype=float).reshape(self.dim)
+            arr = self._coerce_ic(self.ic, "system.ic")
             explicit = bool(self.__dict__.get("_ic_explicit", False))
         elif type(self).default_ic is not None:
-            arr = np.asarray(type(self).default_ic, dtype=float).reshape(self.dim)
+            arr = self._coerce_ic(type(self).default_ic, "default_ic")
             # A class-declared default is not a *user* choice: a system whose
             # declared default lands off-basin keeps the random-IC retry.
             explicit = False

@@ -666,7 +666,7 @@ class TangentSystem(DerivedSystem):
                     "lyapunov_spectrum",
                     exponents,
                     steps=steps,
-                    n_exp=self.k,
+                    k=self.k,
                     reortho_interval=reortho_interval,
                     backend=self._backend,
                 )
@@ -770,7 +770,7 @@ class TangentSystem(DerivedSystem):
                 "lyapunov_spectrum",
                 exponents,
                 steps=steps,
-                n_exp=self.k,
+                k=self.k,
                 reortho_interval=reortho_interval,
                 backend=self._backend,
             )
@@ -886,7 +886,7 @@ class TangentSystem(DerivedSystem):
             dt=dt,
             final_time=final_time,
             burn_in=burn_in,
-            n_exp=self.k,
+            k=self.k,
             method=method or self.system._default_method,
             backend=self._backend,
         )

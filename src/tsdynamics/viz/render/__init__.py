@@ -223,8 +223,9 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
     ------
     VisualizationNotInstalled
         If no rendering backend is registered at all.
-    KeyError
-        If ``backend`` names a backend that is not registered.
+    tsdynamics.errors.InvalidParameterError
+        If ``backend`` names a backend that is not registered.  The message
+        lists the backends that *are* installed and the line to type.
 
     Warns
     -----
@@ -243,7 +244,29 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
         # so ``.render(backend="mpl")`` resolves the registered renderer instead of
         # raising KeyError on the alias.
         backend = _normalize_backend_name(backend)
-        renderer = renderers.get(backend)  # KeyError (naming) if unknown
+        try:
+            renderer = renderers.get(backend)
+        except KeyError:
+            # The registry's own ``KeyError`` names the bad value but not the
+            # choices, so ``render("seaborn")`` told the caller nothing they
+            # could act on — and ``KeyError.__str__`` is ``repr(arg)``, so a
+            # multi-line remedy came out with literal ``\n`` in it.  A bad
+            # ``backend=`` is a bad *option value*, which this library types as
+            # InvalidParameterError (see CLAUDE.md, "Typed errors").  Registration
+            # is lazy (a backend appears once its library imports), so the list
+            # must be the LIVE one and the fix line must name a backend that is
+            # actually installed here.
+            from tsdynamics.errors import InvalidParameterError, remedy
+
+            available = renderers.names()
+            usable = [n for n in available if n != backend] or ["matplotlib"]
+            raise InvalidParameterError(
+                f"no rendering backend named {backend!r}. Installed backends: {available}."
+                + remedy(f"spec.render({usable[0]!r})")
+                + "\n(a backend appears in that list once its library is installed:"
+                " pip install 'tsdynamics[viz]' for matplotlib,"
+                " 'tsdynamics[interactive]' for plotly)"
+            ) from None
         if _can_render(renderer, spec):
             return backend, renderer
         # The named backend declines: prefer a *drawing* fallback over a
@@ -394,3 +417,15 @@ def _visualization_not_installed() -> Exception:
     except Exception:  # pragma: no cover - analysis layer unavailable
         return ImportError(msg)
     return VisualizationNotInstalled(msg)
+
+
+def __dir__() -> list[str]:
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
+
+    Without this, ``dir(ts.viz.render)`` leaked 41 names: the ``importlib`` /
+    ``warnings`` / ``Any`` imports this module happens to use, the lazily bound
+    backend submodules (``mpl`` / ``plotly`` / ``threejs`` appear only *after* a
+    render, so the listing was even non-deterministic), and the private dispatch
+    helpers.  All stay reachable; only the listing is curated.
+    """
+    return sorted(__all__)

@@ -51,10 +51,21 @@ group and out-of-tree plot transforms through ``tsdynamics.plot_transforms``;
 and :data:`tsdynamics.registry.plot_transforms` at import.
 """
 
+from typing import Any
+
 from .. import registry as _registry
 from ..plugins import PLOT_TRANSFORMS_GROUP, register_entry_points
-from .compose import plot
-from .export import SCHEMA_VERSION, from_dict_envelope, from_json, to_dict_envelope, to_json
+from .export import (
+    SCHEMA_VERSION,
+    from_dict_envelope,
+    from_json,
+    to_dict_envelope,
+    to_json,
+)
+
+# Kept bound (and importable) but off the curated tab surface — see
+# ``_INTERNAL_NAMES``.  The redundant ``as`` form marks them as deliberate
+# re-exports rather than unused imports.
 from .spec import (
     Animation,
     Annotation,
@@ -63,17 +74,23 @@ from .spec import (
     Layout,
     PlotKind,
     PlotSpec,
-    Plottable,
+)
+from .spec import (
+    Plottable as Plottable,
 )
 from .style import (
     STYLE_KEYS,
-    THEMES,
     Theme,
     get_theme,
-    normalize_style,
     register_theme,
     set_theme,
     themes,
+)
+from .style import (
+    THEMES as THEMES,
+)
+from .style import (
+    normalize_style as normalize_style,
 )
 from .transforms import (
     Geometry,
@@ -82,6 +99,7 @@ from .transforms import (
     compatibility,
     draw,
     geometry,
+    plot,  # the transform-aware front door IS `viz.plot`
     plot_transform,
 )
 from .transforms import transforms as plot_transforms
@@ -105,39 +123,85 @@ RENDERERS_GROUP = "tsdynamics.renderers"
 #: indistinguishable from an in-tree one.
 TRANSFORMS_GROUP = PLOT_TRANSFORMS_GROUP
 
-__all__ = [
-    "Animation",
-    "Annotation",
-    "Axis",
-    "Geometry",
-    "Layer",
-    "Layout",
-    "PlotKind",
-    "PlotSpec",
-    "PlotTransform",
-    "Plottable",
-    "SCHEMA_VERSION",
-    "STYLE_KEYS",
-    "T",
+#: Names bound on this package but kept **off** ``__all__`` / ``dir()``: plumbing
+#: a user of the plotting layer never types.  Each stays reachable
+#: (``ts.viz.SCHEMA_VERSION``, ``from tsdynamics.viz import normalize_style``) —
+#: it is only the tab surface that is curated.
+#:
+#: * ``discover_plugins`` — entry-point loading, packaging machinery.
+#: * ``THEMES`` — the mutable theme registry behind :func:`themes` /
+#:   :func:`get_theme` / :func:`register_theme`, which are the accessors.
+#: * ``normalize_style`` — the internal validation choke point every renderer
+#:   funnels through; users pass style keys to ``.style(...)``.
+#: * ``Plottable`` — the mixin a *result class* implements, not something a
+#:   plotting caller instantiates.
+#:
+#: The **JSON envelope stays listed** (``SCHEMA_VERSION`` / ``to_dict_envelope`` /
+#: ``from_dict_envelope`` alongside :func:`to_json` / :func:`from_json`).  It
+#: reads like plumbing, but a previous stream promoted the loader half precisely
+#: because ``ts.viz.from_json`` not resolving made the save/load round trip
+#: one-way in practice — being *listed*, not merely importable, is the point, and
+#: ``tests/test_plotspec.py::test_export_names_are_in_the_curated_viz_all`` pins it.
+#: * ``render`` — the backend-dispatch subpackage.  Demoted from the listing, but
+#:   it must still *resolve*: it is the plugin/dispatch surface
+#:   (``ts.viz.render.select_renderer`` / ``register_builtin_renderers``).  It is
+#:   bound lazily by :func:`__getattr__` below rather than eagerly, so touching
+#:   ``ts.viz`` still costs no renderer import.
+_INTERNAL_NAMES = (
     "THEMES",
-    "Theme",
-    "compatibility",
+    "Plottable",
     "discover_plugins",
-    "draw",
-    "from_dict_envelope",
-    "from_json",
-    "geometry",
-    "get_theme",
     "normalize_style",
+    "render",
+)
+
+#: Subpackages of :mod:`tsdynamics.viz` resolved on demand by :func:`__getattr__`.
+#:
+#: ``render`` used to resolve **or not depending on session history**: nothing
+#: imports it at ``tsdynamics.viz`` import time, so ``ts.viz.render`` raised
+#: ``AttributeError`` in a fresh session and succeeded in one that had already
+#: drawn something (the first render imports the subpackage, which binds it on
+#: this package as a side effect).  That is the same order-dependence that made
+#: ``dir(ts.viz.render)`` change after the first render, and it broke the rule
+#: the rest of the curation keeps: *demotion is never removal*.  Resolving it
+#: here makes it deterministic without importing it eagerly.
+_LAZY_SUBMODULES = frozenset({"render"})
+
+__all__ = [
+    # The front door.
     "plot",
+    "T",
+    # The IR you build, inspect and render.
+    "PlotSpec",
+    "PlotKind",
+    "Layer",
+    "Axis",
+    "Layout",
+    "Annotation",
+    "Animation",
+    # Styling & themes.
+    "STYLE_KEYS",
+    "Theme",
+    "themes",
+    "get_theme",
+    "set_theme",
+    "register_theme",
+    # Plot transforms: what to plot, how to draw it, and what pairs with what.
+    "transforms",
+    "PlotTransform",
+    "Geometry",
     "plot_transform",
     "plot_transforms",
-    "register_theme",
-    "set_theme",
-    "themes",
-    "to_dict_envelope",
+    "compatibility",
+    "geometry",
+    "draw",
+    # Serialization round trip — both halves, listed on purpose (see
+    # ``_INTERNAL_NAMES``).
     "to_json",
-    "transforms",
+    "from_json",
+    "to_dict_envelope",
+    "from_dict_envelope",
+    "SCHEMA_VERSION",
 ]
 
 # NOTE: the *listing* function is exported as ``plot_transforms``, not
@@ -184,6 +248,27 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
 discover_plugins()
 
 
+def __getattr__(name: str) -> Any:
+    """Resolve the demoted :mod:`~tsdynamics.viz.render` subpackage on demand.
+
+    See :data:`_LAZY_SUBMODULES`: this exists so ``ts.viz.render`` resolves the
+    same way in every session instead of depending on whether something has
+    already drawn, while still keeping the renderer import off the ``ts.viz``
+    import path.
+    """
+    if name in _LAZY_SUBMODULES:
+        import importlib
+
+        mod = importlib.import_module(f"{__name__}.{name}")
+        globals()[name] = mod  # cache: subsequent access skips __getattr__
+        return mod
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def __dir__() -> list[str]:
-    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
+    """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
+
+    The envelope/registry/validation plumbing (:data:`_INTERNAL_NAMES`) stays
+    bound and importable, just off the tab surface.
+    """
     return sorted(__all__)

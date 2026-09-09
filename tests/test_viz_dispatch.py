@@ -205,10 +205,22 @@ def test_render_with_no_backend_raises_not_installed(clean_renderers, monkeypatc
         render_spec(_line_spec())
 
 
-def test_unknown_backend_name_raises_keyerror(clean_renderers):
+def test_unknown_backend_name_lists_the_registered_backends(clean_renderers):
+    """A bad ``backend=`` is a bad option value: name the choices and a line to type.
+
+    It used to surface the registry's bare ``KeyError``, whose message named the
+    mistake and nothing else — and whose ``__str__`` is ``repr(arg)``, so a
+    multi-line remedy would print with literal ``\\n`` in it.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
     clean_renderers.register("alpha", _make_renderer(RendererCapabilities.all_kinds("alpha")))
-    with pytest.raises(KeyError):
+    with pytest.raises(InvalidParameterError) as excinfo:
         render_spec(_line_spec(), "nope")
+    message = str(excinfo.value)
+    assert "'nope'" in message
+    assert "alpha" in message
+    assert "spec.render('alpha')" in message
 
 
 # ---------------------------------------------------------------------------

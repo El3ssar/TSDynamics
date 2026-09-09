@@ -5,7 +5,7 @@ Three rungs, one function, one return type:
 .. code-block:: python
 
     ts.plot(traj)                                     # what you already had
-    ts.plot(traj, "delay_embedding", tau=7)           # a transform by name
+    ts.plot(traj, "delay_embedding", delay=7)         # a transform by name
     ts.plot(duff, "basins", "attractors", "trajectory", "fixed_points")
 
 The rule that keeps it one function rather than three: **a positional string (or
@@ -133,6 +133,48 @@ def _accepted_names(record: Any) -> frozenset[str]:
     return frozenset(params) | row_option_names(record) | {"primitive_options"}
 
 
+def _reject_unused(kw: dict[str, Any], selectors: list[str | TransformCall]) -> None:
+    """Raise if a shared keyword reaches *none* of the named transforms.
+
+    The per-transform filter in :func:`_build_one` exists so ``plot(sys, "basins",
+    "trajectory", grid=400)`` does not hand ``grid=`` to ``trajectory`` — but a
+    keyword no transform accepts falls through the same sieve and is **silently
+    dropped**, which is exactly the defect ``_FIGURE_KEYS`` was added to fix and
+    exactly what the sibling front door (``traj.plot(colour="red")``) already
+    refuses.  One typo (``colour=``, ``componets=``) must not cost a wrong picture
+    and no message, so the two doors agree: an unusable keyword is an error that
+    names the closest keyword the named transforms *do* take.
+    """
+    import difflib
+
+    from tsdynamics.errors import InvalidParameterError
+
+    accepted: set[str] = set(_style_names() | _FIGURE_KEYS)
+    for selector in selectors:
+        name = selector.name if isinstance(selector, TransformCall) else selector
+        accepted |= _accepted_names(get(name.partition(".")[0]))
+    unused = sorted(set(kw) - accepted)
+    if not unused:
+        return
+    # ``source`` is the subject (passed positionally) and ``primitive_options`` is
+    # the escape hatch — neither is something a caller types, so listing them
+    # would send a reader looking for a keyword that is not the one they want.
+    listed = sorted(accepted - _style_names() - _FIGURE_KEYS - {"source", "primitive_options"})
+    named = [str(s) for s in selectors]
+    # Suggest against the style vocabulary too — ``colour=`` is a misspelling of
+    # the style key ``color=``, not of the transform's own ``color_by=``.
+    pool = sorted(set(listed) | set(_style_names()) | set(_FIGURE_KEYS))
+    close = {u: difflib.get_close_matches(u, pool, n=1, cutoff=0.6) for u in unused}
+    hints = "".join(
+        f"\n    {bad}= — did you mean {near[0]}=?" for bad, near in close.items() if near
+    )
+    raise InvalidParameterError(
+        f"{named} does not accept keyword(s) {unused}, so they would be silently ignored."
+        f"{hints}\nKeywords accepted here: {listed} (plus any style keyword — color=, "
+        "linewidth=, alpha=, … — and animate=)."
+    )
+
+
 def plot(
     *things: Any,
     layout: str = "overlay",
@@ -167,22 +209,27 @@ def plot(
     **kw
         Options shared by the named transforms — routed only to the transforms
         that actually accept them, so ``plot(sys, "basins", "trajectory",
-        grid=400)`` does not hand ``grid=`` to ``trajectory``.  With no selector,
-        forwarded to each subject's ``to_plot_spec`` (as
+        grid=400)`` does not hand ``grid=`` to ``trajectory``.  A keyword that
+        reaches *no* named transform is an **error**, not a silent drop, so a
+        typo (``colour=``) costs a message rather than a wrong picture.  With no
+        selector, forwarded to each subject's ``to_plot_spec`` (as
         :func:`tsdynamics.viz.plot` does).
 
     Returns
     -------
     PlotSpec
-        Always — which is why a result feeds straight back in.  It renders
-        itself: ``.plot()`` / ``.save("fig.pdf")`` / ``.render("plotly")``.
+        Always — which is why a result feeds straight back in, and why this is
+        the *same* return type as ``traj.plot()`` / ``system.plot()`` /
+        ``spec.plot()``.  ``plot`` builds, ``render`` draws, ``save`` writes:
+        ``.save("fig.pdf")`` / ``.render("plotly")``.
 
     Raises
     ------
     tsdynamics.errors.InvalidParameterError
-        If transform names are given without exactly one subject, if a
-        (transform, primitive) pair is not declared, or if the frames do not
-        allow an overlay.
+        If transform names are given without exactly one subject, if a shared
+        keyword reaches none of the named transforms, if a (transform,
+        primitive) pair is not declared, or if the frames do not allow an
+        overlay.
 
     Examples
     --------
@@ -191,7 +238,7 @@ def plot(
     documentation gallery, which is generated from it.
 
     >>> ts.plot(traj)                                        # doctest: +SKIP
-    >>> ts.plot(traj, "delay_embedding", tau=7)              # doctest: +SKIP
+    >>> ts.plot(traj, "delay_embedding", delay=7)            # doctest: +SKIP
     >>> ts.plot(traj, "phase_portrait", primitive="density") # doctest: +SKIP
     >>> ts.plot(fhn, "flow_speed", "streamlines", "nullclines",
     ...         xlim=(-2.5, 2.5), ylim=(-1.0, 2.0))          # doctest: +SKIP
@@ -225,5 +272,6 @@ def plot(
             "compose them with tsdynamics.viz.plot(...)."
         )
     subject = subjects[0]
+    _reject_unused(kw, selectors)
     specs = [_build_one(subject, sel, dict(kw), primitive) for sel in selectors]
     return compose_plot(*specs, layout=layout, on=on)

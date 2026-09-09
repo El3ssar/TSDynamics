@@ -235,7 +235,7 @@ def test_plottable_mixin_plot_raises_without_backend(_no_backend):
             return PlotSpec(kind=PlotKind.TIME_SERIES)
 
     with pytest.raises(ImportError):
-        _Thing().plot(xscale="log")
+        _Thing().plot(xscale="log").render()
 
 
 def test_plottable_base_to_plot_spec_raises():
@@ -495,3 +495,160 @@ def test_frame_round_trips_through_to_dict():
     spec = PlotSpec(kind=PlotKind.PHASE_PORTRAIT_2D, frame=Frame("state2", 2, ("x", "v")))
     assert spec.to_dict()["frame"] == {"space": "state2", "ndim": 2, "axes": ["x", "v"]}
     assert PlotSpec.from_dict(spec.to_dict()).frame == spec.frame
+
+
+# ---------------------------------------------------------------------------
+# The notebook display path (adversarial follow-up to "plot() returns a spec")
+#
+# ``.plot()`` used to hand back a matplotlib Figure, and a Jupyter cell drew it
+# because IPython has a display hook registered for Figure.  Once ``.plot()``
+# returned a PlotSpec instead, the display hook still handed a *Figure* back out
+# of ``_repr_mimebundle_`` — which is not a mime bundle, so IPython warned
+# (``FormatterWarning: ... returned invalid type``) and fell back to ``repr``:
+# a multi-thousand-line dump of the spec's data arrays, in place of the picture.
+# These pin the contract that broke.
+# ---------------------------------------------------------------------------
+
+
+class _FakeFormatter:
+    """Stand-in for ``shell.display_formatter``: reports what it was asked to format."""
+
+    def __init__(self) -> None:
+        self.seen: list[object] = []
+
+    def format(self, obj, include=None, exclude=None):  # noqa: D102 - test double
+        self.seen.append(obj)
+        return {"image/png": b"png-bytes", "text/plain": repr(obj)}, {"image/png": {}}
+
+
+class _FakeShell:
+    def __init__(self) -> None:
+        self.display_formatter = _FakeFormatter()
+
+
+@pytest.fixture()
+def fake_ipython(monkeypatch):
+    """Install a fake ``IPython.core.getipython`` so the hook believes it is in a notebook."""
+    import types
+
+    shell = _FakeShell()
+    module = types.ModuleType("IPython.core.getipython")
+    module.get_ipython = lambda: shell  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "IPython.core.getipython", module)
+    return shell
+
+
+def test_mimebundle_returns_a_mapping_not_a_figure(fake_ipython):
+    """The hook must return ``(data, metadata)``; a figure makes IPython warn and give up."""
+    from tsdynamics.viz.spec import _notebook_mimebundle
+
+    drawn = object()
+    bundle = _notebook_mimebundle(lambda: drawn, None, None)
+
+    assert isinstance(bundle, tuple)
+    data, metadata = bundle
+    assert isinstance(data, dict) and isinstance(metadata, dict)
+    assert "image/png" in data
+    # The figure is handed to IPython's own formatters (so the bundle is whatever
+    # the *backend* registered), never returned raw.
+    assert fake_ipython.display_formatter.seen == [drawn]
+
+
+def test_mimebundle_does_not_wait_for_a_previous_render(fake_ipython, monkeypatch):
+    """The first notebook cell must draw.
+
+    The hook used to bail out when ``tsdynamics.registry.renderers`` was empty —
+    but the in-tree backends only register on the *first* render, so in a fresh
+    session the very first ``traj.plot()`` cell no-op'd and printed the repr.
+    """
+    from tsdynamics.viz import spec as spec_mod
+
+    monkeypatch.setattr(spec_mod, "_resolve_renderers", lambda: None)
+    assert spec_mod._notebook_mimebundle(lambda: object(), None, None) is not None
+
+
+def test_mimebundle_is_a_noop_outside_a_notebook(monkeypatch):
+    """A plain console/script must fall back to ``repr`` — and never draw."""
+    import types
+
+    from tsdynamics.viz.spec import _notebook_mimebundle
+
+    module = types.ModuleType("IPython.core.getipython")
+    module.get_ipython = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "IPython.core.getipython", module)
+
+    def _must_not_draw():
+        raise AssertionError("render() must not run outside a notebook")
+
+    assert _notebook_mimebundle(_must_not_draw, None, None) is None
+
+
+def test_mimebundle_survives_a_render_error(fake_ipython):
+    """A backend blow-up must degrade to ``repr``, never propagate out of a repr."""
+    from tsdynamics.viz.spec import _notebook_mimebundle
+
+    def _boom():
+        raise RuntimeError("no backend")
+
+    assert _notebook_mimebundle(_boom, None, None) is None
+
+
+# ---------------------------------------------------------------------------
+# ts.plot(...) must not swallow a keyword no named transform can use
+# ---------------------------------------------------------------------------
+
+
+def test_front_door_rejects_a_keyword_no_transform_accepts():
+    """``ts.plot(traj, "time_series", colour="red")`` drew the wrong picture, silently.
+
+    The per-transform keyword filter (which stops ``grid=`` reaching
+    ``trajectory`` in a multi-transform overlay) also swallowed a keyword that
+    reached *nothing*.  The sibling door ``traj.plot(colour="red")`` already
+    refused, so the two front doors disagreed about the same typo.
+    """
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+
+    traj = ts.systems.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    with pytest.raises(InvalidParameterError) as excinfo:
+        ts.plot(traj, "time_series", colour="red")
+    message = str(excinfo.value)
+    assert "colour" in message
+    assert "color=" in message  # names the spelling that works
+    assert "components" in message  # ... and what this transform does accept
+
+
+def test_front_door_still_routes_a_keyword_only_one_transform_accepts():
+    """The rejection must not break the routing it guards: a used keyword is fine."""
+    import tsdynamics as ts
+
+    traj = ts.systems.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    spec = ts.plot(traj, "time_series", "phase_portrait", components=[0, 1], layout="row")
+    assert spec.is_composite
+
+
+# ---------------------------------------------------------------------------
+# The two `plot` doors must agree about a positional string
+# ---------------------------------------------------------------------------
+
+
+def test_a_positional_transform_name_on_the_method_names_the_front_door():
+    """``ts.plot(traj, "delay_embedding")`` reads a positional string as a transform.
+
+    A reader who has seen that call tries the same on the method and used to get
+    ``TypeError: plot() takes 1 positional argument but 2 were given`` — which
+    names neither the concept nor a spelling that works.
+    """
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+
+    traj = ts.systems.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    for subject, call in (
+        ("traj", lambda: traj.plot("delay_embedding", delay=7)),
+        ("system", lambda: ts.systems.Lorenz().plot("phase_portrait")),
+    ):
+        with pytest.raises(InvalidParameterError) as excinfo:
+            call()
+        message = str(excinfo.value)
+        assert f"ts.plot({subject}, " in message  # the front-door spelling
+        assert f"{subject}.plot(kind=" in message  # ... and the kind spelling

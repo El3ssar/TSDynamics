@@ -85,7 +85,7 @@ def test_tinkerbell_is_chaotic() -> None:
 def test_partial_spectrum_k_less_than_dim() -> None:
     """Requesting fewer exponents than ``dim`` returns just the leading ones."""
     full = _spectrum(Henon, steps=8000, ic=[0.1, 0.1])
-    top = np.asarray(Henon().lyapunov_spectrum(steps=8000, ic=[0.1, 0.1], n_exp=1), dtype=float)
+    top = np.asarray(Henon().lyapunov_spectrum(steps=8000, ic=[0.1, 0.1], k=1), dtype=float)
     assert top.shape == (1,)
     # Same orbit, same leading direction → the maximal exponent agrees bit-for-bit.
     assert top[0].view(np.uint64) == full[0].view(np.uint64), (top, full)

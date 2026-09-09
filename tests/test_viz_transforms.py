@@ -426,7 +426,7 @@ def test_plot_without_a_transform_is_the_composition_front_door():
 
 
 def test_plot_with_a_transform_name_builds_it():
-    spec = plot(_traj(), "delay_embedding", tau=7)
+    spec = plot(_traj(), "delay_embedding", delay=7)
     assert spec.kind is PlotKind.PHASE_PORTRAIT_2D
     assert spec.layers[0].transform == "delay_embedding"
 
@@ -489,14 +489,14 @@ def test_t_carries_per_transform_options_and_style():
 def test_a_shared_keyword_only_reaches_the_transforms_that_accept_it():
     """``plot(subject, "a", "b", opt=…)`` must not hand ``opt`` to a transform without it.
 
-    ``phase_portrait`` takes no ``tau``; handing it one would raise, so the fact
+    ``phase_portrait`` takes no ``delay``; handing it one would raise, so the fact
     that this composes at all is the assertion.
     """
     spec = plot(
         _traj(),
         T("phase_portrait", components=[0, 1]),
         "delay_embedding",
-        tau=9,
+        delay=9,
         layout="row",
     )
     assert spec.kind is PlotKind.COMPOSITE

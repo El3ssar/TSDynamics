@@ -75,6 +75,7 @@ __all__ = [
     "Nullcline",
     "ScalarField",
     "TraceDeterminant",
+    "classify_linear",
     "escape_time_field",
     "flow_field",
     "ftle_field",
@@ -87,6 +88,20 @@ __all__ = [
     "transient_time_field",
     "window_for",
 ]
+
+
+def __dir__() -> list[str]:
+    """Show the planar toolkit, not this module's imports.
+
+    ``planar`` is advertised as a capability category on ``ts.analysis.<TAB>``,
+    so it is a namespace a user tab-completes into.  Without this, a plain module
+    listing hands them ``np`` / ``warnings`` / ``dataclass`` / ``field`` /
+    ``Any`` / ``Callable`` / ``Sequence`` and the private grid helpers alongside
+    the actual estimators — the same clutter the curated packages exist to
+    remove, one dot deeper.  Everything dropped stays reachable by name.
+    """
+    return sorted(__all__)
+
 
 #: A polyline: ``(n, 2)`` of ``(x, y)`` points in the plane of the slice.
 Curve = np.ndarray

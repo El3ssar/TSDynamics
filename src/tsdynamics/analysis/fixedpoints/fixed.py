@@ -36,9 +36,10 @@ from typing import Any, cast
 
 import numpy as np
 
-from tsdynamics.errors import InvalidParameterError
+from tsdynamics.errors import InvalidParameterError, invalid_value, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
+from .._common import reject_data
 from .._result import AnalysisResult, CollectionResult
 from . import _common as _c
 
@@ -426,19 +427,40 @@ def fixed_points(
     Krawczyk (1969), *Computing* 4, 187.
     Neumaier (1990), *Interval Methods for Systems of Equations*, CUP.
     """
+    reject_data(system, analysis="fixed_points")
     if isinstance(system, DiscreteMap):
         continuous = False
     elif isinstance(system, ContinuousSystem):
         continuous = True
     else:
         raise NotImplementedError(
-            f"fixed_points supports discrete maps and continuous flows, not "
-            f"{type(system).__name__}."
+            f"fixed_points solves f(x)=x for a map and f(x)=0 for a flow; "
+            f"{type(system).__name__} is neither. A delay system has no "
+            f"finite-dimensional root to solve for, and a stochastic one has no "
+            f"fixed point at all — but the *drift* of an SDE, and the flow a delay "
+            f"system reduces to at zero delay, do."
+            + remedy(
+                "ts.fixed_points(ts.systems.Lorenz())",
+                lead="Pass a map or a flow:",
+            )
         )
 
     method = method.lower()
     if method not in ("newton", "sd", "dl", "interval"):
-        raise ValueError(f"method must be 'newton', 'sd', 'dl', or 'interval', got {method!r}.")
+        raise invalid_value(
+            "method",
+            method,
+            options=["newton", "sd", "dl", "interval"],
+            hint=(
+                "'newton' is multi-start Newton; 'sd'/'dl' add stabilising "
+                "transformations that reach unstable orbits of maps; 'interval' "
+                "is the rigorous Krawczyk search, which cannot miss a root."
+                + remedy(
+                    "ts.fixed_points(system, method='newton')",
+                    lead="The default is the one to start from:",
+                )
+            ),
+        )
     if continuous and method in ("sd", "dl"):
         raise ValueError(
             "the 'sd'/'dl' stabilising transformations target unstable orbits of "

@@ -27,10 +27,48 @@ from typing import Any
 
 import numpy as np
 
+from ...errors import InvalidInputError, InvalidParameterError, invalid_value, remedy
 from .._common import reject_system as _reject_system
 from .._result import AnalysisResult, ScalarResult
 from ._common import _BASIN_HINT, _as_label_array
 from .basins import BasinsResult
+
+
+def _resolve_attractor_id(result: BasinsResult, attractor_id: int | None) -> int:
+    """Pick which attractor to measure, or say which ones there are.
+
+    ``resilience`` is the one basin metric that is *about* a particular
+    attractor, so it cannot be defaulted in general — but a single-attractor
+    image has only one answer, and when there is a real choice the caller needs
+    the ids that exist, not the word "attractor_id".
+    """
+    present = sorted(int(i) for i in np.unique(result.labels) if int(i) >= 1)
+    if attractor_id is not None:
+        if int(attractor_id) not in present:
+            raise invalid_value(
+                "attractor_id",
+                attractor_id,
+                options=present,
+                hint="those are the basin labels present in this image.",
+            )
+        return int(attractor_id)
+    if len(present) == 1:
+        return present[0]
+    if not present:
+        raise InvalidInputError(
+            "this basin image has no attractor to measure — every cell diverged or "
+            "went unlabelled, so there is no basin and no boundary."
+            + remedy(
+                "res = ts.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                lead="Widen the region (or raise max_steps) so trajectories settle:",
+            )
+        )
+    raise InvalidInputError(
+        f"resilience measures one attractor's distance to its basin boundary, so it "
+        f"needs to know which: this image holds {len(present)} attractors, "
+        f"labelled {present}." + remedy(f"ts.resilience(res, attractor_id={present[0]})")
+    )
+
 
 __all__ = [
     "BasinEntropy",
@@ -400,7 +438,23 @@ def uncertainty_exponent(
 
     positive = fractions > 0.0
     if positive.sum() < 2:
-        raise ValueError("not enough non-zero f(epsilon) values to fit (no boundary?).")
+        n_basins = len({int(i) for i in np.unique(labels) if int(i) >= 1})
+        why = (
+            f"this image holds only {n_basins} basin, so it has no boundary between "
+            f"basins to be uncertain about"
+            if n_basins < 2
+            else "the grid is too coarse for any cell to straddle a boundary"
+        )
+        raise InvalidParameterError(
+            f"uncertainty_exponent measures how the uncertain fraction f(eps) shrinks "
+            f"with eps, and f(eps) is zero at all but {int(positive.sum())} of the "
+            f"probed radii — {why}."
+            + remedy(
+                "res = ts.basins(system, [(-2.0, 2.0, 400), (-2.0, 2.0, 400)])",
+                "ts.uncertainty_exponent(res)",
+                lead="Image a region that contains more than one attractor, more finely:",
+            )
+        )
 
     log_eps = np.log(epsilons[positive])
     log_f = np.log(fractions[positive])
@@ -562,7 +616,7 @@ def wada_property(
 # ---------------------------------------------------------------------------
 
 
-def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
+def resilience(result: BasinsResult, attractor_id: int | None = None) -> ScalarResult:
     r"""
     Minimal-fatal-shock resilience of an attractor: its distance to the boundary.
 
@@ -575,8 +629,10 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
     ----------
     result : BasinsResult
         A basin image carrying its grid and attractors.
-    attractor_id : int
-        Which attractor (basin label) to measure.
+    attractor_id : int, optional
+        Which attractor (basin label) to measure.  A basin image with exactly
+        **one** attractor needs no choice, so it may be omitted there; with two
+        or more it is required, and the error lists the ids actually present.
 
     Returns
     -------
@@ -615,8 +671,17 @@ def resilience(result: BasinsResult, attractor_id: int) -> ScalarResult:
         hint=_BASIN_HINT.format(who="resilience") + "  # then resilience(res, attractor_id)",
     )
     if not isinstance(result, BasinsResult):
-        raise TypeError("resilience needs a BasinsResult (it requires the grid + attractors).")
+        raise InvalidInputError(
+            f"resilience measures a state-space distance, so it needs the full "
+            f"BasinsResult (with its grid and attractors), not a "
+            f"{type(result).__name__}."
+            + remedy(
+                "res = ts.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                "ts.resilience(res, attractor_id=1)",
+            )
+        )
     labels = result.labels
+    attractor_id = _resolve_attractor_id(result, attractor_id)
     grid = result.grid
     assert grid is not None  # a BasinsResult fed to resilience always carries its grid
     if labels.shape != tuple(grid.shape):

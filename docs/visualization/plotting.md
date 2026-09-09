@@ -201,16 +201,17 @@ mg = ts.systems.MackeyGlass()
 traj = mg.integrate(final_time=500.0, dt=0.5,
                     history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
 
-traj.to_plot_spec(kind="delay", tau=17.0).save("mackey-glass-delay.pdf")
+traj.to_plot_spec(kind="delay", delay_time=17.0).save("mackey-glass-delay.pdf")
 ```
 
 <figure markdown>
 ![A delay embedding of the Mackey-Glass system: x(t) against x(t minus tau) tracing a folded chaotic band](../assets/figures/viz/kind-delay.svg){ loading=lazy }
-<figcaption>The Mackey–Glass delay system embedded via <code>kind="delay"</code>, <code>tau=17.0</code>. At <code>dt=0.5</code> the delay of 17 time units is a 34-sample lag (the axis reads <code>x(t - 34)</code>), and the folded band is the attractor of the scalar <code>x(t)</code> reconstructed by Takens' theorem.</figcaption>
+<figcaption>The Mackey–Glass delay system embedded via <code>kind="delay"</code>, <code>delay_time=17.0</code>. At <code>dt=0.5</code> the delay of 17 time units is a 34-sample lag (the axis reads <code>x(t - 34)</code>), and the folded band is the attractor of the scalar <code>x(t)</code> reconstructed by Takens' theorem.</figcaption>
 </figure>
 
-**`tau` is in time units.** It is converted to a sample lag through the
-trajectory's `dt` (here 17.0 / 0.5 = 34 samples), so the same `tau` reads the
+**`delay_time` is in time units** (`delay` is the same lag in samples). It is
+converted to a sample lag through the
+trajectory's `dt` (here 17.0 / 0.5 = 34 samples), so the same `delay_time` reads the
 same physical delay regardless of your output spacing. `kind="delay"` embeds one
 component — with no `components=` it uses the first; select exactly one channel
 otherwise. See the [embedding analysis](../analysis/embedding.md) for choosing an
@@ -305,7 +306,7 @@ cluttering the signature. Passing one to the wrong kind raises
 
 | Kind | Option | Meaning |
 | --- | --- | --- |
-| `delay` | `tau` *(required)* | delay in **time units** (→ sample lag via `dt`) |
+| `delay` | `delay` **or** `delay_time` *(exactly one)* | lag in **samples**, or in **time units** (→ samples via `dt`) |
 | `time_series`, `phase_portrait_2d`/`_3d` | `color_by` | colour the line by a scalar (above) |
 | `spacetime` | `transpose` | swap the time / component axes |
 
@@ -457,7 +458,9 @@ automatically by `kind="field", animate=True`). Export goes to matplotlib for
   bare `integrate()` starts from a fresh random point each run. **Always pass an
   explicit `ic=`** (as every example here does) when you want a figure to
   reproduce.
-- **`kind="delay"` needs `tau`.** It is required, and it is in *time units* — the
+- **`kind="delay"` needs `delay` or `delay_time`.** Exactly one is required:
+  `delay` is a lag in *samples* (what `optimal_delay` returns), `delay_time` is in
+  *time units* — the
   trajectory must carry a `dt` (it does, from `integrate`) so the lag can be
   resolved.
 - **Overlaying incompatible kinds.** You cannot overlay an image and a portrait,

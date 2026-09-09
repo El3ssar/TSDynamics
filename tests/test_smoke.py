@@ -81,9 +81,14 @@ def test_models_do_not_clutter_top_level_namespace() -> None:
 
     assert "Lorenz" not in ts.__all__
     assert "Lorenz" not in dir(ts)
-    # ...but the public submodules and base classes ARE on the top-level surface.
-    for name in ("analysis", "data", "derived", "systems", "registry", "ContinuousSystem"):
+    # ...but the four navigable submodules and the base classes ARE on the surface.
+    # (``data`` / ``derived`` / ``registry`` were demoted from tab completion by the
+    # v6 namespace curation — they stay importable; see tests/test_namespace_curation.py.)
+    for name in ("analysis", "systems", "viz", "errors", "ContinuousSystem"):
         assert name in dir(ts)
+    for demoted in ("data", "derived", "registry"):
+        assert demoted not in dir(ts)
+        assert hasattr(ts, demoted)
     # An unknown attribute still raises a clean AttributeError (not a model miss).
     with pytest.raises(AttributeError):
         _ = ts.DefinitelyNotASystem

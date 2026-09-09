@@ -228,10 +228,12 @@ def test_spec_saves_itself_to_png(tmp_path):
     assert out.stat().st_size > 0
 
 
-def test_spec_plot_returns_a_figure():
+def test_spec_plot_returns_the_spec_and_render_returns_the_figure():
+    """v6: ``plot`` builds, ``render`` draws — one return type per verb."""
     pytest.importorskip("matplotlib")
-    fig = viz.plot(_lorenz(), _lorenz([1.1, 1.0, 1.0]), layout="stack").plot(backend="matplotlib")
-    assert type(fig).__name__ == "Figure"
+    spec = viz.plot(_lorenz(), _lorenz([1.1, 1.0, 1.0]), layout="stack")
+    assert spec.plot(title="mine") is spec
+    assert type(spec.render("matplotlib")).__name__ == "Figure"
 
 
 # ---------------------------------------------------------------------------

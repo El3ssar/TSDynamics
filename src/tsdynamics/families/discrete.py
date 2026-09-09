@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParameterError
+from tsdynamics.errors import (
+    ConvergenceError,
+    InvalidInputError,
+    InvalidParameterError,
+    remedy,
+)
 
 from .base import SystemBase, Trajectory
 
@@ -369,6 +374,7 @@ class DiscreteMap(SystemBase, ABC):
         *,
         backend: str | None = None,
         seed: int | None = None,
+        **kwargs: Any,
     ) -> Trajectory:
         """
         Iterate the map for ``steps`` steps on the engine.
@@ -432,7 +438,33 @@ class DiscreteMap(SystemBase, ABC):
             (it is not divergence) rather than consuming the retry budget.
         TapeCompileError
             If ``_step`` cannot be lowered to the engine IR (piecewise / ufunc).
+        InvalidParameterError
+            If ``steps < 1``, or an unrecognised keyword is passed — including a
+            *flow* keyword (``final_time`` / ``dt`` / ``method`` / a tolerance),
+            which a map has no meaning for.  ``**kwargs`` exists only to catch
+            those: nothing is silently dropped.
         """
+        if kwargs:
+            bad = sorted(kwargs)[0]
+            time_words = {"final_time", "dt", "t0", "rtol", "atol", "max_step", "method"}
+            hint = (
+                (
+                    f"{bad} is a *flow* keyword: a map has no continuous time and no "
+                    f"solver, so its horizon is a count of iterations."
+                )
+                if bad in time_words
+                else "check the keyword spelling (steps, ic, backend, seed, max_retries)."
+            )
+            raise InvalidParameterError(
+                f"{bad} is not a valid {type(self).__name__}.iterate()/run() keyword, "
+                f"got {kwargs[bad]!r}. " + hint + remedy(f"{type(self).__name__}().run(n=1000)")
+            )
+        steps = int(steps)
+        if steps < 1:
+            raise InvalidParameterError(
+                f"steps is a number of iterations, so it must be >= 1; got {steps}."
+                + remedy(f"{type(self).__name__}().run(n=1000)")
+            )
         backend = backend if backend is not None else self._default_backend
 
         with self._ic_rollback():
@@ -537,7 +569,7 @@ class DiscreteMap(SystemBase, ABC):
         self,
         steps: int = 5000,
         ic: Any | None = None,
-        n_exp: int | None = None,
+        k: int | None = None,
         reortho_interval: int = 1,
         *,
         backend: str | None = None,
@@ -567,8 +599,10 @@ class DiscreteMap(SystemBase, ABC):
             Number of iterations. Default 5000.
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
-        n_exp : int, optional
-            Number of exponents. Defaults to ``dim``.
+        k : int, optional
+            Number of exponents to compute.  Defaults to ``dim``.
+            (Renamed from ``n_exp`` in v4; the old spelling was silently swallowed
+            by ``**integrator_kwargs`` on this method until v6.)
         reortho_interval : int
             Reorthonormalise every this many steps. Default 1.
         backend : {"jit", "interp", "reference"}, optional
@@ -582,7 +616,7 @@ class DiscreteMap(SystemBase, ABC):
 
         Returns
         -------
-        ndarray, shape (n_exp,)
+        ndarray, shape (k,)
             Lyapunov exponents ordered from largest to smallest.
 
         References
@@ -594,7 +628,7 @@ class DiscreteMap(SystemBase, ABC):
         """
         from tsdynamics.derived.tangent import TangentSystem
 
-        k = n_exp or self.dim
+        k = k or self.dim
         return TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
             steps=steps, ic=ic, reortho_interval=reortho_interval
         )

@@ -5,7 +5,7 @@ of deviation *functions* carried along a trajectory.  Unlike an ODE — whose
 tangent space is the finite ``R^dim`` — a DDE's tangent space is the
 **infinite-dimensional history space** ``C([-τ, 0], R^dim)``, so a deviation is a
 function on the delay window and there can be more exponents than state
-components (``n_exp`` may exceed ``dim``).
+components (``k`` may exceed ``dim``).
 
 The v2 path computes this with JiTCDDE (``jitcdde_lyap``), removed at the M3
 migration gate.  This module is the engine-based replacement, mirroring the ODE
@@ -25,7 +25,7 @@ Benettin renormalisation in the function space
 -----------------------------------------------
 Because the deviation is a function, the QR is taken over its **history segment**
 ``[t-τ_max, t]`` (sampled on the output grid), not over the current value — that
-is what lets ``n_exp`` exceed ``dim``.  The engine integrates one chunk of length
+is what lets ``k`` exceed ``dim``.  The engine integrates one chunk of length
 ``T = τ_max`` (the minimal length that yields a full past segment), the ``k``
 deviation segments are QR-orthonormalised, ``log|diag R|`` is accumulated, and
 the orthonormalised segments seed the next chunk's history (a cubic-spline past).
@@ -56,12 +56,12 @@ from tsdynamics.utils.tolerances import DDE_LYAPUNOV_ATOL, DDE_LYAPUNOV_RTOL
 
 __all__ = ["dde_lyapunov_spectrum"]
 
-#: Ceiling on the extended system's dimension, ``dim * (1 + n_exp)``.
+#: Ceiling on the extended system's dimension, ``dim * (1 + k)``.
 #:
-#: :func:`_build_extended_tape` loops *symbolically* over ``n_exp``, emitting
+#: :func:`_build_extended_tape` loops *symbolically* over ``k``, emitting
 #: ``dim`` variational expressions per deviation, so its cost grows with the
 #: extended dimension and it burns that cost in SymEngine long before any Rust
-#: code runs.  An absurd request (``n_exp=2**34``) therefore did not fail — it
+#: code runs.  An absurd request (``k=2**34``) therefore did not fail — it
 #: sat in the symbolic builder indefinitely, which reads to a user as a hang.
 #:
 #: 10 000 is deliberately far above any defensible request and still lowers in
@@ -198,29 +198,29 @@ def _build_extended_tape(system: Any, k: int) -> tuple[Any, list[Any], int]:
     return tape, slots, dim
 
 
-def _seed_deviations(n_seg: int, n_exp: int, dim: int, grid: np.ndarray) -> np.ndarray:
-    """Build ``n_exp`` distinct, QR-orthonormal initial deviation history segments.
+def _seed_deviations(n_seg: int, k: int, dim: int, grid: np.ndarray) -> np.ndarray:
+    """Build ``k`` distinct, QR-orthonormal initial deviation history segments.
 
     Distinct cosines over the delay window give linearly-independent seed
-    functions even when ``n_exp > dim`` (the infinite-dimensional case); the
+    functions even when ``k > dim`` (the infinite-dimensional case); the
     burn-in then rotates them onto the leading covariant Lyapunov directions.
     """
     span = grid[-1] - grid[0]
-    dev = np.zeros((n_seg + 1, n_exp, dim))
-    for m in range(n_exp):
+    dev = np.zeros((n_seg + 1, k, dim))
+    for m in range(k):
         wave = np.cos((m + 1) * np.pi * (grid - grid[0]) / (span + 1e-300))
         # Seed deviation m on state component m % dim with a distinct waveform, so
-        # the k seed functions are linearly independent for any (n_exp, dim).
+        # the k seed functions are linearly independent for any (k, dim).
         dev[:, m, m % dim] = wave
-    return _qr_segments(dev, n_exp, dim)[0]
+    return _qr_segments(dev, k, dim)[0]
 
 
-def _qr_segments(dev: np.ndarray, n_exp: int, dim: int) -> tuple[np.ndarray, np.ndarray]:
+def _qr_segments(dev: np.ndarray, k: int, dim: int) -> tuple[np.ndarray, np.ndarray]:
     """QR-orthonormalise ``k`` deviation history segments over the function space.
 
-    ``dev`` has shape ``(n_seg+1, n_exp, dim)`` (point, deviation, component); each
+    ``dev`` has shape ``(n_seg+1, k, dim)`` (point, deviation, component); each
     deviation's flattened ``(point, component)`` history is one column of an
-    ``((n_seg+1)·dim, n_exp)`` matrix (its function-space representative), which is
+    ``((n_seg+1)·dim, k)`` matrix (its function-space representative), which is
     QR-decomposed.  The deviation axis must be the *column* axis and the component
     axis kept adjacent to the point axis (``transpose(0, 2, 1)``) — a plain
     ``reshape`` would interleave the deviation and component axes and scramble the
@@ -228,7 +228,7 @@ def _qr_segments(dev: np.ndarray, n_exp: int, dim: int) -> tuple[np.ndarray, np.
     ``log|diag R|`` (the per-deviation log growth over the chunk).
     """
     n_pts = dev.shape[0]
-    mat = dev.transpose(0, 2, 1).reshape(n_pts * dim, n_exp)
+    mat = dev.transpose(0, 2, 1).reshape(n_pts * dim, k)
     q, r = np.linalg.qr(mat)
     # Floor the per-deviation growth at the smallest positive normal float before
     # the log: a rank-deficient or collapsed deviation gives a (near-)zero ``R``
@@ -239,13 +239,13 @@ def _qr_segments(dev: np.ndarray, n_exp: int, dim: int) -> tuple[np.ndarray, np.
     # converged spectrum (``interp == jit`` stays bit-for-bit).
     diag = np.maximum(np.abs(np.diag(r)), np.finfo(np.float64).tiny)
     log_growth = np.log(diag)
-    return q.reshape(n_pts, dim, n_exp).transpose(0, 2, 1), log_growth
+    return q.reshape(n_pts, dim, k).transpose(0, 2, 1), log_growth
 
 
 def dde_lyapunov_spectrum(
     system: Any,
     *,
-    n_exp: int = 1,
+    k: int = 1,
     final_time: float = 200.0,
     dt: float = 0.1,
     burn_in: float = 50.0,
@@ -254,7 +254,7 @@ def dde_lyapunov_spectrum(
     rtol: float = DDE_LYAPUNOV_RTOL,
     atol: float = DDE_LYAPUNOV_ATOL,
 ) -> np.ndarray:
-    """Estimate the ``n_exp`` leading Lyapunov exponents of a DDE on the engine.
+    """Estimate the ``k`` leading Lyapunov exponents of a DDE on the engine.
 
     The function-space Benettin estimator described in the module docstring:
     integrate the extended variational DDE on the Rust engine in chunks of one
@@ -265,7 +265,7 @@ def dde_lyapunov_spectrum(
     ----------
     system : DelaySystem
         The delay system.
-    n_exp : int, default 1
+    k : int, default 1
         Number of leading exponents (may exceed ``dim`` — the tangent space is
         infinite-dimensional).
     final_time, dt, burn_in : float
@@ -293,7 +293,7 @@ def dde_lyapunov_spectrum(
 
     Returns
     -------
-    ndarray, shape (n_exp,)
+    ndarray, shape (k,)
         Exponents in descending order.
     """
     from scipy.interpolate import CubicSpline
@@ -301,29 +301,29 @@ def dde_lyapunov_spectrum(
     from tsdynamics.engine.problem import DDEProblem
     from tsdynamics.engine.run import integrate, resolve_backend
 
-    # Bound `n_exp` BEFORE `_build_extended_tape`, which is where an absurd value
-    # is spent: it loops symbolically over `n_exp` building the extended DDE, so
-    # `n_exp=2**34` never reached Rust — it disappeared into SymEngine and looked
+    # Bound `k` BEFORE `_build_extended_tape`, which is where an absurd value
+    # is spent: it loops symbolically over `k` building the extended DDE, so
+    # `k=2**34` never reached Rust — it disappeared into SymEngine and looked
     # like a hang.  All three checks are up-front and name the offending value.
     try:
-        n_exp = operator.index(n_exp)
+        k = operator.index(k)
     except TypeError:
-        # `int(n_exp)` used to silently truncate here, so `n_exp=2.7` quietly
+        # `int(k)` used to silently truncate here, so `k=2.7` quietly
         # computed 2 exponents. A non-integer count is a mistake, not a rounding.
         raise invalid_value(
-            "n_exp",
-            n_exp,
+            "k",
+            k,
             rule="must be an integer (a count of exponents)",
         ) from None
-    if n_exp < 1:
-        raise invalid_value("n_exp", n_exp, rule="must be >= 1 (a count of exponents)")
-    n_ext_requested = int(system.dim) * (1 + n_exp)
+    if k < 1:
+        raise invalid_value("k", k, rule="must be >= 1 (a count of exponents)")
+    n_ext_requested = int(system.dim) * (1 + k)
     if n_ext_requested > _MAX_EXTENDED_DIM:
         raise invalid_value(
-            "n_exp",
-            n_exp,
+            "k",
+            k,
             rule=(
-                f"would build an extended system of dimension dim*(1+n_exp)="
+                f"would build an extended system of dimension dim*(1+k)="
                 f"{n_ext_requested}, over the {_MAX_EXTENDED_DIM} ceiling"
             ),
             hint=(
@@ -339,9 +339,9 @@ def dde_lyapunov_spectrum(
             "backend='interp'/'jit' (the Rust engine)."
         )
 
-    tape, slots, dim = _build_extended_tape(system, n_exp)
+    tape, slots, dim = _build_extended_tape(system, k)
     max_delay = max(s.delay for s in slots)
-    n_ext = dim * (n_exp + 1)
+    n_ext = dim * (k + 1)
 
     # Chunk length = one delay window (minimal length giving a full past segment),
     # so the past window coincides with the engine output grid.
@@ -351,10 +351,10 @@ def dde_lyapunov_spectrum(
 
     # The deviation history segment has (n_seg+1)·dim sample dimensions, the ceiling
     # on the number of linearly-independent deviation functions it can carry.
-    if n_exp > (n_seg + 1) * dim:
+    if k > (n_seg + 1) * dim:
         raise InvalidParameterError(
-            f"n_exp={n_exp} exceeds the delay-window resolution (n_seg+1)·dim="
-            f"{(n_seg + 1) * dim}; decrease dt (finer window) or lower n_exp."
+            f"k={k} exceeds the delay-window resolution (n_seg+1)·dim="
+            f"{(n_seg + 1) * dim}; decrease dt (finer window) or lower k."
         )
     # The base-history reuse is exact only when dt divides the maximum delay (then
     # the segment grid coincides with the engine output grid); otherwise the reseed
@@ -371,7 +371,7 @@ def dde_lyapunov_spectrum(
 
     base_ic = np.asarray(system.resolve_ic(ic), dtype=np.float64).ravel()
     base_seg = np.tile(base_ic, (n_seg + 1, 1))
-    dev_seg = _seed_deviations(n_seg, n_exp, dim, grid)
+    dev_seg = _seed_deviations(n_seg, k, dim, grid)
 
     # ``final_time`` is the post-burn-in AVERAGING WINDOW (the documented
     # contract), so the total integration is ``burn_in + final_time``: discard
@@ -393,14 +393,14 @@ def dde_lyapunov_spectrum(
     if burn_in > 0.0 and n_burn == 0:
         n_burn = 1
     n_chunks = n_burn + n_avg
-    log_sums = np.zeros(n_exp)
+    log_sums = np.zeros(k)
     seg_t = chunk + grid  # absolute times of the next past window within [0, chunk]
 
     problem = DDEProblem(tape=tape, delay_slots=slots, ic=np.zeros(n_ext), system=system)
 
     for c in range(n_chunks):
         spl_base = [CubicSpline(grid, base_seg[:, d]) for d in range(dim)]
-        spl_dev = [[CubicSpline(grid, dev_seg[:, m, d]) for d in range(dim)] for m in range(n_exp)]
+        spl_dev = [[CubicSpline(grid, dev_seg[:, m, d]) for d in range(dim)] for m in range(k)]
 
         def history(
             s: float,
@@ -410,7 +410,7 @@ def dde_lyapunov_spectrum(
             out = np.empty(n_ext)
             for d in range(dim):
                 out[d] = spl_base[d](s)
-            for m in range(n_exp):
+            for m in range(k):
                 for d in range(dim):
                     out[dim + m * dim + d] = spl_dev[m][d](s)
             return out
@@ -435,15 +435,15 @@ def dde_lyapunov_spectrum(
             )
 
         new_base = np.empty((n_seg + 1, dim))
-        new_dev = np.empty((n_seg + 1, n_exp, dim))
+        new_dev = np.empty((n_seg + 1, k, dim))
         for d in range(dim):
             new_base[:, d] = np.interp(seg_t, ts, ys[:, d])
-        for m in range(n_exp):
+        for m in range(k):
             for d in range(dim):
                 new_dev[:, m, d] = np.interp(seg_t, ts, ys[:, dim + m * dim + d])
 
         base_seg = new_base
-        dev_seg, log_growth = _qr_segments(new_dev, n_exp, dim)
+        dev_seg, log_growth = _qr_segments(new_dev, k, dim)
         if c >= n_burn:
             log_sums += log_growth
 

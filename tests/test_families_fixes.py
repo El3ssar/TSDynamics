@@ -72,7 +72,7 @@ def test_lyapunov_spectrum_rejects_unknown_backend() -> None:
 def test_lyapunov_spectrum_rejects_nonpositive_n_exp() -> None:
     """``n_exp`` must be a positive integer (unchanged contract, guard intact)."""
     with pytest.raises(InvalidParameterError):
-        ts.Lorenz().lyapunov_spectrum(n_exp=0)
+        ts.Lorenz().lyapunov_spectrum(k=0)
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +363,8 @@ class TestSystemPlotForwardsIntegrationKeywords:
 
     def test_plot_honours_integration_keywords(self) -> None:
         pytest.importorskip("matplotlib")
-        fig = ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(final_time=2.0, dt=0.1, components="x")
+        # ``.plot()`` returns the PlotSpec since v6; ``.render()`` draws it.
+        fig = ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(final_time=2.0, dt=0.1, components="x").render()
         assert [len(line.get_xdata()) for line in fig.axes[0].lines] == [21]
 
     def test_plot_rejects_an_unknown_keyword(self) -> None:
@@ -373,16 +374,20 @@ class TestSystemPlotForwardsIntegrationKeywords:
 
     def test_plot_still_accepts_tweaks_and_renderer_options(self) -> None:
         pytest.importorskip("matplotlib")
-        fig = ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(
-            final_time=2.0, dt=0.1, components="x", title="T", figsize=(4.0, 3.0)
+        fig = (
+            ts.Lorenz(ic=[1.0, 1.0, 1.0])
+            .plot(final_time=2.0, dt=0.1, components="x", title="T")
+            .render(figsize=(4.0, 3.0))
         )
         assert fig.axes[0].get_title() == "T"
         assert tuple(fig.get_size_inches()) == (4.0, 3.0)
 
     def test_backend_kwargs_escape_hatch(self) -> None:
         pytest.importorskip("matplotlib")
-        fig = ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(
-            final_time=1.0, dt=0.1, components="x", backend_kwargs={"figsize": (5.0, 2.0)}
+        fig = (
+            ts.Lorenz(ic=[1.0, 1.0, 1.0])
+            .plot(final_time=1.0, dt=0.1, components="x")
+            .render(figsize=(5.0, 2.0))
         )
         assert tuple(fig.get_size_inches()) == (5.0, 2.0)
 
@@ -458,6 +463,6 @@ def test_system_plot_accepts_the_in_tree_renderer_keywords() -> None:
     """
     pytest.importorskip("plotly")
     lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
-    traj_fig = lor.integrate(final_time=1.0, dt=0.05).plot(backend="plotly", html=True)
-    sys_fig = lor.plot(backend="plotly", html=True, final_time=1.0, dt=0.05)
+    traj_fig = lor.integrate(final_time=1.0, dt=0.05).plot().render("plotly", html=True)
+    sys_fig = lor.plot(final_time=1.0, dt=0.05).render("plotly", html=True)
     assert type(sys_fig) is type(traj_fig)

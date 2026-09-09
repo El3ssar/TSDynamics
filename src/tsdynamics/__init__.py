@@ -23,33 +23,42 @@ compatibility ``tsdynamics.Lorenz`` (and ``from tsdynamics import Lorenz``) stil
 resolve lazily.  See :mod:`tsdynamics.registry` for programmatic access.  Internal
 helpers (``ParamSet``, ``SystemBase``) live under ``tsdynamics.families``.
 
-Curated top level (stream WS-NAMESPACE)
----------------------------------------
-The top-level ``__all__`` is **curated** to ~30 headline names — the family
-bases, the derived wrappers, :class:`Trajectory`, the six headline analyses, and
-the navigable submodules — so ``tsdynamics.<TAB>`` shows the mental model, not a
-flat dump of ~100 functions.  Everything else stays **fully reachable** at its
-qualified path (``ts.analysis.dimensions.correlation_dimension``) *and* as a flat
-re-export (``from tsdynamics import correlation_dimension`` and
-``ts.correlation_dimension`` both still resolve) — the flat names simply drop out
-of ``__all__`` / autocomplete.  The six promoted analyses are
-:func:`lyapunov_spectrum`, :func:`bifurcation_diagram` (the discoverable spelling
-of :func:`orbit_diagram`), :func:`poincare_section`, :func:`recurrence_matrix`,
-:func:`basins` (short alias of :func:`basins_of_attraction`) and
-:func:`fixed_points`.
+Curated top level
+-----------------
+``tsdynamics.<TAB>`` shows **only what you would use**: the family bases, the
+derived wrappers, :class:`Trajectory`, the state-space regions, the six headline
+analyses, the plotting front door, and the four submodules worth typing a dot
+after (:mod:`~tsdynamics.systems`, :mod:`~tsdynamics.analysis`,
+:mod:`~tsdynamics.viz`, :mod:`~tsdynamics.errors`).
 
-Reachable submodules (bound on the top-level namespace, so they show up in
-``tsdynamics.<TAB>``):
+Everything else stays **fully reachable** — it is dropped from ``__all__`` /
+autocomplete, never removed:
 
-- :mod:`~tsdynamics.errors` — the :class:`~tsdynamics.errors.TSDynamicsError`
-  hierarchy that public entry points raise.
-- :mod:`~tsdynamics.viz` — the backend-agnostic ``PlotSpec`` IR plus its
-  self-registering renderers (matplotlib / Plotly / JSON / three.js).  Resolved
-  **lazily** (via ``__getattr__``) so a plain ``import tsdynamics`` pulls in no
-  plotting machinery — ``ts.viz`` imports it (and caches it) on first access.
-- :mod:`~tsdynamics.engine`, :mod:`~tsdynamics.solvers` — advanced/internal: the
-  Rust-facing compile/run seam and the solver registry.  Reachable for inspection
-  but rarely imported directly.
+- the demoted analysis functions and result classes —
+  ``ts.correlation_dimension``, ``from tsdynamics import correlation_dimension``
+  and ``ts.analysis.dimensions.correlation_dimension`` all resolve;
+- the **machinery submodules** — :mod:`~tsdynamics.engine` (the Rust-facing
+  compile/run seam), :mod:`~tsdynamics.solvers` (the solver registry),
+  :mod:`~tsdynamics.registry` (the system/analysis/renderer registries),
+  :mod:`~tsdynamics.families` (``SystemBase`` / ``ParamSet`` / the ``System``
+  protocol), :mod:`~tsdynamics.utils` (the shared grid + tolerance constants).
+  ``ts.engine`` still resolves and ``from tsdynamics.engine import run`` still
+  imports; they are simply not what a newcomer should be reading first.
+- :mod:`~tsdynamics.data` and :mod:`~tsdynamics.derived` — every name a user
+  needs from them is already *on* the top level (:class:`Trajectory`,
+  :class:`Box`, :class:`Ball`, :class:`Grid`; :class:`PoincareMap` and the other
+  wrappers), so the extra hop earns no tab slot.
+
+The six promoted analyses are :func:`lyapunov_spectrum`,
+:func:`bifurcation_diagram` (the discoverable spelling of :func:`orbit_diagram`),
+:func:`poincare_section`, :func:`recurrence_matrix`, :func:`basins` (short alias
+of :func:`basins_of_attraction`) and :func:`fixed_points`.  :class:`Box` /
+:class:`Ball` / :class:`Grid` are promoted alongside them because
+``ts.basins(system, region)`` cannot be called without one.
+
+:mod:`~tsdynamics.viz` (and the :func:`plot` / :func:`T` front door) resolves
+**lazily** via ``__getattr__``, so a plain ``import tsdynamics`` pulls in no
+plotting machinery.
 
 Canonical homes for the data primitives (each has exactly one defining module;
 the rest are convenience re-exports): :class:`Trajectory`, :class:`Box`,
@@ -61,15 +70,34 @@ from typing import Any
 
 from . import (
     analysis,
-    data,
-    derived,
-    engine,
     errors,
-    families,
-    registry,
-    solvers,
     systems,
-    utils,
+)
+
+# Machinery submodules: bound eagerly so ``ts.engine`` / ``ts.registry`` resolve
+# and ``from tsdynamics.engine import run`` imports, but kept OFF ``__all__`` /
+# ``dir()`` — see ``_INTERNAL_SUBMODULES`` below.  The redundant ``as`` form marks
+# them as deliberate re-exports rather than unused imports.
+from . import (
+    data as data,
+)
+from . import (
+    derived as derived,
+)
+from . import (
+    engine as engine,
+)
+from . import (
+    families as families,
+)
+from . import (
+    registry as registry,
+)
+from . import (
+    solvers as solvers,
+)
+from . import (
+    utils as utils,
 )
 from .analysis import (
     Attractor as Attractor,
@@ -329,10 +357,36 @@ _SYSTEM_NAMES = frozenset(systems._SYSTEM_NAMES)
 # drift back towards a flat dump.
 _VIZ_FRONT_DOOR = frozenset({"plot", "T"})
 
-# The curated top-level surface (~30 names). Demoted analysis functions / result
-# classes / state-space primitives stay fully reachable (flat re-exported above
-# and resolvable as ``ts.<name>``); they are simply no longer advertised in
-# ``__all__`` / autocomplete. Reach them at their qualified path —
+#: Submodules that are bound eagerly (so ``ts.engine`` resolves and
+#: ``from tsdynamics.engine import run`` imports) but kept **off** ``__all__`` /
+#: ``dir()``.  Two reasons, both from the same rule — a tab slot is spent only on
+#: something a user will reach for:
+#:
+#: * ``engine`` / ``solvers`` / ``registry`` / ``families`` / ``utils`` are
+#:   machinery — the Rust-facing compile/run seam, the solver table, the system
+#:   and plugin registries, the ``SystemBase``/``ParamSet`` internals, and the
+#:   shared grid/tolerance constants;
+#: * ``data`` / ``derived`` are *redundant* here: everything a user needs from
+#:   them (``Trajectory``, ``Box``, ``Ball``, ``Grid``; ``PoincareMap`` and the
+#:   other wrappers) is already bound on the top level.
+#:
+#: This tuple is the single source of truth for that decision — the namespace
+#: gate (``tests/test_namespace_curation.py``) reads it, so demoting or promoting
+#: a submodule is a one-line edit here.
+_INTERNAL_SUBMODULES = (
+    "data",
+    "derived",
+    "engine",
+    "families",
+    "registry",
+    "solvers",
+    "utils",
+)
+
+# The curated top-level surface. Demoted analysis functions / result classes /
+# machinery submodules stay fully reachable (bound above, resolvable as
+# ``ts.<name>``); they are simply no longer advertised in ``__all__`` /
+# autocomplete. Reach them at their qualified path —
 # ``ts.analysis.dimensions.correlation_dimension`` — or by flat re-export —
 # ``from tsdynamics import correlation_dimension``.
 __all__ = [
@@ -351,6 +405,11 @@ __all__ = [
     "ProjectedSystem",
     "StroboscopicMap",
     "TangentSystem",
+    # State-space regions — the argument ``basins`` / ``find_attractors`` take,
+    # so they belong next to the analyses that require them.
+    "Box",
+    "Ball",
+    "Grid",
     # Headline analyses (the six a newcomer reaches for; the rest live under
     # ``ts.analysis.*`` and stay flat-re-exported for back-compat)
     "lyapunov_spectrum",
@@ -359,26 +418,91 @@ __all__ = [
     "recurrence_matrix",
     "basins",
     "fixed_points",
-    # Navigable submodules (the depth lives here, scipy-style)
-    "analysis",
-    "data",
-    "derived",
-    "families",
-    "registry",
-    "systems",
-    "utils",
-    "errors",
     # Plotting — the headline one-liner and its per-transform option carrier.
     # Both resolve lazily (see ``__getattr__``) so ``import tsdynamics`` still
     # pulls in no plotting machinery.
     "plot",
     "T",
-    # Backend-agnostic viz IR — resolved lazily (see ``__getattr__``).
+    # The four submodules worth typing a dot after. Everything else
+    # (``engine`` / ``solvers`` / ``registry`` / ``families`` / ``utils`` /
+    # ``data`` / ``derived``) stays importable but off the tab surface — see
+    # ``_INTERNAL_SUBMODULES``.
+    "systems",
+    "analysis",
     "viz",
-    # Advanced / internal submodules (reachable but rarely imported directly).
-    "engine",
-    "solvers",
+    "errors",
 ]
+
+
+#: Names the v6 scope surgery removed outright, mapped to the reason.  Curating
+#: the namespace hides ~230 reachable names from autocomplete, so this
+#: ``AttributeError`` becomes the *only* feedback a user gets when they guess a
+#: spelling — it has to teach, not just refuse.  A v5 user typing
+#: ``ts.permutation_entropy`` should learn the scope changed, not read "no
+#: attribute" and assume the install is broken.
+_REMOVED_IN_V6 = {
+    "entropy": "entropy estimators",
+    "permutation_entropy": "entropy estimators",
+    "dispersion_entropy": "entropy estimators",
+    "sample_entropy": "entropy estimators",
+    "multiscale_entropy": "entropy estimators",
+    "lz76_complexity": "entropy estimators",
+    "surrogates": "surrogate-data tests",
+    "surrogate_test": "surrogate-data tests",
+    "SurrogateTest": "surrogate-data tests",
+    "time_reversal_asymmetry": "surrogate-data tests",
+    "nonlinear_prediction_error": "surrogate-data tests",
+    "transforms": "signal transforms (PSD, detrend, filters, feature extraction)",
+    "power_spectrum": "signal transforms (PSD, detrend, filters, feature extraction)",
+    "detrend": "signal transforms (PSD, detrend, filters, feature extraction)",
+    "extract_features": "signal transforms (PSD, detrend, filters, feature extraction)",
+}
+
+
+def _attribute_error(name: str) -> AttributeError:
+    """Build an ``AttributeError`` that names the line to type, not the mistake.
+
+    Three cases, in the order a user is likely to hit them: a name the v6 scope
+    surgery removed, a near-miss on something still here (a built-in system,
+    which autocomplete deliberately hides, or a demoted analysis), and a genuine
+    miss — answered with the two listings worth tab-completing.
+    """
+    import difflib
+
+    if name in _REMOVED_IN_V6:
+        return AttributeError(
+            f"tsdynamics has no attribute {name!r}: the generic time-series layer "
+            f"({_REMOVED_IN_V6[name]}) was removed in v6.\n"
+            "TSDynamics is scoped to phase-space methods now. What stayed, and the "
+            "closest thing to reach for:\n"
+            "    ts.analysis.recurrence   # recurrence plots / RQA\n"
+            "    ts.analysis.embedding    # delay embedding (data -> phase space)\n"
+            "    ts.analysis.lyapunov     # lyapunov_from_data"
+        )
+
+    system_hit = difflib.get_close_matches(name, sorted(_SYSTEM_NAMES), n=1, cutoff=0.6)
+    if system_hit:
+        return AttributeError(
+            f"module 'tsdynamics' has no attribute {name!r}. Built-in systems live "
+            f"under ts.systems — you probably want:\n    ts.systems.{system_hit[0]}()"
+        )
+
+    reachable = sorted(set(__all__) | set(globals()) | set(getattr(analysis, "__all__", [])))
+    hits = difflib.get_close_matches(name, reachable, n=3, cutoff=0.6)
+    if hits:
+        lines = "\n".join(f"    ts.{h}" for h in hits)
+        return AttributeError(
+            f"module 'tsdynamics' has no attribute {name!r}. Did you mean:\n{lines}"
+        )
+
+    # Counted live: a hardcoded total goes stale every time a system is added
+    # (the docs already say 171 where the registry says 177).
+    return AttributeError(
+        f"module 'tsdynamics' has no attribute {name!r}.\n"
+        "Tab-complete the two catalogues to find it:\n"
+        f"    ts.systems.<TAB>    # the {len(_SYSTEM_NAMES)} built-in systems\n"
+        "    ts.analysis.<TAB>   # the quantifiers, by capability"
+    )
 
 
 def __getattr__(name: str) -> Any:
@@ -415,9 +539,14 @@ def __getattr__(name: str) -> Any:
         return globals()[name]
     if name in _SYSTEM_NAMES:
         return getattr(systems, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    raise _attribute_error(name)
 
 
 def __dir__() -> list[str]:
-    """Top-level surface = the public API in ``__all__`` (models live under ``systems``)."""
+    """Top-level surface = the public API in ``__all__`` (models live under ``systems``).
+
+    Machinery submodules (:data:`_INTERNAL_SUBMODULES`) and the ~150 built-in
+    system classes stay resolvable but out of this listing, so ``ts.<TAB>`` is the
+    mental model rather than a dump.
+    """
     return sorted(__all__)

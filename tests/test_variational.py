@@ -136,8 +136,9 @@ def test_map_family_delegates_to_tangent() -> None:
     np.testing.assert_array_equal(via_family, via_tangent)
 
 
-def test_map_partial_spectrum_via_n_exp() -> None:
-    spec = ts.Henon().lyapunov_spectrum(steps=4000, ic=[0.1, 0.1], n_exp=1)
+def test_map_partial_spectrum_via_k() -> None:
+    """``k`` is the canonical name (v4 glossary); ``n_exp`` was silently swallowed."""
+    spec = ts.Henon().lyapunov_spectrum(steps=4000, ic=[0.1, 0.1], k=1)
     assert spec.shape == (1,)
     assert 0.3 < spec[0] < 0.5  # leading Hénon exponent ≈ 0.42
 
@@ -472,3 +473,24 @@ def test_repeat_ode_lyapunov_reuses_one_variational_tape() -> None:
     finally:
         var_mod.build_variational_tape = original
     assert calls["n"] == 1, f"expected one variational lowering, got {calls['n']}"
+
+
+def test_the_old_n_exp_spelling_raises_instead_of_being_swallowed() -> None:
+    """``k=1`` used to return THREE exponents — the request vanished silently.
+
+    The v4 glossary renamed the parameter ``n_exp`` -> ``k``, but the family
+    methods kept the old name, so ``k=`` fell into ``**integrator_kwargs`` and was
+    dropped.  When the free function was later fixed to take ``k``, the two doors
+    disagreed: ``ts.lyapunov_spectrum(sys, k=1)`` gave one exponent and
+    ``sys.lyapunov_spectrum(k=1)`` gave ``dim`` of them, with no error either way.
+    A wrong count returned confidently is worse than a failure, so the old
+    spelling now raises and names the replacement.
+    """
+    import pytest
+
+    lz = ts.systems.Lorenz()
+    assert len(lz.lyapunov_spectrum(final_time=20.0, k=1)) == 1
+    assert len(ts.lyapunov_spectrum(lz, final_time=20.0, k=1)) == 1
+
+    with pytest.raises(ts.errors.InvalidParameterError, match="did you mean k="):
+        lz.lyapunov_spectrum(final_time=20.0, **{"n_exp": 1})  # the OLD spelling, on purpose

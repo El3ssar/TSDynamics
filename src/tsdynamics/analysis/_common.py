@@ -1,4 +1,4 @@
-r"""Input guards shared by every *data-first* analysis.
+r"""The two input guards that keep the analysis layer's front doors honest.
 
 The analysis layer has two calling conventions (the frozen glossary §1): a
 **system-first** analysis takes a live ``System`` and integrates it, while a
@@ -13,6 +13,18 @@ common front-door mistake, and until v6 it produced::
 — a NumPy message that names neither the mistake nor the fix.  :func:`reject_system`
 is the one guard every point-set / series coercion calls first, so all of them
 answer with the same actionable :class:`~tsdynamics.errors.InvalidInputError`.
+
+The **mirror-image** mistake is just as common and was just as badly served:
+handing measured data to a *system-first* analysis, which until v6 produced::
+
+    >>> ts.max_lyapunov(traj["x"])                   # doctest: +SKIP
+    AttributeError: 'numpy.ndarray' object has no attribute 'is_discrete'
+
+:func:`reject_data` is its counterpart.  Both guards obey the same rule: name
+what was passed, and end with the line to type instead — which for a
+system-first analysis is usually its *data-first sibling*
+(``max_lyapunov`` → ``lyapunov_from_data``), because "you need a model" is a
+dead end for someone who only has a measurement.
 
 The ``System`` is **duck-typed** against the runtime protocol
 (:mod:`tsdynamics.families.protocol`) rather than imported, because
@@ -139,6 +151,96 @@ def reject_system(data: Any, *, analysis: str | None = None, hint: str | None = 
         )
     )
     raise InvalidInputError(f"{who} expects measured data, not a System (got {name}). {remedy}")
+
+
+def is_data(obj: Any) -> bool:
+    """Return whether ``obj`` is a measured series rather than a live system.
+
+    True for an array-like (anything NumPy will turn into a numeric array) and
+    for a :class:`~tsdynamics.data.Trajectory` — the two things a user reaches
+    for when they have a measurement and no model.  Deliberately *narrow*: an
+    object that is neither a system nor obviously data (a string, a dict, a
+    ``None``) returns ``False`` so the caller's own signature error stands.
+    """
+    if is_system(obj) or obj is None or isinstance(obj, (str, bytes)):
+        return False
+    if hasattr(obj, "t") and hasattr(obj, "y"):  # a Trajectory (duck-typed)
+        return True
+    if isinstance(obj, np.ndarray):
+        return obj.dtype.kind in "fiub"
+    if isinstance(obj, (list, tuple)):
+        try:
+            return bool(np.asarray(obj, dtype=float).size)
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def reject_data(system: Any, *, analysis: str, sibling: str | None = None) -> None:
+    """Raise if ``system`` is measured data where a live ``System`` is wanted.
+
+    The counterpart of :func:`reject_system`, called first by every
+    *system-first* analysis (the glossary's other calling convention): those
+    routines need the model's own equations — a Jacobian to factor, a right-hand
+    side to march, a parameter to sweep — so an array cannot be made to work by
+    coercion, and the only useful answer names the alternative.
+
+    Parameters
+    ----------
+    system : Any
+        The first positional argument the analysis received.
+    analysis : str
+        The public function's name, used to open the message.
+    sibling : str, optional
+        A *data-first* call that answers the same question from a measured
+        series, as a runnable line with a ``{data}`` placeholder for the input
+        (e.g. ``"ts.lyapunov_from_data({data})"``).  The placeholder is filled
+        with a variable name that matches what was actually passed — ``traj`` for
+        a :class:`~tsdynamics.data.Trajectory`, ``data`` for a bare array — so
+        the line reads like the caller's own code.  Omit ``sibling`` when the
+        quantity genuinely has no data-driven equivalent: the message then says
+        so, rather than sending the caller looking for one that does not exist.
+
+    Raises
+    ------
+    InvalidInputError
+        If ``system`` is measured data.  ``InvalidInputError`` subclasses
+        :class:`TypeError`, so an existing ``except TypeError`` keeps catching it.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tsdynamics.analysis._common import reject_data
+    >>> from tsdynamics.errors import InvalidInputError
+    >>> try:
+    ...     reject_data(np.zeros(100), analysis="max_lyapunov",
+    ...                 sibling="ts.lyapunov_from_data({data})")
+    ... except InvalidInputError as err:
+    ...     print(str(err))
+    max_lyapunov() needs a model (a System), not measured data (got ndarray).
+    Estimate it from the series instead:
+        ts.lyapunov_from_data(data)
+    """
+    if not is_data(system):
+        return
+
+    from tsdynamics.errors import InvalidInputError, remedy
+
+    kind = type(system).__name__
+    held = "traj" if hasattr(system, "t") and hasattr(system, "y") else "data"
+    if sibling is not None:
+        fix = remedy(sibling.format(data=held), lead="Estimate it from the series instead:")
+    else:
+        fix = remedy(
+            f"ts.{analysis}(system)",
+            lead=(
+                f"{analysis} is defined by the model's equations, so there is no "
+                "data-driven equivalent — pass the system itself:"
+            ),
+        )
+    raise InvalidInputError(
+        f"{analysis}() needs a model (a System), not measured data (got {kind}).{fix}"
+    )
 
 
 def __dir__() -> list[str]:

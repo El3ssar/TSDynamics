@@ -18,6 +18,17 @@ from __future__ import annotations
 
 from typing import Any
 
+__all__ = ["state_time_symbols"]
+
+
+def __dir__() -> list[str]:
+    """Show the one provider, not ``Any`` / ``annotations``.
+
+    ``symbols`` is advertised on ``dir(tsdynamics.engine)``, so it is a namespace
+    someone writing a custom family tab-completes into.
+    """
+    return sorted(__all__)
+
 
 def state_time_symbols() -> tuple[Any, Any]:
     """Return ``(y, t)``: the callable state symbol and the time symbol.

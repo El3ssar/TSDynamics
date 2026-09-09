@@ -15,11 +15,76 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from ...errors import invalid_value, remedy
 from .._common import reject_system
 from .._result import ScalingResult
 from ._scaling import local_slopes
 
 __all__ = ["DimensionResult"]
+
+#: Fewest points any dimension estimator will read a scaling region from.
+#: Below this there is no scaling region to read — the estimators do not fail,
+#: they *succeed spuriously* (Grassberger--Procaccia returned ``D_2 ~= 0`` from a
+#: handful of points; the fixed-mass estimator returned ``1.26 +- 0.13`` from
+#: eight), which is the one failure mode a fractal dimension must never have.
+#: It is a floor, not a sufficiency test: a trustworthy estimate needs orders of
+#: magnitude more, which is why the result also carries its fit region.
+MIN_DIMENSION_POINTS = 32
+
+
+def require_min_points(points: np.ndarray, *, analysis: str, reason: str) -> None:
+    """Reject a point set too small for any scaling region to exist in.
+
+    Parameters
+    ----------
+    points : ndarray, shape (N, dim)
+        The already-coerced point set.
+    analysis : str
+        The public function's name, used in the runnable line.
+    reason : str
+        Why *this* estimator cannot work from so few points, phrased to follow
+        "got N" (e.g. ``"the Grassberger-Procaccia correlation sum cannot
+        resolve a scaling region from so few points"``).
+
+    Raises
+    ------
+    InvalidParameterError
+        If fewer than :data:`MIN_DIMENSION_POINTS` points are given.
+    """
+    n = int(points.shape[0])
+    if n >= MIN_DIMENSION_POINTS:
+        return
+    # A (dim, N) array is read as N-dimensional points, so the honest symptom of
+    # a transposed input is "3 points" -- and "measure for longer" is then the
+    # wrong advice, sending the user off to integrate a series they already have.
+    # More coordinates than points is the giveaway; nothing legitimate looks so.
+    width = int(points.shape[1]) if points.ndim == 2 else 1
+    if width > n:
+        raise invalid_value(
+            "data shape",
+            tuple(points.shape),
+            rule=(
+                f"looks transposed: it holds {n} points of {width} coordinates each, "
+                f"and a {analysis} estimate needs many points of few coordinates"
+            ),
+            hint="Point sets are (n_samples, n_components)."
+            + remedy(
+                f"ts.{analysis}(data.T)",
+                lead="Transpose it:",
+            ),
+        )
+    raise invalid_value(
+        "data length",
+        n,
+        rule=f"must be >= {MIN_DIMENSION_POINTS} points for a {analysis} estimate",
+        hint=reason
+        + "."
+        + remedy(
+            "traj = system.run(final_time=500.0, dt=0.01)",
+            f"ts.{analysis}(traj)",
+            lead="Measure the attractor for longer:",
+        ),
+    )
 
 
 def _as_points(data: Any, *, analysis: str | None = None) -> np.ndarray:

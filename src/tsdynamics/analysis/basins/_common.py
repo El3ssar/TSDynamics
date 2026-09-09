@@ -26,9 +26,18 @@ from typing import Any, cast
 import numpy as np
 
 from ...data import Ball, Box, Grid
+from ...data import region as _build_region
+from ...errors import InvalidInputError, remedy
 from .._common import reject_system
 
 __all__: list[str] = []
+
+#: Lattice nodes per axis when a caller writes a region as bare ``(lo, hi)``
+#: bounds rather than ``(lo, hi, n)`` triples.  A *resolution* is not a modelling
+#: choice — it trades picture detail against runtime and is recorded in the
+#: result — so it is defaulted rather than demanded, and the triple form is
+#: right there in the signature for anyone who wants to set it.
+DEFAULT_REGION_RESOLUTION = 100
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +112,119 @@ class _CellGrid:
 # ---------------------------------------------------------------------------
 
 
+def _region_example(system: Any, *, triples: bool = True) -> str:
+    """Return a region literal sized to ``system``, as source text.
+
+    The example an error message shows must be the *caller's* region, not a
+    stock 2-D one: it names as many axes as the system has state components, and
+    spans a box wide enough to be worth trying.  A system whose ``dim`` cannot be
+    read falls back to two axes.
+    """
+    dim = int(getattr(system, "dim", 2) or 2)
+    axis = f"(-2.0, 2.0, {DEFAULT_REGION_RESOLUTION})" if triples else "(-2.0, 2.0)"
+    if dim <= 3:
+        return "[" + ", ".join([axis] * dim) + "]"
+    return f"[{axis}] * {dim}"
+
+
+def coerce_region(
+    spec: Any,
+    *,
+    analysis: str,
+    system: Any,
+    want_grid: bool,
+    alias: str | None = None,
+    args: str = "",
+) -> Box | Ball | Grid:
+    """Coerce whatever the caller passed as ``region=`` into a region primitive.
+
+    The basin layer's regions are :class:`~tsdynamics.data.Box` /
+    :class:`~tsdynamics.data.Ball` / :class:`~tsdynamics.data.Grid` objects, but
+    the *obvious* thing to type is the bounds themselves — so a sequence of
+    per-axis ``(lo, hi, n)`` triples (the :func:`tsdynamics.data.region`
+    spelling) or bare ``(lo, hi)`` bounds is accepted and built into the right
+    primitive here.  A missing or unrecognisable region is rejected with the
+    literal line to type for *this* system.
+
+    Parameters
+    ----------
+    spec : Any
+        The caller's ``region=`` argument: a region primitive, a sequence of
+        ``(lo, hi, n)`` triples, a sequence of ``(lo, hi)`` bounds, or ``None``.
+    analysis : str
+        The function's own name, used to open the message.
+    system : System
+        The system being analysed — its ``dim`` sizes the suggested region.
+    want_grid : bool
+        ``True`` for a routine that scans a *lattice* (it needs counts, so bare
+        bounds are filled in at :data:`DEFAULT_REGION_RESOLUTION` per axis);
+        ``False`` for a routine that *samples* the region, where bare bounds
+        become a :class:`~tsdynamics.data.Box` and no resolution is invented.
+    alias : str, optional
+        The shorter headline spelling of the same function, when it has one
+        (``basins_of_attraction`` is exported as ``ts.basins``).  The message
+        names **both**, and the runnable line uses the alias: a user who typed
+        ``ts.basins`` must not be answered about a name they never typed, and a
+        user who typed the long name must still recognise their own call.
+    args : str, optional
+        Source text for the positional arguments that sit *between* the system
+        and the region in this function's signature (``continuation`` takes
+        ``param, values`` first).  Without it the suggested line would have the
+        wrong arity — a remedy that does not run is worse than none.
+
+    Returns
+    -------
+    Box, Ball, or Grid
+
+    Raises
+    ------
+    InvalidInputError
+        If ``spec`` is ``None`` or is not a region the layer can build.
+    """
+    if isinstance(spec, (Box, Ball, Grid)):
+        return spec
+
+    who = f"{analysis}() (exported as ts.{alias})" if alias else f"{analysis}()"
+    call = alias or analysis
+
+    def _refuse(detail: str) -> InvalidInputError:
+        return InvalidInputError(
+            f"{who} needs a region: the box of initial conditions to "
+            f"classify — {detail}."
+            + remedy(
+                f"ts.{call}(system, {args}{_region_example(system, triples=want_grid)})",
+                lead=(
+                    "Pass one (lo, hi, n) triple per state component:"
+                    if want_grid
+                    else "Pass one (lo, hi) bound per state component:"
+                ),
+            )
+        )
+
+    if spec is None:
+        raise _refuse(
+            "there is no natural default, because it depends on where your attractors live"
+        )
+
+    try:
+        rows = [tuple(float(v) for v in axis) for axis in spec]
+    except (TypeError, ValueError) as err:
+        raise _refuse(f"got {type(spec).__name__}, which is not a region") from err
+    if not rows or not all(len(row) == len(rows[0]) for row in rows):
+        raise _refuse("the per-axis bounds must all have the same shape")
+
+    width = len(rows[0])
+    if width == 3:
+        return _build_region([(lo, hi, int(n)) for lo, hi, n in rows])
+    if width == 2:
+        lo = np.array([row[0] for row in rows], dtype=float)
+        hi = np.array([row[1] for row in rows], dtype=float)
+        if not want_grid:
+            return Box(lo, hi)
+        return Grid(lo, hi, (DEFAULT_REGION_RESOLUTION,) * len(rows))
+    raise _refuse(f"each axis needs (lo, hi) or (lo, hi, n), got {width} numbers")
+
+
 def _recurrence_grid(
     region: Box | Ball | Grid, resolution: int | tuple[int, ...] = 100
 ) -> _CellGrid:
@@ -128,7 +250,13 @@ def _recurrence_grid(
         lo = region.center - region.r
         hi = region.center + region.r
     else:
-        raise TypeError(f"unsupported region type {type(region).__name__}")
+        raise InvalidInputError(
+            f"a region must be a Box, a Ball or a Grid, got {type(region).__name__}."
+            + remedy(
+                "ts.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                lead="Bounds are accepted directly — one (lo, hi, n) triple per axis:",
+            )
+        )
     dim = lo.size
     counts: tuple[int, ...]
     if np.isscalar(resolution):

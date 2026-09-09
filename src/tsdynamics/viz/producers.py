@@ -211,17 +211,26 @@ def phase_portrait(
 
 def delay_embedding(
     series: np.ndarray | Trajectory,
-    tau: int,
+    delay: int | None = None,
     *,
+    delay_time: float | None = None,
     component: int | str = 0,
     label: str = "x",
 ) -> PlotSpec:
-    """Build the ``x(t)`` vs ``x(t - tau)`` delay-coordinate reconstruction.
+    """Build the ``x(t)`` vs ``x(t - delay)`` delay-coordinate reconstruction.
 
-    Shim over the ``delay_embedding`` transform (``tau`` in **samples**); see
+    Shim over the ``delay_embedding`` transform — ``delay`` in **samples**,
+    ``delay_time`` in **time units** (exactly one); see
     :func:`tsdynamics.viz.transforms._data.delay_embedding`.
     """
-    return build_spec(series, "delay_embedding", tau=tau, component=component, label=label)
+    return build_spec(
+        series,
+        "delay_embedding",
+        delay=delay,
+        delay_time=delay_time,
+        component=component,
+        label=label,
+    )
 
 
 def vector_field(

@@ -77,7 +77,7 @@ def test_map_lyapunov_shape(map_entry) -> None:
     if map_entry.name in MAP_LYAPUNOV_EXCLUDE:
         pytest.skip(MAP_LYAPUNOV_EXCLUDE[map_entry.name])
     m = map_entry.cls()
-    exps = m.lyapunov_spectrum(steps=300, n_exp=m.dim)
+    exps = m.lyapunov_spectrum(steps=300, k=m.dim)
     assert exps.shape == (m.dim,)
     assert np.all(np.isfinite(exps))
 
@@ -87,6 +87,6 @@ def test_map_lyapunov_partial_spectrum(map_entry) -> None:
     if map_entry.name in MAP_LYAPUNOV_EXCLUDE:
         pytest.skip(MAP_LYAPUNOV_EXCLUDE[map_entry.name])
     m = map_entry.cls()
-    exps = m.lyapunov_spectrum(steps=300, n_exp=1)
+    exps = m.lyapunov_spectrum(steps=300, k=1)
     assert exps.shape == (1,)
     assert np.isfinite(exps[0])

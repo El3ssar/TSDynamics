@@ -301,7 +301,7 @@ def test_lorenz_partial_spectrum_n_exp_2() -> None:
     import tsdynamics as ts
 
     lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
-    exps = lor.lyapunov_spectrum(dt=0.1, burn_in=30.0, final_time=100.0, n_exp=2)
+    exps = lor.lyapunov_spectrum(dt=0.1, burn_in=30.0, final_time=100.0, k=2)
     assert exps.shape == (2,)
     assert exps[0] > 0.0
 
@@ -329,7 +329,7 @@ def test_mackeyglass_two_exponents_finite() -> None:
         atol=1e-4,
     )
     exps = mg.lyapunov_spectrum(
-        n_exp=2,
+        k=2,
         dt=0.5,
         burn_in=50.0,
         final_time=300.0,

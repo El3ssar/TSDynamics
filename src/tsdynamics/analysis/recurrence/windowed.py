@@ -20,8 +20,11 @@ from typing import Any
 
 import numpy as np
 
+from tsdynamics.errors import InvalidParameterError, remedy
+
 from .._result import AnalysisResult
 from ._common import _as_points
+from .matrix import DEFAULT_RECURRENCE_RATE
 from .rqa import RQAResult, rqa
 
 __all__ = ["WindowedRQA", "windowed_rqa"]
@@ -128,7 +131,7 @@ class WindowedRQA(AnalysisResult):
 def windowed_rqa(
     data: Any,
     *,
-    window: int,
+    window: int | None = None,
     step: int | None = None,
     threshold: float | None = None,
     recurrence_rate: float | None = None,
@@ -144,7 +147,11 @@ def windowed_rqa(
     data : Trajectory or array-like, shape (N, dim)
         The state points (or a 1-D series).
     window : int
-        Window length in samples (``>= 2``).
+        Window length in samples (``>= 2``).  Required: it is the time scale the
+        analysis is *about* — long enough to hold several recurrences, short
+        enough that the dynamics is stationary across it — so there is no honest
+        default, and omitting it is answered with a concrete suggestion sized
+        from this series.
     step : int, optional
         Stride between windows (default: ``window`` — non-overlapping).
     threshold, recurrence_rate : float, optional
@@ -170,19 +177,42 @@ def windowed_rqa(
     InvalidInputError
         If ``data`` is a ``System``: this is a *data-first* analysis, so run the
         system and pass its trajectory.
-    ValueError
-        If ``window`` is out of range or ``step < 1``.
+    InvalidParameterError
+        If ``window`` is missing or out of range, or ``step < 1``.  A
+        ``ValueError`` subclass, so ``except ValueError`` keeps catching it.
     """
     points = _as_points(data, analysis="windowed_rqa")
     n = points.shape[0]
+    if window is None:
+        raise InvalidParameterError(
+            "windowed_rqa needs a window: the number of samples each RQA is "
+            "measured over. It is the time scale the result is about — long enough "
+            "to hold several recurrences, short enough that the dynamics does not "
+            "change across it — so there is no default that could be right."
+            + remedy(
+                f"ts.windowed_rqa(data, window={max(2, n // 20)}, "
+                f"recurrence_rate={DEFAULT_RECURRENCE_RATE})",
+                lead=f"A twentieth of this {n}-sample series is a place to start:",
+            )
+        )
     window = int(window)
     if window < 2:
-        raise ValueError(f"window must be >= 2, got {window}.")
+        raise InvalidParameterError(
+            f"window must be >= 2 — it is a count of samples, and one sample has no "
+            f"recurrence structure; got {window}."
+            + remedy(f"ts.windowed_rqa(data, window={max(2, n // 20)})")
+        )
     if window > n:
-        raise ValueError(f"window={window} exceeds the series length N={n}.")
+        raise InvalidParameterError(
+            f"window={window} exceeds the series length N={n}, so not one window "
+            f"fits." + remedy(f"ts.windowed_rqa(data, window={max(2, n // 20)})")
+        )
     step = window if step is None else int(step)
     if step < 1:
-        raise ValueError(f"step must be >= 1, got {step}.")
+        raise InvalidParameterError(
+            f"step must be >= 1 — it is the stride between windows in samples; got {step}."
+            + remedy(f"ts.windowed_rqa(data, window={window}, step={max(1, window // 2)})")
+        )
 
     starts = range(0, n - window + 1, step)
     results = tuple(

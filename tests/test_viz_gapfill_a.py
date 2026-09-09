@@ -198,7 +198,7 @@ def test_producer_phase_portrait_bad_component_count():
 def test_producer_delay_embedding_from_series():
     """delay_embedding builds x(t) vs x(t-tau) from a scalar series."""
     x = np.sin(np.linspace(0, 10, 200))
-    spec = producers.delay_embedding(x, tau=5, label="m")
+    spec = producers.delay_embedding(x, delay=5, label="m")
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     lyr = spec.layers[0]
     assert lyr.data["x"].shape[0] == x.shape[0] - 5
@@ -211,18 +211,18 @@ def test_producer_delay_embedding_from_series():
 def test_producer_delay_embedding_from_trajectory_component():
     """delay_embedding can read a named component of a trajectory."""
     traj = _flow_traj(dim=3, variables=("x", "y", "z"))
-    spec = producers.delay_embedding(traj, tau=3, component="y")
+    spec = producers.delay_embedding(traj, delay=3, component="y")
     np.testing.assert_allclose(spec.layers[0].data["x"], traj.y[:-3, 1])
     _roundtrips(spec)
 
 
-def test_producer_delay_embedding_validates_tau():
-    """tau must be >= 1 and shorter than the series."""
+def test_producer_delay_embedding_validates_delay():
+    """delay must be >= 1 and shorter than the series."""
     x = np.arange(10.0)
     with pytest.raises(ValueError):
-        producers.delay_embedding(x, tau=0)
+        producers.delay_embedding(x, delay=0)
     with pytest.raises(ValueError):
-        producers.delay_embedding(x, tau=10)
+        producers.delay_embedding(x, delay=10)
 
 
 # ---------------------------------------------------------------------------

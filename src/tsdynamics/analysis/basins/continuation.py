@@ -15,15 +15,17 @@ the continuation.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from ...data import Ball, Box, Grid, set_distance
+from ...errors import InvalidInputError, remedy
 from .._common import reject_system
 from .._result import AnalysisResult, CollectionResult
-from ._common import DIVERGED_COLOR, PALETTE, _palette_indices
+from ._common import DIVERGED_COLOR, PALETTE, _palette_indices, coerce_region
 from .attractors import Attractor, _reject_unsupported
 from .basins import basin_fractions
 
@@ -163,7 +165,7 @@ def continuation(
     system: Any,
     param: str,
     values: Any,
-    region: Box | Ball | Grid,
+    region: Box | Ball | Grid | Sequence[tuple[float, ...]] | None = None,
     *,
     n: int = 2000,
     resolution: int | tuple[int, ...] = 100,
@@ -235,6 +237,13 @@ def continuation(
     analysis of dynamical systems", *Chaos* **33**, 073151 (2023).
     """
     _reject_unsupported(system, "continuation")
+    region = coerce_region(
+        region,
+        analysis="continuation",
+        system=system,
+        want_grid=False,
+        args="param, values, ",
+    )
     values = np.asarray(values, dtype=float)
     fractions: dict[int, list[float]] = {}
     per_value: list[dict[int, Attractor]] = []
@@ -360,6 +369,18 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> Col
             "    tipping_points(cont)"
         ),
     )
+    if not isinstance(result, ContinuationResult):
+        raise InvalidInputError(
+            f"tipping_points reads the basin fractions along a parameter sweep, so it "
+            f"needs the ContinuationResult that sweep produced, not a "
+            f"{type(result).__name__} — a single trajectory holds no parameter axis."
+            + remedy(
+                "cont = ts.continuation(system, 'rho', np.linspace(0.0, 50.0, 40),"
+                " [(-2.0, 2.0), (-2.0, 2.0), (0.0, 50.0)])",
+                "ts.tipping_points(cont)",
+                lead="Run the continuation first:",
+            )
+        )
     events: list[dict[str, Any]] = []
     vals = result.values
     for gid, frac in result.fractions.items():

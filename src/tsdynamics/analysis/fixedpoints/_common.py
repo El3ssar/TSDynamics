@@ -56,6 +56,7 @@ from tsdynamics.analysis._tangent import (
 from tsdynamics.analysis._tangent import (
     to_native as to_native,
 )
+from tsdynamics.errors import InvalidInputError
 
 if TYPE_CHECKING:
     from tsdynamics.families import SystemBase
@@ -422,6 +423,15 @@ def hull_box(orbit: np.ndarray, dim: int, pad: float) -> tuple[np.ndarray, np.nd
     return lo - pad * span, hi + pad * span
 
 
+def _region_remedy(system: SystemBase, dim: int) -> str:
+    """Return the runnable ``region=`` line for this system, as source text."""
+    from tsdynamics.errors import remedy
+
+    lo = "[" + ", ".join(["-2.0"] * dim) + "]"
+    hi = "[" + ", ".join(["2.0"] * dim) + "]"
+    return remedy(f"ts.fixed_points(system, region=({lo}, {hi}))")
+
+
 def resolve_box(
     system: SystemBase, region: Any, dim: int, rng: np.random.Generator
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -433,10 +443,25 @@ def resolve_box(
     ``[-2, 2]^dim`` if the orbit diverges or cannot be sampled).
     """
     if region is not None:
-        lo_src, hi_src = (region.lo, region.hi) if hasattr(region, "lo") else (region[0], region[1])
-        lo = np.asarray(lo_src, dtype=float).reshape(dim)
-        hi = np.asarray(hi_src, dtype=float).reshape(dim)
-        return lo, hi
+        try:
+            lo_src, hi_src = (
+                (region.lo, region.hi) if hasattr(region, "lo") else (region[0], region[1])
+            )
+            lo = np.asarray(lo_src, dtype=float)
+            hi = np.asarray(hi_src, dtype=float)
+        except (TypeError, ValueError, IndexError, KeyError) as err:
+            raise InvalidInputError(
+                f"region must be a Box/Grid or a (lo, hi) pair of corner points, got "
+                f"{type(region).__name__}." + _region_remedy(system, dim)
+            ) from err
+        if lo.size != dim or hi.size != dim:
+            raise InvalidInputError(
+                f"{type(system).__name__} has {dim} state components, so the search "
+                f"region needs {dim} numbers per corner — got {lo.size} and {hi.size}. "
+                f"A region is (lo_corner, hi_corner), not a list of per-axis bounds."
+                + _region_remedy(system, dim)
+            )
+        return lo.reshape(dim), hi.reshape(dim)
     return hull_box(sample_orbit_box(system, dim, rng=rng), dim, HULL_PAD)
 
 

@@ -323,7 +323,7 @@ class TestTangentEngineLyapunov:
         # k < dim takes the same engine kernel (the leading exponent is positive).
         pytest.importorskip("tsdynamics._rust")
         exps = ts.Lorenz().lyapunov_spectrum(
-            dt=0.05, burn_in=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0], n_exp=2
+            dt=0.05, burn_in=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0], k=2
         )
         assert exps.shape == (2,)
         assert exps[0] > 0.5  # the positive exponent (~0.9)
@@ -333,7 +333,7 @@ class TestTangentEngineLyapunov:
         # (make_ode_stepper rejects it) and keeps the per-chunk loop — still finite.
         pytest.importorskip("tsdynamics._rust")
         sys = ts.systems.Oregonator()
-        exps = sys.lyapunov_spectrum(dt=0.05, burn_in=10.0, final_time=40.0, n_exp=2)
+        exps = sys.lyapunov_spectrum(dt=0.05, burn_in=10.0, final_time=40.0, k=2)
         assert np.all(np.isfinite(exps))
 
 

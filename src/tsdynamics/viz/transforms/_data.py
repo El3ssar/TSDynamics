@@ -536,15 +536,17 @@ def phase_portrait(
     default_primitive="line",
     primitives=("line", "points", "density"),
     presentation=Presentation(aspect="equal"),
-    example=lambda primitive: (_demo_flow(), {"tau": 7}),
-    doc="The x(t) vs x(t - tau) reconstruction of a scalar observable.",
+    example=lambda primitive: (_demo_flow(), {"delay": 7}),
+    doc="The x(t) vs x(t - delay) reconstruction of a scalar observable.",
 )
 def delay_embedding(
     series: np.ndarray | Trajectory,
-    tau: int,
+    delay: int | None = None,
     *,
+    delay_time: float | None = None,
     component: int | str = 0,
     label: str = "x",
+    tau: Any = None,
 ) -> Geometry:
     """Reconstruct one scalar observable in delay coordinates.
 
@@ -552,17 +554,30 @@ def delay_embedding(
     delay-differential trajectory, and the bridge from a measured series back to
     phase space.
 
+    **One concept, two units, two names.**  ``delay`` is a lag in *samples* (the
+    library-wide meaning of an embedding delay — it is exactly what
+    :func:`~tsdynamics.analysis.optimal_delay` returns, so the two compose);
+    ``delay_time`` is the same lag expressed in the trajectory's *time units*, and
+    is converted through its ``dt``.  Give exactly one.  The old ``tau`` spelling
+    meant samples on one front door and time units on the other, so it now raises
+    and names both.
+
     Parameters
     ----------
     series : ndarray or Trajectory
         A 1-D scalar series, or a trajectory from which ``component`` is taken.
-    tau : int
-        The delay **in samples** (not time units) by which the series is
-        shifted; must be ``>= 1`` and shorter than the series.
+    delay : int, optional
+        The lag **in samples**; ``>= 1`` and shorter than the series.
+    delay_time : float, optional
+        The same lag **in time units**, converted via the trajectory's ``dt``.
+        Needs a :class:`~tsdynamics.data.Trajectory` (a bare array has no time
+        axis).
     component : int or str, optional
         Which trajectory component to embed when ``series`` is a Trajectory.
     label : str, optional
-        Base axis label; the axes read ``label(t)`` and ``label(t - tau)``.
+        Base axis label; the axes read ``label(t)`` and ``label(t - delay)``.
+    tau : any, optional
+        Rejected on sight — see above.
 
     Returns
     -------
@@ -570,23 +585,81 @@ def delay_embedding(
 
     Raises
     ------
-    ValueError
-        If ``tau < 1`` or ``tau`` is not shorter than the series.
+    tsdynamics.errors.InvalidParameterError
+        If neither or both of ``delay`` / ``delay_time`` are given, if ``tau`` is
+        given, if ``delay_time`` is asked of a bare array, or if the resolved lag
+        is not ``1 <= delay < len(series)``.
     """
     x = _scalar_series(series, component)
-    if tau < 1:
-        raise ValueError(f"tau must be >= 1, got {tau}.")
-    if tau >= x.shape[0]:
-        raise ValueError(f"tau={tau} must be shorter than the series length {x.shape[0]}.")
-    labels = (f"{label}(t)", f"{label}(t - {tau})")
+    lag = _resolve_delay(series, x.shape[0], delay, delay_time, tau)
+    labels = (f"{label}(t)", f"{label}(t - {lag})")
     return Geometry(
         "delay_embedding",
         make_frame(FrameSpace.STATE2, 2, labels),
-        channels={"x": x[:-tau], "y": x[tau:]},
+        channels={"x": x[:-lag], "y": x[lag:]},
         axis_labels=labels,
         title=_title(series),
         meta=_meta(series),
     )
+
+
+#: The one runnable pair every delay error quotes, so the reader never has to
+#: work out which spelling carries which unit.
+_DELAY_HINT = (
+    "    ts.plot(traj, 'delay_embedding', delay=7)         # 7 SAMPLES\n"
+    "    traj.plot(kind='delay', delay_time=0.12)          # 0.12 TIME UNITS\n"
+    "(both spellings work on both front doors, and mean the same thing on each)"
+)
+
+
+def _resolve_delay(
+    series: Any, length: int, delay: int | None, delay_time: float | None, tau: Any
+) -> int:
+    """Resolve ``delay`` / ``delay_time`` to a validated sample lag.
+
+    The single place the two spellings are turned into samples, shared by the
+    transform and by :meth:`tsdynamics.data.Trajectory.to_plot_spec`, so the two
+    front doors cannot disagree about what a delay means.
+    """
+    from tsdynamics.data import Trajectory
+    from tsdynamics.errors import InvalidParameterError
+
+    if tau is not None:
+        raise InvalidParameterError(
+            "tau= is not a delay spelling in this library: it used to mean SAMPLES on "
+            "ts.plot(...) and TIME UNITS on Trajectory.to_plot_spec(...). Say which you "
+            f"mean:\n{_DELAY_HINT}"
+        )
+    if (delay is None) == (delay_time is None):
+        raise InvalidParameterError(
+            "a delay embedding needs exactly one of delay= (samples) or delay_time= "
+            f"(time units):\n{_DELAY_HINT}"
+        )
+    if delay_time is not None:
+        if not isinstance(series, Trajectory):
+            raise InvalidParameterError(
+                "delay_time= is in time units, and a bare array carries no time axis. "
+                f"Pass the lag in samples instead:\n"
+                f"    ts.plot(data, 'delay_embedding', delay={max(1, int(delay_time))})"
+            )
+        return series._delay_samples(delay_time)
+    assert delay is not None  # narrowed by the exactly-one check above
+    if int(delay) != delay:
+        raise InvalidParameterError(
+            f"delay= is a lag in SAMPLES and must be a whole number, got {delay!r}. For a "
+            f"delay in time units use delay_time=:\n{_DELAY_HINT}"
+        )
+    lag = int(delay)
+    if lag < 1:
+        raise InvalidParameterError(
+            f"delay= is a lag in SAMPLES and must be >= 1, got {delay!r}. For a delay in "
+            f"time units use delay_time=:\n{_DELAY_HINT}"
+        )
+    if lag >= length:
+        raise InvalidParameterError(
+            f"delay={lag} samples must be shorter than the series length {length}."
+        )
+    return lag
 
 
 # ---------------------------------------------------------------------------

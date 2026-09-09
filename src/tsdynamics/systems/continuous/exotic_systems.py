@@ -106,7 +106,7 @@ class HyperBao(ContinuousSystem):
     known_lyapunov = {
         "n_positive": 2,
         "kwargs": {
-            "n_exp": 2,
+            "k": 2,
             "dt": 0.05,
             "burn_in": 50.0,
             "final_time": 200.0,

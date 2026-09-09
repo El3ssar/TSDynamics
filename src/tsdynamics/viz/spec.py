@@ -2195,16 +2195,47 @@ class PlotSpec:
 
         return render_spec(self, backend, **backend_kw)
 
-    def plot(self, backend: str | None = None, **tweaks: Any) -> Any:
-        """Render this spec, applying inline tweaks first (the ``.plot`` sugar).
+    # Figure-scoped: ``plot`` forwards to the individual tweak methods, each of
+    # which already declares (and performs) its own panel recursion — so ``plot``
+    # itself must NOT recurse, or a panel-scoped tweak would be applied twice.
+    @figure_scoped
+    def plot(self, **tweaks: Any) -> PlotSpec:
+        """Apply inline tweaks and return **this spec** (the ``.plot`` sugar).
 
-        A :class:`PlotSpec` *is* the thing :func:`tsdynamics.viz.plot` returns, so
-        it carries the same ``.plot`` convenience as the data types: recognised
-        inline tweaks (``xlabel`` / ``yscale`` / ``title`` / …) are applied to the
-        spec, then it is rendered through the backend dispatch.
+        One word, one meaning, one return type, everywhere in the library:
+
+        =============== =====================================================
+        ``.plot()``     gives you a :class:`PlotSpec` — chainable and saveable
+        ``.render()``   gives you the backend's figure
+        ``.save(path)`` writes the file
+        =============== =====================================================
+
+        So ``traj.plot()``, ``system.plot()``, ``result.plot()``,
+        ``ts.plot(...)`` and ``spec.plot()`` all hand back the same kind of thing,
+        and ``traj.plot().save("fig.png")`` works.  A spec is already a plot, so
+        here ``.plot()`` is the identity plus the recognised inline tweaks
+        (``xlabel`` / ``yscale`` / ``title`` / ``xlim`` / …).  In a notebook the
+        returned spec draws itself.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            For a keyword that is neither an inline tweak nor a spec option — in
+            particular a *renderer* option such as ``ax=`` / ``figsize=``, which
+            belongs to :meth:`render`.
         """
-        backend_kw = _apply_inline_tweaks(self, tweaks)
-        return self.render(backend, **backend_kw)
+        leftover = _apply_inline_tweaks(self, tweaks)
+        if leftover:
+            from tsdynamics.errors import InvalidParameterError
+
+            names = ", ".join(repr(k) for k in sorted(leftover))
+            raise InvalidParameterError(
+                f"plot() applies spec tweaks and returns the spec; {names} is not one. "
+                "A renderer option (ax=, figsize=, dpi=, html=, …) or a backend name goes "
+                "to render(), which returns the figure:\n"
+                f"    spec.render('matplotlib', {next(iter(sorted(leftover)))}=...)"
+            )
+        return self
 
     def save(
         self,
@@ -2492,15 +2523,10 @@ class PlotSpec:
         """Notebook display hook — render inline once a backend is installed.
 
         Mirrors :meth:`Plottable._repr_mimebundle_`: returns ``None`` (so the
-        console falls back to ``repr``) until a rendering backend is registered,
-        keeping a plain ``import`` plot-library-free.
+        console falls back to ``repr``) outside a notebook or when no rendering
+        backend is installed, keeping a plain ``import`` plot-library-free.
         """
-        if _resolve_renderers() is None:
-            return None
-        try:  # pragma: no cover - exercised only once a backend is installed
-            return self.plot()
-        except Exception:  # pragma: no cover - never break repr on a render error
-            return None
+        return _notebook_mimebundle(self.render, include, exclude)
 
     # -- serialization -----------------------------------------------------
 
@@ -2616,49 +2642,38 @@ class Plottable:
             f"{type(self).__name__} must implement to_plot_spec() to be Plottable."
         )
 
-    def plot(self, backend: str | None = None, **tweaks: Any) -> Any:
-        """Render this object via a backend, applying inline tweaks first.
+    def plot(self, *transforms: Any, **tweaks: Any) -> PlotSpec:
+        """Build this object's :class:`PlotSpec`, applying inline tweaks first.
 
-        Tweak keywords matching a :class:`PlotSpec` tweak method
-        (``xscale`` / ``yscale`` / ``zscale``, ``xlabel`` / ``ylabel`` /
-        ``zlabel`` / ``title``, ``xlim`` / ``ylim`` / ``zlim``,
-        ``clim`` / ``colorbar`` / ``legend``) are applied to the spec before
-        rendering; any remaining keywords are forwarded to the backend.
+        ``plot`` **builds**, ``render`` **draws**, ``save`` **writes** — the same
+        three verbs everywhere in the library (see :meth:`PlotSpec.plot`).  Tweak
+        keywords matching a :class:`PlotSpec` tweak method (``xscale`` /
+        ``yscale`` / ``zscale``, ``xlabel`` / ``ylabel`` / ``zlabel`` / ``title``,
+        ``xlim`` / ``ylim`` / ``zlim``, ``clim`` / ``colorbar`` / ``legend``) are
+        applied to the spec.
 
         Parameters
         ----------
-        backend : str, optional
-            Renderer name; ``None`` uses the first registered backend.
         **tweaks
-            Inline spec tweaks and/or backend keyword arguments.
+            Inline spec tweaks.
 
         Returns
         -------
-        Any
-            Whatever the backend returns.
-
-        Raises
-        ------
-        VisualizationNotInstalled
-            If no rendering backend is registered.
+        PlotSpec
+            Chainable, saveable (``.save("fig.png")``), renderable
+            (``.render("plotly")``), and self-drawing in a notebook.
         """
-        spec = self.to_plot_spec()
-        backend_kw = _apply_inline_tweaks(spec, tweaks)
-        return spec.render(backend, **backend_kw)
+        reject_positional_transform(transforms, "obj")
+        return self.to_plot_spec().plot(**tweaks)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Rich notebook display — renders inline once a backend is installed.
 
-        Returns ``None`` (a no-op, so IPython falls back to ``__repr__``) when
-        no rendering backend is registered.  This keeps notebook import of core
-        plot-library-free until a viz backend ships.
+        Returns ``None`` (a no-op, so IPython falls back to ``__repr__``) outside
+        a notebook or when no rendering backend is installed.  This keeps
+        notebook import of core plot-library-free until a viz backend ships.
         """
-        if _resolve_renderers() is None:
-            return None
-        try:  # pragma: no cover - exercised only once a backend is installed
-            return self.plot()
-        except Exception:  # pragma: no cover - never break repr on a render error
-            return None
+        return _notebook_mimebundle(lambda: self.to_plot_spec().render(), include, exclude)
 
 
 # ---------------------------------------------------------------------------
@@ -2735,6 +2750,12 @@ def _resolve_renderers() -> Any | None:
     backends are added by later visualization streams.  Resolving it lazily and
     defensively keeps this module self-contained today while wiring itself up
     automatically the moment a backend lands.
+
+    Note it reports the registry's state *now*: the in-tree backends register on
+    first render, so this is empty in a session that has not drawn anything yet.
+    Gating the notebook hook on it therefore made the very first cell no-op —
+    which is why :func:`_notebook_mimebundle` gates on the IPython shell and a
+    real render attempt instead.
     """
     try:
         from tsdynamics.registry import renderers
@@ -2744,6 +2765,101 @@ def _resolve_renderers() -> Any | None:
         return renderers if len(renderers) else None
     except Exception:  # pragma: no cover - defensive
         return None
+
+
+def reject_positional_transform(positional: tuple[Any, ...], subject: str) -> None:
+    """Refuse ``obj.plot("delay_embedding")`` with the line that does work.
+
+    ``ts.plot(traj, "delay_embedding", delay=7)`` reads a positional string as a
+    *transform name*, so a reader who has seen that call naturally tries the same
+    thing on the method — and got a bare
+    ``TypeError: plot() takes 1 positional argument but 2 were given``, which
+    names neither the concept nor the spelling that works.  The method takes only
+    keywords (its positional slot is the object itself), so the honest answer is
+    the front door.
+
+    Parameters
+    ----------
+    positional : tuple
+        Whatever was captured by the method's ``*args``.
+    subject : str
+        How to spell the receiver in the example (``"traj"``, ``"system"``).
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        Whenever ``positional`` is non-empty.
+    """
+    if not positional:
+        return
+    from tsdynamics.errors import InvalidParameterError, remedy
+
+    first = positional[0]
+    if isinstance(first, str):
+        lead = f"{subject}.plot() takes no positional arguments; a transform is named on the "
+        lines = [
+            f"ts.plot({subject}, {first!r})",
+            f"{subject}.plot(kind={first!r})   # if {first!r} is a plot KIND, not a transform",
+        ]
+        raise InvalidParameterError(
+            lead + "front door (and a plot kind is a keyword):" + remedy(*lines)
+        )
+    raise InvalidParameterError(
+        f"{subject}.plot() takes no positional arguments, got {type(first).__name__}. "
+        "Compose several things with the front door instead:" + remedy(f"ts.plot({subject}, other)")
+    )
+
+
+def _notebook_mimebundle(draw: Any, include: Any, exclude: Any) -> Any:
+    """Shared ``_repr_mimebundle_`` body: draw, then return a **real** mime bundle.
+
+    ``_repr_mimebundle_`` must return a *mapping* of mime type to payload (or a
+    ``(data, metadata)`` pair).  Returning the backend's figure object instead
+    makes IPython emit ``FormatterWarning: ... returned invalid type`` and fall
+    back to ``__repr__`` — which for a :class:`PlotSpec` is a multi-thousand-line
+    dump of its data arrays.  That is exactly what happened when ``.plot()``
+    stopped returning a figure: the hook still handed a figure straight back, so
+    a notebook cell printed the dump instead of drawing the picture.
+
+    Every plotting backend already registers its own IPython display hooks
+    (matplotlib a PNG, plotly HTML+JS), so the honest bundle is whatever IPython
+    itself makes of the drawn figure.  Asking IPython keeps this
+    backend-agnostic and keeps the notebook stack out of the import path.
+
+    Parameters
+    ----------
+    draw : callable
+        Zero-argument callable returning the drawn figure (``spec.render()``).
+        Called only inside a live IPython shell, so a plain console echo never
+        imports a plotting library.
+    include, exclude
+        Forwarded to IPython's formatter, as the display protocol requires.
+
+    Returns
+    -------
+    tuple of dict or None
+        ``(data, metadata)`` when something was drawn and IPython could format
+        it; ``None`` (fall back to ``repr``) otherwise — no backend installed,
+        no IPython, or a render error.
+    """
+    try:
+        from IPython.core.getipython import get_ipython
+    except Exception:  # pragma: no cover - IPython not installed
+        return None
+    shell: Any = get_ipython()  # type: ignore[no-untyped-call]
+    if shell is None:  # a plain console / script: nothing to display into
+        return None
+    try:
+        drawn = draw()
+    except Exception:  # pragma: no cover - never break repr on a render error
+        return None
+    if drawn is None:
+        return None
+    try:
+        data, metadata = shell.display_formatter.format(drawn, include=include, exclude=exclude)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    return (data, metadata) if data else None
 
 
 def _visualization_not_installed() -> Exception:

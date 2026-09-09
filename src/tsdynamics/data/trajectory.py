@@ -59,7 +59,11 @@ _KIND_ALIASES: dict[str, str] = {
 #: options is a one-line edit here (the validation + ``plot()`` forwarding both
 #: read it), so the surface grows without reshaping the signature.
 _KIND_KW: dict[str, frozenset[str]] = {
-    "delay_embedding": frozenset({"tau"}),
+    # ``delay`` is a lag in SAMPLES (the library-wide meaning — what
+    # ``optimal_delay`` returns); ``delay_time`` is the same lag in TIME UNITS.
+    # ``tau`` is accepted only so that the front door can raise the error that
+    # names both, instead of Python's bare "unexpected keyword argument".
+    "delay_embedding": frozenset({"delay", "delay_time", "tau"}),
     "time_series": frozenset({"color_by"}),
     "phase_portrait_2d": frozenset({"color_by"}),
     "phase_portrait_3d": frozenset({"color_by"}),
@@ -317,7 +321,22 @@ class Trajectory:
         try:
             return names.index(name)
         except ValueError:
-            raise KeyError(f"Unknown component {name!r}. Declared variables: {names}") from None
+            # KeyError renders its argument with repr(), so a multi-line remedy
+            # block would reach the user as literal ``\n`` escapes.  Keep the fix
+            # on one line -- and spell it as the expression to type, closest
+            # declared name first, rather than only listing what is valid.
+            import difflib
+
+            # Case first: difflib scores 'Z' against 'z' at zero, yet a wrong-case
+            # component name is the single most common way to miss.
+            folded = [n for n in names if n.lower() == name.lower()]
+            close = folded or difflib.get_close_matches(name, names, n=1, cutoff=0.4)
+            pick = close[0] if close else names[0]
+            hint = f" Did you mean {close[0]!r}?" if close else ""
+            raise KeyError(
+                f"Unknown component {name!r}. Declared variables: {names}."
+                f"{hint} Type: traj[{pick!r}]"
+            ) from None
 
     @property
     def dim(self) -> int:
@@ -455,12 +474,14 @@ class Trajectory:
             ``kind="time_series"`` to overlay component-vs-time on a 3-D
             trajectory, or ``kind="spacetime"`` to image it.  The recipe
             ``kind="delay"`` builds a delay-coordinate embedding ``x(t)`` vs
-            ``x(t - tau)``; pass ``tau`` (in **time units**) via ``**kind_kw``.
+            ``x(t - delay)``; pass the lag via ``**kind_kw`` as either
+            ``delay=`` (**samples**) or ``delay_time=`` (**time units**).
 
         Per-kind options (``**kind_kw``)
             Options valid for one kind only are accepted as keywords rather than
-            cluttering the signature — ``tau`` (required for ``kind="delay"``,
-            converted from time units to samples via ``meta["dt"]``),
+            cluttering the signature — ``delay`` / ``delay_time`` (exactly one
+            required for ``kind="delay"``: a lag in **samples**, or the same lag
+            in **time units**, converted via ``meta["dt"]``),
             ``color_by`` (time series / phase portraits — a named field
             ``"time"``/``"speed"``/``"sagitta"``/``"curvature"``/``"acceleration"``/
             ``"arclength"``/``"index"``, a per-point array, or a callable
@@ -713,7 +734,7 @@ class Trajectory:
 
     @staticmethod
     def _validate_kind_kw(route: str | None, kind_kw: dict[str, Any]) -> None:
-        """Reject per-kind options passed to the wrong kind (and require ``tau``)."""
+        """Reject per-kind options passed to the wrong kind."""
         from tsdynamics.errors import InvalidParameterError
 
         allowed = _KIND_KW.get(route or "", frozenset())
@@ -723,15 +744,22 @@ class Trajectory:
                 f"kind={route!r} does not accept keyword(s) {sorted(unknown)}; "
                 f"allowed here: {sorted(allowed) or '(none)'}"
             )
-        if route == "delay_embedding" and "tau" not in kind_kw:
-            raise InvalidParameterError("kind='delay' requires tau=<delay in time units>")
 
-    def _delay_tau_samples(self, tau: float) -> int:
-        """Convert a delay ``tau`` in **time units** to an integer sample lag."""
+    def _delay_samples(self, delay_time: float) -> int:
+        """Convert a delay in **time units** to an integer sample lag.
+
+        The one conversion, shared by both plotting front doors (this class's
+        ``to_plot_spec`` and the ``delay_embedding`` transform behind
+        ``ts.plot``), so a delay can never mean two different things depending on
+        which door you came in through.
+        """
         from tsdynamics.errors import InvalidParameterError
 
-        if not np.isfinite(float(tau)) or float(tau) <= 0:
-            raise InvalidParameterError(f"delay tau must be a positive, finite time, got {tau!r}.")
+        value = float(delay_time)
+        if not np.isfinite(value) or value <= 0:
+            raise InvalidParameterError(
+                f"delay_time= is a positive, finite time, got {delay_time!r}."
+            )
         dt = self.meta.get("dt")
         dt_f = float(dt) if dt is not None else None
         if dt_f is None or not np.isfinite(dt_f) or dt_f <= 0:
@@ -739,14 +767,15 @@ class Trajectory:
             dt_f = float(np.median(diffs)) if diffs.size else None
         if dt_f is None or dt_f <= 0:
             raise InvalidParameterError(
-                "cannot convert delay tau to samples: the trajectory carries no "
-                "'dt' in meta and its time grid is degenerate."
+                "cannot convert delay_time to samples: the trajectory carries no "
+                "'dt' in meta and its time grid is degenerate. Pass the lag in samples "
+                "instead, e.g. delay=7."
             )
-        samples = max(1, int(round(float(tau) / dt_f)))
+        samples = max(1, int(round(value / dt_f)))
         if samples >= self.n_steps:
             raise InvalidParameterError(
-                f"delay tau={tau} (→ {samples} samples at dt={dt_f:g}) must be shorter "
-                f"than the series length {self.n_steps}."
+                f"delay_time={delay_time} (→ {samples} samples at dt={dt_f:g}) must be "
+                f"shorter than the series length {self.n_steps}."
             )
         return samples
 
@@ -787,30 +816,38 @@ class Trajectory:
         explicit: bool,
         primitive: str | None = None,
     ) -> PlotSpec:
-        """Build the ``x(t)`` vs ``x(t - tau)`` delay embedding (a ``PHASE_PORTRAIT_2D``).
+        """Build the ``x(t)`` vs ``x(t - delay)`` delay embedding (a ``PHASE_PORTRAIT_2D``).
 
         A delay embedding reconstructs **one** scalar observable; with no
         ``components=`` it embeds the first component, but an explicit
         multi-component selection is rejected rather than silently dropped.
+
+        ``delay`` (samples) / ``delay_time`` (time units) are resolved by the very
+        helper the ``delay_embedding`` transform uses, so this door and
+        ``ts.plot(traj, "delay_embedding", ...)`` cannot disagree about units.
         """
         from tsdynamics.errors import InvalidParameterError
-        from tsdynamics.viz import producers
+        from tsdynamics.viz.transforms._data import _resolve_delay
 
         if explicit and len(sel) != 1:
             raise InvalidParameterError(
                 "kind='delay' embeds a single component; select exactly one via "
                 f"components= (got {len(sel)})."
             )
-        samples = self._delay_tau_samples(kind_kw["tau"])
-        if primitive is not None:
-            return self._via_transform(
-                "delay_embedding",
-                primitive,
-                tau=samples,
-                component=sel[0],
-                label=sel_names[0],
-            )
-        return producers.delay_embedding(self, tau=samples, component=sel[0], label=sel_names[0])
+        samples = _resolve_delay(
+            self,
+            self.n_steps,
+            kind_kw.get("delay"),
+            kind_kw.get("delay_time"),
+            kind_kw.get("tau"),
+        )
+        return self._via_transform(
+            "delay_embedding",
+            primitive or "line",
+            delay=samples,
+            component=sel[0],
+            label=sel_names[0],
+        )
 
     def _time_series_spec(
         self,
@@ -973,28 +1010,40 @@ class Trajectory:
             return self._via_transform("spatial_field", primitive, component=block)
         return producers.spatial_field(self, component=block)
 
-    def plot(self, backend: str | None = None, **kwargs: Any) -> Any:
-        """Render this trajectory via a visualization backend.
+    def plot(self, *transforms: Any, **kwargs: Any) -> PlotSpec:
+        """Build this trajectory's :class:`PlotSpec`, applying inline tweaks first.
+
+        ``plot`` **builds**, ``render`` **draws**, ``save`` **writes** — one word,
+        one return type, everywhere::
+
+            traj.plot()                          # a PlotSpec
+            traj.plot().save("fig.png")          # write it
+            traj.plot().render("plotly")         # a plotly figure
+            traj.plot(title="Lorenz")            # tweak, still a PlotSpec
 
         Sugar over :meth:`to_plot_spec`: the spec-shaping keywords (``kind``,
-        ``components``, and the per-kind options ``tau`` / ``color_by`` /
-        ``transpose``) are peeled off and passed to :meth:`to_plot_spec`; the
-        remaining keywords are inline spec tweaks (``xlabel`` / ``yscale`` /
-        ``title`` / …) or backend keyword arguments (see
-        :meth:`tsdynamics.viz.spec.Plottable.plot`).
+        ``components``, ``primitive``, ``animate``, and the per-kind options
+        ``delay`` / ``delay_time`` / ``color_by`` / ``transpose``) are peeled off
+        and passed to :meth:`to_plot_spec`; the rest are inline spec tweaks
+        (``xlabel`` / ``yscale`` / ``title`` / …).  A *renderer* option (``ax=``,
+        ``figsize=``, a backend name) belongs to
+        :meth:`~tsdynamics.viz.spec.PlotSpec.render` and raises here.
 
-        The viz package is imported lazily here (not at module scope) so plain
-        ``import tsdynamics`` never pulls it in — honouring the
-        no-backend-on-import contract.  Raises
-        :class:`~tsdynamics.viz.spec.VisualizationNotInstalled` until a backend
-        is registered.
+        The viz package is imported lazily (not at module scope) so plain
+        ``import tsdynamics`` never pulls it in.
+
+        .. versionchanged:: 6.0
+           Returns the :class:`~tsdynamics.viz.spec.PlotSpec` instead of the
+           backend figure.  ``ts.plot(traj)`` already returned a spec, so the two
+           spellings of the same word returned two different types and
+           ``traj.plot().save(...)`` raised ``'Figure' object has no attribute
+           'save'``.  Use ``.render(backend, **backend_kw)`` for a figure.
         """
-        from tsdynamics.viz.spec import _apply_inline_tweaks
+        from tsdynamics.viz.spec import reject_positional_transform
 
+        reject_positional_transform(transforms, "traj")
         spec_kw = {k: kwargs.pop(k) for k in list(kwargs) if k in _PLOT_SPEC_KEYS}
-        spec = self.to_plot_spec(**spec_kw)
-        backend_kw = _apply_inline_tweaks(spec, kwargs)
-        return spec.render(backend, **backend_kw)
+        return self.to_plot_spec(**spec_kw).plot(**kwargs)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Notebook display hook — lazily delegated to ``Plottable`` (see :meth:`plot`).

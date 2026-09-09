@@ -53,7 +53,7 @@ def _lyap(burn_in: float, final_time: float) -> float:
     ic = np.asarray(_mackeyglass_on_attractor_ic(), dtype=np.float64)
     spec = ts.MackeyGlass().lyapunov_spectrum(
         backend="interp",
-        n_exp=1,
+        k=1,
         dt=0.5,
         burn_in=burn_in,
         final_time=final_time,
@@ -134,7 +134,7 @@ def test_interp_equals_jit_bit_for_bit_under_window_semantics() -> None:
     engines must still return an identical spectrum.
     """
     ic = np.asarray(_mackeyglass_on_attractor_ic(), dtype=np.float64)
-    kw = dict(n_exp=2, dt=0.5, burn_in=180.0, final_time=200.0, ic=ic, rtol=1e-4, atol=1e-4)
+    kw = dict(k=2, dt=0.5, burn_in=180.0, final_time=200.0, ic=ic, rtol=1e-4, atol=1e-4)
     interp = ts.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
     jit = ts.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
     np.testing.assert_array_equal(interp, jit)
@@ -170,7 +170,7 @@ def test_small_positive_burn_in_still_discards_one_window() -> None:
     def run(burn_in: float) -> np.ndarray:
         return ts.MackeyGlass().lyapunov_spectrum(
             backend="interp",
-            n_exp=1,
+            k=1,
             dt=0.5,
             burn_in=burn_in,
             final_time=200.0,

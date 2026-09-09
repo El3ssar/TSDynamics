@@ -227,6 +227,41 @@ def _resolve_derivative_nodes(expr: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
+#: Keywords ``lyapunov_spectrum`` forwards to the integrator.  Everything a
+#: caller may legitimately pass is bound to an explicit parameter, so anything
+#: else in ``**integrator_kwargs`` is a typo.
+_LYAPUNOV_FORWARDED: frozenset[str] = frozenset(
+    {"t0", "max_step", "max_steps", "first_step", "seed"}
+)
+
+
+def _reject_unknown_lyapunov_keywords(extra: dict[str, Any]) -> None:
+    """Raise on an unrecognised ``lyapunov_spectrum`` keyword instead of dropping it.
+
+    ``**integrator_kwargs`` silently swallowed anything it did not recognise, and
+    the keyword it swallowed most often was ``n_exp`` — this method's own
+    parameter until the v4 glossary renamed it to ``k``.  So
+    ``lorenz.lyapunov_spectrum(n_exp=1)`` returned THREE exponents: the caller
+    asked for one, the request went into the void, and the answer looked fine.
+    A wrong number returned confidently is the worst outcome available here, and
+    it is the same footgun ``integrate`` already closed.
+    """
+    unknown = sorted(set(extra) - _LYAPUNOV_FORWARDED)
+    if not unknown:
+        return
+    from tsdynamics.errors import invalid_value
+
+    bad = unknown[0]
+    hint = (
+        "did you mean k=? (the number of exponents was renamed n_exp -> k in v4)."
+        if bad in {"n_exp", "nexp", "n_exponents"}
+        else "valid keywords: final_time, dt, ic, k, burn_in, method, rtol, atol, backend."
+    )
+    raise invalid_value(
+        bad, extra[bad], rule="is not a valid lyapunov_spectrum() keyword", hint=hint
+    )
+
+
 class ContinuousSystem(SystemBase, ABC):
     """
     Base class for ODE-based dynamical systems, integrated on the engine.
@@ -1266,7 +1301,7 @@ class ContinuousSystem(SystemBase, ABC):
         dt: float = 0.1,
         *,
         ic: Any | None = None,
-        n_exp: int | None = None,
+        k: int | None = None,
         burn_in: float = 50.0,
         method: str | None = None,
         rtol: float = DEFAULT_RTOL,
@@ -1294,8 +1329,10 @@ class ContinuousSystem(SystemBase, ABC):
             Sampling interval for local exponent accumulation. Default 0.1.
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
-        n_exp : int, optional
-            Number of exponents. Defaults to ``dim``.
+        k : int, optional
+            Number of exponents to compute.  Defaults to ``dim``.
+            (Renamed from ``n_exp`` in v4; the old spelling was silently swallowed
+            by ``**integrator_kwargs`` on this method until v6.)
         burn_in : float
             Discard this much time before averaging. Default 50.0.
         method : str, optional
@@ -1317,13 +1354,13 @@ class ContinuousSystem(SystemBase, ABC):
 
         Returns
         -------
-        ndarray, shape (n_exp,)
+        ndarray, shape (k,)
             Lyapunov exponents ordered from largest to smallest.
 
         Raises
         ------
         InvalidParameterError
-            If ``n_exp`` is given and not a positive integer.
+            If ``k`` is given and not a positive integer.
 
         References
         ----------
@@ -1332,11 +1369,14 @@ class ContinuousSystem(SystemBase, ABC):
            for Hamiltonian systems; a method for computing all of them,"
            *Meccanica* 15, 9-30 (1980).
         """
-        if n_exp is not None and n_exp <= 0:
-            raise InvalidParameterError(f"n_exp must be a positive integer, got {n_exp!r}")
+        if k is not None and k <= 0:
+            raise InvalidParameterError(
+                f"k (number of exponents) must be a positive integer, got {k!r}"
+            )
         from tsdynamics.derived.tangent import TangentSystem
 
-        k = n_exp if n_exp is not None else self.dim
+        _reject_unknown_lyapunov_keywords(integrator_kwargs)
+        k = k if k is not None else self.dim
         return TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
             final_time=final_time,
             dt=dt,

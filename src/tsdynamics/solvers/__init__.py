@@ -278,12 +278,15 @@ def _scan() -> None:
 _scan()
 discover_plugins()
 
+# ``discover_plugins`` is deliberately absent: loading entry points is packaging
+# machinery, not solver API.  It stays bound and callable
+# (``tsdynamics.solvers.discover_plugins()``), just off the tab surface — the same
+# rule applied to its twins in ``tsdynamics.analysis`` and ``tsdynamics.viz``.
 __all__ = [
     "SolverCaps",
     "SolverSpec",
     "all_specs",
     "available",
-    "discover_plugins",
     "get",
     "register",
     "unregister",

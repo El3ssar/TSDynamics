@@ -30,9 +30,10 @@ from typing import Any, cast
 
 import numpy as np
 
+from tsdynamics.errors import ConvergenceError, InvalidInputError, remedy
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
-from .._common import reject_system
+from .._common import reject_data, reject_system
 from .._result import AnalysisResult, CollectionResult, ScalarResult
 from . import _common as _c
 from .fixed import _build_seeds, _eigenvalue_plane_spec, _stabilising_matrices
@@ -45,6 +46,29 @@ __all__ = [
     "periodic_orbit",
     "periodic_orbits",
 ]
+
+# The two seeding recipes every shooting failure points at.  They are kept here,
+# spelled as complete statements, because an error that says "seed it better"
+# without handing over the lines to type is not a remedy -- and because a line
+# naming a `traj` the reader never defined is not runnable either.
+#
+# They are complementary, which is why the escalation below offers the second
+# only after the first has already failed: the autocorrelation period works when
+# the signal has one dominant frequency (Rossler closes at T=17.5158), while the
+# near-return scan works when it does not (Lorenz T=3.82025, Chua T=1.6671 --
+# both of which the autocorrelation guess sends to an equilibrium instead).
+_SEED_FROM_ATTRACTOR = (
+    "traj = system.run(final_time=200.0, dt=0.01)",
+    "ts.periodic_orbit(system, ic=traj.y[-1], "
+    "period_guess=float(ts.analysis.estimate_period(traj)))",
+)
+_SEED_FROM_NEAR_RETURN = (
+    "traj = system.run(final_time=200.0, dt=0.01)",
+    "lag = int(np.argmin([np.linalg.norm(traj.y[m:] - traj.y[:-m], axis=1).min()",
+    "                     for m in range(50, 500)])) + 50   # the closest near-return",
+    "k = int(np.linalg.norm(traj.y[lag:] - traj.y[:-lag], axis=1).argmin())",
+    "ts.periodic_orbit(system, ic=traj.y[k], period_guess=lag * 0.01)",
+)
 
 
 @dataclass(frozen=True)
@@ -333,9 +357,10 @@ def periodic_orbits(
 
     Raises
     ------
-    TypeError
-        If ``system`` is not a :class:`~tsdynamics.families.DiscreteMap` (use
-        :func:`periodic_orbit` for flows).
+    InvalidInputError
+        If ``system`` is measured data, or is not a
+        :class:`~tsdynamics.families.DiscreteMap` (use :func:`periodic_orbit` for
+        flows).  A ``TypeError`` subclass, so ``except TypeError`` keeps working.
     ValueError
         If ``period < 1`` or ``method`` is not ``"newton"``/``"sd"``/``"dl"``.
 
@@ -344,8 +369,17 @@ def periodic_orbits(
     >>> periodic_orbits(Logistic(params={"r": 3.2}), 2)   # the stable 2-cycle
     >>> periodic_orbits(Logistic(params={"r": 3.83}), 3)  # stable node + saddle
     """
+    reject_data(system, analysis="periodic_orbits")
     if not isinstance(system, DiscreteMap):
-        raise TypeError("periodic_orbits is for DiscreteMap systems; use periodic_orbit for flows.")
+        raise InvalidInputError(
+            f"periodic_orbits finds period-p orbits of a *map* (fixed points of f^p), "
+            f"and {type(system).__name__} is a flow — a flow's periodic orbit is a "
+            f"closed curve with a real-valued period, found by shooting."
+            + remedy(
+                *_SEED_FROM_ATTRACTOR,
+                lead="Use the flow routine (singular), seeded from a point on the orbit:",
+            )
+        )
     period = int(period)
     if period < 1:
         raise ValueError("period must be a positive integer.")
@@ -534,23 +568,33 @@ def periodic_orbit(
 
     Raises
     ------
+    InvalidInputError
+        If ``system`` is measured data rather than a model.
     NotImplementedError
-        If ``system`` is not a continuous flow.
+        If ``system`` is not a continuous flow (use :func:`periodic_orbits` for a
+        map).
     ValueError
         If ``period_guess`` (or the auto-estimated period) is not positive.
-    RuntimeError
+    ConvergenceError
         If the Newton iteration does not converge, or it collapses onto an
         equilibrium (the target may be a centre — a non-isolated orbit — rather
-        than a hyperbolic cycle); try a better ``ic`` / ``period_guess``.
+        than a hyperbolic cycle); seed from a point on the cycle.  A
+        ``RuntimeError`` subclass, so ``except RuntimeError`` keeps working.
 
     Examples
     --------
     >>> periodic_orbit(VanDerPol(params={"mu": 1.0}), ic=[2.0, 0.0], period_guess=6.6)
     """
+    reject_data(system, analysis="periodic_orbit")
     if not isinstance(system, ContinuousSystem):
         raise NotImplementedError(
-            f"periodic_orbit (shooting) is for continuous flows, not {type(system).__name__}; "
-            f"use periodic_orbits for maps."
+            f"periodic_orbit shoots for a closed *flow* trajectory (x0, T), and "
+            f"{type(system).__name__} has no continuous time — a map's periodic orbit "
+            f"is a finite cycle of integer period."
+            + remedy(
+                "ts.periodic_orbits(system, 2)",
+                lead="Use the map routine (plural), with the period you want:",
+            )
         )
     dim = int(system.dim)  # type: ignore[arg-type]  # dim resolved at construction
     rhs, jac = _c.flow_fns(system)
@@ -590,12 +634,24 @@ def periodic_orbit(
         try:
             delta = np.linalg.solve(amat, rhs_vec)
         except np.linalg.LinAlgError as exc:
-            raise RuntimeError(
-                "periodic_orbit: singular shooting Jacobian — the target may be a "
-                "centre (non-isolated orbit) or the phase condition is degenerate."
+            raise ConvergenceError(
+                "periodic_orbit: the shooting Jacobian is singular, so the Newton step "
+                "is undefined — the target is a centre (a continuum of orbits, none "
+                "isolated) or the phase condition is degenerate at this point."
+                + remedy(
+                    *_SEED_FROM_ATTRACTOR,
+                    lead="Seed from a different point on the orbit:",
+                )
             ) from exc
         if not np.all(np.isfinite(delta)):
-            raise RuntimeError("periodic_orbit: non-finite Newton step (diverged).")
+            raise ConvergenceError(
+                "periodic_orbit: the Newton step is non-finite — the shooting "
+                "trajectory blew up before it closed."
+                + remedy(
+                    *_SEED_FROM_ATTRACTOR,
+                    lead="Seed from a point on the attractor and a period near the truth:",
+                )
+            )
         # Backtracking line search: take the largest fraction of the Newton step
         # that keeps T > 0 and strictly reduces the closure residual (shooting has
         # a small basin, so an undamped step can overshoot to T <= 0 or diverge).
@@ -616,18 +672,47 @@ def periodic_orbit(
     x_end, monodromy = _c.flow_monodromy(rhs, jac, x0, t_period, steps_per_period)
     residual = float(np.linalg.norm(x_end - x0))
     if not converged and residual >= tol:
-        raise RuntimeError(
-            f"periodic_orbit: Newton did not converge (residual {residual:.3e} ≥ tol {tol:.1e}); "
-            f"try a better ic/period_guess or a hyperbolic orbit."
+        # Escalate rather than loop.  A caller who passed no seed has not yet
+        # tried the attractor recipe, so offer it; a caller who *did* seed has
+        # already run that line, and repeating it back would be an error message
+        # telling them to type what they just typed.  For them the guess is the
+        # sensitive unknown, so point at the near-return scan instead.
+        seeded = ic is not None and period_guess is not None
+        lead, lines = (
+            (
+                "The period is what shooting is most sensitive to, so take it from "
+                "the trajectory's closest near-return rather than from a guess:",
+                _SEED_FROM_NEAR_RETURN,
+            )
+            if seeded
+            else (
+                "Seed it from the attractor and estimate the period from it:",
+                _SEED_FROM_ATTRACTOR,
+            )
+        )
+        raise ConvergenceError(
+            f"periodic_orbit: Newton did not converge (closure residual {residual:.3e} "
+            f"≥ tol {tol:.1e}), so (x0, T) is not a closed orbit. Shooting has a small "
+            f"basin: it needs a starting point already close to the cycle"
+            + (f", and period_guess={period_guess:g} did not put it there." if seeded else ".")
+            + remedy(*lines, lead=lead)
         )
 
     points = _sample_cycle(rhs, x0, t_period, n_points)
     extent = float(np.linalg.norm(points.max(axis=0) - points.min(axis=0)))
     if extent < min_amplitude:
-        raise RuntimeError(
+        raise ConvergenceError(
             f"periodic_orbit: shooting collapsed onto an equilibrium (orbit extent "
-            f"{extent:.2e} < {min_amplitude:.1e}) — the target may be a centre "
-            f"(non-isolated orbit), or seed a point on an actual cycle."
+            f"{extent:.2e} < {min_amplitude:.1e}). Newton walked to a fixed point "
+            f"because the starting guess was not near a cycle — or the system has no "
+            f"isolated cycle to find (a centre is a continuum of orbits, so shooting "
+            f"has nothing to converge *to*)."
+            + remedy(
+                "traj = system.run(final_time=200.0, dt=0.01)",
+                "ts.periodic_orbit(system, ic=traj.y[-1], period_guess="
+                "float(ts.analysis.estimate_period(traj)))",
+                lead="Seed it from a point that is actually on the cycle:",
+            )
         )
 
     multipliers, eigenvectors = np.linalg.eig(monodromy)

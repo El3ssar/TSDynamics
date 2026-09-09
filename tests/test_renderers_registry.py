@@ -267,17 +267,25 @@ def test_render_dispatches_to_a_registered_backend(_temp_backend):
     assert seen["kw"] == {"dpi": 120}
 
 
-def test_render_unknown_backend_raises_naming_keyerror(_temp_backend):
-    """With at least one backend registered, an unknown name is a naming KeyError.
+def test_render_unknown_backend_lists_the_backends_that_are_installed(_temp_backend):
+    """An unknown ``backend=`` must name the choices, not just the mistake.
 
-    (When the registry is empty the no-backend ``VisualizationNotInstalled`` wins;
-    once a backend exists, an unrecognized name surfaces the registry's
-    name-not-found ``KeyError`` instead — the registry's own helpful lookup.)
+    (When the registry is empty the no-backend ``VisualizationNotInstalled``
+    wins.)  It is an ``InvalidParameterError`` — the library's type for a bad
+    option value — and not the registry's bare ``KeyError``, whose ``__str__``
+    is ``repr(arg)`` and would print the remedy's newlines as literal ``\\n``.
     """
+    from tsdynamics.errors import InvalidParameterError
+
+    name, _ = _temp_backend
     spec = _scaling_spec()
-    with pytest.raises(KeyError) as excinfo:
+    with pytest.raises(InvalidParameterError) as excinfo:
         spec.render("definitely_not_a_backend")
-    assert "definitely_not_a_backend" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "definitely_not_a_backend" in message
+    assert name in message  # the registered backends are listed
+    # ... and one of them is offered as a runnable line.
+    assert any(f"spec.render({n!r})" in message for n in registry.renderers.names())
 
 
 # ---------------------------------------------------------------------------

@@ -42,7 +42,7 @@ from typing import Any
 
 import numpy as np
 
-from ...errors import ConvergenceError, invalid_value
+from ...errors import ConvergenceError, InvalidInputError, invalid_value, remedy
 from ._common import DimensionResult, _as_points, _diameter
 from ._scaling import ScalingFit, fit_scaling_region
 
@@ -324,6 +324,35 @@ def _informative_scales(
 _Q1_BAND = 1e-8
 
 
+def _coerce_q(q: Any, *, analysis: str, param: str = "q") -> float:
+    """Coerce the Renyi order to a float, rejecting a non-numeric ``q`` by name.
+
+    Without this the comparison ``q < 0.0`` a line later raises NumPy's
+    ``'<' not supported between instances of 'str' and 'float'`` — which names
+    neither the parameter nor the call.
+    """
+    try:
+        value = float(q)
+    except (TypeError, ValueError) as err:
+        raise InvalidInputError(
+            f"{param} is the Renyi order of the dimension (a number: 0 for "
+            f"box-counting, 1 for information, 2 for correlation), got {q!r}."
+            + remedy(
+                f"ts.{analysis}(data, {param}=[0.0, 1.0, 2.0])"
+                if param == "qs"
+                else f"ts.{analysis}(data, {param}=2.0)"
+            )
+        ) from err
+    if not np.isfinite(value):
+        raise invalid_value(
+            param,
+            q,
+            rule="must be finite (the Renyi order)",
+            hint="the q -> inf limit is not computed by this estimator.",
+        )
+    return value
+
+
 def _partition_ordinate(counts: np.ndarray, n: int, q: float) -> float:
     r"""Ordinate whose slope vs :math:`\log\epsilon` is :math:`D_q`.
 
@@ -551,6 +580,7 @@ def generalized_dimension(
         If ``q < 0``: the box-counting partition function is unreliable for
         negative orders (the rarely-visited boxes dominate).
     """
+    q = _coerce_q(q, analysis="generalized_dimension")
     if q < 0.0:
         raise invalid_value("q", q, rule=_NEGATIVE_Q_RULE, hint=_NEGATIVE_Q_HINT)
     return _spectrum_core(
@@ -759,7 +789,7 @@ def dimension_spectrum(
     points = _as_points(data, analysis="dimension_spectrum")
     if qs is None:
         qs = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
-    qs = [float(q) for q in np.atleast_1d(qs)]
+    qs = [_coerce_q(q, analysis="dimension_spectrum", param="qs") for q in np.atleast_1d(qs)]
     bad = [q for q in qs if q < 0.0]
     if bad:
         raise invalid_value("q", bad[0], rule=_NEGATIVE_Q_RULE, hint=_NEGATIVE_Q_HINT)

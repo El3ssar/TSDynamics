@@ -125,8 +125,12 @@ class TestMapFixedPoints:
         assert all(not fp.stable for fp in fps)
 
     def test_invalid_method_raises(self) -> None:
-        with pytest.raises(ValueError, match="method must be"):
+        # Still a ValueError (InvalidParameterError subclasses it), but the
+        # message now names the bad value, lists the choices, and hands back the
+        # line to type -- the v6 runnable-line standard.
+        with pytest.raises(ValueError, match="unknown method 'bogus'") as excinfo:
             fixed_points(ts.Henon(), method="bogus")
+        assert "ts.fixed_points(system, method='newton')" in str(excinfo.value)
 
 
 # ── interval-Newton / Krawczyk (method="interval") ───────────────────────────

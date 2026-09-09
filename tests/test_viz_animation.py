@@ -631,7 +631,7 @@ def _build_animatable_spec(name):
     if name == "phase_portrait_2d":
         return lor.to_plot_spec(components=["x", "y"], animate=True)
     if name == "delay_embedding":
-        return lor.to_plot_spec(kind="delay", tau=0.1, components="x", animate=True)
+        return lor.to_plot_spec(kind="delay", delay_time=0.1, components="x", animate=True)
     return lor.to_plot_spec(animate=True)  # phase_portrait_3d
 
 

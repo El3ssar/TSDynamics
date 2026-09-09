@@ -27,38 +27,6 @@ if TYPE_CHECKING:
 
 __all__ = ["SystemPlottable"]
 
-#: Renderer keywords ``system.plot(...)`` forwards to the drawing backend rather
-#: than to the integration.  Deliberately a **closed, small** set: on a *system*
-#: (unlike a bare :class:`~tsdynamics.data.Trajectory`) an unrecognised keyword is
-#: far more likely to be a misspelt integration keyword than a backend option, and
-#: the old catch-all "everything left over goes to the renderer" rule made
-#: ``lor.plot(final_time=2.0)`` a silent no-op — the renderer swallows ``**kwargs``.
-#: Anything exotic goes through the explicit ``backend_kwargs=`` escape hatch.
-#:
-#: The set is the union of the keyword arguments the **in-tree** renderers name
-#: (matplotlib ``figsize`` / ``dpi`` / ``fps`` / ``size``, plotly ``html`` /
-#: ``path`` / ``full_html`` / ``include_plotlyjs``, json + threejs ``path`` /
-#: ``indent`` / ``raw``, plus the dispatcher's ``warn``), so ``system.plot`` and
-#: :meth:`Trajectory.plot <tsdynamics.data.Trajectory.plot>` accept the same
-#: backend options.  None of them collide with an integration keyword.  An
-#: out-of-tree renderer's own options go through ``backend_kwargs=``.
-_RENDER_KEYS: frozenset[str] = frozenset(
-    {
-        "ax",
-        "figsize",
-        "dpi",
-        "fps",
-        "size",
-        "warn",
-        "html",
-        "path",
-        "full_html",
-        "include_plotlyjs",
-        "indent",
-        "raw",
-    }
-)
-
 
 class SystemPlottable:
     """Mixin adding ``to_plot_spec`` / ``.plot`` / a notebook hook to a system.
@@ -82,8 +50,8 @@ class SystemPlottable:
         Integrates the system with its family's :meth:`trajectory` (defaults, or
         the integration keywords you pass — ``final_time`` / ``dt`` / ``steps`` /
         ``ic`` / …) and delegates to the trajectory's own ``to_plot_spec``.  The
-        plot-shaping keywords (``components`` and the per-kind options ``tau`` /
-        ``color_by`` / ``transpose``) are split out and forwarded to the
+        plot-shaping keywords (``components`` and the per-kind options ``delay`` /
+        ``delay_time`` / ``color_by`` / ``transpose``) are split out and forwarded to the
         trajectory's ``to_plot_spec``; every other keyword goes to
         :meth:`trajectory`.  This split keys off the **closed** set of plot
         keywords (``tsdynamics.data.trajectory._PLOT_SPEC_KEYS``), so a system's
@@ -95,8 +63,8 @@ class SystemPlottable:
             Override / select the semantic kind, forwarded to the trajectory's
             ``to_plot_spec`` (a ``PlotKind`` value or the ``"delay"`` recipe).
         **kwargs
-            Plot-shaping keywords (``components`` / ``primitive`` / ``tau`` /
-            ``color_by`` / ``transpose``) forwarded to the trajectory's
+            Plot-shaping keywords (``components`` / ``primitive`` / ``delay`` /
+            ``delay_time`` / ``color_by`` / ``transpose``) forwarded to the trajectory's
             ``to_plot_spec``; all other keywords forwarded to :meth:`trajectory`
             (``final_time``, ``dt``, ``steps``, ``ic``, …).  ``primitive=``
             selects **how** the view is drawn (``"points"`` / ``"density"`` / …),
@@ -114,14 +82,15 @@ class SystemPlottable:
         traj = self.trajectory(**kwargs)
         return traj.to_plot_spec(kind=kind, **plot_kw)
 
-    def plot(
-        self,
-        backend: str | None = None,
-        *,
-        backend_kwargs: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Render this system via a backend, applying inline tweaks first.
+    def plot(self, *transforms: Any, **kwargs: Any) -> PlotSpec:
+        """Build this system's :class:`PlotSpec`, applying inline tweaks first.
+
+        ``plot`` **builds**, ``render`` **draws**, ``save`` **writes** — one word,
+        one return type, everywhere::
+
+            lor.plot()                             # a PlotSpec
+            lor.plot(final_time=20.0).save("a.png")
+            lor.plot().render("plotly")
 
         Keywords are routed by category, in this order:
 
@@ -129,63 +98,60 @@ class SystemPlottable:
            the per-kind options) → :meth:`to_plot_spec`;
         2. inline spec tweaks (``xlabel`` / ``yscale`` / ``title`` / ``xlim`` /
            …) → applied to the spec;
-        3. renderer options (:data:`_RENDER_KEYS`, plus anything in
-           ``backend_kwargs``) → the drawing backend;
-        4. **everything else → the integration** — forwarded through
+        3. **everything else → the integration** — forwarded through
            :meth:`to_plot_spec` to the family's ``trajectory`` (``final_time`` /
            ``dt`` / ``steps`` / ``ic`` / ``method`` / …), which validates them and
            raises :class:`~tsdynamics.errors.InvalidParameterError` on a typo.
 
+        Renderer options (``ax`` / ``figsize`` / ``dpi`` / ``html`` / …) belong to
+        :meth:`~tsdynamics.viz.spec.PlotSpec.render`, which is also where the
+        backend is chosen — so there is no ``backend=`` here to be confused with
+        the integration keywords.
+
         .. versionchanged:: 6.0
-           Category 4 is new.  Previously every keyword that was not plot-shaping
-           or an inline tweak was handed to the renderer, whose ``**kwargs`` then
-           swallowed it — so ``lor.plot(final_time=2.0, dt=0.1)`` silently drew
-           the *default* 100-time-unit trajectory, and ``lor.plot(finaltime=2.0)``
-           was silently accepted.  Both now behave as written / raise.
+           Returns the :class:`~tsdynamics.viz.spec.PlotSpec` rather than the
+           backend figure, so ``system.plot()`` and ``ts.plot(system)`` are the
+           same kind of thing; and every keyword that is not plot-shaping or a
+           tweak now reaches the integration (previously the renderer's
+           ``**kwargs`` swallowed it, so ``lor.plot(final_time=2.0)`` silently
+           drew the default 100-time-unit trajectory).
 
         Parameters
         ----------
-        backend : str, optional
-            Renderer name; ``None`` uses the default capable backend.
-        backend_kwargs : dict, optional
-            Extra keyword arguments passed verbatim to the renderer — the escape
-            hatch for backend options outside :data:`_RENDER_KEYS`.
         **kwargs
-            Plot-shaping keywords, inline spec tweaks, renderer options, and
-            integration keywords (see above).
+            Plot-shaping keywords, inline spec tweaks, and integration keywords
+            (see above).
 
         Returns
         -------
-        Any
-            Whatever the backend returns.
+        PlotSpec
         """
         from tsdynamics.data.trajectory import _PLOT_SPEC_KEYS
-        from tsdynamics.viz.spec import _COLORIZE_TWEAKS, _INLINE_TWEAKS, _apply_inline_tweaks
+        from tsdynamics.viz.spec import (
+            _COLORIZE_TWEAKS,
+            _INLINE_TWEAKS,
+            reject_positional_transform,
+        )
+
+        reject_positional_transform(transforms, "system")
 
         def _take(keys: Any) -> dict[str, Any]:
             return {k: kwargs.pop(k) for k in list(kwargs) if k in keys}
 
         spec_kw = _take(_PLOT_SPEC_KEYS)
         tweak_kw = _take(_INLINE_TWEAKS.keys() | _COLORIZE_TWEAKS)
-        render_kw = _take(_RENDER_KEYS)
         # Whatever is left is an integration keyword; ``to_plot_spec`` hands it to
         # the family's ``trajectory``, which is the one place that knows the valid
         # names and rejects a typo.
-        spec = self.to_plot_spec(**spec_kw, **kwargs)
-        _apply_inline_tweaks(spec, tweak_kw)
-        return spec.render(backend, **render_kw, **(backend_kwargs or {}))
+        return self.to_plot_spec(**spec_kw, **kwargs).plot(**tweak_kw)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Rich notebook display — renders inline once a backend is installed.
 
-        Returns ``None`` (so IPython falls back to ``__repr__``) when no rendering
-        backend is registered, keeping notebook import of core plot-library-free.
+        Returns ``None`` (so IPython falls back to ``__repr__``) outside a
+        notebook or when no rendering backend is installed, keeping notebook
+        import of core plot-library-free.
         """
-        from tsdynamics.viz.spec import _resolve_renderers
+        from tsdynamics.viz.spec import _notebook_mimebundle
 
-        if _resolve_renderers() is None:
-            return None
-        try:  # pragma: no cover - exercised only once a backend is installed
-            return self.plot()
-        except Exception:  # pragma: no cover - never break repr on a render error
-            return None
+        return _notebook_mimebundle(lambda: self.to_plot_spec().render(), include, exclude)

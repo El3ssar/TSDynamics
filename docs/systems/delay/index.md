@@ -49,12 +49,12 @@ therefore *integrate first, then measure*:
 
 ```python
 traj = mg.integrate(final_time=500.0, dt=0.5, history=hist)   # reach the attractor
-exps = mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])   # start from its end state
+exps = mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1])   # start from its end state
 ```
 
 `lyapunov_spectrum` uses a constant past built from `ic`; handing it the
 end state of a settled run starts the measurement *on* the attractor and
-avoids trivial exponents. A DDE has infinitely many exponents — `n_exp`
+avoids trivial exponents. A DDE has infinitely many exponents — `k`
 chooses how many leading ones to estimate (default 1).
 
 ## Tolerances

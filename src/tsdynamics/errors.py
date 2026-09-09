@@ -31,6 +31,29 @@ already-excellent ``method=`` / ``backend=`` / ``set_state`` messages establishe
 :func:`invalid_value` builds exactly that message so the standard is applied
 uniformly rather than re-spelled at every raise site.
 
+The runnable-line standard
+--------------------------
+Naming the mistake is necessary and *not sufficient*.  When a call fails because
+the user typed the wrong shape of call — not merely a wrong number — the message
+must end with **the line they should type instead**, indented and complete enough
+to paste::
+
+    orbit_diagram needs a discrete-time view ...          # describes the mistake
+    wrap the flow in a section first:                     # ... and shows the fix
+        ts.bifurcation_diagram(ts.PoincareMap(system, plane=("z", 27.0)), "rho", values)
+
+:func:`remedy` formats that block, so every site spells it the same way and the
+polish gate (``tests/test_polish_standards.py``) can *decide* whether a message
+carries a runnable line by parsing its indented lines as Python.  Two rules make
+the block worth pasting:
+
+- **name the call the user actually made**, not the internal function it
+  delegates to (a user who typed ``ts.basins`` must not be answered about
+  ``basins_of_attraction``); and
+- **fill in their own values** — the system's real dimension, its declared
+  component names, the length their array actually had — so the line runs as-is
+  rather than needing to be decoded first.
+
 The hierarchy at a glance
 -------------------------
 ============================ =================== ===========================
@@ -50,16 +73,6 @@ while the package is still initialising):
 :class:`BackendError` and is raised when the compiled ``tsdynamics._rust``
 extension is absent — ``except BackendError`` (or ``except RuntimeError``) catches
 it.
-
-Known gap (tracked WS-ERRORS xfail)
------------------------------------
-A wrong-length **initial condition** is still reshaped by NumPy in the family
-``resolve_ic`` path, so it currently surfaces as a raw NumPy ``ValueError``
-(``cannot reshape array …``) rather than a typed :class:`InvalidInputError`.  That
-raise site lives in :mod:`tsdynamics.families`, not here; wrapping it cleanly is
-deferred so this module stays a leaf with no family-side imports.  ``except
-ValueError`` still catches the leak, so the failure mode is correct in kind if not
-yet in framing.
 
 Examples
 --------
@@ -88,6 +101,7 @@ __all__ = [
     "StepBudgetError",
     "TSDynamicsError",
     "invalid_value",
+    "remedy",
 ]
 
 
@@ -160,6 +174,44 @@ class BackendError(TSDynamicsError, RuntimeError):
     ``isinstance(err, BackendError)`` catches it.  Subclasses
     :class:`RuntimeError`, so legacy ``except RuntimeError`` handlers still apply.
     """
+
+
+def remedy(*lines: str, lead: str | None = None) -> str:
+    """Format the *runnable* fix block that closes an error message.
+
+    The formatter behind the runnable-line standard documented at the top of this
+    module: a short lead-in sentence, then one indented line per statement the
+    user should type.  Keeping it in one helper means every site spells the fix
+    the same way, and lets the polish gate decide mechanically whether a message
+    carries a line that actually parses as Python.
+
+    Parameters
+    ----------
+    *lines : str
+        The source lines to show, in the order they should be typed.  Each must
+        be a complete statement (a call, or an assignment whose value is a call)
+        — a fragment the user still has to finish is not a remedy.
+    lead : str, optional
+        A sentence introducing the block (e.g. ``"wrap the flow in a section
+        first:"``).  Rendered on its own line above the code.
+
+    Returns
+    -------
+    str
+        The block, opening with a newline so it appends directly to a message.
+
+    Examples
+    --------
+    >>> print("orbit_diagram needs a discrete-time view." + remedy(
+    ...     'ts.bifurcation_diagram(ts.PoincareMap(sys, plane=("z", 27.0)), "rho", values)',
+    ...     lead="Wrap the flow in a section first:",
+    ... ))
+    orbit_diagram needs a discrete-time view.
+    Wrap the flow in a section first:
+        ts.bifurcation_diagram(ts.PoincareMap(sys, plane=("z", 27.0)), "rho", values)
+    """
+    body = "\n".join(f"    {line}" for line in lines)
+    return f"\n{lead}\n{body}" if lead else f"\n{body}"
 
 
 def invalid_value(

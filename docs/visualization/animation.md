@@ -177,7 +177,7 @@ traj = mg.integrate(
 ).after(150.0)
 
 spec = (
-    traj.to_plot_spec(kind="delay", components="x", tau=17.0, animate=True)
+    traj.to_plot_spec(kind="delay", components="x", delay_time=17.0, animate=True)
     .animate(n_frames=100, fps=25)
     .trail(("time", 120.0), fade=True)
     .head(size=8.0, color="#574FCF")

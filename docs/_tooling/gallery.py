@@ -261,7 +261,7 @@ SHOWCASE: dict[str, Showcase] = {
     ),
     "delay_embedding": Showcase(
         setup=_LORENZ,
-        call='ts.plot(traj, "delay_embedding", tau=17)',
+        call='ts.plot(traj, "delay_embedding", delay=17)',
         square=True,
         caption=(
             "Takens' reconstruction from the single observable `x(t)`: plot it against "
@@ -269,7 +269,7 @@ SHOWCASE: dict[str, Showcase] = {
         ),
         per_primitive={
             "density": Variant(
-                call='ts.plot(traj, "delay_embedding", tau=17, primitive="density")',
+                call='ts.plot(traj, "delay_embedding", delay=17, primitive="density")',
                 caption="The reconstruction as an occupancy density.",
             ),
         },

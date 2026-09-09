@@ -28,7 +28,7 @@ class MackeyGlass(DelaySystem):
     known_lyapunov = {
         "n_positive": 1,
         "kwargs": {
-            "n_exp": 1,
+            "k": 1,
             "dt": 0.5,
             "burn_in": 100.0,
             "final_time": 1000.0,

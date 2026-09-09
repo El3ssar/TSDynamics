@@ -69,9 +69,10 @@ class TestOrbitDiagram:
         assert len(od) == 7
         assert all(np.all(np.isfinite(p)) for p in od.points)
 
-    def test_continuous_system_rejected(self) -> None:
-        with pytest.raises(TypeError, match="discrete"):
-            ts.orbit_diagram(ts.Lorenz(), "rho", [28.0])
+    def test_continuous_system_is_reduced_to_its_peak_map(self) -> None:
+        """A raw flow is accepted since v6 (see tests/test_orbits.py for the contract)."""
+        od = ts.orbit_diagram(ts.Lorenz(ic=[1.0, 1.0, 1.0]), "rho", [28.0], n=10, transient=15)
+        assert od.meta["section"] == "successive maxima of x"
 
     def test_original_system_not_mutated(self) -> None:
         m = ts.Logistic()

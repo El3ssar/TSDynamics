@@ -11,7 +11,23 @@ import numpy as np
 from .._result import AnalysisResult
 from .poincare import _seeded_ic
 
-__all__ = ["OrbitDiagram", "orbit_diagram"]
+__all__ = ["OrbitDiagram", "bifurcation_diagram", "orbit_diagram"]
+
+#: Sampling step for the flow path's integration (time units).  Only the *output*
+#: grid — the adaptive solver picks its own internal step (see CLAUDE.md, "Dense
+#: output and ``max_step``") — so this bounds how finely a peak is resolved before
+#: the parabolic sharpening below, not the accuracy of the orbit itself.
+_FLOW_DT = 0.01
+
+#: First integration horizon tried per parameter value on the flow path, and the
+#: ceiling it doubles up to before giving up on collecting ``transient + n`` peaks.
+_FLOW_FINAL_TIME = 100.0
+_FLOW_MAX_TIME = 1.0e4
+
+#: Relative spread below which the tail of a flow is read as *converged to an
+#: equilibrium* — the asymptotic "orbit" is then a single point, which is the
+#: correct entry for the fixed-point branch of a bifurcation diagram.
+_STATIONARY_RTOL = 1.0e-6
 
 
 @dataclass(frozen=True)
@@ -191,22 +207,30 @@ class OrbitDiagram(AnalysisResult):
                 p = int(periods[j]) if 0 <= j < periods.size else 0
                 label = f"period {p}" if p > 0 else "bifurcation"
                 annotations.append(pb.vline(float(onset), text=label))
+        # Name the discrete view on the figure itself: a section always has to be
+        # chosen, and a diagram that does not say which one it used is not
+        # reproducible from the picture.
+        section = self.meta.get("section")
         return pb.spec(
             kind,
             "orbit_diagram",
             layers=[pb.scatter(x, y, style={"markersize": 1.0})],
             xlabel=self.param,
-            ylabel="asymptotic state",
-            title="orbit diagram",
+            ylabel=str(section) if section else "asymptotic state",
+            title=f"bifurcation diagram — {section}" if section else "bifurcation diagram",
             annotations=annotations,
             meta=self.meta,
         )
 
     def __repr__(self) -> str:
-        return (
-            f"OrbitDiagram({self.param!r}, {len(self.values)} values, "
-            f"{self.points[0].shape[0] if self.points else 0} points/value)"
-        )
+        # Columns are ragged on the flow path — a value that settled on an
+        # equilibrium records one point where a chaotic one records ``n`` — so
+        # quoting the FIRST column's size described the whole diagram as
+        # "1 points/value" when 39 000 points were in it.  Show the range.
+        sizes = [int(p.shape[0]) for p in self.points]
+        lo, hi = (min(sizes), max(sizes)) if sizes else (0, 0)
+        per = f"{lo}" if lo == hi else f"{lo}-{hi}"
+        return f"OrbitDiagram({self.param!r}, {len(self.values)} values, {per} points/value)"
 
 
 def _count_branches(col: np.ndarray, rtol: float) -> int:
@@ -405,7 +429,223 @@ def _record_via_trajectory(
     return np.asarray(section.y, dtype=float)[:, idx], current.state()
 
 
-def orbit_diagram(
+def _peak_records(y: np.ndarray, primary: int, comps: list[int]) -> np.ndarray:
+    """Record every strict local **maximum** of component ``primary`` of a flow.
+
+    Successive maxima of one coordinate are the classic discrete view of a flow —
+    the *next-amplitude* (peak) map, the section Lorenz (1963) used to expose the
+    one-dimensional dynamics inside the attractor, and the view every textbook
+    bifurcation diagram of a flow is drawn from.  Unlike a fixed Poincaré plane it
+    needs no parameter-dependent constant, so it keeps crossing as the attractor
+    moves across the sweep.
+
+    A sample ``i`` is a maximum when ``v[i-1] < v[i] > v[i+1]``.  Every recorded
+    component is then read at the **same** refined position: the vertex of the
+    parabola through the three samples of ``primary``, evaluated on each
+    component's own quadratic through the same three samples.  For ``primary``
+    itself that is exactly the peak-interpolation formula
+    :func:`~tsdynamics.analysis.orbits.return_map._local_extrema` uses, so a
+    coarse output grid still yields a sub-sample-accurate branch.
+    """
+    v = np.asarray(y[:, primary], dtype=float)
+    if v.size < 3:
+        return np.empty((0, len(comps)))
+    interior = v[1:-1]
+    k = np.nonzero((interior > v[:-2]) & (interior > v[2:]))[0] + 1
+    if k.size == 0:
+        return np.empty((0, len(comps)))
+    ym, y0, yp = v[k - 1], v[k], v[k + 1]
+    denom = ym - 2.0 * y0 + yp
+    d = np.where(denom != 0.0, 0.5 * (ym - yp) / denom, 0.0)
+    d = np.clip(d, -0.5, 0.5)
+    out = np.empty((k.size, len(comps)))
+    for j, c in enumerate(comps):
+        a, b, cc = y[k - 1, c], y[k, c], y[k + 1, c]
+        out[:, j] = b + 0.5 * d * (cc - a) + 0.5 * d * d * (a - 2.0 * b + cc)
+    return out
+
+
+def _is_stationary(y: np.ndarray) -> bool:
+    """Whether the tail of ``y`` has stopped moving (converged to an equilibrium).
+
+    Compares the spread of the last tenth of the run against the spread of the
+    whole run: a trajectory that has settled onto a fixed point has a tail spread
+    that is a vanishing fraction of the transient it came in on.  The ``1.0``
+    floor keeps a run that never moved at all (started *at* the equilibrium) on
+    the stationary side.
+    """
+    if y.shape[0] < 10:
+        return False
+    tail = y[-max(2, y.shape[0] // 10) :]
+    spread = float(np.max(tail, axis=0).max() - np.min(tail, axis=0).min())
+    scale = max(float(np.max(y, axis=0).max() - np.min(y, axis=0).min()), 1.0)
+    return bool(np.isfinite(spread) and spread <= _STATIONARY_RTOL * scale)
+
+
+def _short_column(
+    rec: np.ndarray, transient: int, n: int, idx: list[int], max_time: float, dim: int
+) -> np.ndarray:
+    """Return the column for a flow value that ran out of ``max_time``, and warn.
+
+    Three outcomes, each with a message naming the numbers the caller passed and
+    the line that fixes it:
+
+    * enough peaks survived the transient — record them (a partial column);
+    * fewer peaks than ``transient`` — record the **last** ones anyway rather
+      than nothing, and say that the transient was not fully discarded;
+    * no peaks at all — the recorded component never turns over, so the peak map
+      is the wrong view of this flow: name a section or another component.
+    """
+    import warnings
+
+    found = int(rec.shape[0])
+    if found > transient:
+        warnings.warn(
+            f"bifurcation_diagram: only {found - transient} of {n} peaks were found within "
+            f"max_time={max_time:g}, so this value's column is short. To fill it:\n"
+            f"    ts.bifurcation_diagram(system, param, values, max_time={max_time * 10:g})",
+            RuntimeWarning,
+            stacklevel=4,
+        )
+        return rec[transient:]
+    if found:
+        keep = rec[-min(n, found) :]
+        warnings.warn(
+            f"bifurcation_diagram: only {found} peaks were found within "
+            f"max_time={max_time:g}, fewer than transient={transient}, so this value's column "
+            f"is the last {keep.shape[0]} of them and its transient is NOT fully discarded "
+            "(transient/n count peaks here, not iterates — a slow oscillator makes far fewer "
+            "of them than a map does). Either:\n"
+            f"    ts.bifurcation_diagram(system, param, values, transient={max(found // 4, 1)},"
+            f" n={max(found // 2, 1)})\n"
+            f"    ts.bifurcation_diagram(system, param, values, max_time={max_time * 10:g})",
+            RuntimeWarning,
+            stacklevel=4,
+        )
+        return keep
+    # Only offer ``component=`` when the state actually has another component to
+    # offer: a scalar flow (a 1-D DDE) would be told to type an index that does
+    # not exist, which is worse than no suggestion at all.
+    other = next((c for c in range(dim) if c != idx[0]), None)
+    lines = ["    ts.bifurcation_diagram(system, param, values, section=('z', 27.0, 'up'))"]
+    if other is not None:
+        lines.append(f"    ts.bifurcation_diagram(system, param, values, component={other})")
+    warnings.warn(
+        f"bifurcation_diagram: component {idx[0]} of this flow has no maximum within "
+        f"max_time={max_time:g}, so the successive-maxima view records nothing for this value "
+        "(it is monotone, or already at rest but still drifting). Read the flow through a "
+        "section, or through a component that oscillates:\n" + "\n".join(lines),
+        RuntimeWarning,
+        stacklevel=4,
+    )
+    return np.empty((0, len(idx)))
+
+
+def _record_via_peaks(
+    current: Any,
+    start: Any,
+    transient: int,
+    n: int,
+    idx: list[int],
+    *,
+    dt: float,
+    final_time: float,
+    max_time: float,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Record one parameter value of a **flow** as successive maxima (the peak map).
+
+    Integrates, collects ``transient + n`` maxima of the first recorded component
+    and returns the last ``n`` of them.  The horizon doubles (up to ``max_time``)
+    until enough peaks are found; the horizon that worked is returned so the next
+    parameter value starts from it instead of re-discovering it.
+
+    A flow that has **converged to an equilibrium** produces no peaks at all — its
+    asymptotic orbit is one point, which is exactly what the fixed-point branch of
+    a bifurcation diagram should show, so that single state is recorded rather
+    than an empty column.
+
+    **When ``max_time`` runs out** the column is whatever the flow did produce,
+    never silently nothing.  ``transient + n`` counts *peaks*, and the defaults
+    are sized for a map's cheap iterates: a slow oscillator (or a DDE, whose
+    peaks are a delay apart) can easily produce fewer than ``transient`` peaks in
+    ``max_time``, and dropping the first ``transient`` of those then leaves an
+    empty set — a blank figure whose only clue was one ``RuntimeWarning``.  So a
+    short run keeps its **last** peaks (the most asymptotic ones available) and
+    says so, with the numbers the caller actually passed.  A run with *no* peaks
+    at all is a different story — the recorded component never turns over — and
+    that one says to name a section or another component.
+    """
+    need = transient + n
+    horizon = float(final_time)
+    while True:
+        traj = current.integrate(final_time=horizon, dt=dt, ic=start)
+        y = np.asarray(traj.y, dtype=float)
+        if _is_stationary(y):
+            # Settled on an equilibrium: the asymptotic set is the single state.
+            return y[-1][idx][None, :], y[-1], horizon
+        rec = _peak_records(y, idx[0], idx)
+        if rec.shape[0] >= need:
+            return rec[transient:need], y[-1], horizon
+        if horizon >= max_time:
+            return _short_column(rec, transient, n, idx, max_time, y.shape[1]), y[-1], horizon
+        # Grow the horizon by the *measured* peak rate rather than blindly
+        # doubling: one short pilot run tells us how much time a peak costs, so
+        # the second attempt already lands (and the horizon that worked is
+        # returned, so the rest of the sweep pays for exactly one integration).
+        grow = (need + 5) / max(rec.shape[0], 1) if rec.shape[0] else 4.0
+        horizon = min(horizon * max(grow, 1.5), max_time)
+
+
+def _discrete_view(system: Any, section: Any, component_label: str, param: str) -> tuple[Any, str]:
+    """Resolve ``system`` to a discrete-time view, returning ``(view, description)``.
+
+    A genuine discrete view passes straight through.  A **flow** is turned into
+    one — the whole point of :func:`bifurcation_diagram`, whose canonical use is a
+    flow — either through the section the caller asked for or through the peak map
+    (signalled by a ``None`` view, which routes to :func:`_record_via_peaks`).
+    The description is recorded in the result's ``meta["section"]`` and printed on
+    the figure, so the choice is never made silently.
+    """
+    from tsdynamics.derived.poincare import PoincareMap
+    from tsdynamics.derived.stroboscopic import StroboscopicMap
+    from tsdynamics.errors import InvalidInputError, InvalidParameterError
+
+    if not hasattr(system, "is_discrete"):
+        raise InvalidInputError(
+            f"bifurcation_diagram needs a dynamical system as its first argument, got "
+            f"{type(system).__name__}. Pass a system (or a discrete view of one), e.g.\n"
+            "    ts.bifurcation_diagram(ts.systems.Lorenz(), 'rho', "
+            "np.linspace(0.0, 50.0, 200))"
+        )
+    if system.is_discrete:
+        if section is not None:
+            raise InvalidParameterError(
+                f"section= chooses how to slice a *flow*, but {type(system).__name__} is "
+                "already a discrete-time view, so there is nothing to slice. Drop section=:\n"
+                f"    ts.bifurcation_diagram(system, {param!r}, values)"
+            )
+        if isinstance(system, PoincareMap):
+            return system, f"Poincaré section {system.plane}"
+        if isinstance(system, StroboscopicMap):
+            return system, "stroboscopic sampling"
+        return system, "map iterates"
+
+    from tsdynamics.families import StochasticSystem
+
+    if isinstance(system, StochasticSystem):
+        raise InvalidInputError(
+            f"bifurcation_diagram needs a deterministic system: {type(system).__name__} is "
+            "stochastic (an SDE), so its 'asymptotic orbit' is a different sample path on "
+            "every run. Sweep a deterministic model instead, e.g.\n"
+            "    ts.bifurcation_diagram(ts.systems.Lorenz(), 'rho', "
+            "np.linspace(0.0, 50.0, 200))"
+        )
+    if section is not None:
+        return PoincareMap(system, section), f"Poincaré section {section}"
+    return None, f"successive maxima of {component_label}"
+
+
+def bifurcation_diagram(
     system: Any,
     param: str,
     values: Any,
@@ -414,19 +654,44 @@ def orbit_diagram(
     transient: int = 500,
     carry_state: bool = True,
     component: int | str | tuple[Any, ...] = 0,
+    section: Any | None = None,
     ic: Any | None = None,
     seed: int | None = None,
+    dt: float = _FLOW_DT,
+    max_time: float = _FLOW_MAX_TIME,
 ) -> OrbitDiagram:
     """
     Sweep a parameter and record the asymptotic orbit at each value.
 
-    Works on anything discrete: a :class:`~tsdynamics.families.DiscreteMap`
-    directly, or a flow wrapped in a
+    Pass **any** system — this is the one-liner::
+
+        ts.bifurcation_diagram(ts.systems.Lorenz(), "rho", np.linspace(0.0, 50.0, 200))
+
+    A :class:`~tsdynamics.families.DiscreteMap` is swept directly.  A **flow** is
+    reduced to a discrete view automatically, because a bifurcation diagram of a
+    flow is the common case and a section always has to be chosen:
+
+    - by default, **successive maxima of the recorded component** — the
+      next-amplitude (peak) map, the view Lorenz (1963) used and the one every
+      textbook bifurcation diagram of a flow is drawn from.  It needs no
+      parameter-dependent constant, so it keeps producing points as the attractor
+      moves across the sweep, and a value whose flow has settled on an
+      **equilibrium** records that single state (the fixed-point branch);
+    - or the section you name with ``section=`` (any
+      :class:`~tsdynamics.derived.PoincareMap` ``plane`` spelling, e.g.
+      ``section=("z", 27.0, "up")``).
+
+    **The choice is never silent**: it is recorded in ``meta["section"]`` and
+    printed under the figure's title.  A flow already wrapped in a
     :class:`~tsdynamics.derived.PoincareMap` /
-    :class:`~tsdynamics.derived.StroboscopicMap` — in which case this *is*
-    the bifurcation diagram of the flow.  ODE parameter changes reuse the
-    compiled module (control parameters), so flow sweeps stay cheap; DDE
-    sweeps recompile per value (their structure depends on all parameters).
+    :class:`~tsdynamics.derived.StroboscopicMap` is used as given.
+
+    ``orbit_diagram`` is the same function under its other name (the map-centric
+    spelling); both are exported, and both accept everything described here.
+
+    ODE parameter changes reuse the cached lowered tape (control parameters), so
+    flow sweeps stay cheap; DDE sweeps re-lower per value (their structure depends
+    on all parameters).
 
     Notes
     -----
@@ -462,47 +727,69 @@ def orbit_diagram(
     :class:`~tsdynamics.derived.PoincareMap` when sweeping into a fast-timescale
     regime.
 
+    **The flow path.**  With no ``section=``, each parameter value is integrated
+    (output step ``dt``, horizon grown from 100 time units up to ``max_time``)
+    until ``transient + n`` maxima of the recorded component have been collected;
+    the last ``n`` are the column.  ``transient`` and ``n`` therefore count
+    **peaks**, exactly as they count iterates for a map and crossings for a
+    section.  Each peak is sharpened by the same parabolic interpolation
+    :func:`~tsdynamics.analysis.return_map` uses, so a coarse ``dt`` still gives a
+    crisp period-1 branch.
+
     Parameters
     ----------
-    system : System (discrete)
-        The system to sweep.  Never mutated — each value gets a fresh
-        ``with_params`` copy.
+    system : System
+        The system to sweep — a map, a flow, or a discrete view of a flow.  Never
+        mutated: each value gets a fresh ``with_params`` copy.
     param : str
         Parameter name to sweep.
     values : iterable of float
         Parameter values, in sweep order.
     n : int
-        Points recorded per parameter value.
+        Points recorded per parameter value (map iterates / section crossings /
+        peaks, according to the view).
     transient : int
-        Steps discarded before recording, at every value.
+        Points discarded before recording, at every value.
     carry_state : bool
         Start each value from the previous value's final state (follows the
         attractor branch; the classic way to draw clean diagrams).  When
         False, every value starts from ``ic`` / the system default.
     component : int, str, or tuple
         Which state component(s) to record (names allowed when the system
-        declares ``variables``).
+        declares ``variables``).  On the flow path the **first** of them also
+        defines the peak map.
+    section : tuple, optional
+        Slice a flow with this Poincaré section instead of the default peak map.
+        Any :class:`~tsdynamics.derived.PoincareMap` ``plane`` spelling:
+        ``("z", 27.0, "up")``, ``("y", 0.0)``, or ``(normal, offset)``.  Invalid
+        for a system that is already discrete.
     ic : array-like, optional
         Initial state for the first value (and every value when
         ``carry_state=False``).
     seed : int, optional
         Seed for the random initial condition when the system has none; makes
         the diagram reproducible.
+    dt : float, default 0.01
+        Output sampling step of the flow path's integration (time units).  Ignored
+        for a map / an already-discrete view.
+    max_time : float, default 1e4
+        Ceiling on the flow path's integration horizon per parameter value.
 
     Returns
     -------
     OrbitDiagram
-        The swept ``values`` and the per-value recorded ``points``.  A value
+        The swept ``values`` and the per-value recorded ``points``.  ``meta``
+        records the discrete view that was used under ``"section"``.  A value
         whose orbit diverged carries an empty point set (and emits a
         :class:`RuntimeWarning`).
 
     Raises
     ------
-    TypeError
-        If ``system`` is not a discrete-time view (a
-        :class:`~tsdynamics.families.DiscreteMap`, or a flow wrapped in
-        :class:`~tsdynamics.derived.PoincareMap` /
-        :class:`~tsdynamics.derived.StroboscopicMap`).
+    tsdynamics.errors.InvalidInputError
+        If ``system`` is not a dynamical system, or is stochastic (an SDE has no
+        single asymptotic orbit).
+    tsdynamics.errors.InvalidParameterError
+        If ``section=`` is given for a system that is already discrete.
     ValueError
         If a named ``component`` is requested but the system does not declare
         ``variables``.
@@ -510,27 +797,32 @@ def orbit_diagram(
     Warns
     -----
     RuntimeWarning
-        When a parameter value diverges; that value records an empty set and the
-        sweep continues.
+        When a parameter value diverges (that value records an empty set and the
+        sweep continues), or when the flow path exhausts ``max_time`` before
+        collecting ``n`` peaks.
 
     References
     ----------
     May, R. M. (1976). Simple mathematical models with very complicated
     dynamics. *Nature*, 261, 459--467.
 
+    Lorenz, E. N. (1963). Deterministic nonperiodic flow. *Journal of the
+    Atmospheric Sciences*, 20, 130--141.  (Successive maxima as the discrete view
+    of a flow.)
+
     Examples
     --------
-    >>> od = orbit_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 600), n=120)
+    >>> # a flow, straight up — the section is chosen for you and reported:
+    >>> od = bifurcation_diagram(Lorenz(), "rho", np.linspace(0.0, 50.0, 200))
+    >>> od.meta["section"]
+    'successive maxima of x'
+    >>> # ... or name the section yourself:
+    >>> od = bifurcation_diagram(Rossler(), "c", np.linspace(2, 6, 80),
+    ...                          section=("y", 0.0, "up"))
+    >>> # a map:
+    >>> od = bifurcation_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 600), n=120)
     >>> x, y = od.flat()
-    >>> # bifurcation diagram of a flow:
-    >>> od = orbit_diagram(PoincareMap(Rossler(), (1, 0.0)), "c", np.linspace(2, 6, 80))
     """
-    if not system.is_discrete:
-        raise TypeError(
-            "orbit_diagram needs a discrete-time view: a DiscreteMap, or a flow wrapped "
-            "in PoincareMap / StroboscopicMap."
-        )
-
     comp = (component,) if isinstance(component, int | str) else tuple(component)
     # Resolve names via the *instance* (not ``type(sys)``): a derived wrapper
     # exposes ``variables`` as a property, so ``type(sys).variables`` returns the
@@ -547,6 +839,14 @@ def orbit_diagram(
         else:
             idx.append(int(c))
 
+    label = names[idx[0]] if names is not None else f"component {idx[0]}"
+    # Reduce whatever was passed to a discrete-time view.  A flow with no explicit
+    # ``section=`` comes back as ``None`` — the peak map, which is not a wrapper
+    # object but a way of *reading* the flow, so it is driven directly below.
+    resolved, section_label = _discrete_view(system, section, label, param)
+    is_peak_map = resolved is None
+    view = system if is_peak_map else resolved
+
     resolved_ic = _seeded_ic(system, ic, seed)
     if resolved_ic is not None:
         ic = resolved_ic
@@ -560,6 +860,22 @@ def orbit_diagram(
     values_arr = np.asarray(list(values), dtype=float)
     points: list[np.ndarray] = []
     state: np.ndarray | None = None
+    horizon = _FLOW_FINAL_TIME
+
+    def _meta() -> dict[str, Any]:
+        return {
+            "system": type(system).__name__,
+            "param": param,
+            "n": n,
+            "transient": transient,
+            "carry_state": carry_state,
+            "components": tuple(idx),
+            # The discrete view this diagram was read through — recorded so an
+            # auto-chosen section is never a silent choice (it is also printed
+            # under the figure's title by ``to_plot_spec``).
+            "section": section_label,
+            "section_auto": is_peak_map,
+        }
 
     # A genuine DiscreteMap sweeps the WHOLE parameter array in a single engine
     # call (stream perf/param-sweep-kernel): the map is lowered once keeping the
@@ -574,10 +890,10 @@ def orbit_diagram(
     # lower to the IR (``TapeCompileError`` → ``NotImplementedError``) or a
     # wheel-free environment (``EngineNotAvailableError`` → ``BackendError``) fall
     # back to the per-value/per-step protocol loop below — the same answer.
-    if isinstance(system, DiscreteMap):
+    if isinstance(view, DiscreteMap):
         try:
             points = _sweep_via_kernel(
-                system,
+                view,
                 param,
                 values_arr,
                 transient=transient,
@@ -586,16 +902,12 @@ def orbit_diagram(
                 ic=ic,
                 idx=idx,
             )
-            meta = {
-                "system": type(system).__name__,
-                "param": param,
-                "n": n,
-                "transient": transient,
-                "carry_state": carry_state,
-                "components": tuple(idx),
-            }
             return OrbitDiagram(
-                param=param, values=values_arr, points=points, components=tuple(idx), meta=meta
+                param=param,
+                values=values_arr,
+                points=points,
+                components=tuple(idx),
+                meta=_meta(),
             )
         except (NotImplementedError, BackendError):
             # The map cannot run on the engine sweep (a non-lowerable ``_step`` or
@@ -613,24 +925,33 @@ def orbit_diagram(
     # declines.  A degenerate ``n == 0`` keeps the step loop: ``trajectory`` records
     # nothing, so it cannot leave ``state()`` at the last *discarded* transient
     # crossing the way the step loop does, and ``carry_state`` would drift.
-    use_trajectory = isinstance(system, PoincareMap) and n > 0
+    use_trajectory = isinstance(view, PoincareMap) and n > 0
 
-    # The per-value protocol path: flow wrappers and the engine-sweep fallback.
+    # The per-value protocol path: flow wrappers, the raw-flow peak map, and the
+    # engine-sweep fallback.
     for v in values_arr:
-        current = system.with_params(**{param: v})
+        current = view.with_params(**{param: v})
         start = state if (carry_state and state is not None) else ic
         try:
-            # Flow wrappers (PoincareMap / StroboscopicMap) and the engine-sweep
-            # fallback (a non-lowerable map / wheel-free env) both drive the
-            # per-step protocol loop — byte-identical to the engine path on a
-            # lowerable map.
-            record = _record_via_trajectory if use_trajectory else _record_via_step
-            rec, last = record(current, start, transient, n, idx)
+            if is_peak_map:
+                # A raw flow: read it as the successive-maxima (peak) map.  The
+                # horizon that satisfied the previous value seeds the next one, so
+                # only the first value pays for discovering it.
+                rec, last, horizon = _record_via_peaks(
+                    current, start, transient, n, idx, dt=dt, final_time=horizon, max_time=max_time
+                )
+            else:
+                # Flow wrappers (PoincareMap / StroboscopicMap) and the
+                # engine-sweep fallback (a non-lowerable map / wheel-free env)
+                # drive the per-step protocol loop — byte-identical to the engine
+                # path on a lowerable map.
+                record = _record_via_trajectory if use_trajectory else _record_via_step
+                rec, last = record(current, start, transient, n, idx)
         except RuntimeError as exc:
             # One divergent value must not discard the whole sweep: record an
             # empty point set and restart the next value from `ic`.
             warnings.warn(
-                f"orbit_diagram: {param}={v:g} diverged ({exc}); recording an "
+                f"bifurcation_diagram: {param}={v:g} diverged ({exc}); recording an "
                 f"empty set for this value.",
                 RuntimeWarning,
                 stacklevel=2,
@@ -642,17 +963,15 @@ def orbit_diagram(
         if carry_state:
             state = last
 
-    meta = {
-        "system": type(system).__name__,
-        "param": param,
-        "n": n,
-        "transient": transient,
-        "carry_state": carry_state,
-        "components": tuple(idx),
-    }
     return OrbitDiagram(
-        param=param, values=values_arr, points=points, components=tuple(idx), meta=meta
+        param=param, values=values_arr, points=points, components=tuple(idx), meta=_meta()
     )
+
+
+#: The map-centric spelling of the same sweep.  One implementation, two names —
+#: so no error message can ever name a function the caller did not type, and
+#: ``ts.orbit_diagram`` / ``ts.bifurcation_diagram`` cannot drift apart.
+orbit_diagram = bifurcation_diagram
 
 
 def __dir__() -> list[str]:

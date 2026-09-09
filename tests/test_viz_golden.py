@@ -321,7 +321,7 @@ def _producer_specs() -> dict[str, PlotSpec]:
     return {
         "time_series": producers.time_series(_golden_flow()),
         "phase_portrait": producers.phase_portrait(_golden_flow()),
-        "delay_embedding": producers.delay_embedding(_golden_flow(), tau=5, component="y"),
+        "delay_embedding": producers.delay_embedding(_golden_flow(), delay=5, component="y"),
         "vector_field": producers.vector_field(_golden_rhs, xlim=(-1, 1), ylim=(-1, 1), grid=6),
         "phase_portrait_field": producers.phase_portrait_field(
             _golden_rhs, _golden_flow(dim=2), grid=5
@@ -500,7 +500,7 @@ def test_producer_shim_and_transform_agree(name):
     calls = {
         "time_series": (_golden_flow(), {}),
         "phase_portrait": (_golden_flow(), {}),
-        "delay_embedding": (_golden_flow(), {"tau": 5, "component": "y"}),
+        "delay_embedding": (_golden_flow(), {"delay": 5, "component": "y"}),
         "vector_field": (_golden_rhs, {"xlim": (-1, 1), "ylim": (-1, 1), "grid": 6}),
         "phase_portrait_field": (_golden_rhs, {"source": _golden_flow(dim=2), "grid": 5}),
         "cobweb": (_golden_orbit(), {"component": "a"}),

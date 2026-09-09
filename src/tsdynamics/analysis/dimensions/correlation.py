@@ -29,7 +29,6 @@ from typing import Any
 
 import numpy as np
 
-from ...errors import invalid_value
 from ._common import (
     _DEFAULT_C_HI,
     DimensionResult,
@@ -38,18 +37,11 @@ from ._common import (
     _pnorm,
     _radii_for_c_window,
     _resolve_theiler,
+    require_min_points,
 )
 from ._scaling import fit_scaling_region
 
 __all__ = ["correlation_dimension", "correlation_sum"]
-
-#: Absolute floor on the number of points a Grassberger--Procaccia estimate needs.
-#: Below this the correlation sum is dominated by its handful of pairs and the
-#: scaling-region fit collapses to a spurious near-zero slope (it silently
-#: returned ``D_2 ~= 0`` for, e.g., eight points).  Not a sufficiency guarantee —
-#: a reliable estimate wants far more — just the floor below which the answer is
-#: meaningless, so the input is rejected rather than fabricated.
-_MIN_CORR_POINTS = 32
 
 
 def _near_diagonal_distances(points: np.ndarray, w: int, p: float) -> np.ndarray:
@@ -262,24 +254,23 @@ def correlation_dimension(
     Raises
     ------
     InvalidParameterError
-        If fewer than :data:`_MIN_CORR_POINTS` points are given — too few to
-        resolve a scaling region (it previously returned a spurious ``D_2 ~= 0``).
+        If fewer than
+        :data:`~tsdynamics.analysis.dimensions._common.MIN_DIMENSION_POINTS`
+        points are given — too few to resolve a scaling region (it previously
+        returned a spurious ``D_2 ~= 0``).
     """
     # ``_as_points`` rejects <2 points / non-finite first (keeping those messages);
     # then reject a too-short-but-finite handful rather than fabricating a slope.
     # Coerce once and reuse the array for the correlation sum (no double scan).
     points = _as_points(data, analysis="correlation_dimension")
-    n = points.shape[0]
-    if n < _MIN_CORR_POINTS:
-        raise invalid_value(
-            "data length",
-            n,
-            rule=f"must be >= {_MIN_CORR_POINTS} points for a correlation-dimension estimate",
-            hint=(
-                "the Grassberger-Procaccia correlation sum cannot resolve a scaling "
-                "region from so few points; pass a longer trajectory / series."
-            ),
-        )
+    require_min_points(
+        points,
+        analysis="correlation_dimension",
+        reason=(
+            "the Grassberger-Procaccia correlation sum cannot resolve a scaling "
+            "region from so few points"
+        ),
+    )
     radii, c, w = _correlation_sum_from_points(
         points,
         radii=radii,

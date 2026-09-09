@@ -6,10 +6,10 @@ re-exported here so the public surface is flat:
 ``from tsdynamics import lyapunov_spectrum`` and
 ``from tsdynamics.analysis import lyapunov_spectrum`` both work.
 
-- :mod:`~tsdynamics.analysis.orbits` — :func:`orbit_diagram` (parameter sweeps of
-  discrete(-ized) systems; over a :class:`~tsdynamics.derived.PoincareMap` /
-  :class:`~tsdynamics.derived.StroboscopicMap` it draws bifurcation diagrams of
-  flows) and :func:`poincare_section` (surfaces of section).
+- :mod:`~tsdynamics.analysis.orbits` — :func:`bifurcation_diagram` (parameter
+  sweeps; a raw flow is reduced to its successive-maxima map, or to the
+  ``section=`` you name, and ``orbit_diagram`` is the same function under its
+  map-centric name) and :func:`poincare_section` (surfaces of section).
 - :mod:`~tsdynamics.analysis.lyapunov` — :func:`lyapunov_spectrum` /
   :func:`max_lyapunov` / :func:`kaplan_yorke_dimension`.
 - :mod:`~tsdynamics.analysis.fixedpoints` — :func:`fixed_points`, multi-start
@@ -32,6 +32,17 @@ re-exported here so the public surface is flat:
   (basin stability), :func:`basin_entropy`, :func:`uncertainty_exponent` and
   :func:`wada_property` (boundary structure), :func:`continuation` /
   :func:`tipping_points` (global continuation) and :func:`resilience`.
+- :mod:`~tsdynamics.analysis.planar` — the planar (2-D slice) toolkit:
+  :func:`~tsdynamics.analysis.planar.nullclines`,
+  :func:`~tsdynamics.analysis.planar.flow_field` /
+  :func:`~tsdynamics.analysis.planar.streamlines`,
+  :func:`~tsdynamics.analysis.planar.ftle_field`,
+  :func:`~tsdynamics.analysis.planar.escape_time_field` /
+  :func:`~tsdynamics.analysis.planar.transient_time_field`,
+  :func:`~tsdynamics.analysis.planar.invariant_density` and the
+  trace–determinant classification
+  (:func:`~tsdynamics.analysis.planar.trace_determinant`,
+  :func:`~tsdynamics.analysis.planar.classify_linear`).
 - :mod:`~tsdynamics.analysis.sampling` — sagitta-based sampling tools:
   :func:`estimate_dt_from_sagitta` (choose an output ``dt`` for a trajectory) and
   :func:`sagitta_profile` (the per-point bow off the local chord, e.g. a
@@ -58,6 +69,7 @@ from . import (
     fixedpoints,
     lyapunov,
     orbits,
+    planar,
     recurrence,
     sampling,
 )
@@ -142,6 +154,7 @@ from .orbits import (
     OrbitDiagram,
     PoincareSection,
     ReturnMap,
+    bifurcation_diagram,
     orbit_diagram,
     poincare_section,
     return_map,
@@ -156,7 +169,7 @@ from .recurrence import (
 )
 from .sampling import estimate_dt_from_sagitta, sagitta_profile
 
-#: The capability subpackages, in canonical order — the decluttered
+#: The capability subpackages, in canonical order — half of the decluttered
 #: ``ts.analysis.<TAB>`` surface (see :func:`__dir__`).
 _CATEGORY_SUBPACKAGES = (
     "lyapunov",
@@ -167,7 +180,30 @@ _CATEGORY_SUBPACKAGES = (
     "orbits",
     "fixedpoints",
     "basins",
+    "planar",
     "sampling",
+)
+
+#: The headline quantifiers shown alongside the categories, so
+#: ``ts.analysis.<TAB>`` answers "what can I *do*?" as well as "what is in here?".
+#: One per capability cluster — the function a newcomer reaches for first.  The
+#: other ~60 flat re-exports stay importable (``from tsdynamics.analysis import
+#: correlation_sum``) and stay in ``__all__``; they are just not on the tab
+#: surface.  Drill in with ``ts.analysis.dimensions.<TAB>`` for the rest.
+_HEADLINE_ANALYSES = (
+    "lyapunov_spectrum",
+    "correlation_dimension",
+    "gali",
+    "recurrence_matrix",
+    "embed",
+    # The headline spelling is the flow one (``bifurcation_diagram``); the
+    # map-centric ``orbit_diagram`` is the SAME function object and stays
+    # exported, just off the tab surface — mirroring the top level, so a name is
+    # not primary in one namespace and absent from the other.
+    "bifurcation_diagram",
+    "poincare_section",
+    "fixed_points",
+    "basins_of_attraction",
 )
 
 __all__ = [
@@ -233,6 +269,7 @@ __all__ = [
     "mutual_information",
     "optimal_delay",
     "orbit_diagram",
+    "bifurcation_diagram",
     "periodic_orbit",
     "periodic_orbits",
     "poincare_section",
@@ -254,6 +291,7 @@ __all__ = [
     "fixedpoints",
     "lyapunov",
     "orbits",
+    "planar",
     "recurrence",
     "sampling",
 ]
@@ -287,15 +325,20 @@ discover_plugins()
 
 
 def __dir__() -> list[str]:
-    """Show the capability categories to ``dir()`` / autocomplete (scipy-style).
+    """Show the capability categories + the headline quantifiers (scipy-style).
 
     ``ts.analysis.<TAB>`` surfaces the navigable category subpackages
-    (``lyapunov``, ``dimensions``, ``chaos``, …) plus :func:`discover_plugins`,
-    not the flat quantifier names.  Those flat names stay fully reachable —
-    ``from tsdynamics.analysis import correlation_dimension`` and
-    ``ts.analysis.correlation_dimension`` both resolve, and ``__all__`` still
-    carries them for ``from tsdynamics.analysis import *`` — they are simply kept
-    off the tab surface so the structure, not the dump, is what you see.  Drill in
-    with ``ts.analysis.dimensions.<TAB>`` to reach the estimators.
+    (``lyapunov``, ``dimensions``, ``chaos``, …) **and** one headline quantifier
+    per category (:func:`lyapunov_spectrum`, :func:`correlation_dimension`,
+    :func:`recurrence_matrix`, …) — 18 names, not a flat dump of ~75.
+
+    Everything else stays fully reachable: ``from tsdynamics.analysis import
+    correlation_sum`` and ``ts.analysis.correlation_sum`` both resolve, and
+    ``__all__`` still carries them for ``from tsdynamics.analysis import *``.
+    They are simply kept off the tab surface so the structure, not the dump, is
+    what you see — drill in with ``ts.analysis.dimensions.<TAB>``.
+
+    :func:`discover_plugins` is deliberately absent: loading entry points is
+    packaging machinery, not something a user of the analysis toolkit types.
     """
-    return sorted((*_CATEGORY_SUBPACKAGES, "discover_plugins"))
+    return sorted((*_CATEGORY_SUBPACKAGES, *_HEADLINE_ANALYSES))

@@ -23,12 +23,14 @@ Both reuse the recurrence finder in
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
 from ...data import Ball, Box, Grid, grid_points, sampler
+from ...errors import InvalidInputError, remedy
 from .._result import AnalysisResult
 from ._common import (
     DIVERGED_COLOR,
@@ -37,6 +39,8 @@ from ._common import (
     _category_labels,
     _palette_indices,
     _recurrence_grid,
+    _region_example,
+    coerce_region,
 )
 from .attractors import (
     DIVERGED,
@@ -335,9 +339,9 @@ class BasinFractions(AnalysisResult):
 
 def basins_of_attraction(
     system: Any,
-    region: Grid,
+    region: Grid | Box | Ball | Sequence[tuple[float, ...]] | None = None,
     *,
-    recurrence: Box | Grid | None = None,
+    recurrence: Box | Grid | Sequence[tuple[float, ...]] | None = None,
     recurrence_resolution: int | tuple[int, ...] = 100,
     seed: int | None = 0,
     dt: float = 1.0,
@@ -414,11 +418,36 @@ def basins_of_attraction(
     attraction", *Chaos* **32**, 023104 (2022).
     """
     _reject_unsupported(system, "basins_of_attraction")
+    region = coerce_region(
+        region,
+        analysis="basins_of_attraction",
+        alias="basins",
+        system=system,
+        want_grid=True,
+    )
+    if not isinstance(region, Grid):
+        raise InvalidInputError(
+            f"basins_of_attraction paints one label per lattice point, so region must "
+            f"be a Grid (a {type(region).__name__} carries no resolution)."
+            + remedy(
+                f"ts.basins(system, {_region_example(system)})",
+                lead="Say how many initial conditions per axis:",
+            )
+        )
     if recurrence is None:
         # region is a Grid → keeps its own counts (resolution arg is ignored).
         cellgrid = _recurrence_grid(region)
     else:
-        cellgrid = _recurrence_grid(recurrence, recurrence_resolution)
+        cellgrid = _recurrence_grid(
+            coerce_region(
+                recurrence,
+                analysis="basins_of_attraction",
+                alias="basins",
+                system=system,
+                want_grid=False,
+            ),
+            recurrence_resolution,
+        )
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
 
     # Classify every lattice point.  On a supported engine run (an ODE flow / a map
@@ -451,7 +480,7 @@ def basins_of_attraction(
 
 def basin_fractions(
     system: Any,
-    region: Box | Ball | Grid,
+    region: Grid | Box | Ball | Sequence[tuple[float, ...]] | None = None,
     *,
     n: int = 10000,
     resolution: int | tuple[int, ...] = 100,
@@ -519,6 +548,7 @@ def basin_fractions(
     complements the linear-stability paradigm", *Nature Physics* **9**, 89 (2013).
     """
     _reject_unsupported(system, "basin_fractions")
+    region = coerce_region(region, analysis="basin_fractions", system=system, want_grid=False)
     cellgrid = _recurrence_grid(region, resolution)
     mapper = _AttractorMapper(system, cellgrid, dt=dt, max_steps=max_steps, **fsm)
     draw = sampler(region, seed=seed)

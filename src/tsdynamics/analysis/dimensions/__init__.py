@@ -38,9 +38,16 @@ from .fixedmass import fixed_mass_dimension
 from .generalized import (
     box_counting_dimension,
     dimension_spectrum,
-    dimension_spectrum_plot_spec,
     generalized_dimension,
     information_dimension,
+)
+
+# ``dimension_spectrum_plot_spec`` is viz plumbing (it builds the ``PlotSpec`` the
+# ``.plot`` accessor renders), not a dimension estimator.  It stays importable —
+# ``from tsdynamics.analysis.dimensions import dimension_spectrum_plot_spec`` —
+# but a spec builder has no business in an estimator namespace's autocomplete.
+from .generalized import (
+    dimension_spectrum_plot_spec as dimension_spectrum_plot_spec,
 )
 
 __all__ = [
@@ -50,7 +57,6 @@ __all__ = [
     "correlation_dimension",
     "correlation_sum",
     "dimension_spectrum",
-    "dimension_spectrum_plot_spec",
     "fit_scaling_region",
     "fixed_mass_dimension",
     "generalized_dimension",

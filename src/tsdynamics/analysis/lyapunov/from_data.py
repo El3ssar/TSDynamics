@@ -32,7 +32,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidParameterError
+from tsdynamics.errors import ConvergenceError, InvalidParameterError, remedy
 
 from .._common import reject_system
 from .._result import ScalingResult
@@ -689,8 +689,16 @@ def lyapunov_from_data(
                 counts.append(int(neigh.size))
         if not ref_idx_list:
             raise ConvergenceError(
-                "no reference point has a neighbour within eps outside the Theiler "
-                "window; increase eps, lower dimension, or shorten the Theiler window."
+                f"lyapunov_from_data: no reference point on the reconstructed "
+                f"attractor has a neighbour within eps={eps:.3g} outside the Theiler "
+                f"window ({theiler} samples), so there is no divergence to measure. "
+                f"The series is too short or too sparsely sampled for a "
+                f"{dimension}-dimensional reconstruction."
+                + remedy(
+                    f"ts.lyapunov_from_data(data, dimension=3, eps={4 * eps:.3g},"
+                    f" theiler={max(1, theiler // 2)})",
+                    lead="Widen the neighbourhood and lower the embedding dimension:",
+                )
             )
         n_reference = len(ref_idx_list)
         ref_idx_arr = np.asarray(ref_idx_list, dtype=np.intp)

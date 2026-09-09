@@ -35,7 +35,13 @@ from typing import Any
 
 import numpy as np
 
-from ._common import DimensionResult, _as_points, _metric_p, _resolve_theiler
+from ._common import (
+    DimensionResult,
+    _as_points,
+    _metric_p,
+    _resolve_theiler,
+    require_min_points,
+)
 from ._scaling import fit_scaling_region
 
 __all__ = ["fixed_mass_dimension"]
@@ -132,6 +138,13 @@ def fixed_mass_dimension(
     from scipy.special import digamma
 
     points = _as_points(data, analysis="fixed_mass_dimension")
+    require_min_points(
+        points,
+        analysis="fixed_mass_dimension",
+        reason=(
+            "the k-th-neighbour distances of a handful of points measure the sample, not the set"
+        ),
+    )
     n = points.shape[0]
     w = _resolve_theiler(theiler, points)
     p = _metric_p(metric)

@@ -25,7 +25,7 @@ basin and continuation layers drive over a full grid.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,6 +34,7 @@ import numpy as np
 from ...data import Ball, Box, Grid, sampler, set_distance
 from ...errors import ConvergenceError
 from ...utils.tolerances import BASIN_ATOL, BASIN_RTOL
+from .._common import reject_data
 from .._result import AnalysisResult
 from ._common import (
     DIVERGED_COLOR,
@@ -42,6 +43,7 @@ from ._common import (
     _palette_indices,
     _recurrence_grid,
     _representative,
+    coerce_region,
 )
 
 if TYPE_CHECKING:
@@ -1242,7 +1244,7 @@ def _try_rust_march(
 
 def find_attractors(
     system: Any,
-    region: Box | Ball | Grid,
+    region: Grid | Box | Ball | Sequence[tuple[float, ...]] | None = None,
     *,
     resolution: int | tuple[int, ...] = 100,
     n_seeds: int = 1000,
@@ -1354,6 +1356,7 @@ def find_attractors(
     attraction", *Chaos* **32**, 023104 (2022).
     """
     _reject_unsupported(system, "find_attractors")
+    region = coerce_region(region, analysis="find_attractors", system=system, want_grid=False)
 
     grid = _recurrence_grid(region, resolution)
     mapper = _AttractorMapper(system, grid, dt=dt, max_steps=max_steps, **fsm)
@@ -1390,13 +1393,20 @@ def _looks_unsupported(system: Any) -> bool:
 
 
 def _reject_unsupported(system: Any, fn_name: str) -> None:
-    """Raise a uniform ``TypeError`` for delay / stochastic systems.
+    """Raise a uniform error for measured data and for delay / stochastic systems.
 
     Shared by the basin entry points (``find_attractors``,
     ``basins_of_attraction``, ``basin_fractions``, ``continuation``) so an
-    unsupported system fails early with one clear message instead of opaquely
-    inside the step loop.
+    unsupported first argument fails early with one clear message instead of
+    opaquely inside the step loop.
+
+    Measured data is checked first and separately: a basin is a property of the
+    *model* -- it is found by launching fresh initial conditions and seeing where
+    each one goes -- so a recorded trajectory cannot answer it at any resolution.
+    One already-run trajectory used to reach the FSM and surface as
+    ``AttributeError: 'Trajectory' object has no attribute 'reinit'``.
     """
+    reject_data(system, analysis=fn_name)
     if getattr(system, "is_discrete", False) is False and _looks_unsupported(system):
         raise TypeError(f"{fn_name} supports maps and flows, not delay/stochastic systems.")
 

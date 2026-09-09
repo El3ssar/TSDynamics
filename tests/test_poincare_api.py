@@ -132,7 +132,7 @@ def test_section_plot_seam_raises_without_a_backend(monkeypatch) -> None:
     try:
         sec = ts.poincare_section(_rossler(), plane=("y", 0.0), n=15, dt=0.05)
         with pytest.raises(VisualizationNotInstalled):
-            sec.plot()
+            sec.plot().render()
     finally:
         registry.renderers.clear()
         for entry in saved:

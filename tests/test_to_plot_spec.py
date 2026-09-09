@@ -201,30 +201,89 @@ def test_high_dim_components_triple_is_3d_portrait():
     _assert_roundtrips(spec)
 
 
-def test_delay_kind_builds_2d_embedding_with_time_units_tau():
-    """kind='delay' builds an x(t) vs x(t - tau) embedding; tau is in time units."""
+def test_delay_kind_builds_2d_embedding_from_delay_time():
+    """kind='delay' builds an x(t) vs x(t - delay); delay_time is in TIME units."""
     tr = ts.MackeyGlass().integrate(
         final_time=200.0, dt=0.2, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
     )
-    spec = tr.to_plot_spec(kind="delay", tau=17.0)  # 17 time units → 85 samples at dt=0.2
+    spec = tr.to_plot_spec(kind="delay", delay_time=17.0)  # 17 t.u. → 85 samples at dt=0.2
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     # 85 samples dropped off each end of the embedded series.
     assert spec.layers[0].data["x"].shape[0] == tr.n_steps - 85
     _assert_roundtrips(spec)
 
 
-def test_delay_requires_tau():
+def test_delay_kind_builds_2d_embedding_from_delay_samples():
+    """The same door takes the lag in SAMPLES under the canonical name ``delay``."""
+    tr = ts.MackeyGlass().integrate(
+        final_time=200.0, dt=0.2, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
+    )
+    spec = tr.to_plot_spec(kind="delay", delay=85)
+    assert spec.layers[0].data["x"].shape[0] == tr.n_steps - 85
+    assert spec.y.label.endswith("(t - 85)")
+
+
+def test_both_delay_doors_agree_on_units():
+    """THE consistency contract: ts.plot(...) and to_plot_spec(...) mean the same thing.
+
+    ``delay`` was samples on one front door and time units on the other under the
+    single name ``tau`` — one concept, two units, silently.  Both spellings now
+    exist on both doors and produce byte-identical geometry.
+    """
+    tr = _lorenz_traj()  # dt = 0.02
+    by_samples = tr.to_plot_spec(kind="delay", delay=6)
+    by_time = tr.to_plot_spec(kind="delay", delay_time=0.12)  # 0.12 / 0.02 = 6 samples
+    front_samples = ts.plot(tr, "delay_embedding", delay=6)
+    front_time = ts.plot(tr, "delay_embedding", delay_time=0.12)
+    for other in (by_time, front_samples, front_time):
+        np.testing.assert_array_equal(by_samples.layers[0].data["x"], other.layers[0].data["x"])
+        np.testing.assert_array_equal(by_samples.layers[0].data["y"], other.layers[0].data["y"])
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda tr: tr.to_plot_spec(kind="delay", tau=0.12),
+        lambda tr: ts.plot(tr, "delay_embedding", tau=0.12),
+        lambda tr: tr.to_plot_spec(kind="delay", tau=7),
+        lambda tr: ts.plot(tr, "delay_embedding", tau=7),
+    ],
+)
+def test_tau_is_refused_on_both_doors_and_names_both_units(call):
+    """``tau`` is gone; the refusal must contain the line to type, on either door."""
     from tsdynamics.errors import InvalidParameterError
 
-    with pytest.raises(InvalidParameterError):
+    with pytest.raises(InvalidParameterError) as excinfo:
+        call(_lorenz_traj())
+    message = str(excinfo.value)
+    assert "delay=7" in message and "delay_time=0.12" in message
+    assert "SAMPLES" in message and "TIME UNITS" in message
+
+
+def test_delay_requires_exactly_one_of_the_two_spellings():
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="exactly one"):
         _lorenz_traj().to_plot_spec(kind="delay")
+    with pytest.raises(InvalidParameterError, match="exactly one"):
+        _lorenz_traj().to_plot_spec(kind="delay", delay=7, delay_time=0.12)
+
+
+def test_delay_samples_must_be_whole_and_positive():
+    """A float lag under delay= is a unit mistake — say so, and name delay_time."""
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match="delay_time"):
+        _lorenz_traj().to_plot_spec(kind="delay", delay=0.12)
+    with pytest.raises(InvalidParameterError, match="delay_time"):
+        _lorenz_traj().to_plot_spec(kind="delay", delay=0)
 
 
 def test_kind_kw_rejected_for_wrong_kind():
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind="spacetime", tau=1.0)
+        _lorenz_traj().to_plot_spec(kind="spacetime", delay=1)
     with pytest.raises(InvalidParameterError):
         _lorenz_traj().to_plot_spec(kind="phase_portrait_3d", transpose=True)
 
@@ -237,19 +296,47 @@ def test_spacetime_transpose_swaps_axes():
     assert (swapped.x.label, swapped.y.label) == ("component", "t")
 
 
-def test_plot_forwards_spec_shaping_kwargs(monkeypatch):
-    """``plot()`` peels spec-shaping kwargs to to_plot_spec; the rest go to the backend."""
-    captured: dict[str, object] = {}
+def test_plot_forwards_spec_shaping_kwargs():
+    """``plot()`` peels spec-shaping kwargs to to_plot_spec and applies tweaks."""
+    spec = _lorenz_traj().plot(kind="time_series", components="x", title="mine")
+    assert isinstance(spec, PlotSpec)
+    assert spec.kind == PlotKind.TIME_SERIES
+    assert spec.title == "mine"
 
-    def fake_render(self, backend=None, **backend_kw):
-        captured["kind"] = self.kind
-        captured["backend_kw"] = backend_kw
-        return self
 
-    monkeypatch.setattr(PlotSpec, "render", fake_render)
-    _lorenz_traj().plot(kind="time_series", components="x", figsize=(4, 3))
-    assert captured["kind"] == PlotKind.TIME_SERIES
-    assert captured["backend_kw"] == {"figsize": (4, 3)}
+def test_plot_returns_the_spec_on_every_door():
+    """THE consistency contract: one word, one return type.
+
+    ``traj.plot()`` returned a matplotlib Figure while ``ts.plot(traj)`` returned
+    a PlotSpec, so ``traj.plot().save(...)`` raised ``'Figure' object has no
+    attribute 'save'``.  Every spelling now hands back the same kind of thing.
+    """
+    traj = _lorenz_traj()
+    doors = [
+        traj.plot(),
+        ts.plot(traj),
+        ts.Lorenz().plot(final_time=2.0, dt=0.05),
+        traj.plot().plot(title="chained"),
+        traj.to_plot_spec(),
+    ]
+    assert {type(d) for d in doors} == {PlotSpec}
+
+
+def test_plot_saves_and_renders_from_the_returned_spec(tmp_path):
+    """The crash from the owner's quickstart: ``traj.plot().save(...)``."""
+    pytest.importorskip("matplotlib")
+    out = tmp_path / "fig.png"
+    assert _lorenz_traj().plot().save(str(out)) == str(out)
+    assert out.stat().st_size > 0
+    assert hasattr(_lorenz_traj().plot().render("matplotlib"), "savefig")
+
+
+def test_plot_refuses_a_renderer_keyword_and_names_render():
+    """``plot()`` builds; a renderer option must be told where it belongs."""
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError, match=r"render\("):
+        _lorenz_traj().plot(figsize=(4, 3))
 
 
 def test_system_to_plot_spec_splits_plot_and_integration_kwargs():
@@ -273,7 +360,7 @@ def test_empty_components_selection_raises():
 
 def test_delay_default_embeds_first_component_of_multidim():
     """With no components=, kind='delay' embeds the first component (not an error)."""
-    spec = _lorenz_traj().to_plot_spec(kind="delay", tau=0.5)
+    spec = _lorenz_traj().to_plot_spec(kind="delay", delay_time=0.5)
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
 
 
@@ -281,23 +368,23 @@ def test_delay_rejects_explicit_multiple_components():
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind="delay", tau=0.5, components=["x", "y"])
+        _lorenz_traj().to_plot_spec(kind="delay", delay_time=0.5, components=["x", "y"])
 
 
-@pytest.mark.parametrize("bad_tau", [0.0, -1.0, float("inf"), float("nan")])
-def test_delay_rejects_nonpositive_or_nonfinite_tau(bad_tau):
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("inf"), float("nan")])
+def test_delay_time_rejects_nonpositive_or_nonfinite(bad):
     from tsdynamics.errors import InvalidParameterError
 
     with pytest.raises(InvalidParameterError):
-        _lorenz_traj().to_plot_spec(kind="delay", tau=bad_tau)
+        _lorenz_traj().to_plot_spec(kind="delay", delay_time=bad)
 
 
-def test_delay_tau_uses_time_grid_when_meta_dt_absent():
+def test_delay_time_uses_time_grid_when_meta_dt_absent():
     """Without meta['dt'], the time-unit→sample conversion falls back to the grid."""
     t = np.linspace(0.0, 10.0, 501)  # dt = 0.02
     y = np.sin(t)[:, None]
     traj = Trajectory(t=t, y=y, system=None)  # no meta["dt"]
-    spec = traj.to_plot_spec(kind="delay", tau=0.2)  # 0.2 / 0.02 = 10 samples
+    spec = traj.to_plot_spec(kind="delay", delay_time=0.2)  # 0.2 / 0.02 = 10 samples
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
     assert spec.layers[0].data["x"].shape[0] == t.size - 10
 
@@ -306,12 +393,12 @@ def test_delay_tau_uses_time_grid_when_meta_dt_absent():
 @pytest.mark.parametrize(
     ("kind", "bad_kw"),
     [
-        ("time_series", {"tau": 1.0}),
+        ("time_series", {"delay": 1}),
         ("time_series", {"transpose": True}),
-        ("phase_portrait_2d", {"tau": 1.0}),
+        ("phase_portrait_2d", {"delay": 1}),
         ("phase_portrait_2d", {"transpose": True}),
         ("phase_portrait_3d", {"transpose": True}),
-        ("spacetime", {"tau": 1.0}),
+        ("spacetime", {"delay": 1}),
         ("spacetime", {"color_by": "time"}),
         ("delay", {"color_by": "time"}),
         ("delay", {"transpose": True}),
@@ -408,23 +495,16 @@ def test_poincare_short_circuit_is_overridden_by_components_or_kind():
     assert section.to_plot_spec(kind="time_series").kind == PlotKind.TIME_SERIES
 
 
-def test_system_plot_forwards_delay_recipe(monkeypatch):
-    """A system's plot()/to_plot_spec route the delay recipe + tau through the split."""
-    spec = ts.Lorenz().to_plot_spec(kind="delay", tau=0.5, final_time=10.0, dt=0.05)
+def test_system_plot_forwards_delay_recipe():
+    """A system's plot()/to_plot_spec route the delay recipe + delay_time through the split."""
+    spec = ts.Lorenz().to_plot_spec(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
 
-    captured: dict[str, object] = {}
-
-    def fake_render(self, backend=None, **backend_kw):
-        captured["kind"] = self.kind
-        return self
-
-    monkeypatch.setattr(PlotSpec, "render", fake_render)
-    ts.Lorenz().plot(kind="delay", tau=0.5, final_time=10.0, dt=0.05)
-    assert captured["kind"] == PlotKind.PHASE_PORTRAIT_2D
+    via_plot = ts.Lorenz().plot(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
+    assert via_plot.kind == PlotKind.PHASE_PORTRAIT_2D
 
 
-def test_trajectory_plot_raises_without_backend(monkeypatch):
+def test_trajectory_render_raises_without_backend(monkeypatch):
     # The matplotlib backend auto-registers on render as of stream VIZ-MPL-CORE;
     # force an empty registry to keep testing the genuine no-backend path.
     from tsdynamics import registry
@@ -436,7 +516,7 @@ def test_trajectory_plot_raises_without_backend(monkeypatch):
     monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
     try:
         with pytest.raises(VisualizationNotInstalled):
-            _lorenz_traj().plot()
+            _lorenz_traj().plot().render()
     finally:
         registry.renderers.clear()
         for entry in saved:

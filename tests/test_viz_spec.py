@@ -126,7 +126,17 @@ def test_the_scope_partition_matches_the_reviewed_contract() -> None:
         "style",
         "ticks",
     }
-    expected_figure = {"animate", "background", "clock", "head", "size", "theme", "trail"}
+    expected_figure = {
+        "animate",
+        "background",
+        "clock",
+        "head",
+        # ``plot`` forwards to the individual tweaks, which recurse themselves.
+        "plot",
+        "size",
+        "theme",
+        "trail",
+    }
     scopes = tweak_scopes(PlotSpec)
     assert {k for k, v in scopes.items() if v == "panel"} == expected_panel
     assert {k for k, v in scopes.items() if v == "figure"} == expected_figure
@@ -561,7 +571,7 @@ _UNBUILDABLE = sorted(
 @pytest.mark.parametrize("kind", _BUILDABLE)
 def test_to_plot_spec_accepts_every_buildable_kind(kind: str) -> None:
     """Each route the front door owns really builds a spec (not just passes a check)."""
-    extra = {"tau": 0.1} if kind.startswith("delay") else {}
+    extra = {"delay_time": 0.1} if kind.startswith("delay") else {}
     spec = _trajectory().to_plot_spec(kind=kind, **extra)
     assert isinstance(spec, PlotSpec)
     assert spec.layers, f"kind={kind!r} produced a spec with no layers"

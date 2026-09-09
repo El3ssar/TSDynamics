@@ -314,3 +314,206 @@ def test_system_and_trajectory_paths_agree() -> None:
     traj = ts.Lorenz(ic=ic).integrate(final_time=200.0, dt=0.01, ic=ic)
     rm_traj = ts.return_map(traj.after(transient), "z", method="max")
     np.testing.assert_allclose(rm_sys.values, rm_traj.values)
+
+
+# ---------------------------------------------------------------------------
+# The one-liner: a bifurcation diagram OF A FLOW
+#
+# ``ts.bifurcation_diagram(model, "rho", values)`` used to refuse with a
+# TypeError that named ``orbit_diagram`` (a function the caller had not typed)
+# and told them to go and read about PoincareMap / StroboscopicMap.  A
+# bifurcation diagram of a flow is the single most canonical use of the
+# function, so it now works: the flow is reduced to its successive-maxima (peak)
+# map, and the choice is recorded rather than made silently.
+# ---------------------------------------------------------------------------
+
+
+class TestBifurcationDiagramOfAFlow:
+    """The headline call must return a diagram, not a lecture."""
+
+    def test_a_raw_flow_is_accepted(self) -> None:
+        od = ts.bifurcation_diagram(
+            ts.Lorenz(ic=[1.0, 1.0, 1.0]),
+            "rho",
+            np.linspace(0.0, 50.0, 12),
+            n=30,
+            transient=40,
+        )
+        assert len(od) == 12
+        x, y = od.flat()
+        assert x.size == y.size > 0
+        assert np.all(np.isfinite(y))
+
+    def test_the_chosen_section_is_recorded_not_silent(self) -> None:
+        """A section always has to be chosen; choosing silently is its own trap."""
+        od = ts.bifurcation_diagram(
+            ts.Lorenz(ic=[1.0, 1.0, 1.0]), "rho", [28.0], n=20, transient=30, component="z"
+        )
+        assert od.meta["section"] == "successive maxima of z"
+        assert od.meta["section_auto"] is True
+        # ... and the figure itself says so, so the picture is reproducible.
+        spec = od.to_plot_spec()
+        assert "successive maxima of z" in spec.title
+
+    def test_the_fixed_point_branch_is_recorded_not_dropped(self) -> None:
+        """Below the Hopf value the flow settles: that equilibrium IS the branch.
+
+        Lorenz's non-trivial equilibria sit at ``x = ±sqrt(beta (rho - 1))``; a
+        converged column must record that point rather than an empty set.
+        """
+        lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+        od = ts.bifurcation_diagram(lor, "rho", [10.0], n=20, transient=30)
+        (points,) = od.points
+        assert points.shape[0] >= 1
+        expected = np.sqrt(lor.beta * (10.0 - 1.0))
+        assert np.allclose(np.abs(points[:, 0]), expected, atol=1e-6)
+
+    def test_section_override_uses_a_poincare_map(self) -> None:
+        od = ts.bifurcation_diagram(
+            ts.Rossler(ic=[1.0, 1.0, 0.0]),
+            "c",
+            [4.0],
+            n=20,
+            transient=25,
+            section=("y", 0.0, "up"),
+        )
+        assert "Poincaré section" in od.meta["section"]
+        assert od.meta["section_auto"] is False
+        assert od.points[0].shape[0] == 20
+
+    def test_a_map_is_unaffected(self) -> None:
+        od = ts.bifurcation_diagram(ts.Logistic(), "r", [3.2, 3.9], n=40, transient=200)
+        assert od.meta["section"] == "map iterates"
+        assert od.meta["section_auto"] is False
+        assert int(od.periods()[0]) == 2  # the period-2 window
+
+    def test_orbit_diagram_and_bifurcation_diagram_are_one_function(self) -> None:
+        """Two names, one implementation — so no error can name the other one."""
+        assert ts.orbit_diagram is ts.bifurcation_diagram
+        assert registry.analyses.get("bifurcation_diagram") is ts.bifurcation_diagram
+        assert registry.analyses.get("orbit_diagram") is ts.bifurcation_diagram
+
+
+class TestBifurcationDiagramRefusals:
+    """When it does refuse, the message must contain the line to type."""
+
+    def test_a_stochastic_system_is_refused_with_a_runnable_line(self) -> None:
+        from tsdynamics.errors import InvalidInputError
+
+        with pytest.raises(InvalidInputError) as excinfo:
+            ts.bifurcation_diagram(ts.systems.OrnsteinUhlenbeck(), "theta", [1.0])
+        message = str(excinfo.value)
+        assert "ts.bifurcation_diagram(ts.systems.Lorenz(), 'rho'" in message
+        assert "orbit_diagram" not in message  # never name a function they did not call
+
+    def test_a_non_system_is_refused_with_a_runnable_line(self) -> None:
+        from tsdynamics.errors import InvalidInputError
+
+        with pytest.raises(InvalidInputError) as excinfo:
+            ts.bifurcation_diagram([1.0, 2.0], "r", [1.0])
+        assert "ts.bifurcation_diagram(ts.systems.Lorenz(), 'rho'" in str(excinfo.value)
+
+    def test_section_on_an_already_discrete_view_names_the_swept_parameter(self) -> None:
+        from tsdynamics.errors import InvalidParameterError
+
+        with pytest.raises(InvalidParameterError) as excinfo:
+            ts.bifurcation_diagram(ts.Logistic(), "r", [3.5], section=("x", 0.0))
+        assert "ts.bifurcation_diagram(system, 'r', values)" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# The flow path must never hand back a blank diagram
+#
+# ``transient`` / ``n`` count PEAKS on the flow path, and the defaults (500/200)
+# are sized for a map's cheap iterates.  A slow oscillator — or a DDE, whose
+# peaks are a delay apart — makes far fewer peaks than that inside ``max_time``,
+# and dropping the first ``transient`` of them then left an EMPTY column: a
+# blank figure whose only clue was one RuntimeWarning.
+# ---------------------------------------------------------------------------
+
+
+class TestFlowColumnsAreNeverSilentlyEmpty:
+    def test_a_short_run_keeps_its_last_peaks_and_says_so(self) -> None:
+        """Fewer peaks than ``transient`` records the most asymptotic ones available."""
+        from tsdynamics.analysis.orbits.orbit_diagram import _short_column
+
+        rec = np.arange(30.0).reshape(30, 1)
+        with pytest.warns(RuntimeWarning) as record:
+            column = _short_column(rec, transient=500, n=200, idx=[0], max_time=1e4, dim=3)
+
+        assert column.shape == (30, 1)
+        assert np.array_equal(column, rec)  # the last min(n, found) peaks
+        message = str(record[0].message)
+        assert "transient=500" in message
+        assert "NOT fully discarded" in message
+        assert "ts.bifurcation_diagram(system, param, values, max_time=100000)" in message
+
+    def test_a_partial_column_still_discards_the_transient(self) -> None:
+        from tsdynamics.analysis.orbits.orbit_diagram import _short_column
+
+        rec = np.arange(60.0).reshape(60, 1)
+        with pytest.warns(RuntimeWarning, match="only 10 of 200 peaks"):
+            column = _short_column(rec, transient=50, n=200, idx=[0], max_time=1e4, dim=3)
+        assert column.shape == (10, 1)
+        assert column[0, 0] == 50.0
+
+    def test_no_peaks_at_all_points_at_the_other_two_views(self) -> None:
+        """A monotone component is the peak map's one real failure: say what to type."""
+        from tsdynamics.analysis.orbits.orbit_diagram import _short_column
+
+        with pytest.warns(RuntimeWarning) as record:
+            column = _short_column(np.empty((0, 1)), transient=5, n=5, idx=[0], max_time=1e4, dim=3)
+        assert column.shape == (0, 1)
+        message = str(record[0].message)
+        assert "section=('z', 27.0, 'up')" in message
+        assert "component=1" in message
+
+    def test_a_scalar_flow_is_not_told_to_type_a_component_it_does_not_have(self) -> None:
+        """A 1-D DDE has no second component; suggesting ``component=1`` would be a lie."""
+        from tsdynamics.analysis.orbits.orbit_diagram import _short_column
+
+        with pytest.warns(RuntimeWarning) as record:
+            _short_column(np.empty((0, 1)), transient=5, n=5, idx=[0], max_time=1e4, dim=1)
+        message = str(record[0].message)
+        assert "section=" in message
+        assert "component=" not in message
+
+    def test_a_slow_flow_sweep_returns_points_rather_than_a_blank_picture(self) -> None:
+        """End to end: a flow whose peaks are expensive still yields a drawable diagram."""
+        with pytest.warns(RuntimeWarning):
+            od = ts.bifurcation_diagram(
+                ts.Rossler(ic=[1.0, 1.0, 0.0]),
+                "c",
+                [4.0, 4.5],
+                n=40,
+                transient=200,
+                max_time=60.0,
+            )
+        x, y = od.flat()
+        assert x.size == y.size > 0
+        assert np.all(np.isfinite(y))
+
+
+def test_repr_reports_the_range_of_a_ragged_diagram() -> None:
+    """Flow columns are ragged (an equilibrium records one point, a chaotic band ``n``).
+
+    Quoting the first column's size described a 39 000-point Lorenz diagram as
+    "1 points/value".
+    """
+    from tsdynamics.analysis.orbits.orbit_diagram import OrbitDiagram
+
+    ragged = OrbitDiagram(
+        param="rho",
+        values=np.array([1.0, 2.0]),
+        points=[np.zeros((1, 1)), np.zeros((200, 1))],
+        components=(0,),
+    )
+    assert repr(ragged) == "OrbitDiagram('rho', 2 values, 1-200 points/value)"
+
+    even = OrbitDiagram(
+        param="r",
+        values=np.array([1.0, 2.0]),
+        points=[np.zeros((40, 1)), np.zeros((40, 1))],
+        components=(0,),
+    )
+    assert repr(even) == "OrbitDiagram('r', 2 values, 40 points/value)"

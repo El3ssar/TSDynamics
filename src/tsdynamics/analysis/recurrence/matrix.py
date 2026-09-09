@@ -33,11 +33,29 @@ from typing import Any, cast
 
 import numpy as np
 
+from tsdynamics.errors import InvalidParameterError, remedy
+
 from .._common import reject_system
 from .._result import AnalysisResult
 from ._common import _as_points, _metric_p, _threshold_for_rate
 
-__all__ = ["RecurrenceMatrix", "recurrence_matrix"]
+__all__ = ["DEFAULT_RECURRENCE_RATE", "RecurrenceMatrix", "recurrence_matrix"]
+
+#: The recurrence rate every "I don't know the scale of my data" error message
+#: recommends.  A recurrence plot needs *some* notion of "close", and of the two
+#: ways to say it only the density can be chosen without already knowing the
+#: scale of the data — which is exactly what someone reaching for
+#: ``recurrence_matrix(data)`` does not yet know.  5 % is the density RQA
+#: practice recommends (Marwan et al., *Phys. Rep.* **438**, 237, 2007, §3.2.1;
+#: Webber & Zbilut's "a few percent"): dense enough that diagonal lines form,
+#: sparse enough that the plot is not saturated.  It is deliberately *not* a
+#: silent default for ``recurrence_rate=`` — the threshold is the one modelling
+#: choice a recurrence plot cannot make for you, so the call asks rather than
+#: guesses, and the error names the number to paste.
+DEFAULT_RECURRENCE_RATE = 0.05
+
+#: The default rendered for an error message's runnable line.
+_RATE_TEXT = repr(DEFAULT_RECURRENCE_RATE)
 
 
 @dataclass(frozen=True)
@@ -162,14 +180,16 @@ def recurrence_matrix(
         recurrence of a scalar measurement, embed it first
         (:func:`tsdynamics.analysis.embed`).
     threshold : float, optional
-        Fixed distance threshold :math:`\varepsilon`.  Exactly one of
-        ``threshold`` or ``recurrence_rate`` must be given.
+        Fixed distance threshold :math:`\varepsilon`, in the units of the data.
+        Give this *or* ``recurrence_rate``, never both.
     recurrence_rate : float, optional
         Target matrix density in ``(0, 1)``; :math:`\varepsilon` is chosen from
         the distribution of pairwise distances so the realised
         :attr:`~RecurrenceMatrix.recurrence_rate` is close to it.  The realised
         rate can differ slightly because distances are discrete (and sampled for
-        very long series).
+        very long series).  This is the one to reach for when the scale of the
+        data is not already known; :data:`DEFAULT_RECURRENCE_RATE` is the value
+        RQA practice recommends.
     metric : str or float, default "euclidean"
         Distance metric (``"euclidean"``, ``"manhattan"``, ``"chebyshev"``, or a
         numeric Minkowski exponent).  ``"chebyshev"`` (the maximum norm) is the
@@ -188,9 +208,12 @@ def recurrence_matrix(
     InvalidInputError
         If ``data`` is a ``System``: this is a *data-first* analysis, so run the
         system and pass its trajectory.
+    InvalidParameterError
+        If neither or both of ``threshold`` / ``recurrence_rate`` are given (they
+        set the same quantity two different ways), or if either is out of range.
+        A ``ValueError`` subclass, so ``except ValueError`` keeps catching it.
     ValueError
-        If neither or both of ``threshold`` / ``recurrence_rate`` are given, if
-        either is out of range, or if the Theiler window leaves no valid pairs.
+        If the Theiler window leaves no valid pairs.
 
     References
     ----------
@@ -201,11 +224,34 @@ def recurrence_matrix(
     from scipy.spatial import cKDTree
 
     # Before any keyword validation: handing a System to a data-first analysis is
-    # the mistake to name, and "pass exactly one of threshold=/recurrence_rate="
-    # would send the caller down the wrong path entirely.
+    # the mistake to name, and a message about threshold=/recurrence_rate= would
+    # send the caller down the wrong path entirely.
     reject_system(data, analysis="recurrence_matrix")
-    if (threshold is None) == (recurrence_rate is None):
-        raise ValueError("pass exactly one of threshold= or recurrence_rate=.")
+    if threshold is not None and recurrence_rate is not None:
+        raise InvalidParameterError(
+            f"pass exactly one of threshold= or recurrence_rate=: they set the same "
+            f"quantity two different ways (the threshold is what a target rate is "
+            f"solved for), and you gave threshold={threshold!r} *and* "
+            f"recurrence_rate={recurrence_rate!r}."
+            + remedy(
+                f"ts.recurrence_matrix(data, recurrence_rate={recurrence_rate!r})",
+                f"ts.recurrence_matrix(data, threshold={threshold!r})",
+                lead="Either fix the density, or fix the distance:",
+            )
+        )
+    if threshold is None and recurrence_rate is None:
+        raise InvalidParameterError(
+            "a recurrence plot needs a scale, so pass exactly one of threshold= (a "
+            "distance, in the units of the data) or recurrence_rate= (the fraction "
+            "of point pairs to count as recurrent)."
+            + remedy(
+                f"ts.recurrence_matrix(data, recurrence_rate={_RATE_TEXT})",
+                lead=(
+                    "If you do not yet know the scale of your data, ask for the "
+                    f"density RQA practice recommends ({_RATE_TEXT}):"
+                ),
+            )
+        )
     points = _as_points(data, analysis="recurrence_matrix")
     n = points.shape[0]
     p = _metric_p(metric)
@@ -218,12 +264,25 @@ def recurrence_matrix(
     if threshold is not None:
         eps = float(threshold)
         if not (eps > 0.0):
-            raise ValueError(f"threshold must be positive, got {threshold!r}.")
+            raise InvalidParameterError(
+                f"threshold is a distance in the units of the data, so it must be "
+                f"positive; got {threshold!r}. If you do not know the scale of the "
+                f"data, ask for a density instead."
+                + remedy(f"ts.recurrence_matrix(data, recurrence_rate={_RATE_TEXT})")
+            )
     else:
-        assert recurrence_rate is not None  # guaranteed by the exactly-one guard above
+        assert recurrence_rate is not None  # guaranteed by the defaulting above
         rate = float(recurrence_rate)
         if not (0.0 < rate < 1.0):
-            raise ValueError(f"recurrence_rate must be in (0, 1), got {recurrence_rate!r}.")
+            raise InvalidParameterError(
+                f"recurrence_rate is the fraction of point pairs counted as "
+                f"recurrent, so it must lie in (0, 1); got {recurrence_rate!r}"
+                + (" — that looks like a percentage." if rate > 1.0 else ".")
+                + remedy(
+                    f"ts.recurrence_matrix(data, recurrence_rate="
+                    f"{min(0.99, rate / 100) if rate > 1.0 else _RATE_TEXT})"
+                )
+            )
         eps = _threshold_for_rate(points, rate, p, w)
 
     tree = cKDTree(points)

@@ -464,6 +464,7 @@ _SYSTEM_FIRST = frozenset(
     {
         "basin_fractions",
         "basins_of_attraction",
+        "bifurcation_diagram",
         "continuation",
         "expansion_entropy",
         "find_attractors",

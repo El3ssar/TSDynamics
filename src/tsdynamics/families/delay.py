@@ -92,7 +92,7 @@ class DelaySystem(SystemBase, ABC):
     >>> mg = MackeyGlass()
     >>> hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
     >>> traj = mg.integrate(final_time=500, history=hist)
-    >>> exps = mg.lyapunov_spectrum(n_exp=2, ic=traj.y[-1])
+    >>> exps = mg.lyapunov_spectrum(k=2, ic=traj.y[-1])
     """
 
     #: The DDE family's own integration tolerances (see the class docstring for
@@ -514,7 +514,7 @@ class DelaySystem(SystemBase, ABC):
         dt: float = 0.1,
         *,
         ic: Any | None = None,
-        n_exp: int = 1,
+        k: int = 1,
         burn_in: float = 50.0,
         rtol: float | None = None,
         atol: float | None = None,
@@ -522,7 +522,7 @@ class DelaySystem(SystemBase, ABC):
         **kwargs: Any,
     ) -> np.ndarray:
         """
-        Estimate the ``n_exp`` leading Lyapunov exponents of the delay system.
+        Estimate the ``k`` leading Lyapunov exponents of the delay system.
 
         The **engine** estimator (stream E-DDE-LYAP, result stored in
         ``self.meta['lyapunov_spectrum']``) integrates the extended variational
@@ -540,7 +540,7 @@ class DelaySystem(SystemBase, ABC):
         ic : array-like, optional
             Initial state. Provide the end-state of a prior ``integrate``
             call so the trajectory starts on the attractor (recommended).
-        n_exp : int
+        k : int
             Number of leading exponents to estimate. DDEs have infinitely
             many; choose consciously. Default 1.
         burn_in : float
@@ -570,7 +570,7 @@ class DelaySystem(SystemBase, ABC):
 
         Returns
         -------
-        ndarray, shape (n_exp,)
+        ndarray, shape (k,)
         """
         backend = backend if backend is not None else self._default_backend
         from tsdynamics.families._dde_lyapunov import dde_lyapunov_spectrum
@@ -582,7 +582,7 @@ class DelaySystem(SystemBase, ABC):
             )
         exps = dde_lyapunov_spectrum(
             self,
-            n_exp=n_exp,
+            k=k,
             final_time=final_time,
             dt=dt,
             burn_in=burn_in,
@@ -595,7 +595,7 @@ class DelaySystem(SystemBase, ABC):
             "lyapunov_spectrum",
             exps,
             backend=backend,
-            n_exp=n_exp,
+            k=k,
             final_time=final_time,
             dt=dt,
             burn_in=burn_in,

@@ -209,19 +209,48 @@ def test_a_style_keyword_survives_the_bare_string_selector():
     assert aliased.layers[0].style == {"markersize": 2.0}
 
 
-def test_a_shared_option_still_does_not_reach_a_transform_that_cannot_take_it():
-    """The filter the style fix had to keep: compute options are still routed by signature.
+def test_a_shared_option_reaches_only_the_transform_whose_signature_takes_it():
+    """The filter the style fix had to keep: compute options are routed by signature.
 
-    ``tau`` belongs to ``delay_embedding``; handing it to ``phase_portrait`` in a
-    shared keyword must be a no-op, not a ``TypeError``.  Calling the transform
-    directly with it still is one — which is what makes this a *routing* rule and
-    not a silent swallow.
+    ``delay`` belongs to ``delay_embedding`` and ``color_by`` to
+    ``phase_portrait``; naming both transforms in one call must hand each keyword
+    to the transform that declares it and to no other — which is what makes this
+    a *routing* rule rather than a broadcast.
+
+    It is deliberately **not** a licence to swallow: a keyword that reaches
+    *none* of the named transforms is rejected (see
+    ``test_a_keyword_no_named_transform_can_use_is_rejected`` below), because a
+    keyword accepted and ignored is the defect this whole layer keeps fixing.
     """
     import tsdynamics as ts
 
     traj = ts.systems.Lorenz().integrate(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 20.0])
-    spec = ts.plot(traj, "phase_portrait", components=("x", "z"), tau=7)
-    assert len(spec.layers) == 1
+    spec = ts.plot(
+        traj,
+        "phase_portrait",
+        "delay_embedding",
+        layout="row",
+        delay=7,
+        color_by="time",
+    )
+    assert len(spec.panels) == 2
+    # ``delay`` shaped the embedding (its y axis is the delayed coordinate) and
+    # was NOT handed to phase_portrait, which has no such parameter.
+    assert "t - 7" in spec.panels[1].y.label
+    # ``color_by`` gave the portrait a colour channel; the embedding is untouched.
+    assert spec.panels[0].has_color_channel
+
+
+def test_a_keyword_no_named_transform_can_use_is_rejected():
+    """One typo must cost a message, not a wrong picture drawn in silence."""
+    import tsdynamics as ts
+    from tsdynamics.errors import InvalidParameterError
+
+    traj = ts.systems.Lorenz().integrate(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 20.0])
+    with pytest.raises(InvalidParameterError, match="componets"):
+        ts.plot(traj, "phase_portrait", componets=("x", "z"))
+    # Calling the transform directly was always a TypeError — the front door now
+    # agrees with it instead of quietly disagreeing.
     with pytest.raises(TypeError):
         ts.viz.geometry(traj, "phase_portrait", components=("x", "z"), tau=7)
 

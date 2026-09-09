@@ -19,7 +19,7 @@ are discoverable by name alongside out-of-tree analysis plugins.
 """
 
 from ... import registry as _registry
-from .orbit_diagram import OrbitDiagram, orbit_diagram
+from .orbit_diagram import OrbitDiagram, bifurcation_diagram, orbit_diagram
 from .poincare import PoincareSection, poincare_section
 from .return_map import ReturnMap, return_map
 
@@ -27,6 +27,7 @@ __all__ = [
     "OrbitDiagram",
     "PoincareSection",
     "ReturnMap",
+    "bifurcation_diagram",
     "orbit_diagram",
     "poincare_section",
     "return_map",
@@ -34,7 +35,10 @@ __all__ = [
 
 # Self-register the headline analyses (D4 / §4e: in-tree analyses register from
 # their own subpackage).  Idempotent across re-imports.
+# ``bifurcation_diagram`` and ``orbit_diagram`` are the SAME object under two
+# names, so both spellings are discoverable by name and neither can drift.
 for _name, _fn in (
+    ("bifurcation_diagram", bifurcation_diagram),
     ("orbit_diagram", orbit_diagram),
     ("poincare_section", poincare_section),
     ("return_map", return_map),

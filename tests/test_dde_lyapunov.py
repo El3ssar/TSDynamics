@@ -42,7 +42,7 @@ def _on_attractor_ic(name: str) -> np.ndarray:
 def test_interp_equals_jit_bit_for_bit() -> None:
     """The interpreter and the Cranelift JIT give an identical spectrum (D2)."""
     ic = _on_attractor_ic("MackeyGlass")
-    kw = dict(n_exp=2, dt=0.2, burn_in=40.0, final_time=200.0, ic=ic)
+    kw = dict(k=2, dt=0.2, burn_in=40.0, final_time=200.0, ic=ic)
     interp = ts.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
     jit = ts.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
     np.testing.assert_array_equal(interp, jit)
@@ -52,7 +52,7 @@ def test_spectrum_is_descending_with_positive_leading() -> None:
     """Mackey–Glass: λ₁ > 0 (chaos), and the spectrum is sorted descending."""
     ic = _on_attractor_ic("MackeyGlass")
     spec = ts.MackeyGlass().lyapunov_spectrum(
-        backend="interp", n_exp=2, dt=0.2, burn_in=100.0, final_time=600.0, ic=ic
+        backend="interp", k=2, dt=0.2, burn_in=100.0, final_time=600.0, ic=ic
     )
     assert spec.shape == (2,)
     assert np.all(np.isfinite(spec))
@@ -72,7 +72,7 @@ def test_n_exp_may_exceed_dim() -> None:
     assert sys.dim == 1
     spec = sys.lyapunov_spectrum(
         backend="interp",
-        n_exp=3,
+        k=3,
         dt=0.05,
         burn_in=200.0,
         final_time=1500.0,
@@ -94,7 +94,7 @@ def test_mackeyglass_second_exponent_is_near_zero() -> None:
     """
     ic = _on_attractor_ic("MackeyGlass")
     spec = ts.MackeyGlass().lyapunov_spectrum(
-        backend="interp", n_exp=2, dt=0.1, burn_in=200.0, final_time=2000.0, ic=ic
+        backend="interp", k=2, dt=0.1, burn_in=200.0, final_time=2000.0, ic=ic
     )
     assert spec[0] > 0.0
     assert abs(spec[1]) < 0.01, f"second exponent {spec[1]} not near the marginal 0"
@@ -123,11 +123,11 @@ def test_extra_kwargs_rejected_on_engine_path() -> None:
         ("many", "must be an integer"),
     ],
 )
-def test_absurd_n_exp_is_rejected_up_front(bad, expect) -> None:
+def test_absurd_k_is_rejected_up_front(bad, expect) -> None:
     """An unbuildable ``n_exp`` must be a message, not an indefinite wait.
 
     ``_build_extended_tape`` loops *symbolically* over ``n_exp``, emitting ``dim``
-    variational expressions per deviation, so ``n_exp=2**34`` never reached Rust:
+    variational expressions per deviation, so ``k=2**34`` never reached Rust:
     it disappeared into SymEngine and read to the user as a hang.  (Python-side
     and so Ctrl-C-able, hence a usability wart rather than the safety defect the
     ensembles had — but a wart on a public keyword.)
@@ -138,10 +138,10 @@ def test_absurd_n_exp_is_rejected_up_front(bad, expect) -> None:
     count.
     """
     with pytest.raises(InvalidParameterError, match=expect) as excinfo:
-        ts.MackeyGlass().lyapunov_spectrum(n_exp=bad)
+        ts.MackeyGlass().lyapunov_spectrum(k=bad)
     # The v4 error standard: name the parameter and quote the offending value.
     message = str(excinfo.value)
-    assert "n_exp" in message
+    assert "k" in message
     assert repr(bad) in message, message
 
 
@@ -155,7 +155,7 @@ def test_the_largest_admissible_n_exp_is_not_rejected() -> None:
     sys = ts.MackeyGlass()
     at_ceiling = _MAX_EXTENDED_DIM // sys.dim - 1
     with pytest.raises(InvalidParameterError) as excinfo:
-        sys.lyapunov_spectrum(n_exp=at_ceiling, dt=0.1)
+        sys.lyapunov_spectrum(k=at_ceiling, dt=0.1)
     # It got past the ceiling and failed on the *resolution* bound instead.
     assert "ceiling" not in str(excinfo.value)
     assert "delay-window resolution" in str(excinfo.value)
@@ -220,7 +220,7 @@ def test_multidim_spectrum_is_consistent_and_brackets_zero() -> None:
         final_time=300.0, dt=0.1, history=lambda s: [0.5 + 0.1 * np.sin(s), 0.3 + 0.1 * np.cos(s)]
     ).y[-1]
     eng = sys.lyapunov_spectrum(
-        backend="interp", n_exp=2, dt=0.05, burn_in=200.0, final_time=2000.0, ic=ic
+        backend="interp", k=2, dt=0.05, burn_in=200.0, final_time=2000.0, ic=ic
     )
     assert eng.shape == (2,)
     assert np.all(np.isfinite(eng))

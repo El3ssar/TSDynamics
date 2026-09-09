@@ -301,7 +301,7 @@ def fig_kind_delay(plt, out_path):
 
     # kind="delay" is a recipe: x(t) vs x(t - tau); tau is in TIME units (converted
     # to a sample lag via meta["dt"]). It routes to a PHASE_PORTRAIT_2D.
-    spec = traj.to_plot_spec(kind="delay", components="x", tau=17.0)
+    spec = traj.to_plot_spec(kind="delay", components="x", delay_time=17.0)
     spec.style(lw=0.5, alpha=0.85).recolor(TEAL).size(4.8, 4.6)
     spec.relabel(title="")
     _save_svg(spec, out_path)
@@ -530,7 +530,7 @@ def fig_animation_delay(plt, out_path):
     ).after(150.0)
 
     spec = (
-        traj.to_plot_spec(kind="delay", components="x", tau=17.0, animate=True)
+        traj.to_plot_spec(kind="delay", components="x", delay_time=17.0, animate=True)
         .animate(n_frames=100, fps=25)
         .trail(("time", 120.0), fade=True)
         .head(size=8.0, color=INDIGO)

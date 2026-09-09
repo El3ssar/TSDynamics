@@ -8,13 +8,23 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidParameterError
+from tsdynamics.errors import (
+    ConvergenceError,
+    InvalidInputError,
+    InvalidParameterError,
+    remedy,
+)
 from tsdynamics.families import DelaySystem, DiscreteMap
 
 from ... import registry as _registry
-from .._common import reject_system
+from .._common import reject_data, reject_system
 from .._result import AnalysisResult, ArrayResult, ScalarResult
 from .from_data import LyapunovFromData, ScalingRegionWarning, lyapunov_from_data
+
+#: The data-first sibling every system-first Lyapunov entry point points at when
+#: it is handed a measured series: the same question (how fast do nearby states
+#: separate?) answered without a model, from the series alone.
+_FROM_DATA_LINE = "ts.lyapunov_from_data({data})"
 
 __all__ = [
     "LyapunovFromData",
@@ -201,7 +211,25 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
             "    kaplan_yorke_dimension(exps)"
         ),
     )
-    s = np.atleast_1d(np.asarray(spectrum, dtype=float))
+    s = np.asarray(spectrum, dtype=float)
+    if s.ndim == 0:
+        # A single number is never a spectrum: the formula needs a negative
+        # exponent to interpolate against, so a scalar always saturates and
+        # returns a confident 1.0.  ``kaplan_yorke_dimension(max_lyapunov(sys))``
+        # is the natural way to make this mistake -- both are "Lyapunov things"
+        # -- so refuse it rather than answer it.
+        raise InvalidParameterError(
+            f"kaplan_yorke_dimension needs the whole Lyapunov spectrum, not a single "
+            f"exponent (got {float(s):.6g}). The dimension is read off where the "
+            f"running sum of the exponents changes sign, so one number carries no "
+            f"dimension — it would saturate at 1.0 whatever its value."
+            + remedy(
+                "exps = ts.lyapunov_spectrum(system)",
+                "ts.kaplan_yorke_dimension(exps)",
+                lead="Compute the full spectrum first:",
+            )
+        )
+    s = np.atleast_1d(s)
     if s.ndim != 1:
         raise InvalidParameterError(
             f"kaplan_yorke_dimension: spectrum must be one-dimensional, got shape {s.shape}."
@@ -252,7 +280,7 @@ def lyapunov_spectrum(
     system : System
         A flow (ODE/DDE) or a discrete map.
     k : int, optional
-        Number of exponents to compute (was ``n_exp``).  Defaults to
+        Number of exponents to compute.  Defaults to
         ``system.dim`` for flows/maps; a DDE may request more than ``dim`` (its
         tangent space is the infinite-dimensional history).
     final_time : float, optional
@@ -280,9 +308,12 @@ def lyapunov_spectrum(
 
     Raises
     ------
-    TypeError
-        If ``system`` has no ``lyapunov_spectrum`` implementation (e.g. a derived
-        wrapper — compute the spectrum on the underlying system).
+    InvalidInputError
+        If ``system`` is measured data (a ``Trajectory`` / array — estimate the
+        exponent from the series with :func:`lyapunov_from_data` instead), or has
+        no ``lyapunov_spectrum`` implementation (e.g. a derived wrapper — compute
+        the spectrum on the underlying system).  A ``TypeError`` subclass, so an
+        existing ``except TypeError`` keeps catching it.
     ValueError
         If ``k <= 0``, or a keyword is passed to the wrong family (``final_time``
         / ``dt`` / ``transient`` / ``method`` for a map; ``n`` for a flow; or a
@@ -300,18 +331,24 @@ def lyapunov_spectrum(
     systems; a method for computing all of them", *Meccanica* **15** (1980)
     9--20 (Part 1) and 21--30 (Part 2).
     """
+    reject_data(system, analysis="lyapunov_spectrum", sibling=_FROM_DATA_LINE)
     method_fn = getattr(system, "lyapunov_spectrum", None)
     if method_fn is None:
-        raise TypeError(
-            f"{type(system).__name__} has no lyapunov_spectrum implementation. "
-            f"For derived wrappers, compute the spectrum on the underlying system."
+        raise InvalidInputError(
+            f"lyapunov_spectrum() needs a system that implements it, and "
+            f"{type(system).__name__} does not — a derived wrapper measures the "
+            f"exponents of the system it wraps."
+            + remedy(
+                "ts.lyapunov_spectrum(wrapper.system)",
+                lead="Compute the spectrum on the underlying system:",
+            )
         )
     if k is not None and k <= 0:
         raise ValueError(f"k (number of exponents) must be a positive integer, got {k!r}.")
 
     fwd: dict[str, Any] = {}
     if k is not None:
-        fwd["n_exp"] = k
+        fwd["k"] = k
     if ic is not None:
         fwd["ic"] = ic
 
@@ -531,6 +568,9 @@ def max_lyapunov(
 
     Raises
     ------
+    InvalidInputError
+        If ``system`` is measured data rather than a model — use
+        :func:`lyapunov_from_data` on the series.
     NotImplementedError
         If ``system`` is a delay system (it has no ``set_state``).
     ValueError
@@ -549,14 +589,35 @@ def max_lyapunov(
     G. Benettin, L. Galgani & J.-M. Strelcyn, "Kolmogorov entropy and numerical
     experiments", *Physical Review A* **14** (1976) 2338--2345.
     """
+    reject_data(system, analysis="max_lyapunov", sibling=_FROM_DATA_LINE)
     if isinstance(system, DelaySystem):
         raise NotImplementedError(
-            "max_lyapunov needs set_state, which delay systems cannot support — "
-            "use DelaySystem.lyapunov_spectrum (the engine estimator) instead."
+            "max_lyapunov needs set_state, which delay systems cannot support."
+            + remedy(
+                "ts.lyapunov_spectrum(system, k=1, dt=0.5)",
+                lead="Use the delay system's own engine estimator:",
+            )
         )
     if system.is_discrete and dt is not None:
         raise InvalidParameterError(
             "dt has no meaning for discrete maps — omit it (every step is one iteration)."
+            + remedy("ts.max_lyapunov(system, n=2000)")
+        )
+    if not (d0 > 0.0) or not np.isfinite(d0):
+        # The separation is rescaled back to d0 every cycle and the log-ratio is
+        # ln(d / d0): a zero d0 divides by zero, a negative one takes the log of a
+        # negative number.  Both used to surface as a bare ZeroDivisionError /
+        # nan from deep inside the cycle loop.
+        raise InvalidParameterError(
+            f"d0 is the separation the two trajectories are reset to after every "
+            f"rescaling, so it must be a small positive number; got {d0!r}."
+            + remedy("ts.max_lyapunov(system, d0=1e-9)")
+        )
+    if n is not None and int(n) < 1:
+        raise InvalidParameterError(
+            f"n is the number of measured rescaling cycles, so it must be >= 1; got "
+            f"{n!r}. Omit it to size the averaging window automatically."
+            + remedy("ts.max_lyapunov(system)")
         )
 
     # Maps: the maximal exponent is the leading entry of the QR tangent-map
