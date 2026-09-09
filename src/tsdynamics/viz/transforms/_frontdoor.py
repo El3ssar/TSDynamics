@@ -50,6 +50,15 @@ def _split_style(options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any
     return build, style
 
 
+#: Keywords that are about the FIGURE, not about the transform's computation, and
+#: so must survive the per-transform keyword filter.  ``animate`` was silently
+#: dropped by that filter — ``ts.plot(traj, "phase_portrait", animate=True)``
+#: returned a static spec and ``.save("x.gif")`` wrote a one-frame gif that looked
+#: like a working animation.  It is the same class of defect as a dropped
+#: ``color=``: a keyword accepted and ignored.
+_FIGURE_KEYS: frozenset[str] = frozenset({"animate"})
+
+
 def _style_names() -> frozenset[str]:
     """Return the canonical style vocabulary plus every alias, as one lookup set."""
     from ..style import STYLE_KEYS
@@ -79,17 +88,39 @@ def _build_one(
     # `ts.plot(traj, "phase_portrait", color="red")` (the most obvious styling
     # call in the API) silently drops the colour.
     record = get(name.partition(".")[0])
-    accepted = _accepted_names(record) | _style_names()
+    accepted = _accepted_names(record) | _style_names() | _FIGURE_KEYS
     merged = {k: v for k, v in shared.items() if k in accepted}
     merged.update(own)
     build, style = _split_style(merged)
+    figure_kw = {k: build.pop(k) for k in list(build) if k in _FIGURE_KEYS}
 
     spec = build_spec(subject, name, primitive=chosen, **build)
+    animate = figure_kw.get("animate", False)
+    if animate:
+        spec = _apply_animation(spec, animate)
     if style:
         canon = normalize_style(style)
         for layer in spec.layers:
             layer.style = {**layer.style, **canon}
     return spec
+
+
+def _apply_animation(spec: Any, animate: Any) -> Any:
+    """Attach an :class:`~tsdynamics.viz.spec.Animation` to a freshly built spec.
+
+    Accepts the same three spellings the single-panel front door does — ``True``
+    for the defaults, a dict of knobs, or a ready-made ``Animation`` — so
+    ``ts.plot(traj, "phase_portrait", animate=True)`` and
+    ``traj.to_plot_spec(animate=True)`` mean the same thing.
+    """
+    from ..spec import Animation
+
+    if isinstance(animate, Animation):
+        spec.animation = animate
+        return spec
+    if isinstance(animate, dict):
+        return spec.animate(**animate)
+    return spec.animate()
 
 
 def _accepted_names(record: Any) -> frozenset[str]:

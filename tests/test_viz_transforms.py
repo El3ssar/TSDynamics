@@ -652,3 +652,46 @@ def test_transform_records_declare_a_role_for_order_free_overlays():
     assert roles["spacetime"] is OverlayRole.FIELD
     assert roles["phase_portrait"] is OverlayRole.BASE
     assert all(isinstance(r, OverlayRole) for r in roles.values())
+
+
+# ── animate= must survive the per-transform keyword filter ────────────────────
+
+
+def test_animate_reaches_the_spec_through_the_transform_front_door() -> None:
+    """``ts.plot(..., animate=True)`` must animate, in all three spellings.
+
+    ``_build_one`` filters shared keywords against the *transform's* signature, so
+    a keyword that is about the FIGURE rather than the computation was dropped on
+    the floor.  ``animate`` was: ``ts.plot(traj, "phase_portrait", animate=True)``
+    returned a static spec, and — worse than raising — ``.save("x.gif")`` then
+    wrote a perfectly valid ONE-FRAME gif, so the failure looked like success.
+    Same class as the dropped ``color=``: a keyword accepted and ignored.
+    """
+    import tsdynamics as ts
+    from tsdynamics.viz.spec import Animation
+
+    traj = ts.systems.Lorenz().integrate(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+
+    assert ts.plot(traj, "phase_portrait", animate=True).is_animated
+    assert ts.plot(traj, "phase_portrait", animate={"fps": 24}).is_animated
+    assert ts.plot(traj, "time_series", animate=Animation()).is_animated
+    # and the knob passed through the dict spelling actually lands
+    assert ts.plot(traj, "phase_portrait", animate={"fps": 24}).animation.fps == 24
+    # not animated unless asked
+    assert not ts.plot(traj, "phase_portrait").is_animated
+
+
+def test_an_animated_transform_spec_writes_a_real_movie(tmp_path) -> None:
+    """The gif must have more than one frame — that is what the old bug produced."""
+    pytest.importorskip("matplotlib")
+    from PIL import Image
+
+    import tsdynamics as ts
+
+    traj = ts.systems.Lorenz().integrate(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    path = tmp_path / "orbit.gif"
+    ts.plot(traj, "phase_portrait", animate=True).save(path)
+
+    assert path.stat().st_size > 0
+    with Image.open(path) as img:
+        assert getattr(img, "n_frames", 1) > 1
