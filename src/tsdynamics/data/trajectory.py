@@ -76,9 +76,28 @@ _KIND_KW: dict[str, frozenset[str]] = {
 #: The keywords ``plot()`` peels off and forwards to :meth:`Trajectory.to_plot_spec`
 #: (rather than leaking them to the renderer).  Derived from the routing tables so
 #: it can never drift out of sync with the per-kind options above.
-_PLOT_SPEC_KEYS: frozenset[str] = frozenset({"kind", "components", "animate"}).union(
+_PLOT_SPEC_KEYS: frozenset[str] = frozenset({"kind", "components", "animate", "primitive"}).union(
     *_KIND_KW.values()
 )
+
+#: Routing key → the registered plot transform that computes the same geometry
+#: (:mod:`tsdynamics.viz.transforms`).  This front door keeps its own spec
+#: assembly for the default view — so no picture moved when the transforms
+#: landed — and consults the registry only when ``primitive=`` asks for a
+#: *different drawing* of the same numbers, which is the one thing the inline
+#: builders structurally cannot do.
+#:
+#: ``poincare_section`` is deliberately absent: its geometry is not a registered
+#: transform yet, so asking for a primitive there raises rather than silently
+#: ignoring the request.
+_TRANSFORM_ROUTE: dict[str, str] = {
+    "time_series": "time_series",
+    "phase_portrait_2d": "phase_portrait",
+    "phase_portrait_3d": "phase_portrait",
+    "delay_embedding": "delay_embedding",
+    "spacetime": "spacetime",
+    "spatial_field": "spatial_field",
+}
 
 #: The routing keys :meth:`Trajectory.to_plot_spec` can actually **build** — the
 #: auto-dispatch targets plus the recipes in :data:`_KIND_ALIASES`.  Validation
@@ -403,6 +422,7 @@ class Trajectory:
         *,
         components: int | str | Sequence[int | str] | None = None,
         animate: bool | dict[str, Any] | Animation = False,
+        primitive: str | None = None,
         **kind_kw: Any,
     ) -> PlotSpec:
         """
@@ -475,6 +495,22 @@ class Trajectory:
                zero-panel composite, silently discarding the trajectory.
         components : int or str or sequence of int/str, optional
             Which state components to draw (names or indices).  ``None`` uses all.
+        primitive : str, optional
+            **How** to draw the view — the drawing primitive, as opposed to
+            ``kind``, which is *what* is drawn.  ``None`` (the default) uses this
+            front door's own presentation, unchanged.  Naming one routes the same
+            geometry through the registered transform
+            (:mod:`tsdynamics.viz.transforms`) and draws it that way::
+
+                traj.plot()                          # a line
+                traj.plot(primitive="points")        # the same orbit, unconnected
+                traj.plot(primitive="density")       # binned — no overdraw
+
+            Validated against the transform's declared row: an invalid pair
+            raises, naming the valid primitives, rather than drawing something
+            else.  ``ts.viz.compatibility()`` lists the matrix.
+
+            .. versionadded:: 6.0
         animate : bool or dict or Animation, optional
             Turn the spec into a reveal animation.  ``True`` uses sensible per-kind
             defaults (a moving head on portraits / spacetime, off for a plain time
@@ -502,6 +538,7 @@ class Trajectory:
             and not kind_kw
             and str(self.meta.get("plot_kind", "")) == PlotKind.POINCARE_SECTION
         ):
+            self._reject_primitive("poincare_section", primitive)
             return self._with_animation(self._poincare_section_spec(all_names), animate)
 
         # The ``"field"`` / ``"spatial_field"`` recipe routes before component
@@ -513,7 +550,7 @@ class Trajectory:
             _reject_unbuildable_kind(kind, explicit_route)
             if explicit_route == "spatial_field":
                 self._validate_kind_kw("spatial_field", kind_kw)
-                field = self._spatial_field_spec(components)
+                field = self._spatial_field_spec(components, primitive)
                 return self._with_animation(field, animate)
             if explicit_route == "poincare_section":
                 # A section is a *point cloud of crossings*, not a portrait: route
@@ -522,6 +559,7 @@ class Trajectory:
                 # kind fall through to ``_phase_portrait_spec`` — which used to
                 # return a LINE-layer portrait merely *labelled* POINCARE_SECTION.
                 self._validate_kind_kw("poincare_section", kind_kw)
+                self._reject_primitive("poincare_section", primitive)
                 section = self._poincare_section_spec(all_names)
                 return self._with_animation(section, animate)
 
@@ -536,22 +574,42 @@ class Trajectory:
         self._validate_kind_kw(route, kind_kw)
 
         if route == "delay_embedding":
-            delay = self._delay_spec(sel, sel_names, kind_kw, explicit=components is not None)
+            delay = self._delay_spec(
+                sel, sel_names, kind_kw, explicit=components is not None, primitive=primitive
+            )
             return self._with_animation(delay, animate)
 
         spec_kind = PlotKind(route)  # "delay" never reaches here (aliased above)
         ys = self.y[:, sel]
 
         if spec_kind == PlotKind.SPACETIME:
-            image = self._spacetime_spec(ys, sel_names, transpose=bool(kind_kw.get("transpose")))
+            if primitive is not None:
+                image = self._via_transform(
+                    "spacetime", primitive, transpose=bool(kind_kw.get("transpose"))
+                )
+            else:
+                image = self._spacetime_spec(
+                    ys, sel_names, transpose=bool(kind_kw.get("transpose"))
+                )
             return self._with_animation(image, animate)
 
         color_by = kind_kw.get("color_by")
         if spec_kind == PlotKind.TIME_SERIES:
-            series = self._time_series_spec(sel, ys, sel_names, discrete, color_by)
+            if primitive is not None:
+                series = self._via_transform(
+                    "time_series", primitive, components=sel, color_by=color_by
+                )
+            else:
+                series = self._time_series_spec(sel, ys, sel_names, discrete, color_by)
             return self._with_animation(series, animate)
 
-        portrait = self._phase_portrait_spec(spec_kind, sel, ys, sel_names, discrete, color_by)
+        if primitive is not None:
+            need = 3 if spec_kind == PlotKind.PHASE_PORTRAIT_3D else 2
+            portrait = self._via_transform(
+                "phase_portrait", primitive, components=sel[:need], color_by=color_by
+            )
+        else:
+            portrait = self._phase_portrait_spec(spec_kind, sel, ys, sel_names, discrete, color_by)
         return self._with_animation(portrait, animate)
 
     def _with_animation(
@@ -692,6 +750,34 @@ class Trajectory:
             )
         return samples
 
+    def _via_transform(self, transform: str, primitive: str, /, **options: Any) -> PlotSpec:
+        """Build this view through the registered transform, drawn by ``primitive``.
+
+        The ``primitive=`` route.  It is deliberately *not* the default path: the
+        inline builders above are what every existing figure was drawn with, and
+        the transforms landed picture-preserving precisely so that any later
+        difference is attributable.  The two presentations differ only where the
+        transform is the better one — a multi-component time series labels its y
+        axis ``""`` rather than with the first component's name, and colours its
+        curves from the palette.
+        """
+        from tsdynamics.viz.transforms import build_spec
+
+        return build_spec(self, transform, primitive=primitive, **options)
+
+    @staticmethod
+    def _reject_primitive(route: str, primitive: str | None) -> None:
+        """Raise when ``primitive=`` is asked of a view that has no transform yet."""
+        from tsdynamics.errors import InvalidParameterError
+
+        if primitive is None:
+            return
+        raise InvalidParameterError(
+            f"kind={route!r} has no registered plot transform, so primitive={primitive!r} "
+            "cannot be honored. Drop primitive= to get the standard view; "
+            "ts.viz.compatibility() lists the transforms that do accept one."
+        )
+
     def _delay_spec(
         self,
         sel: list[int],
@@ -699,6 +785,7 @@ class Trajectory:
         kind_kw: dict[str, Any],
         *,
         explicit: bool,
+        primitive: str | None = None,
     ) -> PlotSpec:
         """Build the ``x(t)`` vs ``x(t - tau)`` delay embedding (a ``PHASE_PORTRAIT_2D``).
 
@@ -715,6 +802,14 @@ class Trajectory:
                 f"components= (got {len(sel)})."
             )
         samples = self._delay_tau_samples(kind_kw["tau"])
+        if primitive is not None:
+            return self._via_transform(
+                "delay_embedding",
+                primitive,
+                tau=samples,
+                component=sel[0],
+                label=sel_names[0],
+            )
         return producers.delay_embedding(self, tau=samples, component=sel[0], label=sel_names[0])
 
     def _time_series_spec(
@@ -846,7 +941,11 @@ class Trajectory:
         )
         return spec.autocolor()
 
-    def _spatial_field_spec(self, component: int | str | Sequence[int | str] | None) -> PlotSpec:
+    def _spatial_field_spec(
+        self,
+        component: int | str | Sequence[int | str] | None,
+        primitive: str | None = None,
+    ) -> PlotSpec:
         """Build a :data:`SPATIAL_FIELD` spec via the ``spatial_field`` producer.
 
         The spatial grid is read from ``meta["field_shape"]`` (recorded by a system
@@ -870,6 +969,8 @@ class Trajectory:
                     f"components= (got {len(items)})."
                 )
             block = items[0]
+        if primitive is not None:
+            return self._via_transform("spatial_field", primitive, component=block)
         return producers.spatial_field(self, component=block)
 
     def plot(self, backend: str | None = None, **kwargs: Any) -> Any:

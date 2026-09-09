@@ -1,0 +1,752 @@
+"""The transform substrate — :class:`Geometry`, :class:`PlotTransform`, :class:`Primitive`.
+
+Three records, and one rule that connects them:
+
+.. code-block:: text
+
+    subject  ──transform.compute──▶  Geometry  ──primitive.build──▶  [Layer]  ──▶  PlotSpec
+             (what to measure)      (numbers)   (how to draw it)     (the IR)
+
+A **transform** turns a subject (a :class:`~tsdynamics.data.Trajectory`, a system,
+an analysis result) into :class:`Geometry`: named, typed channels of plain
+``ndarray`` sitting in a declared :class:`~tsdynamics.viz._frames.Frame`.  A
+**primitive** turns that geometry into :class:`~tsdynamics.viz.spec.Layer`
+objects.  Neither knows about the other beyond the channel names, which is
+exactly what makes the primitive **swappable**: ``basins`` computes a label
+image once, and ``image`` / ``contour`` / ``points`` are three ways of drawing
+the same numbers.
+
+Why ``Geometry`` is not an IR
+-----------------------------
+It has no ``to_dict``, no schema version, and no renderer ever sees one — it
+dies at spec-build time.  The serializable IR is, and stays,
+:class:`~tsdynamics.viz.spec.PlotSpec`.  ``Geometry`` exists for one reason: if
+``compute`` took the primitive as an argument, every transform would have to
+implement every primitive and the swap would not be a swap.
+
+The channel *type* (``quantitative`` / ``nominal`` / ``ordinal`` / ``temporal``)
+is the one idea worth borrowing from Vega-Lite, and the library already needed
+it: the matplotlib renderer re-derives "these are category labels, give them a
+discrete colormap" from a ``meta`` side-channel.  A channel that says so itself
+is right on every backend.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+import numpy as np
+
+from .._frames import Frame, FrameSpace, OverlayRole, axis_name
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..spec import Layer, PlotKind, PlotSpec
+
+__all__ = [
+    "Channel",
+    "ChannelType",
+    "Geometry",
+    "Part",
+    "PlotTransform",
+    "Presentation",
+    "Primitive",
+    "Source",
+    "make_frame",
+]
+
+#: The two — and only two — source categories a transform can declare.
+#:
+#: ``"data"``
+#:     Computable from the samples you already have: a series, a point set, a
+#:     label image.  A ``data`` transform **also** accepts a system, because a
+#:     model gives you data for free (it integrates one and goes on).
+#: ``"model"``
+#:     Must evaluate or integrate the right-hand side at points that are *not*
+#:     in the input.  The greppable rule: if the transform calls
+#:     ``_rhs_numeric`` / ``jacobian`` / ``integrate`` / ``iterate`` / ``_step``
+#:     at a point not already in the input array, it is ``model``.  Handed a bare
+#:     :class:`~tsdynamics.data.Trajectory`, a ``model`` transform raises
+#:     :class:`~tsdynamics.errors.InvalidInputError` naming the system it needs.
+#:
+#: There is deliberately no third category.
+Source = Literal["data", "model"]
+
+
+class ChannelType(StrEnum):
+    """What the numbers in a :class:`Channel` *mean*.
+
+    Members
+    -------
+    QUANTITATIVE
+        A continuous magnitude (a coordinate, a speed, a field value).  The
+        default, and the only type that maps onto a continuous colour scale.
+    NOMINAL
+        Unordered category labels — basin indices, attractor ids, cluster
+        labels.  A renderer must give these a **discrete** colormap; drawing
+        them on a continuous scale is the live plotly ``basins_image`` bug.
+    ORDINAL
+        Ordered categories (a period number, a symbol rank).
+    TEMPORAL
+        Time.  Distinguished from ``QUANTITATIVE`` so an animator can find the
+        clock without guessing a channel name.
+    """
+
+    QUANTITATIVE = "quantitative"
+    NOMINAL = "nominal"
+    ORDINAL = "ordinal"
+    TEMPORAL = "temporal"
+
+
+@dataclass(frozen=True)
+class Channel:
+    """One named array of numbers plus what they mean.
+
+    Parameters
+    ----------
+    name : str
+        The channel name.  The vocabulary is the :class:`~tsdynamics.viz.spec.Layer`
+        one (``x`` / ``y`` / ``z`` / ``c`` / ``u`` / ``v`` / ``lo`` / ``hi`` /
+        ``err`` / ``cat`` / ``size`` / ``frames``) because a primitive's job is to
+        put channels into a layer; a transform may add its own names for a
+        primitive that knows them.
+    values : ndarray
+        The data.  Coerced with :func:`numpy.asarray` (never copied when it is
+        already an array), so a geometry is cheap to build.
+    type : ChannelType, optional
+        See :class:`ChannelType`.  Default :data:`ChannelType.QUANTITATIVE`.
+    label : str, optional
+        A human label for an axis / colorbar built from this channel.
+    """
+
+    name: str
+    values: np.ndarray
+    type: ChannelType = ChannelType.QUANTITATIVE
+    label: str | None = None
+
+    def __post_init__(self) -> None:
+        """Coerce ``values`` to an ndarray and ``type`` to a :class:`ChannelType`."""
+        object.__setattr__(self, "values", np.asarray(self.values))
+        object.__setattr__(self, "type", ChannelType(self.type))
+
+    @property
+    def is_categorical(self) -> bool:
+        """Whether this channel holds category labels (``NOMINAL`` / ``ORDINAL``)."""
+        return self.type in (ChannelType.NOMINAL, ChannelType.ORDINAL)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"Channel({self.name!r}, {self.values.shape}, {self.type.value})"
+
+
+def _as_channels(
+    channels: Mapping[str, Any],
+    types: Mapping[str, ChannelType | str] | None = None,
+) -> dict[str, Channel]:
+    """Coerce a ``name -> array | Channel`` mapping into ``name -> Channel``."""
+    types = types or {}
+    out: dict[str, Channel] = {}
+    for name, value in channels.items():
+        if isinstance(value, Channel):
+            out[name] = value
+        else:
+            out[name] = Channel(name, value, ChannelType(types.get(name, ChannelType.QUANTITATIVE)))
+    return out
+
+
+@dataclass(frozen=True, init=False)
+class Part:
+    """One drawable piece of a :class:`Geometry`.
+
+    Most geometries are a single part (an image, a curve, a point cloud).  A part
+    list exists for the genuinely plural cases the library already has — one
+    curve per component in a time series, the ``y = x`` diagonal *and* the
+    staircase of a cobweb, one polyline per contour level — where the pieces have
+    different lengths and different labels and so cannot be columns of one array.
+
+    Parameters
+    ----------
+    channels : mapping of str to Channel or ndarray
+        The part's data.  Bare arrays are wrapped as
+        :data:`~ChannelType.QUANTITATIVE` channels.
+    label : str, optional
+        The legend entry for this part.
+    style : mapping, optional
+        Per-part style overrides, in the canonical
+        :data:`~tsdynamics.viz.style.STYLE_KEYS` vocabulary.
+    primitive : str, optional
+        Pin this part to one primitive regardless of the caller's choice.  This
+        is for a geometry that is genuinely heterogeneous — a vector field with a
+        host orbit drawn over it is a ``quiver`` part *and* a ``line`` part, and
+        no single primitive draws both.  ``None`` (the default) means "draw me
+        with whatever primitive was chosen", which is the case that makes the
+        swap a swap.
+    """
+
+    channels: Mapping[str, Channel]
+    label: str | None = None
+    style: Mapping[str, Any] = field(default_factory=dict)
+    primitive: str | None = None
+
+    def __init__(
+        self,
+        channels: Mapping[str, Any],
+        label: str | None = None,
+        style: Mapping[str, Any] | None = None,
+        primitive: str | None = None,
+    ) -> None:
+        """Wrap bare arrays as :class:`Channel` values behind a read-only view.
+
+        Written by hand rather than generated so a transform author can pass
+        plain ``ndarray`` values (the overwhelmingly common case) while the
+        stored field keeps its honest :class:`Channel` type.
+        """
+        object.__setattr__(self, "channels", MappingProxyType(_as_channels(channels)))
+        object.__setattr__(self, "label", label)
+        object.__setattr__(self, "style", MappingProxyType(dict(style or {})))
+        object.__setattr__(self, "primitive", primitive)
+
+    def array(self, name: str) -> np.ndarray | None:
+        """Return channel ``name``'s array, or ``None`` when it is absent."""
+        chan = self.channels.get(name)
+        return None if chan is None else chan.values
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"Part({sorted(self.channels)}, label={self.label!r})"
+
+
+@dataclass(frozen=True)
+class Geometry:
+    """Plottable numbers in a declared coordinate frame — what a transform returns.
+
+    Parameters
+    ----------
+    transform : str
+        The name of the transform that produced this geometry.  Stamped onto
+        every :class:`~tsdynamics.viz.spec.Layer` it lowers to, which is what
+        makes per-source restyling inside an overlay
+        (``spec.style("basins", cmap=...)``) possible at all.
+    frame : Frame
+        The coordinate space, its dimension, and its axis names — the thing that
+        decides whether this geometry may share axes with another.  Build it with
+        :func:`make_frame` so the axis names come from the same normalization the
+        overlay check uses.
+    parts : sequence of Part
+        The drawable pieces, in draw order.  Passing ``channels=`` instead builds
+        a one-part geometry.
+    channels : mapping, optional
+        Shorthand for a single-part geometry.  Mutually exclusive with ``parts``.
+    axis_labels : tuple of str, optional
+        The label of each *drawn* axis (x, y, and z when 3-D).  This is
+        presentation text — ``"$x$"``, ``"x(t - 4)"`` — as opposed to
+        :attr:`Frame.axes`, which are the normalized names the overlay check
+        compares.  A ``time`` frame is ``ndim=1`` but draws two axes, so the two
+        tuples legitimately differ in length.
+    axis_limits : tuple, optional
+        Optional ``(lo, hi)`` per drawn axis (``None`` to autoscale that axis) —
+        for a transform that samples a box and must draw exactly that box.
+    axis_scales : tuple, optional
+        Optional ``"linear"`` / ``"log"`` / ``"symlog"`` per drawn axis (``None``
+        to leave the default).  For the transforms whose quantity is *only*
+        readable on a logarithmic axis: a power spectrum on linear axes is a
+        spike at ``f = 0`` and a flat line, which is a picture of nothing.  It is
+        a default, not a lock — ``spec.rescale(y="linear")`` still wins, because
+        the tweak runs after the spec is assembled.
+    kind : PlotKind, optional
+        The semantic kind of the assembled spec, when it depends on the data
+        rather than on the transform (a portrait is 2-D or 3-D).  ``None`` uses
+        the transform's declared kind.
+    primitive : str, optional
+        Override the transform's default primitive **for this geometry only**.
+        The default sometimes depends on the data rather than on the transform:
+        a discrete-map orbit is a point sequence and a flow is a connected
+        curve, and drawing either as the other is wrong.  An explicit
+        ``primitive=`` from the caller still wins, and the override is checked
+        against the transform's declared row like any other choice.
+    primitives : frozenset of str, optional
+        Narrow the transform's declared row **for this geometry**.  A row is a
+        statement about the transform; some transforms produce geometry whose
+        shape decides which of those primitives can honestly draw it (a 2-D
+        spatial field is an image, its 1-D profile is a line, and drawing either
+        with the other's primitive is a plot of nothing).  ``None`` (the default)
+        keeps the whole row.  The narrowing can only remove, never add.
+    aspect : {"auto", "equal"}, optional
+        Override the transform's declared aspect for this geometry (a 2-D field
+        is drawn on equal axes, its 1-D profile is not).
+    title : str, optional
+        Figure title.
+    color_label : str, optional
+        The colorbar label, when this geometry has a colour dimension.
+    legend : bool, optional
+        Force a legend on / off for this geometry, overriding the transform's
+        :attr:`Presentation.legend` policy.  For the case where legibility
+        depends on the *data* — a field with a host orbit over it wants a legend,
+        the same field alone does not.
+    clim : tuple of float, optional
+        An explicit colour range — for a geometry whose colour scale must be
+        fixed across frames rather than inferred from the drawn one.
+    meta : mapping, optional
+        Provenance, carried onto the spec.  **Every auto-chosen default a
+        model transform made belongs here** (the sampled region, the grid
+        resolution, the integration time), because the alternative is a plot of
+        half the story with nothing to say so.
+
+    Notes
+    -----
+    A ``Geometry`` is frozen and holds only arrays and plain data.  It is not
+    serializable, has no schema version, and no renderer ever receives one.
+    """
+
+    transform: str
+    frame: Frame
+    parts: tuple[Part, ...] = ()
+    axis_labels: tuple[str, ...] = ()
+    axis_limits: tuple[tuple[float, float] | None, ...] = ()
+    axis_scales: tuple[str | None, ...] = ()
+    kind: PlotKind | None = None
+    primitive: str | None = None
+    primitives: frozenset[str] | None = None
+    aspect: Literal["auto", "equal"] | None = None
+    title: str = ""
+    color_label: str | None = None
+    legend: bool | None = None
+    clim: tuple[float, float] | None = None
+    meta: Mapping[str, Any] = field(default_factory=dict)
+
+    def __init__(
+        self,
+        transform: str,
+        frame: Frame,
+        parts: Sequence[Part] | None = None,
+        *,
+        channels: Mapping[str, Any] | None = None,
+        label: str | None = None,
+        style: Mapping[str, Any] | None = None,
+        axis_labels: Sequence[str] = (),
+        axis_limits: Sequence[tuple[float, float] | None] = (),
+        axis_scales: Sequence[str | None] = (),
+        kind: PlotKind | None = None,
+        primitive: str | None = None,
+        primitives: Sequence[str] | None = None,
+        aspect: Literal["auto", "equal"] | None = None,
+        title: str = "",
+        color_label: str | None = None,
+        legend: bool | None = None,
+        clim: tuple[float, float] | None = None,
+        meta: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Build a geometry from either ``parts`` or the single-part ``channels=``."""
+        from tsdynamics.errors import InvalidParameterError
+
+        if (parts is None) == (channels is None):
+            raise InvalidParameterError(
+                "Geometry takes exactly one of parts= (several drawable pieces) or "
+                "channels= (the single-part shorthand)."
+            )
+        resolved = (
+            tuple(parts)
+            if parts is not None
+            else (Part(channels or {}, label=label, style=style or {}),)
+        )
+        object.__setattr__(self, "transform", str(transform))
+        object.__setattr__(self, "frame", frame)
+        object.__setattr__(self, "parts", resolved)
+        object.__setattr__(self, "axis_labels", tuple(str(a) for a in axis_labels))
+        object.__setattr__(self, "axis_limits", tuple(axis_limits))
+        object.__setattr__(self, "axis_scales", tuple(axis_scales))
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "primitive", primitive)
+        object.__setattr__(
+            self, "primitives", frozenset(primitives) if primitives is not None else None
+        )
+        object.__setattr__(self, "aspect", aspect)
+        object.__setattr__(self, "title", str(title))
+        object.__setattr__(self, "color_label", color_label)
+        object.__setattr__(self, "legend", legend)
+        object.__setattr__(self, "clim", clim)
+        object.__setattr__(self, "meta", MappingProxyType(dict(meta or {})))
+
+    # -- introspection (the rung-4 escape hatch) ---------------------------
+
+    @property
+    def space(self) -> FrameSpace:
+        """The coordinate space this geometry is drawn in."""
+        return self.frame.space
+
+    @property
+    def axes(self) -> tuple[str, ...]:
+        """The normalized coordinate names of the frame (what the overlay check compares)."""
+        return self.frame.axes
+
+    @property
+    def channels(self) -> Mapping[str, Channel]:
+        """The channels of a **single-part** geometry.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            If this geometry has several parts — returning the first part's
+            channels would silently hide the rest, which is the class of quiet
+            wrongness this whole layer exists to remove.  Use :attr:`parts`.
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        if len(self.parts) != 1:
+            raise InvalidParameterError(
+                f"geometry {self.transform!r} has {len(self.parts)} parts, so it has no single "
+                "channel set; iterate g.parts (each has .channels) instead."
+            )
+        return self.parts[0].channels
+
+    def channel_names(self) -> frozenset[str]:
+        """Every channel name present in **any** part (what a primitive is checked against)."""
+        return frozenset(name for part in self.parts for name in part.channels)
+
+    def __len__(self) -> int:
+        """Return the number of drawable parts."""
+        return len(self.parts)
+
+    def __iter__(self) -> Any:
+        """Iterate the drawable parts, in draw order."""
+        return iter(self.parts)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return (
+            f"Geometry({self.transform!r}, frame={self.frame.describe()}, "
+            f"parts={len(self.parts)}, channels={sorted(self.channel_names())})"
+        )
+
+
+def make_frame(space: FrameSpace | str, ndim: int, labels: Sequence[str | None]) -> Frame:
+    """Build a :class:`~tsdynamics.viz._frames.Frame` from presentation labels.
+
+    The axis *names* a frame compares are the labels put through
+    :func:`~tsdynamics.viz._frames.axis_name` — the same normalization the
+    overlay check applies to a hand-built spec — so a transform that labels its
+    axis ``"$x$"`` and one that labels it ``"x"`` are recognised as the same
+    coordinate.  Missing labels become
+    :data:`~tsdynamics.viz._frames.ANY_AXIS` (an explicit "I did not say"),
+    never a silently-compatible blank.
+
+    Parameters
+    ----------
+    space : FrameSpace or str
+        The coordinate space.
+    ndim : int
+        How many of the drawn axes are *coordinates* of that space (a ``time``
+        frame is 1: the vertical axis is a free value axis).
+    labels : sequence of str or None
+        The axis labels, in axis order.  Only the first ``ndim`` are used; a
+        shorter sequence is padded.
+    """
+    names = [axis_name(label) for label in list(labels)[:ndim]]
+    names += [axis_name(None)] * (ndim - len(names))
+    return Frame(FrameSpace(space), ndim, tuple(names))
+
+
+# ---------------------------------------------------------------------------
+# Primitive
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Primitive:
+    """How geometry is drawn — one or more marks plus a data-shaping rule.
+
+    "Primitive" does not mean simple.  A basin image, a quiver field, a 3-D
+    surface and a marching-squares contour are all primitives; what they share is
+    that they consume channels and emit :class:`~tsdynamics.viz.spec.Layer`
+    objects, and that they know nothing about which transform produced the
+    numbers.
+
+    Parameters
+    ----------
+    name : str
+        The name used in ``primitive=`` and in a transform's declared row.
+    build : callable
+        ``build(geometry, part, options) -> list[Layer]``.  Called once per
+        :class:`Part`; the returned layers are concatenated in part order.
+    marks : frozenset of PlotKind
+        The layer marks this primitive lowers to.  Documentation and governance
+        only — no new :class:`~tsdynamics.viz.spec.PlotKind` member is ever
+        needed to add a primitive, which is the point.
+    requires : frozenset of str
+        The channel names a part must carry for this primitive to draw it.  The
+        declared-cell check is exactly ``requires <= geometry.channel_names()``,
+        so a row cannot claim a pair that cannot physically work.
+    frames : frozenset of FrameSpace, optional
+        The coordinate spaces this primitive can draw in.  ``None`` means any.
+    options : frozenset of str, optional
+        The keyword names this primitive accepts (``bins``, ``levels``, …).
+        Anything else passed through ``primitive_options`` raises rather than
+        being silently dropped.
+    emits_frame : FrameSpace, optional
+        Set when the primitive *changes* the coordinate space of what it draws
+        (a space-filling-curve image consumes a 1-D series and emits a lattice).
+        ``None`` (the default) keeps the geometry's frame.
+    doc : str, optional
+        One line, shown by :func:`tsdynamics.viz.compatibility`.
+    """
+
+    name: str
+    build: Callable[[Geometry, Part, Mapping[str, Any]], list[Layer]]
+    marks: frozenset[PlotKind]
+    requires: frozenset[str] = frozenset()
+    frames: frozenset[FrameSpace] | None = None
+    options: frozenset[str] = frozenset()
+    emits_frame: FrameSpace | None = None
+    doc: str = ""
+
+    def accepts_frame(self, space: FrameSpace) -> bool:
+        """Whether this primitive can draw in coordinate space ``space``."""
+        return self.frames is None or space in self.frames
+
+    def __repr__(self) -> str:  # noqa: D105
+        return f"Primitive({self.name!r})"
+
+
+# ---------------------------------------------------------------------------
+# Presentation + the transform record
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Presentation:
+    """Presentation intent a transform declares once, honored by every backend.
+
+    This is where a *cross-backend* presentation fact lives — the aspect ratio a
+    phase portrait needs, the discrete colormap a label image needs.  Keeping it
+    on the transform rather than in one renderer's private preset table is not
+    cosmetic: the library shipped a live bug where ``basins_image`` drew with a
+    categorical colormap on matplotlib and plotly's continuous default on
+    plotly, because only matplotlib had the table.
+
+    Parameters
+    ----------
+    aspect : {"auto", "equal"}, optional
+        The axes aspect ratio.  ``"equal"`` for anything drawn in a metric space
+        (a phase portrait, a basin image, a section).
+    autocolor : bool, optional
+        Run :meth:`~tsdynamics.viz.spec.PlotSpec.autocolor` on the assembled
+        spec — attach a colorbar and infer the colour range from the drawn data.
+    legend : bool, optional
+        ``True`` / ``False`` force a legend; ``None`` (default) attaches one when
+        more than one part carries a label.
+    cmap : str, optional
+        The default colormap for this transform's colour dimension.
+    discrete : bool, optional
+        Force a discrete (categorical) colormap.  Usually unnecessary — a
+        :data:`~ChannelType.NOMINAL` colour channel implies it — but available
+        for a transform whose labels arrive as floats.
+    """
+
+    aspect: Literal["auto", "equal"] = "auto"
+    autocolor: bool = False
+    legend: bool | None = None
+    cmap: str | None = None
+    discrete: bool = False
+
+
+#: What a transform's ``example`` callable must return: the subject to run the
+#: transform on, and the options to run it with.
+ExampleFactory = Callable[[str], "tuple[Any, Mapping[str, Any]]"]
+
+
+@dataclass(frozen=True)
+class PlotTransform:
+    """One registered way of turning a subject into plottable geometry.
+
+    The record **is** the contract: the compatibility matrix is its
+    :attr:`primitives` row, declared at the definition site so it cannot rot
+    away from the code that computes the geometry.
+
+    Parameters
+    ----------
+    name : str
+        The name used in ``ts.plot(subject, "<name>")`` and as the registry key.
+    source : {"data", "model"}
+        See :data:`Source`.  There is no third category.
+    compute : callable
+        ``compute(subject, **options) -> Geometry``.
+    default_primitive : str
+        The primitive used when the caller names none.  Must be in
+        :attr:`primitives`.
+    primitives : frozenset of str
+        **The declared compatibility row** — every primitive that may draw this
+        transform's geometry.  Anything else raises
+        :class:`~tsdynamics.errors.InvalidParameterError`; never a fallback,
+        never a warning.  A capability mismatch (this backend cannot draw that
+        mark) is a different thing and keeps its warn-and-fall-back behaviour;
+        a *semantic* mismatch has no correct drawing, so there is nothing to
+        fall back to.
+    exclusive : frozenset of str, optional
+        The subset of :attr:`primitives` that is valid **only** here (a basin
+        boundary, a Wada overlay).  Every exclusive primitive must appear in
+        exactly one row; the governance gate enforces it.
+    frame : FrameSpace or tuple of FrameSpace
+        The coordinate space(s) this transform draws in.  The axis *names* come
+        from the geometry, not from here.
+    role : OverlayRole
+        Draw order by meaning — a field under a curve under a marker — so an
+        overlay call is order-free.
+    ndim : int or tuple of int
+        How many coordinate axes the frame has (a portrait declares ``(2, 3)``).
+    requires : str, optional
+        An **optional dependency** distribution name this transform needs
+        (``"hilbertplot"``).  Listed as *unavailable* rather than omitted when
+        absent, because a silently-missing row reads as "the feature does not
+        exist".
+    doc : str, optional
+        One line, shown by :func:`tsdynamics.viz.compatibility`.
+    kind : PlotKind, optional
+        The semantic kind of the assembled spec.  A geometry may override it
+        (``Geometry.kind``) when it depends on the data.
+    presentation : Presentation, optional
+        See :class:`Presentation`.
+    analysis : str, optional
+        The dotted path of the analysis function this transform adapts.  **A
+        transform is a thin adapter and owns no new math**: anything needing new
+        numerics gets an analysis function, with its own citation and its own
+        tests, first.  ``None`` for a transform that only reshapes its input.
+    example : callable, optional
+        ``example(primitive) -> (subject, options)`` — a small, fast subject the
+        governance gate can build and render this transform on, for the given
+        primitive.  It is on the record rather than in the test file so that
+        adding a transform is **one registration and nothing else**: the gate
+        picks the new row up with no test edit.
+    """
+
+    name: str
+    source: Source
+    compute: Callable[..., Geometry]
+    default_primitive: str
+    primitives: frozenset[str]
+    frame: tuple[FrameSpace, ...]
+    role: OverlayRole
+    ndim: tuple[int, ...]
+    exclusive: frozenset[str] = frozenset()
+    requires: str | None = None
+    doc: str = ""
+    kind: PlotKind | None = None
+    presentation: Presentation = field(default_factory=Presentation)
+    analysis: str | None = None
+    example: ExampleFactory | None = None
+
+    @property
+    def available(self) -> bool:
+        """Whether this transform's optional dependency (:attr:`requires`) is importable."""
+        if self.requires is None:
+            return True
+        from importlib.util import find_spec
+
+        try:
+            return find_spec(self.requires.replace("-", "_")) is not None
+        except (ImportError, ValueError):  # pragma: no cover - defensive
+            return False
+
+    def describe_primitives(self) -> tuple[str, ...]:
+        """Return the row with the reading marks: ``*`` default, ``!`` exclusive.
+
+        Sorted, so the row is stable output rather than set-iteration order.
+        """
+        out = []
+        for name in sorted(self.primitives):
+            mark = "*" if name == self.default_primitive else ""
+            mark += "!" if name in self.exclusive else ""
+            out.append(f"{name}{mark}")
+        return tuple(out)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return (
+            f"PlotTransform({self.name!r}, source={self.source!r}, "
+            f"primitives={list(self.describe_primitives())})"
+        )
+
+
+def spec_of(geometry: Geometry, transform: PlotTransform, layers: list[Layer]) -> PlotSpec:
+    """Assemble the :class:`~tsdynamics.viz.spec.PlotSpec` for a lowered geometry.
+
+    The one assembler every transform shares.  It reads only what the geometry
+    and the transform *declared* — the kind, the axis labels and limits, the
+    colour label and range, the presentation intent — so a new transform gets a
+    correct spec without writing any spec-assembly code, which is the whole of
+    the "one registration and nothing else" claim.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        The computed geometry (supplies title, axes, colour, meta and frame).
+    transform : PlotTransform
+        The record (supplies the semantic kind and the presentation intent).
+    layers : list of Layer
+        The lowered layers, in draw order.
+
+    Returns
+    -------
+    PlotSpec
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    from ..spec import Axis, Colorbar, Legend, PlotKind, PlotSpec
+
+    kind = geometry.kind if geometry.kind is not None else transform.kind
+    if kind is None:  # pragma: no cover - registration rejects this
+        raise InvalidParameterError(
+            f"transform {transform.name!r} declares no semantic kind and its geometry "
+            "supplied none; a spec cannot be assembled without one."
+        )
+    kind = PlotKind(kind)
+
+    labels = list(geometry.axis_labels) + [""] * 3
+    limits = list(geometry.axis_limits) + [None] * 3
+    scales = list(geometry.axis_scales) + [None] * 3
+    three_d = geometry.frame.ndim >= 3 or any(lyr.kind in _THREE_D_MARKS for lyr in layers)
+
+    present = transform.presentation
+    labelled = sum(1 for lyr in layers if lyr.label)
+    legend = geometry.legend
+    if legend is None:
+        legend = present.legend if present.legend is not None else labelled > 1
+
+    spec = PlotSpec(
+        kind=kind,
+        ndim=cast("Any", 3 if three_d else max(1, min(2, geometry.frame.ndim))),
+        aspect=geometry.aspect if geometry.aspect is not None else present.aspect,
+        title=geometry.title,
+        x=_axis(Axis, labels[0], limits[0], scales[0]),
+        y=_axis(Axis, labels[1], limits[1], scales[1]),
+        z=_axis(Axis, labels[2], limits[2], scales[2]) if three_d else None,
+        clim=geometry.clim,
+        colorbar=Colorbar(label=geometry.color_label or "", cmap=present.cmap)
+        if _has_color(layers, geometry)
+        else None,
+        legend=Legend() if legend else None,
+        layers=layers,
+        meta=dict(geometry.meta),
+        frame=geometry.frame,
+    )
+    if present.discrete and spec.colorbar is not None:
+        spec.colorbar.discrete = True
+    if present.autocolor:
+        spec.autocolor()
+    return spec
+
+
+def _axis(axis_cls: Any, label: str, limits: Any, scale: str | None) -> Any:
+    """Build one :class:`~tsdynamics.viz.spec.Axis`, honouring a declared scale."""
+    if scale is None:
+        return axis_cls(label=label, limits=limits)
+    return axis_cls(label=label, limits=limits, scale=scale)
+
+
+#: Marks that force a 3-D axes (kept in step with ``spec._THREE_D_MARKS``).
+_THREE_D_MARKS: frozenset[str] = frozenset({"line3d", "surface3d"})
+
+
+def _has_color(layers: list[Layer], geometry: Geometry) -> bool:
+    """Whether the assembled spec has a colour dimension worth a colorbar."""
+    if geometry.color_label is not None or geometry.clim is not None:
+        return True
+    return any("c" in lyr.data or str(lyr.kind) in ("image", "surface3d") for lyr in layers)

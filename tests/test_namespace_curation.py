@@ -28,7 +28,11 @@ from tsdynamics import analysis
 
 # ── the curated top-level surface ────────────────────────────────────────────────
 
-#: The exact curated ``tsdynamics.__all__`` after WS-NAMESPACE (~30 names).
+#: The exact curated ``tsdynamics.__all__``: WS-NAMESPACE's ~30 names plus the two
+#: v6 plotting front doors (``plot`` / ``T``).  Plotting is the library's headline
+#: feature, so the one-liner has to be reachable without a submodule hop; every
+#: other plotting name (``spec`` / ``geometry`` / ``draw`` / ``compatibility``)
+#: stays under ``ts.viz`` so the namespace does not drift back to a flat dump.
 _CURATED_TOP_LEVEL = {
     "__version__",
     # family bases (subclass these)
@@ -45,6 +49,9 @@ _CURATED_TOP_LEVEL = {
     "ProjectedSystem",
     "StroboscopicMap",
     "TangentSystem",
+    # the two plotting front doors (lazily resolved, like ``viz``)
+    "plot",
+    "T",
     # the six promoted headline analyses
     "lyapunov_spectrum",
     "bifurcation_diagram",
@@ -163,6 +170,43 @@ def test_plain_import_pulls_no_viz_or_plot_library():
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_plot_front_door_resolves_lazily_and_is_cached():
+    """``ts.plot`` / ``ts.T`` are advertised, but cost nothing until touched.
+
+    Naming them in ``__all__`` must not make ``import tsdynamics`` import a
+    plotting layer — that is the whole reason ``viz`` itself is lazy — so both
+    resolve through ``__getattr__`` and cache on first access.
+    """
+    code = (
+        "import sys, tsdynamics as ts\n"
+        "assert 'plot' in ts.__all__ and 'T' in ts.__all__\n"
+        "assert 'tsdynamics.viz' not in sys.modules, 'naming plot imported viz'\n"
+        "p = ts.plot\n"
+        "assert 'tsdynamics.viz.transforms' in sys.modules\n"
+        "assert ts.plot is p and ts.T is ts.T\n"
+        "assert 'matplotlib' not in sys.modules, 'the front door pulled in matplotlib'\n"
+        "import tsdynamics.viz.transforms as tr\n"
+        "assert ts.plot is tr.plot and ts.T is tr.T\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_viz_transforms_subpackage_is_not_shadowed_by_a_function():
+    """``ts.viz.transforms`` is the **module**, never a listing function.
+
+    The v4 namespace work removed exactly this defect once already (a function
+    shadowing a subpackage of the same name).  The filtered listing is therefore
+    ``ts.viz.plot_transforms(...)``, named after the registry it reads.
+    """
+    import types
+
+    assert isinstance(ts.viz.transforms, types.ModuleType)
+    assert ts.viz.transforms.Geometry is not None
+    assert callable(ts.viz.plot_transforms)
+    assert {t.source for t in ts.viz.plot_transforms()} == {"data", "model"}
 
 
 # ── the analysis tree ────────────────────────────────────────────────────────────

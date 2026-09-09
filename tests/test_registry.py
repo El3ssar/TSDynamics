@@ -227,10 +227,11 @@ def test_sde_samples_complete() -> None:
 def test_solver_registry_is_not_duplicated_in_registry_module() -> None:
     """Solvers register in ``tsdynamics.solvers``, never in ``registry``.
 
-    ``registry`` keeps only the *reserved* generic ``analyses``/``renderers``
-    seams; the solver registry is the richer ``SolverSpec`` table in
-    ``tsdynamics.solvers``. A stray ``registry.solvers`` would resurrect the
-    two-registries-for-one-thing split this guard exists to prevent.
+    ``registry`` keeps only the *reserved* generic
+    ``analyses``/``renderers``/``plot_transforms`` seams; the solver registry is
+    the richer ``SolverSpec`` table in ``tsdynamics.solvers``. A stray
+    ``registry.solvers`` would resurrect the two-registries-for-one-thing split
+    this guard exists to prevent.
     """
     from tsdynamics import solvers
     from tsdynamics.registry import Registry
@@ -240,5 +241,45 @@ def test_solver_registry_is_not_duplicated_in_registry_module() -> None:
     )
     assert isinstance(registry.analyses, Registry)
     assert isinstance(registry.renderers, Registry)
+    assert isinstance(registry.plot_transforms, Registry)
     # The real solver registry exposes the SolverSpec-based API.
     assert hasattr(solvers, "register") and hasattr(solvers, "available")
+
+
+def test_plot_transform_registry_is_created_empty_and_filled_by_viz() -> None:
+    """``registry.plot_transforms`` mirrors ``renderers``: empty until ``viz`` loads.
+
+    The registry module is imported while ``tsdynamics`` itself is still
+    initialising, so it may only depend on the standard library — which is the
+    same reason the plot transforms cannot be registered there.  They arrive when
+    ``tsdynamics.viz`` is first imported, so a plain ``import tsdynamics`` still
+    pulls in no plotting machinery.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import tsdynamics as ts\n"
+        "from tsdynamics import registry\n"
+        "assert len(registry.plot_transforms) == 0, 'transforms registered too early'\n"
+        "ts.viz\n"
+        "assert 'phase_portrait' in registry.plot_transforms\n"
+        "assert registry.plot_transforms.kind == 'plot transform'\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_plot_transform_entry_point_group_is_declared() -> None:
+    """Out-of-tree transforms have a declared, discovered entry-point group.
+
+    Third-party plots must be genuinely first-class — the same registration path,
+    the same compatibility row, the same front door — which needs the group to be
+    in ``ALL_GROUPS`` *and* actually loaded by ``viz.discover_plugins``.
+    """
+    import tsdynamics.viz as viz
+    from tsdynamics import plugins
+
+    assert plugins.PLOT_TRANSFORMS_GROUP == "tsdynamics.plot_transforms"
+    assert plugins.PLOT_TRANSFORMS_GROUP in plugins.ALL_GROUPS
+    assert viz.TRANSFORMS_GROUP == plugins.PLOT_TRANSFORMS_GROUP

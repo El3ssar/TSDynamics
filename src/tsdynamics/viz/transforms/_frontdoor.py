@@ -1,0 +1,198 @@
+"""``ts.plot`` — the one-liner front door over transforms and composition.
+
+Three rungs, one function, one return type:
+
+.. code-block:: python
+
+    ts.plot(traj)                                     # what you already had
+    ts.plot(traj, "delay_embedding", tau=7)           # a transform by name
+    ts.plot(duff, "basins", "attractors", "trajectory", "fixed_points")
+
+The rule that keeps it one function rather than three: **a positional string (or
+a** :func:`~tsdynamics.viz.transforms.T` **) is a transform to apply to the
+subject; anything else is a subject.**  With no transform named, this is exactly
+:func:`tsdynamics.viz.plot`, which stays the composition layer underneath — so
+there is one merge policy, one frame check, one z-ordering, and one return type
+(always a :class:`~tsdynamics.viz.spec.PlotSpec`, which renders itself).
+
+Draw order is by **role**, not by argument order, so the call is order-free:
+``plot(basins, traj)`` and ``plot(traj, basins)`` are the same picture.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ._registry import TransformCall, build_spec, get
+
+__all__ = ["plot"]
+
+
+def _is_selector(thing: Any) -> bool:
+    """Whether a positional argument names a *transform* rather than a subject."""
+    return isinstance(thing, (str, TransformCall))
+
+
+def _split_style(options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split a transform's options into ``(build_options, style)``.
+
+    A per-transform style keyword inside an overlay (``T("basins", alpha=0.55)``)
+    is applied to *that* transform's layers only — which is the whole point of
+    naming them separately.  The split keys off the canonical
+    :data:`~tsdynamics.viz.style.STYLE_KEYS` vocabulary and its aliases, so
+    ``lw=`` and ``linewidth=`` are both recognised as style.
+    """
+    style_names = _style_names()
+    build: dict[str, Any] = {}
+    style: dict[str, Any] = {}
+    for name, value in options.items():
+        (style if name in style_names else build)[name] = value
+    return build, style
+
+
+def _style_names() -> frozenset[str]:
+    """Return the canonical style vocabulary plus every alias, as one lookup set."""
+    from ..style import STYLE_KEYS
+
+    names = set(STYLE_KEYS)
+    for key in STYLE_KEYS.values():
+        names.update(key.aliases)
+    return frozenset(names)
+
+
+def _build_one(
+    subject: Any, selector: str | TransformCall, shared: dict[str, Any], primitive: str | None
+) -> Any:
+    """Build one transform's spec, merging the shared options under its own."""
+    from ..style import normalize_style
+
+    if isinstance(selector, TransformCall):
+        name, own, chosen = selector.name, dict(selector.options), selector.primitive
+    else:
+        name, own, chosen = selector, {}, None
+    chosen = chosen if chosen is not None else primitive
+
+    # A shared keyword only reaches a transform that can accept it: `ts.plot(sys,
+    # "basins", "trajectory", grid=400)` must not hand `grid=` to `trajectory`.
+    # A *style* keyword is accepted by every transform — it is applied to the
+    # layers, not passed to the compute — so it must survive this filter, or
+    # `ts.plot(traj, "phase_portrait", color="red")` (the most obvious styling
+    # call in the API) silently drops the colour.
+    record = get(name.partition(".")[0])
+    accepted = _accepted_names(record) | _style_names()
+    merged = {k: v for k, v in shared.items() if k in accepted}
+    merged.update(own)
+    build, style = _split_style(merged)
+
+    spec = build_spec(subject, name, primitive=chosen, **build)
+    if style:
+        canon = normalize_style(style)
+        for layer in spec.layers:
+            layer.style = {**layer.style, **canon}
+    return spec
+
+
+def _accepted_names(record: Any) -> frozenset[str]:
+    """Return the keyword names a transform accepts (compute parameters + primitive options)."""
+    import inspect
+
+    from ._registry import row_option_names
+
+    params = inspect.signature(record.compute).parameters
+    return frozenset(params) | row_option_names(record) | {"primitive_options"}
+
+
+def plot(
+    *things: Any,
+    layout: str = "overlay",
+    primitive: str | None = None,
+    on: str | None = None,
+    **kw: Any,
+) -> Any:
+    """Plot one or more things, optionally through named transforms.
+
+    Parameters
+    ----------
+    *things
+        The **subject** (a :class:`~tsdynamics.data.Trajectory`, a system, an
+        analysis result, a :class:`~tsdynamics.viz.spec.PlotSpec`) followed by
+        any number of **transform selectors** — a name (``"basins"``,
+        ``"basins.boundary"``) or a :func:`~tsdynamics.viz.transforms.T` carrying
+        that transform's own options.  With no selector, every positional is a
+        subject and this is :func:`tsdynamics.viz.plot`.
+    layout : {"overlay", "stack", "row", "grid"}, optional
+        ``"overlay"`` (the default) draws everything on one set of axes; the
+        others give each thing its own panel.  Overlay legality is *frame*
+        compatibility — the same coordinate space, dimension and axes — so a
+        basin image, its attractors, an orbit and the equilibria share one axes,
+        while an ``(x, y)`` portrait refuses an ``(x, z)`` overlay.
+    primitive : str, optional
+        How to draw the named transform(s) — validated against each one's
+        declared row, so an invalid pair raises (naming the valid set) rather
+        than quietly drawing something else.  A ``T(..., primitive=...)`` wins
+        over this for its own transform.
+    on : {"force"}, optional
+        Overlay a deliberate frame mismatch with a warning instead of raising.
+    **kw
+        Options shared by the named transforms — routed only to the transforms
+        that actually accept them, so ``plot(sys, "basins", "trajectory",
+        grid=400)`` does not hand ``grid=`` to ``trajectory``.  With no selector,
+        forwarded to each subject's ``to_plot_spec`` (as
+        :func:`tsdynamics.viz.plot` does).
+
+    Returns
+    -------
+    PlotSpec
+        Always — which is why a result feeds straight back in.  It renders
+        itself: ``.plot()`` / ``.save("fig.pdf")`` / ``.render("plotly")``.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If transform names are given without exactly one subject, if a
+        (transform, primitive) pair is not declared, or if the frames do not
+        allow an overlay.
+
+    Examples
+    --------
+    Every name below is a **registered** transform — see
+    :func:`tsdynamics.viz.compatibility` for the current list, or the
+    documentation gallery, which is generated from it.
+
+    >>> ts.plot(traj)                                        # doctest: +SKIP
+    >>> ts.plot(traj, "delay_embedding", tau=7)              # doctest: +SKIP
+    >>> ts.plot(traj, "phase_portrait", primitive="density") # doctest: +SKIP
+    >>> ts.plot(fhn, "flow_speed", "streamlines", "nullclines",
+    ...         xlim=(-2.5, 2.5), ylim=(-1.0, 2.0))          # doctest: +SKIP
+    >>> ts.plot(vdp, ts.T("flow_speed", log=True, alpha=0.6),
+    ...              ts.T("streamlines", seeds=6, color="w")) # doctest: +SKIP
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    from ..compose import plot as compose_plot
+
+    items = (
+        list(things[0])
+        if len(things) == 1 and isinstance(things[0], (list, tuple))
+        else list(things)
+    )
+    selectors = [t for t in items if _is_selector(t)]
+    subjects = [t for t in items if not _is_selector(t)]
+
+    if not selectors:
+        if primitive is not None:
+            raise InvalidParameterError(
+                "primitive= selects how a *named transform* is drawn, but no transform was "
+                "named; pass one, e.g. ts.plot(traj, 'phase_portrait', primitive='density')."
+            )
+        return compose_plot(*subjects, layout=layout, on=on, **kw)
+
+    if len(subjects) != 1:
+        raise InvalidParameterError(
+            f"naming transform(s) {[str(s) for s in selectors]} needs exactly one subject to "
+            f"apply them to, got {len(subjects)}. Build each subject's spec separately and "
+            "compose them with tsdynamics.viz.plot(...)."
+        )
+    subject = subjects[0]
+    specs = [_build_one(subject, sel, dict(kw), primitive) for sel in selectors]
+    return compose_plot(*specs, layout=layout, on=on)

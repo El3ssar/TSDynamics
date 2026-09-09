@@ -55,6 +55,7 @@ __all__ = [
     "categories",
     "families",
     "get",
+    "plot_transforms",
     "renderers",
 ]
 
@@ -427,6 +428,42 @@ analyses = Registry("analysis")
 #: resolves a backend through this registry; out-of-tree backends are discovered
 #: via the ``tsdynamics.renderers`` entry-point group (see :mod:`tsdynamics.viz`).
 renderers = Registry("renderer")
+
+#: Registered **plot transforms** — ``name → PlotTransform`` (see
+#: :mod:`tsdynamics.viz.transforms`).  A transform turns a subject (a trajectory,
+#: a system, an analysis result) into plottable *geometry*; a **primitive** turns
+#: that geometry into layers.  The record carries the transform's declared
+#: compatibility row, so the matrix lives beside the code that computes the
+#: numbers and cannot rot away from it.
+#:
+#: Created **empty** and populated lazily, like :data:`renderers`: the in-tree
+#: transforms register when :mod:`tsdynamics.viz` is first imported, and
+#: out-of-tree ones arrive through the ``tsdynamics.plot_transforms``
+#: entry-point group.
+#:
+#: **Naming note.** ``CLAUDE.md`` records that there is no ``transforms``
+#: registry and that one must not be re-added.  That prohibition is about the
+#: *generic time-series* package the v6 scope surgery deleted (PSD, detrending,
+#: filters, feature extraction) — a different concept wearing the same word.
+#: This registry is named ``plot_transforms`` (group
+#: ``tsdynamics.plot_transforms``) precisely so the two can never be confused.
+#:
+#: **The scope boundary is a checked rule, not a convention.**  The one member of
+#: the deleted layer re-admitted here is the **power spectrum of a trajectory**,
+#: under the rule:
+#:
+#:     *The PSD of a phase-space trajectory is a phase-space diagnostic; a PSD
+#:     toolbox with windowing options, detrending and filter design is not.*
+#:
+#: ``S(f)`` of an orbit is how the literature separates periodic from
+#: quasiperiodic from chaotic motion, so a plotting module claiming completeness
+#: cannot omit it.  Nothing else follows it in: the admitted set is the frozen
+#: constant ``tsdynamics.viz.transforms.ADMITTED_SERIES_DIAGNOSTICS``, the
+#: forbidden set is ``EXCLUDED_SERIES_TOOLBOX``, and
+#: ``tests/test_viz_transforms.py`` fails if either changes without a deliberate
+#: edit.  Without that gate, ``spectrogram`` and ``detrend`` are back within two
+#: releases and the scope decision is undone by accretion.
+plot_transforms = Registry("plot transform")
 
 
 def __dir__() -> list[str]:

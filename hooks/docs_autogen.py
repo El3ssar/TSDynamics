@@ -59,6 +59,7 @@ import catalog as _catalog  # noqa: E402  (docs/_tooling)
 import equations as _equations  # noqa: E402
 import field_movies as _field_movies  # noqa: E402
 import figures as _figures  # noqa: E402
+import gallery as _gallery  # noqa: E402
 import plot_dt as _plot_dt  # noqa: E402  (re-exported for downstream tuning)
 import properties as _properties  # noqa: E402
 import threejs_viewer as _viewer  # noqa: E402
@@ -88,6 +89,11 @@ _VIEWERS: dict[str, str] = {}
 #: (the ``.mp4`` / ``.gif`` movie and its poster PNG — binary blobs registered
 #: from disk, not in-memory strings).
 _FIELD_MOVIE_ASSETS: dict[str, str] = {}
+#: site uri → absolute cached path for every plot-gallery figure (same
+#: registered-from-disk pattern as the field movies).
+_GALLERY_ASSETS: dict[str, str] = {}
+#: The generated body of the plot gallery, substituted into its page's token.
+_GALLERY_BODY = ""
 _VERSION = "?"
 
 
@@ -842,6 +848,36 @@ def _patch_systems_nav(nav: list, subtree: list) -> bool:
 # ===========================================================================
 # MkDocs hooks
 # ===========================================================================
+def _build_gallery():
+    """Render the plot gallery and stash its body + figure assets.
+
+    The gallery is generated from ``registry.plot_transforms``, so it is the one
+    page that cannot drift from the code: a transform that stops rendering shows
+    up here as a failed cell.  Failures are logged through the ``mkdocs`` logger
+    at WARNING, which ``mkdocs build --strict`` turns into a build failure —
+    deliberately louder than the per-system figures, which soft-fail because a
+    catalogue page without a picture is still a useful page, while a *gallery*
+    that quietly drops a plot is exactly the drift this page exists to prevent.
+    """
+    global _GALLERY_BODY
+
+    import logging
+
+    log = logging.getLogger("mkdocs.plugins.docs_autogen")
+    build = _gallery.render_all(figures=WITH_FIGURES)
+    _GALLERY_BODY = _gallery.page(build)
+    _GALLERY_ASSETS.clear()
+    _GALLERY_ASSETS.update(build.assets())
+    rendered = sum(1 for cell in build.cells if not cell.from_cache and cell.filename)
+    print(
+        f"docs_autogen: gallery — {len(build.cells)} cells over "
+        f"{len({c.transform for c in build.cells})} transforms "
+        f"({rendered} rendered, {len(_GALLERY_ASSETS) - rendered} cached)"
+    )
+    for name, primitive, message in build.failures:
+        log.warning("docs_autogen: gallery cell %s.%s failed: %s", name, primitive, message)
+
+
 def on_config(config):
     """Generate every Systems page + its figures/viewers; patch the nav."""
     global _VERSION
@@ -947,6 +983,9 @@ def on_config(config):
             uri = f"{_SYSTEMS_ROOT}/{slug}/{cat_slug}/index.md"
             _GENERATED[uri] = _subcategory_index(family, category, records, generated_systems)
 
+    # --- the plot gallery (generated from registry.plot_transforms) --------
+    _build_gallery()
+
     # --- nav ---------------------------------------------------------------
     if config.nav is not None:
         subtree = _build_nav(catalog)
@@ -1000,6 +1039,15 @@ def on_files(files, config):
         files.append(
             File.generated(config, uri, abs_src_path=abs_src, inclusion=InclusionLevel.INCLUDED)
         )
+    # Plot-gallery figures — same story: rendered into ``.cache/docs-gallery`` and
+    # registered from there, so the generator never writes into ``docs/``.
+    for uri, abs_src in _GALLERY_ASSETS.items():
+        existing = files.get_file_from_path(uri)
+        if existing is not None:
+            files.remove(existing)
+        files.append(
+            File.generated(config, uri, abs_src_path=abs_src, inclusion=InclusionLevel.INCLUDED)
+        )
     # The viewers import the shared three.js loader from ``_static/`` — a tree
     # ``exclude_docs`` drops, so mkdocs never copies it.  Emit it as a generated
     # file when any viewer shipped, so the iframe import resolves instead of
@@ -1023,5 +1071,8 @@ def on_files(files, config):
 
 
 def on_page_markdown(markdown, page, config, files):
-    """Substitute build-time tokens (the library version)."""
-    return markdown.replace("{{ tsdynamics_version }}", _VERSION)
+    """Substitute build-time tokens (the library version, the generated gallery)."""
+    markdown = markdown.replace("{{ tsdynamics_version }}", _VERSION)
+    if _gallery.TOKEN in markdown:
+        markdown = markdown.replace(_gallery.TOKEN, _GALLERY_BODY)
+    return markdown

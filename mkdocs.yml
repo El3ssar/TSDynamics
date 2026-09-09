@@ -176,11 +176,13 @@ nav:
       - systems/index.md
   - Visualization:
       - visualization/index.md
+      - "The gallery": visualization/gallery.md
       - "Plotting & kinds": visualization/plotting.md
       - "Conventions": visualization/conventions.md
       - "Styling & themes": visualization/styling.md
       - "Animation": visualization/animation.md
       - "Composition": visualization/composition.md
+      - "Space-filling curves": visualization/hilbert.md
       - "Backends & export": visualization/backends.md
   - Tutorials:
       - tutorials/index.md
@@ -249,11 +251,13 @@ exclude_docs: |
   systems/discrete/
   visualization/*.md
   !visualization/index.md
+  !visualization/gallery.md
   !visualization/plotting.md
   !visualization/conventions.md
   !visualization/styling.md
   !visualization/animation.md
   !visualization/composition.md
+  !visualization/hilbert.md
   !visualization/backends.md
   tutorials/*.md
   !tutorials/index.md

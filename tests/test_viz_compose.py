@@ -517,8 +517,12 @@ def test_equal_role_specs_keep_their_argument_order():
     those were all same-kind (and therefore same-role) merges.
     """
     a, b = _curve_spec("a"), _curve_spec("b")
-    assert [lyr.label for lyr in viz.plot(a, b).layers] == ["a: a", "b: b"]
-    assert [lyr.label for lyr in viz.plot(b, a).layers] == ["b: b", "a: a"]
+    # The labels are identity markers here, not the subject: these specs are
+    # titled the same as their single layer, so the overlay tag adds nothing and
+    # is not prefixed (see ``_relabel_for_overlay``).  What is asserted is the
+    # *order*.
+    assert [lyr.label for lyr in viz.plot(a, b).layers] == ["a", "b"]
+    assert [lyr.label for lyr in viz.plot(b, a).layers] == ["b", "a"]
 
 
 def test_overlay_onto_a_different_plane_raises_naming_both():

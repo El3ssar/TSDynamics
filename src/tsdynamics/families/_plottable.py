@@ -95,10 +95,14 @@ class SystemPlottable:
             Override / select the semantic kind, forwarded to the trajectory's
             ``to_plot_spec`` (a ``PlotKind`` value or the ``"delay"`` recipe).
         **kwargs
-            Plot-shaping keywords (``components`` / ``tau`` / ``color_by`` /
-            ``transpose``) forwarded to the trajectory's ``to_plot_spec``; all
-            other keywords forwarded to :meth:`trajectory` (``final_time``,
-            ``dt``, ``steps``, ``ic``, …).
+            Plot-shaping keywords (``components`` / ``primitive`` / ``tau`` /
+            ``color_by`` / ``transpose``) forwarded to the trajectory's
+            ``to_plot_spec``; all other keywords forwarded to :meth:`trajectory`
+            (``final_time``, ``dt``, ``steps``, ``ic``, …).  ``primitive=``
+            selects **how** the view is drawn (``"points"`` / ``"density"`` / …),
+            validated against the transform's declared row — see
+            :meth:`tsdynamics.data.Trajectory.to_plot_spec` and
+            ``ts.viz.compatibility()``.
 
         Returns
         -------
@@ -121,8 +125,8 @@ class SystemPlottable:
 
         Keywords are routed by category, in this order:
 
-        1. plot-shaping keywords (``kind`` / ``components`` / the per-kind
-           options) → :meth:`to_plot_spec`;
+        1. plot-shaping keywords (``kind`` / ``components`` / ``primitive`` /
+           the per-kind options) → :meth:`to_plot_spec`;
         2. inline spec tweaks (``xlabel`` / ``yscale`` / ``title`` / ``xlim`` /
            …) → applied to the spec;
         3. renderer options (:data:`_RENDER_KEYS`, plus anything in

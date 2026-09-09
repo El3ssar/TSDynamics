@@ -35,6 +35,17 @@ SYSTEMS_GROUP = "tsdynamics.systems"
 SOLVERS_GROUP = "tsdynamics.solvers"
 ANALYSES_GROUP = "tsdynamics.analyses"
 RENDERERS_GROUP = "tsdynamics.renderers"
+#: Out-of-tree **plot transforms** (see :mod:`tsdynamics.viz.transforms`).  Each
+#: entry point resolves to a ``PlotTransform`` record, registered verbatim into
+#: :data:`tsdynamics.registry.plot_transforms` under the entry point's name — so
+#: a third-party plot is genuinely first-class: it declares its own
+#: compatibility row, appears in ``ts.viz.compatibility()``, and is reachable as
+#: ``ts.plot(subject, "<name>")`` with no edit to this library.
+#:
+#: Deliberately **not** named ``tsdynamics.transforms``: that word belongs to the
+#: generic time-series layer the v6 scope surgery deleted, and reusing it would
+#: re-litigate a settled scope decision on every grep.
+PLOT_TRANSFORMS_GROUP = "tsdynamics.plot_transforms"
 
 #: Every plugin group TSDynamics recognises.
 ALL_GROUPS: tuple[str, ...] = (
@@ -42,6 +53,7 @@ ALL_GROUPS: tuple[str, ...] = (
     SOLVERS_GROUP,
     ANALYSES_GROUP,
     RENDERERS_GROUP,
+    PLOT_TRANSFORMS_GROUP,
 )
 
 
@@ -190,6 +202,7 @@ __all__ = [
     "SOLVERS_GROUP",
     "ANALYSES_GROUP",
     "RENDERERS_GROUP",
+    "PLOT_TRANSFORMS_GROUP",
     "ALL_GROUPS",
     # The generic discovery / loading primitives the consuming subpackages use.
     "iter_entry_points",

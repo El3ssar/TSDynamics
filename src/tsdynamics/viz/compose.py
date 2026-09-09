@@ -396,15 +396,30 @@ def _copy_layer(layer: Layer, *, label: str | None = None) -> Layer:
 
 
 def _relabel_for_overlay(layer: Layer, tag: str, *, multi: bool) -> Layer:
-    """Copy ``layer``, disambiguating its legend label by source ``tag``."""
+    """Copy ``layer``, disambiguating its legend label by source ``tag``.
+
+    A label that already *is* the tag is left alone — prefixing it would produce
+    ``"streamlines: streamlines"``, which disambiguates nothing.
+    """
     if not multi:
         return layer
-    return _copy_layer(layer, label=f"{tag}: {layer.label}" if layer.label else tag)
+    if not layer.label:
+        return _copy_layer(layer, label=tag)
+    if layer.label == tag:
+        return _copy_layer(layer)
+    return _copy_layer(layer, label=f"{tag}: {layer.label}")
 
 
 def _source_tags(specs: list[PlotSpec]) -> list[str]:
-    """Return a unique, human-readable tag per source spec (title, made unique)."""
-    titles = [s.title or f"series {i + 1}" for i, s in enumerate(specs)]
+    """Return a unique, human-readable tag per source spec.
+
+    Preference order: the spec's own title, then — for a spec built by one plot
+    transform — that transform's name, then a positional fallback.  The middle
+    rung matters: overlaying a direction field, its nullclines and an orbit used
+    to legend the nullclines as ``"series 2: v' = 0"``, where ``"nullclines:
+    v' = 0"`` says the same thing and is true.
+    """
+    titles = [s.title or _transform_tag(s) or f"series {i + 1}" for i, s in enumerate(specs)]
     counts: dict[str, int] = {}
     tags: list[str] = []
     for title in titles:
@@ -414,6 +429,12 @@ def _source_tags(specs: list[PlotSpec]) -> list[str]:
         else:
             tags.append(title)
     return tags
+
+
+def _transform_tag(spec: PlotSpec) -> str:
+    """Return the producing transform's name, when every layer of ``spec`` agrees on one."""
+    names = {layer.transform for layer in spec.layers if layer.transform}
+    return names.pop() if len(names) == 1 else ""
 
 
 def _common_title(specs: list[PlotSpec]) -> str:

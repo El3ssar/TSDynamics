@@ -316,6 +316,19 @@ __version__ = "5.4.0"
 # the top-level surface.
 _SYSTEM_NAMES = frozenset(systems._SYSTEM_NAMES)
 
+# The two plotting names promoted to the curated top level (30 -> 32). They live
+# in ``tsdynamics.viz.transforms`` and resolve lazily through ``__getattr__``, so
+# advertising them costs nothing at import time:
+#
+#   ts.plot(traj)                                  # what ts.viz.plot does
+#   ts.plot(traj, "delay_embedding", tau=7)        # ... plus a named transform
+#   ts.plot(duff, ts.T("basins", grid=400), ts.T("trajectory", color="w"))
+#
+# Everything else in the plotting surface (``spec`` / ``geometry`` / ``draw`` /
+# ``compatibility``) stays under ``ts.viz``, so the curated namespace does not
+# drift back towards a flat dump.
+_VIZ_FRONT_DOOR = frozenset({"plot", "T"})
+
 # The curated top-level surface (~30 names). Demoted analysis functions / result
 # classes / state-space primitives stay fully reachable (flat re-exported above
 # and resolvable as ``ts.<name>``); they are simply no longer advertised in
@@ -355,6 +368,11 @@ __all__ = [
     "systems",
     "utils",
     "errors",
+    # Plotting — the headline one-liner and its per-transform option carrier.
+    # Both resolve lazily (see ``__getattr__``) so ``import tsdynamics`` still
+    # pulls in no plotting machinery.
+    "plot",
+    "T",
     # Backend-agnostic viz IR — resolved lazily (see ``__getattr__``).
     "viz",
     # Advanced / internal submodules (reachable but rarely imported directly).
@@ -371,6 +389,10 @@ def __getattr__(name: str) -> Any:
     * ``tsdynamics.viz`` — imported on first access (and cached) so a plain
       ``import tsdynamics`` pulls in no plotting/IR machinery; ``viz`` still shows
       in ``__all__`` / ``dir()`` for discoverability.
+    * ``tsdynamics.plot`` / ``tsdynamics.T`` — the plotting front door, resolved
+      from :mod:`tsdynamics.viz.transforms` on first access (and cached), for the
+      same reason: naming them in ``__all__`` must not make ``import tsdynamics``
+      import a plotting layer.
     * ``tsdynamics.Lorenz`` and friends — the ~150 built-in system classes,
       resolved from :mod:`tsdynamics.systems` (the canonical path) instead of
       binding all of them into the namespace, which keeps ``dir()`` / autocomplete
@@ -384,6 +406,13 @@ def __getattr__(name: str) -> Any:
         _viz = importlib.import_module(f"{__name__}.viz")
         globals()["viz"] = _viz  # cache: subsequent access skips __getattr__
         return _viz
+    if name in _VIZ_FRONT_DOOR:
+        import importlib
+
+        _transforms = importlib.import_module(f"{__name__}.viz.transforms")
+        for attr in _VIZ_FRONT_DOOR:
+            globals()[attr] = getattr(_transforms, attr)  # cache both at once
+        return globals()[name]
     if name in _SYSTEM_NAMES:
         return getattr(systems, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

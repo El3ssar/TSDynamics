@@ -64,6 +64,15 @@ Changelog = "https://github.com/El3ssar/TSDynamics/releases"
 viz = ["matplotlib>=3.9,<5"]          # the matplotlib reference renderer (static 2-D + 3-D)
 interactive = ["plotly>=6,<7"]        # the interactive backend + self-contained HTML export
 plot = ["matplotlib>=3.9,<5"]         # back-compat alias of `viz`
+# The forty two-dimensional Hilbert-type curves behind the `hilbert*` plot
+# transforms (tsdynamics.viz.transforms.hilbert). Deliberately NOT
+# `hilbertplot[plot]`: only its numpy core is used — `image` / `fourier` /
+# `difference_map` / `label_map` return raw ndarrays, which TSDynamics wraps in a
+# PlotSpec IMAGE layer — so the two rendering stacks never meet and a Hilbert plot
+# is themed, styled and exportable on all four backends like any other plot.
+# Without it, three dependency-free orderings still draw (rowmajor / snake /
+# morton) and asking for a Hilbert curve raises, naming this extra.
+hilbert = ["hilbertplot>=0.2"]
 
 # ── Dependency groups (uv-native, dev-only) ────────────────────────────────────
 

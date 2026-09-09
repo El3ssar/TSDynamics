@@ -854,6 +854,96 @@ documented tolerance):
 pulls in **no** plotting library — `ts.viz` is bound lazily, and every renderer
 import is deferred to first render.
 
+### Transforms, primitives and the compatibility matrix (v6)
+
+The plotting layer has **three nouns**, and every new plot is expressed in them.
+Nothing else in the library learns a new name when one is added.
+
+- **A transform** turns a *subject* — a `Trajectory`, a system, an analysis
+  result, a bare array — into **`Geometry`**: typed channels (`x`/`y`/`z`/`c`/
+  `u`/`v`/`frames`/…) in `Part`s, plus a `Frame` (coordinate space + axis names),
+  axis labels/limits/**scales**, and provenance. `Geometry` is deliberately *not*
+  a second IR: it is never serialized and no renderer ever sees one.
+  Transforms live in `viz/transforms/` (`_data.py` = the migrated producers,
+  `planar.py`/`fields.py`, `series.py`, `hilbert.py`, `spectra.py`,
+  `stability.py`). **A transform owns no new math** — it adapts an estimator
+  from `tsdynamics.analysis` (declared in `PlotTransform.analysis`); anything
+  needing new numerics gets an analysis function, with its own citation and
+  tests, first.
+- **Exactly two source categories**, and there is no third. **`data`** =
+  computable from a series or a point set (and it *also* accepts a system,
+  because a model gives you data for free — it integrates once and records the
+  choice in `meta`). **`model`** = must evaluate or integrate the right-hand side
+  at points that are **not** in the input (a lattice of ICs, a Jacobian at an
+  equilibrium); handing one a bare array raises `InvalidInputError` naming what
+  it needs.
+- **A primitive** is *how* geometry is drawn — `line`/`line3d`/`points`/
+  `points3d`/`steps`/`markers`/`image`/`density`/`contour`/`surface3d`/`quiver`/
+  `bars`/`histogram`/`band`/`boundary`/`errorbars` (`viz/transforms/
+  _primitives.py`). "Primitive" does not mean "simple": a basin image and a 3-D
+  surface are primitives. **Every primitive lowers to the frozen 11-mark
+  `PlotKind` vocabulary** — `contour` and `steps` emit plain `LINE` layers,
+  `density` emits an `IMAGE` — which is why the matrix can grow without touching
+  a renderer or the `PlotKind` enum. A contour's polylines are coloured **by
+  level** from the transform's declared colormap (an unstyled layer per level
+  would take successive *palette* colours and read as N unrelated series).
+- **The compatibility matrix is DECLARED, never implicit.**
+  `PlotTransform.primitives` **is** the row, given at the definition site; an
+  undeclared pair **raises** `InvalidParameterError` naming the valid set (and,
+  when the requested primitive is some other transform's default, naming that
+  transform). Never a fallback, never a warning — a renderer's
+  `VisualizationDegraded` is a different situation (same plot, different
+  backend); here no correct drawing exists.
+- **Registry:** `registry.plot_transforms` (record: `PlotTransform`), entry-point
+  group `tsdynamics.plot_transforms` for out-of-tree plots. Registering is
+  **one decorator call at the definition site and nothing else** — no renderer
+  edit, no `PlotKind` edit, no `compose` edit, no test edit, no gallery edit.
+  (CLAUDE.md's "no `transforms` registry" note governs the DELETED generic
+  time-series layer only. The PSD of a *trajectory* is re-admitted as a plot
+  transform under a checked rule — `ADMITTED_SERIES_DIAGNOSTICS` /
+  `EXCLUDED_SERIES_TOOLBOX` in `viz/transforms/_registry.py`: the power spectrum
+  of a phase-space orbit is a phase-space diagnostic; a PSD toolbox with
+  windowing, detrending and filter design is not. `spectrogram` and friends are
+  refused *at registration*.)
+- **Front doors** (`ts.plot` and `ts.T` are in the curated top-level `__all__`):
+
+  ```python
+  ts.plot(traj)                                  # no transform named → viz.plot
+  ts.plot(traj, "delay_embedding", tau=7)        # a transform by name
+  ts.plot(traj, "phase_portrait", primitive="density")   # …drawn differently
+  ts.plot(fhn, "flow_speed", "streamlines", "nullclines")  # overlay, order-free
+  ts.plot(vdp, ts.T("flow_speed", log=True), ts.T("streamlines", color="w"))
+  g = ts.viz.geometry(sys, "ftle", grid=201)     # the arrays, and stop there
+  ts.viz.draw(g, "contour")                      # hand them back to the library
+  ts.viz.compatibility()                         # the matrix, printable
+  ```
+
+  A positional **string (or `T`)** is a transform; anything else is a subject.
+  `ts.plot` always returns a `PlotSpec`, so a result feeds straight back in.
+  Shared keywords are routed only to the transforms whose `compute` (or chosen
+  primitive) accepts them — **plus every canonical style key**, which applies to
+  the named transform's layers.
+- **Gates.** `tests/test_viz_compatibility.py` renders every declared cell on
+  matplotlib and refuses every undeclared one; `tests/test_viz_transforms.py`
+  pins the substrate and the PSD admission rule;
+  `tests/test_viz_gallery.py` pins the gallery against the registry (and, in the
+  slow tier, renders every cell and fails on a blank figure).
+- **The gallery (`docs/visualization/gallery.md` + `docs/_tooling/gallery.py`).**
+  The user-facing answer to *"what can this draw?"*, **generated from the
+  registry at docs-build time**: one entry per transform (grouped by source
+  category), one tab per declared primitive, and beside each figure the code that
+  produced it — the snippet string is *executed*, so code and picture cannot
+  drift. A curated `SHOWCASE` table picks the subject; a transform with no entry
+  still appears, drawn on the `example` factory its registration already ships
+  (so "one registration and nothing else" holds). Figures are content-addressed
+  in `.cache/docs-gallery` (bump `RENDERER_VERSION` when the *rendering* changes)
+  and registered as generated files, so nothing is written into `docs/`; a failed
+  cell warns through the `mkdocs` logger, which `--strict` turns into a build
+  failure. Run it standalone with
+  `.venv/bin/python docs/_tooling/gallery.py [--only NAME] [--force]`.
+
+### The rest of the seam
+
 - **`PlotSpec` IR (`viz/spec.py`):** a JSON-serializable description of a plot —
   a semantic `PlotKind`, drawable `Layer`s, typed `Axis`/`Colorbar`/`Legend`,
   and `to_dict`/`from_dict` round-trip. The `PlotKind` enum is a **frozen,

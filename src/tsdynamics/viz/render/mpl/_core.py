@@ -243,7 +243,14 @@ def _apply_theme_color_cycle(ax: Any, theme: Theme, spec: PlotSpec | None = None
 #: mark (``image``), while ``PlotSpec.kind`` holds the semantic kind
 #: (``basins_image``), and a hand-built or composed spec may carry an image layer
 #: under any semantic kind at all.
-_FIELD_MARKS: frozenset[PlotKind] = frozenset({PlotKind.IMAGE, PlotKind.QUIVER})
+#:
+#: ``QUIVER`` is deliberately **not** here.  A quiver paints no backdrop — the
+#: page shows through between the arrows — so switching to the contrast cycle
+#: makes an unstyled overlay **white on white**: the host orbit of
+#: ``phase_portrait_field`` was drawn in ``#ffffff`` and was invisible on every
+#: light page, legend entry and all.  The cycle exists for an image's colormap,
+#: which is a thing a quiver does not have.
+_FIELD_MARKS: frozenset[PlotKind] = frozenset({PlotKind.IMAGE})
 
 
 def _draws_over_a_field(spec: PlotSpec) -> bool:
