@@ -253,11 +253,53 @@ def test_every_analysis_subpackage_is_mapped() -> None:
     assert not missing, f"unmapped analysis areas (add to _AREA_TESTS): {sorted(missing)}"
 
 
+def test_every_area_test_file_is_in_some_lane() -> None:
+    """Every test file carrying a lane prefix is selected by that lane's change.
+
+    The blind spot this closes: a change anywhere under ``src/tsdynamics/viz/``
+    selected exactly three test files while sixteen ``test_viz_*.py`` existed, so
+    a viz change could reach ``main`` with most of its own tests deselected.  A
+    hand-written tuple over a *growing* family of files is the defect, and it
+    recurs in every area — so the check is generic: for each prefix in
+    :data:`_changed_select.LANE_PREFIXES`, classify a real source path in that
+    area and assert that **no** existing test file with that prefix is missing
+    from the plan.  Adding ``tests/test_viz_newthing.py`` needs no edit here;
+    adding ``tests/test_basins_newthing.py`` fails until it is mapped.
+    """
+    tests_dir = Path(__file__).parent
+    stale: list[str] = []
+    for prefix, probe in sorted(cs.LANE_PREFIXES.items()):
+        assert (Path(__file__).parents[1] / probe).exists(), (
+            f"LANE_PREFIXES probe {probe!r} no longer exists; point it at a real "
+            f"source file in the {prefix!r} lane."
+        )
+        plan = cs.classify({probe})
+        assert not plan.full, f"probe {probe!r} escalated to a full run: {plan.reason}"
+        carrying = sorted(p.name for p in tests_dir.glob(f"{prefix}*.py"))
+        assert carrying, f"no test file carries the lane prefix {prefix!r} — stale table entry."
+        stale += [
+            f"{name} (changing {probe} does not select it)"
+            for name in carrying
+            if name not in plan.selected_files
+        ]
+    assert not stale, "test files in no lane: " + ", ".join(stale)
+
+
+def test_viz_lane_is_discovered_not_hand_listed() -> None:
+    """``viz_tests()`` picks up every ``test_viz_*.py`` on disk, plus the exceptions."""
+    tests_dir = Path(__file__).parent
+    on_disk = {p.name for p in tests_dir.glob("test_viz_*.py")}
+    assert len(on_disk) > 3, "expected the viz test family to be larger than the old hand list"
+    lane = set(cs.viz_tests())
+    assert on_disk <= lane
+    assert set(cs._VIZ_EXTRA_TESTS) <= lane
+
+
 def test_referenced_test_files_exist() -> None:
     tests_dir = Path(__file__).parent
     referenced = (
         set(cs._ALWAYS_GUARDS)
-        | set(cs._VIZ_TESTS)
+        | set(cs.viz_tests())
         | set(cs._CROSSCUT_ANALYSIS_TESTS)
         | set(cs._SYSTEM_SWEEP_FILES)
     )

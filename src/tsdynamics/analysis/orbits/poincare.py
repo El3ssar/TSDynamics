@@ -32,7 +32,7 @@ def _seeded_ic(system: Any, ic: Any | None, seed: int | None) -> np.ndarray | No
 
 def poincare_section(
     system: Any,
-    plane: tuple[Any, ...],
+    plane: tuple[Any, ...] | None = None,
     *,
     direction: int | str = +1,
     n: int = 1000,
@@ -57,7 +57,7 @@ def poincare_section(
     ----------
     system : System or Trajectory
         A flow to section, or measured trajectory data (the ``data`` overload).
-    plane : tuple
+    plane : tuple, optional
         The section, in any of three spellings:
 
         - ``(axis, c)`` — ``axis`` a component **name** (resolved against the
@@ -71,6 +71,22 @@ def poincare_section(
 
         For example ``plane=("y", 0.0, "up")``, ``plane=(1, 0.0)``, or
         ``plane=([1, 0, 0], 0.0)``.
+
+        **Omit it and one is chosen**, from a short probe orbit: the
+        widest-spread component (largest interquartile range) *among those the
+        orbit repeatedly returns to*, sectioned at its median — an offset the
+        probe orbit provably straddles (so the auto section cannot miss *it*; on
+        a system with no ``default_ic`` the section run starts from a different
+        random draw, which only matters when the two orbits need not share an
+        attractor — see :func:`~tsdynamics.derived.poincare.auto_plane`), and one
+        it comes back to, so the map has crossings to return to.  A
+        monotone coordinate (a carried drive phase) has the widest spread of all
+        and is not a section; it is skipped for that reason.  See
+        :func:`tsdynamics.derived.poincare.auto_plane` for the rule and why it is
+        that one.  The choice is recorded in ``result.meta["plane"]`` with
+        ``meta["plane_auto"] = True`` and shown by ``result.summary()``; name a
+        plane whenever you have one.  In **data** mode (a ``Trajectory`` in) the
+        same rule applies, read off the data itself.
     direction : {+1, -1, 0} or {"up", "down", "both"}, default +1
         Crossing direction filter (``+1`` / ``"up"`` keeps only crossings where
         the section function is increasing).  Ignored when ``plane`` carries its
@@ -99,6 +115,7 @@ def poincare_section(
     Examples
     --------
     >>> section = poincare_section(Rossler(), plane=("y", 0.0, "up"), n=500)
+    >>> section = poincare_section(Rossler(), n=500)     # section chosen + recorded
     >>> section = poincare_section(traj, plane=("z", 25.0))     # from data
     """
     if isinstance(system, Trajectory):
@@ -112,7 +129,7 @@ def poincare_section(
 
 
 def _section_from_data(
-    traj: Trajectory, plane: tuple[Any, ...], direction: int | str
+    traj: Trajectory, plane: tuple[Any, ...] | None, direction: int | str
 ) -> PoincareSection:
     resolved_plane, direction = _resolve_section_plane(traj, plane, direction)
     normal, offset = PoincareMap._parse_plane(traj.dim, resolved_plane)
@@ -137,6 +154,9 @@ def _section_from_data(
         "derived": "poincare_section",
         "plot_kind": "poincare_section",
         "plane": resolved_plane,
+        # An auto-chosen section is recorded, never silent (same contract as the
+        # system path and as bifurcation_diagram's auto discrete view).
+        "plane_auto": plane is None,
         "direction": direction,
     }
     if i_hits.size == 0:

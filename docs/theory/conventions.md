@@ -63,6 +63,8 @@ because a silent swap once produced plausible-but-wrong dynamics.
 write **appends** rather than overwrites:
 
 ```python
+lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+
 lor.lyapunov_spectrum(dt=0.1)            # records value + settings + timestamp
 lor.lyapunov_spectrum(dt=0.05)           # appends a second record
 
@@ -85,5 +87,5 @@ keys raise immediately.
 
 ## See also
 
-- [Integrate & iterate](../analysis/integrate.md) — these conventions in action
+- [Integration & methods](../analysis/integration-and-methods.md) — these conventions in action
 - [Reference · Base classes](../reference/base.md) — the implementing code

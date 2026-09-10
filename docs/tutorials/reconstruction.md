@@ -118,8 +118,10 @@ from the single channel. Because a `Trajectory` can build the same delay view
 directly, you can eyeball the reconstruction with the plotting front door:
 
 ```python
-# the x(t) vs x(t - tau) delay portrait, straight from the trajectory
-full.to_plot_spec(kind="delay", components="x", tau=tau * 0.05).save("delay.png")
+# the x(t) vs x(t - tau) delay portrait, straight from the trajectory.
+# `delay=` is in SAMPLES (what optimal_delay returned); `delay_time=` is the
+# same lag in time units — here delay_time=tau * 0.05 would be equivalent.
+full.to_plot_spec(kind="delay", components="x", delay=tau).save("delay.png")
 ```
 </div>
 

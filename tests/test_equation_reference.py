@@ -578,33 +578,76 @@ def _tape_hash(tape: Any) -> str:
     return hashlib.sha256(_canonical_tape(tape).encode("utf-8")).hexdigest()
 
 
-def _build_snapshot() -> dict[str, str]:
-    """Map every catalogue system name to its canonical-tape hash."""
-    return {entry.name: _tape_hash(_tape_for(entry)) for entry in registry.all_systems()}
+def _canonical_defaults(entry: Any) -> str:
+    """Serialise a system's shipped **defaults** to a stable, readable string.
+
+    The tape hash above is provably **parameter-invariant**: control parameters
+    are read live from the system on every run (``problem.params_vec()``) and
+    never baked into the lowered IR, so editing ``params = {"rho": 28.0}`` to
+    ``{"rho": 14.0}`` — which moves Lorenz off its attractor entirely — leaves
+    every tape hash untouched.  (A *structural* or DDE-delay parameter is baked
+    in and would flip the hash, but those are the minority.)  This second column
+    closes that hole.
+
+    Unlike the tape it is stored **verbatim rather than hashed**, because the
+    point of a defaults pin is that the diff tells you *which* number moved.
+    Floats print at full ``float64`` precision, so a changed last bit is caught.
+    ``dim`` and ``default_ic`` ride along: both are shipped defaults that decide
+    what a plain ``System().integrate()`` does, and neither is in the tape.
+    """
+
+    def fmt(value: Any) -> str:
+        if isinstance(value, bool):
+            return str(value)
+        if isinstance(value, (int, np.integer)):
+            return str(int(value))
+        if isinstance(value, (float, np.floating)):
+            return format(float(value), ".17g")
+        if isinstance(value, (list, tuple, np.ndarray)):
+            return "[" + ",".join(fmt(v) for v in np.asarray(value).ravel().tolist()) + "]"
+        return repr(value)
+
+    params = ",".join(f"{key}={fmt(value)}" for key, value in sorted(entry.params.items()))
+    default_ic = getattr(entry.cls, "default_ic", None)
+    ic = "none" if default_ic is None else fmt(default_ic)
+    return f"dim={entry.dim}|{params}|ic={ic}"
 
 
-def _serialize_snapshot(snapshot: dict[str, str]) -> str:
-    """Render the snapshot to the golden-file text (one ``name\\thash`` per line)."""
+def _build_snapshot() -> dict[str, tuple[str, str]]:
+    """Map every catalogue system name to ``(tape hash, canonical defaults)``."""
+    return {
+        entry.name: (_tape_hash(_tape_for(entry)), _canonical_defaults(entry))
+        for entry in registry.all_systems()
+    }
+
+
+def _serialize_snapshot(snapshot: dict[str, tuple[str, str]]) -> str:
+    """Render the snapshot to the golden-file text (one record per line)."""
     header = (
         "# Equation-reference drift snapshot — SHA-256 of the canonical IR tape\n"
-        "# per catalogue system. Regenerate ONLY after a deliberate, reviewed\n"
-        "# change to a kernel or to the lowering:\n"
+        "# plus the shipped defaults, per catalogue system. Regenerate ONLY after\n"
+        "# a deliberate, reviewed change to a kernel, to the defaults, or to the\n"
+        "# lowering:\n"
         "#   PYTHONPATH=src python -m tests.test_equation_reference --regenerate\n"
-        "# Format: <SystemName>\\t<sha256-of-canonical-tape>\n"
+        "# Format: <SystemName>\\t<sha256-of-canonical-tape>\\t"
+        "dim=<d>|<param>=<value>,...|ic=<default_ic>\n"
+        "# The tape hash is parameter-INVARIANT (control parameters are passed at\n"
+        "# run time, not lowered), so the third column is what pins the defaults.\n"
     )
-    lines = [f"{name}\t{snapshot[name]}" for name in sorted(snapshot)]
+    lines = [f"{name}\t{snapshot[name][0]}\t{snapshot[name][1]}" for name in sorted(snapshot)]
     return header + "\n".join(lines) + "\n"
 
 
-def _load_golden() -> dict[str, str]:
-    """Parse the committed golden file into ``name -> tape-hash``."""
+def _load_golden() -> dict[str, tuple[str, str]]:
+    """Parse the committed golden file into ``name -> (tape hash, defaults)``."""
     text = GOLDEN_PATH.read_text(encoding="utf-8")
-    out: dict[str, str] = {}
+    out: dict[str, tuple[str, str]] = {}
     for line in text.splitlines():
         if not line or line.startswith("#"):
             continue
-        name, _, canon = line.partition("\t")
-        out[name] = canon
+        name, _, rest = line.partition("\t")
+        tape, _, defaults = rest.partition("\t")
+        out[name] = (tape, defaults)
     return out
 
 
@@ -632,7 +675,8 @@ def test_catalogue_tapes_match_snapshot() -> None:
 
     new = sorted(current_names - golden_names)
     removed = sorted(golden_names - current_names)
-    changed = sorted(n for n in current_names & golden_names if current[n] != golden[n])
+    shared = current_names & golden_names
+    changed = sorted(n for n in shared if current[n][0] != golden[n][0])
 
     if new or removed or changed:
         lines: list[str] = ["catalogue RHS snapshot mismatch:"]
@@ -645,11 +689,51 @@ def test_catalogue_tapes_match_snapshot() -> None:
             lines.append(f"  REMOVED systems (in golden, not in catalogue): {removed}")
         for n in changed:
             lines.append(
-                f"  CHANGED: {n} (tape hash {golden[n][:12]}… -> {current[n][:12]}…) — "
+                f"  CHANGED: {n} (tape hash {golden[n][0][:12]}… -> {current[n][0][:12]}…) — "
                 "its lowered RHS changed; if deliberate, regenerate."
             )
         lines.append(
             "If a change is deliberate, regenerate with "
+            "`PYTHONPATH=src python -m tests.test_equation_reference --regenerate`."
+        )
+        raise AssertionError("\n".join(lines))
+
+
+def test_catalogue_default_parameters_match_snapshot() -> None:
+    """Every system's shipped ``params`` / ``dim`` / ``default_ic`` are pinned.
+
+    The tape-hash gate above cannot see this class of change at all: control
+    parameters are handed to the engine at run time and never lowered, so the
+    canonical tape of ``Lorenz(rho=28)`` and ``Lorenz(rho=14)`` are the same
+    bytes.  Yet the defaults are what a plain ``ts.Lorenz().integrate()``
+    actually runs, and v6 had to repair six maps whose shipped defaults missed
+    their documented attractor entirely (and re-point ``Zaslavskii`` from a
+    period-2 sink to the strange attractor).  This pins them so that class of
+    silent edit is caught with a readable diff.
+    """
+    current = _build_snapshot()
+    golden = _load_golden()
+
+    drifted = [
+        (name, golden[name][1], current[name][1])
+        for name in sorted(set(current) & set(golden))
+        if golden[name][1] and current[name][1] != golden[name][1]
+    ]
+    missing = sorted(name for name in set(current) & set(golden) if not golden[name][1])
+
+    if missing:
+        raise AssertionError(
+            f"the golden file has no defaults column for {missing} — regenerate with "
+            "`PYTHONPATH=src python -m tests.test_equation_reference --regenerate`."
+        )
+    if drifted:
+        lines = ["catalogue default-parameter drift:"]
+        for name, was, now in drifted:
+            lines.append(f"  {name}:\n    was: {was}\n    now: {now}")
+        lines.append(
+            "A default moved. Every plain `System()` run changes with it, so this is "
+            "never incidental: confirm the new value against the cited reference, then "
+            "regenerate with "
             "`PYTHONPATH=src python -m tests.test_equation_reference --regenerate`."
         )
         raise AssertionError("\n".join(lines))

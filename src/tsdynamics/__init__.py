@@ -349,8 +349,15 @@ _SYSTEM_NAMES = frozenset(systems._SYSTEM_NAMES)
 # advertising them costs nothing at import time:
 #
 #   ts.plot(traj)                                  # what ts.viz.plot does
-#   ts.plot(traj, "delay_embedding", tau=7)        # ... plus a named transform
-#   ts.plot(duff, ts.T("basins", grid=400), ts.T("trajectory", color="w"))
+#   ts.plot(traj, "delay_embedding", delay=7)      # ... plus a named transform
+#   ts.plot(vdp, "flow_speed", "streamlines", "nullclines")   # ... several, one subject
+#   ts.plot(vdp, ts.T("flow_speed", log=True), ts.T("streamlines", color="w"))
+#
+# Every name in an example here is a REGISTERED transform (``ts.viz.compatibility()``
+# lists them).  It reads like a detail; it is not.  These four lines were the first
+# thing a new user copied, and they used to name ``"basins"`` / ``"trajectory"`` —
+# transforms that do not exist — so the documented one-liner answered with
+# ``InvalidParameterError: unknown plot transform 'basins'``.
 #
 # Everything else in the plotting surface (``spec`` / ``geometry`` / ``draw`` /
 # ``compatibility``) stays under ``ts.viz``, so the curated namespace does not

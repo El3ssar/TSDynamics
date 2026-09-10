@@ -61,6 +61,7 @@ Everything on this page is reachable through one function:
 ```python
 import tsdynamics as ts
 
+# skip-doctest — the calling pattern; `subject` and the transform name are yours
 ts.plot(subject, "transform_name", **options)                 # draw it
 ts.plot(subject, "transform_name", primitive="contour")       # draw it differently
 ts.plot(subject, "nullclines", "direction_field", "streamlines")   # overlay several
@@ -72,6 +73,7 @@ also a working first line of your own figure. Two rungs below it are public when
 you want the numbers rather than the picture:
 
 ```python
+# skip-doctest — the escape-hatch pattern; `subject` is yours
 g = ts.viz.geometry(subject, "ftle", grid=201)   # the arrays, and stop there
 spec = ts.viz.draw(g, "contour")                 # hand them back to the library
 ```

@@ -151,6 +151,7 @@ All four families — and every derived wrapper below — implement the same
 one analysis makes it work on *every* system:
 
 ```python
+# skip-doctest — the protocol surface, not a runnable snippet (`sys` is any system)
 sys.step(n_or_dt)      # advance by n iterations / dt of time → new state
 sys.state()            # current state vector (a copy)
 sys.set_state(u)       # overwrite the state (DDEs raise — by design)
@@ -229,8 +230,8 @@ time** — built-ins and your own classes alike:
 ```python
 from tsdynamics import registry
 
-registry.families()        # {'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
-registry.get("Lorenz")     # SystemEntry(name='Lorenz', family='ode', ...)
+registry.families()        # {'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
+registry.get("Lorenz")     # SystemEntry('Lorenz', family='ode', category=..., dim=3)
 ```
 
 Define `class MyODE(ts.ContinuousSystem)` anywhere in your code and it appears in

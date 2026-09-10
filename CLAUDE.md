@@ -168,9 +168,12 @@ module's `__all__`), so a new system needs no manual edit there.
   builds on (Monte-Carlo + full-grid sampling, attractor-matching distances).
   `Trajectory`/`Box`/`Ball`/`Grid` are *defined* in `tsdynamics.data` (the one
   canonical home); the top-level names are convenience re-exports.
-- Submodules: `analysis`, `data`, `derived`, `families`,
-  `registry`, `systems`, `utils`, `errors` plus the lazily-resolved `viz` and the
-  advanced/internal `engine` / `solvers` (reachable, docstring-flagged internal).
+- Submodules **in `__all__`**: `analysis`, `systems`, `errors` and the
+  lazily-resolved `viz`. Reachable as `ts.<name>` but **not** in `__all__`:
+  `data`, `derived`, `families`, `registry`, `utils`, plus the
+  advanced/internal `engine` / `solvers` (docstring-flagged internal).
+- Plot front doors (v6, in `__all__`): `plot` and `T` — see the plot-transform
+  section below.
 
 **Scope boundary (v6, stream SCOPE-SURGERY).** TSDynamics is a *dynamical systems*
 library, deliberately **not** a general time-series toolkit. The governing rule is
@@ -190,12 +193,16 @@ Do **not** re-add generic signal processing here. Beware the false friends:
 Benettin's "Kolmogorov entropy" citation are all SURVIVORS and unrelated to the
 deleted entropy package.
 
-**Curated top level (stream WS-NAMESPACE).** As of v4, `tsdynamics.__all__` is
-**curated to ~30 headline names** — the five family bases + `WrappedSystem`,
-`Trajectory`, the five derived wrappers, the **six promoted analyses**
+**Curated top level (stream WS-NAMESPACE).** `tsdynamics.__all__` is
+**curated to exactly 27 names** (measured — if you change it, re-measure this
+number rather than nudging it): the five family bases + `WrappedSystem`,
+`Trajectory`, the five derived wrappers, the three state-space primitives
+(`Box`/`Ball`/`Grid`), the **six promoted analyses**
 (`lyapunov_spectrum`, `bifurcation_diagram` [alias of `orbit_diagram`],
 `poincare_section`, `recurrence_matrix`, `basins` [alias of
-`basins_of_attraction`], `fixed_points`), and the navigable submodules. Every
+`basins_of_attraction`], `fixed_points`), the two v6 plot front doors
+(`plot`, `T`), `__version__`, and the four headline submodules
+(`analysis`, `systems`, `viz`, `errors`). Every
 other analysis function / result class / state-space primitive listed above is
 **demoted from `__all__` but stays fully reachable**: `ts.correlation_dimension`
 and `from tsdynamics import correlation_dimension` both resolve (the flat
@@ -209,9 +216,10 @@ collision is gone with the entropy package itself.)
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.families`.
-The `engine`, `solvers` and `errors` submodules are bound eagerly
-on the top-level namespace and in `__all__` (`errors` headline,
-`engine`/`solvers` flagged internal in their docstrings). The `viz` package
+`errors` is bound eagerly and **is** in `__all__`; `engine`, `solvers`, `data`,
+`derived`, `families`, `registry` and `utils` are all **reachable** as
+`ts.<name>` but are deliberately **not** in `__all__` (`engine`/`solvers` are
+flagged internal in their docstrings). The `viz` package
 (`PlotSpec` IR + four self-registering renderers — matplotlib/plotly/json/threejs —
 plus the styling/theme system) is bound **lazily** via the module `__getattr__`, so
 a plain `import tsdynamics` pulls in no plotting library at import time —
@@ -732,7 +740,7 @@ documented tolerance):
   plus one Jacobian per delay slot, so delayed deviations are just extra delay
   slots — **the frozen IR is untouched**) — and integrates it on the Rust DDE
   engine in chunks of one delay window. Benettin renormalisation is over the
-  deviation **history segment** (a function-space QR, so `n_exp` may exceed
+  deviation **history segment** (a function-space QR, so `k` may exceed
   `dim`); with chunk `= τ_max` and `dt | τ_max` the base history is reused exactly
   (no reseed-interpolation error) and the deviation directions are recombined
   exactly (the variational dynamics is linear). Validated (reference-free) on all
@@ -909,7 +917,7 @@ Nothing else in the library learns a new name when one is added.
 
   ```python
   ts.plot(traj)                                  # no transform named → viz.plot
-  ts.plot(traj, "delay_embedding", tau=7)        # a transform by name
+  ts.plot(traj, "delay_embedding", delay=7)      # a transform by name (7 SAMPLES)
   ts.plot(traj, "phase_portrait", primitive="density")   # …drawn differently
   ts.plot(fhn, "flow_speed", "streamlines", "nullclines")  # overlay, order-free
   ts.plot(vdp, ts.T("flow_speed", log=True), ts.T("streamlines", color="w"))
@@ -968,7 +976,7 @@ Nothing else in the library learns a new name when one is added.
     `linestyle`, `marker`, `markersize`, `alpha`, `cmap`, `fill`, `fillalpha`,
     `zorder`), each a `StyleKey(name, aliases, honored_by, validate, doc)`.
     `normalize_style()` is the single choke point: it canonicalises aliases
-    (`lw`→`linewidth`, `c`→`color`, `s`/`ms`→`markersize`, `"--"`→`"dashed"`,
+    (`lw`→`linewidth`, `c`→`color`, `ms`→`markersize`, `"--"`→`"dashed"`,
     `"o"`→`"circle"`, …), validates values (rejects out-of-range / wrong-type,
     incl. bool), and **drops unknown keys with a warning** (no more silent typos).
   - **`honored_by` is an enforced contract.** Each `StyleKey` declares which
@@ -1357,6 +1365,46 @@ When adding an analysis, the registry meta-QA picks it up
 automatically (give it a docstring, register it). When adding a property test,
 reuse `_strategies` and assert a real invariant — never a tautology.
 
+### Documentation is executable and published BY DEFAULT (v6, `docs-truth`)
+
+Two docs contracts were inverted in v6. Both default to *included*, so the way
+to opt out is an explicit, reviewed entry — never silence.
+
+- **The doctest gate discovers its subjects** (`tests/_doctest_select.py`).
+  Every module under `src/tsdynamics` containing a `>>>` and every `docs` page
+  with a runnable ` ```python ` fence is executed under
+  `filterwarnings = error`. It used to be an **allow-list** naming 20 modules and
+  22 pages — while **12 of the 25 modules it did not name were failing**, and 3
+  of the pages it *did* name had no runnable fence and passed vacuously. Leaving
+  the gate now costs a named entry with a written reason in `EXEMPT_MODULES` /
+  `EXEMPT_PAGES`, and exemptions are **self-cleaning**: a `full`-tier guard
+  re-runs each and **fails when one starts passing**, so the list can only
+  shrink. The 12 current exemptions are all *docstring* defects in `src/`
+  (a missing expected-output line, a comment on a `want` line, a name the
+  docstring never binds) — not defects in the code they document.
+  - Gated today: **27 modules + 41 pages** (was 15 + 20).
+  - A fence that is a signature listing, a calling pattern, or a deliberate
+    demonstration of what *raises* opts out **in place** with `# skip-doctest`
+    — visible to the page's reader, unlike a name in a list elsewhere.
+  - **Known gap — the gate does not fire on docs-only PRs.**
+    `tests/_changed_select.py` lists `docs/`, `*.md`, `README.md` and
+    `mkdocs.yml` under `_IGNORE_PREFIXES`/`_IGNORE_SUFFIXES`/`_IGNORE_FILES`
+    ("no bearing on the test suite"), so a diff touching only documentation
+    selects three cheap registry guards and **not** `test_doctests.py` —
+    verified: `classify(['docs/analysis/lyapunov.md'])` does not select it.
+    The full suite on merge/nightly still catches it, so a broken example is
+    delayed rather than shipped. Fixing it means mapping those paths to
+    `test_doctests.py` instead of ignoring them.
+- **`mkdocs.yml` publishes every page except a short enumerated list.** The
+  blanket tree-drop `theory/` had removed ~1.2k lines of accurate documentation
+  from the site — including `theory/fixed-points-interval.md`, which a **shipping
+  source docstring** (`analysis/fixedpoints/_interval.py`) links to — and nothing
+  failed. Only the three pre-generation `systems/*/index.md` stubs (replaced by
+  `hooks/docs_autogen.py`) and the non-page asset dirs are excluded now;
+  `tests/test_doctests.py` fails if that set grows or if any content tree is
+  dropped wholesale. `validation.unrecognized_links` is **`warn`** (was `ignore`),
+  so a broken internal link fails `mkdocs build --strict`.
+
 ---
 
 ## Versioning & release (python-semantic-release)
@@ -1502,9 +1550,10 @@ without re-deriving them.
 The v6 compiled-evaluator cache (above) removed that per-call compile, which
 invalidated the original reason.
 
-*The re-measurement* (all 136 catalogue ODE systems, warm process, JIT **and**
-tape caches emptied per system, so the "first call" column is a genuine cold
-cost):
+*The re-measurement* (all 136 catalogue ODE systems **as the catalogue stood
+then** — it is 142 today; the conclusion is unaffected, but do not read "136" as
+a current count — warm process, JIT **and** tape caches emptied per system, so
+the "first call" column is a genuine cold cost):
 
 | quantity | median | p90 | max |
 |---|---|---|---|
@@ -1641,7 +1690,7 @@ ts.max_lyapunov(h, ic=[0.1, 0.1])           # ≈ 0.42
 # DDE (integrate first, then Lyapunov from the end state)
 mg = ts.MackeyGlass()
 traj = mg.integrate(final_time=500.0, dt=0.5, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
-exps = mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])
+exps = mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1])
 
 # Registry
 from tsdynamics import registry

@@ -31,7 +31,7 @@ against a registry before the engine runs it. For the programmatic registry API
 
 !!! note "`dt` is the output grid, not the step size"
     For every adaptive method, `dt` only sets how densely the returned
-    [`Trajectory`](../analysis/integrate.md) is sampled — the internal stepper
+    [`Trajectory`](../analysis/integration-and-methods.md) is sampled — the internal stepper
     chooses its own steps from `rtol`/`atol`. A coarse `dt` does **not** cost
     accuracy. The two exceptions are `rk4` (a genuinely fixed-step method, where
     `dt` *is* the step) and the stochastic schemes (where `dt` *is* the noise
@@ -78,14 +78,14 @@ All names are case- and punctuation-insensitive and carry common aliases (e.g.
 themselves (see [Programmatic registry](#programmatic-registry)).
 
 <figure markdown>
-![Work–precision diagram for the explicit family and a stiff-problem wall-time comparison](../assets/figures/analysis/solvers.png){ loading=lazy }
+![Work–precision diagram for the explicit family and a stiff-problem wall-time comparison](../assets/figures/analysis/solvers.svg){ loading=lazy }
 <figcaption>Left: on a scalar problem with a known solution the explicit kernels track the requested tolerance, with the order-8 <code>dop853</code> reaching the lowest error at every setting. Right: on stiff van der Pol (μ=1000) all six kernels land on the same final state, but the explicit methods are stability-bound and pay hundreds of times the wall-time of the implicit ones — the practical case for <code>bdf</code>.</figcaption>
 </figure>
 
 ## Explicit Runge–Kutta
 
 These are the workhorses for **smooth, non-stiff** problems, and the same
-kernels drive the [DDE](../systems/delay/index.md) families through the method of
+kernels drive the [DDE](../systems/dde/index.md) families through the method of
 steps. The family spans fixed-step methods from order 1 (`euler`) through the
 order-4 `rk4`/`rk4_38`, the SSP order-3 `ssprk3`, the embedded adaptive pairs
 (`heun_euler`, `bs3`, `rk45`, `rkf45`, `cashkarp`, `tsit5`, `dop853`), and the

@@ -202,6 +202,8 @@ autocorrelation peak (default) or the dominant spectral frequency:
 ```python
 traj = VanDerPol(params={"mu": 1.0}).integrate(final_time=300.0, dt=0.01, ic=[2.0, 0.0])
 ts.estimate_period(traj)                  # ≈ 6.66
+
+signal = traj["x"]                        # or any bare 1-D series of your own
 ts.estimate_period(signal, dt=0.01, method="fft")
 ```
 

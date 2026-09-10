@@ -77,7 +77,7 @@ a plot description over the standard library. See
 import tsdynamics as ts
 
 print(ts.__version__)
-print(ts.registry.families())   # {'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
+print(ts.registry.families())   # {'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
 
 traj = ts.systems.Henon().iterate(steps=100, ic=[0.1, 0.1])
 print(traj.y.shape)             # (100, 2)

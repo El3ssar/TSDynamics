@@ -319,8 +319,8 @@ def get(name: str) -> PlotTransform:
     ------
     tsdynamics.errors.InvalidParameterError
         If no transform of that name is registered.  The message lists the
-        registered names, because a name that is *almost* right (``"basin"`` for
-        ``"basins"``) is the common case.
+        registered names, because a name that is *almost* right
+        (``"nullcline"`` for ``"nullclines"``) is the common case.
     """
     from tsdynamics.errors import InvalidParameterError
 
@@ -338,8 +338,9 @@ def get(name: str) -> PlotTransform:
 def resolve(spec: str) -> tuple[PlotTransform, str | None]:
     """Split a ``"transform"`` / ``"transform.primitive"`` spelling.
 
-    The dotted form is sugar, not a second mechanism: ``"basins.boundary"`` is
-    exactly ``("basins", primitive="boundary")``, validated by the same row.
+    The dotted form is sugar, not a second mechanism:
+    ``"phase_portrait.density"`` is exactly ``("phase_portrait",
+    primitive="density")``, validated by the same row.
     """
     if "." in spec:
         head, _, tail = spec.partition(".")
@@ -659,9 +660,9 @@ class TransformCall:
     Inside an overlay every transform would otherwise have to share one keyword
     namespace, which is how ``grid=`` ends up meaning two things at once::
 
-        ts.plot(duff, T("basins", grid=400, alpha=0.55),
-                      T("trajectory", ic=[0.3, 0.1], color="w"),
-                      T("fixed_points", marker="x", color="red"))
+        ts.plot(vdp, T("flow_speed", log=True, alpha=0.55),
+                     T("streamlines", seeds=8, color="w"),
+                     T("nullclines", linewidth=2.0))
 
     Style keywords (the canonical
     :data:`~tsdynamics.viz.style.STYLE_KEYS` vocabulary) are split out and
@@ -682,10 +683,16 @@ class TransformCall:
 def T(name: str, /, *, primitive: str | None = None, **options: Any) -> TransformCall:  # noqa: N802
     """Name a transform **with its own options**, for use inside a composition.
 
-    ``ts.plot(subject, "basins", "trajectory")`` builds both with the defaults;
-    ``ts.plot(subject, T("basins", grid=400), T("trajectory", ic=[0.3, 0.1]))``
-    gives each its own.  The dotted primitive sugar works here too:
-    ``T("basins.boundary")``.
+    ``ts.plot(subject, "flow_speed", "streamlines")`` builds both with the
+    defaults; ``ts.plot(subject, T("flow_speed", log=True), T("streamlines",
+    seeds=8))`` gives each its own.  The dotted primitive sugar works here too:
+    ``T("phase_portrait.density")``.
+
+    The options are checked against the named transform when :func:`ts.plot
+    <tsdynamics.viz.transforms.plot>` builds the figure — the same check the
+    shared keywords get — so a typo (``T("phase_portrait", nonsense=1)``) is
+    answered with the keywords that *are* accepted and a did-you-mean, rather
+    than with a bare ``TypeError`` raised from inside the compute.
 
     Parameters
     ----------
@@ -737,7 +744,7 @@ def transforms(
 class CompatibilityMatrix(dict):  # type: ignore[type-arg]
     """The declared matrix: ``transform -> (primitive, …)``, with a readable repr.
 
-    A plain ``dict`` subclass, so it is programmable (``m["basins"]``,
+    A plain ``dict`` subclass, so it is programmable (``m["phase_portrait"]``,
     ``pandas.DataFrame(m.rows())``) *and* prints as a table when you just look at
     it.  Reading marks: ``*`` the default primitive, ``!`` exclusive to this row.
     """
@@ -775,8 +782,8 @@ def compatibility(name: str | None = None) -> Any:
     """Return the declared compatibility matrix — the whole thing, or one row.
 
     ``compatibility()`` is a printable, DataFrame-able mapping of every
-    transform to its valid primitives; ``compatibility("basins")`` is that one
-    row.  Reading marks: ``*`` marks the default primitive, ``!`` marks a
+    transform to its valid primitives; ``compatibility("phase_portrait")`` is
+    that one row.  Reading marks: ``*`` marks the default primitive, ``!`` marks a
     primitive that is exclusive to that row.
 
     A transform whose optional dependency is missing is **listed, flagged

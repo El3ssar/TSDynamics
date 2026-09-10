@@ -267,9 +267,9 @@ No web server, no sibling `.json`, no `fetch`.
 import tsdynamics as ts
 
 spec = ts.Lorenz().to_plot_spec(
-    final_time=200.0, dt=0.002, ic=[1.0, 1.0, 1.0], animate=True,
+    final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0], animate=True,
 )
-spec.save("lorenz.html", backend="threejs")     # ~1.5 MB, opens anywhere
+spec.save("lorenz.html", backend="threejs")     # 32k vertices, ~1.3 MB
 ```
 
 The one external reference is the **pinned three.js build**, declared through an
@@ -310,7 +310,7 @@ copy-paste.
 import tsdynamics as ts
 
 ts.Lorenz().to_plot_spec(
-    final_time=200.0, dt=0.002, ic=[1.0, 1.0, 1.0],
+    final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0],
 ).save("lorenz.html", backend="threejs")
 ```
 
@@ -383,23 +383,32 @@ the poster would never appear.
 
 ```python
 import os
+import warnings
 
 import tsdynamics as ts
 
 # A long, finely sampled run — more samples than we will ship, deliberately:
 # the exporter thins by arc length, so the *shape* is set by the integration and
-# the *weight* by the cap.
+# the *weight* by the cap. Thinning is not silent: it raises
+# VisualizationDegraded naming the layer and the counts. That is the intent
+# here, so this snippet accepts it rather than letting it escape.
 traj = ts.Rossler().integrate(final_time=400.0, dt=0.002, ic=[1.0, 1.0, 1.0])
 print(traj.y.shape)                       # (200001, 3)
 
 spec = traj.to_plot_spec(color_by="time")
-spec.theme("dark").relabel(title="Rössler attractor")
+spec.relabel(title="Rössler attractor")
 
-path = spec.save(                # returns the path it wrote, as a str
-    "rossler.html",
-    backend="threejs",
-    max_points=25_000,           # ~1.2 MB with the poster, ~0.7 MB without
-)
+# Use the exporter's own `background=` rather than `.theme("dark")`: threejs
+# honors the background colour but not a theme's fonts/foreground/grid, so a
+# full theme would warn about the fields it has to drop.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")     # accept the documented thinning notice
+    path = spec.save(                   # returns the path it wrote, as a str
+        "rossler.html",
+        backend="threejs",
+        max_points=25_000,              # ~1.2 MB with the poster, ~0.7 MB without
+        background="#111318",
+    )
 print(os.path.getsize(path))
 ```
 
@@ -419,6 +428,9 @@ The `threejs` renderer ships in-tree and needs **no extra dependency** (it is
 pure Python over the spec IR):
 
 ```python
+# a modestly sampled spec, so nothing is thinned by the vertex cap
+spec = ts.Lorenz().to_plot_spec(final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0])
+
 payload = spec.render("threejs")             # a RenderResult carrying the dict
 spec.render("threejs", path="lorenz.json")   # …or write the payload to a file
 page = spec.render("threejs", html=True)     # …or get the viewer page as a str
@@ -517,6 +529,9 @@ sagitta of **0.038** — about 5x over. The fix is to spend vertices, not to cha
 the resampling:
 
 ```python
+# skip-doctest — `traj` is a long HyperQi run (final_time=400); the sagitta and
+# payload figures quoted around this block come from the benchmark below, so the
+# snippet documents that measured configuration rather than re-deriving it.
 # HyperQi is 4-D, so pick the three components you want to see
 spec = traj.to_plot_spec(components=[0, 1, 2])
 spec.save("hyperqi.html", backend="threejs", max_points=200_000)

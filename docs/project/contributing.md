@@ -116,7 +116,7 @@ the changelog and release notes are generated from them:
 feat: add Sprott-N attractor to chaotic_attractors
 fix(dde): reject zero or negative delay parameters
 perf(engine): reuse the frozen Jacobian across SDIRK substages
-docs: clarify n_exp behaviour in DelaySystem.lyapunov_spectrum
+docs: clarify k behaviour in DelaySystem.lyapunov_spectrum
 ```
 
 The prefix decides the release: `feat:` → minor, `fix:` / `perf:` → patch,

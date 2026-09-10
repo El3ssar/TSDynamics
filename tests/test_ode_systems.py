@@ -5,6 +5,15 @@ Instantiation tests are registry-driven and cover every built-in system
 (fast, no JiT compilation).  A curated subset is integration-tested in the
 ``slow`` tier; the exhaustive every-system compile sweep runs nightly under
 ``-m full``.
+
+Scope note: the integration sweeps here are **shape and finiteness smoke tests**
+— they prove a system integrates and returns an array of the right shape, and
+deliberately nothing more.  Whether the resulting orbit is the attractor the
+system claims (bounded, non-degenerate, recurrent, with the right sign of
+leading exponent) is asserted for every catalogue system by
+``tests/test_catalogue_dynamics.py``.  Do not read a green sweep here as
+evidence that a kernel is correct: ``isfinite`` at ``final_time=2.0`` is cleared
+by an orbit heading for ``1e19``.
 """
 
 from __future__ import annotations

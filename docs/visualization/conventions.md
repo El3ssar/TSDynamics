@@ -130,6 +130,10 @@ that "several related views" is *panels*, not clutter.
 
 ```python
 # a shared colour range across two field panels, so the colours mean the same thing
+ks = ts.KuramotoSivashinsky(N=64, L=22.0)
+spec_a = ks.to_plot_spec(final_time=100.0, dt=0.5, ic=None)
+spec_b = ks.to_plot_spec(final_time=200.0, dt=0.5, ic=None)
+
 spec_a.colorize(clim=(-12.0, 15.0))
 spec_b.colorize(clim=(-12.0, 15.0))
 ```

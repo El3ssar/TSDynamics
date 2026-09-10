@@ -4,7 +4,7 @@ This module is the *data + engine* half of the executable-documentation gate
 (stream ``DOCS-DOCTEST-GATE``); :mod:`tests.test_doctests` is the thin pytest
 wrapper that turns it into parametrized test items.  Keeping the lists and the
 runner here (one file per thing) lets the test module stay a handful of
-parametrize calls, and lets other tooling import the same curated lists.
+parametrize calls, and lets other tooling reuse the same discovery helpers.
 
 Two surfaces are gated, both executed under the suite-wide
 ``filterwarnings = error`` (see ``pyproject.toml``):
@@ -25,14 +25,34 @@ That convention keeps the rendered docs readable, so the harness honours it by
 seeding each doctest's globals with :func:`doctest_namespace` *on top of* the
 module's own ``__dict__`` (so the documented object itself is always in scope).
 
+Gate everything, exempt on purpose
+----------------------------------
+This gate is **inverted**: it discovers its own subjects rather than reading an
+allow-list.  Every module under ``src/tsdynamics`` containing a ``>>>`` and every
+``docs`` page containing a runnable ```python``` fence is gated *by default*
+(:func:`discover_doctest_modules`, :func:`discover_doc_pages`).
+
+That matters because the previous design was an allow-list of 20 modules and 22
+pages — and 12 of the 25 modules it did *not* name were failing.  A gate whose
+green tick certifies the half that was already clean is not a gate; worse, a new
+module with a broken example joined nothing and so broke nothing.  Under
+discovery the default is the opposite: a new example is gated the moment it is
+written, and leaving the gate costs a **named entry with a written reason** in
+:data:`EXEMPT_MODULES` / :data:`EXEMPT_PAGES`.
+
+Exemptions are self-cleaning.  Two guards in :mod:`tests.test_doctests` keep the
+list honest: every exemption must still be discovered (no entries for deleted
+modules), and — in the ``full`` tier — every exempt subject must **still fail**,
+so an exemption whose defect has been fixed turns red and asks to be removed.
+
 Tier split (the ``full`` marker)
 ---------------------------------
-The default (fast) tier runs the curated, **verified-fast** docstring modules
-and the curated clean doc pages, and **all of them pass** under
-``filterwarnings = error``.  A handful of doctests run genuinely heavy
-simulations (e.g. a 600-point logistic orbit-diagram sweep) — those modules are
-in :data:`FULL_ONLY_MODULES` and only run under ``-m full`` (the nightly sweep),
-so the inner loop stays quick.
+The default (fast) tier runs every gated module and page, and **all of them
+pass** under ``filterwarnings = error``.  A handful run genuinely heavy
+simulations (a 600-point logistic orbit-diagram sweep; the animation and
+composition pages) — those are named in :data:`SLOW_MODULES` / :data:`SLOW_PAGES`
+and only run under ``-m full`` (the nightly sweep), so the inner loop stays
+quick.
 
 RuntimeWarning allowlist
 ------------------------
@@ -45,7 +65,7 @@ other warning category — and every other module — stays a hard error.
 
 The page-fence contract
 -----------------------
-A page joins :data:`CURATED_PAGES` once **every** one of its ```python``` fences
+A page is gated automatically, and stays green once **every** one of its fences
 either runs clean top-to-bottom as a script (fences on a page share one
 namespace, so a later block may use names an earlier one bound) or opts out by
 carrying the ``# skip-doctest`` marker (:data:`SKIP_MARKER`) — the marker is for
@@ -55,12 +75,12 @@ not executed as a script (the module-doctest path covers those).
 
 Provenance
 ----------
-The curated lists below were produced by running every ``src/tsdynamics``
-module's doctests and every ``docs`` page's python fences under
-``filterwarnings = error`` and keeping the ones that pass clean.  Modules / pages
-whose narrative docstrings are not yet self-contained doctests are deliberately
-*excluded* (not silenced): closing those gaps is tracked follow-up work, and the
-contract above is what a new page must satisfy to join the curated set.
+Every entry in :data:`EXEMPT_MODULES` was produced by *running* that module's
+doctests under ``filterwarnings = error`` and recording the exact failure, which
+is what its reason string quotes.  They are all defects in ``src/tsdynamics``
+docstrings (missing expected-output lines, a comment on a *want* line, a name the
+docstring never binds) rather than defects in the code they document.
+:data:`EXEMPT_PAGES` is empty: every discovered page executes clean.
 """
 
 from __future__ import annotations
@@ -82,35 +102,126 @@ DOCS_DIR = REPO_ROOT / "docs"
 OPTIONFLAGS = doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE
 
 # ---------------------------------------------------------------------------
-# Curated module lists (the docstring half of the gate)
+# Discovery (the docstring half of the gate)
 #
-# CURATED_MODULES — verified clean *and* fast: the default-tier gate.  Every one
-#   passes under filterwarnings=error.
-# FULL_ONLY_MODULES — verified clean but slow (heavy simulations in the example);
-#   collected only under ``-m full`` so the fast loop stays quick.
+# Everything under ``src/tsdynamics`` that contains a ``>>>`` example is gated.
+# There is no allow-list: a module joins the gate by having an example, and the
+# only way out is a named entry in EXEMPT_MODULES with a written reason.
 # ---------------------------------------------------------------------------
 
-CURATED_MODULES: tuple[str, ...] = (
-    "tsdynamics.analysis.chaos.zero_one",
-    "tsdynamics.analysis.dimensions.correlation",
-    "tsdynamics.analysis.lyapunov.from_data",
-    "tsdynamics.analysis.orbits.return_map",
-    "tsdynamics.data.sampling",
-    "tsdynamics.derived.ensemble",
-    "tsdynamics.derived.poincare",
-    "tsdynamics.derived.projected",
-    "tsdynamics.derived.stroboscopic",
-    "tsdynamics.engine.run",
-    "tsdynamics.errors",
-    "tsdynamics.families.delay",
-    "tsdynamics.families.wrapped",
-    "tsdynamics.registry",
-    "tsdynamics.utils.grids",
-)
+SRC_ROOT = REPO_ROOT / "src"
+PACKAGE_ROOT = SRC_ROOT / "tsdynamics"
 
-#: Verified clean, but the documented example runs a heavy simulation — gated to
-#: the ``full`` tier (nightly) so it never slows the change-scoped loop.
-FULL_ONLY_MODULES: tuple[str, ...] = ("tsdynamics.analysis.orbits.orbit_diagram",)
+
+def discover_doctest_modules() -> tuple[str, ...]:
+    """Every importable ``tsdynamics`` module whose source contains ``>>>``.
+
+    The scan is textual on purpose: it finds the examples without importing
+    anything, so a module that fails to import is a *gate failure* rather than a
+    silently-skipped module.
+    """
+    names: list[str] = []
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        if ">>>" not in path.read_text(encoding="utf-8"):
+            continue
+        rel = path.relative_to(SRC_ROOT).with_suffix("")
+        name = ".".join(rel.parts)
+        if name.endswith(".__init__"):
+            name = name[: -len(".__init__")]
+        names.append(name)
+    return tuple(names)
+
+
+# ---------------------------------------------------------------------------
+# Exemptions — the ONLY escape from the gate, and each costs a written reason.
+#
+# Every entry is a *defect in a docstring example*, diagnosed by running it.
+# These live in ``src/tsdynamics/**`` and are owned by the code, not the docs,
+# so they are recorded here rather than silently dropped.  A ``full``-tier guard
+# (``test_exempt_modules_still_fail``) re-runs each one and FAILS when it starts
+# passing, so a fixed example cannot linger here forgotten.
+# ---------------------------------------------------------------------------
+
+#: module -> the exact defect, as measured.
+EXEMPT_MODULES: dict[str, str] = {
+    "tsdynamics": (
+        "The package-docstring tour shows `traj['x']` and `Lorenz()."
+        "lyapunov_spectrum()` with the value in a trailing comment and no "
+        "expected-output line, so doctest sees unexpected output. Either bind "
+        "the results to names or write the repr as the expected output."
+    ),
+    "tsdynamics.analysis.chaos.expansion": (
+        "`expansion_entropy(...)` expects `0.69...  # ln 2, exact` — the "
+        "trailing comment sits on the *want* line, so it is part of the "
+        "expected output and never matches. Move the comment to the `>>>` line."
+    ),
+    "tsdynamics.analysis.chaos.gali": (
+        "`gali(Lorenz(), k=2, final_time=25.0)` expects `0.0...` but returns "
+        "3.78e-11, which formats in scientific notation and cannot match a "
+        "`0.0`-prefixed ellipsis. Wrap in `round(..., 6)` or expect `...e-...`."
+    ),
+    "tsdynamics.analysis.fixedpoints.fixed": (
+        "Three `fixed_points(...)` examples print `FixedPointSet(N items)` but "
+        "declare no expected output."
+    ),
+    "tsdynamics.analysis.fixedpoints.periodic": (
+        "Four examples (`estimate_period`, `periodic_orbit`, `periodic_orbits`) "
+        "print a repr but declare no expected output. Note these reference "
+        "`VanDerPol`, which now EXISTS — the examples run, they just do not "
+        "declare what they print."
+    ),
+    "tsdynamics.analysis.lyapunov": (
+        "Three `lyapunov_spectrum`/`max_lyapunov` examples print a "
+        "`LyapunovSpectrum(...)` repr with no expected-output line."
+    ),
+    "tsdynamics.analysis.orbits.poincare": (
+        "`poincare_section(traj, plane=('z', 25.0))` uses a name `traj` that no "
+        "earlier line in the docstring binds -> NameError."
+    ),
+    "tsdynamics.data.trajectory": (
+        "The `Trajectory` class example opens with `traj = lor.integrate(...)` "
+        "but never binds `lor`, so all six following lines NameError."
+    ),
+    "tsdynamics.derived.tangent": (
+        "Two `TangentSystem` examples print a repr with no expected output."
+    ),
+    "tsdynamics.families.base": (
+        "`p.unknown = 5.0  # raises AttributeError` actually raises, so doctest "
+        "needs a `Traceback (most recent call last): ... AttributeError` block "
+        "rather than a comment."
+    ),
+    "tsdynamics.families.continuous": (
+        "`Henon().run(n=5000)` prints a Trajectory repr with no expected "
+        "output, and `sol.meta['t_events'][0].shape` expects `(... ,)` "
+        "(with a space) but gets `(70,)`."
+    ),
+    "tsdynamics.families.discrete": (
+        "Two `DiscreteMap` examples print a repr with no expected output."
+    ),
+}
+
+#: module -> why it is nightly-only.  Verified clean, but the example runs a
+#: heavy simulation, so it stays out of the change-scoped inner loop.
+SLOW_MODULES: dict[str, str] = {
+    "tsdynamics.analysis.orbits.orbit_diagram": (
+        "the documented example sweeps a 600-point logistic orbit diagram"
+    ),
+}
+
+
+def gated_modules() -> tuple[str, ...]:
+    """Discovered modules minus the exempt and the nightly-only ones."""
+    skip = set(EXEMPT_MODULES) | set(SLOW_MODULES)
+    return tuple(m for m in discover_doctest_modules() if m not in skip)
+
+
+def full_tier_modules() -> tuple[str, ...]:
+    """The nightly-only modules that still exist."""
+    found = set(discover_doctest_modules())
+    return tuple(m for m in SLOW_MODULES if m in found)
+
 
 #: Modules whose documented numerics legitimately emit a ``RuntimeWarning``
 #: (benign intermediate ``log(0)``/``0/0``).  Downgraded to a non-error *only*
@@ -122,37 +233,59 @@ RUNTIME_WARNING_MODULES: frozenset[str] = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# Curated documentation-page list (the page-fence half of the gate)
+# Discovery (the page-fence half of the gate)
 #
-# Every page here executes its ```python``` fences top-to-bottom without raising
-# under filterwarnings=error.  Pages with intentionally-illustrative fragments
-# (referencing a placeholder ``system``/``signal`` the reader supplies) are
-# excluded until they adopt the page-fence contract in the module docstring (a
-# ``# skip-doctest`` marker on the fragment fence).
+# Every ``docs/**.md`` page with at least one runnable ```python``` fence is
+# gated.  As with modules there is no allow-list: a page joins by having a
+# runnable fence.  A fence that is a signature listing, a calling pattern, or a
+# deliberate demonstration of what *raises* opts out in place with the
+# ``# skip-doctest`` marker — visible to the reader of the page, unlike a name
+# buried in a list over here.
 # ---------------------------------------------------------------------------
 
-CURATED_PAGES: tuple[str, ...] = (
-    "analysis/chaos.md",
-    "analysis/dimensions.md",
-    "analysis/embedding.md",
-    "analysis/index.md",
-    "analysis/poincare.md",
-    "analysis/recurrence.md",
-    "index.md",
-    "project/changelog.md",
-    "project/citation.md",
-    "project/contributing.md",
-    "reference/registry.md",
-    "reference/top-level.md",
-    "start/first-trajectory.md",
-    "start/install.md",
-    "systems/delay/index.md",
-    "systems/discrete/index.md",
-    "systems/index.md",
-    "theory/backends.md",
-    "theory/compilation.md",
-    "theory/solvers.md",
-)
+
+#: page -> the exact defect.  Empty is the goal, and currently the truth: every
+#: discovered page executes clean.  Kept as the documented escape hatch so a
+#: genuinely un-runnable page has somewhere to go *with a reason* instead of
+#: being quietly dropped from a curated list.
+EXEMPT_PAGES: dict[str, str] = {}
+
+#: page -> why it is nightly-only.  These pass, but each runs minutes of
+#: simulation, so they stay out of the change-scoped inner loop.
+SLOW_PAGES: dict[str, str] = {
+    "visualization/composition.md": (
+        "~240 s: builds many multi-panel composites, several of them 3-D"
+    ),
+    "visualization/animation.md": ("~105 s: renders animations, including an mp4/gif encode"),
+}
+
+
+def discover_doc_pages() -> tuple[str, ...]:
+    """Every ``docs`` page with at least one runnable python fence.
+
+    Uses :func:`iter_python_fences`, which is defined further down this module —
+    fine because the name is resolved when this is *called*, not when it is
+    defined.  Nothing may call it at import time for that reason.
+    """
+    pages: list[str] = []
+    for path in sorted(DOCS_DIR.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if next(iter_python_fences(text), None) is not None:
+            pages.append(str(path.relative_to(DOCS_DIR)))
+    return tuple(pages)
+
+
+def gated_pages() -> tuple[str, ...]:
+    """Discovered pages minus the exempt and the nightly-only ones."""
+    skip = set(EXEMPT_PAGES) | set(SLOW_PAGES)
+    return tuple(p for p in discover_doc_pages() if p not in skip)
+
+
+def full_tier_pages() -> tuple[str, ...]:
+    """The nightly-only pages that still exist."""
+    found = set(discover_doc_pages())
+    return tuple(p for p in SLOW_PAGES if p in found)
+
 
 # A fenced block carrying this marker is a deliberately-illustrative fragment
 # (pseudo-code or a snippet the reader completes) and is skipped by the page

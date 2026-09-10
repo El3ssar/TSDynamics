@@ -4,6 +4,11 @@ Tests for DDE systems (``DelaySystem`` subclasses).
 Registry-driven; per-system non-equilibrium histories live in
 ``tests/_sampling.py`` (a guard test asserts completeness).  DDE integration
 (the engine method-of-steps) is slow, so integration tests are marked ``slow``.
+
+Scope note: the sweeps here check shape and finiteness.  The per-system
+*dynamical* assertions (the orbit is bounded, non-degenerate and recurrent, from
+the same ``DDE_HISTORIES`` starts) are in ``tests/test_catalogue_dynamics.py``,
+which covers the DDE family alongside the flows and maps.
 """
 
 from __future__ import annotations

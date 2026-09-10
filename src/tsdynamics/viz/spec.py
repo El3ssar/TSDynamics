@@ -1009,10 +1009,10 @@ class Layer:
         keys are ignored by a renderer rather than erroring.
     transform : str, optional
         **Provenance**: the name of the thing that produced this layer
-        (``"basins"``, ``"trajectory"``, ``"fixed_points"``, …), or ``None`` when
-        it is unknown.  A layer that cannot say where it came from cannot be
+        (``"escape_time"``, ``"streamlines"``, ``"nullclines"``, …), or ``None``
+        when it is unknown.  A layer that cannot say where it came from cannot be
         addressed after the fact, which is what blocks per-source restyling
-        inside an overlay (``spec.style("basins", cmap=...)`` rather than
+        inside an overlay (``spec.style("escape_time", cmap=...)`` rather than
         today's all-or-nothing ``.style()``), legend grouping by source, and
         telling a renderer that *this* ``IMAGE`` is a categorical basin image
         rather than a continuous spacetime one.  Purely additive: it defaults to
@@ -2195,6 +2195,48 @@ class PlotSpec:
 
         return render_spec(self, backend, **backend_kw)
 
+    def show(self, backend: str | None = None, **backend_kw: Any) -> Any:
+        """Render this spec and display it — the verb every plotting user types.
+
+        The library's three verbs are :meth:`plot` (build), :meth:`render` (draw)
+        and :meth:`save` (write), which is a coherent vocabulary — but ``.show()``
+        is what a decade of ``plt.show()`` and ``fig.show()`` has wired into the
+        fingers of every matplotlib and plotly user, and an ``AttributeError`` is
+        a poor answer to a reasonable guess.  So it exists, and it means exactly
+        what it says: :meth:`render`, then hand the figure to its own backend's
+        display.
+
+        On a **non-interactive** matplotlib backend (``Agg`` — a headless script,
+        a CI job, this library's own test suite) there is no window to open, so
+        the figure is rendered and returned and nothing else happens; use
+        :meth:`save` to get a file.  This is deliberately quieter than
+        :func:`matplotlib.pyplot.show`, which warns in that situation: the caller
+        of *this* method is told the same thing by the docstring and by getting a
+        figure back, and a warning that fires on every headless call is noise.
+
+        Parameters
+        ----------
+        backend : str, optional
+            The renderer name; ``None`` selects the default capable backend.
+        **backend_kw
+            Forwarded to the renderer.
+
+        Returns
+        -------
+        Any
+            The backend's figure — the same object :meth:`render` returns, so
+            ``fig = spec.show()`` still gives you the handle to poke at.
+
+        See Also
+        --------
+        plot : apply inline tweaks, return the spec.
+        render : draw and return the backend's figure, displaying nothing.
+        save : write the figure (or animation) to a file.
+        """
+        figure = self.render(backend, **backend_kw)
+        _display_figure(figure)
+        return figure
+
     # Figure-scoped: ``plot`` forwards to the individual tweak methods, each of
     # which already declares (and performs) its own panel recursion — so ``plot``
     # itself must NOT recurse, or a panel-scoped tweak would be applied twice.
@@ -2207,6 +2249,7 @@ class PlotSpec:
         =============== =====================================================
         ``.plot()``     gives you a :class:`PlotSpec` — chainable and saveable
         ``.render()``   gives you the backend's figure
+        ``.show()``     draws it and displays it (the matplotlib/plotly reflex)
         ``.save(path)`` writes the file
         =============== =====================================================
 
@@ -2808,6 +2851,50 @@ def reject_positional_transform(positional: tuple[Any, ...], subject: str) -> No
         f"{subject}.plot() takes no positional arguments, got {type(first).__name__}. "
         "Compose several things with the front door instead:" + remedy(f"ts.plot({subject}, other)")
     )
+
+
+#: Matplotlib backends that draw into a file rather than onto a screen.  Used only
+#: as the fallback when the installed matplotlib does not expose its backend
+#: registry; the registry is asked first, so a new GUI backend needs no edit here.
+_NON_INTERACTIVE_MPL: frozenset[str] = frozenset(
+    {"agg", "cairo", "pdf", "pgf", "ps", "svg", "template"}
+)
+
+
+def _mpl_backend_is_interactive() -> bool:
+    """Whether the active matplotlib backend can actually open a window."""
+    import matplotlib
+
+    name = matplotlib.get_backend().lower().removeprefix("module://")
+    try:
+        from matplotlib.backends.registry import BackendFilter, backend_registry
+
+        gui: Any = backend_registry.list_builtin(BackendFilter.INTERACTIVE)  # type: ignore[no-untyped-call]
+        return name in {str(b).lower() for b in gui}
+    except Exception:  # pragma: no cover - older/odd matplotlib: fall back to the set
+        return name not in _NON_INTERACTIVE_MPL
+
+
+def _display_figure(figure: Any) -> None:
+    """Hand a rendered figure to its own backend's display, if it has one.
+
+    Dispatches on where the figure came from rather than on which backend was
+    asked for, so it stays right when the dispatcher falls back to matplotlib.
+    A payload that is not a figure at all (the json / three.js exporters return
+    data) has nothing to display, and that is not an error — ``show()`` on an
+    export is simply the export.
+    """
+    module = type(figure).__module__.split(".")[0]
+    if module == "matplotlib":
+        if not _mpl_backend_is_interactive():
+            return  # headless: the figure is the result; save() writes the file
+        import matplotlib.pyplot as plt
+
+        plt.show()
+        return
+    show = getattr(figure, "show", None)
+    if callable(show):  # plotly: opens the figure in a browser / notebook cell
+        show()
 
 
 def _notebook_mimebundle(draw: Any, include: Any, exclude: Any) -> Any:

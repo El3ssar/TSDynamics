@@ -59,7 +59,7 @@ traj.component(2)            # by index
 traj.after(20.0)             # drop the transient: keep t >= 20
 traj.minmax()                # per-component (minima, maxima)
 traj.standardize()           # zero mean, unit std per component (records the transform)
-traj.neighbors(q, k=3)       # (distances, indices) of the k nearest points to q (cached KD-tree)
+traj.neighbors(traj.y[0], k=3)   # (distances, indices) of the k nearest points (cached KD-tree)
 ```
 
 Slicing keeps `t` and `y` together and preserves the metadata, so a
@@ -70,7 +70,7 @@ condition used:
 
 ```python
 traj.meta
-# {'system': 'Lorenz', 'params': {...}, 'tsdynamics': '5.2.6', 'engine': 'rust',
+# {'system': 'Lorenz', 'params': {...}, 'tsdynamics': '<version>', 'engine': 'rust',
 #  'family': 'ode', 'method': 'rk45', 'backend': 'jit', 'dt': 0.01, 't0': 0.0,
 #  'rtol': 1e-09, 'atol': 1e-12, 'ic': array([...])}
 ```
@@ -121,6 +121,7 @@ The `method=` keyword selects the integration kernel. The default is `rk45`
 serves most non-stiff systems well.
 
 ```python
+# skip-doctest — `sys` is any continuous system of yours
 traj = sys.integrate(final_time=100.0, dt=0.02, method="dop853", rtol=1e-9, atol=1e-12)
 ```
 
@@ -193,6 +194,7 @@ a deliberate exception is visible rather than accidental.
 If you do not know whether a system is stiff, ask the library to find out:
 
 ```python
+# skip-doctest — `sys` is any continuous system of yours
 traj = sys.integrate(final_time=100.0, dt=0.02, method="auto")
 traj.meta["method"]    # the kernel that was actually used, e.g. "rk45" or "bdf"
 ```
@@ -221,6 +223,7 @@ on any of three backends, selected with `backend=`:
 | `"reference"` | A dependency-light pure-Python SciPy oracle (ODEs + maps) | Cross-validation and wheel-free environments — the answer key, not the fast path |
 
 ```python
+# skip-doctest — `sys` is any continuous system of yours
 traj = sys.integrate(final_time=100.0, dt=0.01, backend="interp")
 ```
 

@@ -69,7 +69,7 @@ maps (`DiscreteMap.lyapunov_spectrum`, `TangentSystem`) with the exact
   approximates the leading few by building an *extended* delay system — the base
   state plus deviation states whose dynamics are the symbolic variational
   equations — and integrating it on the engine in delay-window chunks, with a
-  function-space QR over the deviation history segment. This is why `n_exp` must
+  function-space QR over the deviation history segment. This is why `k` must
   be chosen consciously, why the estimates converge more slowly than ODE ones,
   and why `TangentSystem` refuses delay systems outright.
 

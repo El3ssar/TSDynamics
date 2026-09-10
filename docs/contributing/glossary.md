@@ -212,12 +212,12 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
 | `components` | `component` | `orbit_diagram` |
 | `burn_in` | `transient` | `periodic_orbit` |
 | `steps`, `n_rescale` | `n` *(or `final_time` for flows)* | `gali`, `expansion_entropy`, `max_lyapunov`, `poincare_section`, `return_map` |
-| `tau`, `lag` | `delay` | entropy family, `time_reversal_asymmetry`, `nonlinear_prediction_error` |
+| `tau`, `lag` | `delay` | `embed`, `embedding_dimension`, `lyapunov_from_data` |
 | `max_lag` | `max_delay` | `optimal_delay`, `mutual_information`, `estimate_period`, `autocorrelation` |
-| `m`, `emb_dim` | `dimension` | entropy family, `lyapunov_from_data`, `nonlinear_prediction_error` |
+| `m`, `emb_dim` | `dimension` | `embed`, `lyapunov_from_data` |
 | `theiler_window` | `theiler` | dimensions / recurrence family |
 | `min_neighbors` | `n_neighbors` | `lyapunov_from_data` |
-| `kind` (variant selector) | `method` | `return_map` (`max`/`min`/`poincare`), `detrend` (`linear`/`constant`) |
+| `kind` (variant selector) | `method` | `return_map` (`max`/`min`/`poincare`) |
 | `grid`, `box` (region arg) | `region` | `basins_of_attraction`, `fixed_points`, `periodic_orbits` |
 | `n_exp` | `k` | `lyapunov_spectrum` |
 | `.integrate` / `.iterate` | `.run` | every family (`.trajectory` kept, not rewritten) |
@@ -225,6 +225,14 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
 
 > `n_cut` (`zero_one_test`) is **not** in this table: it is a domain-owned lag
 > ceiling (§5), not a transient — it is neither renamed nor banned.
+
+> **v6 scope note.** The Scope column above names only functions that still
+> exist. The v6 scope surgery deleted the entropy, surrogate and transforms
+> families outright (see the scope boundary in `CLAUDE.md`), so the
+> `tau`/`lag` → `delay` and `m`/`emb_dim` → `dimension` renames are now carried
+> by the surviving *phase-space* users (the embedding family and
+> `lyapunov_from_data`); `detrend` left with the transforms package. The
+> renames themselves are unchanged — only their scope shrank.
 
 ---
 

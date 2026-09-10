@@ -6,7 +6,15 @@ Three rungs, one function, one return type:
 
     ts.plot(traj)                                     # what you already had
     ts.plot(traj, "delay_embedding", delay=7)         # a transform by name
-    ts.plot(duff, "basins", "attractors", "trajectory", "fixed_points")
+    ts.plot(vdp, "flow_speed", "streamlines", "nullclines")   # several, one subject
+
+Every name in an example on this page is a **registered** transform
+(:func:`~tsdynamics.viz.compatibility` lists them, and the documentation gallery
+is generated from that list).  The rung-3 line above used to name four
+transforms — ``basins``, ``attractors``, ``trajectory``, ``fixed_points`` — none
+of which is registered, so the module's flagship example answered a reader who
+pasted it with ``InvalidParameterError: unknown plot transform 'basins'``.  A
+gate now checks the names in every such example against the live registry.
 
 The rule that keeps it one function rather than three: **a positional string (or
 a** :func:`~tsdynamics.viz.transforms.T` **) is a transform to apply to the
@@ -16,7 +24,7 @@ there is one merge policy, one frame check, one z-ordering, and one return type
 (always a :class:`~tsdynamics.viz.spec.PlotSpec`, which renders itself).
 
 Draw order is by **role**, not by argument order, so the call is order-free:
-``plot(basins, traj)`` and ``plot(traj, basins)`` are the same picture.
+``plot(field, orbit)`` and ``plot(orbit, field)`` are the same picture.
 """
 
 from __future__ import annotations
@@ -36,7 +44,7 @@ def _is_selector(thing: Any) -> bool:
 def _split_style(options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Split a transform's options into ``(build_options, style)``.
 
-    A per-transform style keyword inside an overlay (``T("basins", alpha=0.55)``)
+    A per-transform style keyword inside an overlay (``T("flow_speed", alpha=0.55)``)
     is applied to *that* transform's layers only — which is the whole point of
     naming them separately.  The split keys off the canonical
     :data:`~tsdynamics.viz.style.STYLE_KEYS` vocabulary and its aliases, so
@@ -77,12 +85,20 @@ def _build_one(
 
     if isinstance(selector, TransformCall):
         name, own, chosen = selector.name, dict(selector.options), selector.primitive
+        # A T()'s OWN options were the one keyword path through this door that
+        # nobody validated: they are merged in below and handed straight to the
+        # compute, so ``T("phase_portrait", nonsense=1)`` surfaced as a bare
+        # ``TypeError: phase_portrait() got an unexpected keyword argument`` from
+        # deep inside the registry.  Route them through the same check the shared
+        # keywords get, so every keyword entering the front door is answered the
+        # same way — with the accepted names and a did-you-mean.
+        _reject_unaccepted(own, [selector], dropped=False)
     else:
         name, own, chosen = selector, {}, None
     chosen = chosen if chosen is not None else primitive
 
     # A shared keyword only reaches a transform that can accept it: `ts.plot(sys,
-    # "basins", "trajectory", grid=400)` must not hand `grid=` to `trajectory`.
+    # "escape_time", "nullclines", grid=400)` must not hand `grid=` to `nullclines`.
     # A *style* keyword is accepted by every transform — it is applied to the
     # layers, not passed to the compute — so it must survive this filter, or
     # `ts.plot(traj, "phase_portrait", color="red")` (the most obvious styling
@@ -133,17 +149,31 @@ def _accepted_names(record: Any) -> frozenset[str]:
     return frozenset(params) | row_option_names(record) | {"primitive_options"}
 
 
-def _reject_unused(kw: dict[str, Any], selectors: list[str | TransformCall]) -> None:
-    """Raise if a shared keyword reaches *none* of the named transforms.
+def _reject_unaccepted(
+    kw: dict[str, Any], selectors: list[str | TransformCall], *, dropped: bool = True
+) -> None:
+    """Raise if a keyword is accepted by *none* of the named transforms.
 
-    The per-transform filter in :func:`_build_one` exists so ``plot(sys, "basins",
-    "trajectory", grid=400)`` does not hand ``grid=`` to ``trajectory`` — but a
+    The per-transform filter in :func:`_build_one` exists so ``plot(sys,
+    "escape_time", "nullclines", grid=400)`` does not hand ``grid=`` to
+    ``nullclines`` — but a
     keyword no transform accepts falls through the same sieve and is **silently
     dropped**, which is exactly the defect ``_FIGURE_KEYS`` was added to fix and
     exactly what the sibling front door (``traj.plot(colour="red")``) already
     refuses.  One typo (``colour=``, ``componets=``) must not cost a wrong picture
     and no message, so the two doors agree: an unusable keyword is an error that
     names the closest keyword the named transforms *do* take.
+
+    Parameters
+    ----------
+    kw : dict
+        The keywords to check.
+    selectors : list
+        The transform selectors they would reach.
+    dropped : bool, optional
+        Whether an unaccepted keyword would be *silently dropped* (the shared-``kw``
+        case) rather than reaching a compute that raises (a ``T()``'s own
+        options).  Only the wording of the message differs; the check does not.
     """
     import difflib
 
@@ -168,8 +198,9 @@ def _reject_unused(kw: dict[str, Any], selectors: list[str | TransformCall]) -> 
     hints = "".join(
         f"\n    {bad}= — did you mean {near[0]}=?" for bad, near in close.items() if near
     )
+    tail = ", so they would be silently ignored." if dropped else "."
     raise InvalidParameterError(
-        f"{named} does not accept keyword(s) {unused}, so they would be silently ignored."
+        f"{named} does not accept keyword(s) {unused}{tail}"
         f"{hints}\nKeywords accepted here: {listed} (plus any style keyword — color=, "
         "linewidth=, alpha=, … — and animate=)."
     )
@@ -189,8 +220,8 @@ def plot(
     *things
         The **subject** (a :class:`~tsdynamics.data.Trajectory`, a system, an
         analysis result, a :class:`~tsdynamics.viz.spec.PlotSpec`) followed by
-        any number of **transform selectors** — a name (``"basins"``,
-        ``"basins.boundary"``) or a :func:`~tsdynamics.viz.transforms.T` carrying
+        any number of **transform selectors** — a name (``"phase_portrait"``,
+        ``"phase_portrait.density"``) or a :func:`~tsdynamics.viz.transforms.T` carrying
         that transform's own options.  With no selector, every positional is a
         subject and this is :func:`tsdynamics.viz.plot`.
     layout : {"overlay", "stack", "row", "grid"}, optional
@@ -208,8 +239,8 @@ def plot(
         Overlay a deliberate frame mismatch with a warning instead of raising.
     **kw
         Options shared by the named transforms — routed only to the transforms
-        that actually accept them, so ``plot(sys, "basins", "trajectory",
-        grid=400)`` does not hand ``grid=`` to ``trajectory``.  A keyword that
+        that actually accept them, so ``plot(sys, "escape_time", "nullclines",
+        grid=400)`` does not hand ``grid=`` to ``nullclines``.  A keyword that
         reaches *no* named transform is an **error**, not a silent drop, so a
         typo (``colour=``) costs a message rather than a wrong picture.  With no
         selector, forwarded to each subject's ``to_plot_spec`` (as
@@ -220,7 +251,7 @@ def plot(
     PlotSpec
         Always — which is why a result feeds straight back in, and why this is
         the *same* return type as ``traj.plot()`` / ``system.plot()`` /
-        ``spec.plot()``.  ``plot`` builds, ``render`` draws, ``save`` writes:
+        ``spec.plot()``.  ``plot`` builds, ``render`` draws, ``show`` displays, ``save`` writes:
         ``.save("fig.pdf")`` / ``.render("plotly")``.
 
     Raises
@@ -239,7 +270,8 @@ def plot(
 
     >>> ts.plot(traj)                                        # doctest: +SKIP
     >>> ts.plot(traj, "delay_embedding", delay=7)            # doctest: +SKIP
-    >>> ts.plot(traj, "phase_portrait", primitive="density") # doctest: +SKIP
+    >>> ts.plot(traj, "phase_portrait", components=("x", "z"),
+    ...         primitive="density")                         # doctest: +SKIP
     >>> ts.plot(fhn, "flow_speed", "streamlines", "nullclines",
     ...         xlim=(-2.5, 2.5), ylim=(-1.0, 2.0))          # doctest: +SKIP
     >>> ts.plot(vdp, ts.T("flow_speed", log=True, alpha=0.6),
@@ -272,6 +304,6 @@ def plot(
             "compose them with tsdynamics.viz.plot(...)."
         )
     subject = subjects[0]
-    _reject_unused(kw, selectors)
+    _reject_unaccepted(kw, selectors)
     specs = [_build_one(subject, sel, dict(kw), primitive) for sel in selectors]
     return compose_plot(*specs, layout=layout, on=on)

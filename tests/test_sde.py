@@ -6,6 +6,13 @@ Python tests cover the family surface: that ``_drift``/``_diffusion`` lower
 correctly, the pure-Python reference integrator reproduces the canonical SDE
 moments, seeding is reproducible and per-index, the seeded RNG faithfully ports
 the engine's substrate, and the protocol behaves.
+
+Scope note: the *catalogue* SDEs (``OrnsteinUhlenbeck`` / ``GeometricBrownianMotion``
+/ ``DoubleWell``) are additionally held to the universal per-system dynamical
+gate in ``tests/test_catalogue_dynamics.py``, seeded from ``SDE_SAMPLES``: their
+paths must stay bounded relative to their own extent, non-degenerate and
+recurrent.  No Lyapunov claim is made about them — a stochastic process has no
+deterministic tangent flow.
 """
 
 from __future__ import annotations

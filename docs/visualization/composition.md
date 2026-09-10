@@ -30,6 +30,7 @@ spec.
 ```python
 import tsdynamics as ts
 
+# skip-doctest — the signature, not a runnable call (`things` is your inputs)
 ts.viz.plot(*things, layout="overlay", animate=False, **build_kw)  # -> PlotSpec
 ```
 

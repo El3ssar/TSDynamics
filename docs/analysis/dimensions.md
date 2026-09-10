@@ -217,6 +217,25 @@ the best, and returns the *widest* one — a long clean stretch preferred over a
 short near-perfect one (Theiler 1990). Tighten `tol` or raise `min_window` when
 the automatic region drifts into a curved tail.
 
+### `trusted`: an unresolved estimate is flagged, not withheld
+
+Every `DimensionResult` carries a boolean **`trusted`**. When the estimator can
+see that its own scaling region did not resolve — no plateau, or a generalized
+spectrum whose $D_q$ *rises* with $q$, which it cannot physically do — it returns
+the number anyway and sets `trusted=False`, and the `repr` says `UNTRUSTED` with
+the reason:
+
+```python
+res = ts.box_counting_dimension(pts)
+res.trusted            # False when the scaling region did not resolve
+float(res)             # still gives you the number
+```
+
+This is deliberate: refusing to return would deny you the diagnostic curve that
+shows *why* it failed. Treat `trusted=False` as "look at `local_slopes` before
+quoting this", not as a crash — and never quote an untrusted value without
+saying so.
+
 !!! warning "Finite data limits the answer"
     A reliable $D$ wants roughly $10^{D}$ points and a clean plateau spanning at
     least a decade in scale. Above $D \approx 5$ prefer `fixed_mass_dimension`,

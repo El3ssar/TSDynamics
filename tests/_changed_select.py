@@ -34,7 +34,9 @@ Selection model
      files (``_AREA_TESTS``);
    * a changed ``benchmarks/…`` file → the harness gate that imports it
      (``_AREA_TESTS["benchmarks"]``);
-   * a changed ``viz`` source file → that surface's tests;
+   * a changed ``viz`` source file → **every** ``test_viz_*.py`` (discovered by
+     glob, not hand-listed) plus the viz tests that do not carry that prefix
+     (``_VIZ_EXTRA_TESTS``);
    * a cheap set of registry/layout **guard** tests always runs in scoped mode;
    * documentation / planning / tooling paths are ignored (no test impact);
    * **any path that matches none of the above escalates to a full run.**
@@ -52,6 +54,7 @@ ambiguous case above resolves to running more, never fewer, tests.
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -110,14 +113,46 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
         "test_boxcount_origin.py",
         "test_fixedmass_digamma.py",
         "test_gendim_negative_q.py",
+        "test_audit_WP2_dimensions_corr.py",
     ),
-    "embedding": ("test_embedding.py", "test_property_embedding.py", "test_embedding_theiler.py"),
-    "recurrence": ("test_recurrence.py", "test_property_recurrence.py"),
-    "chaos": ("test_chaos.py",),
-    "fixedpoints": ("test_fixed_points.py", "test_fixed_points_flow_region.py"),
-    "orbits": ("test_orbits.py", "test_orbit_diagram_perf.py", "test_poincare_perf.py"),
-    "basins": ("test_basins.py",),
-    "sampling": ("test_analysis_sagitta.py",),
+    "embedding": (
+        "test_embedding.py",
+        "test_property_embedding.py",
+        "test_embedding_theiler.py",
+        "test_audit_WP7_embedding.py",
+    ),
+    "recurrence": (
+        "test_recurrence.py",
+        "test_property_recurrence.py",
+    ),
+    "chaos": (
+        "test_chaos.py",
+        "test_gali_ic_policy.py",
+        "test_audit_WP9_chaos_zeroone.py",
+    ),
+    "fixedpoints": (
+        "test_fixed_points.py",
+        "test_fixed_points_flow_region.py",
+        "test_audit_WP4_fixedpoints.py",
+    ),
+    "orbits": (
+        "test_orbits.py",
+        "test_orbit_diagram_perf.py",
+        "test_poincare_api.py",
+        "test_poincare_perf.py",
+        "test_audit_WP8_orbits.py",
+    ),
+    "basins": (
+        "test_basins.py",
+        "test_basin_kernel.py",
+        "test_basins_diverged_policy.py",
+        "test_resilience_edge.py",
+        "test_audit_WP10_basins.py",
+    ),
+    "sampling": (
+        "test_analysis_sagitta.py",
+        "test_audit_WP5_sagitta.py",
+    ),
     # Lyapunov is cross-cutting (the spectrum feeds the known-value catalogue),
     # so it pulls its dedicated tests *and* the literature catalogue.
     "lyapunov": (
@@ -125,14 +160,69 @@ _AREA_TESTS: dict[str, tuple[str, ...]] = {
         "test_variational.py",
         "test_dde_lyapunov.py",
         "test_known_values.py",
+        "test_map_lyapunov_kernel.py",
+        "test_audit_WP1_results_lyap.py",
     ),
 }
 
-_VIZ_TESTS: tuple[str, ...] = (
+#: Viz test files that do **not** carry the ``test_viz_`` prefix, and so cannot be
+#: discovered by :func:`viz_tests`' glob.  Everything named ``test_viz_*.py`` is
+#: picked up automatically — deliberately, because the old hand-written tuple
+#: listed three files while sixteen ``test_viz_*.py`` existed, so a viz change
+#: reached ``main`` with most of its own tests deselected.  A hand-maintained list
+#: of a growing family is the defect; the glob plus this short exception table is
+#: the fix, and ``tests/test_changed_select.py`` fails if any lane goes stale.
+_VIZ_EXTRA_TESTS: tuple[str, ...] = (
     "test_plotspec.py",
+    "test_plotspec_completeness.py",
     "test_to_plot_spec.py",
+    "test_plot_accessor_kinds.py",
     "test_renderers_registry.py",
+    "test_audit_WP12_viz_compose_spec.py",
+    "test_audit_WP13_viz_render.py",
 )
+
+
+def viz_tests() -> tuple[str, ...]:
+    """Every test file that exercises the ``viz`` surface, as sorted basenames.
+
+    The ``test_viz_*.py`` family is **discovered**, not listed: it grows with the
+    renderer/transform work, and a hand-maintained tuple silently under-selects
+    the moment someone adds a file.  Discovery falls back to the exception table
+    alone if the tests directory cannot be read (the selector never raises; an
+    empty lane would under-select, which is the one outcome to avoid — so a
+    directory that cannot be listed is treated as "unknown" by the caller, which
+    keeps the always-on guards and the explicit files).
+    """
+    found: set[str] = set(_VIZ_EXTRA_TESTS)
+    with contextlib.suppress(OSError):  # defensive: an unreadable tests directory
+        found.update(p.name for p in Path(__file__).parent.glob("test_viz_*.py"))
+    return tuple(sorted(found))
+
+
+#: Test-file basename **prefixes** that name a *lane* — an area whose tests are
+#: recognisable by their filename — mapped to a source path in that area.  This
+#: table is what makes the lanes *checkable*: ``tests/test_changed_select.py``
+#: classifies each probe path and fails if any existing test file carrying the
+#: prefix is absent from the resulting selection.  Without it, adding
+#: ``tests/test_viz_newthing.py`` (or ``test_basins_something.py``) silently
+#: leaves it out of every scoped run — the blind spot that let a viz change reach
+#: ``main`` with thirteen of its sixteen test files deselected.
+#:
+#: A prefix only belongs here when *every* file carrying it genuinely belongs to
+#: that one lane; a prefix shared across areas would make the guard lie.
+LANE_PREFIXES: dict[str, str] = {
+    "test_viz_": "src/tsdynamics/viz/spec.py",
+    "test_basin": "src/tsdynamics/analysis/basins/basins.py",
+    "test_chaos": "src/tsdynamics/analysis/chaos/gali.py",
+    "test_dimensions": "src/tsdynamics/analysis/dimensions/correlation.py",
+    "test_embedding": "src/tsdynamics/analysis/embedding/embed.py",
+    "test_fixed_points": "src/tsdynamics/analysis/fixedpoints/fixed.py",
+    "test_lyapunov": "src/tsdynamics/analysis/lyapunov/from_data.py",
+    "test_orbit": "src/tsdynamics/analysis/orbits/orbit_diagram.py",
+    "test_poincare": "src/tsdynamics/analysis/orbits/poincare.py",
+    "test_recurrence": "src/tsdynamics/analysis/recurrence/matrix.py",
+}
 
 #: Cross-cutting analysis tests that exercise functions from *several* areas
 #: (the "regular vs random" cross-quantifier gate; the analysis-pack smoke).
@@ -368,7 +458,7 @@ def classify(changed: set[str] | None) -> Plan:
             selected.update(_AREA_TESTS["benchmarks"])
             continue
         if path.startswith("src/tsdynamics/viz/"):
-            selected.update(_VIZ_TESTS)
+            selected.update(viz_tests())
             continue
         # Anything unrecognized: be conservative and run everything.
         escalate_reasons.append(f"unrecognized path: {path}")

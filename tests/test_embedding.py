@@ -492,3 +492,137 @@ def test_embedding_rejects_a_system_with_a_named_error():
     ):
         with pytest.raises(InvalidInputError, match="expects measured data, not a System"):
             call()
+
+
+# ---------------------------------------------------------------------------
+# Omitted / misspelled parameters (stream v6 API-FOOTGUNS)
+# ---------------------------------------------------------------------------
+#
+# ``embed`` is the flagship data-to-phase-space bridge, and it used to answer the
+# two most likely first calls with raw binder errors: ``embed(x)`` with *missing 2
+# required positional arguments*, and ``embed(x, dim=3)`` with *unexpected keyword
+# argument 'dim'* — neither of which mentions that the library has estimators for
+# exactly those two numbers, nor that ``dimension``/``delay`` are the canonical
+# spellings the frozen glossary settled on.
+
+
+def test_embed_estimates_both_parameters_when_neither_is_given(lorenz):
+    """``embed(x)`` runs, and picks the delay and dimension the estimators would."""
+    x = lorenz[:, 0]
+    result = emb.embed(x)
+    expected_delay = int(emb.optimal_delay(x))
+    expected_dim = int(emb.embedding_dimension(x, delay=expected_delay))
+    assert result.meta["delay"] == expected_delay
+    assert result.meta["dimension"] == expected_dim
+    assert result.shape == (x.size - (expected_dim - 1) * expected_delay, expected_dim)
+
+
+def test_embed_estimated_lorenz_reconstruction_is_three_dimensional(lorenz):
+    """The estimate is the *right* one: a scalar Lorenz record unfolds at m = 3."""
+    assert emb.embed(lorenz[:, 0]).meta["dimension"] == 3
+
+
+def test_embed_records_which_parameters_it_estimated(lorenz):
+    """An estimated parameter is recorded, so a reconstruction says how it was made."""
+    x = lorenz[:, 0]
+    both = emb.embed(x)
+    assert (both.meta["dimension_auto"], both.meta["delay_auto"]) == (True, True)
+    given_dim = emb.embed(x, dimension=4)
+    assert (given_dim.meta["dimension_auto"], given_dim.meta["delay_auto"]) == (False, True)
+    assert given_dim.meta["dimension"] == 4
+    given_both = emb.embed(x, dimension=4, delay=3)
+    assert (given_both.meta["dimension_auto"], given_both.meta["delay_auto"]) == (False, False)
+
+
+def test_embed_delay_is_estimated_before_the_dimension(lorenz):
+    """The dimension is estimated *at* the resolved delay, not at an arbitrary lag.
+
+    Cao's ratio is computed at a fixed delay, so estimating the dimension first
+    would evaluate it at a lag that is then moved out from under it.
+    """
+    x = lorenz[:, 0]
+    tau = int(emb.optimal_delay(x))
+    assert emb.embed(x).meta["dimension"] == int(emb.embedding_dimension(x, delay=tau))
+    # ...and a caller-supplied delay is the one used, not the estimated one
+    assert emb.embed(x, delay=3).meta["dimension"] == int(emb.embedding_dimension(x, delay=3))
+
+
+@pytest.mark.parametrize(
+    "bad,canonical", [("dim", "dimension"), ("m", "dimension"), ("tau", "delay"), ("lag", "delay")]
+)
+def test_embed_banned_spellings_name_the_canonical_parameter(bad, canonical):
+    """``embed(x, dim=3)`` names ``dimension=``; it is not a bare TypeError.
+
+    The glossary bans these spellings, so they cannot simply be accepted — but a
+    banned spelling must be *answered*, not met with Python's binder message.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    x = np.sin(np.linspace(0.0, 60.0, 400))
+    with pytest.raises(InvalidParameterError) as excinfo:
+        emb.embed(x, **{bad: 3})
+    message = str(excinfo.value)
+    assert f"{bad}=3 → {canonical}=3" in message
+    assert "embed(data, dimension, delay" in message
+
+
+def test_embed_unknown_keyword_says_it_is_not_a_parameter():
+    """A keyword that is not a renamed one is still refused with the signature."""
+    from tsdynamics.errors import InvalidParameterError
+
+    x = np.sin(np.linspace(0.0, 60.0, 400))
+    with pytest.raises(InvalidParameterError, match="nonsense= is not a parameter of embed"):
+        emb.embed(x, nonsense=1)
+
+
+def test_embed_multivariate_refuses_to_guess_per_channel_parameters(lorenz):
+    """Auto-selection is univariate by construction, and says so.
+
+    One series has one delay and one dimension; a bundle has one of each *per
+    channel*, and inventing them from a single estimate would be a fiction.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError) as excinfo:
+        emb.embed(lorenz)
+    message = str(excinfo.value)
+    assert "multivariate" in message
+    assert "dimension=[3, 3]" in message
+    # ...but selecting a channel gets the estimated univariate reconstruction
+    assert emb.embed(lorenz, component=0).meta["delay_auto"] is True
+
+
+def test_embed_keeps_the_glossary_spellings_in_its_signature():
+    """The fix must not smuggle a banned spelling into the signature (glossary §2)."""
+    import inspect
+
+    params = inspect.signature(emb.embed).parameters
+    assert "dimension" in params
+    assert "delay" in params
+    assert not {"dim", "m", "tau", "lag"} & set(params)
+
+
+def test_embed_estimator_failure_advice_follows_the_diagnosis():
+    """A constant series is not a *short* series, and is not told that it is.
+
+    Adversarial follow-up: the estimator-failure hint was written for the one
+    case that motivated it (too few samples) and applied unconditionally, so a
+    500-sample constant series was told "series is constant; mutual information
+    is undefined" and, in the very next sentence, "500 samples is not enough for
+    the estimator to work with".  The second sentence contradicts the first and
+    sends the reader to collect data that will fail identically.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError) as excinfo:
+        emb.embed(np.ones(500))
+    message = str(excinfo.value)
+    assert "constant" in message
+    assert "not enough" not in message
+    assert "longer record" not in message
+    assert "Pass the value explicitly" in message
+
+    # ...while a genuinely short series still gets the length advice
+    with pytest.raises(InvalidParameterError) as short:
+        emb.embed(np.sin(np.arange(20) * 0.3))
+    assert "not enough" in str(short.value)

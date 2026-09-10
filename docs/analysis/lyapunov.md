@@ -95,7 +95,7 @@ you can call them directly with their native keywords.
     mg = ts.systems.MackeyGlass()
     hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
     traj = mg.integrate(final_time=1000.0, dt=0.5, history=hist)   # settle first
-    mg.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1],           # then measure
+    mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1],               # then measure
                          burn_in=100.0, final_time=1000.0, rtol=1e-4, atol=1e-4)
     # ≈ [0.0075]   (positive → chaotic at τ = 17)
     ```

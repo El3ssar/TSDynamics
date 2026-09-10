@@ -4,6 +4,12 @@ Tests for discrete map systems (``DiscreteMap`` subclasses).
 All sweeps are registry-driven: a new map is covered automatically.
 Iteration runs on the engine; the longer iterate/Lyapunov sweeps are marked
 ``slow`` on runtime grounds.
+
+Scope note: as in ``test_ode_systems``, the iteration sweep here checks shape
+and finiteness only — the pre-v6 Baker, whose every orbit collapsed to ``(0, 0)``
+within ~53 iterations, passed it.  The dynamical content (bounded,
+non-degenerate, recurrent, claim-consistent) is asserted per system by
+``tests/test_catalogue_dynamics.py``.
 """
 
 from __future__ import annotations

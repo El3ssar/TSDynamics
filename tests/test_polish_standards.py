@@ -44,6 +44,7 @@ import dataclasses
 import inspect
 import json
 import pathlib
+import re
 import types as _types
 import typing
 from collections.abc import Mapping
@@ -1876,3 +1877,347 @@ def test_basin_march_python_and_rust_name_the_same_tolerance() -> None:
             f"{fn.__qualname__} no longer names the basin tolerance constants"
         )
     assert att.BASIN_RTOL is BASIN_RTOL and att.BASIN_ATOL is BASIN_ATOL
+
+
+# ===========================================================================
+# API-footgun gate (stream v6 API-FOOTGUNS)
+# ===========================================================================
+#
+# The fresh-eyes session played a new user with no documentation and walked into
+# the same class of wall repeatedly: a call that is the *obvious* thing to type
+# answered by Python's own binder or by an error raised three layers below the
+# call.  The errgate above asks "does the message name the value"; this section
+# asks the prior question — "did the library get a chance to speak at all".
+#
+# Each gate below pins one closed footgun, and two of them are structural (they
+# sweep the source rather than a curated list), because the failure they catch is
+# one that reappears every time someone writes a new example or a new keyword
+# path.
+
+
+# ── the symbolic-kernel declaration mistakes (the #1 documented pitfall) ────
+
+
+def test_kernel_subscript_error_names_the_accessor_and_the_fix() -> None:
+    """``y[0]`` in ``_equations`` is answered with ``y(0)``, not with numpy advice.
+
+    Writing ``y[0]`` is the single most likely first-timer mistake in the library
+    — the state *looks* like an array — and Python's ``'function' object is not
+    subscriptable`` names neither ``y``, nor the kernel, nor the one-character
+    fix.  The old message went further wrong: it recited the numeric-routine and
+    ``_structural_params`` advice, neither of which has anything to do with it.
+    """
+    from tsdynamics.engine.compile import TapeCompileError
+
+    class Subscripted(ts.ContinuousSystem):
+        params = {"a": 1.0}
+        dim = 2
+
+        @staticmethod
+        def _equations(y, t, a):
+            return [y[1], -a * y[0]]
+
+    with pytest.raises(TapeCompileError) as excinfo:
+        Subscripted().integrate(final_time=1.0, dt=0.1)
+    message = str(excinfo.value)
+    assert "y(0)" in message
+    assert "y[0]" in message
+    assert "state *accessor*" in message
+    # the corrected line is echoed back, so the fix is visible, not described
+    assert "y(1), -a * y(0)" in message
+    # ...and the two irrelevant paragraphs are gone
+    assert "_structural_params" not in message
+    assert "numeric routine" not in message
+
+
+def test_subscripting_something_that_is_not_the_state_is_not_blamed_on_the_state() -> None:
+    """``a[0]`` on a scalar *parameter* is a different mistake, and is not mis-named.
+
+    Adversarial follow-up: the accessor diagnosis keyed off ``object is not
+    subscriptable`` alone, which is the message for subscripting *anything*.  A
+    kernel writing ``a[0]`` for a scalar parameter therefore got a paragraph
+    explaining that ``y`` is an accessor — with no corrected line to show, since
+    the line does not subscript ``y`` — pointing the reader at the one name on
+    that line that was already right.  The claim is now made only when the state
+    really was subscripted, so this falls through to the general advice.
+    """
+    from tsdynamics.engine.compile import TapeCompileError
+
+    class ParamSubscripted(ts.ContinuousSystem):
+        params = {"a": 1.0}
+        dim = 2
+
+        @staticmethod
+        def _equations(y, t, a):
+            return [a[0] * y(1), -y(0)]
+
+    with pytest.raises(TapeCompileError) as excinfo:
+        ParamSubscripted().integrate(final_time=1.0, dt=0.1)
+    message = str(excinfo.value)
+    assert "state *accessor*" not in message
+    assert "not subscriptable" in message  # the raised error is still quoted
+    assert "traced *symbolically*" in message  # ...and the general advice is given
+
+
+def test_missing_staticmethod_is_diagnosed_structurally() -> None:
+    """A kernel declared with ``self`` is named as such, whatever it then failed on.
+
+    The engine calls the kernel off the class, so ``self`` swallows the state and
+    Python reports a missing argument named ``t`` — pointing at a parameter the
+    caller *did* pass.  The mistake is decidable from the class, so it is decided
+    there rather than read out of the message.
+    """
+    from tsdynamics.engine.compile import TapeCompileError
+
+    class NotStatic(ts.ContinuousSystem):
+        params = {"a": 1.0}
+        dim = 2
+
+        def _equations(self, y, t, a):  # noqa: PLR6301 - the defect under test
+            return [y(1), -a * y(0)]
+
+    with pytest.raises(TapeCompileError) as excinfo:
+        NotStatic().integrate(final_time=1.0, dt=0.1)
+    message = str(excinfo.value)
+    assert "@staticmethod" in message
+    assert "def _equations(y, t, a)" in message
+    assert "self" in message
+
+
+def test_correct_kernels_are_untouched_by_the_new_diagnostics() -> None:
+    """The two structural checks fire on the defect only — a good kernel still runs."""
+    traj = ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    assert np.isfinite(traj.y).all()
+
+
+# ── every plot example in the library names a REGISTERED transform ─────────
+
+#: Calls whose *positional* string arguments are transform names.
+_PLOT_CALL = re.compile(r"(?:\bts\.plot|\bviz\.plot|\bplot|\bT)\(")
+
+
+def _transform_names_in(line: str) -> list[str]:
+    """Positional string literals inside a ``plot(...)`` / ``T(...)`` call on ``line``.
+
+    Depth-aware, so a chained ``.save("fig.png")`` / ``.recolor("red")`` is not
+    mistaken for a transform name, and keyword values (``primitive="density"``,
+    ``layout="stack"``) are excluded because they are preceded by ``=``.
+
+    Strings nested inside a ``[...]`` list or a ``{...}`` dict are excluded too,
+    and that exclusion is load-bearing rather than tidy-mindedness: only the
+    first element of a *collection* keyword value is preceded by the ``=``, so
+    without it ``ts.plot(traj, "phase_portrait", components=["x", "z"])`` reads
+    as three positional names and the gate fails a **correct** example, naming
+    ``'z'`` as an unregistered transform.  That is the worst failure mode a
+    source-sweeping gate can have — it makes the honest fix look like the
+    defect — and the shape is a common one (``components=``, ``labels=``,
+    ``ic=[...]``).
+    """
+    found: list[str] = []
+    for match in _PLOT_CALL.finditer(line):
+        depth, nested, i, n = 0, 0, match.end() - 1, len(line)
+        while i < n:
+            char = line[i]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif char in "[{":
+                nested += 1
+            elif char in "]}":
+                nested -= 1
+            elif char == '"' and depth == 1 and nested == 0:
+                end = line.find('"', i + 1)
+                if end == -1:
+                    break
+                if not line[:i].rstrip().endswith(("=", ":")):
+                    found.append(line[i + 1 : end])
+                i = end
+            i += 1
+    return found
+
+
+#: How many following lines a wrapped ``plot(...)`` example may span.  Six covers
+#: every multi-line example in the library with room to spare; the cap only stops
+#: an unbalanced quote from swallowing the rest of the file.
+_MAX_CALL_LINES = 6
+
+
+def _call_blocks(lines: list[str]) -> list[tuple[int, str]]:
+    """Yield ``(lineno, text)`` for each ``plot(...)`` call, joined across wraps.
+
+    A line-at-a-time scan silently misses a transform named on a *continuation*
+    line — ``ts.plot(vdp, "flow_speed",`` / ``"not_a_transform")`` — which is the
+    shape a long example naturally takes, so the check would go blind exactly
+    where an example is long enough to be worth checking.  Joining until the
+    parentheses balance costs nothing and closes that hole.
+    """
+    blocks: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        if not _PLOT_CALL.search(line):
+            continue
+        text, depth = line, line.count("(") - line.count(")")
+        extra = 0
+        while depth > 0 and extra < _MAX_CALL_LINES and index + extra + 1 < len(lines):
+            extra += 1
+            nxt = lines[index + extra]
+            text += " " + nxt.strip()
+            depth += nxt.count("(") - nxt.count(")")
+        blocks.append((index + 1, text))
+    return blocks
+
+
+def test_plot_examples_name_registered_transforms() -> None:
+    """No documented ``ts.plot(...)`` example names a transform that does not exist.
+
+    The defect this closes: the flagship one-liner in ``ts.plot``'s module
+    docstring, in ``TransformCall``'s, and in the package ``__init__`` read
+    ``ts.plot(duff, "basins", "attractors", "trajectory", "fixed_points")`` —
+    four names, none registered — so the first thing a reader copied answered
+    with ``unknown plot transform 'basins'``.  A curated list of examples would
+    rot the same way, so the whole library source is swept and checked against
+    the live registry.
+    """
+    from tsdynamics.viz.transforms import names as transform_names
+
+    known = set(transform_names())
+    offenders: list[str] = []
+    root = pathlib.Path(ts.__file__).parent
+    for path in sorted(root.rglob("*.py")):
+        for lineno, block in _call_blocks(path.read_text().splitlines()):
+            for name in _transform_names_in(block):
+                if not re.fullmatch(r"[a-z_][a-z_0-9.]*", name):
+                    continue  # a path, a title, a colour word — not a name-shaped token
+                if name.partition(".")[0] not in known:
+                    offenders.append(f"{path.name}:{lineno}: {name!r} in {block.strip()!r}")
+    assert not offenders, "plot examples naming unregistered transforms:\n" + "\n".join(offenders)
+
+
+def test_plot_example_scanner_would_catch_the_original_defect() -> None:
+    """The scanner itself: it finds the names that were wrong, and ignores the rest."""
+    broken = '    ts.plot(duff, "basins", "attractors", "trajectory", "fixed_points")'
+    assert _transform_names_in(broken) == ["basins", "attractors", "trajectory", "fixed_points"]
+    # a chained call after the plot(...) is out of scope
+    assert _transform_names_in('traj.plot().save("fig.png").render("plotly")') == []
+    # a keyword value is not a positional transform name
+    assert _transform_names_in('ts.plot(t, "phase_portrait", primitive="density")') == [
+        "phase_portrait"
+    ]
+    # the dotted primitive sugar keeps its head
+    assert _transform_names_in('ts.plot(t, "phase_portrait.density")') == ["phase_portrait.density"]
+
+
+def test_plot_example_scanner_does_not_read_collection_values_as_names() -> None:
+    """A ``components=["x", "z"]`` keyword is a value, not two transform names.
+
+    Only the *first* element of a collection keyword value is preceded by the
+    ``=``, so a scanner that looks no further than that flags every element
+    after the comma — failing a **correct** example and pointing the reader at
+    ``'z'`` as an unregistered transform.  The shape is common enough
+    (``components=``, ``labels=``, ``ic=[…]``) that the gate would misfire the
+    first time someone wrote the most ordinary example there is.
+    """
+    assert _transform_names_in('ts.plot(t, "phase_portrait", components=["x", "z"])') == [
+        "phase_portrait"
+    ]
+    assert _transform_names_in('ts.viz.plot(a, b, components=["x", "y"])') == []
+    assert _transform_names_in('ts.plot(t, "hilbert", labels={"a": "b"})') == ["hilbert"]
+
+
+def test_plot_example_scanner_sees_a_name_on_a_continuation_line() -> None:
+    """A wrapped example is one call, not two lines the scanner may half-read.
+
+    Line-at-a-time, ``"nullclines"`` below is invisible — which is how a long
+    example (the ones most likely to name several transforms) would escape the
+    check entirely.
+    """
+    wrapped = [
+        '>>> ts.plot(vdp, "flow_speed",',
+        '...          "nullclines",',
+        "...          xlim=(-2.5, 2.5))",
+    ]
+    (lineno, block), *rest = _call_blocks(wrapped)
+    assert (lineno, rest) == (1, [])
+    assert _transform_names_in(block) == ["flow_speed", "nullclines"]
+    # a call that closes on its own line is not joined with what follows
+    standalone = ['ts.plot(traj, "phase_portrait")', 'x = "not_a_transform"']
+    assert _transform_names_in(_call_blocks(standalone)[0][1]) == ["phase_portrait"]
+
+
+# ── every keyword path through the plot front door is validated ────────────
+
+
+def test_transform_call_options_are_validated_like_shared_ones() -> None:
+    """``T("phase_portrait", nonsense=1)`` is answered, not raised through.
+
+    A ``T()``'s own options were the last keyword path into ``ts.plot`` that
+    nobody checked: they went straight to the compute, so a typo surfaced as a
+    bare ``TypeError`` naming a private function the caller never typed.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    traj = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    with pytest.raises(InvalidParameterError) as excinfo:
+        ts.plot(traj, ts.T("phase_portrait", nonsense=1))
+    message = str(excinfo.value)
+    assert "nonsense" in message
+    assert "components" in message  # the keywords that ARE accepted are named
+
+
+def test_transform_call_typo_suggests_the_intended_keyword() -> None:
+    """The suggestion machinery reaches the T() path too (``componets`` → ``components``)."""
+    from tsdynamics.errors import InvalidParameterError
+
+    traj = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    with pytest.raises(InvalidParameterError, match="did you mean components="):
+        ts.plot(traj, ts.T("phase_portrait", componets=[0, 1]))
+
+
+def test_transform_call_still_accepts_its_real_options() -> None:
+    """The check refuses only what the transform cannot take (no over-refusal)."""
+    traj = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    spec = ts.plot(traj, ts.T("phase_portrait", components=[0, 1], color="red", alpha=0.5))
+    assert spec.layers[0].style["color"] == "red"
+
+
+# ── PlotSpec.show() — the fourth verb everyone's fingers already know ──────
+
+
+def test_plotspec_show_exists_and_returns_the_figure(monkeypatch) -> None:
+    """``spec.show()`` renders and hands back the figure, headless included."""
+    import matplotlib.pyplot as plt
+
+    from tsdynamics.viz import spec as spec_mod
+
+    monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: False)
+    spec = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).to_plot_spec()
+    figure = spec.show()
+    assert figure.__class__.__module__.startswith("matplotlib")
+    plt.close("all")
+
+
+def test_plotspec_show_displays_on_an_interactive_backend(monkeypatch) -> None:
+    """On a backend that *can* open a window, the display call actually happens."""
+    import matplotlib.pyplot as plt
+
+    from tsdynamics.viz import spec as spec_mod
+
+    calls: list[int] = []
+    monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: True)
+    monkeypatch.setattr(plt, "show", lambda *a, **k: calls.append(1))
+    spec = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).to_plot_spec()
+    spec.show()
+    assert calls == [1]
+    plt.close("all")
+
+
+def test_plot_verbs_are_all_present_and_documented() -> None:
+    """build / draw / display / write — the four verbs, each with a docstring."""
+    from tsdynamics.viz.spec import PlotSpec
+
+    for verb in ("plot", "render", "show", "save"):
+        method = getattr(PlotSpec, verb)
+        assert callable(method)
+        assert method.__doc__, f"PlotSpec.{verb} is undocumented"

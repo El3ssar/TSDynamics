@@ -328,8 +328,14 @@ spec = (
     .font(family="monospace")
     .size(width=7, height=7)
 )
-spec.save("lorenz.html")   # interactive (plotly, by extension)
+spec.save("lorenz.png")    # matplotlib, by extension — honors the whole chain
 ```
+
+Note the extension. Saving this same chain as `.html` routes to plotly, which
+does not honor `figsize` (see the honoring table above), so the `.size(...)` step
+would be dropped with a `VisualizationDegraded` warning naming it. That is the
+contract working as designed: a backend that cannot render a tweak says so
+rather than silently ignoring it.
 
 The static tweaks compose with the [animation](animation.md) modifiers
 (`.animate` / `.trail` / `.head` / `.camera` / `.clock`) the same way — they are
@@ -545,6 +551,7 @@ exporters, so a knob only matplotlib understands cannot be allowed through. The
 trade is a louder upgrade for a portable, predictable spec.
 
 ```python
+# skip-doctest — the first call deliberately shows what now RAISES
 # v3 — forwarded to matplotlib, silently accepted
 spec.style(marker="v", linestyle=(0, (3, 1)), alpha=1.5, zorder=2.0)
 
@@ -581,6 +588,7 @@ short aliases `- -- : -.`. The matplotlib **dash-tuple** form (e.g.
 `(0, (3, 1, 1, 1))`) now raises — pick the nearest named style:
 
 ```python
+# skip-doctest — the first line deliberately shows what now RAISES
 spec.style(linestyle=(0, (5, 2)))   # v3 — raises ValueError now
 spec.style(linestyle="dashed")      # v5
 ```

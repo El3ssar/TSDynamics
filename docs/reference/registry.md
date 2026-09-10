@@ -14,7 +14,7 @@ documentation generator iterate over.
 ```python
 from tsdynamics import registry
 
-registry.families()                       # {'ode': 136, 'dde': 6, 'sde': 3, 'map': 26}
+registry.families()                       # {'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
 registry.categories(family="map")         # {'chaotic_maps': 9, ...}
 entry = registry.get("Lorenz")            # SystemEntry
 entry.cls, entry.family, entry.category   # (<class Lorenz>, 'ode', 'chaotic_attractors')

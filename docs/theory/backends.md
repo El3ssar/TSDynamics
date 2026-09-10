@@ -37,7 +37,8 @@ reports hits/misses; `clear_jit_cache()` empties it, and
 Until v6 the default was `"interp"`, for a good reason at the time: the JIT
 recompiled the whole tape on **every** call, which made it slower than the
 interpreter for short runs. The v6 compiled-evaluator cache removed that per-call
-compile, so the default was re-measured across all 136 catalogue ODE systems
+compile, so the default was re-measured across all 136 catalogue ODE systems as
+the catalogue stood then — it is 142 today, and the conclusion is unchanged
 (cold caches per system):
 
 - **First-call cost** of `"jit"` over `"interp"`: median **+0.65 ms**, p90

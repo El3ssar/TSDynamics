@@ -302,6 +302,116 @@ _INT_COERCION_RE = re.compile(
     r"only integer scalar arrays"
 )
 
+#: The kernels whose state argument is the **callable accessor** ``y`` (``y(0)``),
+#: not an array.  A map's ``_step`` receives a real state vector, so ``x[0]``
+#: there is correct and must never draw the ``y(0)`` advice.
+_ACCESSOR_KERNELS: frozenset[str] = frozenset({"_equations", "_drift", "_diffusion"})
+
+#: The raw Python error for ``y[0]`` when ``y`` is the accessor — the single most
+#: likely first-timer mistake in the whole library, and the one the generic
+#: "don't use numpy" paragraph answered with advice about numeric routines and
+#: structural parameters, neither of which is the problem.
+_SUBSCRIPT_RE = re.compile(r"object is not subscriptable")
+
+#: The accessor's own Python type, as it appears in that error.  ``y`` is a
+#: ``symengine.Function``, which Python reports as ``'function' object`` — so this
+#: is the one message that names the state itself, and it is what lets the hint be
+#: given when the source line could not be recovered.
+_ACCESSOR_TYPE_RE = re.compile(r"'function' object is not subscriptable")
+
+
+def _kernel_state_name(system: Any, kernel: str) -> str:
+    """Name of the state parameter of ``kernel`` (the accessor), defaulting to ``y``."""
+    import inspect
+
+    try:
+        raw = inspect.getattr_static(type(system), kernel)
+        params = list(inspect.signature(getattr(raw, "__func__", raw)).parameters)
+    except Exception:  # noqa: BLE001 - the hint is best-effort, never the failure
+        return "y"
+    params = [p for p in params if p != "self"]
+    return params[0] if params else "y"
+
+
+def _subscripted_accessor_hint(
+    system: Any, kernel: str, line: str | None, message: str
+) -> list[str] | None:
+    """Explain ``y[0]`` → ``y(0)``, echoing the offending line rewritten.
+
+    The state reaches a symbolic kernel as a **function**: ``y(i)`` is component
+    ``i`` and ``y(i, t - tau)`` is a delayed access, which an array simply cannot
+    express.  So ``y[0]`` is a ``TypeError`` from Python's subscript machinery,
+    whose text (``'function' object is not subscriptable``) never mentions ``y``,
+    the kernel, or the one-character fix.
+
+    Returns ``None`` when the subscript was **not** of the state, so the caller
+    falls through to the general advice.  "Something in this kernel was
+    subscripted" is not the same claim as "the state was subscripted": a kernel
+    writing ``a[0]`` for a scalar *parameter* raises the same shape of
+    ``TypeError`` (``'Symbol' object is not subscriptable``) and was being told,
+    wrongly and with no line to show for it, that ``y`` is an accessor — sending
+    the reader to inspect the one name on the line that is already correct.  The
+    claim is therefore made only when the source line really does subscript the
+    state, or when the raised error names the accessor's own type (``function``).
+    """
+    state = _kernel_state_name(system, kernel)
+    rewritten: str | None = None
+    if line is not None:
+        fixed = re.sub(rf"\b{re.escape(state)}\s*\[([^][]*)\]", rf"{state}(\1)", line)
+        rewritten = fixed if fixed != line else None
+    if rewritten is None and _ACCESSOR_TYPE_RE.search(message) is None:
+        return None
+    parts = [
+        f"`{state}` is the state *accessor*, not an array: inside `{kernel}` the state is "
+        f"read by CALLING it — `{state}(0)`, `{state}(1)`, … — so `{state}[0]` is a "
+        "subscript of a function and cannot work."
+    ]
+    if rewritten is not None:
+        parts.append(f"  you wrote: {line}")
+        parts.append(f"  write:     {rewritten}")
+    parts.append(
+        f"(A call is what makes a delayed access expressible too: `{state}(0, t - tau)` in a "
+        "DelaySystem.)"
+    )
+    return parts
+
+
+def _missing_staticmethod_hint(system: Any, kernel: str) -> list[str] | None:
+    """Return the "you forgot ``@staticmethod``" advice, or ``None`` if that is not it.
+
+    A symbolic kernel is called **off the class** (``type(system)._equations(y, t,
+    …)``), because there is no instance state in the math.  Declared as an
+    ordinary method, its ``self`` therefore swallows the state accessor, ``y``
+    swallows ``t``, and Python reports a missing argument named ``t`` — a message
+    that points at the wrong parameter entirely.  The mistake is decidable from
+    the class, not from the message, so it is checked structurally.
+    """
+    import inspect
+
+    try:
+        raw = inspect.getattr_static(type(system), kernel)
+    except AttributeError:  # pragma: no cover - the kernel exists by construction
+        return None
+    if not inspect.isfunction(raw):  # a staticmethod object → correctly declared
+        return None
+    try:
+        params = list(inspect.signature(raw).parameters)
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return None
+    if not params or params[0] != "self":
+        return None
+    name = type(system).__name__
+    rest = ", ".join(params[1:]) or "y, t"
+    return [
+        f"`{kernel}` is declared as an ordinary method (its first parameter is `self`), but "
+        f"the engine calls it off the class — there is no instance state in the math — so "
+        f"`self` receives the state and every later argument is shifted by one (which is why "
+        f"the error names a parameter you did pass).",
+        "Add the decorator:",
+        "    @staticmethod",
+        f"    def {kernel}({rest}):        # on {name}, no `self`",
+    ]
+
 
 def _kernel_source_frame(err: BaseException) -> tuple[str, int, str] | None:
     """Locate the deepest *user* frame of ``err`` as ``(file, lineno, source)``.
@@ -393,7 +503,21 @@ def _trace_kernel(
                 offender = f"{match.group(1)}.{match.group(2)}"
         parts.append(f"  raised {type(err).__name__}: {err}")
         listed = ", ".join(f"{m}.*" for m in numeric_modules)
-        if offender is not None:
+        forgot_static = _missing_staticmethod_hint(system, kernel)
+        subscripted = (
+            _subscripted_accessor_hint(
+                system, kernel, frame[2] if frame is not None else None, str(err)
+            )
+            if kernel in _ACCESSOR_KERNELS and _SUBSCRIPT_RE.search(str(err)) is not None
+            else None
+        )
+        if forgot_static is not None:
+            # Structural, so decided from the class rather than from the message:
+            # whatever the kernel then failed on, the declaration is the cause.
+            parts.extend(forgot_static)
+        elif subscripted is not None:
+            parts.extend(subscripted)
+        elif offender is not None:
             parts.append(
                 f"`{offender}(...)` is a *numeric* function: it converts its argument to a "
                 f"float, but `{kernel}` is called with SymEngine symbols, not numbers."

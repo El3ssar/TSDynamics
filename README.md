@@ -76,7 +76,7 @@ orbit = ts.orbit_diagram(ts.Logistic(), "r", np.linspace(2.8, 4.0, 2000))
 pts = orbit.bifurcation_points()
 
 spec = orbit.to_plot_spec().relabel(x="r", y="x*", title="Logistic bifurcation")
-spec.style(color="k", s=0.2, alpha=0.5)                  # tiny semi-transparent dots
+spec.style(color="k", markersize=0.2, alpha=0.5)         # tiny semi-transparent dots
 spec.annotations = [
     Annotation("vline", x=pts[i], text=lbl, style={"color": "red", "linestyle": "--"})
     for i, lbl in [(0, " r₁"), (1, " r₂"), (3, " r₄")]
@@ -90,6 +90,8 @@ spec.save("bifurcation.png", size=(1600, 700))
 extended system; its space–time field is auto-detected and drawn as a heatmap:
 
 ```python
+import tsdynamics as ts
+
 ks = ts.KuramotoSivashinsky(N=128, L=22.0)
 traj = ks.integrate(final_time=200.0, dt=0.25)
 traj.to_plot_spec().save("ks.png")        # 128-mode space–time field
@@ -102,9 +104,30 @@ traj.to_plot_spec().save("ks.png")        # 128-mode space–time field
 </p>
 
 
+**Named plots, one front door.** Beyond the auto-detected default, `ts.plot`
+takes the name of a **plot transform** — 35 of them, from `nullclines` and
+`streamlines` to `ftle`, `cobweb`, `invariant_density` and `trace_determinant`.
+Each declares which *primitives* can draw it, so you pick the drawing without
+touching a backend:
+
+```python
+import tsdynamics as ts
+
+vdp = ts.VanDerPol(params={"mu": 1.0})
+ts.plot(vdp, "flow_speed", "nullclines", "streamlines")   # overlay, order-free
+ts.plot(ts.Logistic(params={"r": 3.5}), "cobweb")
+```
+
+A transform owns no new math — it adapts an estimator from `tsdynamics.analysis`.
+The [gallery](https://el3ssar.github.io/TSDynamics/visualization/gallery/) is
+generated from the registry, so every picture there is produced by the snippet
+printed beside it.
+
 The spinning attractor at the top is the same `to_plot_spec`, animated:
 
 ```python
+import tsdynamics as ts
+
 traj = ts.Lorenz().integrate(final_time=100.0, dt=0.01)
 spec = traj.to_plot_spec()
 spec.style(axes=False).trail(None).camera(spin=0.4)      # full curve, no axes, rotate
@@ -126,7 +149,7 @@ list(ts.fixed_points(ts.Henon()))
 #  FixedPoint([0.631354 0.189406], unstable, |λ|max=1.9237)]
 
 # Maximal Lyapunov exponent — no Jacobian needed
-ts.max_lyapunov(ts.Lorenz(ic=[1, 1, 1]), dt=0.05)        # ≈ 0.89
+ts.max_lyapunov(ts.Lorenz(ic=[1, 1, 1]), dt=0.05)        # ≈ 0.90
 ```
 
 Plus: **attractors & basins** of any flow or map, correlation/Rényi **fractal
@@ -148,6 +171,11 @@ Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
   built-in Cranelift JIT (or a bit-for-bit identical SSA-tape interpreter);
   parameters are runtime values, so changing them is free, and nothing is ever
   written to disk.
+
+- **`dt` samples, `rtol` decides** — the output grid and the accuracy knob are
+  separate. The adaptive steppers use genuine dense output, so a coarse `dt` is
+  cheap without being less accurate, and `max_step=` is there when you need to
+  bound the step explicitly. Defaults are `rtol=1e-9` / `atol=1e-12`.
 
 - **Composition** — a `PoincareMap` of a flow *is* a discrete map, so
   `orbit_diagram(PoincareMap(Rossler(), ("y", 0.0)), "c", values)` draws the
@@ -172,13 +200,19 @@ run. Optional plotting extra: `tsdynamics[plot,interactive]` (matplotlib, plotly
 ```bash
 git clone https://github.com/El3ssar/TSDynamics && cd TSDynamics
 uv sync --group dev --group docs
-uv run pytest -m "not slow" --no-cov     # fast tier
-uv run pytest --no-cov                   # full local suite
+make test                                # change-scoped fast tier (the loop)
+make test-slow                           # change-scoped slow tier
+make test-all                            # whole fast tier — pre-push sanity
 TSD_DOCS_FIGURES=0 uv run mkdocs serve   # docs preview
 ```
 
+The suite is registry-driven — every test is parametrized over all 177 systems —
+so a plain `pytest` is thousands of items. `make test` runs only what your diff
+touches, which is what CI does too.
+
 Releases are automated: conventional-commit PR titles drive
-[semantic-release](https://python-semantic-release.readthedocs.io/) on merge see [CONTRIBUTING](https://el3ssar.github.io/TSDynamics/project/contributing/).
+[semantic-release](https://python-semantic-release.readthedocs.io/) on merge.
+See [CONTRIBUTING](https://el3ssar.github.io/TSDynamics/project/contributing/).
 
 ## License
 
