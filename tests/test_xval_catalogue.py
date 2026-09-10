@@ -457,7 +457,7 @@ def test_dde_engine_lyapunov_is_positive_mackeyglass() -> None:
     mg = ts.MackeyGlass()
     ic = mg.integrate(final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]).y[-1]
     eng = mg.lyapunov_spectrum(
-        backend="interp", k=1, burn_in=200.0, final_time=2000.0, ic=ic, dt=0.05
+        backend="interp", k=1, transient=200.0, final_time=2000.0, ic=ic, dt=0.05
     )
     assert eng[0] > 0.0  # chaotic — matches known_lyapunov n_positive=1
     # Mackey-Glass at τ=17 is weakly chaotic: λ₁ ≈ 0.0086 (Farmer 1982). A loose

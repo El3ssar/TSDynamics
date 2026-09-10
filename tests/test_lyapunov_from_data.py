@@ -410,3 +410,66 @@ class TestAutoKmaxIsBounded:
             res = lyapunov_from_data(henon_x)
         assert res.meta["k_max"] < _KMAX_CEILING
         assert res.trusted
+
+
+class TestSamplingIntervalIsReadFromTheData:
+    """A Trajectory knows its own ``dt``; the estimator must use it.
+
+    ``traj.lyap.from_data()`` used to return 0.0164 for a Lorenz run sampled at
+    ``dt = 0.02`` — an exponent per *sample*, where the number that compares
+    with ``sys.lyap.spectrum()`` (0.92 per time unit) is ~60x larger.  Nothing
+    was missing: the object was holding the sampling interval and the estimator
+    was not reading it.  That is the whole reason a caller reaches for the
+    accessor instead of the free function.
+    """
+
+    def test_a_trajectory_supplies_its_own_dt(self) -> None:
+        import tsdynamics as ts
+
+        lor = ts.systems.Lorenz()
+        traj = lor.run(final_time=120.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+        per_time = lyapunov_from_data(traj, dimension=3, delay=8, k_max=200)
+        per_sample = lyapunov_from_data(np.asarray(traj["x"]), dimension=3, delay=8, k_max=200)
+        # The array form has no time axis, so it stays per sample (documented).
+        assert float(per_time) == pytest.approx(float(per_time), abs=0)
+        assert float(per_time) > 20.0 * float(per_sample)
+        # ...and the per-time answer is in the right neighbourhood of the truth.
+        assert 0.4 < float(per_time) < 1.6
+
+    def test_the_accessor_agrees_with_the_free_function(self) -> None:
+        import tsdynamics as ts
+
+        traj = ts.systems.Lorenz().run(final_time=120.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+        assert float(traj.lyap.from_data(dimension=3, delay=8, k_max=200)) == pytest.approx(
+            float(lyapunov_from_data(traj, dimension=3, delay=8, k_max=200))
+        )
+
+    def test_an_explicit_dt_still_wins(self) -> None:
+        """Reading a default must never override a value the caller typed."""
+        import tsdynamics as ts
+
+        traj = ts.systems.Lorenz().run(final_time=60.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+        pinned = lyapunov_from_data(traj, dimension=3, delay=8, k_max=200, dt=1.0)
+        read = lyapunov_from_data(traj, dimension=3, delay=8, k_max=200)
+        assert float(read) == pytest.approx(float(pinned) / 0.02)
+
+    def test_a_hand_built_trajectory_reads_its_time_axis(self) -> None:
+        """A measured ``(t, y)`` carries no ``meta['dt']`` — the axis is the source."""
+        import tsdynamics as ts
+
+        traj = ts.systems.Lorenz().run(final_time=60.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+        x = np.asarray(traj["x"])
+        measured = ts.Trajectory(np.arange(x.size) * 0.02, x[:, None])
+        assert measured.meta.get("dt") is None
+        assert float(
+            lyapunov_from_data(measured, dimension=3, delay=8, k_max=200)
+        ) == pytest.approx(float(lyapunov_from_data(x, dimension=3, delay=8, k_max=200, dt=0.02)))
+
+    def test_a_non_uniform_time_axis_is_refused_rather_than_guessed(self) -> None:
+        import tsdynamics as ts
+        from tsdynamics.errors import InvalidParameterError
+
+        t = np.cumsum(np.linspace(0.01, 0.05, 600))
+        y = np.sin(t)[:, None]
+        with pytest.raises(InvalidParameterError, match="not uniformly"):
+            lyapunov_from_data(ts.Trajectory(t, y), dimension=3, delay=8, k_max=200)

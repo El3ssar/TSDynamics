@@ -108,7 +108,7 @@ class TestMapFixedPoints:
 
     def test_logistic_fixed_points(self) -> None:
         m = ts.Logistic(params={"r": 2.5})
-        fps = fixed_points(m, region=([-0.5], [1.5]), seed=0)
+        fps = fixed_points(m, region=[(-0.5, 1.5)], seed=0)
         xs = sorted(fp.x[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 1 - 1 / 2.5], atol=1e-9)
         stable = {round(fp.x[0], 6): fp.stable for fp in fps}
@@ -118,7 +118,7 @@ class TestMapFixedPoints:
     def test_logistic_r4_unstable_fixed_points(self) -> None:
         # at r=4 both fixed points {0, 0.75} are unstable; DL must still find them
         fps = fixed_points(
-            ts.Logistic(params={"r": 4.0}), region=([-0.2], [1.2]), method="dl", seed=2
+            ts.Logistic(params={"r": 4.0}), region=[(-0.2, 1.2)], method="dl", seed=2
         )
         xs = sorted(fp.x[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 0.75], atol=1e-8)
@@ -152,7 +152,7 @@ class TestIntervalMethod:
     """
 
     def test_henon_matches_analytic(self) -> None:
-        fps = fixed_points(ts.Henon(), region=([-3, -3], [3, 3]), method="interval")
+        fps = fixed_points(ts.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
         a, b = 1.4, 0.3
         disc = np.sqrt((1 - b) ** 2 + 4 * a)
         expected = sorted([(-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)])
@@ -168,21 +168,19 @@ class TestIntervalMethod:
         # is a root to machine precision (tighter than the multi-start tol).
         from tsdynamics.analysis.fixedpoints._common import map_fns
 
-        fps = fixed_points(ts.Henon(), region=([-3, -3], [3, 3]), method="interval")
+        fps = fixed_points(ts.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
         step, _ = map_fns(ts.Henon())
         for fp in fps:
             x = np.asarray(fp.x)
             assert np.linalg.norm(step(x) - x) < 1e-12
 
     def test_logistic_r4_finds_both_unstable(self) -> None:
-        fps = fixed_points(
-            ts.Logistic(params={"r": 4.0}), region=([-0.2], [1.2]), method="interval"
-        )
+        fps = fixed_points(ts.Logistic(params={"r": 4.0}), region=[(-0.2, 1.2)], method="interval")
         np.testing.assert_allclose(sorted(fp.x[0] for fp in fps), [0.0, 0.75], atol=1e-12)
         assert all(not fp.stable for fp in fps)
 
     def test_lorenz_three_equilibria(self) -> None:
-        fps = fixed_points(ts.Lorenz(), region=([-30, -30, -5], [30, 30, 55]), method="interval")
+        fps = fixed_points(ts.Lorenz(), region=[(-30, 30), (-30, 30), (-5, 55)], method="interval")
         c = np.sqrt(8 / 3 * (28 - 1))
         assert len(fps) == 3
         for fp in fps:
@@ -192,7 +190,7 @@ class TestIntervalMethod:
         _match(fps, np.array([-c, -c, 27.0]))
 
     def test_rossler_equilibria(self) -> None:
-        fps = fixed_points(ts.Rossler(), region=([-1, -30, -1], [8, 1, 30]), method="interval")
+        fps = fixed_points(ts.Rossler(), region=[(-1, 8), (-30, 1), (-1, 30)], method="interval")
         a, c = 0.2, 5.7
         d = np.sqrt(c * c - 4 * a * a)
         assert len(fps) == 2
@@ -203,7 +201,7 @@ class TestIntervalMethod:
         # The Thomas system (sin-coupled) has 27 equilibria in [-6, 6]^3.  The
         # rigorous interval method brackets *all* of them; a finite multi-start
         # Newton (even at a generous n_seeds) can leave some basins unsampled.
-        region = ([-6.0, -6.0, -6.0], [6.0, 6.0, 6.0])
+        region = [(-6.0, 6.0), (-6.0, 6.0), (-6.0, 6.0)]
         iv = fixed_points(ts.Thomas(), region=region, method="interval")
         assert len(iv) == 27
         rhs = ts.Thomas()._rhs_numeric()
@@ -217,7 +215,7 @@ class TestIntervalMethod:
     def test_agrees_with_newton_set(self) -> None:
         # On a system both methods fully resolve, the certified set equals the
         # multi-start set (same points, to a tight tolerance).
-        region = ([-30, -30, -5], [30, 30, 55])
+        region = [(-30, 30), (-30, 30), (-5, 55)]
         iv = sorted(
             tuple(np.round(fp.x, 6))
             for fp in fixed_points(ts.Lorenz(), region=region, method="interval")
@@ -245,7 +243,7 @@ class TestIntervalMethod:
         # it works — the Tent map's non-trivial fixed point is recovered.
         from tsdynamics.analysis.fixedpoints._common import map_fns
 
-        fps = fixed_points(ts.Tent(), region=([0.0], [1.0]), method="interval")
+        fps = fixed_points(ts.Tent(), region=[(0.0, 1.0)], method="interval")
         assert len(fps) >= 1
         step, _ = map_fns(ts.Tent())
         for fp in fps:
@@ -255,8 +253,8 @@ class TestIntervalMethod:
     @pytest.mark.parametrize(
         "factory, region",
         [
-            (ts.KaplanYorke, ([0.0, 0.0], [1.0, 1.0])),  # uses % (modulo)
-            (ts.Baker, ([0.0, 0.0], [1.0, 1.0])),  # uses a < comparison
+            (ts.KaplanYorke, [(0.0, 1.0), (0.0, 1.0)]),  # uses % (modulo)
+            (ts.Baker, [(0.0, 1.0), (0.0, 1.0)]),  # uses a < comparison
         ],
     )
     def test_unmodelled_kernel_raises(self, factory, region) -> None:
@@ -269,10 +267,10 @@ class TestIntervalMethod:
 
     def test_dde_rejected(self) -> None:
         with pytest.raises(NotImplementedError):
-            fixed_points(ts.MackeyGlass(), region=([0.0], [2.0]), method="interval")
+            fixed_points(ts.MackeyGlass(), region=[(0.0, 2.0)], method="interval")
 
     def test_meta_records_method(self) -> None:
-        fps = fixed_points(ts.Henon(), region=([-3, -3], [3, 3]), method="interval")
+        fps = fixed_points(ts.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
         assert fps.meta["method"] == "interval"
 
 
@@ -281,7 +279,9 @@ class TestIntervalMethod:
 
 class TestFlowEquilibria:
     def test_lorenz_equilibria(self) -> None:
-        fps = fixed_points(ts.Lorenz(), region=([-30, -30, -5], [30, 30, 55]), n_seeds=300, seed=1)
+        fps = fixed_points(
+            ts.Lorenz(), region=[(-30, 30), (-30, 30), (-5, 55)], n_seeds=300, seed=1
+        )
         c = np.sqrt(8 / 3 * (28 - 1))  # ±√72 = 8.48528…
         assert len(fps) == 3
         for fp in fps:
@@ -294,7 +294,7 @@ class TestFlowEquilibria:
         assert origin.eigenvalues.real.max() == pytest.approx(11.8277, abs=1e-3)
 
     def test_rossler_equilibria(self) -> None:
-        fps = fixed_points(ts.Rossler(), region=([-1, -30, -1], [8, 1, 30]), n_seeds=500, seed=2)
+        fps = fixed_points(ts.Rossler(), region=[(-1, 8), (-30, 1), (-1, 30)], n_seeds=500, seed=2)
         a, c = 0.2, 5.7
         d = np.sqrt(c * c - 4 * a * a)
         for x in ((c + d) / 2, (c - d) / 2):
@@ -337,7 +337,7 @@ class TestMapPeriodicOrbits:
         assert {o.stable for o in orbs} == {True, False}
 
     def test_period1_returns_fixed_points(self) -> None:
-        orbs = periodic_orbits(ts.Logistic(params={"r": 2.5}), 1, region=([-0.5], [1.5]), seed=5)
+        orbs = periodic_orbits(ts.Logistic(params={"r": 2.5}), 1, region=[(-0.5, 1.5)], seed=5)
         xs = sorted(float(o.points[0, 0]) for o in orbs)
         np.testing.assert_allclose(xs, [0.0, 0.6], atol=1e-8)
         assert all(o.period == 1 for o in orbs)
@@ -363,9 +363,7 @@ class TestMapPeriodicOrbits:
         Henon(1.4, 0.3) the two agree on the count at every ``p <= 10`` while
         Newton is 112-323x faster (``p=7``: 0.09 s against 29.0 s).
         """
-        orbs = periodic_orbits(
-            ts.Logistic(params={"r": 4.0}), period, region=([0.0], [1.0]), seed=0
-        )
+        orbs = periodic_orbits(ts.Logistic(params={"r": 4.0}), period, region=[(0.0, 1.0)], seed=0)
         assert len(orbs) == n_prime
         assert all(o.period == period for o in orbs)
 

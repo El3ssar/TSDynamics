@@ -30,7 +30,7 @@ class MackeyGlass(DelaySystem):
         "kwargs": {
             "k": 1,
             "dt": 0.5,
-            "burn_in": 100.0,
+            "transient": 100.0,
             "final_time": 1000.0,
             "rtol": 1e-4,
             "atol": 1e-4,

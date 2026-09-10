@@ -93,16 +93,20 @@ from .style import (
     normalize_style as normalize_style,
 )
 from .transforms import (
+    FrameSpace,
     Geometry,
+    Part,
     PlotTransform,
+    Presentation,
     T,
     compatibility,
     draw,
     geometry,
+    make_frame,
     plot,  # the transform-aware front door IS `viz.plot`
     plot_transform,
 )
-from .transforms import transforms as plot_transforms
+from .transforms import transforms as list_transforms
 
 #: The entry-point group out-of-tree visualization backends declare against
 #: (the renderer analogue of :data:`tsdynamics.plugins.ANALYSES_GROUP`).
@@ -188,13 +192,22 @@ __all__ = [
     "register_theme",
     # Plot transforms: what to plot, how to draw it, and what pairs with what.
     "transforms",
-    "PlotTransform",
-    "Geometry",
-    "plot_transform",
-    "plot_transforms",
+    "list_transforms",
     "compatibility",
     "geometry",
     "draw",
+    # Writing one: the decorator plus the four substrate names its body needs.
+    # Before v6 an author had to reach into two PRIVATE modules
+    # (``viz.transforms._base``, ``viz._frames``) for ``Part`` / ``FrameSpace`` /
+    # ``make_frame`` / ``Presentation``, which made "one decorator call and
+    # nothing else" true of the registry and false of the author.
+    "plot_transform",
+    "PlotTransform",
+    "Geometry",
+    "Part",
+    "FrameSpace",
+    "make_frame",
+    "Presentation",
     # Serialization round trip — both halves, listed on purpose (see
     # ``_INTERNAL_NAMES``).
     "to_json",
@@ -204,14 +217,17 @@ __all__ = [
     "SCHEMA_VERSION",
 ]
 
-# NOTE: the *listing* function is exported as ``plot_transforms``, not
+# NOTE: the *listing* function is exported as ``list_transforms``, not
 # ``transforms``: this package has a ``transforms`` **subpackage**, and binding a
 # function of that name over it is exactly the shadowing defect the v4 namespace
-# work removed elsewhere (a function hiding a subpackage of the same name).
+# work removed elsewhere (a function hiding a subpackage of the same name — the
+# reason ``ts.viz.transforms()``, the obvious spelling of "what can this draw?",
+# used to answer ``TypeError: 'module' object is not callable``).
 # ``ts.viz.transforms`` is therefore always the module — navigable, holding
 # ``Geometry`` / ``plot_transform`` / ``PRIMITIVES`` — and
-# ``ts.viz.plot_transforms(source="model")`` is the filtered listing, named after
-# the registry (:data:`tsdynamics.registry.plot_transforms`) it reads.
+# ``ts.viz.list_transforms(source="model")`` is the filtered listing.  The name
+# is a *verb* rather than the registry's noun (``registry.plot_transforms``), so
+# the function and the table it reads are never the same word either.
 
 
 def discover_plugins(*, strict: bool = False) -> list[str]:

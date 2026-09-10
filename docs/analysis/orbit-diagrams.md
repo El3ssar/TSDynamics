@@ -44,7 +44,7 @@ import tsdynamics as ts
 od = ts.orbit_diagram(
     ts.systems.Logistic(),
     "r", np.linspace(2.5, 4.0, 600),
-    n=120,          # states recorded per r
+    points_per_value=120,          # states recorded per r
     transient=500,  # steps discarded first, at every r
 )
 
@@ -97,7 +97,7 @@ changes into estimated onset parameters:
 
 ```python
 od = ts.orbit_diagram(
-    ts.systems.Logistic(), "r", np.linspace(2.9, 3.6, 400), n=64, transient=2000,
+    ts.systems.Logistic(), "r", np.linspace(2.9, 3.6, 400), points_per_value=64, transient=2000,
 )
 
 od.periods()             # period at each r: 1, 2, 4, …, 0 (aperiodic), -1 (diverged)
@@ -136,7 +136,7 @@ from tsdynamics import PoincareMap
 od = ts.orbit_diagram(
     PoincareMap(ts.systems.Rossler(), plane=("y", 0.0, "up")),  # section y = 0, upward
     "c", np.linspace(4.0, 6.0, 120),
-    n=60, transient=30,
+    points_per_value=60, transient=30,
 )
 x_cross, c = od.flat()   # x-coordinate of the crossings vs. c
 ```
@@ -156,7 +156,7 @@ duf = ts.systems.Duffing()                          # forcing frequency omega = 
 od = ts.orbit_diagram(
     StroboscopicMap(duf, period=2 * np.pi / 1.4),
     "gamma", np.linspace(0.30, 0.50, 120),
-    n=40, transient=60, component=0,
+    points_per_value=40, transient=60, component=0,
 )
 ```
 

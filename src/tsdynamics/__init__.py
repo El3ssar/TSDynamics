@@ -23,40 +23,41 @@ compatibility ``tsdynamics.Lorenz`` (and ``from tsdynamics import Lorenz``) stil
 resolve lazily.  See :mod:`tsdynamics.registry` for programmatic access.  Internal
 helpers (``ParamSet``, ``SystemBase``) live under ``tsdynamics.families``.
 
-Curated top level
------------------
-``tsdynamics.<TAB>`` shows **only what you would use**: the family bases, the
-derived wrappers, :class:`Trajectory`, the state-space regions, the six headline
-analyses, the plotting front door, and the four submodules worth typing a dot
-after (:mod:`~tsdynamics.systems`, :mod:`~tsdynamics.analysis`,
-:mod:`~tsdynamics.viz`, :mod:`~tsdynamics.errors`).
+Curated top level — twelve names
+--------------------------------
+``tsdynamics.<TAB>`` shows **only what you type**: the five family bases you
+subclass, :class:`Trajectory`, the :func:`plot` front door, and the four
+submodules worth typing a dot after (:mod:`~tsdynamics.systems`,
+:mod:`~tsdynamics.analysis`, :mod:`~tsdynamics.viz`, :mod:`~tsdynamics.errors`).
 
-Everything else stays **fully reachable** — it is dropped from ``__all__`` /
+The membership rule, and the four corollaries it decomposes into, are written
+out above ``__all__`` in this module's source.  In one line: *a name earns a slot
+only if a user types it — and nobody should ever have to construct a library
+type to make a call, so a name that is exported because a signature demands one
+is evidence of a signature bug.*
+
+Everything else stays **fully reachable** — dropped from ``__all__`` and
 autocomplete, never removed:
 
-- the demoted analysis functions and result classes —
-  ``ts.correlation_dimension``, ``from tsdynamics import correlation_dimension``
-  and ``ts.analysis.dimensions.correlation_dimension`` all resolve;
+- the analysis functions and result classes: ``ts.correlation_dimension``,
+  ``from tsdynamics import correlation_dimension`` and
+  ``ts.analysis.dimensions.correlation_dimension`` all resolve;
+- the state-space regions — ``ts.Box`` is ``ts.data.Box``.  No call requires
+  one: per-axis bounds reach every door that takes a region
+  (``ts.basins_of_attraction(vdp, [(-3, 3), (-3, 3)])``);
+- the derived wrappers — ``ts.PoincareMap`` is ``ts.derived.PoincareMap``.  Each
+  has a verb on the system it wraps: ``sys.poincare("y", 0.0)``,
+  ``sys.stroboscope(period)``, ``sys.tangent(k=2)``, ``sys.project(0, 2)``,
+  ``sys.copies(states)``;
 - the **machinery submodules** — :mod:`~tsdynamics.engine` (the Rust-facing
   compile/run seam), :mod:`~tsdynamics.solvers` (the solver registry),
   :mod:`~tsdynamics.registry` (the system/analysis/renderer registries),
   :mod:`~tsdynamics.families` (``SystemBase`` / ``ParamSet`` / the ``System``
-  protocol), :mod:`~tsdynamics.utils` (the shared grid + tolerance constants).
-  ``ts.engine`` still resolves and ``from tsdynamics.engine import run`` still
-  imports; they are simply not what a newcomer should be reading first.
-- :mod:`~tsdynamics.data` and :mod:`~tsdynamics.derived` — every name a user
-  needs from them is already *on* the top level (:class:`Trajectory`,
-  :class:`Box`, :class:`Ball`, :class:`Grid`; :class:`PoincareMap` and the other
-  wrappers), so the extra hop earns no tab slot.
+  protocol), :mod:`~tsdynamics.utils`, :mod:`~tsdynamics.data` and
+  :mod:`~tsdynamics.derived`.  ``ts.engine`` still resolves and
+  ``from tsdynamics.engine import run`` still imports.
 
-The six promoted analyses are :func:`lyapunov_spectrum`,
-:func:`bifurcation_diagram` (the discoverable spelling of :func:`orbit_diagram`),
-:func:`poincare_section`, :func:`recurrence_matrix`, :func:`basins` (short alias
-of :func:`basins_of_attraction`) and :func:`fixed_points`.  :class:`Box` /
-:class:`Ball` / :class:`Grid` are promoted alongside them because
-``ts.basins(system, region)`` cannot be called without one.
-
-:mod:`~tsdynamics.viz` (and the :func:`plot` / :func:`T` front door) resolves
+:mod:`~tsdynamics.viz` (and :func:`plot`, and the demoted ``ts.T``) resolves
 **lazily** via ``__getattr__``, so a plain ``import tsdynamics`` pulls in no
 plotting machinery.
 
@@ -309,12 +310,25 @@ from .data import (
 from .data import (
     set_distance as set_distance,
 )
+
+# The derived wrappers: demoted from ``__all__`` (each has a verb on the system
+# it wraps — ``sys.poincare(...)`` / ``.stroboscope`` / ``.tangent`` /
+# ``.copies`` / ``.project``), still bound so ``ts.PoincareMap`` resolves.  The
+# redundant ``as`` form marks them as deliberate re-exports.
 from .derived import (
-    EnsembleSystem,
-    PoincareMap,
-    ProjectedSystem,
-    StroboscopicMap,
-    TangentSystem,
+    EnsembleSystem as EnsembleSystem,
+)
+from .derived import (
+    PoincareMap as PoincareMap,
+)
+from .derived import (
+    ProjectedSystem as ProjectedSystem,
+)
+from .derived import (
+    StroboscopicMap as StroboscopicMap,
+)
+from .derived import (
+    TangentSystem as TangentSystem,
 )
 from .families import (
     ContinuousSystem,
@@ -325,12 +339,19 @@ from .families import (
     WrappedSystem,
 )
 
-# Headline analysis aliases promoted to the curated top level (stream
-# WS-NAMESPACE). The canonical implementations keep their original names (still
-# flat re-exported and reachable); these are the discoverable headline spellings
-# advertised in ``__all__``.
-bifurcation_diagram = orbit_diagram  #: discoverable spelling of :func:`orbit_diagram`
-basins = basins_of_attraction  #: short alias of :func:`basins_of_attraction`
+# ``basins`` — a short alias of ``basins_of_attraction`` — used to be bound here
+# and advertised in ``__all__``.  It is GONE, not demoted, because it broke the
+# rule that a name must resolve to what it advertises: ``ts.basins`` was a
+# function while ``ts.analysis.basins`` is the basins **subpackage**, so one
+# word named two different objects in two namespaces one dot apart.  The docs
+# never typed it (0 uses); ``basins_of_attraction`` is what they type, and it is
+# still flat re-exported above.  ``ts.basins`` now answers with the redirect in
+# :data:`_RENAMED_IN_V6`.
+#
+# ``bifurcation_diagram`` was DELETED in v6 (C3, one concept one spelling): it
+# was the same object as ``orbit_diagram`` under a second name, so every shared
+# error message named a function half its callers had never typed.  Guessing it
+# is answered by ``_RENAMED_IN_V6``.
 
 # Single source of truth for the package version; rewritten by python-semantic-release.
 __version__ = "5.4.0"
@@ -373,9 +394,18 @@ _VIZ_FRONT_DOOR = frozenset({"plot", "T"})
 #:   machinery — the Rust-facing compile/run seam, the solver table, the system
 #:   and plugin registries, the ``SystemBase``/``ParamSet`` internals, and the
 #:   shared grid/tolerance constants;
-#: * ``data`` / ``derived`` are *redundant* here: everything a user needs from
-#:   them (``Trajectory``, ``Box``, ``Ball``, ``Grid``; ``PoincareMap`` and the
-#:   other wrappers) is already bound on the top level.
+#: * ``data`` / ``derived`` hold the state-space regions (``Box`` / ``Ball`` /
+#:   ``Grid``) and the derived wrappers (``PoincareMap`` and friends).  They are
+#:   **not** promoted, and the reason is the exact opposite of the one that used
+#:   to be written here.  This comment used to say they were redundant *because
+#:   everything a user needs from them is already bound on the top level* — which
+#:   stopped being true the moment those names were demoted, and which was the
+#:   wrong reasoning even while it was true.  The right reason is C1: **nothing
+#:   in them is required to make a call.**  ``ts.basins_of_attraction(vdp,
+#:   [(-3, 3), (-3, 3)])`` takes plain bounds, ``sys.poincare("y", 0.0)`` builds
+#:   the section, ``sys.tangent(k=2)`` the tangent system.  A house whose
+#:   contents no call demands does not earn a tab slot; promoting it would only
+#:   move the toll up one level.
 #:
 #: This tuple is the single source of truth for that decision — the namespace
 #: gate (``tests/test_namespace_curation.py``) reads it, so demoting or promoting
@@ -390,50 +420,61 @@ _INTERNAL_SUBMODULES = (
     "utils",
 )
 
-# The curated top-level surface. Demoted analysis functions / result classes /
-# machinery submodules stay fully reachable (bound above, resolvable as
-# ``ts.<name>``); they are simply no longer advertised in ``__all__`` /
-# autocomplete. Reach them at their qualified path —
-# ``ts.analysis.dimensions.correlation_dimension`` — or by flat re-export —
-# ``from tsdynamics import correlation_dimension``.
+# ---------------------------------------------------------------------------
+# The curated top level — the membership rule, then the twelve names
+# ---------------------------------------------------------------------------
+#
+# THE RULE.  A name earns a top-level slot only if a user TYPES it in ordinary
+# work.  And no user should ever have to construct a library type to make a
+# call — so a name that is here *because a signature demands it* is evidence of
+# a signature bug, not of a needed export.
+#
+# Four corollaries, applied mechanically, so the next person to add a name has
+# to argue against a written rule rather than against a list:
+#
+#   C1  THE TOLL RULE.  Plain Python — tuples, lists, strings, numbers, arrays —
+#       reaches every front door.  Fix the signature, then demote the name;
+#       never the reverse.  (``ts.basins(vdp, [(-3, 3), (-3, 3)])`` already
+#       worked, which is why ``Box`` / ``Ball`` / ``Grid`` never needed to be
+#       here.  See the note on ``_INTERNAL_SUBMODULES``.)
+#   C2  RECEIVED IS NOT TYPED.  A type you get *back* is not a type you type.
+#       It lives at its real home — unless it is the return value of the
+#       library's single most common call and users annotate it, which admits
+#       exactly one name: ``Trajectory``.
+#   C3  ONE CONCEPT, ONE SPELLING.  Two grammars for the same argument is not
+#       flexibility; it is the silent-wrong-answer defect.
+#   C4  A NAME MUST RESOLVE TO WHAT IT ADVERTISES.  No ``__all__`` entry may be
+#       shadowed by a submodule of the same name (``ts.basins`` the function
+#       against ``ts.analysis.basins`` the package).
+#
+# Everything demoted stays FULLY REACHABLE — ``ts.correlation_dimension``,
+# ``from tsdynamics import correlation_dimension`` and
+# ``ts.analysis.dimensions.correlation_dimension`` all resolve; ``ts.Box`` is
+# ``ts.data.Box``; ``ts.PoincareMap`` is ``ts.derived.PoincareMap``.  Demotion
+# is never removal.
 __all__ = [
     "__version__",
-    # User-facing base classes (subclass these to define a new system)
+    # ── The family bases: what you SUBCLASS to define a system. ──
+    # Each is the sole spelling of a capability (there is no verb, and no
+    # plain-Python path, that defines a delay system for you), which is the
+    # "there is no other way" test rather than "someone might want it".
     "ContinuousSystem",
     "DelaySystem",
     "DiscreteMap",
     "StochasticSystem",
     "WrappedSystem",
-    # Trajectory — the lingua franca every family produces
+    # ── The one received type that is also a typed one (C2). ──
+    # Every run returns it, users annotate it and ``isinstance`` it, and since
+    # v6 they CONSTRUCT it from measured data (``ts.Trajectory(t, y)``).
     "Trajectory",
-    # Derived-system wrappers (composition layer)
-    "EnsembleSystem",
-    "PoincareMap",
-    "ProjectedSystem",
-    "StroboscopicMap",
-    "TangentSystem",
-    # State-space regions — the argument ``basins`` / ``find_attractors`` take,
-    # so they belong next to the analyses that require them.
-    "Box",
-    "Ball",
-    "Grid",
-    # Headline analyses (the six a newcomer reaches for; the rest live under
-    # ``ts.analysis.*`` and stay flat-re-exported for back-compat)
-    "lyapunov_spectrum",
-    "bifurcation_diagram",
-    "poincare_section",
-    "recurrence_matrix",
-    "basins",
-    "fixed_points",
-    # Plotting — the headline one-liner and its per-transform option carrier.
-    # Both resolve lazily (see ``__getattr__``) so ``import tsdynamics`` still
-    # pulls in no plotting machinery.
+    # ── Plotting: the front door. ──
+    # ``ts.plot(anything)``.  Resolves lazily (see ``__getattr__``) so naming it
+    # here still costs ``import tsdynamics`` no plotting machinery.  ``T`` is
+    # demoted: a plain ``("name", {options})`` pair is a transform call now.
     "plot",
-    "T",
-    # The four submodules worth typing a dot after. Everything else
-    # (``engine`` / ``solvers`` / ``registry`` / ``families`` / ``utils`` /
-    # ``data`` / ``derived``) stays importable but off the tab surface — see
-    # ``_INTERNAL_SUBMODULES``.
+    # ── The four submodules worth typing a dot after. ──
+    # The derived wrappers, the state-space regions and the analysis functions
+    # all live behind one of these; none of them is required to make a call.
     "systems",
     "analysis",
     "viz",
@@ -466,15 +507,82 @@ _REMOVED_IN_V6 = {
 }
 
 
+#: Names the v6 namespace curation removed **in favour of another spelling that
+#: still exists**, mapped to the line to type instead.  Distinct from
+#: :data:`_REMOVED_IN_V6`, where the capability itself left the library: here
+#: nothing was lost, so the answer is a redirect, not an explanation.
+#:
+#: ``basins`` is the whole table today.  It broke C4 — ``ts.basins`` was a
+#: function while ``ts.analysis.basins`` is the subpackage — and the docs never
+#: typed it.
+_RENAMED_IN_V6 = {
+    "bifurcation_diagram": (
+        'ts.analysis.orbit_diagram(system, "r", values)',
+        "it was a second name for orbit_diagram, and a shared implementation can "
+        "name only one of its spellings in an error — so half of all callers were "
+        "sent to look up a function they had never typed",
+    ),
+    "basins": (
+        "ts.basins_of_attraction(system, region)",
+        "the short alias collided with the ts.analysis.basins subpackage, so one "
+        "word named two different objects one dot apart",
+    ),
+}
+
+
+#: The public homes a curated top level sends people to.  Demotion only works if
+#: guessing the short name teaches the qualified one, so these are searched — by
+#: exact name first — before any fuzzy match.
+_PUBLIC_HOMES = ("data", "derived", "analysis", "viz")
+
+
+def _home_of(name: str) -> str | None:
+    """Return ``"ts.<home>.<name>"`` if ``name`` is public in one of the homes.
+
+    Curation hides ~230 reachable names from autocomplete, so an
+    ``AttributeError`` is the only feedback a user gets when they guess.  Most
+    demoted names are also bound here and never reach this path; the ones that
+    are **not** (``ts.data.Region`` / ``ts.data.region``, everything in
+    ``ts.viz``, the result base classes) used to fall through to a fuzzy match
+    that answered a real question with a wrong object — ``ts.region`` suggested
+    ``ts.systems.Oregonator()``.  An exact hit in a public ``__all__`` is a
+    certainty; it must outrank any guess.
+    """
+    import importlib
+
+    if name.startswith("__") and name.endswith("__"):
+        # A protocol probe (``__wrapped__``, ``__path__``, a notebook canary) is
+        # not a user typing a name; answering it must not import anything.
+        return None
+    for home in _PUBLIC_HOMES:
+        try:
+            module = importlib.import_module(f"{__name__}.{home}")
+        except ImportError:  # pragma: no cover - an optional home is still absent
+            continue
+        if name in getattr(module, "__all__", ()):
+            return f"ts.{home}.{name}"
+    return None
+
+
 def _attribute_error(name: str) -> AttributeError:
     """Build an ``AttributeError`` that names the line to type, not the mistake.
 
-    Three cases, in the order a user is likely to hit them: a name the v6 scope
-    surgery removed, a near-miss on something still here (a built-in system,
+    Five cases, in the order a user is likely to hit them: a name the v6 scope
+    surgery removed, a name v6 *renamed* (the capability is still here), a name
+    that is simply **at a different address** (public in ``ts.data`` /
+    ``ts.derived`` / ``ts.analysis`` / ``ts.viz`` — an exact hit, so it outranks
+    every guess below), a near-miss on something still here (a built-in system,
     which autocomplete deliberately hides, or a demoted analysis), and a genuine
     miss — answered with the two listings worth tab-completing.
     """
     import difflib
+
+    if name in _RENAMED_IN_V6:
+        line, why = _RENAMED_IN_V6[name]
+        return AttributeError(
+            f"tsdynamics has no attribute {name!r}: it was renamed in v6 ({why}).\n"
+            f"Same function, one spelling:\n    {line}"
+        )
 
     if name in _REMOVED_IN_V6:
         return AttributeError(
@@ -485,6 +593,13 @@ def _attribute_error(name: str) -> AttributeError:
             "    ts.analysis.recurrence   # recurrence plots / RQA\n"
             "    ts.analysis.embedding    # delay embedding (data -> phase space)\n"
             "    ts.analysis.lyapunov     # lyapunov_from_data"
+        )
+
+    qualified = _home_of(name)
+    if qualified is not None:
+        return AttributeError(
+            f"module 'tsdynamics' has no attribute {name!r}: the top level is curated, "
+            f"and this one lives at its own address.\n    {qualified}"
         )
 
     system_hit = difflib.get_close_matches(name, sorted(_SYSTEM_NAMES), n=1, cutoff=0.6)

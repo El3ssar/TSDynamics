@@ -417,10 +417,56 @@ def _auto_fit_region(x: np.ndarray, y: np.ndarray) -> tuple[tuple[int, int] | No
     return (best[2], best[3]), peak
 
 
+#: How far a trajectory's widest sample gap may stray from the typical one
+#: (relative) and still count as a uniformly-sampled time axis.  Output grids are
+#: built by accumulation, so the last gap can differ by a few ULP.
+_UNIFORM_TIME_AXIS_SPREAD = 1e-9
+
+
+def _sampling_interval_of(data: Any) -> float | None:
+    """Read the sampling interval a *trajectory* already knows, or ``None``.
+
+    A :class:`~tsdynamics.data.Trajectory` carries its own output spacing —
+    in ``meta["dt"]`` when it came from a run, and in its ``t`` axis either
+    way.  Reading it is the difference between an exponent per *sample* and
+    an exponent per *time unit*: ``traj.lyap.from_data()`` on a Lorenz run
+    sampled at ``dt = 0.02`` returned 0.0164 (per sample) where the answer
+    that compares with ``sys.lyap.spectrum()`` is 1.04 (per time unit) — a
+    silent factor of 60, from information the object was holding.
+
+    A bare array carries no time axis, so it keeps the documented
+    ``dt = 1.0`` (an exponent per sample / per iteration).
+    """
+    meta = getattr(data, "meta", None)
+    t = getattr(data, "t", None)
+    if meta is None or t is None:
+        return None
+    recorded = meta.get("dt") if hasattr(meta, "get") else None
+    if recorded is not None:
+        return float(recorded)
+    times = np.asarray(t, dtype=float)
+    if times.ndim != 1 or times.size < 2:
+        return None
+    steps = np.diff(times)
+    step = float(np.median(steps))
+    # A uniformity check, not a solver tolerance: how far the widest gap strays
+    # from the typical one, relative to the typical one.
+    spread = float(np.max(np.abs(steps - step))) / abs(step) if step else np.inf
+    if step <= 0.0 or spread > _UNIFORM_TIME_AXIS_SPREAD:
+        # A non-uniform time axis has no single sampling interval, and quietly
+        # assuming one is how a wrong exponent gets reported as a right one.
+        raise InvalidParameterError(
+            "lyapunov_from_data: this trajectory's time axis is not uniformly "
+            "spaced, so it has no single sampling interval to read. Pass the one "
+            "you mean explicitly, e.g. lyapunov_from_data(data, dt=0.01)."
+        )
+    return step
+
+
 def lyapunov_from_data(
     data: np.ndarray,
     *,
-    dt: float = 1.0,
+    dt: float | None = None,
     dimension: int = 5,
     delay: int | None = None,
     theiler: int | None = None,
@@ -441,9 +487,15 @@ def lyapunov_from_data(
     data : array_like
         1-D scalar series, or 2-D ``(n_samples, n_channels)`` for a multivariate
         recording.
-    dt : float, default 1.0
-        Sampling interval (time between consecutive samples).  Use ``1.0`` for a
-        map (the exponent is then per iteration).
+    dt : float, optional
+        Sampling interval (time between consecutive samples); the exponent is
+        reported per unit of ``dt``.  Left unset it is **read from the data
+        when the data knows it** — a
+        :class:`~tsdynamics.data.Trajectory` carries its output spacing, so
+        ``lyapunov_from_data(traj)`` answers in the system's own time units and
+        is directly comparable with :func:`lyapunov_spectrum`.  A bare array has
+        no time axis, so it keeps ``dt = 1.0``: an exponent per sample, which is
+        also the right reading for a map (per iteration).
     dimension : int, default 5
         Embedding dimension.  Should be large enough to unfold the attractor
         (Takens' sufficient condition is ``m > 2 D``; a false-nearest-neighbour
@@ -565,7 +617,12 @@ def lyapunov_from_data(
     reject_system(data, analysis="lyapunov_from_data")
     dimension = int(dimension)
     n_neighbors = int(n_neighbors)
-    dt = float(dt)
+    if dt is None:
+        # Unset: read it off the data when the data knows it, else per sample.
+        measured = _sampling_interval_of(data)
+        dt = 1.0 if measured is None else measured
+    else:
+        dt = float(dt)
     method = method.lower()
     if dimension < 1:
         raise InvalidParameterError("dimension (embedding dimension) must be >= 1.")

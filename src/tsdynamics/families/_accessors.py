@@ -16,7 +16,8 @@ toolkit becomes navigable from the object::
     sys.dims.correlation()       sys.recurrence.rqa()
     sys.chaos.gali(k=2)          sys.chaos.zero_one()
     sys.fixed_points()           sys.poincare(section="y", at=0.0)
-    sys.tangent(k=3)             sys.project("x", "z")     sys.ensemble(states)
+    sys.tangent(k=3)             sys.project("x", "z")     sys.copies(states)
+    sys.poincare(("y", 0.0, "up"))                    sys.ensemble(ics)
 
 Every accessor method forwards to the same free function the user would call by
 hand, passing it *positionally* whichever subject its own signature asks for —
@@ -35,11 +36,24 @@ produce a trajectory and then delegate — a convenience that *generates a
 trajectory implicitly*; pass ``data=`` (or run the system yourself) for full
 control over the integration window.
 
+Those same three namespaces are **also bound to a**
+:class:`~tsdynamics.data.Trajectory`, because a trajectory is what a user
+holding measured data actually has, and it is the input those analyses take::
+
+    traj.dims.correlation()      traj.recurrence.rqa()   traj.lyap.from_data()
+
+so the discoverable path is not available only on the object half of these
+analyses refuse.  A trajectory-bound accessor has nothing to integrate: a
+``system``-first method (``lyap.spectrum`` / ``lyap.maximal``) raises a typed
+error naming the system-bound spelling rather than guessing a right-hand side,
+and ``run_kwargs=`` is refused rather than silently ignored.
+
 The accessor namespaces are wired onto :class:`~tsdynamics.families.base.SystemBase`
-as cached properties in :mod:`tsdynamics.families.base`, so ``sys.lyap is
-sys.lyap`` (one instance per system, holding the system reference).  All
-analysis / derived imports are **function-local** to keep
-:mod:`tsdynamics.families.base` free of import cycles.
+as cached properties in :mod:`tsdynamics.families.base` (and onto
+:class:`~tsdynamics.data.Trajectory` in :mod:`tsdynamics.data.trajectory`), so
+``sys.lyap is sys.lyap`` and ``traj.dims is traj.dims`` — one instance per
+subject, holding the subject reference.  All analysis / derived imports are
+**function-local** to keep :mod:`tsdynamics.families.base` free of import cycles.
 """
 
 from __future__ import annotations
@@ -59,6 +73,7 @@ __all__ = [
     "LyapunovAccessor",
     "RecurrenceAccessor",
     "infer_forcing_period",
+    "is_drivable",
     "subject_kind",
 ]
 
@@ -139,13 +154,33 @@ ACCESSOR_DELEGATIONS: dict[str, dict[str, str]] = {
 # ---------------------------------------------------------------------------
 
 
+def is_drivable(subject: Any) -> bool:
+    """Whether ``subject`` is a *system* the accessor may integrate itself.
+
+    A system can be driven (``run``) to produce data on demand; a measured
+    :class:`~tsdynamics.data.Trajectory` cannot — it *is* the data.  The same
+    accessor classes are bound to both (``lor.dims`` and ``traj.dims``), so the
+    test is made once, structurally, rather than by importing either type.
+    """
+    return callable(getattr(subject, "run", None)) and callable(getattr(subject, "reinit", None))
+
+
 class _Accessor:
-    """Base for a cached topical accessor that holds its owning system.
+    """Base for a cached topical accessor that holds its owning subject.
 
     Subclasses expose estimator methods that delegate to the canonical free
     functions, passing ``self._system`` positionally.  The accessor caches on
     the instance (see :class:`~tsdynamics.families.base.SystemBase`), so
     ``sys.lyap is sys.lyap``.
+
+    The subject is a **system** in the usual case, and the accessor may run it
+    to produce data for a ``data``-first analysis.  The *data-consuming*
+    accessors are also bound to a :class:`~tsdynamics.data.Trajectory`
+    (``traj.dims`` / ``traj.recurrence`` / ``traj.lyap.from_data``), because a
+    user holding measured data is the normal case for exactly those analyses
+    and pushing them onto the flat functions is the discoverability gap this
+    layer exists to close.  A trajectory-bound accessor has nothing to
+    integrate, so a ``system``-first method on one raises rather than guessing.
     """
 
     __slots__ = ("_system",)
@@ -159,7 +194,7 @@ class _Accessor:
     # -- shared helper for the data-consuming accessors --
 
     def _resolve_data(self, data: Any, run_kwargs: dict[str, Any]) -> Any:
-        """Return ``data`` if given, else a fresh trajectory from the system.
+        """Return ``data`` if given, else a fresh trajectory from the subject.
 
         The data-consuming analyses (dimensions, recurrence) want a measured
         series.  When the caller passes ``data`` it is delegated verbatim;
@@ -167,9 +202,24 @@ class _Accessor:
         (``system.run(**run_kwargs)``) and the resulting trajectory is used.
         Splitting the run kwargs out keeps the delegation byte-identical to the
         free function for a given series.
+
+        Bound to a trajectory there is nothing to run: the subject *is* the
+        series, so it is delegated as-is (and ``run_kwargs`` is refused rather
+        than silently ignored).
         """
         if data is not None:
             return data
+        if not is_drivable(self._system):
+            if run_kwargs:
+                from tsdynamics.errors import InvalidParameterError
+
+                raise InvalidParameterError(
+                    f"run_kwargs={sorted(run_kwargs)} has nothing to run: this accessor is "
+                    f"bound to a {type(self._system).__name__}, which is already the measured "
+                    f"series. Drop run_kwargs, or reach the accessor from the system "
+                    f"(e.g. system.dims.correlation(run_kwargs={run_kwargs!r}))."
+                )
+            return self._system
         return self._system.run(**run_kwargs)
 
     def _delegate(
@@ -199,10 +249,39 @@ class _Accessor:
                     f"run_kwargs; pass its own horizon keywords instead "
                     f"(e.g. {sorted(run_kwargs)} → direct keyword arguments)."
                 )
+            if data is None and not is_drivable(self._system):
+                from tsdynamics.errors import InvalidParameterError
+
+                raise InvalidParameterError(
+                    f"{free.__name__}() integrates the system itself, and a "
+                    f"{type(self._system).__name__} is measured data — there is no right-hand "
+                    f"side to integrate. Reach it from the system that produced the data "
+                    f"(system.{_TOPIC_OF.get(type(self).__name__, 'lyap')}."
+                    f"{_method_of(type(self).__name__, free.__name__)}()), or use the "
+                    f"from-data estimator (ts.analysis.lyapunov_from_data(traj))."
+                )
             subject = self._system if data is None else data
         else:
             subject = self._resolve_data(data, run_kwargs or {})
         return free(subject, *args, **kwargs)
+
+
+#: Accessor class name → the attribute it is reached by on a system/trajectory.
+#: Used only to spell the remedy in the "measured data has no dynamics" error.
+_TOPIC_OF = {
+    "LyapunovAccessor": "lyap",
+    "ChaosAccessor": "chaos",
+    "DimensionsAccessor": "dims",
+    "RecurrenceAccessor": "recurrence",
+}
+
+
+def _method_of(accessor: str, free_name: str) -> str:
+    """Return the accessor method that delegates to ``free_name`` (for error text)."""
+    for method, free in ACCESSOR_DELEGATIONS.get(accessor, {}).items():
+        if free == free_name:
+            return method
+    return free_name
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +314,16 @@ class LyapunovAccessor(_Accessor):
     ) -> Any:
         """Delegate to :func:`tsdynamics.analysis.lyapunov_from_data`.
 
-        Estimates the maximal exponent from a measured series.  When ``data`` is
-        omitted the system is run first (see :meth:`_Accessor._resolve_data`);
-        the series passed to the free function is then a 1-D component, so a
-        multi-component system should usually be given an explicit 1-D ``data``.
+        Estimates the maximal exponent from a measured series.  Bound to a
+        :class:`~tsdynamics.data.Trajectory` the trajectory *is* the series;
+        bound to a system and called without ``data`` the system is run first
+        (see :meth:`_Accessor._resolve_data`).  Either way the estimator receives
+        the whole trajectory — a **multivariate** embedding when the system has
+        several components, not one channel — and reads the sampling interval
+        off it, so the exponent comes out **per unit time** and compares directly
+        with :meth:`spectrum`.  Pass an explicit 1-D ``data`` (e.g. ``traj["x"]``)
+        for the single-channel reconstruction, and ``dt=`` to override the
+        interval.
         """
         from tsdynamics.analysis import lyapunov_from_data
 

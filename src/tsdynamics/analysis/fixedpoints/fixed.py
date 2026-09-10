@@ -418,7 +418,7 @@ def fixed_points(
     --------
     >>> fixed_points(Henon())              # two saddles of the Hénon map
     >>> fixed_points(Lorenz())             # the origin and the two C± equilibria
-    >>> fixed_points(Henon(), region=([-3, -3], [3, 3]), method="interval")  # rigorous
+    >>> fixed_points(Henon(), region=[(-3, 3), (-3, 3)], method="interval")  # rigorous
 
     References
     ----------
@@ -574,7 +574,8 @@ def _interval_fixed_points(
     if region is None:
         raise InvalidParameterError(
             "method='interval' needs a bounded 'region' (the box it certifies "
-            "completeness over); pass region=([lo...], [hi...]) or a Box/Grid."
+            "completeness over); pass one (lo, hi) bound per state component, "
+            "e.g. region=[(-3, 3), (-3, 3)] — or a Box/Ball/Grid."
         )
     lo, hi = _c.resolve_box(system, region, dim, rng=np.random.default_rng(0))
 

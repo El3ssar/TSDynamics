@@ -40,7 +40,7 @@ to paste::
 
     orbit_diagram needs a discrete-time view ...          # describes the mistake
     wrap the flow in a section first:                     # ... and shows the fix
-        ts.bifurcation_diagram(ts.PoincareMap(system, plane=("z", 27.0)), "rho", values)
+        ts.analysis.orbit_diagram(system.poincare("z", 27.0), "rho", values)
 
 :func:`remedy` formats that block, so every site spells it the same way and the
 polish gate (``tests/test_polish_standards.py``) can *decide* whether a message
@@ -203,12 +203,12 @@ def remedy(*lines: str, lead: str | None = None) -> str:
     Examples
     --------
     >>> print("orbit_diagram needs a discrete-time view." + remedy(
-    ...     'ts.bifurcation_diagram(ts.PoincareMap(sys, plane=("z", 27.0)), "rho", values)',
+    ...     'ts.analysis.orbit_diagram(sys.poincare("z", 27.0), "rho", values)',
     ...     lead="Wrap the flow in a section first:",
     ... ))
     orbit_diagram needs a discrete-time view.
     Wrap the flow in a section first:
-        ts.bifurcation_diagram(ts.PoincareMap(sys, plane=("z", 27.0)), "rho", values)
+        ts.analysis.orbit_diagram(sys.poincare("z", 27.0), "rho", values)
     """
     body = "\n".join(f"    {line}" for line in lines)
     return f"\n{lead}\n{body}" if lead else f"\n{body}"

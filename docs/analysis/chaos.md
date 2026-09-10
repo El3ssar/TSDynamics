@@ -165,16 +165,18 @@ estimated by Monte-Carlo sampling $N$ initial conditions in a region $S$ and
 reading $H$ off the slope of $\ln E(t)$ against $t$. Points that leave the
 region are dropped, and the survivor count is reported.
 
-```python
-from tsdynamics import Box
+A region is **one `(lo, hi)` pair per state component** — plain Python, no
+library type to build (a `Box` / `Ball` / `Grid` from `ts.data` is still
+accepted, it is simply never required):
 
+```python
 # Unit-height tent map: |f'| ≡ 2 everywhere ⇒ E(t) = 2^t ⇒ H = ln 2, exactly
 ts.expansion_entropy(ts.systems.Tent(params={"mu": 1.0}),
-                     Box([0.0], [1.0]), n_samples=200, n=18).entropy
+                     [(0.0, 1.0)], n_samples=200, n=18).entropy
 # ≈ 0.6931  ( = ln 2 )
 
 # Hénon map: reproduces its topological entropy
-h = ts.expansion_entropy(ts.systems.Henon(), Box([-1.6, -0.5], [1.6, 0.5]),
+h = ts.expansion_entropy(ts.systems.Henon(), [(-1.6, 1.6), (-0.5, 0.5)],
                          n_samples=400, n=12)
 float(h)              # ≈ 0.447   (h_top ≈ 0.465, Newhouse–Pignataro)
 h.n_survivors, h.n_samples     # (295, 400) — how many stayed in S
@@ -186,7 +188,7 @@ dimension. For a **flow** pass `final_time=` and `dt=` instead of `n=` (passing
 `dt=` to a map raises — it has no meaning there):
 
 ```python
-ts.expansion_entropy(ts.systems.Lorenz(), Box([-20.0, -25.0, 0.0], [20.0, 25.0, 50.0]),
+ts.expansion_entropy(ts.systems.Lorenz(), [(-20.0, 20.0), (-25.0, 25.0), (0.0, 50.0)],
                      n_samples=300, final_time=3.0, dt=0.1).entropy
 # ≈ 1.16   (a positive rate — Lorenz is chaotic)
 ```

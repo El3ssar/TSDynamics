@@ -139,14 +139,11 @@ def plot(
     """
     from tsdynamics.errors import InvalidParameterError
 
-    items = (
-        list(things[0])
-        if len(things) == 1 and isinstance(things[0], (list, tuple))
-        else list(things)
-    )
+    items = unwrap_container(things)
     if not items:
         raise InvalidParameterError("plot() needs at least one thing to plot.")
 
+    style, figure = split_presentation(build_kw)
     specs = [_to_spec(item, build_kw) for item in items]
     layout_kw = {
         "rows": rows,
@@ -172,7 +169,73 @@ def plot(
         )
     if animate is not False and animate is not None:
         _apply_figure_animation(result, animate)
+    apply_presentation(result, style, figure)
     return result
+
+
+def unwrap_container(things: tuple[Any, ...]) -> list[Any]:
+    """Unwrap a single list/tuple **of plottables** into its items.
+
+    ``plot([a, b])`` and ``plot(a, b)`` mean the same thing — but a list of
+    *numbers* is one subject, not a batch of them, or ``plot([0.1, 0.2, 0.3])``
+    would report that it "cannot plot a float".  A container that reads cleanly
+    as a numeric array is therefore left whole and coerced later.
+    """
+    import numpy as np
+
+    if len(things) != 1 or not isinstance(things[0], (list, tuple)):
+        return list(things)
+    only = things[0]
+    # A container holding something the library can plot in its own right — a
+    # trajectory, a system, a result, a spec — or a transform name, is a batch.
+    if any(isinstance(x, str) or hasattr(x, "to_plot_spec") for x in only):
+        return list(only)
+    try:
+        arr = np.asarray(only, dtype=float)
+    except (TypeError, ValueError):
+        return list(only)
+    return [only] if arr.ndim >= 1 else list(only)
+
+
+#: Keywords about the **figure**, not about the data: they name it rather than
+#: computing it.  Split out of ``build_kw`` and applied to the finished spec, so
+#: "make it red and give it a title" — the most common plot request there is —
+#: reaches every subject, with or without a named transform.
+_FIGURE_KEYS: frozenset[str] = frozenset({"title", "xlabel", "ylabel", "zlabel", "theme"})
+
+
+def split_presentation(kw: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Peel the style and figure keywords out of ``kw`` **in place**.
+
+    Returns ``(style, figure)``; ``kw`` keeps only the keywords that describe
+    *what to compute*.  Style names are the canonical
+    :data:`~tsdynamics.viz.style.STYLE_KEYS` vocabulary and its aliases, so
+    ``lw=`` and ``linewidth=`` are both recognised.
+    """
+    from .style import style_names
+
+    names = style_names()
+    style = {k: kw.pop(k) for k in list(kw) if k in names}
+    figure = {k: kw.pop(k) for k in list(kw) if k in _FIGURE_KEYS}
+    return style, figure
+
+
+def apply_presentation(spec: PlotSpec, style: dict[str, Any], figure: dict[str, Any]) -> None:
+    """Apply peeled style / label / theme keywords to a finished spec.
+
+    On a composite these apply to **every** panel — that is what the underlying
+    :meth:`~tsdynamics.viz.spec.PlotSpec.style` /
+    :meth:`~tsdynamics.viz.spec.PlotSpec.relabel` tweaks already do (``title``
+    stays figure-level).  An undocumented "first panel only" would be exactly the
+    two-meanings-for-one-spelling defect this pass exists to end.
+    """
+    theme = figure.pop("theme", None)
+    if theme is not None:
+        spec.theme(theme)
+    if style:
+        spec.style(**style)
+    if figure:
+        spec.relabel(**{k.removesuffix("label"): v for k, v in figure.items()})
 
 
 def _reject_layout_kw_for_overlay(layout_kw: dict[str, Any]) -> None:
@@ -235,13 +298,23 @@ def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
                 "already-built PlotSpec; pass them when you first build it."
             )
         return thing
+    kw = dict(build_kw)
     to_plot_spec = getattr(thing, "to_plot_spec", None)
     if not callable(to_plot_spec):
-        raise InvalidInputError(
-            f"cannot plot a {type(thing).__name__}: it is not a Trajectory / system / "
-            f"result / PlotSpec (no to_plot_spec())."
-        )
-    spec = to_plot_spec(**build_kw)
+        # Measured data — a plain array, a list of numbers, a dataframe column.
+        # It comes in through the same door as everything else: a user holding
+        # numbers should not have to construct a Trajectory to look at them.
+        from tsdynamics.data.trajectory import as_trajectory
+
+        try:
+            coerced = as_trajectory(thing, dt=kw.pop("dt", None))
+        except InvalidInputError as err:
+            raise InvalidInputError(
+                f"cannot plot a {type(thing).__name__}: it is not a Trajectory / system / "
+                f"result / PlotSpec, nor data this can read ({err})."
+            ) from None
+        to_plot_spec = coerced.to_plot_spec
+    spec = to_plot_spec(**kw)
     if not isinstance(spec, PlotSpec):  # pragma: no cover - defensive
         raise InvalidInputError(
             f"{type(thing).__name__}.to_plot_spec() returned {type(spec).__name__}, not a PlotSpec."

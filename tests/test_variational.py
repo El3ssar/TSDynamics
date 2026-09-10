@@ -91,14 +91,14 @@ def test_variational_tape_partial_k() -> None:
 def test_backend_neutral_linear_spectrum_reference() -> None:
     """The reference (pure-Python) variational path reproduces the analytic spectrum."""
     tang = TangentSystem(LinOsc(), k=2, backend="reference")
-    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, burn_in=5.0, ic=[1.0, 0.5])
+    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5])
     np.testing.assert_allclose(spec, [-1.0, -2.0], atol=0.02)
 
 
 def test_backend_neutral_partial_spectrum_reference() -> None:
     """Only the leading exponent, via k=1 deviation vector."""
     tang = TangentSystem(LinOsc(), k=1, backend="reference")
-    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, burn_in=5.0, ic=[1.0, 0.5])
+    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5])
     assert spec.shape == (1,)
     np.testing.assert_allclose(spec, [-1.0], atol=0.02)
 
@@ -131,14 +131,14 @@ def test_jitcode_backend_is_rejected() -> None:
 
 def test_map_family_delegates_to_tangent() -> None:
     """Family map ``lyapunov_spectrum`` is exactly ``TangentSystem.lyapunov_spectrum``."""
-    via_family = ts.Henon().lyapunov_spectrum(steps=4000, ic=[0.1, 0.1])
-    via_tangent = TangentSystem(ts.Henon(), k=2).lyapunov_spectrum(steps=4000, ic=[0.1, 0.1])
+    via_family = ts.Henon().lyapunov_spectrum(n=4000, ic=[0.1, 0.1])
+    via_tangent = TangentSystem(ts.Henon(), k=2).lyapunov_spectrum(n=4000, ic=[0.1, 0.1])
     np.testing.assert_array_equal(via_family, via_tangent)
 
 
 def test_map_partial_spectrum_via_k() -> None:
     """``k`` is the canonical name (v4 glossary); ``n_exp`` was silently swallowed."""
-    spec = ts.Henon().lyapunov_spectrum(steps=4000, ic=[0.1, 0.1], k=1)
+    spec = ts.Henon().lyapunov_spectrum(n=4000, ic=[0.1, 0.1], k=1)
     assert spec.shape == (1,)
     assert 0.3 < spec[0] < 0.5  # leading Hénon exponent ≈ 0.42
 
@@ -146,7 +146,7 @@ def test_map_partial_spectrum_via_k() -> None:
 def test_tangent_lyapunov_records_meta() -> None:
     m = ts.Henon()
     tang = TangentSystem(m, k=2)
-    tang.lyapunov_spectrum(steps=2000, ic=[0.1, 0.1])
+    tang.lyapunov_spectrum(n=2000, ic=[0.1, 0.1])
     # meta is the inner system's MetaStore.
     assert "lyapunov_spectrum" in m.meta
     rec = m.meta.history("lyapunov_spectrum")[-1]
@@ -200,7 +200,7 @@ def test_stiff_default_ode_lyapunov_does_not_raise() -> None:
     """
     pytest.importorskip("tsdynamics._rust")
     tang = TangentSystem(_StiffLinOsc(), k=2, backend="interp")
-    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, burn_in=5.0, ic=[1.0, 0.5])
+    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5])
     assert np.all(np.isfinite(spec))
     assert spec[0] >= spec[1]  # descending (QR order)
     np.testing.assert_allclose(spec, [-1.0, -2.0], atol=0.05)
@@ -296,7 +296,7 @@ def test_oregonator_stiff_lyapunov_finite_descending() -> None:
     """
     pytest.importorskip("tsdynamics._rust")
     spec = ts.Oregonator().lyapunov_spectrum(
-        final_time=6.0, dt=0.01, burn_in=2.0, ic=[1.0, 1.0, 1.0], rtol=1e-6, atol=1e-9
+        final_time=6.0, dt=0.01, transient=2.0, ic=[1.0, 1.0, 1.0], rtol=1e-6, atol=1e-9
     )
     assert spec.shape == (3,)
     assert np.all(np.isfinite(spec))
@@ -311,7 +311,7 @@ def test_ode_family_delegates_to_tangent_engine() -> None:
     variational path; ``final_time`` is long enough that the finite-time estimate
     has converged to the canonical Lorenz spectrum ``[0.906, 0, -14.57]``.
     """
-    spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(final_time=240.0, dt=0.1, burn_in=40.0)
+    spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(final_time=240.0, dt=0.1, transient=40.0)
     # Leading exponent ≈ 0.906, middle ≈ 0, third ≈ -14.57 (Lorenz 1963 / Sprott).
     assert abs(spec[0] - 0.906) < 0.06
     assert abs(spec[1]) < 0.06
@@ -322,7 +322,7 @@ def test_ode_family_delegates_to_tangent_engine() -> None:
 def test_backend_neutral_lorenz_spectrum_reference() -> None:
     """The engine variational path reproduces the Lorenz spectrum on the reference backend."""
     ref = TangentSystem(ts.Lorenz(ic=[1.0, 1.0, 1.0]), k=3, backend="reference").lyapunov_spectrum(
-        final_time=120.0, dt=0.1, burn_in=40.0
+        final_time=120.0, dt=0.1, transient=40.0
     )
     assert abs(ref[0] - 0.906) < 0.1
     assert abs(ref[1]) < 0.1
@@ -423,7 +423,7 @@ def test_variational_cached_tape_equals_a_fresh_build() -> None:
 def test_variational_spectrum_is_identical_with_the_cache_disabled(monkeypatch) -> None:
     """``TSDYNAMICS_NO_TAPE_CACHE`` gives a value-identical spectrum (the bypass proof)."""
     pytest.importorskip("tsdynamics._rust")
-    kw = dict(final_time=40.0, dt=0.1, burn_in=10.0, ic=[1.0, 1.0, 1.0])
+    kw = dict(final_time=40.0, dt=0.1, transient=10.0, ic=[1.0, 1.0, 1.0])
 
     clear_tape_cache()
     cached = ts.Lorenz().lyapunov_spectrum(**kw)
@@ -439,7 +439,7 @@ def test_cached_variational_path_keeps_interp_equals_jit() -> None:
     """The memoised tape preserves the ``interp == jit`` bit-for-bit contract."""
     pytest.importorskip("tsdynamics._rust")
     clear_tape_cache()
-    kw = dict(final_time=40.0, dt=0.1, burn_in=10.0, ic=[1.0, 1.0, 1.0])
+    kw = dict(final_time=40.0, dt=0.1, transient=10.0, ic=[1.0, 1.0, 1.0])
     jit = ts.Lorenz().lyapunov_spectrum(backend="jit", **kw)
     interp = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
     assert np.array_equal(jit, interp)
@@ -463,7 +463,7 @@ def test_repeat_ode_lyapunov_reuses_one_variational_tape() -> None:
         calls["n"] += 1
         return real(system, k)
 
-    kw = dict(final_time=20.0, dt=0.1, burn_in=5.0, ic=[1.0, 1.0, 1.0])
+    kw = dict(final_time=20.0, dt=0.1, transient=5.0, ic=[1.0, 1.0, 1.0])
     original = var_mod.build_variational_tape
     var_mod.build_variational_tape = counting
     try:

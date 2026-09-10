@@ -196,7 +196,7 @@ def all_cases() -> list[Case]:
                     i.henon,
                     "a",
                     np.linspace(1.0, 1.4, 30 if q else 60),
-                    n=100,
+                    points_per_value=100,
                     transient=200,
                 )
             ),

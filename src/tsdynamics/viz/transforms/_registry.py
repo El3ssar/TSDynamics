@@ -34,6 +34,7 @@ from ._base import (
     PlotTransform,
     Presentation,
     Source,
+    make_frame,
     spec_of,
 )
 from ._primitives import PRIMITIVES, get_primitive, primitive_names
@@ -138,6 +139,7 @@ def plot_transform(
     presentation: Presentation | None = None,
     analysis: str | None = None,
     example: ExampleFactory | None = None,
+    labels: Sequence[str] = (),
     doc: str = "",
     replace: bool = False,
 ) -> Callable[[Callable[..., Geometry]], Callable[..., Geometry]]:
@@ -193,6 +195,10 @@ def plot_transform(
         compatibility gate builds and renders every declared cell on.  Required
         of in-tree transforms (a gate enforces it) so a declared pair that cannot
         draw fails CI without anyone editing a test file.
+    labels : sequence of str, optional
+        The axis labels to stamp when ``compute`` returns a plain **mapping of
+        channels** rather than a :class:`Geometry` (see below).  Ignored when it
+        returns a ``Geometry``, which carries its own.
     doc : str, optional
         One line, shown by :func:`compatibility`.
     replace : bool, optional
@@ -203,6 +209,29 @@ def plot_transform(
     callable
         The undecorated function, unchanged — so a transform stays directly
         callable and unit-testable.
+
+    Notes
+    -----
+    **``compute`` may return a plain mapping of channels.**  The name, the
+    coordinate space, the axis count and the labels are all declared *here*, so
+    a transform that repeats them in a hand-built :class:`Geometry` is declaring
+    each of them twice — and the registry then checks the two declarations
+    against each other, which is a validation of the author's patience rather
+    than of the plot.  Returning ``{"x": ..., "y": ...}`` lets the registry
+    build the frame from what the decorator already knows::
+
+        @plot_transform(name="recurrence", source="data", frame="grid2", ndim=2,
+                        default_primitive="image", primitives=("image",),
+                        kind=PlotKind.IMAGE, labels=("i", "j"), example=...)
+        def recurrence(traj, *, recurrence_rate=0.05):
+            R = recurrence_matrix(traj, recurrence_rate=recurrence_rate).matrix
+            i = np.arange(R.shape[0], dtype=float)
+            return {"x": i, "y": i, "z": np.asarray(R.todense(), float)}
+
+    The shorthand is available only when the transform declares exactly one
+    ``(frame, ndim)`` pair; a transform whose space depends on the data (a
+    portrait is ``state2`` *or* ``state3``) must say which one it produced, and
+    therefore builds its own :class:`Geometry`.
 
     Raises
     ------
@@ -288,6 +317,7 @@ def plot_transform(
             presentation=presentation or Presentation(),
             analysis=analysis,
             example=example,
+            labels=tuple(str(label) for label in labels),
         )
         _registry.plot_transforms.register(
             name,
@@ -477,9 +507,7 @@ def geometry(subject: Any, name: str, /, **options: Any) -> Geometry:
     """
     transform, _ = resolve(name)
     _check_available(transform)
-    result = _compute(transform, subject, options)
-    _check_geometry(transform, result)
-    return result
+    return _check_geometry(transform, _stamp(transform, _compute(transform, subject, options)))
 
 
 #: Integration keywords the fallback may forward when it runs a system for a
@@ -490,7 +518,7 @@ _RUN_KEYS: frozenset[str] = frozenset(
 )
 
 
-def _compute(transform: PlotTransform, subject: Any, options: dict[str, Any]) -> Geometry:
+def _compute(transform: PlotTransform, subject: Any, options: dict[str, Any]) -> Any:
     """Call ``compute``, running the system first if that is the only way it works.
 
     The library declares exactly two source categories, and the asymmetry between
@@ -520,13 +548,29 @@ def _compute(transform: PlotTransform, subject: Any, options: dict[str, Any]) ->
     except (TypeError, ValueError) as first:
         if transform.source != "data":
             raise
+        from tsdynamics.data.trajectory import Trajectory, as_trajectory
         from tsdynamics.families import SystemBase
 
-        if not isinstance(subject, SystemBase):
+        if isinstance(subject, SystemBase):
+            run_kw = {k: options.pop(k) for k in list(options) if k in _RUN_KEYS}
+            try:
+                return transform.compute(subject.trajectory(**run_kw), **options)
+            except Exception:
+                raise first from None
+        # The same fallback, for measured data: a transform that wants a
+        # trajectory gets one built from the caller's arrays.  Some transforms
+        # (``psd``) already read a bare series and never reach here; the two a
+        # newcomer tries first (``time_series``, ``phase_portrait``) did not,
+        # so "a subject may be a bare array" was true of some transforms and
+        # not others, with no way to tell which.
+        if isinstance(subject, Trajectory):
             raise
-        run_kw = {k: options.pop(k) for k in list(options) if k in _RUN_KEYS}
         try:
-            return transform.compute(subject.trajectory(**run_kw), **options)
+            coerced = as_trajectory(subject, dt=options.pop("dt", None))
+        except Exception:
+            raise first from None
+        try:
+            return transform.compute(coerced, **options)
         except Exception:
             raise first from None
 
@@ -627,14 +671,47 @@ def _check_available(transform: PlotTransform) -> None:
     )
 
 
-def _check_geometry(transform: PlotTransform, result: Any) -> None:
-    """Raise unless ``compute`` returned a well-formed :class:`Geometry`."""
+def _stamp(transform: PlotTransform, result: Any) -> Any:
+    """Wrap a plain channel mapping in the :class:`Geometry` the decorator describes.
+
+    ``name``, the coordinate space, the axis count and the axis labels are all
+    declared on the decorator.  A transform that also spells them out in a
+    hand-built ``Geometry`` declares each of them twice, and the registry's only
+    contribution is to check the author against themselves.  So a mapping is a
+    legal return: the registry stamps it from the declaration, which cannot
+    disagree with itself.
+
+    Available only for a transform declaring exactly one ``(frame, ndim)`` pair.
+    A transform whose space depends on the data must *say* which one it
+    produced, and there is no honest default to guess.
+    """
+    if not isinstance(result, Mapping):
+        return result
+    from tsdynamics.errors import InvalidParameterError
+
+    if len(transform.frame) != 1 or len(transform.ndim) != 1:
+        raise InvalidParameterError(
+            f"transform {transform.name!r} declares coordinate space(s) "
+            f"{[s.value for s in transform.frame]} with ndim {list(transform.ndim)}, so a plain "
+            "channel mapping cannot say which it produced — return a Geometry naming the frame."
+        )
+    return Geometry(
+        transform=transform.name,
+        frame=make_frame(transform.frame[0], transform.ndim[0], transform.labels),
+        channels=result,
+        axis_labels=transform.labels,
+    )
+
+
+def _check_geometry(transform: PlotTransform, result: Any) -> Geometry:
+    """Return ``result`` unless it is not a well-formed :class:`Geometry`, in which case raise."""
     from tsdynamics.errors import InvalidInputError, InvalidParameterError
 
     if not isinstance(result, Geometry):
         raise InvalidInputError(
-            f"transform {transform.name!r} returned {type(result).__name__}, not a Geometry. "
-            "A transform computes geometry; the primitive step builds the PlotSpec."
+            f"transform {transform.name!r} returned {type(result).__name__}, not a Geometry "
+            "(nor a plain mapping of channels). A transform computes geometry; the primitive "
+            "step builds the PlotSpec."
         )
     if result.transform != transform.name:
         raise InvalidParameterError(
@@ -646,6 +723,17 @@ def _check_geometry(transform: PlotTransform, result: Any) -> None:
             f"transform {transform.name!r} declares coordinate space(s) "
             f"{[s.value for s in transform.frame]} but returned {result.frame.space.value!r}."
         )
+    # The axis COUNT was declared and never checked: a transform could declare
+    # ndim=1 and return a 3-D frame, and it plotted.  ndim is what decides
+    # whether two geometries may share axes, so an unchecked claim is an overlay
+    # bug waiting for a second layer.
+    if result.frame.ndim not in transform.ndim:
+        raise InvalidParameterError(
+            f"transform {transform.name!r} declares ndim {list(transform.ndim)} but returned a "
+            f"frame with ndim={result.frame.ndim}. The axis count is what decides whether two "
+            "geometries may overlay, so it has to be the declared one."
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -771,10 +859,24 @@ class CompatibilityMatrix(dict):  # type: ignore[type-arg]
             return "CompatibilityMatrix(empty)"
         width = max(len(k) for k in self)
         lines = [f"{'transform'.ljust(width)}  primitives  (* default, ! exclusive)"]
+        varying: list[str] = []
         for name, row in sorted(self.items()):
             record = get(name)
             flag = "" if record.available else f"   [unavailable: needs {record.requires}]"
             lines.append(f"{name.ljust(width)}  {', '.join(row)}{flag}")
+            if record.shape_dependent:
+                varying.append(name)
+        if varying:
+            # The row is declared per TRANSFORM; the real constraint is per
+            # GEOMETRY.  Printed flat, `phase_portrait -> density, line3d, ...`
+            # promises a 3-D trajectory a density plot, which is not a drawing
+            # that exists.  Say so, and name the call that answers exactly.
+            lines += [
+                "",
+                f"† {', '.join(varying)} produce geometry whose SHAPE depends on the subject",
+                "  (2-D vs 3-D; a 1-D profile vs a 2-D field), so the row above is a union.",
+                "  The legal row for one subject: ts.viz.geometry(subject, name).primitives",
+            ]
         return "\n".join(lines)
 
 

@@ -114,7 +114,7 @@ naming gate. (The gate-enforceable rules are in §7.)
   `final_time`): `lyapunov_spectrum(lorenz, final_time=300, transient=50)` discards
   the first 50 time units.
 - Paired with `n` (a map / discrete view) → `transient` is a count of **steps**:
-  `bifurcation_diagram(logistic, "r", vals, n=200, transient=500)` discards the
+  `orbit_diagram(logistic, "r", vals, points_per_value=200, transient=500)` discards the
   first 500 iterations.
 - A few flow estimators parametrise their run by a *count of rescaling cycles*
   (canonical `n`, replacing v3's `n_rescale`) rather than `final_time`; there
@@ -221,7 +221,7 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
 | `grid`, `box` (region arg) | `region` | `basins_of_attraction`, `fixed_points`, `periodic_orbits` |
 | `n_exp` | `k` | `lyapunov_spectrum` |
 | `.integrate` / `.iterate` | `.run` | every family (`.trajectory` kept, not rewritten) |
-| `orbit_diagram` | `bifurcation_diagram` | top-level (alias kept) |
+| `bifurcation_diagram` | `orbit_diagram` | `ts.analysis` (alias **deleted** in v6 — one concept, one spelling; the old name redirects) |
 
 > `n_cut` (`zero_one_test`) is **not** in this table: it is a domain-owned lag
 > ceiling (§5), not a transient — it is neither renamed nor banned.

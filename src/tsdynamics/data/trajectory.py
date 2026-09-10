@@ -209,20 +209,102 @@ class Trajectory:
     ...     pass
     """
 
-    __slots__ = ("t", "y", "system", "meta", "_kdtree")
+    __slots__ = ("t", "y", "system", "meta", "_kdtree", "_accessor_cache")
 
     def __init__(
         self,
         t: np.ndarray,
         y: np.ndarray,
-        system: Any,
+        system: Any = None,
         meta: dict[str, Any] | None = None,
     ) -> None:
+        """Build a trajectory from time and state arrays.
+
+        Parameters
+        ----------
+        t : array_like, shape (T,)
+            Time points (or step indices).
+        y : array_like, shape (T,) or (T, dim)
+            State at each time point.  A 1-D array is read as a single
+            component and stored as ``(T, 1)``.
+        system : SystemBase, optional
+            The system that produced this trajectory.  **Measured data has no
+            system**, so it defaults to ``None`` — every consumer in the
+            library tolerates that, and it is what lets a user's own arrays
+            reach the plotting and analysis layers::
+
+                traj = ts.Trajectory(t, y)
+                ts.plot(traj)
+
+        meta : dict, optional
+            Provenance (system name, params, solver, ``dt``, tolerances, ic).
+        """
         self.t = np.asarray(t)
-        self.y = np.asarray(y)
+        y_arr = np.asarray(y)
+        self.y = y_arr[:, None] if y_arr.ndim == 1 else y_arr
         self.system = system
         self.meta = dict(meta) if meta else {}
         self._kdtree: cKDTree | None = None
+        self._accessor_cache: dict[str, Any] = {}
+
+    # --- topical accessors (the data-consuming analyses, bound to the data) ---
+
+    def _topical_accessor(self, name: str, factory: Any) -> Any:
+        """Return the cached topical accessor ``name``, building it once."""
+        acc = self._accessor_cache.get(name)
+        if acc is None:
+            acc = factory(self)
+            self._accessor_cache[name] = acc
+        return acc
+
+    @property
+    def dims(self) -> Any:
+        """Fractal-dimension estimators bound to *this* series.
+
+        The same cached
+        :class:`~tsdynamics.families._accessors.DimensionsAccessor` a system
+        carries, with the trajectory bound instead — because these analyses
+        consume a measured point set, and a trajectory is the normal thing to
+        have one in::
+
+            traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.02)
+            traj.dims.correlation(radii=np.logspace(-1, 1, 12))
+
+        Reached from a *system* the accessor integrates first; reached from a
+        trajectory there is nothing to run, so the series is used verbatim.
+        """
+        from tsdynamics.families._accessors import DimensionsAccessor
+
+        return self._topical_accessor("dims", DimensionsAccessor)
+
+    @property
+    def recurrence(self) -> Any:
+        """Recurrence-quantification estimators bound to *this* series.
+
+        A cached :class:`~tsdynamics.families._accessors.RecurrenceAccessor`
+        exposing ``.matrix()`` / ``.rqa()`` / ``.windowed()`` — delegating to
+        :func:`tsdynamics.analysis.recurrence_matrix`,
+        :func:`~tsdynamics.analysis.rqa` and
+        :func:`~tsdynamics.analysis.windowed_rqa` with this trajectory bound.
+        """
+        from tsdynamics.families._accessors import RecurrenceAccessor
+
+        return self._topical_accessor("recurrence", RecurrenceAccessor)
+
+    @property
+    def lyap(self) -> Any:
+        """Lyapunov estimators bound to *this* series.
+
+        A cached :class:`~tsdynamics.families._accessors.LyapunovAccessor`.
+        Only ``.from_data()`` is meaningful here — a trajectory is numbers, not
+        a right-hand side, so ``.spectrum()`` / ``.maximal()`` raise a typed
+        error naming the system-bound spelling instead of guessing::
+
+            traj.lyap.from_data(dimension=3, delay=10)
+        """
+        from tsdynamics.families._accessors import LyapunovAccessor
+
+        return self._topical_accessor("lyap", LyapunovAccessor)
 
     # --- compatibility / convenience ---
 
@@ -761,6 +843,19 @@ class Trajectory:
                 f"delay_time= is a positive, finite time, got {delay_time!r}."
             )
         dt = self.meta.get("dt")
+        if dt is None and self.meta.get("time") == "index":
+            # Measured data handed in as a bare array: its "time" axis is the
+            # sample index, so a delay in TIME UNITS has nothing to convert
+            # against.  Falling through to the median-diff fallback below would
+            # silently use dt=1 — a second delay-in-two-units bug, walking in
+            # through the door built to fix the first.
+            raise InvalidParameterError(
+                "delay_time= is in time units, but this data came in as a bare array, "
+                "so its time axis is the sample index. Say what a sample is worth, or "
+                "pass the lag in samples:\n"
+                "    ts.plot(data, 'delay_embedding', delay=7)     # 7 SAMPLES\n"
+                "    ts.plot(data, dt=0.01)                        # 1 sample = 0.01"
+            )
         dt_f = float(dt) if dt is not None else None
         if dt_f is None or not np.isfinite(dt_f) or dt_f <= 0:
             diffs = np.diff(self.t)
@@ -1024,10 +1119,17 @@ class Trajectory:
         Sugar over :meth:`to_plot_spec`: the spec-shaping keywords (``kind``,
         ``components``, ``primitive``, ``animate``, and the per-kind options
         ``delay`` / ``delay_time`` / ``color_by`` / ``transpose``) are peeled off
-        and passed to :meth:`to_plot_spec`; the rest are inline spec tweaks
-        (``xlabel`` / ``yscale`` / ``title`` / …).  A *renderer* option (``ax=``,
-        ``figsize=``, a backend name) belongs to
-        :meth:`~tsdynamics.viz.spec.PlotSpec.render` and raises here.
+        and passed to :meth:`to_plot_spec`; the **style** vocabulary
+        (:data:`~tsdynamics.viz.style.STYLE_KEYS` and its aliases — ``color`` /
+        ``lw`` / ``alpha`` / …) plus ``theme`` are applied to the finished spec;
+        the rest are inline spec tweaks (``xlabel`` / ``yscale`` / ``title`` /
+        …).  A *renderer* option (``ax=``, ``figsize=``, a backend name) belongs
+        to :meth:`~tsdynamics.viz.spec.PlotSpec.render` and raises here.
+
+        The style keywords are the same set, with the same spellings, that
+        ``ts.plot(traj, color=...)`` accepts — one vocabulary, both doors::
+
+            traj.plot(color="crimson", linewidth=0.6, title="Lorenz", theme="dark")
 
         The viz package is imported lazily (not at module scope) so plain
         ``import tsdynamics`` never pulls it in.
@@ -1040,10 +1142,19 @@ class Trajectory:
            'save'``.  Use ``.render(backend, **backend_kw)`` for a figure.
         """
         from tsdynamics.viz.spec import reject_positional_transform
+        from tsdynamics.viz.style import style_names
 
         reject_positional_transform(transforms, "traj")
         spec_kw = {k: kwargs.pop(k) for k in list(kwargs) if k in _PLOT_SPEC_KEYS}
-        return self.to_plot_spec(**spec_kw).plot(**kwargs)
+        names = style_names()
+        style = {k: kwargs.pop(k) for k in list(kwargs) if k in names}
+        theme = kwargs.pop("theme", None)
+        spec = self.to_plot_spec(**spec_kw)
+        if theme is not None:
+            spec.theme(theme)
+        if style:
+            spec.style(**style)
+        return spec.tweak(**kwargs)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Notebook display hook — lazily delegated to ``Plottable`` (see :meth:`plot`).
@@ -1192,9 +1303,80 @@ class Trajectory:
         self.system = state["system"]
         self.meta = state["meta"]
         self._kdtree = None
+        self._accessor_cache = {}
 
     def __repr__(self) -> str:
         return (
             f"Trajectory(n_steps={self.n_steps}, dim={self.dim}, "
             f"t=[{self.t[0]:.3g}, {self.t[-1]:.3g}])"
         )
+
+
+def as_trajectory(obj: Any, *, dt: float | None = None) -> Trajectory:
+    """Coerce measured data to a :class:`Trajectory` — the door plain arrays come in by.
+
+    A user holding numbers (a recorded signal, a point cloud, a column of a
+    dataframe) should not have to construct a library type to plot or analyse
+    them.  This is the one coercion every front door uses, so an array means the
+    same thing wherever it is handed in.
+
+    Parameters
+    ----------
+    obj : Trajectory, ndarray, or array-like
+        A :class:`Trajectory` (returned unchanged, so a caller who already has
+        one loses nothing), a 1-D series of shape ``(T,)``, or a 2-D block of
+        shape ``(T, dim)`` — one row per sample, one column per component.
+    dt : float, optional
+        Sampling interval.  Without it the time axis is the **sample index**
+        (recorded as ``meta["time"] == "index"``), which is honest: a bare array
+        carries no time.  With it the time axis is ``dt * arange(T)`` and ``dt``
+        is recorded in ``meta``, so anything that converts time units to samples
+        (a delay embedding, say) has the number it needs.
+
+    Returns
+    -------
+    Trajectory
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidInputError
+        If ``obj`` is not a Trajectory and is not an array of shape ``(T,)`` or
+        ``(T, dim)``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> as_trajectory(np.sin(np.linspace(0, 10, 64)))
+    Trajectory(n_steps=64, dim=1, t=[0, 63])
+    >>> as_trajectory(np.zeros((64, 3)), dt=0.01)
+    Trajectory(n_steps=64, dim=3, t=[0, 0.63])
+    """
+    from tsdynamics.errors import InvalidInputError, InvalidParameterError
+
+    if isinstance(obj, Trajectory):
+        return obj
+
+    try:
+        arr = np.asarray(obj, dtype=float)
+    except (TypeError, ValueError) as err:
+        raise InvalidInputError(
+            f"cannot read {type(obj).__name__} as data: pass a Trajectory, a 1-D "
+            "series of shape (T,), or a 2-D block of shape (T, dim)."
+        ) from err
+    if arr.ndim == 0 or arr.ndim > 2:
+        raise InvalidInputError(
+            f"cannot read an array of shape {arr.shape} as data: a series is (T,) "
+            "and a multi-component block is (T, dim) — one row per sample."
+        )
+    y = arr[:, None] if arr.ndim == 1 else arr
+
+    meta: dict[str, Any] = {"time": "index"}
+    if dt is None:
+        t = np.arange(y.shape[0], dtype=float)
+    else:
+        step = float(dt)
+        if not np.isfinite(step) or step <= 0:
+            raise InvalidParameterError(f"dt must be a positive, finite number, got {dt!r}.")
+        t = step * np.arange(y.shape[0], dtype=float)
+        meta["dt"] = step
+    return Trajectory(t, y, None, meta=meta)

@@ -8,7 +8,8 @@ user, no internal use things. Same applies to submodules!!"
 
 So this file locks two contracts:
 
-1. **Per-namespace curation.**  ``ts.__all__`` is the ~27 headline names; the
+1. **Per-namespace curation.**  ``ts.__all__`` is the twelve headline names (a
+   number this file measures rather than restates); the
    machinery submodules are demoted; ``ts.analysis.<TAB>`` shows the capability
    categories plus one headline quantifier each; ``ts.viz`` shows the plotting
    API and not the envelope/registry plumbing.
@@ -38,41 +39,25 @@ from tsdynamics import analysis
 
 # ── the curated top-level surface ────────────────────────────────────────────────
 
-#: The exact curated ``tsdynamics.__all__``.  Read it as the answer to "what does
-#: a user need in tab completion?":  the five family bases, the trajectory type,
-#: the five derived wrappers, the three state-space regions ``basins`` /
-#: ``find_attractors`` take as an argument, the six headline analyses, the
-#: plotting front door, and the four submodules worth typing a dot after.
+#: The exact curated ``tsdynamics.__all__`` — **twelve** names.
+#:
+#: The rule (written out in full above ``__all__`` in ``tsdynamics/__init__.py``):
+#: a name earns a slot only if a user TYPES it in ordinary work, and nobody
+#: should ever have to construct a library type to make a call — so a name that
+#: is exported *because a signature demands it* is evidence of a signature bug,
+#: not of a needed export.
 _CURATED_TOP_LEVEL = {
     "__version__",
-    # family bases (subclass these)
+    # family bases: what you subclass; each the sole spelling of a capability
     "ContinuousSystem",
     "DelaySystem",
     "DiscreteMap",
     "StochasticSystem",
     "WrappedSystem",
-    # the trajectory type
+    # the one received type that is also a typed one
     "Trajectory",
-    # derived wrappers
-    "EnsembleSystem",
-    "PoincareMap",
-    "ProjectedSystem",
-    "StroboscopicMap",
-    "TangentSystem",
-    # state-space regions — you cannot call ``ts.basins(system, region)`` without one
-    "Box",
-    "Ball",
-    "Grid",
-    # the two plotting front doors (lazily resolved, like ``viz``)
+    # the plotting front door (lazily resolved, like ``viz``)
     "plot",
-    "T",
-    # the six promoted headline analyses
-    "lyapunov_spectrum",
-    "bifurcation_diagram",
-    "poincare_section",
-    "recurrence_matrix",
-    "basins",
-    "fixed_points",
     # the four navigable submodules
     "systems",
     "analysis",
@@ -88,41 +73,102 @@ def test_top_level_all_is_curated():
     assert set(dir(ts)) == _CURATED_TOP_LEVEL
 
 
-def test_headline_aliases_resolve_to_canonical():
-    """The promoted aliases delegate to the original implementations."""
-    assert ts.bifurcation_diagram is ts.orbit_diagram
-    assert ts.basins is ts.basins_of_attraction
+def test_the_bifurcation_diagram_alias_is_gone_and_redirects():
+    """``bifurcation_diagram`` broke C3 — two spellings of one concept.
 
-
-def test_state_space_regions_are_promoted_because_basins_takes_one():
-    """``Box`` / ``Ball`` / ``Grid`` earn their tab slot: they are the ``region`` type.
-
-    The original rationale here was "you *cannot* call ``ts.basins`` without a
-    ``Grid``".  That is no longer true and the test must not keep asserting it:
-    ``basins`` now also accepts a bare ``(lo, hi, n)`` triple per component, and
-    its no-region error teaches exactly that spelling.  So the honest claim is
-    the weaker one — a region object is a *first-class* argument type of the
-    analyses the curated surface advertises, which is what earns three tab slots
-    next to them.
-
-    Pinned to the real annotation rather than to a parameter name, so that
-    dropping ``Grid`` from the accepted region types fails here instead of
-    quietly leaving three promoted names as decoration.
+    A shared implementation can name only ONE of its spellings in a message, so
+    half of all callers were pointed at a function they had never typed.  Deleted
+    rather than demoted (a demoted name stays bound, and the ambiguity with it);
+    both namespaces that exported it must redirect to the survivor.
     """
-    import inspect
+    assert "orbit_diagram" not in ts.__all__  # analyses live in ts.analysis
+    for namespace in (ts, ts.analysis):
+        with pytest.raises(AttributeError, match="orbit_diagram"):
+            _ = namespace.bifurcation_diagram
 
-    for fn in (ts.basins, ts.find_attractors):
-        params = inspect.signature(fn).parameters
-        assert "region" in params, f"{fn.__name__} no longer takes a region"
-        annotation = str(params["region"].annotation)
-        for cls in ("Box", "Ball", "Grid"):
-            assert cls in annotation, (
-                f"{fn.__name__}'s region no longer accepts {cls}; "
-                "either re-justify or drop the top-level promotion"
-            )
-    for name in ("Box", "Ball", "Grid"):
-        assert name in ts.__all__
-        assert getattr(ts, name) is getattr(ts.data, name)
+
+def test_the_basins_alias_is_gone_and_redirects():
+    """``ts.basins`` broke C4 — a function shadowing the ``ts.analysis.basins`` package.
+
+    Deleted outright rather than demoted, because a demoted name stays *bound*
+    and the collision would survive.  The capability did not move, so the
+    ``AttributeError`` must be a redirect that names the surviving spelling —
+    not the generic "no attribute", which would read as a broken install.
+    """
+    assert isinstance(ts.analysis.basins, types.ModuleType)
+    with pytest.raises(AttributeError) as excinfo:
+        ts.basins  # noqa: B018 - the attribute access IS the assertion
+    message = str(excinfo.value)
+    assert "ts.basins_of_attraction(system, region)" in message
+    assert "renamed in v6" in message
+    # ...and the surviving spelling really is there.
+    assert ts.basins_of_attraction is ts.analysis.basins_of_attraction
+
+
+#: The names demoted from the top level by the v6 curation, each with the home
+#: it must still resolve from.  Demotion is never removal: ``ts.<name>`` still
+#: works, and it is the *same object* as the qualified path.
+_DEMOTED_TO_HOME = {
+    # State-space regions.  They were promoted on the reasoning that
+    # ``ts.basins(system, region)`` "cannot be called without one" — which was
+    # false by measurement: the call already accepted plain per-axis bounds, and
+    # the type was in fact HARDER than the literal.  That is the mistake the
+    # whole curation exists to correct, so it is pinned by the test below.
+    "Box": "data",
+    "Ball": "data",
+    "Grid": "data",
+    # Derived wrappers: each has a verb on the system it wraps (see
+    # ``test_every_demoted_wrapper_has_a_verb``).
+    "PoincareMap": "derived",
+    "StroboscopicMap": "derived",
+    "TangentSystem": "derived",
+    "EnsembleSystem": "derived",
+    "ProjectedSystem": "derived",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_DEMOTED_TO_HOME))
+def test_demoted_names_resolve_to_their_real_home(name):
+    """A demoted class is off ``__all__`` and IS the object at its canonical path."""
+    home = importlib.import_module(f"tsdynamics.{_DEMOTED_TO_HOME[name]}")
+    assert name not in ts.__all__, f"{name} crept back onto the curated top level"
+    assert name not in dir(ts)
+    assert getattr(ts, name) is getattr(home, name)
+
+
+def test_no_region_argument_requires_a_library_type():
+    """The corollary that demoted ``Box`` / ``Ball`` / ``Grid``: plain bounds suffice.
+
+    The old test here asserted the opposite conclusion from the same facts — that
+    three tab slots were earned because ``region`` accepts a ``Grid``.  A type
+    being *accepted* is not a reason to export it; a type being *required* would
+    be, and none is.  So the claim to defend is that every region door takes
+    plain per-axis bounds, which ``tests/test_polish_standards.py`` sweeps in
+    full; here we pin the headline call from the owner's own report.
+    """
+    from tsdynamics.systems import VanDerPol
+
+    bounds = ts.fixed_points(VanDerPol(), region=[(-3.0, 3.0), (-3.0, 3.0)], seed=0)
+    assert len(bounds) == 1  # the origin, which the corner-pair reading used to miss
+
+
+def test_every_demoted_wrapper_has_a_verb():
+    """The five wrapper demotions are legal only because the verbs exist.
+
+    A demotion that lands before its replacement path is exactly the failure
+    this curation is correcting, so the verbs are asserted here rather than
+    assumed: each builds the same wrapper class the demoted name refers to.
+    """
+    import numpy as np
+
+    from tsdynamics.systems import Lorenz
+
+    lor = Lorenz()
+    assert isinstance(lor.poincare("y", 0.0), ts.PoincareMap)
+    assert isinstance(lor.stroboscope(1.0), ts.StroboscopicMap)
+    assert isinstance(lor.tangent(k=2), ts.TangentSystem)
+    assert isinstance(lor.project(0, 2), ts.ProjectedSystem)
+    assert isinstance(lor.copies(np.zeros((2, 3))), ts.EnsembleSystem)
 
 
 # ── demoted machinery submodules ─────────────────────────────────────────────────
@@ -379,6 +425,51 @@ def test_public_package_declares_all(pkg_name):
     assert isinstance(getattr(mod, "__all__", None), list), f"{pkg_name} has no __all__"
 
 
+#: ``__all__`` entries that legitimately resolve to a **module**, per package.
+#: An entry not on this table is expected to be a class or a function; if it
+#: resolves to a module, some submodule is shadowing it.
+_DECLARED_SUBMODULE_EXPORTS = {
+    "tsdynamics": {"analysis", "errors", "systems", "viz"},
+    "tsdynamics.analysis": set(analysis._CATEGORY_SUBPACKAGES),
+    "tsdynamics.viz": {"transforms"},
+    "tsdynamics.engine": {"compile", "problem", "run", "symbols"},
+    "tsdynamics.systems": {"continuous", "discrete"},
+}
+
+
+@pytest.mark.parametrize("pkg_name", _public_packages())
+def test_no_all_entry_is_shadowed(pkg_name):
+    """Corollary C4: a name must resolve to what its namespace advertises.
+
+    Every ``__all__`` entry resolving to a module has to be a *declared*
+    submodule export.  This one gate would have caught all three instances of
+    the defect the library has shipped:
+
+    * ``ts.basins`` — advertised as an analysis **function**, while
+      ``ts.analysis.basins`` is the basins **subpackage**: one word, two objects,
+      two namespaces one dot apart;
+    * ``ts.viz.transforms`` — a listing function bound over the ``transforms``
+      subpackage, so ``ts.viz.transforms()`` (the obvious spelling of "what can
+      this draw?") answered ``TypeError: 'module' object is not callable``;
+    * the original v4 ``entropy`` collision, where the estimator shadowed the
+      subpackage of the same name.
+    """
+    if pkg_name in _UNCURATED_RENDERER_BACKENDS:
+        pytest.skip("renderer backend __init__ is outside this stream's file ownership")
+    mod = importlib.import_module(pkg_name)
+    declared = _DECLARED_SUBMODULE_EXPORTS.get(pkg_name, set())
+    shadowed = sorted(
+        name
+        for name in getattr(mod, "__all__", [])
+        if name not in declared and isinstance(getattr(mod, name, None), types.ModuleType)
+    )
+    assert not shadowed, (
+        f"{pkg_name}.__all__ advertises {shadowed} as API, but each resolves to a MODULE. "
+        "Either declare it a submodule export in _DECLARED_SUBMODULE_EXPORTS, or rename "
+        "whichever of the two the user is less likely to have meant."
+    )
+
+
 # ── errors (eager) + viz (lazy) ──────────────────────────────────────────────────
 
 
@@ -420,7 +511,7 @@ def test_plot_front_door_resolves_lazily_and_is_cached():
     """
     code = (
         "import sys, tsdynamics as ts\n"
-        "assert 'plot' in ts.__all__ and 'T' in ts.__all__\n"
+        "assert 'plot' in ts.__all__ and 'T' not in ts.__all__\n"
         "assert 'tsdynamics.viz' not in sys.modules, 'naming plot imported viz'\n"
         "p = ts.plot\n"
         "assert 'tsdynamics.viz.transforms' in sys.modules\n"
@@ -437,13 +528,15 @@ def test_viz_transforms_subpackage_is_not_shadowed_by_a_function():
     """``ts.viz.transforms`` is the **module**, never a listing function.
 
     The v4 namespace work removed exactly this defect once already (a function
-    shadowing a subpackage of the same name).  The filtered listing is therefore
-    ``ts.viz.plot_transforms(...)``, named after the registry it reads.
+    shadowing a subpackage of the same name), and it is corollary C4 of the v6
+    membership rule.  The listing is therefore the verb ``ts.viz.list_transforms()``
+    — a verb rather than the registry's noun, so the function and the table it
+    reads are never the same word either.
     """
     assert isinstance(ts.viz.transforms, types.ModuleType)
     assert ts.viz.transforms.Geometry is not None
-    assert callable(ts.viz.plot_transforms)
-    assert {t.source for t in ts.viz.plot_transforms()} == {"data", "model"}
+    assert callable(ts.viz.list_transforms)
+    assert {t.source for t in ts.viz.list_transforms()} == {"data", "model"}
 
 
 # ── the viz namespace ────────────────────────────────────────────────────────────
@@ -467,13 +560,20 @@ _CURATED_VIZ = {
     "set_theme",
     "register_theme",
     "transforms",
-    "PlotTransform",
-    "Geometry",
-    "plot_transform",
-    "plot_transforms",
+    "list_transforms",
     "compatibility",
     "geometry",
     "draw",
+    # Writing one: the decorator plus the four substrate names its body needs.
+    # Exported so the authoring recipe has ZERO private imports (it used to
+    # reach into ``viz.transforms._base`` and ``viz._frames``).
+    "plot_transform",
+    "PlotTransform",
+    "Geometry",
+    "Part",
+    "FrameSpace",
+    "make_frame",
+    "Presentation",
     # Both halves of the JSON envelope stay listed on purpose — see
     # ``test_viz_internals_are_demoted_but_reachable``.
     "to_json",
@@ -561,7 +661,6 @@ def test_viz_transforms_internals_are_demoted_but_reachable():
     demoted = (
         "Channel",
         "ChannelType",
-        "Part",
         "PRIMITIVES",
         "RESERVED_PRIMITIVES",
         "ADMITTED_SERIES_DIAGNOSTICS",
@@ -591,39 +690,47 @@ _CATEGORIES = (
     "sampling",
 )
 
-_ANALYSIS_HEADLINE = (
+#: A representative slice of what a flat ``ts.analysis.<TAB>`` must now show —
+#: including the ones the old hand-picked "headline" listing hid.
+_ANALYSIS_SAMPLE = (
     "lyapunov_spectrum",
     "correlation_dimension",
+    "correlation_sum",  # was HIDDEN: you could not tell from dir() that it existed
     "gali",
     "recurrence_matrix",
     "embed",
-    # The flow spelling is the headline one here as at the top level — the two
-    # names are the SAME function object, and a name that is primary in one
-    # namespace must not be absent from the other (``ts.bifurcation_diagram``
-    # resolved while ``ts.analysis.bifurcation_diagram`` raised AttributeError).
-    "bifurcation_diagram",
+    "orbit_diagram",
     "poincare_section",
     "fixed_points",
     "basins_of_attraction",
+    "max_lyapunov",
+    "DimensionResult",
 )
 
 
-def test_analysis_dir_shows_categories_and_headline_quantifiers():
-    """``ts.analysis.<TAB>`` answers both "what is in here?" and "what can I do?"."""
-    assert set(dir(analysis)) == {*_CATEGORIES, *_ANALYSIS_HEADLINE}
-    # One headline per category, and the flat dump stays off the surface.
-    assert len(dir(analysis)) == 19
-    assert "correlation_sum" not in dir(analysis)
+def test_analysis_dir_mirrors_all():
+    """``ts.analysis.<TAB>`` enumerates the analyses — it IS the leaf namespace.
+
+    It used to show 18 of 86: the ten subpackages plus one hand-picked
+    "headline" quantifier each.  That taught no rule — you could not tell from
+    the listing whether ``correlation_sum`` existed — and the curation had to be
+    re-argued on every addition.  Curation belongs one level up, on ``ts.<TAB>``,
+    where the choice is between whole *areas*; here the honest answer to "what
+    analyses are there?" is the list of analyses (cf. ``numpy.linalg``).
+    """
+    assert set(dir(analysis)) == set(analysis.__all__)
+    assert dir(analysis) == sorted(analysis.__all__)
+    assert len(dir(analysis)) > 80, "the analysis listing collapsed back to a curated subset"
     assert "discover_plugins" not in dir(analysis), "plugin machinery is not user API"
     assert hasattr(analysis, "discover_plugins"), "...but it must stay reachable"
 
 
-@pytest.mark.parametrize("name", _ANALYSIS_HEADLINE)
-def test_analysis_headline_is_a_real_callable(name):
-    """Every advertised headline resolves to the same object the top level exposes."""
-    fn = getattr(analysis, name)
-    assert callable(fn)
-    assert fn is getattr(ts, name)
+@pytest.mark.parametrize("name", _ANALYSIS_SAMPLE)
+def test_analysis_name_is_listed_and_resolves(name):
+    """Every analysis is listed, resolves, and is the same object ``ts.<name>`` gives."""
+    assert name in dir(analysis), f"{name} is missing from the analysis listing"
+    obj = getattr(analysis, name)
+    assert obj is getattr(ts, name)
 
 
 @pytest.mark.parametrize("cat", _CATEGORIES)
@@ -802,3 +909,71 @@ def test_the_catalogue_count_in_the_error_is_live_not_hardcoded():
     with pytest.raises(AttributeError) as exc:
         ts.zzz_definitely_not_a_name  # noqa: B018
     assert f"{sum(registry.families().values())} built-in systems" in str(exc.value)
+
+
+# ===========================================================================
+# The AttributeError is the discovery mechanism (verifier pass)
+# ===========================================================================
+#
+# Curation hides ~230 reachable names from autocomplete, so a wrong guess at
+# ``ts.<name>`` is the ONLY feedback a user gets.  Most demoted names are also
+# bound at the top level and never reach the failure path at all; the ones that
+# are not — everything in ``ts.viz``, ``ts.data.Region`` / ``ts.data.region``,
+# the result base classes — used to fall through to a fuzzy match that answered
+# a real question with the wrong object:
+#
+#     ts.region  ->  "you probably want: ts.systems.Oregonator()"
+#     ts.Region  ->  "Did you mean: ts.engine"
+#
+# An EXACT hit in a public ``__all__`` is a certainty, so it outranks every
+# guess below it.
+
+
+@pytest.mark.parametrize(
+    ("name", "home"),
+    [
+        ("Region", "ts.data.Region"),
+        ("region", "ts.data.region"),
+        ("as_region", "ts.data.as_region"),
+        ("PlotKind", "ts.viz.PlotKind"),
+        ("list_transforms", "ts.viz.list_transforms"),
+        ("geometry", "ts.viz.geometry"),
+        ("ScalarResult", "ts.analysis.ScalarResult"),
+        ("DerivedSystem", "ts.derived.DerivedSystem"),
+    ],
+)
+def test_a_name_that_merely_moved_is_answered_with_its_address(name, home):
+    """A public name at a qualified home is named, not guessed at."""
+    with pytest.raises(AttributeError) as exc:
+        getattr(ts, name)
+    message = str(exc.value)
+    assert home in message, message
+    # ...and the wrong answers this replaced are gone
+    assert "ts.systems.Oregonator" not in message
+    assert "Did you mean" not in message
+
+
+def test_the_address_answer_is_exact_never_fuzzy():
+    """A near-miss on a home name must NOT be claimed as an address."""
+    with pytest.raises(AttributeError) as exc:
+        ts.Regionn  # noqa: B018
+    assert "ts.data.Regionn" not in str(exc.value)
+
+
+def test_a_missing_dunder_resolves_without_importing_anything():
+    """A protocol probe is not a user typing a name — it must import nothing.
+
+    ``_home_of`` reads the public homes, one of which is ``viz``; importing it
+    from a ``__getstate__`` / ``__wrapped__`` probe would quietly defeat the
+    lazy-``viz`` guarantee that ``import tsdynamics`` costs no plotting layer.
+    """
+    code = (
+        "import sys, tsdynamics\n"
+        "assert 'tsdynamics.viz' not in sys.modules\n"
+        "try:\n"
+        "    tsdynamics.__totally_not_a_dunder__\n"
+        "except AttributeError:\n"
+        "    pass\n"
+        "assert 'tsdynamics.viz' not in sys.modules, 'a dunder probe imported viz'\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)

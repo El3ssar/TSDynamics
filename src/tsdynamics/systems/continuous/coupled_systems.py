@@ -380,7 +380,7 @@ class Chen(ContinuousSystem):
         "ic": (-0.1, 0.5, -0.6),
         "kwargs": {
             "dt": 0.02,
-            "burn_in": 50.0,
+            "transient": 50.0,
             "final_time": 300.0,
             "method": "dop853",
             "rtol": 1e-9,
@@ -772,7 +772,7 @@ class PanXuZhou(DequanLi):
        :math:`(\pm 6.532, \pm 6.532, 16)` with spectrum
        :math:`-12.557,\; -0.0548 \pm 8.243 i` — a stable focus.
     3. *Measured Lyapunov spectrum.*  A variational-QR run at ``k = 16``
-       (``final_time=3000``, ``dt=0.005``, ``burn_in=1000``) returns
+       (``final_time=3000``, ``dt=0.005``, ``transient=1000``) returns
        :math:`(-0.0548,\, -0.0548,\, -12.557)` — no positive exponent and no
        zero exponent; it has converged onto the focus above, not onto an
        attractor.
@@ -794,7 +794,7 @@ class PanXuZhou(DequanLi):
     known_lyapunov = {
         "spectrum": (1.0, 0.0, -13.67),
         "atol": (0.15, 0.05, 0.2),
-        "kwargs": {"final_time": 3000.0, "dt": 0.005, "burn_in": 1000.0},
+        "kwargs": {"final_time": 3000.0, "dt": 0.005, "transient": 1000.0},
         "source": (
             "measured; the sum is pinned analytically by the constant divergence "
             "-(a - f) + c = -12.667"
@@ -825,7 +825,7 @@ class Tsucs2(DequanLi):
     three-scroll-like — but it is a 2-torus, not a strange attractor.  The
     measured Lyapunov spectrum is ``(0.000, 0.000, -1.497)`` — two zero
     exponents — from every initial
-    condition tried (``final_time=3000``, ``dt=0.002``, ``burn_in=1000``), on
+    condition tried (``final_time=3000``, ``dt=0.002``, ``transient=1000``), on
     both the engine QR estimator and an independent two-trajectory Benettin run
     at ``rtol = 1e-10``.  Lowering ``f`` restores chaos (``f = 10`` measures
     ``(0.492, 0.000, -2.727)``), but no literature source for a chaotic TSUCS-2

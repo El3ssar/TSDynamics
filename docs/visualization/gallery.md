@@ -88,7 +88,9 @@ A new transform is **one registration and nothing else** — no renderer edit, n
 `PlotKind` edit, no `compose` edit, no test edit:
 
 ```python
-from tsdynamics.viz.transforms import Geometry, plot_transform
+# skip-doctest — a template: `my_small_fixture` is yours, and registering a
+# placeholder transform would put it in every listing for the rest of the session
+from tsdynamics.viz import plot_transform
 
 @plot_transform(
     name="my_diagnostic",
@@ -97,12 +99,20 @@ from tsdynamics.viz.transforms import Geometry, plot_transform
     primitives=("line", "points"),       # the declared compatibility row
     frame="scaling",
     ndim=1,
+    labels=("r", "C(r)"),                # the axis labels of the geometry below
     doc="One line, shown in the matrix above.",
     example=lambda primitive: (my_small_fixture(), {}),
 )
-def my_diagnostic(subject, *, option=1.0) -> Geometry:
-    ...
+def my_diagnostic(subject, *, option=1.0):
+    r, c = measure(subject, option)
+    return {"x": r, "y": c}              # a plain channel mapping — no Geometry
 ```
+
+Every name here is public (`ts.viz.plot_transform`, and — when the shape or the
+labels depend on the subject — `Geometry`, `Part`, `FrameSpace`, `make_frame`,
+`Presentation`). Returning a plain mapping of channels is enough whenever the
+transform declares a single `(frame, ndim)` pair: the registry stamps the name,
+the frame and the labels from the decorator, which already declared all three.
 
 The registration carries the compatibility row, so
 `tests/test_viz_compatibility.py` starts rendering every cell of it, and this

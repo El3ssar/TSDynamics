@@ -6,10 +6,10 @@ re-exported here so the public surface is flat:
 ``from tsdynamics import lyapunov_spectrum`` and
 ``from tsdynamics.analysis import lyapunov_spectrum`` both work.
 
-- :mod:`~tsdynamics.analysis.orbits` — :func:`bifurcation_diagram` (parameter
-  sweeps; a raw flow is reduced to its successive-maxima map, or to the
-  ``section=`` you name, and ``orbit_diagram`` is the same function under its
-  map-centric name) and :func:`poincare_section` (surfaces of section).
+- :mod:`~tsdynamics.analysis.orbits` — :func:`orbit_diagram` (parameter sweeps;
+  a raw flow is reduced to its successive-maxima map, or to the ``section=`` you
+  name, so the same call draws a map's orbit diagram and a flow's bifurcation
+  diagram) and :func:`poincare_section` (surfaces of section).
 - :mod:`~tsdynamics.analysis.lyapunov` — :func:`lyapunov_spectrum` /
   :func:`max_lyapunov` / :func:`kaplan_yorke_dimension`.
 - :mod:`~tsdynamics.analysis.fixedpoints` — :func:`fixed_points`, multi-start
@@ -154,7 +154,6 @@ from .orbits import (
     OrbitDiagram,
     PoincareSection,
     ReturnMap,
-    bifurcation_diagram,
     orbit_diagram,
     poincare_section,
     return_map,
@@ -169,8 +168,12 @@ from .recurrence import (
 )
 from .sampling import estimate_dt_from_sagitta, sagitta_profile
 
-#: The capability subpackages, in canonical order — half of the decluttered
-#: ``ts.analysis.<TAB>`` surface (see :func:`__dir__`).
+#: The capability subpackages, in canonical order.  ``__dir__`` is flat (it
+#: mirrors ``__all__``), so this is no longer a tab-surface decision — it is the
+#: declared list of ``__all__`` entries that resolve to a **module** rather than
+#: a callable, which the namespace gate
+#: (``tests/test_namespace_curation.py::test_no_all_entry_is_shadowed``) reads to
+#: tell a legitimate subpackage export from a function silently hidden behind one.
 _CATEGORY_SUBPACKAGES = (
     "lyapunov",
     "dimensions",
@@ -182,28 +185,6 @@ _CATEGORY_SUBPACKAGES = (
     "basins",
     "planar",
     "sampling",
-)
-
-#: The headline quantifiers shown alongside the categories, so
-#: ``ts.analysis.<TAB>`` answers "what can I *do*?" as well as "what is in here?".
-#: One per capability cluster — the function a newcomer reaches for first.  The
-#: other ~60 flat re-exports stay importable (``from tsdynamics.analysis import
-#: correlation_sum``) and stay in ``__all__``; they are just not on the tab
-#: surface.  Drill in with ``ts.analysis.dimensions.<TAB>`` for the rest.
-_HEADLINE_ANALYSES = (
-    "lyapunov_spectrum",
-    "correlation_dimension",
-    "gali",
-    "recurrence_matrix",
-    "embed",
-    # The headline spelling is the flow one (``bifurcation_diagram``); the
-    # map-centric ``orbit_diagram`` is the SAME function object and stays
-    # exported, just off the tab surface — mirroring the top level, so a name is
-    # not primary in one namespace and absent from the other.
-    "bifurcation_diagram",
-    "poincare_section",
-    "fixed_points",
-    "basins_of_attraction",
 )
 
 __all__ = [
@@ -249,7 +230,10 @@ __all__ = [
     "correlation_dimension",
     "correlation_sum",
     "dimension_spectrum",
-    "discover_plugins",
+    # ``discover_plugins`` is deliberately NOT here: entry-point loading is
+    # packaging machinery, not an analysis.  It stays bound and importable
+    # (``from tsdynamics.analysis import discover_plugins``); since ``__dir__``
+    # mirrors ``__all__``, listing it would put it on the tab surface too.
     "embed",
     "embedding_dimension",
     "estimate_dt_from_sagitta",
@@ -269,7 +253,6 @@ __all__ = [
     "mutual_information",
     "optimal_delay",
     "orbit_diagram",
-    "bifurcation_diagram",
     "periodic_orbit",
     "periodic_orbits",
     "poincare_section",
@@ -324,21 +307,48 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
 discover_plugins()
 
 
+#: Names this namespace used to export, and the one spelling that replaced each.
+#: Guessing a removed name is how a user discovers the rename, so it must answer
+#: with the replacement rather than a bare ``AttributeError`` (the same contract
+#: the top level's :data:`tsdynamics._RENAMED_IN_V6` provides).
+_RENAMED_IN_V6 = {
+    "bifurcation_diagram": (
+        'ts.analysis.orbit_diagram(system, "r", values)',
+        "it was a second name for orbit_diagram, and a shared implementation can "
+        "name only one of its spellings in an error",
+    ),
+}
+
+
+def __getattr__(name: str) -> object:
+    """Answer a removed name with its replacement; otherwise fail normally."""
+    entry = _RENAMED_IN_V6.get(name)
+    if entry is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    line, why = entry
+    raise AttributeError(
+        f"tsdynamics.analysis has no attribute {name!r}: it was renamed in v6 "
+        f"({why}).\nSame function, one spelling:\n    {line}"
+    )
+
+
 def __dir__() -> list[str]:
-    """Show the capability categories + the headline quantifiers (scipy-style).
+    """``dir()`` mirrors ``__all__`` — every analysis, plus the category subpackages.
 
-    ``ts.analysis.<TAB>`` surfaces the navigable category subpackages
-    (``lyapunov``, ``dimensions``, ``chaos``, …) **and** one headline quantifier
-    per category (:func:`lyapunov_spectrum`, :func:`correlation_dimension`,
-    :func:`recurrence_matrix`, …) — 18 names, not a flat dump of ~75.
+    This is the **leaf** namespace: its entire job is to enumerate the
+    quantifiers, so it enumerates them (``numpy.linalg`` does the same).  All 86
+    names — the 44 functions, the 32 result classes and the 10 capability
+    subpackages — sorted.
 
-    Everything else stays fully reachable: ``from tsdynamics.analysis import
-    correlation_sum`` and ``ts.analysis.correlation_sum`` both resolve, and
-    ``__all__`` still carries them for ``from tsdynamics.analysis import *``.
-    They are simply kept off the tab surface so the structure, not the dump, is
-    what you see — drill in with ``ts.analysis.dimensions.<TAB>``.
+    It used to show 18: the ten subpackages plus a hand-picked "headline"
+    quantifier from each.  That taught no rule a user could apply — you could
+    not tell from the listing whether ``correlation_sum`` existed, and the
+    curation had to be re-argued every time an analysis was added.  Curation
+    belongs one level up, on ``ts.<TAB>``, where the choice is between whole
+    *areas* of the library; here the answer to "what analyses are there?" is the
+    list of analyses.
 
-    :func:`discover_plugins` is deliberately absent: loading entry points is
-    packaging machinery, not something a user of the analysis toolkit types.
+    :func:`discover_plugins` stays absent (it is not in ``__all__``): loading
+    entry points is packaging machinery, not something a user types.
     """
-    return sorted((*_CATEGORY_SUBPACKAGES, *_HEADLINE_ANALYSES))
+    return sorted(__all__)

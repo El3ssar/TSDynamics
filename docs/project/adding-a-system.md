@@ -189,7 +189,7 @@ class MyAttractor(ts.ContinuousSystem):
     known_lyapunov = {                           # opt in to the known-value tests
         "spectrum": (0.0714, 0.0, -5.39),
         "atol": (0.06, 0.06, 1.5),
-        "kwargs": {"dt": 0.1, "burn_in": 100.0, "final_time": 500.0},
+        "kwargs": {"dt": 0.1, "transient": 100.0, "final_time": 500.0},
         "source": "Sprott (2003), Chaos and Time-Series Analysis",
     }
 ```

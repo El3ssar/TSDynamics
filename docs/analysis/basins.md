@@ -18,7 +18,7 @@ robust an attractor is to a perturbation.
 | Function | Answers | Reads |
 |---|---|---|
 | [`find_attractors`](#locating-attractors) | what attractors exist | a system + region |
-| [`basins_of_attraction`](#painting-basins) | which initial condition goes where | a system + `Grid` |
+| [`basins_of_attraction`](#painting-basins) | which initial condition goes where | a system + per-axis bounds |
 | [`basin_fractions`](#basin-stability) | each basin's volume share | a system + region |
 | [`basin_entropy`](#boundary-structure) | is the boundary fractal? | a label image |
 | [`uncertainty_exponent`](#boundary-structure) | boundary dimension $D_0$ | a label image |
@@ -80,8 +80,12 @@ finite-state machine: while it keeps landing in *new* cells it is transient; onc
 it recurrently re-visits cells it has located an **attractor** (the recurrent
 cell set). Near-coincident attractors are proximity-merged (`merge_tol`).
 
+A search region is **one `(lo, hi)` pair per state component** — plain Python.
+A `Box` / `Ball` / `Grid` from `ts.data` is accepted everywhere a region is, but
+never required:
+
 ```python
-region = data.Box(np.array([-2.0, -2.0]), np.array([2.0, 2.0]))
+region = [(-2.0, 2.0), (-2.0, 2.0)]
 
 att = ts.find_attractors(sys, region, resolution=40, n_seeds=200,
                          dt=0.5, max_steps=2000, seed=0)
@@ -107,13 +111,13 @@ counted by a lost-counter, and a trajectory that never settles within
 
 ## Painting basins
 
-`basins_of_attraction` runs that finder from **every cell of a `Grid` of initial
+`basins_of_attraction` runs that finder from **every cell of a lattice of initial
 conditions** and labels each with the attractor it reaches — a colour map of
-state space. Build the grid with `data.Grid(lo, hi, counts)` (or the terse
-`data.region([(lo, hi, n), ...])`).
+state space. Add a node count to each axis bound to say how fine the lattice is:
+`(lo, hi, n)` per component.
 
 ```python
-grid = data.Grid(np.array([-2.0, -2.0]), np.array([2.0, 2.0]), (60, 60))
+grid = [(-2.0, 2.0, 60), (-2.0, 2.0, 60)]
 basins = ts.basins_of_attraction(sys, grid, dt=0.5, max_steps=2000)
 
 basins.n_attractors        # 2
@@ -131,8 +135,8 @@ saddle.
 !!! note "Imaging a slice of a higher-dimensional flow"
     For a flow whose state space is larger than the 2-D picture you want, pass a
     separate full-dimension `recurrence` box: the basin is painted over the 2-D
-    `Grid` of initial conditions while the recurrence FSM runs in the full space
-    (free axes pinned with `counts == 1`). This is how the magnetic pendulum's
+    lattice of initial conditions while the recurrence FSM runs in the full space
+    (free axes pinned with a node count of 1). This is how the magnetic pendulum's
     famous fractal basins are imaged from its higher-dimensional phase space.
 
 ## Basin stability
@@ -196,7 +200,6 @@ boundary point touches all three colours. That is the **Wada** property, and
 <div class="ts-item" markdown>
 
 ```python
-from tsdynamics import Grid
 from tsdynamics.analysis import basins as bas
 
 class NewtonMap(ts.DiscreteMap):
@@ -217,7 +220,7 @@ class NewtonMap(ts.DiscreteMap):
         return ((0.0, 0.0), (0.0, 0.0))
 
 res = bas.basins_of_attraction(
-    NewtonMap(), Grid([-1.0, -1.0], [1.0, 1.0], (200, 200)),
+    NewtonMap(), [(-1.0, 1.0, 200), (-1.0, 1.0, 200)],
     consecutive_recurrences=8, attractor_locate_steps=5, max_steps=200)
 
 res.fractions                    # {1: ≈ 1/3, 2: ≈ 1/3, 3: ≈ 1/3}

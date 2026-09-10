@@ -130,50 +130,105 @@ For backwards compatibility a module-level `__getattr__` still resolves
 flat-re-exports every catalogue class automatically (driven by each category
 module's `__all__`), so a new system needs no manual edit there.
 
-`tsdynamics.__all__` exports:
+**`tsdynamics.__all__` is exactly TWELVE names** (measured — re-measure, never
+nudge, if you change it):
 
-- The 177 built-in systems are reachable via `tsdynamics.systems` (177 today:
-  142 ODE + 6 DDE + 26 maps + 3 SDE), not the top-level `__all__`
-- Base classes: `ContinuousSystem`, `DelaySystem`, `DiscreteMap`,
-  `StochasticSystem`; result type `Trajectory`
-- Derived wrappers: `PoincareMap`, `StroboscopicMap`, `TangentSystem`,
-  `EnsembleSystem`, `ProjectedSystem`
-- Analysis: `orbit_diagram`, `OrbitDiagram` (+ `.periods()` /
-  `.bifurcation_points()` cascade quantifiers), `poincare_section`, `return_map`,
-  `ReturnMap` (A-ORBIT: first-return / next-amplitude map — Lorenz z-maxima cusp
-  + Poincaré-crossing variant),
-  `lyapunov_spectrum`, `max_lyapunov`, `kaplan_yorke_dimension`,
-  `lyapunov_from_data`, `LyapunovFromData` (A-LYAP: maximal exponent from a
-  time series, Kantz/Rosenstein),
-  `fixed_points`, `FixedPoint` (A-FP: maps *and* flow equilibria, Newton +
-  Schmelcher–Diakonos/Davidchack–Lai), `periodic_orbits` (map period-p orbits),
-  `periodic_orbit` (flow single shooting), `PeriodicOrbit`, `estimate_period`;
-  fractal dimensions (A-DIM)
-  `correlation_dimension`, `correlation_sum`, `generalized_dimension`,
-  `box_counting_dimension`, `information_dimension`, `dimension_spectrum`,
-  `fixed_mass_dimension`, `DimensionResult`; chaos indicators (A-CHAOS)
-  `gali`, `GALIResult`, `zero_one_test`, `expansion_entropy`,
-  `ExpansionEntropyResult`; recurrence & RQA (A-RQA) `recurrence_matrix`,
-  `RecurrenceMatrix`, `rqa`, `RQAResult`, `windowed_rqa`, `WindowedRQA`;
-  attractors & basins (A-BASIN) `find_attractors`,
+```
+ContinuousSystem DelaySystem DiscreteMap StochasticSystem WrappedSystem
+Trajectory  plot  systems analysis viz errors  __version__
+```
+
+The membership rule is written above `__all__` in `src/tsdynamics/__init__.py`
+and is the thing to argue against before adding a name:
+
+> A name earns a top-level slot only if a user TYPES it in ordinary work — and no
+> user should ever have to construct a library type to make a call, so a name
+> that is exported *because a signature demands it* is evidence of a **signature
+> bug**, not of a needed export.
+
+Four corollaries, applied mechanically:
+
+- **C1 the toll rule** — plain Python (tuples/lists/strings/numbers/arrays)
+  reaches every front door. Fix the signature, then demote the name; never the
+  reverse. (`ts.basins_of_attraction(vdp, [(-3, 3), (-3, 3)])` already worked,
+  which is why `Box`/`Ball`/`Grid` never needed exporting.)
+- **C2 received ≠ typed** — a type you get *back* is not one you type. Exactly
+  one exception: `Trajectory`.
+- **C3 one concept, one spelling** — two grammars for the same argument is the
+  silent-wrong-answer defect, not flexibility.
+- **C4 a name must resolve to what it advertises** — no `__all__` entry may be
+  shadowed by a submodule of the same name. Gate:
+  `tests/test_namespace_curation.py::test_no_all_entry_is_shadowed`, swept over
+  every public package.
+
+Everything else is **demoted, never removed** — `ts.<name>` still resolves and
+`from tsdynamics import <name>` still imports:
+
+- The 177 built-in systems (142 ODE + 6 DDE + 26 maps + 3 SDE) via
+  `tsdynamics.systems`; `ts.Lorenz` resolves lazily through `__getattr__`.
+- Every analysis function and result class — `orbit_diagram` (the ONE spelling
+  since v6: the `bifurcation_diagram` alias was the same object under a second
+  name, and a shared implementation can name only one of its spellings in a
+  message, so half of all callers were answered about a function they had never
+  typed — `ts.bifurcation_diagram` / `ts.analysis.bifurcation_diagram` now
+  redirect; `PlotKind.BIFURCATION_DIAGRAM`, the *picture*, is a different concept
+  and is untouched), `OrbitDiagram`, `poincare_section`,
+  `return_map`/`ReturnMap`, `lyapunov_spectrum`, `max_lyapunov`,
+  `kaplan_yorke_dimension`, `lyapunov_from_data`/`LyapunovFromData`,
+  `fixed_points`/`FixedPoint`, `periodic_orbits`/`periodic_orbit`/`PeriodicOrbit`,
+  `estimate_period`; A-DIM `correlation_dimension`, `correlation_sum`,
+  `generalized_dimension`, `box_counting_dimension`, `information_dimension`,
+  `dimension_spectrum`, `fixed_mass_dimension`, `DimensionResult`; A-CHAOS
+  `gali`/`GALIResult`, `zero_one_test`, `expansion_entropy`/
+  `ExpansionEntropyResult`; A-RQA `recurrence_matrix`/`RecurrenceMatrix`, `rqa`/
+  `RQAResult`, `windowed_rqa`/`WindowedRQA`; A-BASIN `find_attractors`,
   `basins_of_attraction`, `basin_fractions`, `basin_entropy`,
   `uncertainty_exponent`, `wada_property`, `continuation`, `tipping_points`,
   `resilience`, `Attractor`, `AttractorSet`, `BasinsResult`, `BasinFractions`,
-  `BasinEntropy`, `UncertaintyExponent`, `WadaResult`, `ContinuationResult`
-- Adapter base: `WrappedSystem` (adapt any external stepper to the protocol).
-  Canonical home is `tsdynamics.families` (it sits with the family bases users
-  subclass); re-exported from `tsdynamics.derived` for back-compat.
-- State-space geometry (`data`): `Box`, `Ball`, `Grid`, `Region`, `sampler`,
-  `grid_points`, `region`, `set_distance` — the primitives the basin/attractor layer
-  builds on (Monte-Carlo + full-grid sampling, attractor-matching distances).
-  `Trajectory`/`Box`/`Ball`/`Grid` are *defined* in `tsdynamics.data` (the one
-  canonical home); the top-level names are convenience re-exports.
-- Submodules **in `__all__`**: `analysis`, `systems`, `errors` and the
-  lazily-resolved `viz`. Reachable as `ts.<name>` but **not** in `__all__`:
-  `data`, `derived`, `families`, `registry`, `utils`, plus the
-  advanced/internal `engine` / `solvers` (docstring-flagged internal).
-- Plot front doors (v6, in `__all__`): `plot` and `T` — see the plot-transform
-  section below.
+  `BasinEntropy`, `UncertaintyExponent`, `WadaResult`, `ContinuationResult`.
+  Canonical home `ts.analysis.*`; `ts.analysis.__dir__` is **flat** and mirrors
+  its 85-name `__all__` (the leaf namespace enumerates the analyses — cf.
+  `numpy.linalg`; `discover_plugins` is deliberately not in `__all__`).
+- The **derived wrappers** `PoincareMap` / `StroboscopicMap` / `TangentSystem` /
+  `EnsembleSystem` / `ProjectedSystem` → `ts.derived.*`. Legal only because each
+  has a **verb on the system**, speaking the same vocabulary as the class:
+  `sys.poincare("y", 0.0)` / `sys.poincare(("y", 0.0, "up"))`,
+  `sys.stroboscope(period)`, `sys.tangent(k=2)`, `sys.project(0, 2)`,
+  `sys.copies(states)`.
+- **State-space geometry** (`data`): `Box`, `Ball`, `Grid`, `sampler`,
+  `grid_points`, `set_distance` → `ts.data.*`. (`Region` and `region` were never
+  top-level and stay `ts.data`-only — nothing was demoted, so `ts.Region` /
+  `ts.region` do not resolve; the gate `test_demoted_data_primitives_stay_reachable`
+  lists exactly the three that were.) Every `region=` door in
+  the library reads **one `(lo, hi[, n])` pair per state component**
+  (`data/sampling.py::as_region`, the ONE reading); a `Box`/`Ball`/`Grid` is
+  still accepted everywhere, just never required.
+- `T` (the per-transform option carrier) → `ts.viz.T`. A plain
+  `("name", {options})` pair is a transform call now, so nothing requires it.
+- Machinery submodules `data` / `derived` / `engine` / `families` / `registry` /
+  `solvers` / `utils` (`_INTERNAL_SUBMODULES`) — bound eagerly, off `__all__`.
+  The justification is C1: *nothing in them is required to make a call.* (The
+  old comment said they were redundant because their contents were already on the
+  top level — the exact reasoning this curation exists to correct.)
+
+**DELETED outright** (the name ceases to exist, `_RENAMED_IN_V6` redirects):
+
+- `ts.basins` — a C4 violation: the alias was a *function* while
+  `ts.analysis.basins` is the *subpackage*. `ts.basins_of_attraction` is the one
+  spelling; `ts.basins` raises an `AttributeError` naming it.
+
+**The `AttributeError` is the discovery mechanism.** Curation hides ~230
+reachable names from autocomplete, so a wrong guess at `ts.<name>` is the only
+feedback a user gets, and `_attribute_error` answers it in five ordered cases:
+removed-in-v6 → renamed-in-v6 → **at a different address** → a near-miss on a
+built-in system → the two catalogues worth tab-completing. The third case is
+`_home_of`: an **exact** hit in the public `__all__` of `data` / `derived` /
+`analysis` / `viz` outranks every fuzzy guess below it. Without it a name that
+is merely demoted got answered with nonsense — `ts.region` (real, at
+`ts.data.region`) suggested `ts.systems.Oregonator()` and `ts.Region` suggested
+`ts.engine`. Dunder probes short-circuit, so protocol lookups import nothing and
+`ts.viz` stays lazy.
+
 
 **Scope boundary (v6, stream SCOPE-SURGERY).** TSDynamics is a *dynamical systems*
 library, deliberately **not** a general time-series toolkit. The governing rule is
@@ -192,27 +247,6 @@ Do **not** re-add generic signal processing here. Beware the false friends:
 `expansion_entropy` (A-CHAOS), `basin_entropy` (A-BASIN), RQA's `ENTR`, and
 Benettin's "Kolmogorov entropy" citation are all SURVIVORS and unrelated to the
 deleted entropy package.
-
-**Curated top level (stream WS-NAMESPACE).** `tsdynamics.__all__` is
-**curated to exactly 27 names** (measured — if you change it, re-measure this
-number rather than nudging it): the five family bases + `WrappedSystem`,
-`Trajectory`, the five derived wrappers, the three state-space primitives
-(`Box`/`Ball`/`Grid`), the **six promoted analyses**
-(`lyapunov_spectrum`, `bifurcation_diagram` [alias of `orbit_diagram`],
-`poincare_section`, `recurrence_matrix`, `basins` [alias of
-`basins_of_attraction`], `fixed_points`), the two v6 plot front doors
-(`plot`, `T`), `__version__`, and the four headline submodules
-(`analysis`, `systems`, `viz`, `errors`). Every
-other analysis function / result class / state-space primitive listed above is
-**demoted from `__all__` but stays fully reachable**: `ts.correlation_dimension`
-and `from tsdynamics import correlation_dimension` both resolve (the flat
-re-export bindings are retained), and the qualified path
-`ts.analysis.dimensions.correlation_dimension` works too. `__dir__` mirrors the
-curated `__all__`, so autocomplete shows the mental model, not a flat dump.
-`ts.analysis.<TAB>` likewise surfaces the capability subpackages
-(`lyapunov`/`dimensions`/`chaos`/…) rather than a flat dump, while the flat
-re-exports stay importable.  (The old `entropy`-function-shadows-`entropy`-subpackage
-collision is gone with the entropy package itself.)
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.families`.
@@ -336,6 +370,18 @@ import Trajectory` are the same object.
 - Named components when the class declares `variables`: `traj["x"]`,
   `traj[["x","z"]]`, `traj.component("x")`.
 - Point-set ops: `minmax()`, `standardize()`, `neighbors(q, k)` (lazy KD-tree).
+- **Topical accessors for the data-consuming analyses** — `traj.dims`,
+  `traj.recurrence`, `traj.lyap` are the *same* cached accessor classes a system
+  carries (`families/_accessors.py`), bound to the trajectory: `traj.dims.correlation()`,
+  `traj.recurrence.rqa()`, `traj.lyap.from_data()`. These analyses take a measured
+  point set, and a `Trajectory` is what a user holding one actually has — the
+  accessors used to exist only on `SystemBase`, i.e. only on the object half of
+  them refuse. The routing seam is `_accessors.is_drivable(subject)`: bound to a
+  trajectory there is nothing to run, so a **`system`-first** method
+  (`lyap.spectrum` / `lyap.maximal`) raises `InvalidParameterError` naming the
+  system-bound spelling, and `run_kwargs=` is refused rather than ignored.
+  `Trajectory` has `__slots__`, so the cache is an explicit `_accessor_cache`
+  slot reset in `__setstate__` (it is not pickled).
 - `meta` carries provenance (system, params, solver, dt, tolerances, ic,
   version); preserved through slicing/`after()`.
 - **Plotting front door — `to_plot_spec(kind=None, *, components=None, **kind_kw)`:**
@@ -530,6 +576,23 @@ interior points).
 - `__init_subclass__` validates that `_step`/`_jacobian` positional parameter
   names match the `params` dict order — mismatches raise `TypeError` at
   import (also catches re-ordered `params` in subclasses).
+- **`_jacobian` is OPTIONAL (v6).** Only `_step` is `@abstractmethod`. The
+  default `DiscreteMap._jacobian` is a `classmethod` that derives the Jacobian
+  **symbolically from `_step`** via `engine.compile.map_jacobian_fn` — the same
+  trace `lower_map` performs, whose docstring already called the traced
+  derivative "the single source of truth". So defining a map is *writing
+  `_step`*, exactly as defining a flow is writing `_equations`; the two families
+  now answer the same way, and the hand-transcription surface that produced
+  catalogue Jacobian bugs is gone. A hand-written `@staticmethod _jacobian`
+  still **wins** (every catalogue map keeps one, as the test-oracle side of
+  `_jacobian_fd_check`). Write one when the step cannot be traced (a Python `if`
+  on the state → `TapeCompileError` naming the class *and* `_jacobian`) or when
+  a one-sided slope on a discontinuity is the meaningful answer. Results are
+  memoised per `(kernel object, parameter values)` in `_MAP_JACOBIAN_MEMO`, and
+  the a.e. `Derivative` nodes (`abs`/`sign`/`floor`) resolve through the same
+  `_resolve_derivative_nodes` the ODE Jacobian uses. Gate:
+  `tests/test_families_fixes.py::TestMapJacobianIsAutogenerated` (autogen ==
+  hand-written to 1e-14 on Hénon; identical Lyapunov spectrum).
 - `_jacobian_fd_check = False` ClassVar opts a map out of the
   finite-difference Jacobian test (only for orbits living on discontinuities,
   e.g. Baker).
@@ -539,6 +602,34 @@ interior points).
   piecewise/`numpy`-ufunc steps raise `TapeCompileError`. The engine path
   diverges loudly (raises); the random-IC retry still applies when `iterate` is
   called without an explicit `ic`.
+
+### `run` states its own signature (v6)
+
+`run` is the canonical trajectory verb on all four families, and until v6 it was
+a `**kwargs` passthrough: `ContinuousSystem.run` bound `final_time`, `dt`,
+`events` and nothing else, so the library's most-typed call showed **2 of ~12**
+keywords to `inspect.signature`, tab-completion and every IDE tooltip.
+`transient=` — which the quick reference below uses — was discoverable only from
+prose. The family-specific aliases (`integrate` / `iterate`) had the full
+signature all along, so the *alias* documented itself while the *canonical verb*
+did not.
+
+Each family's `run` now binds exactly what its alias binds and forwards
+explicitly, keeping `**kwargs` only for the genuine solver-option passthrough:
+
+| family | `run` binds |
+|---|---|
+| `ContinuousSystem` | `final_time`, `dt`, `t0`, `ic`, `transient`, `method`, `rtol`, `atol`, `max_step`, `backend`, `seed`, `events` |
+| `DiscreteMap` | `n` (+ the `steps` alias via `_resolve_iteration_count`), `ic`, `transient`, `backend`, `seed`, `max_retries` |
+| `DelaySystem` | `final_time`, `dt`, `ic`, `history`, `transient`, `method`, `rtol`, `atol`, `backend`, `seed` |
+| `StochasticSystem` | `final_time`, `dt`, `t0`, `ic`, `transient`, `method`, `seed`, `backend` |
+
+Behaviour is unchanged and verified bit-identical (`run(...)` vs
+`integrate(...)`/`iterate(...)` on a pinned IC, all four families) — every bound
+default is the *same object* the alias defaults to, so binding it and forwarding
+it is indistinguishable from not passing it. The wrong-family horizon words
+still raise by name (`hen.run(final_time=…)` / `lor.run(n=…)`), because they
+reach `**kwargs` and the alias's guard, not a bound parameter.
 
 ### `StochasticSystem` extras
 
@@ -764,7 +855,15 @@ documented tolerance):
   Rosenstein et al. 1993 optional); returns a `LyapunovFromData` carrying the
   stretching curve `S(k)` — fit the linear scaling region (inspect, then pass
   `fit=(lo, hi)`). A private delay-embed helper keeps it independent of the
-  delay-embedding stream.
+  delay-embedding stream. **`dt` is read from the data when the data knows it**
+  (`_sampling_interval_of`): a `Trajectory` carries its sampling interval — in
+  `meta["dt"]`, else in its `t` axis — so `lyapunov_from_data(traj)` /
+  `traj.lyap.from_data()` answer **per unit time** and compare directly with
+  `lyapunov_spectrum`, while a bare array (no time axis) keeps `dt = 1.0`, i.e.
+  per sample / per iteration. Before this the accessor returned the per-sample
+  number from an object that was holding the interval — a silent ~60× on a
+  Lorenz run at `dt=0.02`. An explicit `dt=` always wins; a non-uniform `t` axis
+  raises rather than being averaged into one.
 - `fixed_points` (A-FP) finds map fixed points (`f(x)=x`) **and** flow equilibria
   (`f(x)=0`) by multi-start Newton on the analytic Jacobian; `method="sd"`/`"dl"`
   add the Schmelcher–Diakonos/Davidchack–Lai stabilising transformations (maps
@@ -913,24 +1012,51 @@ Nothing else in the library learns a new name when one is added.
   of a phase-space orbit is a phase-space diagnostic; a PSD toolbox with
   windowing, detrending and filter design is not. `spectrogram` and friends are
   refused *at registration*.)
-- **Front doors** (`ts.plot` and `ts.T` are in the curated top-level `__all__`):
+- **Front doors.** `ts.plot` is the only plotting name in the curated top-level
+  `__all__`; `T` was demoted to `ts.viz.T` once a plain `("name", {options})`
+  pair became a transform call (nothing requires the type any more).
 
   ```python
   ts.plot(traj)                                  # no transform named → viz.plot
+  ts.plot(traj.y)                                # ...a bare array works too
+  ts.plot(traj, color="red", title="Lorenz", theme="dark")   # style AT the door
   ts.plot(traj, "delay_embedding", delay=7)      # a transform by name (7 SAMPLES)
   ts.plot(traj, "phase_portrait", primitive="density")   # …drawn differently
   ts.plot(fhn, "flow_speed", "streamlines", "nullclines")  # overlay, order-free
-  ts.plot(vdp, ts.T("flow_speed", log=True), ts.T("streamlines", color="w"))
+  ts.plot(vdp, ("flow_speed", {"log": True}), ("streamlines", {"color": "w"}))
+  ts.plot(vdp, ts.viz.T("flow_speed", log=True))          # the same thing, typed
   g = ts.viz.geometry(sys, "ftle", grid=201)     # the arrays, and stop there
   ts.viz.draw(g, "contour")                      # hand them back to the library
-  ts.viz.compatibility()                         # the matrix, printable
+  ts.viz.list_transforms(); ts.viz.compatibility()   # what can this draw?
   ```
 
-  A positional **string (or `T`)** is a transform; anything else is a subject.
+  A positional **string, `("name", {options})` pair, or `T`** is a transform;
+  anything else is a subject (a system, a `Trajectory`, a result, **or a bare
+  array** — coerced to an index-time `Trajectory` at the door).
   `ts.plot` always returns a `PlotSpec`, so a result feeds straight back in.
   Shared keywords are routed only to the transforms whose `compute` (or chosen
-  primitive) accepts them — **plus every canonical style key**, which applies to
-  the named transform's layers.
+  primitive) accepts them — **plus every canonical style key** (applied to the
+  named transform's layers) and `title`/`xlabel`/`ylabel`/`zlabel`/`theme`
+  (applied to every panel).
+- **The style vocabulary is the same at all THREE plotting doors.**
+  `ts.plot(subject, color=…)`, `traj.plot(color=…)` and `system.plot(color=…)`
+  peel one derived set — `viz.style.style_names()` (canonical `STYLE_KEYS` +
+  aliases) — plus `theme`. They used to disagree in the worst possible way:
+  `title=` landed at all three but `color=` raised at the two method doors, and
+  on `system.plot` it fell through to the integration and was reported as
+  *"color is not a valid integrate()/run() keyword"*, naming a vocabulary the
+  caller was not speaking. Style is now peeled **before** the leftovers reach
+  `trajectory()`, so an integration typo is still an integration typo. Gate:
+  `tests/test_viz_compose.py::test_style_keywords_land_identically_at_all_three_plot_doors`.
+- **Writing one is a decorator call and nothing else — for the AUTHOR too.**
+  Everything the recipe needs is public (`ts.viz.plot_transform`, `PlotKind`,
+  `Geometry`, `Part`, `FrameSpace`, `make_frame`, `Presentation`); no private
+  module is imported. `compute` may return a **plain mapping of channels**
+  (`{"x": ..., "y": ..., "z": ...}`) and the registry stamps the name, frame,
+  ndim and `labels=` from the decorator, which already declared all four —
+  available whenever the transform declares a single `(frame, ndim)` pair. The
+  declared `ndim` is now **checked** against the returned frame (an ndim mismatch
+  used to be accepted silently).
 - **Gates.** `tests/test_viz_compatibility.py` renders every declared cell on
   matplotlib and refuses every undeclared one; `tests/test_viz_transforms.py`
   pins the substrate and the PSD admission rule;
@@ -1627,6 +1753,7 @@ Two layers now cover them:
 | Situation | What happens / what to do |
 |---|---|
 | `_equations` uses NumPy or `math` | The engine tape can't lower it. Use `symengine.sin`/`cos`/... |
+| `_equations` writes `y[0]` **or** `x, y, z = u` | The ODE/SDE state is an **accessor**, not a vector: read it by CALLING it (`u(0)`, `u(1)`, …), which is also what makes a DDE's `u(0, t - tau)` expressible. A `DiscreteMap._step` **does** take a plain vector — that is the one place the families differ, and it is why a map author writes the unpack in an ODE. Both spellings are diagnosed by name, with the corrected line echoed back (`_subscripted_accessor_hint`). |
 | Variable-dim system without `_structural_params` | Lowering-time `range(N)` fails. Add `_structural_params = frozenset({"N"})`. |
 | Map params order ≠ `_step` signature order | **Raises `TypeError` at import**. |
 | DDE with constant past at a fixed point | Lyapunov exponents ≈ 0. Provide a non-equilibrium `history`. |
@@ -1648,48 +1775,61 @@ Two layers now cover them:
 import numpy as np
 import tsdynamics as ts
 
-# ODE
-lor = ts.Lorenz()
-traj = lor.integrate(final_time=100.0, dt=0.01)
+# ODE — `run` is the one canonical verb on every family (`integrate` is its alias)
+lor = ts.systems.Lorenz()
+traj = lor.run(final_time=100.0, dt=0.01, transient=10.0)
 traj["x"]                                   # named component
-exps = lor.lyapunov_spectrum(final_time=300.0)   # → [0.91, ~0, -14.57]
-ts.kaplan_yorke_dimension(exps)             # → ~2.06
+exps = lor.lyapunov_spectrum(final_time=300.0)   # → LyapunovSpectrum [0.91, ~0, -14.57]
+exps.kaplan_yorke                           # → ~2.06   (also ts.kaplan_yorke_dimension(exps))
 
 # Backends: "jit" (Cranelift, default) / "interp" (SSA interpreter, bit-identical)
 #           / "reference" (pure-Python oracle — the cross-check, not for production)
-traj = lor.integrate(final_time=100.0, dt=0.01, backend="interp")
+traj = lor.run(final_time=100.0, dt=0.01, backend="interp")
 
 # dt is OUTPUT SAMPLING ONLY; rtol/atol set accuracy (default 1e-9/1e-12 since
 # v6 — see "Solver tolerances"), max_step bounds the step
-traj = lor.integrate(final_time=100.0, dt=0.001, rtol=1e-10, atol=1e-13)
-traj = lor.integrate(final_time=100.0, dt=0.01, max_step=0.01)   # bound the step
+traj = lor.run(final_time=100.0, dt=0.001, rtol=1e-10, atol=1e-13)
+traj = lor.run(final_time=100.0, dt=0.01, max_step=0.01)   # bound the step
 
 # Protocol stepping
 lor.reinit([1.0, 1.0, 1.0])
 u = lor.step(0.01)
 
-# Derived systems → analysis composition
-pmap = ts.PoincareMap(ts.Rossler(), plane=("y", 0.0, "up"))   # named axis + direction
-section = pmap.trajectory(500)                                 # → PoincareSection
-sec = ts.poincare_section(ts.Rossler(), plane=("y", 0.0, "up"), n=500, seed=0)
-od = ts.orbit_diagram(pmap, "c", np.linspace(2, 6, 50), component=0)
+# Derived systems: a VERB on the system, same vocabulary as the class
+ros = ts.systems.Rossler()
+pmap = ros.poincare("y", 0.0, direction="up")   # = ts.derived.PoincareMap(ros, ...)
+section = pmap.trajectory(500)                  # → PoincareSection
+sec = ts.poincare_section(ros, plane=("y", 0.0, "up"), crossings=500, seed=0)
+od = ts.orbit_diagram(pmap, "c", np.linspace(2, 6, 50), points_per_value=100)
+tang = lor.tangent(k=2)                         # the Lyapunov engine, steppable
+finals = lor.ensemble(np.random.rand(100, 3), final_time=10.0)   # → (100, 3)
 
 # Event detection / arbitrary stopping (scipy-shaped events=)
-sol = ts.Lorenz().run(final_time=100, dt=0.01, events=[("z", 27.0, "up")])
+sol = lor.run(final_time=100, dt=0.01, events=[("z", 27.0, "up")])
 sol.meta["t_events"][0]                       # times z=27 was crossed upward
 stop = lambda y, t: y(0)**2 + y(1)**2 + y(2)**2 - 50.0**2  # leave a ball → stop
 stop.terminal = True
-ts.Lorenz().run(final_time=1e3, events=[stop])            # truncates at the crossing
+lor.run(final_time=1e3, events=[stop])                    # truncates at the crossing
 
-# Maps
-h = ts.Henon()
-h.iterate(steps=5000)
+# Maps — the horizon word is `n` (`steps` is accepted on run/iterate)
+h = ts.systems.Henon()
+h.run(5000, transient=500)
 ts.fixed_points(h)                          # analytic saddles
+ts.fixed_points(ts.systems.VanDerPol(), region=[(-3, 3), (-3, 3)])   # plain bounds
 ts.max_lyapunov(h, ic=[0.1, 0.1])           # ≈ 0.42
 
+# Regions: one (lo, hi[, n]) pair PER STATE COMPONENT, everywhere. No type to build.
+ts.basins_of_attraction(h, [(-2, 2, 60), (-2, 2, 60)])
+
+# Plotting: one front door, style + labels at the call site, spec in / spec out
+ts.plot(traj, color="crimson", linewidth=2, title="Lorenz", theme="dark").save("l.png")
+ts.plot(np.sin(np.linspace(0, 40, 2000)))              # bare arrays plot too
+ts.plot(ros, ("flow_speed", {"log": True}), "streamlines")   # ("name", {opts}) pairs
+ts.viz.list_transforms(); ts.viz.compatibility()       # what can this draw?
+
 # DDE (integrate first, then Lyapunov from the end state)
-mg = ts.MackeyGlass()
-traj = mg.integrate(final_time=500.0, dt=0.5, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
+mg = ts.systems.MackeyGlass()
+traj = mg.run(final_time=500.0, dt=0.5, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
 exps = mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1])
 
 # Registry

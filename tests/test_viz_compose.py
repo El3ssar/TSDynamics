@@ -232,7 +232,7 @@ def test_spec_plot_returns_the_spec_and_render_returns_the_figure():
     """v6: ``plot`` builds, ``render`` draws — one return type per verb."""
     pytest.importorskip("matplotlib")
     spec = viz.plot(_lorenz(), _lorenz([1.1, 1.0, 1.0]), layout="stack")
-    assert spec.plot(title="mine") is spec
+    assert spec.tweak(title="mine") is spec
     assert type(spec.render("matplotlib")).__name__ == "Figure"
 
 
@@ -774,3 +774,57 @@ def test_a_merged_overlay_never_aliases_its_inputs():
     assert field.layers[0].style.get("color") is None
     assert curve.layers[0].style.get("color") is None
     assert field.x.label == "x" and field.title == "basins"
+
+
+# ===========================================================================
+# One style vocabulary, every plotting door (verifier pass)
+# ===========================================================================
+#
+# ``ts.plot(traj, color="red", title="Lorenz", theme="dark")`` was made to work
+# by WP2, but its two SIBLING doors were left behind, and each failed
+# differently:
+#
+#   traj.plot(color="red")  -> InvalidParameterError from ``tweak()``  ("color
+#                              is not a spec tweak") — while ``title=`` worked,
+#                              so half the same sentence landed and half did not
+#   lor.plot(color="red")   -> the style word fell all the way through to the
+#                              INTEGRATION and was reported as
+#                              "color is not a valid integrate()/run() keyword",
+#                              naming a vocabulary the caller was not speaking
+#
+# All three now peel the same ``STYLE_KEYS`` set (``viz.style.style_names()``),
+# so "make it red and give it a title" is one sentence at every door.
+
+
+def _style_call(subject, **kw):
+    return subject.plot(**kw)
+
+
+def test_style_keywords_land_identically_at_all_three_plot_doors():
+    """``color`` / ``lw`` / ``title`` / ``theme`` mean the same thing everywhere."""
+    lor = ts.systems.Lorenz()
+    traj = lor.integrate(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+
+    front = viz.plot(traj, color="crimson", linewidth=0.6, title="Lorenz", theme="dark")
+    method = traj.plot(color="crimson", linewidth=0.6, title="Lorenz", theme="dark")
+    system = lor.plot(
+        final_time=10.0,
+        dt=0.02,
+        ic=[1.0, 1.0, 1.0],
+        color="crimson",
+        lw=0.6,
+        title="Lorenz",
+        theme="dark",
+    )
+
+    for spec in (front, method, system):
+        assert spec.layers[0].style["color"] == "crimson"
+        assert spec.layers[0].style["linewidth"] == pytest.approx(0.6)
+        assert spec.title == "Lorenz"
+        assert spec.resolved_theme.name == "dark"
+
+
+def test_an_integration_typo_is_still_reported_as_an_integration_typo():
+    """Peeling style must not swallow a misspelt *integration* keyword."""
+    with pytest.raises(InvalidParameterError, match="integrate\\(\\)/run\\(\\) keyword"):
+        ts.systems.Lorenz().plot(final_tim=2.0)

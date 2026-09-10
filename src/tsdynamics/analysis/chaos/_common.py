@@ -185,14 +185,26 @@ def _pearson(x: np.ndarray, y: np.ndarray) -> float:
 def _resolve_region(system: SystemBase, region: object, *, margin: float = 0.1) -> Box:
     """Coerce a region argument to a :class:`~tsdynamics.data.Box`.
 
-    Accepts a ``Box``, an ``(lo, hi)`` pair, or ``None`` — in which case the box
-    is the (``margin``-expanded) bounding box of a burn-in orbit of ``system``.
+    Reads the region through :func:`tsdynamics.data.as_region` — the library's
+    one region grammar, **one ``(lo, hi)`` bound per state component** — and
+    accepts a ``Box`` / ``Ball`` / ``Grid`` unchanged.  ``None`` uses the
+    (``margin``-expanded) bounding box of a burn-in orbit of ``system``.
     """
     if isinstance(region, Box):
         return region
     if region is not None:
-        lo, hi = cast("tuple[npt.ArrayLike, npt.ArrayLike]", region)
-        return Box(np.asarray(lo, dtype=float), np.asarray(hi, dtype=float))
+        from tsdynamics.data import Ball, as_region
+
+        resolved = as_region(
+            region,
+            dim=int(getattr(system, "dim", 2) or 2),
+            analysis="expansion_entropy",
+            system=system,
+            args="",
+        )
+        if isinstance(resolved, Ball):
+            return Box(resolved.center - resolved.r, resolved.center + resolved.r)
+        return Box(np.asarray(resolved.lo, dtype=float), np.asarray(resolved.hi, dtype=float))
     pts = _sample_orbit_box(system)
     lo, hi = pts.min(axis=0), pts.max(axis=0)
     pad = margin * (hi - lo)

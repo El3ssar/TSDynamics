@@ -336,6 +336,20 @@ def _build_alias_index() -> dict[str, str]:
 _ALIAS_INDEX: dict[str, str] = _build_alias_index()
 
 
+def style_names() -> frozenset[str]:
+    """Every accepted spelling of a per-layer style keyword (canonical + alias).
+
+    The single source of truth for "is this keyword about the *look* of the
+    plot?", used by every front door that routes keywords by category —
+    :func:`tsdynamics.viz.compose.split_presentation`,
+    :meth:`tsdynamics.data.Trajectory.plot` and
+    :meth:`tsdynamics.families._plottable.SystemPlottable.plot`.  One derived
+    set rather than three hand-kept ones, so ``color=`` cannot mean a style at
+    one door and an unknown keyword at its sibling.
+    """
+    return frozenset(_ALIAS_INDEX)
+
+
 #: Mark-rendering **structural** knobs that ride on a layer's ``style`` dict but
 #: are *not* part of the cross-backend aesthetic vocabulary (:data:`STYLE_KEYS`):
 #: ``"interpolation"`` (an IMAGE's resampling filter) and ``"bins"`` (a HISTOGRAM's

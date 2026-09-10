@@ -346,7 +346,11 @@ def _runtime_cases() -> list[tuple[str, object]]:
         (
             "orbit_diagram",
             lambda: ts.orbit_diagram(
-                ts.systems.Logistic(), "r", np.linspace(3.4, 4.0, 40), transient=100, n=60
+                ts.systems.Logistic(),
+                "r",
+                np.linspace(3.4, 4.0, 40),
+                transient=100,
+                points_per_value=60,
             ),
         ),
         (
@@ -361,7 +365,9 @@ def _runtime_cases() -> list[tuple[str, object]]:
         # -- carve-out: PoincareSection (a Trajectory, not an AnalysisResult) --
         (
             "poincare_section",
-            lambda: ts.poincare_section(ts.systems.Rossler(), plane=("y", 0.0, "up"), n=20, seed=0),
+            lambda: ts.poincare_section(
+                ts.systems.Rossler(), plane=("y", 0.0, "up"), crossings=20, seed=0
+            ),
         ),
     ]
 
@@ -1488,18 +1494,9 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
     # ── a required argument with no natural default ──
     _RunnableCase(
         "basins-without-a-region",
-        lambda: ts.basins(ts.Henon()),
-        "ts.basins",
-        ("ts.basins(system,",),
-    ),
-    # The same function reached through its canonical (long) name: the message
-    # must name *that* spelling too, so neither caller is answered about a name
-    # they never typed.
-    _RunnableCase(
-        "basins-long-name-without-a-region",
         lambda: ts.basins_of_attraction(ts.Henon()),
         "basins_of_attraction",
-        ("ts.basins(system,",),
+        ("ts.basins_of_attraction(system,",),
     ),
     _RunnableCase(
         "recurrence-matrix-without-a-scale",
@@ -1616,7 +1613,7 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
         "basins-given-a-trajectory",
         lambda: ts.basins(_RUNNABLE_TRAJ, [(-2.0, 2.0, 8), (-2.0, 2.0, 8)]),
         "basins_of_attraction",
-        ("ts.basins_of_attraction(system)",),
+        ("ts.basins_of_attraction(system,",),
     ),
     # ── a transposed point set must not be diagnosed as a short one ──
     _RunnableCase(
@@ -1637,7 +1634,7 @@ def test_errgate_message_hands_back_a_runnable_line(case: _RunnableCase) -> None
     """A wrong-shaped call is answered with the line to type, not a description.
 
     This is the bar the v6 owner session set: ``"X needs a discrete-time view"``
-    fails it; ``"wrap the flow first:\\n    ts.bifurcation_diagram(...)"`` passes.
+    fails it; ``"wrap the flow first:\\n    ts.analysis.orbit_diagram(...)"`` passes.
     """
     with pytest.raises(Exception) as excinfo:  # noqa: PT011 - the type is gated elsewhere
         case.thunk()
@@ -1959,6 +1956,58 @@ def test_subscripting_something_that_is_not_the_state_is_not_blamed_on_the_state
     assert "traced *symbolically*" in message  # ...and the general advice is given
 
 
+def test_unpacking_the_state_is_answered_with_the_accessor_calls() -> None:
+    """``x, y, z = u`` in ``_equations`` gets the same sentence ``u[0]`` gets.
+
+    The subscript spelling was diagnosed; the *unpack* spelling was not — and it
+    is at least as likely, because it is exactly how every ``DiscreteMap._step``
+    in this library is written (a map's state genuinely is a vector).  A reader
+    who wrote a map first and then an ODE hit ``TypeError: cannot unpack
+    non-iterable function object`` and the numpy/``_structural_params``
+    paragraph, which is about neither.
+    """
+    from tsdynamics.engine.compile import TapeCompileError
+
+    class Unpacked(ts.ContinuousSystem):
+        params = {"a": 1.0}
+        dim = 3
+
+        @staticmethod
+        def _equations(u, t, a):
+            x, y, z = u
+            return [a * y, -a * x, -z]
+
+    with pytest.raises(TapeCompileError) as excinfo:
+        Unpacked().integrate(final_time=1.0, dt=0.1)
+    message = str(excinfo.value)
+    assert "state *accessor*" in message
+    assert "u(0)" in message
+    # the corrected line is echoed back, one call per unpacked target
+    assert "x, y, z = u(0), u(1), u(2)" in message
+    assert "_structural_params" not in message
+    assert "numeric routine" not in message
+
+
+def test_unpacking_something_that_is_not_the_state_is_not_blamed_on_the_state() -> None:
+    """The negative of the above: unpacking a scalar *parameter* is a different bug."""
+    from tsdynamics.engine.compile import TapeCompileError
+
+    class ParamUnpacked(ts.ContinuousSystem):
+        params = {"a": 1.0}
+        dim = 2
+
+        @staticmethod
+        def _equations(u, t, a):
+            p, q = a
+            return [p * u(1), -q * u(0)]
+
+    with pytest.raises(TapeCompileError) as excinfo:
+        ParamUnpacked().integrate(final_time=1.0, dt=0.1)
+    message = str(excinfo.value)
+    assert "state *accessor*" not in message
+    assert "traced *symbolically*" in message
+
+
 def test_missing_staticmethod_is_diagnosed_structurally() -> None:
     """A kernel declared with ``self`` is named as such, whatever it then failed on.
 
@@ -2214,10 +2263,108 @@ def test_plotspec_show_displays_on_an_interactive_backend(monkeypatch) -> None:
 
 
 def test_plot_verbs_are_all_present_and_documented() -> None:
-    """build / draw / display / write — the four verbs, each with a docstring."""
+    """adjust / draw / display / write — the four verbs, each with a docstring."""
     from tsdynamics.viz.spec import PlotSpec
 
-    for verb in ("plot", "render", "show", "save"):
+    for verb in ("tweak", "render", "show", "save"):
         method = getattr(PlotSpec, verb)
         assert callable(method)
         assert method.__doc__, f"PlotSpec.{verb} is undocumented"
+    # ``plot`` BUILDS a spec, so a spec does not have one: a method named
+    # ``plot`` that returned its own receiver was the joke told twice.
+    assert not hasattr(PlotSpec, "plot")
+
+
+# ---------------------------------------------------------------------------
+# One region grammar (WP0)
+# ---------------------------------------------------------------------------
+#
+# A ``region=`` argument is read ONE (lo, hi) BOUND PER STATE COMPONENT, at
+# every door, with no exceptions.  The defect this gate exists to catch was
+# silent: ``fixed_points(VanDerPol(), region=[(-3, 3), (-3, 3)])`` used to read
+# the two rows as a *corner pair*, search the zero-volume box between them, and
+# return an empty result rather than the origin.  A wrong answer with no error
+# is the worst outcome available, so both halves are pinned: the per-axis
+# spelling must WORK, and the corner-pair spelling must RAISE.
+
+_REGION_DOORS: list[tuple[str, object]] = []
+
+
+def _region_doors() -> list[tuple[str, object]]:
+    """Every public entry point whose ``region=`` argument names a search box."""
+    if _REGION_DOORS:
+        return _REGION_DOORS
+    from tsdynamics.systems import VanDerPol
+
+    def _fixed_points(region):
+        return ts.fixed_points(VanDerPol(), region=region, seed=0)
+
+    def _fixed_points_interval(region):
+        return ts.fixed_points(VanDerPol(), region=region, method="interval")
+
+    def _expansion_entropy(region):
+        return ts.expansion_entropy(
+            VanDerPol(), region=region, n_samples=20, final_time=0.5, seed=0
+        )
+
+    def _find_attractors(region):
+        return ts.find_attractors(VanDerPol(), region, n_seeds=4, seed=0, max_steps=200)
+
+    def _basin_fractions(region):
+        return ts.basin_fractions(VanDerPol(), region, n=4, seed=0, max_steps=200)
+
+    def _basins(region):
+        return ts.basins_of_attraction(VanDerPol(), region, max_steps=200)
+
+    _REGION_DOORS.extend(
+        [
+            ("fixed_points", _fixed_points),
+            ("fixed_points(method='interval')", _fixed_points_interval),
+            ("expansion_entropy", _expansion_entropy),
+            ("find_attractors", _find_attractors),
+            ("basin_fractions", _basin_fractions),
+            ("basins_of_attraction", _basins),
+        ]
+    )
+    return _REGION_DOORS
+
+
+@pytest.mark.parametrize("name", [d[0] for d in _region_doors()])
+def test_every_region_argument_uses_the_same_reading(name: str) -> None:
+    """Per-axis bounds are accepted; a corner pair is refused, at every door."""
+    call = dict(_region_doors())[name]
+    per_axis = [(-3.0, 3.0), (-3.0, 3.0)]
+    corner_pair = ([-3.0, -3.0], [3.0, 3.0])
+
+    call(per_axis)  # must not raise
+
+    with pytest.raises(InvalidInputError):
+        call(corner_pair)
+
+
+def test_region_primitives_are_accepted_but_never_required() -> None:
+    """A caller holding a Box/Grid keeps working: bounds are an ADDITION."""
+    from tsdynamics.data import Ball, Box, Grid, as_region
+    from tsdynamics.systems import VanDerPol
+
+    bounds = ts.fixed_points(VanDerPol(), region=[(-3.0, 3.0), (-3.0, 3.0)], seed=0)
+    boxed = ts.fixed_points(VanDerPol(), region=Box([-3.0, -3.0], [3.0, 3.0]), seed=0)
+    assert len(bounds) == len(boxed) == 1
+    np.testing.assert_allclose(bounds[0].x, boxed[0].x, atol=1e-8)
+
+    for prim in (
+        Box([-1.0, -1.0], [1.0, 1.0]),
+        Ball([0.0, 0.0], r=1.0),
+        Grid([-1.0, -1.0], [1.0, 1.0], (4, 4)),
+    ):
+        assert as_region(prim) is prim
+
+
+def test_state_space_helpers_take_plain_bounds() -> None:
+    """``sampler`` / ``grid_points`` no longer demand a library type."""
+    from tsdynamics.data import Grid, grid_points, sampler
+
+    assert sampler([(-1.0, 1.0), (-1.0, 1.0)], seed=0)().shape == (2,)
+    assert grid_points([(-1.0, 1.0, 3), (-1.0, 1.0, 3)]).shape == (9, 2)
+    assert grid_points([(-1.0, 1.0), (-1.0, 1.0)], resolution=4).shape == (16, 2)
+    assert grid_points(Grid([-1.0], [1.0], (5,))).shape == (5, 1)

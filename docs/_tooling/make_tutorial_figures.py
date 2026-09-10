@@ -199,7 +199,7 @@ def fig_poincare_section(plt, out_path):
 
     # A short window of the flow for context.
     traj = ros.integrate(final_time=120.0, dt=0.01, ic=ic)
-    sec = ts.poincare_section(ros, plane=("y", 0.0, "up"), n=500, dt=0.02, seed=0)
+    sec = ts.poincare_section(ros, plane=("y", 0.0, "up"), crossings=500, dt=0.02, seed=0)
 
     fig, ax = plt.subplots(figsize=(6.2, 4.2))
     ax.plot(traj["x"], traj["z"], color=INDIGO, lw=0.4, alpha=0.16, zorder=1)
@@ -337,9 +337,7 @@ def fig_double_well_switching(plt, out_path):
     path = dw.integrate(final_time=200.0, dt=0.01, ic=[-1.0], seed=1)
     t, x = path.t, path.y[:, 0]
 
-    fig, (a0, a1) = plt.subplots(
-        1, 2, figsize=(7.6, 3.6), gridspec_kw={"width_ratios": [2.6, 1.0]}
-    )
+    fig, (a0, a1) = plt.subplots(1, 2, figsize=(7.6, 3.6), gridspec_kw={"width_ratios": [2.6, 1.0]})
 
     # -- The telegraph path --
     a0.axhline(1.0, color="#888888", lw=0.7, ls=":", alpha=0.7)

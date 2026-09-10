@@ -62,7 +62,7 @@ you can call them directly with their native keywords.
 
     ```python
     lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
-    lor.lyapunov_spectrum(final_time=300.0, dt=0.05, burn_in=40.0)
+    lor.lyapunov_spectrum(final_time=300.0, dt=0.05, transient=40.0)
     # ≈ [0.903, 0.002, -14.572]
     ```
 
@@ -78,7 +78,7 @@ you can call them directly with their native keywords.
 === "Map"
 
     ```python
-    ts.systems.Henon(ic=[0.1, 0.1]).lyapunov_spectrum(steps=6000)
+    ts.systems.Henon(ic=[0.1, 0.1]).lyapunov_spectrum(n=6000)
     # ≈ [0.42, -1.63]
     ```
 
@@ -96,7 +96,7 @@ you can call them directly with their native keywords.
     hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
     traj = mg.integrate(final_time=1000.0, dt=0.5, history=hist)   # settle first
     mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1],               # then measure
-                         burn_in=100.0, final_time=1000.0, rtol=1e-4, atol=1e-4)
+                         transient=100.0, final_time=1000.0, rtol=1e-4, atol=1e-4)
     # ≈ [0.0075]   (positive → chaotic at τ = 17)
     ```
 
@@ -185,9 +185,15 @@ Two estimators are available via `method=`:
   to short records (Rosenstein, Collins & De Luca 1993).
 
 A Theiler window rejects temporally-correlated neighbours (Theiler 1986),
-defaulting to the embedding span. For a **flow** pass the sampling interval
-`dt=` so the exponent comes out per unit time; for a **map** leave `dt=1.0`
-(per iteration).
+defaulting to the embedding span.
+
+The exponent is reported **per unit of `dt`**, and `dt` is read from the data
+when the data knows it: hand the estimator a `Trajectory` (or reach it as
+`traj.lyap.from_data()`) and it uses that trajectory's own sampling interval,
+so the number is directly comparable with `lyapunov_spectrum`. Hand it a bare
+array — which carries no time axis — and it stays **per sample**, which is also
+the right reading for a map (per iteration). Pass `dt=` explicitly to override
+either way.
 
 !!! warning "Inspect the curve before you trust the number"
     The estimate is only as good as the embedding and the chosen scaling
@@ -216,16 +222,15 @@ spectrum (a fixed point) and `len(spectrum)` when the cumulative sum never turns
 negative (the spectrum does not close — compute more exponents). A
 `LyapunovSpectrum` exposes it directly as `spec.kaplan_yorke`.
 
-## `TangentSystem` — build your own loop
+## `.tangent()` — build your own loop
 
 When the prepackaged routines do not fit — covariant vectors, finite-time
-exponents, custom convergence monitoring — `TangentSystem` exposes the tangent
-machinery as a steppable system, so you own the loop:
+exponents, custom convergence monitoring — the tangent system exposes the
+tangent machinery as a steppable system, so you own the loop. `.tangent()` on
+any system builds it:
 
 ```python
-from tsdynamics import TangentSystem
-
-tang = TangentSystem(ts.systems.Henon(), k=2)     # k deviation vectors
+tang = ts.systems.Henon().tangent(k=2)     # k deviation vectors
 tang.reinit([0.1, 0.1])
 for _ in range(5000):
     tang.step()
@@ -233,7 +238,8 @@ tang.exponents()      # running spectrum estimate ≈ [0.43, -1.63]
 tang.growths()        # per-step log stretch factors
 ```
 
-`TangentSystem` is the single Lyapunov engine underneath every routine above:
+It is exactly `ts.derived.TangentSystem(system, k=2)`, and it is the single
+Lyapunov engine underneath every routine above:
 maps run the compiled QR tangent-map kernel, ODEs integrate the extended
 variational system on the engine, and DDEs are excluded (their tangent space is
 infinite-dimensional — use `DelaySystem.lyapunov_spectrum`). It is exactly the

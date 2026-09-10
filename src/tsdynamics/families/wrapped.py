@@ -225,6 +225,32 @@ class WrappedSystem:
         meta = {"system": "WrappedSystem", "is_discrete": self._is_discrete}
         return Trajectory(t=ts, y=ys, system=self, meta=meta)
 
+    def run(
+        self,
+        n: int | None = None,
+        *,
+        transient: int = 0,
+        ic: Any | None = None,
+        final_time: float | None = None,
+        dt: float | None = None,
+    ) -> Trajectory:
+        """Produce a trajectory — the one canonical verb, on this family too.
+
+        Every other family answers ``run``; a wrapper that answered only
+        ``trajectory`` made "``run`` is the unified trajectory producer" false
+        for exactly the family a user reaches for when adapting their own code.
+        A permanent alias of :meth:`trajectory`, which owns the implementation.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> flow = lambda u, dt: [u[0] * np.exp(0.5 * dt)]
+        >>> w = WrappedSystem(flow, dim=1, is_discrete=False, default_dt=0.1)
+        >>> w.run(final_time=1.0, dt=0.1).y.shape
+        (10, 1)
+        """
+        return self.trajectory(n, transient=transient, ic=ic, final_time=final_time, dt=dt)
+
     def __repr__(self) -> str:
         kind = "discrete" if self._is_discrete else "continuous"
         return f"WrappedSystem(dim={self.dim}, {kind})"

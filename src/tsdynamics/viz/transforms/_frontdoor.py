@@ -31,14 +31,43 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..compose import apply_presentation, unwrap_container
 from ._registry import TransformCall, build_spec, get
 
 __all__ = ["plot"]
 
 
+def _as_call(sel: Any) -> Any:
+    """Normalise a plain ``("name", {options})`` pair to a :class:`TransformCall`.
+
+    No library type is needed to give a transform its own options: a tuple of a
+    name and a mapping is a transform call, and the dotted-primitive sugar
+    (``("phase_portrait.density", {...})``) works there too.  Anything else is
+    returned unchanged.
+
+    This is sugar, not a second grammar — the pair funnels into exactly the
+    :class:`TransformCall` that :func:`~tsdynamics.viz.transforms.T` builds, so
+    it inherits the did-you-mean validation and produces the same spec.  Before
+    this, ``ts.plot(fhn, ("flow_speed", {"log": True}), "streamlines")`` was read
+    as a second *subject* and refused with a message about subject counts, which
+    pointed nowhere near the mistake.
+    """
+    from collections.abc import Mapping
+
+    if (
+        isinstance(sel, tuple)
+        and len(sel) == 2
+        and isinstance(sel[0], str)
+        and isinstance(sel[1], Mapping)
+    ):
+        head, _, prim = sel[0].partition(".")
+        return TransformCall(name=head, options=dict(sel[1]), primitive=prim or None)
+    return sel
+
+
 def _is_selector(thing: Any) -> bool:
     """Whether a positional argument names a *transform* rather than a subject."""
-    return isinstance(thing, (str, TransformCall))
+    return isinstance(thing, (str, TransformCall)) or _as_call(thing) is not thing
 
 
 def _split_style(options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -66,6 +95,12 @@ def _split_style(options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any
 #: ``color=``: a keyword accepted and ignored.
 _FIGURE_KEYS: frozenset[str] = frozenset({"animate"})
 
+#: Keywords that *name* the figure rather than compute it.  They are peeled off
+#: before the per-transform keyword filter and applied to the composed spec, so
+#: ``ts.plot(traj, "phase_portrait", title="Lorenz")`` — half of the most common
+#: plot request in existence — arrives instead of being refused.
+_LABEL_KEYS: frozenset[str] = frozenset({"title", "xlabel", "ylabel", "zlabel", "theme"})
+
 
 def _style_names() -> frozenset[str]:
     """Return the canonical style vocabulary plus every alias, as one lookup set."""
@@ -83,6 +118,7 @@ def _build_one(
     """Build one transform's spec, merging the shared options under its own."""
     from ..style import normalize_style
 
+    selector = _as_call(selector)
     if isinstance(selector, TransformCall):
         name, own, chosen = selector.name, dict(selector.options), selector.primitive
         # A T()'s OWN options were the one keyword path through this door that
@@ -179,7 +215,8 @@ def _reject_unaccepted(
 
     from tsdynamics.errors import InvalidParameterError
 
-    accepted: set[str] = set(_style_names() | _FIGURE_KEYS)
+    accepted: set[str] = set(_style_names() | _FIGURE_KEYS | _LABEL_KEYS)
+    selectors = [_as_call(s) for s in selectors]
     for selector in selectors:
         name = selector.name if isinstance(selector, TransformCall) else selector
         accepted |= _accepted_names(get(name.partition(".")[0]))
@@ -189,11 +226,13 @@ def _reject_unaccepted(
     # ``source`` is the subject (passed positionally) and ``primitive_options`` is
     # the escape hatch — neither is something a caller types, so listing them
     # would send a reader looking for a keyword that is not the one they want.
-    listed = sorted(accepted - _style_names() - _FIGURE_KEYS - {"source", "primitive_options"})
+    listed = sorted(
+        accepted - _style_names() - _FIGURE_KEYS - _LABEL_KEYS - {"source", "primitive_options"}
+    )
     named = [str(s) for s in selectors]
     # Suggest against the style vocabulary too — ``colour=`` is a misspelling of
     # the style key ``color=``, not of the transform's own ``color_by=``.
-    pool = sorted(set(listed) | set(_style_names()) | set(_FIGURE_KEYS))
+    pool = sorted(set(listed) | set(_style_names()) | set(_FIGURE_KEYS) | set(_LABEL_KEYS))
     close = {u: difflib.get_close_matches(u, pool, n=1, cutoff=0.6) for u in unused}
     hints = "".join(
         f"\n    {bad}= — did you mean {near[0]}=?" for bad, near in close.items() if near
@@ -202,7 +241,7 @@ def _reject_unaccepted(
     raise InvalidParameterError(
         f"{named} does not accept keyword(s) {unused}{tail}"
         f"{hints}\nKeywords accepted here: {listed} (plus any style keyword — color=, "
-        "linewidth=, alpha=, … — and animate=)."
+        "linewidth=, alpha=, … — plus title=, xlabel=, ylabel=, theme= and animate=)."
     )
 
 
@@ -251,7 +290,7 @@ def plot(
     PlotSpec
         Always — which is why a result feeds straight back in, and why this is
         the *same* return type as ``traj.plot()`` / ``system.plot()`` /
-        ``spec.plot()``.  ``plot`` builds, ``render`` draws, ``show`` displays, ``save`` writes:
+        ``spec.tweak()``.  ``plot`` builds, ``render`` draws, ``show`` displays, ``save`` writes:
         ``.save("fig.pdf")`` / ``.render("plotly")``.
 
     Raises
@@ -281,10 +320,13 @@ def plot(
 
     from ..compose import plot as compose_plot
 
+    # A lone ``("name", {options})`` pair is a transform call, not a container of
+    # plottables to unwrap — so the message is about the missing subject rather
+    # than about an unplottable string.
     items = (
-        list(things[0])
-        if len(things) == 1 and isinstance(things[0], (list, tuple))
-        else list(things)
+        [things[0]]
+        if len(things) == 1 and _as_call(things[0]) is not things[0]
+        else unwrap_container(things)
     )
     selectors = [t for t in items if _is_selector(t)]
     subjects = [t for t in items if not _is_selector(t)]
@@ -304,6 +346,13 @@ def plot(
             "compose them with tsdynamics.viz.plot(...)."
         )
     subject = subjects[0]
+    # Naming the figure is not the same as computing it: ``title=`` / ``xlabel=``
+    # / ``theme=`` describe the result, so they are peeled off here and applied
+    # to the composed spec rather than offered to a transform that has no idea
+    # what to do with them.
+    figure = {k: kw.pop(k) for k in list(kw) if k in _LABEL_KEYS}
     _reject_unaccepted(kw, selectors)
     specs = [_build_one(subject, sel, dict(kw), primitive) for sel in selectors]
-    return compose_plot(*specs, layout=layout, on=on)
+    result = compose_plot(*specs, layout=layout, on=on)
+    apply_presentation(result, {}, figure)
+    return result

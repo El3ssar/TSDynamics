@@ -187,7 +187,7 @@ class TestTangentMap:
         tang = ts.TangentSystem(ts.Henon(), k=2)
         tang.reinit([0.1, 0.1])
         tang.step(5000)
-        family = ts.Henon().lyapunov_spectrum(steps=5000, ic=[0.1, 0.1])
+        family = ts.Henon().lyapunov_spectrum(n=5000, ic=[0.1, 0.1])
         np.testing.assert_allclose(tang.exponents(), family, atol=0.05)
 
 
@@ -268,7 +268,7 @@ class TestTangentEngineLyapunov:
         # The engine kernel drives two numerically-identical evaluators over the
         # same lowered extended-variational tape, so the spectrum is bit-identical.
         pytest.importorskip("tsdynamics._rust")
-        kw = dict(dt=0.05, burn_in=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0])
+        kw = dict(dt=0.05, transient=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0])
         interp = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
         jit = ts.Lorenz().lyapunov_spectrum(backend="jit", **kw)
         np.testing.assert_array_equal(
@@ -304,7 +304,7 @@ class TestTangentEngineLyapunov:
         2.2e-10 at ``rtol=1e-6 … 1e-10``), so it cannot be satisfied by luck.
         """
         pytest.importorskip("tsdynamics._rust")
-        kw = dict(dt=0.05, burn_in=50.0, final_time=300.0, ic=[1.0, 1.0, 1.0])
+        kw = dict(dt=0.05, transient=50.0, final_time=300.0, ic=[1.0, 1.0, 1.0])
         engine = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
         reference = ts.Lorenz().lyapunov_spectrum(backend="reference", **kw)
         np.testing.assert_allclose(engine, reference, rtol=0.0, atol=5e-2)
@@ -323,7 +323,7 @@ class TestTangentEngineLyapunov:
         # k < dim takes the same engine kernel (the leading exponent is positive).
         pytest.importorskip("tsdynamics._rust")
         exps = ts.Lorenz().lyapunov_spectrum(
-            dt=0.05, burn_in=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0], k=2
+            dt=0.05, transient=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0], k=2
         )
         assert exps.shape == (2,)
         assert exps[0] > 0.5  # the positive exponent (~0.9)
@@ -333,7 +333,7 @@ class TestTangentEngineLyapunov:
         # (make_ode_stepper rejects it) and keeps the per-chunk loop — still finite.
         pytest.importorskip("tsdynamics._rust")
         sys = ts.systems.Oregonator()
-        exps = sys.lyapunov_spectrum(dt=0.05, burn_in=10.0, final_time=40.0, k=2)
+        exps = sys.lyapunov_spectrum(dt=0.05, transient=10.0, final_time=40.0, k=2)
         assert np.all(np.isfinite(exps))
 
 

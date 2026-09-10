@@ -106,7 +106,7 @@ def _assert_points_equal(new, old, *, exact: bool):
 def test_logistic_600x120_byte_identical():
     """The Logistic 600×120 sweep is byte-identical to the old step-loop path."""
     vals = np.linspace(2.5, 4.0, 600)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=120, transient=500, ic=[0.3])
+    new = ts.orbit_diagram(Logistic(), "r", vals, points_per_value=120, transient=500, ic=[0.3])
     old = _old_orbit_diagram(Logistic(), "r", vals, n=120, transient=500, ic=[0.3])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -114,7 +114,7 @@ def test_logistic_600x120_byte_identical():
 def test_carry_state_byte_identical():
     """``carry_state`` (final row → next IC) propagates byte-identically."""
     vals = np.linspace(2.8, 4.0, 200)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=64, transient=200, ic=[0.123])
+    new = ts.orbit_diagram(Logistic(), "r", vals, points_per_value=64, transient=200, ic=[0.123])
     old = _old_orbit_diagram(Logistic(), "r", vals, n=64, transient=200, ic=[0.123])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -122,7 +122,9 @@ def test_carry_state_byte_identical():
 def test_no_carry_state_byte_identical():
     """With ``carry_state=False`` every value restarts from ``ic`` — still identical."""
     vals = np.linspace(2.8, 3.9, 120)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.4], carry_state=False)
+    new = ts.orbit_diagram(
+        Logistic(), "r", vals, points_per_value=48, transient=150, ic=[0.4], carry_state=False
+    )
     old = _old_orbit_diagram(
         Logistic(), "r", vals, n=48, transient=150, ic=[0.4], carry_state=False
     )
@@ -140,12 +142,13 @@ def test_multidim_convergent_window_agrees():
     so they agree to a tight tolerance on every platform.
     """
     vals = np.linspace(0.05, 0.2, 40)  # stable fixed point across this range (b=0.3)
-    kw = dict(n=60, transient=400)
+    kw = dict(points_per_value=60, transient=400)
+    old_kw = dict(n=60, transient=400)
     new = ts.orbit_diagram(
         Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], component=(0, 1), **kw
     )
     old = _old_orbit_diagram(
-        Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], components=(0, 1), **kw
+        Henon().with_params(b=0.3), "a", vals, ic=[0.0, 0.0], components=(0, 1), **old_kw
     )
     _assert_points_equal(new.points, old, exact=False)
 
@@ -158,7 +161,7 @@ def test_multidim_convergent_window_agrees():
 def test_divergence_records_empty_set_and_warns():
     """A divergent value records an empty set and warns — exactly as before."""
     with pytest.warns(RuntimeWarning, match="diverged"):
-        od = ts.orbit_diagram(Logistic(), "r", [4.5], n=50, transient=50, ic=[0.5])
+        od = ts.orbit_diagram(Logistic(), "r", [4.5], points_per_value=50, transient=50, ic=[0.5])
     assert od.points[0].shape == (0, 1)
     assert od.periods()[0] == -1
 
@@ -167,7 +170,7 @@ def test_divergence_then_recovery_byte_identical():
     """A diverged value resets the carry state; the mixed sweep stays identical."""
     vals = [3.7, 4.5, 3.2]  # middle value escapes [0, 1]
     with pytest.warns(RuntimeWarning, match="diverged"):
-        new = ts.orbit_diagram(Logistic(), "r", vals, n=40, transient=80, ic=[0.5])
+        new = ts.orbit_diagram(Logistic(), "r", vals, points_per_value=40, transient=80, ic=[0.5])
     old = _old_orbit_diagram(Logistic(), "r", vals, n=40, transient=80, ic=[0.5])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -175,7 +178,9 @@ def test_divergence_then_recovery_byte_identical():
 def test_zero_transient_and_n_records_empty_without_crashing():
     """``transient + n == 0`` records empty sets (regression: a zero-length engine
     iterate must not index ``y[-1]`` and abort the sweep)."""
-    new = ts.orbit_diagram(Logistic(), "r", [3.2, 3.5, 3.8], n=0, transient=0, ic=[0.3])
+    new = ts.orbit_diagram(
+        Logistic(), "r", [3.2, 3.5, 3.8], points_per_value=0, transient=0, ic=[0.3]
+    )
     old = _old_orbit_diagram(Logistic(), "r", [3.2, 3.5, 3.8], n=0, transient=0, ic=[0.3])
     _assert_points_equal(new.points, old, exact=True)
     assert all(p.shape == (0, 1) for p in new.points)
@@ -195,7 +200,9 @@ def test_chaotic_map_same_attractor():
     invariant set — the support and the occupied region of state space.
     """
     ic = [0.1, 0.2]
-    new = ts.orbit_diagram(Henon(), "a", [1.4], n=4000, transient=2000, ic=ic, component=(0, 1))
+    new = ts.orbit_diagram(
+        Henon(), "a", [1.4], points_per_value=4000, transient=2000, ic=ic, component=(0, 1)
+    )
     old = _old_orbit_diagram(Henon(), "a", [1.4], n=4000, transient=2000, ic=ic, components=(0, 1))
     a, b = new.points[0], old[0]
     # Same support: matching min/max on each coordinate.
@@ -225,7 +232,9 @@ def test_map_path_issues_no_step_calls(monkeypatch):
         return real_step(self, *a, **k)
 
     monkeypatch.setattr(DiscreteMap, "step", counting_step)
-    ts.orbit_diagram(Logistic(), "r", np.linspace(2.8, 3.9, 50), n=64, transient=200, ic=[0.4])
+    ts.orbit_diagram(
+        Logistic(), "r", np.linspace(2.8, 3.9, 50), points_per_value=64, transient=200, ic=[0.4]
+    )
     assert calls["n"] == 0
 
 
@@ -250,7 +259,9 @@ def test_map_sweep_is_a_single_engine_call(monkeypatch):
     # ``map_param_sweep`` inside ``_sweep_via_kernel``), so patching the run module
     # is what the wiring sees.
     monkeypatch.setattr(run_mod, "map_param_sweep", counting_sweep)
-    ts.orbit_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 200), n=64, transient=300, ic=[0.4])
+    ts.orbit_diagram(
+        Logistic(), "r", np.linspace(2.5, 4.0, 200), points_per_value=64, transient=300, ic=[0.4]
+    )
     assert calls["n"] == 1, f"expected one sweep call for the whole diagram, got {calls['n']}"
 
 
@@ -265,7 +276,9 @@ def test_flow_wrapper_keeps_step_path(monkeypatch):
 
     monkeypatch.setattr(ts.StroboscopicMap, "step", counting_step)
     strobo = ts.StroboscopicMap(ts.Rossler(), period=2 * np.pi)
-    ts.orbit_diagram(strobo, "c", [5.7], n=10, transient=10, component=0, ic=[1.0, 1.0, 0.0])
+    ts.orbit_diagram(
+        strobo, "c", [5.7], points_per_value=10, transient=10, component=0, ic=[1.0, 1.0, 0.0]
+    )
     assert calls["n"] > 0
 
 
@@ -289,7 +302,7 @@ def test_engine_unavailable_falls_back_byte_identical(monkeypatch, exc):
 
     monkeypatch.setattr(od_mod, "_sweep_via_kernel", boom)
     vals = np.linspace(2.8, 3.9, 80)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.31])
+    new = ts.orbit_diagram(Logistic(), "r", vals, points_per_value=48, transient=150, ic=[0.31])
     old = _old_orbit_diagram(Logistic(), "r", vals, n=48, transient=150, ic=[0.31])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -316,7 +329,7 @@ def test_engine_fallback_catches_public_bases(monkeypatch, exc):
 
     monkeypatch.setattr(od_mod, "_sweep_via_kernel", boom)
     vals = np.linspace(2.8, 3.9, 60)
-    new = ts.orbit_diagram(Logistic(), "r", vals, n=40, transient=120, ic=[0.27])
+    new = ts.orbit_diagram(Logistic(), "r", vals, points_per_value=40, transient=120, ic=[0.27])
     old = _old_orbit_diagram(Logistic(), "r", vals, n=40, transient=120, ic=[0.27])
     _assert_points_equal(new.points, old, exact=True)
 
@@ -336,7 +349,8 @@ def test_map_orbit_diagram_is_faster_than_step_loop():
     what the pre-kernel path cost).
     """
     vals = np.linspace(2.5, 4.0, 400)
-    kw = dict(n=100, transient=400, ic=[0.3])
+    kw = dict(points_per_value=100, transient=400, ic=[0.3])
+    old_kw = dict(n=100, transient=400, ic=[0.3])
 
     ts.orbit_diagram(Logistic(), "r", vals, **kw)  # warm any one-time costs
     t0 = time.perf_counter()
@@ -344,7 +358,7 @@ def test_map_orbit_diagram_is_faster_than_step_loop():
     t_new = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    _old_orbit_diagram(Logistic(), "r", vals, **kw)
+    _old_orbit_diagram(Logistic(), "r", vals, **old_kw)
     t_old = time.perf_counter() - t0
 
     assert t_old > 20.0 * t_new, f"expected a clear speedup, got {t_old / t_new:.1f}×"
@@ -383,7 +397,9 @@ def test_poincare_orbit_diagram_issues_no_step_calls(monkeypatch):
 
     monkeypatch.setattr(ts.PoincareMap, "step", counting_step)
     monkeypatch.setattr(ts.PoincareMap, "trajectory", counting_traj)
-    ts.orbit_diagram(_pmap(), "c", [4.0, 5.0], n=20, transient=20, ic=[1.0, 1.0, 1.0])
+    ts.orbit_diagram(
+        _pmap(), "c", [4.0, 5.0], points_per_value=20, transient=20, ic=[1.0, 1.0, 1.0]
+    )
 
     assert step_calls["n"] == 0, f"expected no step() calls, got {step_calls['n']}"
     assert traj_calls["n"] == 2, f"expected one trajectory() call per value, got {traj_calls['n']}"
@@ -400,7 +416,7 @@ def test_poincare_orbit_diagram_reproduces_the_branch_structure():
     bifurcation onsets.
     """
     vals = np.linspace(2.5, 6.0, 24)
-    kw = dict(n=60, transient=150, ic=[1.0, 1.0, 1.0])
+    kw = dict(points_per_value=60, transient=150, ic=[1.0, 1.0, 1.0])
     new = ts.orbit_diagram(_pmap(), "c", vals, **kw)
     old_points = _old_orbit_diagram(_pmap(), "c", vals, n=60, transient=150, ic=[1.0, 1.0, 1.0])
     old = od_mod.OrbitDiagram(param="c", values=vals, points=old_points, components=(0,))
@@ -418,7 +434,7 @@ def test_poincare_periodic_window_agrees_pointwise_as_a_set():
     discretisation difference, which is ~5e-8 here.
     """
     vals = np.linspace(3.0, 3.6, 4)
-    kw = dict(n=40, transient=200, ic=[1.0, 1.0, 1.0])
+    kw = dict(points_per_value=40, transient=200, ic=[1.0, 1.0, 1.0])
     new = ts.orbit_diagram(_pmap(), "c", vals, **kw)
     old = _old_orbit_diagram(_pmap(), "c", vals, n=40, transient=200, ic=[1.0, 1.0, 1.0])
     for a, b in zip(new.points, old, strict=True):
@@ -437,7 +453,12 @@ def test_non_eligible_poincare_map_is_byte_identical():
     vals = [17.0, 18.0]  # the second value finds no crossing → empty set + warning
     with pytest.warns(RuntimeWarning, match="diverged"):
         new = ts.orbit_diagram(
-            ts.PoincareMap(ts.MackeyGlass(), **kwargs), "tau", vals, n=8, transient=3, ic=[1.1]
+            ts.PoincareMap(ts.MackeyGlass(), **kwargs),
+            "tau",
+            vals,
+            points_per_value=8,
+            transient=3,
+            ic=[1.1],
         )
     old = _old_orbit_diagram(
         ts.PoincareMap(ts.MackeyGlass(), **kwargs), "tau", vals, n=8, transient=3, ic=[1.1]
@@ -460,7 +481,9 @@ def test_zero_n_poincare_keeps_the_step_loop(monkeypatch):
         return real_step(self, *a, **k)
 
     monkeypatch.setattr(ts.PoincareMap, "step", counting_step)
-    new = ts.orbit_diagram(_pmap(), "c", [4.0, 5.0], n=0, transient=3, ic=[1.0, 1.0, 1.0])
+    new = ts.orbit_diagram(
+        _pmap(), "c", [4.0, 5.0], points_per_value=0, transient=3, ic=[1.0, 1.0, 1.0]
+    )
     monkeypatch.undo()
     old = _old_orbit_diagram(_pmap(), "c", [4.0, 5.0], n=0, transient=3, ic=[1.0, 1.0, 1.0])
     assert calls["n"] > 0
@@ -475,7 +498,7 @@ def test_poincare_orbit_diagram_is_faster_than_step_loop():
     failing if the sweep regresses to the per-``dt`` step loop.
     """
     vals = np.linspace(3.0, 6.0, 8)
-    kw = dict(n=60, transient=100, ic=[1.0, 1.0, 1.0])
+    kw = dict(points_per_value=60, transient=100, ic=[1.0, 1.0, 1.0])
 
     ts.orbit_diagram(_pmap(), "c", vals, **kw)  # warm any one-time costs
     t0 = time.perf_counter()
@@ -503,7 +526,9 @@ def test_poincare_sweep_into_a_stiff_regime_fails_loudly():
     """
     vals = [5.7, 1.0e6]
     with pytest.warns(RuntimeWarning, match="diverged"):
-        od = ts.orbit_diagram(_pmap(), "c", vals, n=5, transient=5, ic=[1.0, 1.0, 1.0])
+        od = ts.orbit_diagram(
+            _pmap(), "c", vals, points_per_value=5, transient=5, ic=[1.0, 1.0, 1.0]
+        )
 
     assert od.points[0].shape == (5, 1)  # the ordinary value is unaffected
     assert od.points[1].size == 0  # the stiff value records nothing, loudly

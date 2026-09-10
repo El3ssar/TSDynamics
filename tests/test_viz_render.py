@@ -595,8 +595,8 @@ def test_ax_is_matplotlibs_keyword_alone():
 
 
 def test_ax_reaches_the_renderer_through_the_plot_sugar():
-    """``spec.plot(title=...).render(ax=...)``: tweaks to plot, backend kwargs to render."""
+    """``spec.tweak(title=...).render(ax=...)``: tweaks to tweak, backend kwargs to render."""
     _, ax = _ax_pair()
-    _spec_for_kind(PlotKind.TIME_SERIES).plot(title="mine").render("matplotlib", ax=ax)
+    _spec_for_kind(PlotKind.TIME_SERIES).tweak(title="mine").render("matplotlib", ax=ax)
     assert ax.get_title() == "mine"
     assert len(ax.lines) == 1

@@ -52,10 +52,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import numpy as np
 
-from tsdynamics.errors import ConvergenceError, InvalidParameterError
+from tsdynamics.errors import ConvergenceError, InvalidParameterError, remedy
 from tsdynamics.utils.grids import make_output_grid
 
-from .base import SystemBase, Trajectory
+from .base import SystemBase, Trajectory, resolve_transient
 
 if TYPE_CHECKING:
     from tsdynamics.engine.problem import SDEProblem
@@ -459,9 +459,47 @@ class StochasticSystem(SystemBase, ABC):
         transient: float = 0.0,
         **kwargs: Any,
     ) -> Trajectory:
-        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
-        traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
-        return traj.after(transient) if transient > 0 else traj
+        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop.
+
+        A permanent alias of ``integrate(transient=...)``, which owns the one
+        implementation.
+        """
+        return self.integrate(final_time=final_time, dt=dt, transient=transient, **kwargs)
+
+    @staticmethod
+    def _reject_flow_keywords(kwargs: dict[str, Any], where: str = "integrate()/run()") -> None:
+        """Refuse an adaptive-solver keyword with the family-aware typed error.
+
+        An SDE is integrated by a fixed-step scheme, so ``rtol`` / ``atol`` /
+        ``max_step`` have nothing to control and ``events`` has no continuous
+        extension to root-find on.  The ODE and map doors already name the
+        offending keyword and explain the family; this gives the SDE door the
+        same answer instead of a bare interpreter ``TypeError``.
+        """
+        if not kwargs:
+            return
+        bad = sorted(kwargs)[0]
+        adaptive = {"rtol", "atol", "max_step"}
+        if bad in adaptive:
+            hint = (
+                f"{bad} controls an adaptive solver's error estimate, but an SDE is "
+                f"integrated by a fixed-step scheme (euler_maruyama / milstein): dt is "
+                f"both the discretisation and the noise scale, so accuracy is set by dt "
+                f"alone."
+            )
+        elif bad == "events":
+            hint = (
+                "events needs a continuous extension to root-find a crossing on, which "
+                "a fixed-step stochastic scheme does not have; sample the path and "
+                "locate crossings on the returned trajectory instead."
+            )
+        else:
+            hint = "check the keyword spelling (final_time, dt, t0, ic, method, seed, backend)."
+        raise InvalidParameterError(
+            f"{bad} is not a valid StochasticSystem.{where} keyword, got {kwargs[bad]!r}. "
+            + hint
+            + remedy("OrnsteinUhlenbeck().run(final_time=10, dt=0.01)")
+        )
 
     # ------------------------------------------------------------------ #
     # Trajectory production — the canonical ``run`` verb
@@ -471,6 +509,13 @@ class StochasticSystem(SystemBase, ABC):
         self,
         final_time: float = 100.0,
         dt: float = 0.02,
+        *,
+        t0: float = 0.0,
+        ic: Any | None = None,
+        transient: float = 0.0,
+        method: str | None = None,
+        seed: int | None = None,
+        backend: str | None = None,
         **kwargs: Any,
     ) -> Trajectory:
         """
@@ -489,9 +534,23 @@ class StochasticSystem(SystemBase, ABC):
         dt : float
             Fixed step size *and* output sampling interval (for an SDE the step
             is the noise scale).
+        t0 : float
+            Start time of the window. Default 0.0.
+        ic : array_like, optional
+            Initial condition.  Priority ``ic`` > ``self.ic`` > ``default_ic`` >
+            a seeded random draw.
+        transient : float
+            Time to integrate and **discard** before recording. In time units.
+        method : str, optional
+            ``"euler_maruyama"`` (order 0.5, the default) or ``"milstein"``
+            (order 1.0).
+        seed : int, optional
+            Fixes the noise realisation *and* the random initial-condition
+            draw, making the whole run reproducible.
+        backend : str, optional
+            ``"jit"`` (default), ``"interp"``, or ``"reference"``.
         **kwargs
-            Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
-            ``seed``, ``backend``).
+            Any remaining option, forwarded verbatim to :meth:`integrate`.
 
         Returns
         -------
@@ -502,7 +561,17 @@ class StochasticSystem(SystemBase, ABC):
         --------
         integrate : The family-specific spelling (a permanent alias of ``run``).
         """
-        return self.integrate(final_time=final_time, dt=dt, **kwargs)
+        return self.integrate(
+            final_time=final_time,
+            dt=dt,
+            t0=t0,
+            ic=ic,
+            transient=transient,
+            method=method,
+            seed=seed,
+            backend=backend,
+            **kwargs,
+        )
 
     # ------------------------------------------------------------------ #
     # Integration
@@ -518,6 +587,8 @@ class StochasticSystem(SystemBase, ABC):
         method: str | None = None,
         seed: int | None = None,
         backend: str | None = None,
+        transient: float = 0.0,
+        **kwargs: Any,
     ) -> Trajectory:
         """
         Integrate the SDE and return a :class:`~tsdynamics.families.Trajectory`.
@@ -564,6 +635,13 @@ class StochasticSystem(SystemBase, ABC):
             .. versionchanged:: 6.0
                The default moved from ``"interp"`` to ``"jit"``, once the v6
                compiled-evaluator cache removed the JIT's per-call recompile.
+        transient : float, optional
+            Leading stretch of the path to discard, in **time units** (the same
+            unit as ``final_time``).  The window is extended to
+            ``transient + final_time`` and everything before ``t0 + transient``
+            dropped.  Spelled identically on every family.
+
+            .. versionadded:: 6.0
 
         Returns
         -------
@@ -571,7 +649,29 @@ class StochasticSystem(SystemBase, ABC):
             A container of samples: ``len(traj)`` time points, iterating
             yields ``(t_i, y_i)`` pairs; ``traj.unpack()`` gives the two
             column arrays ``(t, y)``.
+
+        Raises
+        ------
+        InvalidParameterError
+            If an adaptive-solver keyword (``rtol`` / ``atol`` / ``max_step``) or
+            ``events`` is passed.  An SDE is integrated by a **fixed-step**
+            scheme, so there is no error control to tune and no continuous
+            extension to root-find a crossing on; the keyword is refused by name
+            rather than silently ignored.
         """
+        self._reject_flow_keywords(kwargs)
+        transient = resolve_transient(transient, discrete=False)
+        if transient > 0.0:
+            traj = self.integrate(
+                final_time=final_time + transient,
+                dt=dt,
+                t0=t0,
+                ic=ic,
+                method=method,
+                seed=seed,
+                backend=backend,
+            )
+            return traj.after(t0 + transient)
         # The SDE family does not route through ``_dispatch`` (the generic seam
         # cannot carry the noise seed), so it needs the IC rollback guard of its
         # own: a diverging / interrupted path must leave ``self.ic`` untouched.
@@ -648,6 +748,7 @@ class StochasticSystem(SystemBase, ABC):
         method: str | None = None,
         seed: int | None = None,
         backend: str | None = None,
+        **kwargs: Any,
     ) -> np.ndarray:
         """
         Integrate a batch of initial conditions and return their final states.
@@ -690,6 +791,12 @@ class StochasticSystem(SystemBase, ABC):
             Final states (rows of ``NaN`` for diverged trajectories).
         """
         from tsdynamics.engine import run
+
+        # ``**kwargs`` exists so the adaptive-solver keywords reach the same
+        # family-aware typed error they get at ``integrate`` / ``run``, rather
+        # than a bare interpreter ``TypeError`` (and so the signature stays a
+        # true widening of ``SystemBase.ensemble``).
+        self._reject_flow_keywords(kwargs, where="ensemble()")
 
         backend = backend if backend is not None else self._default_backend
         canon = self._resolve_method(method)

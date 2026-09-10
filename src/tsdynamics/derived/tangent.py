@@ -610,8 +610,8 @@ class TangentSystem(DerivedSystem):
         the QR/variational machinery lives in exactly one place.  Mode-specific
         keywords:
 
-        - **maps**: ``steps`` (default 5000), ``ic``, ``reortho_interval`` (1).
-        - **ODEs**: ``final_time`` (200.0), ``dt`` (0.1), ``ic``, ``burn_in``
+        - **maps**: ``n`` (default 5000), ``ic``, ``reortho_interval`` (1).
+        - **ODEs**: ``final_time`` (200.0), ``dt`` (0.1), ``ic``, ``transient``
           (50.0), ``method``, ``rtol`` / ``atol``
           (:data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
           :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL`, ``1e-9`` /
@@ -631,7 +631,7 @@ class TangentSystem(DerivedSystem):
 
     def _lyapunov_spectrum_map(
         self,
-        steps: int = 5000,
+        n: int = 5000,
         ic: Any | None = None,
         reortho_interval: int = 1,
     ) -> np.ndarray:
@@ -654,18 +654,18 @@ class TangentSystem(DerivedSystem):
         # Fast path: the compiled engine kernel (interp/jit).  Reference, a
         # non-lowering _step, or an absent wheel fall through to the NumPy loop.
         if self._backend in ("interp", "jit"):
-            engine_result = self._map_spectrum_engine(steps, ic, reortho_interval, max_retries)
+            engine_result = self._map_spectrum_engine(n, ic, reortho_interval, max_retries)
             if engine_result is not None:
                 return engine_result
 
         for attempt in range(max_retries):
             use_ic = ic if attempt == 0 else None
-            if self._accumulate_map(steps, use_ic, reortho_interval):
+            if self._accumulate_map(n, use_ic, reortho_interval):
                 exponents = self.exponents()
                 self.meta.record(
                     "lyapunov_spectrum",
                     exponents,
-                    steps=steps,
+                    n=n,
                     k=self.k,
                     reortho_interval=reortho_interval,
                     backend=self._backend,
@@ -678,7 +678,7 @@ class TangentSystem(DerivedSystem):
         raise ValueError(
             f"{type(self.system).__name__}.lyapunov_spectrum: failed after "
             f"{max_retries} retries — iterates diverge from every tried IC. "
-            f"Try a larger `steps` budget or pass an `ic` from a known basin point."
+            f"Try a larger `n` budget or pass an `ic` from a known basin point."
         )
 
     def _map_spectrum_engine(
@@ -837,7 +837,7 @@ class TangentSystem(DerivedSystem):
         dt: float = 0.1,
         *,
         ic: Any | None = None,
-        burn_in: float = 50.0,
+        transient: float = 50.0,
         method: str | None = None,
         rtol: float = DEFAULT_RTOL,
         atol: float = DEFAULT_ATOL,
@@ -866,10 +866,10 @@ class TangentSystem(DerivedSystem):
         self.reinit(ic, method=method, rtol=rtol, atol=atol, **integrator_kwargs)
 
         if self._step_explicit_engine and self._ode_stepper is not None:
-            exponents = self._engine_lyapunov_spectrum(dt, burn_in, final_time)
+            exponents = self._engine_lyapunov_spectrum(dt, transient, final_time)
         else:
             # Burn-in: advance the trajectory + tangent frame without accumulating.
-            t_burn = self._t + max(0.0, burn_in)
+            t_burn = self._t + max(0.0, transient)
             while self._t < t_burn - 1e-12:
                 self.step(min(dt, t_burn - self._t))
             self._reset_accumulators()
@@ -885,7 +885,7 @@ class TangentSystem(DerivedSystem):
             exponents,
             dt=dt,
             final_time=final_time,
-            burn_in=burn_in,
+            transient=transient,
             k=self.k,
             method=method or self.system._default_method,
             backend=self._backend,

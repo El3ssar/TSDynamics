@@ -24,7 +24,7 @@ spec = ts.Lorenz().to_plot_spec(
     components=["x", "y", "z"], final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0]
 )
 
-spec.plot()                    # draw with the default backend (matplotlib)
+spec.show()                    # draw with the default backend (matplotlib)
 spec.save("lorenz.png")        # → matplotlib (raster / vector image)
 spec.save("lorenz.html")       # → plotly (a self-contained interactive page)
 spec.save("lorenz.json")       # → json (a lossless, re-loadable payload)

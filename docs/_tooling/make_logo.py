@@ -76,21 +76,37 @@ def main():
     (OUT / "favicon.svg").write_text(_svg(fav, 2.8))
     # Fidelity preview (exact committed geometry).
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.collections import LineCollection
+
     fig, axes = plt.subplots(1, 2, figsize=(9, 4.6))
     fig.patch.set_facecolor("#0b0f1a")
     for ax, r, lw, name in [(axes[0], mark, 4, "logo.svg"), (axes[1], fav, 6, "favicon.svg")]:
-        pts = r.reshape(-1, 1, 2); segs = np.concatenate([pts[:-1], pts[1:]], 1)
+        pts = r.reshape(-1, 1, 2)
+        segs = np.concatenate([pts[:-1], pts[1:]], 1)
         t = np.linspace(0, 1, len(segs))
-        c0 = np.array([0.31, 0.275, 0.898]); c1 = np.array([0.05, 0.58, 0.53])
+        c0 = np.array([0.31, 0.275, 0.898])
+        c1 = np.array([0.05, 0.58, 0.53])
         cols = (1 - t)[:, None] * c0 + t[:, None] * c1
         ax.add_collection(LineCollection(segs, colors=cols, linewidths=lw, capstyle="round"))
-        ax.set_xlim(0, 64); ax.set_ylim(64, 0); ax.set_aspect("equal"); ax.axis("off")
+        ax.set_xlim(0, 64)
+        ax.set_ylim(64, 0)
+        ax.set_aspect("equal")
+        ax.axis("off")
         ax.set_title(name, color="#aab2c8")
-    plt.tight_layout(); plt.savefig("/tmp/ts_logo_preview.png", dpi=110, facecolor="#0b0f1a")
-    print("wrote", OUT / "logo.svg", "+", OUT / "favicon.svg", "(", len((OUT/"logo.svg").read_text()), "bytes )")
+    plt.tight_layout()
+    plt.savefig("/tmp/ts_logo_preview.png", dpi=110, facecolor="#0b0f1a")
+    print(
+        "wrote",
+        OUT / "logo.svg",
+        "+",
+        OUT / "favicon.svg",
+        "(",
+        len((OUT / "logo.svg").read_text()),
+        "bytes )",
+    )
 
 
 if __name__ == "__main__":

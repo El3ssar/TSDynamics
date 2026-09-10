@@ -76,6 +76,7 @@ def _quiet_numerics(fn):
 
     return wrapper
 
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = ROOT / ".cache" / "docs-props"
 
@@ -92,7 +93,7 @@ _COMPUTE = os.environ.get("TSD_DOCS_PROPS", "1") != "0"
 #: literature ``known_lyapunov``).  Kept modest so a cold full-catalogue build
 #: stays in the minutes, not hours; a system with a published spectrum never
 #: pays this.
-_LYAP_BUDGET: dict[str, Any] = {"final_time": 120.0, "dt": 0.1, "burn_in": 40.0}
+_LYAP_BUDGET: dict[str, Any] = {"final_time": 120.0, "dt": 0.1, "transient": 40.0}
 
 #: Hard wall-clock kill for the computed-Lyapunov **child process**.  A few
 #: off-attractor catalogue systems spiral inside the Rust variational integrator

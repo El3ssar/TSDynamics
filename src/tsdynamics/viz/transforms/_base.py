@@ -616,6 +616,13 @@ class PlotTransform:
         primitive.  It is on the record rather than in the test file so that
         adding a transform is **one registration and nothing else**: the gate
         picks the new row up with no test edit.
+    labels : tuple of str, optional
+        The presentation label of each drawn axis.  Used **only** when
+        ``compute`` returns a plain mapping of channels instead of a
+        :class:`Geometry`: the registry then builds the frame itself, and these
+        are the labels it puts on it.  A transform that builds its own
+        ``Geometry`` (because its labels depend on the subject) leaves this
+        empty and passes ``axis_labels=`` there.
     """
 
     name: str
@@ -633,6 +640,7 @@ class PlotTransform:
     presentation: Presentation = field(default_factory=Presentation)
     analysis: str | None = None
     example: ExampleFactory | None = None
+    labels: tuple[str, ...] = ()
 
     @property
     def available(self) -> bool:
@@ -647,16 +655,35 @@ class PlotTransform:
             return False
 
     def describe_primitives(self) -> tuple[str, ...]:
-        """Return the row with the reading marks: ``*`` default, ``!`` exclusive.
+        """Return the row with its reading marks: ``*`` default, ``!`` exclusive.
 
         Sorted, so the row is stable output rather than set-iteration order.
+        A ``†`` after the row (see :attr:`shape_dependent`) warns that only the
+        primitives fitting the geometry you actually computed are legal.
         """
         out = []
         for name in sorted(self.primitives):
             mark = "*" if name == self.default_primitive else ""
             mark += "!" if name in self.exclusive else ""
             out.append(f"{name}{mark}")
-        return tuple(out)
+        return tuple(out) + (("†",) if self.shape_dependent else ())
+
+    @property
+    def shape_dependent(self) -> bool:
+        """Whether this transform's geometry *shape* — and so its legal row — varies.
+
+        The declared row is a statement about the **transform**; the real
+        constraint is per-**geometry**.  Three transforms produce geometry whose
+        shape depends on the subject — ``phase_portrait`` (2-D or 3-D),
+        ``spatial_field`` (a 1-D profile or a 2-D field), ``invariant_density``
+        (a histogram or an image) — and for those the row is a union, not a
+        promise: printing ``phase_portrait -> density, line3d, ...`` flat tells a
+        3-D trajectory it can have a density plot, which is not a drawing that
+        exists.  Reported as a footnote by :func:`tsdynamics.viz.compatibility`;
+        the exact narrowed row for one subject is
+        ``ts.viz.geometry(subject, name).primitives``.
+        """
+        return len(set(self.ndim)) > 1 or len(self.frame) > 1
 
     def __repr__(self) -> str:  # noqa: D105
         return (

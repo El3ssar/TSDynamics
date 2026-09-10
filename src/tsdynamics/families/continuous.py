@@ -15,7 +15,7 @@ import numpy as np
 from tsdynamics.errors import InvalidParameterError
 from tsdynamics.utils.tolerances import DEFAULT_ATOL, DEFAULT_RTOL
 
-from .base import SystemBase, Trajectory
+from .base import SystemBase, Trajectory, as_lyapunov_result, resolve_transient
 
 #: Memo for :meth:`ContinuousSystem._equations_hash`, keyed by the ``_equations``
 #: kernel **function object itself** — the same key discipline the lowered-tape
@@ -255,7 +255,7 @@ def _reject_unknown_lyapunov_keywords(extra: dict[str, Any]) -> None:
     hint = (
         "did you mean k=? (the number of exponents was renamed n_exp -> k in v4)."
         if bad in {"n_exp", "nexp", "n_exponents"}
-        else "valid keywords: final_time, dt, ic, k, burn_in, method, rtol, atol, backend."
+        else "valid keywords: final_time, dt, ic, k, transient, method, rtol, atol, backend."
     )
     raise invalid_value(
         bad, extra[bad], rule="is not a valid lyapunov_spectrum() keyword", hint=hint
@@ -270,7 +270,24 @@ class ContinuousSystem(SystemBase, ABC):
     -----------------
     1. Declare ``params = {...}`` and ``dim = N`` at class level.
     2. Implement ``_equations`` as a ``@staticmethod`` returning a
-       length-``dim`` sequence of SymEngine symbolic expressions.
+       length-``dim`` sequence of SymEngine symbolic expressions.  Its
+       signature is ``_equations(y, t, **params)``, and **``y`` is a state
+       ACCESSOR, not an array**: component ``i`` is ``y(i)`` — a *call*, which
+       is also what lets a :class:`~tsdynamics.families.delay.DelaySystem`
+       write a delayed access as ``y(i, t - tau)``.  So neither ``y[0]`` nor
+       ``x, y, z = y`` works here (a ``DiscreteMap``'s ``_step`` does take a
+       plain state vector — that is the one place the two families differ)::
+
+           class MyLorenz(ts.ContinuousSystem):
+               params = {"sigma": 10.0, "rho": 28.0, "beta": 8 / 3}
+               variables = ("x", "y", "z")
+               dim = 3
+
+               @staticmethod
+               def _equations(y, t, sigma, rho, beta):
+                   x, u, z = y(0), y(1), y(2)          # NOT `x, u, z = y`
+                   return [sigma * (u - x), x * (rho - z) - u, x * u - beta * z]
+
     3. Optionally mark integer or loop-structural parameters in
        ``_structural_params`` — these are baked into the lowered tape
        rather than exposed as runtime control parameters.
@@ -810,9 +827,14 @@ class ContinuousSystem(SystemBase, ABC):
         transient: float = 0.0,
         **kwargs: Any,
     ) -> Trajectory:
-        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
-        traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
-        return traj.after(transient) if transient > 0 else traj
+        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop.
+
+        A permanent alias of ``integrate(transient=...)``, which owns the one
+        implementation — so the transient cut respects a non-zero ``t0`` here
+        too (it previously cut at the absolute time ``transient``, discarding
+        the whole run whenever ``t0 >= transient``).
+        """
+        return self.integrate(final_time=final_time, dt=dt, transient=transient, **kwargs)
 
     # ------------------------------------------------------------------ #
     # Symbolic Jacobian autogeneration + numeric RHS
@@ -955,17 +977,36 @@ class ContinuousSystem(SystemBase, ABC):
         final_time: float = 100.0,
         dt: float = 0.02,
         *,
+        t0: float = 0.0,
+        ic: Any | None = None,
+        transient: float = 0.0,
+        method: str | None = None,
+        rtol: float = DEFAULT_RTOL,
+        atol: float = DEFAULT_ATOL,
+        max_step: float | None = None,
+        backend: str | None = None,
+        seed: int | None = None,
         events: Any = None,
-        **kwargs: Any,
+        **integrator_kwargs: Any,
     ) -> Trajectory:
         """
         Produce a trajectory — the one canonical verb for every family.
 
-        ``run`` is the unified trajectory producer: it answers the same call for
-        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
-        continuous-time system (this family) it integrates the flow, so
-        ``run`` is a thin alias of :meth:`integrate` and forwards every keyword
-        to it unchanged.
+        ``run`` is the unified trajectory producer: one verb for flows, maps,
+        DDEs and SDEs.  For a continuous-time system (this family) it integrates
+        the flow, so ``run`` is a thin alias of :meth:`integrate` and forwards
+        every keyword to it unchanged.
+
+        .. note::
+           The **verb** is shared; the **horizon keyword follows the family**,
+           because the two horizons are different quantities in different units.
+           A flow has ``final_time`` (time units), a map has ``n`` (a count of
+           iterations) — ``lor.run(final_time=100)`` and ``hen.run(n=1000)``.
+           Passing ``final_time`` to a map is refused by name, not silently
+           reinterpreted.  The **positional** form is the spelling that reads
+           the same on both: ``lor.run(100)``, ``hen.run(1000)``.  Everything
+           that *is* family-independent — ``ic``, ``seed``, ``backend``,
+           ``transient`` — is spelled identically everywhere.
 
         Parameters
         ----------
@@ -974,7 +1015,34 @@ class ContinuousSystem(SystemBase, ABC):
         dt : float
             Output sampling interval — the spacing of the returned grid; the
             internal stepper is adaptive and controlled by ``rtol``/``atol``
-            (see :meth:`integrate`).
+            (see :meth:`integrate`).  ``dt`` is **sampling only**: it does not
+            bound the internal step.  Use ``max_step`` for that.
+        t0 : float
+            Start time of the window. Default 0.0.
+        ic : array_like, optional
+            Initial condition.  Priority ``ic`` > ``self.ic`` > ``default_ic`` >
+            a seeded random draw.
+        transient : float
+            Time to integrate and **discard** before recording, so the returned
+            trajectory starts on the attractor.  In time units (a map's
+            ``transient`` is a count of iterations).
+        method : str, optional
+            Solver kernel (``"rk45"``, ``"dop853"``, ``"bdf"``, …), or
+            ``"auto"`` to probe stiffness and choose.  Defaults to the system's
+            ``_default_method``.
+        rtol, atol : float
+            Relative / absolute error tolerances — **this** is the accuracy
+            knob.  Defaults are the library-wide
+            :data:`~tsdynamics.utils.tolerances.DEFAULT_RTOL` /
+            :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL`.
+        max_step : float, optional
+            Upper bound on any single internal step (a step **size** — not to be
+            confused with ``max_steps``, a step *count*).  ``None`` is unbounded.
+        backend : str, optional
+            ``"jit"`` (default), ``"interp"``, or ``"reference"``.
+        seed : int, optional
+            Seeds the random initial-condition draw, making a run with no ``ic``
+            reproducible.
         events : sequence, optional
             Detect events along the flow (a SciPy-shaped ``events=`` API).  Each
             element is an :class:`~tsdynamics.engine.run.Event`, a bare
@@ -987,9 +1055,9 @@ class ContinuousSystem(SystemBase, ABC):
             plus ``meta["terminated"]``.  This wires the same compiled event
             engine :class:`~tsdynamics.derived.poincare.PoincareMap` uses;
             ``PoincareMap.as_events()`` shows the section as one such event.
-        **kwargs
-            Forwarded verbatim to :meth:`integrate` (``t0``, ``ic``, ``method``,
-            ``rtol``, ``atol``, ``max_step``, ``backend``, ``seed``, …).
+        **integrator_kwargs
+            Any remaining solver option, forwarded verbatim to
+            :meth:`integrate`.
 
         Returns
         -------
@@ -1011,7 +1079,21 @@ class ContinuousSystem(SystemBase, ABC):
         >>> sol.meta["t_events"][0].shape    # times z=27 was crossed upward
         (... ,)
         """
-        return self.integrate(final_time=final_time, dt=dt, events=events, **kwargs)
+        return self.integrate(
+            final_time=final_time,
+            dt=dt,
+            t0=t0,
+            ic=ic,
+            transient=transient,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            max_step=max_step,
+            backend=backend,
+            seed=seed,
+            events=events,
+            **integrator_kwargs,
+        )
 
     def _run_events(
         self,
@@ -1138,6 +1220,7 @@ class ContinuousSystem(SystemBase, ABC):
         max_step: float | None = None,
         backend: str | None = None,
         seed: int | None = None,
+        transient: float = 0.0,
         events: Any = None,
         **integrator_kwargs: Any,
     ) -> Trajectory:
@@ -1239,6 +1322,18 @@ class ContinuousSystem(SystemBase, ABC):
             its first crossing; the returned trajectory carries each event's
             crossings in ``meta["t_events"]`` / ``meta["y_events"]`` (aligned with
             ``events``) plus ``meta["terminated"]``.
+        transient : float, optional
+            Leading stretch of the run to discard, in **time units** (the same
+            unit as ``final_time``).  The window is extended to
+            ``transient + final_time`` and everything before ``t0 + transient``
+            is dropped, so the returned trajectory still spans ``final_time``.
+            Spelled identically on every family and every trajectory-producing
+            verb — ``run`` / ``integrate`` / ``trajectory`` (and ``iterate`` on a
+            map, where the unit is iterations).
+
+            .. versionadded:: 6.0
+                Previously only :meth:`trajectory` accepted it, so a user who
+                found the canonical ``run`` verb could not discard a transient.
 
         Returns
         -------
@@ -1247,6 +1342,23 @@ class ContinuousSystem(SystemBase, ABC):
             yields ``(t_i, y_i)`` pairs; ``traj.unpack()`` gives the two
             column arrays ``(t, y)``.
         """
+        transient = resolve_transient(transient, discrete=False)
+        if transient > 0.0:
+            traj = self.integrate(
+                final_time=final_time + transient,
+                dt=dt,
+                t0=t0,
+                ic=ic,
+                method=method,
+                rtol=rtol,
+                atol=atol,
+                max_step=max_step,
+                backend=backend,
+                seed=seed,
+                events=events,
+                **integrator_kwargs,
+            )
+            return traj.after(t0 + transient)
         if integrator_kwargs:
             # Anything left in **integrator_kwargs is an unrecognised keyword (every
             # valid argument is bound to an explicit parameter above). Reject it
@@ -1254,14 +1366,32 @@ class ContinuousSystem(SystemBase, ABC):
             from tsdynamics.errors import invalid_value
 
             bad = sorted(integrator_kwargs)[0]
+            # The mirror of the map's *flow*-keyword refusal: a map's horizon
+            # words reaching a flow must teach the same lesson from this side,
+            # or the pair reads as a rule in one direction and a typo in the
+            # other.
+            count_words = {"n", "steps", "n_steps", "iterations"}
+            hint = (
+                (
+                    f"{bad} is a *map* keyword: a flow runs for a span of continuous "
+                    f"time, not a count of iterations, so its horizon is final_time "
+                    f"(and dt is the output sampling interval)."
+                )
+                if bad in count_words
+                else (
+                    "check the keyword spelling (e.g. final_time, dt, t0, ic, method, "
+                    "rtol, atol, max_step, seed)."
+                )
+            )
+            if bad in count_words:
+                from tsdynamics.errors import remedy
+
+                hint += remedy(f"{type(self).__name__}().run(final_time=100.0, dt=0.01)")
             raise invalid_value(
                 bad,
                 integrator_kwargs[bad],
                 rule="is not a valid integrate()/run() keyword",
-                hint=(
-                    "check the keyword spelling (e.g. final_time, dt, t0, ic, method, "
-                    "rtol, atol, max_step, seed)."
-                ),
+                hint=hint,
             )
         if events is not None:
             return self._run_events(
@@ -1302,13 +1432,13 @@ class ContinuousSystem(SystemBase, ABC):
         *,
         ic: Any | None = None,
         k: int | None = None,
-        burn_in: float = 50.0,
+        transient: float = 50.0,
         method: str | None = None,
         rtol: float = DEFAULT_RTOL,
         atol: float = DEFAULT_ATOL,
         backend: str = "jit",
         **integrator_kwargs: Any,
-    ) -> np.ndarray:
+    ) -> Any:
         """
         Estimate the Lyapunov spectrum of the flow.
 
@@ -1333,8 +1463,11 @@ class ContinuousSystem(SystemBase, ABC):
             Number of exponents to compute.  Defaults to ``dim``.
             (Renamed from ``n_exp`` in v4; the old spelling was silently swallowed
             by ``**integrator_kwargs`` on this method until v6.)
-        burn_in : float
-            Discard this much time before averaging. Default 50.0.
+        transient : float
+            Discard this much time before averaging, in **time units**. Default
+            50.0.  Spelled ``transient`` on every entry point in the library —
+            it was ``burn_in`` here until v6, the one place the concept had a
+            second name.
         method : str, optional
             Integrator (default ``"RK45"``).
         rtol, atol : float
@@ -1377,13 +1510,22 @@ class ContinuousSystem(SystemBase, ABC):
 
         _reject_unknown_lyapunov_keywords(integrator_kwargs)
         k = k if k is not None else self.dim
-        return TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
+        exponents = TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
             final_time=final_time,
             dt=dt,
             ic=ic,
-            burn_in=burn_in,
+            transient=transient,
             method=method,
             rtol=rtol,
             atol=atol,
             **integrator_kwargs,
+        )
+        return as_lyapunov_result(
+            self,
+            exponents,
+            final_time=final_time,
+            dt=dt,
+            transient=transient,
+            method=method,
+            backend=backend,
         )

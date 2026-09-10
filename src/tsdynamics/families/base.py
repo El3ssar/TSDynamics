@@ -8,6 +8,7 @@ import sites keep resolving ``Trajectory`` to the one canonical object.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator, MutableMapping
 from typing import Any, ClassVar, cast
 
@@ -26,6 +27,11 @@ from tsdynamics.errors import InvalidInputError, remedy
 from ._plottable import SystemPlottable
 
 __all__ = ["MetaStore", "ParamSet", "SystemBase", "Trajectory"]
+
+#: "The caller did not pass this" — distinct from any value they *could* pass.
+#: Needed where a default is indistinguishable from a legal argument (``at=0.0``
+#: on :meth:`SystemBase.poincare`, where 0.0 is the commonest crossing value).
+_UNSET: Any = object()
 
 # ---------------------------------------------------------------------------
 # ParamSet
@@ -320,6 +326,104 @@ class MetaStore(MutableMapping[str, Any]):
             suffix = f" (x{len(recs)})" if len(recs) > 1 else ""
             parts.append(f"{key}={value_repr}{suffix}")
         return f"MetaStore({', '.join(parts)})"
+
+
+# ---------------------------------------------------------------------------
+# Horizon vocabulary
+# ---------------------------------------------------------------------------
+
+
+def resolve_transient(transient: Any, *, discrete: bool) -> float:
+    """
+    Validate a ``transient=`` argument and return it in the family's own unit.
+
+    ``transient`` is the leading stretch of the run that is integrated (or
+    iterated) and then **discarded** — the settling time before the asymptotic
+    behaviour you actually asked for.  It is spelled identically on every
+    family and every trajectory-producing verb; only its *unit* follows the
+    family, exactly as ``final_time`` / ``n`` already do:
+
+    * a flow / DDE / SDE — **time units**, any non-negative float;
+    * a map — **iterations**, a non-negative integer.
+
+    It is deliberately *not* the same concept as ``skip_crossings`` (which
+    counts Poincaré section crossings, per the naming glossary).
+
+    Parameters
+    ----------
+    transient : float or int
+        The candidate value.
+    discrete : bool
+        ``True`` for a map (the value must be a whole number of iterations).
+
+    Returns
+    -------
+    float
+        The validated transient.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If it is negative, non-finite, or (for a map) not a whole number.
+    """
+    from tsdynamics.errors import invalid_value
+
+    try:
+        value = float(transient)
+    except (TypeError, ValueError):
+        raise invalid_value(
+            "transient",
+            transient,
+            rule="must be a number",
+            hint=(
+                "transient is the leading stretch to discard — iterations for a map, "
+                "time units for a flow/DDE/SDE."
+            ),
+        ) from None
+    if not math.isfinite(value) or value < 0.0:
+        raise invalid_value(
+            "transient",
+            transient,
+            rule="must be finite and >= 0",
+            hint="use transient=0 (the default) to keep the whole run.",
+        )
+    if discrete and value != math.floor(value):
+        raise invalid_value(
+            "transient",
+            transient,
+            rule="must be a whole number of iterations for a map",
+            hint="a map's transient counts iterations, not time units.",
+        )
+    return value
+
+
+def as_lyapunov_result(system: Any, exponents: Any, **meta_kw: Any) -> Any:
+    """Wrap a raw exponent array as a :class:`LyapunovSpectrum` result.
+
+    ``system.lyapunov_spectrum(...)`` used to return a bare ``ndarray`` while
+    ``ts.lyapunov_spectrum(system, ...)`` and ``system.lyap.spectrum(...)``
+    returned a ``LyapunovSpectrum`` — three spellings of one analysis, two return
+    types.  The bare-array spelling was the one quoted in the package docstring's
+    quick-start, so the most-documented call was the one where
+    ``.summary()`` / ``.kaplan_yorke`` / ``.plot()`` were all ``AttributeError``.
+
+    ``LyapunovSpectrum`` mixes the numeric-ops base, so this is **not** a
+    breaking change for numeric use: indexing, iteration, ``np.asarray``,
+    comparisons and ``kaplan_yorke_dimension(exps)`` all keep working on the
+    result exactly as they did on the array.
+
+    The import is local: :mod:`tsdynamics.families` must not import
+    :mod:`tsdynamics.analysis` at module scope (the deliberate
+    families→analysis layering seam, see ``_accessors.py``).
+    """
+    from tsdynamics.analysis._result import AnalysisResult
+    from tsdynamics.analysis.lyapunov import LyapunovSpectrum
+
+    values = np.asarray(exponents, dtype=float)
+    meta = AnalysisResult.build_meta(
+        system, analysis="lyapunov_spectrum", k=int(values.size), **meta_kw
+    )
+    return LyapunovSpectrum(values=values, meta=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1187,35 +1291,46 @@ class SystemBase(SystemPlottable):
     def poincare(
         self,
         section: Any = None,
-        at: float = 0.0,
+        at: Any = _UNSET,
         *,
-        plane: tuple[Any, ...] | None = None,
-        direction: int = +1,
+        plane: Any = None,
+        direction: Any = +1,
         **kwargs: Any,
     ) -> Any:
         """Build a :class:`~tsdynamics.derived.PoincareMap` of this flow.
 
-        The friendly ``section=`` (a component index or name) + ``at=`` (the
-        crossing value) spelling is sugar over the wrapper's ``plane`` tuple; an
-        explicit ``plane=(normal, offset)`` may be passed instead for an
-        arbitrary-normal plane.  Calling ``.run(...)`` (or ``.trajectory(...)``)
-        on the returned map collects crossings — the returned object is exactly
-        ``PoincareMap(self, plane, direction=...)``.
+        One section vocabulary, shared with
+        :class:`~tsdynamics.derived.PoincareMap` and
+        :func:`~tsdynamics.analysis.poincare_section` — the argument is resolved
+        by the very same
+        :func:`~tsdynamics.derived.poincare._resolve_section_plane`, so a
+        spelling that works on one works on all three::
+
+            ros.poincare("y", 0.0)                  # component + crossing value
+            ros.poincare(("y", 0.0, "up"))          # ... with the direction word
+            ros.poincare("y", 0.0, direction="up")  # ... as a keyword
+            ros.poincare(plane=([1, 0, 0], 0.0))    # an arbitrary normal
+
+        The returned object is exactly ``PoincareMap(self, plane,
+        direction=...)``; calling ``.run(...)`` / ``.trajectory(...)`` on it
+        collects crossings.
 
         Parameters
         ----------
-        section : int or str, optional
-            State component whose level set defines the section.  A string is
-            resolved against the system's ``variables``.  Ignored when an
-            explicit ``plane`` is given.
-        at : float, default 0.0
-            The crossing value for ``section`` (the plane offset).
+        section : str, int, or tuple, optional
+            The state component whose level set defines the section (a name is
+            resolved against the system's ``variables``), **or** the whole plane
+            tuple — ``(axis, offset)``, ``(axis, offset, direction)``, or
+            ``(normal, offset)``.  Ignored when an explicit ``plane`` is given.
+        at : float, optional
+            The crossing value for ``section``, when ``section`` names a
+            component.  Defaults to ``0.0``.
         plane : tuple, optional
-            The raw ``(component_index, value)`` or ``(normal, offset)`` tuple
-            passed straight to :class:`~tsdynamics.derived.PoincareMap`.  Takes
-            precedence over ``section`` / ``at``.
-        direction : int, default +1
-            Crossing direction (sign).
+            The plane tuple, passed straight through.  Takes precedence over
+            ``section`` / ``at``.
+        direction : int or str, default +1
+            Crossing direction — a sign, or ``"up"`` / ``"down"`` / ``"both"``.
+            A direction given inside the plane tuple overrides this.
         **kwargs
             Forwarded to :class:`~tsdynamics.derived.PoincareMap` (``dt``,
             ``max_time``).
@@ -1227,18 +1342,15 @@ class SystemBase(SystemPlottable):
 
             if section is None:
                 raise InvalidParameterError(
-                    "poincare() needs either `section=` (with `at=`) or an explicit `plane=`."
+                    "poincare() needs a section — the plane orbits are recorded crossing:\n"
+                    "    sys.poincare('y', 0.0)             # component and crossing value\n"
+                    "    sys.poincare(('y', 0.0, 'up'))     # ... and the direction\n"
+                    "    sys.poincare(plane=([1, 0, 0], 0.0))   # an arbitrary normal"
                 )
-            comp = section
-            if isinstance(comp, str):
-                names = getattr(type(self), "variables", None)
-                if names is None:
-                    raise InvalidParameterError(
-                        f"{type(self).__name__} declares no `variables`; "
-                        f"pass an integer `section=` (component index)."
-                    )
-                comp = names.index(comp)
-            plane = (int(comp), float(at))
+            whole_plane = (
+                isinstance(section, (tuple, list)) and len(section) in (2, 3) and at is _UNSET
+            )
+            plane = section if whole_plane else (section, 0.0 if at is _UNSET else float(at))
         return PoincareMap(self, plane, direction=direction, **kwargs)
 
     def stroboscope(self, period: float | None = None, **kwargs: Any) -> Any:
@@ -1318,15 +1430,87 @@ class SystemBase(SystemPlottable):
             comps = list(components)
         return ProjectedSystem(self, comps, **kwargs)
 
-    def ensemble(self, states: Any) -> Any:
+    def copies(self, states: Any) -> Any:
         """Build an :class:`~tsdynamics.derived.EnsembleSystem` over ``states``.
 
-        Equivalent to ``EnsembleSystem(self, states)`` — many copies stepped in
-        lockstep.
+        Many copies of this system, stepped in lockstep through the ordinary
+        :class:`~tsdynamics.families.protocol.System` protocol — a *lazy* object
+        you drive yourself.  Equivalent to ``EnsembleSystem(self, states)``.
+
+        This verb used to be spelled ``ensemble``, which on a
+        :class:`~tsdynamics.families.StochasticSystem` meant something else
+        entirely: *run* the batch and return the final states.  One verb, two
+        semantics and two return types is the defect, so the running verb kept
+        the name (:meth:`ensemble`) and the lazy wrapper took an honest one.
+
+        Parameters
+        ----------
+        states : array-like, shape (n, dim)
+            One row per copy.
+
+        Returns
+        -------
+        EnsembleSystem
+
+        Examples
+        --------
+        >>> band = lor.copies([[1.0, 1.0, 1.0], [1.0, 1.0, 1.001]])  # doctest: +SKIP
+        >>> band.step(0.01)                                          # doctest: +SKIP
         """
         from tsdynamics.derived import EnsembleSystem
 
         return EnsembleSystem(self, states)
+
+    def ensemble(self, ics: Any, **kwargs: Any) -> Any:
+        """Integrate a batch of initial conditions; return their final states.
+
+        The same verb, the same meaning and the same return type on **every**
+        family: hand it ``(n, dim)`` initial conditions, get back the ``(n, dim)``
+        states they reach.  A diverged trajectory is a row of ``NaN`` rather than
+        an aborted batch.  For the *lazy* wrapper you drive yourself, see
+        :meth:`copies`.
+
+        Parameters
+        ----------
+        ics : array-like, shape (n, dim)
+            The batch of initial conditions.
+        **kwargs
+            The run keywords of this family's :meth:`integrate`
+            (``final_time`` / ``dt`` / ``t0`` / ``method`` / ``rtol`` / ``atol``
+            / ``max_step`` / ``backend``; ``seed`` for an SDE).  A **map** takes
+            the same horizon word its :meth:`run` does — ``n`` (or its alias
+            ``steps``) — rather than a time.
+
+        Returns
+        -------
+        ndarray, shape (n, dim)
+            Final states (rows of ``NaN`` for diverged trajectories).
+
+        Examples
+        --------
+        >>> finals = lor.ensemble(np.random.rand(100, 3), final_time=10.0)  # doctest: +SKIP
+        """
+        from tsdynamics.engine import run
+
+        kwargs.setdefault("backend", self._default_backend)
+        # A map's horizon is a COUNT, and its horizon word is ``n`` (``steps``
+        # being the accepted alias on ``run``/``iterate``).  ``run.ensemble``
+        # reads the count off ``final_time`` for every family, so translate here
+        # rather than making the caller spell a map's iteration count as a time.
+        if self.is_discrete:
+            count = kwargs.pop("n", None)
+            alias = kwargs.pop("steps", None)
+            if count is not None and alias is not None:
+                from tsdynamics.errors import InvalidParameterError
+
+                raise InvalidParameterError(
+                    f"n and steps are the same keyword on a map (the number of iterations), "
+                    f"so pass only one; got n={count!r} and steps={alias!r}."
+                )
+            count = count if count is not None else alias
+            if count is not None:
+                kwargs["final_time"] = float(count)
+        return run.ensemble(self, ics, **kwargs)
 
 
 def _reserved_init_keywords() -> frozenset[str]:

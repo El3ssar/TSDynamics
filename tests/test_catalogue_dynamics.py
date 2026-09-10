@@ -891,7 +891,7 @@ def test_reference_ic_overrides_are_all_live() -> None:
             if not needed and behaviour_claim(name, editorial) == CLAIM_CHAOTIC:
                 lam = float(
                     entry.cls().lyapunov_spectrum(
-                        k=1, ic=generic, dt=DT_FLOW, burn_in=50.0, final_time=400.0
+                        k=1, ic=generic, dt=DT_FLOW, transient=50.0, final_time=400.0
                     )[0]
                 )
                 needed = lam <= CHAOS_LAMBDA_FLOOR
@@ -994,9 +994,9 @@ def _leading_exponent(entry: Any) -> float:
     system = entry.cls()
     ic = reference_ic(entry)
     if entry.family == "map":
-        return float(system.lyapunov_spectrum(k=1, steps=20_000, ic=ic)[0])
+        return float(system.lyapunov_spectrum(k=1, n=20_000, ic=ic)[0])
     return float(
-        system.lyapunov_spectrum(k=1, ic=ic, dt=DT_FLOW, burn_in=50.0, final_time=400.0)[0]
+        system.lyapunov_spectrum(k=1, ic=ic, dt=DT_FLOW, transient=50.0, final_time=400.0)[0]
     )
 
 

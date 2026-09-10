@@ -275,9 +275,17 @@ class _PlotAccessor:
 
         Returns
         -------
-        object
-            Whatever the chosen backend's ``render`` returns (a Matplotlib
-            figure, a Plotly figure, …).
+        PlotSpec
+            The built spec — **not** a backend figure.  ``plot`` **builds**,
+            ``render`` **draws**, ``show`` **displays**, ``save`` **writes**, on
+            every plottable object in the library.
+
+            .. versionchanged:: 6.0
+                Returned the backend's figure before v6, so
+                ``rm.plot().save("a.png")`` was an ``AttributeError`` while
+                ``traj.plot().save("a.png")`` worked — the same verb handing back
+                two types with disjoint methods (``.savefig`` vs ``.save``).  Use
+                ``.render(backend, **backend_kw)`` for the figure.
 
         Raises
         ------
@@ -305,9 +313,13 @@ class _PlotAccessor:
             if spec_kw:  # a declared keyword must not be silently dropped
                 raise
             spec = to_spec()
-        if backend is not None:
-            return spec.render(backend, **backend_kw)
-        return spec.render(**backend_kw)
+        # ``plot`` builds.  A caller who named a backend or passed a renderer
+        # option is asking for that drawing to happen, so it still happens — but
+        # what comes back is the spec, which is what every other ``.plot()`` in
+        # the library returns and what ``.save()`` / ``.show()`` hang off.
+        if backend is not None or backend_kw:
+            spec.render(backend, **backend_kw)
+        return spec
 
     def __repr__(self) -> str:  # noqa: D105
         return f"<plot accessor for {type(self._result).__name__}>"

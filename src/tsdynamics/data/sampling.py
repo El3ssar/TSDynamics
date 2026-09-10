@@ -5,6 +5,10 @@ The geometric primitives the attractor/basin layer is built on:
 
 - :class:`Box`, :class:`Ball`, :class:`Grid` describe regions of state space,
   each with a ``contains`` predicate.
+- :func:`as_region` is **the** region reading in the library: one ``(lo, hi)``
+  — or ``(lo, hi, n)`` — pair **per state component**.  Every public
+  ``region=`` argument goes through it, so plain bounds reach every door and
+  the three primitives above are accepted but never *required*.
 - :func:`sampler` turns a region into a thread-local, reproducible draw of
   initial conditions (Monte-Carlo basin sampling).
 - :func:`grid_points` enumerates a region's grid (full-grid basin scans).
@@ -29,11 +33,19 @@ __all__ = [
     "Box",
     "Grid",
     "Region",
+    "as_region",
     "grid_points",
     "region",
     "sampler",
     "set_distance",
 ]
+
+#: Lattice nodes per axis when a caller writes a region as bare ``(lo, hi)``
+#: bounds rather than ``(lo, hi, n)`` triples.  A *resolution* is not a modelling
+#: choice — it trades picture detail against runtime and is recorded in the
+#: result — so it is defaulted rather than demanded, and the triple form is
+#: right there in the signature for anyone who wants to set it.
+DEFAULT_REGION_RESOLUTION = 100
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +306,7 @@ Region = Box | Ball | Grid
 # ---------------------------------------------------------------------------
 
 
-def sampler(region: Region, *, seed: int | None = None) -> Callable[[], np.ndarray]:
+def sampler(region: Any, *, seed: int | None = None) -> Callable[[], np.ndarray]:
     """
     Return a reproducible 0-argument sampler drawing points from ``region``.
 
@@ -304,7 +316,9 @@ def sampler(region: Region, *, seed: int | None = None) -> Callable[[], np.ndarr
 
     Parameters
     ----------
-    region : Box, Ball, or Grid
+    region : Box, Ball, Grid, or sequence of (lo, hi) bounds
+        Plain per-axis bounds are read through :func:`as_region`, so no library
+        type has to be constructed to call this.
     seed : int, optional
         Seeds a private ``numpy.random.Generator`` so draws are reproducible
         and independent of global RNG state.
@@ -316,10 +330,14 @@ def sampler(region: Region, *, seed: int | None = None) -> Callable[[], np.ndarr
 
     Examples
     --------
-    >>> draw = sampler(Box([-1, -1], [1, 1]), seed=0)
+    >>> draw = sampler([(-1, 1), (-1, 1)], seed=0)     # plain bounds
+    >>> draw().shape
+    (2,)
+    >>> draw = sampler(Box([-1, -1], [1, 1]), seed=0)  # or the primitive
     >>> draw().shape
     (2,)
     """
+    region = as_region(region, analysis="sampler")
     rng = np.random.default_rng(seed)
 
     if isinstance(region, Box):
@@ -356,19 +374,42 @@ def sampler(region: Region, *, seed: int | None = None) -> Callable[[], np.ndarr
     raise TypeError(f"unknown region type {type(region).__name__}")
 
 
-def grid_points(grid: Grid) -> np.ndarray:
+def grid_points(grid: Any, *, resolution: int = DEFAULT_REGION_RESOLUTION) -> np.ndarray:
     """
     Enumerate every lattice point of ``grid`` (row-major / C order).
+
+    Parameters
+    ----------
+    grid : Grid, Box, Ball, or sequence of (lo, hi[, n]) bounds
+        Plain per-axis bounds are read through :func:`as_region`, so no library
+        type has to be constructed to call this.  Bounds given without a node
+        count are filled in at ``resolution`` nodes per axis.
+    resolution : int, default 100
+        Nodes per axis used for bare ``(lo, hi)`` bounds (ignored for a
+        :class:`Grid`, which carries its own ``counts``).
 
     Returns
     -------
     ndarray, shape ``(prod(counts), dim)``
         One row per grid node; reshape to ``grid.shape + (dim,)`` for a basin
         map laid out over the grid.
+
+    Examples
+    --------
+    >>> grid_points([(-1.0, 1.0, 3), (-1.0, 1.0, 3)]).shape   # plain bounds
+    (9, 2)
+    >>> grid_points(Grid([-1.0], [1.0], (5,))).shape          # or the primitive
+    (5, 1)
     """
+    resolved = as_region(grid, want_grid=True, resolution=resolution, analysis="grid_points")
+    if not isinstance(resolved, Grid):
+        lo = resolved.lo if isinstance(resolved, Box) else resolved.center - resolved.r
+        hi = resolved.hi if isinstance(resolved, Box) else resolved.center + resolved.r
+        resolved = Grid(lo, hi, (int(resolution),) * int(lo.size))
+    grid = resolved
     axes = grid.axes()
     if grid.dim == 1:
-        return axes[0][:, None]
+        return np.asarray(axes[0], dtype=float)[:, None]
     mesh = np.meshgrid(*axes, indexing="ij")
     return np.stack([m.ravel() for m in mesh], axis=-1)
 
@@ -408,6 +449,148 @@ def region(spec: Any) -> Grid:
     hi = np.array([float(t[1]) for t in triples], dtype=float)
     counts = tuple(int(t[2]) for t in triples)
     return Grid(lo=lo, hi=hi, counts=counts)
+
+
+# ---------------------------------------------------------------------------
+# The one region reading
+# ---------------------------------------------------------------------------
+
+
+def _region_example(dim: int, *, triples: bool) -> str:
+    """Return a region literal sized to ``dim`` state components, as source text.
+
+    The example an error message shows must be the *caller's* region, not a
+    stock 2-D one: it names as many axes as the system has state components, and
+    spans a box wide enough to be worth trying.
+    """
+    axis = f"(-2.0, 2.0, {DEFAULT_REGION_RESOLUTION})" if triples else "(-2.0, 2.0)"
+    if dim <= 3:
+        return "[" + ", ".join([axis] * dim) + "]"
+    return f"[{axis}] * {dim}"
+
+
+def as_region(
+    spec: Any,
+    *,
+    dim: int | None = None,
+    want_grid: bool = False,
+    resolution: int = DEFAULT_REGION_RESOLUTION,
+    analysis: str | None = None,
+    system: Any = None,
+    args: str = "",
+) -> Region:
+    """Coerce a ``region=`` argument to a region primitive.
+
+    **The** one region reading in the library: a region is one ``(lo, hi)``
+    bound — or one ``(lo, hi, n)`` triple — **per state component**.  That is
+    the grammar :func:`plt.xlim <matplotlib.pyplot.xlim>` and
+    :func:`numpy.histogramdd`'s ``range=`` already taught the caller, and it is
+    unambiguous at *every* dimension, including 2 (where a corner-pair reading
+    would silently search a zero-volume box).
+
+    A :class:`Box` / :class:`Ball` / :class:`Grid` is passed straight through —
+    plain bounds are an *addition*, never a replacement.  Nothing else is
+    accepted.
+
+    Parameters
+    ----------
+    spec : Region or sequence of (lo, hi) or sequence of (lo, hi, n), or None
+        The caller's ``region=`` argument.
+    dim : int, optional
+        The system's state dimension, used to size the suggested literal in an
+        error message.  Read from ``system`` when omitted.
+    want_grid : bool, default False
+        ``True`` for a routine that scans a *lattice* — it needs counts, so
+        bare bounds are filled in at ``resolution`` nodes per axis.  ``False``
+        for a routine that *samples* the region, where bare bounds become a
+        :class:`Box` and no resolution is invented.
+    resolution : int, default 100
+        Nodes per axis used to fill in bare bounds when ``want_grid``.
+    analysis, system, args : optional
+        Diagnostic context: the calling function's name, the system being
+        analysed (sizes the suggested literal), and the source text of any
+        positional arguments that sit *between* the system and the region in
+        that signature (``continuation`` takes ``param, values`` first).
+        Without ``args`` the suggested line would have the wrong arity, and a
+        remedy that does not run is worse than none.
+
+    Returns
+    -------
+    Box, Ball, or Grid
+
+    Raises
+    ------
+    InvalidInputError
+        If ``spec`` is ``None`` or is not a region that can be read per-axis.
+
+    Examples
+    --------
+    >>> as_region([(-3.0, 3.0), (-3.0, 3.0)]).lo        # one bound per axis
+    array([-3., -3.])
+    >>> as_region([(-2.0, 2.0, 50)] * 2).shape          # one triple per axis
+    (50, 50)
+    >>> as_region(Box([-1.0, -1.0], [1.0, 1.0])) is not None   # a primitive passes through
+    True
+    """
+    from ..errors import InvalidInputError, remedy
+
+    if isinstance(spec, (Box, Ball, Grid)):
+        return spec
+
+    ndim = int(dim if dim is not None else (getattr(system, "dim", 2) or 2))
+    who = f"{analysis}()" if analysis else "this analysis"
+    call = analysis or "analysis"
+
+    def _refuse(detail: str) -> InvalidInputError:
+        return InvalidInputError(
+            f"{who} needs a region: the box of state space to search — {detail}."
+            + remedy(
+                f"ts.{call}(system, {args}{_region_example(ndim, triples=want_grid)})",
+                lead=(
+                    "Pass one (lo, hi, n) triple per state component:"
+                    if want_grid
+                    else "Pass one (lo, hi) bound per state component:"
+                ),
+            )
+        )
+
+    if spec is None:
+        raise _refuse(
+            "there is no natural default, because it depends on where your attractors live"
+        )
+
+    try:
+        rows = [tuple(float(v) for v in axis) for axis in spec]
+    except (TypeError, ValueError) as err:
+        raise _refuse(f"got {type(spec).__name__}, which is not a region") from err
+    if not rows or not all(len(row) == len(rows[0]) for row in rows):
+        raise _refuse("the per-axis bounds must all have the same shape")
+
+    width = len(rows[0])
+    if width not in (2, 3):
+        raise _refuse(
+            f"each axis needs (lo, hi) or (lo, hi, n), got {width} numbers. "
+            "A region is read one axis at a time, so a pair of corner points is "
+            "spelled Box(lo_corner, hi_corner)"
+        )
+
+    lo = np.array([row[0] for row in rows], dtype=float)
+    hi = np.array([row[1] for row in rows], dtype=float)
+    # A corner *pair* — ``([-3, -3], [3, 3])`` — parses as per-axis rows too, but
+    # every axis then spans nothing (or runs backwards).  That is never a region
+    # anyone meant, and it is exactly the misreading that used to search a
+    # zero-volume box in silence, so name it rather than build it.
+    if np.any(hi < lo) or (len(rows) > 1 and np.all(hi == lo)):
+        raise _refuse(
+            "every axis came out empty or backwards, which is what a pair of "
+            "corner points looks like when it is read one axis at a time"
+        )
+
+    if width == 3:
+        return region([(a, b, int(n)) for a, b, n in rows])
+    if not want_grid:
+        return Box(lo, hi)
+    return Grid(lo, hi, (int(resolution),) * len(rows))
 
 
 # ---------------------------------------------------------------------------

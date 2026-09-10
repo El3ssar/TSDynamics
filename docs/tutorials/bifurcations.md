@@ -43,7 +43,7 @@ a stable fixed point; two, a period-2 cycle; a filled stripe, chaos.
 od = ts.orbit_diagram(
     ts.systems.Logistic(),
     "r", np.linspace(2.5, 4.0, 600),   # sweep the growth rate
-    n=120,          # states recorded per r
+    points_per_value=120,          # states recorded per r
     transient=500,  # steps discarded first, at every r
 )
 
@@ -84,7 +84,7 @@ period), and `bifurcation_points()` reports where the count changes:
 
 ```python
 od = ts.orbit_diagram(
-    ts.systems.Logistic(), "r", np.linspace(2.9, 3.6, 400), n=64, transient=2000,
+    ts.systems.Logistic(), "r", np.linspace(2.9, 3.6, 400), points_per_value=64, transient=2000,
 )
 
 od.bifurcation_points()[:2]     # ≈ [3.00, 3.45]  — the first two onsets
@@ -98,7 +98,7 @@ periods themselves are exactly the doubling ladder:
 
 ```python
 od2 = ts.orbit_diagram(ts.systems.Logistic(), "r",
-                       np.array([2.8, 3.2, 3.5, 3.55, 3.9]), n=64, transient=2000)
+                       np.array([2.8, 3.2, 3.5, 3.55, 3.9]), points_per_value=64, transient=2000)
 od2.periods()          # array([1, 2, 4, 8, 0])   — 0 = aperiodic (chaotic)
 ```
 
@@ -111,7 +111,7 @@ cascade, quantified.
     dynamics briefly return to order before doubling back into chaos:
     ```python
     ts.orbit_diagram(ts.systems.Logistic(), "r",
-                     np.array([3.82, 3.83, 3.84]), n=90, transient=3000).periods()
+                     np.array([3.82, 3.83, 3.84]), points_per_value=90, transient=3000).periods()
     # array([0, 3, 3])   — aperiodic, then the period-3 window opens
     ```
     "Period 3 implies chaos" (Li & Yorke, 1975): the existence of a period-3
@@ -128,7 +128,7 @@ turns chaotic:
 ```python
 for r in [2.9, 3.2, 3.5, 3.57, 3.83, 3.9, 4.0]:
     lam = float(np.asarray(
-        ts.systems.Logistic(params={"r": r}, ic=[0.1]).lyapunov_spectrum(steps=30000)
+        ts.systems.Logistic(params={"r": r}, ic=[0.1]).lyapunov_spectrum(n=30000)
     )[0])
     print(f"r={r}: lambda = {lam:+.4f}")
 
@@ -170,7 +170,7 @@ ros.params      # ParamSet({a=0.2, b=0.2, c=5.7})
 od = ts.orbit_diagram(
     PoincareMap(ros, plane=("y", 0.0, "up")),   # section y = 0, crossed upward
     "c", np.linspace(2.0, 6.0, 80),
-    n=50, transient=50,
+    points_per_value=50, transient=50,
 )
 x_cross, c = od.flat()   # x-coordinate at each crossing vs. c
 ```

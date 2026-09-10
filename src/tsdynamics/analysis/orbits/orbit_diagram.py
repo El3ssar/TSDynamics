@@ -11,7 +11,7 @@ import numpy as np
 from .._result import AnalysisResult
 from .poincare import _seeded_ic
 
-__all__ = ["OrbitDiagram", "bifurcation_diagram", "orbit_diagram"]
+__all__ = ["OrbitDiagram", "orbit_diagram"]
 
 #: Sampling step for the flow path's integration (time units).  Only the *output*
 #: grid — the adaptive solver picks its own internal step (see CLAUDE.md, "Dense
@@ -501,9 +501,9 @@ def _short_column(
     found = int(rec.shape[0])
     if found > transient:
         warnings.warn(
-            f"bifurcation_diagram: only {found - transient} of {n} peaks were found within "
+            f"orbit_diagram: only {found - transient} of {n} peaks were found within "
             f"max_time={max_time:g}, so this value's column is short. To fill it:\n"
-            f"    ts.bifurcation_diagram(system, param, values, max_time={max_time * 10:g})",
+            f"    ts.orbit_diagram(system, param, values, max_time={max_time * 10:g})",
             RuntimeWarning,
             stacklevel=4,
         )
@@ -511,14 +511,14 @@ def _short_column(
     if found:
         keep = rec[-min(n, found) :]
         warnings.warn(
-            f"bifurcation_diagram: only {found} peaks were found within "
+            f"orbit_diagram: only {found} peaks were found within "
             f"max_time={max_time:g}, fewer than transient={transient}, so this value's column "
             f"is the last {keep.shape[0]} of them and its transient is NOT fully discarded "
             "(transient/n count peaks here, not iterates — a slow oscillator makes far fewer "
             "of them than a map does). Either:\n"
-            f"    ts.bifurcation_diagram(system, param, values, transient={max(found // 4, 1)},"
-            f" n={max(found // 2, 1)})\n"
-            f"    ts.bifurcation_diagram(system, param, values, max_time={max_time * 10:g})",
+            f"    ts.orbit_diagram(system, param, values, transient={max(found // 4, 1)},"
+            f" points_per_value={max(found // 2, 1)})\n"
+            f"    ts.orbit_diagram(system, param, values, max_time={max_time * 10:g})",
             RuntimeWarning,
             stacklevel=4,
         )
@@ -527,11 +527,11 @@ def _short_column(
     # offer: a scalar flow (a 1-D DDE) would be told to type an index that does
     # not exist, which is worse than no suggestion at all.
     other = next((c for c in range(dim) if c != idx[0]), None)
-    lines = ["    ts.bifurcation_diagram(system, param, values, section=('z', 27.0, 'up'))"]
+    lines = ["    ts.orbit_diagram(system, param, values, section=('z', 27.0, 'up'))"]
     if other is not None:
-        lines.append(f"    ts.bifurcation_diagram(system, param, values, component={other})")
+        lines.append(f"    ts.orbit_diagram(system, param, values, component={other})")
     warnings.warn(
-        f"bifurcation_diagram: component {idx[0]} of this flow has no maximum within "
+        f"orbit_diagram: component {idx[0]} of this flow has no maximum within "
         f"max_time={max_time:g}, so the successive-maxima view records nothing for this value "
         "(it is monotone, or already at rest but still drifting). Read the flow through a "
         "section, or through a component that oscillates:\n" + "\n".join(lines),
@@ -600,7 +600,7 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
     """Resolve ``system`` to a discrete-time view, returning ``(view, description)``.
 
     A genuine discrete view passes straight through.  A **flow** is turned into
-    one — the whole point of :func:`bifurcation_diagram`, whose canonical use is a
+    one — the whole point of :func:`orbit_diagram`, whose canonical use is a
     flow — either through the section the caller asked for or through the peak map
     (signalled by a ``None`` view, which routes to :func:`_record_via_peaks`).
     The description is recorded in the result's ``meta["section"]`` and printed on
@@ -612,9 +612,9 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
 
     if not hasattr(system, "is_discrete"):
         raise InvalidInputError(
-            f"bifurcation_diagram needs a dynamical system as its first argument, got "
+            f"orbit_diagram needs a dynamical system as its first argument, got "
             f"{type(system).__name__}. Pass a system (or a discrete view of one), e.g.\n"
-            "    ts.bifurcation_diagram(ts.systems.Lorenz(), 'rho', "
+            "    ts.orbit_diagram(ts.systems.Lorenz(), 'rho', "
             "np.linspace(0.0, 50.0, 200))"
         )
     if system.is_discrete:
@@ -622,7 +622,7 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
             raise InvalidParameterError(
                 f"section= chooses how to slice a *flow*, but {type(system).__name__} is "
                 "already a discrete-time view, so there is nothing to slice. Drop section=:\n"
-                f"    ts.bifurcation_diagram(system, {param!r}, values)"
+                f"    ts.orbit_diagram(system, {param!r}, values)"
             )
         if isinstance(system, PoincareMap):
             return system, f"Poincaré section {system.plane}"
@@ -634,10 +634,10 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
 
     if isinstance(system, StochasticSystem):
         raise InvalidInputError(
-            f"bifurcation_diagram needs a deterministic system: {type(system).__name__} is "
+            f"orbit_diagram needs a deterministic system: {type(system).__name__} is "
             "stochastic (an SDE), so its 'asymptotic orbit' is a different sample path on "
             "every run. Sweep a deterministic model instead, e.g.\n"
-            "    ts.bifurcation_diagram(ts.systems.Lorenz(), 'rho', "
+            "    ts.orbit_diagram(ts.systems.Lorenz(), 'rho', "
             "np.linspace(0.0, 50.0, 200))"
         )
     if section is not None:
@@ -645,12 +645,12 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
     return None, f"successive maxima of {component_label}"
 
 
-def bifurcation_diagram(
+def orbit_diagram(
     system: Any,
     param: str,
     values: Any,
     *,
-    n: int = 200,
+    points_per_value: int = 200,
     transient: int = 500,
     carry_state: bool = True,
     component: int | str | tuple[Any, ...] = 0,
@@ -665,7 +665,7 @@ def bifurcation_diagram(
 
     Pass **any** system — this is the one-liner::
 
-        ts.bifurcation_diagram(ts.systems.Lorenz(), "rho", np.linspace(0.0, 50.0, 200))
+        ts.orbit_diagram(ts.systems.Lorenz(), "rho", np.linspace(0.0, 50.0, 200))
 
     A :class:`~tsdynamics.families.DiscreteMap` is swept directly.  A **flow** is
     reduced to a discrete view automatically, because a bifurcation diagram of a
@@ -745,9 +745,16 @@ def bifurcation_diagram(
         Parameter name to sweep.
     values : iterable of float
         Parameter values, in sweep order.
-    n : int
+    points_per_value : int
         Points recorded per parameter value (map iterates / section crossings /
-        peaks, according to the view).
+        peaks, according to the view) — the *height* of one vertical stripe of
+        the diagram.
+
+        .. versionchanged:: 6.0
+            Named ``n`` before v6.  ``n`` was carrying four different meanings
+            across the public surface (map iterations, points kept per parameter
+            value, number of crossings, Monte-Carlo sample count); this is one of
+            the two that misled, so it says what it counts.
     transient : int
         Points discarded before recording, at every value.
     carry_state : bool
@@ -813,14 +820,14 @@ def bifurcation_diagram(
     Examples
     --------
     >>> # a flow, straight up — the section is chosen for you and reported:
-    >>> od = bifurcation_diagram(Lorenz(), "rho", np.linspace(0.0, 50.0, 200))
+    >>> od = orbit_diagram(Lorenz(), "rho", np.linspace(0.0, 50.0, 200))
     >>> od.meta["section"]
     'successive maxima of x'
     >>> # ... or name the section yourself:
-    >>> od = bifurcation_diagram(Rossler(), "c", np.linspace(2, 6, 80),
+    >>> od = orbit_diagram(Rossler(), "c", np.linspace(2, 6, 80),
     ...                          section=("y", 0.0, "up"))
     >>> # a map:
-    >>> od = bifurcation_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 600), n=120)
+    >>> od = orbit_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 600), points_per_value=120)
     >>> x, y = od.flat()
     """
     comp = (component,) if isinstance(component, int | str) else tuple(component)
@@ -857,6 +864,10 @@ def bifurcation_diagram(
     from tsdynamics.errors import BackendError
     from tsdynamics.families import DiscreteMap
 
+    # One short local alias: the sweep machinery below (and the helpers it calls
+    # positionally) reads better with the terse name, while the *signature* says
+    # what the number counts.
+    n = points_per_value
     values_arr = np.asarray(list(values), dtype=float)
     points: list[np.ndarray] = []
     state: np.ndarray | None = None
@@ -866,7 +877,7 @@ def bifurcation_diagram(
         return {
             "system": type(system).__name__,
             "param": param,
-            "n": n,
+            "points_per_value": n,
             "transient": transient,
             "carry_state": carry_state,
             "components": tuple(idx),
@@ -951,7 +962,7 @@ def bifurcation_diagram(
             # One divergent value must not discard the whole sweep: record an
             # empty point set and restart the next value from `ic`.
             warnings.warn(
-                f"bifurcation_diagram: {param}={v:g} diverged ({exc}); recording an "
+                f"orbit_diagram: {param}={v:g} diverged ({exc}); recording an "
                 f"empty set for this value.",
                 RuntimeWarning,
                 stacklevel=2,
@@ -968,10 +979,14 @@ def bifurcation_diagram(
     )
 
 
-#: The map-centric spelling of the same sweep.  One implementation, two names —
-#: so no error message can ever name a function the caller did not type, and
-#: ``ts.orbit_diagram`` / ``ts.bifurcation_diagram`` cannot drift apart.
-orbit_diagram = bifurcation_diagram
+# ``bifurcation_diagram`` used to be an alias of ``orbit_diagram`` — the same
+# object under two names.  It was deleted in v6 under "one concept, one
+# spelling": a shared implementation can only ever name ONE of its spellings in
+# a ``TypeError``, so half of all callers were sent to look up a function they
+# had never typed.  ``ts.bifurcation_diagram`` now raises an ``AttributeError``
+# naming ``orbit_diagram`` (see ``_RENAMED_IN_V6``).  The *picture* is still
+# called a bifurcation diagram — ``PlotKind.BIFURCATION_DIAGRAM`` is a different
+# concept and is untouched.
 
 
 def __dir__() -> list[str]:

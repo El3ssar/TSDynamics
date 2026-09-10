@@ -59,7 +59,7 @@ def _resolve_attractor_id(result: BasinsResult, attractor_id: int | None) -> int
             "this basin image has no attractor to measure — every cell diverged or "
             "went unlabelled, so there is no basin and no boundary."
             + remedy(
-                "res = ts.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                "res = ts.basins_of_attraction(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
                 lead="Widen the region (or raise max_steps) so trajectories settle:",
             )
         )
@@ -450,7 +450,7 @@ def uncertainty_exponent(
             f"with eps, and f(eps) is zero at all but {int(positive.sum())} of the "
             f"probed radii — {why}."
             + remedy(
-                "res = ts.basins(system, [(-2.0, 2.0, 400), (-2.0, 2.0, 400)])",
+                "res = ts.basins_of_attraction(system, [(-2.0, 2.0, 400), (-2.0, 2.0, 400)])",
                 "ts.uncertainty_exponent(res)",
                 lead="Image a region that contains more than one attractor, more finely:",
             )
@@ -676,7 +676,7 @@ def resilience(result: BasinsResult, attractor_id: int | None = None) -> ScalarR
             f"BasinsResult (with its grid and attractors), not a "
             f"{type(result).__name__}."
             + remedy(
-                "res = ts.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                "res = ts.basins_of_attraction(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
                 "ts.resilience(res, attractor_id=1)",
             )
         )

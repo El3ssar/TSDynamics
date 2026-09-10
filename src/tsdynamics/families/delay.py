@@ -16,7 +16,7 @@ from tsdynamics.utils.tolerances import (
     DDE_RTOL,
 )
 
-from .base import SystemBase, Trajectory
+from .base import SystemBase, Trajectory, resolve_transient
 
 if TYPE_CHECKING:
     from .base import ParamSet
@@ -313,9 +313,12 @@ class DelaySystem(SystemBase, ABC):
         transient: float = 0.0,
         **kwargs: Any,
     ) -> Trajectory:
-        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop."""
-        traj = self.integrate(final_time=transient + final_time, dt=dt, **kwargs)
-        return traj.after(transient) if transient > 0 else traj
+        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop.
+
+        A permanent alias of ``integrate(transient=...)``, which owns the one
+        implementation.
+        """
+        return self.integrate(final_time=final_time, dt=dt, transient=transient, **kwargs)
 
     # ------------------------------------------------------------------ #
     # Trajectory production — the canonical ``run`` verb
@@ -325,6 +328,15 @@ class DelaySystem(SystemBase, ABC):
         self,
         final_time: float = 100.0,
         dt: float = 0.02,
+        *,
+        ic: Any | None = None,
+        history: History = None,
+        transient: float = 0.0,
+        method: str = "rk45",
+        rtol: float | None = None,
+        atol: float | None = None,
+        backend: str | None = None,
+        seed: int | None = None,
         **kwargs: Any,
     ) -> Trajectory:
         """
@@ -340,10 +352,30 @@ class DelaySystem(SystemBase, ABC):
         final_time : float
             Integration end time. Default 100.0.
         dt : float
-            Output sampling interval.
+            Output sampling interval.  The method of steps lands on every
+            sample, so ``dt`` *does* bound the internal step here.
+        ic : array_like, optional
+            Constant past to restart from.  Ignored when ``history`` is given.
+        history : callable or array_like, optional
+            The past ``φ(s)`` for ``s ≤ t0``.  A constant past sitting at a
+            fixed point gives Lyapunov exponents ≈ 0 — supply a non-equilibrium
+            history.
+        transient : float
+            Time to integrate and **discard** before recording. In time units.
+        method : str
+            Solver kernel for each delay window. Default ``"rk45"``.
+        rtol, atol : float, optional
+            Error tolerances.  ``None`` takes the DDE defaults
+            (:data:`~tsdynamics.utils.tolerances.DDE_RTOL` /
+            :data:`~tsdynamics.utils.tolerances.DDE_ATOL`), which are looser
+            than the ODE ones on purpose — see the tolerances table.
+        backend : str, optional
+            ``"jit"`` (default) or ``"interp"``.  ``"reference"`` is refused:
+            there is no pure-Python DDE integrator.
+        seed : int, optional
+            Seeds the random initial-condition draw.
         **kwargs
-            Forwarded verbatim to :meth:`integrate` (``ic``, ``history``,
-            ``rtol``, ``atol``, ``backend``, ``method``, ``seed``).
+            Any remaining option, forwarded verbatim to :meth:`integrate`.
 
         Returns
         -------
@@ -354,7 +386,19 @@ class DelaySystem(SystemBase, ABC):
         --------
         integrate : The family-specific spelling (a permanent alias of ``run``).
         """
-        return self.integrate(final_time=final_time, dt=dt, **kwargs)
+        return self.integrate(
+            final_time=final_time,
+            dt=dt,
+            ic=ic,
+            history=history,
+            transient=transient,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            backend=backend,
+            seed=seed,
+            **kwargs,
+        )
 
     # ------------------------------------------------------------------ #
     # Integration
@@ -372,6 +416,7 @@ class DelaySystem(SystemBase, ABC):
         backend: str | None = None,
         method: str = "rk45",
         seed: int | None = None,
+        transient: float = 0.0,
         **kwargs: Any,
     ) -> Trajectory:
         """
@@ -437,11 +482,34 @@ class DelaySystem(SystemBase, ABC):
             recorded on ``traj.meta["ic_seed"]``.
 
             .. versionadded:: 6.0
+        transient : float, optional
+            Leading stretch of the run to discard, in **time units** (the same
+            unit as ``final_time``).  The window is extended to
+            ``transient + final_time`` and everything before ``transient``
+            dropped.  Spelled identically on every family and every
+            trajectory-producing verb.
+
+            .. versionadded:: 6.0
 
         Returns
         -------
         Trajectory
         """
+        transient = resolve_transient(transient, discrete=False)
+        if transient > 0.0:
+            traj = self.integrate(
+                final_time + transient,
+                dt,
+                ic=ic,
+                history=history,
+                rtol=rtol,
+                atol=atol,
+                backend=backend,
+                method=method,
+                seed=seed,
+                **kwargs,
+            )
+            return traj.after(transient)
         backend = backend if backend is not None else self._default_backend
         return self._integrate_engine(
             final_time,
@@ -515,7 +583,7 @@ class DelaySystem(SystemBase, ABC):
         *,
         ic: Any | None = None,
         k: int = 1,
-        burn_in: float = 50.0,
+        transient: float = 50.0,
         rtol: float | None = None,
         atol: float | None = None,
         backend: str | None = None,
@@ -543,8 +611,10 @@ class DelaySystem(SystemBase, ABC):
         k : int
             Number of leading exponents to estimate. DDEs have infinitely
             many; choose consciously. Default 1.
-        burn_in : float
-            Discard interval. Default 50.0.
+        transient : float
+            Discard this much time before averaging, in **time units**. Default
+            50.0.  Spelled ``transient`` on every entry point in the library —
+            it was ``burn_in`` here until v6.
         rtol, atol : float, optional
             Integration tolerances.  The engine path renormalises every delay
             window and defaults to
@@ -585,7 +655,7 @@ class DelaySystem(SystemBase, ABC):
             k=k,
             final_time=final_time,
             dt=dt,
-            burn_in=burn_in,
+            burn_in=transient,
             ic=ic,
             backend=backend,
             rtol=rtol if rtol is not None else DDE_LYAPUNOV_RTOL,
@@ -598,7 +668,7 @@ class DelaySystem(SystemBase, ABC):
             k=k,
             final_time=final_time,
             dt=dt,
-            burn_in=burn_in,
+            burn_in=transient,
         )
         return exps
 

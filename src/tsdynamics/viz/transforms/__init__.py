@@ -3,21 +3,31 @@
 A **transform** turns a subject (a :class:`~tsdynamics.data.Trajectory`, a
 system, an analysis result) into :class:`Geometry`; a **primitive** turns that
 geometry into layers; a declared **compatibility row** says which pairs are
-legal.  Adding a plot to TSDynamics is one decorated function::
+legal.  Adding a plot to TSDynamics is one decorated function, and every name it
+needs is public (:mod:`tsdynamics.viz` re-exports all of them)::
 
-    from tsdynamics.viz.transforms import Geometry, make_frame, plot_transform
-    from tsdynamics.viz._frames import FrameSpace
+    from tsdynamics.viz import PlotKind, plot_transform
+    from tsdynamics.analysis import recurrence_matrix
 
     @plot_transform(
-        name="nullclines", source="model",
-        frame=FrameSpace.STATE2, ndim=2, kind="phase_portrait_2d", role="base",
-        default_primitive="contour", primitives=("contour", "line"),
-        analysis="tsdynamics.analysis.fields.nullclines",
-        example=lambda primitive: (Duffing(), {"grid": 40}),
-        doc="Zero level sets of each RHS component on a 2-D slice.",
+        name="recurrence", source="data",
+        frame="grid2", ndim=2, kind=PlotKind.IMAGE, labels=("i", "j"),
+        default_primitive="image", primitives=("image",),
+        analysis="tsdynamics.analysis.recurrence_matrix",
+        example=lambda primitive: (Lorenz().run(20.0, dt=0.05), {}),
+        doc="Recurrence plot of a trajectory.",
     )
-    def nullclines(system, *, plane=("x", "y"), at=None, grid=400) -> Geometry:
-        ...
+    def recurrence(traj, *, recurrence_rate=0.05):
+        R = recurrence_matrix(traj, recurrence_rate=recurrence_rate).matrix
+        i = np.arange(R.shape[0], dtype=float)
+        return {"x": i, "y": i, "z": np.asarray(R.todense(), float)}
+
+``compute`` may return a plain **mapping of channels**: the name, the coordinate
+space, the axis count and the axis labels are declared on the decorator, so
+repeating them in a hand-built :class:`Geometry` would declare each twice and
+leave the registry checking the author against themselves.  Build a
+:class:`Geometry` (with :func:`make_frame`, :class:`Part`, :class:`FrameSpace`,
+all exported here) when the shape or the labels depend on the subject.
 
 Nothing else changes: no renderer edit, no
 :class:`~tsdynamics.viz.spec.PlotKind` edit, no ``compose`` edit, no test edit.
@@ -41,24 +51,25 @@ entry-point group and are indistinguishable from in-tree ones.
 
 from __future__ import annotations
 
-# Imported for its **registration side effect**: importing ``_data`` is what puts
-# the in-tree transforms into ``registry.plot_transforms``.  (It pulls in
-# ``._registry`` and ``._base`` itself, so the order below is irrelevant.)
-from . import _data, fields, hilbert, planar, series, spectra, stability  # noqa: F401
-
 # ── internals: bound and importable, but off the curated tab surface ────────────
 # The redundant ``as`` form marks them as deliberate re-exports rather than unused
 # imports.  Nothing is removed — ``from tsdynamics.viz.transforms import lower``
 # still works — these are simply not names a user writing a plot ever types:
 #
-# * ``Channel`` / ``ChannelType`` / ``Part`` — the constituent pieces of a
-#   :class:`Geometry`, which transforms build through :func:`make_frame`.
+# * ``Channel`` / ``ChannelType`` — the typed innards of a :class:`Part`, built
+#   for you from the channel mapping a transform returns.
 # * ``PRIMITIVES`` / ``RESERVED_PRIMITIVES`` — the primitive tables behind
 #   :func:`primitive_names` / :func:`get_primitive`, which are the accessors.
 # * ``ADMITTED_SERIES_DIAGNOSTICS`` / ``EXCLUDED_SERIES_TOOLBOX`` — the scope
 #   ledger recording which series diagnostics this library does and does not own.
 # * ``TransformCall`` / ``build_spec`` / ``lower`` — the transform→PlotSpec
 #   lowering pipeline that :func:`plot` drives.
+from .._frames import FrameSpace
+
+# Imported for its **registration side effect**: importing ``_data`` is what puts
+# the in-tree transforms into ``registry.plot_transforms``.  (It pulls in
+# ``._registry`` and ``._base`` itself, so the order below is irrelevant.)
+from . import _data, fields, hilbert, planar, series, spectra, stability  # noqa: F401
 from ._base import (
     Channel as Channel,
 )
@@ -67,13 +78,11 @@ from ._base import (
 )
 from ._base import (
     Geometry,
+    Part,
     PlotTransform,
     Presentation,
     Primitive,
     make_frame,
-)
-from ._base import (
-    Part as Part,
 )
 from ._frontdoor import plot
 from ._primitives import (
@@ -113,9 +122,12 @@ __all__ = [
     # The front door and its option carrier.
     "plot",
     "T",
-    # Writing a transform.
+    # Writing a transform: everything the authoring recipe needs, so no
+    # transform author has to import from a private module.
     "PlotTransform",
     "Geometry",
+    "Part",
+    "FrameSpace",
     "make_frame",
     "plot_transform",
     # Writing / choosing a primitive.

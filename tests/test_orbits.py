@@ -150,7 +150,7 @@ class TestOrbitDiagramQuantifiers:
             ts.Logistic(),
             "r",
             [2.8, 3.2, 3.5, 3.56],
-            n=120,
+            points_per_value=120,
             transient=2000,
             carry_state=False,
             ic=[0.5],
@@ -162,19 +162,28 @@ class TestOrbitDiagramQuantifiers:
         assert p[3] == 8  # 8-cycle
 
     def test_chaotic_band_is_aperiodic(self) -> None:
-        od = ts.orbit_diagram(ts.Logistic(), "r", [3.9], n=200, transient=500, ic=[0.5])
+        od = ts.orbit_diagram(
+            ts.Logistic(), "r", [3.9], points_per_value=200, transient=500, ic=[0.5]
+        )
         assert od.periods()[0] == 0  # too many branches → reported aperiodic
 
     def test_empty_value_is_minus_one(self) -> None:
         # r > 4 escapes [0, 1]: the sweep records an empty set (diverges).
         with pytest.warns(RuntimeWarning, match="diverged"):
-            od = ts.orbit_diagram(ts.Logistic(), "r", [4.5], n=50, transient=50, ic=[0.5])
+            od = ts.orbit_diagram(
+                ts.Logistic(), "r", [4.5], points_per_value=50, transient=50, ic=[0.5]
+            )
         assert od.periods()[0] == -1
 
     def test_bifurcation_points_match_literature(self) -> None:
         # Logistic period-doubling onsets: r1 = 3, r2 = 1 + sqrt(6) ≈ 3.449.
         od = ts.orbit_diagram(
-            ts.Logistic(), "r", np.linspace(2.9, 3.6, 400), n=64, transient=2000, ic=[0.5]
+            ts.Logistic(),
+            "r",
+            np.linspace(2.9, 3.6, 400),
+            points_per_value=64,
+            transient=2000,
+            ic=[0.5],
         )
         bp = od.bifurcation_points()
         assert np.min(np.abs(bp - 3.0)) < 0.03
@@ -185,7 +194,12 @@ class TestOrbitDiagramQuantifiers:
         # no period/bifurcation text overlay (which piles up illegibly in the
         # chaotic cascade).  It also must not walk periods() at all when clean.
         od = ts.orbit_diagram(
-            ts.Logistic(), "r", np.linspace(2.8, 4.0, 60), n=48, transient=400, ic=[0.5]
+            ts.Logistic(),
+            "r",
+            np.linspace(2.8, 4.0, 60),
+            points_per_value=48,
+            transient=400,
+            ic=[0.5],
         )
         calls = {"n": 0}
         real_periods = ts.OrbitDiagram.periods
@@ -207,7 +221,12 @@ class TestOrbitDiagramQuantifiers:
         # directly and again inside bifurcation_points() (and a third walk).  With
         # annotate=True it must compute the period sweep exactly once per call.
         od = ts.orbit_diagram(
-            ts.Logistic(), "r", np.linspace(2.8, 3.6, 60), n=48, transient=400, ic=[0.5]
+            ts.Logistic(),
+            "r",
+            np.linspace(2.8, 3.6, 60),
+            points_per_value=48,
+            transient=400,
+            ic=[0.5],
         )
         calls = {"n": 0}
         real_periods = ts.OrbitDiagram.periods
@@ -228,7 +247,12 @@ class TestOrbitDiagramQuantifiers:
     def test_bifurcation_points_from_precomputed_periods_match(self) -> None:
         # The factored helper must agree with the public bifurcation_points().
         od = ts.orbit_diagram(
-            ts.Logistic(), "r", np.linspace(2.9, 3.6, 80), n=48, transient=400, ic=[0.5]
+            ts.Logistic(),
+            "r",
+            np.linspace(2.9, 3.6, 80),
+            points_per_value=48,
+            transient=400,
+            ic=[0.5],
         )
         p = od.periods()
         np.testing.assert_array_equal(
@@ -296,7 +320,9 @@ def test_periods_on_flow_bifurcation_diagram() -> None:
     found = {}
     for c in (2.6, 3.5, 5.7):
         pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.03)
-        od = ts.orbit_diagram(pmap, "c", [c], n=80, transient=100, component=1, ic=[3.0, 3.0, 0.0])
+        od = ts.orbit_diagram(
+            pmap, "c", [c], points_per_value=80, transient=100, component=1, ic=[3.0, 3.0, 0.0]
+        )
         found[c] = int(od.periods()[0])
     assert found[2.6] == 1  # period-1 limit cycle
     assert found[3.5] == 2  # period-2
@@ -319,7 +345,7 @@ def test_system_and_trajectory_paths_agree() -> None:
 # ---------------------------------------------------------------------------
 # The one-liner: a bifurcation diagram OF A FLOW
 #
-# ``ts.bifurcation_diagram(model, "rho", values)`` used to refuse with a
+# ``ts.orbit_diagram(model, "rho", values)`` used to refuse with a
 # TypeError that named ``orbit_diagram`` (a function the caller had not typed)
 # and told them to go and read about PoincareMap / StroboscopicMap.  A
 # bifurcation diagram of a flow is the single most canonical use of the
@@ -332,11 +358,11 @@ class TestBifurcationDiagramOfAFlow:
     """The headline call must return a diagram, not a lecture."""
 
     def test_a_raw_flow_is_accepted(self) -> None:
-        od = ts.bifurcation_diagram(
+        od = ts.orbit_diagram(
             ts.Lorenz(ic=[1.0, 1.0, 1.0]),
             "rho",
             np.linspace(0.0, 50.0, 12),
-            n=30,
+            points_per_value=30,
             transient=40,
         )
         assert len(od) == 12
@@ -346,8 +372,13 @@ class TestBifurcationDiagramOfAFlow:
 
     def test_the_chosen_section_is_recorded_not_silent(self) -> None:
         """A section always has to be chosen; choosing silently is its own trap."""
-        od = ts.bifurcation_diagram(
-            ts.Lorenz(ic=[1.0, 1.0, 1.0]), "rho", [28.0], n=20, transient=30, component="z"
+        od = ts.orbit_diagram(
+            ts.Lorenz(ic=[1.0, 1.0, 1.0]),
+            "rho",
+            [28.0],
+            points_per_value=20,
+            transient=30,
+            component="z",
         )
         assert od.meta["section"] == "successive maxima of z"
         assert od.meta["section_auto"] is True
@@ -362,18 +393,18 @@ class TestBifurcationDiagramOfAFlow:
         converged column must record that point rather than an empty set.
         """
         lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
-        od = ts.bifurcation_diagram(lor, "rho", [10.0], n=20, transient=30)
+        od = ts.orbit_diagram(lor, "rho", [10.0], points_per_value=20, transient=30)
         (points,) = od.points
         assert points.shape[0] >= 1
         expected = np.sqrt(lor.beta * (10.0 - 1.0))
         assert np.allclose(np.abs(points[:, 0]), expected, atol=1e-6)
 
     def test_section_override_uses_a_poincare_map(self) -> None:
-        od = ts.bifurcation_diagram(
+        od = ts.orbit_diagram(
             ts.Rossler(ic=[1.0, 1.0, 0.0]),
             "c",
             [4.0],
-            n=20,
+            points_per_value=20,
             transient=25,
             section=("y", 0.0, "up"),
         )
@@ -382,43 +413,58 @@ class TestBifurcationDiagramOfAFlow:
         assert od.points[0].shape[0] == 20
 
     def test_a_map_is_unaffected(self) -> None:
-        od = ts.bifurcation_diagram(ts.Logistic(), "r", [3.2, 3.9], n=40, transient=200)
+        od = ts.orbit_diagram(ts.Logistic(), "r", [3.2, 3.9], points_per_value=40, transient=200)
         assert od.meta["section"] == "map iterates"
         assert od.meta["section_auto"] is False
         assert int(od.periods()[0]) == 2  # the period-2 window
 
-    def test_orbit_diagram_and_bifurcation_diagram_are_one_function(self) -> None:
-        """Two names, one implementation — so no error can name the other one."""
-        assert ts.orbit_diagram is ts.bifurcation_diagram
-        assert registry.analyses.get("bifurcation_diagram") is ts.bifurcation_diagram
-        assert registry.analyses.get("orbit_diagram") is ts.bifurcation_diagram
+    def test_orbit_diagram_is_the_one_spelling(self) -> None:
+        """The ``bifurcation_diagram`` alias was deleted in v6 (one concept, one name).
+
+        It was the same object under a second name, so every shared error message
+        named a function half its callers had never typed.  Guessing it must now
+        teach the survivor rather than fail bare.
+        """
+        assert registry.analyses.get("orbit_diagram") is ts.analysis.orbit_diagram
+        assert "bifurcation_diagram" not in registry.analyses.names()
+        for namespace, prefix in ((ts, "tsdynamics"), (ts.analysis, "tsdynamics.analysis")):
+            with pytest.raises(AttributeError) as excinfo:
+                _ = namespace.bifurcation_diagram
+            message = str(excinfo.value)
+            assert "orbit_diagram" in message, f"{prefix} must name the survivor"
+            assert "renamed in v6" in message
 
 
 class TestBifurcationDiagramRefusals:
-    """When it does refuse, the message must contain the line to type."""
+    """When it does refuse, the message must contain the line to type.
+
+    There is one spelling now — ``orbit_diagram`` — so a message names the call
+    the user made.  While the ``bifurcation_diagram`` alias existed, one
+    implementation carried two spellings and a message could only ever name one
+    of them, contradicting the ``TypeError`` Python raised a line earlier.
+    """
 
     def test_a_stochastic_system_is_refused_with_a_runnable_line(self) -> None:
         from tsdynamics.errors import InvalidInputError
 
         with pytest.raises(InvalidInputError) as excinfo:
-            ts.bifurcation_diagram(ts.systems.OrnsteinUhlenbeck(), "theta", [1.0])
+            ts.orbit_diagram(ts.systems.OrnsteinUhlenbeck(), "theta", [1.0])
         message = str(excinfo.value)
-        assert "ts.bifurcation_diagram(ts.systems.Lorenz(), 'rho'" in message
-        assert "orbit_diagram" not in message  # never name a function they did not call
+        assert "ts.orbit_diagram(ts.systems.Lorenz(), 'rho'" in message
 
     def test_a_non_system_is_refused_with_a_runnable_line(self) -> None:
         from tsdynamics.errors import InvalidInputError
 
         with pytest.raises(InvalidInputError) as excinfo:
-            ts.bifurcation_diagram([1.0, 2.0], "r", [1.0])
-        assert "ts.bifurcation_diagram(ts.systems.Lorenz(), 'rho'" in str(excinfo.value)
+            ts.orbit_diagram([1.0, 2.0], "r", [1.0])
+        assert "ts.orbit_diagram(ts.systems.Lorenz(), 'rho'" in str(excinfo.value)
 
     def test_section_on_an_already_discrete_view_names_the_swept_parameter(self) -> None:
         from tsdynamics.errors import InvalidParameterError
 
         with pytest.raises(InvalidParameterError) as excinfo:
-            ts.bifurcation_diagram(ts.Logistic(), "r", [3.5], section=("x", 0.0))
-        assert "ts.bifurcation_diagram(system, 'r', values)" in str(excinfo.value)
+            ts.orbit_diagram(ts.Logistic(), "r", [3.5], section=("x", 0.0))
+        assert "ts.orbit_diagram(system, 'r', values)" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +492,7 @@ class TestFlowColumnsAreNeverSilentlyEmpty:
         message = str(record[0].message)
         assert "transient=500" in message
         assert "NOT fully discarded" in message
-        assert "ts.bifurcation_diagram(system, param, values, max_time=100000)" in message
+        assert "ts.orbit_diagram(system, param, values, max_time=100000)" in message
 
     def test_a_partial_column_still_discards_the_transient(self) -> None:
         from tsdynamics.analysis.orbits.orbit_diagram import _short_column
@@ -481,11 +527,11 @@ class TestFlowColumnsAreNeverSilentlyEmpty:
     def test_a_slow_flow_sweep_returns_points_rather_than_a_blank_picture(self) -> None:
         """End to end: a flow whose peaks are expensive still yields a drawable diagram."""
         with pytest.warns(RuntimeWarning):
-            od = ts.bifurcation_diagram(
+            od = ts.orbit_diagram(
                 ts.Rossler(ic=[1.0, 1.0, 0.0]),
                 "c",
                 [4.0, 4.5],
-                n=40,
+                points_per_value=40,
                 transient=200,
                 max_time=60.0,
             )

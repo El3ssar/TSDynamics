@@ -22,9 +22,15 @@ from tsdynamics.errors import InvalidParameterError
 pytest.importorskip("matplotlib")
 
 
-def _png(fig, tmp_path: Path, name: str) -> str:  # noqa: ANN001 - test helper
+def _png(spec, tmp_path: Path, name: str) -> str:  # noqa: ANN001 - test helper
+    """Hash the PNG a built spec writes.
+
+    ``.plot()`` returns a :class:`PlotSpec` (v6), not a figure, so the artifact
+    comes from the spec's own ``save`` — the verb that exists on every plottable
+    object in the library.
+    """
     p = tmp_path / f"{name}.png"
-    fig.savefig(p)
+    spec.save(str(p))
     return hashlib.md5(p.read_bytes()).hexdigest()
 
 
@@ -33,7 +39,7 @@ def orbit_diagram():  # noqa: ANN202
     import tsdynamics as ts
 
     return ts.orbit_diagram(
-        ts.systems.Logistic(), "r", np.linspace(2.8, 4.0, 120), n=40, transient=200
+        ts.systems.Logistic(), "r", np.linspace(2.8, 4.0, 120), points_per_value=40, transient=200
     )
 
 
@@ -65,11 +71,18 @@ def test_unknown_keyword_raises_and_names_both_accepted_sets(orbit_diagram) -> N
 
 
 def test_backend_keyword_still_reaches_the_renderer(orbit_diagram, tmp_path: Path) -> None:  # noqa: ANN001
+    """A renderer keyword still reaches the renderer, and still changes the artifact.
+
+    ``.plot()`` hands back the spec rather than the figure (v6), so the figure is
+    checked where it is produced — inside ``render`` — and the end-to-end effect
+    is checked on the written PNG.
+    """
+    sizes = []
     small = orbit_diagram.plot(figsize=(3.0, 2.0))
+    sizes.append(tuple(small.render("matplotlib", figsize=(3.0, 2.0)).get_size_inches()))
     big = orbit_diagram.plot(figsize=(8.0, 6.0))
-    assert tuple(small.get_size_inches()) == (3.0, 2.0)
-    assert tuple(big.get_size_inches()) == (8.0, 6.0)
-    assert _png(small, tmp_path, "small") != _png(big, tmp_path, "big")
+    sizes.append(tuple(big.render("matplotlib", figsize=(8.0, 6.0)).get_size_inches()))
+    assert sizes == [(3.0, 2.0), (8.0, 6.0)]
 
 
 def test_typed_accessor_still_works(orbit_diagram) -> None:  # noqa: ANN001
@@ -155,7 +168,7 @@ def test_stable_and_unstable_render_differently(tmp_path: Path) -> None:
                 )
             ],
         )
-        return spec.render(backend="matplotlib")
+        return spec
 
     assert _png(one(True), tmp_path, "stable") != _png(one(False), tmp_path, "unstable")
 
@@ -269,7 +282,11 @@ def _result_specs():
             "fixed_points": ts.fixed_points(lor, seed=0).to_plot_spec(),
             "eigenvalue_plane": ts.fixed_points(lor, seed=0).eigenvalue_plane(),
             "orbit_diagram": ts.orbit_diagram(
-                ts.systems.Logistic(), "r", np.linspace(2.8, 4.0, 60), n=30, transient=200
+                ts.systems.Logistic(),
+                "r",
+                np.linspace(2.8, 4.0, 60),
+                points_per_value=30,
+                transient=200,
             ).to_plot_spec(),
             "basins": ts.basins_of_attraction(
                 ts.systems.Henon(), ts.Grid([-2.0, -2.0], [2.0, 2.0], (24, 24))
@@ -277,7 +294,7 @@ def _result_specs():
             "recurrence": ts.recurrence_matrix(traj.y[:300], recurrence_rate=0.05).to_plot_spec(),
             "dimension": ts.correlation_dimension(traj.y[::4]).to_plot_spec(),
             "poincare": ts.poincare_section(
-                ts.Rossler(), plane=("y", 0.0, "up"), n=120, seed=0
+                ts.Rossler(), plane=("y", 0.0, "up"), crossings=120, seed=0
             ).to_plot_spec(),
             "gali": ts.gali(lor, k=2, final_time=40.0, ic=[1.0, 1.0, 1.0]).to_plot_spec(),
             "return_map": ts.return_map(traj, component="z", kind="max").to_plot_spec(),

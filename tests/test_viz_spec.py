@@ -131,8 +131,8 @@ def test_the_scope_partition_matches_the_reviewed_contract() -> None:
         "background",
         "clock",
         "head",
-        # ``plot`` forwards to the individual tweaks, which recurse themselves.
-        "plot",
+        # ``tweak`` forwards to the individual tweaks, which recurse themselves.
+        "tweak",
         "size",
         "theme",
         "trail",

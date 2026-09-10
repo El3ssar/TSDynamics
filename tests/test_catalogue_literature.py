@@ -49,7 +49,7 @@ def test_tent_full_height_lyapunov_is_ln2() -> None:
     constant slope +/-2, so lambda = ln 2 exactly (Ott, *Chaos in Dynamical
     Systems*, 2nd ed., Sec. 2.2).
     """
-    le = ts.systems.Tent(params={"mu": 1.0}).lyapunov_spectrum(steps=10_000, ic=_IC1D)[0]
+    le = ts.systems.Tent(params={"mu": 1.0}).lyapunov_spectrum(n=10_000, ic=_IC1D)[0]
     # Slope is constant so the estimate is exact up to float roundoff.
     assert le == pytest.approx(np.log(2.0), abs=1e-4)
 
@@ -61,7 +61,7 @@ def test_tent_general_slope_lyapunov_is_ln_2mu() -> None:
     exponent ln(2*mu) wherever the orbit stays on the attractor (the docstring's
     own statement, and the standard piecewise-linear result).
     """
-    le = ts.systems.Tent(params={"mu": 0.7}).lyapunov_spectrum(steps=10_000, ic=_IC1D)[0]
+    le = ts.systems.Tent(params={"mu": 0.7}).lyapunov_spectrum(n=10_000, ic=_IC1D)[0]
     assert le == pytest.approx(np.log(2.0 * 0.7), abs=1e-4)
 
 
@@ -72,13 +72,13 @@ def test_chebyshev_degree_two_lyapunov_is_ln2() -> None:
     with Lyapunov exponent ln a (Adler & Rivlin 1964, Proc. AMS 15, 794-796).
     The a=2 case is conjugate to the logistic map at r=4 → ln 2.
     """
-    le = ts.systems.Chebyshev(params={"a": 2.0}).lyapunov_spectrum(steps=10_000, ic=[0.3])[0]
+    le = ts.systems.Chebyshev(params={"a": 2.0}).lyapunov_spectrum(n=10_000, ic=[0.3])[0]
     assert le == pytest.approx(np.log(2.0), abs=1e-3)
 
 
 def test_chebyshev_degree_six_lyapunov_is_ln6() -> None:
     """Chebyshev map at a=6 has constant Lyapunov exponent ln 6 (Adler-Rivlin 1964)."""
-    le = ts.systems.Chebyshev(params={"a": 6.0}).lyapunov_spectrum(steps=10_000, ic=[0.3])[0]
+    le = ts.systems.Chebyshev(params={"a": 6.0}).lyapunov_spectrum(n=10_000, ic=[0.3])[0]
     assert le == pytest.approx(np.log(6.0), abs=1e-3)
 
 
@@ -90,7 +90,7 @@ def test_ulam_map_lyapunov_is_ln2() -> None:
     smooth measure converges more slowly than the piecewise-linear maps, so the
     tolerance is looser.
     """
-    le = ts.systems.Ulam().lyapunov_spectrum(steps=20_000, ic=[0.1])[0]
+    le = ts.systems.Ulam().lyapunov_spectrum(n=20_000, ic=[0.1])[0]
     assert le == pytest.approx(np.log(2.0), abs=2e-2)
 
 
@@ -101,7 +101,7 @@ def test_gingerbreadman_is_area_preserving() -> None:
     sign(x)*0 - (-1)*1 = 1 everywhere, so it is conservative (Devaney 1984,
     Physica D 10, 387-393): lambda_1 + lambda_2 = ln|det J| = 0 exactly.
     """
-    spec = ts.systems.Gingerbreadman().lyapunov_spectrum(steps=10_000, ic=[0.5, 3.7])
+    spec = ts.systems.Gingerbreadman().lyapunov_spectrum(n=10_000, ic=[0.5, 3.7])
     assert spec.shape == (2,)
     # det J == 1 identically, so the sum is zero to estimator roundoff.
     assert spec.sum() == pytest.approx(0.0, abs=1e-6)
@@ -117,7 +117,7 @@ def test_gingerbreadman_default_ic_is_in_the_chaotic_sea() -> None:
     initial condition and much of the unit square (e.g. [0.5, 0.5]) sits on a
     period-6 island. ``default_ic`` must therefore pick the sea.
     """
-    spec = ts.systems.Gingerbreadman().lyapunov_spectrum(steps=10_000)
+    spec = ts.systems.Gingerbreadman().lyapunov_spectrum(n=10_000)
     assert spec[0] > 0.01, f"default IC is not chaotic: {spec}"
 
 
@@ -172,7 +172,7 @@ def test_zaslavskii_exponent_sum_is_minus_r() -> None:
     orbit onto a stable period-2 cycle where the sum identity also holds.
     """
     r = ts.systems.Zaslavskii().params["r"]
-    spec = ts.systems.Zaslavskii().lyapunov_spectrum(steps=20_000)
+    spec = ts.systems.Zaslavskii().lyapunov_spectrum(n=20_000)
     assert spec.shape == (2,)
     assert spec.sum() == pytest.approx(-r, abs=1e-6)
     assert spec[0] > 0.5, f"default parameters are not chaotic: {spec}"
@@ -309,7 +309,7 @@ def test_halvorsen_exponent_sum_equals_trace() -> None:
     pinned in test_known_values.py.
     """
     spec = ts.systems.Halvorsen(ic=[-5.0, 0.0, 0.0]).lyapunov_spectrum(
-        dt=0.02, burn_in=50.0, final_time=400.0
+        dt=0.02, transient=50.0, final_time=400.0
     )
     assert spec.shape == (3,)
     assert spec.sum() == pytest.approx(-3.0 * 1.4, abs=2e-3)
@@ -340,7 +340,7 @@ def test_duffing_is_a_bounded_double_well_with_divergence_minus_delta() -> None:
     assert 1.2 < np.max(np.abs(traj.y[:, 0])) < 3.0
     assert np.min(traj.y[:, 0]) < -0.5 < 0.5 < np.max(traj.y[:, 0])
 
-    spec = system.lyapunov_spectrum(final_time=4000.0, dt=0.02, burn_in=400.0)
+    spec = system.lyapunov_spectrum(final_time=4000.0, dt=0.02, transient=400.0)
     assert spec.shape == (3,)
     # Trace(J) = -delta identically, so the sum is exact to estimator roundoff.
     assert spec.sum() == pytest.approx(-delta, abs=1e-6)
@@ -368,7 +368,7 @@ def test_pan_xu_zhou_default_parameters_are_above_the_hopf_threshold() -> None:
     threshold = a * (a + b) / (a - b)
     assert k > threshold, f"k={k} is below the Hopf threshold {threshold:.3f}"
 
-    spec = system.lyapunov_spectrum(final_time=3000.0, dt=0.005, burn_in=1000.0)
+    spec = system.lyapunov_spectrum(final_time=3000.0, dt=0.005, transient=1000.0)
     assert spec.shape == (3,)
     assert spec[0] > 0.5, f"default parameters are not chaotic: {spec}"
     # Divergence is the constant -a + f + c = -(a + b), so the sum is exact.

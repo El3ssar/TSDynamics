@@ -176,7 +176,7 @@ class TestFlowEquilibriaNoRegion:
     def test_explicit_region_still_clips_roots(self) -> None:
         """An explicit region remains a hard search domain (the complement)."""
         # A box around C+ only; the origin and C- lie outside and must be clipped.
-        fps = fixed_points(ts.Lorenz(), region=([5, 5, 20], [12, 12, 32]), seed=0)
+        fps = fixed_points(ts.Lorenz(), region=[(5, 12), (5, 12), (20, 32)], seed=0)
         coords = [fp.x for fp in fps]
         assert len(fps) == 1
         c = math.sqrt((8.0 / 3.0) * 27.0)

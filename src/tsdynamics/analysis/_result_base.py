@@ -104,15 +104,29 @@ class AnalysisResult:
             return self._repr_fields
         return tuple(f.name for f in fields(self) if f.repr and f.name != "meta")
 
+    #: Result classes whose *name* carries no domain meaning.  A named result
+    #: (``LyapunovSpectrum``, ``RQAResult``) reprs as itself; these generic
+    #: wrappers repr as ``ScalarResult(max_lyapunov, value=0.423267)`` instead of
+    #: an anonymous ``ScalarResult(value=0.423267)``, because in a console the
+    #: repr is the only thing that says *what was measured*.
+    _ANONYMOUS_RESULT_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"ScalarResult", "CountResult", "ArrayResult", "CollectionResult", "ScalingResult"}
+    )
+
     def __repr__(self) -> str:  # noqa: D105
         parts = []
+        name_of = type(self).__name__
+        if name_of in self._ANONYMOUS_RESULT_TYPES:
+            analysis = self.meta.get("analysis") if self.meta else None
+            if analysis:
+                parts.append(str(analysis))
         for name in self._display_fields():
             try:
                 value = getattr(self, name)
             except AttributeError:
                 continue
             parts.append(f"{name}={_fmt(value)}")
-        return f"{type(self).__name__}({', '.join(parts)})"
+        return f"{name_of}({', '.join(parts)})"
 
     def _interpretation(self) -> str | None:
         """Return a one-line human interpretation, or ``None`` for none.

@@ -211,7 +211,7 @@ _LONG_CALLS: dict[str, str] = {
         import numpy as np
         ts.orbit_diagram(
             ts.systems.Logistic(), "r", np.linspace(3.5, 4.0, 4000),
-            n=2000, transient=200_000,
+            points_per_value=2000, transient=200_000,
         )
     """,
     # The extended-variational chunk loop (`lyapunov.rs`), which drives many
@@ -237,7 +237,7 @@ _LONG_CALLS: dict[str, str] = {
     # search runs the whole span.
     "poincare_section": """
         ts.poincare_section(
-            ts.systems.Rossler(), plane=("y", 1e9, "up"), n=1, max_time=1e7, dt=0.001
+            ts.systems.Rossler(), plane=("y", 1e9, "up"), crossings=1, max_time=1e7, dt=0.001
         )
     """,
     # The three rayon fan-outs (`ensemble.rs` / `map.rs` / `sde.rs`). These are a
@@ -394,7 +394,7 @@ def test_an_absurd_orbit_diagram_raises_instead_of_killing_the_process():
         try:
             ts.orbit_diagram(
                 ts.systems.Logistic(), "r", np.linspace(3.5, 4.0, 4),
-                n=2**40, transient=0,
+                points_per_value=2**40, transient=0,
             )
         except MemoryError as e:
             assert "cannot allocate" in str(e), e

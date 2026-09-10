@@ -312,9 +312,11 @@ def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     class _FakeSpec:
         def __init__(self, kind):
             self.kind = kind
+            self.rendered = None
 
         def render(self, backend="matplotlib", **backend_kw):
-            return {"backend": backend, "kind": self.kind, "backend_kw": backend_kw}
+            self.rendered = {"backend": backend, "kind": self.kind, "backend_kw": backend_kw}
+            return self.rendered
 
     @dataclass(frozen=True)
     class _Plottable(AnalysisResult):
@@ -329,17 +331,22 @@ def test_plot_renders_when_a_renderer_is_registered(monkeypatch):
     monkeypatch.setattr(reg, "renderers", ["matplotlib-stub"], raising=False)
 
     r = _Plottable(value=1.0)
+    # ``plot`` BUILDS: it returns the spec (v6), and renders as a side effect when
+    # a backend / renderer keyword is named.  ``.render()`` is what hands back a
+    # figure — the same contract ``traj.plot()`` and ``system.plot()`` follow.
     out = r.plot(backend="plotly")
-    assert out == {"backend": "plotly", "kind": None, "backend_kw": {}}
+    assert isinstance(out, _FakeSpec)
+    assert out.kind is None
+    assert out.rendered == {"backend": "plotly", "kind": None, "backend_kw": {}}
     # A typed method routes its kind into to_plot_spec; backend kwargs reach render.
     # ``figsize`` is a real backend keyword; ``ax`` used to ride through here too,
     # but no shipped backend accepts it — ``.plot()`` now rejects a keyword neither
     # ``to_plot_spec`` nor the backend contract declares, instead of silently
     # dropping it into a ``**_kw`` catch-all (sanctioned v6 break).
     out2 = r.plot.scaling(backend="mpl", figsize=(4.0, 3.0))
-    assert out2["kind"] == "scaling_fit"
-    assert out2["backend"] == "mpl"
-    assert out2["backend_kw"] == {"figsize": (4.0, 3.0)}
+    assert out2.kind == "scaling_fit"
+    assert out2.rendered["backend"] == "mpl"
+    assert out2.rendered["backend_kw"] == {"figsize": (4.0, 3.0)}
     with pytest.raises(InvalidParameterError):
         r.plot.scaling(backend="mpl", not_a_real_keyword="x")
 

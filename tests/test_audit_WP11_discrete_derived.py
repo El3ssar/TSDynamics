@@ -69,7 +69,7 @@ class TestD1TangentPostEngineMap:
     def test_deviations_and_growths_raise_after_batch_engine(self) -> None:
         pytest.importorskip("tsdynamics._rust")
         tng = TangentSystem(ts.Henon(), backend="interp")
-        exps = tng.lyapunov_spectrum(steps=2000, ic=[0.1, 0.1])
+        exps = tng.lyapunov_spectrum(n=2000, ic=[0.1, 0.1])
 
         # exponents() must stay coherent with the just-returned spectrum.
         np.testing.assert_allclose(tng.exponents(), exps)
@@ -88,7 +88,7 @@ class TestD1TangentPostEngineMap:
         # return the average — it raises.
         pytest.importorskip("tsdynamics._rust")
         tng = TangentSystem(ts.Henon(), backend="interp")
-        tng.lyapunov_spectrum(steps=1000, ic=[0.1, 0.1])
+        tng.lyapunov_spectrum(n=1000, ic=[0.1, 0.1])
         with pytest.raises(RuntimeError):
             tng.growths()
 
@@ -96,7 +96,7 @@ class TestD1TangentPostEngineMap:
         # Answer-preserving: driving the streaming frame after a batch run works.
         pytest.importorskip("tsdynamics._rust")
         tng = TangentSystem(ts.Henon(), backend="interp")
-        tng.lyapunov_spectrum(steps=500, ic=[0.1, 0.1])
+        tng.lyapunov_spectrum(n=500, ic=[0.1, 0.1])
         tng.reinit([0.1, 0.1])
         tng.step()
         assert tng.deviations().shape == (2, 2)
@@ -106,7 +106,7 @@ class TestD1TangentPostEngineMap:
         # The reference NumPy QR loop keeps the streaming accessors coherent
         # (it carries _W and _last_growths) — unchanged by this fix.
         tref = TangentSystem(ts.Henon(), backend="reference")
-        tref.lyapunov_spectrum(steps=500, ic=[0.1, 0.1])
+        tref.lyapunov_spectrum(n=500, ic=[0.1, 0.1])
         assert np.isfinite(tref.deviations()).all()
         assert np.isfinite(tref.growths()).all()
 

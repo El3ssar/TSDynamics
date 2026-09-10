@@ -142,6 +142,8 @@ in `src/tsdynamics/solvers/` (`explicit.py`, `implicit.py`, or `stochastic.py`).
 The capability flags **must match the Rust `Caps`**:
 
 ```python
+# skip-doctest — a template: registering a placeholder kernel would put
+# "your_kernel" in the solver table for the rest of the session
 from tsdynamics.solvers import SolverSpec, SolverCaps, register
 
 register(

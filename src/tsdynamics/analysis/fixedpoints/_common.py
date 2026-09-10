@@ -56,7 +56,7 @@ from tsdynamics.analysis._tangent import (
 from tsdynamics.analysis._tangent import (
     to_native as to_native,
 )
-from tsdynamics.errors import InvalidInputError
+from tsdynamics.errors import InvalidInputError, remedy
 
 if TYPE_CHECKING:
     from tsdynamics.families import SystemBase
@@ -423,43 +423,37 @@ def hull_box(orbit: np.ndarray, dim: int, pad: float) -> tuple[np.ndarray, np.nd
     return lo - pad * span, hi + pad * span
 
 
-def _region_remedy(system: SystemBase, dim: int) -> str:
-    """Return the runnable ``region=`` line for this system, as source text."""
-    from tsdynamics.errors import remedy
-
-    lo = "[" + ", ".join(["-2.0"] * dim) + "]"
-    hi = "[" + ", ".join(["2.0"] * dim) + "]"
-    return remedy(f"ts.fixed_points(system, region=({lo}, {hi}))")
-
-
 def resolve_box(
     system: SystemBase, region: Any, dim: int, rng: np.random.Generator
 ) -> tuple[np.ndarray, np.ndarray]:
     """Resolve the search ``region`` to ``(lo, hi)`` arrays of length ``dim``.
 
-    Accepts a :class:`~tsdynamics.data.Box` / :class:`~tsdynamics.data.Grid`
-    (reads its ``lo`` / ``hi``), a ``(lo, hi)`` tuple, or ``None`` — which uses
-    the burn-in orbit's bounding box padded by :data:`HULL_PAD` (falling back to
+    Reads the region through :func:`tsdynamics.data.as_region` — the library's
+    one region grammar, **one ``(lo, hi)`` bound per state component** — so
+    ``region=[(-3, 3), (-3, 3)]`` searches the box it looks like it searches.
+    A :class:`~tsdynamics.data.Box` / :class:`~tsdynamics.data.Ball` /
+    :class:`~tsdynamics.data.Grid` is accepted unchanged, and ``None`` uses the
+    burn-in orbit's bounding box padded by :data:`HULL_PAD` (falling back to
     ``[-2, 2]^dim`` if the orbit diverges or cannot be sampled).
     """
     if region is not None:
-        try:
-            lo_src, hi_src = (
-                (region.lo, region.hi) if hasattr(region, "lo") else (region[0], region[1])
-            )
-            lo = np.asarray(lo_src, dtype=float)
-            hi = np.asarray(hi_src, dtype=float)
-        except (TypeError, ValueError, IndexError, KeyError) as err:
-            raise InvalidInputError(
-                f"region must be a Box/Grid or a (lo, hi) pair of corner points, got "
-                f"{type(region).__name__}." + _region_remedy(system, dim)
-            ) from err
-        if lo.size != dim or hi.size != dim:
+        from tsdynamics.data import Ball, as_region
+
+        resolved = as_region(region, dim=dim, analysis="fixed_points", system=system)
+        if isinstance(resolved, Ball):
+            lo = np.asarray(resolved.center - resolved.r, dtype=float)
+            hi = np.asarray(resolved.center + resolved.r, dtype=float)
+        else:
+            lo = np.asarray(resolved.lo, dtype=float)
+            hi = np.asarray(resolved.hi, dtype=float)
+        if lo.size != dim:
             raise InvalidInputError(
                 f"{type(system).__name__} has {dim} state components, so the search "
-                f"region needs {dim} numbers per corner — got {lo.size} and {hi.size}. "
-                f"A region is (lo_corner, hi_corner), not a list of per-axis bounds."
-                + _region_remedy(system, dim)
+                f"region needs {dim} per-axis bounds — got {lo.size}."
+                + remedy(
+                    "ts.fixed_points(system, region=[" + ", ".join(["(-2.0, 2.0)"] * dim) + "])",
+                    lead="Pass one (lo, hi) bound per state component:",
+                )
             )
         return lo.reshape(dim), hi.reshape(dim)
     return hull_box(sample_orbit_box(system, dim, rng=rng), dim, HULL_PAD)

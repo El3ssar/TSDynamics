@@ -2163,7 +2163,7 @@ class PlotSpec:
 
     # -- rendering ---------------------------------------------------------
 
-    def render(self, backend: str | None = None, **backend_kw: Any) -> Any:
+    def render(self, backend: str | None = None, *, ax: Any = None, **backend_kw: Any) -> Any:
         """Render this spec through a registered backend.
 
         Delegates to :func:`tsdynamics.viz.render.render_spec` (stream
@@ -2178,6 +2178,16 @@ class PlotSpec:
         backend : str, optional
             The renderer name (e.g. ``"matplotlib"``).  If ``None``, the default
             capable backend is used.
+        ax : matplotlib.axes.Axes, optional
+            Draw into an existing axes instead of creating a figure — the way to
+            put a tsdynamics plot inside a figure you are laying out yourself.
+            Matplotlib only; ignored by the other backends.
+
+            .. versionadded:: 6.0
+                It worked before, through ``**backend_kw``, but appeared in no
+                signature and no ``help()`` — so the one keyword users most need
+                for integration was undiscoverable.  Naming it changes no
+                behaviour.
         **backend_kw
             Forwarded to the renderer callable.
 
@@ -2193,6 +2203,8 @@ class PlotSpec:
         """
         from tsdynamics.viz.render import render_spec
 
+        if ax is not None:
+            backend_kw["ax"] = ax
         return render_spec(self, backend, **backend_kw)
 
     def show(self, backend: str | None = None, **backend_kw: Any) -> Any:
@@ -2229,7 +2241,7 @@ class PlotSpec:
 
         See Also
         --------
-        plot : apply inline tweaks, return the spec.
+        tweak : apply inline tweaks, return the spec.
         render : draw and return the backend's figure, displaying nothing.
         save : write the figure (or animation) to a file.
         """
@@ -2241,24 +2253,30 @@ class PlotSpec:
     # which already declares (and performs) its own panel recursion — so ``plot``
     # itself must NOT recurse, or a panel-scoped tweak would be applied twice.
     @figure_scoped
-    def plot(self, **tweaks: Any) -> PlotSpec:
-        """Apply inline tweaks and return **this spec** (the ``.plot`` sugar).
+    def tweak(self, **tweaks: Any) -> PlotSpec:
+        """Apply inline tweaks and return **this spec**, so calls chain.
 
-        One word, one meaning, one return type, everywhere in the library:
+        The library's four plotting verbs, one return type each:
 
         =============== =====================================================
-        ``.plot()``     gives you a :class:`PlotSpec` — chainable and saveable
+        ``.tweak(...)`` adjusts this spec and hands it back — chainable
         ``.render()``   gives you the backend's figure
         ``.show()``     draws it and displays it (the matplotlib/plotly reflex)
         ``.save(path)`` writes the file
         =============== =====================================================
 
-        So ``traj.plot()``, ``system.plot()``, ``result.plot()``,
-        ``ts.plot(...)`` and ``spec.plot()`` all hand back the same kind of thing,
-        and ``traj.plot().save("fig.png")`` works.  A spec is already a plot, so
-        here ``.plot()`` is the identity plus the recognised inline tweaks
-        (``xlabel`` / ``yscale`` / ``title`` / ``xlim`` / …).  In a notebook the
-        returned spec draws itself.
+        This method used to be called ``plot``, which was the joke told twice: a
+        method named ``plot`` that does not plot, sitting next to a ``ts.plot``
+        front door that does not draw either.  ``.style()`` / ``.relabel()`` /
+        ``.theme()`` are the *named* ways to do the same thing and read better at
+        a call site; ``tweak`` remains for the mixed bag (``xlabel`` / ``yscale``
+        / ``title`` / ``xlim`` / …) in one call.
+
+        .. versionchanged:: 6.0
+            Renamed from ``plot``.  ``traj.plot()``, ``system.plot()``,
+            ``result.plot()`` and ``ts.plot(...)`` all still return a
+            :class:`PlotSpec` — the *building* verb is unchanged; it is only this
+            no-op-on-a-spec spelling that is gone.
 
         Raises
         ------
@@ -2273,7 +2291,7 @@ class PlotSpec:
 
             names = ", ".join(repr(k) for k in sorted(leftover))
             raise InvalidParameterError(
-                f"plot() applies spec tweaks and returns the spec; {names} is not one. "
+                f"tweak() applies spec tweaks and returns the spec; {names} is not one. "
                 "A renderer option (ax=, figsize=, dpi=, html=, …) or a backend name goes "
                 "to render(), which returns the figure:\n"
                 f"    spec.render('matplotlib', {next(iter(sorted(leftover)))}=...)"
@@ -2562,6 +2580,38 @@ class PlotSpec:
             return "matplotlib"
         return None
 
+    def __repr__(self) -> str:
+        """Describe the spec **and name the next verb**.
+
+        ``ts.plot(traj)`` in a script builds a spec and draws nothing — which is
+        the right semantics (spec-in-spec-out is what makes
+        ``ts.plot(ts.plot(a), ts.plot(b), layout="row")`` compose) but a baffling
+        first experience if the object says nothing about how to see it.  So the
+        repr carries the two verbs that do::
+
+            PlotSpec(phase_portrait_3d, 1 layer) — .show() to display, .save('f.png') to write
+
+        An **animated** spec names a filename it can actually write: ``.save``
+        picks the backend by extension, and a ``.png`` of a movie is a still, so
+        offering one would send the reader to the wrong verb::
+
+            PlotSpec(phase_portrait_3d, 1 layer, animated) — .show() to display, .save('f.gif') to write
+
+        In a notebook the spec draws itself and this is never seen; in a console
+        it is the whole answer.
+        """
+        kind = getattr(self.kind, "value", self.kind)
+        n_panels = len(self.panels) if getattr(self, "panels", None) else 0
+        if n_panels:
+            body = f"{n_panels} panel{'s' if n_panels != 1 else ''}"
+        else:
+            n = len(self.layers)
+            body = f"{n} layer{'s' if n != 1 else ''}"
+        animated = getattr(self, "animation", None) is not None
+        anim = ", animated" if animated else ""
+        target = "f.gif" if animated else "f.png"
+        return f"PlotSpec({kind}, {body}{anim}) — .show() to display, .save({target!r}) to write"
+
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Notebook display hook — render inline once a backend is installed.
 
@@ -2707,7 +2757,7 @@ class Plottable:
             (``.render("plotly")``), and self-drawing in a notebook.
         """
         reject_positional_transform(transforms, "obj")
-        return self.to_plot_spec().plot(**tweaks)
+        return self.to_plot_spec().tweak(**tweaks)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Rich notebook display — renders inline once a backend is installed.

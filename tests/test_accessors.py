@@ -140,10 +140,11 @@ def test_chaos_expansion_entropy_identical():
 
     Run on a bounded ``region`` so the estimator's orbit-box sampler does not
     wander off the Hénon attractor — the accessor binds the system and forwards
-    ``region`` and the kwargs unchanged.
+    ``region`` and the kwargs unchanged.  The region is one ``(lo, hi)`` bound
+    per state component, the one reading every region door in the library uses.
     """
     h = Henon()
-    region = ([-1.5, -0.4], [1.5, 0.4])  # (lo, hi) vectors bounding the attractor
+    region = [(-1.5, 1.5), (-0.4, 0.4)]  # one (lo, hi) bound per state component
     e_acc = h.chaos.expansion_entropy(region, seed=0)
     e_free = ts.expansion_entropy(h, region, seed=0)
     assert float(e_acc.entropy) == float(e_free.entropy)
@@ -251,10 +252,28 @@ def test_project_builds_projected_system():
     assert p_args.components == p_hand.components
 
 
-def test_ensemble_builds_ensemble_system():
-    """``sys.ensemble(states)`` builds an ``EnsembleSystem``."""
+def test_copies_builds_ensemble_system():
+    """``sys.copies(states)`` builds an ``EnsembleSystem`` (the LAZY wrapper)."""
     states = np.random.default_rng(0).random((5, 3))
-    assert isinstance(Lorenz().ensemble(states), EnsembleSystem)
+    assert isinstance(Lorenz().copies(states), EnsembleSystem)
+
+
+def test_ensemble_runs_the_batch_on_every_family():
+    """``.ensemble`` means one thing everywhere: run the batch → ``(n, dim)`` finals."""
+    ics = np.array([[1.0, 1.0, 1.0], [1.0, 1.0, 1.001]])
+    finals = Lorenz().ensemble(ics, final_time=1.0, dt=0.05)
+    assert isinstance(finals, np.ndarray)
+    assert finals.shape == (2, 3)
+
+    hen = ts.systems.Henon()
+    map_finals = hen.ensemble(np.array([[0.1, 0.1], [0.2, 0.2]]), steps=50)
+    assert isinstance(map_finals, np.ndarray)
+    assert map_finals.shape == (2, 2)
+
+    ou = ts.systems.OrnsteinUhlenbeck()
+    sde_finals = ou.ensemble(np.zeros((3, 1)), final_time=1.0, dt=0.01, seed=0)
+    assert isinstance(sde_finals, np.ndarray)
+    assert sde_finals.shape == (3, 1)
 
 
 def test_stroboscope_builds_stroboscopic_map():
@@ -491,3 +510,99 @@ def test_accessor_actually_passes_the_declared_subject(monkeypatch, accessor, me
         seen = _record_call(monkeypatch, free_name)
         assert bound(data) == "sentinel"
         assert seen["subject"] is data, f"{accessor}.{method} did not forward the supplied data"
+
+
+# --------------------------------------------------------------------------- #
+# the data-consuming accessors, bound to a Trajectory
+# --------------------------------------------------------------------------- #
+#
+# ``dims`` / ``recurrence`` / ``lyap.from_data`` consume a *measured point set*.
+# They used to be reachable only from a SYSTEM — that is, the discoverable path
+# existed only on the object half of them refuse, and the user actually holding a
+# trajectory (the normal case) was pushed onto the flat functions.  The same
+# accessor classes are now bound to a ``Trajectory`` as well.
+
+TRAJECTORY_TOPICAL = ("dims", "recurrence", "lyap")
+
+
+@pytest.fixture(scope="module")
+def _lorenz_traj():
+    """A short Lorenz run — the measured series the accessors below consume."""
+    return Lorenz().run(final_time=60.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+
+
+@pytest.mark.parametrize("name", TRAJECTORY_TOPICAL)
+def test_trajectory_carries_the_data_consuming_accessors(name, _lorenz_traj):
+    """``traj.dims`` / ``traj.recurrence`` / ``traj.lyap`` exist and are cached."""
+    acc = getattr(_lorenz_traj, name)
+    assert acc is getattr(_lorenz_traj, name), f"traj.{name} is not cached"
+    assert acc._system is _lorenz_traj
+
+
+def test_trajectory_does_not_grow_the_system_only_accessor():
+    """``chaos`` is system-first throughout, so it is NOT hung on a trajectory."""
+    traj = Lorenz().run(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    assert not hasattr(traj, "chaos")
+
+
+def test_trajectory_dims_is_identical_to_the_free_function(_lorenz_traj):
+    """The accessor adds zero behaviour: same series in, same number out."""
+    radii = np.logspace(-0.5, 0.8, 10)
+    assert _lorenz_traj.dims.correlation(radii=radii) == ts.analysis.correlation_dimension(
+        _lorenz_traj, radii=radii
+    )
+
+
+def test_trajectory_recurrence_is_identical_to_the_free_function(_lorenz_traj):
+    """Same for the recurrence accessor."""
+    short = _lorenz_traj[:400]
+    assert short.recurrence.rqa(recurrence_rate=0.05).determinism == (
+        ts.analysis.rqa(short, recurrence_rate=0.05).determinism
+    )
+
+
+def test_trajectory_lyap_from_data_is_identical_to_the_free_function(_lorenz_traj):
+    """``lyap.from_data`` is the one Lyapunov estimator a bare series supports."""
+    # Decimated: the raw dt=0.02 series is oversampled for this estimator and
+    # warns (the suite runs under ``filterwarnings = error``).
+    thin = _lorenz_traj[::4]
+    a = thin.lyap.from_data(dimension=3, delay=5, k_max=60)
+    b = ts.analysis.lyapunov_from_data(thin, dimension=3, delay=5, k_max=60)
+    assert np.allclose(np.asarray(a.ordinate), np.asarray(b.ordinate))
+    assert float(a.estimate) == float(b.estimate)
+
+
+@pytest.mark.parametrize("method", ["spectrum", "maximal"])
+def test_a_system_first_method_on_a_trajectory_raises_and_names_the_fix(method, _lorenz_traj):
+    """A trajectory has no right-hand side; the error says so and names the spelling."""
+    with pytest.raises(ts.errors.InvalidParameterError) as exc:
+        getattr(_lorenz_traj.lyap, method)()
+    msg = str(exc.value)
+    assert "measured data" in msg
+    assert f"system.lyap.{method}()" in msg
+
+
+def test_run_kwargs_on_a_trajectory_accessor_is_refused_not_ignored(_lorenz_traj):
+    """There is nothing to run, so silently dropping the window would be a lie."""
+    with pytest.raises(ts.errors.InvalidParameterError, match="nothing to run"):
+        _lorenz_traj.dims.correlation(run_kwargs={"final_time": 10.0})
+
+
+def test_the_system_side_of_the_accessors_is_unchanged(_lorenz_traj):
+    """Binding the accessors to a trajectory must not move the system behaviour."""
+    lor = Lorenz()
+    radii = np.logspace(-0.5, 0.8, 10)
+    assert lor.dims.correlation(data=_lorenz_traj, radii=radii) == (
+        _lorenz_traj.dims.correlation(radii=radii)
+    )
+    # ... and a system-first method still drives the system itself.
+    assert isinstance(lor.lyap.spectrum(final_time=20.0, ic=[1.0, 1.0, 1.0]), ts.LyapunovSpectrum)
+
+
+def test_trajectory_accessor_cache_survives_a_pickle_round_trip(_lorenz_traj):
+    """``__slots__`` needs the cache slot restored explicitly (it is not pickled)."""
+    import pickle
+
+    restored = pickle.loads(pickle.dumps(_lorenz_traj))
+    assert restored.dims is restored.dims
+    assert restored._accessor_cache == {"dims": restored.dims}

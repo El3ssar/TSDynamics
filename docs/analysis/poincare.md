@@ -38,7 +38,7 @@ import tsdynamics as ts
 section = ts.poincare_section(
     ts.systems.Rossler(),
     plane=("y", 0.0, "up"),   # section y = 0, crossed upward
-    n=500,
+    crossings=500,
 )
 
 section.t          # crossing times, shape (500,)
@@ -118,16 +118,16 @@ the two halves of the attractor and blurs the return structure.
     time- or step-based `transient` of other analyses. The section transient is
     measured in section hits, so the vocabulary keeps them apart.
 
-## The `PoincareMap` wrapper
+## `.poincare()` — the section as a discrete map
 
 `poincare_section` is a convenience over the real machinery, the `PoincareMap`
 derived system. Because a `PoincareMap` *is* a discrete `System`, it slots into
-anything written for maps:
+anything written for maps — and `.poincare()` on the flow builds one, in the
+same plane vocabulary:
 
 ```python
-from tsdynamics import PoincareMap
-
-pmap = PoincareMap(ts.systems.Rossler(), plane=("y", 0.0, "up"), dt=0.01)
+pmap = ts.systems.Rossler().poincare("y", 0.0, direction="up", dt=0.01)
+# ...identical to ts.derived.PoincareMap(Rossler(), ("y", 0.0, "up"), dt=0.01)
 
 u1 = pmap.step()             # advance the flow to the next crossing
 sec = pmap.trajectory(500)   # collect 500 crossings → PoincareSection

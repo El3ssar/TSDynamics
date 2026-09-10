@@ -141,7 +141,7 @@ spec.save("lorenz.gif")
 import numpy as np, tsdynamics as ts
 
 # Poincaré section of the Rössler attractor (root-refined crossings)
-section = ts.poincare_section(ts.Rossler(), plane=("y", 0.0, "up"), n=500)
+section = ts.poincare_section(ts.Rossler(), plane=("y", 0.0, "up"), crossings=500)
 
 # Fixed points of the Hénon map, with stability
 list(ts.fixed_points(ts.Henon()))
@@ -177,9 +177,9 @@ Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
   cheap without being less accurate, and `max_step=` is there when you need to
   bound the step explicitly. Defaults are `rtol=1e-9` / `atol=1e-12`.
 
-- **Composition** — a `PoincareMap` of a flow *is* a discrete map, so
-  `orbit_diagram(PoincareMap(Rossler(), ("y", 0.0)), "c", values)` draws the
-  bifurcation diagram of a *flow* in one line.
+- **Composition** — a Poincaré section of a flow *is* a discrete map, so
+  `ts.orbit_diagram(ros.poincare("y", 0.0), "c", values)` draws the bifurcation
+  diagram of a *flow* in one line.
 
 - **Backend-neutral plotting** — one `PlotSpec` IR renders to matplotlib, plotly
   (interactive + animated HTML), three.js, or JSON, with a fluent styling/theming

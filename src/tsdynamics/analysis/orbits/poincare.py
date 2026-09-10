@@ -35,7 +35,7 @@ def poincare_section(
     plane: tuple[Any, ...] | None = None,
     *,
     direction: int | str = +1,
-    n: int = 1000,
+    crossings: int = 1000,
     skip_crossings: int = 0,
     dt: float = 0.01,
     max_time: float = 1e4,
@@ -47,7 +47,7 @@ def poincare_section(
     Two input modes:
 
     - **System** → wraps it in a :class:`~tsdynamics.derived.PoincareMap`
-      and collects ``n`` root-refined crossings on the fast Rust event engine
+      and collects ``crossings`` root-refined crossings on the fast Rust event engine
       (stream WS-CROSSKERNEL).
     - **Trajectory** → finds the plane crossings between consecutive samples
       by linear interpolation (pure data path; accuracy limited by the
@@ -91,8 +91,14 @@ def poincare_section(
         Crossing direction filter (``+1`` / ``"up"`` keeps only crossings where
         the section function is increasing).  Ignored when ``plane`` carries its
         own direction (third element).
-    n : int, default 1000
-        Number of crossings to collect (system mode).
+    crossings : int, default 1000
+        Number of crossings to collect (system mode) — the number of points the
+        returned section holds.
+
+        .. versionchanged:: 6.0
+            Named ``n`` before v6.  ``n`` meant four different things across the
+            public surface; here it counts crossings, so it says so — and it now
+            reads in the same unit as its neighbour ``skip_crossings``.
     skip_crossings : int, default 0
         Number of leading crossings to discard before recording.  (A *section*
         transient is a count of crossings, deliberately distinct from the
@@ -114,8 +120,8 @@ def poincare_section(
 
     Examples
     --------
-    >>> section = poincare_section(Rossler(), plane=("y", 0.0, "up"), n=500)
-    >>> section = poincare_section(Rossler(), n=500)     # section chosen + recorded
+    >>> section = poincare_section(Rossler(), plane=("y", 0.0, "up"), crossings=500)
+    >>> section = poincare_section(Rossler(), crossings=500)     # section chosen + recorded
     >>> section = poincare_section(traj, plane=("z", 25.0))     # from data
     """
     if isinstance(system, Trajectory):
@@ -125,7 +131,7 @@ def poincare_section(
         system = system.copy()
         system.reinit(seeded)
     pmap = PoincareMap(system, plane, direction=direction, dt=dt, max_time=max_time)
-    return pmap.trajectory(n, transient=skip_crossings)
+    return pmap.trajectory(crossings, transient=skip_crossings)
 
 
 def _section_from_data(
@@ -155,7 +161,7 @@ def _section_from_data(
         "plot_kind": "poincare_section",
         "plane": resolved_plane,
         # An auto-chosen section is recorded, never silent (same contract as the
-        # system path and as bifurcation_diagram's auto discrete view).
+        # system path and as orbit_diagram's auto discrete view).
         "plane_auto": plane is None,
         "direction": direction,
     }

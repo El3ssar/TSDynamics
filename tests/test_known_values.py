@@ -290,7 +290,7 @@ def test_lorenz_spectrum_is_dissipative_and_sorted() -> None:
     import tsdynamics as ts
 
     lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
-    spec = lor.lyapunov_spectrum(dt=0.1, burn_in=50.0, final_time=200.0)
+    spec = lor.lyapunov_spectrum(dt=0.1, transient=50.0, final_time=200.0)
     assert spec[0] >= spec[1] >= spec[2]
     # divergence of Lorenz = -(sigma + 1 + beta) ≈ -13.67
     assert -20.0 < spec.sum() < -5.0
@@ -301,7 +301,7 @@ def test_lorenz_partial_spectrum_n_exp_2() -> None:
     import tsdynamics as ts
 
     lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
-    exps = lor.lyapunov_spectrum(dt=0.1, burn_in=30.0, final_time=100.0, k=2)
+    exps = lor.lyapunov_spectrum(dt=0.1, transient=30.0, final_time=100.0, k=2)
     assert exps.shape == (2,)
     assert exps[0] > 0.0
 
@@ -312,7 +312,7 @@ def test_logistic_stable_regime_negative_exponent() -> None:
     import tsdynamics as ts
 
     m = ts.Logistic(params={"r": 2.0})
-    exps = m.lyapunov_spectrum(steps=5_000)
+    exps = m.lyapunov_spectrum(n=5_000)
     assert exps[0] < 0.0
 
 
@@ -331,7 +331,7 @@ def test_mackeyglass_two_exponents_finite() -> None:
     exps = mg.lyapunov_spectrum(
         k=2,
         dt=0.5,
-        burn_in=50.0,
+        transient=50.0,
         final_time=300.0,
         ic=traj.y[-1],
         rtol=1e-4,

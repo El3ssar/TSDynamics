@@ -56,7 +56,7 @@ def _result_builders() -> dict[str, object]:
     rm = ts.recurrence_matrix(traj.y[:200], recurrence_rate=0.05)
     return {
         "OrbitDiagram": ts.orbit_diagram(
-            ts.Logistic(), "r", np.linspace(2.8, 4.0, 50), n=40, transient=100
+            ts.Logistic(), "r", np.linspace(2.8, 4.0, 50), points_per_value=40, transient=100
         ),
         "DimensionResult": ts.correlation_dimension(traj),
         "RecurrenceMatrix": rm,
@@ -316,7 +316,7 @@ def test_plot_returns_the_spec_on_every_door():
         traj.plot(),
         ts.plot(traj),
         ts.Lorenz().plot(final_time=2.0, dt=0.05),
-        traj.plot().plot(title="chained"),
+        traj.plot().tweak(title="chained"),
         traj.to_plot_spec(),
     ]
     assert {type(d) for d in doors} == {PlotSpec}
@@ -487,7 +487,7 @@ def test_color_by_invalid_inputs_raise():
 
 
 def test_poincare_short_circuit_is_overridden_by_components_or_kind():
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
+    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), crossings=80)
     # Default view honours the section intent…
     assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
     # …but selecting components or forcing a kind opts out of the short-circuit.
@@ -529,7 +529,7 @@ def test_trajectory_render_raises_without_backend(monkeypatch):
 
 
 def test_poincare_section_carries_intent_from_system():
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
+    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), crossings=80)
     assert section.meta.get("plot_kind") == "poincare_section"
     spec = section.to_plot_spec()
     assert spec.kind == PlotKind.POINCARE_SECTION
@@ -555,7 +555,7 @@ def test_poincare_section_from_data_carries_intent():
 
 def test_poincare_section_drops_the_normal_coordinate():
     # plane (1, 0.0) fixes component 1; the in-plane axes must be the other two.
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=80)
+    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), crossings=80)
     i, j = section._section_axes()
     assert 1 not in (i, j)
     assert i != j
@@ -677,7 +677,7 @@ def test_building_specs_imports_no_plot_library():
         # parameters off the data (see `_result_builders`)
         "lyap = ts.Lorenz().integrate(final_time=120.0, dt=0.02).after(20.0).y[:, 0];"
         "traj.to_plot_spec(); traj.to_plot_spec(kind='time_series');"
-        "ts.poincare_section(ts.Rossler(), plane=(1, 0.0), n=40).to_plot_spec();"
+        "ts.poincare_section(ts.Rossler(), plane=(1, 0.0), crossings=40).to_plot_spec();"
         "rm = ts.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.to_plot_spec();"
         "ts.rqa(rm).to_plot_spec();"
         "ts.correlation_dimension(traj).to_plot_spec();"

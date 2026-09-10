@@ -30,7 +30,7 @@ class Lorenz(ContinuousSystem):
         "ic": (1.0, 1.0, 1.0),
         "kwargs": {
             "dt": 0.1,
-            "burn_in": 50.0,
+            "transient": 50.0,
             "final_time": 200.0,
             "method": "dop853",
             "rtol": 1e-7,
@@ -269,7 +269,7 @@ class Rossler(ContinuousSystem):
         "spectrum": (0.0714, 0.0, -5.39),
         "atol": (0.06, 0.06, 1.5),
         "ic": (1.0, 0.0, 0.0),
-        "kwargs": {"dt": 0.1, "burn_in": 100.0, "final_time": 500.0},
+        "kwargs": {"dt": 0.1, "transient": 100.0, "final_time": 500.0},
         "source": "Sprott (2003), Chaos and Time-Series Analysis",
     }
 
@@ -612,7 +612,7 @@ class Chua(ContinuousSystem):
         "ic": (0.1, 0.0, 0.0),
         "kwargs": {
             "dt": 0.02,
-            "burn_in": 100.0,
+            "transient": 100.0,
             "final_time": 400.0,
             "method": "dop853",
             "rtol": 1e-8,
@@ -781,7 +781,7 @@ class Duffing(ContinuousSystem):
         # the usual near-zero tolerance band would count it as positive; require
         # a strictly positive exponent instead.
         "zero_band": 0.0,
-        "kwargs": {"final_time": 4000.0, "dt": 0.02, "burn_in": 400.0},
+        "kwargs": {"final_time": 4000.0, "dt": 0.02, "transient": 400.0},
         "source": (
             "chaotic double-well regime (Ueda 1979); the exact value of the "
             "leading exponent and the analytic exponent sum -delta are pinned "

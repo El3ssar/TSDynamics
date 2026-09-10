@@ -139,7 +139,7 @@ orbit = h.iterate(steps=5000, ic=[0.1, 0.1])
 orbit.t                                        # array([0, 1, 2, ...]) — step indices
 orbit.y.shape                                  # (5000, 2)
 
-h.lyapunov_spectrum(steps=5000, ic=[0.1, 0.1])   # ≈ [0.42, -1.62]
+h.lyapunov_spectrum(n=5000, ic=[0.1, 0.1])   # ≈ [0.42, -1.62]
 ```
 
 The map spectrum is computed by a QR decomposition of the Jacobian product in a

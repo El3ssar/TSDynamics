@@ -97,7 +97,7 @@ explicit step $x_{k+1} = x_k + \lambda\,C\,g(x_k)$.
 ```python
 # at r = 4 both logistic fixed points {0, 0.75} are unstable; DL still reaches them
 ts.fixed_points(ts.systems.Logistic(params={"r": 4.0}),
-                region=([-0.2], [1.2]), method="dl")
+                region=[(-0.2, 1.2)], method="dl")
 # [FixedPoint([-0.], unstable, |λ|max=4.0000),
 #  FixedPoint([ 0.75], unstable, |λ|max=2.0000)]
 ```
@@ -115,7 +115,7 @@ faster than multi-start on the analytic systems it applies to. It works for maps
 ```python
 # all 27 equilibria of the Thomas system, rigorously, in one box
 ts.fixed_points(ts.systems.Thomas(),
-                region=([-6, -6, -6], [6, 6, 6]), method="interval")
+                region=[(-6, 6), (-6, 6), (-6, 6)], method="interval")
 # → 27 equilibria  (where a 200-seed Newton finds only 23)
 ```
 

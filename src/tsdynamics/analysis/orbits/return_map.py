@@ -375,7 +375,7 @@ def _poincare_observable(
             system,
             plane,
             direction=direction,
-            n=n,
+            crossings=n,
             skip_crossings=int(skip_crossings),
             dt=dt,
             seed=seed,

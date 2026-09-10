@@ -16,7 +16,7 @@ from tsdynamics.errors import (
     remedy,
 )
 
-from .base import SystemBase, Trajectory
+from .base import SystemBase, Trajectory, as_lyapunov_result, resolve_transient
 
 if TYPE_CHECKING:
     from .base import ParamSet
@@ -83,14 +83,20 @@ class DiscreteMap(SystemBase, ABC):
     Subclass contract
     -----------------
     1. Declare ``params = {...}`` and ``dim = N``.
-    2. Implement ``_step`` and ``_jacobian`` as ``@staticmethod`` static methods.
-       Parameters arrive as **positional arguments** in the order they appear
-       in the class-level ``params`` dict.  Both are :func:`abc.abstractmethod`
-       and — since this class is an :class:`abc.ABC`, like every other family
-       base — a subclass that omits one **cannot be instantiated**.  (Before v6
-       ``DiscreteMap`` was the one family base that was *not* an ABC, so the
-       abstract markers were inert and a missing kernel surfaced far downstream
-       as a mystifying ``TapeCompileError`` from the lowering pass.)
+    2. Implement ``_step`` as a ``@staticmethod``.  Parameters arrive as
+       **positional arguments** in the order they appear in the class-level
+       ``params`` dict.  It is :func:`abc.abstractmethod` and — since this class
+       is an :class:`abc.ABC`, like every other family base — a subclass that
+       omits it **cannot be instantiated**.  (Before v6 ``DiscreteMap`` was the
+       one family base that was *not* an ABC, so the abstract marker was inert
+       and a missing kernel surfaced far downstream as a mystifying
+       ``TapeCompileError`` from the lowering pass.)
+    3. ``_jacobian`` is **optional**: by default the library differentiates
+       ``_step`` symbolically, exactly as ``ContinuousSystem`` autogenerates its
+       Jacobian from ``_equations``.  Write one only when the step cannot be
+       traced (a Python ``if`` on the state) or when a one-sided slope on a
+       discontinuity is the meaningful answer.  Every catalogue map still ships
+       a hand-written one, which the test suite uses as a cross-check oracle.
 
     Iteration
     ---------
@@ -110,7 +116,7 @@ class DiscreteMap(SystemBase, ABC):
     >>> h = Henon()
     >>> traj = h.iterate(steps=10_000)
     >>> t_idx, X = traj.unpack()   # the two columns
-    >>> exps = h.lyapunov_spectrum(steps=5_000)
+    >>> exps = h.lyapunov_spectrum(n=5_000)
     >>> h_variant = h.with_params(a=1.2)
     >>> traj2 = h_variant.iterate(steps=10_000)
     """
@@ -191,20 +197,43 @@ class DiscreteMap(SystemBase, ABC):
         """
         ...
 
-    @staticmethod
-    @abstractmethod
-    def _jacobian(X: np.ndarray, *params: Any) -> Any:
+    @classmethod
+    def _jacobian(cls, X: np.ndarray, *params: Any) -> Any:
         """
         Return the (dim × dim) Jacobian at state ``X``.
 
-        Decorate with ``@staticmethod``.  Parameters positional, same order as
-        the class-level ``params`` dict.
+        **Optional.**  By default it is derived symbolically from ``_step`` —
+        the same way :class:`~tsdynamics.families.ContinuousSystem`
+        autogenerates its Jacobian from ``_equations`` — so defining a map means
+        writing ``_step`` and nothing else.
+
+        Override it (as a ``@staticmethod``, parameters positional in the order
+        of the class-level ``params`` dict) when the derivative cannot be taken
+        from the step: a map that branches on the state with a Python ``if``, or
+        one living on a discontinuity where a one-sided slope is the meaningful
+        answer.  A hand-written override always wins, and the test suite
+        cross-checks it against a finite difference of ``_step``
+        (:attr:`_jacobian_fd_check`).
 
         Returns
         -------
         array-like of shape (dim, dim).
         """
-        ...
+        from tsdynamics.engine.compile import map_jacobian_fn
+
+        # ``_jacobian`` is called off the CLASS (``type(sys)._jacobian(x, *params)``),
+        # so a map whose dimension is only fixed per instance has no dimension to
+        # trace against here.  Say so, rather than failing inside the trace.
+        dim = cls.dim
+        if dim is None:
+            raise InvalidInputError(
+                f"{cls.__name__}: cannot autogenerate `_jacobian` because `dim` is set "
+                f"per instance, and the Jacobian is derived off the class. Declare a "
+                f"class-level `dim`, or write the Jacobian yourself:\n"
+                f"    @staticmethod\n"
+                f"    def _jacobian(X, {', '.join(cls.params) or '...'}): ..."
+            )
+        return map_jacobian_fn(cls, params, dim=dim)(X)
 
     # ------------------------------------------------------------------ #
     # System protocol — incremental stepping
@@ -315,9 +344,12 @@ class DiscreteMap(SystemBase, ABC):
         transient: int = 0,
         **kwargs: Any,
     ) -> Trajectory:
-        """Protocol-uniform trajectory: ``iterate`` plus optional transient drop."""
-        traj = self.iterate(steps=transient + steps, **kwargs)
-        return traj[transient:] if transient > 0 else traj
+        """Protocol-uniform trajectory: ``iterate`` plus optional transient drop.
+
+        A permanent alias of ``iterate(transient=...)``, which owns the one
+        implementation.
+        """
+        return self.iterate(steps=steps, transient=transient, **kwargs)
 
     # ------------------------------------------------------------------ #
     # Trajectory production — the canonical ``run`` verb
@@ -325,31 +357,68 @@ class DiscreteMap(SystemBase, ABC):
 
     def run(
         self,
-        n: int = 1000,
+        n: int | None = None,
+        *,
+        ic: Any | None = None,
+        transient: int = 0,
+        backend: str | None = None,
+        seed: int | None = None,
+        max_retries: int = 10,
         **kwargs: Any,
     ) -> Trajectory:
         """
         Produce a trajectory — the one canonical verb for every family.
 
-        ``run`` is the unified trajectory producer: it answers the same call for
-        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
-        discrete map (this family) it iterates the map, so ``run`` is a thin
-        alias of :meth:`iterate`.  The number of iterations is named ``n`` (the
-        canonical step-count keyword), forwarded to :meth:`iterate` as its
-        ``steps`` argument; every other keyword is forwarded unchanged.
+        ``run`` is the unified trajectory producer: one verb for flows, maps,
+        DDEs and SDEs.  For a discrete map (this family) it iterates the map, so
+        ``run`` is a thin alias of :meth:`iterate`.
+
+        .. note::
+           The **verb** is shared; the **horizon keyword follows the family**,
+           because the two horizons are different quantities in different units.
+           A map has ``n`` (a count of iterations), a flow has ``final_time``
+           (time units) — ``hen.run(n=1000)`` and ``lor.run(final_time=100)``.
+           Passing ``final_time`` here is refused by name, not silently
+           reinterpreted as an iteration count.  The **positional** form is the
+           spelling that reads the same on both: ``hen.run(1000)``,
+           ``lor.run(100)``.  Everything that *is* family-independent — ``ic``,
+           ``seed``, ``backend``, ``transient`` — is spelled identically
+           everywhere.
 
         Parameters
         ----------
         n : int
-            Number of iterations. Default 1000.
+            Number of iterations. Default 1000.  ``steps=`` is accepted as an
+            exact alias, because that is what :meth:`iterate` names it and the
+            two verbs are otherwise interchangeable.
+        ic : array_like, optional
+            Initial condition.  Priority ``ic`` > ``self.ic`` > ``default_ic`` >
+            a seeded random draw.
+        transient : int
+            Iterations to run and **discard** before recording, so the returned
+            orbit starts on the attractor.  A count (a flow's ``transient`` is
+            in time units).
+        backend : str, optional
+            ``"jit"`` (default), ``"interp"``, or ``"reference"``.
+        seed : int, optional
+            Seeds the random initial-condition draw, making a run with no ``ic``
+            reproducible.
+        max_retries : int
+            How many fresh random initial conditions to try when an orbit
+            diverges.  Only applies when no explicit ``ic`` was given.
         **kwargs
-            Forwarded verbatim to :meth:`iterate` (``ic``, ``max_retries``,
-            ``backend``, ``seed``).
+            Any remaining option, forwarded verbatim to :meth:`iterate`.
 
         Returns
         -------
         Trajectory
             Identical to :meth:`iterate` — ``run`` adds no behaviour.
+
+        Raises
+        ------
+        InvalidParameterError
+            If both ``n`` and ``steps`` are given (they are the same argument),
+            or if a *flow* keyword is passed to a map.
 
         See Also
         --------
@@ -358,9 +427,45 @@ class DiscreteMap(SystemBase, ABC):
         Examples
         --------
         >>> Henon().run(n=5000)
+        >>> Henon().run(steps=5000)                 # the iterate() spelling
         >>> Lorenz().run(final_time=100, dt=0.01)   # the same verb integrates a flow
         """
-        return self.iterate(steps=n, **kwargs)
+        count = self._resolve_iteration_count(n, kwargs, where="run", default=1000)
+        return self.iterate(
+            steps=count,
+            ic=ic,
+            max_retries=max_retries,
+            backend=backend,
+            seed=seed,
+            transient=transient,
+            **kwargs,
+        )
+
+    def _resolve_iteration_count(
+        self, n: int | None, kwargs: dict[str, Any], *, where: str, default: int
+    ) -> int:
+        """Read a map's horizon from ``n`` or its ``steps`` alias, never both.
+
+        ``iterate`` names the iteration count ``steps`` and ``run`` names it
+        ``n``.  One concept, so **every** map horizon door accepts either word
+        and resolves it here — otherwise ``steps=`` collides with the forward on
+        one door and surfaces as a raw "got multiple values for keyword argument
+        'steps'" ``TypeError``, or (worse) as an "unexpected keyword argument"
+        on a door that simply forgot the alias.
+
+        Each door declares ``n: int | None = None`` and names its default here,
+        so "the user passed both" is always distinguishable from "the user
+        passed neither".  ``kwargs`` is consumed in place: ``steps`` is popped.
+        """
+        alias = kwargs.pop("steps", None)
+        if alias is not None and n is not None:
+            raise InvalidParameterError(
+                f"n and steps are the same argument (the iteration count), so pass "
+                f"only one; got n={n!r} and steps={alias!r}."
+                + remedy(f"{type(self).__name__}().{where}(n={default})")
+            )
+        count = n if n is not None else alias
+        return int(default if count is None else count)
 
     # ------------------------------------------------------------------ #
     # Iteration
@@ -374,6 +479,7 @@ class DiscreteMap(SystemBase, ABC):
         *,
         backend: str | None = None,
         seed: int | None = None,
+        transient: int = 0,
         **kwargs: Any,
     ) -> Trajectory:
         """
@@ -422,6 +528,17 @@ class DiscreteMap(SystemBase, ABC):
             :func:`tsdynamics.engine.compile.lower_map`); piecewise or
             ``numpy``-ufunc steps raise
             :class:`~tsdynamics.engine.compile.TapeCompileError`.
+        transient : int, optional
+            Leading stretch of the orbit to discard, in **iterations** (the same
+            unit as ``steps``).  ``transient + steps`` iterations are run and the
+            first ``transient`` dropped, so the returned trajectory still has
+            ``steps`` samples.  Spelled identically on every family and every
+            trajectory-producing verb — ``run`` / ``iterate`` / ``trajectory``
+            (on a flow the unit is time).
+
+            .. versionadded:: 6.0
+                Previously only :meth:`trajectory` accepted it, so a user who
+                found the canonical ``run`` verb could not discard a transient.
 
         Returns
         -------
@@ -465,12 +582,14 @@ class DiscreteMap(SystemBase, ABC):
                 f"steps is a number of iterations, so it must be >= 1; got {steps}."
                 + remedy(f"{type(self).__name__}().run(n=1000)")
             )
+        drop = int(resolve_transient(transient, discrete=True))
         backend = backend if backend is not None else self._default_backend
 
         with self._ic_rollback():
-            return self._iterate_with_retries(
-                steps=steps, ic=ic, max_retries=max_retries, backend=backend, seed=seed
+            traj = self._iterate_with_retries(
+                steps=steps + drop, ic=ic, max_retries=max_retries, backend=backend, seed=seed
             )
+        return traj[drop:] if drop > 0 else traj
 
     def _iterate_with_retries(
         self, *, steps: int, ic: Any | None, max_retries: int, backend: str, seed: int | None
@@ -567,13 +686,14 @@ class DiscreteMap(SystemBase, ABC):
 
     def lyapunov_spectrum(
         self,
-        steps: int = 5000,
+        n: int | None = None,
         ic: Any | None = None,
         k: int | None = None,
         reortho_interval: int = 1,
         *,
         backend: str | None = None,
-    ) -> np.ndarray:
+        **kwargs: Any,
+    ) -> Any:
         """
         QR-based Lyapunov spectrum.
 
@@ -595,8 +715,11 @@ class DiscreteMap(SystemBase, ABC):
 
         Parameters
         ----------
-        steps : int
-            Number of iterations. Default 5000.
+        n : int
+            Number of iterations — a map's horizon word, exactly as on
+            :meth:`run`. Default 5000.  ``steps=`` is accepted as its alias
+            here too (:meth:`iterate` names it that), so the same word works at
+            every map horizon door; passing both raises.
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then random.
         k : int, optional
@@ -628,7 +751,11 @@ class DiscreteMap(SystemBase, ABC):
         """
         from tsdynamics.derived.tangent import TangentSystem
 
+        n = self._resolve_iteration_count(n, kwargs, where="lyapunov_spectrum", default=5000)
         k = k or self.dim
-        return TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
-            steps=steps, ic=ic, reortho_interval=reortho_interval
+        exponents = TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
+            n=n, ic=ic, reortho_interval=reortho_interval
+        )
+        return as_lyapunov_result(
+            self, exponents, n=n, reortho_interval=reortho_interval, backend=backend
         )

@@ -108,7 +108,7 @@ class HyperBao(ContinuousSystem):
         "kwargs": {
             "k": 2,
             "dt": 0.05,
-            "burn_in": 50.0,
+            "transient": 50.0,
             "final_time": 200.0,
             "method": "dop853",
             "rtol": 1e-6,

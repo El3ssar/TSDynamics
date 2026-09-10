@@ -87,6 +87,7 @@ __all__ = [
     "lower_expressions",
     "lower_map",
     "lower_map_cached",
+    "map_jacobian_fn",
     "lower_map_sweep",
     "lower_map_sweep_cached",
     "lower_ode",
@@ -319,6 +320,21 @@ _SUBSCRIPT_RE = re.compile(r"object is not subscriptable")
 #: given when the source line could not be recovered.
 _ACCESSOR_TYPE_RE = re.compile(r"'function' object is not subscriptable")
 
+#: The *other* way a first-timer reaches for the state as a container: ``x, y, z =
+#: u``.  It is the spelling every ``DiscreteMap._step`` in this library uses (a
+#: map's state genuinely IS a vector), so a reader who wrote a map first will
+#: write it in an ODE — and Python answers "cannot unpack non-iterable function
+#: object", which names neither the kernel, nor the state, nor the fix.
+_UNPACK_RE = re.compile(r"cannot unpack non-iterable|is not iterable")
+
+#: The unpack error that names the accessor's own type, so the hint can be given
+#: even when the source line is unavailable (a class defined in a REPL / stdin,
+#: where ``inspect`` has no file to read).
+_UNPACK_ACCESSOR_TYPE_RE = re.compile(r"non-iterable function object|'function' object is not")
+
+#: A tuple-unpack of the state on the offending source line: ``x, y, z = u``.
+_UNPACK_LINE_RE = re.compile(r"^\s*([A-Za-z_][\w\s,]*?)\s*=\s*([A-Za-z_]\w*)\s*$")
+
 
 def _kernel_state_name(system: Any, kernel: str) -> str:
     """Name of the state parameter of ``kernel`` (the accessor), defaulting to ``y``."""
@@ -331,6 +347,24 @@ def _kernel_state_name(system: Any, kernel: str) -> str:
         return "y"
     params = [p for p in params if p != "self"]
     return params[0] if params else "y"
+
+
+def _unpacked_accessor_rewrite(line: str, state: str) -> str | None:
+    """Rewrite ``x, y, z = u`` as ``x, y, z = u(0), u(1), u(2)``, or ``None``.
+
+    Only fires when the right-hand side is exactly the state name: anything else
+    that failed to unpack is a different mistake, and offering this rewrite for
+    it would send the reader to the one name on the line that is already right.
+    """
+    match = _UNPACK_LINE_RE.match(line)
+    if match is None or match.group(2) != state:
+        return None
+    targets = [t.strip() for t in match.group(1).split(",") if t.strip()]
+    if len(targets) < 2:
+        return None
+    indent = line[: len(line) - len(line.lstrip())]
+    calls = ", ".join(f"{state}({i})" for i in range(len(targets)))
+    return f"{indent}{', '.join(targets)} = {calls}"
 
 
 def _subscripted_accessor_hint(
@@ -356,15 +390,25 @@ def _subscripted_accessor_hint(
     """
     state = _kernel_state_name(system, kernel)
     rewritten: str | None = None
+    unpacked = False
     if line is not None:
         fixed = re.sub(rf"\b{re.escape(state)}\s*\[([^][]*)\]", rf"{state}(\1)", line)
         rewritten = fixed if fixed != line else None
-    if rewritten is None and _ACCESSOR_TYPE_RE.search(message) is None:
+    if rewritten is None and _UNPACK_RE.search(message) is not None:
+        if line is not None:
+            rewritten = _unpacked_accessor_rewrite(line, state)
+        unpacked = rewritten is not None or _UNPACK_ACCESSOR_TYPE_RE.search(message) is not None
+        if not unpacked:
+            return None
+    if rewritten is None and not unpacked and _ACCESSOR_TYPE_RE.search(message) is None:
         return None
+    verb = f"`{state}[0]` is a subscript of a function"
+    if unpacked:
+        verb = f"unpacking it (`x, y, z = {state}`) is an iteration over a function"
     parts = [
         f"`{state}` is the state *accessor*, not an array: inside `{kernel}` the state is "
-        f"read by CALLING it — `{state}(0)`, `{state}(1)`, … — so `{state}[0]` is a "
-        "subscript of a function and cannot work."
+        f"read by CALLING it — `{state}(0)`, `{state}(1)`, … — so {verb} "
+        "and cannot work."
     ]
     if rewritten is not None:
         parts.append(f"  you wrote: {line}")
@@ -376,6 +420,16 @@ def _subscripted_accessor_hint(
     return parts
 
 
+def _kernel_owner(system: Any) -> type:
+    """Return the class that owns a kernel, given an instance *or* a class.
+
+    Every trace-time diagnostic names the system class.  Lowering normally has an
+    instance in hand, but :func:`map_jacobian_fn` derives a Jacobian from the
+    class alone, so both spellings must reach the same name.
+    """
+    return system if isinstance(system, type) else type(system)
+
+
 def _missing_staticmethod_hint(system: Any, kernel: str) -> list[str] | None:
     """Return the "you forgot ``@staticmethod``" advice, or ``None`` if that is not it.
 
@@ -385,11 +439,14 @@ def _missing_staticmethod_hint(system: Any, kernel: str) -> list[str] | None:
     swallows ``t``, and Python reports a missing argument named ``t`` — a message
     that points at the wrong parameter entirely.  The mistake is decidable from
     the class, not from the message, so it is checked structurally.
+
+    ``system`` may be an instance *or* the class itself: the autogenerated map
+    Jacobian (:func:`map_jacobian_fn`) traces a kernel with no instance in hand.
     """
     import inspect
 
     try:
-        raw = inspect.getattr_static(type(system), kernel)
+        raw = inspect.getattr_static(_kernel_owner(system), kernel)
     except AttributeError:  # pragma: no cover - the kernel exists by construction
         return None
     if not inspect.isfunction(raw):  # a staticmethod object → correctly declared
@@ -400,7 +457,7 @@ def _missing_staticmethod_hint(system: Any, kernel: str) -> list[str] | None:
         return None
     if not params or params[0] != "self":
         return None
-    name = type(system).__name__
+    name = _kernel_owner(system).__name__
     rest = ", ".join(params[1:]) or "y, t"
     return [
         f"`{kernel}` is declared as an ordinary method (its first parameter is `self`), but "
@@ -491,7 +548,7 @@ def _trace_kernel(
     except TapeCompileError:
         raise
     except Exception as err:  # noqa: BLE001 - any kernel failure means "not lowerable"
-        name = type(system).__name__
+        name = _kernel_owner(system).__name__
         parts = [f"{name}: `{kernel}` could not be lowered to an engine tape."]
         frame = _kernel_source_frame(err)
         offender = None
@@ -504,11 +561,17 @@ def _trace_kernel(
         parts.append(f"  raised {type(err).__name__}: {err}")
         listed = ", ".join(f"{m}.*" for m in numeric_modules)
         forgot_static = _missing_staticmethod_hint(system, kernel)
+        # Two spellings of the same misconception — "the state is a container":
+        # ``y[0]`` (a subscript) and ``x, y, z = u`` (an unpack).  Both are
+        # answered by the same sentence, so both route to the same hint.
+        reached_for_a_container = (
+            _SUBSCRIPT_RE.search(str(err)) is not None or _UNPACK_RE.search(str(err)) is not None
+        )
         subscripted = (
             _subscripted_accessor_hint(
                 system, kernel, frame[2] if frame is not None else None, str(err)
             )
-            if kernel in _ACCESSOR_KERNELS and _SUBSCRIPT_RE.search(str(err)) is not None
+            if kernel in _ACCESSOR_KERNELS and reached_for_a_container
             else None
         )
         if forgot_static is not None:
@@ -2328,6 +2391,110 @@ def lower_map(system: Any, *, with_jacobian: bool = False) -> Tape:
         raise TapeCompileError(f"_step traced to {len(exprs)} components, expected dim={dim}")
 
     return lower_expressions(exprs, u_syms, jacobian=with_jacobian)
+
+
+#: Memo for :func:`map_jacobian_fn`, keyed like every other lowering cache: the
+#: ``_step`` **function object** (so a monkeypatched or redefined kernel is a
+#: deliberate miss) plus the concrete parameter values it was traced against.
+_MAP_JACOBIAN_MEMO: dict[tuple[Any, ...], Callable[[Any], np.ndarray]] = {}
+
+
+def map_jacobian_fn(cls: Any, params: Sequence[Any], *, dim: int) -> Callable[[Any], np.ndarray]:
+    """Return a numeric ``J(x)`` for a map, derived symbolically from ``_step``.
+
+    This is the map twin of :meth:`ContinuousSystem.jacobian`: a map's Jacobian
+    is the symbolic derivative ``∂step_k/∂u_j`` of its own ``_step``, so writing
+    one by hand is transcription work the library can do exactly.  ``_step`` is
+    traced on a symbolic state (the same trace :func:`lower_map` performs),
+    differentiated with SymEngine, and compiled to a numeric callable with
+    ``Lambdify``.
+
+    Parameters are folded in as **constants**, matching :func:`lower_map`, so the
+    result is memoised per ``(kernel object, parameter values)``.
+
+    Parameters
+    ----------
+    cls : type[DiscreteMap]
+        The map class (its ``_step`` is the kernel to differentiate).
+    params : sequence
+        Parameter values in declaration order — exactly what ``_step`` receives.
+    dim : int
+        State dimension.
+
+    Returns
+    -------
+    callable
+        ``J(x) -> ndarray`` of shape ``(dim, dim)``.
+
+    Raises
+    ------
+    TapeCompileError
+        If ``_step`` cannot be traced symbolically (a Python ``if`` on the
+        state, or a routine the symbolic shim does not model).  Such a map must
+        supply its own ``_jacobian``.
+    """
+    import symengine
+
+    from tsdynamics.families.discrete import _unwrap_static
+
+    key = (_unwrap_static(cls._step), dim, tuple(map(_hashable_param, params)))
+    cached = _MAP_JACOBIAN_MEMO.get(key)
+    if cached is not None:
+        return cached
+
+    u_syms = [symengine.Symbol(f"u{i}") for i in range(dim)]
+    state = np.array(u_syms, dtype=object)
+    step = _trace_step(_unwrap_static(cls._step))
+
+    out = _trace_kernel(
+        cls,
+        "_step",
+        lambda: step(state, *params),
+        numeric_modules=_MAP_NUMERIC_MODULES,
+        hint=(
+            "A map `_step` may use `np.*` (it is traced through a symbolic shim), but it "
+            "must not branch on the state with a Python `if` — rewrite the branch with "
+            "`np.where`. A map whose step genuinely cannot be traced must define its own "
+            "`_jacobian` (a @staticmethod returning the dim x dim matrix)."
+        ),
+    )
+    exprs = _trace_kernel(cls, "_step", lambda: [symengine.sympify(e) for e in list(out)])
+    if len(exprs) != dim:
+        raise TapeCompileError(f"_step traced to {len(exprs)} components, expected dim={dim}")
+
+    rows = [[e.diff(u) for u in u_syms] for e in exprs]
+    flat = [_resolve_map_derivative(entry) for row in rows for entry in row]
+    lam = symengine.Lambdify(u_syms, flat, real=True)
+
+    def jac(x: Any) -> np.ndarray:
+        arr = np.asarray(lam(np.asarray(x, dtype=float).ravel()), dtype=float)
+        return arr.reshape(dim, dim)
+
+    if len(_MAP_JACOBIAN_MEMO) >= _TAPE_CACHE_MAXSIZE:
+        _MAP_JACOBIAN_MEMO.clear()
+    _MAP_JACOBIAN_MEMO[key] = jac
+    return jac
+
+
+def _hashable_param(value: Any) -> Any:
+    """Make a parameter value usable in the memo key (arrays are not hashable)."""
+    if isinstance(value, np.ndarray):
+        return (value.shape, value.tobytes())
+    return value
+
+
+def _resolve_map_derivative(entry: Any) -> Any:
+    """Resolve the a.e. derivative nodes SymEngine leaves unevaluated.
+
+    ``d|u|/du``, ``d sign(u)/du`` and ``d floor(u)/du`` are left as unevaluated
+    ``Derivative`` nodes that ``Lambdify`` cannot compile; a map built from
+    ``np.abs`` / ``np.sign`` / the ``%`` opcode hits all three.  This reuses the
+    resolution :class:`~tsdynamics.families.ContinuousSystem` already applies to
+    its autogenerated Jacobian, so both families answer the same way.
+    """
+    from tsdynamics.families.continuous import _resolve_derivative_nodes
+
+    return _resolve_derivative_nodes(entry)
 
 
 def lower_map_sweep(system: Any, sweep_param: str) -> Tape:

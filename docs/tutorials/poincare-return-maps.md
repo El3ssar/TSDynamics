@@ -41,7 +41,7 @@ ros = ts.systems.Rossler()          # a=0.2, b=0.2, c=5.7 — the classic chaoti
 section = ts.poincare_section(
     ros,
     plane=("y", 0.0, "up"),         # section y = 0, crossed with ẏ > 0
-    n=500,
+    crossings=500,
     dt=0.02,
     seed=0,
 )
@@ -78,11 +78,13 @@ of magnitude faster than a per-`dt` Python loop.
 ## 2. The section as a discrete map
 
 The same section is also a **derived system** you can hand to any map analysis.
-[`PoincareMap`](../analysis/poincare.md) wraps the flow and presents crossing
+[`.poincare()`](../analysis/poincare.md) wraps the flow and presents crossing
 $n \mapsto$ crossing $n+1$ as a `DiscreteMap`-shaped object:
 
 ```python
-pmap = ts.PoincareMap(ros, plane=("y", 0.0, "up"))
+pmap = ros.poincare("y", 0.0, direction="up")
+# ...the verb builds exactly ts.derived.PoincareMap(ros, ("y", 0.0, "up")),
+# and both spellings take the same plane vocabulary.
 
 sec = pmap.trajectory(500, transient=50, ic=[1.0, 1.0, 1.0])
 len(sec.y)              # 500 crossings (after discarding the first 50)
@@ -98,7 +100,7 @@ by eye:
 
 ```python
 od = ts.orbit_diagram(pmap, "c", np.linspace(3.0, 6.0, 200),
-                      component=0, transient=100, n=80, ic=[1.0, 1.0, 1.0])
+                      component=0, transient=100, points_per_value=80, ic=[1.0, 1.0, 1.0])
 od.bifurcation_points()[:3]     # where the cascade branches
 ```
 

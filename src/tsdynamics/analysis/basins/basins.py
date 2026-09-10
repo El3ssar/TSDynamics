@@ -421,7 +421,6 @@ def basins_of_attraction(
     region = coerce_region(
         region,
         analysis="basins_of_attraction",
-        alias="basins",
         system=system,
         want_grid=True,
     )
@@ -430,7 +429,8 @@ def basins_of_attraction(
             f"basins_of_attraction paints one label per lattice point, so region must "
             f"be a Grid (a {type(region).__name__} carries no resolution)."
             + remedy(
-                f"ts.basins(system, {_region_example(system)})",
+                "ts.basins_of_attraction(system, "
+                f"{_region_example(int(getattr(system, 'dim', 2) or 2), triples=True)})",
                 lead="Say how many initial conditions per axis:",
             )
         )
@@ -442,7 +442,6 @@ def basins_of_attraction(
             coerce_region(
                 recurrence,
                 analysis="basins_of_attraction",
-                alias="basins",
                 system=system,
                 want_grid=False,
             ),

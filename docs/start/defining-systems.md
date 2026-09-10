@@ -208,6 +208,39 @@ order 1); `dt` is the noise scale $\sqrt{dt}$, and `seed=` fixes the realisation
 Delay equations follow the same shape with `DelaySystem` and a delayed accessor
 `y(i, t - tau)` — see [the mental model](concepts.md#dde-delaysystem).
 
+## Code you already have: `WrappedSystem`
+
+The four families all ask you for the *equations*, so the library can lower them
+to the engine. When you already have a **stepper** — a foreign ODE solver, an
+agent-based model, a hardware-in-the-loop rig, anything that advances a state
+vector — `WrappedSystem` adapts it to the same protocol, and the whole analysis
+toolkit applies unchanged. It is the one place where subclassing (well,
+instantiating) a library type is genuinely the only path: there is no equation to
+lower and so nothing to infer.
+
+```python
+import numpy as np
+
+def step(u, n):                      # your stepper, whatever it is inside
+    x = u[0]
+    for _ in range(int(n)):
+        x = 3.9 * x * (1.0 - x)
+    return [x]
+
+sysm = ts.WrappedSystem(step, dim=1, is_discrete=True,
+                        initial=[0.5], variables=("x",))
+
+traj = sysm.run(500)                       # a Trajectory, like any other family
+float(ts.max_lyapunov(sysm, ic=[0.3]))     # ≈ 0.5 — chaotic
+ts.plot(traj)                              # and it plots like any other
+```
+
+`step_fn(state, n_or_dt) -> new_state` is the whole contract. Set
+`is_discrete=False` and `n_or_dt` becomes a time increment instead of an
+iteration count; `default_dt=` is what a bare `.step()` advances by. Anything
+that reads a system through the protocol — orbit diagrams, Poincaré sections,
+ensembles, basins — works on it.
+
 ## Auto-registration and auto-docs
 
 Every concrete family subclass **registers itself at class-definition time** —

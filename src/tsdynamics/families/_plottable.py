@@ -96,9 +96,16 @@ class SystemPlottable:
 
         1. plot-shaping keywords (``kind`` / ``components`` / ``primitive`` /
            the per-kind options) → :meth:`to_plot_spec`;
-        2. inline spec tweaks (``xlabel`` / ``yscale`` / ``title`` / ``xlim`` /
+        2. the **style** vocabulary (:data:`~tsdynamics.viz.style.STYLE_KEYS`
+           and its aliases — ``color`` / ``lw`` / ``alpha`` / …) and ``theme``
+           → applied to the finished spec.  These are the same spellings, with
+           the same meanings, that ``ts.plot(system, color=...)`` accepts::
+
+               lor.plot(final_time=20.0, color="crimson", title="Lorenz")
+
+        3. inline spec tweaks (``xlabel`` / ``yscale`` / ``title`` / ``xlim`` /
            …) → applied to the spec;
-        3. **everything else → the integration** — forwarded through
+        4. **everything else → the integration** — forwarded through
            :meth:`to_plot_spec` to the family's ``trajectory`` (``final_time`` /
            ``dt`` / ``steps`` / ``ic`` / ``method`` / …), which validates them and
            raises :class:`~tsdynamics.errors.InvalidParameterError` on a typo.
@@ -132,6 +139,7 @@ class SystemPlottable:
             _INLINE_TWEAKS,
             reject_positional_transform,
         )
+        from tsdynamics.viz.style import style_names
 
         reject_positional_transform(transforms, "system")
 
@@ -139,11 +147,22 @@ class SystemPlottable:
             return {k: kwargs.pop(k) for k in list(kwargs) if k in keys}
 
         spec_kw = _take(_PLOT_SPEC_KEYS)
+        # Style is peeled BEFORE the leftovers reach the integration: a style word
+        # that fell through used to be reported as an invalid *integrate()*
+        # keyword ("color is not a valid integrate()/run() keyword"), which names
+        # the wrong vocabulary entirely.
+        style_kw = _take(style_names())
+        theme = kwargs.pop("theme", None)
         tweak_kw = _take(_INLINE_TWEAKS.keys() | _COLORIZE_TWEAKS)
         # Whatever is left is an integration keyword; ``to_plot_spec`` hands it to
         # the family's ``trajectory``, which is the one place that knows the valid
         # names and rejects a typo.
-        return self.to_plot_spec(**spec_kw, **kwargs).plot(**tweak_kw)
+        spec = self.to_plot_spec(**spec_kw, **kwargs)
+        if theme is not None:
+            spec.theme(theme)
+        if style_kw:
+            spec.style(**style_kw)
+        return spec.tweak(**tweak_kw)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Rich notebook display — renders inline once a backend is installed.

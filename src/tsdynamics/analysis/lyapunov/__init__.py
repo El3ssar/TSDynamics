@@ -266,6 +266,7 @@ def lyapunov_spectrum(
     dt: float | None = None,
     ic: Any | None = None,
     method: str | None = None,
+    **aliases: Any,
 ) -> LyapunovSpectrum:
     """Lyapunov spectrum of any system — the uniform, documented entry point.
 
@@ -289,6 +290,12 @@ def lyapunov_spectrum(
     n : int, optional
         Number of iterations for a **map**.  Mutually exclusive with
         ``final_time``; a map uses ``n``.
+    **aliases
+        ``steps=`` only — the alias of ``n`` that a map's
+        :meth:`~tsdynamics.families.discrete.DiscreteMap.iterate` already
+        accepts, taken here too so the flat function speaks the same horizon
+        vocabulary as the method it wraps.  Passing both ``n`` and ``steps``
+        raises, as does any other keyword.
     transient : float, optional
         Amount discarded before averaging (a flow burn-in **time**).  Maps
         reorthonormalise from the initial condition and take no transient here.
@@ -346,6 +353,33 @@ def lyapunov_spectrum(
     if k is not None and k <= 0:
         raise ValueError(f"k (number of exponents) must be a positive integer, got {k!r}.")
 
+    # ``steps`` is the alias of ``n`` a map's ``iterate`` / ``run`` accept, so it
+    # reaches this door too: the flat function must take the same horizon words
+    # as the method it wraps, or ``hen.lyapunov_spectrum(steps=2000)`` working
+    # while ``ts.lyapunov_spectrum(hen, steps=2000)`` raises is a signature bug
+    # a user has no way to predict.  It is accepted through ``**aliases`` rather
+    # than named in the signature on purpose: ``n`` is the declared vocabulary
+    # (the naming gate in ``test_polish_standards.py`` bans ``steps`` as a
+    # *parameter spelling*), and an alias is a courtesy, not a second word.
+    steps = aliases.pop("steps", None)
+    if aliases:
+        # An unknown keyword is a call-shape error, so it must stay catchable as
+        # the ``TypeError`` the interpreter would have raised (``InvalidInputError``
+        # subclasses it); ``InvalidParameterError`` is a ``ValueError`` and is for
+        # a keyword that exists with a bad value.
+        raise InvalidInputError(
+            f"lyapunov_spectrum got an unexpected keyword argument {sorted(aliases)[0]!r}."
+            + remedy("ts.lyapunov_spectrum(system, k=2, final_time=200.0)")
+        )
+    if steps is not None:
+        if n is not None:
+            raise InvalidParameterError(
+                f"n and steps are the same argument (the iteration count), so pass "
+                f"only one; got n={n!r} and steps={steps!r}."
+                + remedy("ts.lyapunov_spectrum(system, n=5000)")
+            )
+        n = steps
+
     fwd: dict[str, Any] = {}
     if k is not None:
         fwd["k"] = k
@@ -366,7 +400,7 @@ def lyapunov_spectrum(
         if method is not None:
             raise ValueError("lyapunov_spectrum: a map spectrum has no solver method.")
         if n is not None:
-            fwd["steps"] = n
+            fwd["n"] = n
     else:
         # Flows (ODE/DDE): horizon is `final_time`; transient is a burn-in time.
         if n is not None:
@@ -374,7 +408,7 @@ def lyapunov_spectrum(
         if final_time is not None:
             fwd["final_time"] = final_time
         if transient is not None:
-            fwd["burn_in"] = transient
+            fwd["transient"] = transient
         if dt is not None:
             fwd["dt"] = dt
         if method is not None:
@@ -499,6 +533,7 @@ def max_lyapunov(
     *,
     d0: float = 1e-9,
     n: int | None = None,
+    final_time: float | None = None,
     steps_per: int = 10,
     dt: float | None = None,
     transient: int = 500,
@@ -547,6 +582,19 @@ def max_lyapunov(
         raised to remove at ``dt = 0.01``.  Pass ``n`` explicitly to fix the
         cycle count instead (and then keep ``n * steps_per * dt`` well above
         ~100 time units, or accept that bias).
+    final_time : float, optional
+        Averaging-window length for a **flow**, in **time units** — the quantity
+        that actually sets the accuracy of the estimate, expressed directly
+        instead of via a cycle count.  It is the same word, in the same unit,
+        that :func:`lyapunov_spectrum` and every family's ``run`` already use
+        for a horizon.  Overrides the :data:`_DEFAULT_WINDOW` default; mutually
+        exclusive with ``n`` (which fixes the cycle count instead), and rejected
+        for a **map**, whose horizon is a count of iterations (``n``).
+
+        .. versionadded:: 6.0
+            Previously the window could only be reached indirectly, by solving
+            ``n * steps_per * dt`` for ``n`` — so the one keyword every other
+            Lyapunov entry point spelled ``final_time`` was simply missing here.
     steps_per : int, default 10
         Protocol steps between rescalings.
     dt : float, optional
@@ -619,6 +667,27 @@ def max_lyapunov(
             f"{n!r}. Omit it to size the averaging window automatically."
             + remedy("ts.max_lyapunov(system)")
         )
+    if final_time is not None:
+        # ``n`` (a cycle count) and ``final_time`` (a window in time) set the same
+        # quantity two different ways, so accepting both would leave one silently
+        # ignored.  A map has no clock for a time window to mean anything on.
+        if system.is_discrete:
+            raise InvalidParameterError(
+                "final_time is a window in time units, and a map has no continuous "
+                "time — its horizon is a count of iterations."
+                + remedy("ts.max_lyapunov(system, n=2000)")
+            )
+        if n is not None:
+            raise InvalidParameterError(
+                f"n and final_time both size the averaging window (a cycle count vs a "
+                f"length in time), so pass only one; got n={n!r} and "
+                f"final_time={final_time!r}." + remedy("ts.max_lyapunov(system, final_time=200.0)")
+            )
+        if not np.isfinite(final_time) or final_time <= 0.0:
+            raise InvalidParameterError(
+                f"final_time is the averaging-window length, so it must be finite and "
+                f"> 0; got {final_time!r}." + remedy("ts.max_lyapunov(system, final_time=200.0)")
+            )
 
     # Maps: the maximal exponent is the leading entry of the QR tangent-map
     # spectrum, run in one Rust engine call (stream perf/map-lyapunov-kernel) —
@@ -665,7 +734,8 @@ def max_lyapunov(
                     "max_lyapunov: the reference clock did not advance, so the "
                     "averaging window cannot be sized — pass an explicit n (and dt)."
                 )
-            n_cycles = max(_MIN_CYCLES, int(np.ceil(_DEFAULT_WINDOW / (steps_per * per_step))))
+            window = _DEFAULT_WINDOW if final_time is None else float(final_time)
+            n_cycles = max(_MIN_CYCLES, int(np.ceil(window / (steps_per * per_step))))
 
     pert = system.copy()
     direction = rng.normal(size=system.dim)
@@ -714,7 +784,12 @@ def max_lyapunov(
             )
     mle = float(log_sum / elapsed)
     meta = AnalysisResult.build_meta(
-        system, analysis="max_lyapunov", n=n_cycles, transient=transient
+        system,
+        analysis="max_lyapunov",
+        n=n_cycles,
+        transient=transient,
+        final_time=final_time,
+        window=elapsed,
     )
     return ScalarResult(value=mle, meta=meta)
 

@@ -42,7 +42,7 @@ def _on_attractor_ic(name: str) -> np.ndarray:
 def test_interp_equals_jit_bit_for_bit() -> None:
     """The interpreter and the Cranelift JIT give an identical spectrum (D2)."""
     ic = _on_attractor_ic("MackeyGlass")
-    kw = dict(k=2, dt=0.2, burn_in=40.0, final_time=200.0, ic=ic)
+    kw = dict(k=2, dt=0.2, transient=40.0, final_time=200.0, ic=ic)
     interp = ts.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
     jit = ts.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
     np.testing.assert_array_equal(interp, jit)
@@ -52,7 +52,7 @@ def test_spectrum_is_descending_with_positive_leading() -> None:
     """Mackey–Glass: λ₁ > 0 (chaos), and the spectrum is sorted descending."""
     ic = _on_attractor_ic("MackeyGlass")
     spec = ts.MackeyGlass().lyapunov_spectrum(
-        backend="interp", k=2, dt=0.2, burn_in=100.0, final_time=600.0, ic=ic
+        backend="interp", k=2, dt=0.2, transient=100.0, final_time=600.0, ic=ic
     )
     assert spec.shape == (2,)
     assert np.all(np.isfinite(spec))
@@ -74,7 +74,7 @@ def test_n_exp_may_exceed_dim() -> None:
         backend="interp",
         k=3,
         dt=0.05,
-        burn_in=200.0,
+        transient=200.0,
         final_time=1500.0,
         ic=_on_attractor_ic("SprottDelay"),
     )
@@ -94,7 +94,7 @@ def test_mackeyglass_second_exponent_is_near_zero() -> None:
     """
     ic = _on_attractor_ic("MackeyGlass")
     spec = ts.MackeyGlass().lyapunov_spectrum(
-        backend="interp", k=2, dt=0.1, burn_in=200.0, final_time=2000.0, ic=ic
+        backend="interp", k=2, dt=0.1, transient=200.0, final_time=2000.0, ic=ic
     )
     assert spec[0] > 0.0
     assert abs(spec[1]) < 0.01, f"second exponent {spec[1]} not near the marginal 0"
@@ -220,7 +220,7 @@ def test_multidim_spectrum_is_consistent_and_brackets_zero() -> None:
         final_time=300.0, dt=0.1, history=lambda s: [0.5 + 0.1 * np.sin(s), 0.3 + 0.1 * np.cos(s)]
     ).y[-1]
     eng = sys.lyapunov_spectrum(
-        backend="interp", k=2, dt=0.05, burn_in=200.0, final_time=2000.0, ic=ic
+        backend="interp", k=2, dt=0.05, transient=200.0, final_time=2000.0, ic=ic
     )
     assert eng.shape == (2,)
     assert np.all(np.isfinite(eng))

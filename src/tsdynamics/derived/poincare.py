@@ -901,7 +901,7 @@ class PoincareMap(DerivedSystem):
             "plot_kind": "poincare_section",
             "plane": self.plane,
             # Recorded so an auto-chosen section is never a silent choice (the
-            # same contract bifurcation_diagram keeps for its auto discrete view).
+            # same contract orbit_diagram keeps for its auto discrete view).
             "plane_auto": self.plane_auto,
             "direction": self.direction,
             "dt": self.dt,

@@ -267,6 +267,40 @@ Names resolve against the system's declared `variables` (Lorenz's are
 labels. An unknown name or an out-of-range index raises `InvalidParameterError`
 rather than plotting the wrong thing.
 
+## Data you measured somewhere else
+
+You do not need a system, and you do not need to build anything, to use the
+plotting layer. `ts.plot` takes bare arrays and lists:
+
+```python
+import numpy as np
+
+signal = np.sin(np.linspace(0.0, 40.0, 2000))
+points = np.column_stack([signal, np.roll(signal, 7)])
+
+ts.plot(signal)                          # (N,)   → time series, index time
+ts.plot(points)                          # (N, 2) → 2-D phase portrait
+ts.plot(points, "phase_portrait", primitive="density")
+ts.plot(signal, dt=0.02)                 # ...with a real sampling interval
+```
+
+An array is turned into a `Trajectory` on the way in — index time (`t = 0, 1,
+2, …`) unless you pass `dt=`. Build one yourself when you want to keep it, name
+its components, or hand it to an analysis:
+
+```python
+t = np.linspace(0.0, 40.0, 2000)
+traj = ts.Trajectory(t, points)          # no system required
+ts.recurrence_matrix(traj, recurrence_rate=0.05).plot().show()
+```
+
+!!! warning "A delay in *time units* needs a real `dt`"
+    `delay=` is a lag in **samples** and always works; `delay_time=` is in
+    **time units**, and an index-time trajectory has no clock to convert it. So
+    `ts.plot(signal, kind="delay", delay_time=0.5)` raises and names both fixes
+    — pass `dt=`, or give the lag in samples — rather than silently treating
+    `0.5` as half a sample.
+
 ## Colour by a scalar
 
 On a time series or a phase portrait, `color_by=` maps a per-point scalar onto
@@ -340,7 +374,7 @@ two agree:
 
 ```python
 portrait = traj.to_plot_spec(components=("x", "z"))
-fps.overlay_on(portrait, components=("x", "z")).plot()
+fps.overlay_on(portrait, components=("x", "z")).show()
 ```
 
 If you forget, the overlay **raises** rather than drawing markers in the wrong
@@ -348,7 +382,7 @@ place — the frame check compares what each spec's axes *mean*, so an `(x, z)`
 portrait will not silently accept `(x, y)` equilibria:
 
 ```pycon
->>> fps.overlay_on(portrait).plot()
+>>> fps.overlay_on(portrait).show()
 InvalidParameterError: axes mismatch state2(x, z) vs state2(x, y) — the two are
 different planes, so the fixed_points_overlay would land in the wrong place.
 Pass the same components= to both, or on='force' to overlay them anyway.
@@ -368,7 +402,7 @@ spec.save("fig.svg")     # scalable vector           → matplotlib
 spec.save("fig.html")    # interactive, rotatable    → plotly
 spec.save("fig.json")    # raw data payload          → json exporter
 
-spec.plot()                       # render inline (a notebook shows it)
+spec.show()                       # render inline (a notebook shows it)
 spec.render(backend="plotly")     # force a backend
 ```
 
@@ -379,6 +413,21 @@ quick one-off needs no chain:
 ```python
 traj.plot(components=["x", "z"], title="Lorenz (x, z)", yscale="linear")
 ```
+
+The **style** vocabulary rides along at the same door — `color=`, `linewidth=`
+(or `lw=`), `alpha=`, `cmap=`, plus `theme=` — with the same spellings and the
+same meanings at all three of `ts.plot(subject, ...)`, `traj.plot(...)` and
+`system.plot(...)`:
+
+```python
+traj.plot(color="crimson", linewidth=0.6, title="Lorenz", theme="dark").save("l.png")
+ts.systems.Lorenz().plot(final_time=20.0, color="crimson", title="Lorenz")
+```
+
+On `system.plot(...)` everything that is *not* plot-shaping, style or a tweak
+goes to the integration (`final_time=`, `dt=`, `ic=`, `method=`, …), and a typo
+there is still reported as an integration keyword — the two vocabularies are
+separated before either is validated.
 
 ## Composing panels
 

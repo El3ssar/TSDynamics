@@ -139,7 +139,7 @@ def fig_orbit_diagram(plt, out_path):
         ts.systems.Logistic(),
         "r",
         rs,
-        n=180,
+        points_per_value=180,
         transient=600,
         component=0,
     )
@@ -537,7 +537,7 @@ def fig_fixed_points(plt, out_path):
     cyc = np.asarray(orb.points)
 
     # The unstable equilibrium at the origin (ROSE x) via multi-start Newton.
-    fps = ts.fixed_points(sys, region=([-3.0, -4.0], [3.0, 4.0]))
+    fps = ts.fixed_points(sys, region=[(-3.0, 3.0), (-4.0, 4.0)])
 
     # A few trajectories spiralling onto the cycle (thin INDIGO): from near the
     # unstable origin outward, and from far outside inward.

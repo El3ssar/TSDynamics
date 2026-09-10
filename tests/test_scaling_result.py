@@ -315,7 +315,8 @@ def test_plot_scaling_renders_when_a_backend_registers(monkeypatch):
     monkeypatch.setattr(PlotSpec, "render", fake_render, raising=True)
 
     out = _scaling().plot.scaling(backend="mpl")
-    assert out == "FIGURE"
+    # ``plot`` builds — it hands back the spec, having rendered it (v6).
+    assert isinstance(out, PlotSpec)
     assert rendered["backend"] == "mpl"
     # The semantic kind that reached the spec is SCALING_FIT.
     assert str(rendered["kind"]) == "scaling_fit"

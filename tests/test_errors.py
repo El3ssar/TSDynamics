@@ -464,7 +464,6 @@ _SYSTEM_FIRST = frozenset(
     {
         "basin_fractions",
         "basins_of_attraction",
-        "bifurcation_diagram",
         "continuation",
         "expansion_entropy",
         "find_attractors",
@@ -569,7 +568,7 @@ def test_dual_convention_analysis_still_accepts_a_system(name):
 
     fn = registry.analyses.get(name)
     calls = {
-        "poincare_section": dict(plane=("y", 0.0, "up"), n=5, seed=0),
+        "poincare_section": dict(plane=("y", 0.0, "up"), crossings=5, seed=0),
         # an extremum return map needs a flow (a map has no continuous extrema)
         "return_map": dict(n=20, final_time=200.0, dt=0.02, component=2),
         "zero_one_test": dict(n=500, component=0),
