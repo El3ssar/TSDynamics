@@ -32,6 +32,7 @@ import warnings
 import numpy as np
 import pytest
 
+from tsdynamics.errors import InvalidParameterError
 from tsdynamics.viz.render.caps import VisualizationDegraded
 from tsdynamics.viz.spec import (
     Axis,
@@ -388,7 +389,7 @@ def test_theme_palette_grid_font_background_size_chain():
     returned = (
         spec.theme("dark")
         .palette(["#111", "#222"])
-        .grid(True, color="#555", alpha=0.6)
+        .gridlines(True, color="#555", alpha=0.6)
         .font(family="monospace", size=13.0)
         .background("#0a0a0a")
         .size(width=6.0, height=4.0, dpi=120.0)
@@ -658,3 +659,190 @@ def test_default_backend_is_stable_matplotlib():
 
     assert isinstance(fig1, Figure)
     assert not isinstance(fig1, PlotSpec)
+
+
+# ---------------------------------------------------------------------------
+# v6 — one style vocabulary, one figure vocabulary, one table that lists them
+# ---------------------------------------------------------------------------
+
+
+def test_ts_viz_styles_lists_the_vocabulary_and_who_honors_it() -> None:
+    """``ts.viz.styles`` is the answer to "what can I pass, and will it draw?"."""
+    import tsdynamics as ts
+
+    table = ts.viz.styles
+    assert table.names() == sorted(STYLE_KEYS)
+    assert table() == table.names()
+    assert len(table) == len(STYLE_KEYS)
+
+    # An alias resolves to its canonical key — the same resolution the doors use.
+    assert table.get("lw") is table.get("linewidth")
+    assert table["c"].name == "color"
+    assert "lw" in table and "linewidth" in table and "nonsense" not in table
+
+    # ``honored_by`` is a declaration the honoring-contract gate already proves
+    # true; here it just has to be *reachable*.
+    threejs = {k.name for k in table.find(honored_by="threejs")}
+    assert "color" in threejs and "cmap" not in threejs
+    assert set(table.names(aliases=True)) > set(table.names())
+
+    with pytest.raises(InvalidParameterError, match="unknown style key"):
+        table.get("definitely_not_a_style")
+
+    text = repr(table)
+    assert "linewidth" in text and "honored by" in text
+
+
+def test_the_style_vocabulary_is_the_same_object_at_every_door() -> None:
+    """One derived set — ``style_names()`` — peeled by every plotting door.
+
+    A door that carries its own copy is how ``color=`` came to work at
+    ``traj.plot(...)`` and raise at ``ts.plot(...)``; the fix is that there is
+    only one set to carry.
+    """
+    from tsdynamics.viz.style import style_names
+
+    names = style_names()
+    assert set(STYLE_KEYS) <= names
+    for key in STYLE_KEYS.values():
+        assert set(key.aliases) <= names, key.name
+    # 11 canonical keys + 7 aliases, measured.
+    assert len(STYLE_KEYS) == 11
+    assert len(names) == 18
+    assert sorted(names - set(STYLE_KEYS)) == [
+        "c",
+        "colormap",
+        "colorscale",
+        "ls",
+        "lw",
+        "ms",
+        "opacity",
+    ]
+
+
+def test_themes_is_a_registry_and_register_takes_plain_keywords() -> None:
+    """The C1 repair: no user should have to construct a ``Theme`` to name one.
+
+    Measured before v6: ``register_theme({...})`` gave ``AttributeError: 'dict'
+    object has no attribute 'name'`` and ``set_theme({...})`` a raw
+    ``TypeError: cannot use 'dict' as a dict key``.
+    """
+    import tsdynamics as ts
+
+    built = ts.viz.themes.register(
+        "lab",
+        palette=("#264653", "#e76f51"),
+        background="#ffffff",
+        font_family="Source Sans 3",
+        dpi=200,
+    )
+    assert built.name == "lab"
+    assert built.palette == ("#264653", "#e76f51")
+    assert built.dpi == 200
+    assert "lab" in ts.viz.themes.names() and "lab" in ts.viz.themes
+
+    # ...and derived from a built-in, which is the line 04 taught that did not run
+    # (``Theme`` has no ``.replace``).
+    paper = ts.viz.themes.register("paper", ts.viz.themes.get("publication"), dpi=600)
+    assert paper.dpi == 600
+    assert paper.font_family == ts.viz.themes.get("publication").font_family
+
+    assert ts.viz.themes.use("lab").name == "lab"
+    assert ts.viz.get_theme().name == "lab"
+
+    with pytest.raises(InvalidParameterError, match="unknown theme 'nope'"):
+        ts.viz.themes.use("nope")
+    with pytest.raises(InvalidParameterError, match="have no field 'bogus'"):
+        ts.viz.themes.register("bad", bogus=1)
+    with pytest.raises(InvalidParameterError, match="must be a Theme"):
+        ts.viz.themes.register("bad", {"palette": ("#000",)})  # type: ignore[arg-type]
+
+    assert ts.viz.themes.find(dpi=600) == [paper]
+    assert repr(ts.viz.themes).startswith("ts.viz.themes:")
+
+
+def test_the_figure_vocabulary_is_seventeen_names_and_lands_on_a_plot() -> None:
+    """The 17 figure keywords, applied by one shared applier.
+
+    Measured before v6: 12 of the 17 raised at ``ts.plot(...)`` and all 17 worked
+    at ``traj.plot(...)`` — because the front door carried a five-name copy.
+    """
+    import numpy as np
+
+    from tsdynamics.viz.spec import (
+        FIGURE_KEYS,
+        Layer,
+        PlotKind,
+        PlotSpec,
+        apply_figure_keywords,
+        split_figure_keywords,
+    )
+
+    assert sorted(FIGURE_KEYS) == [
+        "clim",
+        "colorbar",
+        "legend",
+        "theme",
+        "title",
+        "xlabel",
+        "xlim",
+        "xscale",
+        "xticks",
+        "ylabel",
+        "ylim",
+        "yscale",
+        "yticks",
+        "zlabel",
+        "zlim",
+        "zscale",
+        "zticks",
+    ]
+
+    t = np.linspace(0.0, 1.0, 8)
+    values = {
+        "xscale": "log",
+        "yscale": "log",
+        "zscale": "log",
+        "xlabel": "XL",
+        "ylabel": "YL",
+        "zlabel": "ZL",
+        "title": "TT",
+        "xlim": (0.0, 1.0),
+        "ylim": (0.0, 1.0),
+        "zlim": (0.0, 1.0),
+        "xticks": [0.0, 1.0],
+        "yticks": [0.0, 1.0],
+        "zticks": [0.0, 1.0],
+        "clim": (0.0, 1.0),
+        "colorbar": True,
+        "legend": True,
+        "theme": "dark",
+    }
+    for key in sorted(FIGURE_KEYS):
+        spec = PlotSpec(
+            kind=PlotKind.PHASE_PORTRAIT_3D,
+            layers=[Layer(PlotKind.LINE3D, {"x": t, "y": t, "z": t})],
+            z=Axis(),
+            ndim=3,
+        )
+        kw = {key: values[key], "final_time": 10.0}
+        figure = split_figure_keywords(kw)
+        assert set(figure) == {key}, key
+        assert kw == {"final_time": 10.0}, "a run keyword must survive the peel"
+        apply_figure_keywords(spec, figure)
+
+    # ...and the value is readable back off the plot, not merely accepted.
+    spec = PlotSpec(
+        kind=PlotKind.PHASE_PORTRAIT_3D,
+        layers=[Layer(PlotKind.LINE3D, {"x": t, "y": t, "z": t})],
+        z=Axis(),
+        ndim=3,
+    )
+    apply_figure_keywords(spec, dict(values))
+    assert spec.x.scale == "log" and spec.z.scale == "log"
+    assert spec.x.label == "XL" and spec.z.label == "ZL" and spec.title == "TT"
+    assert spec.x.limits == (0.0, 1.0) and spec.z.limits == (0.0, 1.0)
+    assert spec.x.ticks == [0.0, 1.0] and spec.z.ticks == [0.0, 1.0]
+    assert spec.clim == (0.0, 1.0)
+    assert spec.colorbar is not None and spec.legend is not None
+    assert spec._theme is not None and spec._theme.name == "dark"

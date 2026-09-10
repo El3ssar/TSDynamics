@@ -34,6 +34,7 @@ import numpy as np
 from tsdynamics.families import Trajectory
 
 from .._result import AnalysisResult
+from .._result_json import _sig
 from .poincare import _seeded_ic, poincare_section
 
 __all__ = ["ReturnMap", "return_map"]
@@ -47,7 +48,7 @@ class ReturnMap(AnalysisResult):
     Result of :func:`return_map`.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.  The recorded
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.  The recorded
     observable values are :attr:`values`; the return map itself is the pair
     (:attr:`current`, :attr:`successor`) = :math:`(v_n, v_{n+1})`.  Iterate for
     ``(current, successor)`` pairs, or use :meth:`flat` for the scatter-ready
@@ -151,11 +152,30 @@ class ReturnMap(AnalysisResult):
             meta=self.meta,
         )
 
-    def __repr__(self) -> str:
-        return (
-            f"ReturnMap(kind={self.kind!r}, observable={self.observable}, "
-            f"{self.values.size} values)"
+    def _observable_label(self) -> str:
+        """Return the recorded component's declared name, or its index."""
+        variables = self.meta.get("variables") if self.meta else None
+        if variables is not None:
+            names = tuple(variables)
+            if 0 <= int(self.observable) < len(names):
+                return str(names[int(self.observable)])
+        return f"component {int(self.observable)}"
+
+    def _answer(self) -> str:
+        """Return how many returns were collected, of which observable."""
+        n = int(self.current.size)
+        label = self._observable_label()
+        which = {"max": "successive maxima", "min": "successive minima"}.get(
+            self.kind, "successive crossings"
         )
+        return f"{n} returns of {label} · {which}"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the span of the recorded observable."""
+        v = np.asarray(self.values, dtype=float)
+        if not v.size:
+            return ()
+        return (f"{self._observable_label()} ∈ [{_sig(v.min(), 4)}, {_sig(v.max(), 4)}]",)
 
 
 def _cobweb_path(current: np.ndarray, successor: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -335,7 +355,7 @@ def _extremum_observable(
         idx = _observable_index(system, component)
         seeded = _seeded_ic(system, ic, seed)
         run_ic = seeded if seeded is not None else ic
-        traj = system.integrate(final_time=final_time, dt=dt, ic=run_ic, **integrate_kwargs)
+        traj = system.run(final_time=final_time, dt=dt, ic=run_ic, **integrate_kwargs)
         if transient:
             traj = traj.after(transient)
         return *_local_extrema(traj.y[:, idx], traj.t, method), idx

@@ -9,6 +9,7 @@ from typing import Any, cast
 import numpy as np
 
 from .._result import AnalysisResult
+from .._result_json import _sig
 from .poincare import _seeded_ic
 
 __all__ = ["OrbitDiagram", "orbit_diagram"]
@@ -29,6 +30,18 @@ _FLOW_MAX_TIME = 1.0e4
 #: correct entry for the fixed-point branch of a bifurcation diagram.
 _STATIONARY_RTOL = 1.0e-6
 
+#: Above this many recorded points the repr stops re-deriving the cascade
+#: summary.  ``periods()`` clusters every column, so it is O(total points), and a
+#: repr is typed at a prompt.  Measured: 2 400 points -> 1.7 ms, 40 000 -> 6.1 ms,
+#: 100 000 -> 15.1 ms, 200 000 -> 29.5 ms, so the cap buys a worst case of ~30 ms
+#: — under the threshold where a prompt feels slow.  A publication sweep above it
+#: simply omits the two summary lines; ``periods()`` / ``bifurcation_points()``
+#: are still there to call.
+_REPR_MAX_POINTS = 200_000
+
+#: Bifurcation values shown in the repr before it elides with ``…``.
+_REPR_MAX_BIFURCATIONS = 4
+
 
 @dataclass(frozen=True)
 class OrbitDiagram(AnalysisResult):
@@ -36,7 +49,7 @@ class OrbitDiagram(AnalysisResult):
     Result of :func:`orbit_diagram`.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.  Iterate to
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.  Iterate to
     get ``(value, points)`` pairs, or use :meth:`flat` for the scatter-ready
     arrays.
     """
@@ -222,15 +235,49 @@ class OrbitDiagram(AnalysisResult):
             meta=self.meta,
         )
 
-    def __repr__(self) -> str:
-        # Columns are ragged on the flow path — a value that settled on an
-        # equilibrium records one point where a chaotic one records ``n`` — so
-        # quoting the FIRST column's size described the whole diagram as
-        # "1 points/value" when 39 000 points were in it.  Show the range.
+    def _answer(self) -> str:
+        """Return the swept range and the size of the diagram.
+
+        Columns are ragged on the flow path — a value that settled on an
+        equilibrium records one point where a chaotic one records ``n`` — so
+        quoting the FIRST column's size described the whole diagram as
+        "1 points/value" when 39 000 points were in it.  Show the range.
+        """
         sizes = [int(p.shape[0]) for p in self.points]
         lo, hi = (min(sizes), max(sizes)) if sizes else (0, 0)
-        per = f"{lo}" if lo == hi else f"{lo}-{hi}"
-        return f"OrbitDiagram({self.param!r}, {len(self.values)} values, {per} points/value)"
+        per = f"{lo}" if lo == hi else f"{lo}–{hi}"
+        v = np.asarray(self.values, dtype=float)
+        span = f"{self.param} ∈ [{_sig(v[0], 4)}, {_sig(v[-1], 4)}] · " if v.size else ""
+        return f"{span}{len(self.values)} values × {per} points"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return what the cascade did: the periods seen and where they changed.
+
+        This is the *answer* a bifurcation diagram is computed for, and it is
+        two method calls away from a reader who does not know the method names.
+        Both are recomputed here, so a very large diagram is skipped rather than
+        making a repr slow (:data:`_REPR_MAX_POINTS`), and a failure to cluster
+        is silent — a repr must never raise.
+        """
+        total = sum(int(p.shape[0]) for p in self.points)
+        if not self.points or total > _REPR_MAX_POINTS:
+            return ()
+        try:
+            periods = np.asarray(self.periods())
+            cuts = np.asarray(self.bifurcation_points(), dtype=float)
+        except Exception:  # pragma: no cover - a repr must never raise
+            return ()
+        lines = []
+        seen = sorted({int(p) for p in periods if p > 0})
+        aperiodic = int((periods <= 0).sum())
+        if seen:
+            tail = f" · {aperiodic} aperiodic values" if aperiodic else ""
+            lines.append(f"periods seen: {', '.join(str(p) for p in seen)}{tail}")
+        if cuts.size:
+            shown = ", ".join(_sig(c, 4) for c in cuts[:_REPR_MAX_BIFURCATIONS])
+            more = " …" if cuts.size > _REPR_MAX_BIFURCATIONS else ""
+            lines.append(f"bifurcations at {self.param} = {shown}{more}")
+        return tuple(lines)
 
 
 def _count_branches(col: np.ndarray, rtol: float) -> int:
@@ -425,7 +472,7 @@ def _record_via_trajectory(
       sweep, which records an empty point set and warns for that value.
     """
     current.reinit(start)
-    section = current.trajectory(n, transient=transient)
+    section = current.run(n, transient=transient)
     return np.asarray(section.y, dtype=float)[:, idx], current.state()
 
 
@@ -578,7 +625,7 @@ def _record_via_peaks(
     need = transient + n
     horizon = float(final_time)
     while True:
-        traj = current.integrate(final_time=horizon, dt=dt, ic=start)
+        traj = current.run(final_time=horizon, dt=dt, ic=start)
         y = np.asarray(traj.y, dtype=float)
         if _is_stationary(y):
             # Settled on an equilibrium: the asymptotic set is the single state.
@@ -610,14 +657,18 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
     from tsdynamics.derived.stroboscopic import StroboscopicMap
     from tsdynamics.errors import InvalidInputError, InvalidParameterError
 
-    if not hasattr(system, "is_discrete"):
+    # v6: ``is_discrete`` left the public surface (``family`` replaced it), but a
+    # DERIVED wrapper is the case ``family`` cannot answer yet — a PoincareMap of a
+    # flow reports ``family="ode"`` while being a genuinely discrete view.  The
+    # private ``_is_discrete`` is correct on all five wrappers and every family.
+    if not hasattr(system, "_is_discrete"):
         raise InvalidInputError(
             f"orbit_diagram needs a dynamical system as its first argument, got "
             f"{type(system).__name__}. Pass a system (or a discrete view of one), e.g.\n"
             "    ts.orbit_diagram(ts.systems.Lorenz(), 'rho', "
             "np.linspace(0.0, 50.0, 200))"
         )
-    if system.is_discrete:
+    if system._is_discrete:
         if section is not None:
             raise InvalidParameterError(
                 f"section= chooses how to slice a *flow*, but {type(system).__name__} is "

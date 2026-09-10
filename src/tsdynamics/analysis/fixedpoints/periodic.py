@@ -35,6 +35,7 @@ from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data, reject_system
 from .._result import AnalysisResult, CollectionResult, ScalarResult
+from .._result_json import _sig, _state
 from . import _common as _c
 from .fixed import _build_seeds, _eigenvalue_plane_spec, _stabilising_matrices
 
@@ -204,11 +205,39 @@ class PeriodicOrbit(AnalysisResult):
             trivial_index=trivial,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        kind = "stable" if self.stable else "unstable"
-        mu = np.abs(self.multipliers).max() if self.multipliers.size else float("nan")
-        per = f"T={self.period:.6g}" if self.continuous else f"p={int(self.period)}"
-        return f"PeriodicOrbit({per}, {kind}, |μ|max={mu:.4f}, n={len(self.points)})"
+    def _period_label(self) -> str:
+        """Return ``period <p>`` for a map orbit or ``T = <t>`` for a flow's cycle."""
+        return f"T = {self.period:.6g}" if self.continuous else f"period {int(self.period)}"
+
+    def _gauge(self) -> str:
+        """Return the leading multiplier — the reading stability is decided from."""
+        mu = np.asarray(self.multipliers)
+        if not mu.size:
+            return "no multipliers"
+        return f"|μ|max = {_sig(float(np.abs(mu).max()), 4)}"
+
+    def _answer(self) -> str:
+        """Return the period and the point the orbit starts from."""
+        x0 = np.asarray(self.points, dtype=float)
+        start = f"  x0 = {_state(x0[0])}" if x0.size else ""
+        return f"{self._period_label()}{start}"
+
+    def _interpretation(self) -> str | None:
+        """Name the stability, and the multiplier it was decided from."""
+        return ("stable" if self.stable else "unstable") + f"  {self._gauge()}"
+
+    def _context(self) -> str | None:
+        """Return the subject and how many points the orbit is stored as."""
+        bits = [b for b in (self._system_label(),) if b]
+        bits.append(f"{len(self.points)} points")
+        return ", ".join(bits)
+
+    def _as_item(self) -> str:
+        """Return the compact one-line form used inside an orbit set's list."""
+        x0 = np.asarray(self.points, dtype=float)
+        start = f"  x0 = {_state(x0[0])}" if x0.size else ""
+        stability = "stable" if self.stable else "unstable"
+        return f"{self._period_label()}  {stability}  {self._gauge()}{start}"
 
 
 @dataclass(frozen=True, eq=False)
@@ -218,7 +247,7 @@ class OrbitSet(CollectionResult):
     A :class:`~tsdynamics.analysis._result.CollectionResult`: iterate it, index it
     (``orbits[0]`` is a :class:`PeriodicOrbit`), take its ``len``, and read
     :attr:`stable` / :attr:`unstable` sublists — while it carries ``.meta`` /
-    ``.summary()`` / ``.to_frame()`` / the ``.plot`` seam.
+    the readout ``repr`` / ``.to_frame()`` / the ``.plot`` seam.
     """
 
     @property
@@ -230,6 +259,27 @@ class OrbitSet(CollectionResult):
     def unstable(self) -> list[PeriodicOrbit]:
         """The unstable orbits in the set."""
         return [o for o in self.items if not o.stable]
+
+    def _noun(self) -> str:
+        """Return ``orbit`` — what one item of this collection is."""
+        return "orbit"
+
+    def _answer(self) -> str:
+        """Return the count, the shared period when there is one, and the split."""
+        if not self.items:
+            return "none found"
+        periods = {o.period for o in self.items}
+        shared = f" of period {int(next(iter(periods)))}" if len(periods) == 1 else ""
+        n_stable = len(self.stable)
+        plural = "s" if len(self.items) != 1 else ""
+        return (
+            f"{len(self.items)} {self._noun()}{plural}{shared} · "
+            f"{n_stable} stable, {len(self.items) - n_stable} unstable"
+        )
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the stable/unstable split the repr reports."""
+        return {"n_stable": len(self.stable), "n_unstable": len(self.unstable)}
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe the whole orbit set as one backend-agnostic phase portrait.
@@ -854,7 +904,7 @@ def estimate_period(
 
     Examples
     --------
-    >>> estimate_period(VanDerPol().integrate(final_time=200, dt=0.01))   # ≈ 6.66
+    >>> estimate_period(VanDerPol().run(final_time=200, dt=0.01))   # ≈ 6.66
 
     References
     ----------
@@ -920,7 +970,7 @@ def period_diagnostic(data: Any, **kwargs: Any) -> Any:
 
     Examples
     --------
-    >>> spec = period_diagnostic(VanDerPol().integrate(final_time=200, dt=0.01))
+    >>> spec = period_diagnostic(VanDerPol().run(final_time=200, dt=0.01))
     """
     from .. import _plotbuilder as pb
 

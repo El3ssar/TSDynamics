@@ -4,6 +4,38 @@ Split out of ``analysis/_result.py``; see that module's docstring (now the
 re-exporting facade) for the full result-layer contract.  The repr/JSON helpers
 live in :mod:`tsdynamics.analysis._result_json` and the ``.plot`` seam in
 :mod:`tsdynamics.analysis._result_viz`; this module holds only the base class.
+
+The repr **is** the answer (v6)
+-------------------------------
+Before v6 the readable text lived in ``summary()``, which nothing advertised,
+while ``__repr__`` — the thing a REPL and a notebook actually show — gave a
+constructor-shaped one-liner.  v6 deletes ``summary()`` and makes the repr what
+it printed.  Every result renders as::
+
+    <Name>  <THE ANSWER>   <verdict>   (<subject>)
+        <up to four supporting lines>
+        [0] <item>
+        ...
+        ... [N total]
+
+built from four subclass hooks, none of which a subclass is obliged to override:
+
+``_answer()``
+    The measurement, in the reader's units.  Defaults to the ``_repr_fields``
+    rendering, so a result that declares nothing still says what it holds.
+``_interpretation()``
+    The verdict — *chaotic*, *deterministic*, *not applicable*.  A verdict must
+    be supported by the data (contract §4.2 rule 9); return ``None`` to stay
+    silent rather than print a measured-looking zero.
+``_context()``
+    The trailing parenthetical: the originating system by default, or the
+    settings that make the number meaningful (``(kantz, m=5, τ=40)``).
+``_details()`` / ``_item_lines()``
+    Indented supporting lines and, for a collection, the truncated item list.
+
+Because every renderer (``__str__``, ``_repr_html_``, ``__format__``) is derived
+from those hooks, a subclass gets the console, the notebook and the f-string for
+one override instead of three.
 """
 
 from __future__ import annotations
@@ -20,6 +52,20 @@ from tsdynamics.analysis._result_viz import VisualizationNotInstalled, _PlotAcce
 
 if TYPE_CHECKING:
     from tsdynamics.viz.spec import PlotSpec
+
+#: Separator between the headline's slots (name/answer use two spaces; the
+#: verdict and the subject are set further off so the eye finds them).
+_GAP = "   "
+
+#: Indent of every supporting / item line under the headline.
+_INDENT = "    "
+
+#: A headline plus at most this many supporting lines.  More than four and the
+#: repr stops being a readout and becomes a dump.
+_MAX_DETAILS = 4
+
+#: Items shown before a collection's list is truncated with ``... [N total]``.
+_MAX_ITEMS = 10
 
 
 @dataclass(frozen=True)
@@ -113,99 +159,240 @@ class AnalysisResult:
         {"ScalarResult", "CountResult", "ArrayResult", "CollectionResult", "ScalingResult"}
     )
 
-    def __repr__(self) -> str:  # noqa: D105
-        parts = []
-        name_of = type(self).__name__
-        if name_of in self._ANONYMOUS_RESULT_TYPES:
+    # -- the four repr hooks ----------------------------------------------
+
+    def _result_name(self) -> str:
+        """Name the headline opens with.
+
+        A named result reprs as itself (``LyapunovSpectrum``, ``RQAResult``); an
+        anonymous wrapper reprs under the *analysis* that produced it, because
+        in a console the repr is the only thing that says what was measured.
+        """
+        name = type(self).__name__
+        if name in self._ANONYMOUS_RESULT_TYPES:
             analysis = self.meta.get("analysis") if self.meta else None
             if analysis:
-                parts.append(str(analysis))
+                return str(analysis)
+        return name
+
+    def _is_anonymous(self) -> bool:
+        """Whether the headline name came from ``meta`` rather than the class."""
+        return type(self).__name__ in self._ANONYMOUS_RESULT_TYPES and bool(
+            self.meta.get("analysis") if self.meta else None
+        )
+
+    def _subject_family(self) -> str | None:
+        """Return the producing system's family (``ode`` / ``map`` / …), if knowable.
+
+        Read off the registry by the name ``meta["system"]`` records, falling
+        back to the horizon keyword the analysis stored (``final_time`` ⇒ a flow,
+        ``n`` ⇒ a map).  ``None`` when the result came from measured data with no
+        system behind it.  Used wherever the *units* of an answer depend on
+        whether time is continuous — a Lyapunov exponent is per unit time for a
+        flow and per iteration for a map, and printing the wrong one is a
+        wrong answer, not a cosmetic slip.
+        """
+        if not self.meta:
+            return None
+        name = self.meta.get("system")
+        if name:
+            from tsdynamics import registry
+
+            try:
+                entry = registry.get(str(name))
+            except (KeyError, LookupError):
+                entry = None
+            if entry is not None:
+                return str(entry.family)
+        if self.meta.get("final_time") is not None:
+            return "ode"
+        if self.meta.get("n") is not None:
+            return "map"
+        return None
+
+    def _answer(self) -> str:
+        """Return **the answer**: what was measured, in the reader's units.
+
+        The base renders the declared display fields (``_repr_fields``, else the
+        dataclass fields) as ``name = value`` joined by ``·``, so a result that
+        overrides nothing still says what it holds.
+        """
+        parts = []
         for name in self._display_fields():
             try:
                 value = getattr(self, name)
             except AttributeError:
                 continue
-            parts.append(f"{name}={_fmt(value)}")
-        return f"{name_of}({', '.join(parts)})"
+            parts.append(f"{name} = {_fmt(value)}")
+        return " · ".join(parts)
 
     def _interpretation(self) -> str | None:
-        """Return a one-line human interpretation, or ``None`` for none.
+        """Return the one-word/one-clause verdict, or ``None`` to stay silent.
 
-        Overridden by subclasses (e.g. "chaotic: 1 positive exponent").  The
-        base returns ``None`` so :meth:`summary` simply omits the line.
+        Overridden by subclasses (``chaotic``, ``deterministic``, ``fractal
+        boundary``).  A verdict must be **supported by the data**: when the test
+        does not apply, return ``None`` rather than a measured-looking negative.
         """
         return None
+
+    def _context(self) -> str | None:
+        """Return the trailing parenthetical, or ``None`` for none.
+
+        By default the originating system, which is what makes an answer
+        attributable.  A result whose meaning depends on its settings rather
+        than on a system (an embedding's ``(m=3, τ=9 samples)``, a recurrence
+        matrix's ``(euclidean, theiler=0)``) overrides this with those instead.
+        """
+        return self._system_label()
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the supporting lines under the headline (at most four)."""
+        return ()
+
+    def _item_lines(self) -> tuple[str, ...]:
+        """Return the item lines of a collection-like result (already truncated)."""
+        return ()
+
+    def _as_item(self) -> str:
+        """Return this result's one-line form *inside another result's list*.
+
+        A collection lists its members, and a member's headline repeats the
+        subject and the class name on every row — noise, when the header already
+        said both.  A result that is commonly collected (a fixed point, an
+        attractor, a periodic orbit) overrides this with the compact form; the
+        default is the headline, which is right for anything else.
+
+        Kept separate from :meth:`__str__` deliberately: ``str(result)`` is the
+        headline for *every* result (contract §4.2 rule 12), so overloading it
+        for the list form would make ``print(fixed_point)`` drop the system it
+        belongs to.
+        """
+        return self.headline()
 
     def _system_label(self) -> str | None:
         """Return the originating system's name from ``meta``, if recorded."""
         system = self.meta.get("system") if self.meta else None
         return str(system) if system else None
 
-    def summary(self) -> str:
-        """Return a human-readable multi-line readout of the result.
+    # -- the renderers, all derived from the hooks above ------------------
 
-        The header names the result type (and the originating system, when
-        recorded in ``meta``); the body lists the display fields; an optional
-        trailing ``→`` line carries the subclass's interpretation.
+    def headline(self) -> str:
+        """Return the single line that carries the answer.
+
+        ``<Name>  <answer>   <verdict>   (<subject>)``, with the empty slots
+        omitted.  This is the repr's first line and the whole of ``str(self)``.
 
         Returns
         -------
         str
         """
-        label = self._system_label()
-        header = type(self).__name__ + (f"  ({label})" if label else "")
-        lines = [header]
-        for name in self._display_fields():
-            try:
-                value = getattr(self, name)
-            except AttributeError:
-                continue
-            lines.append(f"  {name} = {_fmt(value)}")
-        interpretation = self._interpretation()
-        if interpretation:
-            lines.append(f"  → {interpretation}")
+        line = self._result_name()
+        answer = self._answer()
+        if answer:
+            # A named result is a title followed by its readout, so it gets the
+            # wider gap; an anonymous one reads as a single sentence
+            # (``max_lyapunov = 0.42 per iteration``) and gets one space.
+            line += (" " if self._is_anonymous() else "  ") + answer
+        verdict = self._interpretation()
+        if verdict:
+            line += _GAP + verdict
+        context = self._context()
+        if context:
+            line += _GAP + f"({context})"
+        return line
+
+    def __repr__(self) -> str:  # noqa: D105
+        lines = [self.headline()]
+        lines += [_INDENT + text for text in self._details()[:_MAX_DETAILS]]
+        lines += [_INDENT + text for text in self._item_lines()]
         return "\n".join(lines)
 
-    def _repr_html_(self) -> str:
-        """Return a small HTML table for Jupyter / IPython display."""
-        label = self._system_label()
-        caption = html.escape(type(self).__name__ + (f" ({label})" if label else ""))
-        rows = []
-        for name in self._display_fields():
-            try:
-                value = getattr(self, name)
-            except AttributeError:
+    def __str__(self) -> str:
+        """Return the headline — the answer without the supporting lines."""
+        return self.headline()
+
+    def _as_number(self) -> float | None:
+        """Return the number this result stands for, or ``None`` if it is not one.
+
+        Reads whichever numeric conversion the subclass declares — ``__float__``
+        for a measured quantity, ``__int__`` for a count or a dimension — so a
+        result that *is* a number never has to also spell out ``__format__``.
+        """
+        for name in ("__float__", "__int__"):
+            convert = getattr(type(self), name, None)
+            if convert is None:
                 continue
-            rows.append(
-                f"<tr><th style='text-align:left;padding-right:1em'>{html.escape(name)}</th>"
-                f"<td style='text-align:left'>{html.escape(_fmt(value))}</td></tr>"
-            )
-        interpretation = self._interpretation()
-        footer = (
-            f"<tr><td colspan='2' style='padding-top:0.4em'><em>{html.escape(interpretation)}"
-            "</em></td></tr>"
-            if interpretation
-            else ""
-        )
-        return (
-            "<table>"
-            f"<caption style='text-align:left;font-weight:bold'>{caption}</caption>"
-            f"{''.join(rows)}{footer}</table>"
-        )
+            try:
+                return float(convert(self))
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def __format__(self, spec: str) -> str:
+        """Format the underlying number when a format spec is given.
+
+        ``f"{result:.3f}"`` used to raise ``TypeError`` on every numeric result,
+        which made a result a *worse* drop-in for the number it replaced than the
+        bare float it wrapped.  An empty spec defers to :meth:`__str__` (so
+        ``f"{result}"`` prints the headline); a non-empty one formats the number
+        when the result is one, and otherwise formats the headline text (so
+        ``f"{result:>40}"`` still aligns a non-numeric result).
+        """
+        if not spec:
+            return str(self)
+        number = self._as_number()
+        if number is None:
+            return format(str(self), spec)
+        return format(number, spec)
+
+    def _repr_html_(self) -> str:
+        """Return the repr, verbatim, for Jupyter / IPython.
+
+        The notebook and the console show the **same** text.  A bespoke HTML
+        table was a second rendering of the same result that drifted from the
+        console one and had to be re-derived per subclass; ``<pre>`` of the repr
+        cannot drift.
+        """
+        return f"<pre style='white-space:pre;margin:0'>{html.escape(repr(self))}</pre>"
 
     # -- export -----------------------------------------------------------
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-friendly mapping of every field (arrays become lists).
+    def _derived(self) -> dict[str, Any]:
+        """Return the named quantities the repr reports that are **not** fields.
+
+        A result's headline usually reports a derived property — a spectrum's
+        ``kaplan_yorke``, a recurrence matrix's ``recurrence_rate``, a Wada
+        test's ``W`` — which :func:`dataclasses.fields` cannot see, so
+        ``to_dict()`` could not export the very number the repr shows.
+        ``to_dict(full=True)`` adds these.  Subclasses override; the base has
+        none.
+        """
+        return {}
+
+    def to_dict(self, full: bool = False) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of the result (arrays become lists).
 
         Uses only the standard library.  Every dataclass field is included
         (``meta`` too), recursively coerced to JSON-serializable types.
+
+        Parameters
+        ----------
+        full : bool, default False
+            Also emit the **derived** quantities the repr reports but that are
+            properties rather than fields (see :meth:`_derived`) — a Lyapunov
+            spectrum's ``kaplan_yorke``, a recurrence matrix's
+            ``recurrence_rate``, a Wada test's ``applicable`` / ``W``.  The
+            default view is exactly the declared fields, so ``full`` only ever
+            *adds* keys.
 
         Returns
         -------
         dict
         """
-        return {f.name: _jsonify(getattr(self, f.name)) for f in fields(self)}
+        data = {f.name: _jsonify(getattr(self, f.name)) for f in fields(self)}
+        if full:
+            data.update({k: _jsonify(v) for k, v in self._derived().items()})
+        return data
 
     @staticmethod
     def _require_pandas() -> Any:

@@ -25,9 +25,13 @@ from ...data import Ball, Box, Grid, set_distance
 from ...errors import InvalidInputError, remedy
 from .._common import reject_system
 from .._result import AnalysisResult, CollectionResult
+from .._result_json import _pct, _sig
 from ._common import DIVERGED_COLOR, PALETTE, _palette_indices, coerce_region
 from .attractors import Attractor, _reject_unsupported
 from .basins import basin_fractions
+
+#: Attractors whose basin-share trajectory the repr lists before eliding.
+_MAX_TRACKED_IN_REPR = 4
 
 if TYPE_CHECKING:
     from ...data.sampling import _SetMethod
@@ -153,12 +157,27 @@ class ContinuationResult(AnalysisResult):
             meta=meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"ContinuationResult(param={self.param!r}, "
-            f"values=[{self.values[0]:.3g}..{self.values[-1]:.3g}], "
-            f"n_attractors={len(self.fractions)})"
-        )
+    def _answer(self) -> str:
+        """Return the swept range and how many attractors were tracked through it."""
+        v = np.asarray(self.values, dtype=float)
+        span = f"{self.param} ∈ [{_sig(v[0], 4)}, {_sig(v[-1], 4)}]" if v.size else self.param
+        n = len(self.fractions)
+        tracked = f"{n} attractor" + ("s" if n != 1 else "") + " tracked"
+        return f"{span} · {v.size} values · {tracked}"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return each tracked attractor's first and last basin share."""
+        lines = []
+        for k in sorted(self.fractions):
+            f = np.asarray(self.fractions[k], dtype=float)
+            if not f.size:
+                continue
+            lines.append(f"#{k}: {_pct(f[0])} → {_pct(f[-1])}")
+        if not lines:
+            return ()
+        head = " · ".join(lines[:_MAX_TRACKED_IN_REPR])
+        more = " …" if len(lines) > _MAX_TRACKED_IN_REPR else ""
+        return (f"basin share, first → last: {head}{more}",)
 
 
 def continuation(

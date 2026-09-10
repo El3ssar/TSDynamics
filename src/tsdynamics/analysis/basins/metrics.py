@@ -30,8 +30,25 @@ import numpy as np
 from ...errors import InvalidInputError, InvalidParameterError, invalid_value, remedy
 from .._common import reject_system as _reject_system
 from .._result import AnalysisResult, ScalarResult
+from .._result_json import _sig
 from ._common import _BASIN_HINT, _as_label_array
 from .basins import BasinsResult
+
+#: Minimum number of basins for the Wada test to mean anything: the Wada property
+#: is DEFINED as every boundary point touching three or more basins (Kennedy &
+#: Yorke 1991), so with two basins there is nothing to test — see
+#: :attr:`WadaResult.applicable`.
+_WADA_MIN_BASINS = 3
+
+#: Below this R^2 the uncertainty-exponent power-law fit is not read as one, so
+#: the repr withholds the predictability verdict rather than naming a regime off
+#: a line that does not describe the data.
+_FIT_ACCEPTABLE_R2 = 0.9
+
+#: alpha at or below which the boundary is called final-state sensitive.  Grebogi
+#: et al. (1983): alpha = D - D_0, so alpha = 1 is a smooth boundary and a small
+#: alpha means halving the initial uncertainty barely improves predictability.
+_FINAL_STATE_SENSITIVE_ALPHA = 0.8
 
 
 def _resolve_attractor_id(result: BasinsResult, attractor_id: int | None) -> int:
@@ -119,10 +136,24 @@ class BasinEntropy(AnalysisResult):
     log_base: float = 0.0
     fractal_boundary: bool = False
 
-    def __repr__(self) -> str:  # noqa: D105
+    def _answer(self) -> str:
+        """Return the two entropies."""
+        return f"Sb = {_sig(self.sb, 4)} · Sbb = {_sig(self.sbb, 4)}"
+
+    def _interpretation(self) -> str | None:
+        r"""Report the sufficient fractal-boundary criterion, and only that.
+
+        Daza et al. (2016) prove :math:`S_{bb} > \ln 2` is *sufficient* for a
+        fractal boundary; it is not necessary, so failing it means "not
+        established by this test", never "smooth".
+        """
+        return "fractal boundary (Sbb > ln 2)" if self.fractal_boundary else None
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the box partition the entropies were computed over."""
         return (
-            f"BasinEntropy(Sb={self.sb:.4g}, Sbb={self.sbb:.4g}, "
-            f"fractal_boundary={self.fractal_boundary})"
+            f"({self.n_boundary_boxes}/{self.n_boxes} boxes on the boundary, "
+            f"box size {self.box_size}, log base {_sig(self.log_base, 4)})",
         )
 
 
@@ -208,11 +239,33 @@ class UncertaintyExponent(AnalysisResult):
             meta=self.meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
+    def _answer(self) -> str:
+        """Return the exponent and the boundary dimension it implies."""
         return (
-            f"UncertaintyExponent(alpha={self.alpha:.4g}, "
-            f"D0={self.boundary_dimension:.4g}, R2={self.r_squared:.4g})"
+            f"α = {_sig(self.alpha, 4)} · D0 = {_sig(self.boundary_dimension, 4)} "
+            f"in a {int(self.state_dimension)}-D state space"
         )
+
+    def _interpretation(self) -> str | None:
+        r"""Say what the exponent means for predictability.
+
+        Grebogi et al. (1983): the uncertain fraction scales as
+        :math:`f \sim \varepsilon^{\alpha}`, so :math:`\alpha \ll 1` means halving
+        the uncertainty in the initial condition barely reduces the chance of
+        predicting the wrong attractor — *final-state sensitivity*.  The verdict
+        is withheld when the power law itself did not fit.
+        """
+        if not np.isfinite(self.r_squared) or self.r_squared < _FIT_ACCEPTABLE_R2:
+            return "no clean power law (R² below the acceptance level)"
+        if self.alpha <= _FINAL_STATE_SENSITIVE_ALPHA:
+            return "final-state sensitive (fractal boundary)"
+        return "smooth boundary (α ≈ 1)"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the fit quality and the range of uncertainty radii."""
+        eps = np.asarray(self.epsilons, dtype=float)
+        span = f", ε ∈ [{_sig(eps.min(), 3)}, {_sig(eps.max(), 3)}]" if eps.size else ""
+        return (f"(R² = {_sig(self.r_squared, 5)}{span})",)
 
 
 @dataclass(frozen=True)
@@ -246,9 +299,57 @@ class WadaResult(AnalysisResult):
     n_boundary_cells: int = 0
     threshold: float = 0.0
 
-    def __repr__(self) -> str:  # noqa: D105
-        w = self.fractions[-1] if self.fractions.size else float("nan")
-        return f"WadaResult(is_wada={self.is_wada}, n_basins={self.n_basins}, W={w:.3g})"
+    @property
+    def applicable(self) -> bool:
+        """Whether the Wada test could be run on this image at all.
+
+        The Wada property is *defined* as every boundary point being on the
+        boundary of **three or more** basins, so the test needs at least three
+        basins and at least one boundary cell.  When either is missing,
+        :func:`wada_property` early-returns zeros — and a ``W = 0`` reads as a
+        *measured negative* ("we looked, the boundaries are not Wada") when the
+        truth is that nothing was measured.  This flag separates the two, and
+        :meth:`_answer` prints the reason instead of the number.
+
+        Derived from the fields the result already carries, so no estimator
+        change: it is exactly the condition ``wada_property`` tests before it
+        early-returns.
+        """
+        return self.n_basins >= _WADA_MIN_BASINS and self.n_boundary_cells > 0
+
+    @property
+    def W(self) -> float | None:  # noqa: N802 - W is the published symbol (Daza 2015)
+        """The Wada fraction at the largest radius, or ``None`` when inapplicable."""
+        if not self.applicable or not self.fractions.size:
+            return None
+        return float(self.fractions[-1])
+
+    def _answer(self) -> str:
+        """Return the Wada fraction, or the reason the test does not apply."""
+        if not self.applicable:
+            if self.n_basins < _WADA_MIN_BASINS:
+                return (
+                    f"not applicable — the Wada test needs ≥ {_WADA_MIN_BASINS} basins, "
+                    f"this image has {self.n_basins}"
+                )
+            return "not applicable — this image has no basin boundary cells"
+        return f"W = {_sig(self.W, 4)} at radius {int(self.radii[-1])}"
+
+    def _interpretation(self) -> str | None:
+        """Name the verdict, but only when the test applied."""
+        if not self.applicable:
+            return None
+        return "Wada basins" if self.is_wada else f"not Wada (W < {_sig(self.threshold, 3)})"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the boundary size the fraction was measured over."""
+        if not self.applicable:
+            return ()
+        return (f"({self.n_boundary_cells} boundary cells, {self.n_basins} basins)",)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export ``applicable`` and ``W`` — ``W`` is ``None`` when nothing was measured."""
+        return {"applicable": self.applicable, "W": self.W}
 
 
 # ---------------------------------------------------------------------------
@@ -729,7 +830,10 @@ def resilience(result: BasinsResult, attractor_id: int | None = None) -> ScalarR
     # boundary, i.e. the MINIMUM distance-to-boundary over the attractor's spatial
     # extent (its sampled point cloud) — an extended attractor (limit cycle /
     # strange set) can graze the boundary far from its single representative.
-    att = result.attractors[int(attractor_id)]
+    # ``by_id``, not ``[]``: since v6 an AttractorSet is a SEQUENCE and ``[]`` is a
+    # positional lookup (CONTRACT §4.2 rule 6 / M25), while ``attractor_id`` here is
+    # the basin LABEL painted into the image.
+    att = result.attractors.by_id(int(attractor_id))
     pts = np.atleast_2d(np.asarray(att.points, dtype=float))
     if pts.size:
         dists, idx = _edt_at(pts)

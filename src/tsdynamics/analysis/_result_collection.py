@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.analysis._result_base import AnalysisResult
+from tsdynamics.analysis._result_base import _MAX_ITEMS, AnalysisResult
 from tsdynamics.analysis._result_json import _is_frame_scalar, _jsonify
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled
 
@@ -54,6 +54,52 @@ class CollectionResult(AnalysisResult):
     def __bool__(self) -> bool:  # noqa: D105
         return bool(self.items)
 
+    def __contains__(self, item: Any) -> bool:  # noqa: D105
+        return any(x is item or x == item for x in self.items)
+
+    def __reversed__(self) -> Any:  # noqa: D105
+        return reversed(self.items)
+
+    def index(self, item: Any) -> int:
+        """Return the position of ``item``, like :meth:`list.index`."""
+        return list(self.items).index(item)
+
+    def count(self, item: Any) -> int:
+        """Return how many items equal ``item``, like :meth:`list.count`."""
+        return list(self.items).count(item)
+
+    def by_id(self, key: Any) -> Any:
+        """Return the item whose ``id`` attribute is ``key``.
+
+        ``[]`` indexes a collection **by position** (contract §4.2 rule 6), the
+        way every Python sequence does; when the items carry their own integer
+        labels this is the explicit spelling for looking one up.  Raises
+        :class:`KeyError` when no item carries that id.
+        """
+        for item in self.items:
+            if getattr(item, "id", None) == key:
+                return item
+        raise KeyError(f"{type(self).__name__} has no item with id {key!r}")
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the collected points as a real ``(n, dim)`` float array.
+
+        ``np.asarray(fixed_points)`` used to yield a ``(n,)`` array of *objects*
+        — a shape that plots as nothing and arithmetics into a ``TypeError`` —
+        because NumPy fell back to iterating the wrappers.  Each item
+        contributes its representative point (see :meth:`_item_point`), so a
+        fixed-point set becomes the ``(n, dim)`` array of the points themselves.
+        An item with no numeric point, or a ragged set, keeps the old object
+        array rather than silently dropping or padding rows.
+        """
+        points = [self._item_point(item) for item in self.items]
+        if points and all(p is not None and p.size for p in points):
+            sizes = {int(p.size) for p in points if p is not None}
+            if len(sizes) == 1:
+                arr = np.asarray([np.asarray(p, dtype=float) for p in points], dtype=float)
+                return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
+        return np.asarray(list(self.items), dtype=object)
+
     def __eq__(self, other: Any) -> Any:
         """Compare element-wise — also equal to a plain ``list``/``tuple`` of items.
 
@@ -68,23 +114,57 @@ class CollectionResult(AnalysisResult):
 
     __hash__ = None  # type: ignore[assignment]  # mutable-sequence-like → unhashable, like list
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"{type(self).__name__}({len(self.items)} items)"
+    # -- the readout ---------------------------------------------------------
 
-    def summary(self) -> str:
-        """Return a header naming the collection size, then each item's repr."""
-        label = self._system_label()
-        header = f"{type(self).__name__} — {len(self.items)} items" + (
-            f"  ({label})" if label else ""
-        )
-        return "\n".join([header, *(f"  {item!r}" for item in self.items)])
+    def _noun(self) -> str:
+        """Return the word for one item (``"item"``; subclasses say ``"point"``)."""
+        return "item"
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-friendly mapping: each item's ``to_dict`` (or repr) + ``meta``."""
+    def _answer(self) -> str:
+        """Return the count, or ``none found`` when the collection is empty.
+
+        An empty collection is a real answer, not a failure, so it says so in
+        words.  An estimator that can explain *what* it did not find records the
+        clause under ``meta["means_none"]`` (e.g. ``tipping_points`` →
+        ``"no basin annihilates over the sweep"``) and it is appended here — the
+        alternative, a table of analysis names inside this generic module, would
+        put every estimator's vocabulary in the wrong file.
+        """
+        n = len(self.items)
+        if n == 0:
+            clause = (self.meta.get("means_none") if self.meta else None) or ""
+            return "none found" + (f" ({clause})" if clause else "")
+        return f"{n} {self._noun()}" + ("s" if n != 1 else "")
+
+    def _item_line(self, index: int, item: Any) -> str:
+        """Return one item's line in the repr's list (``[0] …``)."""
+        text = item._as_item() if isinstance(item, AnalysisResult) else str(item)
+        return f"[{index}] {text}"
+
+    def _item_lines(self) -> tuple[str, ...]:
+        """Return the item list, truncated to :data:`_MAX_ITEMS` with a total."""
+        shown = [self._item_line(i, item) for i, item in enumerate(self.items[:_MAX_ITEMS])]
+        if len(self.items) > _MAX_ITEMS:
+            shown.append(f"... [{len(self.items)} total]")
+        return tuple(shown)
+
+    def to_dict(self, full: bool = False) -> dict[str, Any]:
+        """Return a JSON-friendly mapping: each item's ``to_dict`` (or repr) + ``meta``.
+
+        Parameters
+        ----------
+        full : bool, default False
+            Also emit the derived quantities the repr reports, and pass ``full``
+            down to each item.
+        """
         items = [
-            item.to_dict() if hasattr(item, "to_dict") else _jsonify(item) for item in self.items
+            item.to_dict(full) if isinstance(item, AnalysisResult) else _jsonify(item)
+            for item in self.items
         ]
-        return {"items": items, "meta": _jsonify(self.meta)}
+        data: dict[str, Any] = {"items": items, "meta": _jsonify(self.meta)}
+        if full:
+            data.update({k: _jsonify(v) for k, v in self._derived().items()})
+        return data
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe the collection as a :class:`PlotSpec` (safe generic scatter).

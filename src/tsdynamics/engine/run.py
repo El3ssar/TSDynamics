@@ -1061,7 +1061,7 @@ def ensemble(
         # delay-slot) tape out through the ODE ensemble FFI and return garbage.
         raise NotImplementedError(
             "run.ensemble has no DDE path (the engine integrates delay systems one "
-            "trajectory at a time); use DelaySystem.integrate(backend='interp') per "
+            "trajectory at a time); use DelaySystem.run(backend='interp') per "
             "initial condition."
         )
     if isinstance(problem, MapProblem):

@@ -112,7 +112,7 @@ class LyapunovFromData(ScalingResult):
     exponent is read off the slope of the stretching curve, the same shape every
     fractal dimension and embedding diagnostic share — so it inherits the canonical
     ``estimate`` / ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result
-    surface (``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam) and
+    surface (``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam) and
     ``float(result)`` (the exponent).  Domain-named ``@property`` aliases
     (:attr:`lyapunov`, :attr:`times`, :attr:`divergence`) preserve the original
     field names.
@@ -217,14 +217,44 @@ class LyapunovFromData(ScalingResult):
             title=f"max. Lyapunov ({self.method}) = {self.lyapunov:.3g}",
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        lo, hi = self.fit_region
-        flag = "" if self.trusted else ", UNTRUSTED (no scaling region)"
-        return (
-            f"LyapunovFromData(lyapunov={self.lyapunov:.4g}, method={self.method!r}, "
-            f"m={self.embedding_dim}, tau={self.delay}, fit_region=({lo}, {hi}), "
-            f"n_reference={self.n_reference}{flag})"
-        )
+    def _quantity(self) -> str:
+        r"""Return ``λ_max`` — the quantity the slope is."""
+        return "λ_max"
+
+    def _unit(self) -> str:
+        """Return ``per unit time`` or ``per sample``, read off the curve itself.
+
+        The stretching curve's abscissa is ``k * dt``, so its spacing **is** the
+        sampling interval the estimator used.  A unit spacing means the input
+        carried no time axis and the exponent is per sample (per iteration); any
+        other spacing means it did and the exponent is per unit time.  Getting
+        this wrong is a factor of ``1/dt`` — ~60× on a Lorenz run at
+        ``dt = 0.02`` — so it is derived, not assumed.
+        """
+        t = np.asarray(self.abscissa, dtype=float)
+        if t.size < 2:
+            return ""
+        return "per sample" if float(t[1] - t[0]) == 1.0 else "per unit time"
+
+    def _interpretation(self) -> str | None:
+        """Flag an estimate that is not a reading of a scaling region."""
+        return None if self.trusted else "⚠ UNTRUSTED"
+
+    def _context(self) -> str | None:
+        """Return the settings that make the number meaningful."""
+        return f"{self.method}, m={self.embedding_dim}, τ={self.delay}, {self.n_reference} ref pts"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the fit line, replaced by the remedy when untrusted."""
+        if not self.trusted:
+            return ("⚠ no clear scaling region — inspect .plot.scaling() and pass fit=(lo, hi)",)
+        return super()._details()
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the exponent, its unit and the fit diagnostics."""
+        data = super()._derived()
+        data.update(lyapunov=self.lyapunov, unit=self._unit())
+        return data
 
 
 def _delay_embed(series: np.ndarray, m: int, tau: int) -> np.ndarray:
@@ -600,7 +630,7 @@ def lyapunov_from_data(
     Examples
     --------
     >>> import tsdynamics as ts
-    >>> traj = ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1])
+    >>> traj = ts.systems.Henon().run(6000, transient=500, ic=[0.1, 0.1])
     >>> res = ts.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
     >>> 0.30 < float(res) < 0.55      # ≈ 0.42
     True

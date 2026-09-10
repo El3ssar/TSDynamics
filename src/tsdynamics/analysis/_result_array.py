@@ -12,12 +12,12 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.analysis._result_base import AnalysisResult
-from tsdynamics.analysis._result_json import _fmt, _jsonify
+from tsdynamics.analysis._result_json import _jsonify, _state
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled
 
 
 @dataclass(frozen=True, eq=False)
-class ArrayResult(AnalysisResult):
+class ArrayResult(np.lib.mixins.NDArrayOperatorsMixin, AnalysisResult):
     """An array-valued measurement that stays a drop-in for its ``ndarray``.
 
     Wraps a bare ``ndarray`` return (a Lyapunov spectrum, a delay-embedded point
@@ -29,7 +29,11 @@ class ArrayResult(AnalysisResult):
     Indexing and slicing return the *raw* array element/sub-array (never another
     wrapper), so ``result[:, 0]`` flows straight into NumPy as before.  Operators
     are resolved on the type (``__getattr__`` cannot intercept them), so the
-    comparison/arithmetic dunders are spelled out and return raw arrays.
+    comparison/arithmetic dunders are spelled out and return raw arrays;
+    :class:`numpy.lib.mixins.NDArrayOperatorsMixin` supplies the rest
+    (``/``, ``**``, ``//``, ``%``, unary ``-``, the in-place forms) through
+    :meth:`__array_ufunc__` — before v6 ``result / 2`` raised ``TypeError`` while
+    ``result * 2`` worked, which is the worst of both worlds for a drop-in.
 
     Attributes
     ----------
@@ -41,10 +45,24 @@ class ArrayResult(AnalysisResult):
 
     values: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"{type(self).__name__}({_fmt(np.asarray(self.values))})"
+    # -- the readout ---------------------------------------------------------
+
+    def _answer(self) -> str:
+        """Return the array itself when it is small, else its shape."""
+        arr = np.asarray(self.values)
+        if arr.ndim <= 1:
+            return f"= {_state(arr)}"
+        return f"{arr.shape[0]} × {int(np.prod(arr.shape[1:]))} values"
 
     # -- ndarray protocol ----------------------------------------------------
+
+    def __array_ufunc__(self, ufunc: Any, method: str, *inputs: Any, **kwargs: Any) -> Any:
+        """Unwrap every result operand to its array and defer to NumPy."""
+        args = [np.asarray(x) if isinstance(x, ArrayResult) else x for x in inputs]
+        out = kwargs.get("out")
+        if out is not None:
+            kwargs["out"] = tuple(np.asarray(o) if isinstance(o, ArrayResult) else o for o in out)
+        return getattr(ufunc, method)(*args, **kwargs)
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:  # noqa: D105
         # NumPy 2.0 passes ``copy`` into ``__array__``; honor it so ``np.array``
@@ -110,15 +128,24 @@ class ArrayResult(AnalysisResult):
 
     __rmul__ = __mul__
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, full: bool = False) -> dict[str, Any]:
         """Return a JSON-friendly mapping (the array as a nested list + ``meta``).
+
+        Parameters
+        ----------
+        full : bool, default False
+            Also emit the derived quantities the repr reports (see
+            :meth:`AnalysisResult._derived`).
 
         Returns
         -------
         dict
             ``{"values": <nested list>, "meta": <provenance>}``.
         """
-        return {"values": _jsonify(self.values), "meta": _jsonify(self.meta)}
+        data = {"values": _jsonify(self.values), "meta": _jsonify(self.meta)}
+        if full:
+            data.update({k: _jsonify(v) for k, v in self._derived().items()})
+        return data
 
     def to_frame(self) -> Any:
         """Return a :class:`pandas.DataFrame` tabulating the wrapped array.

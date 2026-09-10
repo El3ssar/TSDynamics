@@ -15,6 +15,7 @@ per window).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,7 @@ import numpy as np
 from tsdynamics.errors import InvalidParameterError, remedy
 
 from .._result import AnalysisResult
+from .._result_json import _sig
 from ._common import _as_points
 from .matrix import DEFAULT_RECURRENCE_RATE
 from .rqa import RQAResult, rqa
@@ -71,6 +73,15 @@ class WindowedRQA(AnalysisResult):
 
     def __len__(self) -> int:  # noqa: D105
         return len(self.results)
+
+    def __iter__(self) -> Iterator[RQAResult]:  # noqa: D105
+        return iter(self.results)
+
+    def __getitem__(self, key: Any) -> Any:
+        """Return the window at position ``key`` (or a list, for a slice)."""
+        if isinstance(key, slice):
+            return list(self.results[key])
+        return self.results[key]
 
     def measure(self, name: str) -> np.ndarray:
         """Return one RQA measure as an array over windows.
@@ -124,8 +135,18 @@ class WindowedRQA(AnalysisResult):
             return self.measure(name)
         raise AttributeError(name)
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"WindowedRQA(n_windows={len(self)}, window={self.window}, step={self.step})"
+    def _answer(self) -> str:
+        """Return how many windows were measured, and their geometry."""
+        return f"{len(self)} windows of {self.window} samples · step {self.step}"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the span of determinism across the windows — the regime signal."""
+        if not self.results:
+            return ()
+        det = self.measure("determinism")
+        centres = np.asarray(self.centers, dtype=float)
+        span = f" · centres {_sig(centres[0], 4)}..{_sig(centres[-1], 4)}" if centres.size else ""
+        return (f"DET ∈ [{_sig(det.min(), 3)}, {_sig(det.max(), 3)}]{span}",)
 
 
 def windowed_rqa(

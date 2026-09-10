@@ -48,7 +48,7 @@ class ExpansionEntropyResult(ScalingResult):
     A :class:`~tsdynamics.analysis._result.ScalingResult` — the entropy is the
     slope of :math:`\ln E(t)` against :math:`t` — so it inherits the canonical
     ``estimate`` / ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result
-    surface (``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam) and
+    surface (``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam) and
     ``float(result)`` (the entropy :math:`H`).  Domain-named ``@property`` aliases
     (:attr:`entropy`, :attr:`times`, :attr:`log_growth`, :attr:`fit_slice`)
     preserve the original field names.
@@ -96,11 +96,30 @@ class ExpansionEntropyResult(ScalingResult):
         """The fitted index range (alias of :attr:`fit_region`)."""
         return self.fit_region
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"ExpansionEntropyResult(entropy={self.entropy:.4g} ± {self.stderr:.2g}, "
-            f"survivors={self.n_survivors}/{self.n_samples})"
-        )
+    def _quantity(self) -> str:
+        r"""Return ``H0`` — the symbol expansion entropy is known by."""
+        return "H0"
+
+    def _interpretation(self) -> str | None:
+        r"""Name the dynamics: a **positive** expansion entropy is chaos.
+
+        Hunt & Ott (2015) define chaos as :math:`H_0 > 0`, so this is the one
+        place the sign genuinely is the verdict.  It is read against the fit's
+        own standard error rather than against zero, so a slope indistinguishable
+        from flat is not sold as a positive one.
+        """
+        h, se = float(self.estimate), float(self.stderr)
+        if not np.isfinite(h):
+            return None
+        if np.isfinite(se) and se > 0.0 and abs(h) < 2.0 * se:
+            return "indistinguishable from zero (H0 within 2 s.e. of 0)"
+        return "chaotic (H0 > 0)" if h > 0.0 else "non-chaotic (H0 ≤ 0)"
+
+    def _context(self) -> str | None:
+        """Return how many sampled initial conditions survived the whole run."""
+        bits = [b for b in (self._system_label(),) if b]
+        bits.append(f"{self.n_survivors}/{self.n_samples} survivors")
+        return ", ".join(bits)
 
 
 def expansion_entropy(

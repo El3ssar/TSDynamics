@@ -313,7 +313,7 @@ def _runtime_cases() -> list[tuple[str, object]]:
     covered by the static annotation sweep, not re-run here.
     """
     series = _logistic_series()
-    traj = _henon().iterate(steps=600, ic=[0.1, 0.1])
+    traj = _henon().run(steps=600, ic=[0.1, 0.1])
     sine = np.sin(np.linspace(0.0, 40.0, 400))
     labels = _synthetic_basin_labels()
     box = _basin_box()
@@ -1069,7 +1069,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "final_time-negative-integrate-alias",
         _ERRGATE_FINAL_TIME,
-        lambda: ts.Lorenz().integrate(final_time=-5.0, dt=0.1, backend="reference"),
+        lambda: ts.Lorenz().run(final_time=-5.0, dt=0.1, backend="reference"),
         ValueError,
         ("final_time",),
         InvalidParameterError,
@@ -1915,7 +1915,7 @@ def test_kernel_subscript_error_names_the_accessor_and_the_fix() -> None:
             return [y[1], -a * y[0]]
 
     with pytest.raises(TapeCompileError) as excinfo:
-        Subscripted().integrate(final_time=1.0, dt=0.1)
+        Subscripted().run(final_time=1.0, dt=0.1)
     message = str(excinfo.value)
     assert "y(0)" in message
     assert "y[0]" in message
@@ -1949,7 +1949,7 @@ def test_subscripting_something_that_is_not_the_state_is_not_blamed_on_the_state
             return [a[0] * y(1), -y(0)]
 
     with pytest.raises(TapeCompileError) as excinfo:
-        ParamSubscripted().integrate(final_time=1.0, dt=0.1)
+        ParamSubscripted().run(final_time=1.0, dt=0.1)
     message = str(excinfo.value)
     assert "state *accessor*" not in message
     assert "not subscriptable" in message  # the raised error is still quoted
@@ -1978,7 +1978,7 @@ def test_unpacking_the_state_is_answered_with_the_accessor_calls() -> None:
             return [a * y, -a * x, -z]
 
     with pytest.raises(TapeCompileError) as excinfo:
-        Unpacked().integrate(final_time=1.0, dt=0.1)
+        Unpacked().run(final_time=1.0, dt=0.1)
     message = str(excinfo.value)
     assert "state *accessor*" in message
     assert "u(0)" in message
@@ -2002,7 +2002,7 @@ def test_unpacking_something_that_is_not_the_state_is_not_blamed_on_the_state() 
             return [p * u(1), -q * u(0)]
 
     with pytest.raises(TapeCompileError) as excinfo:
-        ParamUnpacked().integrate(final_time=1.0, dt=0.1)
+        ParamUnpacked().run(final_time=1.0, dt=0.1)
     message = str(excinfo.value)
     assert "state *accessor*" not in message
     assert "traced *symbolically*" in message
@@ -2026,7 +2026,7 @@ def test_missing_staticmethod_is_diagnosed_structurally() -> None:
             return [y(1), -a * y(0)]
 
     with pytest.raises(TapeCompileError) as excinfo:
-        NotStatic().integrate(final_time=1.0, dt=0.1)
+        NotStatic().run(final_time=1.0, dt=0.1)
     message = str(excinfo.value)
     assert "@staticmethod" in message
     assert "def _equations(y, t, a)" in message
@@ -2035,7 +2035,7 @@ def test_missing_staticmethod_is_diagnosed_structurally() -> None:
 
 def test_correct_kernels_are_untouched_by_the_new_diagnostics() -> None:
     """The two structural checks fire on the defect only — a good kernel still runs."""
-    traj = ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    traj = ts.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
     assert np.isfinite(traj.y).all()
 
 

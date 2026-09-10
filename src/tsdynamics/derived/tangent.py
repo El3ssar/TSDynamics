@@ -161,6 +161,10 @@ class TangentSystem(DerivedSystem):
     def _rebuild(self, inner: Any) -> TangentSystem:
         return TangentSystem(inner, self.k, backend=self._backend)
 
+    def __repr__(self) -> str:
+        """Name the inner system AND how many deviation vectors ride along."""
+        return f"TangentSystem({type(self.system).__name__}, k={self.k})"
+
     # --- lifecycle ---
 
     def _reset_accumulators(self) -> None:
@@ -293,9 +297,9 @@ class TangentSystem(DerivedSystem):
     # --- protocol ---
 
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """Match the wrapped system's time semantics."""
-        return cast(bool, self.system.is_discrete)
+        return cast(bool, self.system._is_discrete)
 
     def step(self, n_or_dt: float | None = None) -> np.ndarray:
         """
@@ -543,13 +547,14 @@ class TangentSystem(DerivedSystem):
 
     # --- visualization seam ---
 
-    def to_plot_spec(
+    def __plot_spec__(
         self,
         kind: str | None = None,
         *,
         steps: int = 2000,
         n_or_dt: float | None = None,
         ic: Any | None = None,
+        **_unused: Any,
     ) -> PlotSpec:
         """Describe the Lyapunov-estimate convergence as a :class:`PlotSpec`.
 
@@ -594,7 +599,7 @@ class TangentSystem(DerivedSystem):
             kind=spec_kind,
             ndim=2,
             title=f"Lyapunov convergence — {type(self.system).__name__}",
-            x=Axis(label="iteration" if self.is_discrete else "time"),
+            x=Axis(label="iteration" if self._is_discrete else "time"),
             y=Axis(label="Lyapunov estimate"),
             layers=layers,
             legend=Legend(),
@@ -602,7 +607,7 @@ class TangentSystem(DerivedSystem):
 
     # --- the one Lyapunov engine: burn-in + time-averaged spectrum ---
 
-    def lyapunov_spectrum(self, **kwargs: Any) -> np.ndarray:
+    def _lyapunov_spectrum(self, **kwargs: Any) -> np.ndarray:
         """
         Estimate the Lyapunov spectrum — the unified engine for every family.
 
@@ -617,7 +622,7 @@ class TangentSystem(DerivedSystem):
           :data:`~tsdynamics.utils.tolerances.DEFAULT_ATOL`, ``1e-9`` /
           ``1e-12``), and any extra integrator keywords.
 
-        The estimate is recorded in ``self.meta['lyapunov_spectrum']`` (the inner
+        The estimate is returned (the inner
         system's :class:`~tsdynamics.families.base.MetaStore`).
 
         Returns
@@ -662,14 +667,6 @@ class TangentSystem(DerivedSystem):
             use_ic = ic if attempt == 0 else None
             if self._accumulate_map(n, use_ic, reortho_interval):
                 exponents = self.exponents()
-                self.meta.record(
-                    "lyapunov_spectrum",
-                    exponents,
-                    n=n,
-                    k=self.k,
-                    reortho_interval=reortho_interval,
-                    backend=self._backend,
-                )
                 return exponents
             if attempt < max_retries - 1:
                 # Force a fresh random IC: clear any stored one on the inner map.
@@ -766,14 +763,6 @@ class TangentSystem(DerivedSystem):
             self._last_growths = np.full(self.k, np.nan)
             self._elapsed = float(intervals * reortho_interval)
             self._map_engine_stale = True
-            self.meta.record(
-                "lyapunov_spectrum",
-                exponents,
-                steps=steps,
-                k=self.k,
-                reortho_interval=reortho_interval,
-                backend=self._backend,
-            )
             return exponents
 
         # Unreachable: the loop returns on success or re-raises on the last attempt.
@@ -880,16 +869,6 @@ class TangentSystem(DerivedSystem):
                 self.step(min(dt, t_end - self._t))
             exponents = self.exponents()
 
-        self.meta.record(
-            "lyapunov_spectrum",
-            exponents,
-            dt=dt,
-            final_time=final_time,
-            transient=transient,
-            k=self.k,
-            method=method or self.system._default_method,
-            backend=self._backend,
-        )
         return exponents
 
     def _engine_lyapunov_spectrum(self, dt: float, burn_in: float, final_time: float) -> np.ndarray:

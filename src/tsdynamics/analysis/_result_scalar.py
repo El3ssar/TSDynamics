@@ -14,7 +14,25 @@ from typing import Any, ClassVar
 import numpy as np
 
 from tsdynamics.analysis._result_base import AnalysisResult
-from tsdynamics.analysis._result_json import _jsonify
+from tsdynamics.analysis._result_json import _jsonify, _sig
+
+#: Analyses whose answer is a **rate**, so its unit depends on whether the
+#: subject's time is continuous: per unit time for a flow, per iteration for a
+#: map.  Printing the wrong one is a wrong answer, not a cosmetic slip — the two
+#: differ by the sampling interval (a factor of ~60 on a Lorenz run at dt=0.02).
+_RATE_ANALYSES = frozenset({"max_lyapunov"})
+
+#: Fixed units for the analyses that return a bare number.  A result may always
+#: override by recording ``meta["unit"]`` at the call site; this table exists so
+#: the ones that ship today read correctly without touching their estimators.
+_UNITS: dict[str, str] = {
+    "optimal_delay": "samples",
+    "estimate_period": "samples",
+    "embedding_dimension": "",
+    "cao_dimension": "",
+    "false_nearest_neighbors": "",
+    "transient_time_field": "time units",
+}
 
 
 def _coerce_float(value: Any) -> float:
@@ -22,7 +40,7 @@ def _coerce_float(value: Any) -> float:
     return float(value)
 
 
-class _NumericOps:
+class _NumericOps(np.lib.mixins.NDArrayOperatorsMixin):
     """Mixin giving a result the full numeric protocol of ``float(self)``.
 
     A :class:`ScalarResult` wraps a bare ``float``/``int`` return so it can carry
@@ -37,7 +55,31 @@ class _NumericOps:
     :data:`NotImplemented` so Python falls back to *its* reflected operator — which
     is exactly how ``result == pytest.approx(x)`` resolves (approx then calls
     ``float(self)`` itself).
+
+    **Both halves are required (contract §4.2 rule 4).**  The spelled-out
+    operators above cover what a *Python* number does and are kept because
+    ``__array_ufunc__`` alone would break them: NumPy consults it only when NumPy
+    dispatches, and ``int.__mul__(result)`` returns :data:`NotImplemented`
+    without ever reaching NumPy, so ``result * 2`` and ``result + 1`` — which
+    work today — would start raising.  :class:`numpy.lib.mixins.NDArrayOperatorsMixin`
+    then fills in every operator *not* spelled out (``**``, ``//``, ``%``,
+    ``divmod``, the in-place forms) by routing it through
+    :meth:`__array_ufunc__`, which unwraps the result to its float and hands the
+    call back to NumPy.
     """
+
+    def __array_ufunc__(self, ufunc: Any, method: str, *inputs: Any, **kwargs: Any) -> Any:
+        """Unwrap every result operand to its float and defer to NumPy.
+
+        The single entry point :class:`numpy.lib.mixins.NDArrayOperatorsMixin`
+        routes its generated operators through, so ``result ** 2`` and
+        ``np.exp(result)`` both work and both return a plain NumPy value.
+        """
+        args = [float(x) if isinstance(x, _NumericOps) else x for x in inputs]
+        out = kwargs.get("out")
+        if out is not None:
+            kwargs["out"] = tuple(np.asarray(o) if isinstance(o, _NumericOps) else o for o in out)
+        return getattr(ufunc, method)(*args, **kwargs)
 
     def __float__(self) -> float:  # noqa: D105
         return _coerce_float(self.value)  # type: ignore[attr-defined]
@@ -160,7 +202,7 @@ class ScalarResult(_NumericOps, AnalysisResult):
 
     Wraps a bare ``float`` return (a maximal Lyapunov exponent, an entropy, a
     0--1-test ``K``, …) so it carries the :class:`AnalysisResult` surface —
-    ``.meta``, ``.summary()``, ``.to_dict()``, the ``.plot`` seam — while
+    ``.meta``, the readout ``repr``, ``.to_dict()``, the ``.plot`` seam — while
     ``float(result)`` and every comparison / arithmetic operator keep working via
     :class:`_NumericOps`, so it is a drop-in for the value it replaces.
 
@@ -177,6 +219,48 @@ class ScalarResult(_NumericOps, AnalysisResult):
     _repr_fields: ClassVar[tuple[str, ...]] = ("value",)
 
     value: float = 0.0
+
+    # -- the readout ------------------------------------------------------
+
+    def _unit(self) -> str:
+        """Return the unit the number is quoted in (``""`` when dimensionless).
+
+        ``meta["unit"]`` wins when an estimator records one.  Otherwise a rate
+        (:data:`_RATE_ANALYSES`) is resolved against the subject's family — per
+        iteration for a map, per unit time for a flow — and everything else
+        reads :data:`_UNITS`.
+        """
+        unit = self.meta.get("unit") if self.meta else None
+        if unit:
+            return str(unit)
+        analysis = str(self.meta.get("analysis") or "") if self.meta else ""
+        if analysis in _RATE_ANALYSES:
+            family = self._subject_family()
+            if family == "map":
+                return "per iteration"
+            if family is None:
+                return ""
+            return "per unit time"
+        return _UNITS.get(analysis, "")
+
+    def _answer(self) -> str:
+        """Return ``= <value> <unit>`` — the number, in the reader's units."""
+        unit = self._unit()
+        return f"= {_sig(float(self), 6)}" + (f" {unit}" if unit else "")
+
+    def _interpretation(self) -> str | None:
+        r"""Name the dynamics when the number is a Lyapunov exponent.
+
+        Only ``max_lyapunov`` gets a verdict, and only against the same realised
+        floor :class:`~tsdynamics.analysis.LyapunovSpectrum` uses: a bare
+        ``lambda > 0`` test would call floating-point noise chaos.
+        """
+        if (self.meta.get("analysis") if self.meta else None) != "max_lyapunov":
+            return None
+        value = float(self)
+        if not np.isfinite(value):
+            return None
+        return "→ chaotic (λ > 0)" if value > 0.0 else "→ regular (λ ≤ 0)"
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe the scalar as a one-point :class:`PlotSpec` (rarely plotted).
@@ -207,7 +291,7 @@ class CountResult(int, AnalysisResult):
     and slices arrays, it survives ``delay=result`` round-trips into estimators
     that type-check their arguments, and all integer arithmetic / comparisons work
     natively.  It *also* carries the :class:`AnalysisResult` surface — ``.meta`` /
-    ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.
+    the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.
 
     Attributes
     ----------
@@ -230,12 +314,65 @@ class CountResult(int, AnalysisResult):
         """The measured count (the integer value itself)."""
         return int(self)
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"{type(self).__name__}({int(self)})"
+    def _unit(self) -> str:
+        """Return the unit the count is quoted in (``"samples"`` for a delay)."""
+        unit = self.meta.get("unit") if self.meta else None
+        if unit:
+            return str(unit)
+        return _UNITS.get(str(self.meta.get("analysis") or "") if self.meta else "", "")
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-friendly mapping of the value and provenance."""
-        return {"value": int(self), "meta": _jsonify(self.meta)}
+    def _answer(self) -> str:
+        """Return ``= <count> <unit>``."""
+        unit = self._unit()
+        return f"= {int(self)}" + (f" {unit}" if unit else "")
+
+    #: ``int.__repr__`` sits ahead of :class:`AnalysisResult` in the MRO, so the
+    #: shared headline repr has to be claimed explicitly — otherwise a count
+    #: reprs as a bare ``9`` and the console never says *what* was measured.
+    __repr__ = AnalysisResult.__repr__
+
+    def __str__(self) -> str:
+        """Return the plain integer text — a count **is** its number.
+
+        The one deliberate exception to "``str`` is the headline".  A
+        :class:`CountResult` is an ``int`` subclass whose whole point is being a
+        drop-in, and ``int.__str__ is object.__str__``, so without this override
+        ``f"tau={c}"`` renders ``tau=CountResult(28)``.  That output is committed
+        to the repository, inside
+        ``docs/assets/figures/analysis/embedding.svg``.
+        """
+        return repr(int(self))
+
+    def __format__(self, spec: str) -> str:
+        """Format as an ``int``, falling back to ``float`` for float codes.
+
+        ``f"{tau:d}"`` and ``f"{tau:>4}"`` keep integer semantics; ``f"{tau:.3f}"``
+        formats the same number as a float instead of raising.
+        """
+        if not spec:
+            return str(self)
+        try:
+            return int.__format__(self, spec)
+        except (TypeError, ValueError):
+            return format(float(self), spec)
+
+    def to_dict(self, full: bool = False) -> dict[str, Any]:
+        """Return a JSON-friendly mapping of the value and provenance.
+
+        Parameters
+        ----------
+        full : bool, default False
+            Also emit the derived quantities (here: the ``unit`` the count is
+            quoted in).
+        """
+        data = {"value": int(self), "meta": _jsonify(self.meta)}
+        if full:
+            data.update(self._derived())
+        return data
+
+    def _derived(self) -> dict[str, Any]:
+        """Return the unit the repr quotes, so an export can carry it too."""
+        return {"unit": self._unit()}
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         """Describe the count as a one-point :class:`PlotSpec` (rarely plotted)."""

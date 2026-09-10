@@ -114,16 +114,15 @@ def _trajectory_of(subject: Any, options: dict[str, Any]) -> Any:
     final_time = options.get("final_time")
     dt = options.get("dt")
     steps = options.get("steps")
-    if getattr(subject, "is_discrete", False) and hasattr(subject, "iterate"):
-        return subject.iterate(steps=int(steps if steps is not None else _DEFAULT_STEPS))
-    if hasattr(subject, "integrate"):
-        return subject.integrate(
-            final_time=float(final_time if final_time is not None else _DEFAULT_FINAL_TIME),
-            dt=float(dt if dt is not None else _DEFAULT_DT),
-        )
-    if hasattr(subject, "iterate"):  # pragma: no cover - a map without is_discrete
-        return subject.iterate(steps=int(steps if steps is not None else _DEFAULT_STEPS))
-    return None
+    # v6: ``run`` is the one trajectory verb, and ``family`` replaced ``is_discrete``.
+    if not hasattr(subject, "run"):
+        return None
+    if getattr(subject, "family", None) == "map":
+        return subject.run(steps=int(steps if steps is not None else _DEFAULT_STEPS))
+    return subject.run(
+        final_time=float(final_time if final_time is not None else _DEFAULT_FINAL_TIME),
+        dt=float(dt if dt is not None else _DEFAULT_DT),
+    )
 
 
 def series_of(

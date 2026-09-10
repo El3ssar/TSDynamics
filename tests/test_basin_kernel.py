@@ -356,6 +356,8 @@ def test_attractor_set_centroid_is_harvest_order_invariant():
         m = _AttractorMapper(_Dummy(), _CellGrid([-2, -2], [2, 2], (2, 2)))
         m._att_points = {k: {3: a, 7: b}[k] for k in order}
         m._att_cells = {0: 3, 1: 7}
-        return m.attractor_set(diverged=0, seeds=1, merge=merge)[1].center
+        # ``by_id``: since v6 ``AttractorSet[]`` is POSITIONAL (CONTRACT §4.2 r6 / M25);
+        # ``1`` here is the canonical merged id, not a position.
+        return m.attractor_set(diverged=0, seeds=1, merge=merge).by_id(1).center
 
     np.testing.assert_array_equal(center([3, 7]), center([7, 3]))

@@ -38,10 +38,20 @@ from tsdynamics.errors import ConvergenceError, InvalidInputError, InvalidParame
 from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._result import AnalysisResult
+from .._result_json import _sig
 from .._tangent import flow_fns, map_fns, rk4_state, rk4_variational
 from . import _common as _c
 
 __all__ = ["GALIResult", "gali"]
+
+#: Final GALI_k at or below which the repr names the orbit chaotic.  GALI_k
+#: separates the two regimes by orders of magnitude (it collapses exponentially
+#: on a chaotic orbit and stays O(1) on a regular one), so a coarse threshold
+#: with a wide silent band between the two is the honest reading.
+_CHAOTIC_GALI = 1e-6
+
+#: Final GALI_k at or above which the repr names the orbit regular.
+_REGULAR_GALI = 1e-2
 
 
 @dataclass(frozen=True)
@@ -49,7 +59,7 @@ class GALIResult(AnalysisResult):
     r"""A GALI\ :sub:`k` time series with the tools to read order vs chaos off it.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.
     ``float(result)`` is the final value — :math:`\approx 1` for a regular orbit,
     :math:`\to 0` for a chaotic one — so the result drops straight into a
     threshold test.
@@ -160,9 +170,43 @@ class GALIResult(AnalysisResult):
             title=f"GALI$_{self.k}$",
         )
 
-    def __repr__(self) -> str:  # noqa: D105
+    def _answer(self) -> str:
+        r"""Return the final GALI\ :sub:`k` value."""
+        if self.values.size == 0:
+            return f"GALI_{self.k} — no samples"
+        return f"GALI_{self.k} = {_sig(self.final, 4)} at the end"
+
+    def _interpretation(self) -> str | None:
+        r"""Name the orbit from where GALI\ :sub:`k` ended up.
+
+        GALI\ :sub:`k` stays :math:`O(1)` on a regular orbit and collapses
+        exponentially on a chaotic one (Skokos et al. 2007), so the verdict is a
+        reading of the final value against the noise floor — several orders of
+        magnitude apart, which is why a coarse threshold is honest here.
+        """
+        if self.values.size == 0:
+            return None
+        final = self.final
+        if not np.isfinite(final):
+            return None
+        if final <= _CHAOTIC_GALI:
+            return "chaotic (GALI collapsed)"
+        if final >= _REGULAR_GALI:
+            return "regular (GALI bounded)"
+        return None
+
+    def _context(self) -> str | None:
+        """Return the subject and the horizon the series was run to."""
         kind = "map" if self.is_discrete else "flow"
-        return f"GALIResult(k={self.k}, {kind}, final={self.final:.3g}, n={self.values.size})"
+        bits = [b for b in (self._system_label(), kind) if b]
+        if self.values.size:
+            horizon = "n" if self.is_discrete else "t"
+            bits.append(f"{self.values.size} samples to {horizon} = {_sig(self.times[-1], 4)}")
+        return ", ".join(bits) or None
+
+    def _derived(self) -> dict[str, Any]:
+        r"""Export the final GALI\ :sub:`k` value the repr reports."""
+        return {"final": self.final if self.values.size else None}
 
 
 def gali(

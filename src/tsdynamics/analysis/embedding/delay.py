@@ -40,7 +40,7 @@ class MutualInformation(ArrayResult):
 
     An :class:`~tsdynamics.analysis._result.ArrayResult`, so it is a drop-in for
     the bare ``(max_delay + 1,)`` curve array (``np.asarray(result)``, indexing
-    and iteration defer to it) while it also carries ``.meta`` / ``.summary()`` /
+    and iteration defer to it) while it also carries ``.meta`` / the readout ``repr`` /
     the ``.plot`` seam.  The curve's **first local minimum** is the recommended
     embedding delay (Fraser & Swinney 1986); :attr:`optimal_lag` reads it off and
     :meth:`to_plot_spec` annotates it, so the delay-selection diagnostic plots as
@@ -54,6 +54,19 @@ class MutualInformation(ArrayResult):
     """
 
     _repr_fields: ClassVar[tuple[str, ...]] = ("optimal_lag",)
+
+    def _answer(self) -> str:
+        r"""Return the recommended delay — the number the curve is computed for."""
+        return f"τ = {self.optimal_lag} samples"
+
+    def _context(self) -> str | None:
+        """Return the lag range the curve spans."""
+        n = int(np.asarray(self.values).size)
+        return f"I(τ) over τ = 0..{max(n - 1, 0)}"
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the recommended delay the repr reports."""
+        return {"optimal_lag": self.optimal_lag}
 
     @property
     def optimal_lag(self) -> int:

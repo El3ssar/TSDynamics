@@ -7,12 +7,55 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tsdynamics.data import Trajectory
     from tsdynamics.viz.spec import PlotSpec
 
-__all__ = ["EnsembleSystem"]
+__all__ = ["Ensemble", "EnsembleSystem", "TrajectoryBatch"]
 
 
-class EnsembleSystem:
+class TrajectoryBatch(list["Trajectory"]):
+    """What ``Ensemble.run(...)`` returns — the trajectories, plus the batch view.
+
+    A ``list`` subclass, so it iterates, indexes and ``len()``s like the list of
+    trajectories it is.  ``.final`` is the ``(n, dim)`` array of end states —
+    exactly what ``system.ensemble(ics, final_time=...)`` used to return before
+    ``ensemble`` became a noun.
+    """
+
+    __slots__ = ()
+
+    @property
+    def final(self) -> np.ndarray:
+        """The ``(n, dim)`` final states, one row per member."""
+        if not self:
+            return np.empty((0, 0))
+        return np.array([np.asarray(t.y)[-1] for t in self], dtype=float)
+
+    def to_frame(self) -> Any:
+        """Return one long-format ``DataFrame``, with a ``member`` column."""
+        import pandas as pd
+
+        frames = []
+        for i, traj in enumerate(self):
+            frame = traj.to_frame()
+            frame.insert(0, "member", i)
+            frames.append(frame)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def plot(self, *transforms: Any, **kwargs: Any) -> Any:
+        """Draw every member on one figure."""
+        from tsdynamics.viz import plot as _plot
+
+        return _plot(*self, *transforms, **kwargs)
+
+    def __repr__(self) -> str:
+        if not self:
+            return "TrajectoryBatch(empty)"
+        rows, dim = np.asarray(self[0].y).shape
+        return f"TrajectoryBatch({len(self)} trajectories, t: {rows}, var: {dim})"
+
+
+class Ensemble:
     """
     Many copies of one system, advanced synchronously from different states.
 
@@ -29,8 +72,10 @@ class EnsembleSystem:
 
     Examples
     --------
-    >>> ens = EnsembleSystem(Lorenz(), [[1, 1, 1], [1.001, 1, 1]])
-    >>> ens.step(0.01)
+    >>> band = Lorenz().ensemble([[1, 1, 1], [1.001, 1, 1]])
+    >>> band.step(0.01)                       # doctest: +SKIP
+    array([[...], [...]])
+    >>> band.run(final_time=10.0).final       # doctest: +SKIP
     array([[...], [...]])
     """
 
@@ -56,9 +101,60 @@ class EnsembleSystem:
         return cast(int, self.template.dim)
 
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """Match the template system's time semantics."""
-        return cast(bool, self.template.is_discrete)
+        return cast(bool, self.template._is_discrete)
+
+    @property
+    def family(self) -> str:
+        """The template system's family word."""
+        return cast(str, self.template.family)
+
+    @property
+    def params(self) -> Any:
+        """The template system's parameters (shared by every member)."""
+        return self.template.params
+
+    @property
+    def variables(self) -> tuple[str, ...]:
+        """The template system's component names."""
+        return cast("tuple[str, ...]", self.template.variables)
+
+    def state(self) -> np.ndarray:
+        """Return the stacked member states — the ``System``-protocol reading."""
+        return self.states()
+
+    def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
+        """Restart every member (from ``u``, or from its own construction state)."""
+        for member in self.members:
+            member.reinit(u, **kwargs)
+
+    def run(self, *args: Any, **kwargs: Any) -> TrajectoryBatch:
+        """Run every member and return a :class:`TrajectoryBatch`.
+
+        Every argument is forwarded verbatim to the template family's ``run``,
+        with each member's own initial state supplied as ``ic=``::
+
+            band = lor.ensemble(np.random.rand(100, 3))
+            batch = band.run(final_time=10.0)
+            batch.final          # the (100, 3) end states
+        """
+        seed = kwargs.pop("seed", None)
+        if self.family == "sde" and seed is not None:
+            # Member ``i`` draws its noise from ``seed_for(seed, i)`` — depending
+            # only on the index — which is the engine's parallel-equals-serial
+            # contract.  One shared seed would give every member the SAME path.
+            from tsdynamics.families.stochastic import _seed_for as seed_for
+
+            return TrajectoryBatch(
+                self.template.run(*args, ic=m.state(), seed=seed_for(seed, i), **kwargs)
+                for i, m in enumerate(self.members)
+            )
+        if seed is not None:
+            kwargs["seed"] = seed
+        return TrajectoryBatch(
+            self.template.run(*args, ic=m.state(), **kwargs) for m in self.members
+        )
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
         """Advance every member synchronously and return the stacked states.
@@ -112,7 +208,7 @@ class EnsembleSystem:
 
         Advances the whole ensemble synchronously, recording each member's state
         after every step.  This is the trajectory collector the static fan chart
-        (:meth:`to_plot_spec`) summarises into a median line + percentile band.
+        (:meth:`__plot_spec__`) summarises into a median line + percentile band.
 
         Parameters
         ----------
@@ -140,7 +236,7 @@ class EnsembleSystem:
 
     # --- visualization seam ---
 
-    def to_plot_spec(
+    def __plot_spec__(
         self, kind: str | None = None, *, steps: int = 200, component: int = 0, band: float = 90.0
     ) -> PlotSpec:
         """Describe the ensemble as a **static fan chart** (median + percentile band).
@@ -190,14 +286,13 @@ class EnsembleSystem:
         # construction; enforce it defensively against any float ordering quirk.
         lo = np.minimum(lo, hi)
 
-        names = getattr(type(self.template), "variables", None)
-        ylabel = names[component] if names is not None else f"y{component}"
+        ylabel = self.variables[component]
         spec_kind = PlotKind(kind) if kind is not None else PlotKind.ENSEMBLE_FAN
         return PlotSpec(
             kind=spec_kind,
             ndim=2,
             title=f"Ensemble fan — {type(self.template).__name__} (n={self.size})",
-            x=Axis(label="iteration" if self.is_discrete else "time"),
+            x=Axis(label="iteration" if self._is_discrete else "time"),
             y=Axis(label=ylabel),
             layers=[
                 Layer(
@@ -214,13 +309,23 @@ class EnsembleSystem:
             ],
         )
 
+    def plot(self, *transforms: Any, **kwargs: Any) -> PlotSpec:
+        """Draw the ensemble — the fan chart by default."""
+        from tsdynamics.viz import plot as _plot
+
+        return cast("PlotSpec", _plot(self, *transforms, **kwargs))
+
     def __len__(self) -> int:
         return len(self.members)
 
     def __repr__(self) -> str:
-        return f"EnsembleSystem({type(self.template).__name__}, size={self.size})"
+        return f"Ensemble({type(self.template).__name__}, m={self.size})"
 
 
 def __dir__() -> list[str]:
     """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete."""
     return sorted(__all__)
+
+
+#: The v5 name.  ``Ensemble`` is the noun ``system.ensemble(states)`` returns.
+EnsembleSystem = Ensemble

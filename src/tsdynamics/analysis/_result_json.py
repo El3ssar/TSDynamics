@@ -1,12 +1,26 @@
 """JSON / repr coercion helpers shared by the analysis result classes.
 
-These three pure helpers (``_jsonify`` for :meth:`AnalysisResult.to_dict`,
-``_is_frame_scalar`` for :meth:`AnalysisResult.to_frame`, and ``_fmt`` for the
-compact ``__repr__`` / :meth:`summary`) were originally inline in
-``analysis/_result.py``; they live here so the split result modules can share
-them without a cycle.  ``_jsonify`` recognises nested :class:`AnalysisResult`
-objects, so it is imported lazily (inside the function) to avoid a circular
-import with :mod:`tsdynamics.analysis._result_base`.
+These pure helpers (``_jsonify`` for :meth:`AnalysisResult.to_dict`,
+``_is_frame_scalar`` for :meth:`AnalysisResult.to_frame`, and the formatting
+family ``_fmt`` / ``_sig`` / ``_state`` / ``_pct`` for ``__repr__``) were
+originally inline in ``analysis/_result.py``; they live here so the split result
+modules can share them without a cycle.  ``_jsonify`` recognises nested
+:class:`AnalysisResult` objects, so it is imported lazily (inside the function)
+to avoid a circular import with :mod:`tsdynamics.analysis._result_base`.
+
+Formatting rules (v6, contract §4.2 rule 13)
+--------------------------------------------
+A result's repr **is** the answer, so the number formatting has to be readable
+at every scale a dynamical system produces:
+
+- :func:`_sig` is **significant-figure** based.  ``np.round(x, 4)`` is
+  scale-blind — a Lyapunov exponent of ``2.5e-5`` rounds to ``0.`` and the repr
+  then asserts something false.
+- :func:`_state` renders a state vector with ``max_line_width=10_000`` and
+  elides above :data:`_MAX_STATE_COMPONENTS` components.  ``numpy``'s default
+  wraps at 75 columns, embedding a newline that would break the indent contract
+  of every multi-line repr on any state with more than ~8 components (every
+  method-of-lines field in the catalogue).
 """
 
 from __future__ import annotations
@@ -95,6 +109,107 @@ def _is_frame_scalar(value: Any) -> bool:
     if isinstance(value, np.ndarray):
         return value.ndim == 0
     return True
+
+
+#: Above this many components a state vector is elided in a repr (contract §4.2
+#: rule 13).  Three components at each end plus ``...`` stays inside one terminal
+#: line for a 3-D flow, a 9-variable climate model and a 4608-cell Gray--Scott
+#: field alike.
+_MAX_STATE_COMPONENTS = 8
+
+#: Never wrap a state vector: a newline inside a repr line destroys the
+#: indentation contract of the multi-line reprs (contract §4.3).
+_NO_WRAP = 10_000
+
+
+def _sig(value: Any, digits: int = 5) -> str:
+    """Format one number to ``digits`` significant figures.
+
+    Significant figures, not decimals: ``2.5e-05`` must not print as ``0``.
+    Non-finite values print as themselves (``nan`` / ``inf`` / ``-inf``).
+
+    Parameters
+    ----------
+    value : float
+        The number to render.
+    digits : int, default 5
+        Significant figures to keep.
+
+    Returns
+    -------
+    str
+    """
+    x = float(value)
+    if not np.isfinite(x):
+        return str(x)
+    return f"{x:.{digits}g}"
+
+
+def _pct(fraction: Any, digits: int = 1) -> str:
+    """Format a 0--1 fraction as a percentage string (``0.496`` → ``49.6%``)."""
+    return f"{100.0 * float(fraction):.{digits}f}%"
+
+
+def _state(values: Any, *, precision: int = 4, max_components: int | None = None) -> str:
+    """Render a state vector on **one** line, elided above ``max_components``.
+
+    ``numpy.array2string`` with ``max_line_width`` pinned so nothing wraps, and
+    ``threshold`` set so a long state summarises as ``[a b c ... x y z]`` rather
+    than dumping a whole field.  Scale-aware: numpy switches to exponential
+    notation on its own when the values need it.
+
+    Parameters
+    ----------
+    values : array_like
+        The state (flattened before rendering).
+    precision : int, default 4
+        Digits after the decimal point in positional notation.
+    max_components : int, optional
+        Elision threshold; defaults to :data:`_MAX_STATE_COMPONENTS`.
+
+    Returns
+    -------
+    str
+        Including the enclosing brackets, e.g. ``[-1.1314 -0.3394]``.
+    """
+    threshold = _MAX_STATE_COMPONENTS if max_components is None else max_components
+    arr = np.asarray(values, dtype=float).ravel()
+    return np.array2string(
+        arr, precision=precision, max_line_width=_NO_WRAP, threshold=threshold, edgeitems=3
+    )
+
+
+def _vector(values: Any, digits: int = 4, *, max_components: int | None = None) -> str:
+    """Render a list of **quantities** — significant figures, comma separated.
+
+    The companion of :func:`_state`.  A state vector is one point and reads best
+    space separated the way NumPy prints it; a list of independent measurements
+    (a Lyapunov spectrum, a set of multipliers) reads as a list, and each entry
+    needs its *own* scale — ``[0.916, 0.000189, -14.58]`` says three different
+    things that a single shared exponent (NumPy's all-or-nothing mode:
+    ``[9.1600e-01 1.8900e-04 -1.4583e+01]``) hides.
+
+    Parameters
+    ----------
+    values : array_like
+        The quantities (flattened before rendering).
+    digits : int, default 4
+        Significant figures per entry.
+    max_components : int, optional
+        Elision threshold; defaults to :data:`_MAX_STATE_COMPONENTS`.
+
+    Returns
+    -------
+    str
+        Including the enclosing brackets, e.g. ``[0.916, 0.000189, -14.58]``.
+    """
+    threshold = _MAX_STATE_COMPONENTS if max_components is None else max_components
+    arr = np.asarray(values, dtype=float).ravel()
+    if arr.size > threshold:
+        head = ", ".join(_sig(v, digits) for v in arr[:3])
+        tail = ", ".join(_sig(v, digits) for v in arr[-3:])
+        return f"[{head}, ..., {tail}]"
+    return "[" + ", ".join(_sig(v, digits) for v in arr) + "]"
 
 
 def _fmt(value: Any) -> str:

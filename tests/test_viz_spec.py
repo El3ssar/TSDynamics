@@ -82,7 +82,7 @@ def _public_fluent_methods() -> set[str]:
             continue
         # ``from __future__ import annotations`` makes every annotation a string;
         # accept the resolved class too, in case that ever changes.
-        if (isinstance(ret, str) and ret.strip() == "PlotSpec") or ret is PlotSpec:
+        if (isinstance(ret, str) and ret.strip() in ("Plot", "PlotSpec")) or ret is PlotSpec:
             out.add(name)
     assert out, "found no fluent tweaks — the introspection broke, not the code"
     return out
@@ -117,14 +117,18 @@ def test_the_scope_partition_matches_the_reviewed_contract() -> None:
         "camera",
         "colorize",
         "font",
-        "grid",
+        "gridlines",
+        "hline",
         "limits",
         "palette",
         "recolor",
         "relabel",
         "rescale",
+        "span",
         "style",
+        "text",
         "ticks",
+        "vline",
     }
     expected_figure = {
         "animate",
@@ -155,7 +159,7 @@ _PANEL_TWEAKS: dict[str, tuple[typing.Callable[[PlotSpec], PlotSpec], bool]] = {
     "style": (lambda s: s.style(linewidth=4.0), False),
     "recolor": (lambda s: s.recolor("red", "green"), False),
     "palette": (lambda s: s.palette(["#123456"]), False),
-    "grid": (lambda s: s.grid(True), False),
+    "gridlines": (lambda s: s.gridlines(True), False),
     "font": (lambda s: s.font(size=22.0), False),
     "colorize": (lambda s: s.colorize(legend=True), False),
     "camera": (lambda s: s.camera(elev=12.0), True),
@@ -380,7 +384,7 @@ def test_resolved_panels_is_empty_for_a_single_panel_spec() -> None:
     [
         ("palette", (("#ff9900", "#00ccff"),), {}),
         ("font", (), {"size": 13.0}),
-        ("grid", (True,), {"color": "#888888"}),
+        ("gridlines", (True,), {"color": "#888888"}),
     ],
 )
 def test_a_forwarded_theme_tweak_keeps_the_composites_theme(tweak, args, kwargs) -> None:
@@ -423,7 +427,7 @@ def test_save_rejects_an_unsupported_extension(tmp_path) -> None:
     """An extension the library cannot write raises instead of half-succeeding."""
     pytest.importorskip("matplotlib")
     target = tmp_path / "figure.xyz"
-    with pytest.raises(InvalidParameterError, match="unsupported format"):
+    with pytest.raises(InvalidParameterError, match="no installed backend writes"):
         _panel().save(str(target))
     assert not target.exists()
 
@@ -446,7 +450,7 @@ def test_save_rejects_an_animated_composite_to_html(tmp_path) -> None:
     ("name", "backend", "match"),
     [
         ("f.html", "matplotlib", "does not write .html"),
-        ("f.mp4", "plotly", "cannot write .mp4"),
+        ("f.mp4", "plotly", "movie format and this Plot is not animated"),
         ("f.json", "matplotlib", "does not write .json"),
     ],
 )
@@ -640,3 +644,344 @@ def test_save_verifies_the_file_even_for_an_unknown_backend(tmp_path, monkeypatc
     monkeypatch.setattr(PlotSpec, "_write", lambda *a, **k: None)
     with pytest.raises(InvalidParameterError, match="did not write"):
         spec.save(str(target))
+
+
+# ---------------------------------------------------------------------------
+# 6 — v6: one type, one escape hatch, one figure vocabulary
+# ---------------------------------------------------------------------------
+
+
+def test_the_type_a_user_receives_is_called_plot() -> None:
+    """``ts.plot`` returns a ``Plot`` — one type, no facade, no wrapper.
+
+    ``PlotSpec`` stays bound as the *same class object* so 557 in-tree
+    annotations keep working, but the name a user sees, types and reads in a
+    repr is ``Plot``.  If these ever became two classes, "escalating from easy to
+    expert is not a type change" would stop being true.
+    """
+    from tsdynamics.viz.spec import Plot
+
+    assert Plot is PlotSpec
+    assert Plot.__name__ == "Plot"
+    assert type(_panel()).__name__ == "Plot"
+    assert repr(_panel()).startswith("Plot(")
+
+
+def test_the_repr_names_what_you_hold_and_the_verb_that_shows_it() -> None:
+    """The repr must answer both "what is this?" and "now what?" — in one line."""
+    text = repr(_panel())
+    assert "time_series" in text and "1 layer" in text
+    assert ".show()" in text and ".save('f.png')" in text
+
+    # Extension-aware: a .png of a movie is a still, so an animated plot must not
+    # send the reader to the wrong verb.
+    animated = repr(_panel().animate(fps=30))
+    assert "animated 30 fps" in animated
+    assert ".save('f.gif')" in animated and ".save('f.png')" not in animated
+
+    # A composite names its arrangement rather than counting layers it has none of.
+    grid = repr(
+        PlotSpec(kind=PlotKind.COMPOSITE, panels=[_panel(), _panel()], layout=Layout(mode="row"))
+    )
+    assert "2 panels in a 1x2 row" in grid
+
+
+def test_the_repr_names_the_producing_transforms_of_an_overlay() -> None:
+    """An overlay reads as its sources, not as "3 layers"."""
+    t = np.linspace(0.0, 1.0, 8)
+    spec = PlotSpec(
+        kind=PlotKind.PHASE_PORTRAIT_2D,
+        layers=[
+            Layer(PlotKind.IMAGE, {"x": t, "y": t, "z": np.outer(t, t)}, transform="flow_speed"),
+            Layer(PlotKind.LINE, {"x": t, "y": t}, transform="streamlines"),
+            Layer(PlotKind.LINE, {"x": t, "y": -t}, transform="nullclines"),
+        ],
+    )
+    assert "3 layers: flow_speed, streamlines, nullclines" in repr(spec)
+
+
+def test_fig_ax_axes_hand_you_matplotlib_and_the_plot_still_works() -> None:
+    """The escape hatch: expert tier is one dot away and is not a type change."""
+    plt = pytest.importorskip("matplotlib.pyplot")
+    spec = _panel()
+    fig = spec.fig
+    assert fig.__class__.__name__ == "Figure"
+    assert spec.fig is fig, "the figure is rendered once and cached"
+    assert spec.ax is fig.axes[0]
+    assert spec.axes == list(fig.axes)
+    # ...and the library verbs still work on the very same object (the warning is
+    # the "library tweaks first, matplotlib last" rule, gated separately below).
+    with pytest.warns(Warning):
+        assert spec.relabel(x="t") is spec
+    plt.close("all")
+
+
+def test_ax_on_a_composite_names_axes_instead_of_guessing() -> None:
+    """A multi-panel figure has no single axes; the error says which name to use."""
+    plt = pytest.importorskip("matplotlib.pyplot")
+    spec = _composite(4)
+    with pytest.raises(InvalidParameterError, match=r"4 panels; use \.axes"):
+        _ = spec.ax
+    assert len(spec.axes) == 4
+    plt.close("all")
+
+
+#: One benign call per mutating method — enough to prove the cache is dropped.
+_MUTATOR_CALLS: dict[str, typing.Callable[[PlotSpec], object]] = {
+    "add": lambda s: s.add(_panel("b")),
+    "relabel": lambda s: s.relabel(x="t"),
+    "rescale": lambda s: s.rescale(y="log"),
+    "limits": lambda s: s.limits(x=(0.0, 1.0)),
+    "ticks": lambda s: s.ticks(x=[0.0, 1.0]),
+    "style": lambda s: s.style(color="red"),
+    "recolor": lambda s: s.recolor("red"),
+    "theme": lambda s: s.theme("dark"),
+    "palette": lambda s: s.palette(["#123456"]),
+    "gridlines": lambda s: s.gridlines(True),
+    "font": lambda s: s.font(size=11.0),
+    "background": lambda s: s.background("#101010"),
+    "size": lambda s: s.size(width=4.0),
+    "colorize": lambda s: s.colorize(legend=True),
+    "autocolor": lambda s: s.autocolor(),
+    "animate": lambda s: s.animate(fps=10),
+    "trail": lambda s: s.trail(length=None),
+    "head": lambda s: s.head(size=4.0),
+    "camera": lambda s: s.camera(elev=10.0),
+    "clock": lambda s: s.clock(True),
+    "tweak": lambda s: s.tweak(title="x"),
+    "vline": lambda s: s.vline(0.5),
+    "hline": lambda s: s.hline(0.5),
+    "span": lambda s: s.span(0.1, 0.2),
+    "text": lambda s: s.text(0.1, 0.2, "hi"),
+}
+
+
+def test_every_mutating_plot_method_drops_the_figure_cache() -> None:
+    """A cached figure that survives a tweak is a silent-wrong-answer generator.
+
+    Structural, not example-based: the set of methods that must invalidate is
+    **derived from the source** (every public method whose return annotation is
+    ``Plot`` / ``PlotSpec`` / ``Self``), so adding a tweak that forgets to
+    invalidate fails here rather than shipping a figure that disagrees with the
+    object it came from.  ``add`` is annotated ``-> Self``, which is exactly why
+    the derivation cannot filter on the class name alone.
+    """
+    derived = set()
+    for name, attr in vars(PlotSpec).items():
+        if name.startswith("_") or not callable(attr):
+            continue
+        try:
+            ret = inspect.signature(attr).return_annotation
+        except (TypeError, ValueError):  # pragma: no cover - builtins / slots
+            continue
+        text = ret.strip() if isinstance(ret, str) else getattr(ret, "__name__", "")
+        if text in {"Plot", "PlotSpec", "Self"}:
+            derived.add(name)
+    assert "add" in derived, "the derivation must not miss the -> Self method"
+    assert derived <= set(_MUTATOR_CALLS), (
+        f"untested mutators: {sorted(derived - set(_MUTATOR_CALLS))} — add a call "
+        "to _MUTATOR_CALLS so this gate can prove each drops the figure cache."
+    )
+    for name in sorted(derived):
+        spec = _panel()
+        spec._figure_cache = ("sentinel-figure", ["sentinel-axes"])  # type: ignore[assignment]
+        _MUTATOR_CALLS[name](spec)
+        assert spec._figure_cache is None, f"{name}() left a stale figure cached"
+
+
+def test_mutating_after_handing_out_the_figure_warns_once() -> None:
+    """Never silently lose your work: library tweaks first, matplotlib last."""
+    plt = pytest.importorskip("matplotlib.pyplot")
+    from tsdynamics.viz.render.caps import VisualizationDegraded
+
+    spec = _panel()
+    spec.ax.set_title("my hand edit")
+    with pytest.warns(VisualizationDegraded, match="library tweaks first"):
+        spec.style(color="red")
+    # Exactly once: a second round of hand edit + tweak is a fresh situation, but
+    # a second tweak on the same handed-out figure must not nag.
+    assert spec.fig is not None
+    import warnings as _w
+
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        spec.style(color="blue")
+    assert not [c for c in caught if issubclass(c.category, VisualizationDegraded)]
+    plt.close("all")
+
+
+def test_selecting_a_panel_returns_a_plot_so_it_chains() -> None:
+    """``p[i]`` / ``p["name"]`` select; ``p.panels`` stays the list."""
+    spec = _composite(3)
+    spec.panels[1].title = "psd"
+    assert spec[0] is spec.panels[0]
+    assert spec["psd"] is spec.panels[1]
+    assert spec[1].rescale(x="log") is spec.panels[1]
+    # On a single-panel plot, p[0] is p — so grid code works on one panel too.
+    panel = _panel()
+    assert panel[0] is panel
+    with pytest.raises(InvalidParameterError, match="no panel named"):
+        _ = spec["nope"]
+    with pytest.raises(InvalidParameterError, match="does not exist"):
+        _ = spec[9]
+
+
+def test_style_by_name_addresses_one_source_inside_an_overlay() -> None:
+    """``p.style("nullclines", ...)`` — the provenance stamp becomes usable."""
+    t = np.linspace(0.0, 1.0, 8)
+    spec = PlotSpec(
+        kind=PlotKind.PHASE_PORTRAIT_2D,
+        layers=[
+            Layer(PlotKind.LINE, {"x": t, "y": t}, label="orbit", transform="streamlines"),
+            Layer(PlotKind.LINE, {"x": t, "y": -t}, label="null", transform="nullclines"),
+        ],
+    )
+    spec.style("nullclines", color="white", linewidth=1.2)
+    assert spec.layers[1].style == {"color": "white", "linewidth": 1.2}
+    assert spec.layers[0].style == {}, "a named restyle must not touch the others"
+    spec.style("orbit", alpha=0.5)  # by legend label, too
+    assert spec.layers[0].style == {"alpha": 0.5}
+    with pytest.raises(InvalidParameterError, match="matched no layer"):
+        spec.style("flow_speed", color="red")
+
+
+def test_annotation_verbs_take_plain_python_and_survive_a_render() -> None:
+    """``Annotation`` was exported because a signature demanded it (a C1 bug)."""
+    plt = pytest.importorskip("matplotlib.pyplot")
+    spec = _panel()
+    returned = (
+        spec.vline([0.25, 0.75], label="onsets", ls="--", color="crimson")
+        .hline(0.0)
+        .span(0.1, 0.2, alpha=0.2)
+        .text(0.5, 0.5, "here")
+    )
+    assert returned is spec
+    kinds = [a.kind for a in spec.annotations]
+    assert kinds == ["vline", "vline", "hline", "span", "text"]
+    # ``ls="--"`` went through the same normalizer ``.style()`` uses.
+    assert spec.annotations[0].style == {"linestyle": "dashed", "color": "crimson"}
+    spec.render("matplotlib")
+    plt.close("all")
+
+
+def test_a_plain_dict_annotation_can_no_longer_reach_a_renderer_raw() -> None:
+    """The measured ``AttributeError: 'dict' object has no attribute 'style'``."""
+    from tsdynamics.viz.spec import Annotation
+
+    coerced = Annotation.from_mapping({"kind": "vline", "x": 1.0})
+    assert isinstance(coerced, Annotation) and coerced.x == 1.0
+    assert Annotation.from_mapping(coerced) is coerced
+
+
+@pytest.mark.parametrize(
+    ("bad", "match"),
+    [
+        ("t={:.1f}", "positional field"),
+        ("{time}", "names 'time'"),
+        ("no fields", "names no field"),
+    ],
+)
+def test_clock_format_is_validated_at_the_call_not_at_save(bad: str, match: str) -> None:
+    """A typo used to surface as a raw IndexError hundreds of frames later."""
+    with pytest.raises(InvalidParameterError, match=match):
+        _panel().clock(fmt=bad)
+
+
+@pytest.mark.parametrize(("given", "want"), [("{}", "{t}"), ("t = {t:.1f}", "t = {t:.1f}")])
+def test_clock_format_normalises_the_bare_field(given: str, want: str) -> None:
+    """A bare ``{}`` means the time, and is rewritten so the callback can format it."""
+    spec = _panel().clock(fmt=given)
+    assert spec.animation is not None
+    assert spec.animation.clock_format == want
+
+
+def test_grid_names_gridlines_and_says_so() -> None:
+    """One attribute cannot mean two things; the error is the migration guide."""
+    with pytest.raises(AttributeError, match="gridlines"):
+        _panel().grid(True)
+
+
+def test_the_figure_vocabulary_is_derived_and_has_seventeen_names() -> None:
+    """One definition of what a *figure* keyword is, shared by every door.
+
+    Before v6 the front door carried a five-name copy of this set, so 12 of these
+    17 raised at ``ts.plot(...)`` while all 17 worked at ``traj.plot(...)``.
+    """
+    from tsdynamics.viz.spec import FIGURE_KEYS, apply_figure_keywords, split_figure_keywords
+
+    assert len(FIGURE_KEYS) == 17
+    assert {"xscale", "xlim", "xticks", "clim", "colorbar", "legend", "theme"} <= FIGURE_KEYS
+
+    kw = {
+        "xlim": (0.0, 1.0),
+        "yscale": "log",
+        "title": "T",
+        "legend": False,
+        "theme": "dark",
+        "final_time": 10.0,
+    }
+    figure = split_figure_keywords(kw)
+    assert kw == {"final_time": 10.0}, "only figure keywords are peeled"
+
+    spec = apply_figure_keywords(_panel(), figure)
+    assert spec.x.limits == (0.0, 1.0)
+    assert spec.y.scale == "log"
+    assert spec.title == "T"
+    assert spec.legend is None, "legend=False drops the legend"
+    assert spec._theme is not None and spec._theme.name == "dark"
+
+
+@pytest.mark.parametrize(
+    ("name", "backend"),
+    [
+        ("f.png", "matplotlib"),
+        ("f.pdf", "matplotlib"),
+        ("f.svg", "matplotlib"),
+        ("f.html", "plotly"),
+        ("f.json", "json"),
+    ],
+)
+def test_save_picks_the_backend_from_the_extension(name: str, backend: str) -> None:
+    """``.png`` / ``.html`` / ``.json`` each route to the backend that writes them."""
+    chosen = _panel()._preferred_save_backend(name)
+    if chosen is None:  # that backend is not installed in this environment
+        pytest.skip(f"{backend} not installed")
+    assert chosen == backend
+
+
+def test_save_picks_a_movie_writer_only_for_an_animated_plot() -> None:
+    """``.mp4`` / ``.gif`` route to matplotlib — and only when there is a movie."""
+    pytest.importorskip("matplotlib")
+    movie = _panel().animate(fps=10)
+    assert movie._preferred_save_backend("f.mp4") == "matplotlib"
+    assert movie._preferred_save_backend("f.gif") == "matplotlib"
+    # A still of a movie is its final frame, so an image extension still resolves.
+    assert movie._preferred_save_backend("f.png") == "matplotlib"
+    # ...but a still plot has no movie writer at all, and says so.
+    with pytest.raises(InvalidParameterError, match="movie format and this Plot is not animated"):
+        _panel()._check_save_supported(".mp4", None)
+
+
+def test_show_renders_and_returns_the_backend_figure() -> None:
+    """``.show()`` is the reflex verb; headless it renders and hands back the figure."""
+    plt = pytest.importorskip("matplotlib.pyplot")
+    figure = _panel().show()
+    assert figure.__class__.__name__ in ("Figure", "RenderResult")
+    plt.close("all")
+
+
+def test_a_plot_without_a_backend_still_says_what_it_is_in_a_notebook() -> None:
+    """``_repr_html_`` is the no-backend fallback; with a backend it stands aside."""
+    import tsdynamics.viz.spec as spec_mod
+
+    spec = _panel().relabel(x="t", y="x(t)", title="run 4")
+    assert spec._repr_html_() is None, "a real backend draws instead"
+
+    saved = spec_mod._resolve_renderers
+    spec_mod._resolve_renderers = lambda: None  # type: ignore[assignment]
+    try:
+        html = spec._repr_html_()
+    finally:
+        spec_mod._resolve_renderers = saved  # type: ignore[assignment]
+    assert html is not None
+    assert "run 4" in html and "time_series" in html and "no drawing backend" in html

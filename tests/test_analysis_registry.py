@@ -228,7 +228,7 @@ def _logistic_series() -> np.ndarray:
 # annotation sweep above.
 def _runtime_cases() -> list[tuple[str, object]]:
     series = _logistic_series()
-    traj = _henon().iterate(steps=600, ic=[0.1, 0.1])
+    traj = _henon().run(steps=600, ic=[0.1, 0.1])
     spectrum = [0.42, -1.62]
     return [
         ("lyapunov_spectrum", lambda: ts.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1])),

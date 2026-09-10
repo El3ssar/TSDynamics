@@ -75,16 +75,13 @@ class ProjectedSystem(DerivedSystem):
         return len(self.components)
 
     @property
-    def variables(self) -> tuple[str, ...] | None:
+    def variables(self) -> tuple[str, ...]:
         """Component names of the *projected* view (the inner names, subset).
 
-        Overrides :class:`DerivedSystem`'s pass-through (which would return the
-        inner system's *full* names and mislabel the projected columns).  Returns
-        ``None`` when the inner system declares no ``variables``.
+        Overrides :class:`DerivedSystem`'s pass-through, which would return the
+        inner system's *full* names and mislabel the projected columns.
         """
-        inner = getattr(type(self.system), "variables", None)
-        if inner is None:
-            return None
+        inner = tuple(self.system.variables)
         return tuple(inner[i] for i in self.components)
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
@@ -138,9 +135,15 @@ class ProjectedSystem(DerivedSystem):
             u = self._to_full_state(np.asarray(u, dtype=float), verb="reinit")
         self.system.reinit(u, **kwargs)
 
-    def trajectory(self, *args: Any, **kwargs: Any) -> Trajectory:
+    def __repr__(self) -> str:
+        """Name the inner system AND which components survive the projection."""
+        names = tuple(self.system.variables)
+        shown = ", ".join(names[i] if 0 <= i < len(names) else str(i) for i in self.components)
+        return f"ProjectedSystem({type(self.system).__name__}, {shown})"
+
+    def run(self, *args: Any, **kwargs: Any) -> Trajectory:
         """Full-system trajectory with projected columns."""
-        traj = self.system.trajectory(*args, **kwargs)
+        traj = self.system.run(*args, **kwargs)
         meta = {**traj.meta, "projected": self.components}
         # Back-reference ``self`` (not the inner system): the returned ``y`` holds
         # only the projected columns, and ``self.variables`` names exactly those —

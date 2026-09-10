@@ -103,7 +103,7 @@ def auto_plane(system: Any) -> tuple[int, float]:
       component on a *driven* system: a carried drive phase (``z' = omega``) has
       the largest IQR of any coordinate by construction, because it sweeps
       monotonically across the whole window — yet it crosses its median once,
-      ever, so ``PoincareMap(Duffing()).trajectory(5)`` marched to
+      ever, so ``PoincareMap(Duffing()).run(5)`` marched to
       ``max_time = 1e4`` and raised.  Measured over the catalogue, **30 of 137
       flows** (Duffing, ForcedVanDerPol, BickleyJet, DoubleGyre, …) chose such a
       coordinate under a spread-only rule; requiring recrossings moves them onto
@@ -276,11 +276,11 @@ def _probe_orbit(system: Any, name: str, stretch: float = 1.0) -> np.ndarray:
     last: Exception | None = None
     for _ in range(_AUTO_PROBE_ATTEMPTS):
         try:
-            traj = system.copy().trajectory(
+            traj = system.copy().run(
                 final_time=_AUTO_PROBE_FINAL_TIME * stretch,
                 dt=_AUTO_PROBE_DT,
                 transient=_AUTO_PROBE_TRANSIENT * stretch,
-                method=_probe_method(system),
+                solver=_probe_method(system),
             )
         except Exception as err:  # noqa: BLE001 - any probe failure means "try again"
             last = err
@@ -306,13 +306,13 @@ def _refuse_a_family_with_no_section(system: Any, name: str) -> None:
     no well-defined transversal.  Both are a category mistake rather than a
     numerical failure — and without this check the probe simply *tries*, and the
     caller is told what the probe tripped over instead (``dt is not a valid
-    Henon.iterate() keyword`` / ``unknown SDE method 'rk4'``) under a heading
+    Henon.run() keyword`` / ``unknown SDE method 'rk4'``) under a heading
     reading "every probe run failed or diverged … reinit(ic) it first", which
     diagnoses an initial condition when the real answer is "not this family".
     """
     from tsdynamics.errors import InvalidParameterError, remedy
 
-    if getattr(system, "is_discrete", False):
+    if getattr(system, "_is_discrete", False):
         raise InvalidParameterError(
             f"{name} is a discrete map, so it has no Poincaré section: a section counts the "
             "crossings of a *continuous* orbit through a surface, and a map jumps rather than "
@@ -543,7 +543,7 @@ class PoincareMap(DerivedSystem):
     Examples
     --------
     >>> pmap = PoincareMap(Rossler(), plane=("x", 0.0, "up"))
-    >>> section = pmap.trajectory(500)         # 500 crossings → PoincareSection
+    >>> section = pmap.run(500)                # 500 crossings → PoincareSection
     >>> section.y.shape
     (500, 3)
     >>> pmap = PoincareMap(Lorenz())           # no plane named → one is chosen
@@ -563,6 +563,10 @@ class PoincareMap(DerivedSystem):
         super().__init__(system)
         #: Whether :attr:`plane` was chosen by :func:`auto_plane` rather than named.
         self.plane_auto = plane is None
+        #: The plane **as the user typed it**, kept beside the resolved
+        #: ``(index, offset)``.  Without it two sections on different planes repr
+        #: identically, because only the resolved form survived.
+        self.plane_given = plane
         plane, direction = _resolve_section_plane(system, plane, direction)
         normal, offset = self._parse_plane(system.dim, plane)
         self.plane = plane
@@ -627,6 +631,7 @@ class PoincareMap(DerivedSystem):
         # was arrived at — otherwise a swept auto section would report itself as
         # deliberate from the second value onwards.
         rebuilt.plane_auto = self.plane_auto
+        rebuilt.plane_given = self.plane_given
         return rebuilt
 
     # --- section geometry ---
@@ -677,7 +682,7 @@ class PoincareMap(DerivedSystem):
     # --- System protocol (discrete view) ---
 
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """A Poincaré map is a discrete view of the flow."""
         return True
 
@@ -756,7 +761,7 @@ class PoincareMap(DerivedSystem):
         Examples
         --------
         >>> pmap = PoincareMap(Rossler(), plane=("y", 0.0, "up"), dt=0.01)
-        >>> sol = Rossler().run(final_time=400, dt=0.01, method="rk4",
+        >>> sol = Rossler().run(final_time=400, dt=0.01, solver="rk4",
         ...                     events=pmap.as_events())
         >>> sol.meta["y_events"][0][:5].shape      # the same crossing states
         (5, 3)
@@ -818,16 +823,25 @@ class PoincareMap(DerivedSystem):
             self._n_cross += transient + steps
         return times, points
 
-    def trajectory(
+    def __repr__(self) -> str:
+        """Name the inner system AND the plane — two sections must not repr alike."""
+        axis, offset = self.plane
+        names = tuple(self.system.variables)
+        label = names[axis] if isinstance(axis, int) and 0 <= axis < len(names) else str(axis)
+        word = {1: " up", -1: " down"}.get(int(self.direction), "")
+        return f"PoincareMap({type(self.system).__name__}, plane={label} = {float(offset):g}{word})"
+
+    def run(
         self,
         steps: int = 100,
         *,
+        ic: Any | None = None,
         transient: int = 0,
         backend: str | None = None,
         **kwargs: Any,
     ) -> PoincareSection:
         """
-        Collect crossings as a :class:`PoincareSection`.
+        Collect crossings as a :class:`PoincareSection` — **from a fresh start**.
 
         ``t`` holds the continuous crossing times; ``y`` the full-dimensional
         crossing states.  ``transient`` crossings are discarded first.  The
@@ -870,7 +884,7 @@ class PoincareMap(DerivedSystem):
 
         Notes
         -----
-        **Live-cursor semantics.**  ``trajectory`` advances the *inner* system as
+        **Live-cursor semantics.**  ``run`` advances the *inner* system as
         a side effect, so a subsequent :meth:`step` continues forward rather than
         re-yielding the crossings just collected.  The two collection paths leave
         the inner cursor at slightly different places: the Python loop stops just
@@ -880,8 +894,10 @@ class PoincareMap(DerivedSystem):
         collected crossings — hold; do not rely on the exact cursor offset.  Call
         :meth:`reinit` first if you need a deterministic restart point.
         """
-        if kwargs:
-            self.reinit(kwargs.pop("ic", None), **kwargs)
+        # ``run`` is a fresh run on every family and every wrapper.  Before v6
+        # this started from the inner flow's LIVE cursor, so ``pmap.run(5)``
+        # twice returned different data; ``step()`` is the verb that continues.
+        self.reinit(ic, **kwargs)
 
         if _crossings.engine_eligible(self.system, backend):
             from tsdynamics.engine.run import EngineNotAvailableError

@@ -207,7 +207,7 @@ def _base_state(system: Any, at: Any | None) -> np.ndarray:
                 f"{dim} entries, got {arr.size}."
             )
         return arr
-    declared = getattr(type(system), "default_ic", None)
+    declared = getattr(type(system), "_default_ic", None)
     if declared is None:
         return np.zeros(dim, dtype=float)
     return np.asarray(declared, dtype=float).reshape(dim)
@@ -273,9 +273,9 @@ def window_for(
         return out_x, out_y, meta
 
     box: np.ndarray | None = None
-    if getattr(type(system), "default_ic", None) is not None:
+    if getattr(type(system), "_default_ic", None) is not None:
         try:
-            traj = system.integrate(final_time=float(pilot_time), dt=float(pilot_time) / 400.0)
+            traj = system.run(final_time=float(pilot_time), dt=float(pilot_time) / 400.0)
             pts = np.asarray(traj.y, dtype=float)
             if np.isfinite(pts).all():
                 box = np.array(

@@ -30,6 +30,7 @@ import numpy as np
 
 from .._common import reject_system
 from .._result import AnalysisResult
+from .._result_json import _sig
 from ._common import _as_series, _delay_columns
 
 __all__ = [
@@ -45,7 +46,7 @@ class EmbeddingDimension(AnalysisResult):
     r"""A minimum-embedding-dimension estimate with the curve it was read from.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.  It also
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.  It also
     behaves as the dimension integer (``int(result)`` drops it straight into
     :func:`~tsdynamics.analysis.embedding.embed.embed`), while carrying the
     per-dimension diagnostic so the saturation/decay can be inspected.
@@ -82,11 +83,32 @@ class EmbeddingDimension(AnalysisResult):
         """Return the recommended embedding dimension, so it drops into ``embed``."""
         return int(self.dimension)
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"EmbeddingDimension(method={self.method!r}, dimension={self.dimension}, "
-            f"delay={self.delay}, dims={self.dims[0]}..{self.dims[-1]})"
-        )
+    def _answer(self) -> str:
+        """Return ``m = <dimension>`` — the recommended embedding dimension."""
+        return f"m = {int(self.dimension)}"
+
+    def _context(self) -> str | None:
+        """Return the method, delay and the dimension range that was scanned."""
+        dims = np.asarray(self.dims)
+        span = f"d = {int(dims[0])}..{int(dims[-1])}" if dims.size else "no scan"
+        return f"{self.method}, τ={self.delay} samples, {span}"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the diagnostic value at the selected dimension."""
+        dims = np.asarray(self.dims)
+        if not dims.size:
+            return ()
+        where = np.flatnonzero(dims == int(self.dimension))
+        if not where.size:
+            return ()
+        i = int(where[0])
+        if self.fnn_fraction is not None:
+            return (f"false neighbours at m: {_sig(np.asarray(self.fnn_fraction)[i], 3)}",)
+        if self.afn_e1 is not None:
+            e1 = _sig(np.asarray(self.afn_e1)[i], 4)
+            e2 = "" if self.afn_e2 is None else f" · E2 = {_sig(np.asarray(self.afn_e2)[i], 4)}"
+            return (f"E1 at m: {e1}{e2}  (E1 saturates to 1; E2 near 1 means stochastic)",)
+        return ()
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe the embedding-dimension diagnostic as a :class:`PlotSpec`.

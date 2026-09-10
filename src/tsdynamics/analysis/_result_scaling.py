@@ -12,6 +12,7 @@ from typing import Any, ClassVar, cast
 import numpy as np
 
 from tsdynamics.analysis._result_base import AnalysisResult
+from tsdynamics.analysis._result_json import _sig
 from tsdynamics.analysis._result_scalar import _NumericOps
 
 
@@ -147,11 +148,84 @@ class ScalingResult(_NumericOps, AnalysisResult):
         x = np.asarray(self.abscissa, dtype=float)
         return float(x[lo]), float(x[hi])
 
-    def _interpretation(self) -> str | None:
-        """Report the estimate with its scaling-window width and point count."""
+    @property
+    def n_fit(self) -> int:
+        """Number of curve points the straight line was fitted over."""
         lo, hi = self.fit_region
-        n_fit = hi - lo + 1
-        return f"estimate = {float(self.estimate):.4g} ± {float(self.stderr):.2g}  (fit over {n_fit} points)"
+        return int(hi) - int(lo) + 1
+
+    @property
+    def r_squared(self) -> float:
+        r"""Coefficient of determination of the line fit over the scaling region.
+
+        :math:`R^2 = 1 - SS_\text{res}/SS_\text{tot}` for the reported line
+        ``intercept + estimate * abscissa`` against :attr:`ordinate`, restricted
+        to :attr:`fit_region`.  It answers the one question a reader has about a
+        slope read off a curve — *was the region actually straight?* — and it is
+        derived from what the result already carries, so no estimator changes.
+        ``nan`` when the region holds fewer than two points or is flat.
+
+        Returns
+        -------
+        float
+        """
+        lo, hi = self.fit_region
+        x = np.asarray(self.abscissa, dtype=float)[lo : hi + 1]
+        y = np.asarray(self.ordinate, dtype=float)[lo : hi + 1]
+        if x.size < 2 or y.size != x.size:
+            return float("nan")
+        residual = y - (float(self.intercept) + float(self.estimate) * x)
+        ss_tot = float(np.sum((y - y.mean()) ** 2))
+        if ss_tot == 0.0:
+            return float("nan")
+        return float(1.0 - np.sum(residual**2) / ss_tot)
+
+    # -- the readout ------------------------------------------------------
+
+    def _quantity(self) -> str:
+        """Return the symbol the answer is named by (``D_corr``, ``λ_max``, …)."""
+        return "estimate"
+
+    def _unit(self) -> str:
+        """Return the unit the estimate is quoted in (``""`` when dimensionless)."""
+        unit = self.meta.get("unit") if self.meta else None
+        return str(unit) if unit else ""
+
+    def _answer(self) -> str:
+        """Return ``<quantity> = <estimate> ± <stderr> <unit>``."""
+        unit = self._unit()
+        text = f"{self._quantity()} = {_sig(self.estimate, 5)} ± {_sig(self.stderr, 3)}"
+        return text + (f" {unit}" if unit else "")
+
+    def _window_for_repr(self) -> tuple[float, float]:
+        """Return the fitted abscissa span, **clipped**, for the repr only.
+
+        :attr:`scaling_window` indexes ``abscissa`` at the declared
+        ``fit_region``, which raises when a caller builds a result whose region
+        does not fit its curve.  That is the right behaviour for an accessor and
+        the wrong one for a repr, which must never be the thing that raises in a
+        console, so the repr reads a clipped window instead.
+        """
+        x = np.asarray(self.abscissa, dtype=float)
+        if not x.size:
+            return float("nan"), float("nan")
+        lo, hi = self.fit_region
+        lo = int(np.clip(lo, 0, x.size - 1))
+        hi = int(np.clip(hi, 0, x.size - 1))
+        return float(x[lo]), float(x[hi])
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the one line that says whether the fit is believable."""
+        lo, hi = self._window_for_repr()
+        r2 = self.r_squared
+        bits = [f"{self.n_fit} fit pts", f"x ∈ [{_sig(lo, 3)}, {_sig(hi, 3)}]"]
+        if np.isfinite(r2):
+            bits.append(f"R² = {_sig(r2, 5)}")
+        return (f"({', '.join(bits)})",)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the fit diagnostics the repr reports (``n_fit`` / ``r_squared``)."""
+        return {"n_fit": self.n_fit, "r_squared": self.r_squared}
 
     # -- visualization ---------------------------------------------------
 

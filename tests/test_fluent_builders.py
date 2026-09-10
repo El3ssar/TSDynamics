@@ -25,7 +25,7 @@ import pytest
 
 import tsdynamics as ts
 from tsdynamics.derived import StroboscopicMap
-from tsdynamics.families._accessors import infer_forcing_period
+from tsdynamics.derived.stroboscopic import infer_forcing_period
 from tsdynamics.systems import Duffing, Lorenz, Rossler
 
 # Engine-backed (runs the flow); gates the module and auto-tags it ``engine``.

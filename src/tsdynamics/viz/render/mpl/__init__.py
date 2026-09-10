@@ -33,16 +33,36 @@ __all__ = ["register"]
 #: The registry name the matplotlib backend registers under.
 _BACKEND_NAME = "matplotlib"
 
-#: The file extensions this backend can **write** (see
-#: :meth:`~tsdynamics.viz.render.caps.RendererCapabilities.can_save`).  The raster
-#: / vector formats go through ``Figure.savefig``; ``.mp4`` / ``.gif`` go through
-#: :class:`~matplotlib.animation.FuncAnimation`'s own ``save`` (ffmpeg / pillow)
-#: and are the **only** way this library writes a movie — plotly's animation core
-#: is single-panel HTML, so an animated composite must land here.
-_WRITES: frozenset[str] = frozenset(
-    {".png", ".pdf", ".svg", ".svgz", ".jpg", ".jpeg", ".eps", ".ps", ".tif", ".tiff", ".webp"}
-    | {".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng"}
+#: Extensions ``Figure.savefig`` writes — **measured**, not assumed.  ``.pgf`` was
+#: missing (it works) and ``.webp`` was declared but unreachable, because a single
+#: undivided ``writes`` set mixed still formats with movie formats.
+_WRITES_STATIC: frozenset[str] = frozenset(
+    {
+        ".png",
+        ".pdf",
+        ".svg",
+        ".svgz",
+        ".jpg",
+        ".jpeg",
+        ".eps",
+        ".ps",
+        ".pgf",
+        ".tif",
+        ".tiff",
+        ".webp",
+        ".gif",
+    }
 )
+
+#: Extensions :class:`~matplotlib.animation.FuncAnimation`'s own ``save`` writes
+#: (ffmpeg / pillow) — the **only** way this library writes a movie, since plotly's
+#: animation core is single-panel HTML, so an animated composite must land here.
+#: Measured: the four formats ``savefig`` refuses outright (``.apng`` ``.m4v``
+#: ``.mov`` ``.webm``) **are** writable here, and ``.mp4`` — the headline movie
+#: format — is animated-only.  Declaring both halves in one undivided set is what
+#: made ``p.save("x.mp4")`` on a static plot raise matplotlib's raw
+#: ``ValueError: Format 'mp4' is not supported``.
+_WRITES_ANIMATED: frozenset[str] = frozenset({".mp4", ".gif", ".webm", ".mov", ".m4v", ".apng"})
 
 
 def _matplotlib_available() -> bool:
@@ -94,7 +114,12 @@ def register(registry: Registry) -> bool:
     if _BACKEND_NAME in registry:
         return False
 
-    capabilities = RendererCapabilities.all_kinds(_BACKEND_NAME, supports_3d=True, writes=_WRITES)
+    capabilities = RendererCapabilities.all_kinds(
+        _BACKEND_NAME,
+        supports_3d=True,
+        writes=_WRITES_STATIC,
+        writes_animated=_WRITES_ANIMATED,
+    )
 
     def _render(spec: Any, /, **kw: Any) -> Any:
         # Import the drawing core lazily so registration pulls matplotlib in only

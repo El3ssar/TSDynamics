@@ -43,7 +43,7 @@ __all__: list[str] = []
 
 #: The ``System`` runtime protocol's method set (``families/protocol.py``).  An
 #: object that implements *all* of these is a system, not a measured series.
-_SYSTEM_METHODS = ("step", "state", "reinit", "trajectory")
+_SYSTEM_METHODS = ("step", "state", "reinit", "run")
 
 
 def is_system(obj: Any) -> bool:
@@ -79,15 +79,13 @@ def is_system(obj: Any) -> bool:
 def front_door(system: Any) -> str:
     """Return the run-me call this particular system actually has, as source text.
 
-    ``integrate`` for a flow, ``iterate`` for a map, and the protocol's
-    ``trajectory`` for a derived wrapper (a ``PoincareMap`` has neither of the
-    first two).
+    Since v6 there is one verb — ``run`` — so what varies is the **horizon word**:
+    a flow is run to a ``final_time``, a map for a count of ``steps``, and a
+    derived discrete view (a ``PoincareMap``) for a count of crossings.
     """
-    if callable(getattr(system, "integrate", None)):
-        return "integrate(final_time=100.0, dt=0.01)"
-    if callable(getattr(system, "iterate", None)):
-        return "iterate(steps=10000)"
-    return "trajectory(10000)"
+    if getattr(system, "family", None) == "map" or getattr(system, "_is_discrete", False):
+        return "run(steps=10000)"
+    return "run(final_time=100.0, dt=0.01)"
 
 
 def reject_system(data: Any, *, analysis: str | None = None, hint: str | None = None) -> None:

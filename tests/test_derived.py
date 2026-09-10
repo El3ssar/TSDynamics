@@ -112,7 +112,7 @@ class TestProjected:
 
     def test_projected_trajectory(self) -> None:
         proj = ts.ProjectedSystem(ts.Henon(), [0])
-        traj = proj.trajectory(steps=50, ic=[0.1, 0.1])
+        traj = proj.run(steps=50, ic=[0.1, 0.1])
         assert traj.y.shape == (50, 1)
         assert traj.meta["projected"] == (0,)
 
@@ -121,7 +121,7 @@ class TestProjected:
         # inner system's full variables (which silently mislabel / IndexError).
         proj = ts.ProjectedSystem(ts.Henon(), ["y"])
         assert proj.variables == ("y",)
-        traj = proj.trajectory(steps=20, ic=[0.1, 0.1])
+        traj = proj.run(steps=20, ic=[0.1, 0.1])
         np.testing.assert_array_equal(traj["y"], traj.y[:, 0])
         # "x" is outside the projected view → KeyError, never a mislabel/IndexError.
         with pytest.raises(KeyError):
@@ -132,20 +132,20 @@ class TestProjected:
         # column order.
         proj = ts.ProjectedSystem(ts.Henon(), ["y", "x"])
         assert proj.variables == ("y", "x")
-        traj = proj.trajectory(steps=20, ic=[0.1, 0.1])
+        traj = proj.run(steps=20, ic=[0.1, 0.1])
         np.testing.assert_array_equal(traj["y"], traj.y[:, 0])
         np.testing.assert_array_equal(traj["x"], traj.y[:, 1])
 
 
 # ---------------------------------------------------------------------------
-# EnsembleSystem on a map (fast)
+# Ensemble on a map (fast)
 # ---------------------------------------------------------------------------
 
 
 class TestEnsemble:
     def test_lockstep_matches_individuals(self) -> None:
         states = [[0.1, 0.2], [0.3, 0.1]]
-        ens = ts.EnsembleSystem(ts.Henon(), states)
+        ens = ts.derived.Ensemble(ts.Henon(), states)
         out = ens.step()
         assert out.shape == (2, 2)
         solo = ts.Henon()
@@ -154,10 +154,10 @@ class TestEnsemble:
 
     def test_shape_validation(self) -> None:
         with pytest.raises(ValueError, match="shape"):
-            ts.EnsembleSystem(ts.Henon(), [[0.1, 0.2, 0.3]])
+            ts.derived.Ensemble(ts.Henon(), [[0.1, 0.2, 0.3]])
 
     def test_set_states(self) -> None:
-        ens = ts.EnsembleSystem(ts.Henon(), [[0.1, 0.2], [0.3, 0.1]])
+        ens = ts.derived.Ensemble(ts.Henon(), [[0.1, 0.2], [0.3, 0.1]])
         ens.set_states([[0.0, 0.0], [1.0, 1.0]])
         np.testing.assert_array_equal(ens.states(), [[0.0, 0.0], [1.0, 1.0]])
 
@@ -187,7 +187,7 @@ class TestTangentMap:
         tang = ts.TangentSystem(ts.Henon(), k=2)
         tang.reinit([0.1, 0.1])
         tang.step(5000)
-        family = ts.Henon().lyapunov_spectrum(n=5000, ic=[0.1, 0.1])
+        family = ts.Henon()._lyapunov_spectrum(n=5000, ic=[0.1, 0.1])
         np.testing.assert_allclose(tang.exponents(), family, atol=0.05)
 
 
@@ -201,7 +201,7 @@ class TestPoincareFlow:
     def test_rossler_crossings_lie_on_plane(self) -> None:
         pmap = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05)
         pmap.reinit([1.0, 1.0, 0.0])
-        section = pmap.trajectory(steps=30, transient=5)
+        section = pmap.run(steps=30, transient=5)
         assert section.y.shape == (30, 3)
         # refined crossings sit on the plane to much better than dt accuracy
         assert np.max(np.abs(section.y[:, 0])) < 1e-6
@@ -216,8 +216,8 @@ class TestPoincareFlow:
 
     def test_is_discrete_view(self) -> None:
         pmap = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0))
-        assert pmap.is_discrete is True
-        assert pmap.system.is_discrete is False
+        assert pmap._is_discrete is True
+        assert pmap.system._is_discrete is False
 
 
 @pytest.mark.slow
@@ -226,7 +226,7 @@ class TestStroboscopicFlow:
         w = 0.63
         smap = ts.StroboscopicMap(ts.ForcedVanDerPol(), period=2 * np.pi / w)
         smap.reinit([0.1, 0.1, 0.0])
-        samples = smap.trajectory(steps=10, transient=3)
+        samples = smap.run(steps=10, transient=3)
         assert samples.y.shape == (10, 3)
         # sample times are exactly one period apart
         np.testing.assert_allclose(np.diff(samples.t), 2 * np.pi / w, rtol=1e-9)
@@ -269,8 +269,8 @@ class TestTangentEngineLyapunov:
         # same lowered extended-variational tape, so the spectrum is bit-identical.
         pytest.importorskip("tsdynamics._rust")
         kw = dict(dt=0.05, transient=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0])
-        interp = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
-        jit = ts.Lorenz().lyapunov_spectrum(backend="jit", **kw)
+        interp = ts.Lorenz()._lyapunov_spectrum(backend="interp", **kw)
+        jit = ts.Lorenz()._lyapunov_spectrum(backend="jit", **kw)
         np.testing.assert_array_equal(
             interp, jit, err_msg="engine ODE Lyapunov: interp != jit (must be bit-for-bit)"
         )
@@ -305,8 +305,8 @@ class TestTangentEngineLyapunov:
         """
         pytest.importorskip("tsdynamics._rust")
         kw = dict(dt=0.05, transient=50.0, final_time=300.0, ic=[1.0, 1.0, 1.0])
-        engine = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
-        reference = ts.Lorenz().lyapunov_spectrum(backend="reference", **kw)
+        engine = ts.Lorenz()._lyapunov_spectrum(backend="interp", **kw)
+        reference = ts.Lorenz()._lyapunov_spectrum(backend="reference", **kw)
         np.testing.assert_allclose(engine, reference, rtol=0.0, atol=5e-2)
         # Kaplan–Yorke dimension is preserved across the two paths.
         assert abs(ts.kaplan_yorke_dimension(engine) - ts.kaplan_yorke_dimension(reference)) < 1e-2
@@ -322,7 +322,7 @@ class TestTangentEngineLyapunov:
     def test_partial_spectrum_k_less_than_dim(self) -> None:
         # k < dim takes the same engine kernel (the leading exponent is positive).
         pytest.importorskip("tsdynamics._rust")
-        exps = ts.Lorenz().lyapunov_spectrum(
+        exps = ts.Lorenz()._lyapunov_spectrum(
             dt=0.05, transient=30.0, final_time=200.0, ic=[1.0, 1.0, 1.0], k=2
         )
         assert exps.shape == (2,)
@@ -333,7 +333,7 @@ class TestTangentEngineLyapunov:
         # (make_ode_stepper rejects it) and keeps the per-chunk loop — still finite.
         pytest.importorskip("tsdynamics._rust")
         sys = ts.systems.Oregonator()
-        exps = sys.lyapunov_spectrum(dt=0.05, transient=10.0, final_time=40.0, k=2)
+        exps = sys._lyapunov_spectrum(dt=0.05, transient=10.0, final_time=40.0, k=2)
         assert np.all(np.isfinite(exps))
 
 
@@ -349,7 +349,7 @@ def _wrappers() -> dict[str, object]:
         "PoincareMap": ts.PoincareMap(inner.copy(), plane=("y", 0.0, "up")),
         "StroboscopicMap": ts.StroboscopicMap(inner.copy(), period=6.0),
         "TangentSystem": ts.TangentSystem(inner.copy(), k=2),
-        "EnsembleSystem": ts.EnsembleSystem(inner.copy(), np.arange(12.0).reshape(4, 3)),
+        "Ensemble": ts.derived.Ensemble(inner.copy(), np.arange(12.0).reshape(4, 3)),
         "ProjectedSystem": ts.ProjectedSystem(inner.copy(), [0, 1]),
     }
 
@@ -367,7 +367,7 @@ def test_derived_wrappers_round_trip_through_pickle(name: str) -> None:
     wrapper = _wrappers()[name]
     restored = pickle.loads(pickle.dumps(wrapper))
     assert type(restored) is type(wrapper)
-    # ``EnsembleSystem`` names its inner system ``template``; the rest ``system``.
+    # ``Ensemble`` names its inner system ``template``; the rest ``system``.
     inner_attr = "system" if hasattr(wrapper, "system") else "template"
     inner, restored_inner = getattr(wrapper, inner_attr), getattr(restored, inner_attr)
     assert type(restored_inner) is type(inner)
@@ -388,4 +388,4 @@ def test_pickled_poincare_map_keeps_its_hermite_rhs_and_the_same_section() -> No
     np.testing.assert_allclose(restored._rhs(np.array([1.0, 2.0, 3.0]), 0.0), [-5.0, 1.4, -13.9])
 
     # ... and end to end: the same 50 crossings, bit for bit.
-    np.testing.assert_array_equal(pmap.trajectory(50).y, restored.trajectory(50).y)
+    np.testing.assert_array_equal(pmap.run(50).y, restored.run(50).y)

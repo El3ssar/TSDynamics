@@ -37,6 +37,7 @@ import numpy as np
 from tsdynamics.errors import InvalidParameterError
 
 from .._result import AnalysisResult, ScalarResult
+from .._result_json import _sig
 from . import _common as _c
 
 __all__ = ["OversamplingWarning", "ZeroOneResult", "zero_one_test"]
@@ -61,6 +62,14 @@ _TARGET_SAMPLES_PER_OSCILLATION = 5.0
 # Never decimate below this many samples: a short record is worth more than a
 # perfectly-decorrelated one (the test itself refuses below 200 points).
 _MIN_KEPT_SAMPLES = 250
+
+#: K at or above which the repr names the orbit chaotic, and at or below which it
+#: names it regular.  The test is CONSTRUCTED so that K -> 1 (chaotic) or K -> 0
+#: (regular); the wide silent band between them is where an oversampled
+#: observable lands, and naming a regime there would hide the sampling problem
+#: the estimator warns about separately.
+_CHAOTIC_K = 0.8
+_REGULAR_K = 0.2
 
 
 class OversamplingWarning(UserWarning):
@@ -103,6 +112,29 @@ class ZeroOneResult(ScalarResult):
 
     p: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
     q: np.ndarray = field(default_factory=lambda: np.empty(0), repr=False, compare=False)
+
+    def _answer(self) -> str:
+        r"""Return ``K = <value>`` — the median growth indicator."""
+        return f"K = {_sig(float(self), 6)}"
+
+    def _interpretation(self) -> str | None:
+        r"""Name the dynamics from :math:`K`.
+
+        The test is designed to return :math:`K \approx 0` for regular dynamics
+        and :math:`K \approx 1` for chaotic dynamics, so the reading is a
+        distance to those two poles.  A value stranded in the middle is reported
+        as **inconclusive** rather than rounded to whichever end is nearer: the
+        usual cause is an oversampled observable, which the test warns about
+        separately, and picking a side there would hide it.
+        """
+        k = float(self)
+        if not np.isfinite(k):
+            return None
+        if k >= _CHAOTIC_K:
+            return "chaotic (K ≈ 1)"
+        if k <= _REGULAR_K:
+            return "regular (K ≈ 0)"
+        return "inconclusive (K is between the two poles — check sampling)"
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe the translation plane :math:`(p_c, q_c)` as a :class:`PlotSpec`.
@@ -224,12 +256,10 @@ def _observable(
     measured :class:`~tsdynamics.data.Trajectory` / ``ndarray`` is read directly
     (the ``data`` overload); the horizon keywords then do not apply.
     """
-    is_system = hasattr(system, "is_discrete") and (
-        hasattr(system, "trajectory")
-        or hasattr(system, "iterate")
-        or hasattr(system, "integrate")
-        or hasattr(system, "_step")
-    )
+    # v6: ``run`` is the one trajectory verb, so "is this a System?" probes it (plus
+    # ``family``, which replaced ``is_discrete``).  Probing the removed
+    # ``trajectory``/``iterate``/``integrate`` made EVERY system read as data.
+    is_system = hasattr(system, "family") and (hasattr(system, "run") or hasattr(system, "_step"))
     if not is_system:
         if any(v is not None for v in (final_time, n, dt, transient, ic)):
             raise InvalidParameterError(
@@ -249,7 +279,7 @@ def _observable(
         # orbit), exactly the footgun ``gali`` guards against.
         if ic is not None:
             kw["ic"] = ic
-        return _c._as_observable(system.trajectory(count, **kw), component)
+        return _c._as_observable(system.run(count, **kw), component)
     # continuous flow — sample on the dt grid (successive samples must be
     # decorrelated for the test to be meaningful; a coarse dt, or a Poincaré /
     # stroboscopic view passed as ``system``, gives the cleanest K).
@@ -260,7 +290,7 @@ def _observable(
     horizon = float(final_time) if final_time is not None else 1000.0
     burn = float(transient) if transient is not None else 0.0
     step = float(dt) if dt is not None else 0.1
-    traj = system.integrate(final_time=horizon + burn, dt=step, ic=ic)
+    traj = system.run(final_time=horizon + burn, dt=step, ic=ic)
     if burn:
         traj = traj.after(burn)
     return _c._as_observable(traj, component)
@@ -363,7 +393,7 @@ def zero_one_test(
     --------
     >>> zero_one_test(Logistic(params={"r": 4.0}), n=5000) > 0.9     # chaotic
     True
-    >>> x = Logistic(params={"r": 4.0}).iterate(steps=5000).component("x")
+    >>> x = Logistic(params={"r": 4.0}).run(steps=5000)["x"]
     >>> zero_one_test(x) > 0.9          # the data overload
     True
     >>> lorenz = Lorenz(ic=[1.0, 1.0, 1.0])                  # a flow, sampled fine

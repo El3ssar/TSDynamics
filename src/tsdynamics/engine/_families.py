@@ -74,7 +74,7 @@ def _run_continuous(
         # point instead. (The reference path above already rejected SDEs.)
         raise NotImplementedError(
             "run.integrate cannot carry the SDE noise seed/step; use "
-            "StochasticSystem.integrate(backend=...) for diagonal-Itô SDEs, or "
+            "StochasticSystem.run(backend=...) for diagonal-Itô SDEs, or "
             "run.sde_integrate_dense(problem, t_eval, dt=, method=, seed=, backend=)."
         )
 

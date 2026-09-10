@@ -52,10 +52,20 @@ import numpy as np
 
 from .._common import reject_system
 from .._result import AnalysisResult
+from .._result_json import _sig
 from ._common import _diagonal_run_lengths, _longest_run_on_diagonal, _vertical_run_lengths
 from .matrix import RecurrenceMatrix, recurrence_matrix
 
 __all__ = ["RQAResult", "rqa"]
+
+#: DET at or above which the repr names the structure deterministic, and at or
+#: below which it names it stochastic.  DET is the fraction of recurrence points
+#: on diagonal lines: uncorrelated noise leaves isolated points (DET -> 0) and a
+#: deterministic signal repeats stretches of trajectory (DET -> 1).  The band
+#: between them is left unnamed; a mid-range DET is a real answer that no single
+#: word describes.
+_DETERMINISTIC_DET = 0.6
+_STOCHASTIC_DET = 0.2
 
 
 @dataclass(frozen=True)
@@ -181,11 +191,36 @@ class RQAResult(AnalysisResult):
             title=f"RQA  DET = {self.determinism:.3g}, LAM = {self.laminarity:.3g}",
         )
 
-    def __repr__(self) -> str:  # noqa: D105
+    def _answer(self) -> str:
+        """Return the four headline RQA measures."""
         return (
-            f"RQAResult(N={self.size}, RR={self.recurrence_rate:.3g}, "
-            f"DET={self.determinism:.3g}, LAM={self.laminarity:.3g}, "
-            f"L_max={self.max_diagonal_length}, ENTR={self.diagonal_entropy:.3g})"
+            f"DET = {self.determinism:.3f} · LAM = {self.laminarity:.3f} · "
+            f"L_max = {self.max_diagonal_length} · ENTR = {self.diagonal_entropy:.3f}"
+        )
+
+    def _interpretation(self) -> str | None:
+        """Name the structure the diagonal statistics show, when it is clear-cut.
+
+        DET is the fraction of recurrence points lying on diagonal lines: a
+        deterministic signal repeats stretches of its trajectory and drives it
+        toward 1, while uncorrelated noise leaves only isolated points and drives
+        it toward 0 (Marwan et al., 2007).  Both regimes are named only at the
+        ends of the range; the middle is left unnamed rather than rounded.
+        """
+        det = float(self.determinism)
+        if not np.isfinite(det):
+            return None
+        if det >= _DETERMINISTIC_DET:
+            return "deterministic"
+        if det <= _STOCHASTIC_DET:
+            return "stochastic (few diagonal lines)"
+        return None
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the settings the measures were computed under."""
+        return (
+            f"(N={self.size}, RR={self.recurrence_rate:.3f}, ε={_sig(self.epsilon, 4)}, "
+            f"l_min={self.min_diagonal}, v_min={self.min_vertical})",
         )
 
 

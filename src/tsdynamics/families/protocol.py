@@ -1,31 +1,31 @@
 """
 The ``System`` runtime protocol — the contract every analysis function consumes.
 
-All three families (:class:`~tsdynamics.families.ContinuousSystem`,
-:class:`~tsdynamics.families.DelaySystem`, :class:`~tsdynamics.families.DiscreteMap`)
-and every derived-system wrapper (:mod:`tsdynamics.derived`) implement this
-interface, so analysis code can be written once against ``System`` and applied
-to anything that steps:
+All four families (:class:`~tsdynamics.families.ContinuousSystem`,
+:class:`~tsdynamics.families.DelaySystem`,
+:class:`~tsdynamics.families.DiscreteMap`,
+:class:`~tsdynamics.families.StochasticSystem`) and every derived-system wrapper
+(:mod:`tsdynamics.derived`) implement this interface, so analysis code can be
+written once against ``System`` and applied to anything that steps:
 
-- ``step(n_or_dt)`` advances the system and **returns the new state** —
-  the number of map iterations for discrete systems, the time increment for
-  continuous ones (each has a sensible default).
-- ``state()`` / ``set_state(u)`` read/write the current state.  DDEs raise
-  ``NotImplementedError`` from ``set_state`` — their state is a whole history
-  function, not a point; use ``reinit(u)`` to restart from a constant past.
-- ``time()`` is the current time (or iteration count for maps).
+- ``run(...)`` is **the** verb that produces a
+  :class:`~tsdynamics.families.Trajectory`.  ``trajectory`` / ``integrate`` /
+  ``iterate`` were three more names for it and are gone in v6.  The horizon word
+  follows the family — ``Lorenz().run(final_time=100, dt=0.01)`` and
+  ``Henon().run(steps=5000)`` — because the two horizons are different
+  quantities in different units.
+- ``step(n_or_dt)`` advances the system and **returns the new state** — a count
+  of iterations for a map, a time increment for a flow (each has a default).
+- ``state()`` reads the current state.
+- ``time()`` is the current time (or iteration count for a map).
 - ``reinit(u, t=..., params=...)`` restarts the internal stepper.
-- ``run(...)`` is **the** canonical verb that produces a
-  :class:`~tsdynamics.families.Trajectory`, dispatching on ``is_discrete``:
-  ``final_time``/``dt`` for a continuous-time flow, ``n`` for a map.  A flow and
-  a map answer the same call (``Lorenz().run(final_time=100, dt=0.01)`` and
-  ``Henon().run(n=5000)``).  The family-specific spellings ``integrate`` (flows
-  / DDEs / SDEs) and ``iterate`` (maps), and the protocol method
-  ``trajectory(...)``, remain as permanent thin aliases.
-- ``trajectory(...)`` produces a :class:`~tsdynamics.families.Trajectory` on a
-  uniform grid (delegates to ``integrate`` / ``iterate``); it is the *structural*
-  member the protocol requires (``run`` is the canonical verb, but every family
-  and wrapper implements ``trajectory`` — see the ``trajectory`` method note).
+- ``family`` is ``"ode" | "dde" | "map" | "sde"``.
+
+**``set_state`` is deliberately NOT a protocol member.**  It is a per-family
+*capability*: a delay system's state is a whole history function, so it cannot
+be seated from a point, and on Python >= 3.12 ``isinstance`` checks data members
+— keeping ``set_state`` in the protocol while removing it from ``DelaySystem``
+would make ``isinstance(mg, System)`` **False**.  Ask for it with ``hasattr``.
 
 Stepping state is lazily initialised: the first ``step()`` or ``state()``
 call on a fresh system performs an implicit ``reinit()``.
@@ -33,7 +33,7 @@ call on a fresh system performs an implicit ``reinit()``.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -47,10 +47,16 @@ class System(Protocol):
     """Structural type for steppable dynamical systems."""
 
     dim: int
+    family: Literal["ode", "dde", "map", "sde"]
 
-    @property
-    def is_discrete(self) -> bool:
-        """True for iterated maps (and map-like wrappers such as Poincaré maps)."""
+    def run(self, *args: Any, **kwargs: Any) -> Trajectory:
+        """Produce a :class:`~tsdynamics.families.Trajectory`.
+
+        The one trajectory verb on every family and every wrapper.  The horizon
+        keyword follows the family (``final_time`` for a flow, ``steps`` for a
+        map); everything family-independent — ``ic``, ``seed``, ``backend``,
+        ``transient`` — is spelled identically everywhere.
+        """
         ...
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
@@ -77,43 +83,12 @@ class System(Protocol):
         """
         ...
 
-    def set_state(self, u: Any) -> None:
-        """Overwrite the current state.
-
-        Not available for delay systems — a DDE's state is a whole history
-        function, not a point, so its implementation raises
-        ``NotImplementedError``; use :meth:`reinit` to restart from a constant
-        past instead.
-        """
-        ...
-
     def time(self) -> float:
         """Return the current time (continuous) or iteration count (discrete)."""
         ...
 
-    def reinit(
-        self,
-        u: Any | None = None,
-        *,
-        t: float | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> None:
-        """Restart the stepper from state ``u`` at time ``t``."""
-        ...
-
-    def trajectory(self, *args: Any, **kwargs: Any) -> Trajectory:
-        """Produce a trajectory on a uniform output grid (the alias of :meth:`run`).
-
-        .. note::
-            ``run`` is the canonical trajectory-producer verb (see the module
-            docstring), but ``trajectory`` is the member the *structural*
-            protocol requires: every family and wrapper implements it, whereas a
-            few (``WrappedSystem`` and the derived wrappers) expose only
-            ``trajectory`` — not ``run`` — so requiring ``run`` here would make
-            them fail ``isinstance(obj, System)``.  Code written against
-            ``System`` should call ``trajectory``; code holding a concrete flow
-            or map should prefer ``run``.
-        """
+    def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
+        """Restart the stepper from state ``u``."""
         ...
 
 

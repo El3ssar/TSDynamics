@@ -1,116 +1,235 @@
-"""
-Visualization — the backend-agnostic plot seam (decision D6).
+"""Visualization — one type, one verb, and four registries.
 
-``import tsdynamics`` (and ``import tsdynamics.viz``) **imports no plot library
-at import time** — there is no matplotlib / Plotly / web import here.  Four
-renderers (matplotlib, plotly, json, threejs) self-register lazily on first
-render.
+``import tsdynamics`` (and ``import tsdynamics.viz``) **imports no plot library**
+— there is no matplotlib / Plotly / web import on this path.  Four renderers
+(matplotlib, plotly, json, threejs) self-register on first use.
 
-What it ships:
+The whole surface, in one screen
+--------------------------------
 
-- :mod:`~tsdynamics.viz.spec` — the backend-agnostic, JSON-serializable
-  :class:`~tsdynamics.viz.spec.PlotSpec` intermediate representation (plus
-  :class:`~tsdynamics.viz.spec.PlotKind`, :class:`~tsdynamics.viz.spec.Layer`,
-  :class:`~tsdynamics.viz.spec.Axis`, :class:`~tsdynamics.viz.spec.Annotation`
-  and the :class:`~tsdynamics.viz.spec.Plottable` mixin).  A result describes
-  itself with ``to_plot_spec()``; the spec carries data + semantic intent and no
-  rendering state.
-- :mod:`~tsdynamics.viz.style` — the **canonical per-layer style vocabulary**
-  (:data:`STYLE_KEYS`, :func:`normalize_style`) and the **figure-level theme
-  system** (:class:`Theme`, :func:`get_theme`, :func:`set_theme`, :func:`themes`,
-  :func:`register_theme`).  :data:`STYLE_KEYS` is the public introspection mapping
-  (``name → StyleKey``); :func:`normalize_style` is the single choke point that
-  canonicalizes aliases, validates values, and drops unknown keys.
-- :mod:`~tsdynamics.viz.transforms` — the **plot-transform registry**: what to
-  plot (a transform turns a subject into :class:`~tsdynamics.viz.transforms.Geometry`)
-  separated from how to draw it (a *primitive* turns geometry into layers), with
-  a **declared** compatibility matrix connecting them.  :func:`compatibility`
-  prints it; :func:`geometry` / :func:`draw` are the raw-array escape hatches;
-  :func:`~tsdynamics.viz.transforms.plot_transform` registers a new one in one
-  call.
-- :func:`plot` (:mod:`~tsdynamics.viz.compose`) — the **composition front door**:
-  arranges one or more plottables into a single- or multi-panel
-  :class:`~tsdynamics.viz.spec.PlotSpec`.
-- the **renderers registry** (:data:`tsdynamics.registry.renderers`) — a backend
-  name → renderer-callable map.  A backend self-registers on first use;
-  :meth:`~tsdynamics.viz.spec.PlotSpec.render` looks it up by name.
-- :func:`to_json` / :func:`from_json` (and the mapping-level
-  :func:`to_dict_envelope` / :func:`from_dict_envelope`, plus
-  :data:`SCHEMA_VERSION`) — the **versioned JSON envelope** for a
-  :class:`~tsdynamics.viz.spec.PlotSpec`.  ``spec.save("fig.json")`` and
-  ``spec.render("json")`` both write this envelope; these are the matching
-  *readers*, so a spec computed on a cluster can be shipped, cached, and replotted
-  elsewhere without re-running the analysis or installing a plotting library.
-  (The read half existed but was unreachable — ``ts.viz.from_json`` did not
-  resolve — which made the round trip one-way in practice.  Serialization is half
-  the "embed plots in web" story, so it is promoted rather than deleted.)
+.. code-block:: python
+
+    ts.plot(traj)                                # a Plot; ts.plot IS ts.viz.plot
+    ts.plot(traj, "psd", yscale="log")           # a named transform, styled at the door
+    ts.viz.draw({"x": r, "y": C}, "line")        # arrays straight to a primitive
+    ts.viz.grid(p1, p2, p3, cols=2)              # arrange finished plots
+    ts.viz.load("f.json")                        # the round trip's read half
+
+    ts.viz.transforms.names()                    # what can be drawn FROM something
+    ts.viz.primitives.names()                    # ...and HOW it can be drawn
+    ts.viz.renderers.find(writes=".svg")         # ...and by whom
+    ts.viz.themes.use("publication")             # ...in what look
+    ts.viz.styles                                # the style vocabulary, printed
+    ts.viz.compatibility()                       # the declared transform x primitive matrix
+
+Thirteen names, and the shape repeats
+-------------------------------------
+Four registries (``transforms`` / ``primitives`` / ``renderers`` / ``themes``)
+answer to the **same four verbs** — ``register`` / ``names`` / ``find`` / ``get``
+— so learning one teaches the rest.  Two drawing doors (:func:`plot`,
+:func:`draw`), one panel arranger (:func:`grid`), one received type
+(:class:`~tsdynamics.viz.spec.Plot`), the arrays escape hatch
+(:func:`geometry`), the matrix (:func:`compatibility`), the style table
+(:data:`styles`), the loader (:func:`load`), and the IR one dot away
+(:mod:`~tsdynamics.viz.spec`).
+
+Everything else still exists — importable, reachable, tested.  It just stops
+shouting: the 19 IR nouns live at :mod:`ts.viz.spec <tsdynamics.viz.spec>`, and a
+name that moved says where it went instead of raising a bare ``AttributeError``.
 
 Out-of-tree renderers register through the ``tsdynamics.renderers`` entry-point
 group and out-of-tree plot transforms through ``tsdynamics.plot_transforms``;
-:func:`discover_plugins` loads both into :data:`tsdynamics.registry.renderers`
-and :data:`tsdynamics.registry.plot_transforms` at import.
+:func:`discover_plugins` loads both at import.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .. import registry as _registry
 from ..plugins import PLOT_TRANSFORMS_GROUP, register_entry_points
-from .export import (
-    SCHEMA_VERSION,
-    from_dict_envelope,
-    from_json,
-    to_dict_envelope,
-    to_json,
-)
 
-# Kept bound (and importable) but off the curated tab surface — see
-# ``_INTERNAL_NAMES``.  The redundant ``as`` form marks them as deliberate
-# re-exports rather than unused imports.
+# Bound but off the tab surface (see ``_INTERNAL_NAMES``).  The redundant ``as``
+# form marks these as deliberate re-exports rather than unused imports.
+from .export import (
+    SCHEMA_VERSION as SCHEMA_VERSION,
+)
+from .export import (
+    from_dict_envelope as from_dict_envelope,
+)
+from .export import (
+    from_json as from_json,
+)
+from .export import (
+    to_dict_envelope as to_dict_envelope,
+)
+from .export import (
+    to_json as to_json,
+)
 from .spec import (
-    Animation,
-    Annotation,
-    Axis,
-    Layer,
-    Layout,
-    PlotKind,
-    PlotSpec,
+    Animation as Animation,
+)
+from .spec import (
+    Annotation as Annotation,
+)
+from .spec import (
+    Axis as Axis,
+)
+from .spec import (
+    Layer as Layer,
+)
+from .spec import (
+    Layout as Layout,
+)
+from .spec import (
+    Plot,
+)
+from .spec import (
+    PlotKind as PlotKind,
 )
 from .spec import (
     Plottable as Plottable,
 )
 from .style import (
-    STYLE_KEYS,
-    Theme,
-    get_theme,
-    register_theme,
-    set_theme,
-    themes,
+    STYLE_KEYS as STYLE_KEYS,
 )
 from .style import (
     THEMES as THEMES,
 )
 from .style import (
+    Theme as Theme,
+)
+from .style import (
+    get_theme as get_theme,
+)
+from .style import (
     normalize_style as normalize_style,
 )
+from .style import (
+    register_theme as register_theme,
+)
+from .style import (
+    set_theme as set_theme,
+)
+from .style import (
+    styles,
+    themes,
+)
 from .transforms import (
-    FrameSpace,
-    Geometry,
-    Part,
-    PlotTransform,
-    Presentation,
-    T,
+    FrameSpace as FrameSpace,
+)
+from .transforms import (
+    Geometry as Geometry,
+)
+from .transforms import (
+    Part as Part,
+)
+from .transforms import (
+    PlotTransform as PlotTransform,
+)
+from .transforms import (
+    Presentation as Presentation,
+)
+from .transforms import (
+    T as T,
+)
+from .transforms import (
     compatibility,
     draw,
     geometry,
-    make_frame,
     plot,  # the transform-aware front door IS `viz.plot`
-    plot_transform,
 )
-from .transforms import transforms as list_transforms
+from .transforms import (
+    make_frame as make_frame,
+)
+from .transforms import (
+    plot_transform as plot_transform,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .render import renderers as renderers
+
+
+class _PrimitiveRegistry:
+    """``ts.viz.primitives`` — how geometry is drawn, in the shared four-verb shape.
+
+    A *primitive* is the drawing half of the plot layer: a transform turns a
+    subject into channels, a primitive turns channels into layers.  ``line`` /
+    ``points`` / ``image`` / ``density`` / ``contour`` / ``surface3d`` / ``quiver``
+    / ``bars`` / ``band`` / … — "primitive" does not mean "simple"; a basin image
+    and a 3-D surface are primitives.
+
+    ::
+
+        ts.viz.primitives.names()
+        ts.viz.primitives.get("line").requires
+        ts.viz.primitives.find(requires="z")
+
+    .. note::
+       ``register`` is the extension door for a **new** primitive and is owned by
+       :mod:`tsdynamics.viz.transforms._primitives`; until it lands this facade
+       forwards to whatever that module exposes, so the verb starts working the
+       moment it exists rather than needing an edit here.
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> list[str]:
+        """Return the registered primitive names (the sorted listing)."""
+        return self.names()
+
+    def names(self) -> list[str]:
+        """Return the sorted names of every registered primitive."""
+        from .transforms import primitive_names
+
+        return sorted(primitive_names())
+
+    def get(self, name: str) -> Any:
+        """Return one primitive record (its ``requires`` / ``marks`` declaration)."""
+        from .transforms import get_primitive
+
+        return get_primitive(name)
+
+    def find(self, *, requires: str | None = None, mark: str | None = None) -> list[str]:
+        """Return the primitives that consume ``requires`` and/or emit ``mark``."""
+        out = []
+        for name in self.names():
+            record = self.get(name)
+            if requires is not None and requires not in getattr(record, "requires", ()):
+                continue
+            if mark is not None and mark not in [str(m) for m in getattr(record, "marks", ())]:
+                continue
+            out.append(name)
+        return out
+
+    def register(self, *args: Any, **kwargs: Any) -> Any:
+        """Register a new primitive (forwards to the primitives module's decorator)."""
+        from . import transforms as _t
+
+        hook = getattr(_t, "register_primitive", None)
+        if hook is None:
+            raise NotImplementedError(
+                "registering a new primitive is not wired yet; the four in-tree "
+                "primitive families are listed by ts.viz.primitives.names()."
+            )
+        return hook(*args, **kwargs)
+
+    def __contains__(self, name: object) -> bool:
+        """Whether a primitive of that name is registered."""
+        return name in self.names()
+
+    def __repr__(self) -> str:
+        """List each primitive with the channels it requires."""
+        rows = ["ts.viz.primitives"]
+        for name in self.names():
+            requires = " ".join(getattr(self.get(name), "requires", ()) or ())
+            rows.append(f"  {name:<12} requires: {requires or '(nothing)'}")
+        return "\n".join(rows)
+
+
+#: ``ts.viz.primitives`` — the primitive registry (also callable, returning names).
+primitives = _PrimitiveRegistry()
 
 #: The entry-point group out-of-tree visualization backends declare against
-#: (the renderer analogue of :data:`tsdynamics.plugins.ANALYSES_GROUP`).
-#: A backend package wires itself in with, in its own ``pyproject.toml``::
+#: (the renderer analogue of :data:`tsdynamics.plugins.ANALYSES_GROUP`)::
 #:
 #:     [project.entry-points."tsdynamics.renderers"]
 #:     matplotlib = "my_pkg.backends:render_matplotlib"
@@ -120,125 +239,167 @@ RENDERERS_GROUP = "tsdynamics.renderers"
 #:
 #:     [project.entry-points."tsdynamics.plot_transforms"]
 #:     my_plot = "my_pkg.transforms:MY_TRANSFORM"
-#:
-#: The target must be a :class:`~tsdynamics.viz.transforms.PlotTransform` record
-#: (what :func:`~tsdynamics.viz.transforms.plot_transform` builds), so a
-#: third-party plot arrives with its own declared compatibility row and is
-#: indistinguishable from an in-tree one.
 TRANSFORMS_GROUP = PLOT_TRANSFORMS_GROUP
 
-#: Names bound on this package but kept **off** ``__all__`` / ``dir()``: plumbing
-#: a user of the plotting layer never types.  Each stays reachable
-#: (``ts.viz.SCHEMA_VERSION``, ``from tsdynamics.viz import normalize_style``) —
-#: it is only the tab surface that is curated.
-#:
-#: * ``discover_plugins`` — entry-point loading, packaging machinery.
-#: * ``THEMES`` — the mutable theme registry behind :func:`themes` /
-#:   :func:`get_theme` / :func:`register_theme`, which are the accessors.
-#: * ``normalize_style`` — the internal validation choke point every renderer
-#:   funnels through; users pass style keys to ``.style(...)``.
-#: * ``Plottable`` — the mixin a *result class* implements, not something a
-#:   plotting caller instantiates.
-#:
-#: The **JSON envelope stays listed** (``SCHEMA_VERSION`` / ``to_dict_envelope`` /
-#: ``from_dict_envelope`` alongside :func:`to_json` / :func:`from_json`).  It
-#: reads like plumbing, but a previous stream promoted the loader half precisely
-#: because ``ts.viz.from_json`` not resolving made the save/load round trip
-#: one-way in practice — being *listed*, not merely importable, is the point, and
-#: ``tests/test_plotspec.py::test_export_names_are_in_the_curated_viz_all`` pins it.
-#: * ``render`` — the backend-dispatch subpackage.  Demoted from the listing, but
-#:   it must still *resolve*: it is the plugin/dispatch surface
-#:   (``ts.viz.render.select_renderer`` / ``register_builtin_renderers``).  It is
-#:   bound lazily by :func:`__getattr__` below rather than eagerly, so touching
-#:   ``ts.viz`` still costs no renderer import.
-_INTERNAL_NAMES = (
-    "THEMES",
+#: Names bound here but kept **off** ``__all__`` / ``dir()``.  Each stays
+#: reachable — ``ts.viz.SCHEMA_VERSION``, ``from tsdynamics.viz import
+#: normalize_style`` — it is only the tab surface that is curated.  The IR nouns
+#: (``Animation`` / ``Annotation`` / ``Axis`` / ``Layer`` / ``Layout`` /
+#: ``PlotKind`` / ``Geometry`` / ``Part`` / ``FrameSpace`` / ``Presentation`` /
+#: ``PlotTransform`` / ``T`` / ``make_frame``) are listed one dot away, at
+#: :mod:`ts.viz.spec <tsdynamics.viz.spec>`, which is where a renderer author
+#: reads them and where nobody else has to look.
+_INTERNAL_NAMES: tuple[str, ...] = (
+    "Animation",
+    "Annotation",
+    "Axis",
+    "FrameSpace",
+    "Geometry",
+    "Layer",
+    "Layout",
+    "Part",
+    "PlotKind",
+    "PlotTransform",
     "Plottable",
+    "Presentation",
+    "SCHEMA_VERSION",
+    "STYLE_KEYS",
+    "T",
+    "THEMES",
+    "Theme",
     "discover_plugins",
+    "from_dict_envelope",
+    "from_json",
+    "get_theme",
+    "make_frame",
     "normalize_style",
+    "plot_transform",
+    "register_theme",
     "render",
+    "set_theme",
+    "to_dict_envelope",
+    "to_json",
 )
 
-#: Subpackages of :mod:`tsdynamics.viz` resolved on demand by :func:`__getattr__`.
-#:
-#: ``render`` used to resolve **or not depending on session history**: nothing
-#: imports it at ``tsdynamics.viz`` import time, so ``ts.viz.render`` raised
-#: ``AttributeError`` in a fresh session and succeeded in one that had already
-#: drawn something (the first render imports the subpackage, which binds it on
-#: this package as a side effect).  That is the same order-dependence that made
-#: ``dir(ts.viz.render)`` change after the first render, and it broke the rule
-#: the rest of the curation keeps: *demotion is never removal*.  Resolving it
-#: here makes it deterministic without importing it eagerly.
-_LAZY_SUBMODULES = frozenset({"render"})
+#: Submodules of :mod:`tsdynamics.viz` resolved on demand by :func:`__getattr__`,
+#: so touching ``ts.viz`` still costs no renderer import.  ``render`` used to
+#: resolve **or not depending on session history**; resolving it here makes it
+#: deterministic without importing it eagerly.
+_LAZY_SUBMODULES = frozenset({"render", "spec"})
+
+#: Names resolved lazily out of a submodule: ``{name: (module, attribute)}``.
+#: ``renderers`` lives in the render subpackage (it is that layer's registry) and
+#: must not be imported eagerly, but it is a *listed* name — so it resolves
+#: through :func:`__getattr__` while appearing in ``dir()`` like any other.
+_LAZY_ATTRS: dict[str, tuple[str, str]] = {
+    "renderers": (".render", "renderers"),
+}
+
+#: ``old name -> the sentence naming the working spelling``.  Only names that
+#: genuinely stop resolving belong here; a *demoted* name (``STYLE_KEYS``,
+#: ``to_json``, ``set_theme``, …) still resolves and is listed in
+#: :data:`_INTERNAL_NAMES` instead.  A rename's error message **is** its
+#: migration guide (see :func:`__getattr__`).
+_MOVED: dict[str, str] = {
+    "PlotSpec": "PlotSpec is now Plot: `ts.viz.Plot`. Same class, shorter name.",
+    "list_transforms": (
+        "Use ts.viz.transforms.names() — one registry, the same four verbs "
+        "(register / names / find / get) as primitives, renderers and themes."
+    ),
+}
 
 __all__ = [
-    # The front door.
-    "plot",
-    "T",
-    # The IR you build, inspect and render.
-    "PlotSpec",
-    "PlotKind",
-    "Layer",
-    "Axis",
-    "Layout",
-    "Annotation",
-    "Animation",
-    # Styling & themes.
-    "STYLE_KEYS",
-    "Theme",
-    "themes",
-    "get_theme",
-    "set_theme",
-    "register_theme",
-    # Plot transforms: what to plot, how to draw it, and what pairs with what.
-    "transforms",
-    "list_transforms",
+    "Plot",
     "compatibility",
-    "geometry",
     "draw",
-    # Writing one: the decorator plus the four substrate names its body needs.
-    # Before v6 an author had to reach into two PRIVATE modules
-    # (``viz.transforms._base``, ``viz._frames``) for ``Part`` / ``FrameSpace`` /
-    # ``make_frame`` / ``Presentation``, which made "one decorator call and
-    # nothing else" true of the registry and false of the author.
-    "plot_transform",
-    "PlotTransform",
-    "Geometry",
-    "Part",
-    "FrameSpace",
-    "make_frame",
-    "Presentation",
-    # Serialization round trip — both halves, listed on purpose (see
-    # ``_INTERNAL_NAMES``).
-    "to_json",
-    "from_json",
-    "to_dict_envelope",
-    "from_dict_envelope",
-    "SCHEMA_VERSION",
+    "geometry",
+    "grid",
+    "load",
+    "plot",
+    "primitives",
+    "renderers",
+    "spec",
+    "styles",
+    "themes",
+    "transforms",
 ]
 
-# NOTE: the *listing* function is exported as ``list_transforms``, not
-# ``transforms``: this package has a ``transforms`` **subpackage**, and binding a
-# function of that name over it is exactly the shadowing defect the v4 namespace
-# work removed elsewhere (a function hiding a subpackage of the same name — the
-# reason ``ts.viz.transforms()``, the obvious spelling of "what can this draw?",
-# used to answer ``TypeError: 'module' object is not callable``).
-# ``ts.viz.transforms`` is therefore always the module — navigable, holding
-# ``Geometry`` / ``plot_transform`` / ``PRIMITIVES`` — and
-# ``ts.viz.list_transforms(source="model")`` is the filtered listing.  The name
-# is a *verb* rather than the registry's noun (``registry.plot_transforms``), so
-# the function and the table it reads are never the same word either.
+
+def grid(*plots: Any, rows: int | None = None, cols: int | None = None, **options: Any) -> Plot:
+    """Arrange finished plots into a panel grid, and return the composite :class:`Plot`.
+
+    The named spelling of ``plot(..., layout="grid")``, for the case the owner
+    asked for by name — *a grid of different plots*::
+
+        ts.viz.grid(
+            ts.plot(tr, "phase_portrait", title="orbit"),
+            ts.plot(tr, "time_series", components="x"),
+            ts.plot(tr, "psd", xscale="log", yscale="log"),
+            cols=2, theme="publication",
+        ).save("three-views.png")
+
+    Because the result is itself a :class:`Plot`, a grid nests, animates and
+    composes with everything else — that is closure, and it is why this is a
+    four-line front rather than a subsystem.
+
+    Parameters
+    ----------
+    *plots
+        Anything :func:`plot` accepts — finished ``Plot`` objects, trajectories,
+        systems, results, arrays.
+    rows, cols : int, optional
+        The grid shape; give one and the other is filled in, give neither and the
+        grid is made near-square.
+    **options
+        Forwarded to :func:`plot` (``share_x`` / ``share_y`` / ``share_color`` /
+        ``title`` / ``theme`` / any style keyword).
+
+    Returns
+    -------
+    Plot
+    """
+    built: Plot = plot(*plots, layout="grid", rows=rows, cols=cols, **options)
+    return built
+
+
+def load(source: str) -> Plot:
+    """Read a :class:`~tsdynamics.viz.spec.Plot` back from a ``.json`` file or JSON text.
+
+    The read half of the round trip whose write half is
+    :meth:`Plot.to_json <tsdynamics.viz.spec.Plot.to_json>` /
+    ``p.save("f.json")`` — so a plot computed on a cluster can be shipped,
+    cached, and drawn elsewhere without re-running the analysis or installing a
+    plotting library::
+
+        p.save("run4.json")
+        ts.viz.load("run4.json").theme("dark").save("run4.png")
+
+    Parameters
+    ----------
+    source : str
+        A path to a ``.json`` file, or the JSON document itself.
+
+    Returns
+    -------
+    Plot
+    """
+    import os
+
+    text = source
+    if not source.lstrip().startswith(("{", "[")) and os.path.exists(source):
+        with open(source, encoding="utf-8") as fh:
+            text = fh.read()
+    return from_json(text)
 
 
 def discover_plugins(*, strict: bool = False) -> list[str]:
     """Load out-of-tree renderer **and plot-transform** plugins.
 
     Walks the ``tsdynamics.renderers`` and ``tsdynamics.plot_transforms``
-    entry-point groups and registers each loaded object — a renderer callable, a
-    :class:`~tsdynamics.viz.transforms.PlotTransform` record — under its
-    entry-point name (see :func:`tsdynamics.plugins.register_entry_points`).
-    Called once at import; safe to re-invoke after installing a plugin.  Names
-    already taken are left untouched.
+    entry-point groups and registers each loaded object under its entry-point
+    name (see :func:`tsdynamics.plugins.register_entry_points`).  Called once at
+    import; safe to re-invoke after installing a plugin.  Names already taken are
+    left untouched.
 
     Parameters
     ----------
@@ -248,8 +409,7 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
     Returns
     -------
     list[str]
-        The names newly registered by this call (renderers first, then
-        transforms).
+        The names newly registered by this call (renderers first, then transforms).
     """
     found = register_entry_points(_registry.renderers, RENDERERS_GROUP, strict=strict)
     found += register_entry_points(_registry.plot_transforms, TRANSFORMS_GROUP, strict=strict)
@@ -259,32 +419,46 @@ def discover_plugins(*, strict: bool = False) -> list[str]:
 # Populate the renderer and plot-transform registries from out-of-tree plugins at
 # import.  The in-tree renderers self-register on first render and the in-tree
 # transforms register when ``.transforms`` is imported above; plugin failures are
-# isolated inside `register_entry_points` (warn-and-skip), so a broken third-party
-# package never breaks import.
+# isolated inside ``register_entry_points`` (warn-and-skip), so a broken
+# third-party package never breaks import.
 discover_plugins()
 
 
 def __getattr__(name: str) -> Any:
-    """Resolve the demoted :mod:`~tsdynamics.viz.render` subpackage on demand.
+    """Resolve the lazy names, then teach a name that moved.
 
-    See :data:`_LAZY_SUBMODULES`: this exists so ``ts.viz.render`` resolves the
-    same way in every session instead of depending on whether something has
-    already drawn, while still keeping the renderer import off the ``ts.viz``
-    import path.
+    Three ordered cases, mirroring the top-level package's:
+
+    1. a demoted **submodule** (``render`` / ``spec``) — imported and cached;
+    2. a listed name that lives in a submodule (``renderers`` / ``primitives``) —
+       resolved without importing a plotting library at ``ts.viz`` import time;
+    3. an **exact hit** in :data:`_MOVED` — answered with the spelling that works.
+
+    Anything else is an ordinary ``AttributeError``, so ``hasattr`` still works
+    for every name in the universe.
     """
-    if name in _LAZY_SUBMODULES:
-        import importlib
+    import importlib
 
+    if name in _LAZY_SUBMODULES:
         mod = importlib.import_module(f"{__name__}.{name}")
         globals()[name] = mod  # cache: subsequent access skips __getattr__
         return mod
+    target = _LAZY_ATTRS.get(name)
+    if target is not None:
+        module, attr = target
+        value = getattr(importlib.import_module(module, __name__), attr)
+        globals()[name] = value
+        return value
+    moved = _MOVED.get(name)
+    if moved is not None:
+        raise AttributeError(f"ts.viz has no {name!r}. {moved}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
     """Expose only the curated public API (``__all__``) to ``dir()`` / autocomplete.
 
-    The envelope/registry/validation plumbing (:data:`_INTERNAL_NAMES`) stays
-    bound and importable, just off the tab surface.
+    The IR nouns, the envelope helpers and the validation plumbing
+    (:data:`_INTERNAL_NAMES`) stay bound and importable, just off the tab surface.
     """
     return sorted(__all__)

@@ -48,14 +48,17 @@ src/tsdynamics/
 ├── __init__.py               # __version__ (managed by python-semantic-release) + re-exports
 ├── registry.py               # system registry (SystemEntry + all_systems/…) + generic analyses/renderers registries (solvers live in tsdynamics.solvers)
 ├── families/                 # base classes + the System protocol (was base/)
-│   ├── base.py               # SystemBase, ParamSet, MetaStore (re-exports Trajectory from data)
-│   ├── protocol.py           # the System runtime Protocol
-│   ├── continuous.py         # ContinuousSystem (engine integrate + jacobian autogen)
+│   ├── base.py               # SystemBase + MetaStore + Absent + the v6 absent-name errors
+│   ├── _params.py            # ParamSet — a **dict subclass** since v6 (fixed keys, as_tuple, param_hash)
+│   ├── _info.py              # SystemInfo (system.info) + the `variables` descriptor + family_of
+│   ├── _derive.py            # DeriveMixin: the two derivation verbs, poincare (absorbs the strobe) + ensemble
+│   ├── _kwargs.py            # the closed-run-signature guard + the per-name WHY table
+│   ├── protocol.py           # the System runtime Protocol (run/step/state/time/reinit + dim/family)
+│   ├── continuous.py         # ContinuousSystem (engine run + jacobian autogen)
 │   ├── delay.py              # DelaySystem (engine method-of-steps, forward-only)
 │   ├── discrete.py           # DiscreteMap (engine iterate + signature validation)
 │   ├── stochastic.py         # StochasticSystem — diagonal-Itô SDEs (_drift+_diffusion; EM/Milstein)
-│   ├── _accessors.py         # analysis-accessor mixin (the deliberate families→analysis lazy-import layering seam)
-│   ├── _plottable.py         # SystemPlottable plotting seam (system.to_plot_spec/plot, splits plot vs integration kwargs)
+│   ├── _plottable.py         # SystemPlottable plotting seam (system.__plot_spec__/plot, splits plot vs run kwargs)
 │   └── wrapped.py            # WrappedSystem (canonical home; adapt an external stepper — re-exported via derived)
 ├── engine/                   # Rust-facing engine layer; tsdynamics._rust is the sole backend
 │   ├── symbols.py            # engine-native symbolic frontend: state_time_symbols() → (Function("y"), Symbol("t"))
@@ -85,13 +88,14 @@ src/tsdynamics/
 ├── analysis/                 # quantifiers, one subpackage per A-* stream (A-LAYOUT reorg)
 │   ├── __init__.py           # flat re-exports (public API) + analyses plugin discovery
 │   ├── _result.py            # re-exporting FACADE: re-exports the result hierarchy from the _result_* submodules (back-compat import surface)
-│   ├── _result_base.py       # AnalysisResult (frozen-dataclass base: meta/repr/summary/to_dict/to_frame/plot seam)
-│   ├── _result_scalar.py     # ScalarResult / CountResult (+ _NumericOps)
-│   ├── _result_array.py      # ArrayResult
-│   ├── _result_collection.py # CollectionResult
-│   ├── _result_scaling.py    # ScalingResult (mixes _NumericOps like ScalarResult: full float drop-in — comparisons/arithmetic + value-based ==/hash; subclasses re-apply @dataclass(frozen=True, eq=False))
+│   ├── results.py            # ts.analysis.results — the 32 result CLASSES behind one dot (namespace only; each still lives in its own subpackage)
+│   ├── _result_base.py       # AnalysisResult (frozen-dataclass base: meta / the repr that IS the answer / to_dict / to_frame / plot seam)
+│   ├── _result_scalar.py     # ScalarResult / CountResult (+ _NumericOps, now on NDArrayOperatorsMixin)
+│   ├── _result_array.py      # ArrayResult (also NDArrayOperatorsMixin — the full operator set)
+│   ├── _result_collection.py # CollectionResult (a complete sequence: positional [], by_id, __array__)
+│   ├── _result_scaling.py    # ScalingResult (mixes _NumericOps like ScalarResult: full float drop-in — comparisons/arithmetic + value-based ==/hash; subclasses re-apply @dataclass(frozen=True, eq=False)); + n_fit / r_squared fit diagnostics
 │   ├── _result_viz.py        # the .plot accessor seam (_PlotAccessor / VisualizationNotInstalled)
-│   ├── _result_json.py       # to_dict / repr helpers (_jsonify / _is_frame_scalar)
+│   ├── _result_json.py       # to_dict / repr helpers (_jsonify / _is_frame_scalar / _fmt) + the repr formatters (_sig / _state / _vector / _pct)
 │   ├── orbits/               # A-ORBIT: orbit_diagram + OrbitDiagram (+ periods/bifurcation_points; orbit_diagram.py); poincare_section (poincare.py); return_map + ReturnMap (first-return/next-amplitude map; return_map.py); self-registers into registry.analyses
 │   ├── lyapunov/             # A-LYAP: lyapunov_spectrum, max_lyapunov, kaplan_yorke_dimension + lyapunov_from_data (Kantz/Rosenstein, from_data.py); self-registers into registry.analyses
 │   ├── fixedpoints/          # A-FP: fixed_points/FixedPoint (maps+flow equilibria, Newton/SD/DL + rigorous Krawczyk method="interval" in _interval.py — fixed.py), periodic_orbits/periodic_orbit/PeriodicOrbit + estimate_period (periodic.py), shared primitives (_common.py); self-registers
@@ -190,11 +194,19 @@ Everything else is **demoted, never removed** — `ts.<name>` still resolves and
   its 85-name `__all__` (the leaf namespace enumerates the analyses — cf.
   `numpy.linalg`; `discover_plugins` is deliberately not in `__all__`).
 - The **derived wrappers** `PoincareMap` / `StroboscopicMap` / `TangentSystem` /
-  `EnsembleSystem` / `ProjectedSystem` → `ts.derived.*`. Legal only because each
-  has a **verb on the system**, speaking the same vocabulary as the class:
-  `sys.poincare("y", 0.0)` / `sys.poincare(("y", 0.0, "up"))`,
-  `sys.stroboscope(period)`, `sys.tangent(k=2)`, `sys.project(0, 2)`,
-  `sys.copies(states)`.
+  `Ensemble` / `ProjectedSystem` → `ts.derived.*`. **Since v6 exactly TWO of them
+  have a verb on the system** (ruling A3):
+  `sys.poincare("y", 0.0)` / `sys.poincare(("y", 0.0, "up"))` / `sys.poincare(period=T)`
+  — `poincare` **absorbed `stroboscope`**, because a plane is an affine surface
+  `g(u) = n·u - c` and a period samples the phase *circle*: two disjoint
+  arguments, one verb, two return types (both at once raises naming the choice;
+  neither on a forced flow infers the drive period, on an autonomous one chooses
+  a plane) — and `sys.ensemble(states)` → an `Ensemble` *system* whose `.run(...)`
+  returns a `TrajectoryBatch` carrying `.final`.
+  `stroboscope`, `project`, `tangent` and `copies` are **gone from the object**
+  (census: no user callers); each `AttributeError` names the replacement —
+  `ts.derived.ProjectedSystem(sys, 0, 2)` / `traj[["x","z"]]`,
+  `ts.derived.TangentSystem(sys, k=2)`, `sys.ensemble(states)`.
 - **State-space geometry** (`data`): `Box`, `Ball`, `Grid`, `sampler`,
   `grid_points`, `set_distance` → `ts.data.*`. (`Region` and `region` were never
   top-level and stay `ts.data`-only — nothing was demoted, so `ts.Region` /
@@ -292,7 +304,10 @@ reorg; keep them in lock-step if the families package ever moves again.
 
 Every concrete `SystemBase` subclass auto-registers at class-definition time
 (`SystemBase.__init_subclass__` → `registry.register_class`). `SystemEntry`
-records name/cls/family/category/dim/params/reference/known_lyapunov.
+records name/cls/family/category/dim/params/reference/known_lyapunov (the last
+two read from the v6 `_reference` / `_known_lyapunov` ClassVars; `doi`,
+`field_shape` and `field_labels` are still missing from `SystemEntry` — that is
+the "155 DOIs silently dropped" bug and is round-2 work).
 
 - `registry.all_systems(family=, category=, builtin=True)` — iteration default
   is builtin-only (module under `tsdynamics.systems`); user classes register
@@ -311,17 +326,30 @@ records name/cls/family/category/dim/params/reference/known_lyapunov.
 - Consumers: registry-driven test parametrization (`tests/conftest.py`
   `pytest_generate_tests`), the docs autogen hook, and users.
 
-Optional per-system metadata ClassVars: `variables` (component names →
-`traj["x"]`, docs labels), `reference` (literature citation shown in docs),
-`doi` (the bare DOI for that citation — e.g. `"10.1175/..."` — sourced from the
-GilpinLab/dysts dataset where available, for the docs per-system page),
-`known_lyapunov` (drives `tests/test_known_values.py`; keys: `spectrum`+`atol`,
-or `n_positive`, plus `params`/`ic`/`kwargs`/`source`), and — for a
+Optional per-system metadata ClassVars. **Since v6 every one of them is
+underscored** — they are facts *about* the class, printed by `system.info`, and
+they were the loudest half of a `lorenz.<TAB>` that had to shrink to 19 names:
+`variables` (component names → `traj["x"]`, docs labels — the one that stays
+un-underscored, because an author *declares* it and `dim` now follows it),
+`_reference` (literature citation shown in docs), `_doi` (the bare DOI for that
+citation — e.g. `"10.1175/..."` — sourced from the GilpinLab/dysts dataset where
+available, for the docs per-system page), `_known_lyapunov` (drives
+`tests/test_known_values.py`; keys: `spectrum`+`atol`, or `n_positive`, plus
+`params`/`ic`/`kwargs`/`source`), `_default_ic`, and — for a
 **spatially-extended** system whose state vector is a flattened field —
 `_field_shape: tuple[int, ...]` (the spatial grid `(Ny, Nx)` / `(N,)`, resolved
 onto `traj.meta["field_shape"]` by `SystemBase.__init__`/`_provenance` for the
-`kind="field"` spatial-field movie) and `field_labels` (the names of the field
+`kind="field"` spatial-field movie) and `_field_labels` (the names of the field
 blocks packed into the state, e.g. Gray–Scott's `("u", "v")`).
+
+**`register_class` reads the underscored spellings** (`registry.py`), and so must
+anything else outside the class. Two live consumers were reading the old public
+names and silently getting `None` for all 177 systems — `registry.register_class`
+itself (every `SystemEntry.reference` / `.known_lyapunov` was `None`, so the docs
+rendered no citation and `test_known_values.py` skipped rather than asserted) and
+`analysis/planar.py::window_for`, whose pilot-orbit branch is gated on
+`default_ic` and so quietly fell back to a *wrong auto window* for every model
+plot. If you add a reader, read `_<name>`.
 
 ---
 
@@ -329,13 +357,46 @@ blocks packed into the state, e.g. Gray–Scott's `("u", "v")`).
 
 ### `SystemBase` (`families/base.py`)
 
-As before (ParamSet with fixed keys, attribute forwarding, `copy()` /
-`with_params()`, `resolve_ic()` priority: arg > self.ic > default_ic > random)
-plus:
+**The v6 tab surface is exactly 19 names** (ruling A5), per family:
 
-- `meta` is now a **`MetaStore`** — dict-like, but writes append with history:
-  `meta.record(key, value, **context)`, `meta[key]` → latest,
-  `meta.history(key)` → all records. `meta == {}` still works.
+```
+ContinuousSystem  19  copy dim ensemble family ic info jacobian jacobian_sym params plot
+                      poincare reinit run set_state state step time variables with_params
+DiscreteMap       17  (- poincare, - jacobian_sym)
+StochasticSystem  18  (- jacobian_sym)
+DelaySystem       16  (- set_state, - jacobian, - jacobian_sym)
+WrappedSystem     13  (- jacobian, - jacobian_sym, - ic, - info, - params, - with_params)
+```
+
+An absent name is bound to a `base.Absent` **descriptor**, so `hasattr` is
+`False`, `dir()` omits it, and reading it raises an `AttributeError` stating the
+mathematical reason plus a runnable line.  `SystemBase.__getattr__` answers every
+*removed* name from `_MOVED_IN_V6` / `_DELETED_ACCESSORS` the same way — the error
+**is** the migration guide.
+
+- `ParamSet` is a **`dict` subclass** (`families/_params.py`): `isinstance(p, dict)`
+  and `json.dumps(p)` work, `repr` is a plain dict, and all five inherited
+  mutators (`pop`/`popitem`/`clear`/`setdefault`/`update`) are overridden so the
+  fixed-key contract — and `as_tuple()`, the **ordered** tape contract — survive.
+- `dim` is **read-only** on an instance, and **follows `variables`**: declaring
+  names is enough, declaring both in disagreement raises at class definition.
+- `variables` is a lazy per-instance descriptor (`families/_info.py`): **every**
+  system names every component (declared names, a field system's `u0..v0..`, a
+  repeated unit's `x0 y0 z0 x1..`, else `y0..y{dim-1}`).  Read off the *class* it
+  is still the declared tuple, for the nine class-level readers deferred to v6.1.
+- `family` (`"ode"|"dde"|"map"|"sde"`) **replaces `is_discrete`**, which could not
+  tell a delay system from a stochastic one.
+- `info` is a frozen `SystemInfo` record that **absorbed** `reference`, `doi`,
+  `known_lyapunov`, `field_labels` and `default_ic` off the tab surface; the
+  ClassVars are now `_reference` / `_doi` / `_known_lyapunov` / `_field_labels` /
+  `_default_ic`, and `__init_subclass__` migrates a class still using the public
+  spelling.  `system.meta` and its `MetaStore` are gone — a *run* records its own
+  provenance on `traj.meta`.
+- `copy()` / `with_params()` forward `dim=` and `field_shape=`, so a
+  `Sys(dim=2)`-constructed system can be re-parametrised (it used to raise
+  "does not declare its state-space dimension", breaking continuation and orbit
+  diagrams for exactly the systems the docs teach you to write).
+- `resolve_ic` / `ic_generator` moved behind an underscore.
 - `_provenance(**extra)` builds the dict attached to `Trajectory.meta`.
 - **Engine-dispatch seam (stream C-FAM):** `_default_backend` ClassVar +
   `_dispatch(backend=, **kwargs)`. Every family's `interp` / `jit` / `reference`
@@ -346,7 +407,7 @@ plus:
   concrete family since v6** (it was `"interp"`; see "Which backend is the
   default" below for the measurement that drove the flip); the abstract
   `SystemBase` keeps `"reference"` (the wheel-free oracle). Passing
-  `backend=None` to a family's `integrate` / `iterate` resolves to it, and
+  `backend=None` to a family's `run` resolves to it, and
   `backend="auto"` resolves to the same `"jit"`. `run.integrate` also resolves the `method=` string
   through the shared `_resolve_method_for` contract (so an alias `"RK45"`/
   `"dopri5"` → `"rk45"`, a rejected v2-only name `"LSODA"`, and the auto-stiffness
@@ -407,23 +468,32 @@ import Trajectory` are the same object.
 
 ### The `System` protocol (`families/protocol.py`)
 
-All three families + all derived wrappers implement:
-`step(n_or_dt) -> new state`, `state()`, `set_state(u)`, `time()`,
-`reinit(u, *, t, params)`, `trajectory(...)`, `is_discrete`.
+All four families + all derived wrappers implement:
+`run(...) -> Trajectory`, `step(n_or_dt) -> new state`, `state()`, `time()`,
+`reinit(u, **kw)`, plus the data members `dim` and `family`.
+
+**`set_state` left the protocol in v6** and became a per-family *capability*: on
+Python >= 3.12 `isinstance` checks data members, so keeping it while removing it
+from `DelaySystem` (whose state is a history function, not a point) would make
+`isinstance(mg, System)` **False**.  Ask for it with `hasattr`.
+`trajectory` -> `run` and `is_discrete` -> `family` are hard breaks for
+third-party implementers; a `Protocol` cannot supply a default for a data member,
+so there is no compatible middle ground.
 
 - First `step()`/`state()` on a cold system does an implicit `reinit()`.
 - ODE: `reinit` lowers the system to an engine tape once; each `step(dt)`
-  integrates one `dt` chunk through `run.integrate` from the live state.
+  integrates one `dt` chunk through `engine.run.integrate` from the live state.
 - **`backend="reference"` is honored through the stepping protocol** (ODE):
   `reinit(backend="reference")` resolves and stores the backend (`resolve_backend`
   raises `InvalidParameterError` for an unknown name), and `step()` then routes to
   `_step_reference` — one `dt` chunk on the pure-Python reference ODE integrator
-  (the same path `integrate(backend="reference")` uses), so the wheel-free oracle
+  (the same path `run(backend="reference")` uses), so the wheel-free oracle
   is reachable via `reinit`/`step`/`state`. It is **no longer silently coerced to
   `interp`** (diagnosis #5); reference owns no resumable `OdeStepper`, so it never
   builds the engine fast path.
-- **DDE `set_state` raises** (state is a history function); `reinit(u)`
-  restarts from a constant past. DDE stepping is forward-only (each `step`
+- **DDE `set_state` does not exist** (state is a history function, not a point —
+  it used to exist and raise `NotImplementedError`, a member that lies); use
+  `reinit(u)` to restart from a constant past. DDE stepping is forward-only (each `step`
   re-integrates from the constant past via the method of steps). **DDE
   `backend="reference"` is loudly rejected** (there is no pure-Python DDE
   integrator) rather than silently degraded.
@@ -443,7 +513,7 @@ All three families + all derived wrappers implement:
   active extremum, so a symengine `Min`/`Max` ODE (or an `np.minimum`/`np.maximum`
   map lowering to `OP_MIN`/`OP_MAX`) lowers `with_jacobian=True` for the stiff
   (`bdf`/`rosenbrock`/`trbdf2`) and map-Lyapunov paths instead of raising.
-- `integrate(backend=)` defaults to `_default_backend` (`"jit"`). `"jit"`
+- `run(backend=)` defaults to `_default_backend` (`"jit"`). `"jit"`
   / `"interp"` / `"reference"` route through the shared C-FAM seam (`_dispatch` →
   `engine.run.integrate`) to the Rust engine (or its pure-Python oracle).
   `run.integrate` resolves `method=` through the solver registry and lowers the
@@ -596,40 +666,50 @@ interior points).
 - `_jacobian_fd_check = False` ClassVar opts a map out of the
   finite-difference Jacobian test (only for orbits living on discontinuities,
   e.g. Baker).
-- `iterate(backend=...)` runs the iteration on the Rust engine (`"jit"`
+- `run(backend=...)` runs the iteration on the Rust engine (`"jit"`
   default / `"interp"` / `"reference"` pure-Python oracle). The engine loop lives in
   `crates/tsdyn-engine/src/map.rs`; all backends lower `_step` to the IR, so
   piecewise/`numpy`-ufunc steps raise `TapeCompileError`. The engine path
-  diverges loudly (raises); the random-IC retry still applies when `iterate` is
+  diverges loudly (raises); the random-IC retry still applies when `run` is
   called without an explicit `ic`.
 
-### `run` states its own signature (v6)
+### `run` is THE trajectory verb (v6) — `integrate` / `iterate` / `trajectory` are gone
 
-`run` is the canonical trajectory verb on all four families, and until v6 it was
-a `**kwargs` passthrough: `ContinuousSystem.run` bound `final_time`, `dt`,
-`events` and nothing else, so the library's most-typed call showed **2 of ~12**
-keywords to `inspect.signature`, tab-completion and every IDE tooltip.
-`transient=` — which the quick reference below uses — was discoverable only from
-prose. The family-specific aliases (`integrate` / `iterate`) had the full
-signature all along, so the *alias* documented itself while the *canonical verb*
-did not.
+One verb on all four families and every derived wrapper.  `integrate`, `iterate`
+and `trajectory` are **removed, not aliased**: `hasattr(sys, "integrate")` is
+`False`, and the `AttributeError` names `run` and hands back a runnable line.
+`run` now *owns* the body (the direction reversed — it used to forward to
+`integrate`).
 
-Each family's `run` now binds exactly what its alias binds and forwards
-explicitly, keeping `**kwargs` only for the genuine solver-option passthrough:
+**Every signature is CLOSED.**  Before v6 `DelaySystem.run` accepted and
+*silently dropped* any keyword — `max_step`, `t0`, `events`, `nonsense_kw` all
+returned baseline-identical trajectories.  Each family routes its leftovers
+through `families/_kwargs.py::reject_unknown_run_keywords`, driven by a per-name
+**why** table: a word that reached the wrong family is not a typo, it is the
+right word for a different kind of dynamics, so the message states the
+mathematical reason and gives the line to type.
 
 | family | `run` binds |
 |---|---|
-| `ContinuousSystem` | `final_time`, `dt`, `t0`, `ic`, `transient`, `method`, `rtol`, `atol`, `max_step`, `backend`, `seed`, `events` |
-| `DiscreteMap` | `n` (+ the `steps` alias via `_resolve_iteration_count`), `ic`, `transient`, `backend`, `seed`, `max_retries` |
-| `DelaySystem` | `final_time`, `dt`, `ic`, `history`, `transient`, `method`, `rtol`, `atol`, `backend`, `seed` |
-| `StochasticSystem` | `final_time`, `dt`, `t0`, `ic`, `transient`, `method`, `seed`, `backend` |
+| `ContinuousSystem` | `final_time`, `dt`, `t0`, `ic`, `transient`, `solver`, `rtol`, `atol`, `max_step`, `backend`, `seed`, `events` |
+| `DiscreteMap` | `steps`, `ic`, `transient`, `backend`, `seed`, `max_retries` |
+| `DelaySystem` | `final_time`, `dt`, `ic`, `history`, `transient`, `solver`, `rtol`, `atol`, `backend`, `seed` |
+| `StochasticSystem` | `final_time`, `dt`, `t0`, `ic`, `transient`, `solver`, `seed`, `backend` |
 
-Behaviour is unchanged and verified bit-identical (`run(...)` vs
-`integrate(...)`/`iterate(...)` on a pinned IC, all four families) — every bound
-default is the *same object* the alias defaults to, so binding it and forwarding
-it is indistinguishable from not passing it. The wrong-family horizon words
-still raise by name (`hen.run(final_time=…)` / `lor.run(n=…)`), because they
-reach `**kwargs` and the alias's guard, not a bound parameter.
+- **`method=` became `solver=`** on `run` *and* `reinit`: `solver=` selects a
+  numerical kernel, `method=` selects an *estimator* on an analysis
+  (`max_lyapunov(method="kantz")`).  A `method=` at `run()` raises naming
+  `solver=`.  (`n` likewise became `steps` — one concept, one spelling.)
+- **`dt=None`** means "the family's `_default_dt`" (0.02 for ODE/DDE/SDE), which
+  is what `system.info` prints under `defaults`.
+- **`run(ic=…)` no longer mutates `self.ic`.**  Measured at HEAD: `l.ic` was
+  `None`, and after `l.run(ic=[3,3,3])` it was `[3. 3. 3.]`, so a later bare
+  `run()` silently started elsewhere.  The **auto-resolved** cases (`_default_ic`,
+  the random draw) still latch — that is what makes a bare `run()` twice
+  reproducible.
+- **`run()` is always a fresh integration; `step()` is the one that continues.**
+  `pmap.run(steps=5)` twice used to return different data; every wrapper now
+  reinitialises first.
 
 ### `StochasticSystem` extras
 
@@ -639,14 +719,14 @@ reach `**kwargs` and the alias's guard, not a bound parameter.
   (one noise coefficient per component); both symbolic, both lower via
   `engine.compile.lower_sde` (drift tape + diffusion tape, the latter carrying
   `∂g/∂u` for Milstein).
-- `integrate(..., method=, seed=, backend=)` runs a fixed-step scheme — `dt` *is*
+- `run(..., solver=, seed=, backend=)` runs a fixed-step scheme — `dt` *is*
   the noise scale `√dt` (so `dt` sets both the discretisation and the output grid).
-  `method`: `"euler_maruyama"` (order 0.5, default) or `"milstein"` (order 1.0).
+  `solver`: `"euler_maruyama"` (order 0.5, default) or `"milstein"` (order 1.0).
   `seed` makes the noise realisation reproducible (recorded in `traj.meta`).
   `backend`: `"jit"` (the default, like every other family) / `"interp"` — the
   compiled engine via `tsdynamics._rust` (stream E-WIRE) — or `"reference"` (pure
   Python). (This line said `"reference"` was the SDE default; it never was.)
-- `ensemble(ics, ..., backend=)` seeds trajectory `i` from `seed_for(seed, i)` —
+- `ensemble(states).run(..., seed=)` seeds member `i` from `seed_for(seed, i)` —
   depending only on the index — so a batch is reproducible and mirrors the Rust
   engine's parallel-equals-serial contract; a diverged trajectory becomes a `NaN`
   row. `backend="interp"/"jit"` fans the batch out on the engine's rayon pool.
@@ -711,6 +791,71 @@ documented tolerance):
   every op no RHS output transitively depends on (mirroring the Cranelift JIT's
   `reachable` set), so it never computes Jacobian-only subexpressions; the
   Jacobian path `eval_jac` ignores the mask and runs the full tape.
+
+---
+
+## Analysis results — the repr IS the answer (v6, C3)
+
+Every registered analysis returns an `AnalysisResult` subclass; there are **32**
+of them and a user constructs none. Two things changed in v6.
+
+**`summary()` is deleted and `__repr__` became what it printed.** The readable
+text already existed inside `summary()`, which nothing advertised and no REPL
+calls, while the repr — the thing a console and a notebook actually show — gave a
+constructor-shaped one-liner. Every result now renders as
+
+```
+<Name>  <THE ANSWER>   <verdict>   (<subject>)
+    <up to four supporting lines>
+    [0] <item>                       # a collection, 10 items then "... [N total]"
+```
+
+built from four hooks on `AnalysisResult`, none of them mandatory: `_answer()`
+(the measurement, defaulting to the `_repr_fields` rendering), `_interpretation()`
+(the verdict), `_context()` (the trailing parenthetical — the system by default,
+or the settings that make the number meaningful), and `_details()` /
+`_item_lines()`. `__str__` is the headline, `_repr_html_` is the repr in a
+`<pre>` (so the notebook and the console cannot drift), and `__format__` formats
+the number. A result commonly listed inside another (a fixed point, an attractor,
+an orbit) overrides `_as_item()` for the compact list form — **not** `__str__`.
+Number formatting lives in `_result_json.py`: `_sig` (significant figures — `np.round`
+is scale-blind), `_state` (a state vector, `max_line_width=10_000`, elided above 8
+components), `_vector` (a list of independent quantities, each at its own scale),
+`_pct`.
+
+**A verdict must be supported by the data.** `WadaResult.applicable` is the
+archetype: `wada_property` early-returns zeros when there are fewer than 3 basins,
+so `W = 0` read as a *measured negative* when nothing was measured; the repr now
+says `not applicable — the Wada test needs ≥ 3 basins, this image has 2` and
+`to_dict(full=True)["W"]` is `None`. The **Lyapunov verdict** follows the same
+rule (contract §4.4): the zero floor is the estimator's own realised zero
+(`min|λ|` for a flow, which has a structural zero exponent; the relative floor for
+a map, which does not), and the regime is named **only when the count is stable
+across a 10× tolerance band** — otherwise the repr says `indeterminate at this
+horizon`. That fixes `Lorenz` at `final_time=20` (was *hyperchaotic*),
+`HenonHeiles` (now honestly hedged) and `LotkaVolterra`, a shipped conservative
+system that was called **chaotic** at every horizon. It is a **repr-only** rule
+with no estimator change; a σ-carrying estimator is a v6.1 ticket.
+
+**A result behaves as the plain thing it replaced.** `f"{result:.3f}"` used to
+raise on every numeric result. `np.asarray(fixed_points)` was a `(n,)` array of
+*objects*. `ArrayResult / 2` raised while `ArrayResult * 2` worked. All fixed:
+`_NumericOps` and `ArrayResult` now sit on `np.lib.mixins.NDArrayOperatorsMixin`
+**plus** `__array_ufunc__` (both halves are required — `__array_ufunc__` alone
+breaks `result * 2`, because `int.__mul__` returns `NotImplemented` without ever
+reaching NumPy), collections are complete sequences indexed **by position** with
+`by_id(k)` for a label lookup (`AttractorSet[0]` is now the first attractor; it
+used to raise `KeyError` because ids start at 1), and `to_dict(full=True)` adds
+the derived answers the repr reports (`kaplan_yorke`, `recurrence_rate`,
+`applicable`/`W`, `n_fit`/`r_squared`) — `full` only ever *adds* keys.
+
+**`ts.analysis.results`** is the namespace for the 32 classes (contract §2.7):
+off the flat `ts.analysis` listing, still importable, still what `isinstance`
+sees; each class still lives in the subpackage that produces it.
+Gates: `tests/test_result_repr.py` (walks `AnalysisResult.__subclasses__()`, so a
+new result class cannot ship without a rendered fixture in
+`tests/_result_fixtures.py`), `tests/test_result_plain.py`,
+`tests/test_results_namespace.py`.
 
 ---
 
@@ -961,6 +1106,32 @@ documented tolerance):
 pulls in **no** plotting library — `ts.viz` is bound lazily, and every renderer
 import is deferred to first render.
 
+**`ts.viz.__all__` is exactly THIRTEEN names** (down from 32; gate
+`tests/test_viz_dispatch.py::test_ts_viz_tab_surface_is_the_contract`, exact and
+sorted — re-measure, never nudge):
+
+```
+Plot  compatibility  draw  geometry  grid  load  plot
+primitives  renderers  spec  styles  themes  transforms
+```
+
+Four registries with the **identical four-verb shape** (`register` / `names` /
+`find` / `get` — learn one, know all four): `transforms` · `primitives` ·
+`renderers` · `themes`. Two drawing doors (`plot`, `draw`), one panel arranger
+(`grid`), one received type (`Plot`), the arrays escape hatch (`geometry`), the
+matrix (`compatibility`), the style table (`styles`), the round-trip loader
+(`load`), and the IR one dot away (`spec`).
+
+Everything else is **demoted, never removed** — the IR nouns, `to_json` /
+`from_json` / `to_dict_envelope` / `from_dict_envelope` / `SCHEMA_VERSION`,
+`STYLE_KEYS` / `Theme` / `THEMES` / `get_theme` / `set_theme` / `register_theme`
+/ `normalize_style`, `Plottable`, `plot_transform`, `make_frame`, and the
+`render` subpackage are all still bound and importable (`_INTERNAL_NAMES`), just
+off the tab surface. Two names genuinely stop resolving and say so
+(`viz/__init__.py::_MOVED`): `ts.viz.PlotSpec` → `ts.viz.Plot`, and
+`ts.viz.list_transforms` → `ts.viz.transforms.names()`. A *guess* is still an
+ordinary `AttributeError`, so `hasattr(ts.viz, anything)` keeps working.
+
 ### Transforms, primitives and the compatibility matrix (v6)
 
 The plotting layer has **three nouns**, and every new plot is expressed in them.
@@ -1078,11 +1249,66 @@ Nothing else in the library learns a new name when one is added.
 
 ### The rest of the seam
 
-- **`PlotSpec` IR (`viz/spec.py`):** a JSON-serializable description of a plot —
-  a semantic `PlotKind`, drawable `Layer`s, typed `Axis`/`Colorbar`/`Legend`,
-  and `to_dict`/`from_dict` round-trip. The `PlotKind` enum is a **frozen,
-  reviewed contract** (governance gate `tests/test_viz_vocab.py` pins the exact
-  membership; adding a kind edits that gate deliberately).
+- **`Plot` (`viz/spec.py`) — one type, no facade.** What was `PlotSpec` is now
+  **`Plot`**: the *same class object* (`PlotSpec` stays bound in `viz/spec.py` as
+  an alias, so the 557 in-tree annotations and `isinstance` checks are untouched;
+  it is in no `__all__` and no `dir()`, and `ts.viz.PlotSpec` answers with the new
+  spelling). It is still a JSON-serializable description of a plot — a semantic
+  `PlotKind`, drawable `Layer`s, typed `Axis`/`Colorbar`/`Legend`,
+  `to_dict`/`from_dict`/`to_json` round-trip — and the `PlotKind` enum remains a
+  **frozen, reviewed contract** (governance gate `tests/test_viz_vocab.py`).
+  - **The escape hatch is the point: `p.fig` / `p.ax` / `p.axes`.** Rendered once
+    through matplotlib and cached; `.ax` on a composite raises naming `.axes`;
+    `.fig` on an animated plot draws the final frame and warns. Escalating from
+    easy to expert is **one dot**, never a type change and never a rewrite.
+  - **Cache invalidation is attached at the definition site, not tabulated.** The
+    `_mutates` decorator wraps every mutate-and-return-self method and drops the
+    figure cache first, so a cached figure can never disagree with the plot it
+    came from. Gate
+    `tests/test_viz_spec.py::test_every_mutating_plot_method_drops_the_figure_cache`
+    **derives** the required set from the source (any public method returning
+    `Plot`/`PlotSpec`/**`Self`** — `add` is the `Self` one an annotation filter
+    would miss) and fails on a new tweak that forgets.
+  - **Handing the figure out then mutating warns exactly once**
+    (`VisualizationDegraded`): re-rendering would discard hand edits. **Rule:
+    library tweaks first, matplotlib last.**
+  - **Selection:** `p[0]` / `p["psd"]` return a `Plot` (so they chain);
+    `p.panels` stays the *list*. On a single-panel plot `p[0] is p`.
+  - **`p.style(*which, **keys)`** addresses layers by producing transform or by
+    legend label (`p.style("nullclines", color="white")`) — the provenance stamp
+    `Layer.transform` was written by every primitive and read by nothing. An
+    unmatched name raises, naming what the plot does have.
+  - **Annotation verbs** `.vline/.hline/.span/.text` take plain Python and
+    normalise `**style` through `normalize_style`; `Annotation.from_mapping`
+    coerces a plain dict (the measured `AttributeError: 'dict' object has no
+    attribute 'style'`). `Annotation` is **not** renamed and the JSON envelope is
+    unchanged.
+  - **`Plot.grid` → `Plot.gridlines`** (the panel arranger is the module-level
+    `ts.viz.grid`; one attribute cannot mean two things). `p.grid` raises an
+    `AttributeError` naming `gridlines` — the error *is* the migration guide.
+  - **`.clock(fmt=)` is validated at the call.** `{t}` / `{i}` / a bare `{}`
+    (normalised to `{t}`); a positional field such as `"t={:.1f}"` used to be
+    accepted and raise a raw `IndexError` inside `.save()` hundreds of frames later.
+  - **The repr says what you hold and what to do next**, names the producing
+    transforms of an overlay (≤ 4 distinct), names a composite's arrangement, and
+    stays extension-aware (`.save('f.png')` → `.save('f.gif')` when animated).
+    `_repr_html_` is the no-backend notebook fallback.
+  - **`FIGURE_KEYS` (17 names) is the one figure vocabulary**, derived as
+    `frozenset(_INLINE_TWEAKS) | _COLORIZE_TWEAKS | {"theme"}`, with
+    `split_figure_keywords` / `apply_figure_keywords` the one peeler and one
+    applier. Measured pre-v6: **12 of 17 raised at `ts.plot(...)` and all 17
+    worked at `traj.plot(...)`**, because the front door carried its own five-name
+    copy. Every door peels these (and `style.style_names()`) **before** the
+    remainder is treated as something to compute, so an integration typo is still
+    reported as an integration typo.
+  - **`ts.viz.spec` is the IR sub-namespace** — exactly 19 nouns
+    (`Animation Annotation Axis Colorbar Frame FrameSpace Geometry Layer Layout
+    Legend Part PlotKind PlotTransform Presentation SCHEMA_VERSION T
+    from_dict_envelope make_frame to_dict_envelope`). Ten are owned by sibling
+    modules that import `spec.py`, so they are re-exported through a module
+    `__getattr__` (`_LAZY_IR_NAMES`) — no cycle, and `import tsdynamics` still
+    pulls in no plotting library. `Plot` is deliberately **not** here: it is the
+    one type you annotate, and it lives one level up at `ts.viz.Plot`.
 - **Renderers (`viz/render/`):** in-tree backends `mpl` (the universal reference
   renderer — `kinds=None`, draws everything, the fallback), `plotly`
   (interactive 2-D + 3-D + HTML), `json` and `threejs` (data-export). Dispatch
@@ -1094,6 +1320,27 @@ Nothing else in the library learns a new name when one is added.
   a custom/registered backend is reached only by an explicit `backend="name"`
   (`caps`-normalised aliases like `"mpl"` accepted). json never draws — it
   serializes — so it is exempt from the honoring negotiation below.
+  - **`ts.viz.renderers`** is the backend registry in the shared four-verb shape
+    (`register`/`names`/`find`/`get`), and **every verb registers the in-tree
+    backends first**: measured pre-v6, `registry.renderers.names()` was `[]` in a
+    fresh session and the full list once something had drawn, so any
+    introspection before the first plot lied. `find(writes=".svg")` /
+    `find(kind=…)` / `find(supports_3d=True)`.
+  - **`writes` splits into `writes_static` / `writes_animated`**, and `Plot.save`
+    consults each backend's declaration and **nothing else** (`_writers_for`);
+    the hardcoded `_IMAGE_EXT`/`_MOVIE_EXT`/`_WRITABLE_EXT` table in `spec.py` is
+    gone. It contradicted the backends in both directions — measured, `.webp` was
+    *declared* by matplotlib and refused, `.pgf` was *not* declared and accepted,
+    and matplotlib declared 17 extensions of which `savefig` cannot write five
+    (`.apng .m4v .mov .webm .mp4`) — while a registered third-party backend could
+    be rendered by name and its declared extension **never** saved. Consequences:
+    `.mp4` on a **static** plot is now a typed error (*"'.mp4' is a movie format
+    and this Plot is not animated. Add animate=True at the door, or call
+    .animate() here."*) instead of matplotlib's raw `ValueError`; an unknown
+    extension names every writable one and who writes it; a wrong `backend=` names
+    the ones that can. `_writes_its_own_file` picks the "hand it `path=`" route
+    from `data_export`/`web_export` + an accepted `path` keyword, not from a list
+    of backend names.
 - **Styling & theming (`viz/style.py`):** the look of every plot is controlled by a
   **canonical, validated, introspectable** vocabulary, honored consistently across
   the three *visual* backends (matplotlib/plotly/threejs; json serializes it). The
@@ -1114,21 +1361,37 @@ Nothing else in the library learns a new name when one is added.
     honored claim and asserts the artifact reflects it (and that every non-honored
     key warns) — an overclaim cannot ship green. (`fill`/`fillalpha` apply to AREA
     marks only; `cmap`/`linestyle`/marker-shape are not honored by threejs.)
+  - **`ts.viz.styles`** is the public listing of that vocabulary (`names()` /
+    `get("lw")` → the canonical `StyleKey` / `find(honored_by="threejs")` /
+    `repr` prints the table). It is the answer to *"what can I pass, and will
+    this backend draw it?"*, and it is the **same** vocabulary at every plotting
+    door.
   - **`Theme`** (a **frozen** dataclass: palette, background, foreground, font,
     grid, line/marker defaults) + the **`THEMES`** registry with four built-ins
     (`default`/`dark`/`minimal`/`publication`) and a single mutable global default
-    via `set_theme`/`get_theme`/`themes`/`register_theme` (the **only** mutable
-    viz global — `tests/conftest.py` has an autouse fixture snapshotting+restoring
-    it around every test). A `PlotSpec` carries a private `_theme`; renderers read
-    `spec.resolved_theme` (the spec's theme, else the global default) and apply it
-    first (palette colours unstyled layers), then per-layer style overrides it.
+    (the **only** mutable viz global — `tests/conftest.py` has an autouse fixture
+    snapshotting+restoring it around every test). A `Plot` carries a private
+    `_theme`; renderers read `spec.resolved_theme` (the plot's theme, else the
+    global default) and apply it first (palette colours unstyled layers), then
+    per-layer style overrides it.
+  - **`ts.viz.themes` is a registry object**, in the same four-verb shape
+    (`register`/`names`/`find`/`get`) plus `use(name)`; it is still **callable**
+    (`ts.viz.themes()` → the name list), so the pre-v6 spelling keeps working.
+    `themes.register(name, theme=None, /, **fields)` takes **keywords** and
+    optionally a base to derive from — which removes the only reason `Theme` was
+    ever exported (corollary C1). Measured pre-v6: `register_theme({...})` gave
+    `AttributeError: 'dict' object has no attribute 'name'` and `set_theme({...})`
+    a raw `TypeError: cannot use 'dict' as a dict key`; `Theme.replace` (taught by
+    the design docs) never existed. `themes.use` raises `InvalidParameterError`
+    naming `themes.names()`. `register_theme`/`set_theme`/`get_theme` stay bound
+    and importable, off the listing.
   - **Fluent tweaks** (all mutate-and-return-self, so they chain and render
-    identically on every backend): `.style(**keys)`, `.recolor(*colors)`,
+    identically on every backend): `.style(*which, **keys)`, `.recolor(*colors)`,
     `.theme(name|Theme, **overrides)` (a setter; `theme` is positional-only),
-    `.palette(...)`, `.grid(...)`, `.font(...)`, `.background(...)`, `.size(...)`,
-    alongside the existing `.relabel/.rescale/.limits/.ticks/.colorize/.animate/…`.
-    Public introspection: `ts.viz.STYLE_KEYS`, `ts.viz.themes()`,
-    `ts.viz.get_theme()/set_theme()`. (Full guide: `docs/visualization/styling.md`.)
+    `.palette(...)`, `.gridlines(...)`, `.font(...)`, `.background(...)`,
+    `.size(...)`, `.vline/.hline/.span/.text`, alongside
+    `.relabel/.rescale/.limits/.ticks/.colorize/.animate/…`.
+    (Full guide: `docs/visualization/styling.md`.)
 - **Single-panel front door:** `Trajectory.to_plot_spec(...)` / `.plot(...)` (see
   the `Trajectory` section) builds **one panel**.
 - **Composition — `tsdynamics.viz.plot(*things, layout="overlay", **build_kw)`
@@ -1761,7 +2024,10 @@ Two layers now cover them:
 | Adding a new `rtol=`/`atol=` default | Don't write a literal — name a constant in `utils/tolerances.py`. A gate (`test_polish_standards.py::test_no_bare_tolerance_literal_in_the_library`) fails on a bare literal in any signature, call keyword or `self._rtol =` assignment. |
 | "My results got less accurate in v6" | `dt` is now **sampling only** — it no longer secretly bounds the internal step (see "Dense output and `max_step`"). The default `rtol`/`atol` tightened to `1e-9`/`1e-12` to compensate, so a plain `.integrate()` is *more* accurate than pre-v6, not less. If you pinned `rtol=1e-6` explicitly you kept the old accuracy on a coarser step — tighten it; or pass `max_step=dt` to reproduce the old step regime; or set `TSDYNAMICS_NO_DENSE_OUTPUT=1` to reproduce pre-v6 numbers exactly. |
 | An adaptive kernel strides over a narrow feature | Pass `max_step=`. (A step *size* — `max_steps` is a step *count*.) |
-| `set_state` on a DDE | Raises by design — use `reinit(u)`. |
+| `set_state` on a DDE | **Does not exist** (v6) — the state is a history function; use `reinit(u)` for a constant past or `run(history=...)`. |
+| `system.integrate(...)` / `.iterate(...)` / `.trajectory(...)` | **Gone** (v6) — `run` is the one trajectory verb; the `AttributeError` prints the replacement line. |
+| `run(method="rk45")` | **`solver=`** since v6: `solver=` picks a numerical kernel, `method=` picks an *estimator* on an analysis. |
+| A keyword your `run` silently ignored | It no longer can — every family's signature is closed (`families/_kwargs.py`) and the message states why that word belongs to a different family. |
 | Stiff ODE: which method? | `"bdf"` is the **variable-order (1–5) BDF** and the right default for stiff ODEs (far faster than the fixed-order `rosenbrock`/`trbdf2`, which stay selectable). `run.integrate` auto-builds the Jacobian-carrying tape for the implicit kernels, so `integrate(method="bdf")` "just works". The legacy SciPy name `"LSODA"` is no longer a method — declare `_default_method = "bdf"`. Pass `method="auto"` to let `solvers.recommend` probe stiffness and pick `bdf`/`rk45` — a one-point heuristic, so prefer `_default_method` for a system known to be stiff. |
 | Param change ignored by a live stepper | `reinit()` after parameter changes (or use `with_params`). |
 | Orbit diagram over a DDE wrapper | Re-lowers the tape per parameter value — slow by design, document it. |
@@ -1775,12 +2041,12 @@ Two layers now cover them:
 import numpy as np
 import tsdynamics as ts
 
-# ODE — `run` is the one canonical verb on every family (`integrate` is its alias)
+# ODE — `run` is THE trajectory verb (integrate/iterate/trajectory are gone in v6)
 lor = ts.systems.Lorenz()
 traj = lor.run(final_time=100.0, dt=0.01, transient=10.0)
 traj["x"]                                   # named component
-exps = lor.lyapunov_spectrum(final_time=300.0)   # → LyapunovSpectrum [0.91, ~0, -14.57]
-exps.kaplan_yorke                           # → ~2.06   (also ts.kaplan_yorke_dimension(exps))
+exps = ts.analysis.lyapunov_spectrum(lor, final_time=300.0)  # [0.91, ~0, -14.57]
+exps.kaplan_yorke                           # → ~2.06
 
 # Backends: "jit" (Cranelift, default) / "interp" (SSA interpreter, bit-identical)
 #           / "reference" (pure-Python oracle — the cross-check, not for production)
@@ -1798,11 +2064,13 @@ u = lor.step(0.01)
 # Derived systems: a VERB on the system, same vocabulary as the class
 ros = ts.systems.Rossler()
 pmap = ros.poincare("y", 0.0, direction="up")   # = ts.derived.PoincareMap(ros, ...)
-section = pmap.trajectory(500)                  # → PoincareSection
+section = pmap.run(500)                         # → PoincareSection
+strobe = ts.systems.Duffing().poincare(period=4.488)   # poincare absorbed stroboscope
 sec = ts.poincare_section(ros, plane=("y", 0.0, "up"), crossings=500, seed=0)
 od = ts.orbit_diagram(pmap, "c", np.linspace(2, 6, 50), points_per_value=100)
-tang = lor.tangent(k=2)                         # the Lyapunov engine, steppable
-finals = lor.ensemble(np.random.rand(100, 3), final_time=10.0)   # → (100, 3)
+tang = ts.derived.TangentSystem(lor, k=2)       # the Lyapunov engine, steppable
+band = lor.ensemble(np.random.rand(100, 3))    # → an Ensemble *system*
+finals = band.run(final_time=10.0).final       # → (100, 3)
 
 # Event detection / arbitrary stopping (scipy-shaped events=)
 sol = lor.run(final_time=100, dt=0.01, events=[("z", 27.0, "up")])
@@ -1811,7 +2079,7 @@ stop = lambda y, t: y(0)**2 + y(1)**2 + y(2)**2 - 50.0**2  # leave a ball → st
 stop.terminal = True
 lor.run(final_time=1e3, events=[stop])                    # truncates at the crossing
 
-# Maps — the horizon word is `n` (`steps` is accepted on run/iterate)
+# Maps — the horizon word is `steps` (a count; `final_time` is refused by name)
 h = ts.systems.Henon()
 h.run(5000, transient=500)
 ts.fixed_points(h)                          # analytic saddles

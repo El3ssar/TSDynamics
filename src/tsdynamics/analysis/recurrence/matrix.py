@@ -37,6 +37,7 @@ from tsdynamics.errors import InvalidParameterError, remedy
 
 from .._common import reject_system
 from .._result import AnalysisResult
+from .._result_json import _sig
 from ._common import _as_points, _metric_p, _threshold_for_rate
 
 __all__ = ["DEFAULT_RECURRENCE_RATE", "RecurrenceMatrix", "recurrence_matrix"]
@@ -86,12 +87,17 @@ class RecurrenceMatrix(AnalysisResult):
 
     @property
     def size(self) -> int:
-        """Number of states ``N`` (the matrix is ``N x N``)."""
-        return int(self.matrix.shape[0])
+        """Number of states ``N`` (the matrix is ``N x N``); ``0`` when unpopulated.
+
+        The field defaults to ``None`` (it carries no matrix until an estimator
+        fills it in), so this reports ``0`` rather than raising — the repr reads
+        it, and a repr must never be the thing that raises in a console.
+        """
+        return 0 if self.matrix is None else int(self.matrix.shape[0])
 
     @property
     def recurrence_rate(self) -> float:
-        r"""Matrix density :math:`RR = \#\{R_{ij}=1\}/N^2`."""
+        r"""Matrix density :math:`RR = \#\{R_{ij}=1\}/N^2` (``0`` when unpopulated)."""
         n = self.size
         return float(self.matrix.nnz) / float(n * n) if n else 0.0
 
@@ -154,12 +160,22 @@ class RecurrenceMatrix(AnalysisResult):
             title=f"recurrence plot (RR = {self.recurrence_rate:.3g}, {i.size} pts)",
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"RecurrenceMatrix(N={self.size}, eps={self.epsilon:.4g}, "
-            f"metric={self.metric!r}, theiler={self.theiler_window}, "
-            f"RR={self.recurrence_rate:.4g})"
-        )
+    def _answer(self) -> str:
+        """Return the plot's size and its two defining numbers."""
+        n = int(self.size)
+        return f"{n}×{n} · RR = {self.recurrence_rate:.3f} · ε = {_sig(self.epsilon, 4)}"
+
+    def _context(self) -> str | None:
+        """Return the metric and the Theiler window the matrix was built with."""
+        bits = [str(self.metric), f"theiler={self.theiler_window}"]
+        system = self._system_label()
+        if system:
+            bits.insert(0, system)
+        return ", ".join(bits)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the size and recurrence rate the repr reports."""
+        return {"size": int(self.size), "recurrence_rate": float(self.recurrence_rate)}
 
 
 def recurrence_matrix(

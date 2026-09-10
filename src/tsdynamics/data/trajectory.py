@@ -197,7 +197,7 @@ class Trajectory:
 
     Examples
     --------
-    >>> traj = lor.integrate(final_time=100)
+    >>> traj = lor.run(final_time=100)
     >>> traj.dim
     3
     >>> traj["x"]            # named component (via the class's ``variables``)

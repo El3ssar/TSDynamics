@@ -64,6 +64,7 @@ __all__ = [
     "normalize_kind",
     "register_builtin_renderers",
     "render_spec",
+    "renderers",
     "select_renderer",
     "style_honoring_gaps",
 ]
@@ -403,6 +404,131 @@ def render_spec(spec: PlotSpec, backend: str | None = None, **backend_kw: Any) -
         )
 
     return renderer(spec, **backend_kw)
+
+
+class _RendererRegistry:
+    """``ts.viz.renderers`` — the rendering backends, in the shared four-verb shape.
+
+    ::
+
+        ts.viz.renderers.names()              # ['matplotlib', 'plotly', 'json', 'threejs']
+        ts.viz.renderers.find(writes=".svg")  # who can write that
+        ts.viz.renderers.get("plotly")        # its declared capabilities
+        ts.viz.renderers.register("mine", fn) # an out-of-tree backend
+
+    **Every verb registers the in-tree backends first.** Measured before v6,
+    ``registry.renderers.names()`` was ``[]`` in a fresh session and the full list
+    once something had drawn, so any introspection before the first plot *lied*.
+    Registration is a ``find_spec`` probe per backend, so it still imports no
+    plotting library.
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> list[str]:
+        """Return the registered backend names (matplotlib first)."""
+        return self.names()
+
+    @staticmethod
+    def _table() -> dict[str, Any]:
+        """``name -> renderer callable``, with the in-tree backends registered."""
+        from tsdynamics import registry as _reg
+
+        register_builtin_renderers()
+        return {name: _reg.renderers.get(name) for name in _reg.renderers.names()}
+
+    def names(self) -> list[str]:
+        """Return the registered backend names, most-preferred first."""
+        return list(self._table())
+
+    def get(self, name: str) -> RendererCapabilities:
+        """Return one backend's declared :class:`RendererCapabilities`."""
+        from tsdynamics.errors import InvalidParameterError
+
+        table = self._table()
+        if name not in table:
+            raise InvalidParameterError(
+                f"unknown rendering backend {name!r}; installed backends are {', '.join(table)}."
+            )
+        caps = _capabilities_of(table[name])
+        if caps is None:  # a backend that declared nothing
+            return RendererCapabilities(name=name)
+        return caps
+
+    def find(
+        self,
+        *,
+        writes: str | None = None,
+        kind: PlotKind | str | None = None,
+        animated: bool = False,
+        **flags: bool,
+    ) -> list[str]:
+        """Return the backends matching every filter, most-preferred first.
+
+        Parameters
+        ----------
+        writes : str, optional
+            An output extension (``".svg"``, ``"html"``) the backend must declare
+            it can write.
+        kind : PlotKind or str, optional
+            A plot kind the backend must be able to draw.
+        animated : bool, optional
+            Ask about the **animated** form of ``writes`` (matplotlib writes
+            ``.png`` statically and ``.mp4`` only animated).
+        **flags
+            Capability flags to match exactly (``supports_3d=True``,
+            ``interactive=True``, ``web_export=True``, ``data_export=False``).
+        """
+        out = []
+        for name in self.names():
+            caps = self.get(name)
+            if writes is not None and not caps.can_save(writes, animated=animated):
+                continue
+            if kind is not None and not caps.can_render(kind):
+                continue
+            if any(getattr(caps, flag, None) != want for flag, want in flags.items()):
+                continue
+            out.append(name)
+        return out
+
+    def register(self, name: str, renderer: Any = None, /) -> Any:
+        """Register a rendering backend under ``name``; usable as a decorator.
+
+        ::
+
+            @ts.viz.renderers.register("ascii")
+            def render_ascii(plot, **kw): ...
+
+        The callable may carry a ``capabilities`` attribute (a
+        :class:`RendererCapabilities`); without one it is treated as declaring
+        nothing, which means it draws everything and writes no file itself.
+        """
+        from tsdynamics import registry as _reg
+
+        register_builtin_renderers()
+
+        def _do(fn: Any) -> Any:
+            _reg.renderers.register(name, fn)
+            return fn
+
+        return _do if renderer is None else _do(renderer)
+
+    def __contains__(self, name: object) -> bool:
+        """Whether a backend of that name is registered."""
+        return name in self._table()
+
+    def __repr__(self) -> str:
+        """List each backend with the extensions it declares it can write."""
+        rows = ["ts.viz.renderers"]
+        for name in self.names():
+            caps = self.get(name)
+            exts = " ".join(sorted(caps.writes)) or "(no file writer)"
+            rows.append(f"  {name:<12} writes: {exts}")
+        return "\n".join(rows)
+
+
+#: ``ts.viz.renderers`` — the backend registry (also callable, returning the names).
+renderers = _RendererRegistry()
 
 
 def _visualization_not_installed() -> Exception:

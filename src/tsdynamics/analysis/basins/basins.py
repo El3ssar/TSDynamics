@@ -32,6 +32,7 @@ import numpy as np
 from ...data import Ball, Box, Grid, grid_points, sampler
 from ...errors import InvalidInputError, remedy
 from .._result import AnalysisResult
+from .._result_json import _pct, _sig
 from ._common import (
     DIVERGED_COLOR,
     PALETTE,
@@ -219,11 +220,50 @@ class BasinsResult(AnalysisResult):
             meta=meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        return (
-            f"BasinsResult(shape={self.shape}, n_attractors={self.n_attractors}, "
-            f"diverged={self.diverged_fraction:.3g})"
-        )
+    def _answer(self) -> str:
+        """Return the grid size and every basin's share of it."""
+        labels = np.asarray(self.labels)
+        if not labels.size:
+            return "empty basin image"
+        shape = "×".join(str(int(n)) for n in labels.shape)
+        shares = self.fractions
+        parts = " · ".join(f"#{k} {_pct(v)}" for k, v in sorted(shares.items()) if k >= 1)
+        n = self.n_attractors
+        basins = f"{n} basin" + ("s" if n != 1 else "")
+        body = f"{basins}: {parts}" if parts else basins
+        return f"{shape} grid · {body} · {_pct(self.diverged_fraction)} diverged"
+
+    def _details(self) -> tuple[str, ...]:
+        """Say so when the image is a slice through a higher-dimensional space.
+
+        A degenerate (``counts == 1``) grid axis is a *pinned* coordinate, and
+        the picture is then a 2-D slice of an N-D basin structure, not the whole
+        of it — which changes what the fractions mean.  Nothing else in the
+        result says so.
+        """
+        grid = self.grid
+        counts = getattr(grid, "counts", None)
+        if grid is None or counts is None:
+            return ()
+        pinned = [i for i, c in enumerate(counts) if int(c) == 1]
+        if not pinned:
+            return ()
+        names = self.meta.get("variables") if self.meta else None
+        labels = tuple(names) if names else ()
+
+        def _name(i: int) -> str:
+            return str(labels[i]) if i < len(labels) else f"axis {i}"
+
+        pins = ", ".join(f"{_name(i)} pinned at {_sig(np.asarray(grid.lo)[i], 4)}" for i in pinned)
+        return (f"slice: {pins}",)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the shares and counts the repr reports."""
+        return {
+            "n_attractors": self.n_attractors,
+            "fractions": self.fractions,
+            "diverged_fraction": self.diverged_fraction,
+        }
 
 
 @dataclass(frozen=True)
@@ -258,7 +298,14 @@ class BasinFractions(AnalysisResult):
         """Id of the attractor with the largest basin (``None`` if all diverged)."""
         return max(self.fractions, key=self.fractions.__getitem__) if self.fractions else None
 
-    def __getitem__(self, key: int) -> float:  # noqa: D105
+    def __getitem__(self, key: int) -> float:
+        """Return the basin fraction of attractor **id** ``key`` — see :meth:`by_id`.
+
+        Unlike :class:`~tsdynamics.analysis.results.AttractorSet`, which is a
+        sequence and indexes by *position*, ``BasinFractions`` is a mapping from
+        attractor id to share, so ``[]`` is an id lookup here (contract §4.2
+        rule 6, mutation M-C3-3).
+        """
         return self.fractions[key]
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
@@ -327,9 +374,36 @@ class BasinFractions(AnalysisResult):
             meta=meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        body = ", ".join(f"{k}:{v:.3g}" for k, v in sorted(self.fractions.items()))
-        return f"BasinFractions({{{body}}}, diverged={self.diverged:.3g}, n={self.n})"
+    def by_id(self, key: int) -> float:
+        """Return the basin fraction of attractor ``key`` — the same as ``self[key]``.
+
+        ``BasinFractions`` is a *mapping* from attractor id to share, not a
+        sequence of items, so ``[]`` stays an id lookup here (a positional one
+        would silently return a different attractor's share on any set whose ids
+        do not start at 0).  ``by_id`` is the explicit spelling of the same
+        thing, so code that wants to be unambiguous can say so.
+        """
+        return float(self.fractions[int(key)])
+
+    def _answer(self) -> str:
+        """Return every attractor's sampled share, with the Monte-Carlo error."""
+        err = self.standard_error
+        parts = " · ".join(
+            f"#{k} {_pct(v)} ± {_pct(err.get(k, 0.0), 1)}"
+            for k, v in sorted(self.fractions.items())
+        )
+        body = parts or "no attractor found"
+        return f"{body} · {_pct(self.diverged)} diverged"
+
+    def _context(self) -> str | None:
+        """Return the subject and how many initial conditions were sampled."""
+        bits = [b for b in (self._system_label(),) if b]
+        bits.append(f"{self.n} samples")
+        return ", ".join(bits)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the dominant basin and the sampling error the repr reports."""
+        return {"dominant": self.dominant, "standard_error": self.standard_error}
 
 
 # ---------------------------------------------------------------------------

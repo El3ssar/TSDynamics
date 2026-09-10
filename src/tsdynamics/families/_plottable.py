@@ -2,13 +2,13 @@
 
 Gives every :class:`~tsdynamics.families.base.SystemBase` subclass — the
 continuous / delay / discrete / stochastic families — a ``.plot()`` accessor and
-a default ``to_plot_spec()`` so ``ts.Lorenz().plot()`` resolves end-to-end
+a default ``__plot_spec__()`` so ``ts.Lorenz().plot()`` resolves end-to-end
 through the visualization seam, exactly as the analysis result types already do.
 
-The default :meth:`SystemPlottable.to_plot_spec` integrates a short default
-trajectory (each family's own :meth:`trajectory` with its defaults) and delegates
+The default :meth:`SystemPlottable.__plot_spec__` integrates a short default
+trajectory (each family's own ``run`` with its defaults) and delegates
 to :meth:`tsdynamics.data.Trajectory.to_plot_spec`, which already dispatches on
-``is_discrete`` (a map → scatter orbit, a flow → time series / phase portrait).
+``family`` (a map → scatter orbit, a flow → time series / phase portrait).
 Richer system draw-views (vector fields, cobwebs, component triples) are layered
 on by the gap-fill stream; this is the safe default.
 
@@ -29,7 +29,7 @@ __all__ = ["SystemPlottable"]
 
 
 class SystemPlottable:
-    """Mixin adding ``to_plot_spec`` / ``.plot`` / a notebook hook to a system.
+    """Mixin adding ``__plot_spec__`` / ``.plot`` / a notebook hook to a system.
 
     Mixed into :class:`~tsdynamics.families.base.SystemBase`, so every system
     family inherits it.  A system describes itself by integrating a default
@@ -42,18 +42,18 @@ class SystemPlottable:
     if TYPE_CHECKING:
         # Provided by the concrete families (Continuous/Delay/Discrete/Stochastic)
         # this mixin is combined with; declared for the type checker only.
-        def trajectory(self, *args: Any, **kwargs: Any) -> Trajectory: ...
+        def run(self, *args: Any, **kwargs: Any) -> Trajectory: ...
 
-    def to_plot_spec(self, kind: str | None = None, **kwargs: Any) -> PlotSpec:
+    def __plot_spec__(self, kind: str | None = None, **kwargs: Any) -> PlotSpec:
         """Describe this system as a :class:`PlotSpec` via a default trajectory.
 
-        Integrates the system with its family's :meth:`trajectory` (defaults, or
+        Integrates the system with its family's ``run`` (defaults, or
         the integration keywords you pass — ``final_time`` / ``dt`` / ``steps`` /
         ``ic`` / …) and delegates to the trajectory's own ``to_plot_spec``.  The
         plot-shaping keywords (``components`` and the per-kind options ``delay`` /
         ``delay_time`` / ``color_by`` / ``transpose``) are split out and forwarded to the
         trajectory's ``to_plot_spec``; every other keyword goes to
-        :meth:`trajectory`.  This split keys off the **closed** set of plot
+        ``run``.  This split keys off the **closed** set of plot
         keywords (``tsdynamics.data.trajectory._PLOT_SPEC_KEYS``), so a system's
         own — possibly heterogeneous — ``trajectory`` signature stays open-ended.
 
@@ -65,7 +65,7 @@ class SystemPlottable:
         **kwargs
             Plot-shaping keywords (``components`` / ``primitive`` / ``delay`` /
             ``delay_time`` / ``color_by`` / ``transpose``) forwarded to the trajectory's
-            ``to_plot_spec``; all other keywords forwarded to :meth:`trajectory`
+            ``to_plot_spec``; all other keywords forwarded to ``run``
             (``final_time``, ``dt``, ``steps``, ``ic``, …).  ``primitive=``
             selects **how** the view is drawn (``"points"`` / ``"density"`` / …),
             validated against the transform's declared row — see
@@ -79,8 +79,9 @@ class SystemPlottable:
         from tsdynamics.data.trajectory import _PLOT_SPEC_KEYS
 
         plot_kw = {k: kwargs.pop(k) for k in list(kwargs) if k in _PLOT_SPEC_KEYS}
-        traj = self.trajectory(**kwargs)
-        return traj.to_plot_spec(kind=kind, **plot_kw)
+        traj = self.run(**kwargs)
+        builder = getattr(traj, "__plot_spec__", None) or traj.to_plot_spec
+        return builder(kind=kind, **plot_kw)
 
     def plot(self, *transforms: Any, **kwargs: Any) -> PlotSpec:
         """Build this system's :class:`PlotSpec`, applying inline tweaks first.
@@ -95,7 +96,7 @@ class SystemPlottable:
         Keywords are routed by category, in this order:
 
         1. plot-shaping keywords (``kind`` / ``components`` / ``primitive`` /
-           the per-kind options) → :meth:`to_plot_spec`;
+           the per-kind options) → :meth:`__plot_spec__`;
         2. the **style** vocabulary (:data:`~tsdynamics.viz.style.STYLE_KEYS`
            and its aliases — ``color`` / ``lw`` / ``alpha`` / …) and ``theme``
            → applied to the finished spec.  These are the same spellings, with
@@ -106,7 +107,7 @@ class SystemPlottable:
         3. inline spec tweaks (``xlabel`` / ``yscale`` / ``title`` / ``xlim`` /
            …) → applied to the spec;
         4. **everything else → the integration** — forwarded through
-           :meth:`to_plot_spec` to the family's ``trajectory`` (``final_time`` /
+           :meth:`__plot_spec__` to the family's ``run`` (``final_time`` /
            ``dt`` / ``steps`` / ``ic`` / ``method`` / …), which validates them and
            raises :class:`~tsdynamics.errors.InvalidParameterError` on a typo.
 
@@ -155,9 +156,9 @@ class SystemPlottable:
         theme = kwargs.pop("theme", None)
         tweak_kw = _take(_INLINE_TWEAKS.keys() | _COLORIZE_TWEAKS)
         # Whatever is left is an integration keyword; ``to_plot_spec`` hands it to
-        # the family's ``trajectory``, which is the one place that knows the valid
+        # the family's ``run``, which is the one place that knows the valid
         # names and rejects a typo.
-        spec = self.to_plot_spec(**spec_kw, **kwargs)
+        spec = self.__plot_spec__(**spec_kw, **kwargs)
         if theme is not None:
             spec.theme(theme)
         if style_kw:
@@ -173,4 +174,4 @@ class SystemPlottable:
         """
         from tsdynamics.viz.spec import _notebook_mimebundle
 
-        return _notebook_mimebundle(lambda: self.to_plot_spec().render(), include, exclude)
+        return _notebook_mimebundle(lambda: self.__plot_spec__().render(), include, exclude)

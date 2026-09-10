@@ -365,7 +365,7 @@ def _resolve_convergence(
     return (
         times,
         est,
-        bool(tangent.is_discrete),
+        tangent.family == "map",
         type(tangent.system).__name__,
         {
             "analysis": "tangent.convergence",

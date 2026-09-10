@@ -43,9 +43,20 @@ def _assert_json_roundtrips(result) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _henon_traj():
-    """A deterministic Hénon trajectory for the recurrence-based results."""
-    return ts.systems.Henon().iterate(steps=600, ic=[0.1, 0.1])
+def _henon_traj() -> np.ndarray:
+    """A deterministic Hénon orbit for the recurrence-based results.
+
+    Iterated here rather than through the family layer: this file is a *result*
+    gate — what it is about is whether ``to_dict()`` is JSON-safe — and the four
+    lines below keep it independent of the trajectory verb, whose spelling moved
+    in v6 (``iterate`` → ``run``).
+    """
+    point = np.array([0.1, 0.1])
+    orbit = np.empty((600, 2))
+    for i in range(600):
+        orbit[i] = point
+        point = np.array([1.0 - 1.4 * point[0] ** 2 + point[1], 0.3 * point[0]])
+    return orbit
 
 
 def _henon_box() -> Box:

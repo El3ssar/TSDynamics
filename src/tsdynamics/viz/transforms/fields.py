@@ -98,7 +98,7 @@ def _demo_settling_flow() -> Any:
 
 def _demo_orbit() -> Any:
     """Return a short deterministic orbit for the ``invariant_density`` example."""
-    return _demo_flow().integrate(final_time=40.0, dt=0.02, ic=[4.0, 1.5])
+    return _demo_flow().run(final_time=40.0, dt=0.02, ic=[4.0, 1.5])
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +379,7 @@ def _series(
         values = np.asarray(subject.y, dtype=float)
         system = getattr(subject, "system", None)
         names: tuple[str, ...] | None = getattr(system, "variables", None)
-    elif hasattr(subject, "integrate") or hasattr(subject, "iterate"):
+    elif hasattr(subject, "run"):
         raise InvalidInputError(
             "invariant_density takes samples: integrate or iterate the system first "
             "(the transform will not silently pick a run length, a transient or a seed "

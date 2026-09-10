@@ -190,8 +190,10 @@ def register_class(cls: type) -> None:
         dim=getattr(cls, "dim", None),
         params=MappingProxyType(dict(getattr(cls, "params", {}))),
         is_builtin=is_builtin,
-        reference=getattr(cls, "reference", None),
-        known_lyapunov=getattr(cls, "known_lyapunov", None),
+        # v6: the catalogue metadata ClassVars moved behind an underscore so they
+        # stay off ``system.<TAB>`` (contract §3.8 — ``system.info`` absorbs them).
+        reference=getattr(cls, "_reference", None),
+        known_lyapunov=getattr(cls, "_known_lyapunov", None),
     )
 
     bucket = _BY_NAME.setdefault(entry.name, [])

@@ -16,7 +16,11 @@ from tsdynamics.errors import (
     remedy,
 )
 
-from .base import SystemBase, Trajectory, as_lyapunov_result, resolve_transient
+from ._kwargs import reject_unknown_run_keywords
+from .base import Absent, SystemBase, Trajectory, as_lyapunov_result, resolve_transient
+
+#: ``DiscreteMap.run``'s keywords, in signature order.
+_MAP_RUN_KEYWORDS = ("steps", "ic", "transient", "backend", "seed", "max_retries")
 
 if TYPE_CHECKING:
     from .base import ParamSet
@@ -114,11 +118,11 @@ class DiscreteMap(SystemBase, ABC):
     Examples
     --------
     >>> h = Henon()
-    >>> traj = h.iterate(steps=10_000)
+    >>> traj = h.run(steps=10_000)
     >>> t_idx, X = traj.unpack()   # the two columns
-    >>> exps = h.lyapunov_spectrum(n=5_000)
+    >>> exps = h._lyapunov_spectrum(n=5_000)
     >>> h_variant = h.with_params(a=1.2)
-    >>> traj2 = h_variant.iterate(steps=10_000)
+    >>> traj2 = h_variant.run(steps=10_000)
     """
 
     #: Set to False on maps whose orbit visits discontinuities, where the
@@ -197,6 +201,36 @@ class DiscreteMap(SystemBase, ABC):
         """
         ...
 
+    def jacobian(self, u: Any, t: float = 0.0) -> np.ndarray:
+        """Return the tangent map ``J = df/dx`` at state ``u``.
+
+        The same verb, the same signature and the same return type as a flow's
+        :meth:`~tsdynamics.families.ContinuousSystem.jacobian` — a map simply
+        has no ``t`` dependence, so the argument is accepted and ignored.
+
+        Parameters
+        ----------
+        u : array-like, shape (dim,)
+            The state to linearise at.
+        t : float, optional
+            Ignored; present so a caller holding *any* system can write
+            ``sys.jacobian(u, t)``.
+
+        Returns
+        -------
+        ndarray, shape (dim, dim)
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> ts.systems.Henon().jacobian([0.5, 0.2]).shape
+        (2, 2)
+        """
+        state = np.asarray(u, dtype=float)
+        jac = type(self)._jacobian(state, *cast(Any, self.params).as_tuple())
+        n = int(cast(int, self.dim))
+        return np.asarray(jac, dtype=float).reshape(n, n)
+
     @classmethod
     def _jacobian(cls, X: np.ndarray, *params: Any) -> Any:
         """
@@ -239,8 +273,24 @@ class DiscreteMap(SystemBase, ABC):
     # System protocol — incremental stepping
     # ------------------------------------------------------------------ #
 
+    #: The one-word family, read by :attr:`SystemBase.family`.
+    _family: ClassVar[str] = "map"
+
+    #: A section is the transversal crossing of a CONTINUOUS trajectory.
+    poincare = Absent(
+        "a section is the transversal crossing of a CONTINUOUS trajectory, and a "
+        "map has no in-between to cross",
+        "ts.analysis.orbit_diagram(system, 'a', values)",
+    )
+
+    #: A map's kernel is traced numerically, not held as a symbolic tree.
+    jacobian_sym = Absent(
+        "a map's kernel is traced numerically, not held as a symbolic tree",
+        "system.jacobian(x)",
+    )
+
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """Maps are discrete-time systems."""
         return True
 
@@ -260,7 +310,7 @@ class DiscreteMap(SystemBase, ABC):
         # ``t`` must not leave a half-applied IC behind (the ``_dispatch`` /
         # ``iterate`` contract, applied to the stepping entry point).
         with self._ic_rollback():
-            state = self.resolve_ic(u)
+            state = self._resolve_ic(u)
             n_now = int(t) if t is not None else 0
         self._state_now = state
         self._n_now = n_now
@@ -337,110 +387,6 @@ class DiscreteMap(SystemBase, ABC):
         """Return the current iteration count."""
         return float(self._n_now)
 
-    def trajectory(
-        self,
-        steps: int = 1000,
-        *,
-        transient: int = 0,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """Protocol-uniform trajectory: ``iterate`` plus optional transient drop.
-
-        A permanent alias of ``iterate(transient=...)``, which owns the one
-        implementation.
-        """
-        return self.iterate(steps=steps, transient=transient, **kwargs)
-
-    # ------------------------------------------------------------------ #
-    # Trajectory production — the canonical ``run`` verb
-    # ------------------------------------------------------------------ #
-
-    def run(
-        self,
-        n: int | None = None,
-        *,
-        ic: Any | None = None,
-        transient: int = 0,
-        backend: str | None = None,
-        seed: int | None = None,
-        max_retries: int = 10,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """
-        Produce a trajectory — the one canonical verb for every family.
-
-        ``run`` is the unified trajectory producer: one verb for flows, maps,
-        DDEs and SDEs.  For a discrete map (this family) it iterates the map, so
-        ``run`` is a thin alias of :meth:`iterate`.
-
-        .. note::
-           The **verb** is shared; the **horizon keyword follows the family**,
-           because the two horizons are different quantities in different units.
-           A map has ``n`` (a count of iterations), a flow has ``final_time``
-           (time units) — ``hen.run(n=1000)`` and ``lor.run(final_time=100)``.
-           Passing ``final_time`` here is refused by name, not silently
-           reinterpreted as an iteration count.  The **positional** form is the
-           spelling that reads the same on both: ``hen.run(1000)``,
-           ``lor.run(100)``.  Everything that *is* family-independent — ``ic``,
-           ``seed``, ``backend``, ``transient`` — is spelled identically
-           everywhere.
-
-        Parameters
-        ----------
-        n : int
-            Number of iterations. Default 1000.  ``steps=`` is accepted as an
-            exact alias, because that is what :meth:`iterate` names it and the
-            two verbs are otherwise interchangeable.
-        ic : array_like, optional
-            Initial condition.  Priority ``ic`` > ``self.ic`` > ``default_ic`` >
-            a seeded random draw.
-        transient : int
-            Iterations to run and **discard** before recording, so the returned
-            orbit starts on the attractor.  A count (a flow's ``transient`` is
-            in time units).
-        backend : str, optional
-            ``"jit"`` (default), ``"interp"``, or ``"reference"``.
-        seed : int, optional
-            Seeds the random initial-condition draw, making a run with no ``ic``
-            reproducible.
-        max_retries : int
-            How many fresh random initial conditions to try when an orbit
-            diverges.  Only applies when no explicit ``ic`` was given.
-        **kwargs
-            Any remaining option, forwarded verbatim to :meth:`iterate`.
-
-        Returns
-        -------
-        Trajectory
-            Identical to :meth:`iterate` — ``run`` adds no behaviour.
-
-        Raises
-        ------
-        InvalidParameterError
-            If both ``n`` and ``steps`` are given (they are the same argument),
-            or if a *flow* keyword is passed to a map.
-
-        See Also
-        --------
-        iterate : The family-specific spelling (a permanent alias of ``run``).
-
-        Examples
-        --------
-        >>> Henon().run(n=5000)
-        >>> Henon().run(steps=5000)                 # the iterate() spelling
-        >>> Lorenz().run(final_time=100, dt=0.01)   # the same verb integrates a flow
-        """
-        count = self._resolve_iteration_count(n, kwargs, where="run", default=1000)
-        return self.iterate(
-            steps=count,
-            ic=ic,
-            max_retries=max_retries,
-            backend=backend,
-            seed=seed,
-            transient=transient,
-            **kwargs,
-        )
-
     def _resolve_iteration_count(
         self, n: int | None, kwargs: dict[str, Any], *, where: str, default: int
     ) -> int:
@@ -471,19 +417,28 @@ class DiscreteMap(SystemBase, ABC):
     # Iteration
     # ------------------------------------------------------------------ #
 
-    def iterate(
+    def run(
         self,
         steps: int = 1000,
-        ic: Any | None = None,
-        max_retries: int = 10,
         *,
+        ic: Any | None = None,
+        transient: int = 0,
         backend: str | None = None,
         seed: int | None = None,
-        transient: int = 0,
-        **kwargs: Any,
+        max_retries: int = 10,
+        **solver_options: Any,
     ) -> Trajectory:
         """
-        Iterate the map for ``steps`` steps on the engine.
+        Iterate the map and return a :class:`~tsdynamics.families.Trajectory`.
+
+        ``run`` is **the** trajectory verb — one word on flows, maps, delay and
+        stochastic systems.  ``iterate`` and ``trajectory`` were two more names
+        for this method and are gone in v6.
+
+        A map's horizon is ``steps``, a **count of iterations**, because a map
+        has no continuous time; ``final_time`` is refused by name rather than
+        reinterpreted.  The positional form reads the same on both families:
+        ``hen.run(1000)``, ``lor.run(100.0)``.
 
         Parameters
         ----------
@@ -561,26 +516,12 @@ class DiscreteMap(SystemBase, ABC):
             which a map has no meaning for.  ``**kwargs`` exists only to catch
             those: nothing is silently dropped.
         """
-        if kwargs:
-            bad = sorted(kwargs)[0]
-            time_words = {"final_time", "dt", "t0", "rtol", "atol", "max_step", "method"}
-            hint = (
-                (
-                    f"{bad} is a *flow* keyword: a map has no continuous time and no "
-                    f"solver, so its horizon is a count of iterations."
-                )
-                if bad in time_words
-                else "check the keyword spelling (steps, ic, backend, seed, max_retries)."
-            )
-            raise InvalidParameterError(
-                f"{bad} is not a valid {type(self).__name__}.iterate()/run() keyword, "
-                f"got {kwargs[bad]!r}. " + hint + remedy(f"{type(self).__name__}().run(n=1000)")
-            )
+        reject_unknown_run_keywords(self, solver_options, family="map", accepted=_MAP_RUN_KEYWORDS)
         steps = int(steps)
         if steps < 1:
             raise InvalidParameterError(
                 f"steps is a number of iterations, so it must be >= 1; got {steps}."
-                + remedy(f"{type(self).__name__}().run(n=1000)")
+                + remedy(f"{type(self).__name__}().run(steps=1000)")
             )
         drop = int(resolve_transient(transient, discrete=True))
         backend = backend if backend is not None else self._default_backend
@@ -600,8 +541,8 @@ class DiscreteMap(SystemBase, ABC):
         # off-basin); a *user* ic — passed here or to the constructor — that
         # diverges raises loudly, the engine's contract.  ``resolve_ic`` records
         # which of the two it resolved on ``_ic_explicit``.
-        ic_arr = self.resolve_ic(ic, seed=seed)
-        ic_explicit = bool(self.__dict__.get("_ic_explicit", ic is not None))
+        ic_arr = self._resolve_ic(ic, seed=seed)
+        ic_explicit = ic is not None or bool(self.__dict__.get("_ic_explicit", False))
         for attempt in range(max_retries):
             try:
                 return self._iterate_engine(steps=steps, ic=ic_arr, backend=backend)
@@ -640,7 +581,7 @@ class DiscreteMap(SystemBase, ABC):
                     RuntimeWarning,
                     stacklevel=2,
                 )
-                ic_arr = self.ic_generator().random(cast(int, self.dim))
+                ic_arr = self._ic_generator().random(cast(int, self.dim))
                 object.__setattr__(self, "ic", ic_arr.copy())
                 object.__setattr__(self, "_ic_explicit", False)
         raise ConvergenceError(
@@ -684,7 +625,7 @@ class DiscreteMap(SystemBase, ABC):
     # Lyapunov spectrum
     # ------------------------------------------------------------------ #
 
-    def lyapunov_spectrum(
+    def _lyapunov_spectrum(
         self,
         n: int | None = None,
         ic: Any | None = None,
@@ -711,7 +652,7 @@ class DiscreteMap(SystemBase, ABC):
         engine IR, or a wheel-free environment) runs the pure-Python QR loop — the
         oracle the engine is validated against.
 
-        Results are stored in ``self.meta['lyapunov_spectrum']``.
+
 
         Parameters
         ----------
@@ -753,7 +694,7 @@ class DiscreteMap(SystemBase, ABC):
 
         n = self._resolve_iteration_count(n, kwargs, where="lyapunov_spectrum", default=5000)
         k = k or self.dim
-        exponents = TangentSystem(self, k=k, backend=backend).lyapunov_spectrum(
+        exponents = TangentSystem(self, k=k, backend=backend)._lyapunov_spectrum(
             n=n, ic=ic, reortho_interval=reortho_interval
         )
         return as_lyapunov_result(

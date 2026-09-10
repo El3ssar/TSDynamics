@@ -16,7 +16,22 @@ from tsdynamics.utils.tolerances import (
     DDE_RTOL,
 )
 
-from .base import SystemBase, Trajectory, resolve_transient
+from ._kwargs import reject_unknown_run_keywords
+from .base import Absent, SystemBase, Trajectory, resolve_transient
+
+#: ``DelaySystem.run``'s keywords, in signature order.
+_DDE_RUN_KEYWORDS = (
+    "final_time",
+    "dt",
+    "ic",
+    "history",
+    "transient",
+    "solver",
+    "rtol",
+    "atol",
+    "backend",
+    "seed",
+)
 
 if TYPE_CHECKING:
     from .base import ParamSet
@@ -91,7 +106,7 @@ class DelaySystem(SystemBase, ABC):
     --------
     >>> mg = MackeyGlass()
     >>> hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
-    >>> traj = mg.integrate(final_time=500, history=hist)
+    >>> traj = mg.run(final_time=500, history=hist)
     >>> exps = mg.lyapunov_spectrum(k=2, ic=traj.y[-1])
     """
 
@@ -218,8 +233,39 @@ class DelaySystem(SystemBase, ABC):
     # System protocol — incremental stepping (forward-only)
     # ------------------------------------------------------------------ #
 
+    #: The output sampling interval ``run`` uses when given no ``dt``.  The
+    #: method of steps lands on every sample, so it *does* bound the step here.
+    _default_dt: ClassVar[float] = 0.02
+
+    #: The solver kernel each delay window is integrated with by default.
+    _default_method: ClassVar[str] = "rk45"
+
+    #: The one-word family, read by :attr:`SystemBase.family`.
+    _family: ClassVar[str] = "dde"
+
+    #: A delay system's right-hand side is not a function of one state vector.
+    jacobian = Absent(
+        "a delay system's right-hand side reads the state at several past times, "
+        "so d f/d u at one point is not defined without those",
+        "ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5)",
+    )
+
+    #: A delay system's kernel is lowered with its delay slots baked in.
+    jacobian_sym = Absent(
+        "a delay system's right-hand side reads the state at several past times, "
+        "so there is no single square Jacobian to hand back",
+        "ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5)",
+    )
+
+    #: A delay system's state is a whole history function.
+    set_state = Absent(
+        "a delay system's state is a whole history function on [-tau_max, 0], not "
+        "a point, so it cannot be seated from one",
+        "mg.reinit(history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])",
+    )
+
     @property
-    def is_discrete(self) -> bool:
+    def _is_discrete(self) -> bool:
         """DDEs are continuous-time systems."""
         return False
 
@@ -257,7 +303,7 @@ class DelaySystem(SystemBase, ABC):
         # else, so a malformed ``u`` must leave the object exactly as it was —
         # the same contract ``integrate`` gets from ``_dispatch``.
         with self._ic_rollback():
-            past_ic = self.resolve_ic(u)
+            past_ic = self._resolve_ic(u)
         self._past_ic = past_ic
         self._step_rtol = rtol
         self._step_atol = atol
@@ -270,7 +316,7 @@ class DelaySystem(SystemBase, ABC):
             self.reinit()
         dt = float(n_or_dt) if n_or_dt is not None else self._default_step_dt
         self._t_now = self._t_now + dt
-        traj = self.integrate(
+        traj = self.run(
             final_time=self._t_now,
             dt=min(dt, self._t_now),
             ic=self._past_ic,
@@ -292,135 +338,39 @@ class DelaySystem(SystemBase, ABC):
         assert self._state_now is not None
         return self._state_now.copy()
 
-    def set_state(self, u: Any) -> None:
-        """Not available for DDEs — their state is a whole history function."""
-        raise NotImplementedError(
-            f"{type(self).__name__}.set_state is impossible for delay systems: the "
-            f"instantaneous state is a history function over [t - max_delay, t], not a "
-            f"point.  Use reinit(u) to restart from a constant past, or integrate(...) "
-            f"with a history callable."
-        )
-
     def time(self) -> float:
         """Return the current stepper time."""
         return self._t_now
-
-    def trajectory(
-        self,
-        final_time: float = 100.0,
-        *,
-        dt: float = 0.02,
-        transient: float = 0.0,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """Protocol-uniform trajectory: ``integrate`` plus optional transient drop.
-
-        A permanent alias of ``integrate(transient=...)``, which owns the one
-        implementation.
-        """
-        return self.integrate(final_time=final_time, dt=dt, transient=transient, **kwargs)
-
-    # ------------------------------------------------------------------ #
-    # Trajectory production — the canonical ``run`` verb
-    # ------------------------------------------------------------------ #
-
-    def run(
-        self,
-        final_time: float = 100.0,
-        dt: float = 0.02,
-        *,
-        ic: Any | None = None,
-        history: History = None,
-        transient: float = 0.0,
-        method: str = "rk45",
-        rtol: float | None = None,
-        atol: float | None = None,
-        backend: str | None = None,
-        seed: int | None = None,
-        **kwargs: Any,
-    ) -> Trajectory:
-        """
-        Produce a trajectory — the one canonical verb for every family.
-
-        ``run`` is the unified trajectory producer: it answers the same call for
-        flows, maps, DDEs and SDEs, dispatching on :attr:`is_discrete`.  For a
-        delay system (this family) it integrates the DDE, so ``run`` is a thin
-        alias of :meth:`integrate` and forwards every keyword to it unchanged.
-
-        Parameters
-        ----------
-        final_time : float
-            Integration end time. Default 100.0.
-        dt : float
-            Output sampling interval.  The method of steps lands on every
-            sample, so ``dt`` *does* bound the internal step here.
-        ic : array_like, optional
-            Constant past to restart from.  Ignored when ``history`` is given.
-        history : callable or array_like, optional
-            The past ``φ(s)`` for ``s ≤ t0``.  A constant past sitting at a
-            fixed point gives Lyapunov exponents ≈ 0 — supply a non-equilibrium
-            history.
-        transient : float
-            Time to integrate and **discard** before recording. In time units.
-        method : str
-            Solver kernel for each delay window. Default ``"rk45"``.
-        rtol, atol : float, optional
-            Error tolerances.  ``None`` takes the DDE defaults
-            (:data:`~tsdynamics.utils.tolerances.DDE_RTOL` /
-            :data:`~tsdynamics.utils.tolerances.DDE_ATOL`), which are looser
-            than the ODE ones on purpose — see the tolerances table.
-        backend : str, optional
-            ``"jit"`` (default) or ``"interp"``.  ``"reference"`` is refused:
-            there is no pure-Python DDE integrator.
-        seed : int, optional
-            Seeds the random initial-condition draw.
-        **kwargs
-            Any remaining option, forwarded verbatim to :meth:`integrate`.
-
-        Returns
-        -------
-        Trajectory
-            Identical to :meth:`integrate` — ``run`` adds no behaviour.
-
-        See Also
-        --------
-        integrate : The family-specific spelling (a permanent alias of ``run``).
-        """
-        return self.integrate(
-            final_time=final_time,
-            dt=dt,
-            ic=ic,
-            history=history,
-            transient=transient,
-            method=method,
-            rtol=rtol,
-            atol=atol,
-            backend=backend,
-            seed=seed,
-            **kwargs,
-        )
 
     # ------------------------------------------------------------------ #
     # Integration
     # ------------------------------------------------------------------ #
 
-    def integrate(
+    def run(
         self,
         final_time: float = 100.0,
-        dt: float = 0.02,
+        dt: float | None = None,
         *,
         ic: Any | None = None,
         history: History = None,
+        transient: float = 0.0,
+        solver: str | None = None,
         rtol: float | None = None,
         atol: float | None = None,
         backend: str | None = None,
-        method: str = "rk45",
         seed: int | None = None,
-        transient: float = 0.0,
-        **kwargs: Any,
+        **solver_options: Any,
     ) -> Trajectory:
         """
-        Integrate the DDE and return a :class:`~tsdynamics.families.Trajectory`.
+        Integrate the delay system and return a :class:`~tsdynamics.families.Trajectory`.
+
+        ``run`` is **the** trajectory verb — one word on flows, maps, delay and
+        stochastic systems.  ``integrate`` and ``trajectory`` were two more names
+        for this method and are gone in v6.
+
+        The signature is **closed**.  Before v6 this method accepted — and
+        silently dropped — ``max_step``, ``t0``, ``events`` and outright typos:
+        the run completed, the number was wrong, and nothing said so.
 
         Parameters
         ----------
@@ -495,9 +445,12 @@ class DelaySystem(SystemBase, ABC):
         -------
         Trajectory
         """
+        reject_unknown_run_keywords(self, solver_options, family="dde", accepted=_DDE_RUN_KEYWORDS)
+        dt = self._default_dt if dt is None else dt
+        method = self._default_method if solver is None else solver
         transient = resolve_transient(transient, discrete=False)
         if transient > 0.0:
-            traj = self.integrate(
+            traj = self.run(
                 final_time + transient,
                 dt,
                 ic=ic,
@@ -505,9 +458,8 @@ class DelaySystem(SystemBase, ABC):
                 rtol=rtol,
                 atol=atol,
                 backend=backend,
-                method=method,
+                solver=method,
                 seed=seed,
-                **kwargs,
             )
             return traj.after(transient)
         backend = backend if backend is not None else self._default_backend
@@ -576,7 +528,7 @@ class DelaySystem(SystemBase, ABC):
     # Lyapunov spectrum
     # ------------------------------------------------------------------ #
 
-    def lyapunov_spectrum(
+    def _lyapunov_spectrum(
         self,
         final_time: float = 200.0,
         dt: float = 0.1,
@@ -593,7 +545,7 @@ class DelaySystem(SystemBase, ABC):
         Estimate the ``k`` leading Lyapunov exponents of the delay system.
 
         The **engine** estimator (stream E-DDE-LYAP, result stored in
-        ``self.meta['lyapunov_spectrum']``) integrates the extended variational
+        the DDE Lyapunov estimator) integrates the extended variational
         DDE on the Rust engine with a function-space Benettin renormalisation
         (:func:`tsdynamics.families._dde_lyapunov.dde_lyapunov_spectrum`):
         ``backend="jit"`` (the default) / ``"interp"``.  ``"reference"`` is
@@ -660,15 +612,6 @@ class DelaySystem(SystemBase, ABC):
             backend=backend,
             rtol=rtol if rtol is not None else DDE_LYAPUNOV_RTOL,
             atol=atol if atol is not None else DDE_LYAPUNOV_ATOL,
-        )
-        self.meta.record(
-            "lyapunov_spectrum",
-            exps,
-            backend=backend,
-            k=k,
-            final_time=final_time,
-            dt=dt,
-            burn_in=transient,
         )
         return exps
 

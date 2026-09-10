@@ -584,18 +584,34 @@ class RendererCapabilities:
     web_export: bool = False
     data_export: bool = False
     #: File extensions (lowercase, **with** the leading dot) this backend can
-    #: *write*.  Empty means "writes nothing" — a backend that only returns a live
-    #: figure.  See :meth:`can_save`.
-    writes: frozenset[str] = frozenset()
+    #: write for a **static** plot.  Empty means "writes no still image".
+    writes_static: frozenset[str] = frozenset()
+    #: File extensions this backend can write for an **animated** plot.  A movie
+    #: format lives here and *not* in :attr:`writes_static`: measured,
+    #: ``savefig`` refuses ``.mp4`` / ``.webm`` / ``.mov`` / ``.m4v`` / ``.apng``
+    #: outright, so declaring them in one undivided ``writes`` made ``save`` promise
+    #: four formats it could never produce and reject ``.webp``, which it can.
+    writes_animated: frozenset[str] = frozenset()
     #: The render keywords this backend reads, or ``None`` (undeclared).  See
     #: :func:`accepted_render_kwargs`.
     render_kwargs: frozenset[str] | None = None
+
+    @property
+    def writes(self) -> frozenset[str]:
+        """Every extension this backend can write, static **or** animated.
+
+        The undivided view, kept because "which formats does this backend know?"
+        is a real question (``ts.viz.renderers.find(writes=".svg")`` asks it).
+        :meth:`can_save` is the one that decides a *particular* save, because that
+        question always has an animated-or-not half.
+        """
+        return self.writes_static | self.writes_animated
 
     def can_save(self, ext: str, *, animated: bool = False) -> bool:
         """Whether this backend can **write** a file with extension ``ext``.
 
         The other half of the save contract (:meth:`can_render_spec` answers "can
-        you draw it?"; this answers "can you write it?").  ``PlotSpec.save``
+        you draw it?"; this answers "can you write it?").  :meth:`Plot.save`
         resolves ``(extension, backend)`` through this predicate and **raises**
         when no capable writer exists — rather than returning a path it never
         wrote, which is what it used to do for an animated composite ``.html`` and
@@ -607,19 +623,17 @@ class RendererCapabilities:
             The output extension, with or without a leading dot; case-insensitive.
         animated : bool, optional
             Whether the spec carries an :class:`~tsdynamics.viz.spec.Animation`.
-            A backend may write a format statically but not animated (matplotlib
-            writes ``.png`` either way; plotly writes ``.html`` statically but
-            declines an animated *composite* via :meth:`can_render_spec`).
+            The two halves genuinely differ: matplotlib writes ``.png`` only
+            statically and ``.mp4`` only animated, and ``.gif`` both ways.
 
         Returns
         -------
         bool
         """
-        del animated  # base contract is animation-agnostic; subclasses refine
         e = ext.lower()
         if not e.startswith("."):
             e = f".{e}"
-        return e in self.writes
+        return e in (self.writes_animated if animated else self.writes_static)
 
     @classmethod
     def all_kinds(
@@ -631,12 +645,17 @@ class RendererCapabilities:
         web_export: bool = False,
         data_export: bool = False,
         writes: Iterable[str] = (),
+        writes_animated: Iterable[str] | None = None,
         render_kwargs: Iterable[str] | None = None,
     ) -> RendererCapabilities:
         """Build capabilities for a backend that draws **every** kind.
 
         The shorthand the reference renderer (and any other "draws anything"
         backend) uses: ``kinds=None`` means no kind is ever declined.
+
+        ``writes`` is the *static* extension set; ``writes_animated`` defaults to
+        it, so a backend with one file writer declares once and a backend whose
+        movie formats differ (matplotlib) declares both.
         """
         return cls(
             name=name,
@@ -645,7 +664,10 @@ class RendererCapabilities:
             interactive=interactive,
             web_export=web_export,
             data_export=data_export,
-            writes=_normalize_extensions(writes),
+            writes_static=_normalize_extensions(writes),
+            writes_animated=_normalize_extensions(
+                writes if writes_animated is None else writes_animated
+            ),
             render_kwargs=None if render_kwargs is None else frozenset(render_kwargs),
         )
 
@@ -660,6 +682,7 @@ class RendererCapabilities:
         web_export: bool = False,
         data_export: bool = False,
         writes: Iterable[str] = (),
+        writes_animated: Iterable[str] | None = None,
         render_kwargs: Iterable[str] | None = None,
     ) -> RendererCapabilities:
         """Build capabilities for a backend that draws only ``kinds``.
@@ -674,7 +697,10 @@ class RendererCapabilities:
             interactive=interactive,
             web_export=web_export,
             data_export=data_export,
-            writes=_normalize_extensions(writes),
+            writes_static=_normalize_extensions(writes),
+            writes_animated=_normalize_extensions(
+                writes if writes_animated is None else writes_animated
+            ),
             render_kwargs=None if render_kwargs is None else frozenset(render_kwargs),
         )
 

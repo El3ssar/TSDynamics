@@ -63,7 +63,7 @@ def test_poincare_map_accepts_named_plane_and_direction_word() -> None:
     pm = PoincareMap(_rossler(), plane=("y", 0.0, "down"))
     assert pm.plane == (1, 0.0)
     assert pm.direction == -1
-    assert isinstance(pm.trajectory(20), PoincareSection)
+    assert isinstance(pm.run(20), PoincareSection)
 
 
 def test_general_normal_plane_passes_through() -> None:
@@ -90,7 +90,7 @@ def test_returns_poincare_section_that_is_a_trajectory() -> None:
 def test_section_carries_poincare_intent_and_spec() -> None:
     sec = ts.poincare_section(_rossler(), plane=("y", 0.0), crossings=40, dt=0.05)
     assert sec.meta["plot_kind"] == "poincare_section"
-    spec = sec.to_plot_spec()
+    spec = sec.__plot_spec__()
     assert spec.kind == PlotKind.POINCARE_SECTION
     assert spec.ndim == 2
     assert spec.aspect == "equal"
@@ -147,7 +147,7 @@ def test_section_plot_seam_raises_without_a_backend(monkeypatch) -> None:
 
 
 def test_data_path_returns_named_section() -> None:
-    traj = _rossler().integrate(final_time=80.0, dt=0.02)
+    traj = _rossler().run(final_time=80.0, dt=0.02)
     sec = ts.poincare_section(traj, plane=("z", 0.0, "up"))
     assert isinstance(sec, PoincareSection)
     assert sec.meta["plot_kind"] == "poincare_section"
@@ -225,12 +225,12 @@ def test_section_missing_attractor_raises_convergence_error() -> None:
     pm = PoincareMap(_rossler(), plane=("x", 1e6), dt=0.05, max_time=50.0)
     pm.reinit([1.0, 1.0, 0.0])
     with pytest.raises(ConvergenceError):
-        pm.trajectory(5)
+        pm.run(5)
 
     pm_ref = PoincareMap(_rossler(), plane=("x", 1e6), dt=0.05, max_time=50.0)
     pm_ref.reinit([1.0, 1.0, 0.0])
     with pytest.raises(ConvergenceError):
-        pm_ref.trajectory(5, backend="reference")
+        pm_ref.run(5, backend="reference")
 
 
 def test_section_missing_attractor_is_runtime_error() -> None:
@@ -238,7 +238,7 @@ def test_section_missing_attractor_is_runtime_error() -> None:
     pm = PoincareMap(_rossler(), plane=("x", 1e6), dt=0.05, max_time=50.0)
     pm.reinit([1.0, 1.0, 0.0])
     with pytest.raises(RuntimeError):
-        pm.trajectory(5, backend="reference")
+        pm.run(5, backend="reference")
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +261,7 @@ def test_poincare_map_without_a_plane_chooses_one() -> None:
     axis, offset = pmap.plane
     assert axis in range(3)
     assert np.isfinite(offset)
-    section = pmap.trajectory(40)
+    section = pmap.run(40)
     assert section.y.shape == (40, 3)
     # the crossings really do lie on the plane it chose
     assert np.allclose(section.y[:, axis], offset, atol=1e-6)
@@ -286,7 +286,7 @@ def test_auto_plane_offset_is_crossed_by_construction() -> None:
 
     system = _rossler()
     axis, offset = auto_plane(system)
-    y = system.copy().trajectory(final_time=100.0, dt=0.05, transient=50.0).y[:, axis]
+    y = system.copy().run(final_time=100.0, dt=0.05, transient=50.0).y[:, axis]
     assert y.min() < offset < y.max()
 
 
@@ -310,7 +310,7 @@ def test_named_plane_is_unaffected_by_the_auto_path() -> None:
 
 def test_auto_plane_from_data_uses_the_samples() -> None:
     """The data overload chooses from the trajectory itself — no probe run."""
-    traj = _rossler().trajectory(final_time=120.0, dt=0.01, transient=40.0)
+    traj = _rossler().run(final_time=120.0, dt=0.01, transient=40.0)
     section = ts.poincare_section(traj)
     assert section.meta["plane_auto"] is True
     axis, offset = section.meta["plane"]
@@ -371,7 +371,7 @@ def test_auto_plane_refuses_a_monotone_drive_phase() -> None:
     duffing = ts.systems.Duffing()
     axis, offset = auto_plane(duffing)
     assert axis != 2, "picked the monotone drive phase z (widest spread, never recrossed)"
-    section = PoincareMap(duffing).trajectory(5)
+    section = PoincareMap(duffing).run(5)
     assert section.y.shape == (5, 3)
     assert np.allclose(section.y[:, axis], offset, atol=1e-6)
 
@@ -387,7 +387,7 @@ def test_auto_plane_prefers_spread_among_the_components_it_accepts() -> None:
 
     system = _rossler()
     axis, offset = auto_plane(system)
-    orbit = system.copy().trajectory(final_time=100.0, dt=0.01, transient=50.0, method="rk4").y
+    orbit = system.copy().run(final_time=100.0, dt=0.01, transient=50.0, solver="rk4").y
     spread = np.percentile(orbit, 75.0, axis=0) - np.percentile(orbit, 25.0, axis=0)
     accepted = [
         i
@@ -442,9 +442,9 @@ def test_auto_plane_gives_a_slow_oscillator_a_longer_look() -> None:
 
     system = ts.systems.FitzHughNagumo()
     axis, offset = auto_plane(system)
-    short = system.copy().trajectory(final_time=100.0, dt=0.01, transient=50.0, method="rk4").y
+    short = system.copy().run(final_time=100.0, dt=0.01, transient=50.0, solver="rk4").y
     assert _recrossings(short[:, axis], offset) < _MIN_RECROSSINGS  # the short look cannot decide
-    long = system.copy().trajectory(final_time=1000.0, dt=0.01, transient=500.0, method="rk4").y
+    long = system.copy().run(final_time=1000.0, dt=0.01, transient=500.0, solver="rk4").y
     assert _recrossings(long[:, axis], float(np.median(long[:, axis]))) >= _MIN_RECROSSINGS
 
 
@@ -453,7 +453,7 @@ def test_auto_plane_refuses_a_map_by_naming_the_family() -> None:
 
     Adversarial follow-up to the auto-plane work: the probe used to simply *run*
     on whatever it was handed, so a discrete map reported the first thing the
-    probe tripped over — ``dt is not a valid Henon.iterate() keyword`` — under a
+    probe tripped over — ``dt is not a valid Henon.run() keyword`` — under a
     heading that read "every probe run of Henon failed or diverged … if it has no
     default_ic, the random start may be leaving the attractor's basin, so
     reinit(ic) it first".  Every clause of that is wrong about a map, and it

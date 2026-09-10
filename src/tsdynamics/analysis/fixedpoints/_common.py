@@ -470,8 +470,9 @@ def _orbit_start_ic(system: SystemBase, dim: int, rng: np.random.Generator) -> n
     """
     if system.ic is not None:
         return np.asarray(system.ic, dtype=float).reshape(dim)
-    if type(system).default_ic is not None:
-        return np.asarray(type(system).default_ic, dtype=float).reshape(dim)
+    declared = type(system)._default_ic
+    if declared is not None:
+        return np.asarray(declared, dtype=float).reshape(dim)
     return rng.random(dim)
 
 

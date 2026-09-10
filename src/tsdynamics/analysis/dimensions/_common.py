@@ -18,6 +18,7 @@ import numpy as np
 from ...errors import invalid_value, remedy
 from .._common import reject_system
 from .._result import ScalingResult
+from .._result_json import _sig
 from ._scaling import local_slopes
 
 __all__ = ["DimensionResult"]
@@ -401,7 +402,7 @@ class DimensionResult(ScalingResult):
     :class:`~tsdynamics.analysis._result.ScalingResult` — the dimension is the
     fitted slope of a log--log curve — so it inherits the canonical ``estimate`` /
     ``abscissa`` / ``ordinate`` / ``fit_region`` schema, the result surface
-    (``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam) and behaves
+    (``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam) and behaves
     as the dimension number (``float(result)`` and comparisons).  Domain-named
     ``@property`` aliases (:attr:`dimension`, :attr:`x`, :attr:`y`,
     :attr:`fit_slice`) preserve the original field names.
@@ -520,14 +521,59 @@ class DimensionResult(ScalingResult):
             title=f"{self.kind} dimension{q}  D = {self.dimension:.3f}",
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        q = "" if self.q is None else f", q={self.q:g}"
-        flag = "" if self.trusted else ", UNTRUSTED (unresolved: D_q rises with q)"
-        return (
-            f"DimensionResult(kind={self.kind!r}{q}, "
-            f"dimension={self.dimension:.4g} ± {self.stderr:.2g}, "
-            f"n_fit={self.fit_slice[1] - self.fit_slice[0] + 1}{flag})"
-        )
+    #: The symbol each estimator's answer is known by, for the repr headline.
+    _SYMBOLS: ClassVar[dict[str, str]] = {
+        "correlation": "D_corr",
+        "generalized": "D_q",
+        "fixed_mass": "D_mass",
+    }
+
+    #: What the log--log axes of each estimator's curve are, for the fit line.
+    _ABSCISSA: ClassVar[dict[str, str]] = {
+        "correlation": "log r",
+        "generalized": "log ε",
+        "fixed_mass": "⟨log r_k⟩",
+    }
+
+    def _quantity(self) -> str:
+        """Return the dimension's symbol (``D_corr`` / ``D_q`` / ``D_mass``)."""
+        return self._SYMBOLS.get(self.kind, "D")
+
+    def _interpretation(self) -> str | None:
+        """Warn when the estimate is self-evidently unresolved, else stay silent.
+
+        The verdict slot carries the only thing a reader must not miss: whether
+        the number is a reading of a scaling region at all.  A dimension is a
+        measurement, not a classification, so there is nothing else to name.
+        """
+        return None if self.trusted else "⚠ UNTRUSTED"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the fit line, and the reason when the estimate is untrusted."""
+        lo, hi = self._window_for_repr()
+        bits = [self.kind] if self.kind else []
+        if self.q is not None:
+            bits.append(f"q={self.q:g}")
+        bits.append(f"{self.n_fit} fit pts")
+        bits.append(f"{self._ABSCISSA.get(self.kind, 'x')} ∈ [{_sig(lo, 3)}, {_sig(hi, 3)}]")
+        r2 = self.r_squared
+        if np.isfinite(r2):
+            bits.append(f"R² = {_sig(r2, 5)}")
+        lines = [f"({', '.join(bits)})"]
+        if not self.trusted:
+            lines.append(
+                "⚠ D_q rises with q, which no measure can do — the box count has not "
+                "converged at these scales; inspect .plot.scaling()"
+            )
+        return tuple(lines)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the dimension and the fit diagnostics the repr reports."""
+        return {
+            "dimension": self.dimension,
+            "n_fit": self.n_fit,
+            "r_squared": self.r_squared,
+        }
 
 
 def __dir__() -> list[str]:

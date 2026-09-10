@@ -4,7 +4,7 @@ TSDynamics — compiled dynamical systems: integration, iteration, and chaos ana
 Quick start
 -----------
 >>> from tsdynamics.systems import Lorenz, MackeyGlass, Henon
->>> traj = Lorenz().integrate(final_time=100.0, dt=0.01)
+>>> traj = Lorenz().run(final_time=100.0, dt=0.01)
 >>> traj.t.shape, traj.y.shape
 ((10001,), (10001, 3))
 >>> traj["x"]                          # named component access

@@ -49,6 +49,7 @@ __all__ = [
     "register_theme",
     "resolve_palette",
     "set_theme",
+    "styles",
     "themes",
 ]
 
@@ -772,9 +773,224 @@ def set_theme(theme: str | Theme) -> None:
     _ACTIVE = theme
 
 
-def themes() -> list[str]:
-    """Return the sorted names of all registered themes (built-in + user)."""
-    return sorted(THEMES)
+class _ThemeRegistry:
+    """``ts.viz.themes`` — the theme registry, in the shared four-verb shape.
+
+    Every registry in the library answers to the same four verbs, so learning one
+    teaches the rest::
+
+        ts.viz.themes.names()          # what is there
+        ts.viz.themes.get("dark")      # one of them
+        ts.viz.themes.find(dark=True)  # the ones matching a filter
+        ts.viz.themes.register("lab", palette=(...), dpi=200)
+        ts.viz.themes.use("lab")       # ...and make it this session's default
+
+    ``register`` taking **keywords** is what removed the only reason
+    :class:`Theme` was ever exported (corollary C1: a name exported because a
+    signature demands it is a signature bug).  Measured before v6:
+    ``register_theme({...})`` gave ``AttributeError: 'dict' object has no
+    attribute 'name'`` and ``set_theme({...})`` a raw ``TypeError: cannot use
+    'dict' as a dict key``.
+
+    Calling the object (``ts.viz.themes()``) still returns the sorted name list,
+    so the pre-v6 spelling keeps working.
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> list[str]:
+        """Return the sorted theme names (the pre-v6 ``themes()`` spelling)."""
+        return self.names()
+
+    def names(self) -> list[str]:
+        """Return the sorted names of all registered themes (built-in + user)."""
+        return sorted(THEMES)
+
+    def get(self, name: str | None = None) -> Theme:
+        """Return a theme by name, or the active default when ``name`` is ``None``."""
+        return get_theme(name)
+
+    def find(self, **filters: Any) -> list[Theme]:
+        """Return the registered themes whose fields match every keyword in ``filters``.
+
+        ``ts.viz.themes.find(grid=True)`` — one ``getattr`` per filter, the same
+        shape every other registry's ``find`` has.
+        """
+        unknown = [k for k in filters if not hasattr(Theme, k) and k not in Theme.__annotations__]
+        if unknown:
+            from tsdynamics.errors import InvalidParameterError
+
+            fields = ", ".join(sorted(Theme.__annotations__))
+            raise InvalidParameterError(
+                f"themes have no field {unknown[0]!r}; the fields are {fields}."
+            )
+        return [
+            t
+            for _, t in sorted(THEMES.items())
+            if all(getattr(t, k, None) == v for k, v in filters.items())
+        ]
+
+    def register(self, name: str, theme: Theme | None = None, /, **fields: Any) -> Theme:
+        """Build (or derive) a theme, file it under ``name``, and return it.
+
+        Two spellings, one verb::
+
+            ts.viz.themes.register("lab", palette=("#264653", "#e76f51"), dpi=200)
+            ts.viz.themes.register("paper", ts.viz.themes.get("publication"),
+                                   font_family="Charter", dpi=600)
+
+        Parameters
+        ----------
+        name : str
+            The registry key; also the built theme's :attr:`Theme.name`.
+        theme : Theme, optional
+            A base to derive from.  ``None`` (default) starts from the built-in
+            ``"default"`` theme, so only the fields you name change.
+        **fields
+            :class:`Theme` fields to override.
+
+        Returns
+        -------
+        Theme
+            The registered theme.
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        base = theme if theme is not None else THEMES["default"]
+        if not isinstance(base, Theme):
+            raise InvalidParameterError(
+                f"the base of a theme must be a Theme (from ts.viz.themes.get(...)), not "
+                f"{type(base).__name__}; pass the fields as keywords instead: "
+                'ts.viz.themes.register("lab", palette=(...), dpi=200).'
+            )
+        unknown = sorted(set(fields) - set(Theme.__annotations__) - {"name"})
+        if unknown:
+            known = ", ".join(sorted(set(Theme.__annotations__) - {"name"}))
+            raise InvalidParameterError(
+                f"themes have no field {unknown[0]!r}; the fields are {known}."
+            )
+        built = base.merged(name=name, **fields)
+        register_theme(built)
+        return built
+
+    def use(self, theme: str | Theme) -> Theme:
+        """Make ``theme`` this session's default, and return it.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            If a *name* is given that is not registered — naming the ones that are.
+        """
+        from tsdynamics.errors import InvalidParameterError
+
+        if isinstance(theme, str) and theme not in THEMES:
+            raise InvalidParameterError(
+                f"unknown theme {theme!r}; registered themes are {', '.join(self.names())}."
+            )
+        if not isinstance(theme, (str, Theme)):
+            raise InvalidParameterError(
+                f"use() takes a registered theme name or a Theme, not {type(theme).__name__}; "
+                'build one first with ts.viz.themes.register("lab", ...).'
+            )
+        set_theme(theme)
+        return get_theme()
+
+    def __contains__(self, name: object) -> bool:
+        """Whether ``name`` is a registered theme."""
+        return name in THEMES
+
+    def __repr__(self) -> str:
+        """List the registered themes and name the active one."""
+        active = get_theme().name
+        listed = ", ".join(f"*{n}" if n == active else n for n in self.names())
+        return f"ts.viz.themes: {listed}  (* = active; .use(name) to switch)"
+
+
+#: ``ts.viz.themes`` — the theme registry (also callable, returning the names).
+themes = _ThemeRegistry()
+
+
+class _StyleTable:
+    """``ts.viz.styles`` — the closed per-layer style vocabulary, and who honors it.
+
+    The answer to "what can I pass to ``color=``?" and "will plotly draw my
+    ``linestyle``?", printed::
+
+        >>> import tsdynamics as ts
+        >>> ts.viz.styles.names()[:3]
+        ['alpha', 'cmap', 'color']
+        >>> ts.viz.styles.get("linewidth").aliases
+        ('lw',)
+
+    The **same** vocabulary lands at every plotting door — ``ts.plot(...)``,
+    ``traj.plot(...)``, ``system.plot(...)`` and ``Plot.style(...)`` — plus the
+    aliases (``lw`` / ``c`` / ``ms`` / ``"--"`` / ``"o"``).
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> list[str]:
+        """Return the canonical style-key names (aliases excluded)."""
+        return self.names()
+
+    def names(self, *, aliases: bool = False) -> list[str]:
+        """Return the sorted canonical style keys, optionally including the aliases."""
+        return sorted(style_names()) if aliases else sorted(STYLE_KEYS)
+
+    def get(self, name: str) -> StyleKey:
+        """Return one :class:`StyleKey`, resolving an alias to its canonical key."""
+        canonical = _ALIAS_INDEX.get(name, name)
+        if canonical not in STYLE_KEYS:
+            from tsdynamics.errors import InvalidParameterError
+
+            raise InvalidParameterError(
+                f"unknown style key {name!r}; the vocabulary is "
+                f"{', '.join(self.names())} (plus aliases)."
+            )
+        return STYLE_KEYS[canonical]
+
+    def find(self, *, honored_by: str | None = None) -> list[StyleKey]:
+        """Return the style keys a backend genuinely renders.
+
+        ``ts.viz.styles.find(honored_by="threejs")`` is the honest answer to "what
+        will actually change if I switch backend?" — the same declaration the
+        dispatcher's :class:`~tsdynamics.viz.render.caps.VisualizationDegraded`
+        warning is generated from.
+        """
+        keys = [STYLE_KEYS[n] for n in sorted(STYLE_KEYS)]
+        if honored_by is None:
+            return keys
+        return [k for k in keys if honored_by in k.honored_by]
+
+    def __iter__(self) -> Any:
+        """Iterate the canonical :class:`StyleKey` records, sorted by name."""
+        return iter(STYLE_KEYS[n] for n in sorted(STYLE_KEYS))
+
+    def __len__(self) -> int:
+        """Return how many canonical style keys there are."""
+        return len(STYLE_KEYS)
+
+    def __getitem__(self, name: str) -> StyleKey:
+        """``ts.viz.styles["lw"]`` — the same lookup as :meth:`get`."""
+        return self.get(name)
+
+    def __contains__(self, name: object) -> bool:
+        """Whether ``name`` is a style key or one of its aliases."""
+        return isinstance(name, str) and (name in STYLE_KEYS or name in _ALIAS_INDEX)
+
+    def __repr__(self) -> str:
+        """Render the vocabulary as a table: key, aliases, and who honors it."""
+        rows = ["ts.viz.styles — the style vocabulary (same at every plotting door)", ""]
+        width = max(len(n) for n in STYLE_KEYS)
+        for key in self:
+            alias = f"({', '.join(key.aliases)})" if key.aliases else ""
+            honored = ", ".join(sorted(key.honored_by)) or "nothing"
+            rows.append(f"  {key.name:<{width}} {alias:<12} honored by: {honored}")
+        return "\n".join(rows)
+
+
+#: ``ts.viz.styles`` — the style vocabulary table (also callable, returning names).
+styles = _StyleTable()
 
 
 def resolve_palette(p: str | Sequence[str]) -> tuple[str, ...]:

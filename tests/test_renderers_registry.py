@@ -45,8 +45,9 @@ import pytest
 
 from tsdynamics import registry
 from tsdynamics.registry import Registry
-from tsdynamics.viz import RENDERERS_GROUP, PlotKind, PlotSpec, discover_plugins
-from tsdynamics.viz.spec import Layer
+from tsdynamics.viz import RENDERERS_GROUP, discover_plugins
+from tsdynamics.viz.spec import Layer, PlotKind
+from tsdynamics.viz.spec import Plot as PlotSpec
 
 # ---------------------------------------------------------------------------
 # The registry exists, is the right kind, and is distinct

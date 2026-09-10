@@ -24,151 +24,17 @@ from tsdynamics.errors import InvalidInputError, remedy
 # The Plottable mixin (stream VIZ-SYSTEM-PLOT) gives every system a ``.plot()`` /
 # ``to_plot_spec()``.  It imports tsdynamics.viz only lazily (inside its methods),
 # so importing the family bases here keeps ``import tsdynamics`` visualization-free.
+from ._derive import DeriveMixin
+from ._info import SystemInfo, Variables, family_of
+from ._params import ParamSet
 from ._plottable import SystemPlottable
 
-__all__ = ["MetaStore", "ParamSet", "SystemBase", "Trajectory"]
+__all__ = ["Absent", "MetaStore", "ParamSet", "SystemBase", "Trajectory"]
 
 #: "The caller did not pass this" — distinct from any value they *could* pass.
 #: Needed where a default is indistinguishable from a legal argument (``at=0.0``
 #: on :meth:`SystemBase.poincare`, where 0.0 is the commonest crossing value).
 _UNSET: Any = object()
-
-# ---------------------------------------------------------------------------
-# ParamSet
-# ---------------------------------------------------------------------------
-
-
-class ParamSet(MutableMapping[str, Any]):
-    """
-    Ordered, fixed-key parameter container.
-
-    Keys are frozen at construction time — you can change values but not add or
-    remove keys. Supports both dict-style (``p["sigma"]``) and attribute-style
-    (``p.sigma``) read/write.
-
-    Parameters
-    ----------
-    data : dict
-        Initial key→value mapping.  All future writes must use existing keys.
-
-    Raises
-    ------
-    AttributeError
-        On attribute-style read or write of an undeclared key
-        (``p.unknown`` / ``p.unknown = ...``).
-    KeyError
-        On item-style write of an undeclared key (``p["unknown"] = ...``).
-    InvalidInputError
-        On any attempt to delete a key (the key set is frozen).
-
-    Examples
-    --------
-    >>> p = ParamSet({"sigma": 10.0, "rho": 28.0})
-    >>> p.sigma
-    10.0
-    >>> p.sigma = 15.0
-    >>> p["sigma"]
-    15.0
-    >>> p.unknown = 5.0            # raises AttributeError
-    """
-
-    __slots__ = ("_data",)
-
-    def __init__(self, data: dict[str, Any]) -> None:
-        object.__setattr__(self, "_data", dict(data))
-
-    # --- attribute access routes to _data ---
-
-    def __getattr__(self, key: str) -> Any:
-        d = object.__getattribute__(self, "_data")
-        if key in d:
-            return d[key]
-        raise AttributeError(f"Unknown parameter {key!r}. Declared params: {list(d)}")
-
-    def __setattr__(self, key: str, value: Any) -> None:
-        d = object.__getattribute__(self, "_data")
-        if key in d:
-            d[key] = value
-        else:
-            raise AttributeError(f"Unknown parameter {key!r}. Declared params: {list(d)}")
-
-    # --- MutableMapping protocol ---
-
-    def __getitem__(self, key: str) -> Any:
-        return self._data[key]
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        if key not in self._data:
-            raise KeyError(f"Unknown parameter {key!r}. Declared params: {list(self._data)}")
-        self._data[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        from tsdynamics.errors import InvalidInputError
-
-        raise InvalidInputError("Parameters are fixed-key — cannot delete.")
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    # --- helpers ---
-
-    def as_tuple(self) -> tuple[Any, ...]:
-        """Return parameter values as a tuple (insertion order)."""
-        return tuple(self._data.values())
-
-    def as_dict(self) -> dict[str, Any]:
-        """Return a shallow copy as a plain dict."""
-        return dict(self._data)
-
-    # --- pickling / copying ---
-    #
-    # ``__slots__`` plus a validating ``__setattr__`` defeats the default
-    # ``object.__reduce_ex__`` path: the generic slot restorer calls
-    # ``setattr(inst, "_data", ...)`` on a *fresh* instance whose ``_data`` does
-    # not exist yet, so :meth:`__setattr__` raises ``AttributeError: '...ParamSet'
-    # object has no attribute '_data'``.  That single AttributeError made every
-    # system, and every trajectory holding one, impossible to pickle **or**
-    # deep-copy — which blocks ``multiprocessing`` / ``joblib`` parameter sweeps
-    # and disk caching.  Declaring the state protocol explicitly fixes both
-    # (``copy.deepcopy`` goes through the same ``__reduce_ex__``).
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Return the picklable state (a plain dict of the parameter values)."""
-        return dict(self._data)
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore from :meth:`__getstate__`, bypassing the validating setattr."""
-        object.__setattr__(self, "_data", dict(state))
-
-    def param_hash(self) -> int:
-        """
-        Return a process-stable 64-bit integer hash of the current parameter values.
-
-        Uses MD5 over a JSON-serialised representation so the result is
-        reproducible across Python process restarts (unlike ``hash()``).
-
-        The hash backs cache keys for per-system lowering / lambdify caches.
-        At 64 bits the birthday-paradox
-        collision probability reaches 50 % only around ``2^32 ≈ 4·10⁹``
-        distinct parameter sets, which is well beyond any realistic
-        parameter sweep.  The previous 32-bit width hit the same threshold
-        at only ``2^16 ≈ 65 000`` sets, which a sufficiently large sweep
-        could plausibly reach — and a collision there would silently
-        return a compiled artifact built for a different parameter set.
-        """
-        import hashlib
-        import json
-
-        s = json.dumps(list(self._data.items()), default=str)
-        return int(hashlib.md5(s.encode()).hexdigest()[:16], 16)
-
-    def __repr__(self) -> str:
-        items = ", ".join(f"{k}={v!r}" for k, v in self._data.items())
-        return f"ParamSet({{{items}}})"
-
 
 # ---------------------------------------------------------------------------
 # MetaStore
@@ -414,7 +280,7 @@ def as_lyapunov_result(system: Any, exponents: Any, **meta_kw: Any) -> Any:
 
     The import is local: :mod:`tsdynamics.families` must not import
     :mod:`tsdynamics.analysis` at module scope (the deliberate
-    families→analysis layering seam, see ``_accessors.py``).
+    families→analysis layering seam).
     """
     from tsdynamics.analysis._result import AnalysisResult
     from tsdynamics.analysis.lyapunov import LyapunovSpectrum
@@ -424,6 +290,189 @@ def as_lyapunov_result(system: Any, exponents: Any, **meta_kw: Any) -> Any:
         system, analysis="lyapunov_spectrum", k=int(values.size), **meta_kw
     )
     return LyapunovSpectrum(values=values, meta=meta)
+
+
+# ---------------------------------------------------------------------------
+# Names that left the system object in v6
+# ---------------------------------------------------------------------------
+
+#: Library plumbing that moved behind an underscore.  Resolved by
+#: :meth:`SystemBase.__getattr__` (so the in-tree callers outside
+#: ``tsdynamics.families`` keep working) but absent from ``dir()``.  Delete a row
+#: the moment its remaining call sites are updated.
+_INTERNAL_ALIASES: dict[str, str] = {
+    "ic_generator": "_ic_generator",
+    "is_discrete": "_is_discrete",
+    "resolve_ic": "_resolve_ic",
+}
+
+#: ``name -> (why it is gone, the lines to type instead)``.  These names are
+#: **genuinely absent**: ``hasattr(sys, "integrate")`` is ``False``.  The error
+#: *is* the migration guide — there is no shim to find later.
+_MOVED_IN_V6: dict[str, tuple[str, tuple[str, ...]]] = {
+    "integrate": (
+        "run is the one trajectory verb in v6",
+        ("system.run(final_time=100.0, dt=0.01)",),
+    ),
+    "iterate": ("run is the one trajectory verb in v6", ("system.run(steps=1000)",)),
+    "trajectory": ("run is the one trajectory verb in v6", ("system.run(final_time=100.0)",)),
+    "copies": (
+        "ensemble returns the lazy wrapper now — one verb, one object",
+        ("band = system.ensemble(states)", "band.step(0.01)"),
+    ),
+    "stroboscope": (
+        "poincare absorbed it: a plane and a strobe period are two sections of the same flow",
+        ("system.poincare(period=4.488)", "system.poincare()   # ...period inferred"),
+    ),
+    "project": (
+        "projection left the object (no user callers)",
+        (
+            'traj[["x", "z"]]                          # the numbers',
+            "ts.derived.ProjectedSystem(system, 0, 2)  # a live 2-D stepper",
+        ),
+    ),
+    "tangent": (
+        "the tangent system is Lyapunov machinery, not a verb on a system",
+        ("ts.derived.TangentSystem(system, k=2)",),
+    ),
+    "meta": (
+        "a system no longer accumulates metadata — a run records its own",
+        ("traj = system.run(final_time=100.0)", "traj.meta"),
+    ),
+    "to_plot_spec": (
+        "the plotting seam is __plot_spec__; the verb you type is plot",
+        ("system.plot()", 'ts.plot(system, "phase_portrait")'),
+    ),
+    "default_ic": ("it is a fact about the class, printed by info", ("system.info.default_ic",)),
+    "reference": ("it is a fact about the class, printed by info", ("system.info.reference",)),
+    "doi": ("it is a fact about the class, printed by info", ("system.info.doi",)),
+    "known_lyapunov": (
+        "it is a fact about the class, printed by info",
+        ("system.info.known_lyapunov",),
+    ),
+    "field_labels": (
+        "it is a fact about the class, printed by info",
+        ("system.info.field_labels",),
+    ),
+}
+
+#: The four analysis namespaces deleted by ruling A2, and the free functions that
+#: replace each one's headline member.
+_DELETED_ACCESSORS: dict[str, tuple[str, ...]] = {
+    "lyap": ("lyapunov_spectrum", "max_lyapunov"),
+    "chaos": ("gali", "zero_one_test"),
+    "dims": ("correlation_dimension", "generalized_dimension"),
+    "recurrence": ("recurrence_matrix", "rqa"),
+}
+
+
+class Absent:
+    """A name that **cannot work** on this family, and therefore does not exist.
+
+    ``DelaySystem.set_state`` used to exist and raise ``NotImplementedError`` —
+    a member that lies: ``hasattr`` said yes, the call said no, and a generic
+    sweep believed the first answer.  Binding this descriptor instead removes the
+    name from ``dir()`` *and* from ``hasattr``, and spends the ``AttributeError``
+    on the mathematics rather than on "not implemented".
+
+    Examples
+    --------
+    >>> import tsdynamics as ts
+    >>> hasattr(ts.systems.MackeyGlass(), "set_state")
+    False
+    """
+
+    __slots__ = ("_lines", "_name", "_why")
+
+    def __init__(self, why: str, *lines: str) -> None:
+        self._why = why
+        self._lines = lines
+        self._name = "<unset>"
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+
+    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+        cls = (objtype or type(obj)).__name__
+        raise AttributeError(
+            f"{cls!r} object has no attribute {self._name!r}: {self._why}"
+            + (remedy(*self._lines) if self._lines else "")
+        )
+
+
+def _absent_slot(cls: type, name: str) -> Absent | None:
+    """Return the :class:`Absent` bound at ``name``, walking the MRO by dict.
+
+    ``getattr`` cannot be used: reading an ``Absent`` is exactly what raises.
+    """
+    for klass in cls.__mro__:
+        found = klass.__dict__.get(name)
+        if isinstance(found, Absent):
+            return found
+        if found is not None:
+            return None
+    return None
+
+
+def _absent_name_error(system: Any, name: str) -> AttributeError:
+    """Build the ``AttributeError`` for a name that is not on a system in v6.
+
+    Five ordered cases, most specific first: a name that **moved**, one of the
+    four deleted analysis namespaces, an analysis that is now a free function, a
+    near miss on a declared parameter, and a plain miss.  Every one of them ends
+    in a line the reader can type.
+    """
+    slot = _absent_slot(type(system), name)
+    if slot is not None:
+        try:
+            slot.__get__(system, type(system))
+        except AttributeError as err:
+            return err
+    cls = type(system).__name__
+    head = f"{cls!r} object has no attribute {name!r}"
+
+    moved = _MOVED_IN_V6.get(name)
+    if moved is not None:
+        why, lines = moved
+        return AttributeError(f"{head}: {why}." + remedy(*lines))
+
+    deleted = _DELETED_ACCESSORS.get(name)
+    if deleted is not None:
+        return AttributeError(
+            f"{head}: the .lyap / .chaos / .dims / .recurrence namespaces are gone "
+            f"in v6 — every member is a free function."
+            + remedy(
+                *(f"ts.analysis.{fn}(system)" for fn in deleted),
+                "ts.analysis.find(system)   # everything that takes this system",
+            )
+        )
+
+    try:
+        from tsdynamics import registry
+
+        known = set(registry.analyses.names())
+    except Exception:  # pragma: no cover - defensive
+        known = set()
+    if name in known:
+        return AttributeError(
+            f"{head}: analyses are free functions in v6, and the subject is the "
+            f"first argument." + remedy(f"ts.analysis.{name}(system)", "ts.analysis.find(system)")
+        )
+
+    declared = list(object.__getattribute__(system, "params"))
+    if declared:
+        import difflib
+
+        close = difflib.get_close_matches(name, declared, n=1, cutoff=0.6)
+        if close:
+            return AttributeError(f"{head}. Did you mean {close[0]!r}? (a declared parameter)")
+        return AttributeError(
+            f"{head}. Declared parameters: {', '.join(declared)}."
+            + remedy("ts.analysis.find(system)   # the analyses that take this system")
+        )
+    return AttributeError(
+        f"{head}." + remedy("ts.analysis.find(system)   # the analyses that take this system")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +488,7 @@ def as_lyapunov_result(system: Any, exponents: Any, **meta_kw: Any) -> Any:
 _RESERVED_INIT_KEYWORDS: frozenset[str] = frozenset()
 
 
-class SystemBase(SystemPlottable):
+class SystemBase(DeriveMixin, SystemPlottable):
     """
     Abstract base class for all dynamical systems.
 
@@ -450,7 +499,7 @@ class SystemBase(SystemPlottable):
     - ``ic`` — optional initial conditions array.
     - ``meta`` — dict for storing computed metadata (Lyapunov spectra, etc.).
     - ``copy()`` / ``with_params()`` for safe cloning.
-    - ``resolve_ic()`` for uniform IC resolution across subclasses.
+    - ``_resolve_ic()`` for uniform IC resolution across subclasses.
 
     Class-level declarations
     ------------------------
@@ -489,7 +538,7 @@ class SystemBase(SystemPlottable):
     --------
     ParamSet : the fixed-key parameter container behind ``params``.
     MetaStore : the append-with-history store behind ``meta``.
-    resolve_ic : the uniform initial-condition resolution helper.
+    _resolve_ic : the uniform initial-condition resolution helper.
     """
 
     #: Class-level parameter defaults.  Keys are frozen once the instance
@@ -498,17 +547,37 @@ class SystemBase(SystemPlottable):
 
     #: State-space dimension.  Set at class level for fixed-dim systems;
     #: override in ``__init__`` for variable-dim systems (e.g. Lorenz96).
+    #: A class that declares :attr:`variables` need not declare ``dim`` — it
+    #: follows the number of names.  On an *instance* ``dim`` is **read-only**:
+    #: ``lor.dim = 5`` used to be accepted, and the next ``run()`` then failed
+    #: with ``_equations must return 5 expressions, got 3`` — an error about the
+    #: kernel, caused by a mutation of ``dim``.
     dim: ClassVar[int | None] = None
 
     #: Optional class-level default initial conditions.  Used when no ``ic``
-    #: argument is supplied to the constructor or to ``resolve_ic``.  Useful
+    #: argument is supplied to the constructor or to the IC resolution.  Useful
     #: for systems whose attractor basin is small (e.g. Tinkerbell) so random
-    #: ICs in ``U[0, 1)^dim`` always diverge.
-    default_ic: ClassVar[Any | None] = None
+    #: ICs in ``U[0, 1)^dim`` always diverge.  (Underscored since v6: it is a
+    #: *fact about the class*, printed by ``system.info``, not a verb.)
+    _default_ic: ClassVar[Any | None] = None
 
-    #: Optional component names, e.g. ``("x", "y", "z")``.  Enables named
-    #: access on trajectories (``traj["x"]``) and labelled docs figures.
-    variables: ClassVar[tuple[str, ...] | None] = None
+    #: Component names.  Declare them on the class — ``variables = ("x","y","z")``
+    #: — and :attr:`dim` follows.  Read off an **instance** this is always a
+    #: tuple of exactly ``dim`` names, resolved by the four rules in
+    #: :func:`~tsdynamics.families._info.resolve_variables` (declared names, a
+    #: field system's ``u0 u1 ... v0 v1 ...``, a repeated unit's ``x0 y0 z0
+    #: x1 ...``, else ``y0 ... y{dim-1}``); read off the **class** it is the
+    #: declared tuple, or ``None``.
+    variables: Any = Variables()
+
+    #: Where the declared tuple is parked once :meth:`__init_subclass__` has
+    #: moved it aside.  Not a user-facing name.
+    _declared_variables: ClassVar[tuple[str, ...] | None] = None
+
+    #: Optional names of one repeated unit of a many-unit system (e.g. a chain
+    #: of Chua circuits declares ``("x", "y", "z")``), used to generate per-unit
+    #: component names ``x0 y0 z0 x1 y1 z1 ...``.
+    _unit_variables: ClassVar[tuple[str, ...] | None] = None
 
     #: Optional **spatial** grid shape for a spatially-extended system whose state
     #: vector is a flattened field — e.g. ``(Ny, Nx)`` for a 2-D
@@ -528,21 +597,37 @@ class SystemBase(SystemPlottable):
     #: laid out contiguously in state order.  Lets the ``kind="field"`` recipe
     #: select which block to plot via ``components="u"|"v"`` (the first block is
     #: the default).  ``None`` for a single-block field.
-    field_labels: ClassVar[tuple[str, ...] | None] = None
+    _field_labels: ClassVar[tuple[str, ...] | None] = None
 
     #: Optional literature reference for the system, e.g.
-    #: ``"Lorenz (1963), J. Atmos. Sci. 20, 130"``.  Surfaced in the docs.
-    reference: ClassVar[str | None] = None
+    #: ``"Lorenz (1963), J. Atmos. Sci. 20, 130"``.  Printed by ``system.info``.
+    _reference: ClassVar[str | None] = None
+
+    #: The bare DOI of :attr:`_reference`, e.g. ``"10.1175/1520-0469(1963)..."``.
+    _doi: ClassVar[str | None] = None
 
     #: Optional known Lyapunov data used by the bulk known-value tests::
     #:
-    #:     known_lyapunov = {
+    #:     _known_lyapunov = {
     #:         "spectrum": (0.906, 0.0, -14.57),   # literature values
     #:         "atol": 0.1,                        # per-exponent tolerance
     #:         "kwargs": {"final_time": 300.0},    # forwarded to lyapunov_spectrum
     #:         "source": "Sprott (2003)",
     #:     }
-    known_lyapunov: ClassVar[dict[str, Any] | None] = None
+    _known_lyapunov: ClassVar[dict[str, Any] | None] = None
+
+    #: The legacy public spellings of the five metadata ClassVars above.  A
+    #: catalogue class that still writes ``reference = "..."`` is migrated by
+    #: :meth:`__init_subclass__`, which moves the value to the underscored name
+    #: and *removes* the public one — a fact about a system is printed by
+    #: ``system.info``, and does not deserve a slot in ``system.<TAB>``.
+    _ABSORBED_CLASSVARS: ClassVar[tuple[str, ...]] = (
+        "default_ic",
+        "field_labels",
+        "reference",
+        "doi",
+        "known_lyapunov",
+    )
 
     #: The runtime backend this family's engine-dispatch seam uses when a caller
     #: does not name one.  Every concrete family sets it to ``"jit"`` (the Rust
@@ -574,6 +659,43 @@ class SystemBase(SystemPlottable):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        # --- v6: the five metadata ClassVars move behind an underscore --------
+        # They are facts about the class, printed by ``system.info`` — not verbs
+        # a user calls, so they left ``system.<TAB>``.  A class written against
+        # the old public spelling keeps working: the value is moved to the
+        # underscored name and the public one is deleted, so there is exactly one
+        # spelling afterwards rather than two that can drift apart.
+        for public in cls._ABSORBED_CLASSVARS:
+            if public in cls.__dict__:
+                setattr(cls, f"_{public}", cls.__dict__[public])
+                delattr(cls, public)
+
+        # ``variables`` keeps its public spelling on the class (nine in-tree
+        # readers still say ``type(system).variables``) but the *declared* tuple
+        # moves aside so ``SystemBase.variables`` — the lazy descriptor that
+        # names every component of every system — is what an instance reads.
+        declared_vars = cls.__dict__.get("variables", None)
+        if declared_vars is not None and not isinstance(declared_vars, Variables):
+            cls._declared_variables = tuple(declared_vars)
+            delattr(cls, "variables")
+        else:
+            declared_vars = None
+
+        # --- v6: dim follows variables ---------------------------------------
+        # Declaring both is no longer required; declaring both and disagreeing is
+        # refused here, at class definition, rather than at the first run.
+        if declared_vars is not None:
+            n_names = len(tuple(declared_vars))
+            declared_dim = cls.__dict__.get("dim", None)
+            if declared_dim is None:
+                cls.dim = n_names
+            elif int(declared_dim) != n_names:
+                raise TypeError(
+                    f"{cls.__name__}: dim = {declared_dim} but variables names "
+                    f"{n_names} component(s) {tuple(declared_vars)!r}. They are the "
+                    f"same number — declare `variables` alone and dim follows, or "
+                    f"make them agree."
+                )
         # A declared parameter whose name collides with one of this constructor's
         # own keyword arguments would be *unreachable* as a constructor keyword —
         # ``Sys(dim=3)`` would silently set the state-space dimension instead of
@@ -617,7 +739,7 @@ class SystemBase(SystemPlottable):
             the class-level :attr:`params` defaults; unknown keys raise.
         ic : array-like, optional
             Initial conditions.  Stored on ``self.ic`` (as a ``float`` array) and
-            used by :meth:`resolve_ic` when no explicit ``ic`` is later supplied.
+            used by :meth:`_resolve_ic` when no explicit ``ic`` is later supplied.
             An ``ic`` given here is **explicit**: it is never silently replaced by
             a random draw (a diverging one raises instead).
         dim : int, optional
@@ -761,19 +883,30 @@ class SystemBase(SystemPlottable):
         object.__setattr__(self, "_ic_seed", None if seed is None else int(seed))
         object.__setattr__(self, "_ic_rng", None)
 
-        # Metadata store: computed properties (Lyapunov, etc.) accumulate here
-        # with history — repeated runs append instead of overwriting.
-        object.__setattr__(self, "meta", MetaStore())
-
     # --- transparent attribute routing through params ---
 
     def __getattr__(self, name: str) -> Any:
-        # Only called when normal attribute lookup fails
+        # Only called when normal attribute lookup fails.
+        if name.startswith("__") and name.endswith("__"):
+            # A protocol probe (copy, pickle, numpy, IPython).  Answer fast and
+            # never import anything: a teaching message here would be printed to
+            # nobody and would drag the analysis package into a dunder lookup.
+            raise AttributeError(name)
         try:
             params = object.__getattribute__(self, "params")
-            return params[name]
-        except (AttributeError, KeyError) as err:
-            raise AttributeError(f"{type(self).__name__!r} has no attribute {name!r}") from err
+        except AttributeError:
+            raise AttributeError(f"{type(self).__name__!r} has no attribute {name!r}") from None
+        if name in params:
+            return cast(Any, params[name])
+        # Transition shims: three internal helpers moved behind an underscore in
+        # v6 (they are library plumbing, never a verb a user types) and a handful
+        # of in-tree callers outside this package still spell them the old way.
+        # They resolve, they are absent from ``dir()``, and they can be deleted
+        # the moment those call sites are updated.
+        private = _INTERNAL_ALIASES.get(name)
+        if private is not None:
+            return getattr(self, private)
+        raise _absent_name_error(self, name)
 
     def __setattr__(self, name: str, value: Any) -> None:
         try:
@@ -785,6 +918,23 @@ class SystemBase(SystemPlottable):
             # No ParamSet yet (mid-construction) — let the assignment through.
             object.__setattr__(self, name, value)
             return
+
+        # ``dim`` is a FACT about the equations, not a setting.  ``lor.dim = 5``
+        # used to be accepted and the next run() then failed with "_equations
+        # must return 5 expressions, got 3" — an error about the kernel, caused
+        # by a mutation of dim.  Refuse it where the mistake is.
+        if name == "dim" and "dim" in self.__dict__:
+            from tsdynamics.errors import invalid_value
+
+            raise invalid_value(
+                f"{type(self).__name__}.dim",
+                value,
+                rule=f"is read-only (this system has {self.__dict__['dim']} state components)",
+                hint=(
+                    "dim is fixed by the equations. For a variable-dimension system "
+                    f"build another instance: {type(self).__name__}(dim={value!r})"
+                ),
+            )
 
         # A public name that is neither a declared parameter, an already-set
         # instance attribute, nor a class-level attribute/method is almost
@@ -817,15 +967,14 @@ class SystemBase(SystemPlottable):
         """
         Return a deep copy with the same class, params, and ic.
 
-        The copy has its own independent ``params`` and ``meta`` stores, so
-        mutating the clone's parameters or recording metadata on it never
-        affects the original.
+        The copy has its own independent ``params``, so mutating the clone's
+        parameters never affects the original.  ``dim`` and ``field_shape`` are
+        forwarded, so a system that took them from the constructor copies.
 
         Returns
         -------
         SystemBase
-            A fresh instance of the same subclass with copied ``params`` and
-            ``ic`` and an empty ``meta`` store.
+            A fresh instance of the same subclass with copied ``params`` and ``ic``.
 
         See Also
         --------
@@ -835,6 +984,8 @@ class SystemBase(SystemPlottable):
         return type(self)(
             params=cast(ParamSet, self.params).as_dict(),
             ic=self.ic.copy() if self.ic is not None else None,
+            dim=cast(int, self.dim),
+            field_shape=self.__dict__.get("_field_shape"),
         )
 
     def _clone_state(self) -> dict[str, Any]:
@@ -848,8 +999,6 @@ class SystemBase(SystemPlottable):
         """
         state = {k: v for k, v in self.__dict__.items() if k not in self._TRANSIENT_STATE}
         state["params"] = ParamSet(cast(ParamSet, self.params).as_dict())
-        meta = self.__dict__.get("meta")
-        state["meta"] = meta.copy() if isinstance(meta, MetaStore) else MetaStore()
         ic = self.__dict__.get("ic")
         state["ic"] = None if ic is None else np.array(ic, dtype=float, copy=True)
         return state
@@ -905,7 +1054,7 @@ class SystemBase(SystemPlottable):
         Does not mutate ``self``.  Designed for parameter sweeps::
 
             for rho in np.linspace(0, 50, 200):
-                traj = base_system.with_params(rho=rho).integrate(final_time=50)
+                traj = base_system.with_params(rho=rho).run(final_time=50)
 
         Parameters
         ----------
@@ -918,14 +1067,24 @@ class SystemBase(SystemPlottable):
             New instance of the same subclass.
         """
         new_p = {**cast(ParamSet, self.params).as_dict(), **overrides}
-        return type(self)(params=new_p, ic=self.ic)
+        # ``dim`` and ``field_shape`` are forwarded because a system that takes
+        # them from the CONSTRUCTOR (the shape the docs teach you to write) has
+        # nothing to re-read them from — measured, ``DimCtor(dim=2).with_params(k=2)``
+        # raised "does not declare its state-space dimension", which broke
+        # continuation and orbit diagrams for exactly those systems.
+        return type(self)(
+            params=new_p,
+            ic=self.ic,
+            dim=cast(int, self.dim),
+            field_shape=self.__dict__.get("_field_shape"),
+        )
 
     # --- IC resolution ---
 
-    def ic_generator(self, seed: int | None = None) -> np.random.Generator:
+    def _ic_generator(self, seed: int | None = None) -> np.random.Generator:
         """Return this system's **private** initial-condition ``Generator``.
 
-        The random-IC fallback in :meth:`resolve_ic` draws from here, never from
+        The random-IC fallback in :meth:`_resolve_ic` draws from here, never from
         the global ``numpy.random`` stream: a plain ``system.run()`` must not
         perturb a caller's own ``np.random.seed(0)`` reproducibility.
 
@@ -967,7 +1126,7 @@ class SystemBase(SystemPlottable):
         """Coerce one initial-condition candidate to a ``(dim,)`` float array.
 
         The single place a wrong-length / non-numeric initial condition is
-        rejected, so the three sources :meth:`resolve_ic` draws from (the ``ic=``
+        rejected, so the three sources :meth:`_resolve_ic` draws from (the ``ic=``
         argument, the latched ``self.ic``, the class-level ``default_ic``) all
         answer with one message that names the system's dimension, its component
         names, and the line to type — instead of leaking NumPy's
@@ -1028,7 +1187,7 @@ class SystemBase(SystemPlottable):
         who = "system" if structural else f"{type(self).__name__}()"
         return remedy(f"{who}.{run}")
 
-    def resolve_ic(self, ic: Any | None = None, *, seed: int | None = None) -> np.ndarray:
+    def _resolve_ic(self, ic: Any | None = None, *, seed: int | None = None) -> np.ndarray:
         """
         Resolve initial conditions consistently.
 
@@ -1038,7 +1197,7 @@ class SystemBase(SystemPlottable):
         2. ``self.ic`` (set by a previous integration / iteration)
         3. ``type(self).default_ic`` (class-level default, if declared)
         4. Random ``U[0, 1)^dim`` from the system's **private**
-           :meth:`ic_generator` (never the global ``numpy.random`` stream)
+           :meth:`_ic_generator` (never the global ``numpy.random`` stream)
 
         The resolved IC is stored in ``self.ic`` so subsequent calls without
         an explicit ``ic`` reproduce the same initial state.
@@ -1060,6 +1219,7 @@ class SystemBase(SystemPlottable):
         ndarray, shape (dim,)
         """
         explicit = True
+        latch = True
         if ic is not None:
             arr = self._coerce_ic(ic, "ic=")
             # A *re-resolution of the value already on the instance* is not a new
@@ -1073,25 +1233,34 @@ class SystemBase(SystemPlottable):
             prior = self.__dict__.get("ic")
             if prior is not None and prior.shape == arr.shape and np.array_equal(prior, arr):
                 explicit = bool(self.__dict__.get("_ic_explicit", True))
+            else:
+                # v6: a caller-supplied ``ic=`` is for THIS call and is NOT
+                # latched onto the system.  Measured at HEAD: ``l.ic`` is None,
+                # and after ``l.run(ic=[3,3,3])`` it is ``[3. 3. 3.]`` — so a
+                # later bare ``run()`` silently started somewhere else.  The
+                # auto-resolved cases below still latch, which is what makes a
+                # bare ``run()`` twice reproducible.
+                latch = False
         elif self.ic is not None:
             arr = self._coerce_ic(self.ic, "system.ic")
             explicit = bool(self.__dict__.get("_ic_explicit", False))
-        elif type(self).default_ic is not None:
-            arr = self._coerce_ic(type(self).default_ic, "default_ic")
+        elif type(self)._default_ic is not None:
+            arr = self._coerce_ic(type(self)._default_ic, "_default_ic")
             # A class-declared default is not a *user* choice: a system whose
             # declared default lands off-basin keeps the random-IC retry.
             explicit = False
         else:
-            arr = self.ic_generator(seed).random(cast(int, self.dim))
+            arr = self._ic_generator(seed).random(cast(int, self.dim))
             explicit = False
-        object.__setattr__(self, "ic", arr.copy())
-        object.__setattr__(self, "_ic_explicit", explicit)
+        if latch:
+            object.__setattr__(self, "ic", arr.copy())
+            object.__setattr__(self, "_ic_explicit", explicit)
         return arr
 
     def _ic_rollback(self) -> Any:
         """Return a context manager restoring ``ic`` if the block raises.
 
-        :meth:`resolve_ic` commits the resolved initial condition to ``self.ic``
+        :meth:`_resolve_ic` commits the resolved initial condition to ``self.ic``
         *before* the run happens, so a run that then fails used to leave the bad
         IC latched on the instance — and every later, unrelated analysis silently
         started from it.  Wrapping a run in this guard makes a failure leave the
@@ -1133,12 +1302,12 @@ class SystemBase(SystemPlottable):
         instead (and ``run.integrate`` refuses an SDE problem).
 
         ``seed`` is the **initial-condition** seed — the one every family's
-        trajectory producer accepts (``DiscreteMap.iterate(seed=)`` has always
+        trajectory producer accepts (``DiscreteMap.run(seed=)`` has always
         had it; the flow families gained it for symmetry).  It is resolved here,
         *inside* the rollback guard, and only bites when a random draw actually
         happens: an explicit ``ic``, a previously resolved ``self.ic`` and a
         class-level ``default_ic`` all take priority, exactly as in
-        :meth:`resolve_ic`.  The resolved array is then handed down as ``ic=``,
+        :meth:`_resolve_ic`.  The resolved array is then handed down as ``ic=``,
         which ``run.integrate``'s own ``resolve_ic`` recognises as a
         re-resolution of the value already on the instance (so the
         user-chosen/auto-drawn flag is preserved and the random-IC retry logic
@@ -1152,7 +1321,7 @@ class SystemBase(SystemPlottable):
 
         with self._ic_rollback():
             if seed is not None:
-                kwargs["ic"] = self.resolve_ic(kwargs.get("ic"), seed=seed)
+                kwargs["ic"] = self._resolve_ic(kwargs.get("ic"), seed=seed)
             return run.integrate(self, backend=backend, **kwargs)
 
     # --- misc ---
@@ -1182,7 +1351,7 @@ class SystemBase(SystemPlottable):
         field_shape = getattr(self, "_field_shape", None)
         if field_shape is not None:
             prov["field_shape"] = tuple(int(n) for n in field_shape)
-            field_labels = getattr(self, "field_labels", None)
+            field_labels = getattr(type(self), "_field_labels", None)
             if field_labels is not None:
                 prov["field_labels"] = tuple(str(s) for s in field_labels)
         return prov
@@ -1191,326 +1360,38 @@ class SystemBase(SystemPlottable):
         params_str = ", ".join(f"{k}={v}" for k, v in self.params.items())
         return f"{type(self).__name__}({params_str})"
 
-    # --- object-side analysis surface (additive convenience) ------------- #
-    #
-    # The canonical analysis surface is the *free functions* in
-    # ``tsdynamics.analysis``.  The accessors below make that toolkit
-    # *discoverable from a system in hand*: pressing ``<TAB>`` on ``sys.``
-    # reveals a handful of grouped topical namespaces (the xarray accessor
-    # pattern) instead of nothing, and each delegates to the matching free
-    # function with the system bound — adding zero behaviour.  All analysis /
-    # derived imports are function-local (here and in ``_accessors.py``) so this
-    # module stays free of import cycles.
-    #
-    # The accessors cache on the instance (so ``sys.lyap is sys.lyap``) via a
-    # small helper that stows the built accessor in an ``_accessor_cache`` dict
-    # set with ``object.__setattr__`` (the family ``__getattr__`` /
-    # ``__setattr__`` route ordinary attribute access through ``params``, so a
-    # plain ``functools.cached_property`` cannot be used).
+    def __dir__(self) -> list[str]:
+        """List what this system actually answers — no lies, no ``Absent`` slots."""
+        names = set(super().__dir__())
+        cls = type(self)
+        return sorted(n for n in names if _absent_slot(cls, n) is None)
 
-    def _topical_accessor(self, name: str, factory: Any) -> Any:
-        """Return the cached topical accessor ``name``, building it once."""
-        cache = self.__dict__.get("_accessor_cache")
-        if cache is None:
-            cache = {}
-            object.__setattr__(self, "_accessor_cache", cache)
-        acc = cache.get(name)
-        if acc is None:
-            acc = factory(self)
-            cache[name] = acc
-        return acc
+    # --- identity ------------------------------------------------------- #
 
     @property
-    def lyap(self) -> Any:
-        """Lyapunov-exponent estimators bound to this system.
+    def family(self) -> str:
+        """``"ode" | "dde" | "map" | "sde"`` — what kind of dynamics this is.
 
-        A cached :class:`~tsdynamics.families._accessors.LyapunovAccessor`
-        exposing ``.spectrum()`` / ``.maximal()`` / ``.from_data()`` — each
-        delegating to :func:`tsdynamics.analysis.lyapunov_spectrum`,
-        :func:`~tsdynamics.analysis.max_lyapunov` and
-        :func:`~tsdynamics.analysis.lyapunov_from_data` with this system bound.
+        Replaces ``is_discrete``, which could not tell a delay system from a
+        stochastic one, so every caller that needed the distinction had to sniff
+        the class.
         """
-        from tsdynamics.families._accessors import LyapunovAccessor
-
-        return self._topical_accessor("lyap", LyapunovAccessor)
+        return family_of(self)
 
     @property
-    def chaos(self) -> Any:
-        """Chaos indicators bound to this system.
+    def info(self) -> SystemInfo:
+        """Everything true about this system, in one printable record.
 
-        A cached :class:`~tsdynamics.families._accessors.ChaosAccessor` exposing
-        ``.gali()`` / ``.expansion_entropy()`` / ``.zero_one()`` — delegating to
-        :func:`tsdynamics.analysis.gali`,
-        :func:`~tsdynamics.analysis.expansion_entropy` and
-        :func:`~tsdynamics.analysis.zero_one_test`.
+        Absorbs ``reference``, ``doi``, ``known_lyapunov``, ``field_labels`` and
+        ``default_ic`` off the tab surface — they are *facts*, and a fact belongs
+        in the record you print::
+
+            >>> print(Rossler().info)               # doctest: +SKIP
+            Roessler — 3-D continuous flow                     tsdynamics...Rossler
+              equations   dx/dt = -y - z
+              ...
         """
-        from tsdynamics.families._accessors import ChaosAccessor
-
-        return self._topical_accessor("chaos", ChaosAccessor)
-
-    @property
-    def dims(self) -> Any:
-        """Fractal-dimension estimators bound to this system.
-
-        A cached :class:`~tsdynamics.families._accessors.DimensionsAccessor`
-        (``.correlation()`` / ``.generalized()`` / …) delegating to the
-        ``*_dimension`` free functions.  These consume a point set; omitting the
-        ``data`` argument runs the system first (an implicit integration).
-        """
-        from tsdynamics.families._accessors import DimensionsAccessor
-
-        return self._topical_accessor("dims", DimensionsAccessor)
-
-    @property
-    def recurrence(self) -> Any:
-        """Recurrence-quantification estimators bound to this system.
-
-        A cached :class:`~tsdynamics.families._accessors.RecurrenceAccessor`
-        (``.matrix()`` / ``.rqa()`` / ``.windowed()``) delegating to
-        :func:`tsdynamics.analysis.recurrence_matrix`,
-        :func:`~tsdynamics.analysis.rqa` and
-        :func:`~tsdynamics.analysis.windowed_rqa`.
-        """
-        from tsdynamics.families._accessors import RecurrenceAccessor
-
-        return self._topical_accessor("recurrence", RecurrenceAccessor)
-
-    # --- first-class analysis / derived verbs (additive convenience) ----- #
-
-    def fixed_points(self, **kwargs: Any) -> Any:
-        """Find fixed points / equilibria of this system.
-
-        Delegates to :func:`tsdynamics.analysis.fixed_points` with this system
-        bound — returns the same list of
-        :class:`~tsdynamics.analysis.FixedPoint`.
-        """
-        from tsdynamics.analysis import fixed_points
-
-        return fixed_points(self, **kwargs)
-
-    def poincare(
-        self,
-        section: Any = None,
-        at: Any = _UNSET,
-        *,
-        plane: Any = None,
-        direction: Any = +1,
-        **kwargs: Any,
-    ) -> Any:
-        """Build a :class:`~tsdynamics.derived.PoincareMap` of this flow.
-
-        One section vocabulary, shared with
-        :class:`~tsdynamics.derived.PoincareMap` and
-        :func:`~tsdynamics.analysis.poincare_section` — the argument is resolved
-        by the very same
-        :func:`~tsdynamics.derived.poincare._resolve_section_plane`, so a
-        spelling that works on one works on all three::
-
-            ros.poincare("y", 0.0)                  # component + crossing value
-            ros.poincare(("y", 0.0, "up"))          # ... with the direction word
-            ros.poincare("y", 0.0, direction="up")  # ... as a keyword
-            ros.poincare(plane=([1, 0, 0], 0.0))    # an arbitrary normal
-
-        The returned object is exactly ``PoincareMap(self, plane,
-        direction=...)``; calling ``.run(...)`` / ``.trajectory(...)`` on it
-        collects crossings.
-
-        Parameters
-        ----------
-        section : str, int, or tuple, optional
-            The state component whose level set defines the section (a name is
-            resolved against the system's ``variables``), **or** the whole plane
-            tuple — ``(axis, offset)``, ``(axis, offset, direction)``, or
-            ``(normal, offset)``.  Ignored when an explicit ``plane`` is given.
-        at : float, optional
-            The crossing value for ``section``, when ``section`` names a
-            component.  Defaults to ``0.0``.
-        plane : tuple, optional
-            The plane tuple, passed straight through.  Takes precedence over
-            ``section`` / ``at``.
-        direction : int or str, default +1
-            Crossing direction — a sign, or ``"up"`` / ``"down"`` / ``"both"``.
-            A direction given inside the plane tuple overrides this.
-        **kwargs
-            Forwarded to :class:`~tsdynamics.derived.PoincareMap` (``dt``,
-            ``max_time``).
-        """
-        from tsdynamics.derived import PoincareMap
-
-        if plane is None:
-            from tsdynamics.errors import InvalidParameterError
-
-            if section is None:
-                raise InvalidParameterError(
-                    "poincare() needs a section — the plane orbits are recorded crossing:\n"
-                    "    sys.poincare('y', 0.0)             # component and crossing value\n"
-                    "    sys.poincare(('y', 0.0, 'up'))     # ... and the direction\n"
-                    "    sys.poincare(plane=([1, 0, 0], 0.0))   # an arbitrary normal"
-                )
-            whole_plane = (
-                isinstance(section, (tuple, list)) and len(section) in (2, 3) and at is _UNSET
-            )
-            plane = section if whole_plane else (section, 0.0 if at is _UNSET else float(at))
-        return PoincareMap(self, plane, direction=direction, **kwargs)
-
-    def stroboscope(self, period: float | None = None, **kwargs: Any) -> Any:
-        """Build a :class:`~tsdynamics.derived.StroboscopicMap` of this forced flow.
-
-        When ``period`` is omitted the forcing period is **inferred from the
-        system** — from a ``forcing_period`` / ``drive_period`` hook (used
-        verbatim) or a ``drive_frequency`` / ``omega`` hook (taken as the
-        angular drive frequency, so the period is ``2*pi / omega``).  The
-        catalogue's forced systems (e.g. :class:`~tsdynamics.systems.Duffing`,
-        whose autonomising phase obeys ``zdot = omega``) follow the ``omega``
-        convention, so ``ForcedDuffing().stroboscope()`` just works.  Pass
-        ``period=`` to override the inference (or when no drive hook exists).
-        Equivalent to ``StroboscopicMap(self, period)``.
-
-        Parameters
-        ----------
-        period : float, optional
-            The forcing period.  When ``None`` (the default) it is inferred from
-            the system; a system with no recognised drive hook raises, asking for
-            an explicit ``period=``.
-        **kwargs
-            Forwarded to :class:`~tsdynamics.derived.StroboscopicMap`.
-
-        Raises
-        ------
-        InvalidParameterError
-            When ``period`` is omitted and the system exposes no drive hook to
-            infer it from.
-        """
-        from tsdynamics.derived import StroboscopicMap
-
-        if period is None:
-            from tsdynamics.errors import invalid_value
-            from tsdynamics.families._accessors import infer_forcing_period
-
-            try:
-                period = infer_forcing_period(self)
-            except KeyError as err:
-                raise invalid_value(
-                    f"period for {type(self).__name__}.stroboscope()",
-                    value=None,
-                    rule="could not be inferred from the system",
-                    hint=(
-                        "pass an explicit `period=` (e.g. `2 * np.pi / omega`), or give "
-                        "the system a `drive_frequency` / `forcing_period` attribute."
-                    ),
-                ) from err
-        return StroboscopicMap(self, period, **kwargs)
-
-    def tangent(self, k: int | None = None, **kwargs: Any) -> Any:
-        """Build a :class:`~tsdynamics.derived.TangentSystem` (state plus ``k`` deviation vectors).
-
-        Equivalent to ``TangentSystem(self, k, ...)`` — the Lyapunov engine.
-        """
-        from tsdynamics.derived import TangentSystem
-
-        return TangentSystem(self, k, **kwargs)
-
-    def project(self, *components: Any, **kwargs: Any) -> Any:
-        """Build a :class:`~tsdynamics.derived.ProjectedSystem` onto ``components``.
-
-        Accepts component indices or names (resolved against ``variables``), as
-        positional arguments (``self.project("x", "z")``) or a single sequence
-        (``self.project(["x", "z"])``).  Equivalent to
-        ``ProjectedSystem(self, components)``.
-        """
-        from tsdynamics.derived import ProjectedSystem
-
-        if len(components) == 1 and not isinstance(components[0], (str, bytes)):
-            first = components[0]
-            try:
-                comps = list(first)
-            except TypeError:
-                comps = [first]
-        else:
-            comps = list(components)
-        return ProjectedSystem(self, comps, **kwargs)
-
-    def copies(self, states: Any) -> Any:
-        """Build an :class:`~tsdynamics.derived.EnsembleSystem` over ``states``.
-
-        Many copies of this system, stepped in lockstep through the ordinary
-        :class:`~tsdynamics.families.protocol.System` protocol — a *lazy* object
-        you drive yourself.  Equivalent to ``EnsembleSystem(self, states)``.
-
-        This verb used to be spelled ``ensemble``, which on a
-        :class:`~tsdynamics.families.StochasticSystem` meant something else
-        entirely: *run* the batch and return the final states.  One verb, two
-        semantics and two return types is the defect, so the running verb kept
-        the name (:meth:`ensemble`) and the lazy wrapper took an honest one.
-
-        Parameters
-        ----------
-        states : array-like, shape (n, dim)
-            One row per copy.
-
-        Returns
-        -------
-        EnsembleSystem
-
-        Examples
-        --------
-        >>> band = lor.copies([[1.0, 1.0, 1.0], [1.0, 1.0, 1.001]])  # doctest: +SKIP
-        >>> band.step(0.01)                                          # doctest: +SKIP
-        """
-        from tsdynamics.derived import EnsembleSystem
-
-        return EnsembleSystem(self, states)
-
-    def ensemble(self, ics: Any, **kwargs: Any) -> Any:
-        """Integrate a batch of initial conditions; return their final states.
-
-        The same verb, the same meaning and the same return type on **every**
-        family: hand it ``(n, dim)`` initial conditions, get back the ``(n, dim)``
-        states they reach.  A diverged trajectory is a row of ``NaN`` rather than
-        an aborted batch.  For the *lazy* wrapper you drive yourself, see
-        :meth:`copies`.
-
-        Parameters
-        ----------
-        ics : array-like, shape (n, dim)
-            The batch of initial conditions.
-        **kwargs
-            The run keywords of this family's :meth:`integrate`
-            (``final_time`` / ``dt`` / ``t0`` / ``method`` / ``rtol`` / ``atol``
-            / ``max_step`` / ``backend``; ``seed`` for an SDE).  A **map** takes
-            the same horizon word its :meth:`run` does — ``n`` (or its alias
-            ``steps``) — rather than a time.
-
-        Returns
-        -------
-        ndarray, shape (n, dim)
-            Final states (rows of ``NaN`` for diverged trajectories).
-
-        Examples
-        --------
-        >>> finals = lor.ensemble(np.random.rand(100, 3), final_time=10.0)  # doctest: +SKIP
-        """
-        from tsdynamics.engine import run
-
-        kwargs.setdefault("backend", self._default_backend)
-        # A map's horizon is a COUNT, and its horizon word is ``n`` (``steps``
-        # being the accepted alias on ``run``/``iterate``).  ``run.ensemble``
-        # reads the count off ``final_time`` for every family, so translate here
-        # rather than making the caller spell a map's iteration count as a time.
-        if self.is_discrete:
-            count = kwargs.pop("n", None)
-            alias = kwargs.pop("steps", None)
-            if count is not None and alias is not None:
-                from tsdynamics.errors import InvalidParameterError
-
-                raise InvalidParameterError(
-                    f"n and steps are the same keyword on a map (the number of iterations), "
-                    f"so pass only one; got n={count!r} and steps={alias!r}."
-                )
-            count = count if count is not None else alias
-            if count is not None:
-                kwargs["final_time"] = float(count)
-        return run.ensemble(self, ics, **kwargs)
+        return SystemInfo.of(self)
 
 
 def _reserved_init_keywords() -> frozenset[str]:

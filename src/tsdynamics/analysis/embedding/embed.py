@@ -43,7 +43,7 @@ class Embedding(ArrayResult):
     An :class:`~tsdynamics.analysis._result.ArrayResult`, so it is a drop-in for
     the bare ``(N - (m-1)·τ, m)`` matrix: ``np.asarray(result)``, indexing,
     slicing (``result[:, 0]``), ``result.shape`` and iteration all defer to the
-    wrapped array, while it also carries ``.meta`` / ``.summary()`` / the ``.plot``
+    wrapped array, while it also carries ``.meta`` / the readout ``repr`` / the ``.plot``
     seam.
 
     Attributes
@@ -51,6 +51,27 @@ class Embedding(ArrayResult):
     values : numpy.ndarray
         The embedded delay-vector matrix.  ``np.asarray(result)`` returns it.
     """
+
+    def _answer(self) -> str:
+        """Return ``<N> points in <m>-D`` — the shape of the reconstruction."""
+        mat = np.atleast_2d(np.asarray(self.values))
+        if not mat.size:
+            return "empty reconstruction"
+        return f"{mat.shape[0]} points in {mat.shape[1]}-D"
+
+    def _context(self) -> str | None:
+        """Return the reconstruction parameters that define the embedding."""
+        m = self.meta.get("dimension") if self.meta else None
+        tau = self.meta.get("delay") if self.meta else None
+        bits = []
+        if m is not None:
+            bits.append(f"m={m}")
+        if tau is not None:
+            bits.append(f"τ={tau} samples")
+        system = self._system_label()
+        if system:
+            bits.append(system)
+        return ", ".join(bits) or None
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe the reconstructed attractor as a backend-agnostic :class:`PlotSpec`.

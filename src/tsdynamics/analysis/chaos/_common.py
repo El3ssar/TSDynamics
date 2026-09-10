@@ -53,11 +53,11 @@ def _as_observable(data: object, component: int | None = None) -> np.ndarray:
         If the series is not one-dimensional after component selection, or is
         too short to be informative.
     """
-    if hasattr(data, "integrate") or hasattr(data, "_equations") or hasattr(data, "_step"):
+    if hasattr(data, "run") or hasattr(data, "_equations") or hasattr(data, "_step"):
         raise TypeError(
             "the 0-1 test consumes a sampled observable, not a live system; "
             "integrate/iterate first and pass one component, e.g. "
-            "zero_one_test(sys.integrate(...).component('x'))."
+            "zero_one_test(sys.run(...)['x'])."
         )
     y = getattr(data, "y", None)
     arr = np.asarray(y if y is not None else data, dtype=float)

@@ -608,7 +608,7 @@ def _canonical_defaults(entry: Any) -> str:
         return repr(value)
 
     params = ",".join(f"{key}={fmt(value)}" for key, value in sorted(entry.params.items()))
-    default_ic = getattr(entry.cls, "default_ic", None)
+    default_ic = getattr(entry.cls, "_default_ic", None)
     ic = "none" if default_ic is None else fmt(default_ic)
     return f"dim={entry.dim}|{params}|ic={ic}"
 

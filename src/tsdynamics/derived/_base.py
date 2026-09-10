@@ -8,7 +8,7 @@ import numpy as np
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tsdynamics.data import Trajectory
-    from tsdynamics.families.base import MetaStore, ParamSet
+    from tsdynamics.families.base import ParamSet
     from tsdynamics.viz.spec import PlotSpec
 
 __all__ = ["DerivedSystem"]
@@ -39,15 +39,26 @@ class DerivedSystem:
 
     @property
     def params(self) -> ParamSet:
-        return cast("ParamSet", self.system.params)
+        """The inner system's parameters — an empty set when it declares none.
+
+        Blindly forwarding ``self.system.params`` made ``PoincareMap(wrapped)``
+        march correctly and then die with a raw ``AttributeError`` from this
+        line, because a :class:`~tsdynamics.families.WrappedSystem` has no
+        parameter set at all.
+        """
+        from tsdynamics.families.base import ParamSet as _ParamSet
+
+        return cast("ParamSet", getattr(self.system, "params", None) or _ParamSet({}))
 
     @property
-    def meta(self) -> MetaStore:
-        return cast("MetaStore", self.system.meta)
+    def family(self) -> str:
+        """The inner system's family word."""
+        return cast(str, getattr(self.system, "family", "ode"))
 
     @property
-    def variables(self) -> tuple[str, ...] | None:
-        return getattr(type(self.system), "variables", None)
+    def variables(self) -> tuple[str, ...]:
+        """The inner system's component names."""
+        return cast("tuple[str, ...]", self.system.variables)
 
     def with_params(self, **overrides: Any) -> DerivedSystem:
         """Return a new wrapper of the same kind around a re-parametrized copy."""
@@ -64,8 +75,8 @@ class DerivedSystem:
     # --- default protocol delegation (subclasses override what differs) ---
 
     @property
-    def is_discrete(self) -> bool:
-        return cast(bool, self.system.is_discrete)
+    def _is_discrete(self) -> bool:
+        return cast(bool, self.system._is_discrete)
 
     def state(self) -> np.ndarray:
         return cast(np.ndarray, self.system.state())
@@ -79,32 +90,26 @@ class DerivedSystem:
     def reinit(self, u: Any | None = None, **kwargs: Any) -> None:
         self.system.reinit(u, **kwargs)
 
-    def trajectory(self, *args: Any, **kwargs: Any) -> Trajectory:
-        """Produce the wrapper's trajectory — subclasses implement the lens-specific collection."""
-        raise NotImplementedError
-
     def run(self, *args: Any, **kwargs: Any) -> Trajectory:
-        """Produce the wrapper's trajectory — the alias of :meth:`trajectory`.
+        """Produce this derived view's trajectory — **always from a fresh start**.
 
-        ``run`` is the library's canonical trajectory-producer verb (a flow's
-        ``Lorenz().run(...)``, a map's ``Henon().run(...)``), so a fluent
-        derived view reads left-to-right with the same verb at the end::
+        The one trajectory verb, on a wrapper too::
 
-            section = Rossler().poincare(section="y", at=0.0).run(steps=500)
+            section = Rossler().poincare("y", 0.0).run(steps=500)
 
-        It forwards verbatim to this wrapper's :meth:`trajectory`, so the two are
-        byte-identical and every wrapper-specific keyword (``transient``, ...) is
-        honoured.  ``trajectory`` remains the member the structural ``System``
-        protocol requires; ``run`` is the discoverable spelling.
+        Before v6 a wrapper's ``run`` continued the live stepper, so
+        ``pmap.run(steps=5)`` twice returned *different* data.  One rule now, on
+        every family and every wrapper: ``run()`` is a fresh run from ``ic``, and
+        ``step()`` is the one that continues.
         """
-        return self.trajectory(*args, **kwargs)
+        raise NotImplementedError
 
     # --- visualization seam ---
 
-    def to_plot_spec(self, kind: str | None = None) -> PlotSpec:
+    def __plot_spec__(self, kind: str | None = None, **kwargs: Any) -> PlotSpec:
         """Describe this derived view as a backend-agnostic :class:`PlotSpec`.
 
-        The default delegates to the wrapper's own :meth:`trajectory`: it
+        The default delegates to the wrapper's own :meth:`run`: it
         collects the lens-specific trajectory (Poincaré crossings, projected
         columns, ...) and forwards to that trajectory's
         :meth:`~tsdynamics.data.Trajectory.to_plot_spec`.  Subclasses whose
@@ -126,10 +131,23 @@ class DerivedSystem:
         -------
         PlotSpec
         """
-        return self.trajectory().to_plot_spec(kind=kind)
+        traj = self.run(**kwargs)
+        builder = getattr(traj, "__plot_spec__", None) or traj.to_plot_spec
+        return cast("PlotSpec", builder(kind=kind))
+
+    def plot(self, *transforms: Any, **kwargs: Any) -> PlotSpec:
+        """Draw this derived view.
+
+        All five wrappers used to answer ``hasattr(pm, "plot") -> False`` while
+        ``to_plot_spec`` was ``True``: the seam was there and the verb was not.
+        """
+        from tsdynamics.viz import plot as _plot
+
+        return cast("PlotSpec", _plot(self, *transforms, **kwargs))
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}({self.system!r})"
+        inner = type(self.system).__name__
+        return f"{type(self).__name__}({inner})"
 
 
 def __dir__() -> list[str]:

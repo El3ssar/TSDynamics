@@ -36,6 +36,8 @@ from ...errors import ConvergenceError
 from ...utils.tolerances import BASIN_ATOL, BASIN_RTOL
 from .._common import reject_data
 from .._result import AnalysisResult
+from .._result_base import _MAX_ITEMS
+from .._result_json import _pct, _state
 from ._common import (
     DIVERGED_COLOR,
     PALETTE,
@@ -108,9 +110,24 @@ class Attractor(AnalysisResult):
         """State-space dimension."""
         return int(self.points.shape[1])
 
-    def __repr__(self) -> str:  # noqa: D105
-        c = np.round(self.center, 4)
-        return f"Attractor(id={self.id}, center={c.tolist()}, cells={self.cells})"
+    def _answer(self) -> str:
+        """Return the attractor's id and where in state space it sits."""
+        if not np.asarray(self.points).size:
+            return f"#{self.id} — no sampled points"
+        return f"#{self.id} at {_state(self.center)}"
+
+    def _context(self) -> str | None:
+        """Return how much of the tessellation the attractor occupies."""
+        bits = [b for b in (self._system_label(),) if b]
+        bits.append(f"{self.cells} cells, {int(np.shape(self.points)[0])} sampled points")
+        return ", ".join(bits)
+
+    def _as_item(self) -> str:
+        """Return the compact one-line form used inside an :class:`AttractorSet`."""
+        where = (
+            "no sampled points" if not np.asarray(self.points).size else f"at {_state(self.center)}"
+        )
+        return f"#{self.id}  {where}  {self.cells} cells"
 
 
 @dataclass(frozen=True)
@@ -138,8 +155,28 @@ class AttractorSet(AnalysisResult):
     def __iter__(self) -> Iterator[Attractor]:  # noqa: D105
         return iter(self.attractors.values())
 
-    def __getitem__(self, key: int) -> Attractor:  # noqa: D105
-        return self.attractors[key]
+    def __getitem__(self, key: Any) -> Any:
+        """Return the attractor at **position** ``key`` (or a list, for a slice).
+
+        Positional, like every Python sequence (contract §4.2 rule 6) — ids start
+        at 1, so ``aset[0]`` used to raise ``KeyError`` while ``aset[1]`` returned
+        the *first* attractor, which reads as positional and is not.  Look one up
+        by its label with :meth:`by_id`.
+        """
+        ordered = [self.attractors[k] for k in self.ids]
+        if isinstance(key, slice):
+            return ordered[key]
+        return ordered[key]
+
+    def by_id(self, key: int) -> Attractor:
+        """Return the attractor labelled ``key``.
+
+        Raises
+        ------
+        KeyError
+            If no attractor carries that id.
+        """
+        return self.attractors[int(key)]
 
     @property
     def ids(self) -> list[int]:
@@ -250,8 +287,25 @@ class AttractorSet(AnalysisResult):
             meta=meta,
         )
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"AttractorSet({len(self)} attractors, {self.diverged}/{self.seeds} diverged)"
+    def _answer(self) -> str:
+        """Return how many attractors were located, and the escape share."""
+        n = len(self)
+        found = f"{n} attractor" + ("s" if n != 1 else "") if n else "no attractor found"
+        share = _pct(self.diverged / self.seeds) if self.seeds else "0.0%"
+        return f"{found} · {share} of {self.seeds} seeds diverged"
+
+    def _item_lines(self) -> tuple[str, ...]:
+        """Return one line per located attractor, truncated like a collection."""
+        ordered = [self.attractors[k] for k in self.ids]
+        shown = [f"[{i}] {a._as_item()}" for i, a in enumerate(ordered[:_MAX_ITEMS])]
+        if len(ordered) > _MAX_ITEMS:
+            shown.append(f"... [{len(ordered)} total]")
+        return tuple(shown)
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the attractor representatives as an ``(n_attractors, dim)`` array."""
+        arr = np.asarray(self.centers, dtype=float)
+        return arr.astype(dtype, copy=bool(copy)) if dtype is not None else arr
 
 
 # ---------------------------------------------------------------------------

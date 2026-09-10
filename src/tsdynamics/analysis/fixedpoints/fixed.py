@@ -41,6 +41,7 @@ from tsdynamics.families import ContinuousSystem, DiscreteMap
 
 from .._common import reject_data
 from .._result import AnalysisResult, CollectionResult
+from .._result_json import _sig, _state
 from . import _common as _c
 
 __all__ = ["FixedPoint", "FixedPointSet", "fixed_points"]
@@ -51,7 +52,7 @@ class FixedPoint(AnalysisResult):
     """A fixed point (map) or equilibrium (flow) with its linear stability data.
 
     An :class:`~tsdynamics.analysis._result.AnalysisResult`, so it carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam alongside its
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam alongside its
     point and stability data.
 
     Attributes
@@ -74,13 +75,32 @@ class FixedPoint(AnalysisResult):
     stable: bool = False
     continuous: bool = False
 
-    def __repr__(self) -> str:  # noqa: D105
-        kind = "stable" if self.stable else "unstable"
+    def _gauge(self) -> str:
+        """Return the eigenvalue reading that decides the classification."""
+        e = np.asarray(self.eigenvalues)
+        if not e.size:
+            return "no eigenvalues"
         if self.continuous:
-            gauge = f"Re(λ)max={self.eigenvalues.real.max():+.4f}"
-        else:
-            gauge = f"|λ|max={np.abs(self.eigenvalues).max():.4f}"
-        return f"FixedPoint({np.round(self.x, 6)}, {kind}, {gauge})"
+            return f"Re(λ)max = {float(e.real.max()):+.4g}"
+        return f"|λ|max = {_sig(float(np.abs(e).max()), 4)}"
+
+    def _answer(self) -> str:
+        """Return ``x* = [...]`` — the point itself."""
+        return f"x* = {_state(self.x)}"
+
+    def _interpretation(self) -> str | None:
+        """Name the stability, and the reading it was decided from."""
+        return ("stable" if self.stable else "unstable") + f"  {self._gauge()}"
+
+    def _context(self) -> str | None:
+        """Return the subject, and which stability convention applies."""
+        bits = [b for b in (self._system_label(),) if b]
+        bits.append("equilibrium of a flow" if self.continuous else "fixed point of a map")
+        return ", ".join(bits)
+
+    def _as_item(self) -> str:
+        """Return the compact one-line form used inside a set's item list."""
+        return f"x* = {_state(self.x)}  {'stable' if self.stable else 'unstable'}  {self._gauge()}"
 
     def to_plot_spec(
         self,
@@ -190,7 +210,7 @@ class FixedPointSet(CollectionResult):
     A :class:`~tsdynamics.analysis._result.CollectionResult`: iterate it, index it
     (``fps[0]`` is a :class:`FixedPoint`), take its ``len``, and read
     :attr:`stable` / :attr:`unstable` sublists — while it carries ``.meta`` /
-    ``.summary()`` / ``.to_frame()`` / the ``.plot`` seam.
+    the readout ``repr`` / ``.to_frame()`` / the ``.plot`` seam.
     """
 
     @property
@@ -202,6 +222,25 @@ class FixedPointSet(CollectionResult):
     def unstable(self) -> list[FixedPoint]:
         """The unstable fixed points / equilibria in the set."""
         return [fp for fp in self.items if not fp.stable]
+
+    def _noun(self) -> str:
+        """Return ``point`` — what one item of this collection is."""
+        return "point"
+
+    def _answer(self) -> str:
+        """Return the count and the stable/unstable split."""
+        if not self.items:
+            return "none found"
+        n_stable = len(self.stable)
+        return (
+            f"{len(self.items)} {self._noun()}"
+            + ("s" if len(self.items) != 1 else "")
+            + f" · {n_stable} stable, {len(self.items) - n_stable} unstable"
+        )
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the stable/unstable split the repr reports."""
+        return {"n_stable": len(self.stable), "n_unstable": len(self.unstable)}
 
     def to_plot_spec(
         self,

@@ -79,20 +79,22 @@ class TestResolveIc:
     def test_priority_arg_over_self_over_default(self) -> None:
         # arg > self.ic > default_ic
         lor = ts.Lorenz(ic=[1.0, 2.0, 3.0])
-        np.testing.assert_array_equal(lor.resolve_ic([4.0, 5.0, 6.0]), [4.0, 5.0, 6.0])
-        # the explicit arg is now stored, so a subsequent bare call reproduces it
-        np.testing.assert_array_equal(lor.resolve_ic(), [4.0, 5.0, 6.0])
+        np.testing.assert_array_equal(lor._resolve_ic([4.0, 5.0, 6.0]), [4.0, 5.0, 6.0])
+        # ...and since v6 the explicit arg is NOT latched: a bare call afterwards
+        # still answers with the system's own ic, so a later plain run() cannot
+        # silently start somewhere the caller never asked for.
+        np.testing.assert_array_equal(lor._resolve_ic(), [1.0, 2.0, 3.0])
 
     def test_falls_back_to_self_ic(self) -> None:
         lor = ts.Lorenz(ic=[1.0, 2.0, 3.0])
-        np.testing.assert_array_equal(lor.resolve_ic(), [1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(lor._resolve_ic(), [1.0, 2.0, 3.0])
 
     def test_random_fallback_is_deterministic_under_seed(self) -> None:
         # No ic, no default_ic -> random U[0,1)^dim, reproducible under a seed.
         np.random.seed(0)
-        a = ts.Lorenz().resolve_ic()
+        a = ts.Lorenz()._resolve_ic()
         np.random.seed(0)
-        b = ts.Lorenz().resolve_ic()
+        b = ts.Lorenz()._resolve_ic()
         assert a.shape == (3,)
         np.testing.assert_array_equal(a, b)
 
@@ -114,14 +116,17 @@ def test_families_satisfy_protocol() -> None:
 
 
 def test_is_discrete_flags() -> None:
-    assert ts.Henon().is_discrete is True
-    assert ts.Lorenz().is_discrete is False
-    assert ts.MackeyGlass().is_discrete is False
+    assert ts.Henon()._is_discrete is True
+    assert ts.Lorenz()._is_discrete is False
+    assert ts.MackeyGlass()._is_discrete is False
 
 
-def test_dde_set_state_raises_helpfully() -> None:
+def test_dde_set_state_does_not_exist() -> None:
+    # v6: a name that cannot work does not exist.  It used to exist and raise
+    # NotImplementedError -- a member that lies, because hasattr said yes.
     mg = ts.MackeyGlass()
-    with pytest.raises(NotImplementedError, match="history function"):
+    assert not hasattr(mg, "set_state")
+    with pytest.raises(AttributeError, match="history function"):
         mg.set_state([1.0])
 
 
@@ -138,7 +143,7 @@ class TestMapStepping:
         stepped = [h1.step().copy() for _ in range(5)]
 
         h2 = ts.Henon()
-        traj = h2.iterate(steps=5, ic=ic)
+        traj = h2.run(steps=5, ic=ic)
         np.testing.assert_allclose(np.array(stepped), traj.y, rtol=1e-12)
 
     def test_batch_step_equals_single_steps(self) -> None:
@@ -173,7 +178,7 @@ class TestMapStepping:
 
     def test_trajectory_with_transient(self) -> None:
         h = ts.Henon()
-        traj = h.trajectory(steps=100, transient=50, ic=[0.1, 0.1])
+        traj = h.run(steps=100, transient=50, ic=[0.1, 0.1])
         assert traj.n_steps == 100
 
 
@@ -199,7 +204,7 @@ class TestODEStepping:
         for _ in range(10):
             lor.step(0.1)
 
-        traj = ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=ic, rtol=1e-9, atol=1e-12)
+        traj = ts.Lorenz().run(final_time=1.0, dt=0.1, ic=ic, rtol=1e-9, atol=1e-12)
         np.testing.assert_allclose(lor.state(), traj.y[-1], rtol=1e-5, atol=1e-6)
 
     def test_two_live_steppers_are_isolated(self) -> None:
@@ -250,7 +255,7 @@ class TestDDEStepping:
 
     def test_trajectory_protocol(self) -> None:
         mg = ts.MackeyGlass()
-        traj = mg.trajectory(final_time=5.0, dt=0.5, transient=2.0, ic=[1.2])
+        traj = mg.run(final_time=5.0, dt=0.5, transient=2.0, ic=[1.2])
         assert traj.t[0] >= 2.0
         assert np.all(np.isfinite(traj.y))
 
@@ -283,7 +288,7 @@ class TestFailedRunLeavesTheIcUntouched:
 
     def test_continuous_integrate(self) -> None:
         sys = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
-        assert _ic_survives(sys, lambda: sys.integrate(final_time=1.0, dt=0.1, ic=[1e9] * 3))
+        assert _ic_survives(sys, lambda: sys.run(final_time=1.0, dt=0.1, ic=[1e9] * 3))
 
     def test_continuous_run_with_events(self) -> None:
         sys = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
@@ -302,7 +307,7 @@ class TestFailedRunLeavesTheIcUntouched:
 
     def test_map_iterate(self) -> None:
         sys = ts.systems.Henon(ic=[0.1, 0.1])
-        assert _ic_survives(sys, lambda: sys.iterate(steps=200, ic=[1e6, 1e6]))
+        assert _ic_survives(sys, lambda: sys.run(steps=200, ic=[1e6, 1e6]))
 
     def test_map_reinit_bad_shape(self) -> None:
         sys = ts.systems.Henon(ic=[0.1, 0.1])
@@ -314,7 +319,7 @@ class TestFailedRunLeavesTheIcUntouched:
 
     def test_dde_integrate_rejects_reference_backend(self) -> None:
         sys = ts.systems.MackeyGlass(ic=[1.0])
-        assert _ic_survives(sys, lambda: sys.integrate(final_time=1.0, dt=0.1, backend="reference"))
+        assert _ic_survives(sys, lambda: sys.run(final_time=1.0, dt=0.1, backend="reference"))
 
     def test_sde_reinit(self) -> None:
         sys = ts.systems.OrnsteinUhlenbeck(ic=[1.0])
@@ -323,7 +328,7 @@ class TestFailedRunLeavesTheIcUntouched:
     def test_sde_integrate(self) -> None:
         sys = ts.systems.OrnsteinUhlenbeck(ic=[1.0])
         assert _ic_survives(
-            sys, lambda: sys.integrate(final_time=1.0, dt=0.1, ic=[7.0], backend="no-such-backend")
+            sys, lambda: sys.run(final_time=1.0, dt=0.1, ic=[7.0], backend="no-such-backend")
         )
 
 
@@ -360,18 +365,18 @@ class TestSeedIsSymmetricAcrossFamilies:
     """``seed=`` used to exist only on ``DiscreteMap.iterate``; a flow rejected it."""
 
     def test_ode_integrate_accepts_seed_and_is_reproducible(self) -> None:
-        a = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=42)
-        b = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=42)
+        a = _SeedProbeODE().run(final_time=1.0, dt=0.5, seed=42)
+        b = _SeedProbeODE().run(final_time=1.0, dt=0.5, seed=42)
         np.testing.assert_array_equal(a.y, b.y)
         assert a.meta["ic_seed"] == 42
 
     def test_ode_a_different_seed_gives_a_different_ic(self) -> None:
-        a = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=42)
-        c = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=43)
+        a = _SeedProbeODE().run(final_time=1.0, dt=0.5, seed=42)
+        c = _SeedProbeODE().run(final_time=1.0, dt=0.5, seed=43)
         assert not np.array_equal(a.y[0], c.y[0])
 
     def test_ode_run_and_events_paths_honour_seed(self) -> None:
-        base = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, seed=42)
+        base = _SeedProbeODE().run(final_time=1.0, dt=0.5, seed=42)
         np.testing.assert_array_equal(
             _SeedProbeODE().run(final_time=1.0, dt=0.5, seed=42).y, base.y
         )
@@ -381,25 +386,25 @@ class TestSeedIsSymmetricAcrossFamilies:
         np.testing.assert_array_equal(with_events.y[0], base.y[0])
 
     def test_map_iterate_seed(self) -> None:
-        a = ts.systems.Henon().iterate(steps=20, seed=1)
-        b = ts.systems.Henon().iterate(steps=20, seed=1)
+        a = ts.systems.Henon().run(steps=20, seed=1)
+        b = ts.systems.Henon().run(steps=20, seed=1)
         np.testing.assert_array_equal(a.y, b.y)
 
     def test_dde_integrate_seed(self) -> None:
-        a = ts.systems.MackeyGlass().integrate(final_time=2.0, dt=0.5, seed=5)
-        b = ts.systems.MackeyGlass().integrate(final_time=2.0, dt=0.5, seed=5)
+        a = ts.systems.MackeyGlass().run(final_time=2.0, dt=0.5, seed=5)
+        b = ts.systems.MackeyGlass().run(final_time=2.0, dt=0.5, seed=5)
         np.testing.assert_array_equal(a.y, b.y)
         assert a.meta["ic_seed"] == 5
 
     def test_sde_integrate_seed_covers_ic_and_noise(self) -> None:
-        a = _SeedProbeSDE().integrate(final_time=1.0, dt=0.1, seed=9)
-        b = _SeedProbeSDE().integrate(final_time=1.0, dt=0.1, seed=9)
+        a = _SeedProbeSDE().run(final_time=1.0, dt=0.1, seed=9)
+        b = _SeedProbeSDE().run(final_time=1.0, dt=0.1, seed=9)
         np.testing.assert_array_equal(a.y, b.y)
         assert a.meta["ic_seed"] == 9
 
     def test_seed_is_inert_when_an_explicit_ic_is_given(self) -> None:
         # An explicit ic outranks the draw, so seeding must not change anything.
         pinned = [0.3, 0.4]
-        a = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, ic=pinned, seed=1)
-        b = _SeedProbeODE().integrate(final_time=1.0, dt=0.5, ic=pinned, seed=2)
+        a = _SeedProbeODE().run(final_time=1.0, dt=0.5, ic=pinned, seed=1)
+        b = _SeedProbeODE().run(final_time=1.0, dt=0.5, ic=pinned, seed=2)
         np.testing.assert_array_equal(a.y, b.y)

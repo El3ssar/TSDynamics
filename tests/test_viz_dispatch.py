@@ -13,6 +13,8 @@ itself stays plot-free).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tsdynamics import registry
@@ -362,3 +364,244 @@ def test_declared_render_kwargs_match_each_backend_core():
     }
     for backend, actual in cores.items():
         assert _BUILTIN_RENDER_KWARGS[backend] == actual, backend
+
+
+# ---------------------------------------------------------------------------
+# v6 — the ts.viz surface, the renderers registry, and the save contract
+# ---------------------------------------------------------------------------
+
+#: The contract's ``ts.viz.<TAB>``, §2.5.  Exact and sorted: a builder who
+#: produces a different listing has failed.
+_VIZ_TAB_SURFACE = [
+    "Plot",
+    "compatibility",
+    "draw",
+    "geometry",
+    "grid",
+    "load",
+    "plot",
+    "primitives",
+    "renderers",
+    "spec",
+    "styles",
+    "themes",
+    "transforms",
+]
+
+#: The contract's ``ts.viz.spec.<TAB>``, §2.7 — the 19 IR nouns.
+_SPEC_TAB_SURFACE = [
+    "Animation",
+    "Annotation",
+    "Axis",
+    "Colorbar",
+    "Frame",
+    "FrameSpace",
+    "Geometry",
+    "Layer",
+    "Layout",
+    "Legend",
+    "Part",
+    "PlotKind",
+    "PlotTransform",
+    "Presentation",
+    "SCHEMA_VERSION",
+    "T",
+    "from_dict_envelope",
+    "make_frame",
+    "to_dict_envelope",
+]
+
+
+def test_ts_viz_tab_surface_is_the_contract() -> None:
+    """13 names: four registries, two doors, one arranger, one type, and the IR."""
+    import tsdynamics as ts
+
+    assert sorted(ts.viz.__all__) == _VIZ_TAB_SURFACE
+    assert dir(ts.viz) == _VIZ_TAB_SURFACE
+    for name in _VIZ_TAB_SURFACE:
+        assert getattr(ts.viz, name) is not None, name
+
+
+def test_ts_viz_spec_holds_the_ir_and_every_noun_resolves() -> None:
+    """The IR is one dot away — and ten of the nineteen come from sibling modules."""
+    import tsdynamics as ts
+
+    assert sorted(ts.viz.spec.__all__) == _SPEC_TAB_SURFACE
+    assert dir(ts.viz.spec) == _SPEC_TAB_SURFACE
+    for name in _SPEC_TAB_SURFACE:
+        assert getattr(ts.viz.spec, name) is not None, name
+    # Plot is deliberately NOT here: it is the one type you annotate, and it
+    # lives one level up.
+    assert "Plot" not in ts.viz.spec.__all__
+    assert ts.viz.Plot.__name__ == "Plot"
+
+
+def test_touching_the_viz_surface_imports_no_plot_library() -> None:
+    """``ts.viz`` and ``ts.viz.spec`` must stay free of matplotlib and plotly."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, tsdynamics as ts;"
+        "_ = ts.viz.__all__; _ = ts.viz.spec.__all__; _ = ts.viz.spec.Geometry;"
+        "bad = [m for m in sys.modules if m.split('.')[0] in ('matplotlib', 'plotly')];"
+        "assert not bad, bad; print('CLEAN')"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "CLEAN" in out.stdout
+
+
+def test_a_name_that_moved_says_where_it_went() -> None:
+    """The error message *is* the migration guide."""
+    import tsdynamics as ts
+
+    with pytest.raises(AttributeError, match=r"PlotSpec is now Plot"):
+        _ = ts.viz.PlotSpec
+    with pytest.raises(AttributeError, match=r"transforms\.names\(\)"):
+        _ = ts.viz.list_transforms
+    # A guess is still an ordinary miss, so hasattr keeps working.
+    assert not hasattr(ts.viz, "definitely_not_a_name")
+
+
+def test_the_four_registries_share_one_shape() -> None:
+    """``register`` / ``names`` / ``find`` / ``get`` — learn one, know all four."""
+    import tsdynamics as ts
+
+    for name in ("transforms", "primitives", "renderers", "themes"):
+        registry_obj = getattr(ts.viz, name)
+        missing = [
+            verb for verb in ("names", "get") if not callable(getattr(registry_obj, verb, None))
+        ]
+        assert not missing, f"ts.viz.{name} is missing {missing}"
+        assert registry_obj.names(), f"ts.viz.{name}.names() is empty"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "ts.viz.transforms is still the module; turning it into the registry object "
+        "with register/find is owned by the viz-registry slot "
+        "(src/tsdynamics/viz/transforms/_registry.py). Delete this marker when it lands."
+    ),
+)
+def test_the_four_registries_all_answer_find() -> None:
+    """``find`` is the fourth shared verb; three of four answer it today."""
+    import tsdynamics as ts
+
+    for name in ("transforms", "primitives", "renderers", "themes"):
+        assert callable(getattr(getattr(ts.viz, name), "find", None)), name
+
+
+def test_renderers_introspection_is_honest_before_the_first_render() -> None:
+    """Measured before v6: ``names()`` answered ``[]`` until something had drawn."""
+    import subprocess
+    import sys
+
+    code = (
+        "import tsdynamics as ts;"
+        "print(','.join(ts.viz.renderers.names()));"
+        "print(','.join(ts.viz.renderers.find(writes='.svg')))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    listed, svg = out.stdout.strip().splitlines()
+    assert listed.split(",")[0] == "matplotlib", listed
+    assert svg == "matplotlib", svg
+
+
+def test_writes_is_split_into_static_and_animated_because_savefig_disagrees() -> None:
+    """Measured: ``savefig`` refuses ``.mp4``; ``FuncAnimation.save`` writes it.
+
+    One undivided ``writes`` set made ``Plot.save`` promise four formats
+    matplotlib can never produce (``.apng`` ``.m4v`` ``.mov`` ``.webm``, all
+    static) while refusing ``.webp``, which it can.
+    """
+    import tsdynamics as ts
+
+    caps = ts.viz.renderers.get("matplotlib")
+    assert caps.can_save(".png") and not caps.can_save(".png", animated=True)
+    assert caps.can_save(".mp4", animated=True) and not caps.can_save(".mp4")
+    assert caps.can_save(".gif") and caps.can_save(".gif", animated=True)
+    assert ".webp" in caps.writes_static, "declared and, before v6, unreachable"
+    assert ".pgf" in caps.writes_static, "works, and was simply never declared"
+    assert caps.writes == caps.writes_static | caps.writes_animated
+
+
+@pytest.mark.parametrize(
+    "ext",
+    [
+        ".png",
+        ".pdf",
+        ".svg",
+        ".svgz",
+        ".eps",
+        ".ps",
+        ".pgf",
+        ".jpg",
+        ".jpeg",
+        ".tif",
+        ".tiff",
+        ".webp",
+        ".gif",
+    ],
+)
+def test_every_extension_matplotlib_declares_statically_can_actually_be_written(
+    tmp_path, ext: str
+) -> None:
+    """The declaration and the writer must agree — in both directions."""
+    pytest.importorskip("matplotlib")
+    import warnings as _w
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    t = np.linspace(0.0, 1.0, 8)
+    spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])
+    target = tmp_path / f"figure{ext}"
+    with _w.catch_warnings():
+        _w.simplefilter("ignore")
+        spec.save(str(target))
+    assert target.stat().st_size > 0
+    plt.close("all")
+
+
+def test_a_third_party_backends_declared_extension_becomes_saveable(tmp_path) -> None:
+    """``save`` asks the backends and believes them — it keeps no table of its own.
+
+    Before v6 a registered backend could be *rendered* by name but its declared
+    extension could **never** be saved, because a hardcoded ``_WRITABLE_EXT`` in
+    ``spec.py`` was consulted first.
+    """
+    import numpy as np
+
+    written: list[str] = []
+
+    def _render(spec, /, *, path=None, **kw):
+        # A file-writing backend: it draws nothing, so with no ``path`` it has
+        # nothing to hand back — which is exactly the shape ``save`` must cope
+        # with when it does not recognise the writer up front.
+        if path is None:
+            return None
+        Path(path).write_text("TIKZ")
+        written.append(path)
+        return path
+
+    _render.capabilities = RendererCapabilities.all_kinds("tikz", writes=(".tikz",))
+    registry.renderers.register("tikz", _render)
+    try:
+        t = np.linspace(0.0, 1.0, 8)
+        spec = PlotSpec(kind=PlotKind.TIME_SERIES, layers=[Layer(PlotKind.LINE, {"x": t, "y": t})])
+        target = tmp_path / "figure.tikz"
+        assert "tikz" in ts_viz_renderers_find(".tikz")
+        spec.save(str(target), backend="tikz")
+        assert written and target.read_text() == "TIKZ"
+    finally:
+        registry.renderers.unregister("tikz")
+
+
+def ts_viz_renderers_find(ext: str) -> list[str]:
+    """Helper: which backends declare they can write ``ext``."""
+    import tsdynamics as ts
+
+    return ts.viz.renderers.find(writes=ext)

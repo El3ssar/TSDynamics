@@ -162,24 +162,31 @@ def test_scaling_window_returns_plain_floats():
 
 
 # ---------------------------------------------------------------------------
-# repr / summary inherit the AnalysisResult machinery
+# The repr inherits the AnalysisResult machinery — and IS the readout (v6)
 # ---------------------------------------------------------------------------
 
 
-def test_repr_shows_scalar_summary_fields_not_arrays():
+def test_repr_is_the_readout_not_a_constructor_call():
+    """v6: the repr became what ``summary()`` printed (contract §4.2 rule 3)."""
     text = repr(_scaling())
-    assert text.startswith("ScalingResult(")
-    assert "estimate=2" in text
-    assert "stderr=0.05" in text
-    assert "abscissa" not in text  # array field, repr=False
+    head = text.splitlines()[0]
+    assert head.startswith("ScalingResult  estimate = 2")
+    assert "± 0.05" in head
+    assert "(Lorenz)" in head  # the subject, read off meta
+    assert "abscissa" not in text  # the curve arrays are never dumped
     assert "ordinate" not in text
 
 
-def test_summary_carries_interpretation_line():
-    out = _scaling().summary()
-    assert out.splitlines()[0] == "ScalingResult  (Lorenz)"
-    assert "→" in out
-    assert "fit over 8 points" in out
+def test_repr_carries_the_fit_diagnostics():
+    """The supporting line says whether the slope is a reading of a straight region."""
+    detail = repr(_scaling()).splitlines()[1]
+    assert "8 fit pts" in detail
+    assert "R²" in detail
+
+
+def test_summary_is_deleted():
+    """Everything ``summary()`` printed is in ``__repr__`` now, so it is gone."""
+    assert not hasattr(_scaling(), "summary")
 
 
 # ---------------------------------------------------------------------------
@@ -390,5 +397,5 @@ def test_domain_subclass_can_alias_estimate():
     assert float(r) == 1.886
     assert r.scaling_window == (0.0, 4.0)
     # The inherited repr survives the @dataclass redecoration (the WS-RESULT gotcha).
-    assert repr(r).startswith("_Dim(")
-    assert "estimate=1.886" in repr(r)
+    assert repr(r).startswith("_Dim  ")
+    assert "estimate = 1.886" in repr(r)

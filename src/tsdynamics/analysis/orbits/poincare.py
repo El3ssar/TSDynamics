@@ -131,7 +131,7 @@ def poincare_section(
         system = system.copy()
         system.reinit(seeded)
     pmap = PoincareMap(system, plane, direction=direction, dt=dt, max_time=max_time)
-    return pmap.trajectory(crossings, transient=skip_crossings)
+    return pmap.run(crossings, transient=skip_crossings)
 
 
 def _section_from_data(

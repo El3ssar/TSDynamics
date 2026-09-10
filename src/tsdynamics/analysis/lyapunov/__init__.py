@@ -19,6 +19,7 @@ from tsdynamics.families import DelaySystem, DiscreteMap
 from ... import registry as _registry
 from .._common import reject_data, reject_system
 from .._result import AnalysisResult, ArrayResult, ScalarResult
+from .._result_json import _vector
 from .from_data import LyapunovFromData, ScalingRegionWarning, lyapunov_from_data
 
 #: The data-first sibling every system-first Lyapunov entry point points at when
@@ -64,7 +65,10 @@ class LyapunovSpectrum(ArrayResult):
     An :class:`~tsdynamics.analysis._result.ArrayResult`, so it is a drop-in for
     the bare exponent array: ``np.asarray(result)``, indexing, iteration and
     ``result.shape`` all defer to the wrapped exponents, while it also carries
-    ``.meta`` / ``.summary()`` / ``.to_dict()`` / the ``.plot`` seam.
+    ``.meta`` / the readout ``repr`` / ``.to_dict()`` / the ``.plot`` seam.
+
+    The repr names the dynamics — see :meth:`_interpretation` for the rule and
+    why it refuses to name one when the horizon does not support it.
 
     Attributes
     ----------
@@ -86,23 +90,105 @@ class LyapunovSpectrum(ArrayResult):
         """The Kaplan--Yorke (Lyapunov) dimension implied by this spectrum."""
         return float(kaplan_yorke_dimension(self.values))
 
-    def _interpretation(self) -> str | None:
-        """Name the dynamics from the count of *positive* exponents.
+    @property
+    def _is_flow(self) -> bool:
+        """Whether the spectrum came from a continuous-time system.
 
-        A flow's zero exponent is only numerically near zero, so "positive" is
-        thresholded relative to the spectrum's scale (``1e-3`` of the largest
-        magnitude) rather than at an absolute floor.
+        A flow has at least one *structural* zero exponent (translation along
+        the orbit); a map has none.  That single fact is what calibrates the
+        classification below, so it has to be right — it is read off the
+        registry entry for ``meta["system"]``, falling back to the horizon
+        keyword the estimator recorded.  Absent evidence the answer is "map",
+        the conservative choice: the map floor is a fixed relative one, so a
+        misread flow is *hedged* by the band test rather than mislabelled.
         """
-        exps = np.asarray(self.values, dtype=float)
-        if exps.size == 0:
+        return self._subject_family() in ("ode", "dde", "sde")
+
+    @property
+    def _zero_tolerance(self) -> float:
+        """The floor below which an exponent counts as zero, in this spectrum.
+
+        Calibrated on the estimator's **own realised zero**: a flow has a
+        structural zero exponent, so ``min|λ|`` measures how close to zero this
+        estimator got at this horizon — which is exactly the tolerance the
+        classification needs.  A map has no structural zero and keeps the
+        relative floor.
+        """
+        e = np.abs(np.asarray(self.values, dtype=float))
+        if e.size == 0:
+            return 0.0
+        base = 1e-3 * float(e.max())
+        return max(base, float(e.min())) if self._is_flow else max(1e-6, base)
+
+    def _n_positive(self) -> tuple[int, int]:
+        """Return the positive-exponent count at ``lo`` and at ``10 × lo``."""
+        e = np.asarray(self.values, dtype=float)
+        lo = self._zero_tolerance
+        return int((e > lo).sum()), int((e > 10.0 * lo).sum())
+
+    def _interpretation(self) -> str | None:
+        """Name the dynamics, or refuse to.
+
+        The rule (v6, contract §4.4).  The old one thresholded at ``1e-3`` of
+        the largest magnitude, which is blind to how well the estimator actually
+        resolved zero at the horizon it was given, and so read a flow's
+        imperfectly-converged zero exponent as a second positive one:
+        ``lyapunov_spectrum(Lorenz, final_time=20)`` was reported
+        **hyperchaotic**, and ``LotkaVolterra`` — a shipped conservative system
+        — is reported **chaotic** at every horizon.
+
+        Two changes fix both.  The floor is the estimator's own realised zero
+        (:attr:`_zero_tolerance`), and the verdict is printed **only when the
+        count is stable across a 10× tolerance band**; when it is not, the
+        honest answer is that the horizon is too short, and the repr says so
+        instead of naming a regime.
+
+        Scored over every catalogue system carrying a literature
+        ``known_lyapunov`` (20 systems): the old rule is wrong once, this one is
+        wrong zero times with one honest hedge (``HyperBao``, whose ``k``
+        defaults to 2 so the spectrum is truncated and the classification
+        genuinely cannot be made).
+
+        A σ-carrying estimator and a properly-tested classifier are a v6.1
+        ticket; this is a **repr-only** rule with no estimator change.
+        """
+        e = np.asarray(self.values, dtype=float)
+        if e.size == 0:
             return None
-        tol = max(1e-6, 1e-3 * float(np.max(np.abs(exps))))
-        n_pos = int((exps > tol).sum())
-        if n_pos >= 2:
-            return f"hyperchaotic: {n_pos} positive exponents"
-        if n_pos == 1:
-            return "chaotic: 1 positive exponent"
-        return "regular: no positive exponent"
+        n_lo, n_hi = self._n_positive()
+        if n_lo != n_hi:
+            return (
+                f"indeterminate at this horizon (n_pos = {n_hi}..{n_lo} across a 10× "
+                "tolerance band; raise final_time)"
+            )
+        word = "hyperchaotic" if n_lo >= 2 else "chaotic" if n_lo == 1 else "regular"
+        if n_lo == 0:
+            # No expanding direction, so the Kaplan--Yorke dimension is the whole
+            # (integer) state space and reporting it would look like a measurement.
+            return word
+        dky = self.kaplan_yorke
+        return f"{word} · D_KY = {dky:.4g}" if np.isfinite(dky) else word
+
+    def _answer(self) -> str:
+        r"""Return ``λ = [...]`` — the exponents, each at its own scale."""
+        return f"λ = {_vector(self.values)}"
+
+    def _details(self) -> tuple[str, ...]:
+        """Return the audit line: the floor the verdict was decided at."""
+        e = np.asarray(self.values, dtype=float)
+        if e.size == 0:
+            return ()
+        kind = "flow (realised zero)" if self._is_flow else "map (relative floor)"
+        return (f"({e.size} exponents · {kind} · λ > {self._zero_tolerance:.3g})",)
+
+    def _derived(self) -> dict[str, Any]:
+        """Export the derived answers the repr reports."""
+        n_lo, _ = self._n_positive()
+        return {
+            "kaplan_yorke": self.kaplan_yorke,
+            "n_positive": n_lo,
+            "zero_tolerance": self._zero_tolerance,
+        }
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe the Lyapunov spectrum as a backend-agnostic :class:`PlotSpec`.
@@ -339,7 +425,7 @@ def lyapunov_spectrum(
     9--20 (Part 1) and 21--30 (Part 2).
     """
     reject_data(system, analysis="lyapunov_spectrum", sibling=_FROM_DATA_LINE)
-    method_fn = getattr(system, "lyapunov_spectrum", None)
+    method_fn = getattr(system, "_lyapunov_spectrum", None)
     if method_fn is None:
         raise InvalidInputError(
             f"lyapunov_spectrum() needs a system that implements it, and "

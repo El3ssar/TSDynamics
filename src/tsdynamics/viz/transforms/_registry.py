@@ -554,7 +554,7 @@ def _compute(transform: PlotTransform, subject: Any, options: dict[str, Any]) ->
         if isinstance(subject, SystemBase):
             run_kw = {k: options.pop(k) for k in list(options) if k in _RUN_KEYS}
             try:
-                return transform.compute(subject.trajectory(**run_kw), **options)
+                return transform.compute(subject.run(**run_kw), **options)
             except Exception:
                 raise first from None
         # The same fallback, for measured data: a transform that wants a
