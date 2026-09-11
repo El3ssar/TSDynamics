@@ -1,12 +1,12 @@
 ---
-description: Catalogue of the numerical solvers behind integrate() — explicit Runge–Kutta, implicit/stiff kernels and stochastic schemes — with how to pick one, the aliases, and the auto-stiffness helpers.
+description: Catalogue of the numerical solvers behind run() — explicit Runge–Kutta, implicit/stiff kernels and stochastic schemes — with how to pick one, the aliases, and the auto-stiffness helpers.
 ---
 
 <span class="ts-kicker">Theory</span>
 
 # Solvers & methods
 
-Most of the time you never touch this layer. You call `integrate()` and the
+Most of the time you never touch this layer. You call `run()` and the
 default solver does the right thing:
 
 ```python
@@ -162,7 +162,7 @@ the *same* final state, but the explicit methods run hundreds of times slower.
 Every implicit kernel is adaptive and requires the **analytic Jacobian**
 $\partial f/\partial u$. You never build it: the engine differentiates your
 `_equations` symbolically and lowers a Jacobian-carrying tape automatically
-whenever the resolved method needs one, so `method="bdf"` simply works.
+whenever the resolved kernel needs one, so `solver="bdf"` simply works.
 
 `bdf` is the variable-order (1–5), fixed-leading-coefficient backward
 differentiation formula (Curtiss & Hirschfelder 1952; Shampine & Gordon 1975) —
@@ -200,7 +200,7 @@ Mark a system stiff once and forget it — declare the default method on the cla
 
 ```python
 class MyStiffSystem(ts.ContinuousSystem):
-    _default_method = "bdf"          # every integrate() now uses bdf
+    _default_method = "bdf"          # every run() now uses bdf
     ...
 ```
 

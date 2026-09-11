@@ -129,11 +129,26 @@ DT_SDE = 0.01
 #: Map orbit length.
 STEPS_MAP = 4000
 
-#: Radius of the generic starting ball for a system with no ``default_ic``.
+#: Radius of the generic starting ball for a system with no declared IC.
 #: Deliberately small: most catalogue flows are chaotic attractors whose basin
 #: surrounds (but does not include) the origin, and a draw from ``U[0, 1)^dim``
 #: — what the pre-v6 sweeps used — lands outside the basin of 9 of them.
 IC_BALL_RADIUS = 0.1
+
+#: The ClassVar a catalogue system declares its own starting point on.
+#:
+#: It was ``default_ic`` through v5 and became ``_default_ic`` in v6 (the
+#: metadata ClassVars were underscored so they leave ``system.<TAB>``).  Reading
+#: the old name did not raise — ``None`` is a *legal* value for it — so this gate
+#: silently ignored all 46 declared initial conditions and started those systems
+#: from a random ball instead, which is how six of them came to diverge
+#: (``RabinovichFabrikant``, ``Blasius``, ``LotkaVolterra``, ``MacArthur``,
+#: ``HyperRossler``, ``BelousovZhabotinsky``).  That is CONTRACT §9.4 rule 1 —
+#: "renaming a ClassVar whose absence is legal requires the reader sweep in the
+#: same change" — so the name is a named constant now and
+#: :func:`test_the_declared_ic_classvar_is_the_one_the_catalogue_uses` fails the
+#: moment it stops matching the catalogue.
+IC_CLASSVAR = "_default_ic"
 
 
 def _seed_of(name: str) -> int:
@@ -145,16 +160,15 @@ def reference_ic(entry: Any) -> np.ndarray | None:
     """The deterministic starting point this gate holds ``entry`` to.
 
     Priority: the curated :data:`_sampling.DYNAMICS_ICS` override, then the
-    class ``default_ic``, then a seeded draw from a ball of radius
-    :data:`IC_BALL_RADIUS` about the origin.  Returns ``None`` for a map with
-    neither an override nor a ``default_ic``, which means "let ``iterate`` draw
-    and retry" — its random-IC retry is seeded from the constructor, so that is
-    still deterministic.
+    class's declared IC (:data:`IC_CLASSVAR`), then a seeded draw from a ball of
+    radius :data:`IC_BALL_RADIUS` about the origin.  Returns ``None`` for a map
+    with neither, which means "let ``run`` draw and retry" — its random-IC retry
+    is seeded from the constructor, so that is still deterministic.
     """
     override = DYNAMICS_ICS.get(entry.name)
     if override is not None:
         return np.asarray(override, dtype=float)
-    default = getattr(entry.cls, "default_ic", None)
+    default = getattr(entry.cls, IC_CLASSVAR, None)
     if default is not None:
         return np.asarray(default, dtype=float)
     if entry.family == "map":
@@ -162,6 +176,28 @@ def reference_ic(entry: Any) -> np.ndarray | None:
     dim = entry.cls().dim
     rng = np.random.default_rng(_seed_of(entry.name))
     return IC_BALL_RADIUS * (2.0 * rng.random(dim) - 1.0)
+
+
+def test_the_declared_ic_classvar_is_the_one_the_catalogue_uses() -> None:
+    """:data:`IC_CLASSVAR` must name an attribute the catalogue actually declares.
+
+    The guard for CONTRACT §9.4 rule 1.  ``getattr(cls, <wrong name>, None)``
+    returns ``None``, which is a legal value here, so a rename of the ClassVar
+    degrades this gate **silently** — every declared initial condition is
+    replaced by a random draw and the failures surface hundreds of lines away as
+    "the RHS is diverging".  Measured at the moment of the fix: ``_default_ic``
+    is declared by 46 systems and ``default_ic`` by **0**.
+    """
+    # `is not None`, never truthiness: a declared IC may be a numpy array, whose
+    # truth value is ambiguous, and may legitimately be all zeros.
+    declaring = [
+        e.name for e in registry.all_systems() if getattr(e.cls, IC_CLASSVAR, None) is not None
+    ]
+    assert len(declaring) >= 20, (
+        f"only {len(declaring)} systems answer to {IC_CLASSVAR!r} — it has been renamed. "
+        f"Point IC_CLASSVAR at the new name; a wrong name makes this whole gate start "
+        f"every system from a random draw without raising."
+    )
 
 
 def _compute_reference_orbit(entry: Any) -> np.ndarray:

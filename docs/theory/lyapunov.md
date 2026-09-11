@@ -46,7 +46,7 @@ $$
 
 Comparisons across method variants (Geist, Parlitz & Lauterborn 1990)
 established this as the robust default, and it is what TSDynamics uses for
-maps (`DiscreteMap.lyapunov_spectrum`, `TangentSystem`) with the exact
+maps (the compiled QR tangent-map kernel behind `TangentSystem`) with the exact
 `_jacobian` at every iterate.
 
 ## What each family actually solves
@@ -65,7 +65,7 @@ maps (`DiscreteMap.lyapunov_spectrum`, `TangentSystem`) with the exact
 
 - **DDEs** — the tangent space of a delay system is the
   **infinite-dimensional** history space $C([-\tau_{\max}, 0])$; there is
-  a full spectrum of infinitely many exponents. `DelaySystem.lyapunov_spectrum`
+  a full spectrum of infinitely many exponents. The DDE estimator
   approximates the leading few by building an *extended* delay system — the base
   state plus deviation states whose dynamics are the symbolic variational
   equations — and integrating it on the engine in delay-window chunks, with a

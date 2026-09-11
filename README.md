@@ -23,12 +23,12 @@ sections, attractors & basins — and even the documentation page for your syste
 ```python
 import tsdynamics as ts
 
-lor = ts.systems.Lorenz()
-traj = lor.run(final_time=100.0, dt=0.01)
-traj["x"]                              # named component access
+lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+traj = lor.run(final_time=100.0, dt=0.01)   # `run` is the one verb, every family
+traj["x"]                                   # named component access
 
-exps = lor.lyapunov_spectrum()         # → [0.91, ~0, -14.58]
-ts.analysis.kaplan_yorke_dimension(exps)        # → ~2.06
+print(ts.analysis.lyapunov_spectrum(lor))   # an analysis is a free function
+# LyapunovSpectrum  λ = [0.916, 0.0001893, -14.58]   chaotic · D_KY = 2.063   (Lorenz)
 ```
 
 📖 **Documentation: <https://el3ssar.github.io/TSDynamics/>**
@@ -41,12 +41,11 @@ ts.analysis.kaplan_yorke_dimension(exps)        # → ~2.06
 import tsdynamics as ts
 
 class Rossler(ts.ContinuousSystem):
+    variables = ("x", "y", "z")            # dim inferred = 3
     params = {"a": 0.2, "b": 0.2, "c": 5.7}
-    dim = 3
-    variables = ("x", "y", "z")            # optional niceties
+    _reference = "Rössler (1976), Phys. Lett. A 57, 397-398"
 
-    @staticmethod
-    def _equations(y, t, *, a, b, c):
+    def _equations(y, t, a, b, c):
         x, yv, z = y(0), y(1), y(2)
         return (-yv - z, x + a * yv, b + z * (x - c))
 ```
@@ -54,15 +53,18 @@ class Rossler(ts.ContinuousSystem):
 That's the whole contract. The class auto-registers: every analysis tool works
 on it, the test-suite sweeps it, and the docs build renders its equations
 (LaTeX, straight from the symbolics) and its attractor — zero extra steps. Delay
-systems use `y(0, t - tau)`; maps implement `_step`/`_jacobian` (signature order
-validated at import); SDEs add a `_diffusion` term.
+systems use `y(0, t - tau)`; maps implement `_step` (the Jacobian is derived from
+it); SDEs add a `_diffusion` term. `Rossler().info` prints everything the library
+read back to you.
 
 ## From equations to figures
 
-Every system produces a `Trajectory`, and every `Trajectory` knows how to plot
-itself (`to_plot_spec` auto-detects the right kind from the data). The plot is a
-backend-neutral *spec* you tweak fluently, then `render` or `save` to matplotlib,
-plotly (interactive), or a three.js / JSON export.
+There is **one plotting verb**, and it has one rule: `ts.plot` draws everything
+you hand it on one figure and gives you back a `Plot` — a positional *string*
+says how to draw, everything else says what to draw, and a `Plot` handed back in
+is just another thing to draw. That last clause is why grids, movies and
+escape-to-matplotlib need no extra API. The `Plot` is backend-neutral: tweak it
+fluently, then `save` to matplotlib, plotly (interactive), three.js or JSON.
 
 **Bifurcation diagram of the logistic map**, with the period-doubling onsets
 marked — `orbit_diagram` is one call, and `.bifurcation_points()` finds the
@@ -70,18 +72,15 @@ cascade ($r_1 = 3$, $r_2 = 1 + \sqrt6 \approx 3.449$, …):
 
 ```python
 import numpy as np, tsdynamics as ts
-from tsdynamics.viz import Annotation
 
 orbit = ts.analysis.orbit_diagram(ts.systems.Logistic(), "r", np.linspace(2.8, 4.0, 2000))
 pts = orbit.bifurcation_points()
 
-spec = orbit.to_plot_spec().relabel(x="r", y="x*", title="Logistic bifurcation")
-spec.style(color="k", markersize=0.2, alpha=0.5)         # tiny semi-transparent dots
-spec.annotations = [
-    Annotation("vline", x=pts[i], text=lbl, style={"color": "red", "linestyle": "--"})
-    for i, lbl in [(0, " r₁"), (1, " r₂"), (3, " r₄")]
-]
-spec.save("bifurcation.png", size=(1600, 700))
+p = ts.plot(orbit, color="k", markersize=0.2, alpha=0.5,   # tiny translucent dots
+            xlabel="r", ylabel="x*", title="Logistic bifurcation")
+for i, lbl in [(0, " r₁"), (1, " r₂"), (3, " r₄")]:        # mark the onsets
+    p.vline(pts[i], label=lbl, color="red", linestyle="dashed")
+p.save("bifurcation.png", size=(1600, 700))
 ```
 
 ![Logistic bifurcation diagram](docs/assets/readme/logistic_bifurcation.png)
@@ -94,7 +93,7 @@ import tsdynamics as ts
 
 ks = ts.systems.KuramotoSivashinsky(N=128, L=22.0)
 traj = ks.run(final_time=200.0, dt=0.25)
-traj.to_plot_spec().save("ks.png")        # 128-mode space–time field
+ts.plot(traj).save("ks.png")              # 128-mode space–time field
 ```
 
 
@@ -104,18 +103,31 @@ traj.to_plot_spec().save("ks.png")        # 128-mode space–time field
 </p>
 
 
-**Named plots, one front door.** Beyond the auto-detected default, `ts.plot`
-takes the name of a **plot transform** — 35 of them, from `nullclines` and
+**Named plots, grids, primitives.** Beyond the auto-detected default, a
+positional string names a **plot transform** — 38 of them, from `nullclines` and
 `streamlines` to `ftle`, `cobweb`, `invariant_density` and `trace_determinant`.
 Each declares which *primitives* can draw it, so you pick the drawing without
-touching a backend:
+touching a backend; and because a `Plot` is itself a legal subject, a grid of
+different plots is the same call:
 
 ```python
-import tsdynamics as ts
+import numpy as np, tsdynamics as ts
 
 vdp = ts.systems.VanDerPol(params={"mu": 1.0})
-ts.plot(vdp, "flow_speed", "nullclines", "streamlines")   # overlay, order-free
-ts.plot(ts.systems.Logistic(params={"r": 3.5}), "cobweb")
+traj = vdp.run(final_time=30.0, dt=0.01, ic=[0.5, 0.0])
+
+ts.plot(vdp, traj, "flow_speed", "nullclines")                   # overlay, order-free
+ts.plot(ts.plot(traj), ts.plot(traj, "psd"), layout="row")       # a grid
+ts.viz.draw({"x": np.arange(5.0), "y": np.arange(5.0) ** 2}, "line")   # bare arrays
+
+@ts.viz.transforms.register(source="data", frame="time", kind="diagnostic_curve",
+                            primitives=("line", "points"))
+def speed(traj):
+    """Instantaneous speed |dx/dt| along the orbit."""
+    return {"x": traj.t[1:],
+            "y": np.linalg.norm(np.diff(traj.y, axis=0), axis=1) / np.diff(traj.t)}
+
+ts.plot(traj, "speed")   # ...now in the gallery, the matrix, and every plot door
 ```
 
 A transform owns no new math — it adapts an estimator from `tsdynamics.analysis`.
@@ -123,16 +135,16 @@ The [gallery](https://el3ssar.github.io/TSDynamics/visualization/gallery/) is
 generated from the registry, so every picture there is produced by the snippet
 printed beside it.
 
-The spinning attractor at the top is the same `to_plot_spec`, animated:
+The spinning attractor at the top is the same call, animated:
 
 ```python
 import tsdynamics as ts
 
 traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01)
-spec = traj.to_plot_spec()
-spec.style(axes=False).trail(None).camera(spin=0.4)      # full curve, no axes, rotate
-spec.animate(fps=30, duration=10, loop=True)
-spec.save("lorenz.gif")
+p = ts.plot(traj, animate=True)
+p.style(axes=False).trail(None).camera(spin=0.4)      # full curve, no axes, rotate
+p.animate(fps=30, duration=10, loop=True)
+p.save("lorenz.gif")
 ```
 
 ## A taste of the analysis layer
@@ -143,10 +155,11 @@ import numpy as np, tsdynamics as ts
 # Poincaré section of the Rössler attractor (root-refined crossings)
 section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=("y", 0.0, "up"), crossings=500)
 
-# Fixed points of the Hénon map, with stability
-list(ts.analysis.fixed_points(ts.systems.Henon()))
-# [FixedPoint([-1.131354 -0.339406], unstable, |λ|max=3.2598),
-#  FixedPoint([0.631354 0.189406], unstable, |λ|max=1.9237)]
+# Fixed points of the Hénon map, with stability — the repr IS the report
+print(ts.analysis.fixed_points(ts.systems.Henon()))
+# FixedPointSet  2 points · 0 stable, 2 unstable   (Henon)
+#     [0] x* = [-1.1314 -0.3394]  unstable  |λ|max = 3.26
+#     [1] x* = [0.6314 0.1894]  unstable  |λ|max = 1.924
 
 # Maximal Lyapunov exponent — no Jacobian needed
 ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1, 1, 1]), dt=0.05)        # ≈ 0.90
@@ -161,9 +174,14 @@ Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
 ## Highlights
 
 - **Four families, one interface** — **ODEs**, **DDEs**, **SDEs** and
-  **discrete maps** all implement the same stepping protocol
-  (`reinit` / `step` / `state` / `trajectory`), so every analysis composes over
-  all of them.
+  **discrete maps** all answer the same `run` verb and the same stepping protocol
+  (`reinit` / `step` / `state` / `time`), so every analysis composes over all of
+  them.
+
+- **A small surface** — `tsdynamics.<TAB>` is **17** names, `lorenz.<TAB>` is
+  **19**, and every analysis is a free function whose first argument is its
+  subject (`ts.analysis.lyapunov_spectrum(lorenz)`). A name that moved raises an
+  error printing its new address; that error *is* the migration guide.
 
 - **177 built-in systems** with literature parameters (142 ODEs, 26 maps, 6 DDEs, 3 SDEs).
 
@@ -181,9 +199,9 @@ Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
   `ts.analysis.orbit_diagram(ros.poincare("y", 0.0), "c", values)` draws the bifurcation
   diagram of a *flow* in one line.
 
-- **Backend-neutral plotting** — one `PlotSpec` IR renders to matplotlib, plotly
+- **Backend-neutral plotting** — one `Plot` renders to matplotlib, plotly
   (interactive + animated HTML), three.js, or JSON, with a fluent styling/theming
-  vocabulary.
+  vocabulary and registries for transforms, primitives, themes and renderers.
 
 ## Install
 

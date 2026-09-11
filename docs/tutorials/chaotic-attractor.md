@@ -45,14 +45,14 @@ lor.variables    # ('x', 'y', 'z')  — named components
 
 !!! note "Pin the initial condition"
     The Lorenz class ships with `default_ic = None`, which means a bare
-    `integrate()` picks a *random* start each run. Every snippet below passes an
+    a bare `run()` picks a *random* start. Every snippet below passes an
     explicit `ic=[1.0, 1.0, 1.0]` so the printed numbers reproduce exactly. Make
     this a habit whenever you quote a value: pin the IC (and, for anything
     stochastic, the `seed=`).
 
 ## 2. Integrate — and draw the butterfly
 
-`integrate` marches the flow and hands back a [`Trajectory`](../analysis/index.md):
+`run` marches the flow and hands back a [`Trajectory`](../analysis/index.md):
 a `(T, dim)` array of states with named components and its provenance in
 `traj.meta`.
 
@@ -68,12 +68,12 @@ traj.meta["method"]   # the solver that ran — 'rk45'
 ```
 
 A three-component trajectory draws as a 3-D phase portrait straight from the
-front door — [`to_plot_spec`](../visualization/index.md) auto-dispatches on the
+front door — [`ts.plot`](../visualization/index.md) auto-dispatches on the
 component count. We hide the axes and set a camera angle for a clean "attractor
 floating in space":
 
 ```python
-(traj.to_plot_spec()                    # 3 components → PHASE_PORTRAIT_3D
+(ts.plot(traj)                          # 3 components → a 3-D phase portrait
      .style(axes=False)
      .camera(elev=22, azim=-60)
      .save("lorenz.png"))
@@ -131,8 +131,9 @@ reorthonormalised frame (Benettin et al., 1980):
 spec = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
                             final_time=300.0, dt=0.05, transient=40.0)
 
-np.asarray(spec)     # ≈ [ 0.903,  0.002, -14.572]
-spec.summary()       # "… → chaotic: 1 positive exponent"
+np.asarray(spec)     # ≈ [ 0.908, -0.001, -14.57]
+print(spec)
+# LyapunovSpectrum  λ = [0.9081, -0.001005, -14.57]   chaotic · D_KY = 2.062   (Lorenz)
 ```
 
 Read the signs — they are a fingerprint of the dynamics:
@@ -182,7 +183,7 @@ where the cumulative exponent sum crosses zero (Kaplan & Yorke, 1979):
 
 ```python
 spec.kaplan_yorke        # ≈ 2.062
-ts.analysis.kaplan_yorke_dimension([0.903, 0.002, -14.572])   # ≈ 2.062  — the same, from the bare numbers
+ts.analysis.kaplan_yorke_dimension([0.908, -0.001, -14.57])   # ≈ 2.062  — the same, from the bare numbers
 ```
 
 $D_{KY} \approx 2.06$: the Lorenz attractor is *just* more than a two-dimensional
@@ -215,7 +216,7 @@ the moving head.
 
 <div class="ts-item" markdown>
 ```python
-(traj.to_plot_spec(animate=True)
+(ts.plot(traj, animate=True)
      .animate(n_frames=120, fps=30)
      .trail(("time", 6.0), fade=True)     # 6-time-unit fading tail
      .head(color="#F5A623")               # amber "current state" dot
@@ -232,7 +233,7 @@ animation model.
 
 <figure class="ts-fig" markdown>
 ![Animated reveal of the Lorenz attractor drawing itself in](../assets/figures/viz/animation-lorenz-reveal.gif){ loading=lazy }
-<figcaption><span class="lbl">FIG 2</span> · the same trajectory as a looping reveal comet — a fading trail follows the amber current-state marker as the butterfly draws itself in. One <code>PlotSpec</code>, one <code>.save("…gif")</code>.</figcaption>
+<figcaption><span class="lbl">FIG 2</span> · the same trajectory as a looping reveal comet — a fading trail follows the amber current-state marker as the butterfly draws itself in. One <code>Plot</code>, one <code>.save("…gif")</code>.</figcaption>
 </figure>
 
 </div>

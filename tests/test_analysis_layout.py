@@ -166,12 +166,26 @@ def test_old_flat_module_paths_are_gone(old_path):
 
 @pytest.fixture
 def clean_generic_registries():
-    """Snapshot the generic analyses registry; restore afterwards."""
+    """Snapshot the generic analyses registry; restore afterwards.
+
+    ``discover_plugins`` does **two** things — it registers into
+    ``registry.analyses`` *and* it binds the name onto ``tsdynamics.analysis``
+    and rebuilds ``__all__`` (``_refresh_surface``).  Undoing only the first half
+    leaves the plugin in ``ts.analysis.__all__`` for the rest of the worker's
+    session, which is a live cross-file leak: measured, it fails three
+    ``tests/test_api_contract.py`` listing gates with ``toy_count`` whenever the
+    two files share an xdist worker.  Restore both halves.
+    """
     before = set(registry.analyses.names())
     yield
-    for name in list(registry.analyses.names()):
-        if name not in before:
-            registry.analyses.unregister(name)
+    leaked = [n for n in registry.analyses.names() if n not in before]
+    for name in leaked:
+        registry.analyses.unregister(name)
+    if leaked:
+        for name in leaked:
+            if getattr(analysis, name, None) is not None:
+                delattr(analysis, name)
+        analysis._refresh_surface()
 
 
 def _write_fake_distribution(

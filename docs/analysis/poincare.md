@@ -43,7 +43,7 @@ section = ts.analysis.poincare_section(
 
 section.t          # crossing times, shape (500,)
 section.y          # full-dimensional crossing states, (500, 3)
-section.summary()  # crossings / dim / plane / direction
+print(section)     # a one-line report of what the section is
 ```
 
 The system path marches the flow with a detection step `dt`, brackets each sign
@@ -54,7 +54,8 @@ small enough not to *skip* a crossing; the refinement supplies the precision.
 
 The return value is a `PoincareSection` — a `Trajectory` subclass carrying
 section plot intent (so a renderer draws the in-plane scatter, not a misleading
-flow line) plus a `.summary()` / `.to_dict()` / `.plot` result surface.
+flow line) plus a `.to_dict()` / `.plot` result surface. It is still a
+trajectory, so `section["x"]`, `section[10:50]` and `ts.plot(section)` all work.
 </div>
 
 <figure class="ts-fig" markdown>
@@ -118,40 +119,47 @@ the two halves of the attractor and blurs the return structure.
     time- or step-based `transient` of other analyses. The section transient is
     measured in section hits, so the vocabulary keeps them apart.
 
-## `.poincare()` — the section as a discrete map
+## `sys.poincare(...)` — the section as a discrete map
 
-`poincare_section` is a convenience over the real machinery, the `PoincareMap`
-derived system. Because a `PoincareMap` *is* a discrete `System`, it slots into
-anything written for maps — and `.poincare()` on the flow builds one, in the
-same plane vocabulary:
+`poincare_section` is a convenience over the real machinery: a **derived system**
+that *is* a discrete map, so it slots into anything written for maps. The verb on
+the flow builds one, in the same plane vocabulary:
 
 ```python
 pmap = ts.systems.Rossler().poincare("y", 0.0, direction="up", dt=0.01)
-# ...identical to ts.derived.PoincareMap(Rossler(), ("y", 0.0, "up"), dt=0.01)
 
-u1 = pmap.step()             # advance the flow to the next crossing
+u1 = pmap.step()      # advance the flow to the next crossing
 sec = pmap.run(500)   # collect 500 crossings → PoincareSection
-pmap.crossing_count          # bookkeeping
+pmap.crossing_count   # bookkeeping
 ```
 
+Give `poincare` a **period** instead of a plane and you get a strobe — the state
+sampled once per forcing cycle of a driven oscillator:
+
+```python
+strobe = ts.systems.Duffing().poincare(period=2 * 3.141592653589793 / 1.4)
+```
+
+A plane is an affine surface; a period samples the phase circle. Exactly one of
+them is given; passing both raises and names the choice.
+
 The most important consumer is [`orbit_diagram`](orbit-diagrams.md#flows-bifurcation-diagrams-by-composition):
-a parameter sweep over a `PoincareMap` is a bifurcation diagram of the flow.
-`PoincareMap` also exposes the section to the general events API via
-`pmap.as_events()`, so the same crossings can be collected through
-`system.run(events=...)`. A `ConvergenceError` is raised if no crossing occurs
-within `max_time` — the plane may miss the attractor, or the direction is
-reversed.
+a parameter sweep over a section **is** a bifurcation diagram of the flow. The
+section is also exposed to the general events API via `pmap.as_events()`, so the
+same crossings can be collected through `system.run(events=...)`. A
+`ConvergenceError` is raised if no crossing occurs within `max_time` — the plane
+may miss the attractor, or the direction is reversed.
 
 ## First-return maps
 
 A return map takes the reduction one step further: from the crossing sequence it
 keeps a *single* scalar observable and plots each value against its successor
 $(v_n, v_{n+1})$, exposing the one-dimensional map that governs the flow.
-`return_map(method="poincare")` builds it directly from a section:
+`return_map(kind="poincare")` builds it directly from a section:
 
 ```python
-rm = ts.analysis.return_map(ts.systems.Rossler(), "y", method="poincare",
-                   plane=("x", 0.0, "up"), n=400)
+rm = ts.analysis.return_map(ts.systems.Rossler(), "y", kind="poincare",
+                            plane=("x", 0.0, "up"), n=400)
 ```
 
 The related extremum construction — successive local maxima of a coordinate, the

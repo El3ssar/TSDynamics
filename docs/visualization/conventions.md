@@ -66,7 +66,7 @@ import tsdynamics as ts
 
 lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100, dt=0.01)
 
-lor.to_plot_spec(components=["x", "z"]).recolor("#11857A")   # the house teal
+ts.plot(lor, components=["x", "z"]).recolor("#11857A")   # the house teal
 ```
 
 When two traces are compared, teal-then-indigo is the default pairing (small
@@ -83,7 +83,7 @@ unlabelled colour ramp is an unfinished figure.
 
 ```python
 (
-    lor.to_plot_spec(components=["x", "z"], color_by="time")
+    ts.plot(lor, components=["x", "z"], color_by="time")
        .relabel(x="x", y="z", title="Lorenz (x, z)")   # axes + title
        # a color_by= channel grows a labelled colorbar automatically
 )
@@ -107,12 +107,12 @@ A figure should make exactly one point. The catalogue holds to this strictly:
   with a colorbar, not a tangle of 20 overlaid line plots.
 
 When a figure wants to say two things, make it two figures (or two panels). The
-`ts.viz.plot(..., layout="grid" | "row" | "stack")` composer exists precisely so
+`ts.plot(..., layout="grid" | "row" | "stack")` composer exists precisely so
 that "several related views" is *panels*, not clutter.
 
 <figure markdown>
 ![A two-by-two grid showing the same Lorenz (x, z) portrait under the four built-in themes — default, dark, minimal, publication — the dark panel keeping a near-black background](../assets/figures/viz/themes.svg){ loading=lazy }
-<figcaption>The same Lorenz <code>(x, z)</code> portrait under the four built-in themes, tiled with <code>ts.viz.plot(layout="grid")</code>. A theme is a coherent set of conventions — palette, background, font, grid — applied at once; <strong>publication</strong> (serif, colour-blind-safe palette, larger type) is the one to reach for when the figure is bound for a journal.</figcaption>
+<figcaption>The same Lorenz <code>(x, z)</code> portrait under the four built-in themes, tiled with <code>ts.plot(layout="grid")</code>. A theme is a coherent set of conventions — palette, background, font, grid — applied at once; <strong>publication</strong> (serif, colour-blind-safe palette, larger type) is the one to reach for when the figure is bound for a journal.</figcaption>
 </figure>
 
 ## Colorbars and legends
@@ -131,8 +131,8 @@ that "several related views" is *panels*, not clutter.
 ```python
 # a shared colour range across two field panels, so the colours mean the same thing
 ks = ts.systems.KuramotoSivashinsky(N=64, L=22.0)
-spec_a = ks.to_plot_spec(final_time=100.0, dt=0.5, ic=None)
-spec_b = ks.to_plot_spec(final_time=200.0, dt=0.5, ic=None)
+spec_a = ts.plot(ks, final_time=100.0, dt=0.5, ic=None)
+spec_b = ts.plot(ks, final_time=200.0, dt=0.5, ic=None)
 
 spec_a.colorize(clim=(-12.0, 15.0))
 spec_b.colorize(clim=(-12.0, 15.0))
@@ -151,7 +151,7 @@ spec_b.colorize(clim=(-12.0, 15.0))
   explicit white is what you want.
 
 ```python
-lor.to_plot_spec().style(axes=False).size(dpi=300).save("lorenz.png")
+ts.plot(lor).style(axes=False).size(dpi=300).save("lorenz.png")
 ```
 
 ## A paper-ready recipe
@@ -165,10 +165,10 @@ import tsdynamics as ts
 lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100.0, dt=0.01)
 
 (
-    lor.to_plot_spec(components=["x", "z"], color_by="time")
+    ts.plot(lor, components=["x", "z"], color_by="time")
        .theme("publication")          # serif, Wong colour-blind-safe palette
        .relabel(x="x", y="z", title="Lorenz attractor")
-       .grid(alpha=0.3)
+       .gridlines(alpha=0.3)
        .save("lorenz-figure.pdf")      # vector output for a manuscript
 )
 ```
@@ -177,7 +177,9 @@ For a whole document, set the theme once globally so every figure matches
 without repeating `.theme(...)`:
 
 ```python
-ts.viz.set_theme("publication")   # every subsequent plot uses it
+ts.viz.themes.use("publication")   # every subsequent plot uses it
+# ...and when you are done with that document:
+ts.viz.themes.use("default")
 ```
 
 ## Checklist

@@ -64,18 +64,18 @@ import tsdynamics as ts
 # skip-doctest — the calling pattern; `subject` and the transform name are yours
 ts.plot(subject, "transform_name", **options)                 # draw it
 ts.plot(subject, "transform_name", primitive="contour")       # draw it differently
-ts.plot(subject, "nullclines", "direction_field", "streamlines")   # overlay several
+ts.plot(subject, "flow_speed", "nullclines", "streamlines")   # overlay several
 ```
 
-`ts.plot` always returns a [`PlotSpec`](plotting.md), which renders itself —
-`.plot()`, `.save("figure.pdf")`, `.render("plotly")` — so a gallery snippet is
+`ts.plot` always returns a [`Plot`](plotting.md), which renders itself —
+`.show()`, `.save("figure.pdf")`, `.render("plotly")` — so a gallery snippet is
 also a working first line of your own figure. Two rungs below it are public when
 you want the numbers rather than the picture:
 
 ```python
 # skip-doctest — the escape-hatch pattern; `subject` is yours
 g = ts.viz.geometry(subject, "ftle", grid=201)   # the arrays, and stop there
-spec = ts.viz.draw(g, "contour")                 # hand them back to the library
+ts.viz.draw(g, "contour")                        # hand them back to the library
 ```
 
 And `ts.viz.compatibility()` prints the same matrix this page draws.
@@ -87,37 +87,36 @@ And `ts.viz.compatibility()` prints the same matrix this page draws.
 A new transform is **one registration and nothing else** — no renderer edit, no
 `PlotKind` edit, no `compose` edit, no test edit:
 
-```python
-# skip-doctest — a template: `my_small_fixture` is yours, and registering a
-# placeholder transform would put it in every listing for the rest of the session
-from tsdynamics.viz import plot_transform
+**Four declarations and a function that returns a mapping.** Nothing else in
+the library is edited:
 
-@plot_transform(
-    name="my_diagnostic",
-    source="data",                       # or "model"
-    default_primitive="line",
-    primitives=("line", "points"),       # the declared compatibility row
-    frame="scaling",
-    ndim=1,
-    labels=("r", "C(r)"),                # the axis labels of the geometry below
-    doc="One line, shown in the matrix above.",
-    example=lambda primitive: (my_small_fixture(), {}),
-)
+```python
+# skip-doctest — a template: `measure` is yours, and registering a placeholder
+# transform here would put it in every listing for the rest of the session
+import tsdynamics as ts
+
+@ts.viz.transforms.register(source="data",              # or "model"
+                            frame="scaling",
+                            kind="scaling_curve",
+                            primitives=("line", "points"))
 def my_diagnostic(subject, *, option=1.0):
+    """One line — it becomes the summary in the matrix above."""
     r, c = measure(subject, option)
-    return {"x": r, "y": c}              # a plain channel mapping — no Geometry
+    return {"x": r, "y": c}              # a plain channel mapping — no IR type
 ```
 
-Every name here is public (`ts.viz.plot_transform`, and — when the shape or the
-labels depend on the subject — `Geometry`, `Part`, `FrameSpace`, `make_frame`,
-`Presentation`). Returning a plain mapping of channels is enough whenever the
-transform declares a single `(frame, ndim)` pair: the registry stamps the name,
-the frame and the labels from the decorator, which already declared all three.
+Everything else is **derived**: the name from the function, the summary from the
+docstring, the axis count from the frame's arity, the default primitive from the
+first one listed, the accepted subjects from `source`. The optional keywords are
+`name=`, `default_primitive=`, `aliases=`, `labels=`, `role=`, `analysis=` (the
+estimator this adapts) and `example=` (a small subject the gallery can draw).
 
 The registration carries the compatibility row, so
 `tests/test_viz_compatibility.py` starts rendering every cell of it, and this
 gallery starts showing it — on the small fixture the `example=` factory returns,
-until someone curates a nicer subject in `docs/_tooling/gallery.py`.
+until someone curates a nicer subject in `docs/_tooling/gallery.py`. The
+generator prints any uncurated transform at the end of a run, so a new one is
+visible the moment it lands.
 
 Out of tree, declare the same function against the `tsdynamics.plot_transforms`
 entry-point group and it joins the registry — and this page — on import.

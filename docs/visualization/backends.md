@@ -1,12 +1,12 @@
 ---
-description: The four rendering backends — matplotlib (the universal default), plotly (interactive HTML), three.js (a BufferGeometry web payload with a live orbitable viewer) and json (lossless serialization) — plus backend selection, capability negotiation, the VisualizationDegraded warning, and saving / rendering / exporting a PlotSpec by file extension.
+description: The four rendering backends — matplotlib (the universal default), plotly (interactive HTML), three.js (a BufferGeometry web payload with a live orbitable viewer) and json (lossless serialization) — plus backend selection, capability negotiation, the VisualizationDegraded warning, and saving / rendering / exporting a Plot by file extension.
 ---
 
 <span class="ts-kicker">Visualization</span>
 
 # Backends & export
 
-A [`PlotSpec`](../reference/top-level.md) is a *semantic* description of a figure
+A [`Plot`](../reference/top-level.md) is a *semantic* description of a figure
 — a kind, some layers of array data, typed axes, a theme. It holds no drawing
 state and imports no plotting library. **Rendering** is the separate step that
 turns that description into a concrete artifact: a matplotlib figure, an
@@ -20,21 +20,24 @@ or let the file extension pick it for you.
 ```python
 import tsdynamics as ts
 
-spec = ts.systems.Lorenz().to_plot_spec(
-    components=["x", "y", "z"], final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0]
-)
+spec = ts.plot(ts.systems.Lorenz(),
+               components=["x", "y", "z"], final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 
+spec.render("threejs")         # → a three.js BufferGeometry-ready dict
+spec.to_json()                 # → the lossless, re-loadable payload as text
+```
+
+```python
+# skip-doctest — .save() writes files and needs the optional viz backends
 spec.show()                    # draw with the default backend (matplotlib)
 spec.save("lorenz.png")        # → matplotlib (raster / vector image)
 spec.save("lorenz.html")       # → plotly (a self-contained interactive page)
 spec.save("lorenz.json")       # → json (a lossless, re-loadable payload)
-spec.render("threejs")         # → a three.js BufferGeometry-ready dict
 ```
 
-Everything on a spec is inherited by results, trajectories and systems: a
-`Trajectory` or an analysis result carries the same `.plot()` / `.save()` /
-`.render()` methods (they build a spec, then render it), and so does the
-`ts.viz.plot(...)` composition result.
+Everything on a `Plot` is reachable from whatever produced it: a `Trajectory`,
+an analysis result and a system all carry `.plot(...)`, which builds one and
+hands it back.
 
 ---
 
@@ -96,8 +99,13 @@ frontend, or replayed **without re-running the analysis** and without a plotting
 library installed.
 
 ```python
-spec.render("json", path="lorenz-spec.json")   # write the payload to a file
-text = spec.render("json", raw=True)            # …or get the JSON string back
+text = spec.to_json()                    # the JSON string
+same = ts.viz.load(text)                 # …read it back — a path works too
+```
+
+```python
+# skip-doctest — writes a file
+spec.save("lorenz-spec.json")            # or write it, and ts.viz.load(path)
 ```
 
 ```pycon
@@ -130,7 +138,7 @@ opens from `file://`. It is the natural format for putting a 3-D attractor
 
 ## How a backend is chosen
 
-`PlotSpec.render(backend=...)` delegates to the dispatcher, which:
+`Plot.render(backend=...)` delegates to the dispatcher, which:
 
 1. **Registers** the installed in-tree backends lazily, on the first render —
    never at import, so `import tsdynamics` stays plot-free. A backend whose
@@ -175,9 +183,9 @@ with a `VisualizationDegraded` warning. There are two triggers.
 routed to a capable one (matplotlib) instead:
 
 ```pycon
->>> px = ts.systems.Lorenz().to_plot_spec(components="x", final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
->>> py = ts.systems.Lorenz().to_plot_spec(components="y", final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
->>> comp = ts.viz.plot(px, py, layout="stack", animate=True)   # an animated composite
+>>> px = ts.plot(ts.systems.Lorenz(), components="x", final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
+>>> py = ts.plot(ts.systems.Lorenz(), components="y", final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
+>>> comp = ts.plot(px, py, layout="stack", animate=True)   # an animated composite
 >>> comp.render("plotly")
 VisualizationDegraded: backend 'plotly' cannot draw a 'composite' spec;
 falling back to 'matplotlib'.
@@ -189,7 +197,7 @@ carries. The dispatcher collects **all** of them and emits **one** consolidated
 warning before drawing:
 
 ```pycon
->>> spec = ts.systems.Lorenz().to_plot_spec(components=["x", "y", "z"], final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
+>>> spec = ts.plot(ts.systems.Lorenz(), components=["x", "y", "z"], final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
 >>> spec.style(linestyle="dashed")     # three.js has no line dashing
 >>> spec.render("threejs")
 VisualizationDegraded: threejs: ignoring linestyle
@@ -212,7 +220,7 @@ surfaces everywhere else.
 
 ## Saving by extension
 
-`PlotSpec.save(path)` picks the backend from the file extension when you do not
+`Plot.save(path)` picks the backend from the file extension when you do not
 name one — the fast path for "just write me the figure".
 
 | Extension | Backend | Produces |
@@ -227,7 +235,7 @@ name one — the fast path for "just write me the figure".
 
 !!! warning "`.json` means two different documents"
 
-    `save("x.json")` writes the **PlotSpec IR envelope** — reloadable with
+    `save("x.json")` writes the **Plot IR envelope** — reloadable with
     `tsdynamics.viz.export.from_json`. `save("x.json", backend="threejs")` writes
     the **BufferGeometry payload** — geometry for a browser, *not* a spec. They
     share an extension and are not interchangeable; `backend=` is the
@@ -266,7 +274,7 @@ No web server, no sibling `.json`, no `fetch`.
 ```python
 import tsdynamics as ts
 
-spec = ts.systems.Lorenz().to_plot_spec(
+spec = ts.plot(ts.systems.Lorenz(), 
     final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0], animate=True,
 )
 spec.save("lorenz.html", backend="threejs")     # 32k vertices, ~1.3 MB
@@ -309,7 +317,7 @@ copy-paste.
 ```python
 import tsdynamics as ts
 
-ts.systems.Lorenz().to_plot_spec(
+ts.plot(ts.systems.Lorenz(), 
     final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0],
 ).save("lorenz.html", backend="threejs")
 ```
@@ -395,7 +403,7 @@ import tsdynamics as ts
 traj = ts.systems.Rossler().run(final_time=400.0, dt=0.002, ic=[1.0, 1.0, 1.0])
 print(traj.y.shape)                       # (200001, 3)
 
-spec = traj.to_plot_spec(color_by="time")
+spec = ts.plot(traj, color_by="time")
 spec.relabel(title="Rössler attractor")
 
 # Use the exporter's own `background=` rather than `.theme("dark")`: threejs
@@ -429,11 +437,15 @@ pure Python over the spec IR):
 
 ```python
 # a modestly sampled spec, so nothing is thinned by the vertex cap
-spec = ts.systems.Lorenz().to_plot_spec(final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0])
+spec = ts.plot(ts.systems.Lorenz(), final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0])
 
 payload = spec.render("threejs")             # a RenderResult carrying the dict
-spec.render("threejs", path="lorenz.json")   # …or write the payload to a file
 page = spec.render("threejs", html=True)     # …or get the viewer page as a str
+```
+
+```python
+# skip-doctest — writes a file
+spec.render("threejs", path="lorenz.json")   # …or write the payload to a file
 ```
 
 ```pycon
@@ -533,7 +545,7 @@ the resampling:
 # payload figures quoted around this block come from the benchmark below, so the
 # snippet documents that measured configuration rather than re-deriving it.
 # HyperQi is 4-D, so pick the three components you want to see
-spec = traj.to_plot_spec(components=[0, 1, 2])
+spec = ts.plot(traj, components=[0, 1, 2])
 spec.save("hyperqi.html", backend="threejs", max_points=200_000)
 ```
 
@@ -644,7 +656,7 @@ A few honest exclusions the payload makes deliberately:
   fields (foreground, font, grid) have no analogue in a bare three.js scene.
 
 `metadata.animation` is present **only** for an animated spec (e.g.
-`spec.to_plot_spec(..., animate=True)`); a static export omits it and the geometry
+`ts.plot(spec, ..., animate=True)`); a static export omits it and the geometry
 buffers are byte-for-byte the non-animated payload. When it is present, the loader
 plays a **reveal comet** — a faint full-curve backdrop with a bright windowed
 trail and a head marker sweeping the line — by advancing
@@ -678,7 +690,7 @@ draws every panel in one orbitable scene.
     viewed through one camera. For 2-D panels that reads much like a subplot grid.
     For several 3-D panels it reads as several boxes at different depths, which is
     honest but rarely what you want — save each panel separately (a panel *is* a
-    `PlotSpec`), or use `backend="plotly"` for a genuine interactive multi-panel
+    `Plot`), or use `backend="plotly"` for a genuine interactive multi-panel
     page.
 
     Earlier versions **refused** a composite `.html` outright, because the loader
@@ -810,7 +822,7 @@ bottom-left.
 
 ## See also
 
-- [Plotting — the front door](plotting.md) — the `to_plot_spec` front door every
+- [Transforms & primitives](plotting.md) — the vocabulary every
   render starts from.
 - [Styling & themes](styling.md) — the per-key `honored_by` contract these
   degradation warnings enforce.

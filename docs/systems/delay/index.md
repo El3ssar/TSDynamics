@@ -49,7 +49,7 @@ therefore *integrate first, then measure*:
 
 ```python
 traj = mg.run(final_time=500.0, dt=0.5, history=hist)   # reach the attractor
-exps = mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1])   # start from its end state
+exps = ts.analysis.lyapunov_spectrum(mg, k=1, dt=0.5, ic=traj.y[-1])  # from its end state
 ```
 
 `lyapunov_spectrum` uses a constant past built from `ic`; handing it the

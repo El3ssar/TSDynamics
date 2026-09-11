@@ -18,7 +18,9 @@ import numpy as np
 import pytest
 from _sampling import DDE_HISTORIES
 
+import tsdynamics as ts
 from tsdynamics import registry
+from tsdynamics.analysis.results import LyapunovSpectrum
 
 _ENTRIES = [e for e in registry.all_systems() if e.known_lyapunov]
 _IDS = [e.name for e in _ENTRIES]
@@ -68,7 +70,7 @@ def _compute_spectrum(entry) -> tuple[np.ndarray, dict]:
     elif meta.get("ic") is not None:
         kwargs.setdefault("ic", list(meta["ic"]))
 
-    return sys.lyapunov_spectrum(**kwargs), meta
+    return ts.analysis.lyapunov_spectrum(sys, **kwargs), meta
 
 
 @pytest.mark.slow
@@ -165,8 +167,6 @@ def test_max_lyapunov_on_flows_matches_literature(system_name, ic, expected) -> 
     against 0.906, and the only flow test was too loose to see it. The tolerance
     here is 15 %, tight enough to fail on that bias.
     """
-    import tsdynamics as ts
-
     cls = getattr(ts.systems, system_name)
     value = float(ts.analysis.max_lyapunov(cls(ic=ic), ic=ic, seed=0))
     assert value == pytest.approx(expected, rel=0.15), (
@@ -182,8 +182,6 @@ def test_max_lyapunov_is_reproducible_across_perturbation_seeds() -> None:
     seeds (a 13 % spread); the averaging window is now long enough that the
     seed is irrelevant.
     """
-    import tsdynamics as ts
-
     values = [
         float(
             ts.analysis.max_lyapunov(
@@ -211,8 +209,6 @@ def test_max_lyapunov_does_not_depend_on_the_output_step(dt: float) -> None:
     Lorenz equations under ``scipy.integrate.solve_ivp`` at ``rtol=1e-11``;
     literature 0.906 (Sprott 2003).
     """
-    import tsdynamics as ts
-
     value = float(
         ts.analysis.max_lyapunov(
             ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), ic=[1.0, 1.0, 1.0], seed=0, dt=dt
@@ -224,8 +220,6 @@ def test_max_lyapunov_does_not_depend_on_the_output_step(dt: float) -> None:
 @pytest.mark.slow
 def test_max_lyapunov_on_a_limit_cycle_is_zero() -> None:
     """A periodic orbit has no positive exponent (the estimator must say so)."""
-    import tsdynamics as ts
-
     periodic = ts.systems.Rossler(params={"a": 0.1, "b": 0.1, "c": 6.0})
     value = float(ts.analysis.max_lyapunov(periodic, ic=[1.0, 1.0, 1.0], seed=0))
     assert abs(value) < 0.02, value
@@ -243,8 +237,6 @@ def test_kaplan_yorke_on_literature_spectra() -> None:
     ``2 + 0.906/14.57 = 2.0622`` (Sprott 2003), folded towel
     ``2 + (0.43 + 0.376)/3.3 = 2.244`` (Rössler 1979, quoted as ~2.25).
     """
-    import tsdynamics as ts
-
     assert float(ts.analysis.kaplan_yorke_dimension([0.906, 0.0, -14.57])) == pytest.approx(
         2.0 + 0.906 / 14.57, rel=1e-12
     )
@@ -266,8 +258,6 @@ def test_kaplan_yorke_on_literature_spectra() -> None:
 )
 def test_kaplan_yorke_edge_conventions(spectrum, expected) -> None:
     """Each documented edge of the Kaplan–Yorke definition returns its convention."""
-    import tsdynamics as ts
-
     assert float(ts.analysis.kaplan_yorke_dimension(spectrum)) == pytest.approx(expected)
 
 
@@ -293,10 +283,8 @@ def test_kaplan_yorke_refuses_meaningless_input(spectrum) -> None:
 
 @pytest.mark.slow
 def test_lorenz_spectrum_is_dissipative_and_sorted() -> None:
-    import tsdynamics as ts
-
     lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
-    spec = lor.lyapunov_spectrum(dt=0.1, transient=50.0, final_time=200.0)
+    spec = ts.analysis.lyapunov_spectrum(lor, dt=0.1, transient=50.0, final_time=200.0)
     assert spec[0] >= spec[1] >= spec[2]
     # divergence of Lorenz = -(sigma + 1 + beta) ≈ -13.67
     assert -20.0 < spec.sum() < -5.0
@@ -304,10 +292,8 @@ def test_lorenz_spectrum_is_dissipative_and_sorted() -> None:
 
 @pytest.mark.slow
 def test_lorenz_partial_spectrum_n_exp_2() -> None:
-    import tsdynamics as ts
-
     lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
-    exps = lor.lyapunov_spectrum(dt=0.1, transient=30.0, final_time=100.0, k=2)
+    exps = ts.analysis.lyapunov_spectrum(lor, dt=0.1, transient=30.0, final_time=100.0, k=2)
     assert exps.shape == (2,)
     assert exps[0] > 0.0
 
@@ -315,17 +301,13 @@ def test_lorenz_partial_spectrum_n_exp_2() -> None:
 @pytest.mark.slow
 def test_logistic_stable_regime_negative_exponent() -> None:
     """Logistic at r=2 sits on a stable fixed point: LE < 0."""
-    import tsdynamics as ts
-
     m = ts.systems.Logistic(params={"r": 2.0})
-    exps = m.lyapunov_spectrum(n=5_000)
+    exps = ts.analysis.lyapunov_spectrum(m, n=5_000)
     assert exps[0] < 0.0
 
 
 @pytest.mark.slow
 def test_mackeyglass_two_exponents_finite() -> None:
-    import tsdynamics as ts
-
     mg = ts.systems.MackeyGlass()
     traj = mg.run(
         final_time=200.0,
@@ -334,7 +316,8 @@ def test_mackeyglass_two_exponents_finite() -> None:
         rtol=1e-4,
         atol=1e-4,
     )
-    exps = mg.lyapunov_spectrum(
+    exps = ts.analysis.lyapunov_spectrum(
+        mg,
         k=2,
         dt=0.5,
         transient=50.0,
@@ -345,3 +328,106 @@ def test_mackeyglass_two_exponents_finite() -> None:
     )
     assert exps.shape == (2,)
     assert np.all(np.isfinite(exps))
+
+
+# ---------------------------------------------------------------------------
+# The VERDICT the repr prints, scored against the same literature (CONTRACT §4.4)
+# ---------------------------------------------------------------------------
+#
+# §4.4 replaced an unimplementable rule (classify with `lambda_i > max(atol,
+# k*sigma_i)`, where sigma is a finite-time scatter the estimator does not
+# compute) with a repr-only one calibrated on the estimator's OWN realised zero.
+# Its claim is a score: "current rule 1 wrong, new rule 0 wrong" over the
+# catalogue's literature spectra.  A claim of that shape belongs beside the
+# literature it was scored on, so it lives here rather than in the repr tests —
+# and it is cheap, because it reads the DECLARED spectrum instead of estimating
+# one.
+
+
+def _literature_verdict(spectrum, declared_n_positive) -> str:
+    """What the literature says this spectrum is, in the repr's own vocabulary."""
+    n_pos = declared_n_positive
+    if n_pos is None:
+        n_pos = count_positive_exponents(spectrum)
+    return {0: "regular", 1: "chaotic"}.get(n_pos, "hyperchaotic")
+
+
+_LITERATURE_SPECTRA = [
+    (e.name, e.family, e.known_lyapunov["spectrum"], e.known_lyapunov.get("n_positive"))
+    for e in _ENTRIES
+    if e.known_lyapunov.get("spectrum") is not None
+]
+
+
+def test_the_literature_spectra_are_actually_swept() -> None:
+    """Guard against a vacuous sweep: the catalogue must still declare spectra."""
+    assert len(_LITERATURE_SPECTRA) >= 10, (
+        f"only {len(_LITERATURE_SPECTRA)} systems declare a literature spectrum — "
+        "the verdict sweep below would certify almost nothing"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "family", "spectrum", "n_positive"),
+    _LITERATURE_SPECTRA,
+    ids=[row[0] for row in _LITERATURE_SPECTRA],
+)
+def test_the_repr_names_the_dynamics_the_literature_names(
+    name: str, family: str, spectrum, n_positive
+) -> None:
+    """§4.4 — a literature spectrum prints the literature's own classification.
+
+    ``LotkaVolterra`` is the case that motivated the rule: a shipped
+    *conservative* system with spectrum ``[0, 0]``, which the pre-v6 rule called
+    **chaotic**.  ``FoldedTowel`` is the other end — two positive exponents must
+    read ``hyperchaotic``, not ``chaotic``.
+    """
+    result = LyapunovSpectrum(
+        np.asarray(spectrum, dtype=float),
+        meta={"system": name, "analysis": "lyapunov_spectrum"},
+    )
+    headline = repr(result).splitlines()[0]
+    expected = _literature_verdict(spectrum, n_positive)
+    assert expected in headline, f"{name}: expected {expected!r} in {headline!r}"
+    for wrong in {"regular", "chaotic", "hyperchaotic"} - {expected}:
+        if wrong == "chaotic" and expected == "hyperchaotic":
+            continue  # "hyperchaotic" contains "chaotic" as a substring
+        assert wrong not in headline, f"{name}: {headline!r} also claims {wrong!r}"
+
+
+@pytest.mark.parametrize(
+    ("name", "family", "spectrum", "n_positive"),
+    _LITERATURE_SPECTRA,
+    ids=[row[0] for row in _LITERATURE_SPECTRA],
+)
+def test_kaplan_yorke_is_printed_only_when_an_exponent_is_positive(
+    name: str, family: str, spectrum, n_positive
+) -> None:
+    """§4.4 / M26 — on a regular spectrum ``D_KY`` is the integer state dimension.
+
+    Printing it there reads as a measurement of a fractal dimension that was
+    never measured, so it is suppressed.
+    """
+    result = LyapunovSpectrum(
+        np.asarray(spectrum, dtype=float),
+        meta={"system": name, "analysis": "lyapunov_spectrum"},
+    )
+    headline = repr(result).splitlines()[0]
+    positive = count_positive_exponents(spectrum) > 0
+    assert ("D_KY" in headline) is positive, headline
+
+
+def test_a_spectrum_whose_verdict_moves_across_the_band_refuses_to_name_one() -> None:
+    """§4.4 — the honest answer to a too-short horizon is "indeterminate".
+
+    The rule prints a word only when the positive count is stable across a 10x
+    tolerance band.  This is the hedge that turned ``HenonHeiles`` from a
+    confidently wrong verdict into a correct refusal.
+    """
+    hedged = LyapunovSpectrum(
+        np.asarray([0.11, 0.021, -0.0003, -25.2], dtype=float),
+        meta={"system": "Lorenz", "analysis": "lyapunov_spectrum"},
+    )
+    headline = repr(hedged).splitlines()[0]
+    assert "indeterminate" in headline, headline
+    assert "final_time" in repr(hedged), "the hedge must say what to do about it"

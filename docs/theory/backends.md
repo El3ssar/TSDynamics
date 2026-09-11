@@ -78,7 +78,7 @@ ts.systems.Lorenz().run(final_time=100, dt=0.01, backend="reference")  # pure-Py
 
 ## Choosing a solver
 
-`integrate(method=...)` selects the solver kernel; the name is resolved by the
+`run(solver=...)` selects the solver kernel; the name is resolved by the
 solver registry (`tsdynamics.solvers`), which canonicalises spellings and
 aliases:
 

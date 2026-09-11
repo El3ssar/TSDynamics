@@ -44,7 +44,42 @@ from ...spec import Axis, PlotKind, PlotSpec
 if TYPE_CHECKING:
     import plotly.graph_objects as go
 
-__all__ = ["animated_html", "build_animated_figure"]
+__all__ = ["animated_html", "build_animated_figure", "playback_seconds"]
+
+
+def playback_seconds(anim: Any, n_samples: int) -> float:
+    """How long the browser should take to traverse the whole series, in seconds.
+
+    The real-time HTML comet has no frame clock: a ``requestAnimationFrame`` loop
+    advances by a fixed ``stride`` chosen so the series takes ``duration`` seconds
+    at the browser's ~60 Hz.  Before this, ``duration`` fell back to a hard-coded
+    ``12.0`` whenever the caller had not set it — so ``.animate(fps=60)`` reached
+    matplotlib (which uses ``fps`` directly) and was **dropped in silence** by the
+    HTML export, while ``caps`` declared no gap for ``fps`` on either backend.
+
+    :class:`~tsdynamics.viz.spec.Animation` already relates the two
+    (``frame_count = round(duration * fps)``), so inverting it is the definition:
+    play ``frame_count(n_samples)`` frames at ``fps`` frames per second.  At the
+    defaults (``fps=30``, ``DEFAULT_FRAMES=360``) that is **12.0 s exactly** — the
+    old constant — so no existing export changes speed.
+
+    An explicit ``duration`` always wins: it is the same quantity stated directly.
+
+    .. note::
+       ``tsdynamics.viz.render.threejs._lower._playback_seconds`` is the same
+       arithmetic for the three.js reveal, whose loader picks its speed the same
+       way.  The two are deliberate twins in two backend packages rather than one
+       import across backends; ``tests/test_viz_render_threejs_animation.py``
+       asserts they agree.  The natural single home is a method on ``Animation``
+       (``viz/spec.py``) — filed as a mutation.
+    """
+    if anim.duration is not None:
+        return float(anim.duration)
+    fps = float(anim.fps)
+    if fps <= 0:  # pragma: no cover - Animation validates fps > 0
+        return float(anim.DEFAULT_FRAMES) / 30.0
+    return float(anim.frame_count(int(n_samples))) / fps
+
 
 #: The real-time driver: a ``requestAnimationFrame`` loop that advances a comet by
 #: **streaming its trace buffers in place with ``Plotly.extendTraces``** (append the
@@ -679,7 +714,7 @@ def animated_html(
     _realtime_layout(fig, spec, three_d=three_d)
 
     # Speed: traverse the whole series in ~duration seconds at the browser's 60 fps.
-    duration = float(anim.duration) if anim.duration else 12.0
+    duration = playback_seconds(anim, n)
     stride = max(1, round(n / (duration * 60.0)))
     js = (
         _REALTIME_JS.replace("__LAYERS__", json.dumps(layers_meta))

@@ -46,12 +46,8 @@ section = ts.analysis.poincare_section(
     seed=0,
 )
 
-section.summary()
-# PoincareSection  (Rossler)
-#   crossings = 500
-#   dim = 3
-#   plane = (1, 0.0)
-#   direction = up (+)
+print(section)
+# PoincareSection(crossings=500, dim=3)
 
 section.y[:3, [0, 2]]               # (x, z) at the first three crossings
 # array([[1.2932, 0.0449],
@@ -64,7 +60,8 @@ and gives the direction as a word; `("y", 0.0)` alone, an index `(1, 0.0)`, or a
 general `(normal, offset)` all work too (see the
 [Poincaré reference](../analysis/poincare.md)). The return value is a
 `PoincareSection` — a `Trajectory` subclass carrying the full-dimensional
-crossing states plus a `.summary()` / `.to_dict()` / `.plot` surface.
+crossing states plus a `.to_dict()` / `.plot` surface. Because it is a
+trajectory, `section["x"]` and `ts.plot(section)` work on it unchanged.
 
 Under the hood this marches the whole attractor and refines every crossing with
 cubic Hermite interpolation in a **single Rust engine call** — roughly two orders
@@ -109,12 +106,12 @@ od.bifurcation_points()[:3]     # where the cascade branches
 Sectioning gives full crossing *states*; the **return map** goes one step
 further and plots a single observable at successive crossings against itself —
 $v_{n+1}$ vs $v_n$ — the literal 1-D map. [`return_map`](../analysis/orbit-diagrams.md)
-with `method="poincare"` does this on the same section:
+with `kind="poincare"` does this on the same section:
 
 ```python
-rm = ts.analysis.return_map(ros, "x", method="poincare",
-                   plane=("y", 0.0), direction=+1,
-                   n=500, dt=0.02, seed=0)
+rm = ts.analysis.return_map(ros, "x", kind="poincare",
+                            plane=("y", 0.0), direction=+1,
+                            n=500, dt=0.02, seed=0)
 
 len(rm)                 # 499  — one pair per consecutive crossing
 rm.current[:3]          # array([1.2932, 2.3779, 4.3606])   (x_n)
@@ -123,7 +120,7 @@ rm.successor[:3]        # array([2.3779, 4.3606, 7.8082])   (x_{n+1})
 
 `rm.current` / `rm.successor` are the scatter arrays $(x_n, x_{n+1})$; iterate
 `rm` for the pairs, or call `rm.flat()`. The result renders itself —
-`rm.to_plot_spec()` builds a `return_map` scatter with the fixed-point diagonal
+`ts.plot(rm)` builds a `return_map` scatter with the fixed-point diagonal
 $v_{n+1} = v_n$ drawn in, and `rm.cobweb()` gives the cobweb-plot variant.
 
 Plotted (Fig 2, left) the Rössler return map is a single-valued curve with one
@@ -134,14 +131,14 @@ noninvertible map, exactly as the thin section in Fig 1 promised.
 
 Lorenz's original 1963 construction did not even need a section: he recorded the
 **successive local maxima of $z$** and plotted each against the next. Do the same
-with `method="max"` (the default), on the Lorenz attractor, again settling first:
+with `kind="max"` (the default), on the Lorenz attractor, again settling first:
 
 ```python
 lor = ts.systems.Lorenz()
 ic = lor.run(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).y[-1]
 # ic ≈ [4.369, 1.717, 26.335]  — a point on the attractor
 
-zc = ts.analysis.return_map(lor, "z", method="max", n=2000,
+zc = ts.analysis.return_map(lor, "z", kind="max", n=2000,
                    final_time=400.0, dt=0.01, ic=ic)
 
 len(zc)                 # 532  — that many z-maxima in 400 time units
@@ -173,8 +170,8 @@ accurately.
   two- or higher-dimensional, and the return map is only a projection. That is
   itself diagnostic: it says the attractor's dimension exceeds two by more than a
   little.
-- **Extrema vs Poincaré.** `method="max"`/`"min"` need no plane — they read peaks
-  of one coordinate (Lorenz's construction). `method="poincare"` reads the
+- **Extrema vs Poincaré.** `kind="max"`/`"min"` need no plane — they read peaks
+  of one coordinate (Lorenz's construction). `kind="poincare"` reads the
   observable at section crossings and needs a `plane`. Use extrema when a
   coordinate has clean, well-separated maxima; use a section when it does not, or
   when you want the crossings for other analyses too.
@@ -185,7 +182,7 @@ accurately.
 |---|---|
 | First crossings look transient | Settle first (integrate, take `y[-1]` as `ic`) or pass `skip_crossings=` / `transient=` (crossings, not time). |
 | Return map is a fuzzy band, not a curve | The attractor is not near-1-D on this observable — try a different component, or accept it as evidence of higher dimension. |
-| `dt` too coarse, peaks missed | In `method="poincare"` `dt` only has to not *skip* a crossing; in extremum mode the peak is parabolically sharpened, so a coarse grid is usually fine — but a `dt` larger than the oscillation will still lose maxima. |
+| `dt` too coarse, peaks missed | In `kind="poincare"` `dt` only has to not *skip* a crossing; in extremum mode the peak is parabolically sharpened, so a coarse grid is usually fine — but a `dt` larger than the oscillation will still lose maxima. |
 | Section on a stiff / DDE flow | The engine fast path needs a numeric RHS and an explicit method; stiff defaults, DDEs and `backend="reference"` fall back to the (correct, slower) Python loop automatically. |
 
 ## See also

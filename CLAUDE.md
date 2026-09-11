@@ -1541,7 +1541,10 @@ Nothing else in the library learns a new name when one is added.
   and registered as generated files, so nothing is written into `docs/`; a failed
   cell warns through the `mkdocs` logger, which `--strict` turns into a build
   failure. Run it standalone with
-  `.venv/bin/python docs/_tooling/gallery.py [--only NAME] [--force]`.
+  `.venv/bin/python docs/_tooling/gallery.py [--only NAME] [--force]`; it prints
+  the uncurated transforms at the end, so a newly registered one is visible the
+  moment it lands. As of v6 that list is **empty**: 99 cells over 38 transforms,
+  every one curated.
 
 ### The rest of the seam
 
@@ -1740,7 +1743,27 @@ Nothing else in the library learns a new name when one is added.
   `Animation` (`head_indices`/`tail_samples`/`frame_count`). Per-kind head default:
   on for portraits / spacetime, off for a plain time series; a composite plays
   panels in **lockstep** on one master clock (each panel keeps its own per-kind
-  head). **`frames`** (stream VIZ-SPATIAL-FIELD): a **spatial-field movie** — the
+  head) — **unless its `Layout.mode` is `"frames"`**, in which case the panels are
+  consecutive in *time* rather than in space and are **played one after another**
+  (`mpl/_anim.py::_render_frames_movie`): the parameter-sweep movie, expressed
+  entirely in the composition grammar and needing no new API
+  (`ts.plot(*[ts.plot(sys.with_params(r=r), "cobweb") for r in rs],
+  layout="frames", fps=15).save("cascade.mp4")`). **The renderer half is what ships
+  today; the front-door spelling in that snippet still raises `unknown layout
+  'frames'`** — `Layout.mode`'s literal (`viz/spec.py`) and `compose.py`'s
+  `_COMPOSITE_MODES` are the two remaining halves, and until they land the mode is
+  reachable only by constructing the `Layout` directly. The two were deliberately
+  split: shipping the *spec* half alone would build a composite no backend can
+  draw, which is worse than a clear refusal. Each frame re-draws one panel in
+  full through the same static panel bodies the tiled renderer uses, so a frame is
+  the picture that panel renders on its own; the axis ranges are the **union** over
+  the panels (a movie whose axes rescale every frame shows you the axes moving, not
+  the dynamics) and `share_color=True` unifies the colour range for the same
+  reason; `n_frames`/`duration`/`pingpong` index the **panel list**; the figure is
+  left showing the **last** frame so a still save (`.png`) is the final panel and
+  not a blank page. Scope is **matplotlib only** (mp4/gif) — plotly declines every
+  `COMPOSITE` and falls back to it, three.js exports the last panel and says so.
+  **`frames`** (stream VIZ-SPATIAL-FIELD): a **spatial-field movie** — the
   field of a spatially-extended system (a method-of-lines PDE) *played over time*.
   Each frame is the field's **spatial** state at that instant, and the per-frame
   plot's shape follows the field's spatial dimensionality: a **1-D field** `u(x)`
@@ -1762,7 +1785,16 @@ Nothing else in the library learns a new name when one is added.
   it). No `shape` kwarg: a system with no `_field_shape` (or a 1-D one) is a 1-D
   profile (honest — never guesses a 2-D grid). A multi-block field state declares
   `field_labels` (e.g. Gray–Scott's `("u", "v")`); `components="u"|"v"` picks the
-  block, defaulting to the **last** (the activator). The field movie is
+  block, defaulting to the **last** (the activator). **`mode="frames"` is resolved
+  from the DATA, not from the door** (v6, `mpl/_anim.py::_play_the_field_stack`):
+  a `"frames"` channel exists only because the producer stacked the per-time
+  snapshots so they could be played, so an animated `SPATIAL_FIELD` carrying one
+  plays it whichever door built the spec. Only the `to_plot_spec(kind="field")`
+  recipe forced the mode, so the transform spelling — `ts.plot(traj,
+  "spatial_field", animate=True)`, the one the front door and the v6 docs use —
+  animated in `reveal` mode and swept a ruler across the **final** field: measured
+  on a Swift–Hohenberg lattice whose stack is `(101, 8, 8)`, 8 frames (the lattice
+  *width*, read as a sample axis) instead of the requested 12. The field movie is
   **matplotlib-only** (mp4/gif): plotly *declines* an animated `SPATIAL_FIELD` (a
   static field it draws), threejs draws a 1-D profile / declines a 2-D field.
   Rendering: **matplotlib** →
@@ -1803,6 +1835,19 @@ Nothing else in the library learns a new name when one is added.
   (bottom-left, with a % readout) makes it obviously alive without devtools.
   A returned live figure (notebooks) instead uses a plotly frames + play/slider
   player (`build_animated_figure`). Camera-spin/clock are mpl-only for now.
+  **`fps` reaches both HTML exports** (v6): neither browser loop has a frame clock
+  — each traverses the series in `duration` seconds at the browser's ~60 Hz — and
+  both used a hard-coded `12.0` whenever `duration` was unset, so `.animate(fps=60)`
+  was honored by matplotlib and **dropped in silence** by the web exports, with no
+  `caps` gap declared for it. `Animation` already relates the two
+  (`frame_count = round(duration * fps)`), so both now invert it:
+  `plotly/_anim.py::playback_seconds` and `threejs/_lower.py::_playback_seconds`
+  (deliberate twins in two backend packages, guarded by
+  `test_both_html_exporters_derive_the_same_playback_duration`; the single natural
+  home is a method on `Animation`). At the defaults — `fps=30`,
+  `Animation.DEFAULT_FRAMES=360` — the derived value is **12.0 s exactly**, so no
+  existing export changed speed; measured in a browser, `fps=60` vs `fps=10` now
+  advance the comet 8x apart (plotly `STRIDE` 8 vs 1).
   **threejs** → the data exporter (`viz/render/threejs/_lower.py`) adds a
   `metadata.animation` block (`fps`/`duration`/`trail_length_samples`/`head`/
   `n_samples`) when `spec.animation` is set — the geometry buffers are untouched
@@ -1818,6 +1863,19 @@ Nothing else in the library learns a new name when one is added.
   exporter drops to a static payload and **warns** (`VisualizationDegraded`) rather
   than silently dropping it (and the loader auto-rotates, never freezing the
   camera). A static payload (no `metadata.animation`) renders exactly as before.
+  An **animated COMPOSITE** is the same rule one level up (v6,
+  `_degrade_animated_composite`): the loader reveals one draw range in one scene,
+  so a multi-panel movie has no three.js form — `_lower_composite` never read the
+  top-level `Animation` at all, so `animate=True` used to vanish between the call
+  and the file. It now exports the composite **statically** with ONE
+  `VisualizationDegraded` naming the drop and the `.mp4`/`.gif` way out; a
+  `layout="frames"` composite is the sharper case (its panels are frames, so tiling
+  them in space would be a different picture) and exports the **last** panel.
+  The page (`_page.py`) is self-contained — payload + loader inlined, the only
+  external reference the pinned three.js import map, with a matplotlib poster +
+  `<noscript>` fallback — and was verified loading and animating in a real browser
+  (WebGL canvas drawn, progress readout advancing, no console errors), for a
+  single-panel comet and a composite alike.
   `PlotSpec.save` picks the
   backend by extension (animated: `.html`→plotly, `.mp4`/`.gif`→matplotlib) and
   takes `fps`/`dpi`/`size`. The `Animation` directive round-trips through
@@ -1984,6 +2042,11 @@ uv run pytest --changed --changed-since=HEAD~3 ...                    # custom d
   the `_CATALOGUE_GATES` table — a kernel-body edit cannot reach those by
   per-system scoping, so they are selected explicitly;
 - a touched **analysis area** (`analysis/<area>/`) → that area's test files;
+- a touched **documentation** path → the tests that *execute* it: `docs/**`,
+  `README.md`, `CLAUDE.md` and `mkdocs.yml` → `test_doctests.py`, and
+  `docs/_tooling/**` → that plus `test_docs_figures_golden.py` /
+  `test_viz_gallery.py` / `test_catalogue_dynamics.py` (see the doctest-gate
+  section below — documentation is executable, so it is not ignorable);
 - a touched **test file** → that file; plus cheap registry/layout guard tests.
 
 It is **biased to over-select**: any *foundational* change (the engine / solver /
@@ -2006,6 +2069,25 @@ never the full `uv run pytest`, for routine work.**
 The suite has three layers, all **registry-driven where possible** so new
 systems/analyses join the sweeps with zero test edits:
 
+- **The API contract gate — `tests/test_api_contract.py`.** The single file that
+  pins the v6 public surface, so `planning/api-v6/CONTRACT.md` §2's "every listing
+  is a contract" has teeth. Six invariants, each the inverse of a way the surface
+  eroded: the **listings** (`ts.__all__` = 17; `system.<TAB>` = the 19-name core
+  minus each family's declared absences; `ts.analysis` = 50 + 3; `ts.viz` = 13;
+  `dir(M) == sorted(M.__all__)` over the 14 declared public packages); **one
+  spelling** (no two exported names are the same object; no submodule shadowed by
+  a same-named function — `import tsdynamics.analysis.recurrence.rqa as m` must
+  bind the *module*); **plain Python** (every live `region=` / `plane=` /
+  `components=` door is *called* with tuples and strings, and a guard fails when a
+  new door is not in the call table); **legible results** (all 32 result reprs
+  state a number, a count or a verdict); **taught removals** (every redirect and
+  every demoted name hands back a spelling that RESOLVES, including through
+  `from tsdynamics import X`); and **real signatures** (each family's `run` binds
+  exactly §3.1's why-table; no public callable hides behind `(*args, **kwargs)`;
+  no return annotation names a deleted type). Contract items another slot still
+  owns are tracked either as a `strict` xfail naming that slot or — where the
+  defect is a population that must *shrink* — as a declared table asserted by set
+  equality, so fixing one fails until its row is deleted.
 - **Registry sweeps.** `tests/conftest.py` parametrizes fixtures over the
   registries: `ode_entry`/`dde_entry`/`map_entry`/`sde_entry`/`system_entry`
   (built-in systems) and `analysis_entry` (the D4 `registry.analyses` plugin
@@ -2067,19 +2149,29 @@ to opt out is an explicit, reviewed entry — never silence.
   shrink. The 12 current exemptions are all *docstring* defects in `src/`
   (a missing expected-output line, a comment on a `want` line, a name the
   docstring never binds) — not defects in the code they document.
-  - Gated today: **27 modules + 41 pages** (was 15 + 20).
+  - Gated today: **32 modules + 42 pages** (was 15 + 20; the page count includes
+    `tutorials/seven-tasks.md`, the cold-start tutorial).
   - A fence that is a signature listing, a calling pattern, or a deliberate
     demonstration of what *raises* opts out **in place** with `# skip-doctest`
     — visible to the page's reader, unlike a name in a list elsewhere.
-  - **Known gap — the gate does not fire on docs-only PRs.**
-    `tests/_changed_select.py` lists `docs/`, `*.md`, `README.md` and
+  - **The gate fires on docs-only PRs (v6; the known gap is CLOSED).**
+    `tests/_changed_select.py` used to list `docs/`, `*.md`, `README.md` and
     `mkdocs.yml` under `_IGNORE_PREFIXES`/`_IGNORE_SUFFIXES`/`_IGNORE_FILES`
     ("no bearing on the test suite"), so a diff touching only documentation
-    selects three cheap registry guards and **not** `test_doctests.py` —
-    verified: `classify(['docs/analysis/lyapunov.md'])` does not select it.
-    The full suite on merge/nightly still catches it, so a broken example is
-    delayed rather than shipped. Fixing it means mapping those paths to
-    `test_doctests.py` instead of ignoring them.
+    selected three cheap registry guards and **not** `test_doctests.py`.
+    Documentation is now classified by `_docs_gate_tests`, checked **before**
+    the ignore table (which is keyed on the `.md` suffix and the `docs/`
+    prefix): `docs/**` selects `test_doctests.py`; `README.md` / `CLAUDE.md` /
+    `mkdocs.yml` select it too (their catalogue counts are checked against the
+    live registry and the `exclude_docs` block is parsed); and
+    `docs/_tooling/**` — *code the suite imports* — additionally selects
+    `test_docs_figures_golden.py`, `test_viz_gallery.py` and
+    `test_catalogue_dynamics.py`. `planning/`, `.claude/`, `CHANGELOG.md` and
+    `CONTRIBUTING.md` stay ignored, because no test reads them. Guarded by
+    `tests/test_changed_select.py` (`test_a_docs_page_selects_the_gate_that_executes_it`,
+    `test_the_repo_root_files_the_doctest_gate_reads_are_not_ignored`,
+    `test_docs_tooling_selects_the_tests_that_import_it`,
+    `test_no_file_is_both_docs_gated_and_ignored`).
 - **`mkdocs.yml` publishes every page except a short enumerated list.** The
   blanket tree-drop `theory/` had removed ~1.2k lines of accurate documentation
   from the site — including `theory/fixed-points-interval.md`, which a **shipping
@@ -2089,6 +2181,37 @@ to opt out is an explicit, reviewed entry — never silence.
   `tests/test_doctests.py` fails if that set grows or if any content tree is
   dropped wholesale. `validation.unrecognized_links` is **`warn`** (was `ignore`),
   so a broken internal link fails `mkdocs build --strict`.
+
+- **The 177 generated system pages are gated at build time** (v6,
+  `hooks/docs_autogen.py`). They are the library's largest single body of example
+  code and **nothing executes them**, so a renamed verb ships silently on all 177
+  at once — which is exactly what happened: the "Define it" block was emitting
+  `sys.integrate(...)` / `sys.iterate(steps=…)` / `sys.lyapunov_spectrum()` /
+  `ts.kaplan_yorke_dimension(...)` / `n_exp=`, five spellings v6 removed. Two
+  build-time assertions close it, and `--strict` turns either into a failure
+  naming the system:
+  - `_assert_define_block_uses_the_live_api` refuses a block containing any
+    entry of `_DEAD_API_SPELLINGS`. The block now reads
+    `system.run(...)` + `ts.plot(traj)` + `ts.analysis.<name>(system)`.
+  - `_assert_doi_is_rendered` refuses a page whose record carries a `doi` but
+    whose reference card has no `doi.org` link. **155 of the 177 built-ins carry
+    a DOI**, and until `SystemEntry` gained the field every one of those links
+    was dropped with no symptom. Measured after the fix: `155` pages under
+    `site/systems/` contain a `doi.org` link, `0` contain a removed verb.
+
+- **The cold-start tutorial is `docs/tutorials/seven-tasks.md`** — simulate ·
+  Lyapunov + is-it-chaotic · bifurcation diagram of a map *and* of a flow ·
+  fixed points + stability · basins · animated phase portrait over a vector
+  field · define your own ODE. Every fence is executed by the doctest gate, so
+  it cannot rot. It is the page `docs/start/index.md` and
+  `docs/tutorials/index.md` both point at first.
+
+- **The gallery is fully curated**: 99 cells over 38 transforms, every one with
+  a hand-written `SHOWCASE` subject and caption (the fallback path — an
+  uncurated transform drawn on its `example` factory — is exercised by nothing
+  in-tree, deliberately). Regenerate with
+  `.venv/bin/python docs/_tooling/gallery.py [--only NAME] [--force]`; it prints
+  any uncurated transform so a newly registered one is visible immediately.
 
 ---
 

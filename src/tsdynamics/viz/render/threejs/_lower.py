@@ -166,6 +166,17 @@ Each ``panel`` is a single-panel payload (the same ``geometries`` / per-panel
         "metadata": { ... }                 # the panel's own labels/bounds/camera
     }
 
+An **animated** composite has no three.js representation: the reference loader
+reveals **one** draw range in **one** scene, so it can play a single panel and
+nothing more.  Rather than write a payload whose animation directive silently
+vanishes, :func:`lower_spec` exports the composite **statically** and emits one
+:class:`~tsdynamics.viz.render.caps.VisualizationDegraded` naming what was
+dropped and the format that does write it (``.mp4`` / ``.gif``, matplotlib).
+A ``layout`` mode of ``"frames"`` is the sharper case — those panels are
+consecutive in *time*, so tiling them in space would be a wrong picture, not a
+degraded one; the exporter keeps the **last** panel (the still that a
+non-animating backend shows for any movie) and says so.
+
 The panel's geometry ``positions`` stay in the panel's **own** local coordinates
 (unshifted), so a frontend can render each panel into its own viewport
 untouched.  The separate ``offset`` is a convenience translation — each panel's
@@ -178,6 +189,7 @@ redundant placement hints, and the geometry itself is never mutated.
 
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -332,12 +344,73 @@ def lower_spec(
     """
     report = _CapReport(max_points=max_points)
     if spec.is_composite:
+        spec = _degrade_animated_composite(spec)
+    if spec.is_composite:
         payload = _lower_composite(spec, report, decimals)
     else:
         payload = _lower_single(spec, report, decimals)
     payload["metadata"]["resample"] = report.to_dict()
     _warn_if_capped(report)
     return payload
+
+
+def _degrade_animated_composite(spec: PlotSpec) -> PlotSpec:
+    """Refuse to animate a composite — out loud — and return what *is* exportable.
+
+    The reference loader reveals **one** draw range in **one** scene, so a
+    multi-panel movie has no three.js representation at all.  Two shapes, one rule
+    ("animates, **or warns** — never silently drops"):
+
+    - ``layout`` mode ``"frames"`` — the panels are consecutive in *time*, so
+      tiling them in space is a wrong picture, not a degraded one.  The **last**
+      panel is returned (the still every non-animating backend shows for a movie),
+      stripped of its own animation.
+    - any other mode — the panels are a genuine spatial layout, so the tiled
+      export is kept and only the top-level animation directive is dropped.
+
+    A *static* composite is returned untouched, so nothing about the existing
+    export changes.
+
+    Parameters
+    ----------
+    spec : PlotSpec
+        A composite spec (the caller has already checked ``is_composite``).
+
+    Returns
+    -------
+    PlotSpec
+        ``spec`` itself when it is static; otherwise the de-animated composite, or
+        — in ``"frames"`` mode — its last panel.
+
+    Warns
+    -----
+    VisualizationDegraded
+        Exactly once, naming the dropped animation and the way to get the movie.
+    """
+    frames_mode = getattr(getattr(spec, "layout", None), "mode", None) == "frames"
+    if spec.animation is None and not frames_mode:
+        return spec
+
+    panels = list(spec.panels)
+    if frames_mode:
+        detail = (
+            f"its {len(panels)} panels are frames of a movie, not a spatial layout, "
+            "so tiling them would be a different picture; exporting the last panel"
+        )
+    else:
+        detail = (
+            f"the reveal comet plays one draw range in one scene, and this is a "
+            f"{len(panels)}-panel composite; exporting it statically"
+        )
+    warnings.warn(
+        f"threejs export: the animation on this composite was dropped — {detail}. "
+        "For the movie itself, save to .mp4 / .gif (matplotlib writes them).",
+        VisualizationDegraded,
+        stacklevel=3,
+    )
+    if frames_mode and panels:
+        return dataclasses.replace(panels[-1], animation=None)
+    return dataclasses.replace(spec, animation=None)
 
 
 def _warn_if_capped(report: _CapReport) -> None:
@@ -931,7 +1004,7 @@ def _animation_metadata(spec: PlotSpec, geometries: list[dict[str, Any]]) -> dic
         trail = max(2, int(round(trail * n_samples / n_original)))
     return {
         "fps": float(anim.fps),
-        "duration": None if anim.duration is None else float(anim.duration),
+        "duration": _playback_seconds(anim, n_samples),
         "n_frames": None if anim.n_frames is None else int(anim.n_frames),
         "loop": bool(anim.loop),
         "pingpong": bool(anim.pingpong),
@@ -941,6 +1014,44 @@ def _animation_metadata(spec: PlotSpec, geometries: list[dict[str, Any]]) -> dic
         "head_color": _head_color(anim.head_color),
         "n_samples": int(n_samples),
     }
+
+
+def _playback_seconds(anim: Any, n_samples: int) -> float:
+    """How long the reveal should take, in seconds — so ``fps=`` actually reaches the page.
+
+    The reference loader has no frame clock: it traverses the whole series in
+    ``metadata.animation.duration`` seconds (falling back to a hard-coded 12 s when
+    that is ``null``) and reads ``fps`` **nowhere** — grep the loader for ``anim.``
+    and the seven fields it consults do not include it.  So ``.animate(fps=60)``
+    reached matplotlib and plotly and was dropped, in silence, by three.js, while
+    ``caps`` declared no gap for it.  A declared-honored knob that does nothing is
+    the defect the honoring contract exists to prevent.
+
+    ``Animation`` already relates the two — ``frame_count = round(duration * fps)``
+    — so inverting it is the *definition*, not a heuristic: play
+    ``frame_count(n_samples)`` frames at ``fps`` frames per second.  At the
+    defaults (``fps=30``, ``DEFAULT_FRAMES=360``) that is exactly **12.0 s**, the
+    loader's own fallback, so every existing export keeps its speed; it only bites
+    when the caller set ``fps`` or the curve is shorter than the default cap (a
+    101-point orbit now plays in 3.4 s instead of being stretched over 12).
+
+    An explicit ``duration`` always wins — it is the same quantity, stated directly.
+
+    .. note::
+       :func:`tsdynamics.viz.render.plotly._anim.playback_seconds` is the same
+       arithmetic for the real-time HTML comet, whose ``requestAnimationFrame``
+       loop picks its stride the same way.  The two are deliberate twins in two
+       backend packages rather than one import across backends;
+       ``tests/test_viz_render_threejs_animation.py`` asserts they agree.  The
+       natural single home is a method on ``Animation`` (``viz/spec.py``) — filed
+       as a mutation.
+    """
+    if anim.duration is not None:
+        return float(anim.duration)
+    fps = float(anim.fps)
+    if fps <= 0:  # pragma: no cover - Animation validates fps > 0
+        return float(anim.DEFAULT_FRAMES) / 30.0
+    return float(anim.frame_count(int(n_samples))) / fps
 
 
 def _warn_unrevealable(spec: PlotSpec) -> None:

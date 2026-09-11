@@ -61,7 +61,7 @@ a class-level `default_ic` so the first try lands inside.
 ## Lyapunov spectrum
 
 ```python
-h.lyapunov_spectrum(n=5000)    # ≈ [0.42, -1.62]
+ts.analysis.lyapunov_spectrum(h, n=5000)    # ≈ [0.42, -1.62]
 ```
 
 Computed by QR decomposition of the running Jacobian product in a single

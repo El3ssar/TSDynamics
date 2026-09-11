@@ -134,12 +134,76 @@ def test_changed_test_file_is_selected() -> None:
     assert "test_smoke.py" in plan.selected_files
 
 
-def test_docs_and_markdown_are_ignored() -> None:
-    plan = cs.classify({"docs/index.md", "README.md", "planning/notes.md"})
+def test_a_docs_page_selects_the_gate_that_executes_it() -> None:
+    """A documentation change runs the doctest gate — the known v6 gap, closed.
+
+    ``tests/test_doctests.py`` *executes* every runnable ``python`` fence on every
+    ``docs/**.md`` page under ``filterwarnings = error``.  Before this rule,
+    ``docs/`` and ``*.md`` sat in the ignore table as "no bearing on the test
+    suite", so ``classify(['docs/analysis/lyapunov.md'])`` selected three cheap
+    registry guards and **not** the gate that runs the page — a docs-only PR could
+    break every example on it and go green.
+    """
+    for page in ("docs/index.md", "docs/analysis/lyapunov.md", "docs/tutorials/basics.md"):
+        plan = cs.classify({page})
+        assert not plan.full, plan.reason
+        assert "test_doctests.py" in plan.selected_files, page
+        assert not plan.systems
+
+
+def test_the_repo_root_files_the_doctest_gate_reads_are_not_ignored() -> None:
+    """``README.md`` / ``CLAUDE.md`` / ``mkdocs.yml`` select the gate that reads them.
+
+    ``test_doctests.py`` checks the catalogue counts written in their prose
+    against the live registry and parses ``mkdocs.yml``'s ``exclude_docs`` block,
+    so none of the three is ignorable.  The two tables are kept from disagreeing
+    by :func:`test_no_file_is_both_docs_gated_and_ignored`.
+    """
+    from _doctest_select import REPO_ROOT
+
+    for name in sorted(cs._DOCS_GATE_FILES):
+        assert (REPO_ROOT / name).exists(), f"{name} is gated but does not exist"
+        plan = cs.classify({name})
+        assert not plan.full, plan.reason
+        assert "test_doctests.py" in plan.selected_files, name
+
+
+def test_docs_tooling_selects_the_tests_that_import_it() -> None:
+    """``docs/_tooling/`` is code the suite imports, not prose.
+
+    The gallery builder, the committed golden-figure corpus and
+    ``editorial.json`` are all read by tests; ignoring the directory hid those
+    dependencies completely.
+    """
+    for path in ("docs/_tooling/gallery.py", "docs/_tooling/editorial.json"):
+        plan = cs.classify({path})
+        assert not plan.full, plan.reason
+        assert set(cs._DOCS_TOOLING_TESTS) <= plan.selected_files, path
+
+
+def test_planning_and_changelog_stay_ignored() -> None:
+    """Only the documentation the suite *reads* is gated; the rest still costs nothing."""
+    plan = cs.classify({"planning/notes.md", "CHANGELOG.md", ".claude/settings.json"})
     assert not plan.full
-    # Only the always-on guards remain — nothing escalated.
     assert plan.selected_files == set(cs._ALWAYS_GUARDS)
     assert not plan.systems
+
+
+def test_no_file_is_both_docs_gated_and_ignored() -> None:
+    """One file, one classification — the two tables may not claim the same name.
+
+    The doc-gate check runs *first*, so an overlap would be a silently dead
+    ignore entry rather than an error.  This makes it loud.
+    """
+    overlap = cs._DOCS_GATE_FILES & cs._IGNORE_FILES
+    assert not overlap, f"claimed by both the docs gate and the ignore table: {sorted(overlap)}"
+    assert not any(p.startswith("docs") for p in cs._IGNORE_PREFIXES)
+
+
+def test_docs_gate_tests_exist() -> None:
+    tests_dir = Path(__file__).parent
+    for name in set(cs._DOCS_GATE_TESTS) | set(cs._DOCS_TOOLING_TESTS):
+        assert (tests_dir / name).exists(), f"docs lane references a missing test file: {name}"
 
 
 def test_no_changes_runs_only_guards() -> None:

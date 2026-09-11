@@ -211,6 +211,7 @@ crates/*/uv.lock
 /*.pdf
 /*.svg
 /*.html
+/*.json
 
 # audit/analysis reports — kept out of the repo
 AUDIT-*.md

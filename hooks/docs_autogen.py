@@ -367,39 +367,82 @@ def _parameter_table(rec) -> list[str]:
 
 
 def _define_block(rec) -> list[str]:
-    """Build a "Define it in TSDynamics" code block using the **real** library API."""
+    """Build a "Use it in TSDynamics" code block using the **real** v6 library API.
+
+    Two spellings are load-bearing here and are gated by
+    :func:`_assert_define_block_uses_the_live_api`, because this block is
+    reproduced on all 177 generated pages and nothing else executes it:
+
+    * ``run`` is the one trajectory verb on every family (``integrate`` /
+      ``iterate`` / ``trajectory`` do not exist);
+    * an analysis is a **free function whose first argument is its subject**
+      (``ts.analysis.lyapunov_spectrum(system)``) — there is no bound method.
+    """
     if rec.family == "map":
-        run = "traj = sys.iterate(steps=10_000)"
+        run = "traj = system.run(steps=10_000)"
     elif rec.family == "dde":
-        run = "traj = sys.integrate(final_time=500.0, dt=0.5)"
+        run = "traj = system.run(final_time=500.0, dt=0.5)"
     else:
-        run = "traj = sys.integrate(final_time=100.0, dt=0.01)"
+        run = "traj = system.run(final_time=100.0, dt=0.01)"
 
     lines = [
-        "## Define it in TSDynamics",
+        "## Use it in TSDynamics",
         "",
         "```python",
         "import tsdynamics as ts",
         "",
-        f"sys = ts.systems.{rec.name}()",
+        f"system = ts.systems.{rec.name}()",
         run,
+        "ts.plot(traj)",
     ]
-    # A Lyapunov line where it is meaningful (flows + maps; not DDE/SDE — those have
-    # their own dedicated estimators, shown elsewhere).
+    # A Lyapunov line where it is meaningful (flows + maps; not SDE — its estimator
+    # is a different object, shown on the stochastic pages).
     if rec.family in ("ode", "map"):
         lines += [
             "",
-            "exps = sys.lyapunov_spectrum()",
-            "ts.kaplan_yorke_dimension(exps)",
+            "spectrum = ts.analysis.lyapunov_spectrum(system)",
+            "ts.analysis.kaplan_yorke_dimension(spectrum)",
         ]
     elif rec.family == "dde":
         lines += [
             "",
             "# DDE Lyapunov uses the infinite-dimensional-history estimator:",
-            "exps = sys.lyapunov_spectrum(n_exp=1, dt=0.5, ic=traj.y[-1])",
+            "spectrum = ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5, ic=traj.y[-1])",
         ]
     lines += ["```", ""]
     return lines
+
+
+#: Spellings that must NOT appear in a generated page's code block.  Each is a
+#: v5 name the v6 API removed; a page that shows one hands the reader a line
+#: that raises.  Checked at build time by
+#: :func:`_assert_define_block_uses_the_live_api`.
+_DEAD_API_SPELLINGS: tuple[str, ...] = (
+    ".integrate(",
+    ".iterate(",
+    ".trajectory(",
+    "sys.lyapunov_spectrum",
+    "system.lyapunov_spectrum",
+    "ts.kaplan_yorke_dimension",
+    "n_exp=",
+)
+
+
+def _assert_define_block_uses_the_live_api(rec, block: str) -> None:
+    """Fail the build if a generated code block uses a name v6 removed.
+
+    The 177 generated pages are the library's largest single body of example
+    code and **no test executes them**, so a renamed verb would ship silently on
+    every one of them.  This turns that into a ``--strict`` build failure naming
+    the system and the dead spelling.
+    """
+    for dead in _DEAD_API_SPELLINGS:
+        if dead in block:
+            raise RuntimeError(
+                f"generated page for {rec.name} uses the removed spelling {dead!r}; "
+                f"hooks/docs_autogen.py::_define_block must use the live v6 API "
+                f"(run / ts.analysis.<name>(subject))"
+            )
 
 
 def _sde_equations_md(rec) -> str:
@@ -504,6 +547,26 @@ def _reference_block(rec) -> list[str]:
     return parts
 
 
+def _assert_doi_is_rendered(rec, block: str) -> None:
+    """Fail the build if a system that HAS a DOI publishes a page without it.
+
+    155 of the 177 built-in systems carry a DOI on the class.  Until v6 the
+    registry entry had no ``doi`` field at all, so :data:`SystemRecord.doi` read
+    ``None`` for every one of them and all 155 links were dropped silently —
+    every page looked correct, just poorer.  A missing link is exactly the kind
+    of defect that has no symptom, so it gets a gate: a record carrying a DOI
+    must publish a resolvable ``doi.org`` link, and ``--strict`` turns a
+    violation into a build failure naming the system.
+    """
+    if not rec.doi or not rec.reference:
+        return
+    if f"https://doi.org/{rec.doi}" not in block:
+        raise RuntimeError(
+            f"generated page for {rec.name} drops its DOI ({rec.doi}); the registry "
+            f"entry carries one, so _reference_block must render a doi.org link"
+        )
+
+
 def _out_rel(from_uri: str, to_root_path: str) -> str:
     """Site-root-relative path as seen from the *rendered* page of ``from_uri``.
 
@@ -586,11 +649,15 @@ def _system_page(
     except Exception as exc:  # noqa: BLE001 — a property card must never break a build
         parts += [f"_Properties unavailable ({type(exc).__name__})._", ""]
 
-    # Define it (real API).
-    parts += _define_block(rec)
+    # Use it (the real v6 API), gated against spellings v6 removed.
+    define = _define_block(rec)
+    _assert_define_block_uses_the_live_api(rec, "\n".join(define))
+    parts += define
 
-    # Reference.
-    parts += _reference_block(rec)
+    # Reference — citation, resolvable DOI link, BibTeX.
+    reference = _reference_block(rec)
+    _assert_doi_is_rendered(rec, "\n".join(reference))
+    parts += reference
 
     return "\n".join(parts)
 

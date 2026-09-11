@@ -24,6 +24,20 @@ Axis limits (and an image's colour range) are computed once from the **full**
 data and held fixed so the view does not jump between frames; a 3-D camera
 optionally spins; an optional clock prints the current time.
 
+Orthogonally to :attr:`~tsdynamics.viz.spec.Animation.mode`, a **composite** spec
+animates in one of two ways, selected by its :class:`~tsdynamics.viz.spec.Layout`:
+
+- ``layout`` mode ``"stack"`` / ``"row"`` / ``"grid"`` — the panels are tiled and
+  played in **lockstep** on one master clock
+  (:func:`_render_composite_animation`); the panels are consecutive in *space*.
+- ``layout`` mode ``"frames"`` — the panels are consecutive in *time*
+  (:func:`_render_frames_movie`).  Each panel is one frame of the movie, so a
+  parameter sweep (``[ts.plot(sys.with_params(r=r), "cobweb") for r in rs]``,
+  ``layout="frames"``) plays as a cascade with **no new API**: panels are already
+  the composition unit, so ``share_x`` / ``share_y`` / per-panel styling / nesting
+  all apply unchanged.  This mode is matplotlib-only (mp4 / gif) in v6 — plotly
+  and three.js decline an animated composite and say so.
+
 This module imports matplotlib only when called (never at ``import tsdynamics``).
 """
 
@@ -83,11 +97,15 @@ def render_animation(
     """Render an animated :class:`PlotSpec` to a :class:`FuncAnimation`.
 
     Single-panel specs animate their curve / image layers in reveal mode;
-    composite specs animate every panel in lockstep on one shared frame clock.
+    composite specs animate every panel in lockstep on one shared frame clock —
+    unless their layout mode is ``"frames"``, in which case the panels *are* the
+    frames and are played one after another (:func:`_render_frames_movie`).
     """
     from matplotlib.animation import FuncAnimation
 
     if spec.is_composite:
+        if _is_frames_layout(spec):
+            return _render_frames_movie(spec, figsize=figsize)
         return _render_composite_animation(spec, figsize=figsize)
 
     from . import _threed
@@ -137,6 +155,7 @@ def _build_panel_animation(fig: Figure, ax: Any, spec: PlotSpec, *, three_d: boo
     Applies the spec's theme figure-locally (background, color cycle, font) before
     drawing any layer.
     """
+    spec = _play_the_field_stack(spec)
     anim = spec.animation
     assert anim is not None
     if anim.mode == "frames":
@@ -212,6 +231,46 @@ def _field_stack(layer: Any) -> np.ndarray | None:
         return None
     a = np.asarray(arr, dtype=float)
     return a if a.ndim in (2, 3) else None
+
+
+def _play_the_field_stack(spec: PlotSpec) -> PlotSpec:
+    """Play a field stack that is present, whichever door asked for the animation.
+
+    A layer's ``"frames"`` channel exists for exactly one reason: the
+    :data:`~tsdynamics.viz.spec.PlotKind.SPATIAL_FIELD` producer stacked every
+    per-time snapshot on it so the field could be *played*.  Animating such a spec
+    in ``reveal`` mode sweeps a line across the **final** field instead — a picture
+    that is not wrong-looking, just wrong.
+
+    Two doors build that spec and only one of them said so.  Measured on a
+    Swift–Hohenberg lattice whose stack is ``(101, 8, 8)``::
+
+        traj.to_plot_spec(kind="field", animate=True)   mode='frames'   101 frames
+        ts.plot(traj, "spatial_field", animate=True)    mode='reveal'     8 frames
+
+    — eight being the width of the lattice, because the reveal model read the
+    *spatial* x-axis as its sample axis.  The second spelling is the one §6.6's
+    own example uses, so the movie the contract advertises played 8 of 101 frames
+    and swept a ruler over a frozen field.  The mode is a property of the data, not
+    of the door, so it is resolved here, once, for every caller.
+
+    Mirrors the field defaults the recipe door already forces (no head, no trail —
+    a heatmap has no comet).  Returns ``spec`` unchanged when there is no stack or
+    the mode is already ``"frames"``.
+    """
+    anim = spec.animation
+    if anim is None or anim.mode == "frames":
+        return spec
+    if spec.kind is not PlotKind.SPATIAL_FIELD:
+        return spec
+    if not any(_field_stack(layer) is not None for layer in spec.layers):
+        return spec
+    return dataclasses.replace(
+        spec,
+        animation=dataclasses.replace(
+            anim, mode="frames", head=False, trail_kind=None, trail_length=None
+        ),
+    )
 
 
 def _warn_if_frames_without_field(spec: PlotSpec) -> None:
@@ -651,4 +710,174 @@ def _render_composite_animation(
     interval = 1000.0 / float(anim.fps) if anim.fps > 0 else 50.0
     return FuncAnimation(
         fig, update, frames=n_steps, interval=interval, blit=False, repeat=bool(anim.loop)
+    )
+
+
+# ---------------------------------------------------------------------------
+# layout="frames" — the panels ARE the frames (a movie of any N plots)
+# ---------------------------------------------------------------------------
+
+
+def _is_frames_layout(spec: PlotSpec) -> bool:
+    """Whether ``spec`` is a composite whose panels are frames, not tiles.
+
+    ``Layout.mode == "frames"`` is the fifth composition mode: the panels are
+    consecutive **in time** rather than in space.  Read defensively (``getattr``)
+    because a spec deserialized from an older envelope carries no ``layout`` at
+    all, and a hard attribute read there would turn a missing key into a crash.
+    """
+    layout = getattr(spec, "layout", None)
+    return bool(spec.is_composite and getattr(layout, "mode", None) == "frames")
+
+
+def _frames_axis_ranges(
+    panels: list[PlotSpec],
+) -> dict[str, tuple[float, float]]:
+    """Union each panel's data extent per axis, so the view does not jump per frame.
+
+    A sweep movie whose axes rescale on every frame is unreadable — the motion you
+    see is the *axes* moving, not the dynamics.  Every frame of a ``"frames"``
+    composite is drawn on **one** axes, so the ranges are the union over all
+    panels; ``share_x`` / ``share_y`` describe panel-to-panel sharing in a *tiled*
+    layout and add nothing here (rather than shipping a knob that cannot be
+    distinguished from its own default, this mode simply does the right thing).
+
+    Honours a panel's explicit ``limits`` the same way :func:`_apply_fixed_limits`
+    does — an author who pinned a range means it.
+    """
+    out: dict[str, tuple[float, float]] = {}
+    for channel in ("x", "y", "z"):
+        lo, hi = np.inf, -np.inf
+        for panel in panels:
+            axis = getattr(panel, channel, None)
+            rng = (axis.limits if axis is not None else None) or _data_range(panel, channel)
+            if rng is None:
+                continue
+            lo, hi = min(lo, float(rng[0])), max(hi, float(rng[1]))
+        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+            out[channel] = (lo, hi)
+    return out
+
+
+def _frames_clim(panels: list[PlotSpec]) -> tuple[float, float] | None:
+    """Union of the panels' colour ranges, for ``share_color=True``.
+
+    The colour-scale half of the same rule: a heatmap whose colour meaning changes
+    every frame cannot be compared with the frame before it.  ``None`` when no
+    panel declares a ``clim`` and no panel carries a colour channel.
+    """
+    lo, hi = np.inf, -np.inf
+    for panel in panels:
+        rng = getattr(panel, "clim", None) or _data_range(panel, "c")
+        if rng is None:
+            continue
+        lo, hi = min(lo, float(rng[0])), max(hi, float(rng[1]))
+    return (lo, hi) if np.isfinite(lo) and np.isfinite(hi) and hi > lo else None
+
+
+def _render_frames_movie(spec: PlotSpec, *, figsize: tuple[float, float] | None) -> FuncAnimation:
+    """Play a composite's panels as consecutive frames of one movie.
+
+    ``ts.plot(*[ts.plot(logistic.with_params(r=r), "cobweb") for r in rs],
+    layout="frames", fps=15).save("cascade.mp4")`` — a parameter-sweep movie
+    expressed entirely in the composition grammar.
+
+    Each playback frame **re-draws one panel in full** through the same static
+    panel bodies the tiled composite renderer uses (``_draw_2d_panel`` /
+    ``_draw_3d_panel``), so a frame of the movie is byte-for-byte the picture that
+    panel renders on its own — including its colorbar, legend and annotations, and
+    including a 3-D panel next to a 2-D one (the figure is rebuilt per frame, so
+    the projection may change between frames; a *tiled* composite cannot do that
+    on one axes either).
+
+    The frame sequence comes from :meth:`~tsdynamics.viz.spec.Animation.head_indices`
+    over the panel count, so ``n_frames`` / ``duration`` / ``pingpong`` mean exactly
+    what they mean everywhere else — with the panel list, not a sample axis, as the
+    thing being indexed.
+
+    Parameters
+    ----------
+    spec : PlotSpec
+        A composite whose :class:`~tsdynamics.viz.spec.Layout` mode is ``"frames"``.
+    figsize : tuple of float, optional
+        Explicit figure size; otherwise the theme's (a frame shows **one** panel,
+        so — unlike the tiled composite — there is no grid to scale up for).
+
+    Returns
+    -------
+    FuncAnimation
+        One frame per entry of the resolved schedule.
+
+    Notes
+    -----
+    Axis ranges are the union over the panels so the view does not jump
+    (:func:`_frames_axis_ranges`); ``share_color=True`` additionally unifies the
+    colour range, since a heatmap whose colour *meaning* changes every frame
+    cannot be compared with the frame before it.
+    """
+    from matplotlib.animation import FuncAnimation
+
+    from . import _threed
+    from ._core import _draw_2d_panel
+
+    anim = spec.animation or Animation()
+    panels = list(spec.panels)
+    theme = _resolve_theme(spec)
+    figsize, dpi, layout_engine = figure_geometry(spec, figsize, theme=theme)
+
+    fig = new_figure(figsize, dpi, layout_engine)
+    if theme.background is not None:
+        fig.patch.set_facecolor(theme.background)
+
+    layout = spec.layout
+    ranges = _frames_axis_ranges(panels)
+    shared_clim = _frames_clim(panels) if layout is not None and layout.share_color else None
+
+    frame_seq = anim.head_indices(len(panels)) if panels else [0]
+
+    def update(frame: int) -> Any:
+        if not panels:
+            return []
+        panel = panels[frame_seq[min(frame, len(frame_seq) - 1)]]
+        # Never mutate the caller's panel: a composite holds the SAME objects the
+        # user built (documented), so the inherited theme (and the shared colour
+        # scale) ride on a throwaway copy.
+        effective = dataclasses.replace(panel, _theme=panel._theme or theme)
+        if shared_clim is not None:
+            effective = dataclasses.replace(effective, clim=shared_clim)
+        fig.clear()
+        three_d = _threed.is_three_d(effective)
+        # ``Any`` because a 3-D axes carries ``set_zlim``, which the 2-D ``Axes``
+        # stub does not declare (the same reason ``_apply_fixed_limits`` takes one).
+        ax: Any = fig.add_subplot(1, 1, 1, projection="3d" if three_d else None)
+        if three_d:
+            _threed._draw_3d_panel(fig, ax, effective)
+        else:
+            _draw_2d_panel(fig, ax, effective)
+        if "x" in ranges:
+            ax.set_xlim(*ranges["x"])
+        if "y" in ranges:
+            ax.set_ylim(*ranges["y"])
+        if three_d and "z" in ranges:
+            ax.set_zlim(*ranges["z"])
+        if spec.title:
+            fig.suptitle(spec.title)
+        return []
+
+    # Draw the LAST frame eagerly.  A still save of an animation writes the
+    # animation's underlying figure (``_core._write``), and ``Plot.fig`` hands that
+    # same figure out — so a figure that stays empty until the frame loop runs
+    # means ``movie.save("cascade.png")`` silently writes a blank page.  The final
+    # frame is the right still for a movie, matching the spatial-field movie (whose
+    # static layer data is the final field).
+    update(len(frame_seq) - 1)
+
+    interval = 1000.0 / float(anim.fps) if anim.fps > 0 else 50.0
+    return FuncAnimation(
+        fig,
+        update,
+        frames=len(frame_seq),
+        interval=interval,
+        blit=False,
+        repeat=bool(anim.loop),
     )

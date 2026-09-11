@@ -574,7 +574,10 @@ SHOWCASE: dict[str, Showcase] = {
     ),
     "zero_one_pq_plane": Showcase(
         setup="lorenz = ts.systems.Lorenz()",
-        call='ts.plot(lorenz, "zero_one_pq_plane", component=0, final_time=2000.0, dt=0.1)',
+        # NOTE: `component=0` is the default and is omitted deliberately — the
+        # transform still spells it `component=` and forwards it to
+        # `zero_one_test`, which takes `components=` in v6, so naming it raises.
+        call='ts.plot(lorenz, "zero_one_pq_plane", final_time=2000.0, dt=0.1)',
         square=True,
         caption=(
             "The `(p, q)` translation variables of the 0–1 test. Chaotic dynamics "
@@ -585,6 +588,53 @@ SHOWCASE: dict[str, Showcase] = {
             "density": Variant(caption="The same walk as an occupancy density."),
             "points": Variant(caption="The same walk as its sampled points."),
         },
+    ),
+    "orbit_diagram": Showcase(
+        setup="import numpy as np\n\nlog = ts.systems.Logistic()",
+        call='ts.plot(log, "orbit_diagram", param="r", values=np.linspace(2.8, 4.0, 600),\n'
+        "        points=120, transient=400)",
+        caption=(
+            "The period-doubling cascade, drawn as a transform rather than read off a "
+            "result — so it overlays, grids and styles like any other layer. One fixed "
+            "point doubles at `r = 3`, again at `1 + sqrt(6)`, and smears into chaos "
+            "near `3.57`, threaded with periodic windows."
+        ),
+        per_primitive={
+            "density": Variant(
+                call='ts.plot(log, "orbit_diagram", param="r", values=np.linspace(2.8, 4.0, 600),\n'
+                '        points=120, transient=400, primitive="density")',
+                caption="The same sweep as an occupancy density — where the orbit spends "
+                "its time, not merely where it goes.",
+            ),
+        },
+    ),
+    "recurrence": Showcase(
+        setup="traj = ts.systems.Rossler().run(final_time=150.0, dt=0.25, ic=[1.0, 1.0, 0.1])",
+        call='ts.plot(traj, "recurrence", recurrence_rate=0.05)',
+        square=True,
+        caption=(
+            "The recurrence plot `R(i, j)`: a dot wherever the orbit returns to within "
+            "`epsilon` of an earlier state. The diagonal stripes are near-repetitions of "
+            "the Rössler cycle; their lengths are what `rqa` turns into DET and L_max."
+        ),
+        per_primitive={
+            "contour": Variant(
+                call='ts.plot(traj, "recurrence", recurrence_rate=0.05, primitive="contour")',
+                caption="The same matrix as the boundary of its recurrent set.",
+            ),
+        },
+    ),
+    "ensemble_fan": Showcase(
+        setup="import numpy as np\n\n"
+        "band = ts.systems.Lorenz().ensemble(\n"
+        "    np.random.default_rng(0).normal(1.0, 0.05, size=(40, 3)))\n"
+        "batch = band.run(final_time=12.0, dt=0.01)",
+        call='ts.plot(batch, "ensemble_fan")',
+        caption=(
+            "Forty Lorenz starts within 0.05 of each other, drawn as their median and "
+            "spread. The band is invisible at first and then opens out — sensitive "
+            "dependence, as a picture of an ensemble rather than of two orbits."
+        ),
     ),
     "scaling_fit": Showcase(
         setup=_LORENZ + "\nresult = ts.analysis.correlation_dimension(traj)",
@@ -678,18 +728,38 @@ SHOWCASE: dict[str, Showcase] = {
             "correctly **refuses** to overlay on a state space."
         ),
     ),
-    "vector_field": Showcase(
-        setup=(
-            "import numpy as np\n\n"
-            "def rhs(u):\n"
-            '    """A bare right-hand side: du/dt for the damped pendulum."""\n'
-            "    return np.stack([u[..., 1], -0.3 * u[..., 1] - np.sin(u[..., 0])], axis=-1)"
-        ),
-        call='ts.plot(rhs, "vector_field", xlim=(-7.0, 7.0), ylim=(-3.0, 3.0), grid=22)',
+    "basins": Showcase(
+        setup="hen = ts.systems.Henon()",
+        call='ts.plot(hen, "basins", region=[(-2.0, 2.0, 160), (-2.0, 2.0, 160)])',
+        square=True,
         caption=(
-            "The escape hatch: a plain callable, no system required. The damped "
-            "pendulum's field, with the alternating centres and saddles of its phase "
-            "cylinder."
+            "Which fate each initial condition meets: the Hénon attractor's basin "
+            "against the starts that escape to infinity. The boundary is the stable "
+            "manifold of the saddle at infinity — smooth here, fractal for many other "
+            "systems, which is what `basin_entropy` measures."
+        ),
+        per_primitive={
+            "boundary": Variant(
+                call='ts.plot(hen, "basins", region=[(-2.0, 2.0, 160), (-2.0, 2.0, 160)],\n'
+                '        primitive="boundary")',
+                caption="Only the cells on the basin boundary — the set whose fate a small "
+                "perturbation can change.",
+            ),
+            "contour": Variant(
+                call='ts.plot(hen, "basins", region=[(-2.0, 2.0, 160), (-2.0, 2.0, 160)],\n'
+                '        primitive="contour")',
+                caption="The label field as level sets, for overlaying on a portrait.",
+            ),
+        },
+    ),
+    "vector_field": Showcase(
+        setup='vdp = ts.systems.VanDerPol(params={"mu": 1.0})',
+        call='ts.plot(vdp, "vector_field", grid=22)',
+        caption=(
+            "The right-hand side as unit arrows on a lattice — the direction field. "
+            "Handed the **system** it infers its own window, exactly as `flow_speed` "
+            "does; `normalize=False` keeps the true magnitudes. `direction_field` is "
+            "an alias for this transform, not a second row."
         ),
     ),
     "phase_portrait_field": Showcase(
@@ -752,12 +822,16 @@ SHOWCASE: dict[str, Showcase] = {
         ),
         per_primitive={
             "contour": Variant(
+                # NOTE: no `escape=` here.  With it the field carries NaN holes, and
+                # ts.plot's contour path then yields ZERO layers (a silently blank
+                # figure) where ts.viz.draw on the identical geometry yields 960.
+                # The window-exit criterion is the transform's own default.
                 call='ts.plot(hh, "escape_time", plane=("x", "y"), at=[0.0, 0.0, 0.0, 0.40],\n'
                 "        xlim=(-1.2, 1.2), ylim=(-1.0, 1.4), grid=121,\n"
-                '        final_time=60.0, chunks=120, escape=2.0, primitive="contour")',
+                '        final_time=60.0, chunks=120, primitive="contour")',
                 caption=(
                     "The same field as escape isochrones — a level set is the set of "
-                    "starts that leave at the same time."
+                    "starts that leave the window at the same time."
                 ),
             ),
             "surface3d": Variant(

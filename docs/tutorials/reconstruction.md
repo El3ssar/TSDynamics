@@ -63,15 +63,15 @@ lag at which the next coordinate adds the most *new* information while staying
 dynamically related to the current one.
 
 ```python
-tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 27 samples
+tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 25 samples
 
 mi = ts.analysis.mutual_information(x, max_delay=120)
-mi.optimal_lag          # 27   — the same lag, read off the I(tau) curve
+mi.optimal_lag          # 25   — the same lag, read off the I(tau) curve
 # mi.plot()             # inspect the curve, with the chosen tau marked
 ```
 
-`optimal_delay` returns a `CountResult` that *is* the integer $\tau = 27$, so it
-drops straight into `embed`. The linear alternative — the autocorrelation $1/e$
+`optimal_delay` returns a count that *is* the integer $\tau = 25$ — it prints,
+formats and indexes as that integer — so it drops straight into `embed`. The linear alternative — the autocorrelation $1/e$
 rule, `method="acf"` — gives $\tau \approx 22$ here, close to the
 mutual-information choice; when they disagree, prefer the mutual-information lag,
 which sees nonlinear dependence the autocorrelation misses.
@@ -118,16 +118,17 @@ from the single channel. Because a `Trajectory` can build the same delay view
 directly, you can eyeball the reconstruction with the plotting front door:
 
 ```python
-# the x(t) vs x(t - tau) delay portrait, straight from the trajectory.
+# skip-doctest — .save() writes a file; needs the optional tsdynamics[viz] backend
+# the x(t) vs x(t - tau) delay portrait, straight from the series.
 # `delay=` is in SAMPLES (what optimal_delay returned); `delay_time=` is the
-# same lag in time units — here delay_time=tau * 0.05 would be equivalent.
-full.to_plot_spec(kind="delay", components="x", delay=tau).save("delay.png")
+# same lag in time units — here delay_time = tau * 0.05 would be equivalent.
+ts.plot(full["x"], "delay_embedding", delay=tau).save("delay.png")
 ```
 </div>
 
 <figure class="ts-fig" markdown>
 ![A delay-coordinate reconstruction of a flow from one channel](../assets/figures/viz/kind-delay.svg){ loading=lazy }
-<figcaption><span class="lbl">FIG 1</span> · a delay embedding — x(t) against x(t − τ) — built from a single recorded channel. The <code>kind="delay"</code> recipe takes τ in <em>time units</em> (here τ = 27 samples × dt = 1.35). The loop is the reconstructed attractor: same topology as the true state space, from one signal.</figcaption>
+<figcaption><span class="lbl">FIG 1</span> · a delay embedding — x(t) against x(t − τ) — built from a single recorded channel. The <code>delay_embedding</code> transform also takes <code>delay_time=</code> in <em>time units</em> (here τ = 25 samples × dt = 1.25). The loop is the reconstructed attractor: same topology as the true state space, from one signal.</figcaption>
 </figure>
 
 </div>

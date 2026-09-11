@@ -77,7 +77,7 @@ the damped oscillation still ringing down at $t = 60$.)
 
 ## 3. Find the attractors
 
-[`find_attractors`](../analysis/basins.md) drives the flow from a grid of
+[`ts.analysis.attractors`](../analysis/basins.md) drives the flow from a grid of
 random seeds over a `data.Box` of state space and follows
 each until it *recurrently* revisits the same cells — the signature of having
 reached an attractor (Datseris & Wagemakers, 2022). It samples over a
@@ -108,7 +108,7 @@ centroid), an integer id, and the recurrent cells that identified it.
 
 ## 4. Paint the basins
 
-[`basins_of_attraction`](../analysis/basins.md) labels a `data.Grid` of initial
+[`ts.analysis.basins`](../analysis/basins.md) labels a lattice of initial
 conditions by *which* attractor each one reaches — the basin map itself:
 
 ```python
@@ -130,7 +130,7 @@ cell), laid out on the grid you passed — ready to image directly:
 ```
 
 or, without touching matplotlib, through the result's own front door —
-`basins.to_plot_spec()` returns a `basins_image` [`PlotSpec`](../visualization/index.md)
+`ts.plot(basins)` returns a `basins_image` [`Plot`](../visualization/index.md)
 that renders itself with `.plot()` / `.save("basins.png")`.
 
 <figure class="ts-fig" markdown>
@@ -249,7 +249,7 @@ designed around: define the system once, then compose
 [analysis](../analysis/index.md) on top.
 
 !!! warning "Basins are for finite-dimensional states only"
-    `find_attractors` / `basins_of_attraction` / `continuation` drive a **map or
+    `attractors` / `basins` / `continuation` drive a **map or
     flow** whose state is a point. A delay system (infinite-dimensional history)
     or a stochastic system (no single deterministic limit) is rejected —
     `ts.analysis.attractors(ts.systems.OrnsteinUhlenbeck(), region)` raises a

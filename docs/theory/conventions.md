@@ -10,14 +10,15 @@ The contracts the implementation commits to, stated once and precisely.
 
 ## Time: `t` for flows, steps for maps
 
-- **Flows** (`ContinuousSystem`, `DelaySystem`) live in continuous time:
-  `integrate(final_time, dt, t0=0.0)` produces a uniform grid from `t0` to
-  `final_time` *inclusive* (the final point is appended if the grid does
+- **Flows** (`ContinuousSystem`, `DelaySystem`, `StochasticSystem`) live in
+  continuous time: `run(final_time, dt, t0=0.0)` produces a uniform grid from
+  `t0` to `final_time` *inclusive* (the final point is appended if the grid does
   not land on it exactly). `dt` is the output sampling interval only; the
-  internal stepper is adaptive.
-- **Maps** (`DiscreteMap`) live in iteration count: `iterate(steps)`
-  produces `traj.t == arange(steps)` — integer step indices, not float
-  times.
+  internal stepper is adaptive. `dt=None` resolves to the family default
+  (`0.02`); `dt=final_time` is the explicit two-point grid.
+- **Maps** (`DiscreteMap`) live in iteration count: `run(steps)` produces
+  `traj.t == arange(steps)` — integer step indices, not float times. A map
+  handed `final_time=` raises and says why: a map has no continuous time.
 - The protocol mirrors this: `step(n_or_dt)` means a *time increment* for
   flows (defaults 0.01 ODE / 0.1 DDE) and a *number of iterations* for
   maps (default 1); `time()` returns continuous time or the iteration
@@ -41,12 +42,17 @@ order:
 
 1. the explicit `ic=` argument,
 2. `self.ic` (set by the constructor or by a *previous* run),
-3. the class-level `default_ic` (declared by systems with small basins),
+3. the class-level `_default_ic` (declared by systems with small basins),
 4. random `U[0, 1)^{dim}`.
 
-The resolved IC is **written back to `self.ic`**, so repeating a call
-without arguments reproduces the same start — a random IC is drawn once,
-not per call.
+An **auto-resolved** IC (cases 3 and 4) is written back to `self.ic`, so a bare
+`run()` repeated reproduces the same start — a random IC is drawn once, not per
+call. An **explicit** `ic=` argument does *not* latch: `run(ic=[3, 3, 3])` runs
+from that point and leaves `self.ic` alone, so a later bare `run()` still starts
+where it always did.
+
+And `run()` is always a fresh integration from the resolved IC; `step()` is the
+verb that continues from the live state.
 
 ## Map parameter order
 
@@ -57,25 +63,26 @@ the base class checks them at class-definition time and raises a
 `TypeError` on mismatch (names *and* order). This is enforced precisely
 because a silent swap once produced plausible-but-wrong dynamics.
 
-## `meta`: append-with-history
+## `meta`: provenance travels with the data, not with the system
 
-`system.meta` is a `MetaStore` — dict-like for everyday use, but every
-write **appends** rather than overwrites:
+A system carries no analysis log. Provenance lives on the **things that were
+produced**: `traj.meta` is a plain dict frozen at creation (the system, the
+parameters, the solver, `dt`, the tolerances, the IC, the library version), and
+every analysis result carries its own `result.meta` recording the horizon it
+actually used.
 
 ```python
 lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
 
-lor.lyapunov_spectrum(dt=0.1)            # records value + settings + timestamp
-lor.lyapunov_spectrum(dt=0.05)           # appends a second record
+traj = lor.run(final_time=50.0, dt=0.05)
+traj.meta["method"], traj.meta["dt"]           # 'rk45', 0.05
 
-lor.meta["lyapunov_spectrum"]            # the LATEST value
-lor.meta.history("lyapunov_spectrum")    # every record, with its context
-lor.meta.latest()                        # plain dict of latest values
+spec = ts.analysis.lyapunov_spectrum(lor, dt=0.1, final_time=200.0)
+spec.meta["final_time"]                        # 200.0 — what this number came from
 ```
 
-Re-running an analysis never destroys the previous result or the settings
-that produced it. (Trajectory `meta`, by contrast, is a plain provenance
-dict frozen at creation.)
+Re-running an analysis therefore never destroys anything: the previous result
+object still holds its own numbers and its own settings.
 
 ## Cloning
 

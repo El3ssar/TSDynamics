@@ -61,7 +61,7 @@ sys.run(
     for a **median 1.74×** wall-clock cost. Pass `rtol=1e-6, atol=1e-9` for the
     pre-v6 trade.
 
-`lyapunov_spectrum(final_time=200.0, dt=0.1, transient=50.0, k=None, ...)`
+`ts.analysis.lyapunov_spectrum(system, final_time=200.0, dt=0.1, transient=50.0, k=None, ...)`
 computes the spectrum from the variational equations — see
 [Lyapunov spectra](../../analysis/lyapunov.md).
 

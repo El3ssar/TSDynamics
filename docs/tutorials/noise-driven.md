@@ -1,5 +1,5 @@
 ---
-description: A stochastic-dynamics walkthrough — integrate a single noisy path, gather statistics with ensemble(), watch noise drive Kramers escape between the wells of a double-well potential, and compare everything against the deterministic skeleton and the analytic laws.
+description: A stochastic-dynamics walkthrough — run a single noisy path, gather statistics with ensemble(), watch noise drive Kramers escape between the wells of a double-well potential, and compare everything against the deterministic skeleton and the analytic laws.
 ---
 
 <span class="ts-kicker">Tutorial · Noise-driven dynamics</span>
@@ -67,8 +67,8 @@ One path gives a noisy variance estimate ($0.037$ vs the true $0.045$). To pin
 the statistics down we need many paths.
 
 !!! note "Euler–Maruyama vs Milstein"
-    `method="euler_maruyama"` (order 0.5, the default) is the workhorse;
-    `method="milstein"` (order 1.0) adds a correction proportional to
+    `solver="euler_maruyama"` (order 0.5, the default) is the workhorse;
+    `solver="milstein"` (order 1.0) adds a correction proportional to
     $g\,\partial g/\partial x$. For **additive** noise ($g$ constant, as in OU
     and the double well) that correction is identically zero, so the two schemes
     produce **bit-identical** paths — a useful sanity check. Milstein only differs
@@ -76,13 +76,15 @@ the statistics down we need many paths.
 
 ## 2. Ensemble statistics
 
-The right object for a stochastic system is the *ensemble*. `ou.ensemble(...)`
-integrates a batch of initial conditions and returns each one's final state,
-fanning the batch out across the compiled engine's thread pool:
+The right object for a stochastic system is the *ensemble*. `ou.ensemble(ics)`
+builds a **system**: one object holding many copies. You then `run` it exactly as
+you would run any other system, and the batch fans out across the compiled
+engine's thread pool:
 
 ```python
 ics = np.full((2000, 1), 2.0)          # 2000 copies of the same start
-finals = ou.ensemble(ics, final_time=30.0, dt=0.01, seed=0)
+batch = ou.ensemble(ics).run(final_time=30.0, dt=0.01, seed=0)
+finals = batch.final                   # the (n, dim) array of end states
 
 finals.shape                            # (2000, 1)
 round(finals.mean(), 4)                 # -0.0007  ≈ μ = 0
@@ -96,7 +98,7 @@ $\mu + (x_0 - \mu)\,e^{-\theta t}$. Sweep the horizon and compare:
 
 ```python
 for T in (0.5, 1.0, 2.0):
-    f = ou.ensemble(ics, final_time=T, dt=0.01, seed=0)
+    f = ou.ensemble(ics).run(final_time=T, dt=0.01, seed=0).final
     print(f"T={T}: mean={f.mean():.4f}  analytic={2.0*np.exp(-T):.4f}")
 # T=0.5: mean=1.2071  analytic=1.2131
 # T=1.0: mean=0.7299  analytic=0.7358
@@ -112,14 +114,14 @@ transient.
 </figure>
 
 !!! warning "Ensemble seeding is by index — by design"
-    `ensemble(ics, seed=s)` seeds trajectory $i$ from `seed_for(s, i)`, a mix
-    depending only on the index, so the batch is reproducible and matches the
-    engine's parallel-equals-serial contract. This means `ensemble([ic], seed=s)`
-    generally draws a **different** sample path from `integrate(seed=s)` for the
-    same `s` — they are different streams. (The one coincidence: `seed_for(0, 0)`
-    happens to be `0`, so at `seed=0` index `0` alone they align.) Do not expect
-    `ensemble` and `integrate` to reproduce each other path-for-path; do expect
-    each, on its own, to reproduce exactly under a fixed seed.
+    `ensemble(ics).run(seed=s)` seeds trajectory $i$ from `seed_for(s, i)`, a
+    mix depending only on the index, so the batch is reproducible and matches the
+    engine's parallel-equals-serial contract. This means a one-member ensemble
+    generally draws a **different** sample path from a plain `run(seed=s)` for
+    the same `s` — they are different streams. (The one coincidence:
+    `seed_for(0, 0)` happens to be `0`, so at `seed=0` index `0` alone they
+    align.) Do not expect the two to reproduce each other path-for-path; do
+    expect each, on its own, to reproduce exactly under a fixed seed.
 
 ## 3. Noise-induced switching (Kramers escape)
 
@@ -169,7 +171,7 @@ left well and, after long enough, they redistribute toward the symmetric $\tfrac
 
 ```python
 ics = np.full((4000, 1), -1.0)
-finals = dw.ensemble(ics, final_time=50.0, dt=0.01, seed=0)
+finals = dw.ensemble(ics).run(final_time=50.0, dt=0.01, seed=0).final
 finals = finals[~np.isnan(finals).any(axis=1)]
 round((finals[:, 0] > 0).mean(), 3)     # 0.472 — nearly half have escaped to the right well
 ```
@@ -188,7 +190,8 @@ signature of multiplicative noise. Check both against the ensemble:
 
 ```python
 gbm = ts.systems.GeometricBrownianMotion(params={"mu": 0.1, "sigma": 0.3})
-finals = gbm.ensemble(np.full((5000, 1), 1.0), final_time=5.0, dt=0.005, seed=0)
+finals = gbm.ensemble(np.full((5000, 1), 1.0)).run(
+    final_time=5.0, dt=0.005, seed=0).final
 finals = finals[~np.isnan(finals).any(axis=1)]
 
 round(finals.mean(), 4)                 # 1.6585  vs  exp(μT)          = 1.6487
@@ -198,7 +201,7 @@ bool((finals > 0).all())                # True   — every path stayed positive
 
 Because $g = \sigma X$ is state-dependent, this is where **Milstein** actually
 differs from Euler–Maruyama — for a serious moment estimate at coarse `dt`, prefer
-`method="milstein"`.
+`solver="milstein"`.
 
 ## 5. The deterministic skeleton
 
@@ -218,7 +221,7 @@ round(det.run(final_time=50.0, dt=0.01, ic=[ 0.2], seed=0).y[-1, 0], 4)  #  1.0
 From $x_0 = -1.5$ it settles into the left well ($-1$); from $x_0 = 0.2$, just
 right of the barrier, into the right well ($+1$). Those two fixed points are
 exactly the states the noise telegraphs *between* in §3 — the skeleton's basins
-(which you can map with [`basins_of_attraction`](basins-multistability.md) on the
+(which you can map with [`ts.analysis.basins`](basins-multistability.md) on the
 $\sigma = 0$ system) are the wells; the noise supplies the barrier-hopping the
 skeleton can never do on its own.
 

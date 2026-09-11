@@ -14,9 +14,17 @@ number reproducible and every claim traceable to the literature.
 
 Each one is self-contained and runnable end to end: paste the blocks in order,
 keep the pinned initial conditions, and you get the numbers and figures shown.
-Read them in any order — but if you are new, the first three trace the arc most
-nonlinear-dynamics courses follow, from *what is chaos* to *how do I find it in
-real data*.
+Read them in any order — but if you are new, start with the seven-task page
+below, then follow the arc most nonlinear-dynamics courses take, from *what is
+chaos* to *how do I find it in real data*.
+
+## Start here
+
+- [**Seven tasks in one sitting**](seven-tasks.md) — the cold-start page.
+  Simulate a system; test it for chaos; draw a bifurcation diagram of a map
+  *and* of a flow; find fixed points and read their stability; paint basins;
+  animate a phase portrait over a vector field; define a system of your own.
+  Seven things, one page, every line executed by the documentation gate.
 
 ## The journeys
 
@@ -58,9 +66,9 @@ real data*.
 
 Every tutorial follows the same discipline:
 
-- **The system is defined once.** A class with `params`, `dim`, and a symbolic
-  right-hand side — the [definition contract](../start/concepts.md) — or a
-  built-in from the [catalogue](../systems/index.md). Everything downstream
+- **The system is defined once.** A class with `variables`, `params` and a
+  symbolic right-hand side — the [definition contract](../start/concepts.md) —
+  or a built-in from the [catalogue](../systems/index.md). Everything downstream
   composes over that one object.
 - **Every number is reproducible.** Snippets pass an explicit `ic=` (or `seed=`
   for anything stochastic), so the printed values are exactly what the code

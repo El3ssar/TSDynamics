@@ -164,7 +164,7 @@ Optional friendly aliases go in `select.py::_ALIASES` (keys are normalised —
 lowercased, whitespace / `-` → `_` — so `"RK45"`, `"dopri5"`, and `"rk-45"` all
 resolve). No change to `run.py` is needed: `run.integrate` flows any registered
 method through `solvers.resolve`, so once the spec is registered,
-`integrate(method="your_kernel")` just works and the tolerances thread through
+`run(solver="your_kernel")` just works and the tolerances thread through
 `build_solver`.
 
 ## Tests to update

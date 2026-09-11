@@ -189,6 +189,7 @@ nav:
       - "Backends & export": visualization/backends.md
   - Tutorials:
       - tutorials/index.md
+      - "Seven tasks in one sitting": tutorials/seven-tasks.md
       - "From equations to a chaotic attractor": tutorials/chaotic-attractor.md
       - "The road to chaos — bifurcations": tutorials/bifurcations.md
       - "Reconstructing dynamics from a signal": tutorials/reconstruction.md

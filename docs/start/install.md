@@ -94,4 +94,4 @@ also returns cleanly, the engine is wired up and you are ready to go.
 ## Next
 
 [**02 · First trajectory**](first-trajectory.md) — instantiate the Lorenz
-system, integrate it, read its components, and compute its Lyapunov spectrum.
+system, run it, read its components, and measure its Lyapunov spectrum.

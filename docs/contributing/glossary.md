@@ -43,7 +43,7 @@ exactly one canonical name per kind:
 
 **Choosing `system` vs `data`.** A function whose job is to *integrate or iterate
 the dynamics itself* takes `system` (it produces its own trajectory internally —
-`gali`, `expansion_entropy`, `fixed_points`, `find_attractors`). A function whose
+`gali`, `expansion_entropy`, `fixed_points`, `attractors`). A function whose
 job is to *operate on an already-measured signal* takes `data` (`recurrence_matrix`,
 `correlation_dimension`, `lyapunov_from_data`).
 
@@ -92,13 +92,19 @@ pre-emptive, kept so the concept can never drift into them.
 | Theiler window | **`theiler`** | `int`, in samples | `theiler_window`, `w`† |
 | Nearest-neighbour count | **`n_neighbors`** | `int` | `min_neighbors`, `num_neighbors`† |
 | Spatial region | **`region`** | `Box` / `Ball` / `Grid`, or `region([(lo, hi, n), …])` | `grid`, `box`, `domain`†, `bounds`† |
-| Algorithm / kernel selector | **`method`** | `str` | `kind`, `mode`†, `estimator`†, `scheme`† |
+| Estimator / algorithm selector | **`method`** | `str` | `mode`†, `estimator`†, `scheme`† |
+| Numerical solver kernel | **`solver`** | `str` | `method` (v5), `integrator`† |
 
 `seed` and `ic` are already universal — they are listed so the gate treats them as
-locked, not because they need fixing. `method` is **always allowed** (it is the
-canonical variant/kernel selector — solver kernels on `integrate`/`lyapunov_spectrum`,
-algorithm variants on `fixed_points`/`optimal_delay`/`power_spectral_density`); it
-is never a banned token and needs no per-site whitelist.
+locked, not because they need fixing.
+
+**`solver=` and `method=` are two concepts, and v6 gives each one word.**
+`solver=` selects a *numerical kernel* and is a keyword of `run` / `reinit` /
+`ensemble` (`lor.run(solver="dop853")`); `method=` selects an *estimator
+algorithm* on an analysis (`optimal_delay(x, method="mi")`,
+`fixed_points(sys, method="interval")`). Passing `method=` to `run` raises and
+names `solver=`. Both are always-allowed tokens in their own half and need no
+per-site whitelist.
 
 ---
 
@@ -147,15 +153,19 @@ violators).
 
 ## 4. Verbs — one intent, one word
 
-| Intent | Canonical | Permanent aliases |
+| Intent | Canonical | Removed in v6 |
 |---|---|---|
 | Produce a trajectory (any family) | **`system.run(...)`** | `.integrate` (flows), `.iterate` (maps), `.trajectory` |
+| Ask what a system is | **`system.family`** | `.is_discrete` |
+| Derive a section or a strobe | **`system.poincare(...)`** | `.stroboscope(...)` |
+| Measure something | **`ts.analysis.<name>(subject)`** | every bound analysis method and the `.lyap`/`.chaos`/`.dims`/`.recurrence` accessors |
 
-`run` dispatches on `is_discrete`, so `Lorenz().run(final_time=100, dt=0.01)` and
-`Henon().run(n=5000)` are the one verb a newcomer learns. `.integrate` /
-`.iterate` / `.trajectory` survive permanently as thin aliases (no breakage); docs
-and examples standardise on `run`. The codemod rewrites only `.integrate` /
-`.iterate` → `.run` — `.trajectory` is kept as-is, not rewritten.
+**One verb, closed signatures.** `Lorenz().run(final_time=100, dt=0.01)` and
+`Henon().run(steps=5000)` are the one verb a newcomer learns, and each family
+binds exactly the keywords its mathematics admits — a map handed `final_time=`
+raises and says why. `integrate` / `iterate` / `trajectory` are **removed**, not
+aliased: `hasattr(sys, "integrate")` is `False`, and the `AttributeError` names
+`run`.
 
 ---
 
@@ -171,7 +181,7 @@ pairs; the same token used for a *banned* concept anywhere else still fails.
 | **`k`** | `lyapunov_spectrum.k` | number of **Lyapunov exponents** to compute (was `n_exp`; *may exceed `dim`* for DDEs — a function-space tangent) | a count of *exponents*, not neighbours |
 | **`k_max`** | `lyapunov_from_data.k_max` | length of the divergence / stretching curve `S(k)`, evolved over `k = 0 … k_max` | an *abscissa horizon* of the scaling curve, not a neighbour count |
 | **`step`** | `windowed_rqa.step` | window **stride** in samples | a stride between windows, not the integration time step `dt` |
-| **`max_steps`** | `find_attractors`, `basins_of_attraction`, `continuation`, `basin_fractions` | integration **safety cap** — max steps before a trajectory is declared lost / non-recurrent | a divergence/abort bound, not the run length `n` |
+| **`max_steps`** | `attractors`, `basins`, `continuation`, `basin_fractions` | integration **safety cap** — max steps before a trajectory is declared lost / non-recurrent | a divergence/abort bound, not the run length `n` |
 | **`max_delay`** | `optimal_delay`, `mutual_information`, `estimate_period`, `autocorrelation` | the **search ceiling** for a delay scan (supersedes `max_lag`) | a bound on the delay search, distinct from a single embedding `delay`; the `lag`/`tau` tokens stay banned |
 
 **New tokens WS-CONV introduces** (not v3 renames — they do not exist yet, so a
@@ -218,7 +228,7 @@ name raises a precise "renamed to *X* in v4.0" error for one release.
 | `theiler_window` | `theiler` | dimensions / recurrence family |
 | `min_neighbors` | `n_neighbors` | `lyapunov_from_data` |
 | `kind` (variant selector) | `method` | `return_map` (`max`/`min`/`poincare`) |
-| `grid`, `box` (region arg) | `region` | `basins_of_attraction`, `fixed_points`, `periodic_orbits` |
+| `grid`, `box` (region arg) | `region` | `basins`, `fixed_points`, `periodic_orbits` |
 | `n_exp` | `k` | `lyapunov_spectrum` |
 | `.integrate` / `.iterate` | `.run` | every family (`.trajectory` kept, not rewritten) |
 | `bifurcation_diagram` | `orbit_diagram` | `ts.analysis` (alias **deleted** in v6 — one concept, one spelling; the old name redirects) |

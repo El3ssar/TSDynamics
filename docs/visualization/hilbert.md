@@ -82,7 +82,7 @@ pip install "tsdynamics[hilbert]"
 
 Only its **numpy core** is used. TSDynamics deliberately never installs or
 touches hilbertplot's own `[plot]` extra: a Hilbert plot must arrive as a
-`PlotSpec` `IMAGE` layer like every other picture in this library, or it would
+`Plot` `IMAGE` layer like every other picture in this library, or it would
 bypass the [`Theme`](styling.md), [`STYLE_KEYS`](styling.md) and three of the
 four [backends](backends.md).
 
@@ -186,7 +186,7 @@ two pixels touching across a ridge are far apart in the record, so a texture tha
 straddles one is an artefact of the layout, not of your data.
 
 ```python
-ts.viz.plot(
+ts.plot(
     ts.plot(lorenz, "hilbert_difference", component="x", curve="Hilbert"),
     ts.plot(lorenz, "hilbert_difference", component="x", curve="rowmajor"),
     layout="row",
@@ -237,14 +237,14 @@ Three independent locks make it trustworthy:
 
 ## Composing and exporting
 
-A `hilbert*` spec is an ordinary `PlotSpec` in the `grid2` frame, so everything
+A `hilbert*` spec is an ordinary `Plot` in the `grid2` frame, so everything
 else in the visualization layer applies:
 
 ```python
 image = ts.plot(lorenz, "hilbert", component="x")
 spectrum = ts.plot(lorenz, "hilbert_fourier", component="x")
 
-ts.viz.plot(image, spectrum, layout="row").save("hilbert.pdf")
+ts.plot(image, spectrum, layout="row").save("hilbert.pdf")
 image.render("plotly")            # interactive heatmap
 image.style(cmap="magma").show()  # the usual style vocabulary
 ```

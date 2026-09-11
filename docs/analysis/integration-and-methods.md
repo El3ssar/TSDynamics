@@ -116,9 +116,15 @@ analysis does not fit, you drive it directly; see
 
 ## Choosing a solver
 
-The `method=` keyword selects the integration kernel. The default is `rk45`
+The **`solver=`** keyword selects the integration kernel. The default is `rk45`
 (Dormand–Prince 5(4)), a robust general-purpose adaptive explicit solver that
 serves most non-stiff systems well.
+
+!!! note "`solver=` picks a kernel; `method=` picks an estimator"
+    One concept, one spelling. `solver=` is a keyword of `run` / `reinit` /
+    `ensemble`; `method=` selects an *estimation algorithm* on an analysis
+    (`optimal_delay(x, method="mi")`, `fixed_points(sys, method="interval")`).
+    `run(method=...)` raises and names `solver=`.
 
 ```python
 # skip-doctest — `sys` is any continuous system of yours
@@ -140,7 +146,7 @@ There are three broad regimes:
   nonlinear) system each step using the Jacobian, so they stay stable on stiff
   problems where an explicit kernel would need a punishingly small step.
   `bdf` (variable-order 1–5) is the recommended stiff default. The engine builds
-  the Jacobian-carrying tape automatically for these kernels — `method="bdf"`
+  the Jacobian-carrying tape automatically for these kernels — `solver="bdf"`
   just works, no hand-written Jacobian required.
 
 A system that is *known* to be stiff should declare `_default_method = "bdf"`
@@ -199,11 +205,11 @@ traj = sys.run(final_time=100.0, dt=0.02, solver="auto")
 traj.meta["method"]    # the kernel that was actually used, e.g. "rk45" or "bdf"
 ```
 
-`method="auto"` lowers the problem, probes the Jacobian spectrum at the start
+`solver="auto"` lowers the problem, probes the Jacobian spectrum at the start
 state with the one-point `solvers.recommend` heuristic, and selects `bdf` on a
 stiff right-hand side or `rk45` otherwise. The resolved kernel is recorded in
 `traj.meta["method"]`, so the choice is always visible after the fact. It is
-honoured consistently across every entry point — `integrate`, `ensemble`, the
+honoured consistently across every entry point — `run`, `ensemble`, the
 resumable stepping protocol, and the events seam.
 
 Because the probe is taken at a single point, it is **initial-condition
@@ -213,7 +219,7 @@ reliably stiff should still declare `_default_method = "bdf"` rather than lean o
 
 ## Backends: `jit`, `interp`, `reference`
 
-Orthogonal to *which* solver runs is *what* executes it. The same `method=` runs
+Orthogonal to *which* solver runs is *what* executes it. The same `solver=` runs
 on any of three backends, selected with `backend=`:
 
 | `backend` | What it is | When to use it |
@@ -236,9 +242,9 @@ rather than silently degrading.
 
 Every solver lives in the solver registry — a `name → SolverSpec` table with
 capability flags. The table below is the **complete registry**, generated
-directly from `tsdynamics.solvers.all_specs()`. Each `method=` string accepted by
-`integrate` is one row here. (The `name` column is the exact `method=` value;
-common aliases such as `"RK45"` / `"dopri5"` resolve to `rk45`.)
+directly from `tsdynamics.solvers.all_specs()`. Each `solver=` string accepted by
+`run` is one row here. (The `name` column is the exact `solver=` value; common
+aliases such as `"RK45"` / `"dopri5"` resolve to `rk45`.)
 
 <!--
   GENERATED TABLE — regenerate after adding/removing a solver with:
@@ -322,7 +328,7 @@ The registry is the single source of truth. Any solver — built-in or shipped b
 a plugin — appears in `solvers.all_specs()` with its capability flags and
 description, which is exactly what this table renders. A new kernel registered
 through the solver registry therefore documents itself: it becomes selectable by
-`method=` and shows up here on the next docs build, with no separate
+`solver=` and shows up here on the next docs build, with no separate
 documentation step. The `origin` column distinguishes registry-`builtin`
 kernels from out-of-tree contributions; today every solver is `builtin`.
 

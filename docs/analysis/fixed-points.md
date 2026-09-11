@@ -153,7 +153,7 @@ at an orbit point (the multipliers), judged against the unit circle.
 
 ## Periodic orbits of flows (single shooting)
 
-`periodic_orbit` finds a limit cycle of an autonomous flow by **single
+`periodic_orbits` finds a limit cycle of an autonomous flow by **single
 shooting**: Newton on the unknowns $(x_0, T)$ solving $\varphi_T(x_0) - x_0 = 0$,
 plus an orthogonality phase condition $f(x_0)\cdot\delta x = 0$ that removes the
 trivial time-shift degeneracy. The **monodromy matrix**
@@ -162,27 +162,34 @@ equation alongside the state, and its eigenvalues are the **Floquet
 multipliers**.
 
 ```python
-class VanDerPol(ts.ContinuousSystem):          # autonomous van der Pol oscillator
+class VanDerPolCycle(ts.ContinuousSystem):     # autonomous van der Pol oscillator
     params = {"mu": 1.0}
-    dim = 2
     variables = ("x", "v")
 
-    @staticmethod
     def _equations(y, t, mu):
         return [y(1), mu * (1 - y(0) * y(0)) * y(1) - y(0)]
 
-orb = ts.periodic_orbit(VanDerPol(params={"mu": 1.0}),
-                        ic=[2.0, 0.0], period_guess=6.0, transient=20.0)
+orbits = ts.analysis.periodic_orbits(VanDerPolCycle(params={"mu": 1.0}), 6.0,
+                                     ic=[2.0, 0.0], transient=20.0)
+print(orbits)
+# OrbitSet  1 orbit of period 6 · 1 stable, 0 unstable   (VanDerPolCycle)
+#     [0] T = 6.66329  stable  |μ|max = 1  x0 = [ 2.0082 -0.0416]
+
+orb = orbits[0]
 orb.period       # ≈ 6.6633  (the μ = 1 Van der Pol limit-cycle period)
 orb.multipliers  # one trivial multiplier ≈ 1 (the flow direction) …
 orb.stable       # … and the other inside the unit circle → stable
 ```
 
+**One verb, one return type.** A flow's limit cycle comes back as an `OrbitSet`
+of one, exactly as a map's period-$p$ orbits do — the second positional argument
+is the *period*: an integer period for a map, a period **guess** for a flow.
+
 A periodic orbit always carries one trivial Floquet multiplier $\approx 1$ along
 the flow direction; stability is read from the *other* multipliers. Shooting has
 a small basin, so seed it well: `transient` forward-integrates the guess onto a
-stable cycle first (widening the Newton basin), and `period_guess` defaults to an
-[`estimate_period`](#estimating-a-period) read of a burn-in trajectory.
+stable cycle first (widening the Newton basin), and the guess itself defaults to
+an [`estimate_period`](#estimating-a-period) read of a burn-in trajectory.
 
 !!! note "Centres are degenerate"
     A conservative centre — an undamped harmonic oscillator, for instance — has a
@@ -193,7 +200,7 @@ stable cycle first (widening the Newton basin), and `period_guess` defaults to a
 
 ## Estimating a period
 
-`periodic_orbit` needs a period guess, and often you just want to *know* a
+Shooting needs a period guess, and often you just want to *know* a
 signal's period. `estimate_period` reads the dominant period of a sampled signal
 — a `Trajectory` (the sampling step is read from its time grid), a 1-D array, or
 a multi-component array (the highest-variance channel by default) — by the first

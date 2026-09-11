@@ -202,7 +202,7 @@ class MyAttractor(ts.ContinuousSystem):
 | `default_ic` | Fallback IC when a random `U[0,1)^dim` start escapes the basin |
 | `known_lyapunov` | Enrolls the system in `test_known_values.py` — literature spectra checked continuously |
 | `_structural_params` | For variable-dimension systems (see below) |
-| `_default_method` | `"bdf"` for a system known to be stiff, so `integrate` defaults to the implicit kernel |
+| `_default_method` | `"bdf"` for a system known to be stiff, so `run` defaults to the implicit kernel |
 | `_field_shape` / `field_labels` | For a spatially-extended (PDE) system whose state is a flattened field |
 
 ### Variable-dimension systems

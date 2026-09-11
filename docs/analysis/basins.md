@@ -17,8 +17,8 @@ robust an attractor is to a perturbation.
 
 | Function | Answers | Reads |
 |---|---|---|
-| [`find_attractors`](#locating-attractors) | what attractors exist | a system + region |
-| [`basins_of_attraction`](#painting-basins) | which initial condition goes where | a system + per-axis bounds |
+| [`attractors`](#locating-attractors) | what attractors exist | a system + region |
+| [`basins`](#painting-basins) | which initial condition goes where | a system + per-axis bounds |
 | [`basin_fractions`](#basin-stability) | each basin's volume share | a system + region |
 | [`basin_entropy`](#boundary-structure) | is the boundary fractal? | a label image |
 | [`uncertainty_exponent`](#boundary-structure) | boundary dimension $D_0$ | a label image |
@@ -74,7 +74,7 @@ not a finite-dimensional point the cell tessellation can bin — and raise a cle
 
 ## Locating attractors
 
-`find_attractors` tessellates a search region into cells, draws random initial
+`attractors` tessellates a search region into cells, draws random initial
 conditions from it, and follows each trajectory cell by cell with a small
 finite-state machine: while it keeps landing in *new* cells it is transient; once
 it recurrently re-visits cells it has located an **attractor** (the recurrent
@@ -111,7 +111,7 @@ counted by a lost-counter, and a trajectory that never settles within
 
 ## Painting basins
 
-`basins_of_attraction` runs that finder from **every cell of a lattice of initial
+`basins` runs that finder from **every cell of a lattice of initial
 conditions** and labels each with the attractor it reaches — a colour map of
 state space. Add a node count to each axis bound to say how fine the lattice is:
 `(lo, hi, n)` per component.
@@ -200,8 +200,6 @@ boundary point touches all three colours. That is the **Wada** property, and
 <div class="ts-item" markdown>
 
 ```python
-from tsdynamics.analysis import basins as bas
-
 class NewtonMap(ts.DiscreteMap):
     """Newton on z**3 - 1 = 0 → three roots, Wada basins."""
     params: dict = {}
@@ -219,7 +217,7 @@ class NewtonMap(ts.DiscreteMap):
     def _jacobian(X):
         return ((0.0, 0.0), (0.0, 0.0))
 
-res = bas.basins(
+res = ts.analysis.basins(
     NewtonMap(), [(-1.0, 1.0, 200), (-1.0, 1.0, 200)],
     consecutive_recurrences=8, attractor_locate_steps=5, max_steps=200)
 

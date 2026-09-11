@@ -45,8 +45,6 @@ treatments live in the [Analysis](../analysis/index.md) section.
 
 ::: tsdynamics.analysis.fixedpoints.periodic.periodic_orbits
 
-::: tsdynamics.analysis.fixedpoints.periodic.periodic_orbit
-
 ::: tsdynamics.analysis.fixedpoints.periodic.PeriodicOrbit
 
 ::: tsdynamics.analysis.fixedpoints.periodic.estimate_period
@@ -139,13 +137,13 @@ share of a sampled region; basin *entropy* (Daza et al., 2016) and the
 *uncertainty exponent* (Grebogi et al., 1983) quantify how fractal the boundaries
 are; continuation tracks attractors and their basins across a parameter.
 
-::: tsdynamics.analysis.basins.attractors.find_attractors
+::: tsdynamics.analysis.basins.attractors.attractors
 
 ::: tsdynamics.analysis.basins.attractors.AttractorSet
 
 ::: tsdynamics.analysis.basins.attractors.Attractor
 
-::: tsdynamics.analysis.basins.basins.basins_of_attraction
+::: tsdynamics.analysis.basins.basins.basins
 
 ::: tsdynamics.analysis.basins.basins.BasinsResult
 

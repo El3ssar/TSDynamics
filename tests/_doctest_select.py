@@ -18,12 +18,26 @@ Two surfaces are gated, both executed under the suite-wide
 Why a shared injected namespace
 --------------------------------
 The library's doctests are written for a *reader*: they use the short names a
-user would have in scope — ``np`` (NumPy), ``ts`` (the package), every built-in
-system class (``Lorenz``, ``Henon`` …) and every public analysis function
-(``lyapunov_spectrum`` …) — without repeating ``import`` lines in every block.
-That convention keeps the rendered docs readable, so the harness honours it by
-seeding each doctest's globals with :func:`doctest_namespace` *on top of* the
-module's own ``__dict__`` (so the documented object itself is always in scope).
+user would have in scope — ``np`` (NumPy), ``ts`` (the package) and every
+built-in system class (``Lorenz``, ``Henon`` …) — without repeating ``import``
+lines in every block.  That convention keeps the rendered docs readable, so the
+harness honours it by seeding each doctest's globals with
+:func:`doctest_namespace` *on top of* the module's own ``__dict__`` (so the
+documented object itself is always in scope).
+
+**The seeded top level is the v6 one — 17 names — and is not padded.**  Since v6
+the analyses are free functions at ``ts.analysis.<name>`` and the result classes
+live at ``ts.analysis.results``; seeding them bare would let a page pass this
+gate while the reader's copy-paste raises ``MovedInV6``, which is the precise
+failure mode an executable-documentation gate exists to prevent.  So a page that
+still writes ``lyapunov_spectrum(lor)`` fails here, correctly, until it is
+rewritten.
+
+The one convenience that remains is the built-in system classes, seeded from
+``dir(tsdynamics.systems)``: ``ts.Lorenz`` no longer resolves either, so this
+carries the same hazard — measured, **88 gated fences** call a bare system class
+with no import line.  Removing the seed is a docs-wide rewrite rather than a test
+change, so it is recorded here and deferred, not silently relied upon.
 
 Gate everything, exempt on purpose
 ----------------------------------
@@ -305,10 +319,10 @@ _FENCE_OPEN = re.compile(r"^(`{3,})\s*(?:python|py|pycon)\b.*$")
 def doctest_namespace() -> dict[str, Any]:
     """Build the shared globals seeded into every doctest / page block.
 
-    Contains ``np`` (NumPy), ``ts`` (the package), every built-in system class
-    and every public top-level name (analysis functions, result types, derived
-    wrappers).  These are the names a reader has in scope, so the readable,
-    import-light examples in the docstrings and pages run as written.
+    Contains ``np`` (NumPy), ``ts`` (the package), every built-in system class,
+    and the **v6 top level exactly as a user gets it** — 17 names, nothing added
+    back.  See "Why a shared injected namespace" in this module's docstring: a
+    padded namespace would certify examples the reader cannot run.
     """
     import numpy as np
 

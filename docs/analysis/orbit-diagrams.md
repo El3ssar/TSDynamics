@@ -1,5 +1,5 @@
 ---
-description: Orbit and bifurcation diagrams — sweep a parameter of a map (or a flow through PoincareMap / StroboscopicMap), read the period-doubling cascade with OrbitDiagram.periods() / bifurcation_points(), and expose the hidden 1-D map with return_map.
+description: Orbit and bifurcation diagrams — sweep a parameter of a map (or of a flow through sys.poincare), read the period-doubling cascade with OrbitDiagram.periods() / bifurcation_points(), and expose the hidden 1-D map with return_map.
 ---
 
 <span class="ts-kicker">Analysis · Orbit & bifurcation diagrams</span>
@@ -24,10 +24,10 @@ draws the **bifurcation diagram** — the map of how that attractor is created,
 doubled, and destroyed as the parameter moves.
 
 Nothing about the construction is specific to maps. Any object that advances in
-discrete steps works, and the [derived wrappers](../start/index.md) turn a flow
-into exactly such an object: a `PoincareMap` samples the flow at plane
-crossings, a `StroboscopicMap` samples a forced oscillator once per drive
-period. An orbit diagram over either **is** the bifurcation diagram of the flow.
+discrete steps works, and `sys.poincare(...)` turns a flow into exactly such an
+object: given a *plane* it samples the flow at the crossings, given a *period* it
+strobes a forced oscillator once per drive cycle. An orbit diagram over either
+**is** the bifurcation diagram of the flow.
 
 ## Maps: the logistic cascade
 
@@ -55,7 +55,7 @@ param, state = od.flat()   # scatter-ready arrays
 recorded point, and the asymptotic state — ready to scatter as
 `plt.plot(param, state, ",k")`. The result is an `OrbitDiagram`: iterate it for
 `(value, points)` pairs, index its `.values` / `.points`, and it carries the
-usual `.meta` / `.summary()` / `.plot` result surface. `transient` is a *step*
+usual `.meta` / `.to_dict()` / `.plot` result surface. `transient` is a *step*
 count discarded before recording; `n` is how many states you keep, enough to
 resolve the widest band you care about.
 </div>
@@ -118,23 +118,20 @@ and $r_2 = 1 + \sqrt{6} \approx 3.449$. The resolution of
 near a transition to pin it down.
 
 !!! tip "Named components"
-    When the system declares `variables`, `component=` accepts a name:
-    `orbit_diagram(sys, "r", values, component="x")`. `periods()` and
-    `bifurcation_points()` take the same `component=` to count branches in a
-    chosen coordinate.
+    When the system declares `variables`, the component selector accepts a
+    name as well as an index, and `periods()` / `bifurcation_points()` take the
+    same selector to count branches in a chosen coordinate.
 
 ## Flows: bifurcation diagrams by composition
 
 `orbit_diagram` requires a discrete view, and a flow does not have one on its
-own — so wrap it. A `PoincareMap` presents the flow as the map of its crossings
-through a section plane; sweeping a parameter of *that* is a bifurcation diagram
-of the flow, one section crossing per "iteration":
+own — so derive one. `sys.poincare(...)` presents the flow as the map of its
+crossings through a section plane; sweeping a parameter of *that* is a
+bifurcation diagram of the flow, one section crossing per "iteration":
 
 ```python
-from tsdynamics.derived import PoincareMap
-
 od = ts.analysis.orbit_diagram(
-    PoincareMap(ts.systems.Rossler(), plane=("y", 0.0, "up")),  # section y = 0, upward
+    ts.systems.Rossler().poincare("y", 0.0),   # section y = 0, crossed upward
     "c", np.linspace(4.0, 6.0, 120),
     points_per_value=60, transient=30,
 )
@@ -146,19 +143,21 @@ wrapper, so the sweep composes transparently. The Rössler period-doubling route
 to its funnel attractor appears here just as the logistic cascade does — the
 same cascade, one dimension up.
 
-For a **periodically forced** oscillator the natural strobe is once per forcing
-period, which is what `StroboscopicMap` does:
+For a **periodically forced** oscillator the natural section is a strobe once
+per forcing period — the same `poincare` verb, given a period instead of a plane:
 
 ```python
-from tsdynamics.derived import StroboscopicMap
-
 duf = ts.systems.Duffing()                          # forcing frequency omega = 1.4
 od = ts.analysis.orbit_diagram(
-    StroboscopicMap(duf, period=2 * np.pi / 1.4),
+    duf.poincare(period=2 * np.pi / 1.4),
     "gamma", np.linspace(0.30, 0.50, 120),
-    points_per_value=40, transient=60, component=0,
+    points_per_value=40, transient=60,
 )
 ```
+
+A plane is an affine surface $g(\mathbf{u}) = \mathbf{n}\cdot\mathbf{u} - c$;
+a period samples the phase circle. They are different sections of the same flow,
+so `poincare` takes exactly one of them and says so if you give both.
 
 Each sample is the state after exactly one drive period, so a period-1 response
 (locked to the forcing) is a single point, a period-2 subharmonic is two, and
@@ -181,8 +180,8 @@ The classic construction (Lorenz, 1963) records successive **local maxima** of a
 coordinate:
 
 ```python
-rm = ts.analysis.return_map(ts.systems.Lorenz(), "z", method="max",
-                   final_time=400.0, transient=40.0)
+rm = ts.analysis.return_map(ts.systems.Lorenz(), "z", kind="max",
+                            final_time=400.0, transient=40.0)
 vn, vn1 = rm.flat()
 # plt.plot(vn, vn1, ".")   # the famous single-humped z-maxima cusp map
 ```
@@ -196,8 +195,8 @@ The other construction records an observable at successive **section crossings**
 — the section's own return map:
 
 ```python
-rm = ts.analysis.return_map(ts.systems.Rossler(), "y", method="poincare",
-                   plane=("x", 0.0, "up"), n=400)
+rm = ts.analysis.return_map(ts.systems.Rossler(), "y", kind="poincare",
+                            plane=("x", 0.0, "up"), n=400)
 ```
 
 Either source can be a live system (integrated for you), an existing
@@ -220,7 +219,7 @@ curve is the signature that the dynamics are *not* effectively one-dimensional.
 
 ## See also
 
-- [Poincaré sections](poincare.md) — the section machinery behind `PoincareMap`, and `return_map(method="poincare")`
+- [Poincaré sections](poincare.md) — the section machinery behind `sys.poincare(...)`, and `return_map(kind="poincare")`
 - [Fixed points & periodic orbits](fixed-points.md) — the invariant sets that are born and lost at the bifurcations above
 - [Lyapunov spectra](lyapunov.md) — the exponent that turns positive as the cascade reaches chaos
 - [Integration & methods](integration-and-methods.md) — the `integrate` / stepping machinery every sweep drives

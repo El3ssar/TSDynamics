@@ -48,9 +48,9 @@ ros = ts.systems.Rossler()
 traj = ros.run(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0])
 x = traj.y[1000:, 0]        # keep ONLY the x channel
 
-tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 27 samples
+tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 25 samples
 emb = ts.analysis.embed(x, dimension=3, delay=tau)
-emb.shape                   # (6947, 3)
+emb.shape                   # (6951, 3)
 emb[:, 0], emb[:, 1]        # (x(t), x(t+tau)) — the reconstructed plane
 ```
 
@@ -94,15 +94,15 @@ $x_{i+\tau}$ adds the most *new* information about the state while still being
 dynamically related to $x_i$.
 
 ```python
-tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 27   (first MI minimum)
+tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 25   (first MI minimum)
 
 mi = ts.analysis.mutual_information(x, max_delay=120)
-mi.optimal_lag          # 27   — the same lag, read off the curve
+mi.optimal_lag          # 25   — the same lag, read off the curve
 mi.plot()               # the I(tau) diagnostic, with the chosen tau marked
 ```
 
-`optimal_delay` returns a `CountResult` that behaves as the integer $\tau$, so
-it drops straight into `embed`. The linear alternatives are the classic
+`optimal_delay` returns a count that behaves as the integer $\tau$ — it prints,
+formats and indexes as that integer — so it drops straight into `embed`. The linear alternatives are the classic
 autocorrelation rules — `method="acf"` (first lag where the autocorrelation
 falls to $1/e$) and `method="acf_zero"` (first zero crossing); the raw curve is
 available via `autocorrelation(x)`. On the Rössler $x$ channel the $1/e$ rule
@@ -162,10 +162,10 @@ Delay, dimension, embed, analyse — from one channel to a dimension estimate:
 ```python
 x = ts.systems.Rossler().run(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0]).y[1000:, 0]
 
-tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)     # 27
+tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)     # 25
 m = int(ts.analysis.embedding_dimension(x, method="fnn", delay=tau, max_dim=8))  # 3
 emb = ts.analysis.embed(x, dimension=m, delay=tau)
-ts.analysis.correlation_dimension(emb, theiler=tau)                # ≈ 1.74
+ts.analysis.correlation_dimension(emb, theiler=tau)                # ≈ 1.71
 ```
 
 This is the standard route to a fractal dimension or a data-driven Lyapunov

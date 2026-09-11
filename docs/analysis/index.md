@@ -12,22 +12,57 @@ stochastic system, or a Poincaré section of a flow — implements the same
 [built-in or user-defined system](../systems/index.md) without special-casing.
 You define the dynamics once; the whole toolkit follows.
 
-Two things tie it together. First, **the `Trajectory`** — every `integrate` or
-`iterate` call returns one: a `(T, dim)` array of states with named components
-(`traj["x"]`), point-set operations (`traj.after(t)`, `traj.minmax()`,
-`traj.standardize()`) and provenance carried in `traj.meta`. Second, **the
-calling convention** — every quantifier takes a *system or data* as its first
-argument, dispatches on its family, and returns a rich result object that is a
-drop-in for its underlying value (a `float`, an array) while also carrying
-`.meta`, `.summary()`, `.to_dict()` and a `.plot` seam.
+Two things tie it together. First, **the `Trajectory`** — every `run` call
+returns one: a `(T, dim)` array of states with named components (`traj["x"]`),
+row/column selection (`traj[10:50]`, `traj[["x", "z"]]`, `traj.after(t)`) and
+provenance carried in `traj.meta`. Second, **the calling convention**:
+
+> **Every analysis is a free function whose FIRST argument is the thing it is
+> about** — a system, a trajectory, or a result another analysis returned.
+
+There is no bound method on a system, on a `Trajectory`, or on a result. One
+concept, one spelling; and the free function is the one that cannot hide a
+sampling choice from you. Each returns a rich result object that is a drop-in for
+its underlying value (a `float`, an array) while also carrying `.meta`,
+`.to_dict()`, `.to_frame()` and a `.plot` seam — **and whose `repr` is the
+answer**, so `print(result)` is the whole reporting story.
 
 ```python
 import tsdynamics as ts
 
 lor  = ts.systems.Lorenz()
-traj = lor.run(final_time=100.0, dt=0.01)      # a Trajectory
-exps = ts.analysis.lyapunov_spectrum(lor, final_time=300.0)   # → [0.91, ~0, -14.57]
-ts.analysis.kaplan_yorke_dimension(exps)                      # → ≈ 2.06
+traj = lor.run(final_time=100.0, dt=0.01)                     # a Trajectory
+exps = ts.analysis.lyapunov_spectrum(lor, final_time=300.0)   # a property of the equations
+ts.analysis.correlation_dimension(traj)                       # a property of a point set
+ts.analysis.kaplan_yorke_dimension(exps)                      # a property of the answer above
+```
+
+## Finding the one you want
+
+`ts.analysis` is **53 flat, sorted names** — 50 analyses plus `find`, `register`
+and `results` — so `ts.analysis.<TAB>` is the index. Two questions get answered
+without leaving the REPL:
+
+```python
+ts.analysis.find(traj)             # what can I measure on THIS?
+ts.analysis.find("is this chaotic")  # who answers THIS question?
+```
+
+`find` takes **one** positional argument: a free-text string, or a subject (a
+system, a trajectory, an array, a result — or any of their classes), or nothing
+at all for the complete list. It returns the analysis *functions*, so
+`ts.analysis.find("chaotic")[0](lor)` runs the first hit; its `repr` is the
+grouped table. `help(ts.analysis)` prints that same table, grouped by **what you
+are holding**.
+
+Guess a name that used to exist and the error is the migration guide:
+
+```
+>>> lor.lyapunov_spectrum()
+AttributeError: 'Lorenz' object has no attribute 'lyapunov_spectrum': analyses are
+free functions in v6, and the subject is the first argument.
+    ts.analysis.lyapunov_spectrum(system)
+    ts.analysis.find(system)   # all 21 that take a flow
 ```
 
 ## The toolkit, by capability
@@ -37,9 +72,9 @@ literature it implements.
 
 ### Integration & methods
 
-The two verbs that drive everything — `integrate` for flows, `iterate` for
-maps — the fixed / adaptive / implicit solver families, automatic stiffness
-selection, and the `interp` / `jit` / `reference` backends.
+The one verb that drives everything — `run`, on every family — the fixed /
+adaptive / implicit solver families, automatic stiffness selection, and the
+`interp` / `jit` / `reference` backends.
 
 - [**Integration & methods**](integration-and-methods.md) — choosing a solver and a backend, plus the complete solver capability table.
 
@@ -98,9 +133,9 @@ Every routine above is built on the same uniform **stepping protocol** —
 `reinit(u)` / `step(n_or_dt)` / `state()` / `set_state(u)` / `time()` — that
 every system implements. When a prepackaged analysis does not fit (covariant
 Lyapunov vectors, a custom event, finite-time statistics), you can drive the
-protocol directly, or reach for the derived wrappers — `PoincareMap`,
-`StroboscopicMap`, `TangentSystem`, `EnsembleSystem`, `ProjectedSystem` — which
-are themselves systems, so the whole toolkit composes back over them.
+protocol directly, or reach for the derived views — `sys.poincare(...)`,
+`sys.ensemble(...)`, and `ts.derived.TangentSystem` / `ts.derived.ProjectedSystem`
+— which are themselves systems, so the whole toolkit composes back over them.
 
 ```python
 lor.reinit([1.0, 1.0, 1.0])

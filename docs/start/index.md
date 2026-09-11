@@ -11,14 +11,19 @@ Read it in order, or jump to what you need:
 - **[01 · Install](install.md)** — one `pip install`; the compiled engine ships
   in the wheel, so there is no build step and no compiler toolchain.
 - **[02 · First trajectory](first-trajectory.md)** — instantiate the Lorenz
-  system, integrate it, read named components off the result, plot it, and
-  compute its Lyapunov spectrum.
+  system, `run` it, read named components off the result, plot it, and measure
+  its Lyapunov spectrum.
 - **[03 · The mental model](concepts.md)** — the handful of ideas the whole
   library rests on: the four families, the one stepping protocol, the three
   execution backends, and the derived-system wrappers.
 - **[04 · Defining systems](defining-systems.md)** — subclass a family base and
   write the dynamics as one symbolic method. A worked example end to end, plus
   maps, SDEs, and automatic registration.
+
+In a hurry? [**Seven tasks in one sitting**](../tutorials/seven-tasks.md) is
+the same material as one page of runnable code: simulate, test for chaos, draw a
+bifurcation diagram, find fixed points, paint basins, animate a phase portrait,
+and define a system of your own.
 
 Once you are comfortable, the rest of the site opens up:
 

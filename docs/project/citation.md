@@ -65,7 +65,7 @@ the original paper for each method your results depend on:
 | `recurrence_matrix` / `rqa` | Marwan, Romano, Thiel & Kurths, *Recurrence plots for the analysis of complex systems*, Phys. Rep. **438**, 237 (2007) |
 | `embed` (delay reconstruction) | Takens, *Detecting strange attractors in turbulence*, LNM **898**, Springer (1981) |
 | `embedding_dimension` (Cao / FNN) | Cao, *Practical method for determining the minimum embedding dimension…*, Physica D **110**, 43 (1997) |
-| `find_attractors` / `basins_of_attraction` | Datseris & Wagemakers, *Effortless estimation of basins of attraction*, Chaos **32**, 023104 (2022) |
+| `attractors` / `basins` | Datseris & Wagemakers, *Effortless estimation of basins of attraction*, Chaos **32**, 023104 (2022) |
 | `basin_entropy` | Daza, Wagemakers, Georgeot, Guéry-Odelin & Sanjuán, *Basin entropy: a new tool to analyze uncertainty in dynamical systems*, Sci. Rep. **6**, 31416 (2016) |
 
 Each analysis page under [Analysis](../analysis/index.md) lists the exact
@@ -74,9 +74,10 @@ paper it implements.
 
 ## Citing the systems
 
-Each built-in system declares its literature source in its `reference` class
-attribute — shown on its page under [Systems](../systems/index.md) and available
-programmatically from the [registry](../references/index.md):
+Each built-in system declares its literature source in its `_reference` class
+attribute — shown on its page under [Systems](../systems/index.md), printed by
+`system.info`, and available programmatically from the
+[registry](../references/index.md):
 
 ```python
 from tsdynamics import registry
@@ -85,18 +86,17 @@ registry.get("Lorenz").reference
 # 'Lorenz (1963), J. Atmos. Sci. 20, 130-141'
 ```
 
-Most systems also carry a bare `doi` on the class for the primary reference,
-sourced where available from the published catalogue metadata:
+Most systems also carry the bare DOI of that primary reference, sourced where
+available from the published catalogue metadata — the registry entry is the door:
 
 ```python
-import tsdynamics as ts
-
-ts.systems.Lorenz.doi
+registry.get("Lorenz").doi
 # '10.1175/1520-0469(1963)020<0130:dnf>2.0.co;2'
 ```
 
-Of the 177 built-in systems, 172 declare a literature `reference` and 155 carry
-a `doi`. To pull the reference for every system you touched — the makings of a
+Of the 177 built-in systems, 172 declare a literature reference and 155 carry a
+DOI; every one of those 155 is rendered as a resolvable `doi.org` link on that
+system's generated page. To pull the reference for every system you touched — the makings of a
 `\bibliography` — sweep the registry:
 
 ```python

@@ -48,7 +48,7 @@ source:
 
 - [Top level](../reference/top-level.md) — everything importable straight from `tsdynamics`.
 - [Base classes](../reference/base.md) — `ContinuousSystem`, `DelaySystem`, `DiscreteMap`, `StochasticSystem`, `Trajectory`, and the `System` protocol.
-- [Derived systems](../reference/derived.md) — `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `EnsembleSystem`, `ProjectedSystem`, `WrappedSystem`.
+- [Derived systems](../reference/derived.md) — `PoincareMap`, `StroboscopicMap`, `TangentSystem`, `ProjectedSystem`, `Ensemble`, `WrappedSystem`.
 - [Analysis](../reference/analysis.md) — the full quantifier toolkit.
 - [Data &amp; state-space](../reference/data.md) — `Trajectory`, regions, samplers, set distances.
 - [Solvers](../reference/solvers.md) — the by-name method registry and auto-stiffness.

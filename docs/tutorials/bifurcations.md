@@ -127,9 +127,9 @@ turns chaotic:
 
 ```python
 for r in [2.9, 3.2, 3.5, 3.57, 3.83, 3.9, 4.0]:
-    lam = float(np.asarray(
-        ts.systems.Logistic(params={"r": r}, ic=[0.1]).lyapunov_spectrum(n=30000)
-    )[0])
+    lam = float(np.asarray(ts.analysis.lyapunov_spectrum(
+        ts.systems.Logistic(params={"r": r}, ic=[0.1]), n=30000
+    ))[0])
     print(f"r={r}: lambda = {lam:+.4f}")
 
 # r=2.9 : lambda = -0.1054     stable fixed point
@@ -154,7 +154,7 @@ Nothing about the cascade is special to maps. A *continuous* system
 period-doubles its way to chaos too — you just cannot sweep a flow directly,
 because a flow has no discrete "next state" to record. The
 [derived wrappers](../start/index.md) fix that: a
-[`PoincareMap`](../analysis/poincare.md) samples the flow only where it pierces a
+[`sys.poincare(...)`](../analysis/poincare.md) samples the flow only where it pierces a
 chosen plane, presenting it as a genuine discrete map. Sweeping a parameter of
 *that* is the bifurcation diagram of the flow.
 
@@ -162,13 +162,11 @@ We use the **Rössler system** — three equations whose single parameter $c$ dr
 exactly this route:
 
 ```python
-from tsdynamics.derived import PoincareMap
-
 ros = ts.systems.Rossler()
 ros.params      # ParamSet({a=0.2, b=0.2, c=5.7})
 
 od = ts.analysis.orbit_diagram(
-    PoincareMap(ros, plane=("y", 0.0, "up")),   # section y = 0, crossed upward
+    ros.poincare("y", 0.0, direction="up"),   # section y = 0, crossed upward
     "c", np.linspace(2.0, 6.0, 80),
     points_per_value=50, transient=50,
 )
@@ -188,7 +186,7 @@ for cval in [2.5, 3.5, 4.1, 5.7]:
 # c ~ 2.51:   1 distinct crossings     period-1 limit cycle
 # c ~ 3.52:   2 distinct crossings     period-2
 # c ~ 4.08:   4 distinct crossings     period-4
-# c ~ 5.70:  47 distinct crossings     chaotic — the Rössler funnel attractor
+# c ~ 5.70:  43 distinct crossings     chaotic — the Rössler funnel attractor
 ```
 
 There it is again — 1, 2, 4, … cascading into a chaotic band, the identical
@@ -196,10 +194,10 @@ period-doubling route to chaos, one dimension up. The logistic map was not a toy
 curiosity: it is the *universal* skeleton (Feigenbaum, 1978) that a huge class of
 systems, flows included, follow into chaos.
 
-!!! tip "Forced oscillators: `StroboscopicMap`"
+!!! tip "Forced oscillators: strobe instead of a plane"
     For a *periodically forced* system the natural discrete view is once per
-    forcing period — [`StroboscopicMap`](../analysis/orbit-diagrams.md) does
-    exactly that, and sweeping the forcing amplitude gives the forced-oscillator
+    forcing period — [`sys.poincare(period=T)`](../analysis/orbit-diagrams.md)
+    does exactly that, and sweeping the forcing amplitude gives the forced-oscillator
     bifurcation diagram. A subtlety: a driven oscillator can *diverge* over part
     of a naive parameter range, and `orbit_diagram` records an empty set with a
     `RuntimeWarning` for any value that blows up rather than aborting the sweep —
@@ -229,7 +227,7 @@ exists.
 ## See also
 
 - [Orbit & bifurcation diagrams](../analysis/orbit-diagrams.md) — the full `orbit_diagram` / `periods()` / `bifurcation_points()` / `return_map` API
-- [Poincaré sections](../analysis/poincare.md) — the section machinery behind `PoincareMap`
+- [Poincaré sections](../analysis/poincare.md) — the section machinery behind `sys.poincare(...)`
 - [Poincaré sections & return maps](poincare-return-maps.md) — the companion tutorial on sectioning a flow and reading its hidden 1-D map
 - [Lyapunov spectra](../analysis/lyapunov.md) — the exponent that turns positive as the cascade reaches chaos
 - [Fixed points & periodic orbits](../analysis/fixed-points.md) — the invariant sets born and lost at each fork

@@ -275,25 +275,51 @@ def test_matplotlib_composite_animation_renders():
 
 
 def test_save_gif(tmp_path):
+    """The GIF plays: ``n_frames`` frames, all different, at the requested rate.
+
+    ``st_size > 0`` is not enough — a **one-frame** GIF is a perfectly valid file
+    and has shipped from this library before.  The frame count, the pairwise
+    difference and the inter-frame delay are what a reader would actually notice.
+    """
     pytest.importorskip("matplotlib")
     pytest.importorskip("PIL")  # the pillow gif writer
+    import numpy as np
+
     out = tmp_path / "orbit.gif"
     spec = _lorenz().to_plot_spec(animate=True).animate(n_frames=6).trail(length=("steps", 100))
     returned = spec.save(str(out), fps=10)
     assert returned == str(out)
     assert out.stat().st_size > 0
 
+    frames = _gif_frames(out)
+    assert len(frames) == 6  # not one, not "some"
+    assert len({f.tobytes() for f in frames}) == 6  # six different pictures
+    diffs = [
+        int(np.abs(frames[i].astype(int) - frames[i - 1].astype(int)).sum()) for i in range(1, 6)
+    ]
+    assert all(d > 0 for d in diffs)
+
+    from PIL import Image
+
+    with Image.open(out) as im:
+        assert im.info.get("duration") == pytest.approx(100, abs=10)  # fps=10 → 100 ms/frame
+
 
 def test_save_mp4(tmp_path):
+    """The MP4 plays: ``n_frames`` decoded frames at the requested rate."""
     import shutil
 
     pytest.importorskip("matplotlib")
-    if shutil.which("ffmpeg") is None:
-        pytest.skip("ffmpeg not available for mp4 export")
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg/ffprobe not available for mp4 export")
     out = tmp_path / "orbit.mp4"
     spec = _lorenz().to_plot_spec(animate=True).animate(n_frames=6)
     assert spec.save(str(out), fps=10) == str(out)
     assert out.stat().st_size > 0
+
+    n_frames, rate = _mp4_stream_info(out)
+    assert n_frames == 6
+    assert rate == pytest.approx(10.0, abs=0.5)
 
 
 def test_save_still_image_renders_final_frame(tmp_path):
@@ -422,6 +448,38 @@ def _field_1d_traj():
     numerically fragile; a short window keeps it cheap.
     """
     return ts.systems.KuramotoSivashinsky(N=32, L=22.0).run(final_time=20.0, dt=0.5)
+
+
+def _mp4_stream_info(path):
+    """Return ``(n_frames, frame_rate)`` decoded from an MP4 with ``ffprobe``.
+
+    Counting the frames is the only way to tell a movie from a one-frame file that
+    happens to carry the right container; the rate proves ``fps=`` reached the writer.
+    """
+    import json
+    import subprocess
+
+    out = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames,r_frame_rate",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    stream = json.loads(out)["streams"][0]
+    num, _, den = stream["r_frame_rate"].partition("/")
+    return int(stream["nb_read_frames"]), float(num) / float(den or 1)
 
 
 def _gif_frames(path):

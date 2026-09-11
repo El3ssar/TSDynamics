@@ -37,9 +37,28 @@ Selection model
    * a changed ``viz`` source file → **every** ``test_viz_*.py`` (discovered by
      glob, not hand-listed) plus the viz tests that do not carry that prefix
      (``_VIZ_EXTRA_TESTS``);
+   * a changed **documentation** path → the tests that *execute* it
+     (``_docs_gate_tests``; see "Documentation is executable" below);
    * a cheap set of registry/layout **guard** tests always runs in scoped mode;
-   * documentation / planning / tooling paths are ignored (no test impact);
+   * planning / editor / issue-template paths are ignored (no test impact);
    * **any path that matches none of the above escalates to a full run.**
+
+Documentation is executable
+---------------------------
+``docs/`` used to be listed as having "no bearing on the test suite", alongside
+``*.md``, ``README.md`` and ``mkdocs.yml``.  That was false the day the doctest
+gate was inverted (v6, ``docs-truth``): ``tests/test_doctests.py`` **runs** every
+runnable ``python`` fence on every ``docs/**.md`` page under
+``filterwarnings = error``, parses ``mkdocs.yml``'s exclusion block, and checks
+the catalogue counts written in ``README.md`` / ``CLAUDE.md`` / ``mkdocs.yml``
+against the live registry.  Measured before this rule existed,
+``classify(['docs/analysis/lyapunov.md'])`` selected three cheap registry guards
+and **not** ``test_doctests.py`` — so a docs-only PR could break every example on
+a page and go green, with the failure deferred to the merge or the nightly.
+
+``docs/_tooling/`` is worse than prose: it is *code the suite imports* — the
+gallery builder, the golden-figure corpus, and ``editorial.json`` (read by
+``test_catalogue_dynamics.py``) — so it selects those gates too.
 
 The result is a :class:`Plan`.  ``conftest`` turns it into deselections and
 prints exactly what it kept and why (``[changed-select] …``).
@@ -266,9 +285,55 @@ _CATALOGUE_GATES: tuple[str, ...] = (
     "test_xval_catalogue.py",
 )
 
+#: The gate that **executes** the documentation: every runnable ``python`` fence
+#: on every ``docs/**.md`` page, the ``mkdocs.yml`` exclusion block, and the
+#: catalogue counts written in prose.  A documentation change selects it.
+_DOCS_GATE_TESTS: tuple[str, ...] = ("test_doctests.py",)
+
+#: ``docs/_tooling/`` is code the suite imports, not prose: the gallery builder
+#: (``test_viz_gallery.py``), the committed golden-figure corpus
+#: (``test_docs_figures_golden.py``) and ``editorial.json``, the reviewed
+#: per-system claim table ``test_catalogue_dynamics.py`` reads.
+_DOCS_TOOLING_TESTS: tuple[str, ...] = (
+    "test_doctests.py",
+    "test_docs_figures_golden.py",
+    "test_viz_gallery.py",
+    "test_catalogue_dynamics.py",
+)
+
+#: Repo-root files the doctest gate reads: ``test_doctests.py::_COUNTED_FILES``
+#: checks the catalogue counts in their prose against the live registry, and the
+#: ``mkdocs.yml`` guards parse its ``exclude_docs`` block.  They are **not**
+#: ignorable, which is why they are absent from :data:`_IGNORE_FILES`.
+_DOCS_GATE_FILES: frozenset[str] = frozenset({"README.md", "CLAUDE.md", "mkdocs.yml"})
+
+
+def _docs_gate_tests(path: str) -> tuple[str, ...] | None:
+    """Test files a **documentation** path can break, or ``None`` if it is not one.
+
+    Checked *before* :func:`_is_ignored`, because the ignore table is keyed on
+    suffix (``.md``) and prefix (``docs/``) and would otherwise swallow the very
+    paths the doctest gate executes.  ``planning/`` and ``.claude/`` keep their
+    ignore, because no test reads them.
+    """
+    if path.startswith("docs/_tooling/"):
+        return _DOCS_TOOLING_TESTS
+    if path.startswith("docs/"):
+        return _DOCS_GATE_TESTS
+    if "/" not in path and path in _DOCS_GATE_FILES:
+        return _DOCS_GATE_TESTS
+    return None
+
+
 #: Paths with no bearing on the test suite — ignored, never escalate.
+#:
+#: ``docs/``, ``*.md``, ``README.md`` and ``mkdocs.yml`` used to be here.  They
+#: are not ignorable: see :func:`_docs_gate_tests` and this module's
+#: "Documentation is executable" section.  The ``.md`` *suffix* rule stays, so a
+#: stray markdown file outside ``docs/`` (a crate README, a note beside a
+#: benchmark) still costs nothing — the doc-gate check runs first and claims the
+#: pages that are actually executed.
 _IGNORE_PREFIXES: tuple[str, ...] = (
-    "docs/",
     "planning/",
     ".claude/",
     ".github/ISSUE_TEMPLATE/",
@@ -277,12 +342,10 @@ _IGNORE_SUFFIXES: tuple[str, ...] = (".md", ".rst", ".txt")
 _IGNORE_FILES: frozenset[str] = frozenset(
     {
         "Makefile",
-        "mkdocs.yml",
         "LICENSE",
         ".gitignore",
         ".pre-commit-config.yaml",
         "CHANGELOG.md",
-        "README.md",
         "CONTRIBUTING.md",
     }
 )
@@ -422,6 +485,13 @@ def classify(changed: set[str] | None) -> Plan:
     for path in files:
         if _is_foundational(path):
             return Plan(full=True, reason=f"foundational change: {path}", changed=files)
+        docs_gate = _docs_gate_tests(path)
+        if docs_gate is not None:
+            # Checked before _is_ignored: the ignore table is keyed on the `.md`
+            # suffix and the `docs/` prefix, and the doctest gate EXECUTES those.
+            selected.update(docs_gate)
+            notes.append(f"docs gate: {path}")
+            continue
         if _is_ignored(path):
             notes.append(f"ignored: {path}")
             continue
