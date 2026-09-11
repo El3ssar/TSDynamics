@@ -43,8 +43,8 @@ def _reference_chain(make, ic, dt, n, method, rtol=1e-6, atol=1e-9):
     t = 0.0
     out = []
     for _ in range(n):
-        traj = sys.integrate(
-            final_time=t + dt, dt=dt, t0=t, ic=state, method=method, rtol=rtol, atol=atol
+        traj = sys.run(
+            final_time=t + dt, dt=dt, t0=t, ic=state, solver=method, rtol=rtol, atol=atol
         )
         state = np.asarray(traj.y[-1], dtype=float)
         t += dt
@@ -55,7 +55,7 @@ def _reference_chain(make, ic, dt, n, method, rtol=1e-6, atol=1e-9):
 def _stepped(make, ic, dt, n, method, rtol=1e-6, atol=1e-9):
     """The states handed out by the live ``step`` stepper."""
     sys = make()
-    sys.reinit(list(ic), method=method, rtol=rtol, atol=atol)
+    sys.reinit(list(ic), solver=method, rtol=rtol, atol=atol)
     return np.array([sys.step(dt).copy() for _ in range(n)])
 
 
@@ -73,8 +73,8 @@ def test_step_matches_perstep_integrate(method):
     adaptive methods too — not merely "within tolerance".
     """
     ic = [1.0, 1.0, 1.0]
-    ref = _reference_chain(ts.Lorenz, ic, 0.01, 300, method)
-    got = _stepped(ts.Lorenz, ic, 0.01, 300, method)
+    ref = _reference_chain(ts.systems.Lorenz, ic, 0.01, 300, method)
+    got = _stepped(ts.systems.Lorenz, ic, 0.01, 300, method)
     assert got.shape == ref.shape
     assert np.max(np.abs(got - ref)) < 1e-12
 
@@ -82,8 +82,8 @@ def test_step_matches_perstep_integrate(method):
 def test_step_matches_perstep_integrate_rossler():
     """Same exact equivalence on a second system / dt (Rössler, dt=0.02)."""
     ic = [0.1, 0.0, 0.0]
-    ref = _reference_chain(ts.Rossler, ic, 0.02, 250, "rk45")
-    got = _stepped(ts.Rossler, ic, 0.02, 250, "rk45")
+    ref = _reference_chain(ts.systems.Rossler, ic, 0.02, 250, "rk45")
+    got = _stepped(ts.systems.Rossler, ic, 0.02, 250, "rk45")
     assert np.max(np.abs(got - ref)) < 1e-12
 
 
@@ -100,8 +100,8 @@ def test_max_lyapunov_lorenz_not_corrupted_by_step():
     measured exponent blew up to ~23.  A short but unambiguous run pins it back to
     the Lorenz value (≈0.906) in the fast tier.
     """
-    lam = ts.max_lyapunov(
-        ts.Lorenz(),
+    lam = ts.analysis.max_lyapunov(
+        ts.systems.Lorenz(),
         ic=[1.0, 1.0, 1.0],
         dt=0.05,
         n=250,
@@ -122,16 +122,16 @@ def test_set_state_midstream_matches_fresh_system():
     ic = [1.0, 1.0, 1.0]
     new_state = [5.0, -3.0, 12.0]
 
-    sys = ts.Lorenz()
-    sys.reinit(ic, method="rk4")
+    sys = ts.systems.Lorenz()
+    sys.reinit(ic, solver="rk4")
     for _ in range(30):
         sys.step(0.01)
     sys.set_state(new_state)
     after = np.array([sys.step(0.01).copy() for _ in range(30)])
 
     # A fresh system reinitialised at the same time/state.
-    ref_sys = ts.Lorenz()
-    ref_sys.reinit(new_state, t=30 * 0.01, method="rk4")
+    ref_sys = ts.systems.Lorenz()
+    ref_sys.reinit(new_state, t=30 * 0.01, solver="rk4")
     ref = np.array([ref_sys.step(0.01).copy() for _ in range(30)])
     assert np.max(np.abs(after - ref)) < 1e-12
 
@@ -141,24 +141,24 @@ def test_dt_change_midstream_is_exact():
     ic = [1.0, 1.0, 1.0]
     dt1, dt2 = 0.01, 0.025
 
-    sys = ts.Lorenz()
-    sys.reinit(ic, method="rk4")
+    sys = ts.systems.Lorenz()
+    sys.reinit(ic, solver="rk4")
     leg1 = np.array([sys.step(dt1).copy() for _ in range(40)])
     leg2 = np.array([sys.step(dt2).copy() for _ in range(40)])
 
-    ref1 = _reference_chain(ts.Lorenz, ic, dt1, 40, "rk4")
-    ref2 = _reference_chain(ts.Lorenz, list(ref1[-1]), dt2, 40, "rk4")
+    ref1 = _reference_chain(ts.systems.Lorenz, ic, dt1, 40, "rk4")
+    ref2 = _reference_chain(ts.systems.Lorenz, list(ref1[-1]), dt2, 40, "rk4")
     assert np.max(np.abs(leg1 - ref1)) < 1e-12
     assert np.max(np.abs(leg2 - ref2)) < 1e-12
 
 
 def test_state_time_track_stepping():
     """``state()``/``time()`` follow the stepping exactly (vs a per-step chain)."""
-    sys = ts.Lorenz()
-    sys.reinit([1.0, 1.0, 1.0], method="rk4")
+    sys = ts.systems.Lorenz()
+    sys.reinit([1.0, 1.0, 1.0], solver="rk4")
     for _ in range(100):
         sys.step(0.01)
-    ref = _reference_chain(ts.Lorenz, [1.0, 1.0, 1.0], 0.01, 100, "rk4")
+    ref = _reference_chain(ts.systems.Lorenz, [1.0, 1.0, 1.0], 0.01, 100, "rk4")
     assert sys.time() == pytest.approx(100 * 0.01)
     assert np.max(np.abs(sys.state() - ref[-1])) < 1e-12
 
@@ -170,8 +170,8 @@ def test_state_time_track_stepping():
 
 def test_divergence_raises():
     """A trajectory that blows up raises a ``RuntimeError`` (the diverged signal)."""
-    sys = ts.Lorenz()
-    sys.reinit([1e6, 1e6, 1e6], method="rk4")
+    sys = ts.systems.Lorenz()
+    sys.reinit([1e6, 1e6, 1e6], solver="rk4")
     with pytest.raises(RuntimeError):
         for _ in range(512):
             sys.step(1.0)
@@ -184,15 +184,15 @@ def test_finite_prefix_before_divergence():
     raises on a non-finite node), so a consumer collecting states sees the same
     finite prefix the released path produced.
     """
-    ref = ts.Lorenz()
-    ref.reinit([100.0, 100.0, 100.0], method="rk4")
+    ref = ts.systems.Lorenz()
+    ref.reinit([100.0, 100.0, 100.0], solver="rk4")
     finite_ref = []
     with pytest.raises(RuntimeError):
         for _ in range(512):
             finite_ref.append(ref.step(0.5).copy())
 
-    got = ts.Lorenz()
-    got.reinit([100.0, 100.0, 100.0], method="rk4")
+    got = ts.systems.Lorenz()
+    got.reinit([100.0, 100.0, 100.0], solver="rk4")
     finite_got = []
     with pytest.raises(RuntimeError):
         for _ in range(512):
@@ -220,7 +220,7 @@ def test_basins_over_flow_answer_preserving():
         def _equations(y, t, delta, alpha, beta):
             return [y(1), -delta * y(1) - alpha * y(0) - beta * y(0) ** 3]
 
-    grid = ts.Grid(np.array([-2.0, -2.0]), np.array([2.0, 2.0]), (12, 12))
-    res_a = ts.basins_of_attraction(_DampedDuffing(), grid, dt=0.05, max_steps=2000)
-    res_b = ts.basins_of_attraction(_DampedDuffing(), grid, dt=0.05, max_steps=2000)
+    grid = ts.data.Grid(np.array([-2.0, -2.0]), np.array([2.0, 2.0]), (12, 12))
+    res_a = ts.analysis.basins(_DampedDuffing(), grid, dt=0.05, max_steps=2000)
+    res_b = ts.analysis.basins(_DampedDuffing(), grid, dt=0.05, max_steps=2000)
     assert np.array_equal(res_a.labels, res_b.labels)

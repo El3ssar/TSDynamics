@@ -41,7 +41,7 @@ from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 def _lorenz_traj(final_time: float = 30.0, dt: float = 0.02) -> Trajectory:
     """A short Lorenz trajectory with its transient dropped."""
-    return ts.Lorenz().integrate(final_time=final_time, dt=dt).after(5.0)
+    return ts.systems.Lorenz().run(final_time=final_time, dt=dt).after(5.0)
 
 
 def _result_builders() -> dict[str, object]:
@@ -52,18 +52,22 @@ def _result_builders() -> dict[str, object]:
     # data.  Build its input separately and long enough to be *trusted*
     # (lambda ~ 0.96 against Lorenz's 0.906) rather than trimming the short
     # shared trajectory to a length whose neighbours it then has to refuse.
-    lyap_series = ts.Lorenz().integrate(final_time=120.0, dt=0.02).after(20.0).y[:, 0]
-    rm = ts.recurrence_matrix(traj.y[:200], recurrence_rate=0.05)
+    lyap_series = ts.systems.Lorenz().run(final_time=120.0, dt=0.02).after(20.0).y[:, 0]
+    rm = ts.analysis.recurrence_matrix(traj.y[:200], recurrence_rate=0.05)
     return {
-        "OrbitDiagram": ts.orbit_diagram(
-            ts.Logistic(), "r", np.linspace(2.8, 4.0, 50), points_per_value=40, transient=100
+        "OrbitDiagram": ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
+            "r",
+            np.linspace(2.8, 4.0, 50),
+            points_per_value=40,
+            transient=100,
         ),
-        "DimensionResult": ts.correlation_dimension(traj),
+        "DimensionResult": ts.analysis.correlation_dimension(traj),
         "RecurrenceMatrix": rm,
-        "RQAResult": ts.rqa(rm),
-        "GALIResult": ts.gali(ts.Lorenz(), k=2, final_time=20.0, dt=0.05),
-        "ReturnMap": ts.return_map(traj, component=2, method="max"),
-        "LyapunovFromData": ts.lyapunov_from_data(lyap_series, dt=0.02),
+        "RQAResult": ts.analysis.rqa(rm),
+        "GALIResult": ts.analysis.gali(ts.systems.Lorenz(), k=2, final_time=20.0, dt=0.05),
+        "ReturnMap": ts.analysis.return_map(traj, component=2, method="max"),
+        "LyapunovFromData": ts.analysis.lyapunov_from_data(lyap_series, dt=0.02),
         "BasinsResult": _synthetic_basins(),
     }
 
@@ -195,7 +199,7 @@ def test_unknown_component_raises():
 
 def test_high_dim_components_triple_is_3d_portrait():
     """Selecting three channels of a high-dim flow yields a 3-D portrait."""
-    tr = ts.Lorenz96(N=8).trajectory(final_time=10.0, dt=0.1)
+    tr = ts.systems.Lorenz96(N=8).run(final_time=10.0, dt=0.1)
     spec = tr.to_plot_spec(components=["y0", "y1", "y2"])
     assert spec.kind == PlotKind.PHASE_PORTRAIT_3D
     _assert_roundtrips(spec)
@@ -203,7 +207,7 @@ def test_high_dim_components_triple_is_3d_portrait():
 
 def test_delay_kind_builds_2d_embedding_from_delay_time():
     """kind='delay' builds an x(t) vs x(t - delay); delay_time is in TIME units."""
-    tr = ts.MackeyGlass().integrate(
+    tr = ts.systems.MackeyGlass().run(
         final_time=200.0, dt=0.2, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
     )
     spec = tr.to_plot_spec(kind="delay", delay_time=17.0)  # 17 t.u. → 85 samples at dt=0.2
@@ -215,7 +219,7 @@ def test_delay_kind_builds_2d_embedding_from_delay_time():
 
 def test_delay_kind_builds_2d_embedding_from_delay_samples():
     """The same door takes the lag in SAMPLES under the canonical name ``delay``."""
-    tr = ts.MackeyGlass().integrate(
+    tr = ts.systems.MackeyGlass().run(
         final_time=200.0, dt=0.2, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
     )
     spec = tr.to_plot_spec(kind="delay", delay=85)
@@ -289,7 +293,7 @@ def test_kind_kw_rejected_for_wrong_kind():
 
 
 def test_spacetime_transpose_swaps_axes():
-    tr = ts.Lorenz96(N=6).trajectory(final_time=8.0, dt=0.1)
+    tr = ts.systems.Lorenz96(N=6).run(final_time=8.0, dt=0.1)
     normal = tr.to_plot_spec(kind="spacetime")
     swapped = tr.to_plot_spec(kind="spacetime", transpose=True)
     assert (normal.x.label, normal.y.label) == ("t", "component")
@@ -315,7 +319,7 @@ def test_plot_returns_the_spec_on_every_door():
     doors = [
         traj.plot(),
         ts.plot(traj),
-        ts.Lorenz().plot(final_time=2.0, dt=0.05),
+        ts.systems.Lorenz().plot(final_time=2.0, dt=0.05),
         traj.plot().tweak(title="chained"),
         traj.to_plot_spec(),
     ]
@@ -341,7 +345,7 @@ def test_plot_refuses_a_renderer_keyword_and_names_render():
 
 def test_system_to_plot_spec_splits_plot_and_integration_kwargs():
     """A system splits plot kwargs (components) from integration kwargs (final_time/dt)."""
-    spec = ts.Lorenz().to_plot_spec(components="x", final_time=10.0, dt=0.05)
+    spec = ts.systems.Lorenz().to_plot_spec(components="x", final_time=10.0, dt=0.05)
     assert spec.kind == PlotKind.TIME_SERIES
     assert spec.y.label == "x"
 
@@ -487,7 +491,7 @@ def test_color_by_invalid_inputs_raise():
 
 
 def test_poincare_short_circuit_is_overridden_by_components_or_kind():
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), crossings=80)
+    section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=80)
     # Default view honours the section intent…
     assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
     # …but selecting components or forcing a kind opts out of the short-circuit.
@@ -497,10 +501,10 @@ def test_poincare_short_circuit_is_overridden_by_components_or_kind():
 
 def test_system_plot_forwards_delay_recipe():
     """A system's plot()/to_plot_spec route the delay recipe + delay_time through the split."""
-    spec = ts.Lorenz().to_plot_spec(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
+    spec = ts.systems.Lorenz().to_plot_spec(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
 
-    via_plot = ts.Lorenz().plot(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
+    via_plot = ts.systems.Lorenz().plot(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
     assert via_plot.kind == PlotKind.PHASE_PORTRAIT_2D
 
 
@@ -529,7 +533,7 @@ def test_trajectory_render_raises_without_backend(monkeypatch):
 
 
 def test_poincare_section_carries_intent_from_system():
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), crossings=80)
+    section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=80)
     assert section.meta.get("plot_kind") == "poincare_section"
     spec = section.to_plot_spec()
     assert spec.kind == PlotKind.POINCARE_SECTION
@@ -540,22 +544,22 @@ def test_poincare_section_carries_intent_from_system():
 
 
 def test_poincare_map_trajectory_carries_intent():
-    pmap = ts.PoincareMap(ts.Rossler(), plane=(1, 0.0))
-    section = pmap.trajectory(80)
+    pmap = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(1, 0.0))
+    section = pmap.run(80)
     assert section.meta.get("plot_kind") == "poincare_section"
     assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
 
 
 def test_poincare_section_from_data_carries_intent():
-    traj = ts.Rossler().integrate(final_time=80.0, dt=0.02)
-    section = ts.poincare_section(traj, plane=(1, 0.0))
+    traj = ts.systems.Rossler().run(final_time=80.0, dt=0.02)
+    section = ts.analysis.poincare_section(traj, plane=(1, 0.0))
     assert section.meta.get("plot_kind") == "poincare_section"
     assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
 
 
 def test_poincare_section_drops_the_normal_coordinate():
     # plane (1, 0.0) fixes component 1; the in-plane axes must be the other two.
-    section = ts.poincare_section(ts.Rossler(), plane=(1, 0.0), crossings=80)
+    section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=80)
     i, j = section._section_axes()
     assert 1 not in (i, j)
     assert i != j
@@ -563,7 +567,7 @@ def test_poincare_section_drops_the_normal_coordinate():
 
 def test_ordinary_trajectory_has_no_section_intent():
     # A plain flow must not accidentally carry section intent.
-    traj = ts.Lorenz().integrate(final_time=10.0, dt=0.05)
+    traj = ts.systems.Lorenz().run(final_time=10.0, dt=0.05)
     assert "plot_kind" not in traj.meta
     assert traj.to_plot_spec().kind == PlotKind.PHASE_PORTRAIT_3D
 
@@ -672,18 +676,18 @@ def test_building_specs_imports_no_plot_library():
         "from tsdynamics.analysis.basins.attractors import Attractor, AttractorSet;"
         "from tsdynamics.analysis.basins.basins import BasinsResult;"
         "from tsdynamics.data import Grid;"
-        "traj = ts.Lorenz().integrate(final_time=20.0, dt=0.05).after(5.0);"
+        "traj = ts.systems.Lorenz().run(final_time=20.0, dt=0.05).after(5.0);"
         # a separate, longer record for the estimator that reads its own
         # parameters off the data (see `_result_builders`)
-        "lyap = ts.Lorenz().integrate(final_time=120.0, dt=0.02).after(20.0).y[:, 0];"
+        "lyap = ts.systems.Lorenz().run(final_time=120.0, dt=0.02).after(20.0).y[:, 0];"
         "traj.to_plot_spec(); traj.to_plot_spec(kind='time_series');"
-        "ts.poincare_section(ts.Rossler(), plane=(1, 0.0), crossings=40).to_plot_spec();"
-        "rm = ts.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.to_plot_spec();"
-        "ts.rqa(rm).to_plot_spec();"
-        "ts.correlation_dimension(traj).to_plot_spec();"
-        "ts.gali(ts.Lorenz(), k=2, final_time=15.0, dt=0.05).to_plot_spec();"
-        "ts.return_map(traj, component=2, method='max').to_plot_spec();"
-        "ts.lyapunov_from_data(lyap, dt=0.02).to_plot_spec();"
+        "ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=40).to_plot_spec();"
+        "rm = ts.analysis.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.to_plot_spec();"
+        "ts.analysis.rqa(rm).to_plot_spec();"
+        "ts.analysis.correlation_dimension(traj).to_plot_spec();"
+        "ts.analysis.gali(ts.systems.Lorenz(), k=2, final_time=15.0, dt=0.05).to_plot_spec();"
+        "ts.analysis.return_map(traj, component=2, method='max').to_plot_spec();"
+        "ts.analysis.lyapunov_from_data(lyap, dt=0.02).to_plot_spec();"
         "a = AttractorSet({1: Attractor(1, np.array([[0.0, 0.0]]), 1)}, 0, 1);"
         "BasinsResult(np.ones((4, 4), int), Grid([-1, -1], [1, 1], (4, 4)), a).to_plot_spec();"
         "bad = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')"

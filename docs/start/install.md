@@ -79,14 +79,14 @@ import tsdynamics as ts
 print(ts.__version__)
 print(ts.registry.families())   # {'ode': 142, 'dde': 6, 'sde': 3, 'map': 26}
 
-traj = ts.systems.Henon().iterate(steps=100, ic=[0.1, 0.1])
+traj = ts.systems.Henon().run(steps=100, ic=[0.1, 0.1])
 print(traj.y.shape)             # (100, 2)
 ```
 
 `ts.registry.families()` reports the built-in catalogue by family. If
 
 ```python
-ts.systems.Lorenz().integrate(final_time=1.0).y.shape   # (51, 3)
+ts.systems.Lorenz().run(final_time=1.0).y.shape   # (51, 3)
 ```
 
 also returns cleanly, the engine is wired up and you are ready to go.

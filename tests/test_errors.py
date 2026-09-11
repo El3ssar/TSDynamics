@@ -127,7 +127,7 @@ def test_integrate_negative_final_time_raises():
     """Was a silent one-step garbage Trajectory; now raises with the value named."""
     lor = ts.systems.Lorenz()
     with pytest.raises(InvalidParameterError) as ei:
-        lor.integrate(final_time=-5, dt=0.01)
+        lor.run(final_time=-5, dt=0.01)
     assert "final_time" in str(ei.value) and "-5" in str(ei.value)
 
 
@@ -135,7 +135,7 @@ def test_integrate_zero_dt_raises():
     """Was a bare ZeroDivisionError from the grid helper; now a domain error."""
     lor = ts.systems.Lorenz()
     with pytest.raises(InvalidParameterError) as ei:
-        lor.integrate(final_time=10, dt=0.0)
+        lor.run(final_time=10, dt=0.0)
     assert "dt" in str(ei.value)
     # the old failure mode was a ZeroDivisionError — assert we no longer leak it
     assert not isinstance(ei.value, ZeroDivisionError)
@@ -143,7 +143,7 @@ def test_integrate_zero_dt_raises():
 
 def test_integrate_happy_path_still_works():
     lor = ts.systems.Lorenz()
-    traj = lor.integrate(final_time=2.0, dt=0.1)
+    traj = lor.run(final_time=2.0, dt=0.1)
     assert traj.y.shape[1] == 3
     assert traj.y.shape[0] > 1
 
@@ -203,7 +203,7 @@ def test_data_analysis_on_a_system_is_not_silent():
     """
     lor = ts.systems.Lorenz()
     with pytest.raises(TypeError):
-        ts.lyapunov_from_data(lor)
+        ts.analysis.lyapunov_from_data(lor)
 
 
 def test_reject_system_names_the_system_and_the_fix():
@@ -221,7 +221,7 @@ def test_reject_system_names_the_system_and_the_fix():
     assert "Lorenz" in msg
     assert "System" in msg
     assert "correlation_dimension()" in msg
-    assert "integrate(final_time=100.0, dt=0.01)" in msg  # the fix, verbatim
+    assert "system.run(final_time=100.0, dt=0.01)" in msg  # the fix, verbatim
     # Additive: an existing `except TypeError` still catches it.
     assert isinstance(ei.value, TypeError)
 
@@ -229,18 +229,25 @@ def test_reject_system_names_the_system_and_the_fix():
 @pytest.mark.parametrize(
     "factory,front_door",
     [
-        (lambda: ts.systems.Lorenz(), "integrate(final_time=100.0, dt=0.01)"),
-        (lambda: ts.systems.Henon(), "iterate(steps=10000)"),
-        (lambda: ts.systems.MackeyGlass(), "integrate(final_time=100.0, dt=0.01)"),
+        (lambda: ts.systems.Lorenz(), "run(final_time=100.0, dt=0.01)"),
+        (lambda: ts.systems.Henon(), "run(steps=10000)"),
+        (lambda: ts.systems.MackeyGlass(), "run(final_time=100.0, dt=0.01)"),
         (
-            lambda: ts.PoincareMap(ts.systems.Rossler(), plane=("y", 0.0)),
-            "trajectory(10000)",
+            lambda: ts.systems.Rossler().poincare("y", 0.0),
+            "run(steps=10000)",
         ),
     ],
     ids=["ode", "map", "dde", "derived"],
 )
 def test_reject_system_shows_the_front_door_that_system_has(factory, front_door):
-    """The suggested fix names a method the offending object actually has."""
+    """The suggested fix names a method the offending object actually has.
+
+    Since v6 that method is ``run`` on every family — which is exactly why this
+    gate matters more, not less: the message used to name ``integrate`` /
+    ``iterate`` / ``trajectory``, three verbs that no longer exist, and the
+    horizon word still differs per family (``final_time`` for a flow, ``steps``
+    for a map or a section).
+    """
     from tsdynamics.analysis._common import reject_system
 
     system = factory()
@@ -274,7 +281,7 @@ def test_reject_system_passes_a_trajectory_through():
     """A ``Trajectory`` carries a ``.system`` reference but *is* measured data."""
     from tsdynamics.analysis._common import is_system, reject_system
 
-    traj = ts.systems.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
     assert not is_system(traj)
     reject_system(traj, analysis="rqa")  # must not raise
 
@@ -292,10 +299,10 @@ def test_data_analysis_on_a_series_still_works():
     deterministic Lyapunov exponent at all, so an estimator is *right* to refuse
     one — asserting a finite value there would pin the wrong behaviour.
     """
-    orbit = ts.systems.Henon().iterate(steps=6000, ic=[0.1, 0.1])
+    orbit = ts.systems.Henon().run(steps=6000, ic=[0.1, 0.1])
     x = np.asarray(orbit.y)[1000:, 0]  # drop the transient, keep one scalar channel
 
-    result = ts.lyapunov_from_data(x, dimension=2, delay=1)
+    result = ts.analysis.lyapunov_from_data(x, dimension=2, delay=1)
 
     assert result.trusted, "the Henon x series must yield a genuine scaling region"
     assert np.isfinite(float(result))
@@ -308,7 +315,7 @@ def test_catch_all_via_base_class():
     """A user can catch everything deliberate through the one base class."""
     lor = ts.systems.Lorenz()
     with pytest.raises(TSDynamicsError):
-        lor.integrate(final_time=-1.0, dt=0.1)
+        lor.run(final_time=-1.0, dt=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -462,17 +469,16 @@ _DATA_FIRST: dict[str, dict] = {
 #: System-first analyses: a ``System`` is exactly what they want.
 _SYSTEM_FIRST = frozenset(
     {
+        "attractors",
         "basin_fractions",
-        "basins_of_attraction",
+        "basins",
         "continuation",
         "expansion_entropy",
-        "find_attractors",
         "fixed_points",
         "gali",
         "lyapunov_spectrum",
         "max_lyapunov",
         "orbit_diagram",
-        "periodic_orbit",
         "periodic_orbits",
     }
 )
@@ -549,10 +555,10 @@ def test_data_first_analysis_message_shows_a_runnable_next_step(name):
         assert callable(getattr(system, suggested.split("(")[0]))
         return
     # ... or an analysis-specific recipe naming a real public entry point.
-    named = [w for w in ("basins_of_attraction", "lyapunov_spectrum", "continuation") if w in msg]
+    named = [w for w in ("basins", "lyapunov_spectrum", "continuation") if w in msg]
     assert named, f"{name}: message offers no runnable next step:\n{msg}"
     for w in named:
-        assert callable(getattr(ts, w))
+        assert callable(getattr(ts.analysis, w))
 
 
 @pytest.mark.parametrize("name", sorted(_DUAL))
@@ -571,7 +577,7 @@ def test_dual_convention_analysis_still_accepts_a_system(name):
         "poincare_section": dict(plane=("y", 0.0, "up"), crossings=5, seed=0),
         # an extremum return map needs a flow (a map has no continuous extrema)
         "return_map": dict(n=20, final_time=200.0, dt=0.02, component=2),
-        "zero_one_test": dict(n=500, component=0),
+        "zero_one_test": dict(n=500, components=0),
     }
     system = ts.systems.Henon() if name == "zero_one_test" else ts.systems.Rossler()
     assert is_system(system)  # the guard would fire if one were wired in

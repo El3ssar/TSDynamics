@@ -28,7 +28,7 @@ every recovered number against the truth at the end.
 import tsdynamics as ts
 
 # generate a trajectory, then keep ONLY the x channel — pretend this is all you recorded
-full = ts.systems.Rossler().integrate(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0])
+full = ts.systems.Rossler().run(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0])
 x = full.y[1000:, 0]        # a single scalar signal, transient dropped
 x.shape                     # (7001,)
 ```
@@ -63,9 +63,9 @@ lag at which the next coordinate adds the most *new* information while staying
 dynamically related to the current one.
 
 ```python
-tau = ts.optimal_delay(x, method="mi", max_delay=120)   # 27 samples
+tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 27 samples
 
-mi = ts.mutual_information(x, max_delay=120)
+mi = ts.analysis.mutual_information(x, max_delay=120)
 mi.optimal_lag          # 27   — the same lag, read off the I(tau) curve
 # mi.plot()             # inspect the curve, with the chosen tau marked
 ```
@@ -85,10 +85,10 @@ overlap. **Cao's method** (Cao, 1997) and **Kennel's false nearest neighbours**
 vanish, unified behind `embedding_dimension`:
 
 ```python
-m_fnn = ts.embedding_dimension(x, method="fnn", delay=tau, max_dim=8)
+m_fnn = ts.analysis.embedding_dimension(x, method="fnn", delay=tau, max_dim=8)
 int(m_fnn)              # 3   — Kennel FNN; matches Rössler's true dimension
 
-m_cao = ts.embedding_dimension(x, method="cao", delay=tau, max_dim=8)
+m_cao = ts.analysis.embedding_dimension(x, method="cao", delay=tau, max_dim=8)
 int(m_cao)             # 4   — Cao's conservative saturation threshold
 # m_cao.plot()         # the E1/E2 saturation curves, with the chosen m marked
 ```
@@ -107,7 +107,7 @@ With both parameters chosen, `embed` builds the matrix of delay vectors:
 
 <div class="ts-item" markdown>
 ```python
-emb = ts.embed(x, dimension=3, delay=tau)
+emb = ts.analysis.embed(x, dimension=3, delay=tau)
 emb.shape               # (6947, 3) — one reconstructed state per row, in time order
 ```
 
@@ -145,7 +145,7 @@ samples sit spuriously close and bias the estimate downward — a few delays is 
 safe choice:
 
 ```python
-ts.correlation_dimension(emb, theiler=tau)     # ≈ 1.74   (Rössler D2, from x alone)
+ts.analysis.correlation_dimension(emb, theiler=tau)     # ≈ 1.74   (Rössler D2, from x alone)
 ```
 
 **Largest Lyapunov exponent.** [`lyapunov_from_data`](../analysis/lyapunov.md)
@@ -154,7 +154,7 @@ estimates the top exponent from how fast embedded neighbours diverge (Kantz,
 — crucially — **inspect the stretching curve before quoting a number**:
 
 ```python
-res = ts.lyapunov_from_data(x, dimension=3, delay=tau, dt=0.05, k_max=80)
+res = ts.analysis.lyapunov_from_data(x, dimension=3, delay=tau, dt=0.05, k_max=80)
 res.times, res.divergence      # the S(k) curve — plot it, find the linear stretch
 ```
 
@@ -163,7 +163,7 @@ between look-ahead times $0.3$ and $1.3$ (sample indices 6–26). The exponent i
 the slope of *that* stretch, not of the whole curve — fit it explicitly:
 
 ```python
-res = ts.lyapunov_from_data(x, dimension=3, delay=tau, dt=0.05, k_max=80, fit=(6, 26))
+res = ts.analysis.lyapunov_from_data(x, dimension=3, delay=tau, dt=0.05, k_max=80, fit=(6, 26))
 float(res)             # ≈ 0.074   per unit time — positive, so chaotic
 ```
 
@@ -179,8 +179,8 @@ float(res)             # ≈ 0.074   per unit time — positive, so chaotic
 
 ```python
 # the truth, from the full state and the equations
-ts.correlation_dimension(full.y[1000:], theiler=tau)                     # ≈ 1.75
-float(ts.max_lyapunov(ts.systems.Rossler(ic=[1.0, 0.0, 0.0]), dt=0.05, seed=0))  # ≈ 0.062
+ts.analysis.correlation_dimension(full.y[1000:], theiler=tau)                     # ≈ 1.75
+float(ts.analysis.max_lyapunov(ts.systems.Rossler(ic=[1.0, 0.0, 0.0]), dt=0.05, seed=0))  # ≈ 0.062
 ```
 
 $D_2 = 1.74$ from one channel versus $1.75$ from the full state; $\lambda \approx

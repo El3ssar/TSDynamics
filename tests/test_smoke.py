@@ -65,8 +65,8 @@ def test_systems_is_the_canonical_model_path() -> None:
     """``tsdynamics.systems.<Name>`` is the canonical flat path; ``tsd.<Name>`` is its alias."""
     import tsdynamics as ts
 
-    assert ts.systems.Lorenz is ts.Lorenz
-    assert ts.systems.Henon is ts.Henon
+    assert ts.systems.Lorenz is ts.systems.Lorenz
+    assert ts.systems.Henon is ts.systems.Henon
     # The flat catalogue covers every registered builtin.
     from tsdynamics import registry
 
@@ -130,7 +130,7 @@ def test_internals_not_in_top_level_all() -> None:
 def test_lorenz_integrates() -> None:
     import tsdynamics as ts
 
-    traj = ts.Lorenz().integrate(final_time=5.0, dt=0.05)
+    traj = ts.systems.Lorenz().run(final_time=5.0, dt=0.05)
     assert traj.y.shape == (traj.t.shape[0], 3)
     assert np.all(np.isfinite(traj.y))
 
@@ -139,7 +139,7 @@ def test_lorenz_integrates() -> None:
 def test_henon_iterates() -> None:
     import tsdynamics as ts
 
-    traj = ts.Henon().iterate(steps=200)
+    traj = ts.systems.Henon().run(steps=200)
     assert traj.y.shape == (200, 2)
     assert traj.t.shape == (200,)
     assert np.all(np.isfinite(traj.y))

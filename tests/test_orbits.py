@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import ReturnMap, registry, return_map
+from tsdynamics import registry
+from tsdynamics.analysis import ReturnMap, return_map
 
 
 def _functionality(cur: np.ndarray, suc: np.ndarray) -> float:
@@ -33,7 +34,7 @@ def _functionality(cur: np.ndarray, suc: np.ndarray) -> float:
 class TestReturnMapSeries:
     def test_known_maxima(self) -> None:
         s = np.array([0, 1, 0, 2, 0, 3, 0, 2.5, 0], dtype=float)
-        rm = return_map(s, method="max")
+        rm = return_map(s, kind="max")
         np.testing.assert_allclose(rm.values, [1.0, 2.0, 3.0, 2.5])
         np.testing.assert_allclose(rm.current, [1.0, 2.0, 3.0])
         np.testing.assert_allclose(rm.successor, [2.0, 3.0, 2.5])
@@ -42,7 +43,7 @@ class TestReturnMapSeries:
 
     def test_minima(self) -> None:
         s = np.array([0, -1, 0, -2, 0, -3, 0], dtype=float)
-        rm = return_map(s, method="min")
+        rm = return_map(s, kind="min")
         np.testing.assert_allclose(rm.values, [-1.0, -2.0, -3.0])
 
     def test_parabolic_refinement_sharpens_peak(self) -> None:
@@ -50,13 +51,13 @@ class TestReturnMapSeries:
         # samples, so the parabolic-refined value beats the raw sample max.
         t = np.linspace(-0.37, 2 * np.pi - 0.37, 64)  # peak of cos at t=0 is off-grid
         s = np.cos(t)
-        rm = return_map(s, method="max")
+        rm = return_map(s, kind="max")
         assert rm.values.size == 1
         assert s.max() < rm.values[0] <= 1.0 + 1e-9
 
     def test_flat_and_iter(self) -> None:
         s = np.array([0, 1, 0, 2, 0, 3, 0], dtype=float)
-        rm = return_map(s, method="max")
+        rm = return_map(s, kind="max")
         cur, suc = rm.flat()
         assert cur.shape == suc.shape == (2,)
         pairs = list(rm)
@@ -66,13 +67,13 @@ class TestReturnMapSeries:
         # A pure sine: every maximum is equal → the return map is one point on
         # the diagonal (current == successor).
         t = np.linspace(0, 60, 6000)
-        rm = return_map(np.sin(2 * np.pi * t), method="max")
+        rm = return_map(np.sin(2 * np.pi * t), kind="max")
         assert rm.values.size > 5
         np.testing.assert_allclose(rm.current, rm.successor, atol=1e-6)
         np.testing.assert_allclose(rm.values, rm.values[0], atol=1e-6)
 
     def test_too_short_series_is_empty(self) -> None:
-        rm = return_map(np.array([1.0, 2.0]), method="max")
+        rm = return_map(np.array([1.0, 2.0]), kind="max")
         assert rm.values.size == 0
         assert len(rm) == 0
 
@@ -84,29 +85,29 @@ class TestReturnMapSeries:
 
 class TestReturnMapValidation:
     def test_bad_kind(self) -> None:
-        with pytest.raises(ValueError, match="method must be"):
-            return_map(np.zeros(10), method="bogus")
+        with pytest.raises(ValueError, match="kind must be"):
+            return_map(np.zeros(10), kind="bogus")
 
     def test_2d_raw_series_rejected(self) -> None:
         with pytest.raises(ValueError, match="1-D"):
-            return_map(np.zeros((10, 2)), method="max")
+            return_map(np.zeros((10, 2)), kind="max")
 
     def test_poincare_needs_plane(self) -> None:
         with pytest.raises(ValueError, match="plane"):
-            return_map(ts.Rossler(), method="poincare")
+            return_map(ts.systems.Rossler(), kind="poincare")
 
     def test_poincare_rejects_raw_series(self) -> None:
         with pytest.raises(TypeError, match="System or Trajectory"):
-            return_map(np.zeros(10), method="poincare", plane=(0, 0.0))
+            return_map(np.zeros(10), kind="poincare", plane=(0, 0.0))
 
     def test_discrete_map_rejected_for_extrema(self) -> None:
         with pytest.raises(TypeError, match="continuous flow"):
-            return_map(ts.Henon(), method="max")
+            return_map(ts.systems.Henon(), kind="max")
 
     def test_unknown_named_observable(self) -> None:
-        traj = ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+        traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
         with pytest.raises(ValueError, match="unknown component"):
-            return_map(traj, "nope", method="max")
+            return_map(traj, "nope", kind="max")
 
 
 # ---------------------------------------------------------------------------
@@ -116,14 +117,14 @@ class TestReturnMapValidation:
 
 class TestReturnMapPoincareData:
     @staticmethod
-    def _circle_traj() -> ts.Trajectory:
+    def _circle_traj() -> ts.data.Trajectory:
         # a clean limit cycle: (sin, cos) crosses the x=0 plane once per period
         t = np.linspace(0.0, 10.0 * np.pi, 4000)
         y = np.column_stack([np.sin(t), np.cos(t)])
-        return ts.Trajectory(t, y, None)
+        return ts.data.Trajectory(t, y, None)
 
     def test_crossings_from_data(self) -> None:
-        rm = return_map(self._circle_traj(), 1, method="poincare", plane=(0, 0.0), direction=1)
+        rm = return_map(self._circle_traj(), 1, kind="poincare", plane=(0, 0.0), direction=1)
         assert rm.kind == "poincare"
         assert rm.values.size > 2
         # y = cos at the up-crossings of sin is ≈ +1 each period → a fixed point
@@ -131,9 +132,9 @@ class TestReturnMapPoincareData:
 
     def test_transient_drops_leading_crossings(self) -> None:
         traj = self._circle_traj()
-        full = return_map(traj, 1, method="poincare", plane=(0, 0.0), direction=1)
+        full = return_map(traj, 1, kind="poincare", plane=(0, 0.0), direction=1)
         skipped = return_map(
-            traj, 1, method="poincare", plane=(0, 0.0), direction=1, skip_crossings=2
+            traj, 1, kind="poincare", plane=(0, 0.0), direction=1, skip_crossings=2
         )
         assert skipped.values.size == full.values.size - 2
         np.testing.assert_array_equal(skipped.values, full.values[2:])
@@ -146,8 +147,8 @@ class TestReturnMapPoincareData:
 
 class TestOrbitDiagramQuantifiers:
     def test_period_doubling_sequence(self) -> None:
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             [2.8, 3.2, 3.5, 3.56],
             points_per_value=120,
@@ -162,23 +163,23 @@ class TestOrbitDiagramQuantifiers:
         assert p[3] == 8  # 8-cycle
 
     def test_chaotic_band_is_aperiodic(self) -> None:
-        od = ts.orbit_diagram(
-            ts.Logistic(), "r", [3.9], points_per_value=200, transient=500, ic=[0.5]
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(), "r", [3.9], points_per_value=200, transient=500, ic=[0.5]
         )
         assert od.periods()[0] == 0  # too many branches → reported aperiodic
 
     def test_empty_value_is_minus_one(self) -> None:
         # r > 4 escapes [0, 1]: the sweep records an empty set (diverges).
         with pytest.warns(RuntimeWarning, match="diverged"):
-            od = ts.orbit_diagram(
-                ts.Logistic(), "r", [4.5], points_per_value=50, transient=50, ic=[0.5]
+            od = ts.analysis.orbit_diagram(
+                ts.systems.Logistic(), "r", [4.5], points_per_value=50, transient=50, ic=[0.5]
             )
         assert od.periods()[0] == -1
 
     def test_bifurcation_points_match_literature(self) -> None:
         # Logistic period-doubling onsets: r1 = 3, r2 = 1 + sqrt(6) ≈ 3.449.
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             np.linspace(2.9, 3.6, 400),
             points_per_value=64,
@@ -193,8 +194,8 @@ class TestOrbitDiagramQuantifiers:
         # The default plot is the textbook bifurcation picture: just the scatter,
         # no period/bifurcation text overlay (which piles up illegibly in the
         # chaotic cascade).  It also must not walk periods() at all when clean.
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             np.linspace(2.8, 4.0, 60),
             points_per_value=48,
@@ -202,17 +203,17 @@ class TestOrbitDiagramQuantifiers:
             ic=[0.5],
         )
         calls = {"n": 0}
-        real_periods = ts.OrbitDiagram.periods
+        real_periods = ts.analysis.OrbitDiagram.periods
 
         def counting_periods(self, **kw):  # type: ignore[no-untyped-def]
             calls["n"] += 1
             return real_periods(self, **kw)
 
         try:
-            ts.OrbitDiagram.periods = counting_periods  # type: ignore[method-assign]
+            ts.analysis.OrbitDiagram.periods = counting_periods  # type: ignore[method-assign]
             spec = od.to_plot_spec()
         finally:
-            ts.OrbitDiagram.periods = real_periods  # type: ignore[method-assign]
+            ts.analysis.OrbitDiagram.periods = real_periods  # type: ignore[method-assign]
         assert calls["n"] == 0  # clean plot never computes the period sweep
         assert not spec.annotations  # no vline smear
 
@@ -220,8 +221,8 @@ class TestOrbitDiagramQuantifiers:
         # Regression: the annotated path previously recomputed periods() once
         # directly and again inside bifurcation_points() (and a third walk).  With
         # annotate=True it must compute the period sweep exactly once per call.
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             np.linspace(2.8, 3.6, 60),
             points_per_value=48,
@@ -229,25 +230,25 @@ class TestOrbitDiagramQuantifiers:
             ic=[0.5],
         )
         calls = {"n": 0}
-        real_periods = ts.OrbitDiagram.periods
+        real_periods = ts.analysis.OrbitDiagram.periods
 
         def counting_periods(self, **kw):  # type: ignore[no-untyped-def]
             calls["n"] += 1
             return real_periods(self, **kw)
 
         try:
-            ts.OrbitDiagram.periods = counting_periods  # type: ignore[method-assign]
+            ts.analysis.OrbitDiagram.periods = counting_periods  # type: ignore[method-assign]
             spec = od.to_plot_spec(annotate=True)
         finally:
-            ts.OrbitDiagram.periods = real_periods  # type: ignore[method-assign]
+            ts.analysis.OrbitDiagram.periods = real_periods  # type: ignore[method-assign]
         assert calls["n"] == 1
         # And the labelled onset annotations are produced when opted in.
         assert any(a.kind == "vline" for a in spec.annotations)
 
     def test_bifurcation_points_from_precomputed_periods_match(self) -> None:
         # The factored helper must agree with the public bifurcation_points().
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             np.linspace(2.9, 3.6, 80),
             points_per_value=48,
@@ -269,7 +270,7 @@ def test_orbit_analyses_self_register() -> None:
     names = registry.analyses.names()
     for n in ("orbit_diagram", "poincare_section", "return_map"):
         assert n in names
-        assert registry.analyses.get(n) is getattr(ts, n)
+        assert registry.analyses.get(n) is getattr(ts.analysis, n)
 
 
 # ---------------------------------------------------------------------------
@@ -280,8 +281,13 @@ def test_orbit_analyses_self_register() -> None:
 @pytest.mark.slow
 def test_lorenz_z_maxima_cusp_map() -> None:
     """Lorenz (1963): successive maxima of z form a near-1-D cusp map."""
-    rm = ts.return_map(
-        ts.Lorenz(ic=[1.0, 1.0, 1.0]), "z", method="max", final_time=400.0, dt=0.01, transient=40.0
+    rm = ts.analysis.return_map(
+        ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
+        "z",
+        kind="max",
+        final_time=400.0,
+        dt=0.01,
+        transient=40.0,
     )
     cur, suc = rm.flat()
     assert len(rm) > 100
@@ -295,10 +301,10 @@ def test_lorenz_z_maxima_cusp_map() -> None:
 @pytest.mark.slow
 def test_rossler_poincare_return_map_is_1d() -> None:
     """y at successive x=0 crossings of Rössler is a tight 1-D return map."""
-    rm = ts.return_map(
-        ts.Rossler(ic=[1.0, 1.0, 0.0]),
+    rm = ts.analysis.return_map(
+        ts.systems.Rossler(ic=[1.0, 1.0, 0.0]),
         "y",
-        method="poincare",
+        kind="poincare",
         plane=(0, 0.0),
         n=400,
         skip_crossings=20,
@@ -319,8 +325,10 @@ def test_periods_on_flow_bifurcation_diagram() -> None:
     """
     found = {}
     for c in (2.6, 3.5, 5.7):
-        pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.03)
-        od = ts.orbit_diagram(
+        pmap = ts.derived.PoincareMap(
+            ts.systems.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.03
+        )
+        od = ts.analysis.orbit_diagram(
             pmap, "c", [c], points_per_value=80, transient=100, component=1, ic=[3.0, 3.0, 0.0]
         )
         found[c] = int(od.periods()[0])
@@ -334,18 +342,18 @@ def test_system_and_trajectory_paths_agree() -> None:
     """The same integration, read as a System or a Trajectory, gives the same map."""
     ic = [1.0, 1.0, 1.0]
     transient = 30.0
-    rm_sys = ts.return_map(
-        ts.Lorenz(ic=ic), "z", method="max", final_time=200.0, dt=0.01, transient=transient
+    rm_sys = ts.analysis.return_map(
+        ts.systems.Lorenz(ic=ic), "z", kind="max", final_time=200.0, dt=0.01, transient=transient
     )
-    traj = ts.Lorenz(ic=ic).integrate(final_time=200.0, dt=0.01, ic=ic)
-    rm_traj = ts.return_map(traj.after(transient), "z", method="max")
+    traj = ts.systems.Lorenz(ic=ic).run(final_time=200.0, dt=0.01, ic=ic)
+    rm_traj = ts.analysis.return_map(traj.after(transient), "z", kind="max")
     np.testing.assert_allclose(rm_sys.values, rm_traj.values)
 
 
 # ---------------------------------------------------------------------------
 # The one-liner: a bifurcation diagram OF A FLOW
 #
-# ``ts.orbit_diagram(model, "rho", values)`` used to refuse with a
+# ``ts.analysis.orbit_diagram(model, "rho", values)`` used to refuse with a
 # TypeError that named ``orbit_diagram`` (a function the caller had not typed)
 # and told them to go and read about PoincareMap / StroboscopicMap.  A
 # bifurcation diagram of a flow is the single most canonical use of the
@@ -358,8 +366,8 @@ class TestBifurcationDiagramOfAFlow:
     """The headline call must return a diagram, not a lecture."""
 
     def test_a_raw_flow_is_accepted(self) -> None:
-        od = ts.orbit_diagram(
-            ts.Lorenz(ic=[1.0, 1.0, 1.0]),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
             "rho",
             np.linspace(0.0, 50.0, 12),
             points_per_value=30,
@@ -372,8 +380,8 @@ class TestBifurcationDiagramOfAFlow:
 
     def test_the_chosen_section_is_recorded_not_silent(self) -> None:
         """A section always has to be chosen; choosing silently is its own trap."""
-        od = ts.orbit_diagram(
-            ts.Lorenz(ic=[1.0, 1.0, 1.0]),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
             "rho",
             [28.0],
             points_per_value=20,
@@ -392,16 +400,16 @@ class TestBifurcationDiagramOfAFlow:
         Lorenz's non-trivial equilibria sit at ``x = ±sqrt(beta (rho - 1))``; a
         converged column must record that point rather than an empty set.
         """
-        lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
-        od = ts.orbit_diagram(lor, "rho", [10.0], points_per_value=20, transient=30)
+        lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+        od = ts.analysis.orbit_diagram(lor, "rho", [10.0], points_per_value=20, transient=30)
         (points,) = od.points
         assert points.shape[0] >= 1
         expected = np.sqrt(lor.beta * (10.0 - 1.0))
         assert np.allclose(np.abs(points[:, 0]), expected, atol=1e-6)
 
     def test_section_override_uses_a_poincare_map(self) -> None:
-        od = ts.orbit_diagram(
-            ts.Rossler(ic=[1.0, 1.0, 0.0]),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Rossler(ic=[1.0, 1.0, 0.0]),
             "c",
             [4.0],
             points_per_value=20,
@@ -413,7 +421,9 @@ class TestBifurcationDiagramOfAFlow:
         assert od.points[0].shape[0] == 20
 
     def test_a_map_is_unaffected(self) -> None:
-        od = ts.orbit_diagram(ts.Logistic(), "r", [3.2, 3.9], points_per_value=40, transient=200)
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(), "r", [3.2, 3.9], points_per_value=40, transient=200
+        )
         assert od.meta["section"] == "map iterates"
         assert od.meta["section_auto"] is False
         assert int(od.periods()[0]) == 2  # the period-2 window
@@ -428,7 +438,9 @@ class TestBifurcationDiagramOfAFlow:
         assert registry.analyses.get("orbit_diagram") is ts.analysis.orbit_diagram
         assert "bifurcation_diagram" not in registry.analyses.names()
         for namespace, prefix in ((ts, "tsdynamics"), (ts.analysis, "tsdynamics.analysis")):
-            with pytest.raises(AttributeError) as excinfo:
+            # v6: an exact hit in a redirect table is an ImportError (MovedInV6),
+            # because ``from X import Y`` discards an AttributeError's message.
+            with pytest.raises((AttributeError, ImportError)) as excinfo:
                 _ = namespace.bifurcation_diagram
             message = str(excinfo.value)
             assert "orbit_diagram" in message, f"{prefix} must name the survivor"
@@ -448,23 +460,23 @@ class TestBifurcationDiagramRefusals:
         from tsdynamics.errors import InvalidInputError
 
         with pytest.raises(InvalidInputError) as excinfo:
-            ts.orbit_diagram(ts.systems.OrnsteinUhlenbeck(), "theta", [1.0])
+            ts.analysis.orbit_diagram(ts.systems.OrnsteinUhlenbeck(), "theta", [1.0])
         message = str(excinfo.value)
-        assert "ts.orbit_diagram(ts.systems.Lorenz(), 'rho'" in message
+        assert "ts.analysis.orbit_diagram(ts.systems.Lorenz(), 'rho'" in message
 
     def test_a_non_system_is_refused_with_a_runnable_line(self) -> None:
         from tsdynamics.errors import InvalidInputError
 
         with pytest.raises(InvalidInputError) as excinfo:
-            ts.orbit_diagram([1.0, 2.0], "r", [1.0])
-        assert "ts.orbit_diagram(ts.systems.Lorenz(), 'rho'" in str(excinfo.value)
+            ts.analysis.orbit_diagram([1.0, 2.0], "r", [1.0])
+        assert "ts.analysis.orbit_diagram(ts.systems.Lorenz(), 'rho'" in str(excinfo.value)
 
     def test_section_on_an_already_discrete_view_names_the_swept_parameter(self) -> None:
         from tsdynamics.errors import InvalidParameterError
 
         with pytest.raises(InvalidParameterError) as excinfo:
-            ts.orbit_diagram(ts.Logistic(), "r", [3.5], section=("x", 0.0))
-        assert "ts.orbit_diagram(system, 'r', values)" in str(excinfo.value)
+            ts.analysis.orbit_diagram(ts.systems.Logistic(), "r", [3.5], section=("x", 0.0))
+        assert "ts.analysis.orbit_diagram(system, 'r', values)" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +504,7 @@ class TestFlowColumnsAreNeverSilentlyEmpty:
         message = str(record[0].message)
         assert "transient=500" in message
         assert "NOT fully discarded" in message
-        assert "ts.orbit_diagram(system, param, values, max_time=100000)" in message
+        assert "ts.analysis.orbit_diagram(system, param, values, max_time=100000)" in message
 
     def test_a_partial_column_still_discards_the_transient(self) -> None:
         from tsdynamics.analysis.orbits.orbit_diagram import _short_column
@@ -527,8 +539,8 @@ class TestFlowColumnsAreNeverSilentlyEmpty:
     def test_a_slow_flow_sweep_returns_points_rather_than_a_blank_picture(self) -> None:
         """End to end: a flow whose peaks are expensive still yields a drawable diagram."""
         with pytest.warns(RuntimeWarning):
-            od = ts.orbit_diagram(
-                ts.Rossler(ic=[1.0, 1.0, 0.0]),
+            od = ts.analysis.orbit_diagram(
+                ts.systems.Rossler(ic=[1.0, 1.0, 0.0]),
                 "c",
                 [4.0, 4.5],
                 points_per_value=40,
@@ -554,7 +566,9 @@ def test_repr_reports_the_range_of_a_ragged_diagram() -> None:
         points=[np.zeros((1, 1)), np.zeros((200, 1))],
         components=(0,),
     )
-    assert repr(ragged) == "OrbitDiagram('rho', 2 values, 1-200 points/value)"
+    # v6 repr: the answer first, then the supporting lines (CONTRACT §4.3).
+    head = repr(ragged).splitlines()[0]
+    assert head == "OrbitDiagram  rho ∈ [1, 2] · 2 values × 1–200 points"
 
     even = OrbitDiagram(
         param="r",
@@ -562,4 +576,4 @@ def test_repr_reports_the_range_of_a_ragged_diagram() -> None:
         points=[np.zeros((40, 1)), np.zeros((40, 1))],
         components=(0,),
     )
-    assert repr(even) == "OrbitDiagram('r', 2 values, 40 points/value)"
+    assert repr(even).splitlines()[0] == "OrbitDiagram  r ∈ [1, 2] · 2 values × 40 points"

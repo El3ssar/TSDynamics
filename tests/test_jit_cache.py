@@ -74,11 +74,11 @@ def _integrate_tape(tape, ic, p, t_eval, *, jit: bool) -> np.ndarray:
 
 def test_repeat_jit_run_is_a_cache_hit():
     lor = ts.systems.Lorenz()
-    lor.integrate(final_time=0.1, dt=0.01, backend="jit", ic=[1.0, 1.0, 1.0])
+    lor.run(final_time=0.1, dt=0.01, backend="jit", ic=[1.0, 1.0, 1.0])
     first = runmod.jit_cache_stats()
     assert (first["hits"], first["misses"], first["size"]) == (0, 1, 1)
 
-    lor.integrate(final_time=0.1, dt=0.01, backend="jit", ic=[1.0, 1.0, 1.0])
+    lor.run(final_time=0.1, dt=0.01, backend="jit", ic=[1.0, 1.0, 1.0])
     second = runmod.jit_cache_stats()
     assert second["hits"] == 1
     assert second["misses"] == 1
@@ -88,7 +88,7 @@ def test_repeat_jit_run_is_a_cache_hit():
 def test_control_param_sweep_reuses_one_compiled_evaluator():
     """The tape ignores control-parameter values, so the compile must too."""
     for rho in (28.0, 35.0, 40.0, 45.0):
-        ts.systems.Lorenz(params={"rho": rho}).integrate(
+        ts.systems.Lorenz(params={"rho": rho}).run(
             final_time=0.1, dt=0.01, backend="jit", ic=[1.0, 1.0, 1.0]
         )
     stats = runmod.jit_cache_stats()
@@ -97,15 +97,15 @@ def test_control_param_sweep_reuses_one_compiled_evaluator():
 
 
 def test_interp_run_never_touches_the_jit_cache():
-    ts.systems.Lorenz().integrate(final_time=0.1, dt=0.01, backend="interp")
+    ts.systems.Lorenz().run(final_time=0.1, dt=0.01, backend="interp")
     stats = runmod.jit_cache_stats()
     assert (stats["hits"], stats["misses"], stats["size"]) == (0, 0, 0)
 
 
 def test_clear_resets_counters_and_store():
     lor = ts.systems.Lorenz()
-    lor.integrate(final_time=0.1, dt=0.01, backend="jit")
-    lor.integrate(final_time=0.1, dt=0.01, backend="jit")
+    lor.run(final_time=0.1, dt=0.01, backend="jit")
+    lor.run(final_time=0.1, dt=0.01, backend="jit")
     assert runmod.jit_cache_stats()["hits"] == 1
     runmod.clear_jit_cache()
     assert runmod.jit_cache_stats() == {
@@ -115,7 +115,7 @@ def test_clear_resets_counters_and_store():
         "maxsize": runmod.jit_cache_stats()["maxsize"],
     }
     # …and the next call therefore compiles again.
-    lor.integrate(final_time=0.1, dt=0.01, backend="jit")
+    lor.run(final_time=0.1, dt=0.01, backend="jit")
     assert runmod.jit_cache_stats()["misses"] == 1
 
 
@@ -202,11 +202,11 @@ def test_cached_equals_bypassed_bit_for_bit(name, monkeypatch):
     """WITH-cache == WITHOUT-cache, to the last bit."""
     cls = getattr(ts.systems, name)
     kw = {"final_time": 5.0, "dt": 0.01, "backend": "jit", "ic": [0.5, 0.5, 0.5]}
-    cached = cls().integrate(**kw).y
+    cached = cls().run(**kw).y
 
     monkeypatch.setenv(_NO_JIT_CACHE, "1")
     runmod.clear_jit_cache()
-    bypassed = cls().integrate(**kw).y
+    bypassed = cls().run(**kw).y
     # Nothing was stored while the bypass was on.
     assert runmod.jit_cache_stats()["size"] == 0
 
@@ -217,8 +217,8 @@ def test_repeat_hits_stay_bit_identical():
     """A hit must reproduce the first compile exactly, not merely closely."""
     lor = ts.systems.Lorenz()
     kw = {"final_time": 5.0, "dt": 0.01, "backend": "jit", "ic": [0.5, 0.5, 0.5]}
-    first = lor.integrate(**kw).y
-    second = ts.systems.Lorenz(params={"rho": 28.0}).integrate(**kw).y
+    first = lor.run(**kw).y
+    second = ts.systems.Lorenz(params={"rho": 28.0}).run(**kw).y
     assert runmod.jit_cache_stats()["hits"] == 1
     assert first.tobytes() == second.tobytes()
 
@@ -227,8 +227,8 @@ def test_interp_equals_jit_bit_for_bit_through_the_cache():
     """The documented ``interp == jit`` contract, re-checked on a cache hit."""
     lor = ts.systems.Lorenz()
     kw = {"final_time": 5.0, "dt": 0.01, "ic": [0.5, 0.5, 0.5]}
-    interp = lor.integrate(**kw, backend="interp").y
-    lor.integrate(**kw, backend="jit")  # miss (compiles)
-    jit_hit = lor.integrate(**kw, backend="jit").y  # hit (cached)
+    interp = lor.run(**kw, backend="interp").y
+    lor.run(**kw, backend="jit")  # miss (compiles)
+    jit_hit = lor.run(**kw, backend="jit").y  # hit (cached)
     assert runmod.jit_cache_stats()["hits"] == 1
     assert interp.tobytes() == jit_hit.tobytes()

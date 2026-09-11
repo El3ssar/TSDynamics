@@ -40,7 +40,7 @@ a stable fixed point; two, a period-2 cycle; a filled stripe, chaos.
 
 <div class="ts-item" markdown>
 ```python
-od = ts.orbit_diagram(
+od = ts.analysis.orbit_diagram(
     ts.systems.Logistic(),
     "r", np.linspace(2.5, 4.0, 600),   # sweep the growth rate
     points_per_value=120,          # states recorded per r
@@ -83,7 +83,7 @@ Those onset values are not eyeballed off the plot — the library computes them.
 period), and `bifurcation_points()` reports where the count changes:
 
 ```python
-od = ts.orbit_diagram(
+od = ts.analysis.orbit_diagram(
     ts.systems.Logistic(), "r", np.linspace(2.9, 3.6, 400), points_per_value=64, transient=2000,
 )
 
@@ -97,7 +97,7 @@ the swept values, so sweep finely near a transition to pin it down. And the
 periods themselves are exactly the doubling ladder:
 
 ```python
-od2 = ts.orbit_diagram(ts.systems.Logistic(), "r",
+od2 = ts.analysis.orbit_diagram(ts.systems.Logistic(), "r",
                        np.array([2.8, 3.2, 3.5, 3.55, 3.9]), points_per_value=64, transient=2000)
 od2.periods()          # array([1, 2, 4, 8, 0])   — 0 = aperiodic (chaotic)
 ```
@@ -110,7 +110,7 @@ cascade, quantified.
     tangent bifurcation $r = 1 + \sqrt8 \approx 3.828$ — the interval where the
     dynamics briefly return to order before doubling back into chaos:
     ```python
-    ts.orbit_diagram(ts.systems.Logistic(), "r",
+    ts.analysis.orbit_diagram(ts.systems.Logistic(), "r",
                      np.array([3.82, 3.83, 3.84]), points_per_value=90, transient=3000).periods()
     # array([0, 3, 3])   — aperiodic, then the period-3 window opens
     ```
@@ -162,12 +162,12 @@ We use the **Rössler system** — three equations whose single parameter $c$ dr
 exactly this route:
 
 ```python
-from tsdynamics import PoincareMap
+from tsdynamics.derived import PoincareMap
 
 ros = ts.systems.Rossler()
 ros.params      # ParamSet({a=0.2, b=0.2, c=5.7})
 
-od = ts.orbit_diagram(
+od = ts.analysis.orbit_diagram(
     PoincareMap(ros, plane=("y", 0.0, "up")),   # section y = 0, crossed upward
     "c", np.linspace(2.0, 6.0, 80),
     points_per_value=50, transient=50,

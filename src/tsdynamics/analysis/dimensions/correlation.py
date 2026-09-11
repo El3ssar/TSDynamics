@@ -186,7 +186,7 @@ def correlation_dimension(
     c_lo: float | None = None,
     c_hi: float = _DEFAULT_C_HI,
     min_window: int = 5,
-    tol: float = 1.5,
+    flatness: float = 1.5,
 ) -> DimensionResult:
     r"""Grassberger--Procaccia correlation dimension :math:`D_2`.
 
@@ -216,9 +216,11 @@ def correlation_dimension(
         (defaults ``1e-4`` and ``0.1``); see :func:`correlation_sum`.
     min_window : int, default 5
         Minimum number of radii in the fitted scaling region.
-    tol : float, default 1.5
-        Scaling-region residual tolerance (see
-        :func:`~tsdynamics.analysis.dimensions._scaling.fit_scaling_region`).
+    flatness : float, default 1.5
+        How flat the fitted scaling region has to be: a window is admitted when
+        its straight-line residual is within this factor of the flattest window
+        found.  Larger admits wider but less straight regions.  (It is **not** a
+        solver tolerance — that is what the v6 rename off ``tol=`` is for.)
 
     Returns
     -------
@@ -296,7 +298,7 @@ def correlation_dimension(
     order = np.argsort(x)
     x = x[order]
     y = y[order]
-    fit = fit_scaling_region(x, y, min_window=min_window, tol=tol)
+    fit = fit_scaling_region(x, y, min_window=min_window, tol=flatness)
     return DimensionResult(
         estimate=fit.slope,
         stderr=fit.stderr,

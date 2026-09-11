@@ -14,18 +14,18 @@ import tsdynamics as ts
 
 class TestKaplanYorke:
     def test_lorenz_literature_value(self) -> None:
-        d = ts.kaplan_yorke_dimension([0.906, 0.0, -14.57])
+        d = ts.analysis.kaplan_yorke_dimension([0.906, 0.0, -14.57])
         assert d == pytest.approx(2.062, abs=0.01)
 
     def test_all_negative_is_zero(self) -> None:
-        assert ts.kaplan_yorke_dimension([-0.1, -1.0]) == 0.0
+        assert ts.analysis.kaplan_yorke_dimension([-0.1, -1.0]) == 0.0
 
     def test_never_closing_saturates(self) -> None:
-        assert ts.kaplan_yorke_dimension([0.2, 0.1]) == 2.0
+        assert ts.analysis.kaplan_yorke_dimension([0.2, 0.1]) == 2.0
 
     def test_order_independent(self) -> None:
-        a = ts.kaplan_yorke_dimension([0.906, 0.0, -14.57])
-        b = ts.kaplan_yorke_dimension([-14.57, 0.906, 0.0])
+        a = ts.analysis.kaplan_yorke_dimension([0.906, 0.0, -14.57])
+        b = ts.analysis.kaplan_yorke_dimension([-14.57, 0.906, 0.0])
         assert a == b
 
 
@@ -40,8 +40,8 @@ class TestOrbitDiagram:
         return len(np.unique(np.round(points[:, 0], decimals)))
 
     def test_logistic_period_doubling(self) -> None:
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             [3.2, 3.5],
             points_per_value=120,
@@ -53,22 +53,22 @@ class TestOrbitDiagram:
         assert self._branches(od.points[1]) == 4  # 4-cycle at r=3.5
 
     def test_logistic_chaotic_band_dense(self) -> None:
-        od = ts.orbit_diagram(
-            ts.Logistic(), "r", [3.9], points_per_value=200, transient=500, ic=[0.5]
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(), "r", [3.9], points_per_value=200, transient=500, ic=[0.5]
         )
         assert self._branches(od.points[0]) > 50
 
     def test_flat_output(self) -> None:
-        od = ts.orbit_diagram(
-            ts.Logistic(), "r", [3.2, 3.5], points_per_value=50, transient=200, ic=[0.5]
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(), "r", [3.2, 3.5], points_per_value=50, transient=200, ic=[0.5]
         )
         x, y = od.flat()
         assert x.shape == y.shape == (100,)
         assert set(np.unique(x)) == {3.2, 3.5}
 
     def test_carry_state_follows_branch(self) -> None:
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             np.linspace(2.8, 3.4, 7),
             points_per_value=40,
@@ -80,14 +80,14 @@ class TestOrbitDiagram:
 
     def test_continuous_system_is_reduced_to_its_peak_map(self) -> None:
         """A raw flow is accepted since v6 (see tests/test_orbits.py for the contract)."""
-        od = ts.orbit_diagram(
-            ts.Lorenz(ic=[1.0, 1.0, 1.0]), "rho", [28.0], points_per_value=10, transient=15
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), "rho", [28.0], points_per_value=10, transient=15
         )
         assert od.meta["section"] == "successive maxima of x"
 
     def test_original_system_not_mutated(self) -> None:
-        m = ts.Logistic()
-        ts.orbit_diagram(m, "r", [3.0], points_per_value=10, transient=10, ic=[0.5])
+        m = ts.systems.Logistic()
+        ts.analysis.orbit_diagram(m, "r", [3.0], points_per_value=10, transient=10, ic=[0.5])
         assert m.params["r"] == 3.9
 
 
@@ -98,7 +98,7 @@ class TestOrbitDiagram:
 
 class TestFixedPoints:
     def test_henon_analytic_fixed_points(self) -> None:
-        fps = ts.fixed_points(ts.Henon(), seed=0)
+        fps = ts.analysis.fixed_points(ts.systems.Henon(), seed=0)
         a, b = 1.4, 0.3
         disc = np.sqrt((1 - b) ** 2 + 4 * a)
         expected_x = sorted([(-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)])
@@ -111,8 +111,8 @@ class TestFixedPoints:
             assert fp.x[1] == pytest.approx(b * fp.x[0], rel=1e-8)
 
     def test_logistic_fixed_points(self) -> None:
-        m = ts.Logistic(params={"r": 2.5})
-        fps = ts.fixed_points(m, region=[(-0.5, 1.5)], seed=0)
+        m = ts.systems.Logistic(params={"r": 2.5})
+        fps = ts.analysis.fixed_points(m, region=[(-0.5, 1.5)], seed=0)
         xs = sorted(fp.x[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 1 - 1 / 2.5], atol=1e-9)
         stable = {round(fp.x[0], 6): fp.stable for fp in fps}
@@ -127,17 +127,19 @@ class TestFixedPoints:
 
 class TestMaxLyapunov:
     def test_logistic_r4_ln2(self) -> None:
-        m = ts.Logistic(params={"r": 4.0})
-        lam = ts.max_lyapunov(m, ic=[0.3], n=600, steps_per=3, seed=1)
+        m = ts.systems.Logistic(params={"r": 4.0})
+        lam = ts.analysis.max_lyapunov(m, ic=[0.3], n=600, steps_per=3, seed=1)
         assert lam == pytest.approx(np.log(2), abs=0.1)
 
     def test_henon(self) -> None:
-        lam = ts.max_lyapunov(ts.Henon(), ic=[0.1, 0.1], n=600, steps_per=3, seed=1)
+        lam = ts.analysis.max_lyapunov(
+            ts.systems.Henon(), ic=[0.1, 0.1], n=600, steps_per=3, seed=1
+        )
         assert lam == pytest.approx(0.42, abs=0.12)
 
     def test_dde_raises(self) -> None:
         with pytest.raises(NotImplementedError, match="set_state"):
-            ts.max_lyapunov(ts.MackeyGlass())
+            ts.analysis.max_lyapunov(ts.systems.MackeyGlass())
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +149,8 @@ class TestMaxLyapunov:
 
 @pytest.mark.slow
 def test_max_lyapunov_lorenz() -> None:
-    lam = ts.max_lyapunov(
-        ts.Lorenz(),
+    lam = ts.analysis.max_lyapunov(
+        ts.systems.Lorenz(),
         ic=[1.0, 1.0, 1.0],
         dt=0.05,
         n=600,
@@ -161,8 +163,12 @@ def test_max_lyapunov_lorenz() -> None:
 
 @pytest.mark.slow
 def test_poincare_section_from_system_thin_set() -> None:
-    section = ts.poincare_section(
-        ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), crossings=100, skip_crossings=10, dt=0.05
+    section = ts.analysis.poincare_section(
+        ts.systems.Rossler(ic=[1.0, 1.0, 0.0]),
+        plane=(0, 0.0),
+        crossings=100,
+        skip_crossings=10,
+        dt=0.05,
     )
     assert section.y.shape == (100, 3)
     assert np.max(np.abs(section.y[:, 0])) < 1e-6
@@ -170,8 +176,8 @@ def test_poincare_section_from_system_thin_set() -> None:
 
 @pytest.mark.slow
 def test_poincare_section_from_trajectory_data() -> None:
-    traj = ts.Lorenz().integrate(final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0])
-    section = ts.poincare_section(traj, plane=(2, 27.0), direction=0)
+    traj = ts.systems.Lorenz().run(final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+    section = ts.analysis.poincare_section(traj, plane=(2, 27.0), direction=0)
     assert section.y.shape[0] > 10
     # linear interpolation puts the crossing near the plane (dt-limited accuracy)
     assert np.max(np.abs(section.y[:, 2] - 27.0)) < 1e-8
@@ -179,18 +185,24 @@ def test_poincare_section_from_trajectory_data() -> None:
 
 @pytest.mark.slow
 def test_lorenz_kaplan_yorke_from_spectrum() -> None:
-    spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(
-        dt=0.1, transient=50.0, final_time=300.0, method="dop853", rtol=1e-7, atol=1e-10
+    spec = ts.analysis.lyapunov_spectrum(
+        ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
+        dt=0.1,
+        transient=50.0,
+        final_time=300.0,
+        method="dop853",
+        rtol=1e-7,
+        atol=1e-10,
     )
-    d = ts.kaplan_yorke_dimension(spec)
+    d = ts.analysis.kaplan_yorke_dimension(spec)
     assert d == pytest.approx(2.06, abs=0.1)
 
 
 @pytest.mark.slow
 def test_bifurcation_diagram_of_flow_via_poincare() -> None:
     """The composition acceptance test: orbit diagram over a PoincareMap."""
-    pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
-    od = ts.orbit_diagram(
+    pmap = ts.derived.PoincareMap(ts.systems.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
+    od = ts.analysis.orbit_diagram(
         pmap, "c", [4.0, 5.7], points_per_value=15, transient=10, component=1, ic=[1.0, 1.0, 0.0]
     )
     assert len(od) == 2
@@ -204,8 +216,8 @@ def test_orbit_diagram_named_component_over_poincare() -> None:
     """Regression: a NAMED component over a derived wrapper must resolve via the
     instance, not ``type(sys).variables`` — which leaks the property descriptor
     and raised ``AttributeError: 'property' object has no attribute 'index'``."""
-    pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
-    od = ts.orbit_diagram(
+    pmap = ts.derived.PoincareMap(ts.systems.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
+    od = ts.analysis.orbit_diagram(
         pmap, "c", [5.7], points_per_value=10, transient=10, component="y", ic=[1.0, 1.0, 0.0]
     )
     assert len(od) == 1

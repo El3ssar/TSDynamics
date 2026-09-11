@@ -466,17 +466,27 @@ def _sampling_interval_of(data: Any) -> float | None:
 
     A bare array carries no time axis, so it keeps the documented
     ``dt = 1.0`` (an exponent per sample / per iteration).
+
+    **The time axis is the truth, not ``meta["dt"]``.**  ``meta`` records the
+    ``dt`` the *run* asked for and slicing carries it verbatim, so a decimated
+    trajectory reported the undecimated step: measured, ``tr[::5]`` of a Lorenz
+    run at ``dt = 0.01`` still said ``meta["dt"] == 0.01`` while
+    ``np.diff(t)[0] == 0.05``, and ``lyapunov_from_data(tr[::5])`` returned
+    9.809 where the truth is 1.962 — off by exactly the decimation factor, with
+    no exception.  ``traj.dt`` is the single reading; ``meta["dt"]`` is consulted
+    only when there is no usable axis to read.
     """
     meta = getattr(data, "meta", None)
     t = getattr(data, "t", None)
     if meta is None or t is None:
         return None
-    recorded = meta.get("dt") if hasattr(meta, "get") else None
-    if recorded is not None:
-        return float(recorded)
+    derived = getattr(data, "dt", None)  # the Trajectory's own, axis-derived reading
+    if derived is not None:
+        return float(derived)
     times = np.asarray(t, dtype=float)
     if times.ndim != 1 or times.size < 2:
-        return None
+        recorded = meta.get("dt") if hasattr(meta, "get") else None
+        return None if recorded is None else float(recorded)
     steps = np.diff(times)
     step = float(np.median(steps))
     # A uniformity check, not a solver tolerance: how far the widest gap strays
@@ -631,7 +641,7 @@ def lyapunov_from_data(
     --------
     >>> import tsdynamics as ts
     >>> traj = ts.systems.Henon().run(6000, transient=500, ic=[0.1, 0.1])
-    >>> res = ts.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
+    >>> res = ts.analysis.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
     >>> 0.30 < float(res) < 0.55      # ≈ 0.42
     True
 
@@ -782,7 +792,7 @@ def lyapunov_from_data(
                 f"The series is too short or too sparsely sampled for a "
                 f"{dimension}-dimensional reconstruction."
                 + remedy(
-                    f"ts.lyapunov_from_data(data, dimension=3, eps={4 * eps:.3g},"
+                    f"ts.analysis.lyapunov_from_data(data, dimension=3, eps={4 * eps:.3g},"
                     f" theiler={max(1, theiler // 2)})",
                     lead="Widen the neighbourhood and lower the embedding dimension:",
                 )

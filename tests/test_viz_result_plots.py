@@ -38,7 +38,7 @@ def _png(spec, tmp_path: Path, name: str) -> str:  # noqa: ANN001 - test helper
 def orbit_diagram():  # noqa: ANN202
     import tsdynamics as ts
 
-    return ts.orbit_diagram(
+    return ts.analysis.orbit_diagram(
         ts.systems.Logistic(), "r", np.linspace(2.8, 4.0, 120), points_per_value=40, transient=200
     )
 
@@ -182,7 +182,7 @@ def test_fixed_points_label_axes_with_the_systems_variables() -> None:
     """``$x_0$`` / ``$x_1$`` throws away names the system already declares."""
     import tsdynamics as ts
 
-    spec = ts.fixed_points(ts.systems.Lorenz()).to_plot_spec()
+    spec = ts.analysis.fixed_points(ts.systems.Lorenz()).to_plot_spec()
     assert spec.x.label == "$x$"
     assert spec.y.label == "$y$"
 
@@ -201,7 +201,7 @@ def test_3d_specs_draw_their_annotations() -> None:
     import tsdynamics as ts
     from tsdynamics.viz.spec import Annotation
 
-    tr = ts.systems.Lorenz().integrate(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    tr = ts.systems.Lorenz().run(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
     spec = tr.to_plot_spec()
     before = len(spec.render(backend="matplotlib").axes[0].lines)
     spec.annotations.append(Annotation(kind="vline", x=0.0, text="x = 0"))
@@ -215,7 +215,7 @@ def test_dark_theme_themes_the_3d_panes() -> None:
 
     import tsdynamics as ts
 
-    tr = ts.systems.Lorenz().integrate(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    tr = ts.systems.Lorenz().run(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
     fig = tr.to_plot_spec().theme("dark").render(backend="matplotlib")
     ax = fig.axes[0]
     background = to_rgba(fig.get_facecolor())
@@ -244,7 +244,7 @@ def test_basin_colorbar_is_a_categorical_legend() -> None:
     grid = ts.data.Grid(lo=[-2.0, -1.5], hi=[2.0, 1.5], counts=[16, 16])
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        res = ts.basins_of_attraction(_Duffing(), grid, dt=0.05, max_steps=2000)
+        res = ts.analysis.basins(_Duffing(), grid, dt=0.05, max_steps=2000)
 
     spec = res.to_plot_spec()
     labels = spec.meta["category_labels"]
@@ -274,31 +274,33 @@ def _result_specs():
     """
     import tsdynamics as ts
 
-    lor = ts.Lorenz()
-    traj = lor.integrate(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+    lor = ts.systems.Lorenz()
+    traj = lor.run(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return {
-            "fixed_points": ts.fixed_points(lor, seed=0).to_plot_spec(),
-            "eigenvalue_plane": ts.fixed_points(lor, seed=0).eigenvalue_plane(),
-            "orbit_diagram": ts.orbit_diagram(
+            "fixed_points": ts.analysis.fixed_points(lor, seed=0).to_plot_spec(),
+            "eigenvalue_plane": ts.analysis.fixed_points(lor, seed=0).eigenvalue_plane(),
+            "orbit_diagram": ts.analysis.orbit_diagram(
                 ts.systems.Logistic(),
                 "r",
                 np.linspace(2.8, 4.0, 60),
                 points_per_value=30,
                 transient=200,
             ).to_plot_spec(),
-            "basins": ts.basins_of_attraction(
-                ts.systems.Henon(), ts.Grid([-2.0, -2.0], [2.0, 2.0], (24, 24))
+            "basins": ts.analysis.basins(
+                ts.systems.Henon(), ts.data.Grid([-2.0, -2.0], [2.0, 2.0], (24, 24))
             ).to_plot_spec(),
-            "recurrence": ts.recurrence_matrix(traj.y[:300], recurrence_rate=0.05).to_plot_spec(),
-            "dimension": ts.correlation_dimension(traj.y[::4]).to_plot_spec(),
-            "poincare": ts.poincare_section(
-                ts.Rossler(), plane=("y", 0.0, "up"), crossings=120, seed=0
+            "recurrence": ts.analysis.recurrence_matrix(
+                traj.y[:300], recurrence_rate=0.05
             ).to_plot_spec(),
-            "gali": ts.gali(lor, k=2, final_time=40.0, ic=[1.0, 1.0, 1.0]).to_plot_spec(),
-            "return_map": ts.return_map(traj, component="z", kind="max").to_plot_spec(),
-            "lyapunov_from_data": ts.lyapunov_from_data(
+            "dimension": ts.analysis.correlation_dimension(traj.y[::4]).to_plot_spec(),
+            "poincare": ts.analysis.poincare_section(
+                ts.systems.Rossler(), plane=("y", 0.0, "up"), crossings=120, seed=0
+            ).to_plot_spec(),
+            "gali": ts.analysis.gali(lor, k=2, final_time=40.0, ic=[1.0, 1.0, 1.0]).to_plot_spec(),
+            "return_map": ts.analysis.return_map(traj, component="z", kind="max").to_plot_spec(),
+            "lyapunov_from_data": ts.analysis.lyapunov_from_data(
                 traj["x"][::4], dt=0.04, dimension=3
             ).to_plot_spec(),
         }
@@ -363,7 +365,7 @@ def test_the_eigenvalue_plane_does_not_write_its_boundary_over_an_eigenvalue() -
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        spec = ts.fixed_points(ts.Lorenz(), seed=0).eigenvalue_plane()
+        spec = ts.analysis.fixed_points(ts.systems.Lorenz(), seed=0).eigenvalue_plane()
 
     assert all(not ann.text for ann in spec.annotations if ann.kind == "vline")
     assert "Re" in spec.title and "0" in spec.title

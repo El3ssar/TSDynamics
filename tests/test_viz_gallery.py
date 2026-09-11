@@ -135,7 +135,7 @@ def test_every_non_default_tab_asks_for_its_primitive(structure):
 def test_the_primitive_check_catches_a_mislabelled_tab(tmp_path):
     """The guard that makes the point above enforceable at render time."""
     variant = gallery.Variant(
-        setup="traj = ts.systems.Lorenz().integrate(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 20.0])",
+        setup="traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 20.0])",
         call='ts.plot(traj, "spacetime")',  # an image, shown under a "contour" tab
     )
     with pytest.raises(ValueError, match="shown under the 'contour' tab but drew"):
@@ -202,7 +202,7 @@ def test_a_style_keyword_survives_the_bare_string_selector():
     """
     import tsdynamics as ts
 
-    traj = ts.systems.Lorenz().integrate(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 20.0])
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 20.0])
     spec = ts.plot(traj, "phase_portrait", components=("x", "z"), color="red", lw=3)
     assert spec.layers[0].style == {"color": "red", "linewidth": 3.0}
     aliased = ts.plot(traj, "phase_portrait", components=("x", "z"), primitive="points", ms=2.0)
@@ -224,7 +224,7 @@ def test_a_shared_option_reaches_only_the_transform_whose_signature_takes_it():
     """
     import tsdynamics as ts
 
-    traj = ts.systems.Lorenz().integrate(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 20.0])
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 20.0])
     spec = ts.plot(
         traj,
         "phase_portrait",
@@ -246,7 +246,7 @@ def test_a_keyword_no_named_transform_can_use_is_rejected():
     import tsdynamics as ts
     from tsdynamics.errors import InvalidParameterError
 
-    traj = ts.systems.Lorenz().integrate(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 20.0])
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 20.0])
     with pytest.raises(InvalidParameterError, match="componets"):
         ts.plot(traj, "phase_portrait", componets=("x", "z"))
     # Calling the transform directly was always a TypeError — the front door now

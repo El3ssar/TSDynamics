@@ -106,6 +106,19 @@ class SystemEntry:
         ``False`` for user-defined classes.
     reference : str or None
         The literature citation shown in the docs, if the class declares one.
+    doi : str or None
+        The bare DOI of that citation (e.g. ``"10.1175/1520-0469(1963)020..."``).
+        **This field is new in v6 and closes a headline bug:** 155 catalogue
+        systems declare a DOI, the entry had nowhere to put it, and the docs tool
+        therefore read ``None`` for every one of them.
+    field_shape : tuple[int, ...] or None
+        The spatial grid of a spatially-extended system whose state vector is a
+        flattened field (``(Ny, Nx)`` / ``(N,)``), read off the class.  A
+        variable-``N`` field resolves its real shape per *instance*; this is the
+        class-level declaration only.
+    field_labels : tuple[str, ...] or None
+        The names of the field blocks packed into that state (Gray-Scott's
+        ``("u", "v")``).
     known_lyapunov : Mapping[str, Any] or None
         The reference Lyapunov metadata driving ``tests/test_known_values.py``,
         if the class declares it.
@@ -120,6 +133,9 @@ class SystemEntry:
     params: Mapping[str, Any]
     is_builtin: bool
     reference: str | None = None
+    doi: str | None = None
+    field_shape: tuple[int, ...] | None = None
+    field_labels: tuple[str, ...] | None = None
     known_lyapunov: Mapping[str, Any] | None = None
 
     def __repr__(self) -> str:  # noqa: D105
@@ -169,6 +185,39 @@ def _has_concrete_rhs(cls: type) -> bool:
     return False
 
 
+#: The catalogue metadata this registry snapshots, as ``(entry field, ClassVar)``.
+#:
+#: **Each is read under BOTH spellings, underscored first.**  v6 moves these
+#: ClassVars behind an underscore so they stay off ``system.<TAB>`` (§3.8 —
+#: ``system.info`` absorbs them).  For a catalogue class the move is done by
+#: ``SystemBase.__init_subclass__`` (``_ABSORBED_CLASSVARS``) before registration,
+#: so the underscored read always hits; the bare read covers everything that
+#: migration does not — a third-party class built by another metaclass, a record
+#: constructed directly, a class registered before the absorption runs.
+#:
+#: The reason to spell it defensively is the failure *mode*, not the current
+#: state: ``None`` is a legal value for all five, so a reader looking under one
+#: spelling that stops matching records "no citation" for every system in the
+#: catalogue and **nothing raises**.  That is how 155 DOIs and 172 citations came
+#: to be dropped in the first place.  The real guard is therefore the counting
+#: gate ``tests/test_registry.py::test_catalogue_metadata_reaches_the_registry``,
+#: which fails when a declared value stops arriving rather than when a field
+#: stops existing.
+_METADATA_CLASSVARS: tuple[tuple[str, str], ...] = (
+    ("reference", "reference"),
+    ("doi", "doi"),
+    ("field_shape", "field_shape"),
+    ("field_labels", "field_labels"),
+    ("known_lyapunov", "known_lyapunov"),
+)
+
+
+def _classvar(cls: type, name: str) -> Any:
+    """Read a catalogue ClassVar under its underscored, then its bare, spelling."""
+    value = getattr(cls, f"_{name}", None)
+    return value if value is not None else getattr(cls, name, None)
+
+
 def register_class(cls: type) -> None:
     """
     Register a system class.  Called from ``SystemBase.__init_subclass__``.
@@ -190,10 +239,7 @@ def register_class(cls: type) -> None:
         dim=getattr(cls, "dim", None),
         params=MappingProxyType(dict(getattr(cls, "params", {}))),
         is_builtin=is_builtin,
-        # v6: the catalogue metadata ClassVars moved behind an underscore so they
-        # stay off ``system.<TAB>`` (contract §3.8 — ``system.info`` absorbs them).
-        reference=getattr(cls, "_reference", None),
-        known_lyapunov=getattr(cls, "_known_lyapunov", None),
+        **{field: _classvar(cls, var) for field, var in _METADATA_CLASSVARS},
     )
 
     bucket = _BY_NAME.setdefault(entry.name, [])

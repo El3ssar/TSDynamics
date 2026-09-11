@@ -66,8 +66,8 @@ def test_is_stiff_separates_oregonator_from_lorenz() -> None:
 
 def test_auto_selects_bdf_on_oregonator() -> None:
     """``method="auto"`` selects ``bdf`` on the stiff Oregonator (was: raised)."""
-    traj = ts.systems.Oregonator().integrate(
-        final_time=5.0, dt=0.1, ic=OREGONATOR_IC, method="auto", backend="reference"
+    traj = ts.systems.Oregonator().run(
+        final_time=5.0, dt=0.1, ic=OREGONATOR_IC, solver="auto", backend="reference"
     )
     assert traj.meta["method"] == "bdf"
     assert np.isfinite(traj.y).all()
@@ -75,8 +75,8 @@ def test_auto_selects_bdf_on_oregonator() -> None:
 
 def test_auto_selects_rk45_on_lorenz() -> None:
     """``method="auto"`` selects ``rk45`` on the non-stiff Lorenz (was: raised)."""
-    traj = ts.systems.Lorenz().integrate(
-        final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0], method="auto", backend="reference"
+    traj = ts.systems.Lorenz().run(
+        final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0], solver="auto", backend="reference"
     )
     assert traj.meta["method"] == "rk45"
     assert np.isfinite(traj.y).all()
@@ -85,8 +85,8 @@ def test_auto_selects_rk45_on_lorenz() -> None:
 def test_auto_is_case_insensitive() -> None:
     """``"AUTO"`` / ``"Auto"`` normalise to the auto path, not an unknown-method error."""
     for spelling in ("AUTO", "Auto", " auto "):
-        traj = ts.systems.Lorenz().integrate(
-            final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0], method=spelling, backend="reference"
+        traj = ts.systems.Lorenz().run(
+            final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0], solver=spelling, backend="reference"
         )
         assert traj.meta["method"] == "rk45"
 
@@ -94,8 +94,8 @@ def test_auto_is_case_insensitive() -> None:
 def test_auto_matches_the_explicitly_named_kernel() -> None:
     """Auto-on-Oregonator gives the *same* trajectory as the explicit ``bdf`` it picks."""
     kw = dict(final_time=5.0, dt=0.1, ic=OREGONATOR_IC, backend="reference")
-    auto = ts.systems.Oregonator().integrate(method="auto", **kw)
-    explicit = ts.systems.Oregonator().integrate(method="bdf", **kw)
+    auto = ts.systems.Oregonator().run(solver="auto", **kw)
+    explicit = ts.systems.Oregonator().run(solver="bdf", **kw)
     assert auto.meta["method"] == explicit.meta["method"] == "bdf"
     np.testing.assert_array_equal(auto.y, explicit.y)
 
@@ -128,7 +128,7 @@ def test_ensemble_on_stiff_system_rebuilds_the_jacobian_tape() -> None:
     # The batch solved the stiff system with its analytic Jacobian: each row equals
     # the lone integrate of that IC (smooth window ⇒ no spike phase sensitivity).
     for row, ic in zip(out, ics, strict=True):
-        traj = ts.systems.Oregonator().integrate(ic=ic, method="bdf", **kw)
+        traj = ts.systems.Oregonator().run(ic=ic, solver="bdf", **kw)
         np.testing.assert_allclose(row, traj.y[-1], rtol=1e-7, atol=1e-9)
 
     # The originally reported variant: method="auto" must also not raise.
@@ -144,13 +144,11 @@ def test_ensemble_on_stiff_system_rebuilds_the_jacobian_tape() -> None:
 def test_default_method_unchanged_without_auto() -> None:
     """Omitting ``method=`` keeps each system's own default — auto changes nothing here."""
     # Lorenz keeps the global default RK45 -> rk45.
-    lor = ts.systems.Lorenz().integrate(
-        final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0], backend="reference"
-    )
+    lor = ts.systems.Lorenz().run(final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0], backend="reference")
     assert lor.meta["method"] == "rk45"
     # Oregonator keeps its declared _default_method = "bdf" (NOT via the auto probe).
     assert ts.systems.Oregonator._default_method == "bdf"
-    oreg = ts.systems.Oregonator().integrate(
+    oreg = ts.systems.Oregonator().run(
         final_time=5.0, dt=0.1, ic=OREGONATOR_IC, backend="reference"
     )
     assert oreg.meta["method"] == "bdf"
@@ -158,8 +156,8 @@ def test_default_method_unchanged_without_auto() -> None:
 
 def test_explicit_method_still_resolves_unchanged() -> None:
     """A named, non-auto method resolves through the registry exactly as before."""
-    traj = ts.systems.Lorenz().integrate(
-        final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0], method="dop853", backend="reference"
+    traj = ts.systems.Lorenz().run(
+        final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0], solver="dop853", backend="reference"
     )
     assert traj.meta["method"] == "dop853"
 
@@ -185,8 +183,8 @@ def test_auto_is_a_noop_on_a_map() -> None:
 def test_auto_interp_equals_jit_bitforbit() -> None:
     """The auto path selects the same kernel and integrates identically on interp/jit."""
     pytest.importorskip("tsdynamics._rust")
-    kw = dict(final_time=5.0, dt=0.05, ic=OREGONATOR_IC, method="auto")
-    interp = ts.systems.Oregonator().integrate(backend="interp", **kw)
-    jit = ts.systems.Oregonator().integrate(backend="jit", **kw)
+    kw = dict(final_time=5.0, dt=0.05, ic=OREGONATOR_IC, solver="auto")
+    interp = ts.systems.Oregonator().run(backend="interp", **kw)
+    jit = ts.systems.Oregonator().run(backend="jit", **kw)
     assert interp.meta["method"] == jit.meta["method"] == "bdf"
     np.testing.assert_array_equal(interp.y, jit.y)

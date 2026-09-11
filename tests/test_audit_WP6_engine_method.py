@@ -40,13 +40,13 @@ def test_reinit_method_auto_resolves_like_integrate() -> None:
     already worked.  After the fix the stepping path probes auto-stiffness and
     resolves to the same explicit kernel ``integrate`` records.
     """
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     # Did not raise (the pre-fix crash) and selected a concrete kernel.
     lor.reinit([1.0, 1.0, 1.0], method="auto")
     assert lor._step_method_canonical == "rk45"
 
     # The resolved kernel matches the integrate/ensemble contract for the same IC.
-    traj = ts.Lorenz().integrate(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], method="auto")
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], method="auto")
     assert traj.meta["method"] == lor._step_method_canonical
 
     # And a step actually advances (the protocol is reachable end-to-end).
@@ -67,7 +67,9 @@ def test_run_events_method_auto_resolves_like_integrate() -> None:
     ``ValueError``).  After the fix the events path resolves through the shared
     contract, detects crossings, and records the canonical kernel name.
     """
-    sol = ts.Lorenz().run(final_time=20.0, dt=0.01, method="auto", events=[("z", 27.0, "up")])
+    sol = ts.systems.Lorenz().run(
+        final_time=20.0, dt=0.01, method="auto", events=[("z", 27.0, "up")]
+    )
     # Canonical name in provenance (not the raw "auto" alias), matching integrate.
     assert sol.meta["method"] == "rk45"
     # The event seam actually fired (Lorenz crosses z=27 upward many times).
@@ -81,7 +83,7 @@ def test_events_path_still_rejects_unknown_method() -> None:
     name (``"LSODA"``) still raises a ``ValueError`` subclass.
     """
     with pytest.raises(ValueError):
-        ts.Lorenz().run(final_time=5.0, dt=0.01, method="LSODA", events=[("z", 27.0, "up")])
+        ts.systems.Lorenz().run(final_time=5.0, dt=0.01, method="LSODA", events=[("z", 27.0, "up")])
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +148,6 @@ def test_minmax_jacobian_interp_equals_jit_bit_for_bit() -> None:
             ]
 
     s = _StiffMax()
-    ti = s.integrate(final_time=5.0, dt=0.05, ic=[0.3, 0.7], backend="interp", method="bdf")
-    tj = s.integrate(final_time=5.0, dt=0.05, ic=[0.3, 0.7], backend="jit", method="bdf")
+    ti = s.run(final_time=5.0, dt=0.05, ic=[0.3, 0.7], backend="interp", method="bdf")
+    tj = s.run(final_time=5.0, dt=0.05, ic=[0.3, 0.7], backend="jit", method="bdf")
     assert np.array_equal(ti.y, tj.y)

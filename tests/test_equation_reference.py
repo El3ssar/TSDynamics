@@ -593,7 +593,7 @@ def _canonical_defaults(entry: Any) -> str:
     point of a defaults pin is that the diff tells you *which* number moved.
     Floats print at full ``float64`` precision, so a changed last bit is caught.
     ``dim`` and ``default_ic`` ride along: both are shipped defaults that decide
-    what a plain ``System().integrate()`` does, and neither is in the tape.
+    what a plain ``System().run()`` does, and neither is in the tape.
     """
 
     def fmt(value: Any) -> str:
@@ -705,7 +705,7 @@ def test_catalogue_default_parameters_match_snapshot() -> None:
     The tape-hash gate above cannot see this class of change at all: control
     parameters are handed to the engine at run time and never lowered, so the
     canonical tape of ``Lorenz(rho=28)`` and ``Lorenz(rho=14)`` are the same
-    bytes.  Yet the defaults are what a plain ``ts.Lorenz().integrate()``
+    bytes.  Yet the defaults are what a plain ``ts.systems.Lorenz().run()``
     actually runs, and v6 had to repair six maps whose shipped defaults missed
     their documented attractor entirely (and re-point ``Zaslavskii`` from a
     period-2 sink to the strange attractor).  This pins them so that class of

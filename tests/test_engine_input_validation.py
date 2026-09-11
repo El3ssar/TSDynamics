@@ -116,7 +116,7 @@ class _BlowupSDE(ts.StochasticSystem):
 def test_integrate_rejects_inadmissible_tolerances(tol):
     """The dense ODE path names the offending tolerance instead of integrating."""
     with pytest.raises(InvalidParameterError) as exc:
-        ts.Lorenz().integrate(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], **tol)
+        ts.systems.Lorenz().run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], **tol)
     msg = str(exc.value)
     name = "rtol" if "rtol" in tol else "atol"
     assert name in msg, msg
@@ -131,7 +131,7 @@ def test_every_tolerance_surface_rejects_inadmissible_tolerances(tol):
     The guard lives in one place (the bridge's validated ``Tolerances`` newtype,
     which is the only way to build a solver), so a surface cannot forget it.
     """
-    lorenz = ts.Lorenz()
+    lorenz = ts.systems.Lorenz()
     ics = np.array([[1.0, 1.0, 1.0], [1.1, 1.0, 1.0]])
 
     with pytest.raises(InvalidParameterError):
@@ -142,13 +142,13 @@ def test_every_tolerance_surface_rejects_inadmissible_tolerances(tol):
 
     # The resumable stepper builds its engine handle lazily on the first ``step``,
     # so that is where its tolerances are validated.
-    stepped = ts.Lorenz()
+    stepped = ts.systems.Lorenz()
     stepped.reinit([1.0, 1.0, 1.0], **tol)
     with pytest.raises(InvalidParameterError):
         stepped.step(0.01)
 
     with pytest.raises(InvalidParameterError):
-        ts.MackeyGlass().integrate(final_time=5.0, dt=0.5, **tol)
+        ts.systems.MackeyGlass().run(final_time=5.0, dt=0.5, **tol)
 
 
 @pytest.mark.parametrize("tol", [{"atol": 0.0}, {"rtol": 0.0}, {}])
@@ -158,7 +158,7 @@ def test_one_sided_error_control_is_still_accepted(tol):
     Only the *pair* being zero is unsatisfiable; rejecting either alone would
     break standard error control that SciPy also accepts.
     """
-    traj = ts.Lorenz().integrate(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], **tol)
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], **tol)
     assert np.isfinite(traj.y).all()
 
 
@@ -180,17 +180,17 @@ def test_negative_rtol_no_longer_silently_matches_a_huge_one():
     is finite and on the attractor).  The assertion is unchanged; only the
     *mechanism* that bounds the step is now written down instead of accidental.
     """
-    lorenz = ts.Lorenz()
-    loose = lorenz.integrate(final_time=5.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=1e6, max_step=0.01)
+    lorenz = ts.systems.Lorenz()
+    loose = lorenz.run(final_time=5.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=1e6, max_step=0.01)
     assert np.isfinite(loose.y).all()
     with pytest.raises(InvalidParameterError):
-        lorenz.integrate(final_time=5.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=-1.0)
+        lorenz.run(final_time=5.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=-1.0)
 
 
 def test_zero_tolerance_is_not_reported_as_a_divergence():
     """``rtol = atol = 0`` used to raise ``ConvergenceError`` at ``t = 0``."""
     with pytest.raises(InvalidParameterError):
-        ts.Lorenz().integrate(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=0.0, atol=0.0)
+        ts.systems.Lorenz().run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0], rtol=0.0, atol=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ def test_zero_tolerance_is_not_reported_as_a_divergence():
 
 def test_ode_divergence_raises_convergence_error():
     with pytest.raises(ConvergenceError):
-        _Blowup().integrate(final_time=100.0, dt=0.01, ic=[2.0, 2.0])
+        _Blowup().run(final_time=100.0, dt=0.01, ic=[2.0, 2.0])
 
 
 def test_stepper_divergence_raises_convergence_error():
@@ -213,17 +213,17 @@ def test_stepper_divergence_raises_convergence_error():
 
 def test_map_divergence_raises_convergence_error():
     with pytest.raises(ConvergenceError):
-        _BlowupMap().iterate(steps=200, ic=[2.0])
+        _BlowupMap().run(steps=200, ic=[2.0])
 
 
 def test_dde_divergence_raises_convergence_error():
     with pytest.raises(ConvergenceError):
-        _BlowupDDE().integrate(final_time=50.0, dt=0.1, ic=[2.0])
+        _BlowupDDE().run(final_time=50.0, dt=0.1, ic=[2.0])
 
 
 def test_sde_divergence_raises_convergence_error():
     with pytest.raises(ConvergenceError):
-        _BlowupSDE().integrate(final_time=50.0, dt=0.01, ic=[3.0], seed=0)
+        _BlowupSDE().run(final_time=50.0, dt=0.01, ic=[3.0], seed=0)
 
 
 def test_raw_ffi_divergence_is_typed_not_a_bare_runtime_error():
@@ -268,7 +268,7 @@ def test_a_jit_failure_would_not_be_mislabelled_as_divergence():
 
 def test_empty_output_grid_is_rejected():
     """An empty ``t_eval`` returned ``(0, dim)``, contradicting "first row is the IC"."""
-    problem = build_problem(ts.Lorenz())
+    problem = build_problem(ts.systems.Lorenz())
     with pytest.raises(ValueError, match="t_eval"):
         _rust.integrate_dense(
             *problem.tape.to_arrays(),
@@ -307,18 +307,18 @@ def test_make_output_grid_rejects_non_finite_start():
 def test_integrate_rejects_non_finite_dt(dt):
     """End to end: ``dt=inf`` used to yield a two-sample "trajectory"."""
     with pytest.raises(InvalidParameterError):
-        ts.Lorenz().integrate(final_time=1.0, dt=dt, ic=[1.0, 1.0, 1.0])
+        ts.systems.Lorenz().run(final_time=1.0, dt=dt, ic=[1.0, 1.0, 1.0])
 
 
 def test_integrate_rejects_non_finite_final_time():
     with pytest.raises(InvalidParameterError):
-        ts.Lorenz().integrate(final_time=float("inf"), dt=0.01, ic=[1.0, 1.0, 1.0])
+        ts.systems.Lorenz().run(final_time=float("inf"), dt=0.01, ic=[1.0, 1.0, 1.0])
 
 
 @pytest.mark.parametrize("dt", [float("inf"), float("nan")])
 def test_step_rejects_non_finite_dt(dt):
     """The stepping seam builds its two-node grid through the same helper."""
-    system = ts.Rossler()
+    system = ts.systems.Rossler()
     system.reinit([1.0, 1.0, 1.0])
     with pytest.raises(InvalidParameterError, match="dt"):
         system.step(dt)
@@ -332,7 +332,7 @@ def test_step_rejects_non_finite_dt(dt):
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
 def test_non_finite_initial_state_is_rejected_not_called_a_divergence(bad):
     """It used to surface as "diverged … non-finite state at t = 0"."""
-    problem = build_problem(ts.Lorenz())
+    problem = build_problem(ts.systems.Lorenz())
     with pytest.raises(ValueError, match="finite") as exc:
         _rust.integrate_dense(
             *problem.tape.to_arrays(),
@@ -368,7 +368,7 @@ def test_non_finite_initial_state_is_rejected_not_called_a_divergence(bad):
 
 
 def _lorenz_ffi_args(*, ic, t_eval):
-    problem = build_problem(ts.Lorenz())
+    problem = build_problem(ts.systems.Lorenz())
     return (
         *problem.tape.to_arrays(),
         np.asarray(ic, dtype=float),
@@ -419,12 +419,12 @@ def test_the_stepper_agrees_with_the_dense_path_on_a_bad_state():
     it does fire it is the same :class:`InvalidParameterError` the dense path
     raises, not a divergence report about a run that never started.
     """
-    cold = ts.Lorenz()
+    cold = ts.systems.Lorenz()
     cold.reinit([float("nan"), 1.0, 1.0])
     with pytest.raises(InvalidParameterError, match="finite"):
         cold.step(0.01)
 
-    warm = ts.Lorenz()
+    warm = ts.systems.Lorenz()
     warm.reinit([1.0, 1.0, 1.0])
     warm.step(0.01)
     warm.set_state([float("inf"), 1.0, 1.0])

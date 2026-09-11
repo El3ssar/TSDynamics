@@ -157,7 +157,7 @@ def test_baker_orbits_do_not_collapse() -> None:
     rng = np.random.default_rng(0)
     baker = ts.systems.Baker()
     for _ in range(25):
-        traj = baker.iterate(steps=5_000, ic=rng.random(2))
+        traj = baker.run(steps=5_000, ic=rng.random(2))
         uniques = len(np.unique(np.round(traj.y, 9), axis=0))
         assert uniques > 4_000, f"orbit collapsed to {uniques} distinct points"
 
@@ -201,9 +201,7 @@ def test_henon_heiles_energy_is_conserved() -> None:
         return 0.5 * (px**2 + py**2) + 0.5 * (x**2 + y**2) + x**2 * y - y**3 / 3.0
 
     ic = [0.0, 0.1, 0.4, 0.0]  # bounded sub-escape orbit (E ~ 0.085)
-    traj = ts.systems.HenonHeiles().integrate(
-        final_time=100.0, dt=0.05, ic=ic, rtol=1e-10, atol=1e-10
-    )
+    traj = ts.systems.HenonHeiles().run(final_time=100.0, dt=0.05, ic=ic, rtol=1e-10, atol=1e-10)
     e = np.array([energy(s) for s in traj.y])
     e0 = energy(np.asarray(ic, dtype=float))
     # Tolerant of solver drift (rtol/atol 1e-10), strict enough to catch a wrong
@@ -239,7 +237,7 @@ def test_double_pendulum_conserves_the_compound_rod_hamiltonian() -> None:
         return kinetic + potential
 
     ic = [0.3, 0.2, 0.0, 0.0]
-    traj = system.integrate(final_time=50.0, dt=0.01, ic=ic, rtol=1e-11, atol=1e-12)
+    traj = system.run(final_time=50.0, dt=0.01, ic=ic, rtol=1e-11, atol=1e-12)
     e = energy(traj.y)
     # Machine-precision conservation at rtol 1e-11; 1e-8 is a comfortable ceiling
     # and four orders of magnitude below the drift a wrong torque term produces.
@@ -284,7 +282,7 @@ def test_lissajous2d_matches_closed_form() -> None:
     fa, fb = 3.0, 2.0
     delta = np.pi / 2
     ic = [a_amp * np.cos(0.0), b_amp * np.cos(delta)]
-    traj = s.integrate(final_time=10.0, dt=0.01, ic=ic, rtol=1e-11, atol=1e-11)
+    traj = s.run(final_time=10.0, dt=0.01, ic=ic, rtol=1e-11, atol=1e-11)
     t = traj.t
     x_exact = a_amp * np.cos(fa * t)
     y_exact = b_amp * np.cos(fb * t + delta)
@@ -334,7 +332,7 @@ def test_duffing_is_a_bounded_double_well_with_divergence_minus_delta() -> None:
     system = ts.systems.Duffing()
     delta = system.params["delta"]
 
-    traj = system.integrate(final_time=500.0, dt=0.01)
+    traj = system.run(final_time=500.0, dt=0.01)
     assert np.all(np.isfinite(traj.y))
     # The two wells sit at x = +/-1; the attractor spans both and stays O(1).
     assert 1.2 < np.max(np.abs(traj.y[:, 0])) < 3.0
@@ -400,7 +398,7 @@ def test_thomas_origin_is_an_equilibrium() -> None:
     # which depends on the process-global RNG state — order-dependent in a full
     # suite run; the tight box makes the recovery deterministic.)
     region = Box([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0])
-    fps = ts.fixed_points(sys, region=region, n_seeds=200, seed=0)
+    fps = ts.analysis.fixed_points(sys, region=region, n_seeds=200, seed=0)
     locations = np.array([fp.x for fp in fps])
     nearest = float(np.min(np.linalg.norm(locations, axis=1)))
     # Newton converges to the root to full tolerance; 1e-6 is the dedup scale.
@@ -430,7 +428,7 @@ def test_stuart_landau_cycle_is_the_analytic_circle() -> None:
     """
     mu, omega, b = 1.4, 0.9, 0.5
     s = ts.systems.StuartLandau(params={"mu": mu, "omega": omega, "b": b})
-    traj = s.integrate(final_time=200.0, dt=0.005, ic=[0.3, 0.1], rtol=1e-11, atol=1e-13)
+    traj = s.run(final_time=200.0, dt=0.005, ic=[0.3, 0.1], rtol=1e-11, atol=1e-13)
     settled = traj.y[traj.t > 100.0]
     t_settled = traj.t[traj.t > 100.0]
 
@@ -460,9 +458,7 @@ def test_stuart_landau_spectrum_is_zero_and_minus_two_mu() -> None:
 
 def test_stuart_landau_below_the_hopf_bifurcation_decays_to_the_origin() -> None:
     """For mu < 0 the origin is globally attracting (r' = mu r - r^3 < 0)."""
-    traj = ts.systems.StuartLandau(params={"mu": -0.3}).integrate(
-        final_time=200.0, dt=0.5, ic=[0.8, 0.2]
-    )
+    traj = ts.systems.StuartLandau(params={"mu": -0.3}).run(final_time=200.0, dt=0.5, ic=[0.8, 0.2])
     assert np.linalg.norm(traj.y[-1]) < 1e-9
 
 
@@ -478,7 +474,7 @@ def test_lotka_volterra_conserves_its_first_integral() -> None:
     """
     s = ts.systems.LotkaVolterra()
     p = s.params
-    traj = s.integrate(final_time=500.0, dt=0.01, rtol=1e-11, atol=1e-13)
+    traj = s.run(final_time=500.0, dt=0.01, rtol=1e-11, atol=1e-13)
     x, y = traj.y[:, 0], traj.y[:, 1]
     v = p["delta"] * x - p["gamma"] * np.log(x) + p["beta"] * y - p["alpha"] * np.log(y)
     assert np.max(np.abs(v - v[0])) < 1e-7
@@ -489,7 +485,7 @@ def test_lotka_volterra_conserves_its_first_integral() -> None:
 
     # A different initial condition traces a *different* closed orbit (a center,
     # not an attractor): the amplitudes must not coincide.
-    other = s.integrate(final_time=500.0, dt=0.01, ic=[4.0, 2.2])
+    other = s.run(final_time=500.0, dt=0.01, ic=[4.0, 2.2])
     assert np.ptp(other.y[:, 0]) < 0.5 * np.ptp(x)
 
 
@@ -508,10 +504,10 @@ def test_brusselator_hopf_threshold_is_one_plus_a_squared() -> None:
     eq = np.array([a, threshold / a])
     assert np.allclose(s._rhs_numeric()(eq, 0.0), 0.0, atol=1e-12)
 
-    below = ts.systems.Brusselator(params={"a": a, "b": threshold - 0.5}).integrate(
+    below = ts.systems.Brusselator(params={"a": a, "b": threshold - 0.5}).run(
         final_time=400.0, dt=0.05, ic=[1.3, 2.0]
     )
-    above = ts.systems.Brusselator(params={"a": a, "b": threshold + 1.0}).integrate(
+    above = ts.systems.Brusselator(params={"a": a, "b": threshold + 1.0}).run(
         final_time=400.0, dt=0.05, ic=[1.3, 2.0]
     )
     assert np.ptp(below.y[below.t > 350.0][:, 0]) < 1e-4  # decays to the focus
@@ -537,7 +533,7 @@ def test_selkov_oscillates_only_inside_its_analytic_hopf_window() -> None:
         # The equilibrium claim, checked against the RHS.
         eq = np.array([b, b / (a + b**2)])
         assert np.allclose(s._rhs_numeric()(eq, 0.0), 0.0, atol=1e-12)
-        traj = s.integrate(final_time=800.0, dt=0.05, ic=[0.6, 0.8])
+        traj = s.run(final_time=800.0, dt=0.05, ic=[0.6, 0.8])
         amplitude = float(np.ptp(traj.y[traj.t > 700.0][:, 0]))
         assert (amplitude > 0.1) is expect_cycle, f"b={b}: amplitude {amplitude:.2e}"
 
@@ -562,7 +558,7 @@ def test_van_der_pol_has_a_unique_globally_attracting_limit_cycle() -> None:
     s = ts.systems.VanDerPol()
     tails = []
     for ic in ([0.05, 0.0], [3.0, 3.0]):
-        traj = s.integrate(final_time=300.0, dt=0.0005, ic=ic, rtol=1e-11, atol=1e-13)
+        traj = s.run(final_time=300.0, dt=0.0005, ic=ic, rtol=1e-11, atol=1e-13)
         # Two limit-cycle periods (~6.66 each) is a whole closed curve, twice.
         tails.append(traj.y[traj.t > 286.0])
     a_pts, b_pts = tails
@@ -594,7 +590,7 @@ def test_van_der_pol_becomes_relaxational_at_large_mu() -> None:
     """
     ratios = {}
     for mu in (1.0, 10.0):
-        traj = ts.systems.VanDerPol(params={"mu": mu}).integrate(
+        traj = ts.systems.VanDerPol(params={"mu": mu}).run(
             final_time=300.0, dt=0.002, ic=[2.0, 0.0], rtol=1e-10, atol=1e-12
         )
         x = traj.y[traj.t > 260.0, 0]
@@ -622,13 +618,13 @@ def test_fitzhugh_nagumo_is_excitable_at_zero_current_and_oscillatory_at_half() 
     v_rest = float(np.min(roots[np.abs(roots.imag) < 1e-9].real))
     w_rest = (v_rest + a) / b
 
-    rest = ts.systems.FitzHughNagumo(params={**p, "curr": 0.0}).integrate(
+    rest = ts.systems.FitzHughNagumo(params={**p, "curr": 0.0}).run(
         final_time=600.0, dt=0.05, ic=[0.0, 0.0]
     )
     assert np.ptp(rest.y[rest.t > 500.0][:, 0]) < 1e-4
     assert rest.y[-1] == pytest.approx([v_rest, w_rest], abs=1e-4)
 
-    firing = ts.systems.FitzHughNagumo(params={**p, "curr": 0.5}).integrate(
+    firing = ts.systems.FitzHughNagumo(params={**p, "curr": 0.5}).run(
         final_time=600.0, dt=0.05, ic=[0.0, 0.0]
     )
     assert np.ptp(firing.y[firing.t > 500.0][:, 0]) > 3.0

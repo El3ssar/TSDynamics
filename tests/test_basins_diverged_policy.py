@@ -29,14 +29,14 @@ def test_basin_entropy_excludes_diverged_by_default() -> None:
     """A box of (basin 1 | escape) is single-colour once escape is dropped → S=0."""
     labels = np.where(np.arange(10)[None, :] < 5, 1, -1) * np.ones((10, 10), dtype=int)
     # One 10x10 box: left half basin 1, right half -1.
-    be_default = ts.basin_entropy(labels, box_size=10)
+    be_default = ts.analysis.basin_entropy(labels, box_size=10)
     assert be_default.sb == pytest.approx(0.0, abs=1e-12)
 
 
 def test_basin_entropy_include_diverged_counts_escape() -> None:
     """With include_diverged, the same 50/50 (1 | -1) box has entropy log 2."""
     labels = np.where(np.arange(10)[None, :] < 5, 1, -1) * np.ones((10, 10), dtype=int)
-    be_incl = ts.basin_entropy(labels, box_size=10, include_diverged=True)
+    be_incl = ts.analysis.basin_entropy(labels, box_size=10, include_diverged=True)
     assert be_incl.sb == pytest.approx(np.log(2.0), abs=1e-9)
 
 
@@ -49,9 +49,9 @@ def test_uncertainty_escape_is_not_a_final_state_boundary() -> None:
     labels = np.where(np.arange(40)[None, :] < 20, 1, -1) * np.ones((40, 40), dtype=int)
     # Default: the only interface is 1|-1 → no settled boundary → nothing to fit.
     with pytest.raises(ValueError):
-        ts.uncertainty_exponent(labels)
+        ts.analysis.uncertainty_exponent(labels)
     # include_diverged: 1|-1 now counts → a fit succeeds.
-    ue = ts.uncertainty_exponent(labels, include_diverged=True)
+    ue = ts.analysis.uncertainty_exponent(labels, include_diverged=True)
     assert np.isfinite(ue.alpha)
 
 
@@ -68,8 +68,8 @@ def _three_basins_plus_escape(n: int = 60) -> np.ndarray:
 def test_wada_boundary_excludes_escape_by_default() -> None:
     """The basin/escape interface is not counted as boundary unless requested."""
     labels = _three_basins_plus_escape()
-    default = ts.wada_property(labels)
-    incl = ts.wada_property(labels, include_diverged=True)
+    default = ts.analysis.wada_property(labels)
+    incl = ts.analysis.wada_property(labels, include_diverged=True)
     # Including escape adds the basin-2|escape interface → strictly more boundary.
     assert incl.n_boundary_cells > default.n_boundary_cells
 
@@ -77,8 +77,8 @@ def test_wada_boundary_excludes_escape_by_default() -> None:
 def test_wada_colours_always_exclude_escape() -> None:
     """``-1`` is never a Wada colour, regardless of include_diverged."""
     labels = _three_basins_plus_escape()
-    assert ts.wada_property(labels).n_basins == 2
-    assert ts.wada_property(labels, include_diverged=True).n_basins == 2
+    assert ts.analysis.wada_property(labels).n_basins == 2
+    assert ts.analysis.wada_property(labels, include_diverged=True).n_basins == 2
 
 
 # --- resilience (the deliberate exception) -----------------------------------
@@ -94,4 +94,4 @@ def test_resilience_treats_escape_as_a_boundary() -> None:
     aset = AttractorSet({1: att1}, diverged=int(np.sum(labels == -1)), seeds=labels.size)
     res = BasinsResult(labels=labels, grid=grid, attractors=aset)
     # Attractor at x=0.3, escape region begins at x=0.5 → minimal fatal shock ~0.2.
-    assert float(ts.resilience(res, 1)) == pytest.approx(0.2, abs=0.03)
+    assert float(ts.analysis.resilience(res, 1)) == pytest.approx(0.2, abs=0.03)

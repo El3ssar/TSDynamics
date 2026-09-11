@@ -42,7 +42,7 @@ The whole API hangs off one front-door argument. Every plot builder —
 import tsdynamics as ts
 
 lor = ts.systems.Lorenz()
-traj = lor.integrate(final_time=45.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+traj = lor.run(final_time=45.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
 
 spec = traj.to_plot_spec(components=["x", "y", "z"], animate=True)
 spec.is_animated      # True — an Animation is attached
@@ -111,7 +111,7 @@ import tsdynamics as ts
 
 TEAL, INDIGO = "#2CC5AE", "#574FCF"
 aiz = ts.systems.Aizawa()
-traj = aiz.integrate(final_time=95.0, dt=0.01, ic=[0.1, 0.0, 0.0]).after(15.0)
+traj = aiz.run(final_time=95.0, dt=0.01, ic=[0.1, 0.0, 0.0]).after(15.0)
 
 spec = (
     traj.to_plot_spec(components=[0, 1, 2], animate=True)   # Aizawa has no named vars
@@ -143,7 +143,7 @@ import tsdynamics as ts
 
 # GrayScott has a deterministic seeded IC, so the pattern is reproducible.
 gs = ts.systems.GrayScott()
-gtr = gs.integrate(final_time=4000.0, dt=85.0)     # a 48x48 reaction-diffusion field
+gtr = gs.run(final_time=4000.0, dt=85.0)     # a 48x48 reaction-diffusion field
 
 spec = (
     gtr.to_plot_spec(kind="field", animate=True)   # SPATIAL_FIELD, mode="frames"
@@ -171,7 +171,7 @@ import numpy as np
 import tsdynamics as ts
 
 mg = ts.systems.MackeyGlass()
-traj = mg.integrate(
+traj = mg.run(
     final_time=900.0, dt=0.5,
     history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)],
 ).after(150.0)
@@ -210,7 +210,7 @@ from tsdynamics.viz.producers import time_series
 from tsdynamics.viz.spec import Animation
 
 lor = ts.systems.Lorenz()
-traj = lor.integrate(final_time=42.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+traj = lor.run(final_time=42.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
 
 portrait = (
     traj.to_plot_spec(components=["x", "y", "z"])
@@ -455,7 +455,7 @@ reached through the `kind="field"` recipe:
 
 ```python
 gs = ts.systems.GrayScott()
-gtr = gs.integrate(final_time=1500.0, dt=5.0)      # a 48x48 reaction-diffusion field
+gtr = gs.run(final_time=1500.0, dt=5.0)      # a 48x48 reaction-diffusion field
 
 movie = gtr.to_plot_spec(kind="field", animate=True)
 movie.kind                 # PlotKind.SPATIAL_FIELD
@@ -479,7 +479,7 @@ import numpy as np
 
 ks = ts.systems.KuramotoSivashinsky()
 ic = 0.1 * np.cos(np.linspace(0.0, 2.0 * np.pi, ks.dim, endpoint=False))
-ktr = ks.integrate(final_time=150.0, dt=0.5, ic=ic).after(20.0)
+ktr = ks.run(final_time=150.0, dt=0.5, ic=ic).after(20.0)
 
 wave = ktr.to_plot_spec(kind="field", animate=True)
 wave.kind                             # PlotKind.SPATIAL_FIELD

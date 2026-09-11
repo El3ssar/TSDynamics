@@ -41,7 +41,7 @@ The logistic map $x_{n+1} = r\,x_n(1 - x_n)$ is the canonical example.
 import numpy as np
 import tsdynamics as ts
 
-od = ts.orbit_diagram(
+od = ts.analysis.orbit_diagram(
     ts.systems.Logistic(),
     "r", np.linspace(2.5, 4.0, 600),
     points_per_value=120,          # states recorded per r
@@ -96,7 +96,7 @@ Counting distinct branches at each $r$ *is* reading off the period, and
 changes into estimated onset parameters:
 
 ```python
-od = ts.orbit_diagram(
+od = ts.analysis.orbit_diagram(
     ts.systems.Logistic(), "r", np.linspace(2.9, 3.6, 400), points_per_value=64, transient=2000,
 )
 
@@ -131,9 +131,9 @@ through a section plane; sweeping a parameter of *that* is a bifurcation diagram
 of the flow, one section crossing per "iteration":
 
 ```python
-from tsdynamics import PoincareMap
+from tsdynamics.derived import PoincareMap
 
-od = ts.orbit_diagram(
+od = ts.analysis.orbit_diagram(
     PoincareMap(ts.systems.Rossler(), plane=("y", 0.0, "up")),  # section y = 0, upward
     "c", np.linspace(4.0, 6.0, 120),
     points_per_value=60, transient=30,
@@ -150,10 +150,10 @@ For a **periodically forced** oscillator the natural strobe is once per forcing
 period, which is what `StroboscopicMap` does:
 
 ```python
-from tsdynamics import StroboscopicMap
+from tsdynamics.derived import StroboscopicMap
 
 duf = ts.systems.Duffing()                          # forcing frequency omega = 1.4
-od = ts.orbit_diagram(
+od = ts.analysis.orbit_diagram(
     StroboscopicMap(duf, period=2 * np.pi / 1.4),
     "gamma", np.linspace(0.30, 0.50, 120),
     points_per_value=40, transient=60, component=0,
@@ -181,7 +181,7 @@ The classic construction (Lorenz, 1963) records successive **local maxima** of a
 coordinate:
 
 ```python
-rm = ts.return_map(ts.systems.Lorenz(), "z", method="max",
+rm = ts.analysis.return_map(ts.systems.Lorenz(), "z", method="max",
                    final_time=400.0, transient=40.0)
 vn, vn1 = rm.flat()
 # plt.plot(vn, vn1, ".")   # the famous single-humped z-maxima cusp map
@@ -196,7 +196,7 @@ The other construction records an observable at successive **section crossings**
 — the section's own return map:
 
 ```python
-rm = ts.return_map(ts.systems.Rossler(), "y", method="poincare",
+rm = ts.analysis.return_map(ts.systems.Rossler(), "y", method="poincare",
                    plane=("x", 0.0, "up"), n=400)
 ```
 

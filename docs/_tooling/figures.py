@@ -161,7 +161,7 @@ FIG_OVERRIDES: dict[str, dict] = {
 #: - ``view``: ``(elev, azim)`` for a 3-D map whose thin dimension needs an angle
 #:   to reveal its structure (FoldedTowel).
 #: - ``bifurcation``: ``(param, lo, hi)`` — a 1-D map also gets a library-generated
-#:   bifurcation diagram (``ts.orbit_diagram``) beside its return map.
+#:   bifurcation diagram (``ts.analysis.orbit_diagram``) beside its return map.
 MAP_OVERRIDES: dict[str, dict] = {
     # GumowskiMira at the shipped defaults (a=-0.35, b=1.0) is AREA-PRESERVING —
     # its spectrum sums to zero (+0.097, -0.097), so like Chirikov and
@@ -398,12 +398,12 @@ def _ode_trajectory_engine(entry, opts) -> tuple[np.ndarray, np.ndarray]:
         if ic is None or attempt > 0:
             ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
         try:
-            traj = sys_obj.integrate(
+            traj = sys_obj.run(
                 final_time=final_time,
                 dt=fine_dt,
                 ic=np.asarray(ic, dtype=float),
                 backend="interp",
-                method=method,
+                solver=method,
             )
         except (RuntimeError, ValueError):  # divergence / off-basin start
             ic = None
@@ -520,7 +520,7 @@ def _field_trajectory(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     kwargs = {"final_time": final_time, "dt": dt, "backend": "interp"}
     if ic is not None:
         kwargs["ic"] = np.asarray(ic, dtype=float)
-    traj = sys_obj.integrate(**kwargs)
+    traj = sys_obj.run(**kwargs)
     return traj.t, traj.y
 
 
@@ -696,7 +696,7 @@ def _sde_sample_path(entry, opts) -> tuple[np.ndarray, np.ndarray]:
     dt = opts.get("dt", 0.01)
     seed = int(opts.get("seed", 0))
     sys_obj = entry.cls()
-    traj = sys_obj.integrate(final_time=final_time, dt=dt, seed=seed, backend="reference")
+    traj = sys_obj.run(final_time=final_time, dt=dt, seed=seed, backend="reference")
     return traj.t, traj.y
 
 
@@ -734,7 +734,7 @@ def _render_dde(entry, plt, opts):
     def history(s):
         return [center + amp * np.sin(0.2 * s)] * sys_obj.dim
 
-    traj = sys_obj.integrate(final_time=final_time, dt=dt, history=history)
+    traj = sys_obj.run(final_time=final_time, dt=dt, history=history)
     x = traj.y[:, 0]
     tau = float(sys_obj._delays()[0])
     lag = max(1, int(round(tau / dt)))
@@ -778,7 +778,7 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
         # chaotic sea) is always represented and not left to the random spray.
         for seed_ic in mcfg.get("seeds", ()):
             try:
-                tr = sys_obj.iterate(
+                tr = sys_obj.run(
                     steps=int(mcfg.get("seed_steps", per)),
                     ic=np.asarray(seed_ic, dtype=float),
                 )
@@ -790,7 +790,7 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
         for _ in range(n_orbits):
             ic = rng.uniform(lo, hi, sys_obj.dim)
             try:
-                tr = sys_obj.iterate(steps=per, ic=ic)
+                tr = sys_obj.run(steps=per, ic=ic)
             except (RuntimeError, ValueError):
                 continue
             yy = tr.y
@@ -814,12 +814,12 @@ def _map_cloud(entry, mcfg) -> np.ndarray:
     if ic is not None:
         kwargs["ic"] = ic
         kwargs.pop("max_retries")  # a curated IC must be honoured, not re-rolled
-    tr = sys_obj.iterate(**kwargs)
+    tr = sys_obj.run(**kwargs)
     return tr.y[burn:]
 
 
 def _render_bifurcation(entry, plt, mcfg, ax):
-    """Draw a library-generated bifurcation diagram (``ts.orbit_diagram``) on ``ax``.
+    """Draw a library-generated bifurcation diagram (``ts.analysis.orbit_diagram``) on ``ax``.
 
     For a 1-D map, the parameter sweep + asymptotic-orbit scatter is the picture
     people recognise (the logistic period-doubling cascade).  Sweeps the editorial
@@ -829,7 +829,7 @@ def _render_bifurcation(entry, plt, mcfg, ax):
 
     param, lo, hi = mcfg["bifurcation"]
     sys_obj = entry.cls()
-    od = ts.orbit_diagram(
+    od = ts.analysis.orbit_diagram(
         sys_obj, param, np.linspace(lo, hi, 700), component=0, transient=400, points_per_value=180
     )
     xr, yr = od.flat()
@@ -849,7 +849,7 @@ def _render_map(entry, plt, opts):
     """Render a **static** map figure (a scatter — reads better than an animation).
 
     - **1-D maps** → the first-return map ``x_n`` vs ``x_{n+1}`` *and* a
-      recognizable **bifurcation diagram** (``ts.orbit_diagram``) side by side.
+      recognizable **bifurcation diagram** (``ts.analysis.orbit_diagram``) side by side.
       These stay a **static PNG** on the page (no interactive viewer).
     - **2-D maps** → the iterate cloud (a curated IC / ensemble for the maps whose
       default orbit collapses).  Also a **static PNG** on the page.

@@ -505,7 +505,7 @@ def test_to_plot_spec_animate_flag_drives_threejs_payload() -> None:
     pytest.importorskip("tsdynamics._rust")
     import tsdynamics as ts
 
-    tr = ts.Lorenz().integrate(final_time=10.0, dt=0.01).after(2.0)
+    tr = ts.systems.Lorenz().run(final_time=10.0, dt=0.01).after(2.0)
     animated = tr.to_plot_spec(animate=True).render("threejs", raw=True)
     static = tr.to_plot_spec(animate=False).render("threejs", raw=True)
     assert "animation" in animated["metadata"]
@@ -862,9 +862,7 @@ def test_arclength_cap_holds_the_sagitta_target_on_the_fastest_attractors() -> N
     cap = 40_000
     for name in ("HyperQi", "DequanLi", "ZhouChen", "QiChen", "Lorenz", "Rossler"):
         system = getattr(ts.systems, name)()
-        traj = system.integrate(
-            final_time=90.0, dt=0.001, ic=system.resolve_ic(None), method="rk45"
-        )
+        traj = system.run(final_time=90.0, dt=0.001, ic=system.resolve_ic(None), solver="rk45")
         y = np.ascontiguousarray(traj.y[len(traj.y) // 5 :, :3], dtype=float)
         arc, _ = resample_arclength(y, cap)
         sag_arc = max_sagitta_ratio(arc)
@@ -902,9 +900,7 @@ def test_sagitta_follows_the_documented_chord_rule_at_a_harsh_thinning_ratio() -
 
     def chord_and_sagitta(name: str, n: int) -> tuple[float, float]:
         system = getattr(ts.systems, name)()
-        traj = system.integrate(
-            final_time=400.0, dt=0.0005, ic=system.resolve_ic(None), method="rk45"
-        )
+        traj = system.run(final_time=400.0, dt=0.0005, ic=system.resolve_ic(None), solver="rk45")
         y = np.ascontiguousarray(traj.y[len(traj.y) // 5 :, :3], dtype=float)
         length = float(np.linalg.norm(np.diff(y, axis=0), axis=1).sum())
         diagonal = float(np.linalg.norm(y.max(axis=0) - y.min(axis=0)))
@@ -1480,7 +1476,7 @@ def test_a_dense_map_cloud_shows_its_banding_in_a_browser(tmp_path) -> None:
     import tsdynamics as ts
 
     henon = ts.systems.Henon()
-    traj = henon.iterate(steps=200_000, ic=[0.1, 0.1])
+    traj = henon.run(steps=200_000, ic=[0.1, 0.1])
     out = tmp_path / "henon.html"
     with pytest.warns(VisualizationDegraded):
         traj.to_plot_spec().render("threejs", path=out, poster=False)
@@ -1508,7 +1504,7 @@ def test_the_viewer_draws_a_labelled_scale_frame_in_a_browser(tmp_path) -> None:
     """
     import tsdynamics as ts
 
-    traj = ts.systems.Lorenz().integrate(final_time=40.0, dt=0.005, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=40.0, dt=0.005, ic=[1.0, 1.0, 1.0])
     out = tmp_path / "lorenz.html"
     traj.to_plot_spec().render("threejs", path=out, poster=False)
 

@@ -18,14 +18,19 @@ def _seeded_ic(system: Any, ic: Any | None, seed: int | None) -> np.ndarray | No
 
     Returns a seeded ``U[0, 1)^dim`` draw only when the run would *otherwise*
     fall back to a random IC (no explicit ``ic``, no ``system.ic``, no class
-    ``default_ic``); in every other case the existing resolution wins and this
+    ``_default_ic``); in every other case the existing resolution wins and this
     returns ``None`` (so ``seed`` never overrides a deliberate initial state).
+
+    The ClassVar is read by its v6 name, ``_default_ic``.  Reading the pre-v6
+    ``default_ic`` here returned ``None`` for **every** system — a legal value,
+    so nothing raised — and a seeded section of a system that declares a default
+    initial state silently started somewhere else instead.
     """
     if ic is not None or seed is None:
         return None
     if getattr(system, "ic", None) is not None:
         return None
-    if getattr(type(system), "default_ic", None) is not None:
+    if getattr(type(system), "_default_ic", None) is not None:
         return None
     return cast(np.ndarray, np.random.default_rng(seed).random(system.dim))
 

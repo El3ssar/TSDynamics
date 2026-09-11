@@ -211,7 +211,7 @@ how much you want to say.
     ```python
     import tsdynamics as ts
 
-    traj = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).integrate(final_time=200, dt=0.05)
+    traj = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).run(final_time=200, dt=0.05)
     (
         traj.to_plot_spec(components=["x", "y"], color_by="time")
             .relabel(title="Rössler")
@@ -229,8 +229,8 @@ how much you want to say.
     ```python
     import tsdynamics as ts
 
-    a = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100, dt=0.01)
-    b = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).integrate(final_time=200, dt=0.05)
+    a = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100, dt=0.01)
+    b = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).run(final_time=200, dt=0.05)
     ts.viz.plot(a, b, layout="grid").save("two-attractors.pdf")
     ```
 

@@ -66,8 +66,8 @@ Two nearby initial conditions can fall into *different* wells. Integrate from
 each and read off the end state:
 
 ```python
-sys.integrate(final_time=60.0, dt=0.05, ic=[ 1.5, 0.5]).y[-1]   # ≈ [ 1.000,  0.000]
-sys.integrate(final_time=60.0, dt=0.05, ic=[-1.5, 0.5]).y[-1]   # ≈ [-1.000, -0.000]
+sys.run(final_time=60.0, dt=0.05, ic=[ 1.5, 0.5]).y[-1]   # ≈ [ 1.000,  0.000]
+sys.run(final_time=60.0, dt=0.05, ic=[-1.5, 0.5]).y[-1]   # ≈ [-1.000, -0.000]
 ```
 
 Both settle onto a fixed point — the bottom of a well at $x = \pm 1,\ y = 0$.
@@ -87,7 +87,7 @@ are:
 ```python
 region = data.Box(np.array([-2.0, -2.0]), np.array([2.0, 2.0]))
 
-att = ts.find_attractors(sys, region, resolution=40, n_seeds=200,
+att = ts.analysis.attractors(sys, region, resolution=40, n_seeds=200,
                          dt=0.5, max_steps=2000, seed=0)
 
 att                          # AttractorSet(2 attractors, 0/200 diverged)
@@ -113,7 +113,7 @@ conditions by *which* attractor each one reaches — the basin map itself:
 
 ```python
 grid = data.Grid(np.array([-2.0, -2.0]), np.array([2.0, 2.0]), (300, 300))
-basins = ts.basins_of_attraction(sys, grid, dt=0.5, max_steps=2000)
+basins = ts.analysis.basins(sys, grid, dt=0.5, max_steps=2000)
 
 basins.n_attractors     # 2
 basins.labels.shape     # (300, 300) — integer attractor id per initial condition
@@ -149,13 +149,13 @@ How predictable is the outcome near the boundary? Three label-image diagnostics
 read the painted grid directly — no further integration:
 
 ```python
-ts.basin_fractions(sys, region, n=400, dt=0.5, max_steps=2000, seed=0)
+ts.analysis.basin_fractions(sys, region, n=400, dt=0.5, max_steps=2000, seed=0)
 # BasinFractions({1:0.53, 2:0.47}, diverged=0, n=400)      — basin stability
 
-ts.basin_entropy(basins)
+ts.analysis.basin_entropy(basins)
 # BasinEntropy(Sb=0.04184, Sbb=0.4859, fractal_boundary=False)
 
-ts.uncertainty_exponent(basins)
+ts.analysis.uncertainty_exponent(basins)
 # UncertaintyExponent(alpha=0.9968, D0=1.003, R2=1.0)
 ```
 
@@ -183,7 +183,7 @@ a given attractor is from its basin boundary — the smallest perturbation that
 can knock the system out of it (Halekotte & Feudel, 2020):
 
 ```python
-ts.resilience(basins, 1)     # ScalarResult(value=0.575251)
+ts.analysis.resilience(basins, 1)     # ScalarResult(value=0.575251)
 ```
 
 !!! tip "When the boundary turns fractal"
@@ -193,7 +193,7 @@ ts.resilience(basins, 1)     # ScalarResult(value=0.575251)
     boundary point touches *all* basins at once). Then `basin_entropy` reports
     `fractal_boundary=True` ($S_{bb} > \ln 2$) and
     [`wada_property`](../analysis/basins.md) detects the Wada structure. For our
-    two smooth basins `ts.wada_property(basins)` returns
+    two smooth basins `ts.analysis.wada_property(basins)` returns
     `WadaResult(is_wada=False, n_basins=2, W=0)`, as it should. The
     [Attractors & basins](../analysis/basins.md) page walks the fractal case.
 
@@ -211,7 +211,7 @@ attractor keeps its id and a vanishing one drops to `NaN` (Datseris, Rossi &
 Wagemakers, 2023):
 
 ```python
-cont = ts.continuation(sys, "F", np.linspace(0.0, 0.5, 11), region,
+cont = ts.analysis.continuation(sys, "F", np.linspace(0.0, 0.5, 11), region,
                        n=300, resolution=40, dt=0.5, max_steps=2000, seed=0)
 
 cont.values            # array([0.  , 0.05, 0.1 , ..., 0.5 ])
@@ -225,7 +225,7 @@ id turns `NaN`. [`tipping_points`](../analysis/basins.md) reads that event off
 the continuation:
 
 ```python
-ts.tipping_points(cont)
+ts.analysis.tipping_points(cont)
 # CollectionResult(1 items)
 #   {'value': 0.4, 'attractor': 1, 'kind': 'disappear',
 #    'before': 0.06333..., 'after': 0.0}
@@ -252,7 +252,7 @@ designed around: define the system once, then compose
     `find_attractors` / `basins_of_attraction` / `continuation` drive a **map or
     flow** whose state is a point. A delay system (infinite-dimensional history)
     or a stochastic system (no single deterministic limit) is rejected —
-    `ts.find_attractors(ts.systems.OrnsteinUhlenbeck(), region)` raises a
+    `ts.analysis.attractors(ts.systems.OrnsteinUhlenbeck(), region)` raises a
     `TypeError`. For the stochastic analogue — noise hopping *between* the wells
     of exactly this potential — see the
     [noise-driven tutorial](noise-driven.md).

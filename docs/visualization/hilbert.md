@@ -35,7 +35,7 @@ theme, style and export exactly like a phase portrait.
 ```python
 import tsdynamics as ts
 
-lorenz = ts.systems.Lorenz().integrate(final_time=200.0, dt=0.01, ic=[1, 1, 1])
+lorenz = ts.systems.Lorenz().run(final_time=200.0, dt=0.01, ic=[1, 1, 1])
 
 ts.plot(lorenz, "hilbert", component="x").show()
 ```
@@ -56,7 +56,7 @@ gets here:
 
 ```python
 # a windowed RQA measure over time
-windowed = ts.windowed_rqa(lorenz.y[::20], window=200, step=4, recurrence_rate=0.1)
+windowed = ts.analysis.windowed_rqa(lorenz.y[::20], window=200, step=4, recurrence_rate=0.1)
 ts.plot(windowed.determinism, "hilbert")
 
 # an inter-event series: the successive return times to a level set

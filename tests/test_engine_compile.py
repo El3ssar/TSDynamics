@@ -362,7 +362,7 @@ def test_validation_rejects_bad_jacobian_shape() -> None:
 
 def test_to_arrays_round_trips_shapes_and_dtypes() -> None:
     """``to_arrays`` yields the contiguous wire tuple the Rust FFI ingests."""
-    tape = lower_ode(ts.Lorenz(), with_jacobian=True)
+    tape = lower_ode(ts.systems.Lorenz(), with_jacobian=True)
     ops, a, b, imm, outputs, jac, n_state, n_param = tape.to_arrays()
     assert ops.dtype == np.int32 and imm.dtype == np.float64
     assert ops.size == a.size == b.size == imm.size == tape.n_reg
@@ -400,7 +400,7 @@ def test_baker_branchless_step_lowers() -> None:
     comparison-blend, so the formerly-unrepresentable map is now a straight-line
     tape — with a Jacobian that survives the floor/Piecewise derivative.
     """
-    tape = lower_map(ts.Baker(), with_jacobian=True)
+    tape = lower_map(ts.systems.Baker(), with_jacobian=True)
     assert tape.dim == 2
     assert tape.has_jacobian
 
@@ -550,7 +550,7 @@ def test_every_dde_lowers_with_delay_slots(dde_entry) -> None:
 
 def test_dde_rhs_matches_manual_mackey_glass() -> None:
     """MackeyGlass lowers to the right RHS over (current, delayed) inputs."""
-    mg = ts.MackeyGlass()
+    mg = ts.systems.MackeyGlass()
     tape, slots = lower_dde(mg)
     assert len(slots) == 1 and slots[0].component == 0
     assert slots[0].delay == pytest.approx(float(mg.tau))

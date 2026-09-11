@@ -63,7 +63,7 @@ def _compute_spectrum(entry) -> tuple[np.ndarray, dict]:
         # DDE Lyapunov needs a state on the attractor: integrate from a
         # non-equilibrium history first, then seed with the final state.
         history = DDE_HISTORIES[entry.name]
-        traj = sys.integrate(final_time=200.0, dt=0.5, history=history, rtol=1e-4, atol=1e-4)
+        traj = sys.run(final_time=200.0, dt=0.5, history=history, rtol=1e-4, atol=1e-4)
         kwargs.setdefault("ic", traj.y[-1])
     elif meta.get("ic") is not None:
         kwargs.setdefault("ic", list(meta["ic"]))
@@ -168,7 +168,7 @@ def test_max_lyapunov_on_flows_matches_literature(system_name, ic, expected) -> 
     import tsdynamics as ts
 
     cls = getattr(ts.systems, system_name)
-    value = float(ts.max_lyapunov(cls(ic=ic), ic=ic, seed=0))
+    value = float(ts.analysis.max_lyapunov(cls(ic=ic), ic=ic, seed=0))
     assert value == pytest.approx(expected, rel=0.15), (
         f"{system_name}: max_lyapunov gave {value:.4f}, literature {expected}"
     )
@@ -185,7 +185,11 @@ def test_max_lyapunov_is_reproducible_across_perturbation_seeds() -> None:
     import tsdynamics as ts
 
     values = [
-        float(ts.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), ic=[1.0, 1.0, 1.0], seed=s))
+        float(
+            ts.analysis.max_lyapunov(
+                ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), ic=[1.0, 1.0, 1.0], seed=s
+            )
+        )
         for s in range(3)
     ]
     assert np.ptp(values) < 0.01, values
@@ -210,7 +214,9 @@ def test_max_lyapunov_does_not_depend_on_the_output_step(dt: float) -> None:
     import tsdynamics as ts
 
     value = float(
-        ts.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), ic=[1.0, 1.0, 1.0], seed=0, dt=dt)
+        ts.analysis.max_lyapunov(
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), ic=[1.0, 1.0, 1.0], seed=0, dt=dt
+        )
     )
     assert value == pytest.approx(0.9076, rel=0.1), (dt, value)
 
@@ -221,7 +227,7 @@ def test_max_lyapunov_on_a_limit_cycle_is_zero() -> None:
     import tsdynamics as ts
 
     periodic = ts.systems.Rossler(params={"a": 0.1, "b": 0.1, "c": 6.0})
-    value = float(ts.max_lyapunov(periodic, ic=[1.0, 1.0, 1.0], seed=0))
+    value = float(ts.analysis.max_lyapunov(periodic, ic=[1.0, 1.0, 1.0], seed=0))
     assert abs(value) < 0.02, value
 
 
@@ -239,10 +245,10 @@ def test_kaplan_yorke_on_literature_spectra() -> None:
     """
     import tsdynamics as ts
 
-    assert float(ts.kaplan_yorke_dimension([0.906, 0.0, -14.57])) == pytest.approx(
+    assert float(ts.analysis.kaplan_yorke_dimension([0.906, 0.0, -14.57])) == pytest.approx(
         2.0 + 0.906 / 14.57, rel=1e-12
     )
-    assert float(ts.kaplan_yorke_dimension([0.43, 0.376, -3.3])) == pytest.approx(
+    assert float(ts.analysis.kaplan_yorke_dimension([0.43, 0.376, -3.3])) == pytest.approx(
         2.0 + (0.43 + 0.376) / 3.3, rel=1e-12
     )
 
@@ -262,7 +268,7 @@ def test_kaplan_yorke_edge_conventions(spectrum, expected) -> None:
     """Each documented edge of the Kaplan–Yorke definition returns its convention."""
     import tsdynamics as ts
 
-    assert float(ts.kaplan_yorke_dimension(spectrum)) == pytest.approx(expected)
+    assert float(ts.analysis.kaplan_yorke_dimension(spectrum)) == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("spectrum", [[], [np.nan, -1.0], [np.inf, -1.0], [0.5, -np.inf]], ids=str)
@@ -289,7 +295,7 @@ def test_kaplan_yorke_refuses_meaningless_input(spectrum) -> None:
 def test_lorenz_spectrum_is_dissipative_and_sorted() -> None:
     import tsdynamics as ts
 
-    lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+    lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     spec = lor.lyapunov_spectrum(dt=0.1, transient=50.0, final_time=200.0)
     assert spec[0] >= spec[1] >= spec[2]
     # divergence of Lorenz = -(sigma + 1 + beta) ≈ -13.67
@@ -300,7 +306,7 @@ def test_lorenz_spectrum_is_dissipative_and_sorted() -> None:
 def test_lorenz_partial_spectrum_n_exp_2() -> None:
     import tsdynamics as ts
 
-    lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+    lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     exps = lor.lyapunov_spectrum(dt=0.1, transient=30.0, final_time=100.0, k=2)
     assert exps.shape == (2,)
     assert exps[0] > 0.0
@@ -311,7 +317,7 @@ def test_logistic_stable_regime_negative_exponent() -> None:
     """Logistic at r=2 sits on a stable fixed point: LE < 0."""
     import tsdynamics as ts
 
-    m = ts.Logistic(params={"r": 2.0})
+    m = ts.systems.Logistic(params={"r": 2.0})
     exps = m.lyapunov_spectrum(n=5_000)
     assert exps[0] < 0.0
 
@@ -320,8 +326,8 @@ def test_logistic_stable_regime_negative_exponent() -> None:
 def test_mackeyglass_two_exponents_finite() -> None:
     import tsdynamics as ts
 
-    mg = ts.MackeyGlass()
-    traj = mg.integrate(
+    mg = ts.systems.MackeyGlass()
+    traj = mg.run(
         final_time=200.0,
         dt=0.5,
         history=DDE_HISTORIES["MackeyGlass"],

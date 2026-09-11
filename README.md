@@ -23,12 +23,12 @@ sections, attractors & basins — and even the documentation page for your syste
 ```python
 import tsdynamics as ts
 
-lor = ts.Lorenz()
-traj = lor.integrate(final_time=100.0, dt=0.01)
+lor = ts.systems.Lorenz()
+traj = lor.run(final_time=100.0, dt=0.01)
 traj["x"]                              # named component access
 
 exps = lor.lyapunov_spectrum()         # → [0.91, ~0, -14.58]
-ts.kaplan_yorke_dimension(exps)        # → ~2.06
+ts.analysis.kaplan_yorke_dimension(exps)        # → ~2.06
 ```
 
 📖 **Documentation: <https://el3ssar.github.io/TSDynamics/>**
@@ -72,7 +72,7 @@ cascade ($r_1 = 3$, $r_2 = 1 + \sqrt6 \approx 3.449$, …):
 import numpy as np, tsdynamics as ts
 from tsdynamics.viz import Annotation
 
-orbit = ts.orbit_diagram(ts.Logistic(), "r", np.linspace(2.8, 4.0, 2000))
+orbit = ts.analysis.orbit_diagram(ts.systems.Logistic(), "r", np.linspace(2.8, 4.0, 2000))
 pts = orbit.bifurcation_points()
 
 spec = orbit.to_plot_spec().relabel(x="r", y="x*", title="Logistic bifurcation")
@@ -92,8 +92,8 @@ extended system; its space–time field is auto-detected and drawn as a heatmap:
 ```python
 import tsdynamics as ts
 
-ks = ts.KuramotoSivashinsky(N=128, L=22.0)
-traj = ks.integrate(final_time=200.0, dt=0.25)
+ks = ts.systems.KuramotoSivashinsky(N=128, L=22.0)
+traj = ks.run(final_time=200.0, dt=0.25)
 traj.to_plot_spec().save("ks.png")        # 128-mode space–time field
 ```
 
@@ -113,9 +113,9 @@ touching a backend:
 ```python
 import tsdynamics as ts
 
-vdp = ts.VanDerPol(params={"mu": 1.0})
+vdp = ts.systems.VanDerPol(params={"mu": 1.0})
 ts.plot(vdp, "flow_speed", "nullclines", "streamlines")   # overlay, order-free
-ts.plot(ts.Logistic(params={"r": 3.5}), "cobweb")
+ts.plot(ts.systems.Logistic(params={"r": 3.5}), "cobweb")
 ```
 
 A transform owns no new math — it adapts an estimator from `tsdynamics.analysis`.
@@ -128,7 +128,7 @@ The spinning attractor at the top is the same `to_plot_spec`, animated:
 ```python
 import tsdynamics as ts
 
-traj = ts.Lorenz().integrate(final_time=100.0, dt=0.01)
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01)
 spec = traj.to_plot_spec()
 spec.style(axes=False).trail(None).camera(spin=0.4)      # full curve, no axes, rotate
 spec.animate(fps=30, duration=10, loop=True)
@@ -141,15 +141,15 @@ spec.save("lorenz.gif")
 import numpy as np, tsdynamics as ts
 
 # Poincaré section of the Rössler attractor (root-refined crossings)
-section = ts.poincare_section(ts.Rossler(), plane=("y", 0.0, "up"), crossings=500)
+section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=("y", 0.0, "up"), crossings=500)
 
 # Fixed points of the Hénon map, with stability
-list(ts.fixed_points(ts.Henon()))
+list(ts.analysis.fixed_points(ts.systems.Henon()))
 # [FixedPoint([-1.131354 -0.339406], unstable, |λ|max=3.2598),
 #  FixedPoint([0.631354 0.189406], unstable, |λ|max=1.9237)]
 
 # Maximal Lyapunov exponent — no Jacobian needed
-ts.max_lyapunov(ts.Lorenz(ic=[1, 1, 1]), dt=0.05)        # ≈ 0.90
+ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1, 1, 1]), dt=0.05)        # ≈ 0.90
 ```
 
 Plus: **attractors & basins** of any flow or map, correlation/Rényi **fractal
@@ -178,7 +178,7 @@ Lyapunov exponents **from a bare time series** (Kantz/Rosenstein).
   bound the step explicitly. Defaults are `rtol=1e-9` / `atol=1e-12`.
 
 - **Composition** — a Poincaré section of a flow *is* a discrete map, so
-  `ts.orbit_diagram(ros.poincare("y", 0.0), "c", values)` draws the bifurcation
+  `ts.analysis.orbit_diagram(ros.poincare("y", 0.0), "c", values)` draws the bifurcation
   diagram of a *flow* in one line.
 
 - **Backend-neutral plotting** — one `PlotSpec` IR renders to matplotlib, plotly

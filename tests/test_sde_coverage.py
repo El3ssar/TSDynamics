@@ -118,9 +118,9 @@ def test_2d_reference_matches_engine_to_documented_tolerance(method):
     two independent integrator implementations of the same vector SDE.
     """
     sys = _CovMixed2D()
-    kw = dict(final_time=1.0, dt=0.01, ic=[0.0, 1.0], seed=20240615, method=method)
-    ref = sys.integrate(backend="reference", **kw)
-    eng = sys.integrate(backend="interp", **kw)
+    kw = dict(final_time=1.0, dt=0.01, ic=[0.0, 1.0], seed=20240615, solver=method)
+    ref = sys.run(backend="reference", **kw)
+    eng = sys.run(backend="interp", **kw)
     assert ref.y.shape == eng.y.shape == (ref.t.size, 2)
     assert eng.meta["engine"] == "rust"
     np.testing.assert_allclose(eng.y, ref.y, rtol=1e-9, atol=1e-11)
@@ -135,9 +135,9 @@ def test_2d_engine_interp_equals_jit_bit_for_bit(method):
     trajectory agrees exactly across both compiled backends.
     """
     sys = _CovMixed2D()
-    kw = dict(final_time=1.0, dt=0.01, ic=[0.0, 1.0], seed=7, method=method)
-    interp = sys.integrate(backend="interp", **kw)
-    jit = sys.integrate(backend="jit", **kw)
+    kw = dict(final_time=1.0, dt=0.01, ic=[0.0, 1.0], seed=7, solver=method)
+    interp = sys.run(backend="interp", **kw)
+    jit = sys.run(backend="jit", **kw)
     np.testing.assert_array_equal(interp.y, jit.y)
 
 
@@ -185,7 +185,7 @@ def test_ensemble_row_equals_lone_trajectory_seeded_by_index():
     base_seed, tf, dt = 9091, 0.6, 0.02
     batch = sys.ensemble(ics, final_time=tf, dt=dt, seed=base_seed, backend="reference")
     for i, ic in enumerate(ics):
-        lone = sys.integrate(
+        lone = sys.run(
             final_time=tf, dt=dt, ic=ic, seed=_seed_for(base_seed, i), backend="reference"
         )
         np.testing.assert_array_equal(batch[i], lone.y[-1])

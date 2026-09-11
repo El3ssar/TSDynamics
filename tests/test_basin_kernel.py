@@ -12,7 +12,7 @@ a flow, one lowered-IR iteration for a map), the labels are **bit-identical** to
 the pure-Python loop, which stays the fallback and the oracle.
 
 This module pins that identity: for each validation system, the public
-:func:`basins_of_attraction` (which auto-selects the Rust path) must yield a
+:func:`basins` (which auto-selects the Rust path) must yield a
 **byte-identical** basin *label image* to the same call forced onto the Python
 fallback, and the Rust path must be deterministic across repeats.
 
@@ -40,13 +40,20 @@ transparently falls back to Python (covered by its own fallback test).
 
 from __future__ import annotations
 
+import importlib
+
 import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics.analysis import basins as bas
-from tsdynamics.analysis.basins import attractors as _attractors
 from tsdynamics.data import Box, Grid
+
+# ``ts.analysis.basins`` is the ANALYSIS (CONTRACT §5.4: the function wins the
+# name over the implementation package), so the two ``from ... import`` lines
+# below would bind the FUNCTION, not the package.  Reach both through
+# sys.modules, which the shadow cannot touch.
+bas = importlib.import_module("tsdynamics.analysis.basins")
+_attractors = importlib.import_module("tsdynamics.analysis.basins.attractors")
 
 pytest.importorskip("tsdynamics._rust")
 
@@ -134,7 +141,7 @@ def _cubic_run():
 
 def _henon_run():
     return (
-        ts.Henon(),
+        ts.systems.Henon(),
         Grid([-2.0, -2.0], [2.0, 2.0], (40, 40)),
         dict(max_steps=2000),
     )
@@ -185,7 +192,7 @@ def _force_python(monkeypatch) -> None:
     """Force ``classify_seeds`` onto the pure-Python ``map_ic`` fallback (the oracle).
 
     Patches the support predicate the seam consults, so the *exact same*
-    :func:`basins_of_attraction` code path runs the per-seed Python loop instead of
+    :func:`basins` code path runs the per-seed Python loop instead of
     the Rust kernel — the cleanest oracle (no re-implementation of the
     merge/harvest/painting that follows).
     """
@@ -198,10 +205,12 @@ def _assert_attractor_sets_identical(a, b) -> None:
     assert a.diverged == b.diverged
     assert a.seeds == b.seeds
     for k in a.ids:
-        assert a[k].cells == b[k].cells, f"id {k} cell count differs"
+        # ``by_id``: since v6 ``AttractorSet[]`` is POSITIONAL (CONTRACT §4.2 r6 /
+        # M25), and these keys are attractor ids, which start at 1.
+        assert a.by_id(k).cells == b.by_id(k).cells, f"id {k} cell count differs"
         # The point clouds are pooled from byte-identical engine states, so the
         # centroids match to the bit (not just to a tolerance).
-        np.testing.assert_array_equal(a[k].center, b[k].center)
+        np.testing.assert_array_equal(a.by_id(k).center, b.by_id(k).center)
 
 
 def _assert_attractor_sets_same(a, b) -> None:
@@ -237,12 +246,12 @@ def test_rust_kernel_basin_image_bit_identical_to_python(name, monkeypatch):
 
     # Rust path (the public function auto-selects it on interp).
     system, grid, kw = make()
-    rust = bas.basins_of_attraction(system, grid, **kw)
+    rust = bas.basins(system, grid, **kw)
 
     # Python oracle: identical call, support predicate forced off.
     _force_python(monkeypatch)
     system2, grid2, kw2 = make()
-    py = bas.basins_of_attraction(system2, grid2, **kw2)
+    py = bas.basins(system2, grid2, **kw2)
 
     # The whole label image is byte-identical (not just same fractions) for EVERY
     # validation system — the headline deliverable.
@@ -261,16 +270,16 @@ def test_rust_kernel_basins_deterministic(name):
     """A repeated Rust-march run returns a byte-identical label image."""
     make, _ = _RUNS[name]
     system, grid, kw = make()
-    first = bas.basins_of_attraction(system, grid, **kw)
+    first = bas.basins(system, grid, **kw)
     system2, grid2, kw2 = make()
-    second = bas.basins_of_attraction(system2, grid2, **kw2)
+    second = bas.basins(system2, grid2, **kw2)
     np.testing.assert_array_equal(first.labels, second.labels)
 
 
 @pytest.mark.slow
 def test_find_attractors_rust_identical_to_python(monkeypatch):
-    """``find_attractors`` (Rust path) matches the forced-Python oracle attractor set."""
-    rust = bas.find_attractors(
+    """``attractors`` (Rust path) matches the forced-Python oracle attractor set."""
+    rust = bas.attractors(
         DuffingTwoWell(),
         Box([-2.0, -2.0], [2.0, 2.0]),
         resolution=40,
@@ -282,7 +291,7 @@ def test_find_attractors_rust_identical_to_python(monkeypatch):
         attractor_locate_steps=10,
     )
     _force_python(monkeypatch)
-    py = bas.find_attractors(
+    py = bas.attractors(
         DuffingTwoWell(),
         Box([-2.0, -2.0], [2.0, 2.0]),
         resolution=40,
@@ -325,9 +334,9 @@ def test_map_path_unlowerable_step_falls_back(monkeypatch):
 
     grid = Grid([-1.0, -1.0], [1.0, 1.0], (40, 40))
     kw = dict(consecutive_recurrences=8, attractor_locate_steps=5, max_steps=200)
-    auto = bas.basins_of_attraction(NewtonMap(), grid, **kw)  # falls back internally
+    auto = bas.basins(NewtonMap(), grid, **kw)  # falls back internally
     _force_python(monkeypatch)
-    forced = bas.basins_of_attraction(NewtonMap(), grid, **kw)
+    forced = bas.basins(NewtonMap(), grid, **kw)
     np.testing.assert_array_equal(auto.labels, forced.labels)
     assert auto.n_attractors == 3  # the three cube roots of unity
 

@@ -9,9 +9,9 @@ flows, each with linear-stability classification:
   (:math:`f(x) = 0`) by multi-start Newton, with optional Schmelcher--Diakonos /
   Davidchack--Lai stabilising transformations to reach unstable points (maps).
 - :func:`periodic_orbits` — period-``p`` orbits of a map (fixed points of
-  :math:`f^{p}`), filtered to minimal period and merged over cyclic shifts.
-- :func:`periodic_orbit` — a periodic orbit of a flow by single shooting on
-  ``(x0, T)`` with the monodromy matrix and Floquet multipliers.
+  :math:`f^{p}`), filtered to minimal period and merged over cyclic shifts; on a
+  flow, the limit cycle by single shooting on ``(x0, T)`` with the monodromy
+  matrix and Floquet multipliers.  One verb, one return type (:class:`OrbitSet`).
 - :func:`estimate_period` — the dominant period of a sampled signal
   (autocorrelation / spectral peak), used to characterise a cycle or seed
   shooting.
@@ -30,16 +30,14 @@ Davidchack & Lai (1999), *Phys. Rev. E* 60, 6172.
 
 from __future__ import annotations
 
-from typing import Any
-
-from ... import registry as _registry
+from .._discovery import register as _register
+from .._result import ScalarResult
 from .fixed import FixedPoint, FixedPointSet, fixed_points
 from .periodic import (
     OrbitSet,
     PeriodicOrbit,
     estimate_period,
     period_diagnostic,
-    periodic_orbit,
     periodic_orbits,
 )
 
@@ -49,23 +47,39 @@ __all__ = [
     "OrbitSet",
     "PeriodicOrbit",
     "estimate_period",
-    "period_diagnostic",
     "fixed_points",
-    "periodic_orbit",
+    "period_diagnostic",
     "periodic_orbits",
 ]
 
-# Self-register the fixed-point / periodic-orbit finders (D4 / §4e: in-tree
-# analyses register from their own subpackage).  Idempotent across re-imports.
-_registrations: tuple[tuple[str, Any, dict[str, Any]], ...] = (
-    ("fixed_points", fixed_points, {"needs": "system", "family": "fixedpoints"}),
-    ("periodic_orbits", periodic_orbits, {"needs": "system", "family": "fixedpoints"}),
-    ("periodic_orbit", periodic_orbit, {"needs": "system", "family": "fixedpoints"}),
-    ("estimate_period", estimate_period, {"needs": "series", "family": "fixedpoints"}),
+# Self-register the finders: the definition site is the registration site
+# (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
+_register(
+    fixed_points,
+    subjects=("system",),
+    area="fixedpoints",
+    returns=FixedPointSet,
+    keywords="equilibria equilibrium roots steady state saddle node",
+    cite="Schmelcher & Diakonos (1997), Phys. Rev. Lett. 78, 4733",
+    doi="10.1103/PhysRevLett.78.4733",
 )
-for _name, _fn, _meta in _registrations:
-    _registry.analyses.register(_name, _fn, **_meta)
-del _name, _fn, _meta
+_register(
+    periodic_orbits,
+    subjects=("system",),
+    area="fixedpoints",
+    returns=OrbitSet,
+    keywords="limit cycle periodic unstable shooting floquet",
+    cite="Davidchack & Lai (1999), Phys. Rev. E 60, 6172",
+    doi="10.1103/PhysRevE.60.6172",
+)
+_register(
+    estimate_period,
+    subjects=("trajectory", "array"),
+    area="fixedpoints",
+    returns=ScalarResult,
+    keywords="period frequency oscillation cycle autocorrelation",
+    cite="Box & Jenkins (1970), Time Series Analysis: Forecasting and Control",
+)
 
 
 def __dir__() -> list[str]:

@@ -296,7 +296,7 @@ def _build_spec(entry, recipe: dict):
     # animated window's ``ic``.
     warmup = float(recipe.get("warmup", 0.0) or 0.0)
     if warmup > 0.0:
-        burn = sys_obj.integrate(final_time=warmup, dt=warmup)
+        burn = sys_obj.run(final_time=warmup, dt=warmup)
         spec_kw["ic"] = np.asarray(burn.y[-1], dtype=float)
 
     spec = sys_obj.to_plot_spec(**spec_kw)

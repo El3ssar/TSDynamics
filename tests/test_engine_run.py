@@ -70,14 +70,14 @@ def test_resolve_backend_rejects_unknown() -> None:
 
 
 def test_build_problem_dispatches_by_family() -> None:
-    assert isinstance(build_problem(ts.Lorenz()), ODEProblem)
-    assert isinstance(build_problem(ts.Henon()), MapProblem)
-    assert isinstance(build_problem(ts.MackeyGlass()), DDEProblem)
+    assert isinstance(build_problem(ts.systems.Lorenz()), ODEProblem)
+    assert isinstance(build_problem(ts.systems.Henon()), MapProblem)
+    assert isinstance(build_problem(ts.systems.MackeyGlass()), DDEProblem)
     assert isinstance(build_problem(_OU()), SDEProblem)
 
 
 def test_ode_problem_carries_tape_ic_and_params() -> None:
-    lor = ts.Lorenz(ic=[1.0, 2.0, 3.0])
+    lor = ts.systems.Lorenz(ic=[1.0, 2.0, 3.0])
     prob = ode_problem(lor, ic=[1.0, 2.0, 3.0], with_jacobian=True)
     assert prob.dim == 3
     assert prob.tape.has_jacobian
@@ -87,7 +87,7 @@ def test_ode_problem_carries_tape_ic_and_params() -> None:
 
 def test_params_vec_reads_live_for_sweeps() -> None:
     """A control-parameter change is reflected by ``params_vec`` with no recompile."""
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     prob = ode_problem(lor)
     tape_before = prob.tape
     lor.rho = 40.0
@@ -96,14 +96,14 @@ def test_params_vec_reads_live_for_sweeps() -> None:
 
 
 def test_map_problem_has_no_params_vector() -> None:
-    prob = build_problem(ts.Henon())
+    prob = build_problem(ts.systems.Henon())
     assert prob.params_vec().size == 0  # map params folded into the tape
 
 
 def test_dde_problem_exposes_delays() -> None:
-    prob = build_problem(ts.MackeyGlass())
-    assert prob.max_delay == pytest.approx(float(ts.MackeyGlass().tau))
-    assert prob.delays == [pytest.approx(float(ts.MackeyGlass().tau))]
+    prob = build_problem(ts.systems.MackeyGlass())
+    assert prob.max_delay == pytest.approx(float(ts.systems.MackeyGlass().tau))
+    assert prob.delays == [pytest.approx(float(ts.systems.MackeyGlass().tau))]
 
 
 def test_build_problem_rejects_unknown_family() -> None:
@@ -121,7 +121,7 @@ def test_build_problem_rejects_unknown_family() -> None:
 
 
 def test_reference_ode_integrate_returns_trajectory() -> None:
-    lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+    lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     traj = run.integrate(
         lor, final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0], backend="reference", method="DOP853"
     )
@@ -140,7 +140,7 @@ def test_reference_ode_integrates_the_lowered_tape() -> None:
     """
     from scipy.integrate import solve_ivp
 
-    lor = ts.Lorenz(ic=[0.5, 0.5, 0.5])
+    lor = ts.systems.Lorenz(ic=[0.5, 0.5, 0.5])
     tape_traj = run.integrate(
         lor,
         final_time=2.0,
@@ -168,7 +168,7 @@ def test_reference_map_iterate_matches_step_exactly() -> None:
     """The first reference map step equals ``_step`` to machine precision."""
     from tsdynamics.families.discrete import _unwrap_static
 
-    h = ts.Henon(ic=[0.1, 0.1])
+    h = ts.systems.Henon(ic=[0.1, 0.1])
     traj = run.integrate(h, final_time=5, ic=[0.1, 0.1], backend="reference")
     step = _unwrap_static(type(h)._step)
     expected = np.asarray(step(np.array([0.1, 0.1]), *h.params.as_tuple()), dtype=float)
@@ -194,7 +194,7 @@ def test_reference_map_diverges_loudly() -> None:
     # non-finite, so the index assertion is pinned to the actual blow-up rather
     # than to the Logistic default parameter (and would catch an off-by-one in
     # the reported index).
-    prob = map_problem(ts.Logistic(ic=[2.0]))
+    prob = map_problem(ts.systems.Logistic(ic=[2.0]))
     x = np.asarray(prob.ic, dtype=float).ravel()
     expected_idx = None
     for i in range(60):
@@ -206,7 +206,7 @@ def test_reference_map_diverges_loudly() -> None:
 
     # Logistic with an initial condition outside [0, 1] escapes to -inf.
     with pytest.raises(RuntimeError, match=r"diverged.*iteration \d+") as exc:
-        run.integrate(ts.Logistic(), final_time=60, ic=[2.0], backend="reference")
+        run.integrate(ts.systems.Logistic(), final_time=60, ic=[2.0], backend="reference")
     msg = str(exc.value)
     assert "Logistic" in msg
     reported = int(re.search(r"iteration (\d+)", msg).group(1))
@@ -217,7 +217,7 @@ def test_reference_map_finite_orbit_iterates_without_raising() -> None:
     """A bounded orbit returns a full finite trajectory — the per-iterate guard
     must not fire on a healthy run (a ``not``-inversion or over-eager check would
     break every normal map iteration)."""
-    traj = run.integrate(ts.Logistic(), final_time=60, ic=[0.2], backend="reference")
+    traj = run.integrate(ts.systems.Logistic(), final_time=60, ic=[0.2], backend="reference")
     assert traj.y.shape == (60, 1)
     assert np.all(np.isfinite(traj.y))
 
@@ -226,20 +226,20 @@ def test_map_time_axis_starts_at_n0() -> None:
     """A warm-restart map carries its starting iteration index on the time axis."""
     from tsdynamics.engine.problem import map_problem
 
-    prob = map_problem(ts.Henon(ic=[0.1, 0.1]), n0=100)
+    prob = map_problem(ts.systems.Henon(ic=[0.1, 0.1]), n0=100)
     traj = run.integrate(prob, final_time=5, backend="reference")
     np.testing.assert_array_equal(traj.t, np.arange(100, 105))
 
 
 def test_reference_rejects_dde_and_sde() -> None:
     with pytest.raises(NotImplementedError, match="reference"):
-        run.integrate(ts.MackeyGlass(), final_time=1.0, backend="reference")
+        run.integrate(ts.systems.MackeyGlass(), final_time=1.0, backend="reference")
     with pytest.raises(NotImplementedError, match="reference"):
         run.integrate(_OU(), final_time=1.0, backend="reference")
 
 
 def test_eval_rhs_reference_matches_symbolic(rng) -> None:
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     f = lor._rhs_numeric()
     for _ in range(20):
         u = rng.standard_normal(3)
@@ -261,7 +261,7 @@ def test_engine_backend_raises_when_extension_absent() -> None:
     else:  # E7 built the engine extension — the "absent" path no longer applies.
         pytest.skip("the engine extension (tsdynamics._rust) is built")
     with pytest.raises(EngineNotAvailableError, match="tsdynamics._rust"):
-        run.integrate(ts.Lorenz(), final_time=1.0, backend="interp")
+        run.integrate(ts.systems.Lorenz(), final_time=1.0, backend="interp")
 
 
 class _FakeEngine:
@@ -290,7 +290,7 @@ def test_engine_integrate_dispatch_payload(monkeypatch) -> None:
     """``integrate(backend='interp')`` hands the engine the right tape + runtime data."""
     fake = _FakeEngine()
     monkeypatch.setattr(run, "_engine", lambda: fake)
-    lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+    lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     traj = run.integrate(
         lor, final_time=2.0, dt=0.1, ic=[1.0, 1.0, 1.0], backend="jit", method="RK45"
     )
@@ -332,7 +332,7 @@ def test_engine_integrate_dispatch_payload(monkeypatch) -> None:
 def test_engine_ensemble_dispatch_payload(monkeypatch) -> None:
     fake = _FakeEngine()
     monkeypatch.setattr(run, "_engine", lambda: fake)
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     ics = np.random.default_rng(0).standard_normal((5, 3))
     out = run.ensemble(lor, ics, final_time=3.0, dt=0.05, backend="interp")
     assert out.shape == (5, 3)
@@ -345,7 +345,7 @@ def test_engine_ensemble_dispatch_payload(monkeypatch) -> None:
 
 def test_ensemble_validates_ic_shape() -> None:
     with pytest.raises(ValueError, match="ics must be"):
-        run.ensemble(ts.Lorenz(), np.zeros((4, 2)), final_time=1.0, backend="reference")
+        run.ensemble(ts.systems.Lorenz(), np.zeros((4, 2)), final_time=1.0, backend="reference")
 
 
 def test_ensemble_rejects_nonpositive_dt() -> None:
@@ -360,9 +360,9 @@ def test_ensemble_rejects_nonpositive_dt() -> None:
 
     ics = np.array([[1.0, 1.0, 1.0], [0.5, 0.5, 0.5]])
     with pytest.raises(InvalidParameterError, match=r"dt must be finite and > 0"):
-        run.ensemble(ts.Lorenz(), ics, final_time=1.0, dt=0.0, backend="reference")
+        run.ensemble(ts.systems.Lorenz(), ics, final_time=1.0, dt=0.0, backend="reference")
     with pytest.raises(ValueError, match=r"dt must be finite and > 0"):
-        run.ensemble(ts.Lorenz(), ics, final_time=1.0, dt=-0.01, backend="reference")
+        run.ensemble(ts.systems.Lorenz(), ics, final_time=1.0, dt=-0.01, backend="reference")
 
 
 def test_ensemble_rejects_backwards_window() -> None:
@@ -371,20 +371,20 @@ def test_ensemble_rejects_backwards_window() -> None:
 
     ics = np.array([[1.0, 1.0, 1.0]])
     with pytest.raises(InvalidParameterError, match="must run forward in time"):
-        run.ensemble(ts.Lorenz(), ics, final_time=1.0, t0=2.0, dt=0.05, backend="reference")
+        run.ensemble(ts.systems.Lorenz(), ics, final_time=1.0, t0=2.0, dt=0.05, backend="reference")
 
 
 def test_ensemble_rejects_unknown_method_like_integrate() -> None:
     """An unknown/v2-only ``method`` is rejected before any per-trajectory work."""
     ics = np.array([[1.0, 1.0, 1.0]])
     with pytest.raises(ValueError, match="unknown solver method"):
-        run.ensemble(ts.Lorenz(), ics, final_time=1.0, method="LSODA", backend="reference")
+        run.ensemble(ts.systems.Lorenz(), ics, final_time=1.0, solver="LSODA", backend="reference")
 
 
 def test_reference_ensemble_runs_in_python() -> None:
     """The reference ensemble loops the pure-Python integrator (no engine needed)."""
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     ics = np.array([[1.0, 1.0, 1.0], [0.5, 0.5, 0.5]])
-    out = run.ensemble(lor, ics, final_time=1.0, backend="reference", method="DOP853")
+    out = run.ensemble(lor, ics, final_time=1.0, backend="reference", solver="DOP853")
     assert out.shape == (2, 3)
     assert np.all(np.isfinite(out))

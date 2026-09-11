@@ -36,17 +36,16 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import (
-    ContinuousSystem,
+from tsdynamics import ContinuousSystem, registry
+from tsdynamics.analysis import (
     FixedPoint,
+    OrbitSet,
     PeriodicOrbit,
-    Trajectory,
     estimate_period,
     fixed_points,
-    periodic_orbit,
     periodic_orbits,
-    registry,
 )
+from tsdynamics.data import Trajectory
 
 
 class _VanDerPol(ContinuousSystem):
@@ -88,7 +87,7 @@ def _match(found: list, expected: np.ndarray, atol: float = 1e-4) -> np.ndarray:
 
 class TestMapFixedPoints:
     def test_henon_analytic(self) -> None:
-        fps = fixed_points(ts.Henon(), seed=0)
+        fps = fixed_points(ts.systems.Henon(), seed=0)
         a, b = 1.4, 0.3
         disc = np.sqrt((1 - b) ** 2 + 4 * a)
         expected = sorted([(-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)])
@@ -100,14 +99,14 @@ class TestMapFixedPoints:
 
     @pytest.mark.parametrize("method", ["newton", "sd", "dl"])
     def test_henon_all_methods_find_both_saddles(self, method: str) -> None:
-        fps = fixed_points(ts.Henon(), method=method, seed=1)
+        fps = fixed_points(ts.systems.Henon(), method=method, seed=1)
         a, b = 1.4, 0.3
         disc = np.sqrt((1 - b) ** 2 + 4 * a)
         for xstar in ((-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)):
             _match(fps, np.array([xstar, b * xstar]), atol=1e-6)
 
     def test_logistic_fixed_points(self) -> None:
-        m = ts.Logistic(params={"r": 2.5})
+        m = ts.systems.Logistic(params={"r": 2.5})
         fps = fixed_points(m, region=[(-0.5, 1.5)], seed=0)
         xs = sorted(fp.x[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 1 - 1 / 2.5], atol=1e-9)
@@ -118,7 +117,7 @@ class TestMapFixedPoints:
     def test_logistic_r4_unstable_fixed_points(self) -> None:
         # at r=4 both fixed points {0, 0.75} are unstable; DL must still find them
         fps = fixed_points(
-            ts.Logistic(params={"r": 4.0}), region=[(-0.2, 1.2)], method="dl", seed=2
+            ts.systems.Logistic(params={"r": 4.0}), region=[(-0.2, 1.2)], method="dl", seed=2
         )
         xs = sorted(fp.x[0] for fp in fps)
         np.testing.assert_allclose(xs, [0.0, 0.75], atol=1e-8)
@@ -129,8 +128,8 @@ class TestMapFixedPoints:
         # message now names the bad value, lists the choices, and hands back the
         # line to type -- the v6 runnable-line standard.
         with pytest.raises(ValueError, match="unknown method 'bogus'") as excinfo:
-            fixed_points(ts.Henon(), method="bogus")
-        assert "ts.fixed_points(system, method='newton')" in str(excinfo.value)
+            fixed_points(ts.systems.Henon(), method="bogus")
+        assert "ts.analysis.fixed_points(system, method='newton')" in str(excinfo.value)
 
 
 # ── interval-Newton / Krawczyk (method="interval") ───────────────────────────
@@ -152,7 +151,7 @@ class TestIntervalMethod:
     """
 
     def test_henon_matches_analytic(self) -> None:
-        fps = fixed_points(ts.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
+        fps = fixed_points(ts.systems.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
         a, b = 1.4, 0.3
         disc = np.sqrt((1 - b) ** 2 + 4 * a)
         expected = sorted([(-(1 - b) + disc) / (2 * a), (-(1 - b) - disc) / (2 * a)])
@@ -168,19 +167,23 @@ class TestIntervalMethod:
         # is a root to machine precision (tighter than the multi-start tol).
         from tsdynamics.analysis.fixedpoints._common import map_fns
 
-        fps = fixed_points(ts.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
-        step, _ = map_fns(ts.Henon())
+        fps = fixed_points(ts.systems.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
+        step, _ = map_fns(ts.systems.Henon())
         for fp in fps:
             x = np.asarray(fp.x)
             assert np.linalg.norm(step(x) - x) < 1e-12
 
     def test_logistic_r4_finds_both_unstable(self) -> None:
-        fps = fixed_points(ts.Logistic(params={"r": 4.0}), region=[(-0.2, 1.2)], method="interval")
+        fps = fixed_points(
+            ts.systems.Logistic(params={"r": 4.0}), region=[(-0.2, 1.2)], method="interval"
+        )
         np.testing.assert_allclose(sorted(fp.x[0] for fp in fps), [0.0, 0.75], atol=1e-12)
         assert all(not fp.stable for fp in fps)
 
     def test_lorenz_three_equilibria(self) -> None:
-        fps = fixed_points(ts.Lorenz(), region=[(-30, 30), (-30, 30), (-5, 55)], method="interval")
+        fps = fixed_points(
+            ts.systems.Lorenz(), region=[(-30, 30), (-30, 30), (-5, 55)], method="interval"
+        )
         c = np.sqrt(8 / 3 * (28 - 1))
         assert len(fps) == 3
         for fp in fps:
@@ -190,7 +193,9 @@ class TestIntervalMethod:
         _match(fps, np.array([-c, -c, 27.0]))
 
     def test_rossler_equilibria(self) -> None:
-        fps = fixed_points(ts.Rossler(), region=[(-1, 8), (-30, 1), (-1, 30)], method="interval")
+        fps = fixed_points(
+            ts.systems.Rossler(), region=[(-1, 8), (-30, 1), (-1, 30)], method="interval"
+        )
         a, c = 0.2, 5.7
         d = np.sqrt(c * c - 4 * a * a)
         assert len(fps) == 2
@@ -202,14 +207,14 @@ class TestIntervalMethod:
         # rigorous interval method brackets *all* of them; a finite multi-start
         # Newton (even at a generous n_seeds) can leave some basins unsampled.
         region = [(-6.0, 6.0), (-6.0, 6.0), (-6.0, 6.0)]
-        iv = fixed_points(ts.Thomas(), region=region, method="interval")
+        iv = fixed_points(ts.systems.Thomas(), region=region, method="interval")
         assert len(iv) == 27
-        rhs = ts.Thomas()._rhs_numeric()
+        rhs = ts.systems.Thomas()._rhs_numeric()
         for fp in iv:
             assert np.linalg.norm(rhs(np.asarray(fp.x), 0.0)) < 1e-9
             assert fp.continuous
         # interval is at least as complete as a moderate multi-start
-        nw = fixed_points(ts.Thomas(), region=region, n_seeds=200, seed=0)
+        nw = fixed_points(ts.systems.Thomas(), region=region, n_seeds=200, seed=0)
         assert len(iv) >= len(nw)
 
     def test_agrees_with_newton_set(self) -> None:
@@ -218,11 +223,11 @@ class TestIntervalMethod:
         region = [(-30, 30), (-30, 30), (-5, 55)]
         iv = sorted(
             tuple(np.round(fp.x, 6))
-            for fp in fixed_points(ts.Lorenz(), region=region, method="interval")
+            for fp in fixed_points(ts.systems.Lorenz(), region=region, method="interval")
         )
         nw = sorted(
             tuple(np.round(fp.x, 6))
-            for fp in fixed_points(ts.Lorenz(), region=region, n_seeds=400, seed=1)
+            for fp in fixed_points(ts.systems.Lorenz(), region=region, n_seeds=400, seed=1)
         )
         assert iv == nw
 
@@ -230,12 +235,12 @@ class TestIntervalMethod:
         from tsdynamics.errors import InvalidParameterError
 
         with pytest.raises(InvalidParameterError, match="bounded 'region'"):
-            fixed_points(ts.Henon(), method="interval")
+            fixed_points(ts.systems.Henon(), method="interval")
 
     def test_box_accepts_box_object(self) -> None:
         from tsdynamics.data import Box
 
-        fps = fixed_points(ts.Henon(), region=Box([-3, -3], [3, 3]), method="interval")
+        fps = fixed_points(ts.systems.Henon(), region=Box([-3, -3], [3, 3]), method="interval")
         assert len(fps) == 2
 
     def test_abs_kernel_is_enclosed(self) -> None:
@@ -243,9 +248,9 @@ class TestIntervalMethod:
         # it works — the Tent map's non-trivial fixed point is recovered.
         from tsdynamics.analysis.fixedpoints._common import map_fns
 
-        fps = fixed_points(ts.Tent(), region=[(0.0, 1.0)], method="interval")
+        fps = fixed_points(ts.systems.Tent(), region=[(0.0, 1.0)], method="interval")
         assert len(fps) >= 1
-        step, _ = map_fns(ts.Tent())
+        step, _ = map_fns(ts.systems.Tent())
         for fp in fps:
             x = np.asarray(fp.x)
             assert np.linalg.norm(step(x) - x) < 1e-10
@@ -253,8 +258,8 @@ class TestIntervalMethod:
     @pytest.mark.parametrize(
         "factory, region",
         [
-            (ts.KaplanYorke, [(0.0, 1.0), (0.0, 1.0)]),  # uses % (modulo)
-            (ts.Baker, [(0.0, 1.0), (0.0, 1.0)]),  # uses a < comparison
+            (ts.systems.KaplanYorke, [(0.0, 1.0), (0.0, 1.0)]),  # uses % (modulo)
+            (ts.systems.Baker, [(0.0, 1.0), (0.0, 1.0)]),  # uses a < comparison
         ],
     )
     def test_unmodelled_kernel_raises(self, factory, region) -> None:
@@ -267,10 +272,10 @@ class TestIntervalMethod:
 
     def test_dde_rejected(self) -> None:
         with pytest.raises(NotImplementedError):
-            fixed_points(ts.MackeyGlass(), region=[(0.0, 2.0)], method="interval")
+            fixed_points(ts.systems.MackeyGlass(), region=[(0.0, 2.0)], method="interval")
 
     def test_meta_records_method(self) -> None:
-        fps = fixed_points(ts.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
+        fps = fixed_points(ts.systems.Henon(), region=[(-3, 3), (-3, 3)], method="interval")
         assert fps.meta["method"] == "interval"
 
 
@@ -280,7 +285,7 @@ class TestIntervalMethod:
 class TestFlowEquilibria:
     def test_lorenz_equilibria(self) -> None:
         fps = fixed_points(
-            ts.Lorenz(), region=[(-30, 30), (-30, 30), (-5, 55)], n_seeds=300, seed=1
+            ts.systems.Lorenz(), region=[(-30, 30), (-30, 30), (-5, 55)], n_seeds=300, seed=1
         )
         c = np.sqrt(8 / 3 * (28 - 1))  # ±√72 = 8.48528…
         assert len(fps) == 3
@@ -294,7 +299,9 @@ class TestFlowEquilibria:
         assert origin.eigenvalues.real.max() == pytest.approx(11.8277, abs=1e-3)
 
     def test_rossler_equilibria(self) -> None:
-        fps = fixed_points(ts.Rossler(), region=[(-1, 8), (-30, 1), (-1, 30)], n_seeds=500, seed=2)
+        fps = fixed_points(
+            ts.systems.Rossler(), region=[(-1, 8), (-30, 1), (-1, 30)], n_seeds=500, seed=2
+        )
         a, c = 0.2, 5.7
         d = np.sqrt(c * c - 4 * a * a)
         for x in ((c + d) / 2, (c - d) / 2):
@@ -303,11 +310,11 @@ class TestFlowEquilibria:
 
     def test_flow_rejects_sd_dl(self) -> None:
         with pytest.raises(ValueError, match="method='newton'"):
-            fixed_points(ts.Lorenz(), method="dl")
+            fixed_points(ts.systems.Lorenz(), method="dl")
 
     def test_unsupported_family_raises(self) -> None:
         with pytest.raises(NotImplementedError):
-            fixed_points(ts.MackeyGlass())
+            fixed_points(ts.systems.MackeyGlass())
 
 
 # ── map periodic orbits ──────────────────────────────────────────────────────
@@ -315,7 +322,7 @@ class TestFlowEquilibria:
 
 class TestMapPeriodicOrbits:
     def test_logistic_period2(self) -> None:
-        orbs = periodic_orbits(ts.Logistic(params={"r": 3.2}), 2, seed=3)
+        orbs = periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2, seed=3)
         assert len(orbs) == 1
         o = orbs[0]
         r = 3.2
@@ -328,7 +335,7 @@ class TestMapPeriodicOrbits:
         assert o.residual < 1e-9
 
     def test_logistic_period3_window(self) -> None:
-        orbs = periodic_orbits(ts.Logistic(params={"r": 3.83}), 3, seed=4)
+        orbs = periodic_orbits(ts.systems.Logistic(params={"r": 3.83}), 3, seed=4)
         assert len(orbs) == 2  # the saddle-node pair born at r = 1+√8
         assert all(o.period == 3 for o in orbs)
         mults = sorted(float(np.abs(o.multipliers).max()) for o in orbs)
@@ -337,7 +344,9 @@ class TestMapPeriodicOrbits:
         assert {o.stable for o in orbs} == {True, False}
 
     def test_period1_returns_fixed_points(self) -> None:
-        orbs = periodic_orbits(ts.Logistic(params={"r": 2.5}), 1, region=[(-0.5, 1.5)], seed=5)
+        orbs = periodic_orbits(
+            ts.systems.Logistic(params={"r": 2.5}), 1, region=[(-0.5, 1.5)], seed=5
+        )
         xs = sorted(float(o.points[0, 0]) for o in orbs)
         np.testing.assert_allclose(xs, [0.0, 0.6], atol=1e-8)
         assert all(o.period == 1 for o in orbs)
@@ -363,7 +372,9 @@ class TestMapPeriodicOrbits:
         Henon(1.4, 0.3) the two agree on the count at every ``p <= 10`` while
         Newton is 112-323x faster (``p=7``: 0.09 s against 29.0 s).
         """
-        orbs = periodic_orbits(ts.Logistic(params={"r": 4.0}), period, region=[(0.0, 1.0)], seed=0)
+        orbs = periodic_orbits(
+            ts.systems.Logistic(params={"r": 4.0}), period, region=[(0.0, 1.0)], seed=0
+        )
         assert len(orbs) == n_prime
         assert all(o.period == period for o in orbs)
 
@@ -371,7 +382,7 @@ class TestMapPeriodicOrbits:
         # the period-2 orbit is a fixed point of f⁴; with prime=True it must NOT
         # appear in a period-4 search.
         r = 3.2
-        orbs4 = periodic_orbits(ts.Logistic(params={"r": r}), 4, prime=True, seed=6)
+        orbs4 = periodic_orbits(ts.systems.Logistic(params={"r": r}), 4, prime=True, seed=6)
         disc = np.sqrt((r + 1) * (r - 3))
         p2 = {round((r + 1 + disc) / (2 * r), 6), round((r + 1 - disc) / (2 * r), 6)}
         for o in orbs4:
@@ -383,33 +394,43 @@ class TestMapPeriodicOrbits:
 
 
 class TestFlowShooting:
+    """v6: ``periodic_orbit`` (singular) is absorbed — one verb, one return type.
+
+    ``periodic_orbits`` on a flow shoots for the limit cycle and hands back an
+    ``OrbitSet`` of one, exactly as it hands back a map's orbits; ``period`` is
+    the period *guess* there, since a flow's period is a real unknown.
+    """
+
     def test_vanderpol_mu1(self) -> None:
-        orb = periodic_orbit(
-            _VanDerPol(params={"mu": 1.0}), ic=[2.0, 0.0], period_guess=6.0, transient=20.0
-        )
+        orbits = periodic_orbits(_VanDerPol(params={"mu": 1.0}), 6.0, ic=[2.0, 0.0], transient=20.0)
+        assert isinstance(orbits, OrbitSet) and len(orbits) == 1
+        orb = orbits[0]
         assert orb.period == pytest.approx(6.6632869, abs=2e-3)
         assert orb.residual < 1e-8 and orb.continuous and orb.stable
         # one trivial Floquet multiplier ≈ 1 (the flow direction)
         assert np.abs(np.abs(orb.multipliers) - 1.0).min() < 1e-2
 
     def test_vanderpol_mu05(self) -> None:
-        orb = periodic_orbit(
-            _VanDerPol(params={"mu": 0.5}), ic=[2.0, 0.0], period_guess=6.3, transient=30.0
-        )
+        orb = periodic_orbits(_VanDerPol(params={"mu": 0.5}), 6.3, ic=[2.0, 0.0], transient=30.0)[0]
         assert orb.period == pytest.approx(6.3806758, abs=2e-3)
         assert orb.stable
 
     def test_auto_period_guess(self) -> None:
-        orb = periodic_orbit(_VanDerPol(params={"mu": 1.0}), ic=[0.5, 0.5], transient=20.0)
+        orb = periodic_orbits(_VanDerPol(params={"mu": 1.0}), ic=[0.5, 0.5], transient=20.0)[0]
         assert orb.period == pytest.approx(6.6632869, abs=5e-2)
 
     def test_center_is_rejected(self) -> None:
         with pytest.raises(RuntimeError):
-            periodic_orbit(_Harmonic(), ic=[1.0, 0.0], period_guess=6.0)
+            periodic_orbits(_Harmonic(), 6.0, ic=[1.0, 0.0])
 
-    def test_map_rejected(self) -> None:
-        with pytest.raises(NotImplementedError):
-            periodic_orbit(ts.Henon())
+    def test_a_map_still_needs_its_integer_period(self) -> None:
+        with pytest.raises(ts.InvalidInputError, match="needs the period p"):
+            periodic_orbits(ts.systems.Henon())
+
+    def test_the_singular_spelling_is_gone_and_says_so(self) -> None:
+        with pytest.raises((AttributeError, ImportError)) as err:
+            _ = ts.analysis.periodic_orbit
+        assert "ts.analysis.periodic_orbits(" in str(err.value)
 
 
 # ── period estimation ────────────────────────────────────────────────────────
@@ -427,6 +448,27 @@ class TestEstimatePeriod:
         assert estimate_period(y, dt=t[1] - t[0], method="fft") == pytest.approx(
             2 * np.pi / 3, rel=1e-2
         )
+
+    def test_components_selects_a_column_not_a_row(self) -> None:
+        """The v6 axis fix.  ``data[component]`` on a Trajectory selects a *state*
+        (one row), so ``estimate_period(traj, component=0)`` measured a signal of
+        length ``dim``: on a 2-component system it raised "needs at least 8
+        samples", and on a 10-component one it silently returned 0.0304 where the
+        truth is 1.5789 — a factor of 52, with no exception."""
+        t = np.linspace(0.0, 40.0, 4001)
+        y = np.column_stack([np.sin(2 * np.pi * t / 1.5), 3.0 * np.sin(2 * np.pi * t / 8.0)])
+        traj = Trajectory(t, y, None)
+        assert estimate_period(traj, components=0) == pytest.approx(1.5, rel=2e-2)
+        assert estimate_period(traj, components=1) == pytest.approx(8.0, rel=2e-2)
+        # ...and an out-of-range column is named, not silently wrapped
+        with pytest.raises(ValueError, match="out of range"):
+            estimate_period(traj, components=7)
+
+    def test_the_old_singular_keyword_is_gone(self) -> None:
+        t = np.linspace(0.0, 40.0, 4001)
+        traj = Trajectory(t, np.column_stack([np.sin(t), np.cos(t)]), None)
+        with pytest.raises(TypeError, match="component"):
+            estimate_period(traj, component=0)
 
     def test_trajectory_component_autopick(self) -> None:
         t = np.linspace(0, 20 * np.pi, 6000)
@@ -447,13 +489,15 @@ class TestEstimatePeriod:
 
 
 def test_self_registered_in_analyses() -> None:
-    for name in ("fixed_points", "periodic_orbits", "periodic_orbit", "estimate_period"):
+    for name in ("fixed_points", "periodic_orbits", "estimate_period"):
         assert registry.analyses.get(name) is not None
 
 
 def test_result_types() -> None:
-    assert isinstance(fixed_points(ts.Henon(), seed=0)[0], FixedPoint)
-    assert isinstance(periodic_orbits(ts.Logistic(params={"r": 3.2}), 2, seed=0)[0], PeriodicOrbit)
+    assert isinstance(fixed_points(ts.systems.Henon(), seed=0)[0], FixedPoint)
+    assert isinstance(
+        periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2, seed=0)[0], PeriodicOrbit
+    )
 
 
 # ── stabilising-matrix generation (A-FP _common) ──────────────────────────────
@@ -556,7 +600,7 @@ def test_periodic_orbits_shared_monodromy_is_numerically_identical() -> None:
     analytic values exactly — this guards the refactor against any divergence
     from the un-cached path.
     """
-    orbs = periodic_orbits(ts.Logistic(params={"r": 3.2}), 2, method="newton", seed=3)
+    orbs = periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2, method="newton", seed=3)
     assert len(orbs) == 1
     o = orbs[0]
     r = 3.2
@@ -610,7 +654,7 @@ def test_periodic_orbits_monodromy_shared_per_iterate() -> None:
     _c.map_orbit_monodromy = counting  # type: ignore[assignment]
     _c.solve_roots = traced_solve  # type: ignore[assignment]
     try:
-        periodic_orbits(ts.Logistic(params={"r": 3.2}), 2, method="dl", seed=3, max_iter=50)
+        periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2, method="dl", seed=3, max_iter=50)
     finally:
         _c.map_orbit_monodromy = orig  # type: ignore[assignment]
         _c.solve_roots = real_solve  # type: ignore[assignment]
@@ -666,9 +710,9 @@ class TestSeedDeterminism:
         region = Box([-12.0] * 3, [12.0] * 3)
 
         np.random.seed(123)
-        a = fixed_points(ts.Thomas(), region=region, n_seeds=200, seed=0)
+        a = fixed_points(ts.systems.Thomas(), region=region, n_seeds=200, seed=0)
         np.random.seed(999)
-        b = fixed_points(ts.Thomas(), region=region, n_seeds=200, seed=0)
+        b = fixed_points(ts.systems.Thomas(), region=region, n_seeds=200, seed=0)
 
         xa = sorted(tuple(np.asarray(fp.x)) for fp in a)
         xb = sorted(tuple(np.asarray(fp.x)) for fp in b)
@@ -679,9 +723,9 @@ class TestSeedDeterminism:
         # ``region=None`` routes randomness through ``resolve_box`` → the burn-in
         # orbit as well, so cover that path too.
         np.random.seed(1)
-        c = fixed_points(ts.Lorenz(), n_seeds=100, seed=7)
+        c = fixed_points(ts.systems.Lorenz(), n_seeds=100, seed=7)
         np.random.seed(2)
-        d = fixed_points(ts.Lorenz(), n_seeds=100, seed=7)
+        d = fixed_points(ts.systems.Lorenz(), n_seeds=100, seed=7)
 
         xc = sorted(tuple(np.asarray(fp.x)) for fp in c)
         xd = sorted(tuple(np.asarray(fp.x)) for fp in d)
@@ -690,9 +734,9 @@ class TestSeedDeterminism:
 
     def test_periodic_orbits_seed_independent_of_global_rng(self) -> None:
         np.random.seed(5)
-        a = periodic_orbits(ts.Henon(), 2, seed=0)
+        a = periodic_orbits(ts.systems.Henon(), 2, seed=0)
         np.random.seed(50)
-        b = periodic_orbits(ts.Henon(), 2, seed=0)
+        b = periodic_orbits(ts.systems.Henon(), 2, seed=0)
 
         xa = sorted(tuple(np.asarray(o.points[0])) for o in a)
         xb = sorted(tuple(np.asarray(o.points[0])) for o in b)
@@ -705,7 +749,7 @@ class TestSeedDeterminism:
         # priority unchanged.
         from tsdynamics.analysis.fixedpoints._common import _orbit_start_ic
 
-        sys = ts.Thomas()  # default_ic is None → random fallback
+        sys = ts.systems.Thomas()  # default_ic is None → random fallback
         np.random.seed(123)
         x1 = _orbit_start_ic(sys, 3, np.random.default_rng(0))
         np.random.seed(999)
@@ -713,7 +757,7 @@ class TestSeedDeterminism:
         assert np.array_equal(x1, x2)
 
         # An explicit ``system.ic`` is honored verbatim (priority preserved).
-        seeded = ts.Thomas(ic=[1.0, 2.0, 3.0])
+        seeded = ts.systems.Thomas(ic=[1.0, 2.0, 3.0])
         y = _orbit_start_ic(seeded, 3, np.random.default_rng(0))
         assert np.array_equal(y, [1.0, 2.0, 3.0])
 
@@ -859,7 +903,7 @@ class TestFixedPointPlotSpec:
         """
         from tsdynamics.analysis.fixedpoints.fixed import _ANNOTATE_AUTO_MAX
 
-        fps = fixed_points(ts.systems.Thomas(), region=ts.Box([-5.0] * 3, [5.0] * 3), seed=0)
+        fps = fixed_points(ts.systems.Thomas(), region=ts.data.Box([-5.0] * 3, [5.0] * 3), seed=0)
         assert len(fps) > _ANNOTATE_AUTO_MAX
 
         assert [a for a in fps.to_plot_spec().annotations if a.kind == "text"] == []
@@ -879,7 +923,7 @@ class TestFixedPointPlotSpec:
         frame, plausible-looking, and wrong.
         """
         fps = fixed_points(ts.systems.Lorenz(), seed=0)
-        traj = ts.systems.Lorenz().integrate(final_time=10.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+        traj = ts.systems.Lorenz().run(final_time=10.0, dt=0.01, ic=[1.0, 1.0, 1.0])
         base = traj.to_plot_spec(components=("x", "z"))
         n_host = len(base.layers)
 

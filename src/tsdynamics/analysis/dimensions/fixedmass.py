@@ -78,7 +78,7 @@ def fixed_mass_dimension(
     n_ref: int | None = 1500,
     n_ks: int = 16,
     min_window: int = 5,
-    tol: float = 1.5,
+    flatness: float = 1.5,
     seed: int = 0,
 ) -> DimensionResult:
     r"""Fixed-mass (nearest-neighbour) dimension.
@@ -105,8 +105,10 @@ def fixed_mass_dimension(
         Number of masses when ``ks`` is not given.
     min_window : int, default 5
         Minimum number of masses in the fitted scaling region.
-    tol : float, default 1.5
-        Scaling-region residual tolerance.
+    flatness : float, default 1.5
+        How flat the fitted scaling region has to be: a window is admitted when
+        its straight-line residual is within this factor of the flattest window
+        found.  (It is **not** a solver tolerance — hence the v6 rename.)
     seed : int, default 0
         Seed for the reference sub-sample (keeps the estimate reproducible).
 
@@ -199,7 +201,7 @@ def fixed_mass_dimension(
     y = digamma(ks.astype(float))
     order = np.argsort(x)
     x, y = x[order], y[order]
-    fit = fit_scaling_region(x, y, min_window=min_window, tol=tol)
+    fit = fit_scaling_region(x, y, min_window=min_window, tol=flatness)
     return DimensionResult(
         estimate=fit.slope,
         stderr=fit.stderr,

@@ -363,7 +363,7 @@ def gali(
         # a run that then fails would leave the bad IC latched and silently poison
         # every later, unrelated analysis.  Same guard the family layer uses.
         with system._ic_rollback():
-            x = np.asarray(system.resolve_ic(ic), dtype=float).ravel()
+            x = np.asarray(system._resolve_ic(ic), dtype=float).ravel()
             result = _run(x)
             if result is not None:
                 return _wrap(result)
@@ -387,7 +387,7 @@ def gali(
     for attempt in range(max_retries):
         with system._ic_rollback():
             x = (
-                np.asarray(system.resolve_ic(None), dtype=float).ravel()
+                np.asarray(system._resolve_ic(None), dtype=float).ravel()
                 if attempt == 0
                 else rng.random(dim)
             )

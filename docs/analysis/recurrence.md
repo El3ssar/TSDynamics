@@ -44,8 +44,8 @@ reconstructed phase space.
 ```python
 import tsdynamics as ts
 
-traj = ts.systems.Logistic(params={"r": 4.0}).iterate(steps=500, ic=[0.31])
-rm = ts.recurrence_matrix(traj.y[:, 0], threshold=0.05)
+traj = ts.systems.Logistic(params={"r": 4.0}).run(steps=500, ic=[0.31])
+rm = ts.analysis.recurrence_matrix(traj.y[:, 0], threshold=0.05)
 
 rm.epsilon           # 0.05     — the radius actually used
 rm.size              # 500      — N states (the matrix is N x N)
@@ -72,7 +72,7 @@ The radius $\varepsilon$ is set one of two mutually-exclusive ways — pass
 === "Fixed radius"
 
     ```python
-    rm = ts.recurrence_matrix(x, threshold=0.05)   # ε = 0.05 in state units
+    rm = ts.analysis.recurrence_matrix(x, threshold=0.05)   # ε = 0.05 in state units
     ```
 
     A literal distance in the embedding's own units — direct, but the resulting
@@ -82,7 +82,7 @@ The radius $\varepsilon$ is set one of two mutually-exclusive ways — pass
 === "Target recurrence rate"
 
     ```python
-    rm = ts.recurrence_matrix(x, recurrence_rate=0.05)   # pick ε so RR ≈ 5 %
+    rm = ts.analysis.recurrence_matrix(x, recurrence_rate=0.05)   # pick ε so RR ≈ 5 %
     ```
 
     `recurrence_rate` chooses $\varepsilon$ from the empirical distribution of
@@ -117,8 +117,8 @@ same input as `recurrence_matrix` (a series or trajectory, with the same
 `RecurrenceMatrix`.
 
 ```python
-x = ts.systems.Logistic(params={"r": 4.0}).iterate(steps=2000, ic=[0.4]).y[:, 0]
-res = ts.rqa(x, recurrence_rate=0.05, theiler=1)
+x = ts.systems.Logistic(params={"r": 4.0}).run(steps=2000, ic=[0.4]).y[:, 0]
+res = ts.analysis.rqa(x, recurrence_rate=0.05, theiler=1)
 
 res.recurrence_rate      # ≈ 0.0496   RR — realised matrix density
 res.determinism          # ≈ 0.652    DET — fraction of points on diagonals ≥ 2
@@ -185,11 +185,11 @@ indices).
 import numpy as np
 
 # a series that is periodic for its first half, then switches to chaos
-periodic = ts.systems.Logistic(params={"r": 3.5}).trajectory(1500, transient=500, ic=[0.2]).y[:, 0]
-chaotic  = ts.systems.Logistic(params={"r": 4.0}).trajectory(1500, transient=500, ic=[0.4]).y[:, 0]
+periodic = ts.systems.Logistic(params={"r": 3.5}).run(1500, transient=500, ic=[0.2]).y[:, 0]
+chaotic  = ts.systems.Logistic(params={"r": 4.0}).run(1500, transient=500, ic=[0.4]).y[:, 0]
 x = np.concatenate([periodic, chaotic])          # the switch is at sample 1500
 
-wr = ts.windowed_rqa(x, window=300, step=150, recurrence_rate=0.05, theiler=1)
+wr = ts.analysis.windowed_rqa(x, window=300, step=150, recurrence_rate=0.05, theiler=1)
 
 wr.centers        # window mid-points (the time axis)
 wr.determinism    # DET(t): 1.0 through the periodic half, ≈ 0.65 in the chaotic half

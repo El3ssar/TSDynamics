@@ -451,7 +451,9 @@ def resolve_box(
                 f"{type(system).__name__} has {dim} state components, so the search "
                 f"region needs {dim} per-axis bounds — got {lo.size}."
                 + remedy(
-                    "ts.fixed_points(system, region=[" + ", ".join(["(-2.0, 2.0)"] * dim) + "])",
+                    "ts.analysis.fixed_points(system, region=["
+                    + ", ".join(["(-2.0, 2.0)"] * dim)
+                    + "])",
                     lead="Pass one (lo, hi) bound per state component:",
                 )
             )

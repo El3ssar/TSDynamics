@@ -23,7 +23,8 @@ import numpy as np
 
 from ...data import Ball, Box, Grid, set_distance
 from ...errors import InvalidInputError, remedy
-from .._common import reject_system
+from .._common import is_data, reject_system
+from .._discovery import wrong_subject
 from .._result import AnalysisResult, CollectionResult
 from .._result_json import _pct, _sig
 from ._common import DIVERGED_COLOR, PALETTE, _palette_indices, coerce_region
@@ -379,24 +380,21 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> Col
         ``{"value", "attractor", "kind", "before", "after"}`` with ``kind`` in
         ``{"appear", "disappear"}``, sorted by parameter value.
     """
-    reject_system(
-        result,
-        analysis="tipping_points",
-        hint=(
-            "It reads an already computed continuation:\n"
-            "    cont = continuation(system, param, values, region)\n"
-            "    tipping_points(cont)"
-        ),
-    )
+    # No ``hint=``: the shared builder (CONTRACT §5.6) already knows this is a
+    # *result*-first analysis and which analysis produces its subject, so the
+    # system door and the data door below answer with one body.
+    reject_system(result, analysis="tipping_points")
     if not isinstance(result, ContinuationResult):
+        if is_data(result):
+            raise wrong_subject("tipping_points", type(result).__name__, "data")
         raise InvalidInputError(
             f"tipping_points reads the basin fractions along a parameter sweep, so it "
             f"needs the ContinuationResult that sweep produced, not a "
             f"{type(result).__name__} — a single trajectory holds no parameter axis."
             + remedy(
-                "cont = ts.continuation(system, 'rho', np.linspace(0.0, 50.0, 40),"
+                "cont = ts.analysis.continuation(system, 'rho', np.linspace(0.0, 50.0, 40),"
                 " [(-2.0, 2.0), (-2.0, 2.0), (0.0, 50.0)])",
-                "ts.tipping_points(cont)",
+                "ts.analysis.tipping_points(cont)",
                 lead="Run the continuation first:",
             )
         )
@@ -424,7 +422,14 @@ def tipping_points(result: ContinuationResult, *, threshold: float = 0.0) -> Col
     events.sort(key=lambda e: (e["value"], e["attractor"]))
     return CollectionResult(
         items=tuple(events),
-        meta={"analysis": "tipping_points", "threshold": float(threshold)},
+        meta={
+            "analysis": "tipping_points",
+            "threshold": float(threshold),
+            # An empty collection is an ANSWER here, not a failure to find one:
+            # "none found" alone reads like the sweep broke.  The repr prints
+            # this clause so the reader learns what the emptiness means.
+            "means_none": "no basin annihilates over the sweep",
+        },
     )
 
 

@@ -376,7 +376,7 @@ def psd(
         )
     return Geometry(
         "psd",
-        make_frame(FrameSpace.SCALING, 1, ("f",)),
+        make_frame(FrameSpace.SCALING, ("f",)),
         channels={"x": np.asarray(freq, dtype=float), "y": np.asarray(power, dtype=float)},
         label="$S(f)$",
         axis_labels=("frequency $f$", "$S(f)$"),
@@ -463,7 +463,7 @@ def autocorrelation(
         parts.append(_marker_part(float(tau_zero), lo, hi, rf"first zero at $\tau$ = {tau_zero}"))
     return Geometry(
         "autocorrelation",
-        make_frame(FrameSpace.SCALING, 1, ("tau",)),
+        make_frame(FrameSpace.SCALING, ("tau",)),
         parts,
         axis_labels=(r"lag $\tau$ (samples)", r"$C(\tau)$"),
         title=f"{title} autocorrelation".strip(),
@@ -559,7 +559,7 @@ def mutual_information(
     ]
     return Geometry(
         "mutual_information",
-        make_frame(FrameSpace.SCALING, 1, ("tau",)),
+        make_frame(FrameSpace.SCALING, ("tau",)),
         parts,
         axis_labels=(r"delay $\tau$ (samples)", r"$I(\tau)$"),
         title=f"{title} mutual information".strip(),
@@ -742,7 +742,7 @@ def _dimension_geometry(
     parts.append(_marker_part(float(chosen), lo, hi, f"$m$ = {chosen}"))
     return Geometry(
         name,
-        make_frame(FrameSpace.SCALING, 1, ("m",)),
+        make_frame(FrameSpace.SCALING, ("m",)),
         parts,
         axis_labels=("embedding dimension $d$", ylabel),
         title=title,
@@ -871,7 +871,7 @@ def line_lengths(
         )
     return Geometry(
         "line_lengths",
-        make_frame(FrameSpace.SCALING, 1, ("l",)),
+        make_frame(FrameSpace.SCALING, ("l",)),
         parts,
         axis_labels=("line length", "$P$" if normalize else "count"),
         title=f"{title} recurrence line lengths".strip(),
@@ -1064,7 +1064,7 @@ def return_time(
     centres = 0.5 * (edges[:-1] + edges[1:])
     return Geometry(
         "return_time",
-        make_frame(FrameSpace.SCALING, 1, ("T",)),
+        make_frame(FrameSpace.SCALING, ("T",)),
         channels={"x": centres, "y": counts.astype(float)},
         label="$P(T)$",
         axis_labels=("return time $T$", "$P(T)$" if normalize else "count"),

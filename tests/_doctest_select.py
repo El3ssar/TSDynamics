@@ -181,7 +181,7 @@ EXEMPT_MODULES: dict[str, str] = {
         "earlier line in the docstring binds -> NameError."
     ),
     "tsdynamics.data.trajectory": (
-        "The `Trajectory` class example opens with `traj = lor.integrate(...)` "
+        "The `Trajectory` class example opens with `traj = lor.run(...)` "
         "but never binds `lor`, so all six following lines NameError."
     ),
     "tsdynamics.derived.tangent": (

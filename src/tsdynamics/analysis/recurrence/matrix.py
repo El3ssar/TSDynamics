@@ -250,8 +250,8 @@ def recurrence_matrix(
             f"solved for), and you gave threshold={threshold!r} *and* "
             f"recurrence_rate={recurrence_rate!r}."
             + remedy(
-                f"ts.recurrence_matrix(data, recurrence_rate={recurrence_rate!r})",
-                f"ts.recurrence_matrix(data, threshold={threshold!r})",
+                f"ts.analysis.recurrence_matrix(data, recurrence_rate={recurrence_rate!r})",
+                f"ts.analysis.recurrence_matrix(data, threshold={threshold!r})",
                 lead="Either fix the density, or fix the distance:",
             )
         )
@@ -261,7 +261,7 @@ def recurrence_matrix(
             "distance, in the units of the data) or recurrence_rate= (the fraction "
             "of point pairs to count as recurrent)."
             + remedy(
-                f"ts.recurrence_matrix(data, recurrence_rate={_RATE_TEXT})",
+                f"ts.analysis.recurrence_matrix(data, recurrence_rate={_RATE_TEXT})",
                 lead=(
                     "If you do not yet know the scale of your data, ask for the "
                     f"density RQA practice recommends ({_RATE_TEXT}):"
@@ -284,7 +284,7 @@ def recurrence_matrix(
                 f"threshold is a distance in the units of the data, so it must be "
                 f"positive; got {threshold!r}. If you do not know the scale of the "
                 f"data, ask for a density instead."
-                + remedy(f"ts.recurrence_matrix(data, recurrence_rate={_RATE_TEXT})")
+                + remedy(f"ts.analysis.recurrence_matrix(data, recurrence_rate={_RATE_TEXT})")
             )
     else:
         assert recurrence_rate is not None  # guaranteed by the defaulting above
@@ -295,7 +295,7 @@ def recurrence_matrix(
                 f"recurrent, so it must lie in (0, 1); got {recurrence_rate!r}"
                 + (" — that looks like a percentage." if rate > 1.0 else ".")
                 + remedy(
-                    f"ts.recurrence_matrix(data, recurrence_rate="
+                    f"ts.analysis.recurrence_matrix(data, recurrence_rate="
                     f"{min(0.99, rate / 100) if rate > 1.0 else _RATE_TEXT})"
                 )
             )

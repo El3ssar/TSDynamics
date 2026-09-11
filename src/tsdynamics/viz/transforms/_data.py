@@ -50,7 +50,6 @@ __all__ = [
     "spacetime",
     "spatial_field",
     "time_series",
-    "vector_field",
 ]
 
 
@@ -413,7 +412,7 @@ def time_series(
     y_label = _label(sel[0], names) if len(sel) == 1 else ""
     return Geometry(
         "time_series",
-        make_frame(FrameSpace.TIME, 1, ("t",)),
+        make_frame(FrameSpace.TIME, ("t",)),
         parts,
         axis_labels=("t", y_label),
         primitive="points" if is_discrete else "line",
@@ -504,9 +503,7 @@ def phase_portrait(
         primitive = "line3d" if want_3d else "line"
     return Geometry(
         "phase_portrait",
-        make_frame(
-            FrameSpace.STATE3 if want_3d else FrameSpace.STATE2, 3 if want_3d else 2, labels
-        ),
+        make_frame(FrameSpace.STATE3 if want_3d else FrameSpace.STATE2, labels),
         channels=channels,
         axis_labels=labels,
         kind=PlotKind.PHASE_PORTRAIT_3D if want_3d else PlotKind.PHASE_PORTRAIT_2D,
@@ -595,7 +592,7 @@ def delay_embedding(
     labels = (f"{label}(t)", f"{label}(t - {lag})")
     return Geometry(
         "delay_embedding",
-        make_frame(FrameSpace.STATE2, 2, labels),
+        make_frame(FrameSpace.STATE2, labels),
         channels={"x": x[:-lag], "y": x[lag:]},
         axis_labels=labels,
         title=_title(series),
@@ -691,62 +688,44 @@ def _quiver_channels(
     return {"x": gx.ravel(), "y": gy.ravel(), "u": u.ravel(), "v": v.ravel()}
 
 
-@plot_transform(
-    name="vector_field",
-    source="model",
-    kind=PlotKind.VECTOR_FIELD,
-    frame=FrameSpace.STATE2,
-    ndim=2,
-    role=OverlayRole.FIELD,
-    default_primitive="quiver",
-    primitives=("quiver",),
-    presentation=Presentation(aspect="equal"),
-    example=lambda primitive: (_demo_rhs, {"xlim": (-1.0, 1.0), "ylim": (-1.0, 1.0), "grid": 8}),
-    doc="The right-hand side sampled on a lattice over a 2-D slice.",
-)
-def vector_field(
-    rhs: Callable[[np.ndarray], np.ndarray],
-    *,
-    xlim: tuple[float, float],
-    ylim: tuple[float, float],
-    grid: int = 20,
-    normalize: bool = False,
-    labels: tuple[str, str] = ("x", "y"),
-) -> Geometry:
-    """Sample a 2-D right-hand side on a regular lattice.
+def _demo_planar_system() -> Any:
+    """Return the small, fast planar **system** the field examples are drawn on."""
+    from tsdynamics.systems.continuous.population_dynamics import LotkaVolterra
 
-    Parameters
-    ----------
-    rhs : callable
-        A 2-D field ``rhs([x, y]) -> [u, v]``.
-    xlim, ylim : tuple of float
-        The ``(lo, hi)`` extent of the sampling box along each axis.
-    grid : int, optional
-        Samples per axis (a ``grid x grid`` lattice).
-    normalize : bool, optional
-        Unit-normalize each arrow (a direction field) rather than draw true
-        magnitudes.
-    labels : tuple of str, optional
-        The ``(x, y)`` axis labels.
+    return LotkaVolterra()
 
-    Returns
-    -------
-    Geometry
 
-    Notes
-    -----
-    This transform takes a bare 2-vector callable and therefore cannot slice a
-    higher-dimensional system.  The ``plane=`` / ``at=`` slice API that fixes
-    that is model-transform work (phase P3); the signature here is preserved
-    verbatim from the pre-registry producer.
+def _field_and_host(
+    subject: Any, source: Any, components: Sequence[int | str]
+) -> tuple[Callable[[np.ndarray], np.ndarray], Any]:
+    """Resolve ``(rhs, host orbit)`` from a **system** or a bare 2-D callable.
+
+    The repair that lets a ``source="model"`` transform be handed a model: given
+    a system, the in-plane right-hand side is closed over from its numeric RHS
+    (the other coordinates frozen at the system's own default start), and — when
+    the caller named no host trajectory — a short run supplies the orbit that
+    makes this kind a *portrait* rather than a bare field.
     """
-    return Geometry(
-        "vector_field",
-        make_frame(FrameSpace.STATE2, 2, labels),
-        channels=_quiver_channels(rhs, xlim, ylim, grid, normalize),
-        axis_labels=labels,
-        axis_limits=(xlim, ylim),
-    )
+    from tsdynamics.families import SystemBase
+
+    if not isinstance(subject, SystemBase):
+        return subject, source
+    system = subject
+    names = tuple(system.variables)
+    dim = len(names)
+    i, j = (_component_index(c, names, dim) for c in components)
+    at = np.asarray(system._resolve_ic(None), dtype=float)
+    evaluate = system._rhs_numeric()
+
+    def rhs(point: np.ndarray) -> np.ndarray:
+        state = at.copy()
+        state[i], state[j] = float(point[0]), float(point[1])
+        out = np.asarray(evaluate(state, 0.0), dtype=float)
+        return np.array([out[i], out[j]], dtype=float)
+
+    if source is None:
+        source = system.run(final_time=20.0, dt=0.01)
+    return rhs, source
 
 
 @plot_transform(
@@ -759,11 +738,11 @@ def vector_field(
     default_primitive="quiver",
     primitives=("quiver",),
     presentation=Presentation(aspect="equal"),
-    example=lambda primitive: (_demo_rhs, {"source": _demo_flow(), "grid": 6}),
+    example=lambda primitive: (_demo_planar_system(), {"grid": 6}),
     doc="A direction field with a host orbit drawn on it.",
 )
 def phase_portrait_field(
-    rhs: Callable[[np.ndarray], np.ndarray],
+    subject: Any,
     source: Trajectory | None = None,
     *,
     xlim: tuple[float, float] | None = None,
@@ -781,10 +760,16 @@ def phase_portrait_field(
 
     Parameters
     ----------
-    rhs : callable
-        A 2-D field ``rhs([x, y]) -> [u, v]``.
+    subject : system or callable
+        The **system** whose field to draw (the spelling that works from
+        ``ts.plot``), or a bare 2-D field ``rhs([x, y]) -> [u, v]``.  It used to
+        be the callable only, so ``ts.plot(vdp, "phase_portrait_field")``
+        answered ``TypeError: 'VanDerPol' object is not callable`` — a transform
+        declaring ``source="model"`` that could not be handed a model.
     source : Trajectory, optional
         A trajectory to overlay on the field (its selected two components).
+        With a *system* subject and no ``source``, the system's own short run
+        supplies the host orbit.
     xlim, ylim : tuple of float, optional
         Sampling-box extent.  ``None`` with a ``source`` takes the trajectory's
         padded in-plane extent; otherwise ``(-1, 1)``.
@@ -799,6 +784,7 @@ def phase_portrait_field(
     -------
     Geometry
     """
+    rhs, source = _field_and_host(subject, source, components)
     labels: tuple[str, str] = ("x", "y")
     orbit: Part | None = None
     if source is not None:
@@ -819,7 +805,7 @@ def phase_portrait_field(
     field = Part(_quiver_channels(rhs, xlim, ylim, grid, normalize))
     return Geometry(
         "phase_portrait_field",
-        make_frame(FrameSpace.STATE2, 2, labels),
+        make_frame(FrameSpace.STATE2, labels),
         [field] if orbit is None else [field, orbit],
         axis_labels=labels,
         axis_limits=(xlim, ylim),
@@ -901,7 +887,7 @@ def cobweb(
     labels = (f"{label}_n", f"{label}_(n+1)")
     return Geometry(
         "cobweb",
-        make_frame(FrameSpace.STATE2, 2, labels),
+        make_frame(FrameSpace.STATE2, labels),
         [
             Part({"x": diag, "y": diag}, label="y = x"),
             Part({"x": stair_x, "y": stair_y}, label="orbit"),
@@ -959,7 +945,7 @@ def spacetime(source: Trajectory, *, transpose: bool = False) -> Geometry:
         x_data, y_data = t, comp_idx
     return Geometry(
         "spacetime",
-        make_frame(FrameSpace.GRID2, 2, labels),
+        make_frame(FrameSpace.GRID2, labels),
         channels={"x": x_data, "y": y_data, "c": img.ravel(), "z": img},
         axis_labels=labels,
         title=_title(source),
@@ -1037,7 +1023,7 @@ def spatial_field(
         finite = frames[np.isfinite(frames)]
         return Geometry(
             "spatial_field",
-            make_frame(FrameSpace.GRID2, 2, ("x", "y")),
+            make_frame(FrameSpace.GRID2, ("x", "y")),
             channels={
                 "x": np.arange(nx, dtype=float),
                 "y": np.arange(ny, dtype=float),
@@ -1059,7 +1045,7 @@ def spatial_field(
     final = frames[-1]
     return Geometry(
         "spatial_field",
-        make_frame(FrameSpace.GRID2, 1, ("x",)),
+        make_frame(FrameSpace.GRID2, ("x",), ndim=1),
         channels={"x": np.arange(final.shape[0], dtype=float), "y": final, "frames": frames},
         label="u(x)",
         axis_labels=("x", "u"),
@@ -1123,7 +1109,10 @@ def _select_field_block(
 
 
 #: Read by ``tsdynamics.viz.producers`` — the migrated names, so the shim module
-#: and this one cannot drift apart.
+#: and this one cannot drift apart.  ``vector_field`` left this table in v6: the
+#: name now belongs to the **system**-taking transform in ``planar.py`` (the
+#: guessable spelling had been the broken one), and the bare-callable producer it
+#: used to name survives only as ``phase_portrait_field``'s field sampler.
 MIGRATED: Mapping[str, Callable[..., Geometry]] = {
     "cobweb": cobweb,
     "delay_embedding": delay_embedding,
@@ -1132,5 +1121,4 @@ MIGRATED: Mapping[str, Callable[..., Geometry]] = {
     "spacetime": spacetime,
     "spatial_field": spatial_field,
     "time_series": time_series,
-    "vector_field": vector_field,
 }

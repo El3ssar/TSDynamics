@@ -131,7 +131,7 @@ def test_threshold_mode_density_increases_with_eps(noise):
 
 
 def test_theiler_window_removes_near_diagonal(sine):
-    emb = ts.embed(sine, dimension=2, delay=10)
+    emb = ts.analysis.embed(sine, dimension=2, delay=10)
     rm = rec.recurrence_matrix(emb, threshold=0.3, theiler=15)
     arr = rm.toarray()
     # every recurrence sits outside the |i - j| <= 15 band.
@@ -202,7 +202,9 @@ def test_rqa_chaotic_logistic_is_less_deterministic():
 
 
 def test_rqa_sine_vs_noise(sine, noise):
-    det_sine = rec.rqa(ts.embed(sine, dimension=2, delay=10), recurrence_rate=0.05).determinism
+    det_sine = rec.rqa(
+        ts.analysis.embed(sine, dimension=2, delay=10), recurrence_rate=0.05
+    ).determinism
     det_noise = rec.rqa(noise, recurrence_rate=0.05).determinism
     assert det_sine > 0.95
     assert det_noise < 0.3
@@ -483,7 +485,7 @@ def transition_embedding():
     periodic = np.sin(2.0 * np.pi * 1.0 * t)
     stochastic = rng.standard_normal(2000)
     sig = np.concatenate([periodic, stochastic])
-    return ts.embed(sig, dimension=3, delay=5)
+    return ts.analysis.embed(sig, dimension=3, delay=5)
 
 
 def test_windowed_rqa_detects_transition(transition_embedding):
@@ -536,11 +538,11 @@ def test_windowed_guards(transition_embedding):
 
 def test_repr_strings(noise):
     rm = rec.recurrence_matrix(noise[:300], recurrence_rate=0.05)
-    assert "RecurrenceMatrix" in repr(rm) and "RR=" in repr(rm)
+    assert "RecurrenceMatrix" in repr(rm) and "RR = " in repr(rm)
     res = rec.rqa(rm)
-    assert "RQAResult" in repr(res) and "DET=" in repr(res)
+    assert "RQAResult" in repr(res) and "DET = " in repr(res)
     w = rec.windowed_rqa(noise[:600], window=200, recurrence_rate=0.05)
-    assert "WindowedRQA" in repr(w) and "n_windows=" in repr(w)
+    assert "WindowedRQA" in repr(w) and "3 windows of 200 samples" in repr(w)
 
 
 # ── registry integration & public API ───────────────────────────────────────────
@@ -550,7 +552,7 @@ def test_repr_strings(noise):
 def test_estimators_self_register(name):
     assert name in registry.analyses
     assert registry.analyses.get(name) is getattr(rec, name)
-    assert registry.analyses.entry(name).metadata["family"] == "recurrence"
+    assert registry.analyses.entry(name).metadata["area"] == "recurrence"
 
 
 @pytest.mark.parametrize(
@@ -565,11 +567,15 @@ def test_estimators_self_register(name):
     ],
 )
 def test_public_api_reexported(name):
-    assert getattr(ts, name) is getattr(rec, name)
-    assert name in ts.analysis.__all__
+    assert getattr(ts.analysis, name) is getattr(rec, name)
+    # C2 — a type you only ever get *back* is reachable but off the tab surface.
+    if name[:1].isupper():
+        assert name in ts.analysis.results.__all__
+    else:
+        assert name in ts.analysis.__all__
     # v4 (WS-NAMESPACE): the curated top-level ``__all__`` carries only headline
     # names; demoted analysis names stay reachable as flat re-exports.
-    assert hasattr(ts, name)
+    assert hasattr(ts.analysis, name)
 
 
 # ── the Theiler window and the vertical measures ────────────────────────────────

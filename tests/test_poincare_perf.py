@@ -43,9 +43,9 @@ def _python_rk4_reference(n: int, dt: float = 0.05):
     use the same fixed-step kernel as the engine event path, so the two refine the
     identical bracket — the faithful parity oracle.
     """
-    ros = ts.Rossler()
+    ros = ts.systems.Rossler()
     ros.reinit(_IC.copy(), t=0.0, solver="rk4")
-    pmap = ts.PoincareMap(ros, plane=(0, 0.0), direction=+1, dt=dt)
+    pmap = ts.derived.PoincareMap(ros, plane=(0, 0.0), direction=+1, dt=dt)
     times = np.empty(n)
     states = np.empty((n, 3))
     for k in range(n):
@@ -68,7 +68,7 @@ def test_first_crossing_matches_python_to_machine_precision() -> None:
     (engine Illinois vs ``brentq``, both to ``xtol=1e-14``).
     """
     te, ye, *_ = section_crossings(
-        ts.Rossler(),
+        ts.systems.Rossler(),
         _NORMAL_X,
         0.0,
         direction=+1,
@@ -90,7 +90,7 @@ def test_section_matches_python_rk4_over_roundoff_horizon() -> None:
     """
     k = 12
     te, ye, *_ = section_crossings(
-        ts.Rossler(),
+        ts.systems.Rossler(),
         _NORMAL_X,
         0.0,
         direction=+1,
@@ -106,7 +106,9 @@ def test_section_matches_python_rk4_over_roundoff_horizon() -> None:
 
 def test_crossings_lie_on_the_plane() -> None:
     """Refined crossings sit on the section to far better than ``dt``."""
-    sec = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05).run(200)
+    sec = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05).run(
+        200
+    )
     assert np.max(np.abs(sec.y[:, 0])) < 1e-10
     assert np.all(np.diff(sec.t) > 0)
     assert sec.y.shape == (200, 3)
@@ -114,8 +116,10 @@ def test_crossings_lie_on_the_plane() -> None:
 
 def test_direction_filter_selects_the_right_branch() -> None:
     """``+1`` and ``-1`` collect distinct, finite, on-plane crossings."""
-    up = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05).run(50)
-    down = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0), direction=-1, dt=0.05).run(50)
+    up = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05).run(50)
+    down = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(0, 0.0), direction=-1, dt=0.05).run(
+        50
+    )
     assert np.isfinite(up.y).all() and np.isfinite(down.y).all()
     assert np.max(np.abs(up.y[:, 0])) < 1e-10
     assert np.max(np.abs(down.y[:, 0])) < 1e-10
@@ -126,8 +130,8 @@ def test_direction_filter_selects_the_right_branch() -> None:
 def test_jit_equals_interp_bit_for_bit() -> None:
     """The Cranelift JIT and the interpreter produce identical crossings."""
     kw = dict(direction=+1, n_crossings=80, dt=0.05, max_time=1e4, ic=_IC.copy())
-    ti, yi, *_ = section_crossings(ts.Rossler(), _NORMAL_X, 0.0, backend="interp", **kw)
-    tj, yj, *_ = section_crossings(ts.Rossler(), _NORMAL_X, 0.0, backend="jit", **kw)
+    ti, yi, *_ = section_crossings(ts.systems.Rossler(), _NORMAL_X, 0.0, backend="interp", **kw)
+    tj, yj, *_ = section_crossings(ts.systems.Rossler(), _NORMAL_X, 0.0, backend="jit", **kw)
     assert np.array_equal(ti, tj)
     assert np.array_equal(yi, yj)
 
@@ -138,10 +142,10 @@ def test_full_section_is_the_same_attractor_as_the_python_path() -> None:
     They cannot be point-equal over 2000 chaotic crossings (different kernels →
     roundoff diverges), but they image the *same* section — equal bounding boxes.
     """
-    new = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05).run(
+    new = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05).run(
         2000, transient=50
     )
-    old = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05).run(
+    old = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05).run(
         2000, transient=50, backend="reference"
     )
     np.testing.assert_allclose(new.y.min(0), old.y.min(0), atol=0.05)
@@ -154,20 +158,22 @@ def test_full_section_is_the_same_attractor_as_the_python_path() -> None:
 
 
 def test_poincare_section_routes_through_the_engine() -> None:
-    sec = ts.poincare_section(ts.Rossler(), (0, 0.0), crossings=300, skip_crossings=10, dt=0.05)
+    sec = ts.analysis.poincare_section(
+        ts.systems.Rossler(), (0, 0.0), crossings=300, skip_crossings=10, dt=0.05
+    )
     assert sec.y.shape == (300, 3)
     assert np.max(np.abs(sec.y[:, 0])) < 1e-10
 
 
 def test_return_map_poincare_routes_through_the_engine() -> None:
-    rm = ts.return_map(ts.Rossler(), 1, method="poincare", plane=(0, 0.0), n=200)
+    rm = ts.analysis.return_map(ts.systems.Rossler(), 1, method="poincare", plane=(0, 0.0), n=200)
     assert rm.current.shape == rm.successor.shape
     assert rm.current.size >= 150
 
 
 def test_trajectory_zero_returns_empty() -> None:
     """``trajectory(0)`` returns correctly-shaped empties, not a crash."""
-    sec = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0), dt=0.05).run(0)
+    sec = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(0, 0.0), dt=0.05).run(0)
     assert sec.t.shape == (0,)
     assert sec.y.shape == (0, 3)
 
@@ -179,7 +185,7 @@ def test_trajectory_then_step_continues_forward() -> None:
     ``step()`` continues forward rather than restarting the section and silently
     re-returning crossings already collected.
     """
-    pmap = ts.PoincareMap(ts.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05)
+    pmap = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(0, 0.0), direction=+1, dt=0.05)
     sec = pmap.run(40)
     nxt = pmap.step()
     assert pmap.time() > sec.t[-1]  # strictly forward in continuous time
@@ -195,7 +201,9 @@ def test_repeated_run_restarts_rather_than_advancing() -> None:
     that continues.  Before the change ``pmap.run(steps=5)`` twice returned
     different data, which made a section irreproducible from its own call.
     """
-    pmap = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 1.0]), plane=(0, 0.0), direction=+1, dt=0.05)
+    pmap = ts.derived.PoincareMap(
+        ts.systems.Rossler(ic=[1.0, 1.0, 1.0]), plane=(0, 0.0), direction=+1, dt=0.05
+    )
     first = pmap.run(30)
     second = pmap.run(30)
     assert np.allclose(first.t, second.t)
@@ -204,12 +212,12 @@ def test_repeated_run_restarts_rather_than_advancing() -> None:
 
 def test_dde_keeps_the_python_fallback() -> None:
     """A DDE has no numeric RHS → not engine-eligible → Python crossing loop."""
-    mg = ts.MackeyGlass()
+    mg = ts.systems.MackeyGlass()
     # Rejected on both engine evaluators, incl. the production default ("jit").
     assert engine_eligible(mg, "interp") is False
     assert engine_eligible(mg, "jit") is False
     tr = mg.run(final_time=300.0, dt=0.5, history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
-    sec = ts.PoincareMap(mg, plane=(0, 1.0), direction=+1, dt=0.5, max_time=2000.0).run(
+    sec = ts.derived.PoincareMap(mg, plane=(0, 1.0), direction=+1, dt=0.5, max_time=2000.0).run(
         10, ic=tr.y[-1]
     )
     assert sec.y.shape == (10, 1)
@@ -218,7 +226,7 @@ def test_dde_keeps_the_python_fallback() -> None:
 def test_stiff_default_keeps_the_python_fallback() -> None:
     """A stiff default (an implicit kernel) must not take the ``rk4`` engine path."""
 
-    class _Stiff(ts.Rossler):  # type: ignore[misc, valid-type]
+    class _Stiff(ts.systems.Rossler):  # type: ignore[misc, valid-type]
         _default_method = "bdf"
 
     assert engine_eligible(_Stiff(), "interp") is False
@@ -226,7 +234,7 @@ def test_stiff_default_keeps_the_python_fallback() -> None:
 
 
 def test_reference_backend_forces_the_python_loop() -> None:
-    assert engine_eligible(ts.Rossler(), "reference") is False
+    assert engine_eligible(ts.systems.Rossler(), "reference") is False
 
 
 # --------------------------------------------------------------------------- #
@@ -237,7 +245,9 @@ def test_reference_backend_forces_the_python_loop() -> None:
 def test_no_crossing_within_max_time_raises() -> None:
     """A plane that misses the attractor raises, as the Python loop did."""
     with pytest.raises(RuntimeError):
-        ts.PoincareMap(ts.Rossler(), plane=(0, 1e6), direction=+1, dt=0.05, max_time=20.0).run(5)
+        ts.derived.PoincareMap(
+            ts.systems.Rossler(), plane=(0, 1e6), direction=+1, dt=0.05, max_time=20.0
+        ).run(5)
 
 
 # --------------------------------------------------------------------------- #
@@ -256,8 +266,8 @@ def test_engine_path_is_far_faster_than_the_python_loop() -> None:
     not a micro-benchmark — see ``test_perf_regression.py`` on why we avoid tight
     wall-clock budgets).
     """
-    ros = ts.Rossler()
-    pmap = ts.PoincareMap(ros, plane=(0, 0.0), direction=+1, dt=0.05)
+    ros = ts.systems.Rossler()
+    pmap = ts.derived.PoincareMap(ros, plane=(0, 0.0), direction=+1, dt=0.05)
     t0 = time.perf_counter()
     sec = pmap.run(500)
     elapsed = time.perf_counter() - t0

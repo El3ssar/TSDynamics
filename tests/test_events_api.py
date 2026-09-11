@@ -99,7 +99,7 @@ class TestAnalyticCrossings:
     def test_down_crossings_match_analytic(self):
         sys = _EventsHarmonic()
         sol = sys.run(
-            final_time=20.0, dt=0.01, ic=(1.0, 0.0), method="rk4", events=[("x", 0.0, "down")]
+            final_time=20.0, dt=0.01, ic=(1.0, 0.0), solver="rk4", events=[("x", 0.0, "down")]
         )
         t_cross = sol.meta["t_events"][0]
         expected = np.array([np.pi / 2 + 2 * np.pi * k for k in range(3)])
@@ -113,7 +113,7 @@ class TestAnalyticCrossings:
     def test_up_crossings_match_analytic(self):
         sys = _EventsHarmonic()
         sol = sys.run(
-            final_time=20.0, dt=0.01, ic=(1.0, 0.0), method="rk4", events=[("x", 0.0, "up")]
+            final_time=20.0, dt=0.01, ic=(1.0, 0.0), solver="rk4", events=[("x", 0.0, "up")]
         )
         t_cross = sol.meta["t_events"][0]
         expected = np.array([3 * np.pi / 2 + 2 * np.pi * k for k in range(3)])
@@ -122,7 +122,7 @@ class TestAnalyticCrossings:
     def test_both_equals_up_plus_down(self):
         sys = _EventsHarmonic()
         ic = (1.0, 0.0)
-        kw = dict(final_time=20.0, dt=0.01, ic=ic, method="rk4")
+        kw = dict(final_time=20.0, dt=0.01, ic=ic, solver="rk4")
         up = sys.run(events=[("x", 0.0, "up")], **kw).meta["t_events"][0]
         down = sys.run(events=[("x", 0.0, "down")], **kw).meta["t_events"][0]
         both = sys.run(events=[("x", 0.0, "both")], **kw).meta["t_events"][0]
@@ -138,7 +138,7 @@ class TestAnalyticCrossings:
 
 class TestRunEvents:
     def test_returns_trajectory_with_event_meta(self):
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
         sol = lor.run(final_time=30.0, dt=0.01, ic=LORENZ_IC, events=[("z", 27.0, "up")])
         assert isinstance(sol, ts.Trajectory)
         assert sol.y.shape[1] == 3
@@ -152,14 +152,14 @@ class TestRunEvents:
         assert np.allclose(yv[:, 2], 27.0, atol=1e-6)
 
     def test_events_none_is_plain_run(self):
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
         a = lor.run(final_time=10.0, dt=0.01, ic=LORENZ_IC)
         b = lor.run(final_time=10.0, dt=0.01, ic=LORENZ_IC, events=None)
         assert np.array_equal(a.y, b.y)
         assert "t_events" not in a.meta
 
     def test_multiple_events_collected_independently(self):
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
         sol = lor.run(
             final_time=30.0,
             dt=0.01,
@@ -172,7 +172,7 @@ class TestRunEvents:
         assert abs(up.size - down.size) <= 1
 
     def test_terminal_event_truncates(self):
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
 
         def escape(y, t):
             return y(0) ** 2 + y(1) ** 2 + y(2) ** 2 - 40.0**2
@@ -189,7 +189,7 @@ class TestRunEvents:
         assert np.isclose(np.linalg.norm(fire[0]), 40.0, atol=1e-3)
 
     def test_terminal_with_nonterminal_companion(self):
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
 
         # A time-dependent terminal event (stop at t = 20): exercises an event
         # condition that depends on `t`, not just the state.
@@ -221,7 +221,7 @@ class TestRunEvents:
 class TestEngineVsReference:
     def test_oscillator_crossings_agree(self):
         sys = _EventsHarmonic()
-        kw = dict(final_time=18.0, dt=0.02, ic=(1.0, 0.0), method="rk45", rtol=1e-10, atol=1e-12)
+        kw = dict(final_time=18.0, dt=0.02, ic=(1.0, 0.0), solver="rk45", rtol=1e-10, atol=1e-12)
         eng = sys.run(backend="interp", events=[("x", 0.0, "up")], **kw)
         ref = sys.run(backend="reference", events=[("x", 0.0, "up")], **kw)
         te, tr = eng.meta["t_events"][0], ref.meta["t_events"][0]
@@ -241,8 +241,8 @@ class TestEngineVsReference:
         assert np.allclose(te, exact, atol=1e-9)
 
     def test_lorenz_early_crossings_agree(self):
-        lor = ts.Lorenz()
-        kw = dict(final_time=12.0, dt=0.005, ic=LORENZ_IC, method="rk45", rtol=1e-9, atol=1e-11)
+        lor = ts.systems.Lorenz()
+        kw = dict(final_time=12.0, dt=0.005, ic=LORENZ_IC, solver="rk45", rtol=1e-9, atol=1e-11)
         eng = lor.run(backend="interp", events=[("z", 27.0, "up")], **kw)
         ref = lor.run(backend="reference", events=[("z", 27.0, "up")], **kw)
         te, tr = eng.meta["t_events"][0], ref.meta["t_events"][0]
@@ -275,7 +275,7 @@ class TestTerminalGridParity:
     # A `dt` that does NOT divide the terminal time (20.0 / 0.3 is non-integer),
     # so the old full-grid-aligned reference tail and the engine's t_stop-aligned
     # grid genuinely disagree — the regression is observable.
-    _KW = dict(final_time=200.0, dt=0.3, ic=(1.0, 0.0), method="rk4")
+    _KW = dict(final_time=200.0, dt=0.3, ic=(1.0, 0.0), solver="rk4")
 
     @staticmethod
     def _stop_at_20():
@@ -337,7 +337,7 @@ class TestReferenceEnsembleErrorNarrowing:
 
         monkeypatch.setattr(ref_mod, "_reference_ode", boom)
         ics = np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
-        prob = ts.Lorenz()
+        prob = ts.systems.Lorenz()
         from tsdynamics.engine.problem import ode_problem
 
         p = ode_problem(prob, ic=ics[0])
@@ -355,7 +355,7 @@ class TestReferenceEnsembleErrorNarrowing:
         ics = np.array([[1.0, 1.0, 1.0]])
         from tsdynamics.engine.problem import ode_problem
 
-        p = ode_problem(ts.Lorenz(), ic=ics[0])
+        p = ode_problem(ts.systems.Lorenz(), ic=ics[0])
         out = ref_mod._reference_ensemble(p, ics, 0.0, 1.0, method="rk45", rtol=1e-6, atol=1e-9)
         assert np.all(np.isnan(out[0]))
 
@@ -367,17 +367,17 @@ class TestReferenceEnsembleErrorNarrowing:
 
 class TestPoincareConsumer:
     def test_as_events_reproduces_section(self):
-        ros = ts.Rossler()
+        ros = ts.systems.Rossler()
         ic = [3.0, 3.0, 0.5]
-        pmap = ts.PoincareMap(ros, plane=("y", 0.0, "up"), dt=0.01)
+        pmap = ts.derived.PoincareMap(ros, plane=("y", 0.0, "up"), dt=0.01)
         pmap.reinit(ic)
-        section = pmap.trajectory(15)
+        section = pmap.run(15)
 
         sol = ros.run(
             final_time=500.0,
             dt=0.01,
             ic=ic,
-            method="rk4",
+            solver="rk4",
             events=pmap.as_events(),
         )
         crossings = sol.meta["y_events"][0]
@@ -395,14 +395,14 @@ class TestEventGuards:
     def test_map_problem_rejected(self):
         from tsdynamics.engine.problem import build_problem
 
-        prob = build_problem(ts.Henon())
+        prob = build_problem(ts.systems.Henon())
         with pytest.raises(InvalidInputError):
             integrate_events(prob, [("x", 0.0)], final_time=10.0)
 
     def test_empty_events_rejected(self):
         from tsdynamics.engine.problem import build_problem
 
-        prob = build_problem(ts.Lorenz(), ic=LORENZ_IC)
+        prob = build_problem(ts.systems.Lorenz(), ic=LORENZ_IC)
         with pytest.raises(InvalidParameterError):
             integrate_events(prob, [], final_time=10.0)
 

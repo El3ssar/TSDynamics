@@ -133,9 +133,9 @@ become *control parameters* of the lowered tape — changing them is free:
 
 ```python
 lor = ts.systems.Lorenz()
-lor.integrate(final_time=10)     # lowers + compiles once, in milliseconds
+lor.run(final_time=10)     # lowers + compiles once, in milliseconds
 lor.rho = 35.0                   # zero cost
-lor.integrate(final_time=10)     # same tape, new parameter value
+lor.run(final_time=10)     # same tape, new parameter value
 ```
 
 Only *structural* parameters — integer loop bounds that change the *shape* of the
@@ -157,7 +157,7 @@ sys.state()            # current state vector (a copy)
 sys.set_state(u)       # overwrite the state (DDEs raise — by design)
 sys.time()             # current time / iteration count
 sys.reinit(u, t=0.0)   # restart the internal stepper from a fresh state
-sys.trajectory(...)    # run and return a uniform-grid Trajectory
+sys.run(...)    # run and return a uniform-grid Trajectory
 sys.is_discrete        # True for maps and derived discrete views
 ```
 
@@ -186,7 +186,7 @@ run works on any of three backends, chosen with `backend=`:
 | `"reference"` | A dependency-light pure-Python oracle (ODEs, SDEs, maps) | Cross-validation and wheel-free environments — the answer key, not the fast path |
 
 ```python
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01, backend="interp")
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01, backend="interp")
 ```
 
 `interp` and `jit` lower the *same* tape, so they agree to the last bit.
@@ -204,7 +204,7 @@ keeping the protocol intact — so every analysis keeps working on the wrapped
 view. The wrappers live at the top level:
 
 ```python
-from tsdynamics import PoincareMap, StroboscopicMap
+from tsdynamics.derived import PoincareMap, StroboscopicMap
 
 pmap = PoincareMap(ts.systems.Rossler(), plane=("y", 0.0, "up"))   # flow → discrete map
 smap = StroboscopicMap(ts.systems.Duffing(), period=2 * 3.14159 / 1.4)

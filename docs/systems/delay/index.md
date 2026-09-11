@@ -33,9 +33,9 @@ Pass it as a callable returning a length-`dim` sequence:
 import numpy as np
 import tsdynamics as ts
 
-mg = ts.MackeyGlass()
+mg = ts.systems.MackeyGlass()
 hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
-traj = mg.integrate(final_time=500.0, dt=0.5, history=hist)
+traj = mg.run(final_time=500.0, dt=0.5, history=hist)
 ```
 
 Without `history`, a constant past equal to the resolved `ic` is used.
@@ -48,7 +48,7 @@ past rather than an arbitrary history function. The supported pattern is
 therefore *integrate first, then measure*:
 
 ```python
-traj = mg.integrate(final_time=500.0, dt=0.5, history=hist)   # reach the attractor
+traj = mg.run(final_time=500.0, dt=0.5, history=hist)   # reach the attractor
 exps = mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1])   # start from its end state
 ```
 

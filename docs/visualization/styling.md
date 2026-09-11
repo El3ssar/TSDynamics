@@ -39,7 +39,7 @@ and render the same on every backend.
 import tsdynamics as ts
 
 spec = (
-    ts.Lorenz(ic=[1.0, 1.0, 1.0])
+    ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     .to_plot_spec(components=["x", "z"])
     .theme("dark")                    # figure-level look
     .grid()                           # gridlines on
@@ -183,7 +183,7 @@ These reshape the axes without touching the data or the look.
 
 ```python
 spec = (
-    ts.Rossler(ic=[0.1, 0.1, 0.1])
+    ts.systems.Rossler(ic=[0.1, 0.1, 0.1])
     .to_plot_spec(components=["x", "y"])
     .relabel(x="x(t)", y="y(t)", title="Rössler x–y")
     .limits(x=(-12, 12), y=(-12, 12))
@@ -209,7 +209,7 @@ Merge style keys into one layer or every layer. `**keys` go through
 `normalize_style` (aliases canonicalised, values validated, unknown keys warned).
 
 ```python
-spec = ts.Rossler(ic=[0.1, 0.1, 0.1]).to_plot_spec()
+spec = ts.systems.Rossler(ic=[0.1, 0.1, 0.1]).to_plot_spec()
 
 spec.style(color="teal", lw=2, alpha=0.8)   # apply to every layer
 spec.style(linestyle="dotted", layer=0)     # apply to layer 0 only
@@ -234,8 +234,8 @@ layer is set to `colors[0]`:
 ```python
 # Two 3-D attractors overlaid on one set of axes, coloured by source.
 ts.viz.plot(
-    ts.Lorenz(ic=[1.0, 1.0, 1.0]),
-    ts.Rossler(ic=[0.1, 0.1, 0.1]),
+    ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
+    ts.systems.Rossler(ic=[0.1, 0.1, 0.1]),
 ).recolor("crimson", "royalblue")
 ```
 
@@ -266,9 +266,9 @@ from future global-default changes. You can always read the effective theme back
 
 ```pycon
 >>> import tsdynamics as ts
->>> ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().resolved_theme.name
+>>> ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().resolved_theme.name
 'default'
->>> ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("dark").resolved_theme.name
+>>> ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("dark").resolved_theme.name
 'dark'
 ```
 
@@ -318,7 +318,7 @@ axes, then look, then geometry:
 
 ```python
 spec = (
-    ts.Lorenz(ic=[1.0, 1.0, 1.0])
+    ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     .to_plot_spec(components=["x", "z"])
     .relabel(x="x(t)", y="z(t)", title="Lorenz x–z")
     .theme("dark")
@@ -406,7 +406,7 @@ Four themes ship out of the box, applied per figure with `.theme(...)`:
 Apply one and save straight to a paper-ready vector:
 
 ```python
-ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("publication").save("lorenz-pub.pdf")
+ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("publication").save("lorenz-pub.pdf")
 ```
 
 ### Registering your own
@@ -430,7 +430,7 @@ register_theme(Theme(
     line_width=1.6,
 ))
 
-ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("tsd-brand")   # now usable by name
+ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().theme("tsd-brand")   # now usable by name
 ```
 
 ```pycon
@@ -467,8 +467,8 @@ once at the top of a notebook or script and every plot follows:
 
 ```python
 ts.viz.set_theme("publication")
-ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().save("fig1.pdf")   # publication-themed
-ts.Rossler(ic=[0.1, 0.1, 0.1]).to_plot_spec().save("fig2.pdf")  # …and so is this
+ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().save("fig1.pdf")   # publication-themed
+ts.systems.Rossler(ic=[0.1, 0.1, 0.1]).to_plot_spec().save("fig2.pdf")  # …and so is this
 ts.viz.set_theme("default")                                      # tidy up
 ```
 
@@ -513,7 +513,7 @@ listing the dropped keys alphabetically:
 ```pycon
 >>> import warnings
 >>> import tsdynamics as ts
->>> spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().style(
+>>> spec = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).to_plot_spec().style(
 ...     linestyle="dashed", marker="square", cmap="viridis"
 ... )
 >>> with warnings.catch_warnings(record=True) as w:

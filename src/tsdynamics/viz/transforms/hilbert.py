@@ -519,7 +519,7 @@ def _hilbert_geometry(
         extra["sample_index"] = index
     return Geometry(
         name,
-        make_frame(FrameSpace.GRID2, 2, axis_labels),
+        make_frame(FrameSpace.GRID2, axis_labels),
         channels={"x": axis, "y": axis, "z": np.asarray(field, dtype=float)},
         axis_labels=axis_labels,
         primitives=primitives,

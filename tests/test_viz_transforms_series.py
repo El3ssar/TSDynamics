@@ -67,7 +67,7 @@ def white() -> np.ndarray:
 @pytest.fixture(scope="module")
 def lorenz():
     """A pinned Lorenz orbit: 10,001 samples, deterministic (an explicit ``ic``)."""
-    return ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+    return ts.systems.Lorenz().run(final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 
 
 # ---------------------------------------------------------------------------
@@ -287,8 +287,8 @@ def test_the_line_length_distributions_reproduce_the_rqa_numbers_they_are_read_f
     itself, to the last bit, rather than asserted in a docstring.
     """
     points = lorenz.y[::20][:600]
-    matrix = ts.recurrence_matrix(points, recurrence_rate=0.05, theiler=2)
-    quant = ts.rqa(matrix, min_diagonal=2, min_vertical=2)
+    matrix = ts.analysis.recurrence_matrix(points, recurrence_rate=0.05, theiler=2)
+    quant = ts.analysis.rqa(matrix, min_diagonal=2, min_vertical=2)
     geom = geometry(matrix, "line_lengths", min_diagonal=2, min_vertical=2, normalize=False)
 
     lengths = geom.parts[0].array("x")

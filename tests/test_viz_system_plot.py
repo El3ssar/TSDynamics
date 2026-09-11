@@ -1,6 +1,6 @@
 """System families are Plottable end-to-end (stream VIZ-SYSTEM-PLOT).
 
-``ts.Lorenz().plot()`` must resolve through the visualization seam exactly like
+``ts.systems.Lorenz().plot()`` must resolve through the visualization seam exactly like
 an analysis result: a system describes itself with ``to_plot_spec()`` (a default
 trajectory delegated to :meth:`tsdynamics.data.Trajectory.to_plot_spec`), and
 ``.plot()`` routes that spec to a backend (raising the documented
@@ -39,7 +39,7 @@ def test_every_family_base_is_plottable():
 
 def test_continuous_system_to_plot_spec_resolves():
     """A flow integrates a default trajectory and yields a valid spec."""
-    spec = ts.Lorenz().to_plot_spec()
+    spec = ts.systems.Lorenz().to_plot_spec()
     assert isinstance(spec, PlotSpec)
     assert isinstance(spec.kind, PlotKind)
     assert spec.layers
@@ -47,14 +47,14 @@ def test_continuous_system_to_plot_spec_resolves():
 
 def test_discrete_map_to_plot_spec_resolves():
     """A map's default spec resolves too (dispatching on is_discrete)."""
-    spec = ts.Henon().to_plot_spec()
+    spec = ts.systems.Henon().to_plot_spec()
     assert isinstance(spec, PlotSpec)
     assert isinstance(spec.kind, PlotKind)
 
 
 def test_to_plot_spec_forwards_trajectory_kwargs():
     """to_plot_spec passes integration kwargs through to the family trajectory."""
-    spec = ts.Lorenz().to_plot_spec(final_time=5.0, dt=0.05)
+    spec = ts.systems.Lorenz().to_plot_spec(final_time=5.0, dt=0.05)
     assert isinstance(spec, PlotSpec)
 
 
@@ -89,19 +89,19 @@ def test_render_raises_without_a_backend(_no_backend):
     returns), and ``.render()`` is what needs a backend.
     """
     with pytest.raises(VisualizationNotInstalled):
-        ts.Lorenz().plot().render()
+        ts.systems.Lorenz().plot().render()
 
 
 def test_system_plot_returns_a_spec_like_every_other_door(_no_backend):
     """``system.plot()`` and ``ts.plot(system)`` are the same kind of thing."""
     from tsdynamics.viz.spec import PlotSpec
 
-    assert isinstance(ts.Lorenz().plot(final_time=2.0, dt=0.05), PlotSpec)
+    assert isinstance(ts.systems.Lorenz().plot(final_time=2.0, dt=0.05), PlotSpec)
 
 
 def test_repr_mimebundle_is_noop_without_backend(_no_backend):
     """The notebook hook no-ops (returns None) until a backend registers."""
-    assert ts.Lorenz()._repr_mimebundle_() is None
+    assert ts.systems.Lorenz()._repr_mimebundle_() is None
 
 
 def test_import_tsdynamics_stays_viz_free():

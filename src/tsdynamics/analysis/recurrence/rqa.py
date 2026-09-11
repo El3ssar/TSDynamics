@@ -414,8 +414,8 @@ def rqa(
     >>> import numpy as np
     >>> import tsdynamics as ts
     >>> t = np.linspace(0.0, 100.0, 1000)
-    >>> emb = ts.embed(np.sin(t), dimension=2, delay=5)
-    >>> res = ts.rqa(emb, recurrence_rate=0.05)
+    >>> emb = ts.analysis.embed(np.sin(t), dimension=2, delay=5)
+    >>> res = ts.analysis.rqa(emb, recurrence_rate=0.05)
     >>> 0.0 <= res.determinism <= 1.0
     True
     """

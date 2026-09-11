@@ -40,10 +40,21 @@ IR — so ``import tsdynamics`` stays plot-free (``tsdynamics.viz`` itself is la
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ._frames import check_overlay, force_requested, role_of
-from .spec import Animation, Annotation, Layer, Layout, Legend, PlotKind, PlotSpec
+from .spec import (
+    Animation,
+    Annotation,
+    Layer,
+    Layout,
+    Legend,
+    PlotKind,
+    PlotSpec,
+    apply_figure_keywords,
+    split_figure_keywords,
+)
 
 __all__ = ["plot"]
 
@@ -55,6 +66,7 @@ def plot(
     *things: Any,
     layout: str = "overlay",
     animate: bool | dict[str, Any] | Animation = False,
+    fps: float | None = None,
     on: str | None = None,
     rows: int | None = None,
     cols: int | None = None,
@@ -144,7 +156,7 @@ def plot(
         raise InvalidParameterError("plot() needs at least one thing to plot.")
 
     style, figure = split_presentation(build_kw)
-    specs = [_to_spec(item, build_kw) for item in items]
+    specs = [to_spec(item, build_kw) for item in items]
     layout_kw = {
         "rows": rows,
         "cols": cols,
@@ -153,24 +165,49 @@ def plot(
         "share_color": share_color,
     }
 
-    if layout == "overlay":
+    mode = layout.mode if isinstance(layout, Layout) else layout
+    if isinstance(layout, Layout):
+        layout_kw = {
+            key: getattr(layout, key) if layout_kw[key] is None else layout_kw[key]
+            for key in layout_kw
+        }
+    if mode == "overlay":
         _reject_layout_kw_for_overlay(layout_kw)
         result = _overlay(specs, on=on)
-    elif layout in _COMPOSITE_MODES:
+    elif mode in _COMPOSITE_MODES:
         if on is not None:
             raise InvalidParameterError(
                 f"on={on!r} applies to layout='overlay' (one set of axes); panelled "
                 "layouts draw each thing in its own frame, so there is nothing to force."
             )
-        result = _composite(specs, layout, layout_kw)
+        result = _composite(specs, mode, layout_kw)
     else:
         raise InvalidParameterError(
-            f"unknown layout {layout!r}; use 'overlay', 'stack', 'row', or 'grid'."
+            f"unknown layout {mode!r}; use 'overlay', 'stack', 'row', or 'grid'."
         )
-    if animate is not False and animate is not None:
-        _apply_figure_animation(result, animate)
+    if (animate is not False and animate is not None) or fps is not None:
+        _apply_figure_animation(result, animate if animate is not False else True, fps)
     apply_presentation(result, style, figure)
     return result
+
+
+#: The pre-v6 private spelling of :func:`to_spec`.  ``Plot.add`` imports it by
+#: this name (``viz/spec.py``, another slot's file), so the rename keeps the old
+#: binding rather than reaching across to edit the caller.
+def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
+    """Alias of :func:`to_spec` (the name ``Plot.add`` imports)."""
+    return to_spec(thing, build_kw)
+
+
+def _plot_spec_of(thing: Any) -> Any:
+    """Return ``thing``'s spec builder — ``__plot_spec__``, else ``to_plot_spec``.
+
+    ``__plot_spec__`` is the v6 seam (a dunder, because it is a protocol and not
+    a verb a user types); ``to_plot_spec`` is what the pre-v6 objects and any
+    out-of-tree plottable still spell it.  Both are asked here, once, so nothing
+    downstream has to know which one an object has.
+    """
+    return getattr(thing, "__plot_spec__", None) or getattr(thing, "to_plot_spec", None)
 
 
 def unwrap_container(things: tuple[Any, ...]) -> list[Any]:
@@ -188,7 +225,7 @@ def unwrap_container(things: tuple[Any, ...]) -> list[Any]:
     only = things[0]
     # A container holding something the library can plot in its own right — a
     # trajectory, a system, a result, a spec — or a transform name, is a batch.
-    if any(isinstance(x, str) or hasattr(x, "to_plot_spec") for x in only):
+    if any(isinstance(x, str) or _plot_spec_of(x) is not None for x in only):
         return list(only)
     try:
         arr = np.asarray(only, dtype=float)
@@ -197,31 +234,31 @@ def unwrap_container(things: tuple[Any, ...]) -> list[Any]:
     return [only] if arr.ndim >= 1 else list(only)
 
 
-#: Keywords about the **figure**, not about the data: they name it rather than
-#: computing it.  Split out of ``build_kw`` and applied to the finished spec, so
-#: "make it red and give it a title" — the most common plot request there is —
-#: reaches every subject, with or without a named transform.
-_FIGURE_KEYS: frozenset[str] = frozenset({"title", "xlabel", "ylabel", "zlabel", "theme"})
-
-
 def split_presentation(kw: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Peel the style and figure keywords out of ``kw`` **in place**.
 
     Returns ``(style, figure)``; ``kw`` keeps only the keywords that describe
     *what to compute*.  Style names are the canonical
     :data:`~tsdynamics.viz.style.STYLE_KEYS` vocabulary and its aliases, so
-    ``lw=`` and ``linewidth=`` are both recognised.
+    ``lw=`` and ``linewidth=`` are both recognised; figure names are the **17**
+    of :data:`~tsdynamics.viz.spec.FIGURE_KEYS`.
+
+    .. versionchanged:: 6.0
+       This module carried its own five-name copy of the figure vocabulary, so
+       ``ts.plot(traj, xlim=(0, 1))`` answered ``kind='phase_portrait_3d' does
+       not accept keyword(s) ['xlim']`` while ``traj.plot(xlim=(0, 1))`` worked
+       — **12 of the 17 failed at one door and none at the other**.  There is now
+       one definition, in ``viz/spec.py``, and every door imports it.
     """
     from .style import style_names
 
     names = style_names()
     style = {k: kw.pop(k) for k in list(kw) if k in names}
-    figure = {k: kw.pop(k) for k in list(kw) if k in _FIGURE_KEYS}
-    return style, figure
+    return style, split_figure_keywords(kw)
 
 
 def apply_presentation(spec: PlotSpec, style: dict[str, Any], figure: dict[str, Any]) -> None:
-    """Apply peeled style / label / theme keywords to a finished spec.
+    """Apply peeled style / figure keywords to a finished spec.
 
     On a composite these apply to **every** panel — that is what the underlying
     :meth:`~tsdynamics.viz.spec.PlotSpec.style` /
@@ -229,13 +266,10 @@ def apply_presentation(spec: PlotSpec, style: dict[str, Any], figure: dict[str, 
     stays figure-level).  An undocumented "first panel only" would be exactly the
     two-meanings-for-one-spelling defect this pass exists to end.
     """
-    theme = figure.pop("theme", None)
-    if theme is not None:
-        spec.theme(theme)
     if style:
         spec.style(**style)
     if figure:
-        spec.relabel(**{k.removesuffix("label"): v for k, v in figure.items()})
+        apply_figure_keywords(spec, figure)
 
 
 def _reject_layout_kw_for_overlay(layout_kw: dict[str, Any]) -> None:
@@ -256,7 +290,9 @@ def _reject_layout_kw_for_overlay(layout_kw: dict[str, Any]) -> None:
         )
 
 
-def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | Animation) -> None:
+def _apply_figure_animation(
+    result: PlotSpec, animate: bool | dict[str, Any] | Animation, fps: float | None = None
+) -> None:
     """Stamp a figure-level animation: lockstep master on a composite, else the panel.
 
     A composite gets the master clock on itself and a per-panel animation (the
@@ -273,9 +309,12 @@ def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | A
             # other knob the user set) is honored verbatim; the per-kind head
             # default applies only to the bare-``True`` / dict spellings below.
             return animate
+        knobs: dict[str, Any] = {"head": head_default}
         if isinstance(animate, dict):
-            return Animation(**{"head": head_default, **animate})
-        return Animation(head=head_default)
+            knobs.update(animate)
+        if fps is not None:
+            knobs["fps"] = fps
+        return Animation(**knobs)
 
     if result.is_composite:
         master = _make(PlotKind.COMPOSITE)
@@ -287,8 +326,15 @@ def _apply_figure_animation(result: PlotSpec, animate: bool | dict[str, Any] | A
         result.animation = _make(result.kind)
 
 
-def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
-    """Convert one ``thing`` to a :class:`PlotSpec` (forwarding ``build_kw``)."""
+def to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
+    """Convert one ``thing`` to a :class:`PlotSpec` (forwarding ``build_kw``).
+
+    The single coercion every composition door goes through: a finished ``Plot``
+    passes through untouched (closure), anything with ``__plot_spec__`` /
+    ``to_plot_spec`` is asked for its default view, and plain numbers are read
+    as an index-time trajectory at the door — a user holding an array should not
+    have to construct a library type to look at it.
+    """
     from tsdynamics.errors import InvalidInputError, InvalidParameterError
 
     if isinstance(thing, PlotSpec):
@@ -299,7 +345,7 @@ def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
             )
         return thing
     kw = dict(build_kw)
-    to_plot_spec = getattr(thing, "to_plot_spec", None)
+    to_plot_spec = _plot_spec_of(thing)
     if not callable(to_plot_spec):
         # Measured data — a plain array, a list of numbers, a dataframe column.
         # It comes in through the same door as everything else: a user holding
@@ -313,7 +359,7 @@ def _to_spec(thing: Any, build_kw: dict[str, Any]) -> PlotSpec:
                 f"cannot plot a {type(thing).__name__}: it is not a Trajectory / system / "
                 f"result / PlotSpec, nor data this can read ({err})."
             ) from None
-        to_plot_spec = coerced.to_plot_spec
+        to_plot_spec = _plot_spec_of(coerced)
     spec = to_plot_spec(**kw)
     if not isinstance(spec, PlotSpec):  # pragma: no cover - defensive
         raise InvalidInputError(
@@ -384,6 +430,8 @@ def _overlay(specs: list[PlotSpec], *, on: str | None = None) -> PlotSpec:
             )
         annotations.extend(replace(a) for a in specs[i].annotations)
         composed.extend(done or [tags[i]])
+    _disambiguate_labels(layers)
+    _warn_on_stacked_images(layers)
 
     # Deep-copy the carried-over presentation objects (Axis / Colorbar / Legend
     # are mutable dataclasses, and PlotSpec's in-place tweaks — relabel / rescale /
@@ -472,15 +520,78 @@ def _relabel_for_overlay(layer: Layer, tag: str, *, multi: bool) -> Layer:
     """Copy ``layer``, disambiguating its legend label by source ``tag``.
 
     A label that already *is* the tag is left alone — prefixing it would produce
-    ``"streamlines: streamlines"``, which disambiguates nothing.
+    ``"streamlines: streamlines"``, which disambiguates nothing.  Neither is a
+    **positional** tag prefixed onto a label the caller wrote: ``"series 2: y =
+    0"`` names the argument slot, not the curve, and
+    :func:`_disambiguate_labels` is what guarantees uniqueness in the end anyway.
     """
     if not multi:
         return layer
     if not layer.label:
         return _copy_layer(layer, label=tag)
-    if layer.label == tag:
+    if layer.label == tag or _POSITIONAL_TAG.fullmatch(tag):
         return _copy_layer(layer)
     return _copy_layer(layer, label=f"{tag}: {layer.label}")
+
+
+def _disambiguate_labels(layers: list[Layer]) -> None:
+    """Give every legend entry in the merged overlay its own name, **in place**.
+
+    Run over the **final** layer set rather than per ``add``, because the two
+    paths disagreed exactly where it mattered: measured before v6,
+    ``ts.plot(t1, t2, t3)`` legended ``(1)`` / ``(2)`` / ``(3)`` while
+    ``ts.plot(t1).add(t2).add(t3)`` legended ``(1)`` / ``(2)`` / ``(2)`` — a
+    duplicate — and over a transform-produced base it named three different
+    orbits ``VanDerPol`` three times with no suffix at all.  **A legend that
+    names two different orbits identically is a wrong answer**, not a cosmetic
+    one: it is the figure telling you these are the same curve.
+
+    Only genuine duplicates are touched, so a figure whose labels were already
+    unique is byte-identical to what it was.
+    """
+    counts: dict[str, int] = {}
+    for layer in layers:
+        if layer.label:
+            counts[layer.label] = counts.get(layer.label, 0) + 1
+    seen: dict[str, int] = {}
+    for layer in layers:
+        label = layer.label
+        if not label or counts[label] < 2:
+            continue
+        seen[label] = seen.get(label, 0) + 1
+        layer.label = f"{label} ({seen[label]})"
+
+
+#: Layer marks that paint every pixel of their extent.  Two of them on one axes
+#: means the second hides the first.
+_OPAQUE_MARKS: frozenset[str] = frozenset({"image"})
+
+
+def _warn_on_stacked_images(layers: list[Layer]) -> None:
+    """Warn once when an overlay stacks two opaque images (the second hides the first).
+
+    Not an error: it is a real thing to want, with ``alpha=`` — which is exactly
+    why it needs saying rather than refusing.
+    """
+    import warnings
+
+    from .render.caps import VisualizationDegraded
+
+    opaque = [
+        layer
+        for layer in layers
+        if str(layer.kind) in _OPAQUE_MARKS and float(layer.style.get("alpha", 1.0) or 1.0) >= 1.0
+    ]
+    if len(opaque) < 2:
+        return
+    names = [layer.transform or str(layer.kind) for layer in opaque]
+    warnings.warn(
+        f"this overlay stacks {len(opaque)} opaque images ({', '.join(names)}); the last one "
+        "drawn hides the ones under it. Give the top one alpha=, or use "
+        "layout='row' / 'grid' to put them side by side.",
+        VisualizationDegraded,
+        stacklevel=4,
+    )
 
 
 def _source_tags(specs: list[PlotSpec]) -> list[str]:
@@ -504,10 +615,22 @@ def _source_tags(specs: list[PlotSpec]) -> list[str]:
     return tags
 
 
+#: The provenance stamp ``ts.viz.draw`` puts on hand-built arrays.  It is real
+#: provenance (``p.style("(arrays)", …)`` selects those layers) but it is not a
+#: *source name*, so it never becomes a legend prefix: ``"(arrays): y = 0"``
+#: names the escape hatch rather than the curve.
+_HAND_BUILT_STAMP = "(arrays)"
+
+#: The last-resort source tag: ``series 3`` / ``series 3 (2)``.  It names the
+#: argument slot, so it is used only when a layer has no label of its own.
+_POSITIONAL_TAG = re.compile(r"series \d+( \(\d+\))?")
+
+
 def _transform_tag(spec: PlotSpec) -> str:
     """Return the producing transform's name, when every layer of ``spec`` agrees on one."""
     names = {layer.transform for layer in spec.layers if layer.transform}
-    return names.pop() if len(names) == 1 else ""
+    tag = names.pop() if len(names) == 1 else ""
+    return "" if tag == _HAND_BUILT_STAMP else tag
 
 
 def _common_title(specs: list[PlotSpec]) -> str:
@@ -525,6 +648,57 @@ def _common_title(specs: list[PlotSpec]) -> str:
 # ---------------------------------------------------------------------------
 # Composite — many specs into panels (one figure)
 # ---------------------------------------------------------------------------
+
+
+def _unify_colour(panels: list[PlotSpec]) -> None:
+    """Make ``share_color=True`` mean something: one scale, one bar, or a refusal.
+
+    Measured before v6 it was a **complete no-op** — three ``flow_speed`` panels
+    rendered three colorbars with ``share_color`` ``True`` *or* ``False``, at
+    clims ``(5.8e-05, 16.74)``, ``(5.2e-04, 35.69)`` and ``(1.4e-03, 96.86)``:
+    three incomparable colour scales presented as a comparison figure.  It was
+    plumbed through :class:`~tsdynamics.viz.spec.Layout`, documented, and honored
+    by zero renderers.
+
+    Three obligations, all discharged here in the IR — so every backend inherits
+    them without a renderer edit:
+
+    1. **Unify the range.**  Every colorbar-bearing panel gets the union of the
+       panels' ``clim``.  *This is the half that makes the figure mean
+       something.*
+    2. **Draw one bar.**  The colorbar is kept on the first such panel and
+       dropped from the rest, which is what "one figure-level colorbar" looks
+       like to a renderer that draws per panel.
+    3. **Refuse a figure that cannot have one scale.**  Panels whose colorbars
+       label *different quantities* are not comparable, and silently unifying
+       them would be a worse wrong answer than the one being fixed.
+
+    Raises
+    ------
+    tsdynamics.errors.InvalidParameterError
+        If the panels' colorbars label different quantities.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    coloured = [p for p in panels if p.colorbar is not None]
+    if len(coloured) < 2:
+        return
+    labels = {(p.colorbar.label if p.colorbar is not None else ""): i for i, p in enumerate(panels)}
+    named = {lab: i for lab, i in labels.items() if lab}
+    if len(named) > 1:
+        (first, i), (second, j) = sorted(named.items(), key=lambda kv: kv[1])[:2]
+        raise InvalidParameterError(
+            f"share_color=True needs one colour meaning; panel {i} colours {first!r} and "
+            f"panel {j} colours {second!r}. Drop share_color, or give them their own panels."
+        )
+
+    ranges = [p.clim for p in coloured if p.clim is not None]
+    if ranges:
+        union = (min(lo for lo, _ in ranges), max(hi for _, hi in ranges))
+        for panel in coloured:
+            panel.clim = union
+    for panel in coloured[1:]:
+        panel.colorbar = None
 
 
 def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> PlotSpec:
@@ -565,6 +739,8 @@ def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> P
         and len({p.x.label for p in panels}) == 1
     )
     share_x = layout_kw["share_x"] if layout_kw["share_x"] is not None else auto_share_x
+    if layout_kw["share_color"]:
+        _unify_colour(panels)
     layout = Layout(
         mode=mode,  # type: ignore[arg-type]
         rows=layout_kw["rows"],
@@ -573,7 +749,7 @@ def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> P
         share_y=bool(layout_kw["share_y"]),
         share_color=bool(layout_kw["share_color"]),
     )
-    meta: dict[str, Any] = {"n_panels": len(panels)}
+    meta: dict[str, Any] = {"n_panels": len(panels), "panel_grid": layout.grid(len(panels))}
     if dropped_layouts:
         meta["flattened_layouts"] = dropped_layouts
     return PlotSpec(

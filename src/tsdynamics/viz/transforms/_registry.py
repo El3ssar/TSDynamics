@@ -26,15 +26,19 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ... import registry as _registry
-from .._frames import FrameSpace, OverlayRole
+from .._frames import FrameSpace, OverlayRole, space_arity
 from ..spec import PlotKind
 from ._base import (
+    PART_KEYS,
     ExampleFactory,
     Geometry,
+    Part,
     PlotTransform,
     Presentation,
     Source,
     make_frame,
+    part_from_mapping,
+    parts_from_return,
     spec_of,
 )
 from ._primitives import PRIMITIVES, get_primitive, primitive_names
@@ -45,17 +49,22 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "ADMITTED_SERIES_DIAGNOSTICS",
     "EXCLUDED_SERIES_TOOLBOX",
+    "PART_KEYS",
     "T",
     "TransformCall",
     "build_spec",
     "compatibility",
     "draw",
+    "find",
     "geometry",
     "get",
     "lower",
     "names",
-    "row_option_names",
+    "part_from_mapping",
     "plot_transform",
+    "record_for",
+    "register",
+    "row_option_names",
     "transforms",
 ]
 
@@ -124,17 +133,17 @@ def _as_tuple(value: Any) -> tuple[Any, ...]:
     return (value,)
 
 
-def plot_transform(
+def register(
     *,
-    name: str,
     source: Source,
-    default_primitive: str,
-    primitives: Iterable[str],
     frame: FrameSpace | str | Sequence[FrameSpace | str],
-    ndim: int | Sequence[int],
+    primitives: Iterable[str],
     kind: PlotKind | str | None = None,
+    name: str | None = None,
+    default_primitive: str | None = None,
+    ndim: int | Sequence[int] | None = None,
     role: OverlayRole | str = OverlayRole.BASE,
-    exclusive: Iterable[str] = (),
+    aliases: Iterable[str] = (),
     requires: str | None = None,
     presentation: Presentation | None = None,
     analysis: str | None = None,
@@ -145,41 +154,70 @@ def plot_transform(
 ) -> Callable[[Callable[..., Geometry]], Callable[..., Geometry]]:
     """Register a geometry-computing function as a named plot transform.
 
-    This decorator **is** the extension point.  Adding a plot to TSDynamics is:
-    write a function that returns a :class:`~tsdynamics.viz.transforms.Geometry`,
-    decorate it with this, done.  The compatibility row, the presentation intent
-    and the governance gate's example all ride on the same call, so nothing else
-    in the library has to learn the new name — not the renderers, not the
-    :class:`~tsdynamics.viz.spec.PlotKind` vocabulary, not ``viz.compose``, not
-    the test suite.
+    **Four declarations.  Everything else is derived.**
+
+    .. code-block:: python
+
+        import numpy as np, tsdynamics as ts
+
+        @ts.viz.transforms.register(source="data", frame="time", kind="diagnostic_curve",
+                                    primitives=("line", "points", "steps"))
+        def speed(traj):
+            '''Instantaneous speed |dx/dt| along the orbit.'''
+            dt = np.diff(traj.t)
+            return {"x": traj.t[1:],
+                    "y": np.linalg.norm(np.diff(traj.y, axis=0), axis=1) / dt}
+
+    That is the whole extension point, and it buys — with **no other edit
+    anywhere** — ``ts.plot(traj, "speed")``, ``primitive="steps"``,
+    ``traj.plot.speed()``, a row in :func:`tsdynamics.viz.compatibility`, an
+    entry in ``ts.viz.transforms.names()``, a generated gallery figure, and every
+    declared cell rendered by the compatibility gate.
+
+    Derived, never declared: ``name`` from ``fn.__name__``, ``doc`` from the
+    docstring's first line, **``ndim`` from the frame's arity**
+    (:func:`~tsdynamics.viz._frames.space_arity`), ``default_primitive`` from the
+    first entry of ``primitives``, and :attr:`~PlotTransform.subjects` from
+    ``source``.  (Axis *labels* are deliberately **not** derived from the channel
+    names: a ``{"x": t, "y": speed}`` return would label the time axis ``x``,
+    which is a wrong label rather than a missing one.  Pass ``labels=`` when the
+    axes have names.)
 
     Parameters
     ----------
-    name : str
-        The registry key and the spelling used in ``ts.plot(subject, "<name>")``.
     source : {"data", "model"}
         See :data:`~tsdynamics.viz.transforms._base.Source`.  ``"model"`` if the
         function evaluates or integrates the right-hand side at a point that is
-        not already in its input.
-    default_primitive : str
-        Used when the caller names none.  Must appear in ``primitives``.
-    primitives : iterable of str
-        **The declared compatibility row.**  Every primitive that may draw this
-        transform's geometry; anything else raises.
+        not already in its input — the registry then *enforces* it, refusing a
+        bare array with a message naming what the transform needs.
     frame : FrameSpace or sequence
         The coordinate space(s) the geometry is drawn in.  A sequence for a
         transform whose space depends on the data (a portrait is ``state2`` or
         ``state3``).
-    ndim : int or sequence of int
-        The matching coordinate-axis count(s).
+    primitives : iterable of str
+        **The declared compatibility row**, best first.  Every primitive that may
+        draw this transform's geometry; anything else raises.
     kind : PlotKind or str, optional
-        The semantic kind of the assembled spec.  Omit only when the geometry
-        always supplies its own (``Geometry.kind``).
+        The semantic kind of the assembled spec.  **Required**, except for a
+        transform declaring several frames — whose geometry must supply its own,
+        since the kind is exactly what varies.  (It was de jure optional and de
+        facto mandatory before v6: the authoring template in the shipped gallery
+        registered fine and then failed at *plot* time, on a user's machine.)
+    name : str, optional
+        The registry key and the spelling used in ``ts.plot(subject, "<name>")``.
+        Defaults to the decorated function's ``__name__``.
+    default_primitive : str, optional
+        Used when the caller names none.  Defaults to the first of ``primitives``.
+    ndim : int or sequence of int, optional
+        The coordinate-axis count(s).  Derived from ``frame``; pass it only for a
+        geometry whose shape varies *within* one space (a spatial field is a 2-D
+        lattice or a 1-D profile).
     role : OverlayRole or str, optional
         Draw order by meaning — ``field`` under ``base`` under ``overlay`` — so
         an overlay call is order-free.  Default ``base``.
-    exclusive : iterable of str, optional
-        The primitives in the row that are valid **only** here.
+    aliases : iterable of str, optional
+        Extra names resolving to this transform (``direction_field`` →
+        ``vector_field``).
     requires : str, optional
         An optional-dependency distribution name.  The row is listed as
         *unavailable* (never omitted) when it is not installed.
@@ -197,10 +235,11 @@ def plot_transform(
         draw fails CI without anyone editing a test file.
     labels : sequence of str, optional
         The axis labels to stamp when ``compute`` returns a plain **mapping of
-        channels** rather than a :class:`Geometry` (see below).  Ignored when it
-        returns a ``Geometry``, which carries its own.
+        channels** (see below).  Ignored when it returns a ``Geometry``, which
+        carries its own.
     doc : str, optional
-        One line, shown by :func:`compatibility`.
+        One line, shown by :func:`compatibility`.  Defaults to the docstring's
+        first line.
     replace : bool, optional
         Overwrite an existing registration of the same name.
 
@@ -212,70 +251,90 @@ def plot_transform(
 
     Notes
     -----
-    **``compute`` may return a plain mapping of channels.**  The name, the
-    coordinate space, the axis count and the labels are all declared *here*, so
-    a transform that repeats them in a hand-built :class:`Geometry` is declaring
-    each of them twice — and the registry then checks the two declarations
-    against each other, which is a validation of the author's patience rather
-    than of the plot.  Returning ``{"x": ..., "y": ...}`` lets the registry
-    build the frame from what the decorator already knows::
+    **``compute`` may return a plain mapping of channels, or a list of them.**
+    The name, the coordinate space and the labels are declared *here*, so a
+    transform that repeats them in a hand-built :class:`Geometry` declares each
+    of them twice and the registry's only contribution is to check the author
+    against themselves.  A list gives one :class:`Part` per mapping, reading four
+    reserved keys — ``label``, ``style``, ``primitive``, ``mark`` — with
+    everything else a channel::
 
-        @plot_transform(name="recurrence", source="data", frame="grid2", ndim=2,
-                        default_primitive="image", primitives=("image",),
-                        kind=PlotKind.IMAGE, labels=("i", "j"), example=...)
-        def recurrence(traj, *, recurrence_rate=0.05):
-            R = recurrence_matrix(traj, recurrence_rate=recurrence_rate).matrix
-            i = np.arange(R.shape[0], dtype=float)
-            return {"x": i, "y": i, "z": np.asarray(R.todense(), float)}
+        return [{"x": r, "y": c, "label": "data"},
+                {"x": r, "y": fit, "label": "fit", "style": {"linestyle": "dashed"}}]
 
-    The shorthand is available only when the transform declares exactly one
-    ``(frame, ndim)`` pair; a transform whose space depends on the data (a
-    portrait is ``state2`` *or* ``state3``) must say which one it produced, and
-    therefore builds its own :class:`Geometry`.
+    With this, **no transform author ever needs an IR type**.  Build a
+    :class:`Geometry` when the frame or the kind depends on the subject.
 
     Raises
     ------
     tsdynamics.errors.InvalidParameterError
-        If the declared row names an unknown primitive, omits the default, marks
-        an exclusive primitive that is not in the row, or claims a
-        (primitive, coordinate-space) pair the primitive itself refuses.
+        If ``source`` is not one of the two categories, if ``kind`` is missing
+        where it is required, if the declared row names an unknown primitive or
+        omits the default, or if it claims a (primitive, coordinate-space) pair
+        the primitive itself refuses.
     """
     from tsdynamics.errors import InvalidParameterError
 
     def decorator(fn: Callable[..., Geometry]) -> Callable[..., Geometry]:
+        # -- derive what was not declared -----------------------------------
+        key = name if name is not None else fn.__name__
         spaces = tuple(FrameSpace(s) for s in _as_tuple(frame))
-        row = frozenset(str(p) for p in primitives)
-        excl = frozenset(str(p) for p in exclusive)
+        ordered = tuple(str(p) for p in primitives)
+        row = frozenset(ordered)
+        chosen_default = default_primitive if default_primitive is not None else ordered[0]
+        arities = (
+            tuple(int(n) for n in _as_tuple(ndim))
+            if ndim is not None
+            else tuple(space_arity(s) for s in spaces)
+        )
 
-        if name in EXCLUDED_SERIES_TOOLBOX:
+        if source not in ("data", "model"):
             raise InvalidParameterError(
-                f"{name!r} is part of the generic time-series toolbox the v6 scope surgery "
+                f"transform {key!r} declares source={source!r}; there are exactly two "
+                "categories — 'data' (computable from the samples you have) and 'model' "
+                "(must evaluate or integrate the right-hand side somewhere new)."
+            )
+        if kind is None and len(spaces) == 1:
+            raise InvalidParameterError(
+                f"transform {key!r} declares no kind=. The semantic kind is what the "
+                "renderers dispatch on, so a transform without one registers cleanly and "
+                "then fails at PLOT time, on a user's machine. Declare one of "
+                f"{[k.value for k in PlotKind]}; only a transform declaring several frames "
+                "may leave it to its geometry."
+            )
+        if key in EXCLUDED_SERIES_TOOLBOX:
+            raise InvalidParameterError(
+                f"{key!r} is part of the generic time-series toolbox the v6 scope surgery "
                 "removed; it belongs in the companion time-series library, not in a plot "
                 "transform. See ADMITTED_SERIES_DIAGNOSTICS for the one exception and the "
                 "rule that admits it."
             )
-        if default_primitive not in row:
+        if chosen_default not in row:
             raise InvalidParameterError(
-                f"transform {name!r} declares default_primitive={default_primitive!r}, which "
+                f"transform {key!r} declares default_primitive={chosen_default!r}, which "
                 f"is not in its row {sorted(row)}."
+            )
+        if len(arities) != len(spaces) and len(spaces) != 1:
+            # One arity per space, or — for the one case ``ndim=`` survives for —
+            # several arities within a single space, because the geometry's SHAPE
+            # varies there (a spatial field is a 2-D lattice or a 1-D profile).
+            raise InvalidParameterError(
+                f"transform {key!r} declares {len(spaces)} coordinate space(s) but "
+                f"{len(arities)} ndim value(s); give one per space, or omit ndim entirely "
+                "and let the space decide."
             )
         unknown = sorted(row - set(PRIMITIVES))
         if unknown:
             raise InvalidParameterError(
-                f"transform {name!r} declares unknown primitive(s) {unknown}; the registered "
+                f"transform {key!r} declares unknown primitive(s) {unknown}; the registered "
                 f"primitives are {list(primitive_names())}."
-            )
-        stray = sorted(excl - row)
-        if stray:
-            raise InvalidParameterError(
-                f"transform {name!r} marks {stray} exclusive but does not list them in its row."
             )
         for prim_name in sorted(row):
             prim = PRIMITIVES[prim_name]
             bad = [s.value for s in spaces if not prim.accepts_frame(s)]
             if bad:
                 raise InvalidParameterError(
-                    f"transform {name!r} claims primitive {prim_name!r}, which cannot draw in "
+                    f"transform {key!r} claims primitive {prim_name!r}, which cannot draw in "
                     f"coordinate space(s) {bad} (it draws in "
                     f"{sorted(s.value for s in prim.frames or ())}). The declared matrix may "
                     "not contain a pair that is structurally impossible."
@@ -292,7 +351,7 @@ def plot_transform(
         clash = sorted(prim_options & set(inspect.signature(fn).parameters))
         if clash:
             raise InvalidParameterError(
-                f"transform {name!r} takes parameter(s) {clash}, which a primitive in its "
+                f"transform {key!r} takes parameter(s) {clash}, which a primitive in its "
                 f"row also accepts as an option; rename one so the keyword split is "
                 "unambiguous."
             )
@@ -302,15 +361,14 @@ def plot_transform(
             summary = fn.__doc__.strip().splitlines()[0]
 
         record = PlotTransform(
-            name=name,
+            name=key,
             source=source,
             compute=fn,
-            default_primitive=default_primitive,
+            default_primitive=chosen_default,
             primitives=row,
             frame=spaces,
             role=OverlayRole[role.upper()] if isinstance(role, str) else OverlayRole(role),
-            ndim=tuple(int(n) for n in _as_tuple(ndim)),
-            exclusive=excl,
+            ndim=arities,
             requires=requires,
             doc=summary,
             kind=PlotKind(kind) if kind is not None else None,
@@ -318,18 +376,32 @@ def plot_transform(
             analysis=analysis,
             example=example,
             labels=tuple(str(label) for label in labels),
+            aliases=tuple(str(a) for a in aliases),
         )
         _registry.plot_transforms.register(
-            name,
+            key,
             record,
             replace=replace,
             source=source,
-            default_primitive=default_primitive,
+            default_primitive=chosen_default,
             requires=requires,
         )
+        for alias in record.aliases:
+            _ALIASES[alias] = key
         return fn
 
     return decorator
+
+
+#: ``alias -> registered name``.  An alias is a second *spelling*, never a second
+#: record: ``ts.plot(sys, "direction_field")`` and ``"vector_field"`` build the
+#: identical geometry, and the matrix lists one row.
+_ALIASES: dict[str, str] = {}
+
+#: The pre-v6 spelling of :func:`register`.  The same function object — the
+#: in-tree transforms were written against it and it is what the published
+#: authoring recipe named.
+plot_transform = register
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +415,7 @@ def names() -> list[str]:
 
 
 def get(name: str) -> PlotTransform:
-    """Return the :class:`PlotTransform` registered as ``name``.
+    """Return the :class:`PlotTransform` registered as ``name`` (or as one of its aliases).
 
     Raises
     ------
@@ -352,17 +424,83 @@ def get(name: str) -> PlotTransform:
         registered names, because a name that is *almost* right
         (``"nullcline"`` for ``"nullclines"``) is the common case.
     """
+    import difflib
+
     from tsdynamics.errors import InvalidParameterError
 
     try:
-        record = _registry.plot_transforms.get(name)
+        record = _registry.plot_transforms.get(_ALIASES.get(name, name))
     except KeyError:
-        close = [n for n in names() if n.lower().startswith(name.lower()[:4])]
+        close = difflib.get_close_matches(name, names(), n=1, cutoff=0.5) or [
+            n for n in names() if n.lower().startswith(name.lower()[:4])
+        ]
         hint = f" Did you mean {close[0]!r}?" if close else ""
         raise InvalidParameterError(
             f"unknown plot transform {name!r}.{hint} Registered transforms: {names()}."
         ) from None
     return record  # type: ignore[no-any-return]
+
+
+def find(
+    what: str | None = None,
+    /,
+    *,
+    subject: Any = None,
+    source: Source | None = None,
+    frame: FrameSpace | str | None = None,
+    primitive: str | None = None,
+    available: bool | None = None,
+) -> list[str]:
+    """Answer *"what can I draw?"* — the names matching every filter given.
+
+    The fourth shared registry verb (``register`` / ``names`` / ``find`` /
+    ``get``).  ``subject=`` is the **user's** question, and the one worth typing::
+
+        ts.viz.transforms.find(subject=traj)     # what can I draw from THIS?
+        ts.viz.transforms.find(subject=lorenz)
+        ts.viz.transforms.find("spectrum")       # free text over name + summary
+        ts.viz.transforms.find(source="model")   # the author's question
+        ts.viz.transforms.find(primitive="contour")
+
+    Parameters
+    ----------
+    what : str, optional
+        Free text matched against the transform name and its one-line summary.
+    subject : Any, optional
+        A trajectory / system / array.  Keeps the transforms whose declared
+        :attr:`~PlotTransform.subjects` admit it.
+    source : {"data", "model"}, optional
+        Keep one source category.
+    frame : FrameSpace or str, optional
+        Keep the transforms that draw in that coordinate space.
+    primitive : str, optional
+        Keep the transforms whose declared row contains it.
+    available : bool, optional
+        Keep the transforms whose optional dependency is (or is not) installed.
+
+    Returns
+    -------
+    list of str
+        The matching names, sorted.
+    """
+    text = (what or "").lower()
+    space = FrameSpace(frame) if frame is not None else None
+    out = []
+    for record in _all_records():
+        if text and text not in record.name.lower() and text not in record.doc.lower():
+            continue
+        if subject is not None and not record.accepts_subject(subject):
+            continue
+        if source is not None and record.source != source:
+            continue
+        if space is not None and space not in record.frame:
+            continue
+        if primitive is not None and primitive not in record.primitives:
+            continue
+        if available is not None and record.available is not available:
+            continue
+        out.append(record.name)
+    return sorted(out)
 
 
 def resolve(spec: str) -> tuple[PlotTransform, str | None]:
@@ -542,7 +680,22 @@ def _compute(transform: PlotTransform, subject: Any, options: dict[str, Any]) ->
 
     If the retry also fails, the transform's ORIGINAL error is raised: it knows
     what it wanted, and a message about a failed coercion would bury that.
+
+    The ``model`` half is **enforced here rather than by a hand-written guard per
+    transform**, because the hand-written guards did not exist: handed a bare
+    array, a model transform used to raise ``AttributeError: 'numpy.ndarray'
+    object has no attribute 'jacobian'`` from somewhere inside its own numerics.
     """
+    if transform.source == "model" and not transform.accepts_subject(subject):
+        from tsdynamics.errors import InvalidInputError
+
+        raise InvalidInputError(
+            f"transform {transform.name!r} needs a dynamical system: it evaluates the "
+            f"right-hand side at points that are not in your data, and a "
+            f"{type(subject).__name__} cannot be asked for them. Pass the system "
+            f"(ts.plot(lorenz, {transform.name!r})), or pick a 'data' transform — "
+            f"ts.viz.transforms.find(subject=your_data) lists them."
+        )
     try:
         return transform.compute(subject, **options)
     except (TypeError, ValueError) as first:
@@ -575,6 +728,35 @@ def _compute(transform: PlotTransform, subject: Any, options: dict[str, Any]) ->
             raise first from None
 
 
+def record_for(geom: Geometry) -> PlotTransform:
+    """Return the :class:`PlotTransform` behind ``geom`` — or an ad-hoc one for hand-built arrays.
+
+    **``Geometry.transform`` is provenance, not a lookup key.**  It is the stamp
+    every layer carries so per-source restyling works; it used to double as the
+    registry key, which closed the layer in both directions — you could not hand
+    the library a geometry you built yourself without first registering a fake
+    transform for it.  A geometry whose stamp names no registered transform now
+    gets a record that allows **every** primitive and declares its own frame:
+    there is no declared row to violate, because nobody declared one.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    try:
+        return get(geom.transform)
+    except InvalidParameterError:
+        return PlotTransform(
+            name=geom.transform,
+            source="data",
+            compute=lambda subject, **kw: geom,
+            default_primitive="line",
+            primitives=frozenset(PRIMITIVES),
+            frame=(geom.frame.space,),
+            role=OverlayRole.BASE,
+            ndim=(geom.frame.ndim,),
+            doc="hand-built geometry",
+        )
+
+
 def lower(geom: Geometry, primitive: str | None = None, /, **primitive_options: Any) -> list[Layer]:
     """Lower a geometry to :class:`~tsdynamics.viz.spec.Layer` objects via one primitive.
 
@@ -584,7 +766,7 @@ def lower(geom: Geometry, primitive: str | None = None, /, **primitive_options: 
     """
     from tsdynamics.errors import InvalidParameterError
 
-    transform = get(geom.transform)
+    transform = record_for(geom)
     chosen = validate_primitive(transform, primitive, geometry=geom)
     prim = get_primitive(chosen)
     unknown = sorted(set(primitive_options) - prim.options)
@@ -603,19 +785,145 @@ def lower(geom: Geometry, primitive: str | None = None, /, **primitive_options: 
                 f"transform {geom.transform!r} does not carry (it has "
                 f"{sorted(part.channels)}). This is a declared-row bug, not a user error."
             )
-        layers.extend(this.build(geom, part, primitive_options if this is prim else {}))
+        built = this.build(geom, part, primitive_options if this is prim else {})
+        _check_colour_survived(geom, this, part, built)
+        layers.extend(built)
     return layers
 
 
-def draw(geom: Geometry, primitive: str | None = None, /, **primitive_options: Any) -> PlotSpec:
-    """Turn a :class:`Geometry` into a renderable :class:`~tsdynamics.viz.spec.PlotSpec`.
+def _check_colour_survived(geom: Geometry, prim: Any, part: Part, layers: Sequence[Layer]) -> None:
+    """Raise when a primitive silently **discards** a part's colour channel.
 
-    The second half of the escape hatch: ``ts.viz.geometry(...)`` gets the
-    numbers, this hands them back to the library with a chosen primitive.
+    Measured before v6: ``ts.plot(traj, "phase_portrait.steps")`` on a
+    colour-by-time portrait dropped the ``c`` channel *and kept the colorbar* —
+    a figure with a legend for a dimension it is not drawing, at no warning
+    level.  A primitive that cannot colour per-vertex is a legitimate primitive;
+    being handed colour it will throw away is a user error, and it has a
+    one-word fix.
     """
-    transform = get(geom.transform)
+    from tsdynamics.errors import InvalidParameterError
+
+    if not prim.consumes or prim.consumes & {"c", "z"}:
+        # Undeclared ``consumes`` means the primitive reshapes its input wholesale
+        # (``density`` bins it, ``contour`` colours by level) and owns its own
+        # colour story.  A primitive that consumes ``z`` draws the same scalar as
+        # height, so nothing was lost either.  What is left is the real case:
+        # a primitive that draws neither, handed a colour channel.
+        return
+    if "c" not in part.channels or any("c" in layer.data for layer in layers):
+        return
+    keeps = sorted(name for name, other in PRIMITIVES.items() if "c" in other.consumes)
+    raise InvalidParameterError(
+        f"primitive {prim.name!r} cannot draw the colour channel that transform "
+        f"{geom.transform!r} computed, so the colour would be silently dropped. Either "
+        f"draw it with one that can ({', '.join(keeps)}), or drop the colour "
+        "(color_by=None)."
+    )
+
+
+def draw(
+    data: Geometry | Mapping[str, Any] | Sequence[Mapping[str, Any]],
+    primitive: str | None = None,
+    /,
+    *,
+    labels: Sequence[str] = (),
+    title: str = "",
+    kind: PlotKind | str | None = None,
+    frame: FrameSpace | str = FrameSpace.FREE,
+    **primitive_options: Any,
+) -> PlotSpec:
+    """**Hand arrays to a primitive and get a `Plot` back** — no transform required.
+
+    The other half of the escape hatch (:func:`geometry` gets the numbers, this
+    takes numbers back), and the door for the plot the library does not have::
+
+        ts.viz.draw({"x": r, "y": C}, "line", labels=("log r", "log C(r)"))
+
+        ts.viz.draw([{"x": r, "y": C,   "label": "data"},
+                     {"x": r, "y": fit, "label": "fit",
+                      "style": {"linestyle": "dashed"}},
+                     {"x": r, "y": lo, "y2": hi, "primitive": "band",
+                      "style": {"alpha": 0.2}}],
+                    "line", labels=("log r", "log C(r)"), title="correlation sum")
+
+    Because it returns a :class:`~tsdynamics.viz.spec.Plot`, it **composes with
+    everything** — that is closure, and it is why this is a function rather than
+    a subsystem::
+
+        ts.plot(traj, "phase_portrait") + ts.viz.draw({"x": xs, "y": ys}, "line")
+        ts.viz.grid(ts.viz.draw({"x": r, "y": C}, "points"), ts.plot(traj, "psd"))
+
+    Parameters
+    ----------
+    data : Geometry, mapping, or sequence of mappings
+        A mapping of **channel name → array** (``x`` / ``y`` / ``z`` / ``c`` /
+        ``u`` / ``v`` / ``lo`` / ``hi`` / ``err`` / …), optionally with the four
+        reserved keys ``label`` / ``style`` / ``primitive`` (or ``mark``); a list
+        of such mappings for several pieces; or a :class:`Geometry` you built.
+    primitive : str, optional
+        How to draw it — ``ts.viz.primitives.names()`` lists them.  Defaults to
+        ``"line"`` for a mapping (and to the geometry's own default otherwise).
+    labels : sequence of str, optional
+        Axis labels, in axis order.
+    title : str, optional
+        Figure title.
+    kind : PlotKind or str, optional
+        The semantic kind to stamp.  Defaults to the primitive's own mark, which
+        is the honest answer for arrays that carry no further meaning.
+    frame : FrameSpace or str, optional
+        The coordinate space to claim.  Defaults to
+        :data:`~tsdynamics.viz._frames.FrameSpace.FREE` — *"I did not say"* —
+        which overlays with anything, because a caller who hand-built the arrays
+        made no coordinate claim to violate.
+    **primitive_options
+        Forwarded to the primitive (``bins=``, ``levels=``, …).
+
+    Returns
+    -------
+    Plot
+    """
+    from dataclasses import replace as _replace
+
+    geom = data if isinstance(data, Geometry) else _hand_built(data, frame, labels, title)
+    transform = record_for(geom)
     layers = lower(geom, primitive, **primitive_options)
-    return spec_of(geom, transform, layers)
+
+    # A hand-built geometry carries no semantic kind and no transform declared one
+    # for it, so the honest kind is the mark the chosen primitive emitted.
+    if kind is None and geom.kind is None and transform.kind is None:
+        transform = _replace(
+            transform, kind=PlotKind(str(layers[0].kind)) if layers else PlotKind.LINE
+        )
+    spec = spec_of(geom, transform, layers)
+    if kind is not None:
+        spec.kind = PlotKind(kind)
+    return spec
+
+
+def _hand_built(
+    data: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+    frame: FrameSpace | str,
+    labels: Sequence[str],
+    title: str,
+) -> Geometry:
+    """Build a hand-arrays :class:`Geometry` from a mapping / list of mappings."""
+    from tsdynamics.errors import InvalidInputError
+
+    parts = parts_from_return(data)
+    if parts is None:
+        raise InvalidInputError(
+            "draw() takes a channel mapping ({'x': …, 'y': …}), a list of them, or a "
+            f"Geometry; got {type(data).__name__}. For a trajectory / system / result, use "
+            "ts.plot(subject, ...)."
+        )
+    space = FrameSpace(frame)
+    return Geometry(
+        "(arrays)",
+        make_frame(space, labels, space_arity(space)),
+        parts=parts,
+        axis_labels=tuple(str(label) for label in labels),
+        title=title,
+    )
 
 
 def build_spec(
@@ -672,20 +980,24 @@ def _check_available(transform: PlotTransform) -> None:
 
 
 def _stamp(transform: PlotTransform, result: Any) -> Any:
-    """Wrap a plain channel mapping in the :class:`Geometry` the decorator describes.
+    """Wrap a plain channel mapping — or a **list** of them — in a :class:`Geometry`.
 
     ``name``, the coordinate space, the axis count and the axis labels are all
     declared on the decorator.  A transform that also spells them out in a
     hand-built ``Geometry`` declares each of them twice, and the registry's only
     contribution is to check the author against themselves.  So a mapping is a
     legal return: the registry stamps it from the declaration, which cannot
-    disagree with itself.
+    disagree with itself.  A **sequence of mappings** gives one :class:`Part`
+    each (``label`` / ``style`` / ``primitive`` / ``mark`` are read, everything
+    else is a channel) — which is what makes the plural cases, a data curve plus
+    its fit plus its confidence band, reachable without an IR type either.
 
     Available only for a transform declaring exactly one ``(frame, ndim)`` pair.
     A transform whose space depends on the data must *say* which one it
     produced, and there is no honest default to guess.
     """
-    if not isinstance(result, Mapping):
+    parts = parts_from_return(result)
+    if parts is None:
         return result
     from tsdynamics.errors import InvalidParameterError
 
@@ -697,8 +1009,8 @@ def _stamp(transform: PlotTransform, result: Any) -> Any:
         )
     return Geometry(
         transform=transform.name,
-        frame=make_frame(transform.frame[0], transform.ndim[0], transform.labels),
-        channels=result,
+        frame=make_frame(transform.frame[0], transform.labels, transform.ndim[0]),
+        parts=parts,
         axis_labels=transform.labels,
     )
 
@@ -858,25 +1170,49 @@ class CompatibilityMatrix(dict):  # type: ignore[type-arg]
         if not self:
             return "CompatibilityMatrix(empty)"
         width = max(len(k) for k in self)
-        lines = [f"{'transform'.ljust(width)}  primitives  (* default, ! exclusive)"]
+        records = [get(name) for name in sorted(self)]
+        lines: list[str] = []
         varying: list[str] = []
-        for name, row in sorted(self.items()):
-            record = get(name)
-            flag = "" if record.available else f"   [unavailable: needs {record.requires}]"
-            lines.append(f"{name.ljust(width)}  {', '.join(row)}{flag}")
-            if record.shape_dependent:
-                varying.append(name)
+        # Grouped by SOURCE, because that is the first thing a newcomer needs to
+        # know: a `model` transform wants the system, a `data` one takes the
+        # numbers you already have.  A flat alphabetical list answered "what can
+        # I draw" with 35 names and no way to tell which of them apply to the
+        # object in your hand.
+        for source, header in (
+            ("data", "FROM DATA — a trajectory, an array, or a system (it runs one)"),
+            ("model", "FROM A MODEL — needs the system: evaluates the RHS somewhere new"),
+        ):
+            rows = [r for r in records if r.source == source]
+            if not rows:
+                continue
+            lines += [header, "-" * len(header)]
+            for record in rows:
+                row = self[record.name]
+                flag = "" if record.available else f"   [unavailable: needs {record.requires}]"
+                doc = f"   {record.doc}" if record.doc else ""
+                lines.append(f"  {record.name.ljust(width)}  {', '.join(row)}{flag}")
+                if doc:
+                    lines.append(f"  {' ' * width}  {record.doc}")
+                if record.shape_dependent:
+                    varying.append(record.name)
+            lines.append("")
+        lines += ["* = the default primitive (what you get when you name none)"]
         if varying:
             # The row is declared per TRANSFORM; the real constraint is per
             # GEOMETRY.  Printed flat, `phase_portrait -> density, line3d, ...`
             # promises a 3-D trajectory a density plot, which is not a drawing
             # that exists.  Say so, and name the call that answers exactly.
             lines += [
-                "",
                 f"† {', '.join(varying)} produce geometry whose SHAPE depends on the subject",
                 "  (2-D vs 3-D; a 1-D profile vs a 2-D field), so the row above is a union.",
                 "  The legal row for one subject: ts.viz.geometry(subject, name).primitives",
             ]
+        lines += [
+            "",
+            "ts.plot(subject, 'name')              draw it",
+            "ts.plot(subject, 'name.primitive')    ...drawn another way",
+            "ts.viz.transforms.find(subject=x)     what can I draw from THIS?",
+        ]
         return "\n".join(lines)
 
 

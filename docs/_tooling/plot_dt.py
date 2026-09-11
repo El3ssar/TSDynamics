@@ -247,12 +247,12 @@ def _ode_pilot(entry: Any, final_time: float, dt0: float) -> np.ndarray | None:
         if ic is None or attempt > 0:
             ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
         try:
-            traj = sys_obj.integrate(
+            traj = sys_obj.run(
                 final_time=final_time,
                 dt=dt0,
                 ic=np.asarray(ic, dtype=float),
                 backend="interp",
-                method=method,
+                solver=method,
             )
         except (RuntimeError, ValueError):  # divergence / off-basin start
             ic = None
@@ -277,7 +277,7 @@ def _dde_pilot(entry: Any, final_time: float, dt0: float) -> np.ndarray | None:
         return [_DDE_HISTORY_OFF + _DDE_HISTORY_AMP * np.sin(_DDE_HISTORY_FREQ * s)] * sys_obj.dim
 
     try:
-        traj = sys_obj.integrate(final_time=final_time, dt=dt0, history=history)
+        traj = sys_obj.run(final_time=final_time, dt=dt0, history=history)
     except (RuntimeError, ValueError):
         return None
     x = np.asarray(traj.y[:, 0], dtype=float)

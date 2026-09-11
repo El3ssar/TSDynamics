@@ -25,7 +25,7 @@ _FD_H = 1e-6
 
 def _on_attractor_points(sys, n: int) -> np.ndarray:
     """Iterate past the transient and return ``n`` orbit points."""
-    traj = sys.iterate(steps=60 + n, max_retries=15)
+    traj = sys.run(steps=60 + n, max_retries=15)
     return traj.y[60:]
 
 

@@ -35,7 +35,7 @@ Hand `poincare_section` a flow and the plane, and it returns the crossings:
 ```python
 import tsdynamics as ts
 
-section = ts.poincare_section(
+section = ts.analysis.poincare_section(
     ts.systems.Rossler(),
     plane=("y", 0.0, "up"),   # section y = 0, crossed upward
     crossings=500,
@@ -76,8 +76,8 @@ If you only hold arrays — archived output, an experimental record — pass the
 `Trajectory` instead:
 
 ```python
-traj = ts.systems.Lorenz().integrate(final_time=300.0, dt=0.01)
-section = ts.poincare_section(traj, plane=("z", 25.0))   # plane z = 25
+traj = ts.systems.Lorenz().run(final_time=300.0, dt=0.01)
+section = ts.analysis.poincare_section(traj, plane=("z", 25.0))   # plane z = 25
 ```
 
 The data path finds sign changes between consecutive samples and locates each
@@ -104,9 +104,9 @@ hint. The direction words are `"up"` (increasing through the plane, the
 default), `"down"`, and `"both"`:
 
 ```python
-ts.poincare_section(traj, plane=("y", 0.0, "up"))    # only upward crossings
-ts.poincare_section(traj, plane=("y", 0.0), direction="down")
-ts.poincare_section(traj, plane=("y", 0.0, "both"))  # both orientations
+ts.analysis.poincare_section(traj, plane=("y", 0.0, "up"))    # only upward crossings
+ts.analysis.poincare_section(traj, plane=("y", 0.0), direction="down")
+ts.analysis.poincare_section(traj, plane=("y", 0.0, "both"))  # both orientations
 ```
 
 One-sided sections are usually what you want — a two-sided section superimposes
@@ -130,7 +130,7 @@ pmap = ts.systems.Rossler().poincare("y", 0.0, direction="up", dt=0.01)
 # ...identical to ts.derived.PoincareMap(Rossler(), ("y", 0.0, "up"), dt=0.01)
 
 u1 = pmap.step()             # advance the flow to the next crossing
-sec = pmap.trajectory(500)   # collect 500 crossings → PoincareSection
+sec = pmap.run(500)   # collect 500 crossings → PoincareSection
 pmap.crossing_count          # bookkeeping
 ```
 
@@ -150,7 +150,7 @@ $(v_n, v_{n+1})$, exposing the one-dimensional map that governs the flow.
 `return_map(method="poincare")` builds it directly from a section:
 
 ```python
-rm = ts.return_map(ts.systems.Rossler(), "y", method="poincare",
+rm = ts.analysis.return_map(ts.systems.Rossler(), "y", method="poincare",
                    plane=("x", 0.0, "up"), n=400)
 ```
 

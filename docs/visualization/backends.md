@@ -20,7 +20,7 @@ or let the file extension pick it for you.
 ```python
 import tsdynamics as ts
 
-spec = ts.Lorenz().to_plot_spec(
+spec = ts.systems.Lorenz().to_plot_spec(
     components=["x", "y", "z"], final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0]
 )
 
@@ -175,8 +175,8 @@ with a `VisualizationDegraded` warning. There are two triggers.
 routed to a capable one (matplotlib) instead:
 
 ```pycon
->>> px = ts.Lorenz().to_plot_spec(components="x", final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
->>> py = ts.Lorenz().to_plot_spec(components="y", final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
+>>> px = ts.systems.Lorenz().to_plot_spec(components="x", final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
+>>> py = ts.systems.Lorenz().to_plot_spec(components="y", final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
 >>> comp = ts.viz.plot(px, py, layout="stack", animate=True)   # an animated composite
 >>> comp.render("plotly")
 VisualizationDegraded: backend 'plotly' cannot draw a 'composite' spec;
@@ -189,7 +189,7 @@ carries. The dispatcher collects **all** of them and emits **one** consolidated
 warning before drawing:
 
 ```pycon
->>> spec = ts.Lorenz().to_plot_spec(components=["x", "y", "z"], final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
+>>> spec = ts.systems.Lorenz().to_plot_spec(components=["x", "y", "z"], final_time=20, dt=0.02, ic=[1.0, 1.0, 1.0])
 >>> spec.style(linestyle="dashed")     # three.js has no line dashing
 >>> spec.render("threejs")
 VisualizationDegraded: threejs: ignoring linestyle
@@ -266,7 +266,7 @@ No web server, no sibling `.json`, no `fetch`.
 ```python
 import tsdynamics as ts
 
-spec = ts.Lorenz().to_plot_spec(
+spec = ts.systems.Lorenz().to_plot_spec(
     final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0], animate=True,
 )
 spec.save("lorenz.html", backend="threejs")     # 32k vertices, ~1.3 MB
@@ -309,7 +309,7 @@ copy-paste.
 ```python
 import tsdynamics as ts
 
-ts.Lorenz().to_plot_spec(
+ts.systems.Lorenz().to_plot_spec(
     final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0],
 ).save("lorenz.html", backend="threejs")
 ```
@@ -392,7 +392,7 @@ import tsdynamics as ts
 # the *weight* by the cap. Thinning is not silent: it raises
 # VisualizationDegraded naming the layer and the counts. That is the intent
 # here, so this snippet accepts it rather than letting it escape.
-traj = ts.Rossler().integrate(final_time=400.0, dt=0.002, ic=[1.0, 1.0, 1.0])
+traj = ts.systems.Rossler().run(final_time=400.0, dt=0.002, ic=[1.0, 1.0, 1.0])
 print(traj.y.shape)                       # (200001, 3)
 
 spec = traj.to_plot_spec(color_by="time")
@@ -429,7 +429,7 @@ pure Python over the spec IR):
 
 ```python
 # a modestly sampled spec, so nothing is thinned by the vertex cap
-spec = ts.Lorenz().to_plot_spec(final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0])
+spec = ts.systems.Lorenz().to_plot_spec(final_time=80.0, dt=0.0025, ic=[1.0, 1.0, 1.0])
 
 payload = spec.render("threejs")             # a RenderResult carrying the dict
 spec.render("threejs", path="lorenz.json")   # …or write the payload to a file

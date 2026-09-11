@@ -2,7 +2,7 @@ r"""
 Quantifiers of a basin diagram.
 
 These read a basin *image* — a labelled grid from
-:func:`~tsdynamics.analysis.basins.basins.basins_of_attraction` (or a raw integer
+:func:`~tsdynamics.analysis.basins.basins.basins` (or a raw integer
 array) — and need no further integration, so they are cheap and exact on a
 synthetic label grid:
 
@@ -31,7 +31,7 @@ from ...errors import InvalidInputError, InvalidParameterError, invalid_value, r
 from .._common import reject_system as _reject_system
 from .._result import AnalysisResult, ScalarResult
 from .._result_json import _sig
-from ._common import _BASIN_HINT, _as_label_array
+from ._common import _as_label_array
 from .basins import BasinsResult
 
 #: Minimum number of basins for the Wada test to mean anything: the Wada property
@@ -76,14 +76,14 @@ def _resolve_attractor_id(result: BasinsResult, attractor_id: int | None) -> int
             "this basin image has no attractor to measure — every cell diverged or "
             "went unlabelled, so there is no basin and no boundary."
             + remedy(
-                "res = ts.basins_of_attraction(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                "res = ts.analysis.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
                 lead="Widen the region (or raise max_steps) so trajectories settle:",
             )
         )
     raise InvalidInputError(
         f"resilience measures one attractor's distance to its basin boundary, so it "
         f"needs to know which: this image holds {len(present)} attractors, "
-        f"labelled {present}." + remedy(f"ts.resilience(res, attractor_id={present[0]})")
+        f"labelled {present}." + remedy(f"ts.analysis.resilience(res, attractor_id={present[0]})")
     )
 
 
@@ -551,8 +551,8 @@ def uncertainty_exponent(
             f"with eps, and f(eps) is zero at all but {int(positive.sum())} of the "
             f"probed radii — {why}."
             + remedy(
-                "res = ts.basins_of_attraction(system, [(-2.0, 2.0, 400), (-2.0, 2.0, 400)])",
-                "ts.uncertainty_exponent(res)",
+                "res = ts.analysis.basins(system, [(-2.0, 2.0, 400), (-2.0, 2.0, 400)])",
+                "ts.analysis.uncertainty_exponent(res)",
                 lead="Image a region that contains more than one attractor, more finely:",
             )
         )
@@ -766,19 +766,18 @@ def resilience(result: BasinsResult, attractor_id: int | None = None) -> ScalarR
     """
     from scipy.ndimage import distance_transform_edt
 
-    _reject_system(
-        result,
-        analysis="resilience",
-        hint=_BASIN_HINT.format(who="resilience") + "  # then resilience(res, attractor_id)",
-    )
+    # The shared builder (CONTRACT §5.6) answers the system door; the bespoke
+    # branch below still answers the *data* door, because it names the keyword
+    # (``attractor_id=``) that no generic message can know about.
+    _reject_system(result, analysis="resilience")
     if not isinstance(result, BasinsResult):
         raise InvalidInputError(
             f"resilience measures a state-space distance, so it needs the full "
             f"BasinsResult (with its grid and attractors), not a "
             f"{type(result).__name__}."
             + remedy(
-                "res = ts.basins_of_attraction(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
-                "ts.resilience(res, attractor_id=1)",
+                "res = ts.analysis.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                "ts.analysis.resilience(res, attractor_id=1)",
             )
         )
     labels = result.labels

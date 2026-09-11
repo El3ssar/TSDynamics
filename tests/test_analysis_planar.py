@@ -163,7 +163,7 @@ def test_a_base_state_of_the_wrong_size_is_refused():
 
 def test_the_model_estimators_refuse_a_trajectory():
     """The greppable source rule, enforced: these evaluate the RHS somewhere new."""
-    traj = LotkaVolterra().integrate(final_time=1.0, dt=0.1)
+    traj = LotkaVolterra().run(final_time=1.0, dt=0.1)
     for call in (planar.flow_field, planar.nullclines, planar.streamlines, planar.ftle_field):
         with pytest.raises(InvalidInputError, match="continuous system"):
             call(traj, xlim=(0.0, 1.0), ylim=(0.0, 1.0))
@@ -262,7 +262,7 @@ def _cosine_with_field(system, traj, field, skip=200):
 def test_the_sampled_field_is_tangent_to_an_integrated_trajectory():
     """The one check that says the arrows mean what the picture claims."""
     system = VanDerPol()
-    traj = system.integrate(final_time=20.0, dt=0.005, ic=[0.5, 0.5])
+    traj = system.run(final_time=20.0, dt=0.005, ic=[0.5, 0.5])
     field = planar.flow_field(system, xlim=(-3.0, 3.0), ylim=(-4.0, 4.0), grid=201)
     cosine = _cosine_with_field(system, traj, field)
     assert cosine.min() > 0.999, f"worst angle {np.degrees(np.arccos(cosine.min())):.3f} deg"
@@ -573,7 +573,7 @@ def test_the_logistic_invariant_density_matches_the_arcsine_law():
     r"""``rho(x) = 1 / (pi sqrt(x (1-x)))`` at ``r = 4`` — an exact reference."""
     from tsdynamics.systems import Logistic
 
-    orbit = Logistic(r=4.0).iterate(steps=200_000, ic=[0.4])
+    orbit = Logistic(r=4.0).run(steps=200_000, ic=[0.4])
     centres, density, edges = planar.invariant_density(orbit.y[:, 0], bins=200)
     truth = 1.0 / (np.pi * np.sqrt(np.clip(centres * (1.0 - centres), 1e-30, None)))
     inside = (centres > 0.05) & (centres < 0.95)

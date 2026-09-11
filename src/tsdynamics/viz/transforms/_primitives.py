@@ -27,9 +27,15 @@ import numpy as np
 
 from .._frames import FrameSpace
 from ..spec import Layer, PlotKind
-from ._base import Geometry, Part, Primitive
+from ._base import Geometry, Part, Primitive, parts_from_return
 
-__all__ = ["PRIMITIVES", "RESERVED_PRIMITIVES", "get_primitive", "primitive_names"]
+__all__ = [
+    "PRIMITIVES",
+    "RESERVED_PRIMITIVES",
+    "get_primitive",
+    "primitive_names",
+    "register_primitive",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +96,7 @@ def _passthrough(
         requires=frozenset(requires),
         frames=frames,
         doc=doc,
+        consumes=frozenset(names),
     )
 
 
@@ -405,6 +412,9 @@ _register(
         build=_build_steps,
         marks=frozenset({PlotKind.LINE}),
         requires=frozenset({"x", "y"}),
+        # Declared, so handing it a colour channel it cannot draw is an error
+        # rather than a silent drop (which used to keep the colorbar too).
+        consumes=frozenset({"x", "y"}),
         doc="A piecewise-constant staircase, materialised as a polyline.",
     ),
 )
@@ -453,12 +463,172 @@ _register(
 #: draw: nothing here appears in any transform's declared row, so no caller is
 #: ever told these are available for a plot they cannot get.
 RESERVED_PRIMITIVES: dict[str, str] = {
-    "bars": "claimed by the result-class transforms (lyapunov_spectrum, basin fractions, RQA)",
-    "errorbars": "claimed by the scaling-fit and D(q) transforms",
-    "band": "claimed by the ensemble-fan and continuation transforms",
     "markers": "claimed by the fixed-point / tipping-point overlays",
-    "boundary": "exclusive to the basins transform",
+    "errorbars": (
+        "claimed by nothing yet: it needs a per-point `err` channel, and the two "
+        "candidates (scaling_fit, dimension_spectrum) carry a whole-fit "
+        "uncertainty rather than one per point"
+    ),
 }
+
+
+#: ``mark name -> PlotKind``.  A primitive author writes ``marks=("line",
+#: "points")`` — the words they already use — and never imports the enum.  The
+#: two spellings that differ from the enum value are the two where the primitive
+#: vocabulary and the mark vocabulary genuinely disagree.
+_MARK_ALIASES: dict[str, PlotKind] = {
+    "points": PlotKind.SCATTER,
+    "points3d": PlotKind.SCATTER,
+    "band": PlotKind.AREA,
+    "bars": PlotKind.BAR,
+    "errorbars": PlotKind.ERRORBAR,
+    "steps": PlotKind.LINE,
+    "contour": PlotKind.LINE,
+    "density": PlotKind.IMAGE,
+    "boundary": PlotKind.SCATTER,
+}
+
+
+def as_mark(mark: PlotKind | str) -> PlotKind:
+    """Coerce a mark spelling to a :class:`~tsdynamics.viz.spec.PlotKind`.
+
+    Accepts the enum, its value (``"line"``), or a primitive-side synonym
+    (``"points"`` → ``SCATTER``).  **No new ``PlotKind`` is ever needed to add a
+    primitive** — that is the invariant that keeps the compatibility matrix
+    growable, so the coercion has to be generous at exactly this one point.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    if isinstance(mark, PlotKind):
+        return mark
+    text = str(mark)
+    if text in _MARK_ALIASES:
+        return _MARK_ALIASES[text]
+    try:
+        return PlotKind(text)
+    except ValueError:
+        raise InvalidParameterError(
+            f"unknown mark {text!r}; a primitive lowers to the frozen mark vocabulary "
+            f"{sorted({k.value for k in PlotKind} | set(_MARK_ALIASES))}."
+        ) from None
+
+
+def register_primitive(
+    name: str,
+    /,
+    *,
+    requires: Sequence[str] = (),
+    marks: Sequence[PlotKind | str] = (),
+    frames: Sequence[FrameSpace | str] | None = None,
+    options: Sequence[str] = (),
+    emits_frame: FrameSpace | str | None = None,
+    doc: str = "",
+    replace: bool = False,
+) -> Any:
+    """Register a **new way of drawing** — one decorator, zero private imports.
+
+    The second extension door, and it returns the same shape as the first::
+
+        @ts.viz.primitives.register("stem", requires=("x", "y"), marks=("line", "points"))
+        def stem(part, **options):
+            '''A vertical drop to the baseline plus a marker at each point.'''
+            x, y = part["x"], part["y"]
+            base = options.get("baseline", 0.0)
+            xs = np.repeat(x, 3)
+            ys = np.empty(3 * len(y)); ys[0::3] = base; ys[1::3] = y; ys[2::3] = np.nan
+            return [{"mark": "line", "x": xs, "y": ys},
+                    {"mark": "points", "x": x, "y": y}]
+
+    **Primitives return mappings, exactly like transforms.**  One return
+    convention across both doors, so "you never need an IR type" is true of both
+    rather than of one: the function takes a
+    :class:`~tsdynamics.viz.transforms.Part` (``part["x"]`` is the array) and
+    returns a mapping of channels, or a list of them, each optionally naming its
+    ``mark``, ``label`` and ``style``.
+
+    **No new** :class:`~tsdynamics.viz.spec.PlotKind` **is ever needed**: marks
+    are coerced from the words you already use (:func:`as_mark`), which is what
+    lets the compatibility matrix grow without touching a renderer.
+
+    Parameters
+    ----------
+    name : str
+        The spelling used in ``primitive="…"``, in ``"transform.name"`` sugar,
+        and in a transform's declared row.
+    requires : sequence of str, optional
+        The channels a part must carry for this primitive to draw it.  Checked
+        before ``build`` is called, so a missing channel is a message rather than
+        a ``KeyError``.
+    marks : sequence, optional
+        The layer marks this primitive lowers to — documentation and governance;
+        the actual mark of each returned piece comes from its ``mark`` key (or
+        the first of these).
+    frames : sequence, optional
+        The coordinate spaces it can draw in.  ``None`` (default) means any; a
+        transform declaring a space this primitive refuses is rejected **at
+        registration**.
+    options : sequence of str, optional
+        The keyword names it accepts.  Anything else raises rather than being
+        silently dropped.
+    emits_frame : FrameSpace or str, optional
+        Set when the primitive *changes* the coordinate space of what it draws.
+    doc : str, optional
+        One line for :func:`tsdynamics.viz.compatibility`; defaults to the
+        docstring's first line.
+    replace : bool, optional
+        Overwrite an existing primitive of that name.
+
+    Returns
+    -------
+    callable
+        A decorator returning the undecorated function, so a primitive stays
+        directly callable and unit-testable.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    def decorator(fn: Any) -> Any:
+        if name in PRIMITIVES and not replace:
+            raise InvalidParameterError(
+                f"primitive {name!r} is already registered ({PRIMITIVES[name].doc!r}); "
+                "pass replace=True to override it deliberately."
+            )
+        kinds = frozenset(as_mark(m) for m in marks) or frozenset({PlotKind.LINE})
+        default_mark = as_mark(marks[0]) if marks else PlotKind.LINE
+        summary = doc or ((fn.__doc__ or "").strip().splitlines() or [""])[0]
+
+        def build(geometry: Geometry, part: Part, opts: Mapping[str, Any]) -> list[Layer]:
+            pieces = parts_from_return(fn(part, **dict(opts)))
+            if pieces is None:
+                raise InvalidParameterError(
+                    f"primitive {name!r} returned "
+                    f"{type(fn(part, **dict(opts))).__name__}, not a channel mapping "
+                    "({'x': …, 'y': …}) nor a list of them."
+                )
+            return [
+                _layer(
+                    geometry,
+                    part,
+                    as_mark(piece.primitive) if piece.primitive else default_mark,
+                    {n: c.values for n, c in piece.channels.items()},
+                    label=piece.label if piece.label is not None else part.label,
+                    style={**dict(part.style), **dict(piece.style)},
+                )
+                for piece in pieces
+            ]
+
+        PRIMITIVES[name] = Primitive(
+            name=name,
+            build=build,
+            marks=kinds,
+            requires=frozenset(requires),
+            frames=frozenset(FrameSpace(f) for f in frames) if frames is not None else None,
+            options=frozenset(options),
+            emits_frame=FrameSpace(emits_frame) if emits_frame is not None else None,
+            doc=summary,
+        )
+        return fn
+
+    return decorator
 
 
 def primitive_names() -> tuple[str, ...]:

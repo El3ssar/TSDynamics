@@ -48,8 +48,8 @@ defaults, and an orbit figure.
 ```python
 import tsdynamics as ts
 
-h = ts.Henon()
-traj = h.iterate(steps=10_000)     # Trajectory; traj.t is arange(steps)
+h = ts.systems.Henon()
+traj = h.run(steps=10_000)     # Trajectory; traj.t is arange(steps)
 ```
 
 The map iterates on the Rust engine, with the lowered tape JIT-compiled once per

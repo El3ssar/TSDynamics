@@ -162,10 +162,10 @@ class MyAttractor(ts.ContinuousSystem):
         x, yv, z = y(0), y(1), y(2)
         return (-yv - z, x + a * yv, b + z * (x - c))
 
-traj = MyAttractor(ic=[1.0, 0.0, 0.0]).integrate(final_time=5.0, dt=0.05)
+traj = MyAttractor(ic=[1.0, 0.0, 0.0]).run(final_time=5.0, dt=0.05)
 np.round(traj.y[-1], 3)                    # → [ 0.647, -1.605,  0.037]
 
-exps = ts.lyapunov_spectrum(MyAttractor(ic=[1.0, 0.0, 0.0]))   # composes for free
+exps = ts.analysis.lyapunov_spectrum(MyAttractor(ic=[1.0, 0.0, 0.0]))   # composes for free
 ```
 
 A user-defined class registers as **non-builtin**

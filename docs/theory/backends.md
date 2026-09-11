@@ -71,9 +71,9 @@ one-shot script, or profiling the interpreter itself — ask for
 ```python
 import tsdynamics as ts
 
-ts.Lorenz().integrate(final_time=100, dt=0.01)                       # jit (default)
-ts.Lorenz().integrate(final_time=100, dt=0.01, backend="interp")     # SSA interpreter
-ts.Lorenz().integrate(final_time=100, dt=0.01, backend="reference")  # pure-Python oracle
+ts.systems.Lorenz().run(final_time=100, dt=0.01)                       # jit (default)
+ts.systems.Lorenz().run(final_time=100, dt=0.01, backend="interp")     # SSA interpreter
+ts.systems.Lorenz().run(final_time=100, dt=0.01, backend="reference")  # pure-Python oracle
 ```
 
 ## Choosing a solver
@@ -95,7 +95,7 @@ aliases:
 `rk45`) can fail outright on a stiff right-hand side. Systems known to need an
 implicit solver declare it themselves — e.g. `Oregonator`, `KuramotoSivashinsky`
 and several Sprott jerk flows set `_default_method = "bdf"` — so
-`sys.integrate()` "just works" without the caller having to know. When you
+`sys.run()` "just works" without the caller having to know. When you
 define a stiff system of your own, set `_default_method = "bdf"` on the class.
 The implicit kernels need the system's analytic Jacobian on the tape;
 `run.integrate` builds it automatically when the resolved method is implicit, so

@@ -73,8 +73,15 @@ def scratch_registry():
     made: list[str] = []
 
     def register(**kwargs):
-        made.append(kwargs["name"])
-        return plot_transform(**kwargs)
+        decorate = plot_transform(**kwargs)
+
+        def wrap(fn):
+            # ``name`` is derived from ``fn.__name__`` unless declared, so the
+            # cleanup list can only be built once the function is in hand.
+            made.append(kwargs.get("name", fn.__name__))
+            return decorate(fn)
+
+        return wrap
 
     yield register
     for name in made:
@@ -119,7 +126,7 @@ def test_geometry_channels_shortcut_refuses_a_multi_part_geometry():
 
 
 def test_geometry_needs_exactly_one_of_parts_or_channels():
-    frame = make_frame(FrameSpace.STATE2, 2, ("x", "y"))
+    frame = make_frame(FrameSpace.STATE2, ("x", "y"))
     with pytest.raises(InvalidParameterError, match="exactly one"):
         Geometry("t", frame)
     with pytest.raises(InvalidParameterError, match="exactly one"):
@@ -143,12 +150,12 @@ def test_make_frame_normalizes_labels_the_way_the_overlay_check_does():
     Otherwise a transform labelling its axis ``"$x$"`` and one labelling it
     ``"x"`` would be refused an overlay on typography.
     """
-    assert make_frame(FrameSpace.STATE2, 2, ("$x$", "v")) == Frame(FrameSpace.STATE2, 2, ("x", "v"))
+    assert make_frame(FrameSpace.STATE2, ("$x$", "v")) == Frame(FrameSpace.STATE2, 2, ("x", "v"))
     # A time frame draws two axes but has one coordinate; the extra label is
     # presentation, not a coordinate, so it never reaches the frame.
-    assert make_frame(FrameSpace.TIME, 1, ("t", "x")).axes == ("t",)
+    assert make_frame(FrameSpace.TIME, ("t", "x")).axes == ("t",)
     # Fewer labels than coordinates is padded with "I did not say", never dropped.
-    assert make_frame(FrameSpace.STATE3, 3, ("x",)).axes == ("x", "", "")
+    assert make_frame(FrameSpace.STATE3, ("x",)).axes == ("x", "", "")
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +166,7 @@ def test_make_frame_normalizes_labels_the_way_the_overlay_check_does():
 def _ok_geometry(_subject, **_kw):
     return Geometry(
         "scratch",
-        make_frame(FrameSpace.STATE2, 2, ("x", "y")),
+        make_frame(FrameSpace.STATE2, ("x", "y")),
         channels={"x": np.arange(4.0), "y": np.arange(4.0)},
         axis_labels=("x", "y"),
     )
@@ -207,7 +214,8 @@ def test_registering_a_transform_touches_only_its_own_module(scratch_registry):
     [
         ({"default_primitive": "points", "primitives": ("line",)}, "not in its row"),
         ({"primitives": ("line", "rainbow")}, "unknown primitive"),
-        ({"primitives": ("line",), "exclusive": ("points",)}, "exclusive"),
+        ({"kind": None}, "declares no kind"),
+        ({"source": "oracle"}, "exactly two categories"),
         (
             {"primitives": ("line", "quiver"), "frame": FrameSpace.SCALING},
             "structurally impossible",
@@ -287,7 +295,7 @@ def test_a_transform_that_computes_an_undeclared_frame_is_caught(scratch_registr
     def scratch(subject):
         return Geometry(
             "scratch",
-            make_frame(FrameSpace.TIME, 1, ("t",)),
+            make_frame(FrameSpace.TIME, ("t",)),
             channels={"x": np.arange(3.0), "y": np.arange(3.0)},
         )
 
@@ -383,7 +391,7 @@ def test_the_reserved_primitives_draw_when_handed_the_channels_they_need():
     """A primitive with no transform row yet is still exercised, never untested code."""
     from tsdynamics.viz.transforms._base import Geometry as _Geometry
 
-    frame = make_frame(FrameSpace.CATEGORY, 1, ("k",))
+    frame = make_frame(FrameSpace.CATEGORY, ("k",))
     samples = {
         "bars": {"x": np.arange(3.0), "y": np.array([1.0, -2.0, 0.5])},
         "errorbars": {
@@ -404,7 +412,11 @@ def test_the_reserved_primitives_draw_when_handed_the_channels_they_need():
             "z": np.array([[0, 0, 1, 1]] * 3, dtype=float),
         },
     }
-    assert set(samples) == set(RESERVED_PRIMITIVES)
+    # v6 claimed three of these — `bars` by the lyapunov-spectrum row, `band` by
+    # `ensemble_fan`, `boundary` by `basins` — so the compatibility gate renders
+    # them now.  What is still reserved must be a subset of what is smoke-tested
+    # here, and nothing may be reserved without an example.
+    assert set(RESERVED_PRIMITIVES) <= set(samples)
     for name, channels in samples.items():
         g = _Geometry("reserved", frame, channels=channels)
         layers = PRIMITIVES[name].build(g, g.parts[0], {})
@@ -454,7 +466,7 @@ def test_plot_overlays_a_new_transform_onto_a_built_in_one(scratch_registry):
     def scratch_marks(subject):
         return Geometry(
             "scratch_marks",
-            make_frame(FrameSpace.STATE2, 2, ("x", "y")),
+            make_frame(FrameSpace.STATE2, ("x", "y")),
             channels={"x": np.array([0.0, 0.5]), "y": np.array([0.0, -0.5])},
             axis_labels=("x", "y"),
             label="marks",
@@ -504,10 +516,27 @@ def test_a_shared_keyword_only_reaches_the_transforms_that_accept_it():
     assert spec.panels[1].x.label == "x(t)"
 
 
-def test_plot_needs_exactly_one_subject_when_transforms_are_named():
-    with pytest.raises(InvalidParameterError, match="exactly one subject"):
-        plot(_traj(), _traj(), "time_series")
-    with pytest.raises(InvalidParameterError, match="exactly one subject"):
+def test_a_named_transform_applies_to_every_subject_that_admits_it():
+    """**The headline fix.** Two subjects and one transform is one figure, not a refusal.
+
+    ``ts.plot(a, b, "phase_portrait")`` — the most obvious comparison plot in
+    dynamics — used to answer *"naming transform(s) ['phase_portrait'] needs
+    exactly one subject to apply them to, got 2"*.
+    """
+    one = plot(_traj(), "time_series")
+    both = plot(_traj(), _traj(), "time_series")
+    assert {layer.transform for layer in both.layers} == {"time_series"}
+    assert len(both.layers) == 2 * len(one.layers)  # both orbits, one figure
+    # ...and every legend entry names exactly one of them
+    labels = [layer.label for layer in both.layers if layer.label]
+    assert len(set(labels)) == len(labels)
+
+
+def test_a_transform_no_subject_admits_raises_naming_what_it_needs():
+    """A model transform with only data to work on says so, and says what to pass."""
+    with pytest.raises(InvalidParameterError, match="none of the 1 subject"):
+        plot(_traj(), "nullclines")
+    with pytest.raises(InvalidParameterError, match="needs something to apply them to"):
         plot("time_series")
 
 
@@ -670,7 +699,7 @@ def test_animate_reaches_the_spec_through_the_transform_front_door() -> None:
     import tsdynamics as ts
     from tsdynamics.viz.spec import Animation
 
-    traj = ts.systems.Lorenz().integrate(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=5.0, dt=0.05, ic=[1.0, 1.0, 1.0])
 
     assert ts.plot(traj, "phase_portrait", animate=True).is_animated
     assert ts.plot(traj, "phase_portrait", animate={"fps": 24}).is_animated
@@ -688,10 +717,212 @@ def test_an_animated_transform_spec_writes_a_real_movie(tmp_path) -> None:
 
     import tsdynamics as ts
 
-    traj = ts.systems.Lorenz().integrate(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0])
     path = tmp_path / "orbit.gif"
     ts.plot(traj, "phase_portrait", animate=True).save(path)
 
     assert path.stat().st_size > 0
     with Image.open(path) as img:
         assert getattr(img, "n_frames", 1) > 1
+
+
+# ---------------------------------------------------------------------------
+# v6: the extension doors — four declarations, and nothing else
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def scratch_primitive():
+    """Register primitives that are removed again afterwards."""
+    from tsdynamics.viz.transforms import PRIMITIVES as _P
+
+    before = dict(_P)
+    yield
+    _P.clear()
+    _P.update(before)
+
+
+def test_four_declarations_are_enough_to_add_a_plot(scratch_registry):
+    """The newcomer's door: source, frame, kind, primitives — everything else derived."""
+
+    @scratch_registry(
+        source="data", frame="time", kind="diagnostic_curve", primitives=("line", "points")
+    )
+    def speed(traj):
+        """Instantaneous speed |dx/dt| along the orbit."""
+        dt = np.diff(traj.t)
+        return {"x": traj.t[1:], "y": np.linalg.norm(np.diff(traj.y, axis=0), axis=1) / dt}
+
+    record = get("speed")
+    assert record.name == "speed"  # from __name__
+    assert record.doc.startswith("Instantaneous speed")  # from __doc__
+    assert record.ndim == (1,)  # from the frame's arity
+    assert record.default_primitive == "line"  # from primitives[0]
+    assert record.subjects == ("trajectory", "array", "system")  # from source
+    # ...and with no other edit anywhere, all of this works:
+    assert plot(_traj(), "speed").kind is PlotKind.DIAGNOSTIC_CURVE
+    assert plot(_traj(), "speed", primitive="points").layers[0].kind is PlotKind.SCATTER
+    assert plot(_traj(), "speed.points").layers[0].kind is PlotKind.SCATTER
+    assert "speed" in compatibility()
+    assert "speed" in names()
+    assert "speed" in ts_find(subject=_traj())
+
+
+def ts_find(**kw):
+    from tsdynamics.viz.transforms import find
+
+    return find(**kw)
+
+
+def test_a_transform_may_return_a_list_of_mappings(scratch_registry):
+    """The plural case without an IR type: one Part per mapping, four reserved keys."""
+
+    @scratch_registry(
+        source="data", frame="scaling", kind="scaling_fit", primitives=("line", "points")
+    )
+    def pair(traj):
+        """A measured curve and its fit."""
+        x = np.arange(5.0)
+        return [
+            {"x": x, "y": x**2, "label": "measured"},
+            {"x": x, "y": x**2 + 1, "label": "fit", "style": {"linestyle": "dashed"}},
+            {"x": x, "y": x, "label": "guide", "primitive": "points"},
+        ]
+
+    spec = plot(_traj(), "pair")
+    assert [layer.label for layer in spec.layers] == ["measured", "fit", "guide"]
+    assert spec.layers[1].style["linestyle"] == "dashed"
+    assert [str(layer.kind) for layer in spec.layers] == ["line", "line", "scatter"]
+
+
+def test_a_new_primitive_is_one_decorator_and_returns_mappings(scratch_primitive, scratch_registry):
+    """The second extension door, with the *same* return convention as the first."""
+    from tsdynamics.viz.transforms import get_primitive, primitive_names, register_primitive
+
+    @register_primitive("stem", requires=("x", "y"), marks=("line", "points"))
+    def stem(part, **options):
+        """A vertical drop to the baseline plus a marker at each point."""
+        x, y = part["x"], part["y"]
+        xs, ys = np.repeat(x, 3), np.empty(3 * len(y))
+        ys[0::3], ys[1::3], ys[2::3] = options.get("baseline", 0.0), y, np.nan
+        return [{"mark": "line", "x": xs, "y": ys}, {"mark": "points", "x": x, "y": y}]
+
+    assert "stem" in primitive_names()
+    assert get_primitive("stem").requires == frozenset({"x", "y"})
+
+    @scratch_registry(
+        source="data", frame="time", kind="diagnostic_curve", primitives=("stem", "line")
+    )
+    def spikes(traj):
+        """A spike train."""
+        return {"x": traj.t[:6], "y": np.arange(6.0)}
+
+    spec = plot(_traj(), "spikes")
+    assert [str(layer.kind) for layer in spec.layers] == ["line", "scatter"]
+    # no new PlotKind was needed to add a way of drawing
+    assert {str(k) for k in get_primitive("stem").marks} <= {str(k) for k in PlotKind}
+
+
+def test_draw_takes_plain_arrays_and_gives_back_a_plot():
+    """The owner's ask by name: hand arrays to a primitive, get a Plot."""
+    r = np.linspace(0.1, 2.0, 20)
+    p = draw({"x": r, "y": r**2}, "line", labels=("log r", "log C(r)"))
+    assert isinstance(p, PlotSpec)
+    assert (p.x.label, p.y.label) == ("log r", "log C(r)")
+    assert [str(layer.kind) for layer in p.layers] == ["line"]
+    assert np.allclose(p.layers[0].data["y"], r**2)
+
+
+def test_draw_takes_a_list_of_mappings_with_labels_styles_and_primitives():
+    r = np.linspace(0.1, 2.0, 20)
+    p = draw(
+        [
+            {"x": r, "y": r**2, "label": "data"},
+            {"x": r, "y": r**2 + 1, "label": "fit", "style": {"linestyle": "dashed"}},
+            {"x": r, "lo": r, "hi": r + 1, "primitive": "band", "style": {"alpha": 0.2}},
+        ],
+        "line",
+        title="correlation sum",
+    )
+    assert [layer.label for layer in p.layers][:2] == ["data", "fit"]
+    assert p.layers[1].style["linestyle"] == "dashed"
+    assert str(p.layers[2].kind) == "area"
+    assert p.title == "correlation sum"
+
+
+def test_draw_refuses_something_that_is_not_channels():
+    with pytest.raises(InvalidInputError, match="channel mapping"):
+        draw(_traj(), "line")
+
+
+def test_a_hand_built_geometry_needs_no_registered_transform():
+    """``Geometry.transform`` is provenance, not a lookup key."""
+    g = Geometry(
+        "mine",
+        make_frame(FrameSpace.FREE, ("a", "b")),
+        channels={"x": np.arange(5.0), "y": np.arange(5.0)},
+    )
+    spec = draw(g, "points")
+    assert [layer.transform for layer in spec.layers] == ["mine"]
+
+
+def test_a_model_transform_refuses_measured_data_by_name():
+    """Before v6: ``AttributeError: 'numpy.ndarray' object has no attribute 'jacobian'``."""
+    with pytest.raises(InvalidInputError, match="needs a dynamical system"):
+        build_spec(np.linspace(0.0, 1.0, 10), "nullclines")
+
+
+def test_an_alias_is_a_second_spelling_not_a_second_row():
+    """``direction_field`` resolves to ``vector_field``; the matrix lists one row."""
+    assert get("direction_field") is get("vector_field")
+    assert "direction_field" not in compatibility()
+    assert get("vector_field").aliases == ("direction_field",)
+
+
+def test_the_guessable_name_is_the_working_one():
+    """``ts.plot(system, "vector_field")`` used to raise ``missing 'xlim' and 'ylim'``."""
+    from tsdynamics.systems import VanDerPol
+
+    spec = plot(VanDerPol(), "vector_field")
+    assert spec.kind is PlotKind.VECTOR_FIELD
+    assert "u" in spec.layers[0].data and "v" in spec.layers[0].data
+
+
+def test_a_primitive_that_would_drop_the_colour_raises(scratch_registry):
+    """Measured: ``steps`` discarded the colour channel **and kept the colorbar**."""
+
+    @scratch_registry(
+        source="data", frame="time", kind="diagnostic_curve", primitives=("line", "steps")
+    )
+    def coloured(traj):
+        """A curve carrying a colour channel."""
+        return {"x": traj.t, "y": traj.y[:, 0], "c": traj.t}
+
+    assert "c" in plot(_traj(), "coloured").layers[0].data
+    with pytest.raises(InvalidParameterError, match="cannot draw the colour channel"):
+        plot(_traj(), "coloured.steps")
+
+
+def test_transforms_answers_the_four_shared_registry_verbs():
+    """``register`` / ``names`` / ``find`` / ``get`` — the same shape as every registry."""
+    import tsdynamics as ts
+
+    for verb in ("register", "names", "find", "get"):
+        assert callable(getattr(ts.viz.transforms, verb)), verb
+    assert ts.viz.transforms.find(source="model")
+    assert set(ts.viz.transforms.find(source="model")) < set(ts.viz.transforms.names())
+    assert "nullclines" not in ts.viz.transforms.find(subject=_traj())
+    assert "time_series" in ts.viz.transforms.find(subject=_traj())
+    assert "psd" in ts.viz.transforms.find("spectral")
+
+
+def test_the_matrix_reads_as_an_answer_to_what_can_i_draw():
+    """``compatibility()`` is the newcomer's first question; it must answer it."""
+    text = repr(compatibility())
+    assert "FROM DATA" in text and "FROM A MODEL" in text
+    assert "* = the default primitive" in text
+    assert "ts.plot(subject, 'name')" in text
+    # every transform is listed, with its one-line summary under it
+    for record in transforms():
+        assert record.name in text
+        assert record.doc in text

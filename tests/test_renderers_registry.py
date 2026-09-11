@@ -19,7 +19,7 @@ These tests freeze that live contract:
 - it is **empty at import** — a fresh ``import tsdynamics`` registers no backend
   and pulls in **no plot library** (core stays plotting-free; registration is
   lazy, only on first render);
-- :mod:`tsdynamics.viz` wires entry-point discovery (the ``tsdynamics.renderers``
+- :mod:`tsdynamics.viz` wires entry-point discovery (the ``tsdynamics.viz.renderers``
   group) exactly like analyses;
 - with **no** backend registered (forced empty), resolving through
   :meth:`tsdynamics.viz.spec.PlotSpec.render` raises a *helpful*,
@@ -141,8 +141,8 @@ def test_importing_viz_pulls_no_plot_library():
 
 
 def test_renderers_group_name():
-    """The entry-point group is the documented ``tsdynamics.renderers``."""
-    assert RENDERERS_GROUP == "tsdynamics.renderers"
+    """The entry-point group is the documented ``tsdynamics.viz.renderers``."""
+    assert RENDERERS_GROUP == "tsdynamics.viz.renderers"
 
 
 def test_discover_plugins_is_idempotent_and_returns_a_list():

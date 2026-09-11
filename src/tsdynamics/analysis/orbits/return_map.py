@@ -202,7 +202,7 @@ def return_map(
     system: Any,
     component: int | str = 0,
     *,
-    method: str = "max",
+    kind: str = "max",
     plane: tuple[Any, ...] | None = None,
     direction: int = +1,
     n: int = 2000,
@@ -227,45 +227,45 @@ def return_map(
         What to read the observable from.  A continuous
         :class:`~tsdynamics.families.ContinuousSystem` is integrated first; a
         :class:`~tsdynamics.data.Trajectory` is read directly; a 1-D array is
-        treated as the observable series itself (``method`` must be ``"max"`` or
+        treated as the observable series itself (``kind`` must be ``"max"`` or
         ``"min"``).  (Trajectory / array inputs are the ``data`` overload.)
     component : int or str, default 0
         Which state component to record (names allowed when the system /
         trajectory declares ``variables``).  Ignored when ``system`` is a raw
         1-D series.
-    method : {"max", "min", "poincare"}, default "max"
+    kind : {"max", "min", "poincare"}, default "max"
         ``"max"`` / ``"min"`` record successive local maxima / minima of the
         observable (the Lorenz construction); ``"poincare"`` records the
         observable at successive section crossings (needs ``plane``).
     plane : tuple, optional
-        ``(i, c)`` or ``(normal, offset)`` — the section for ``method="poincare"``
+        ``(i, c)`` or ``(normal, offset)`` — the section for ``kind="poincare"``
         (see :func:`~tsdynamics.analysis.orbits.poincare_section`).
     direction : {+1, -1, 0}, default +1
-        Crossing-direction filter (``method="poincare"`` only).
+        Crossing-direction filter (``kind="poincare"`` only).
     n : int, default 2000
         Number of section crossings to collect when integrating a system in
-        ``method="poincare"`` mode.
+        ``kind="poincare"`` mode.
     final_time, dt : float
         Integration horizon and detection / output step used when ``system`` is
         a flow.  In extremum mode ``dt`` only needs to resolve the peaks; the
         recorded value is sharpened by parabolic interpolation, so a coarse grid
-        still gives accurate extrema.  In ``method="poincare"`` mode only ``dt``
+        still gives accurate extrema.  In ``kind="poincare"`` mode only ``dt``
         is used (the section is marched until ``n`` crossings); ``final_time``,
         ``ic``, ``transient`` and ``**integrate_kwargs`` apply to extremum mode
         and are ignored.
     transient : float, default 0.0
-        Elapsed **time** discarded before recording extrema (``method="max"`` /
+        Elapsed **time** discarded before recording extrema (``kind="max"`` /
         ``"min"``, system input).
     skip_crossings : int, default 0
         Number of leading **crossings** discarded before recording
-        (``method="poincare"``, system input).
+        (``kind="poincare"``, system input).
     ic : array-like, optional
         Initial state when ``system`` is a flow.
     seed : int, optional
         Seed for the random initial condition when the system has none; makes
         the map reproducible.
     **integrate_kwargs
-        Forwarded to ``system.integrate`` (extremum mode, system input).
+        Forwarded to ``system.run`` (extremum mode, system input).
 
     Returns
     -------
@@ -274,28 +274,32 @@ def return_map(
 
     Examples
     --------
-    >>> rm = return_map(Lorenz(), "z", method="max", final_time=400.0, transient=40.0)
+    >>> rm = return_map(Lorenz(), "z", kind="max", final_time=400.0, transient=40.0)
     >>> x, y = rm.flat()       # the cusp map z_n -> z_{n+1}
-    >>> rm = return_map(Rossler(), 0, method="poincare", plane=(0, 0.0), n=400)
+    >>> rm = return_map(Rossler(), 0, kind="poincare", plane=(0, 0.0), n=400)
     """
-    method = method.lower()
-    if method not in _KINDS:
-        raise ValueError(f"method must be one of {_KINDS}, got {method!r}.")
+    kind = kind.lower()
+    if kind not in _KINDS:
+        raise ValueError(f"kind must be one of {_KINDS}, got {kind!r}.")
 
-    if method == "poincare":
+    if kind == "poincare":
         values, times, obs_idx = _poincare_observable(
             system, component, plane, direction, n, skip_crossings, dt, seed
         )
     else:
         values, times, obs_idx = _extremum_observable(
-            system, component, method, final_time, dt, transient, ic, seed, integrate_kwargs
+            system, component, kind, final_time, dt, transient, ic, seed, integrate_kwargs
         )
 
     current = values[:-1]
     successor = values[1:]
-    meta: dict[str, Any] = {"kind": method, "observable": obs_idx, "n": int(values.size)}
+    meta: dict[str, Any] = {"kind": kind, "observable": obs_idx, "n": int(values.size)}
     if plane is not None:
         meta["plane"] = plane
+    names = tuple(getattr(system, "variables", ()) or ())
+    if names:
+        # The repr says "26 returns of z", not "of component 2" (S3 inbox d).
+        meta["variables"] = names
     src_name = getattr(type(system), "__name__", None)
     if not isinstance(system, np.ndarray | list | tuple):
         meta["source"] = src_name
@@ -305,7 +309,7 @@ def return_map(
         values=values,
         times=times,
         observable=obs_idx,
-        kind=method,
+        kind=kind,
         meta=meta,
     )
 
@@ -346,8 +350,8 @@ def _extremum_observable(
         traj = system.after(transient) if transient else system
         idx = _observable_index(traj, component)
         return *_local_extrema(traj.y[:, idx], traj.t, method), idx
-    if hasattr(system, "is_discrete"):  # a System
-        if system.is_discrete:
+    if hasattr(system, "family"):  # a System
+        if system.family == "map" or getattr(system, "_is_discrete", False):
             raise TypeError(
                 "extremum return maps need a continuous flow; for a map, iterate and "
                 "pass the series, or use orbit_diagram."
@@ -381,7 +385,7 @@ def _poincare_observable(
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Extract the observable series (+ times) for Poincaré-return mode."""
     if plane is None:
-        raise ValueError("method='poincare' needs a `plane=(i, c)`.")
+        raise ValueError("kind='poincare' needs a `plane=(i, c)`.")
     if isinstance(system, Trajectory):
         # the system path discards `skip_crossings` crossings inside
         # poincare_section; the data path has them all, so drop the first
@@ -390,7 +394,7 @@ def _poincare_observable(
         idx = _observable_index(section, component)
         skip = int(skip_crossings)
         return section.y[skip:, idx], section.t[skip:], idx
-    if hasattr(system, "is_discrete"):
+    if hasattr(system, "family"):
         section = poincare_section(
             system,
             plane,
@@ -402,7 +406,7 @@ def _poincare_observable(
         )
         idx = _observable_index(section, component)
         return section.y[:, idx], section.t, idx
-    raise TypeError("method='poincare' needs a System or Trajectory input, not a raw series.")
+    raise TypeError("kind='poincare' needs a System or Trajectory input, not a raw series.")
 
 
 def _local_extrema(series: Any, times: Any | None, kind: str) -> tuple[np.ndarray, np.ndarray]:

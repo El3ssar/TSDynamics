@@ -7,7 +7,7 @@ The analysis layer has two calling conventions (the frozen glossary §1): a
 signal.  Handing a ``System`` to a data-first analysis is the single most
 common front-door mistake, and until v6 it produced::
 
-    >>> ts.correlation_dimension(ts.Lorenz())        # doctest: +SKIP
+    >>> ts.analysis.correlation_dimension(ts.systems.Lorenz())        # doctest: +SKIP
     TypeError: float() argument must be a string or a real number, not 'Lorenz'
 
 — a NumPy message that names neither the mistake nor the fix.  :func:`reject_system`
@@ -17,7 +17,7 @@ answer with the same actionable :class:`~tsdynamics.errors.InvalidInputError`.
 The **mirror-image** mistake is just as common and was just as badly served:
 handing measured data to a *system-first* analysis, which until v6 produced::
 
-    >>> ts.max_lyapunov(traj["x"])                   # doctest: +SKIP
+    >>> ts.analysis.max_lyapunov(traj["x"])                   # doctest: +SKIP
     AttributeError: 'numpy.ndarray' object has no attribute 'is_discrete'
 
 :func:`reject_data` is its counterpart.  Both guards obey the same rule: name
@@ -29,8 +29,10 @@ dead end for someone who only has a measurement.
 The ``System`` is **duck-typed** against the runtime protocol
 (:mod:`tsdynamics.families.protocol`) rather than imported, because
 :mod:`tsdynamics.analysis` must not import :mod:`tsdynamics.families` at module
-scope — that is the deliberate families→analysis layering seam
-(``families/_accessors.py``).
+scope — that is the deliberate families -> analysis layering seam.  (It used to
+be named after ``families/_accessors.py``, the module that held the four topical
+accessors; owner ruling A2 deleted that module, and the seam it needed outlived
+it.)
 """
 
 from __future__ import annotations
@@ -76,6 +78,17 @@ def is_system(obj: Any) -> bool:
     return all(callable(getattr(obj, name, None)) for name in _SYSTEM_METHODS)
 
 
+def _holds_map(system: Any) -> bool:
+    """Whether the system advances by iterations (its horizon word is ``steps``).
+
+    ``family`` is the v6 public flag; the private ``_is_discrete`` is the
+    fallback because a ``PoincareMap`` reports ``family == "ode"`` while being a
+    discrete view of one.  One predicate, so the horizon word this module prints
+    and the one the message builder prints cannot disagree.
+    """
+    return bool(getattr(system, "family", None) == "map" or getattr(system, "_is_discrete", False))
+
+
 def front_door(system: Any) -> str:
     """Return the run-me call this particular system actually has, as source text.
 
@@ -83,9 +96,14 @@ def front_door(system: Any) -> str:
     a flow is run to a ``final_time``, a map for a count of ``steps``, and a
     derived discrete view (a ``PoincareMap``) for a count of crossings.
     """
-    if getattr(system, "family", None) == "map" or getattr(system, "_is_discrete", False):
-        return "run(steps=10000)"
-    return "run(final_time=100.0, dt=0.01)"
+    return "run(steps=10000)" if _holds_map(system) else "run(final_time=100.0, dt=0.01)"
+
+
+def _teachable(analysis: str) -> bool:
+    """Whether ``analysis`` is a registered name the message builder can read."""
+    from tsdynamics import registry
+
+    return analysis in registry.analyses.names()
 
 
 def reject_system(data: Any, *, analysis: str | None = None, hint: str | None = None) -> None:
@@ -123,10 +141,13 @@ def reject_system(data: Any, *, analysis: str | None = None, hint: str | None = 
     >>> from tsdynamics.analysis._common import reject_system
     >>> from tsdynamics.errors import InvalidInputError
     >>> try:
-    ...     reject_system(ts.Lorenz(), analysis="correlation_dimension")
+    ...     reject_system(ts.systems.Lorenz(), analysis="correlation_dimension")
     ... except InvalidInputError as err:
-    ...     print(str(err).splitlines()[0])
-    correlation_dimension() expects measured data, not a System (got Lorenz). Run the system first and pass its trajectory:
+    ...     print(str(err))
+    correlation_dimension() needs data, and got a system (Lorenz): it
+    measures a point set, so it needs data. Run the system first:
+        traj = system.run(200.0, dt=0.02)
+        ts.analysis.correlation_dimension(traj)
     >>> reject_system(np.zeros((10, 3)))          # measured data passes through
     """
     if not is_system(data):
@@ -134,7 +155,18 @@ def reject_system(data: Any, *, analysis: str | None = None, hint: str | None = 
 
     from tsdynamics.errors import InvalidInputError
 
+    from ._discovery import wrong_subject
+
     name = type(data).__name__
+    # The one text builder (CONTRACT §5.6): the object door and this one must
+    # answer with the same body, so neither can drift into saying something the
+    # other does not.  It needs a *registered* analysis to read the wanted
+    # subject off; the shared coercion helpers call in without a name, and a
+    # ``hint=`` caller's input is not a trajectory at all (a basin label image),
+    # so those two keep the generic wording below.
+    if analysis and hint is None and _teachable(analysis):
+        raise wrong_subject(analysis, name, "map" if _holds_map(data) else "flow")
+
     who = f"{analysis}()" if analysis else "this analysis"
     run = front_door(data)
     call = f"{analysis}(" if analysis else "analysis("
@@ -192,7 +224,7 @@ def reject_data(system: Any, *, analysis: str, sibling: str | None = None) -> No
     sibling : str, optional
         A *data-first* call that answers the same question from a measured
         series, as a runnable line with a ``{data}`` placeholder for the input
-        (e.g. ``"ts.lyapunov_from_data({data})"``).  The placeholder is filled
+        (e.g. ``"ts.analysis.lyapunov_from_data({data})"``).  The placeholder is filled
         with a variable name that matches what was actually passed — ``traj`` for
         a :class:`~tsdynamics.data.Trajectory`, ``data`` for a bare array — so
         the line reads like the caller's own code.  Omit ``sibling`` when the
@@ -212,20 +244,30 @@ def reject_data(system: Any, *, analysis: str, sibling: str | None = None) -> No
     >>> from tsdynamics.errors import InvalidInputError
     >>> try:
     ...     reject_data(np.zeros(100), analysis="max_lyapunov",
-    ...                 sibling="ts.lyapunov_from_data({data})")
+    ...                 sibling="ts.analysis.lyapunov_from_data({data})")
     ... except InvalidInputError as err:
     ...     print(str(err))
-    max_lyapunov() needs a model (a System), not measured data (got ndarray).
-    Estimate it from the series instead:
-        ts.lyapunov_from_data(data)
+    max_lyapunov() needs a system, and got measured data (ndarray): it is
+    a property of the equations, not of a point set.
+        ts.analysis.lyapunov_from_data(traj)
+        ts.analysis.find(traj)   # the 23 that take a trajectory
     """
     if not is_data(system):
         return
 
     from tsdynamics.errors import InvalidInputError, remedy
 
+    from ._discovery import wrong_subject
+
     kind = type(system).__name__
     held = "traj" if hasattr(system, "t") and hasattr(system, "y") else "data"
+    # One builder for both doors (CONTRACT §5.6).  ``has_system`` decides whether
+    # the message can send the caller to ``traj.system``: a bare array has no
+    # such attribute, and a Trajectory built by hand may carry ``system=None``.
+    if _teachable(analysis):
+        raise wrong_subject(
+            analysis, kind, "data", has_system=getattr(system, "system", None) is not None
+        )
     if sibling is not None:
         fix = remedy(sibling.format(data=held), lead="Estimate it from the series instead:")
     else:

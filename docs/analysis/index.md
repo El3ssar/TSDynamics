@@ -25,9 +25,9 @@ drop-in for its underlying value (a `float`, an array) while also carrying
 import tsdynamics as ts
 
 lor  = ts.systems.Lorenz()
-traj = lor.integrate(final_time=100.0, dt=0.01)      # a Trajectory
-exps = ts.lyapunov_spectrum(lor, final_time=300.0)   # → [0.91, ~0, -14.57]
-ts.kaplan_yorke_dimension(exps)                      # → ≈ 2.06
+traj = lor.run(final_time=100.0, dt=0.01)      # a Trajectory
+exps = ts.analysis.lyapunov_spectrum(lor, final_time=300.0)   # → [0.91, ~0, -14.57]
+ts.analysis.kaplan_yorke_dimension(exps)                      # → ≈ 2.06
 ```
 
 ## The toolkit, by capability

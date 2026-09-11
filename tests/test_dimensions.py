@@ -167,7 +167,7 @@ def test_chebyshev_metric_runs(uniform_sets):
 def test_accepts_trajectory_array_and_series_equivalently():
     rng = np.random.default_rng(7)
     pts = rng.uniform(0, 1, (3000, 2))
-    traj = ts.Trajectory(np.arange(3000), pts, system=None)
+    traj = ts.data.Trajectory(np.arange(3000), pts, system=None)
     d_arr = float(dim.correlation_dimension(pts))
     d_traj = float(dim.correlation_dimension(traj))
     assert d_arr == pytest.approx(d_traj)
@@ -210,17 +210,17 @@ def test_dimension_result_api(uniform_sets):
 def test_registered_in_analyses(name, fn):
     assert name in registry.analyses
     assert registry.analyses.get(name) is fn
-    assert registry.analyses.entry(name).metadata["needs"] == "trajectory"
+    assert registry.analyses.entry(name).metadata["subjects"] == ("trajectory", "array")
 
 
 def test_public_api_identity():
-    assert ts.correlation_dimension is dim.correlation_dimension
-    assert ts.fixed_mass_dimension is dim.fixed_mass_dimension
-    assert ts.DimensionResult is dim.DimensionResult
+    assert ts.analysis.correlation_dimension is dim.correlation_dimension
+    assert ts.analysis.fixed_mass_dimension is dim.fixed_mass_dimension
+    assert ts.analysis.DimensionResult is dim.DimensionResult
     # v4 (WS-NAMESPACE): the curated top-level ``__all__`` carries only headline
     # names; demoted analysis names stay reachable as flat re-exports.
     for name in ("correlation_dimension", "fixed_mass_dimension", "DimensionResult"):
-        assert hasattr(ts, name)
+        assert hasattr(ts.analysis, name)
 
 
 # ── scaling-region fit ──────────────────────────────────────────────────────────
@@ -581,9 +581,7 @@ def test_auto_theiler_declines_to_correct_a_drifting_orbit():
     """
     from tsdynamics.analysis.dimensions._common import _auto_theiler
 
-    orbit = np.asarray(
-        ts.systems.Chirikov().with_params(k=0.05).iterate(steps=3000, ic=[0.1, 0.3]).y
-    )
+    orbit = np.asarray(ts.systems.Chirikov().with_params(k=0.05).run(steps=3000, ic=[0.1, 0.3]).y)
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # any warning here fails the test
         assert _auto_theiler(orbit) == 1
@@ -652,15 +650,87 @@ def test_negative_q_is_rejected_and_the_gap_is_named():
 
 
 def test_dimensions_reject_a_system_with_a_named_error():
-    """A System handed to a data-first estimator names itself and the fix."""
+    """A System handed to a data-first estimator names itself and the fix.
+
+    The text is the shared builder's (CONTRACT §5.6), not a per-estimator
+    string: it names the analysis that was called, says *why* a point set is
+    required, and ends with the two lines to run — including the horizon word
+    the held family actually has (``final_time`` for a flow, ``steps`` for a map).
+    """
     from tsdynamics.errors import InvalidInputError
 
-    for call in (
-        lambda: dim.correlation_dimension(ts.Lorenz()),
-        lambda: dim.box_counting_dimension(ts.Lorenz()),
-        lambda: dim.generalized_dimension(ts.Lorenz()),
-        lambda: dim.dimension_spectrum(ts.Lorenz()),
-        lambda: dim.fixed_mass_dimension(ts.systems.Henon()),
+    for call, name, run in (
+        (lambda: dim.correlation_dimension(ts.systems.Lorenz()), "correlation_dimension", "200.0"),
+        (
+            lambda: dim.box_counting_dimension(ts.systems.Lorenz()),
+            "box_counting_dimension",
+            "200.0",
+        ),
+        (lambda: dim.generalized_dimension(ts.systems.Lorenz()), "generalized_dimension", "200.0"),
+        (lambda: dim.dimension_spectrum(ts.systems.Lorenz()), "dimension_spectrum", "200.0"),
+        (lambda: dim.fixed_mass_dimension(ts.systems.Henon()), "fixed_mass_dimension", "20000"),
     ):
-        with pytest.raises(InvalidInputError, match="expects measured data, not a System"):
+        with pytest.raises(InvalidInputError) as excinfo:
             call()
+        text = str(excinfo.value)
+        sentence = " ".join(text.split("\n    ")[0].split())  # the wrapped prose
+        assert sentence.startswith(f"{name}() needs data, and got a system")
+        assert "it measures a point set, so it needs data. Run the system first:" in sentence
+        assert f"traj = system.run({run}" in text
+        assert f"    ts.analysis.{name}(traj)" in text
+        assert "expects measured data" not in text  # the pre-v6 wording is gone
+
+
+# ── 7. `tol=` is `flatness=` (CONTRACT §5.7) ────────────────────────────────────
+
+
+class TestTheScalingWindowKeywordIsCalledFlatness:
+    """``tol=`` named a *scaling-region flatness factor*, one letter from the
+    solver tolerances (``rtol`` / ``atol``) that every estimator in this library
+    also takes — and means something entirely different from both.  C3 (one
+    concept, one spelling) renames it ``flatness=`` on every public door."""
+
+    #: Every public dimension estimator and how it reaches the keyword.
+    DIRECT = (
+        "correlation_dimension",
+        "generalized_dimension",
+        "dimension_spectrum",
+        "fixed_mass_dimension",
+    )
+    VIA_KWARGS = ("box_counting_dimension", "information_dimension")
+
+    @pytest.mark.parametrize("name", DIRECT)
+    def test_the_keyword_is_flatness_and_tol_is_gone(self, name):
+        import inspect
+
+        params = inspect.signature(getattr(ts.analysis, name)).parameters
+        assert "flatness" in params
+        assert "tol" not in params
+
+    def test_flatness_is_honoured_and_widens_the_window(self):
+        """Not just accepted — it changes the fitted window, which is the point."""
+        rng = np.random.default_rng(3)
+        pts = rng.random((3000, 2))
+        tight = ts.analysis.correlation_dimension(pts, flatness=1.01)
+        loose = ts.analysis.correlation_dimension(pts, flatness=6.0)
+        width = lambda r: r.fit_region[1] - r.fit_region[0]  # noqa: E731
+        assert width(loose) >= width(tight)
+        assert width(loose) > width(tight) or float(loose) != float(tight)
+
+    @pytest.mark.parametrize("name", DIRECT)
+    def test_the_old_spelling_names_the_function_the_user_called(self, name):
+        with pytest.raises(TypeError) as excinfo:
+            getattr(ts.analysis, name)(np.zeros((50, 2)), tol=1.2)
+        assert name in str(excinfo.value)
+
+    @pytest.mark.parametrize("name", VIA_KWARGS)
+    def test_a_kwargs_door_answers_tol_with_the_new_spelling(self, name):
+        """These two forward ``**kwargs``, so the raw binder error would name a
+        PRIVATE function (``_core_kwargs() got an unexpected keyword argument
+        'tol'``) — not a line anybody can act on."""
+        with pytest.raises(ts.InvalidParameterError) as excinfo:
+            getattr(ts.analysis, name)(np.zeros((50, 2)), tol=1.2)
+        text = str(excinfo.value)
+        assert "_core_kwargs" not in text
+        assert f"{name}() has no 'tol' keyword in v6" in text
+        assert f"ts.analysis.{name}(data, flatness=1.2)" in text

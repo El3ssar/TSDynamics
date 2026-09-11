@@ -350,7 +350,7 @@ def test_fence_extractor_skips_markers_and_transcripts() -> None:
         "intro\n"
         "```python\n"
         "import tsdynamics as ts\n"
-        "ts.Lorenz()\n"
+        "ts.systems.Lorenz()\n"
         "```\n"
         "fragment:\n"
         "```python\n"
@@ -365,6 +365,6 @@ def test_fence_extractor_skips_markers_and_transcripts() -> None:
     )
     blocks = list(iter_python_fences(page))
     assert len(blocks) == 1
-    assert "ts.Lorenz()" in blocks[0]
+    assert "ts.systems.Lorenz()" in blocks[0]
     assert all("skip-doctest" not in b for b in blocks)
     assert all(">>>" not in b for b in blocks)

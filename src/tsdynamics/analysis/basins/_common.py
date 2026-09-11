@@ -160,7 +160,7 @@ def _recurrence_grid(
         raise InvalidInputError(
             f"a region must be a Box, a Ball or a Grid, got {type(region).__name__}."
             + remedy(
-                "ts.basins_of_attraction(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
+                "ts.analysis.basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])",
                 lead="Bounds are accepted directly — one (lo, hi, n) triple per axis:",
             )
         )
@@ -183,7 +183,7 @@ def _recurrence_grid(
 #: wrong way entirely.
 _BASIN_HINT = (
     "Compute the basins first and pass the result (or its label array):\n"
-    "    res = basins_of_attraction(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])\n"
+    "    res = basins(system, [(-2.0, 2.0, 200), (-2.0, 2.0, 200)])\n"
     "    {who}(res)"
 )
 
@@ -199,9 +199,16 @@ def _as_label_array(basins: Any, *, analysis: str | None = None) -> np.ndarray:
 
     A ``System`` is rejected up front: the basin *metrics* read an already
     computed label image, so the fix is to run
-    :func:`~tsdynamics.analysis.basins_of_attraction` first.
+    :func:`~tsdynamics.analysis.basins` first — which is what the shared message
+    builder says for a *result*-first analysis, so a named one is sent there and
+    only an unnamed caller falls back to :data:`_BASIN_HINT`.  (The hand-written
+    hint opened with "expects measured data", the wrong clause CONTRACT §5.6
+    names: these metrics do not take measured data.)
     """
-    reject_system(basins, analysis=analysis, hint=_BASIN_HINT.format(who=analysis or "metric"))
+    if analysis:
+        reject_system(basins, analysis=analysis)
+    else:
+        reject_system(basins, analysis=analysis, hint=_BASIN_HINT.format(who="metric"))
     labels = getattr(basins, "labels", basins)
     arr = np.asarray(labels)
     if not np.issubdtype(arr.dtype, np.integer):

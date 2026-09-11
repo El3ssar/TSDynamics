@@ -124,7 +124,7 @@ def test_lorenz_attractor_showcase_renders_in_3d():
     pytest.importorskip("tsdynamics._rust")
     import tsdynamics as ts
 
-    y = np.asarray(ts.Lorenz().trajectory(final_time=40.0, dt=0.01).y, dtype=float)
+    y = np.asarray(ts.systems.Lorenz().run(final_time=40.0, dt=0.01).y, dtype=float)
     spec = PlotSpec(
         kind=PlotKind.PHASE_PORTRAIT_3D,
         ndim=3,

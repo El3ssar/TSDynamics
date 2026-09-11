@@ -58,7 +58,7 @@ actually shrink.
 ```python
 import tsdynamics as ts
 
-g = ts.gali(ts.systems.Lorenz(), 2, final_time=40.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+g = ts.analysis.gali(ts.systems.Lorenz(), 2, final_time=40.0, dt=0.05, ic=[1.0, 1.0, 1.0])
 
 g.values[0], g.values[-1]   # ≈ 1.0  →  ~1e-16   (exponential collapse: chaotic)
 g.is_chaotic()              # True
@@ -76,11 +76,11 @@ argument, and must satisfy $2 \le k \le \dim$.
 ```python
 # GALI_3 on Lorenz: the second gap (λ₁ − λ₃ ≈ 15.5) is added on top, so it
 # decays far faster — the teal curve in the figure above.
-ts.gali(ts.systems.Lorenz(), 3, final_time=40.0, dt=0.05,
+ts.analysis.gali(ts.systems.Lorenz(), 3, final_time=40.0, dt=0.05,
         ic=[1.0, 1.0, 1.0]).decay_rate()   # ≈ 18.4  (lit. gap sum ≈ 16.4)
 
 # On a map GALI is immediate (analytic Jacobian, no integration):
-ts.gali(ts.systems.Henon(), 2, n=60).is_chaotic()    # True
+ts.analysis.gali(ts.systems.Henon(), 2, n=60).is_chaotic()    # True
 ```
 
 !!! note "GALI on a flow integrates its variational core"
@@ -116,8 +116,8 @@ the frequencies, computed by the regularised correlation method of the 2009
 paper.
 
 ```python
-ts.zero_one_test(ts.systems.Logistic(params={"r": 4.0}), n=5000, ic=[0.1])   # ≈ 0.998  (chaotic)
-ts.zero_one_test(ts.systems.Logistic(params={"r": 3.5}), n=5000, ic=[0.1])   # ≈ 0.0    (period-4 window)
+ts.analysis.zero_one_test(ts.systems.Logistic(params={"r": 4.0}), n=5000, ic=[0.1])   # ≈ 0.998  (chaotic)
+ts.analysis.zero_one_test(ts.systems.Logistic(params={"r": 3.5}), n=5000, ic=[0.1])   # ≈ 0.0    (period-4 window)
 ```
 
 The first argument may be a **system** — integrated (a flow) or iterated (a
@@ -125,8 +125,8 @@ map / Poincaré / stroboscopic view) internally to produce the observable — or
 bare 1-D series read directly (the *data* overload):
 
 ```python
-x = ts.systems.Logistic(params={"r": 4.0}).iterate(steps=5000, ic=[0.1]).component("x")
-ts.zero_one_test(x)          # ≈ 0.998   (the data overload — horizon keywords don't apply)
+x = ts.systems.Logistic(params={"r": 4.0}).run(steps=5000, ic=[0.1]).component("x")
+ts.analysis.zero_one_test(x)          # ≈ 0.998   (the data overload — horizon keywords don't apply)
 ```
 
 The test medians over `n_c` random drive frequencies drawn from `c_range`
@@ -171,12 +171,12 @@ accepted, it is simply never required):
 
 ```python
 # Unit-height tent map: |f'| ≡ 2 everywhere ⇒ E(t) = 2^t ⇒ H = ln 2, exactly
-ts.expansion_entropy(ts.systems.Tent(params={"mu": 1.0}),
+ts.analysis.expansion_entropy(ts.systems.Tent(params={"mu": 1.0}),
                      [(0.0, 1.0)], n_samples=200, n=18).entropy
 # ≈ 0.6931  ( = ln 2 )
 
 # Hénon map: reproduces its topological entropy
-h = ts.expansion_entropy(ts.systems.Henon(), [(-1.6, 1.6), (-0.5, 0.5)],
+h = ts.analysis.expansion_entropy(ts.systems.Henon(), [(-1.6, 1.6), (-0.5, 0.5)],
                          n_samples=400, n=12)
 float(h)              # ≈ 0.447   (h_top ≈ 0.465, Newhouse–Pignataro)
 h.n_survivors, h.n_samples     # (295, 400) — how many stayed in S
@@ -188,7 +188,7 @@ dimension. For a **flow** pass `final_time=` and `dt=` instead of `n=` (passing
 `dt=` to a map raises — it has no meaning there):
 
 ```python
-ts.expansion_entropy(ts.systems.Lorenz(), [(-20.0, 20.0), (-25.0, 25.0), (0.0, 50.0)],
+ts.analysis.expansion_entropy(ts.systems.Lorenz(), [(-20.0, 20.0), (-25.0, 25.0), (0.0, 50.0)],
                      n_samples=300, final_time=3.0, dt=0.1).entropy
 # ≈ 1.16   (a positive rate — Lorenz is chaotic)
 ```

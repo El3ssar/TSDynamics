@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
-from .._frames import Frame, FrameSpace, OverlayRole, axis_name
+from .._frames import Frame, FrameSpace, OverlayRole, axis_name, space_arity
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..spec import Layer, PlotKind, PlotSpec
@@ -137,6 +137,21 @@ class Channel:
         """Whether this channel holds category labels (``NOMINAL`` / ``ORDINAL``)."""
         return self.type in (ChannelType.NOMINAL, ChannelType.ORDINAL)
 
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """Return the underlying array, so ``np.asarray(channel)`` is the data.
+
+        Without this a channel is an opaque object and
+        ``np.asarray(part.channels["x"]).shape`` is ``()`` — a 0-d array holding
+        the ``Channel`` itself, which is a silent wrong answer for anyone who
+        reached into a geometry to get their numbers back.
+        """
+        values = self.values if dtype is None else self.values.astype(dtype)
+        return np.array(values, copy=True) if copy else np.asarray(values)
+
+    def __len__(self) -> int:
+        """Return the length of the underlying array."""
+        return len(self.values)
+
     def __repr__(self) -> str:  # noqa: D105
         return f"Channel({self.name!r}, {self.values.shape}, {self.type.value})"
 
@@ -213,8 +228,71 @@ class Part:
         chan = self.channels.get(name)
         return None if chan is None else chan.values
 
+    def __getitem__(self, name: str) -> np.ndarray:
+        """Return channel ``name``'s **array** — ``part["x"]`` is the numbers.
+
+        The subscript is the one a person reaching into a geometry writes, so it
+        returns the array rather than the :class:`Channel` wrapper (which stays
+        available as ``part.channels[name]`` for a renderer that needs the type).
+
+        Raises
+        ------
+        KeyError
+            Naming the channels this part does carry.
+        """
+        chan = self.channels.get(name)
+        if chan is None:
+            raise KeyError(f"{name!r}; this part carries {sorted(self.channels)}")
+        return chan.values
+
+    def __contains__(self, name: object) -> bool:
+        """Whether this part carries a channel of that name."""
+        return name in self.channels
+
     def __repr__(self) -> str:  # noqa: D105
         return f"Part({sorted(self.channels)}, label={self.label!r})"
+
+
+#: The keys a channel mapping may carry that are **not** channels.  Everything
+#: else in the mapping is data — which is what lets a transform author return
+#: ``{"x": …, "y": …}``, and a primitive author return
+#: ``[{"mark": "line", …}, {"mark": "points", …}]``, without importing an IR type.
+PART_KEYS: frozenset[str] = frozenset({"label", "style", "primitive", "mark"})
+
+
+def part_from_mapping(mapping: Mapping[str, Any]) -> Part:
+    """Build one :class:`Part` from a plain mapping of channels plus :data:`PART_KEYS`.
+
+    The single reader of the mapping convention, shared by the transform door
+    (:func:`~tsdynamics.viz.transforms.register`), the primitive door
+    (:func:`~tsdynamics.viz.transforms.register_primitive`) and the arrays door
+    (:func:`tsdynamics.viz.draw`), so the three cannot drift.  ``mark`` is
+    accepted as a synonym of ``primitive``: a primitive that emits several marks
+    pins its pieces by mark, and a transform pins a part to a primitive — the
+    same field, spelled the way each author thinks about it.
+    """
+    channels = {k: v for k, v in mapping.items() if k not in PART_KEYS}
+    pinned = mapping.get("primitive", mapping.get("mark"))
+    return Part(
+        channels,
+        label=mapping.get("label"),
+        style=dict(mapping.get("style") or {}),
+        primitive=str(pinned) if pinned is not None else None,
+    )
+
+
+def parts_from_return(result: Any) -> list[Part] | None:
+    """Read a mapping / sequence-of-mappings return as parts; ``None`` if it is neither."""
+    if isinstance(result, Mapping):
+        return [part_from_mapping(result)]
+    if (
+        isinstance(result, Sequence)
+        and not isinstance(result, (str, bytes))
+        and len(result) > 0
+        and all(isinstance(item, Mapping) for item in result)
+    ):
+        return [part_from_mapping(item) for item in result]
+    return None
 
 
 @dataclass(frozen=True)
@@ -412,6 +490,23 @@ class Geometry:
         """Iterate the drawable parts, in draw order."""
         return iter(self.parts)
 
+    def __getitem__(self, key: str | int) -> Any:
+        """``g["x"]`` is a single-part geometry's **array**; ``g[0]`` is a :class:`Part`.
+
+        The two subscripts read differently and cannot be confused: a string names
+        a channel (and asks the same question ``part["x"]`` does), an integer
+        picks one of several drawable pieces.
+
+        Raises
+        ------
+        tsdynamics.errors.InvalidParameterError
+            For a string subscript on a multi-part geometry — the first part's
+            channel would be a quiet half-answer.  Use ``g.parts``.
+        """
+        if isinstance(key, str):
+            return self.channels[key].values
+        return self.parts[key]
+
     def __repr__(self) -> str:  # noqa: D105
         return (
             f"Geometry({self.transform!r}, frame={self.frame.describe()}, "
@@ -419,7 +514,9 @@ class Geometry:
         )
 
 
-def make_frame(space: FrameSpace | str, ndim: int, labels: Sequence[str | None]) -> Frame:
+def make_frame(
+    space: FrameSpace | str, labels: Sequence[str | None], ndim: int | None = None
+) -> Frame:
     """Build a :class:`~tsdynamics.viz._frames.Frame` from presentation labels.
 
     The axis *names* a frame compares are the labels put through
@@ -434,16 +531,23 @@ def make_frame(space: FrameSpace | str, ndim: int, labels: Sequence[str | None])
     ----------
     space : FrameSpace or str
         The coordinate space.
-    ndim : int
-        How many of the drawn axes are *coordinates* of that space (a ``time``
-        frame is 1: the vertical axis is a free value axis).
     labels : sequence of str or None
         The axis labels, in axis order.  Only the first ``ndim`` are used; a
         shorter sequence is padded.
+    ndim : int, optional
+        How many of the drawn axes are *coordinates* of that space.  **Derived
+        from the space** (:func:`~tsdynamics.viz._frames.space_arity`) and only
+        worth passing for a geometry whose shape genuinely varies *within* one
+        space — a spatial field is a 2-D lattice or a 1-D profile.
+
+        .. versionchanged:: 6.0
+           It used to be the required second positional argument, which made
+           every caller state a number the space already fixes.
     """
-    names = [axis_name(label) for label in list(labels)[:ndim]]
-    names += [axis_name(None)] * (ndim - len(names))
-    return Frame(FrameSpace(space), ndim, tuple(names))
+    width = space_arity(space) if ndim is None else int(ndim)
+    names = [axis_name(label) for label in list(labels)[:width]]
+    names += [axis_name(None)] * (width - len(names))
+    return Frame(FrameSpace(space), width, tuple(names))
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +586,12 @@ class Primitive:
         The keyword names this primitive accepts (``bins``, ``levels``, …).
         Anything else passed through ``primitive_options`` raises rather than
         being silently dropped.
+    consumes : frozenset of str, optional
+        The channels this primitive can actually *draw* (a superset of
+        :attr:`requires`: ``line`` requires ``x``/``y`` and consumes ``c`` when
+        it is there).  Read by the check that refuses to hand a primitive a
+        colour channel it would throw away.  Empty means "not declared", which is
+        only honest for a primitive that reshapes its input wholesale.
     emits_frame : FrameSpace, optional
         Set when the primitive *changes* the coordinate space of what it draws
         (a space-filling-curve image consumes a 1-D series and emits a lattice).
@@ -498,6 +608,7 @@ class Primitive:
     options: frozenset[str] = frozenset()
     emits_frame: FrameSpace | None = None
     doc: str = ""
+    consumes: frozenset[str] = frozenset()
 
     def accepts_frame(self, space: FrameSpace) -> bool:
         """Whether this primitive can draw in coordinate space ``space``."""
@@ -582,9 +693,12 @@ class PlotTransform:
         a *semantic* mismatch has no correct drawing, so there is nothing to
         fall back to.
     exclusive : frozenset of str, optional
-        The subset of :attr:`primitives` that is valid **only** here (a basin
-        boundary, a Wada overlay).  Every exclusive primitive must appear in
-        exactly one row; the governance gate enforces it.
+        **Vestigial and always empty.**  It meant "valid only in this row" and
+        drove a ``!`` marker in :func:`tsdynamics.viz.compatibility` — a marker
+        that could never appear, because all 35 in-tree rows left it empty.  The
+        declaration was removed from
+        :func:`~tsdynamics.viz.transforms.register` in v6; the field survives so
+        the docs-gallery tooling that reads it keeps working.
     frame : FrameSpace or tuple of FrameSpace
         The coordinate space(s) this transform draws in.  The axis *names* come
         from the geometry, not from here.
@@ -641,6 +755,42 @@ class PlotTransform:
     analysis: str | None = None
     example: ExampleFactory | None = None
     labels: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def subjects(self) -> tuple[str, ...]:
+        """What this transform can be handed — **derived from** :attr:`source`.
+
+        ``model`` needs the right-hand side, so it takes a system and nothing
+        else; ``data`` needs samples, and a system supplies those for free by
+        being run.  Derived rather than declared because a *declared* default of
+        ``("trajectory", "array")`` — which nothing in the tree overrides — would
+        make all twelve ``model`` transforms unreachable from
+        ``system.plot.<TAB>``.
+        """
+        return ("system",) if self.source == "model" else ("trajectory", "array", "system")
+
+    def accepts_subject(self, subject: Any) -> bool:
+        """Whether this transform can be handed ``subject`` (by declared :attr:`subjects`).
+
+        The check behind ``ts.plot(vdp, t1, t2, "vector_field", "nullclines")``:
+        a named transform is applied to **every subject its source admits**, so a
+        field transform skips the trajectories instead of raising on them.
+
+        A ``data`` transform takes anything (a system supplies data by being
+        run).  A ``model`` transform refuses **measured data** — an array, a
+        trajectory — which is the one thing that genuinely cannot answer it, and
+        accepts everything else (a system, a bare right-hand side, an analysis
+        result that carries the model with it).  Refusing by an allow-list
+        instead would turn away ``eigenvalue_plane``'s ``FixedPoint``.
+        """
+        from tsdynamics.families import SystemBase
+
+        if self.source != "model" or isinstance(subject, SystemBase):
+            return True
+        return not isinstance(subject, (np.ndarray, list, tuple)) and not (
+            hasattr(subject, "y") and hasattr(subject, "t")
+        )
 
     @property
     def available(self) -> bool:
@@ -655,17 +805,16 @@ class PlotTransform:
             return False
 
     def describe_primitives(self) -> tuple[str, ...]:
-        """Return the row with its reading marks: ``*`` default, ``!`` exclusive.
+        """Return the row with its reading mark: ``*`` marks the default primitive.
 
         Sorted, so the row is stable output rather than set-iteration order.
         A ``†`` after the row (see :attr:`shape_dependent`) warns that only the
         primitives fitting the geometry you actually computed are legal.
         """
-        out = []
-        for name in sorted(self.primitives):
-            mark = "*" if name == self.default_primitive else ""
-            mark += "!" if name in self.exclusive else ""
-            out.append(f"{name}{mark}")
+        out = [
+            f"{name}*" if name == self.default_primitive else name
+            for name in sorted(self.primitives)
+        ]
         return tuple(out) + (("†",) if self.shape_dependent else ())
 
     @property

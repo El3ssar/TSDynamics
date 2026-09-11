@@ -26,7 +26,8 @@ functions self-register into :data:`tsdynamics.registry.analyses`.
 
 from __future__ import annotations
 
-from ... import registry as _registry
+from .._discovery import register as _register
+from .._result import CountResult
 from .delay import MutualInformation, autocorrelation, mutual_information, optimal_delay
 from .dimension import (
     EmbeddingDimension,
@@ -49,18 +50,67 @@ __all__ = [
     "optimal_delay",
 ]
 
-# Self-register the headline estimators (D4 / §4e: in-tree analyses register from
-# their own subpackage).  Idempotent across re-imports.
-for _name, _fn in (
-    ("embed", embed),
-    ("optimal_delay", optimal_delay),
-    ("mutual_information", mutual_information),
-    ("cao_dimension", cao_dimension),
-    ("false_nearest_neighbors", false_nearest_neighbors),
-    ("embedding_dimension", embedding_dimension),
-):
-    _registry.analyses.register(_name, _fn, needs="series", family="embedding")
-del _name, _fn
+# Self-register the estimators: the definition site is the registration site
+# (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
+_DATA = ("trajectory", "array")
+_register(
+    embed,
+    subjects=_DATA,
+    area="embedding",
+    returns=Embedding,
+    keywords="takens reconstruction delay coordinates state space",
+    cite="Takens (1981), Lecture Notes in Mathematics 898, 366",
+    doi="10.1007/BFb0091924",
+)
+_register(
+    optimal_delay,
+    subjects=_DATA,
+    area="embedding",
+    returns=CountResult,
+    keywords="takens delay tau reconstruction decorrelation",
+    cite="Fraser & Swinney (1986), Phys. Rev. A 33, 1134",
+    doi="10.1103/PhysRevA.33.1134",
+)
+_register(
+    mutual_information,
+    subjects=_DATA,
+    area="embedding",
+    returns=MutualInformation,
+    keywords="takens delay fraser swinney information",
+    cite="Fraser & Swinney (1986), Phys. Rev. A 33, 1134",
+    doi="10.1103/PhysRevA.33.1134",
+)
+_register(
+    autocorrelation,
+    subjects=_DATA,
+    area="embedding",
+    keywords="takens delay decorrelation correlation time",
+)
+_register(
+    cao_dimension,
+    subjects=_DATA,
+    area="embedding",
+    returns=EmbeddingDimension,
+    keywords="takens reconstruction false neighbours cao",
+    cite="Cao (1997), Physica D 110, 43",
+    doi="10.1016/S0167-2789(97)00118-8",
+)
+_register(
+    false_nearest_neighbors,
+    subjects=_DATA,
+    area="embedding",
+    returns=EmbeddingDimension,
+    keywords="takens reconstruction kennel fnn neighbours",
+    cite="Kennel, Brown & Abarbanel (1992), Phys. Rev. A 45, 3403",
+    doi="10.1103/PhysRevA.45.3403",
+)
+_register(
+    embedding_dimension,
+    subjects=_DATA,
+    area="embedding",
+    returns=EmbeddingDimension,
+    keywords="takens reconstruction false neighbours dimension",
+)
 
 
 def __dir__() -> list[str]:

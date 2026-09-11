@@ -31,7 +31,7 @@ from tsdynamics.viz.spec import Animation, PlotKind, PlotSpec
 
 
 def _lorenz():
-    return ts.Lorenz().integrate(final_time=20.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
+    return ts.systems.Lorenz().run(final_time=20.0, dt=0.01, ic=[1.0, 1.0, 1.0]).after(3.0)
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ def test_default_animation_is_a_windowed_comet():
     [(None, True), ("time_series", False), ("spacetime", True)],
 )
 def test_per_kind_head_default(kind, head_default):
-    tr = ts.Lorenz96(N=6).trajectory(final_time=8.0, dt=0.1)
+    tr = ts.systems.Lorenz96(N=6).run(final_time=8.0, dt=0.1)
     spec = tr.to_plot_spec(kind=kind, animate=True)
     assert spec.animation.head is head_default
 
@@ -410,8 +410,8 @@ def test_style_axes_false_matplotlib(tmp_path):
 
 def _field_2d_traj():
     """A cheap 2-D field trajectory (a Swift–Hohenberg lattice) whose field evolves."""
-    return ts.systems.SwiftHohenberg(N=8, L=40.0).trajectory(
-        final_time=20.0, dt=0.2, backend="interp", method="rk45"
+    return ts.systems.SwiftHohenberg(N=8, L=40.0).run(
+        final_time=20.0, dt=0.2, backend="interp", solver="rk45"
     )
 
 
@@ -421,7 +421,7 @@ def _field_1d_traj():
     Uses the catalogue default grid (N=32) — KS is stiff and a coarser grid is
     numerically fragile; a short window keeps it cheap.
     """
-    return ts.KuramotoSivashinsky(N=32, L=22.0).trajectory(final_time=20.0, dt=0.5)
+    return ts.systems.KuramotoSivashinsky(N=32, L=22.0).run(final_time=20.0, dt=0.5)
 
 
 def _gif_frames(path):
@@ -576,9 +576,7 @@ def test_field_movie_block_selection_for_multi_field_systems():
     """``components=`` selects a field block (Gray–Scott's u / v); v is the default."""
     import numpy as np
 
-    tr = ts.systems.GrayScott(N=8).trajectory(
-        final_time=80.0, dt=4.0, backend="interp", method="rk45"
-    )
+    tr = ts.systems.GrayScott(N=8).run(final_time=80.0, dt=4.0, backend="interp", solver="rk45")
     spec_v = tr.to_plot_spec(kind="field")  # default → the activator v (last block)
     spec_u = tr.to_plot_spec(kind="field", components="u")
     assert spec_v.layers[0].data["z"].shape == (8, 8)
@@ -623,9 +621,9 @@ def _build_animatable_spec(name):
         traj = _field_2d_traj() if name.endswith("2d") else _field_1d_traj()
         return traj.to_plot_spec(kind="field", animate=True)
     if name == "spacetime_reveal":
-        field = ts.Lorenz96(N=8).trajectory(final_time=8.0, dt=0.1)
+        field = ts.systems.Lorenz96(N=8).run(final_time=8.0, dt=0.1)
         return field.to_plot_spec(kind="spacetime", animate=True)
-    lor = ts.Lorenz().integrate(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
+    lor = ts.systems.Lorenz().run(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
     if name == "time_series":
         return lor.to_plot_spec(kind="time_series", components="x", animate=True)
     if name == "phase_portrait_2d":
@@ -650,7 +648,7 @@ def test_curve_kinds_reveal_multiple_distinct_frames():
     import numpy as np
 
     pytest.importorskip("matplotlib")
-    lor = ts.Lorenz().integrate(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
+    lor = ts.systems.Lorenz().run(final_time=8.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(1.0)
     # A persistent reveal so the drawn curve strictly grows (no windowing).
     spec = (
         lor.to_plot_spec(components=["x", "y"], animate=True).animate(n_frames=8).trail(length=None)
@@ -683,7 +681,7 @@ def test_spacetime_reveal_sweep_line_moves():
     import numpy as np
 
     pytest.importorskip("matplotlib")
-    field = ts.Lorenz96(N=8).trajectory(final_time=8.0, dt=0.1)
+    field = ts.systems.Lorenz96(N=8).run(final_time=8.0, dt=0.1)
     spec = field.to_plot_spec(kind="spacetime", animate=True).animate(n_frames=8)
     anim = spec.render(backend="matplotlib")
     ax = anim._fig.axes[0]
@@ -706,7 +704,7 @@ def test_spacetime_reveal_sweep_line_moves():
 def test_building_an_animation_imports_no_plot_library():
     code = (
         "import sys, tsdynamics as ts;"
-        "tr = ts.Lorenz().integrate(final_time=10.0, dt=0.05).after(2.0);"
+        "tr = ts.systems.Lorenz().run(final_time=10.0, dt=0.05).after(2.0);"
         "spec = tr.to_plot_spec(animate=True).animate(fps=20).trail(length=('time', 3.0));"
         "spec.to_dict();"
         "bad = [m for m in sys.modules if m.split('.')[0] in ('matplotlib', 'plotly')];"

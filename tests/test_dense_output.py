@@ -55,7 +55,7 @@ def _reference_lorenz(final_time: float, ic=IC) -> np.ndarray:
     """
     from scipy.integrate import solve_ivp
 
-    s = ts.Lorenz()
+    s = ts.systems.Lorenz()
     sigma, rho, beta = s.sigma, s.rho, s.beta
 
     def f(t, y):
@@ -93,10 +93,10 @@ def test_the_answer_no_longer_depends_on_the_output_grid():
     the same trajectory to within the accuracy ``rtol`` actually bought.  Before
     v6 this failed: the forced landing made a fine ``dt`` silently more accurate.
     """
-    lorenz = ts.Lorenz()
+    lorenz = ts.systems.Lorenz()
     finals = {}
     for dt in (10.0, 5.0, 1.0, 0.1, 0.01):
-        traj = lorenz.integrate(final_time=10.0, dt=dt, ic=IC, method="rk45", rtol=1e-8, atol=1e-11)
+        traj = lorenz.run(final_time=10.0, dt=dt, ic=IC, solver="rk45", rtol=1e-8, atol=1e-11)
         finals[dt] = traj.y[-1]
 
     coarse = finals[10.0]
@@ -106,10 +106,8 @@ def test_the_answer_no_longer_depends_on_the_output_grid():
 
     # And the shared *interior* samples of two different grids agree too, not
     # merely the endpoints.
-    fine = lorenz.integrate(final_time=10.0, dt=0.01, ic=IC, method="rk45", rtol=1e-8, atol=1e-11)
-    coarse_grid = lorenz.integrate(
-        final_time=10.0, dt=0.1, ic=IC, method="rk45", rtol=1e-8, atol=1e-11
-    )
+    fine = lorenz.run(final_time=10.0, dt=0.01, ic=IC, solver="rk45", rtol=1e-8, atol=1e-11)
+    coarse_grid = lorenz.run(final_time=10.0, dt=0.1, ic=IC, solver="rk45", rtol=1e-8, atol=1e-11)
     shared = fine.y[::10]
     assert shared.shape == coarse_grid.y.shape
     assert np.max(np.abs(shared - coarse_grid.y)) < 1e-6
@@ -124,10 +122,10 @@ def test_grid_dependence_is_small_compared_to_the_requested_tolerance():
     rounding detail of the requested accuracy, not comparable to it.
     """
     truth = _reference_lorenz(10.0)
-    lorenz = ts.Lorenz()
+    lorenz = ts.systems.Lorenz()
     errs = {}
     for dt in (10.0, 0.1, 0.01):
-        traj = lorenz.integrate(final_time=10.0, dt=dt, ic=IC, method="rk45", rtol=1e-6, atol=1e-9)
+        traj = lorenz.run(final_time=10.0, dt=dt, ic=IC, solver="rk45", rtol=1e-6, atol=1e-9)
         errs[dt] = np.max(np.abs(traj.y[-1] - truth))
     spread = max(errs.values()) / min(errs.values())
     assert spread < 1.05, f"the answer still depends on the grid: error ratio {spread:.2f} ({errs})"
@@ -146,9 +144,9 @@ def test_rtol_is_live_on_a_fine_output_grid():
     Now it must change both the numbers and the delivered accuracy.
     """
     truth = _reference_lorenz(5.0)
-    lorenz = ts.Lorenz()
-    loose = lorenz.integrate(final_time=5.0, dt=0.001, ic=IC, method="rk45", rtol=1e-4, atol=1e-7)
-    tight = lorenz.integrate(final_time=5.0, dt=0.001, ic=IC, method="rk45", rtol=1e-11, atol=1e-13)
+    lorenz = ts.systems.Lorenz()
+    loose = lorenz.run(final_time=5.0, dt=0.001, ic=IC, solver="rk45", rtol=1e-4, atol=1e-7)
+    tight = lorenz.run(final_time=5.0, dt=0.001, ic=IC, solver="rk45", rtol=1e-11, atol=1e-13)
     assert not np.array_equal(loose.y, tight.y), "rtol is inert on a fine grid"
     e_loose = np.max(np.abs(loose.y[-1] - truth))
     e_tight = np.max(np.abs(tight.y[-1] - truth))
@@ -167,10 +165,10 @@ def test_engine_and_reference_oracle_agree_in_kind():
     cross-validation was structurally weaker than it looked.  They now agree in
     kind, so the residual is genuine solver disagreement only.
     """
-    lorenz = ts.Lorenz()
-    kw = dict(final_time=5.0, dt=0.01, ic=IC, method="rk45", rtol=1e-9, atol=1e-12)
-    engine = lorenz.integrate(**kw)
-    ref = lorenz.integrate(**kw, backend="reference")
+    lorenz = ts.systems.Lorenz()
+    kw = dict(final_time=5.0, dt=0.01, ic=IC, solver="rk45", rtol=1e-9, atol=1e-12)
+    engine = lorenz.run(**kw)
+    ref = lorenz.run(**kw, backend="reference")
     assert np.max(np.abs(engine.y - ref.y)) < 1e-6
 
 
@@ -189,10 +187,10 @@ def test_interp_equals_jit_bit_for_bit_on_a_dense_grid(method, dt):
     only ever exercised the *landing* path (``dt=0.05`` over ``T=0.5``), so this
     is the dense-path leg it did not have.
     """
-    lorenz = ts.Lorenz()
-    kw = dict(final_time=2.0, dt=dt, ic=IC, method=method, rtol=1e-8, atol=1e-11)
-    a = lorenz.integrate(**kw, backend="interp")
-    b = lorenz.integrate(**kw, backend="jit")
+    lorenz = ts.systems.Lorenz()
+    kw = dict(final_time=2.0, dt=dt, ic=IC, solver=method, rtol=1e-8, atol=1e-11)
+    a = lorenz.run(**kw, backend="interp")
+    b = lorenz.run(**kw, backend="jit")
     np.testing.assert_array_equal(a.y, b.y)
 
 
@@ -202,9 +200,9 @@ def test_interp_equals_jit_bit_for_bit_on_a_dense_grid(method, dt):
 
 _BYPASS_PROBE = """
 import numpy as np, tsdynamics as ts
-lorenz = ts.Lorenz()
-traj = lorenz.integrate(final_time=3.0, dt={dt}, ic=[1.0, 1.0, 1.0],
-                        method="rk45", rtol=1e-7, atol=1e-10)
+lorenz = ts.systems.Lorenz()
+traj = lorenz.run(final_time=3.0, dt={dt}, ic=[1.0, 1.0, 1.0],
+                        solver="rk45", rtol=1e-7, atol=1e-10)
 print(traj.y.tobytes().hex())
 print(traj.meta["dense_output"])
 """
@@ -248,26 +246,26 @@ import numpy as np, tsdynamics as ts
 out = {}
 
 # (a) the stepping protocol (two-node spans through OdeStepper.advance)
-lor = ts.Lorenz()
+lor = ts.systems.Lorenz()
 lor.reinit([1.0, 1.0, 1.0])
 out["step"] = np.array([lor.step(0.01) for _ in range(200)])
 
 # (b) lyapunov_spectrum (the engine chunk loop; t_eval = [t, tf])
-out["lyap"] = ts.Lorenz().lyapunov_spectrum(final_time=30.0, dt=0.1, transient=5.0,
+out["lyap"] = ts.systems.Lorenz().lyapunov_spectrum(final_time=30.0, dt=0.1, transient=5.0,
                                             ic=[1.0, 1.0, 1.0])
 
 # (c) PoincareMap (pinned to the fixed-step rk4 march, which carries no Caps::dense)
-pm = ts.PoincareMap(ts.Rossler(ic=[1.0, 1.0, 0.0]), plane=("y", 0.0, "up"))
-out["poincare"] = pm.trajectory(60).y
+pm = ts.derived.PoincareMap(ts.systems.Rossler(ic=[1.0, 1.0, 0.0]), plane=("y", 0.0, "up"))
+out["poincare"] = pm.run(60).y
 
 # (d) a map (a different family entirely)
-out["map"] = ts.Henon().iterate(steps=500, ic=[0.1, 0.1]).y
+out["map"] = ts.systems.Henon().run(steps=500, ic=[0.1, 0.1]).y
 
 # (e) a kernel with no continuous extension, on a fine grid
-out["rk4"] = ts.Lorenz().integrate(final_time=3.0, dt=0.01, ic=[1.0, 1.0, 1.0],
-                                   method="rk4").y
-out["bdf"] = ts.Lorenz().integrate(final_time=3.0, dt=0.01, ic=[1.0, 1.0, 1.0],
-                                   method="bdf").y
+out["rk4"] = ts.systems.Lorenz().run(final_time=3.0, dt=0.01, ic=[1.0, 1.0, 1.0],
+                                   solver="rk4").y
+out["bdf"] = ts.systems.Lorenz().run(final_time=3.0, dt=0.01, ic=[1.0, 1.0, 1.0],
+                                   solver="bdf").y
 
 for k in sorted(out):
     print(k, np.ascontiguousarray(out[k], dtype=np.float64).tobytes().hex())
@@ -310,7 +308,7 @@ def test_poincare_is_structurally_out_of_the_blast_radius():
 
     probe = (
         "import tsdynamics as ts;"
-        "t = ts.Lorenz().integrate(final_time=3.0, dt=0.01, ic=[1.0,1.0,1.0], method={m!r});"
+        "t = ts.systems.Lorenz().run(final_time=3.0, dt=0.01, ic=[1.0,1.0,1.0], solver={m!r});"
         "print(t.y.tobytes().hex())"
     )
     rk4_on = _run_in_subprocess(probe.format(m="rk4")).strip()
@@ -341,13 +339,13 @@ def test_max_step_reproduces_the_pre_v6_forced_landing():
     below), which is what "the ceiling restores the old step regime" means
     operationally.
     """
-    lorenz = ts.Lorenz()
-    kw = dict(final_time=3.0, dt=0.01, ic=IC, method="rk45", rtol=1e-9, atol=1e-12)
-    capped = lorenz.integrate(**kw, max_step=0.01)
+    lorenz = ts.systems.Lorenz()
+    kw = dict(final_time=3.0, dt=0.01, ic=IC, solver="rk45", rtol=1e-9, atol=1e-12)
+    capped = lorenz.run(**kw, max_step=0.01)
     bypassed = _run_in_subprocess(
         "import numpy as np, tsdynamics as ts;"
-        "t = ts.Lorenz().integrate(final_time=3.0, dt=0.01, ic=[1.0,1.0,1.0],"
-        " method='rk45', rtol=1e-9, atol=1e-12);"
+        "t = ts.systems.Lorenz().run(final_time=3.0, dt=0.01, ic=[1.0,1.0,1.0],"
+        " solver='rk45', rtol=1e-9, atol=1e-12);"
         "print(t.y.tobytes().hex())",
         TSDYNAMICS_NO_DENSE_OUTPUT="1",
     ).strip()
@@ -404,11 +402,11 @@ def test_max_step_bounds_every_internal_step():
     caps = (0.4, 0.2, 0.1)
     errs = []
     for cap in caps:
-        traj = _Oscillator().integrate(
+        traj = _Oscillator().run(
             final_time=4.0,
             dt=4.0,
             ic=[1.0, 0.0],
-            method="rk45",
+            solver="rk45",
             rtol=1e9,
             atol=1e9,
             max_step=cap,
@@ -420,9 +418,9 @@ def test_max_step_bounds_every_internal_step():
 
     # And the cost consequence, on a real system: a ceiling far below the natural
     # step forces strictly more work and so a materially different step sequence.
-    kw = dict(final_time=20.0, dt=0.5, ic=IC, method="rk45", rtol=1e-6, atol=1e-9)
-    free = ts.Lorenz().integrate(**kw)
-    capped = ts.Lorenz().integrate(**kw, max_step=1e-3)
+    kw = dict(final_time=20.0, dt=0.5, ic=IC, solver="rk45", rtol=1e-6, atol=1e-9)
+    free = ts.systems.Lorenz().run(**kw)
+    capped = ts.systems.Lorenz().run(**kw, max_step=1e-3)
     assert np.isfinite(capped.y).all()
     assert free.y.shape == capped.y.shape
     assert not np.array_equal(free.y, capped.y), "max_step changed nothing at all"
@@ -441,20 +439,20 @@ def test_a_bad_max_step_is_a_typed_invalid_parameter_error(bad, backend):
     quietly do nothing on the third.  This sweep is what pins the three together.
     """
     with pytest.raises(InvalidParameterError, match="max_step"):
-        ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=IC, backend=backend, max_step=bad)
+        ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=IC, backend=backend, max_step=bad)
 
 
 def test_max_step_is_recorded_in_provenance():
-    traj = ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=IC, max_step=0.05)
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=IC, max_step=0.05)
     assert traj.meta["max_step"] == 0.05
     assert traj.meta["dense_output"] is True
-    free = ts.Lorenz().integrate(final_time=1.0, dt=0.1, ic=IC)
+    free = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=IC)
     assert math.isinf(free.meta["max_step"])
 
 
 def test_max_step_is_honoured_through_the_stepping_protocol():
     """``reinit(max_step=...)`` is stored and applied to every later ``step``."""
-    lorenz = ts.Lorenz()
+    lorenz = ts.systems.Lorenz()
     lorenz.reinit(IC, max_step=1e-3)
     u = lorenz.step(0.1)
     assert np.isfinite(u).all()
@@ -477,7 +475,7 @@ def test_every_ode_integrates_on_a_dense_grid(ode_entry):
     hand-written case covers.
     """
     system = ode_entry.cls()
-    traj = system.integrate(final_time=1.0, dt=0.05, method="rk45", rtol=1e-6, atol=1e-9)
+    traj = system.run(final_time=1.0, dt=0.05, solver="rk45", rtol=1e-6, atol=1e-9)
     assert traj.y.shape == (traj.t.size, system.dim)
     assert traj.t.size > 2, "the sweep must exercise a grid with interior points"
     assert np.isfinite(traj.y).all()

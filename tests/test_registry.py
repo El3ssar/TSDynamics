@@ -28,9 +28,87 @@ def test_registry_matches_all_exports() -> None:
     assert not missing_from_exports, f"registered but not exported: {missing_from_exports}"
 
 
-def test_registry_matches_top_level_namespace() -> None:
+def test_registry_matches_the_systems_namespace() -> None:
+    """``ts.systems.<Name>`` is the canonical path, and it *is* the registered class.
+
+    It used to be ``ts.<Name>``.  Since v6 the top level is seventeen names and a
+    built-in system resolves at one address; the registry is how tooling finds
+    them, so the two must not be able to disagree.
+    """
     for entry in registry.all_systems():
-        assert getattr(ts, entry.name) is entry.cls
+        assert getattr(ts.systems, entry.name) is entry.cls
+
+
+# ---------------------------------------------------------------------------
+# Catalogue metadata reaches the entry (the 155-dropped-DOI headline bug)
+# ---------------------------------------------------------------------------
+
+
+def test_system_entry_carries_the_catalogue_metadata_fields() -> None:
+    """``SystemEntry`` has somewhere to put a DOI, a field shape and field labels.
+
+    It did not, which is why the docs tool read ``None`` for all 155 declared
+    DOIs: the values were on the classes the whole time and the record they were
+    copied into had no slot for them.
+    """
+    fields = {f.name for f in __import__("dataclasses").fields(registry.SystemEntry)}
+    assert {"reference", "doi", "field_shape", "field_labels", "known_lyapunov"} <= fields
+
+
+def test_catalogue_metadata_reaches_the_registry() -> None:
+    """Every value a catalogue class declares must arrive on its ``SystemEntry``.
+
+    This is the gate for the failure mode that has now bitten this repo twice:
+    **renaming a ClassVar whose absence is legal orphans its readers silently.**
+    ``None`` is a legal value for every field below, so a reader that looks under
+    only one spelling records "no citation" for all 177 systems and *nothing
+    raises* — the docs lose their bibliography, ``test_known_values.py`` quietly
+    stops comparing against literature, and the suite stays green.
+
+    So the assertion is not "the field exists" but "the declared value arrived",
+    counted, with a floor that a silent regression cannot clear.
+    """
+    entries = registry.all_systems()
+    counts = {
+        field: sum(1 for e in entries if getattr(e, field) is not None)
+        for field in ("reference", "doi", "known_lyapunov")
+    }
+    assert counts["reference"] >= 170, f"citations stopped reaching the registry: {counts}"
+    assert counts["doi"] >= 150, f"DOIs stopped reaching the registry: {counts}"
+    assert counts["known_lyapunov"] >= 20, f"known_lyapunov stopped arriving: {counts}"
+
+    # ...and spot-check one system end to end, under whichever spelling it declares.
+    lorenz = registry.get("Lorenz")
+    assert lorenz.doi and lorenz.doi.startswith("10."), lorenz.doi
+    assert lorenz.reference and "Lorenz" in lorenz.reference
+
+
+def test_metadata_is_read_under_both_spellings() -> None:
+    """The dual read is deliberate, and it prefers the underscored ClassVar.
+
+    v6 moves these ClassVars behind an underscore so they stay off
+    ``system.<TAB>``.  Reading both spellings is what makes the declaration side
+    of that rename a separable change instead of a silent data loss, and the
+    underscored one wins so the migration is a real migration.
+    """
+
+    class Both:
+        _doi = "10.underscored"
+        doi = "10.bare"
+
+    class BareOnly:
+        doi = "10.bare"
+
+    assert registry._classvar(Both, "doi") == "10.underscored"
+    assert registry._classvar(BareOnly, "doi") == "10.bare"
+    assert registry._classvar(object, "doi") is None
+
+
+def test_field_metadata_reaches_the_registry() -> None:
+    """A spatially-extended system's grid and block names arrive on the entry."""
+    gs = registry.get("GrayScott")
+    assert gs.field_shape is not None and len(gs.field_shape) == 2
+    assert gs.field_labels == ("u", "v")
 
 
 def test_family_counts() -> None:
@@ -50,7 +128,7 @@ def test_entries_have_consistent_metadata(system_entry) -> None:
 
 
 def test_get_prefers_builtin_and_suggests() -> None:
-    assert registry.get("Lorenz").cls is ts.Lorenz
+    assert registry.get("Lorenz").cls is ts.systems.Lorenz
     with pytest.raises(KeyError, match="Did you mean 'Lorenz'"):
         registry.get("lorenz")
     with pytest.raises(KeyError):
@@ -268,6 +346,92 @@ def test_plot_transform_registry_is_created_empty_and_filled_by_viz() -> None:
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+#: Every declared plugin group, and the module that must actually load it.
+#:
+#: A declared group is a promise.  ``SYSTEMS_GROUP`` was declared inside "the
+#: frozen contract a plugin author declares against", listed in ``ALL_GROUPS``,
+#: and loaded by **nothing** — so a third-party package publishing
+#: ``tsdynamics.systems`` entry points was silently ignored, with no error to
+#: debug, for as long as the group has existed.
+_GROUP_CONSUMERS = {
+    "SYSTEMS_GROUP": "tsdynamics.systems",
+    "SOLVERS_GROUP": "tsdynamics.solvers",
+    "ANALYSES_GROUP": "tsdynamics.analysis",
+    "RENDERERS_GROUP": "tsdynamics.viz",
+    "PLOT_TRANSFORMS_GROUP": "tsdynamics.viz",
+    "PLOT_PRIMITIVES_GROUP": "tsdynamics.viz",
+}
+
+
+def test_every_declared_plugin_group_is_in_all_groups() -> None:
+    """The six extension doors are declared, and ``ALL_GROUPS`` is the whole set."""
+    from tsdynamics import plugins
+
+    declared = {getattr(plugins, name) for name in _GROUP_CONSUMERS}
+    assert set(plugins.ALL_GROUPS) == declared
+    assert len(plugins.ALL_GROUPS) == 6, plugins.ALL_GROUPS
+    assert plugins.PLOT_PRIMITIVES_GROUP == "tsdynamics.plot_primitives"
+
+
+#: Groups whose loader belongs to another v6 slot and has not landed yet.
+#: ``strict`` xfails, so each one **fails the moment it starts passing** and the
+#: row has to be deleted — the repo's established cross-slot handoff.
+_LOADER_NOT_LANDED = {
+    # §7.1: "SYSTEMS_GROUP is advertised and dead ... systems/__init__.py gains
+    # the loader."  Owner: C9 · CATALOGUE.
+    "SYSTEMS_GROUP": "C9 - CATALOGUE owns systems/__init__.py (contract 7.1)",
+    # §7.4/§6.9: the primitives registry and its entry-point loader.
+    # Owner: C8 · VIZ-REGISTRY / S5 · PLOT-FRONTDOOR.
+    "PLOT_PRIMITIVES_GROUP": "C8 - VIZ-REGISTRY owns the primitives registry (contract 6.9)",
+}
+
+
+@pytest.mark.parametrize(
+    "group_name",
+    [
+        pytest.param(
+            name,
+            marks=(
+                [pytest.mark.xfail(strict=True, reason=_LOADER_NOT_LANDED[name])]
+                if name in _LOADER_NOT_LANDED
+                else []
+            ),
+        )
+        for name in sorted(_GROUP_CONSUMERS)
+    ],
+)
+def test_every_declared_plugin_group_has_a_consumer(group_name) -> None:
+    """Some module must actually *load* each declared group.
+
+    Detected by looking for the group **constant** (``SYSTEMS_GROUP``) or a
+    literal load of the group string in the consumer's source.  Matching the
+    constant rather than the group *string* is load-bearing: the string
+    ``"tsdynamics.systems"`` appears in every module path under
+    ``tsdynamics/systems/``, so a string match would have declared the dead group
+    healthy — which is exactly how it stayed dead.
+    """
+    import importlib
+    import pathlib
+    import re
+
+    from tsdynamics import plugins
+
+    group = getattr(plugins, group_name)
+    consumer = importlib.import_module(_GROUP_CONSUMERS[group_name])
+    root = pathlib.Path(consumer.__file__).parent
+    sources = "\n".join(p.read_text(encoding="utf-8") for p in root.rglob("*.py"))
+    loads_constant = re.search(rf"\b{group_name}\b", sources) is not None
+    loads_literal = (
+        re.search(rf"""(load_plugins|register_entry_points)\([^)]*{re.escape(group)}""", sources)
+        is not None
+    )
+    assert loads_constant or loads_literal, (
+        f"{group_name} ({group!r}) is declared in plugins.ALL_GROUPS but "
+        f"{_GROUP_CONSUMERS[group_name]} never loads it — a declared group that "
+        "nothing reads silently ignores every plugin that declares against it"
+    )
 
 
 def test_plot_transform_entry_point_group_is_declared() -> None:

@@ -8,8 +8,8 @@ Periodic orbits of maps and flows, and period estimation from a signal.
   :math:`g(x) = f^{p}(x) - x`.  Orbits whose *minimal* period properly divides
   ``p`` are filtered out (``prime=True``) and cyclic shifts of one orbit are
   merged.
-- :func:`periodic_orbit` — a periodic orbit of a
-  :class:`~tsdynamics.families.ContinuousSystem` by single shooting: Newton on
+  For a :class:`~tsdynamics.families.ContinuousSystem` the same verb finds the
+  limit cycle by single shooting: Newton on
   the unknowns ``(x0, T)`` solving :math:`\varphi_T(x_0) - x_0 = 0` with an
   orthogonality phase condition, using the monodromy matrix from the variational
   equations.  Stability is read from the Floquet multipliers.
@@ -44,7 +44,6 @@ __all__ = [
     "PeriodicOrbit",
     "estimate_period",
     "period_diagnostic",
-    "periodic_orbit",
     "periodic_orbits",
 ]
 
@@ -60,15 +59,14 @@ __all__ = [
 # both of which the autocorrelation guess sends to an equilibrium instead).
 _SEED_FROM_ATTRACTOR = (
     "traj = system.run(final_time=200.0, dt=0.01)",
-    "ts.periodic_orbit(system, ic=traj.y[-1], "
-    "period_guess=float(ts.analysis.estimate_period(traj)))",
+    "ts.analysis.periodic_orbits(system, float(ts.analysis.estimate_period(traj)), ic=traj.y[-1])",
 )
 _SEED_FROM_NEAR_RETURN = (
     "traj = system.run(final_time=200.0, dt=0.01)",
     "lag = int(np.argmin([np.linalg.norm(traj.y[m:] - traj.y[:-m], axis=1).min()",
     "                     for m in range(50, 500)])) + 50   # the closest near-return",
     "k = int(np.linalg.norm(traj.y[lag:] - traj.y[:-lag], axis=1).argmin())",
-    "ts.periodic_orbit(system, ic=traj.y[k], period_guess=lag * 0.01)",
+    "ts.analysis.periodic_orbits(system, lag * 0.01, ic=traj.y[k])",
 )
 
 
@@ -342,22 +340,27 @@ class OrbitSet(CollectionResult):
 
 def periodic_orbits(
     system: Any,
-    period: int,
+    period: int | float | None = None,
     *,
     region: Any = None,
     n_seeds: int = 300,
     method: str = "newton",
     lam: float = 0.05,
     beta: float = 1.0,
-    tol: float = 1e-12,
-    max_iter: int = 200,
+    tol: float | None = None,
+    max_iter: int | None = None,
     dedup_tol: float = 1e-6,
     prime: bool = True,
     max_c: int | None = None,
     seed: int | None = None,
+    ic: Any = None,
+    transient: float = 0.0,
+    steps_per_period: int = 2000,
+    n_points: int = 400,
+    min_amplitude: float = 1e-6,
 ) -> OrbitSet:
     r"""
-    Find period-``period`` orbits of a discrete map.
+    Periodic orbits of a map, or a flow's limit cycle.
 
     Solves :math:`f^{p}(x) = x` by multi-start root finding, recovers each orbit
     by forward iteration, filters orbits whose minimal period properly divides
@@ -409,8 +412,7 @@ def periodic_orbits(
     ------
     InvalidInputError
         If ``system`` is measured data, or is not a
-        :class:`~tsdynamics.families.DiscreteMap` (use :func:`periodic_orbit` for
-        flows).  A ``TypeError`` subclass, so ``except TypeError`` keeps working.
+        a :class:`~tsdynamics.families.DiscreteMap`, when a period is named.  A ``TypeError`` subclass, so ``except TypeError`` keeps working.
     ValueError
         If ``period < 1`` or ``method`` is not ``"newton"``/``"sd"``/``"dl"``.
 
@@ -421,15 +423,33 @@ def periodic_orbits(
     """
     reject_data(system, analysis="periodic_orbits")
     if not isinstance(system, DiscreteMap):
+        # A flow's periodic orbit is a closed curve with a REAL period, so it is
+        # found by single shooting on ``(x0, T)`` rather than by rooting f^p.
+        # One verb, one return type: v6 absorbed the old ``periodic_orbit``
+        # (singular) here, and ``period`` is the period guess for a flow.
+        return _flow_periodic_orbits(
+            system,
+            period_guess=None if period is None else float(period),
+            ic=ic,
+            transient=transient,
+            steps_per_period=steps_per_period,
+            tol=1e-10 if tol is None else float(tol),
+            max_iter=50 if max_iter is None else int(max_iter),
+            n_points=n_points,
+            min_amplitude=min_amplitude,
+            seed=seed,
+        )
+    if period is None:
         raise InvalidInputError(
-            f"periodic_orbits finds period-p orbits of a *map* (fixed points of f^p), "
-            f"and {type(system).__name__} is a flow — a flow's periodic orbit is a "
-            f"closed curve with a real-valued period, found by shooting."
+            "periodic_orbits needs the period p to look for on a map — a map's "
+            "orbits are the fixed points of f^p, one root problem per p."
             + remedy(
-                *_SEED_FROM_ATTRACTOR,
-                lead="Use the flow routine (singular), seeded from a point on the orbit:",
+                "ts.analysis.periodic_orbits(system, 2)   # the 2-cycles",
+                lead="Name the period:",
             )
         )
+    tol = 1e-12 if tol is None else float(tol)
+    max_iter = 200 if max_iter is None else int(max_iter)
     period = int(period)
     if period < 1:
         raise ValueError("period must be a positive integer.")
@@ -554,7 +574,7 @@ def _minimal_period(
 # ── periodic orbits of flows (single shooting) ────────────────────────────────
 
 
-def periodic_orbit(
+def _flow_periodic_orbits(
     system: Any,
     *,
     ic: Any | None = None,
@@ -566,9 +586,9 @@ def periodic_orbit(
     n_points: int = 400,
     min_amplitude: float = 1e-6,
     seed: int | None = None,
-) -> PeriodicOrbit:
+) -> OrbitSet:
     r"""
-    Find a periodic orbit of an autonomous flow by single shooting.
+    Find a limit cycle of an autonomous flow by single shooting.
 
     Newton iterates the unknowns ``(x0, T)`` to solve ``φ_T(x0) − x0 = 0`` with an
     orthogonality phase condition ``f(x0)·δx = 0`` (which removes the trivial
@@ -612,17 +632,16 @@ def periodic_orbit(
 
     Returns
     -------
-    PeriodicOrbit
-        With ``continuous=True``, ``period`` the converged ``T`` and ``multipliers``
-        the Floquet multipliers.
+    OrbitSet
+        One :class:`PeriodicOrbit` with ``continuous=True``, ``period`` the
+        converged ``T`` and ``multipliers`` the Floquet multipliers.
 
     Raises
     ------
     InvalidInputError
         If ``system`` is measured data rather than a model.
     NotImplementedError
-        If ``system`` is not a continuous flow (use :func:`periodic_orbits` for a
-        map).
+        If ``system`` is not a continuous flow.
     ValueError
         If ``period_guess`` (or the auto-estimated period) is not positive.
     ConvergenceError
@@ -633,16 +652,16 @@ def periodic_orbit(
 
     Examples
     --------
-    >>> periodic_orbit(VanDerPol(params={"mu": 1.0}), ic=[2.0, 0.0], period_guess=6.6)
+    >>> periodic_orbits(VanDerPol(params={"mu": 1.0}), 6.6, ic=[2.0, 0.0])
     """
-    reject_data(system, analysis="periodic_orbit")
+    reject_data(system, analysis="periodic_orbits")
     if not isinstance(system, ContinuousSystem):
         raise NotImplementedError(
-            f"periodic_orbit shoots for a closed *flow* trajectory (x0, T), and "
+            f"periodic_orbits shoots for a closed *flow* trajectory (x0, T), and "
             f"{type(system).__name__} has no continuous time — a map's periodic orbit "
             f"is a finite cycle of integer period."
             + remedy(
-                "ts.periodic_orbits(system, 2)",
+                "ts.analysis.periodic_orbits(system, 2)",
                 lead="Use the map routine (plural), with the period you want:",
             )
         )
@@ -685,7 +704,7 @@ def periodic_orbit(
             delta = np.linalg.solve(amat, rhs_vec)
         except np.linalg.LinAlgError as exc:
             raise ConvergenceError(
-                "periodic_orbit: the shooting Jacobian is singular, so the Newton step "
+                "periodic_orbits: the shooting Jacobian is singular, so the Newton step "
                 "is undefined — the target is a centre (a continuum of orbits, none "
                 "isolated) or the phase condition is degenerate at this point."
                 + remedy(
@@ -695,7 +714,7 @@ def periodic_orbit(
             ) from exc
         if not np.all(np.isfinite(delta)):
             raise ConvergenceError(
-                "periodic_orbit: the Newton step is non-finite — the shooting "
+                "periodic_orbits: the Newton step is non-finite — the shooting "
                 "trajectory blew up before it closed."
                 + remedy(
                     *_SEED_FROM_ATTRACTOR,
@@ -741,7 +760,7 @@ def periodic_orbit(
             )
         )
         raise ConvergenceError(
-            f"periodic_orbit: Newton did not converge (closure residual {residual:.3e} "
+            f"periodic_orbits: Newton did not converge (closure residual {residual:.3e} "
             f"≥ tol {tol:.1e}), so (x0, T) is not a closed orbit. Shooting has a small "
             f"basin: it needs a starting point already close to the cycle"
             + (f", and period_guess={period_guess:g} did not put it there." if seeded else ".")
@@ -752,29 +771,35 @@ def periodic_orbit(
     extent = float(np.linalg.norm(points.max(axis=0) - points.min(axis=0)))
     if extent < min_amplitude:
         raise ConvergenceError(
-            f"periodic_orbit: shooting collapsed onto an equilibrium (orbit extent "
+            f"periodic_orbits: shooting collapsed onto an equilibrium (orbit extent "
             f"{extent:.2e} < {min_amplitude:.1e}). Newton walked to a fixed point "
             f"because the starting guess was not near a cycle — or the system has no "
             f"isolated cycle to find (a centre is a continuum of orbits, so shooting "
             f"has nothing to converge *to*)."
             + remedy(
                 "traj = system.run(final_time=200.0, dt=0.01)",
-                "ts.periodic_orbit(system, ic=traj.y[-1], period_guess="
-                "float(ts.analysis.estimate_period(traj)))",
+                "ts.analysis.periodic_orbits(system, "
+                "float(ts.analysis.estimate_period(traj)), ic=traj.y[-1])",
                 lead="Seed it from a point that is actually on the cycle:",
             )
         )
 
     multipliers, eigenvectors = np.linalg.eig(monodromy)
     stable = _flow_orbit_stable(multipliers, eigenvectors, rhs(x0, 0.0))
-    return PeriodicOrbit(
-        points=points,
-        period=float(t_period),
-        multipliers=multipliers,
-        stable=stable,
-        continuous=True,
-        residual=residual,
-        meta=AnalysisResult.build_meta(system, analysis="periodic_orbit", period=float(t_period)),
+    meta = AnalysisResult.build_meta(system, analysis="periodic_orbits", period=float(t_period))
+    return OrbitSet(
+        items=(
+            PeriodicOrbit(
+                points=points,
+                period=float(t_period),
+                multipliers=multipliers,
+                stable=stable,
+                continuous=True,
+                residual=residual,
+                meta=meta,
+            ),
+        ),
+        meta=meta,
     )
 
 
@@ -855,7 +880,7 @@ def estimate_period(
     data: Any,
     *,
     dt: float | None = None,
-    component: int | str | None = None,
+    components: int | str | None = None,
     method: str = "autocorrelation",
     max_delay: int | None = None,
     detrend: bool = True,
@@ -865,7 +890,7 @@ def estimate_period(
 
     Accepts a :class:`~tsdynamics.data.Trajectory` (the sampling step is read from
     its time grid), a 1-D array, or a 2-D array (one row per sample); for
-    multi-component input, ``component`` selects the channel (default: the
+    multi-component input, ``components`` selects the channel (default: the
     highest-variance one).
 
     Parameters
@@ -876,8 +901,10 @@ def estimate_period(
         Sampling step.  For a bare array it sets the time unit (default ``1.0`` →
         period in samples).  For a Trajectory the step is read from its time grid;
         passing ``dt`` overrides that grid.
-    component : int or str, optional
-        Channel to analyse for multi-component input.
+    components : int or str, optional
+        Which **column** of a multi-component input to read, by index or by
+        name (default: the highest-variance one).  It selects a channel, never
+        a sample: ``estimate_period(traj, components=0)`` reads ``traj.y[:, 0]``.
     method : {"autocorrelation", "fft"}
         ``"autocorrelation"`` — first autocorrelation peak after the first
         zero-crossing (parabolically refined).  ``"fft"`` — reciprocal of the
@@ -911,7 +938,7 @@ def estimate_period(
     Box, G. E. P. & Jenkins, G. M. (1970). *Time Series Analysis: Forecasting
     and Control*. Holden-Day (autocorrelation method).
     """
-    y, step = _coerce_signal(data, dt, component)
+    y, step = _coerce_signal(data, dt, components)
     if y.size < 8:
         raise ValueError("estimate_period needs at least 8 samples.")
     if detrend:
@@ -960,8 +987,8 @@ def period_diagnostic(data: Any, **kwargs: Any) -> Any:
     data : Trajectory or array-like
         The signal — passed straight to :func:`estimate_period`.
     **kwargs
-        Forwarded to :func:`estimate_period` (``dt`` / ``component`` / ``method``
-        / ``max_delay`` / ``detrend``).
+        Forwarded to :func:`estimate_period` (``dt`` / ``components`` /
+        ``method`` / ``max_delay`` / ``detrend``).
 
     Returns
     -------
@@ -998,8 +1025,39 @@ def period_diagnostic(data: Any, **kwargs: Any) -> Any:
     )
 
 
+def _column(data: Any, arr: np.ndarray, components: int | str | None) -> np.ndarray:
+    """Select ONE column of an ``(N, dim)`` point set, by index or by name.
+
+    The v6 fix for the axis bug: ``data[component]`` on a
+    :class:`~tsdynamics.data.Trajectory` selects a **row** (one state), not a
+    channel, so ``estimate_period(traj, component=0)`` measured the period of a
+    3-sample signal.  On a 2-component system that raised; on a 10-component
+    one it silently returned 0.030 where the truth is 1.58.
+    """
+    if arr.ndim == 1:
+        return arr
+    if arr.ndim != 2:
+        raise ValueError("estimate_period expects a 1-D series or an (N, dim) point set.")
+    if components is None:
+        return arr[:, 0] if arr.shape[1] == 1 else arr[:, int(np.argmax(arr.var(0)))]
+    if isinstance(components, str):
+        names = tuple(getattr(data, "variables", ()) or ())
+        if components not in names:
+            known = f" This subject's components are: {', '.join(names)}." if names else ""
+            raise ValueError(f"no component named {components!r}.{known}")
+        index = names.index(components)
+    else:
+        index = int(components)
+    if not -arr.shape[1] <= index < arr.shape[1]:
+        raise ValueError(
+            f"components={components!r} is out of range: this subject has "
+            f"{arr.shape[1]} components."
+        )
+    return arr[:, index]
+
+
 def _coerce_signal(
-    data: Any, dt: float | None, component: int | str | None
+    data: Any, dt: float | None, components: int | str | None
 ) -> tuple[np.ndarray, float]:
     """Coerce input to ``(1-D float array, sampling step)``.
 
@@ -1009,25 +1067,11 @@ def _coerce_signal(
     reject_system(data, analysis="estimate_period")
     if hasattr(data, "t") and hasattr(data, "y"):  # Trajectory (duck-typed)
         t = np.asarray(data.t, dtype=float)
-        if component is not None:
-            y = np.asarray(data[component], dtype=float)
-        else:
-            ys = np.asarray(data.y, dtype=float)
-            y = ys.ravel() if ys.ndim == 1 or ys.shape[1] == 1 else ys[:, int(np.argmax(ys.var(0)))]
+        y = _column(data, np.asarray(data.y, dtype=float), components)
         step = dt if dt is not None else float(np.mean(np.diff(t))) if t.size > 1 else 1.0
         return np.ravel(y), step
-    arr = np.asarray(data, dtype=float)
-    if arr.ndim == 2:
-        if component is not None:
-            arr = arr[:, int(component)]
-        elif arr.shape[1] == 1:
-            arr = arr[:, 0]
-        else:
-            arr = arr[:, int(np.argmax(arr.var(0)))]
-    arr = np.ravel(arr)
-    if arr.ndim != 1:
-        raise ValueError("estimate_period expects a 1-D series after component selection.")
-    return arr, (1.0 if dt is None else float(dt))
+    arr = _column(data, np.asarray(data, dtype=float), components)
+    return np.ravel(arr), (1.0 if dt is None else float(dt))
 
 
 def _autocorr_period_lag(

@@ -39,9 +39,9 @@ values live from the system on every run, so a parameter sweep re-lowers
 nothing:
 
 ```python
-lor = ts.Lorenz()
+lor = ts.systems.Lorenz()
 for rho in np.linspace(0, 50, 200):
-    lor.with_params(rho=rho).integrate(final_time=50.0)   # one tape, 200 runs
+    lor.with_params(rho=rho).run(final_time=50.0)   # one tape, 200 runs
 ```
 
 Two kinds of parameter *do* change the tape's shape and therefore re-lower:
@@ -67,7 +67,7 @@ Because the right-hand side exists symbolically, the Jacobian does too — no
 hand-derivation, no finite differences:
 
 ```python
-lor = ts.Lorenz()
+lor = ts.systems.Lorenz()
 lor.jacobian_sym()              # dim × dim SymEngine expressions, ∂f_i/∂y_j
 lor.jacobian([1.0, 1.0, 1.0])   # ndarray (3, 3), evaluated at a state
 ```

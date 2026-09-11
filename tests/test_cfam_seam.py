@@ -66,19 +66,19 @@ def test_default_backend_per_family() -> None:
 def test_backend_none_resolves_to_family_default_ode() -> None:
     """``backend=None`` is the same as the family default (the engine seam)."""
     pytest.importorskip("tsdynamics._rust")
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     kw = dict(final_time=1.0, dt=0.5, ic=[1.0, 1.0, 1.0])
-    explicit = lor.integrate(backend=ts.ContinuousSystem._default_backend, **kw)
-    implicit = lor.integrate(backend=None, **kw)
+    explicit = lor.run(backend=ts.ContinuousSystem._default_backend, **kw)
+    implicit = lor.run(backend=None, **kw)
     np.testing.assert_array_equal(explicit.y, implicit.y)
     # The default path now *is* the engine seam.
     assert implicit.meta.get("engine") == "rust"
 
 
 def test_backend_none_resolves_to_family_default_map() -> None:
-    h = ts.Henon()
-    a = h.iterate(steps=20, ic=[0.1, 0.1], backend="reference")
-    b = h.iterate(steps=20, ic=[0.1, 0.1], backend=None)
+    h = ts.systems.Henon()
+    a = h.run(steps=20, ic=[0.1, 0.1], backend="reference")
+    b = h.run(steps=20, ic=[0.1, 0.1], backend=None)
     np.testing.assert_array_equal(a.y, b.y)
 
 
@@ -97,7 +97,7 @@ def test_dispatch_routes_through_run_integrate(monkeypatch) -> None:
         return "SENTINEL"
 
     monkeypatch.setattr(run, "integrate", fake_integrate)
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     out = lor._dispatch(backend="interp", final_time=5.0, dt=0.1, ic=[1.0, 1.0, 1.0])
     assert out == "SENTINEL"
     assert seen["system"] is lor
@@ -114,9 +114,9 @@ def test_ode_engine_backends_route_through_the_seam(monkeypatch) -> None:
         return "ROUTED"
 
     monkeypatch.setattr(ts.ContinuousSystem, "_dispatch", fake_dispatch, raising=True)
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     for be in ("interp", "jit", "reference"):
-        assert lor.integrate(backend=be, final_time=1.0, dt=0.5, ic=[1.0, 1.0, 1.0]) == "ROUTED"
+        assert lor.run(backend=be, final_time=1.0, dt=0.5, ic=[1.0, 1.0, 1.0]) == "ROUTED"
     assert calls == ["interp", "jit", "reference"]
 
 
@@ -126,14 +126,14 @@ def test_ode_engine_backends_route_through_the_seam(monkeypatch) -> None:
 
 
 def test_ode_reference_via_family_carries_engine_provenance_with_ic_t0() -> None:
-    """``Lorenz().integrate(backend='reference')`` runs the lowered tape via the seam.
+    """``Lorenz().run(backend='reference')`` runs the lowered tape via the seam.
 
     The engine-path provenance now threads ``ic`` and ``t0`` (the C-FAM fix), so
     an engine-produced Trajectory carries the same provenance a v2 run would.
     """
-    lor = ts.Lorenz()
-    traj = lor.integrate(
-        backend="reference", final_time=2.0, dt=0.1, t0=0.0, ic=[1.0, 1.0, 1.0], method="DOP853"
+    lor = ts.systems.Lorenz()
+    traj = lor.run(
+        backend="reference", final_time=2.0, dt=0.1, t0=0.0, ic=[1.0, 1.0, 1.0], solver="DOP853"
     )
     assert traj.meta["engine"] == "rust"
     assert traj.meta["family"] == "ode"
@@ -147,9 +147,9 @@ def test_ode_reference_matches_scipy_on_a_short_window() -> None:
     """The seam's lowered-tape integration agrees with an independent SciPy oracle."""
     from scipy.integrate import solve_ivp
 
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     kw = dict(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0], rtol=1e-10, atol=1e-12)
-    seam = lor.integrate(backend="reference", method="DOP853", **kw)
+    seam = lor.run(backend="reference", solver="DOP853", **kw)
     rhs = lor._rhs_numeric()
     sol = solve_ivp(
         lambda t, y: rhs(y, t),
@@ -170,8 +170,8 @@ def test_ode_reference_matches_scipy_on_a_short_window() -> None:
 
 
 def test_map_engine_provenance_carries_steps_and_ic() -> None:
-    h = ts.Henon()
-    traj = h.iterate(steps=30, ic=[0.1, 0.1], backend="reference")
+    h = ts.systems.Henon()
+    traj = h.run(steps=30, ic=[0.1, 0.1], backend="reference")
     assert traj.meta["engine"] == "rust"
     assert traj.meta["family"] == "map"
     assert traj.meta["steps"] == 30
@@ -186,7 +186,7 @@ def test_map_engine_provenance_carries_steps_and_ic() -> None:
 def test_dde_reference_is_rejected_through_the_seam() -> None:
     """A DDE has no reference integrator — the seam refuses it loudly."""
     with pytest.raises(NotImplementedError, match="reference"):
-        ts.MackeyGlass().integrate(backend="reference", final_time=1.0, dt=0.5, ic=[1.0])
+        ts.systems.MackeyGlass().run(backend="reference", final_time=1.0, dt=0.5, ic=[1.0])
 
 
 def test_run_integrate_refuses_sde_without_the_engine() -> None:
@@ -216,14 +216,14 @@ def test_dde_engine_absent_gives_install_guidance(monkeypatch) -> None:
 
     monkeypatch.setattr(run, "_engine", boom)
     with pytest.raises(EngineNotAvailableError, match="compiled wheel"):
-        ts.MackeyGlass().integrate(backend="interp", final_time=1.0, dt=0.5, ic=[1.0])
+        ts.systems.MackeyGlass().run(backend="interp", final_time=1.0, dt=0.5, ic=[1.0])
 
 
 def test_run_integrate_and_ensemble_refuse_dde_ensemble() -> None:
     """The engine has no batched method-of-steps path; ``run.ensemble`` refuses a DDE."""
     from tsdynamics.engine.problem import dde_problem
 
-    prob = dde_problem(ts.MackeyGlass(), ic=[1.0])
+    prob = dde_problem(ts.systems.MackeyGlass(), ic=[1.0])
     with pytest.raises(NotImplementedError, match="DDE"):
         run.ensemble(prob, np.ones((3, 1)), final_time=1.0, backend="interp")
 
@@ -307,10 +307,10 @@ def test_make_output_grid_samples_endpoint_inclusive() -> None:
 
 def test_ode_interp_via_family_matches_reference() -> None:
     pytest.importorskip("tsdynamics._rust")
-    lor = ts.Lorenz()
-    kw = dict(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0], method="dop853", rtol=1e-10, atol=1e-12)
-    interp = lor.integrate(backend="interp", **kw)
-    reference = lor.integrate(backend="reference", **kw)
+    lor = ts.systems.Lorenz()
+    kw = dict(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0], solver="dop853", rtol=1e-10, atol=1e-12)
+    interp = lor.run(backend="interp", **kw)
+    reference = lor.run(backend="reference", **kw)
     assert interp.meta["engine"] == "rust"
     np.testing.assert_allclose(interp.y, reference.y, rtol=1e-6, atol=1e-8)
 
@@ -319,9 +319,9 @@ def test_ode_interp_via_family_matches_reference() -> None:
 def test_representative_odes_integrate_on_the_rust_engine(name) -> None:
     """A spread of built-in ODEs integrate via the Rust engine through the family."""
     pytest.importorskip("tsdynamics._rust")
-    sys = getattr(ts, name)()
+    sys = getattr(ts.systems, name)()
     ic = sys.resolve_ic(None)
-    traj = sys.integrate(backend="interp", final_time=2.0, dt=0.05, ic=ic, method="rk45")
+    traj = sys.run(backend="interp", final_time=2.0, dt=0.05, ic=ic, solver="rk45")
     assert traj.y.shape[1] == sys.dim
     assert np.all(np.isfinite(traj.y))
     assert traj.meta["engine"] == "rust"

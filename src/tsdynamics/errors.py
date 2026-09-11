@@ -65,7 +65,12 @@ Class                        Stdlib base         Raised for
 :class:`ConvergenceError`    :class:`RuntimeError` divergence / non-convergence
 :class:`StepBudgetError`     :class:`ConvergenceError` a *stalled* run (finite state)
 :class:`BackendError`        :class:`RuntimeError` a compute-backend failure
+:class:`MovedInV6`           :class:`ImportError` a name that moved or left in v6
 ============================ =================== ===========================
+
+:class:`MovedInV6` is the odd one out and deliberately so: it is the only class
+here that inherits :class:`ImportError` rather than the stdlib type its *raise
+site* would otherwise use.  See its docstring for the measurement behind that.
 
 One concrete leaf lives outside this module to keep it import-light (it must load
 while the package is still initialising):
@@ -98,6 +103,7 @@ __all__ = [
     "ConvergenceError",
     "InvalidInputError",
     "InvalidParameterError",
+    "MovedInV6",
     "StepBudgetError",
     "TSDynamicsError",
     "invalid_value",
@@ -173,6 +179,58 @@ class BackendError(TSDynamicsError, RuntimeError):
     compiled ``tsdynamics._rust`` extension is missing, so
     ``isinstance(err, BackendError)`` catches it.  Subclasses
     :class:`RuntimeError`, so legacy ``except RuntimeError`` handlers still apply.
+    """
+
+
+class MovedInV6(TSDynamicsError, ImportError):  # noqa: N818 - see the docstring
+    """A public name that v6 moved to another address, renamed, or removed.
+
+    Raised by a package ``__getattr__`` on an **exact hit** in one of the v6
+    redirect tables (:mod:`tsdynamics._redirects`) or in a public submodule's
+    ``__all__``.  The message carries the line to type instead — it *is* the
+    migration guide.
+
+    Why this is an ``ImportError`` and not an ``AttributeError``
+    -----------------------------------------------------------
+    Because the failing spelling that matters is ``from tsdynamics import X``,
+    and CPython **discards** a module ``__getattr__``'s message for that spelling
+    whenever the exception matches ``AttributeError``.  Measured on CPython
+    3.14.2 against a two-line probe package:
+
+    .. code-block:: text
+
+        __getattr__ raises AttributeError  ->  ImportError: cannot import name
+                                               'attr_case' from 'pkg'   (TEXT LOST)
+        __getattr__ raises ImportError     ->  ImportError: <custom text>
+                                                                        (TEXT KEPT)
+
+    A class inheriting *both* is impossible — ``class M(AttributeError,
+    ImportError)`` raises ``TypeError: multiple bases have instance lay-out
+    conflict`` — so the two spellings cannot be served by one type, and the
+    import spelling wins.
+
+    The cost, stated
+    ----------------
+    ``hasattr(ts, name)`` **raises** instead of returning ``False`` for a name in
+    a redirect table, because :func:`hasattr` only swallows ``AttributeError``.
+    That is confined to the enumerated dead names and is the point: a v5 script
+    probing ``hasattr(ts, "permutation_entropy")`` should not silently take the
+    "not installed" branch when the honest answer is "that moved out of this
+    library".  A *guess* (``ts.random_typo``) stays an ``AttributeError``, so
+    ``hasattr`` keeps working for every other name in the universe.
+
+    Subclasses :class:`ImportError`, so ``except ImportError`` — the handler a
+    caller already wraps an optional dependency in — catches it.
+
+    Examples
+    --------
+    >>> from tsdynamics.errors import MovedInV6
+    >>> issubclass(MovedInV6, ImportError)
+    True
+    >>> issubclass(MovedInV6, TSDynamicsError)
+    True
+    >>> issubclass(MovedInV6, AttributeError)
+    False
     """
 
 

@@ -18,16 +18,24 @@ Two layers:
 
 from __future__ import annotations
 
+import importlib
+
 import numpy as np
 import pytest
 
 import tsdynamics as ts
 from tsdynamics import registry
-from tsdynamics.analysis import basins as bas
 from tsdynamics.analysis.basins.attractors import Attractor, AttractorSet
 from tsdynamics.analysis.basins.basins import BasinsResult
 from tsdynamics.analysis.basins.continuation import ContinuationResult
 from tsdynamics.data import Ball, Box, Grid
+
+# ``ts.analysis.basins`` is the ANALYSIS (CONTRACT §5.4: the function wins the
+# name over the implementation package), so ``import tsdynamics.analysis.basins
+# as bas`` would bind the FUNCTION — ``import a.b.c as d`` resolves by getattr on
+# the parent.  Reach the package through sys.modules, which the shadow cannot
+# touch.
+bas = importlib.import_module("tsdynamics.analysis.basins")
 
 LN2 = float(np.log(2.0))
 
@@ -191,8 +199,8 @@ class MagneticPendulum(ts.ContinuousSystem):
 # ===========================================================================
 
 _PUBLIC_FUNCS = [
-    "find_attractors",
-    "basins_of_attraction",
+    "attractors",
+    "basins",
     "basin_fractions",
     "continuation",
     "tipping_points",
@@ -215,18 +223,22 @@ _PUBLIC_CLASSES = [
 
 @pytest.mark.parametrize("name", _PUBLIC_FUNCS + _PUBLIC_CLASSES)
 def test_public_api_reexported(name):
-    assert getattr(ts, name) is getattr(bas, name)
-    assert name in ts.analysis.__all__
+    assert getattr(ts.analysis, name) is getattr(bas, name)
+    # C2 — a type you only ever get *back* is reachable but off the tab surface.
+    if name[:1].isupper():
+        assert name in ts.analysis.results.__all__
+    else:
+        assert name in ts.analysis.__all__
     # v4 (WS-NAMESPACE): the curated top-level ``__all__`` carries only headline
     # names; demoted analysis names stay reachable as flat re-exports.
-    assert hasattr(ts, name)
+    assert hasattr(ts.analysis, name)
 
 
 @pytest.mark.parametrize("name", _PUBLIC_FUNCS)
 def test_functions_self_register(name):
     assert name in registry.analyses
     assert registry.analyses.get(name) is getattr(bas, name)
-    assert registry.analyses.entry(name).metadata["family"] == "basins"
+    assert registry.analyses.entry(name).metadata["area"] == "basins"
 
 
 # ===========================================================================
@@ -491,9 +503,9 @@ def test_attractor_set_match_picks_nearest():
 
 
 def test_find_attractors_rejects_unsupported_system():
-    mg = ts.MackeyGlass()  # a DDE
+    mg = ts.systems.MackeyGlass()  # a DDE
     with pytest.raises(TypeError):
-        bas.find_attractors(mg, Box([0.0], [2.0]))
+        bas.attractors(mg, Box([0.0], [2.0]))
 
 
 # ===========================================================================
@@ -515,7 +527,7 @@ def test_slow_transient_is_not_reported_as_an_attractor(dt):
     its initial conditions are reported as diverged, which is the truth.
     """
     with pytest.warns(UserWarning, match="invariance check"):
-        ats = bas.find_attractors(
+        ats = bas.attractors(
             SaddleNodeGhost(), Box([-1.0], [1.0]), n_seeds=200, resolution=100, dt=dt, seed=0
         )
     assert len(ats) == 0
@@ -537,9 +549,7 @@ def test_unstable_equilibrium_is_not_reported_as_an_attractor(resolution):
     upward and falls to :math:`-0.1` downward, so neither neighbour comes back.
     """
     with pytest.warns(UserWarning) as caught:
-        res = bas.basins_of_attraction(
-            SaddleNodePair(), Grid([-1.0], [1.0], (resolution,)), dt=0.05
-        )
+        res = bas.basins(SaddleNodePair(), Grid([-1.0], [1.0], (resolution,)), dt=0.05)
     # the repellor is rejected by the ATTRACTION check specifically (the crawl
     # just above it is separately rejected by the invariance check)
     assert any("attraction check" in str(w.message) for w in caught)
@@ -558,7 +568,7 @@ def test_stable_equilibrium_of_the_same_system_survives_the_audit():
     repellors without also eating attractors.
     """
     with pytest.warns(UserWarning) as caught:
-        res = bas.basins_of_attraction(SaddleNodePair(), Grid([-1.0], [1.0], (401,)), dt=0.05)
+        res = bas.basins(SaddleNodePair(), Grid([-1.0], [1.0], (401,)), dt=0.05)
     assert any("attraction check" in str(w.message) for w in caught)
     (att_id,) = res.attractors.ids
     captured = float(np.mean(res.labels == att_id))
@@ -579,7 +589,7 @@ def test_lorenz_attractor_is_not_fragmented_by_the_recurrence_machine(dt):
     orbit on one enters the other's cells), which the centroid-proximity merge
     cannot see but the audit's reachability grouping does.
     """
-    ats = bas.find_attractors(
+    ats = bas.attractors(
         ts.systems.Lorenz(),
         Box([-25.0, -30.0, 0.0], [25.0, 30.0, 55.0]),
         n_seeds=200,
@@ -607,7 +617,7 @@ def test_concentric_attractors_are_not_merged_by_a_shared_centroid(resolution):
     for fixed-point attractors the two distances coincide, so nothing that
     merged before stops.
     """
-    ats = bas.find_attractors(
+    ats = bas.attractors(
         NestedLimitCycles(),
         Box([-4.0, -4.0], [4.0, 4.0]),
         n_seeds=200,
@@ -650,7 +660,7 @@ def test_newton_map_thirds_basin_fractions():
 @pytest.mark.slow
 def test_newton_basin_image_is_wada_and_fractal():
     nm = NewtonMap()
-    res = bas.basins_of_attraction(
+    res = bas.basins(
         nm,
         Grid([-1.0, -1.0], [1.0, 1.0], (120, 120)),
         consecutive_recurrences=8,
@@ -677,7 +687,7 @@ def test_newton_basin_image_is_wada_and_fractal():
 def test_duffing_two_well_half_basins():
     """Damped two-well Duffing: two basins, 1/2 each by reflection symmetry."""
     d = DuffingTwoWell()
-    res = bas.basins_of_attraction(
+    res = bas.basins(
         d,
         Grid([-2.0, -2.0], [2.0, 2.0], (60, 60)),
         dt=0.4,
@@ -698,9 +708,7 @@ def test_duffing_two_well_half_basins():
 @pytest.mark.slow
 def test_duffing_resilience_to_boundary():
     d = DuffingTwoWell()
-    res = bas.basins_of_attraction(
-        d, Grid([-2.0, -2.0], [2.0, 2.0], (60, 60)), dt=0.4, max_steps=400
-    )
+    res = bas.basins(d, Grid([-2.0, -2.0], [2.0, 2.0], (60, 60)), dt=0.4, max_steps=400)
     # the saddle separating the wells sits at x=0; an attractor near x=±1 is ~1
     # away from the boundary.
     att_id = res.attractors.ids[0]
@@ -710,8 +718,8 @@ def test_duffing_resilience_to_boundary():
 @pytest.mark.slow
 def test_henon_escape_basin():
     """Hénon: one bounded strange attractor and an escape basin."""
-    h = ts.Henon()
-    res = bas.basins_of_attraction(h, Grid([-2.0, -2.0], [2.0, 2.0], (80, 80)), max_steps=3000)
+    h = ts.systems.Henon()
+    res = bas.basins(h, Grid([-2.0, -2.0], [2.0, 2.0], (80, 80)), max_steps=3000)
     assert res.n_attractors >= 1
     # a sizeable fraction escapes the square and a sizeable fraction is captured.
     assert 0.2 < res.diverged_fraction < 0.8
@@ -721,7 +729,7 @@ def test_henon_escape_basin():
 def test_magnetic_pendulum_three_attractors():
     """Magnetic pendulum: three magnet attractors with fractal basins."""
     mp = MagneticPendulum()
-    ats = bas.find_attractors(
+    ats = bas.attractors(
         mp,
         Box([-1.3, -1.3, -2.5, -2.5], [1.3, 1.3, 2.5, 2.5]),
         resolution=(60, 60, 40, 40),
@@ -755,7 +763,7 @@ def test_magnetic_pendulum_fractal_basin_image():
     slice_grid = Grid([-1.3, -1.3, 0.0, 0.0], [1.3, 1.3, 0.0, 0.0], (35, 35, 1, 1))
     rbox = Box([-1.6, -1.6, -3.0, -3.0], [1.6, 1.6, 3.0, 3.0])
     with pytest.warns(UserWarning, match="attraction check"):
-        res = bas.basins_of_attraction(
+        res = bas.basins(
             mp,
             slice_grid,
             recurrence=rbox,

@@ -42,7 +42,7 @@ pytest.importorskip("tsdynamics._rust")
 @functools.lru_cache(maxsize=1)
 def _mackeyglass_on_attractor_ic() -> tuple[float, ...]:
     """A deterministic on-attractor Mackey–Glass state (end of a seeded run)."""
-    traj = ts.MackeyGlass().integrate(
+    traj = ts.systems.MackeyGlass().run(
         final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]
     )
     return tuple(np.asarray(traj.y[-1], dtype=np.float64).ravel().tolist())
@@ -51,7 +51,7 @@ def _mackeyglass_on_attractor_ic() -> tuple[float, ...]:
 def _lyap(transient: float, final_time: float) -> float:
     """Leading Mackey–Glass DDE exponent from the seeded on-attractor state."""
     ic = np.asarray(_mackeyglass_on_attractor_ic(), dtype=np.float64)
-    spec = ts.MackeyGlass().lyapunov_spectrum(
+    spec = ts.systems.MackeyGlass().lyapunov_spectrum(
         backend="interp",
         k=1,
         dt=0.5,
@@ -135,8 +135,8 @@ def test_interp_equals_jit_bit_for_bit_under_window_semantics() -> None:
     """
     ic = np.asarray(_mackeyglass_on_attractor_ic(), dtype=np.float64)
     kw = dict(k=2, dt=0.5, transient=180.0, final_time=200.0, ic=ic, rtol=1e-4, atol=1e-4)
-    interp = ts.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
-    jit = ts.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
+    interp = ts.systems.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
+    jit = ts.systems.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
     np.testing.assert_array_equal(interp, jit)
 
 
@@ -144,7 +144,7 @@ def _mackeyglass_chunk() -> float:
     """The renormalisation chunk (= one delay window) the estimator uses."""
     from tsdynamics.families._dde_lyapunov import _build_extended_tape
 
-    _, slots, _ = _build_extended_tape(ts.MackeyGlass(), 1)
+    _, slots, _ = _build_extended_tape(ts.systems.MackeyGlass(), 1)
     return max(s.delay for s in slots)
 
 
@@ -168,7 +168,7 @@ def test_small_positive_burn_in_still_discards_one_window() -> None:
     assert round(5.0 / chunk) == 0, "test premise: 5.0 must round to zero windows"
 
     def run(burn_in: float) -> np.ndarray:
-        return ts.MackeyGlass().lyapunov_spectrum(
+        return ts.systems.MackeyGlass().lyapunov_spectrum(
             backend="interp",
             k=1,
             dt=0.5,

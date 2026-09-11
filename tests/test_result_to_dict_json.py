@@ -66,7 +66,7 @@ def _henon_box() -> Box:
 
 def test_recurrence_matrix_to_dict_json():
     """``RecurrenceMatrix.to_dict()`` serializes its sparse matrix as a COO triplet."""
-    result = ts.recurrence_matrix(_henon_traj(), recurrence_rate=0.05)
+    result = ts.analysis.recurrence_matrix(_henon_traj(), recurrence_rate=0.05)
     data = _assert_json_roundtrips(result)
     matrix = data["matrix"]
     assert matrix["format"] == "coo"
@@ -76,7 +76,7 @@ def test_recurrence_matrix_to_dict_json():
 
 def test_windowed_rqa_to_dict_json():
     """``WindowedRQA.to_dict()`` recurses into its per-window ``RQAResult`` objects."""
-    result = ts.windowed_rqa(_henon_traj(), window=200, step=100, recurrence_rate=0.05)
+    result = ts.analysis.windowed_rqa(_henon_traj(), window=200, step=100, recurrence_rate=0.05)
     data = _assert_json_roundtrips(result)
     assert isinstance(data["results"], list) and data["results"]
     assert all(isinstance(window, dict) for window in data["results"])
@@ -84,7 +84,7 @@ def test_windowed_rqa_to_dict_json():
 
 def test_find_attractors_to_dict_json():
     """``AttractorSet.to_dict()`` recurses into its nested ``Attractor`` objects."""
-    result = ts.find_attractors(
+    result = ts.analysis.attractors(
         ts.systems.Henon(), _henon_box(), resolution=30, n_seeds=80, max_steps=400, seed=0
     )
     data = _assert_json_roundtrips(result)

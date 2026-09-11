@@ -24,7 +24,7 @@ lor = ts.systems.Lorenz()          # sigma=10, rho=28, beta=8/3
 
 Override any parameter by keyword — `ts.systems.Lorenz(rho=35.0)` — or set an
 initial condition with `ic=[...]`. Leaving `ic` unset lets the library pick a
-sensible starting point. (For convenience `ts.Lorenz` also resolves to the same
+sensible starting point. (For convenience `ts.systems.Lorenz` also resolves to the same
 class, but the explicit `ts.systems.Lorenz` path is the one that autocompletes.)
 
 ## Integrate
@@ -36,7 +36,7 @@ A continuous system **integrates** over a time span. `integrate` returns a singl
 
 <div class="ts-item" markdown>
 ```python
-traj = lor.integrate(final_time=100.0, dt=0.01)
+traj = lor.run(final_time=100.0, dt=0.01)
 
 traj.t.shape      # (10001,)   — the time grid
 traj.y.shape      # (10001, 3) — state at each time
@@ -121,7 +121,7 @@ chaotic attractor. Feed the spectrum to the Kaplan–Yorke formula for a
 fractal-dimension estimate:
 
 ```python
-ts.kaplan_yorke_dimension(lor.lyapunov_spectrum(final_time=500.0, dt=0.05))
+ts.analysis.kaplan_yorke_dimension(lor.lyapunov_spectrum(final_time=500.0, dt=0.05))
 # ≈ 2.06
 ```
 
@@ -135,7 +135,7 @@ same `Trajectory`. A map takes a number of `steps` rather than a `final_time`:
 
 ```python
 h = ts.systems.Henon()                        # a=1.4, b=0.3
-orbit = h.iterate(steps=5000, ic=[0.1, 0.1])
+orbit = h.run(steps=5000, ic=[0.1, 0.1])
 orbit.t                                        # array([0, 1, 2, ...]) — step indices
 orbit.y.shape                                  # (5000, 2)
 

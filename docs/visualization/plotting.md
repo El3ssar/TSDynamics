@@ -15,7 +15,7 @@ one method and you can draw everything the library produces.
 ```python
 import tsdynamics as ts
 
-traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100.0, dt=0.01)
+traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100.0, dt=0.01)
 
 traj.plot()                         # render immediately (auto-dispatched)
 spec = traj.to_plot_spec()          # …or keep the spec, tweak it, then render
@@ -51,7 +51,7 @@ components you are drawing** — the natural view for that dimensionality:
 | 4 or more | `SPACETIME` | a component-vs-time field image |
 
 ```python
-traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100, dt=0.01)
+traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100, dt=0.01)
 
 traj.to_plot_spec().kind                          # → 'phase_portrait_3d'  (all 3)
 traj.to_plot_spec(components="x").kind             # → 'time_series'        (1)
@@ -77,7 +77,7 @@ selected component as its own line (a legend appears automatically for two or
 more).
 
 ```python
-ros = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).integrate(final_time=200.0, dt=0.05)
+ros = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).run(final_time=200.0, dt=0.05)
 
 # all three components, x(t) / y(t) / z(t), overlaid with a legend
 ros.to_plot_spec(kind="time_series").save("rossler-ts.pdf")
@@ -107,7 +107,7 @@ axes** so the geometry is undistorted. Auto-selected when you draw two
 components.
 
 ```python
-ros = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).integrate(final_time=200.0, dt=0.05)
+ros = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).run(final_time=200.0, dt=0.05)
 
 ros.to_plot_spec(components=["x", "y"], color_by="time").save("rossler-xy.pdf")
 ```
@@ -131,7 +131,7 @@ trajectory. Hide the axes for a clean "object floating in space" look and frame
 it with the camera.
 
 ```python
-lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100.0, dt=0.01)
+lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100.0, dt=0.01)
 
 (
     lor.to_plot_spec()               # all three → phase_portrait_3d
@@ -169,7 +169,7 @@ import numpy as np
 
 ic = np.full(20, 8.0)
 ic[0] += 0.01                        # a small bump breaks the symmetry
-l96 = ts.systems.Lorenz96().integrate(final_time=30.0, dt=0.05, ic=ic)
+l96 = ts.systems.Lorenz96().run(final_time=30.0, dt=0.05, ic=ic)
 
 l96.to_plot_spec().save("lorenz96-spacetime.pdf")   # 20 components → SPACETIME
 ```
@@ -198,7 +198,7 @@ space you cannot plot directly.
 import numpy as np
 
 mg = ts.systems.MackeyGlass()
-traj = mg.integrate(final_time=500.0, dt=0.5,
+traj = mg.run(final_time=500.0, dt=0.5,
                     history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)])
 
 traj.to_plot_spec(kind="delay", delay_time=17.0).save("mackey-glass-delay.pdf")
@@ -228,7 +228,7 @@ you never pass a `shape` by hand.
 
 ```python
 # a 2-D reaction–diffusion field → heatmap of the activator
-gs = ts.systems.GrayScott().integrate(final_time=2000.0, dt=5.0)
+gs = ts.systems.GrayScott().run(final_time=2000.0, dt=5.0)
 gs.to_plot_spec(kind="field").save("gray-scott.pdf")           # last field, imshow
 gs.to_plot_spec(kind="field", components="v").save("gs-v.pdf")  # pick a field block
 ```
@@ -255,7 +255,7 @@ heatmap for a 2-D one. See [animation](#animation) below.
 auto-dispatch then keys off how many you selected:
 
 ```python
-traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100, dt=0.01)
+traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100, dt=0.01)
 
 traj.to_plot_spec(components="x")             # one channel  → time series
 traj.to_plot_spec(components=["x", "z"])       # two channels → 2-D portrait
@@ -291,7 +291,7 @@ its components, or hand it to an analysis:
 ```python
 t = np.linspace(0.0, 40.0, 2000)
 traj = ts.Trajectory(t, points)          # no system required
-ts.recurrence_matrix(traj, recurrence_rate=0.05).plot().show()
+ts.analysis.recurrence_matrix(traj, recurrence_rate=0.05).plot().show()
 ```
 
 !!! warning "A delay in *time units* needs a real `dt`"
@@ -309,7 +309,7 @@ where is it fast?). It accepts a **named field**, a **per-point array**, or a
 **callable** `f(trajectory) -> array`:
 
 ```python
-traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100, dt=0.01)
+traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100, dt=0.01)
 
 traj.to_plot_spec(components=["x", "z"], color_by="time")     # elapsed time
 traj.to_plot_spec(components=["x", "z"], color_by="speed")    # |velocity|
@@ -351,7 +351,7 @@ markers take the same `components=` spelling as a trajectory — the projection 
 choice, not a formality:
 
 ```python
-fps = ts.fixed_points(ts.Lorenz())
+fps = ts.analysis.fixed_points(ts.systems.Lorenz())
 
 fps.to_plot_spec()                          # the (x, y) plane
 fps.to_plot_spec(components=("x", "z"))     # …or (x, z), where C± separate
@@ -436,8 +436,8 @@ overlaid on shared axes, or tiled — use `ts.viz.plot(*things, layout=...)`,
 which returns a spec that itself renders:
 
 ```python
-a = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100, dt=0.01)
-b = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).integrate(final_time=200, dt=0.05)
+a = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100, dt=0.01)
+b = ts.systems.Rossler(ic=[1.0, 1.0, 1.0]).run(final_time=200, dt=0.05)
 
 ts.viz.plot(a, b, layout="grid").save("two-attractors.pdf")
 ```
@@ -451,8 +451,8 @@ Overlay merges compatible single-panel specs onto **one** set of axes, with the
 legend auto-disambiguated by source:
 
 ```python
-r1 = ts.systems.Rossler(params={"c": 2.3}, ic=[1.0, 1.0, 1.0]).integrate(400, 0.05).after(100)
-r2 = ts.systems.Rossler(params={"c": 5.7}, ic=[1.0, 1.0, 1.0]).integrate(400, 0.05).after(100)
+r1 = ts.systems.Rossler(params={"c": 2.3}, ic=[1.0, 1.0, 1.0]).run(400, 0.05).after(100)
+r2 = ts.systems.Rossler(params={"c": 5.7}, ic=[1.0, 1.0, 1.0]).run(400, 0.05).after(100)
 
 ts.viz.plot(r1, r2, components=["x", "y"], layout="overlay").save("rossler-overlay.pdf")
 ```
@@ -471,7 +471,7 @@ then tune with the chainable `.animate` / `.trail` / `.head` / `.camera` /
 `.clock` methods:
 
 ```python
-lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=60.0, dt=0.01)
+lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=60.0, dt=0.01)
 
 (
     lor.to_plot_spec(animate=True)

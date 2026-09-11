@@ -36,19 +36,19 @@ HENON_OFFBASIN_IC = [10.0, 10.0]
 def test_explicit_diverging_ic_raises_invalidinput():
     """A pinned ``ic`` that escapes the basin must raise, not silently re-roll."""
     with pytest.raises(InvalidInputError):
-        gali(ts.Henon(), k=2, ic=HENON_OFFBASIN_IC, n=80, seed=0)
+        gali(ts.systems.Henon(), k=2, ic=HENON_OFFBASIN_IC, n=80, seed=0)
 
 
 def test_explicit_diverging_ic_is_a_typeerror_subclass():
     """``InvalidInputError`` is a ``TypeError`` — legacy ``except TypeError`` catches it."""
     with pytest.raises(TypeError):  # InvalidInputError subclasses TypeError
-        gali(ts.Henon(), k=2, ic=HENON_OFFBASIN_IC, n=80, seed=0)
+        gali(ts.systems.Henon(), k=2, ic=HENON_OFFBASIN_IC, n=80, seed=0)
 
 
 def test_explicit_diverging_ic_message_names_the_value():
     """The error follows the value-naming standard: it names the offending ic."""
     with pytest.raises(InvalidInputError) as excinfo:
-        gali(ts.Henon(), k=2, ic=HENON_OFFBASIN_IC, n=80, seed=0)
+        gali(ts.systems.Henon(), k=2, ic=HENON_OFFBASIN_IC, n=80, seed=0)
     msg = str(excinfo.value)
     assert "10.0" in msg  # the offending ic is reported back
     assert "ic" in msg
@@ -63,7 +63,7 @@ def test_explicit_diverging_ic_does_not_silently_reroll():
     """
     for offbasin in ([10.0, 10.0], [-50.0, 7.0], [1e3, -1e3]):
         with pytest.raises(InvalidInputError):
-            gali(ts.Henon(), k=2, ic=offbasin, n=60, seed=0)
+            gali(ts.systems.Henon(), k=2, ic=offbasin, n=60, seed=0)
 
 
 # ── (b) ic=None still recovers via the seeded random-IC retry ─────────────────
@@ -78,7 +78,7 @@ def test_implicit_ic_none_recovers_and_never_raises():
     re-roll path the fix must *preserve*).
     """
     for seed in range(12):
-        g = gali(ts.Henon(), k=2, n=1500, seed=seed)
+        g = gali(ts.systems.Henon(), k=2, n=1500, seed=seed)
         assert isinstance(g, GALIResult)
         assert np.all(np.isfinite(g.values))
         assert g.is_chaotic()  # Hénon is chaotic → GALI₂ collapses toward 0
@@ -86,7 +86,7 @@ def test_implicit_ic_none_recovers_and_never_raises():
 
 def test_implicit_ic_none_omitted_keyword_recovers():
     """Omitting the ``ic`` keyword entirely (not even ``ic=None``) also recovers."""
-    g = gali(ts.Henon(), k=2, n=1200)
+    g = gali(ts.systems.Henon(), k=2, n=1200)
     assert isinstance(g, GALIResult)
     assert np.all(np.isfinite(g.values))
 
@@ -96,7 +96,7 @@ def test_implicit_ic_none_omitted_keyword_recovers():
 
 def test_good_explicit_ic_map_works():
     """An on-attractor explicit ``ic`` for a map returns the expected chaotic decay."""
-    g = gali(ts.Henon(), k=2, ic=[0.1, 0.1], n=70, seed=0)
+    g = gali(ts.systems.Henon(), k=2, ic=[0.1, 0.1], n=70, seed=0)
     assert isinstance(g, GALIResult)
     assert np.all(np.isfinite(g.values))
     assert g.is_chaotic()
@@ -105,7 +105,7 @@ def test_good_explicit_ic_map_works():
 
 def test_good_explicit_ic_flow_works():
     """An on-attractor explicit ``ic`` for a flow returns a finite GALI series."""
-    g = gali(ts.Lorenz(), k=2, ic=[1.0, 1.0, 1.0], final_time=20.0, dt=0.05, seed=0)
+    g = gali(ts.systems.Lorenz(), k=2, ic=[1.0, 1.0, 1.0], final_time=20.0, dt=0.05, seed=0)
     assert isinstance(g, GALIResult)
     assert np.all(np.isfinite(g.values))
     assert g.is_chaotic()  # Lorenz is chaotic → GALI₂ collapses toward 0
@@ -118,10 +118,10 @@ def test_good_explicit_ic_is_honoured_exactly():
     seeded), so two calls with the same ``ic`` and ``seed`` are bit-identical:
     the orbit is the one the caller pinned, not a re-rolled random one.
     """
-    g1 = gali(ts.Henon(), k=2, ic=[0.1, 0.1], n=70, seed=0)
-    g2 = gali(ts.Henon(), k=2, ic=[0.1, 0.1], n=70, seed=0)
+    g1 = gali(ts.systems.Henon(), k=2, ic=[0.1, 0.1], n=70, seed=0)
+    g2 = gali(ts.systems.Henon(), k=2, ic=[0.1, 0.1], n=70, seed=0)
     assert np.array_equal(g1.values, g2.values)
 
     # A *different* on-basin ic gives a different orbit (so the ic is not ignored).
-    g3 = gali(ts.Henon(), k=2, ic=[0.3, -0.1], n=70, seed=0)
+    g3 = gali(ts.systems.Henon(), k=2, ic=[0.3, -0.1], n=70, seed=0)
     assert not np.array_equal(g1.values, g3.values)

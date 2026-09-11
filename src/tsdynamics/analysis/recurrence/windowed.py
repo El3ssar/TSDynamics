@@ -161,7 +161,9 @@ def windowed_rqa(
     min_diagonal: int = 2,
     min_vertical: int = 2,
 ) -> WindowedRQA:
-    r"""Run :func:`~tsdynamics.analysis.rqa` in a sliding window.
+    r"""RQA in a sliding window: nonstationarity in time.
+
+    Runs :func:`~tsdynamics.analysis.rqa` over overlapping windows.
 
     Parameters
     ----------
@@ -211,7 +213,7 @@ def windowed_rqa(
             "to hold several recurrences, short enough that the dynamics does not "
             "change across it — so there is no default that could be right."
             + remedy(
-                f"ts.windowed_rqa(data, window={max(2, n // 20)}, "
+                f"ts.analysis.windowed_rqa(data, window={max(2, n // 20)}, "
                 f"recurrence_rate={DEFAULT_RECURRENCE_RATE})",
                 lead=f"A twentieth of this {n}-sample series is a place to start:",
             )
@@ -221,18 +223,18 @@ def windowed_rqa(
         raise InvalidParameterError(
             f"window must be >= 2 — it is a count of samples, and one sample has no "
             f"recurrence structure; got {window}."
-            + remedy(f"ts.windowed_rqa(data, window={max(2, n // 20)})")
+            + remedy(f"ts.analysis.windowed_rqa(data, window={max(2, n // 20)})")
         )
     if window > n:
         raise InvalidParameterError(
             f"window={window} exceeds the series length N={n}, so not one window "
-            f"fits." + remedy(f"ts.windowed_rqa(data, window={max(2, n // 20)})")
+            f"fits." + remedy(f"ts.analysis.windowed_rqa(data, window={max(2, n // 20)})")
         )
     step = window if step is None else int(step)
     if step < 1:
         raise InvalidParameterError(
             f"step must be >= 1 — it is the stride between windows in samples; got {step}."
-            + remedy(f"ts.windowed_rqa(data, window={window}, step={max(1, window // 2)})")
+            + remedy(f"ts.analysis.windowed_rqa(data, window={window}, step={max(1, window // 2)})")
         )
 
     starts = range(0, n - window + 1, step)

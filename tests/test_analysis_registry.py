@@ -63,12 +63,19 @@ def test_analysis_entry_roundtrips(analysis_entry):
     assert registry.analyses.entry(analysis_entry.name).obj is analysis_entry.obj
 
 
-def test_analysis_entry_top_level_export(analysis_entry):
-    """If re-exported at top level, ``ts.<name>`` is the *same* object (no shadowing)."""
-    # Lenient: not every analysis is advertised at the top level; only the ones
-    # that ARE must agree with the registered object.
-    if hasattr(ts, analysis_entry.name):
-        assert getattr(ts, analysis_entry.name) is analysis_entry.obj
+def test_analysis_entry_is_reachable_at_its_one_public_address(analysis_entry):
+    """``ts.analysis.<name>`` IS the registered object, and it is the only address.
+
+    v6 took the analyses off the 17-name top level, so ``ts.<name>`` raises a
+    redirect naming ``ts.analysis.<name>``.  This is the gate for that: one
+    concept, one spelling, and the spelling resolves to the registered object.
+    """
+    name = analysis_entry.name
+    assert getattr(ts.analysis, name) is analysis_entry.obj
+    assert name in ts.analysis.__all__
+    with pytest.raises((AttributeError, ImportError)) as err:
+        getattr(ts, name)
+    assert f"ts.analysis.{name}" in str(err.value)
 
 
 # ---------------------------------------------------------------------------
@@ -112,8 +119,12 @@ _EXPECTED_ANALYSES = frozenset(
         "rqa",
         "windowed_rqa",
         # A-BASIN
-        "find_attractors",
-        "basins_of_attraction",
+        "attractors",
+        "basins",
+        # A-FIELDS (promoted public in v6)
+        "flow_field",
+        "ftle_field",
+        "nullclines",
     }
 )
 
@@ -160,6 +171,35 @@ _RESULT_CARVE_OUTS: dict[str, type] = {
     "poincare_section": PoincareSection,
 }
 
+#: Registered analyses that return a **plain value** — an array, a float, a
+#: tuple, a list of small records.  v6 promoted these onto the public surface
+#: (CONTRACT §5.7: the eight ``planar`` field analyses had no door at all, and a
+#: user who wanted FTLE *numbers* rather than a picture could not reach them), and
+#: promoting them collided with §4.2 r1 ("every registered analysis returns an
+#: ``AnalysisResult``").  §2.4's 53-name listing is the harder contract, so they
+#: are registered, and the honest record of the exception is THIS table plus the
+#: registry's own ``returns=`` field: an analysis either DECLARES the result class
+#: it returns, or it is listed here.  Giving the 13 result wrappers is a v6.1
+#: item (it moves the returned *type*, in two files this slot does not own).
+_PLAIN_VALUE_ANALYSES: frozenset[str] = frozenset(
+    {
+        "autocorrelation",
+        "correlation_sum",
+        "dimension_spectrum",
+        "escape_time_field",
+        "estimate_dt_from_sagitta",
+        "flow_field",
+        "ftle_field",
+        "invariant_density",
+        "nullclines",
+        "sagitta_profile",
+        "set_distance",
+        "streamlines",
+        "trace_determinant",
+        "transient_time_field",
+    }
+)
+
 
 def _return_annotation_types(fn: object) -> tuple[object, ...]:
     """Flatten a callable's resolved return annotation into its component types.
@@ -197,6 +237,13 @@ def test_analysis_returns_analysis_result(analysis_entry):
     name = analysis_entry.name
     types = _return_annotation_types(analysis_entry.obj)
 
+    if name in _PLAIN_VALUE_ANALYSES:
+        assert analysis_entry.metadata.get("returns") is None, (
+            f"{name!r} is listed as a plain-value analysis but DECLARES returns="
+            f"{analysis_entry.metadata['returns']!r}; drop it from _PLAIN_VALUE_ANALYSES"
+        )
+        return
+
     if name in _RESULT_CARVE_OUTS:
         expected = _RESULT_CARVE_OUTS[name]
         assert expected in types, (
@@ -207,6 +254,14 @@ def test_analysis_returns_analysis_result(analysis_entry):
     assert any(isinstance(t, type) and issubclass(t, AnalysisResult) for t in types), (
         f"analysis {name!r} must return an AnalysisResult subclass "
         f"(got return annotation {types or 'none'})"
+    )
+    declared = analysis_entry.metadata.get("returns")
+    assert declared is not None and issubclass(declared, AnalysisResult), (
+        f"analysis {name!r} must DECLARE its result class on the decorator "
+        f"(returns=...), got {declared!r}"
+    )
+    assert declared in types, (
+        f"analysis {name!r} declares returns={declared.__name__} but is annotated {types}"
     )
 
 
@@ -231,17 +286,20 @@ def _runtime_cases() -> list[tuple[str, object]]:
     traj = _henon().run(steps=600, ic=[0.1, 0.1])
     spectrum = [0.42, -1.62]
     return [
-        ("lyapunov_spectrum", lambda: ts.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1])),
-        ("max_lyapunov", lambda: ts.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
-        ("kaplan_yorke_dimension", lambda: ts.kaplan_yorke_dimension(spectrum)),
-        ("zero_one_test", lambda: ts.zero_one_test(series)),
-        ("correlation_dimension", lambda: ts.correlation_dimension(traj)),
-        ("embed", lambda: ts.embed(series, 3, 1)),
-        ("optimal_delay", lambda: ts.optimal_delay(series, max_delay=20)),
-        ("mutual_information", lambda: ts.mutual_information(series, max_delay=20)),
-        ("recurrence_matrix", lambda: ts.recurrence_matrix(traj, recurrence_rate=0.05)),
-        ("rqa", lambda: ts.rqa(traj, recurrence_rate=0.05)),
-        ("fixed_points", lambda: ts.fixed_points(_henon(), seed=0)),
+        (
+            "lyapunov_spectrum",
+            lambda: ts.analysis.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1]),
+        ),
+        ("max_lyapunov", lambda: ts.analysis.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
+        ("kaplan_yorke_dimension", lambda: ts.analysis.kaplan_yorke_dimension(spectrum)),
+        ("zero_one_test", lambda: ts.analysis.zero_one_test(series)),
+        ("correlation_dimension", lambda: ts.analysis.correlation_dimension(traj)),
+        ("embed", lambda: ts.analysis.embed(series, 3, 1)),
+        ("optimal_delay", lambda: ts.analysis.optimal_delay(series, max_delay=20)),
+        ("mutual_information", lambda: ts.analysis.mutual_information(series, max_delay=20)),
+        ("recurrence_matrix", lambda: ts.analysis.recurrence_matrix(traj, recurrence_rate=0.05)),
+        ("rqa", lambda: ts.analysis.rqa(traj, recurrence_rate=0.05)),
+        ("fixed_points", lambda: ts.analysis.fixed_points(_henon(), seed=0)),
     ]
 
 

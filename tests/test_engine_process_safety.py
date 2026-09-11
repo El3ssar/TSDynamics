@@ -85,7 +85,7 @@ def test_absurd_map_step_count_raises_instead_of_killing_the_process(steps, what
         import tsdynamics as ts
 
         try:
-            ts.systems.Henon().iterate(steps={steps}, ic=[0.1, 0.1])
+            ts.systems.Henon().run(steps={steps}, ic=[0.1, 0.1])
         except MemoryError as e:
             assert "cannot allocate" in str(e), e
             print("RAISED")
@@ -186,7 +186,7 @@ def test_a_long_engine_call_is_interruptible():
         t0 = time.perf_counter()
         try:
             # ~4e7 rk4 steps: minutes of engine time.
-            lor.integrate(final_time=200_000.0, dt=0.005, method="rk4")
+            lor.run(final_time=200_000.0, dt=0.005, solver="rk4")
         except KeyboardInterrupt:
             print(f"INTERRUPTED {time.perf_counter() - t0:.3f}")
         else:
@@ -209,7 +209,7 @@ _LONG_CALLS: dict[str, str] = {
     # The map orbit-diagram sweep kernel (`param_sweep.rs`).
     "orbit_diagram": """
         import numpy as np
-        ts.orbit_diagram(
+        ts.analysis.orbit_diagram(
             ts.systems.Logistic(), "r", np.linspace(3.5, 4.0, 4000),
             points_per_value=2000, transient=200_000,
         )
@@ -221,22 +221,22 @@ _LONG_CALLS: dict[str, str] = {
     """,
     # The QR tangent-map iteration (`map_lyapunov.rs`).
     "max_lyapunov": """
-        ts.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1], n=200_000_000)
+        ts.analysis.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1], n=200_000_000)
     """,
     # The recurrence FSM (`basin.rs`), one `dt` segment per cell check.
     "basins_of_attraction": """
         import numpy as np
-        grid = ts.Grid(
+        grid = ts.data.Grid(
             np.array([-20.0, -20.0, 0.0]), np.array([20.0, 20.0, 40.0]), (80, 80, 80)
         )
-        ts.basins_of_attraction(
+        ts.analysis.basins(
             ts.systems.Lorenz(), grid, dt=0.01, max_steps=10_000_000
         )
     """,
     # The event march (`event.rs`): a plane the flow never reaches, so the
     # search runs the whole span.
     "poincare_section": """
-        ts.poincare_section(
+        ts.analysis.poincare_section(
             ts.systems.Rossler(), plane=("y", 1e9, "up"), crossings=1, max_time=1e7, dt=0.001
         )
     """,
@@ -251,7 +251,7 @@ _LONG_CALLS: dict[str, str] = {
         from tsdynamics.engine import run as engine_run
         ics = np.random.default_rng(0).normal(size=(64, 3))
         engine_run.ensemble(
-            ts.systems.Lorenz(), ics, final_time=200_000.0, dt=0.005, method="rk4"
+            ts.systems.Lorenz(), ics, final_time=200_000.0, dt=0.005, solver="rk4"
         )
     """,
     "ensemble_map": """
@@ -356,7 +356,7 @@ def test_an_ensemble_is_interruptible():
         try:
             # ~4e7 rk4 steps per trajectory, 64 of them: minutes of engine time.
             engine_run.ensemble(
-                lor, ics, final_time=200_000.0, dt=0.005, method="rk4"
+                lor, ics, final_time=200_000.0, dt=0.005, solver="rk4"
             )
         except KeyboardInterrupt:
             print(f"INTERRUPTED {time.perf_counter() - t0:.3f}")
@@ -392,7 +392,7 @@ def test_an_absurd_orbit_diagram_raises_instead_of_killing_the_process():
         import tsdynamics as ts
 
         try:
-            ts.orbit_diagram(
+            ts.analysis.orbit_diagram(
                 ts.systems.Logistic(), "r", np.linspace(3.5, 4.0, 4),
                 points_per_value=2**40, transient=0,
             )
@@ -441,7 +441,7 @@ def test_a_stalled_run_is_a_step_budget_error_not_a_divergence():
     step cap is reached once rather than once per grid point.
     """
     with pytest.raises(StepBudgetError) as excinfo:
-        _VeryStiff(ic=[1.0]).integrate(final_time=1.0, dt=1.0, method="rk45")
+        _VeryStiff(ic=[1.0]).run(final_time=1.0, dt=1.0, solver="rk45")
 
     message = str(excinfo.value)
     assert "step limit" in message
@@ -481,7 +481,7 @@ def test_a_diverging_ode_is_reported_promptly_by_every_kernel(method):
     fires, and it fires for every kernel including ``bdf``.
     """
     with pytest.raises(ConvergenceError) as excinfo:
-        _Blowup(ic=[1.0]).integrate(final_time=10.0, dt=0.01, method=method)
+        _Blowup(ic=[1.0]).run(final_time=10.0, dt=0.01, solver=method)
 
     message = str(excinfo.value)
     assert "diverged" in message
@@ -508,6 +508,6 @@ def test_large_but_bounded_amplitudes_still_integrate():
         def _equations(y, t):
             return [y(0)]
 
-    traj = Growth(ic=[1.0]).integrate(final_time=13.8, dt=0.1, method="rk45")
+    traj = Growth(ic=[1.0]).run(final_time=13.8, dt=0.1, solver="rk45")
     final = float(traj.y[-1, 0])
     assert 1e5 < final < 1e7, final

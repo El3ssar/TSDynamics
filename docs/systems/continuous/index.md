@@ -16,8 +16,8 @@ JIT-compiled on first use, with no build step (see
 ```python
 import tsdynamics as ts
 
-ross = ts.Rossler()                              # a=0.2, b=0.2, c=5.7
-traj = ross.integrate(final_time=200.0, dt=0.02)
+ross = ts.systems.Rossler()                              # a=0.2, b=0.2, c=5.7
+traj = ross.run(final_time=200.0, dt=0.02)
 traj["x"]                                        # named components
 ```
 
@@ -41,12 +41,12 @@ defaults, and a phase portrait.
 
 ```python
 # skip-doctest — the signature, not a runnable call
-sys.integrate(
+sys.run(
     final_time=100.0,    # end of the window
     dt=0.02,             # OUTPUT grid only — the stepper is adaptive
     t0=0.0,              # start time (warm restarts allowed)
     ic=None,             # initial state; falls back to self.ic, then random
-    method="rk45",       # "rk45" (default), "dop853", "tsit5", "rk4", "bdf", ...
+    solver="rk45",       # "rk45" (default), "dop853", "tsit5", "rk4", "bdf", ...
     rtol=1e-9, atol=1e-12,   # the accuracy knob (tightened in v6 — see below)
 ) -> Trajectory
 ```
@@ -73,7 +73,7 @@ parameter that sets the *number of equations*. Such parameters are
 adjustable at runtime:
 
 ```python
-l96 = ts.Lorenz96(N=10, f=8.0)     # N is structural; f is a control param
+l96 = ts.systems.Lorenz96(N=10, f=8.0)     # N is structural; f is a control param
 ```
 
 Changing `f` is free; changing `N` re-lowers the equations for the new size.

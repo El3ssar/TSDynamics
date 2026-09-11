@@ -217,7 +217,10 @@ def _example_spectrum(_primitive: str) -> tuple[Any, dict[str, Any]]:
     ndim=1,
     role=OverlayRole.BASE,
     default_primitive="points",
-    primitives=("points", "line"),
+    # ``bars`` is the other honest reading of a spectrum: one bar per exponent,
+    # signed about zero.  It claims a primitive that no row claimed, which is the
+    # same thing as a drawing the library could not do.
+    primitives=("points", "line", "bars"),
     analysis="tsdynamics.analysis.lyapunov.lyapunov_spectrum",
     example=_example_spectrum,
     doc="The ordered exponents as a stem plot against the lambda = 0 line.",
@@ -306,7 +309,7 @@ def lyapunov_spectrum(
 
     return Geometry(
         "lyapunov_spectrum",
-        make_frame(FrameSpace.INDEX, 1, ("index $i$",)),
+        make_frame(FrameSpace.INDEX, ("index $i$",)),
         parts,
         axis_labels=("index $i$", r"$\lambda_i$"),
         title=title,
@@ -495,7 +498,7 @@ def lyapunov_convergence(
     yrange = _settled_range(est, autoscale_after) if autoscale_after > 0.0 else None
     return Geometry(
         "lyapunov_convergence",
-        make_frame(FrameSpace.SCALING, 1, (axis,)),
+        make_frame(FrameSpace.SCALING, (axis,)),
         parts,
         axis_labels=(axis, "running Lyapunov estimate"),
         axis_limits=(None, yrange),
@@ -696,7 +699,7 @@ def gali_curves(
 
     return Geometry(
         "gali_curves",
-        make_frame(FrameSpace.SCALING, 1, (axis,)),
+        make_frame(FrameSpace.SCALING, (axis,)),
         parts,
         axis_labels=(axis, r"$\log_{10} \mathrm{GALI}_k$"),
         title="GALI" + (f" (k = {', '.join(str(o) for o in orders)})" if orders else ""),
@@ -843,7 +846,7 @@ def zero_one_pq_plane(
     ]
     return Geometry(
         "zero_one_pq_plane",
-        make_frame(FrameSpace.STATE2, 2, ("$p_c$", "$q_c$")),
+        make_frame(FrameSpace.STATE2, ("$p_c$", "$q_c$")),
         parts,
         axis_labels=("$p_c$", "$q_c$"),
         aspect="equal",
@@ -1047,7 +1050,7 @@ def scaling_fit(subject: Any, *, view: str = "fit") -> Geometry:
 
     return Geometry(
         "scaling_fit",
-        make_frame(FrameSpace.SCALING, 1, (xlabel,)),
+        make_frame(FrameSpace.SCALING, (xlabel,)),
         parts,
         axis_labels=(xlabel, ylabel),
         title=title,

@@ -42,7 +42,7 @@ import tsdynamics as ts
 
 ou = ts.systems.OrnsteinUhlenbeck(params={"theta": 1.0, "mu": 0.0, "sigma": 0.3})
 
-path = ou.integrate(final_time=30.0, dt=0.01, ic=[2.0], seed=0)
+path = ou.run(final_time=30.0, dt=0.01, ic=[2.0], seed=0)
 
 path.y.shape            # (3001, 1)
 path.y[0, 0]            # 2.0   — the initial condition
@@ -137,7 +137,7 @@ path starting in the left well:
 
 ```python
 dw = ts.systems.DoubleWell(params={"a": 1.0, "b": 1.0, "sigma": 0.5})
-path = dw.integrate(final_time=200.0, dt=0.01, ic=[-1.0], seed=1)
+path = dw.run(final_time=200.0, dt=0.01, ic=[-1.0], seed=1)
 x = path.y[:, 0]
 
 # barrier hops = sign changes of x (the state crossing x = 0)
@@ -154,7 +154,7 @@ again:
 
 ```python
 x8 = ts.systems.DoubleWell(params={"a": 1.0, "b": 1.0, "sigma": 0.8}) \
-        .integrate(final_time=200.0, dt=0.01, ic=[-1.0], seed=1).y[:, 0]
+        .run(final_time=200.0, dt=0.01, ic=[-1.0], seed=1).y[:, 0]
 int(np.sum(np.diff(np.sign(x8)) != 0))  # 324  — 4.6× the hops of σ = 0.5
 ```
 
@@ -211,8 +211,8 @@ simply rolls into the nearest well and stops.
 ```python
 det = ts.systems.DoubleWell(params={"a": 1.0, "b": 1.0, "sigma": 0.0})
 
-round(det.integrate(final_time=50.0, dt=0.01, ic=[-1.5], seed=0).y[-1, 0], 4)  # -1.0
-round(det.integrate(final_time=50.0, dt=0.01, ic=[ 0.2], seed=0).y[-1, 0], 4)  #  1.0
+round(det.run(final_time=50.0, dt=0.01, ic=[-1.5], seed=0).y[-1, 0], 4)  # -1.0
+round(det.run(final_time=50.0, dt=0.01, ic=[ 0.2], seed=0).y[-1, 0], 4)  #  1.0
 ```
 
 From $x_0 = -1.5$ it settles into the left well ($-1$); from $x_0 = 0.2$, just

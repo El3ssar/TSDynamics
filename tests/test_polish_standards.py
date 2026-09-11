@@ -95,11 +95,16 @@ def _no_render_backend(monkeypatch):
 # Result-object contract gate (stream WS-RESULT-GATE)
 # ===========================================================================
 
-#: The four affordances every result must carry (the acceptance contract).  A
-#: result is self-describing when it can report its provenance (``meta``), render
-#: a human readout (``summary``), serialize itself (``to_dict``), and expose the
-#: deferred visualization seam (``plot``).
-_CONTRACT_METHODS = ("summary", "to_dict")
+#: The affordances every result must carry (the acceptance contract).  A result
+#: is self-describing when it can report its provenance (``meta``), serialize
+#: itself (``to_dict``), and expose the deferred visualization seam (``plot``).
+#:
+#: ``summary`` is **deliberately absent** since v6.  It was a method nothing
+#: advertised, carrying the good text while ``repr()`` printed a dataclass dump —
+#: so the readout a user got by typing the result's name in a REPL was the worse
+#: of the two.  ``__repr__`` *is* what ``summary()`` printed now; one concept, one
+#: spelling.
+_CONTRACT_METHODS = ("to_dict",)
 
 #: Registered analyses whose return is a deliberate carve-out from
 #: ``AnalysisResult`` — they return a richer type that *still* carries the result
@@ -221,6 +226,37 @@ def test_analysis_result_plot_seam_raises_until_a_backend_lands(_no_render_backe
 # Static, registry-driven — every registered analysis's *return type*
 # ---------------------------------------------------------------------------
 
+#: Analyses **promoted into the registry by v6** that do not yet declare an
+#: ``AnalysisResult`` return, with the slot that owns the result class.
+#:
+#: Contract §4.2 r1 ("every registered analysis returns an ``AnalysisResult``
+#: subclass") and §5.7 ("``analysis/planar.py``'s 8 field functions — **promoted
+#: public**") pull in opposite directions for exactly one release: promoting a
+#: function into ``registry.analyses`` puts it under the result contract, and the
+#: result classes are a different slot's file.  Every row is an **xfail**, so the
+#: day one of them starts returning a result the row has to be deleted — the
+#: table cannot quietly become the norm.
+_RESULT_CONTRACT_NOT_LANDED: dict[str, str] = {
+    # S4 · ANALYSIS-DOOR promoted these eight from analysis/planar.py (§5.7);
+    # S3 · ANALYSIS-DOMAIN owns the result classes they need.
+    "escape_time_field": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
+    "flow_field": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
+    "ftle_field": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
+    "invariant_density": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
+    "nullclines": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
+    "streamlines": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
+    "trace_determinant": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
+    "transient_time_field": "S3/S4: promoted in v6, result class not landed (§4.2 r1)",
+    # the sampling tools and the set metric, likewise newly registered
+    "estimate_dt_from_sagitta": "S3: registered in v6, returns a hidden SagittaDt (§4.2 r1)",
+    "sagitta_profile": "S3: registered in v6, returns a bare ndarray (§4.2 r1)",
+    "set_distance": "S3: registered in v6, returns a bare float (§4.2 r1)",
+    # pre-existing returns the promotion sweep newly exposed
+    "autocorrelation": "S3: returns a bare ndarray (§4.2 r1)",
+    "correlation_sum": "S3: returns an unannotated tuple (§4.2 r1)",
+    "dimension_spectrum": "S3: returns an unannotated tuple (§4.2 r1)",
+}
+
 
 def test_registered_analysis_return_carries_full_contract(analysis_entry):
     """Every registered analysis declares a return type that carries the contract.
@@ -234,6 +270,8 @@ def test_registered_analysis_return_carries_full_contract(analysis_entry):
     proves the surface actually fires.
     """
     name = analysis_entry.name
+    if name in _RESULT_CONTRACT_NOT_LANDED:
+        pytest.xfail(_RESULT_CONTRACT_NOT_LANDED[name])
     classes = _return_classes(analysis_entry.obj)
 
     if name in _RESULT_CARVE_OUTS:
@@ -294,11 +332,11 @@ def _basin_box():
 #: JSON-serializable, because a hand-rolled ``to_dict`` embeds a raw object rather
 #: than recursing into its serializable form: ``recurrence_matrix`` carries a
 #: SciPy sparse ``csr_matrix``, ``windowed_rqa`` carries nested ``RQAResult``
-#: objects, and ``find_attractors`` carries nested ``Attractor`` objects.  All
+#: objects, and ``attractors`` carries nested ``Attractor`` objects.  All
 #: three are real gaps against the ``to_dict`` "JSON-friendly" promise, tracked
 #: for a fix in the owning analysis modules (out of this gate's owned paths); the
 #: core contract (``to_dict`` returns a mapping) is still asserted for them below.
-_TODICT_NOT_JSON = frozenset({"recurrence_matrix", "windowed_rqa", "find_attractors"})
+_TODICT_NOT_JSON = frozenset({"recurrence_matrix", "windowed_rqa", "attractors"})
 
 
 def _runtime_cases() -> list[tuple[str, object]]:
@@ -308,7 +346,7 @@ def _runtime_cases() -> list[tuple[str, object]]:
     the static surface above is proven to fire on a live object.  Calls are kept
     small/deterministic (fast tier) and warning-clean under ``filterwarnings=
     ['error']``.  The expensive or multistability-requiring analyses
-    (``periodic_orbits``/``periodic_orbit``/``basins_of_attraction``/
+    (``periodic_orbits``/``basins``/
     ``basin_fractions``/``continuation``/``tipping_points``/``resilience``) are
     covered by the static annotation sweep, not re-run here.
     """
@@ -319,33 +357,42 @@ def _runtime_cases() -> list[tuple[str, object]]:
     box = _basin_box()
     return [
         # -- ArrayResult family --
-        ("lyapunov_spectrum", lambda: ts.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1])),
-        ("mutual_information", lambda: ts.mutual_information(series, max_delay=20)),
-        ("embed", lambda: ts.embed(series, 3, 1)),
+        (
+            "lyapunov_spectrum",
+            lambda: ts.analysis.lyapunov_spectrum(_henon(), k=2, n=1500, ic=[0.1, 0.1]),
+        ),
+        ("mutual_information", lambda: ts.analysis.mutual_information(series, max_delay=20)),
+        ("embed", lambda: ts.analysis.embed(series, 3, 1)),
         # -- ScalarResult family --
-        ("max_lyapunov", lambda: ts.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
-        ("kaplan_yorke_dimension", lambda: ts.kaplan_yorke_dimension([0.42, -1.62])),
-        ("estimate_period", lambda: ts.estimate_period(sine)),
-        ("zero_one_test", lambda: ts.zero_one_test(series)),
+        ("max_lyapunov", lambda: ts.analysis.max_lyapunov(_henon(), n=150, ic=[0.1, 0.1])),
+        ("kaplan_yorke_dimension", lambda: ts.analysis.kaplan_yorke_dimension([0.42, -1.62])),
+        ("estimate_period", lambda: ts.analysis.estimate_period(sine)),
+        ("zero_one_test", lambda: ts.analysis.zero_one_test(series)),
         # -- CountResult --
-        ("optimal_delay", lambda: ts.optimal_delay(series, max_delay=20)),
+        ("optimal_delay", lambda: ts.analysis.optimal_delay(series, max_delay=20)),
         # -- ScalingResult family (canonical scaling-curve schema) --
-        ("correlation_dimension", lambda: ts.correlation_dimension(traj)),
-        ("generalized_dimension", lambda: ts.generalized_dimension(traj)),
-        ("lyapunov_from_data", lambda: ts.lyapunov_from_data(series)),
-        ("expansion_entropy", lambda: ts.expansion_entropy(_henon(), box, n_samples=150, n=8)),
+        ("correlation_dimension", lambda: ts.analysis.correlation_dimension(traj)),
+        ("generalized_dimension", lambda: ts.analysis.generalized_dimension(traj)),
+        ("lyapunov_from_data", lambda: ts.analysis.lyapunov_from_data(series)),
+        (
+            "expansion_entropy",
+            lambda: ts.analysis.expansion_entropy(_henon(), box, n_samples=150, n=8),
+        ),
         # -- CollectionResult family --
-        ("fixed_points", lambda: ts.fixed_points(_henon(), seed=0)),
+        ("fixed_points", lambda: ts.analysis.fixed_points(_henon(), seed=0)),
         # -- rich per-stream result dataclasses --
-        ("embedding_dimension", lambda: ts.embedding_dimension(series, max_dim=6)),
-        ("recurrence_matrix", lambda: ts.recurrence_matrix(traj, recurrence_rate=0.05)),
-        ("rqa", lambda: ts.rqa(traj, recurrence_rate=0.05)),
-        ("windowed_rqa", lambda: ts.windowed_rqa(traj, window=200, step=100, recurrence_rate=0.05)),
-        ("gali", lambda: ts.gali(_henon(), k=2, n=300, ic=[0.1, 0.1])),
-        ("return_map", lambda: ts.return_map(series)),
+        ("embedding_dimension", lambda: ts.analysis.embedding_dimension(series, max_dim=6)),
+        ("recurrence_matrix", lambda: ts.analysis.recurrence_matrix(traj, recurrence_rate=0.05)),
+        ("rqa", lambda: ts.analysis.rqa(traj, recurrence_rate=0.05)),
+        (
+            "windowed_rqa",
+            lambda: ts.analysis.windowed_rqa(traj, window=200, step=100, recurrence_rate=0.05),
+        ),
+        ("gali", lambda: ts.analysis.gali(_henon(), k=2, n=300, ic=[0.1, 0.1])),
+        ("return_map", lambda: ts.analysis.return_map(series)),
         (
             "orbit_diagram",
-            lambda: ts.orbit_diagram(
+            lambda: ts.analysis.orbit_diagram(
                 ts.systems.Logistic(),
                 "r",
                 np.linspace(3.4, 4.0, 40),
@@ -354,18 +401,18 @@ def _runtime_cases() -> list[tuple[str, object]]:
             ),
         ),
         (
-            "find_attractors",
-            lambda: ts.find_attractors(
+            "attractors",
+            lambda: ts.analysis.attractors(
                 _henon(), box, resolution=30, n_seeds=80, max_steps=400, seed=0
             ),
         ),
-        ("basin_entropy", lambda: ts.basin_entropy(labels)),
-        ("uncertainty_exponent", lambda: ts.uncertainty_exponent(labels)),
-        ("wada_property", lambda: ts.wada_property(labels)),
+        ("basin_entropy", lambda: ts.analysis.basin_entropy(labels)),
+        ("uncertainty_exponent", lambda: ts.analysis.uncertainty_exponent(labels)),
+        ("wada_property", lambda: ts.analysis.wada_property(labels)),
         # -- carve-out: PoincareSection (a Trajectory, not an AnalysisResult) --
         (
             "poincare_section",
-            lambda: ts.poincare_section(
+            lambda: ts.analysis.poincare_section(
                 ts.systems.Rossler(), plane=("y", 0.0, "up"), crossings=20, seed=0
             ),
         ),
@@ -373,6 +420,25 @@ def _runtime_cases() -> list[tuple[str, object]]:
 
 
 _RUNTIME_CASES = _runtime_cases()
+
+#: Results whose ``summary()`` has not been folded into ``__repr__`` yet.
+#:
+#: ``PoincareSection`` subclasses :class:`~tsdynamics.data.Trajectory`, not
+#: :class:`AnalysisResult`, so the round that deleted ``summary()`` on the 32
+#: result classes could not reach it — it is a different file, owned by
+#: S2 · DERIVED (contract §9.3).  Liveness-checked below, so the row goes the day
+#: the method does.
+_SUMMARY_NOT_YET_FOLDED = frozenset({"poincare_section"})
+
+
+def test_summary_carve_out_is_live() -> None:
+    """The one remaining ``summary()`` is still there — otherwise drop the row."""
+    for name, thunk in _RUNTIME_CASES:
+        if name in _SUMMARY_NOT_YET_FOLDED:
+            assert hasattr(thunk(), "summary"), (
+                f"{name} no longer carries summary() — delete it from "
+                "_SUMMARY_NOT_YET_FOLDED so the contract is enforced again"
+            )
 
 
 @pytest.mark.parametrize("name,thunk", _RUNTIME_CASES, ids=[c[0] for c in _RUNTIME_CASES])
@@ -398,10 +464,14 @@ def test_runtime_result_contract(name, thunk, _no_render_backend):
     # provenance
     assert isinstance(result.meta, Mapping) and result.meta, f"{name} has no provenance .meta"
 
-    # human readouts
-    assert repr(result).strip(), f"{name} has an empty repr"
-    summary = result.summary()
-    assert isinstance(summary, str) and summary.strip(), f"{name}.summary() is empty"
+    # the human readout — since v6 there is exactly one, and it is ``repr``
+    readout = repr(result)
+    assert readout.strip(), f"{name} has an empty repr"
+    if name not in _SUMMARY_NOT_YET_FOLDED:
+        assert not hasattr(result, "summary"), (
+            f"{name} still carries summary(); v6 folded it into __repr__ (one concept, "
+            "one spelling), so a second readout is a second answer waiting to drift"
+        )
 
     # export
     data = result.to_dict()
@@ -637,11 +707,18 @@ _NAMEGATE_BANNED_PARAMS: dict[str, str] = {
     "n_rescale": "n",
     # step size → dt
     "h": "dt",
-    # observed component → component
-    "components": "component",
-    "observable": "component",
-    "coord": "component",
-    "col": "component",
+    # observed component(s) → components
+    #
+    # **Flipped in v6.**  The glossary froze the singular, and the singular was
+    # measurably wrong: ``estimate_period(component=2)`` sliced ``data[2]`` — a
+    # *row*, one state — so it raised on a 2-component Van der Pol and silently
+    # returned 0.026 where the truth is 8.0 (311x) on a 10-component system.  The
+    # plural is the honest name because every one of these doors takes a
+    # selection, not a single index.
+    "component": "components",
+    "observable": "components",
+    "coord": "components",
+    "col": "components",
     # embedding dimension → dimension
     "m": "dimension",
     "emb_dim": "dimension",
@@ -669,13 +746,78 @@ _NAMEGATE_BANNED_PARAMS: dict[str, str] = {
 }
 
 # §5 homonym carve-outs: exact ``(function, parameter)`` pairs that may use a
-# token banned elsewhere.  None of the canonical homonym tokens (``k``/``k_max``/
-# ``step``/``max_steps``/``max_delay``) collide with a §2 ban
-# under exact-name matching (``step`` ≠ ``steps``, ``max_delay`` ≠ ``max_lag``,
-# ``max_steps`` ≠ ``steps``), so this whitelist is empty today — kept as the
-# documented extension point.  ``test_naming_gate_homonym_whitelist_is_sound``
-# guards that any future entry references a real banned token on a real function.
-_NAMEGATE_HOMONYM_WHITELIST: frozenset[tuple[str, str]] = frozenset()
+# token banned elsewhere, because on *that* function the token names a different
+# concept.  ``test_naming_gate_homonym_whitelist_is_sound`` asserts every entry
+# references a real banned token on a real function, so a rename cannot leave a
+# stale row masking a genuine regression.
+#
+# Every row below is a homonym, not an exemption:
+#
+# * ``grid`` on the six planar **field** analyses is a *resolution* — the number
+#   of samples per axis (``grid=201``) — not a region.  The box those functions
+#   work over is ``xlim``/``ylim``, and the §2 ban exists to stop a *region*
+#   being spelled ``grid``.  Banning an integer resolution because it shares a
+#   word with a box is the false positive the carve-out table is for.
+# * ``steps`` on ``streamlines`` is the integration length of one streamline —
+#   the ``max_steps`` concept, a safety/length cap on a single curve, not the
+#   run length of an analysis.
+# * ``kind`` on ``return_map`` names *which return map* (successive maxima,
+#   successive minima, successive section crossings).  The §2 selector ban exists
+#   to keep one word for "which algorithm"; this is not an algorithm choice, and
+#   v6 renamed it from ``method`` precisely so that ``method`` stays the
+#   estimator word everywhere.
+_NAMEGATE_HOMONYM_WHITELIST: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("escape_time_field", "grid"),
+        ("flow_field", "grid"),
+        ("ftle_field", "grid"),
+        ("nullclines", "grid"),
+        ("transient_time_field", "grid"),
+        ("streamlines", "steps"),
+        ("return_map", "kind"),
+    }
+)
+
+#: Signatures the **deferred** v6.1 VOCAB sweep still owns, with the reason.
+#: Contract §8.2 defers the general keyword sweep ("worst risk-to-value ratio in
+#: the plan"); the *named* renames a user types landed in v6 and are enforced
+#: above.  These rows are what is left, and each names why it is not simply a
+#: bug.  ``test_namegate_deferred_rows_are_live`` fails when one starts passing,
+#: so the table can only shrink.
+#: The **other half** of the deferred v6.1 VOCAB sweep: signatures still spelling
+#: the observed-component selector in the singular.
+#:
+#: This is a live C3 split — two grammars for one argument — and it is recorded
+#: rather than hidden, because that is exactly the defect C3 names.  v6 landed
+#: the two renames a *bug* depended on (``estimate_period`` sliced a row and
+#: returned 0.026 for 8.0; ``zero_one_test`` raised for every system of dim > 1);
+#: the remaining nine are correct today under either spelling, and §8.2 defers
+#: the sweep that unifies them.  ``test_namegate_deferred_param_rows_are_live``
+#: fails the moment one is fixed, so the table can only shrink.
+_NAMEGATE_DEFERRED_PARAM: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("autocorrelation", "component"),
+        ("cao_dimension", "component"),
+        ("embed", "component"),
+        ("embedding_dimension", "component"),
+        ("false_nearest_neighbors", "component"),
+        ("mutual_information", "component"),
+        ("optimal_delay", "component"),
+        ("orbit_diagram", "component"),
+        ("return_map", "component"),
+    }
+)
+
+_NAMEGATE_DEFERRED_FIRST_ARG: dict[str, str] = {
+    # A binary metric: neither point set is "the subject", so neither can be
+    # 'system' or 'data' without lying about the other.  Arguably permanent.
+    "set_distance": "a",
+    # Sampling tools promoted into the registry in v6; their first argument is
+    # measured data under another name.  v6.1 VOCAB sweep.
+    "estimate_dt_from_sagitta": "y",
+    "sagitta_profile": "samples",
+    "invariant_density": "values",
+}
 
 # §5 / §6: the homonym tokens, with the functions that legitimately carry them.
 # Each token names a *different* concept here (a GALI order, a stride, a search
@@ -687,8 +829,8 @@ _NAMEGATE_HOMONYM_CARVE_OUTS: dict[str, tuple[str, ...]] = {
     "k_max": ("lyapunov_from_data",),  # scaling-curve abscissa horizon
     "step": ("windowed_rqa",),  # window stride (not the time step dt)
     "max_steps": (  # integration safety cap (not the run length n)
-        "find_attractors",
-        "basins_of_attraction",
+        "attractors",
+        "basins",
         "continuation",
         "basin_fractions",
     ),
@@ -748,6 +890,12 @@ def test_naming_gate_first_argument_is_canonical(name: str, fn: object) -> None:
     first = _namegate_first_arg(fn)
     if first is None:
         return
+    if name in _NAMEGATE_DEFERRED_FIRST_ARG:
+        assert first == _NAMEGATE_DEFERRED_FIRST_ARG[name], (
+            f"{name}: first argument moved to {first!r} — update or delete its row in "
+            "_NAMEGATE_DEFERRED_FIRST_ARG"
+        )
+        return
     if name in _NAMEGATE_PRIOR_RESULT_FIRST_ARG:
         expected = _NAMEGATE_PRIOR_RESULT_FIRST_ARG[name]
         assert first == expected, (
@@ -771,12 +919,44 @@ def test_naming_gate_no_banned_parameter_spellings(name: str, fn: object) -> Non
     Registry-driven over both registries.  Reports every offender on a function
     at once, each with its canonical replacement, so a regression names the fix.
     """
+    exempt = _NAMEGATE_HOMONYM_WHITELIST | _NAMEGATE_DEFERRED_PARAM
     offenders = [
         f"{p.name!r} (use {_NAMEGATE_BANNED_PARAMS[p.name]!r})"
         for p in inspect.signature(fn).parameters.values()
-        if p.name in _NAMEGATE_BANNED_PARAMS and (name, p.name) not in _NAMEGATE_HOMONYM_WHITELIST
+        if p.name in _NAMEGATE_BANNED_PARAMS and (name, p.name) not in exempt
     ]
     assert not offenders, f"{name}: banned parameter spelling(s): {', '.join(offenders)}."
+
+
+def test_namegate_deferred_param_rows_are_live() -> None:
+    """The deferred keyword table can only shrink.
+
+    Every row must name a **registered** analysis that still carries the
+    non-canonical spelling.  A row for a signature already fixed is a row that
+    would mask the next regression.
+    """
+    for fn_name, param in sorted(_NAMEGATE_DEFERRED_PARAM):
+        fn = _NAMEGATE_BY_NAME.get(fn_name)
+        assert fn is not None, f"{fn_name} is no longer registered — drop its deferred row"
+        assert param in inspect.signature(fn).parameters, (
+            f"{fn_name} no longer takes {param!r} — drop its row from _NAMEGATE_DEFERRED_PARAM"
+        )
+
+
+def test_namegate_deferred_rows_are_live() -> None:
+    """The deferred-sweep table can only shrink.
+
+    Every row must name a **registered** analysis whose first argument is still
+    the non-canonical one.  A row for a function that has been fixed, renamed or
+    unregistered is a row that would mask the next regression, so it fails here
+    rather than rotting.
+    """
+    for name, first in _NAMEGATE_DEFERRED_FIRST_ARG.items():
+        fn = _NAMEGATE_BY_NAME.get(name)
+        assert fn is not None, f"{name} is no longer registered — drop its deferred row"
+        assert _namegate_first_arg(fn) == first, (
+            f"{name}'s first argument is no longer {first!r} — drop its deferred row"
+        )
 
 
 def test_naming_gate_tables_are_glossary_faithful() -> None:
@@ -964,13 +1144,13 @@ _ERRGATE_DEGENERATE_SERIES = np.linspace(0.0, 1.0, 8)
 
 def _errgate_set_unknown_attribute() -> None:
     """Trigger the typo'd-attribute footgun (``lor.sigmaa = 99`` for ``sigma``)."""
-    system = ts.Lorenz()
+    system = ts.systems.Lorenz()
     system.sigmaa = 99
 
 
 def _errgate_unknown_component() -> object:
     """Index a Trajectory by a component name the system does not declare."""
-    traj = ts.Lorenz().run(final_time=1.0, dt=0.5, backend="reference")
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.5, backend="reference")
     return traj["nonexistent"]
 
 
@@ -984,7 +1164,7 @@ def _errgate_data_analysis_on_system() -> object:
     ``InvalidInputError`` naming the system and the call that fixes it, so this
     thunk backs a tier-2 "it raises" row *and* a value-naming row.
     """
-    return ts.lyapunov_from_data(ts.Lorenz())
+    return ts.analysis.lyapunov_from_data(ts.systems.Lorenz())
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1053,7 +1233,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "final_time-negative",
         _ERRGATE_FINAL_TIME,
-        lambda: ts.Lorenz().run(final_time=-5.0, dt=0.1, backend="reference"),
+        lambda: ts.systems.Lorenz().run(final_time=-5.0, dt=0.1, backend="reference"),
         ValueError,
         ("final_time",),
         InvalidParameterError,
@@ -1061,7 +1241,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "final_time-zero",
         _ERRGATE_FINAL_TIME,
-        lambda: ts.Lorenz().run(final_time=0.0, dt=0.1, backend="reference"),
+        lambda: ts.systems.Lorenz().run(final_time=0.0, dt=0.1, backend="reference"),
         ValueError,
         ("final_time",),
         InvalidParameterError,
@@ -1069,7 +1249,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "final_time-negative-integrate-alias",
         _ERRGATE_FINAL_TIME,
-        lambda: ts.Lorenz().run(final_time=-5.0, dt=0.1, backend="reference"),
+        lambda: ts.systems.Lorenz().run(final_time=-5.0, dt=0.1, backend="reference"),
         ValueError,
         ("final_time",),
         InvalidParameterError,
@@ -1077,7 +1257,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "dt-zero",
         _ERRGATE_DT,
-        lambda: ts.Lorenz().run(final_time=5.0, dt=0.0, backend="reference"),
+        lambda: ts.systems.Lorenz().run(final_time=5.0, dt=0.0, backend="reference"),
         ValueError,
         ("dt",),
         InvalidParameterError,
@@ -1085,7 +1265,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "dt-negative",
         _ERRGATE_DT,
-        lambda: ts.Lorenz().run(final_time=5.0, dt=-0.1, backend="reference"),
+        lambda: ts.systems.Lorenz().run(final_time=5.0, dt=-0.1, backend="reference"),
         ValueError,
         ("dt",),
         InvalidParameterError,
@@ -1101,7 +1281,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "unknown-parameter-with_params",
         _ERRGATE_UNKNOWN_ATTR,
-        lambda: ts.Lorenz().with_params(nonexistent=5),
+        lambda: ts.systems.Lorenz().with_params(nonexistent=5),
         ValueError,
         ("nonexistent",),
         InvalidParameterError,
@@ -1109,7 +1289,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "unknown-parameter-constructor",
         _ERRGATE_UNKNOWN_ATTR,
-        lambda: ts.Lorenz(params={"sigmaa": 9}),
+        lambda: ts.systems.Lorenz(params={"sigmaa": 9}),
         ValueError,
         ("sigmaa",),
         InvalidParameterError,
@@ -1118,7 +1298,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "short-data-correlation-dimension",
         _ERRGATE_SHORT_DATA,
-        lambda: ts.correlation_dimension(_ERRGATE_DEGENERATE_SERIES),
+        lambda: ts.analysis.correlation_dimension(_ERRGATE_DEGENERATE_SERIES),
         ValueError,
         ("data length",),
         InvalidParameterError,
@@ -1126,7 +1306,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "unknown-keyword-run",
         _ERRGATE_UNKNOWN_KWARG,
-        lambda: ts.Lorenz().run(final_time=5.0, dt=0.5, backend="reference", nonsense=5),
+        lambda: ts.systems.Lorenz().run(final_time=5.0, dt=0.5, backend="reference", nonsense=5),
         ValueError,
         ("nonsense",),
         InvalidParameterError,
@@ -1141,7 +1321,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
         _ERRGATE_WRONG_TYPE,
         _errgate_data_analysis_on_system,
         TypeError,
-        ("System", "Lorenz", "integrate"),
+        ("System", "Lorenz", "system.run("),
         InvalidInputError,
     ),
     # Closed by v6 FRESH-EYES: ``SystemBase._coerce_ic`` is now the one place the
@@ -1152,7 +1332,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "wrong-ic-message",
         _ERRGATE_WRONG_IC,
-        lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
+        lambda: ts.systems.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
         TypeError,
         ("Lorenz", "3 state components", "got 2"),
         InvalidInputError,
@@ -1162,15 +1342,17 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "curated-solver-method",
         _ERRGATE_CURATED,
-        lambda: ts.Lorenz().run(final_time=5.0, dt=0.1, method="LSODA", backend="reference"),
+        lambda: ts.systems.Lorenz().run(
+            final_time=5.0, dt=0.1, method="LSODA", backend="reference"
+        ),
         ValueError,
-        ("LSODA", "available"),
+        ("LSODA", "solver="),
         None,
     ),
     _ValueNamingCase(
         "curated-backend",
         _ERRGATE_CURATED,
-        lambda: ts.Lorenz().run(final_time=5.0, dt=0.1, backend="gpu"),
+        lambda: ts.systems.Lorenz().run(final_time=5.0, dt=0.1, backend="gpu"),
         ValueError,
         ("gpu", "choose from"),
         None,
@@ -1186,9 +1368,9 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
     _ValueNamingCase(
         "curated-dde-set-state",
         _ERRGATE_CURATED,
-        lambda: ts.MackeyGlass().set_state([1.0]),
-        NotImplementedError,
-        ("set_state",),
+        lambda: ts.systems.MackeyGlass().set_state([1.0]),
+        AttributeError,
+        ("set_state", "history"),
         None,
     ),
 ]
@@ -1199,42 +1381,42 @@ _ERRGATE_NO_SILENT: list[_RaisesCase] = [
     _RaisesCase(
         "short-data-embed",
         _ERRGATE_SHORT_DATA,
-        lambda: ts.analysis.embedding.embed(_ERRGATE_SHORT_SERIES, dimension=5, delay=3),
+        lambda: ts.analysis.embed(_ERRGATE_SHORT_SERIES, dimension=5, delay=3),
         ValueError,
         "too short",
     ),
     _RaisesCase(
         "short-data-box-counting",
         _ERRGATE_SHORT_DATA,
-        lambda: ts.box_counting_dimension(_ERRGATE_SHORT_SERIES),
+        lambda: ts.analysis.box_counting_dimension(_ERRGATE_SHORT_SERIES),
         ValueError,
         None,
     ),
     _RaisesCase(
         "short-data-lyapunov-from-data",
         _ERRGATE_SHORT_DATA,
-        lambda: ts.lyapunov_from_data(_ERRGATE_SHORT_SERIES),
+        lambda: ts.analysis.lyapunov_from_data(_ERRGATE_SHORT_SERIES),
         ValueError,
         "longer series",
     ),
     _RaisesCase(
         "unknown-keyword-lyapunov-spectrum",
         _ERRGATE_UNKNOWN_KWARG,
-        lambda: ts.lyapunov_spectrum(ts.Lorenz(), nonsense=5),
+        lambda: ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), nonsense=5),
         TypeError,
         "nonsense",
     ),
     _RaisesCase(
         "unknown-keyword-correlation-dimension",
         _ERRGATE_UNKNOWN_KWARG,
-        lambda: ts.correlation_dimension(_ERRGATE_VALID_SERIES, nonsense=5),
+        lambda: ts.analysis.correlation_dimension(_ERRGATE_VALID_SERIES, nonsense=5),
         TypeError,
         "nonsense",
     ),
     _RaisesCase(
         "wrong-ic-dimension",
         _ERRGATE_WRONG_IC,
-        lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
+        lambda: ts.systems.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
         TypeError,
         None,
     ),
@@ -1397,7 +1579,7 @@ def test_errgate_open_footgun_reasons_cite_a_lane() -> None:
 def _runnable_lines(message: str) -> list[str]:
     """Return the indented lines of ``message`` that parse as a Python call.
 
-    A remedy line is either a bare call (``ts.basins(system, region)``) or an
+    A remedy line is either a bare call (``ts.analysis.basins(system, region)``) or an
     assignment whose value is a call (``traj = system.run(...)``); anything else
     — prose, a fragment, a bare name — is not something to paste and is not
     counted.  Trailing comments are fine (the tokenizer drops them).
@@ -1455,7 +1637,7 @@ def _undeclared_dim_system() -> object:
 
 #: Deterministic inputs for the rows below.
 _RUNNABLE_SERIES = np.linspace(0.0, 1.0, 8)
-_RUNNABLE_TRAJ = ts.Lorenz().run(final_time=2.0, dt=0.1, backend="reference")
+_RUNNABLE_TRAJ = ts.systems.Lorenz().run(final_time=2.0, dt=0.1, backend="reference")
 #: A two-basin label image, built directly rather than integrated: ``resilience``
 #: reads labels + grid, and the point of this row is the *ambiguity* (which of the
 #: two?), which a synthetic image states exactly and a real system only
@@ -1469,107 +1651,107 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
     # ── wrong shape of call: a model where data belongs, and the reverse ──
     _RunnableCase(
         "system-first-analysis-given-data",
-        lambda: ts.max_lyapunov(np.asarray(_RUNNABLE_TRAJ.y[:, 0])),
+        lambda: ts.analysis.max_lyapunov(np.asarray(_RUNNABLE_TRAJ.y[:, 0])),
         "max_lyapunov",
         ("lyapunov_from_data",),
     ),
     _RunnableCase(
         "lyapunov-spectrum-given-a-trajectory",
-        lambda: ts.lyapunov_spectrum(_RUNNABLE_TRAJ),
+        lambda: ts.analysis.lyapunov_spectrum(_RUNNABLE_TRAJ),
         "lyapunov_spectrum",
         ("lyapunov_from_data(traj)",),
     ),
     _RunnableCase(
         "data-first-analysis-given-a-system",
-        lambda: ts.correlation_dimension(ts.Lorenz()),
+        lambda: ts.analysis.correlation_dimension(ts.systems.Lorenz()),
         "correlation_dimension",
         ("correlation_dimension(traj",),
     ),
     _RunnableCase(
         "fixed-points-given-data",
-        lambda: ts.fixed_points(np.zeros((10, 2))),
+        lambda: ts.analysis.fixed_points(np.zeros((10, 2))),
         "fixed_points",
-        ("ts.fixed_points(",),
+        ("ts.analysis.fixed_points(",),
     ),
     # ── a required argument with no natural default ──
     _RunnableCase(
         "basins-without-a-region",
-        lambda: ts.basins_of_attraction(ts.Henon()),
-        "basins_of_attraction",
-        ("ts.basins_of_attraction(system,",),
+        lambda: ts.analysis.basins(ts.systems.Henon()),
+        "basins",
+        ("ts.analysis.basins(system, region)",),
     ),
     _RunnableCase(
         "recurrence-matrix-without-a-scale",
-        lambda: ts.recurrence_matrix(_RUNNABLE_TRAJ),
+        lambda: ts.analysis.recurrence_matrix(_RUNNABLE_TRAJ),
         "recurrence_matrix",
         ("recurrence_rate=",),
     ),
     _RunnableCase(
         "windowed-rqa-without-a-window",
-        lambda: ts.windowed_rqa(_RUNNABLE_TRAJ),
+        lambda: ts.analysis.windowed_rqa(_RUNNABLE_TRAJ),
         "windowed_rqa",
         ("window=",),
     ),
     _RunnableCase(
         "continuation-without-a-region",
-        lambda: ts.continuation(ts.Henon(), "a", [1.2, 1.4]),
+        lambda: ts.analysis.continuation(ts.systems.Henon(), "a", [1.2, 1.4]),
         "continuation",
-        ("ts.continuation(system, param, values,",),
+        ("ts.analysis.continuation(system, param, values,",),
     ),
     _RunnableCase(
         "resilience-without-an-attractor-id",
-        lambda: ts.resilience(_RUNNABLE_BASINS),
+        lambda: ts.analysis.resilience(_RUNNABLE_BASINS),
         "resilience",
         ("attractor_id=",),
     ),
     _RunnableCase(
         "tipping-points-given-a-trajectory",
-        lambda: ts.tipping_points(_RUNNABLE_TRAJ),
+        lambda: ts.analysis.tipping_points(_RUNNABLE_TRAJ),
         "tipping_points",
-        ("ts.tipping_points(cont)",),
+        ("ts.analysis.tipping_points(cont)",),
     ),
     # ── a flow keyword aimed at a map ──
     _RunnableCase(
         "map-given-a-flow-keyword",
-        lambda: ts.Henon().run(n=10, dt=0.01),
+        lambda: ts.systems.Henon().run(n=10, dt=0.01),
         "run",
         ("Henon().run(n=",),
     ),
     # ── right idea, wrong family ──
     _RunnableCase(
         "periodic-orbits-on-a-flow",
-        lambda: ts.periodic_orbits(ts.Lorenz(), 2),
+        lambda: ts.analysis.periodic_orbits(ts.systems.Lorenz(), 2),
         "periodic_orbits",
-        ("ts.periodic_orbit(",),
+        ("ts.analysis.periodic_orbits(",),
     ),
     _RunnableCase(
         "periodic-orbit-on-a-map",
-        lambda: ts.periodic_orbit(ts.Henon()),
-        "periodic_orbit",
-        ("ts.periodic_orbits(",),
+        lambda: ts.analysis.periodic_orbits(ts.systems.Henon()),
+        "periodic_orbits",
+        ("ts.analysis.periodic_orbits(",),
     ),
     # ── a value the caller can only fix by being told the right one ──
     _RunnableCase(
         "wrong-length-initial-condition",
-        lambda: ts.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
+        lambda: ts.systems.Lorenz().run(ic=[1.0, 2.0], final_time=5.0, dt=0.1, backend="reference"),
         "run",
         ("ic=[1.0, 1.0, 1.0]",),
     ),
     _RunnableCase(
         "too-short-series-for-a-dimension",
-        lambda: ts.correlation_dimension(_RUNNABLE_SERIES),
+        lambda: ts.analysis.correlation_dimension(_RUNNABLE_SERIES),
         "correlation_dimension",
-        ("ts.correlation_dimension(traj)",),
+        ("ts.analysis.correlation_dimension(traj)",),
     ),
     _RunnableCase(
         "too-short-series-for-fixed-mass",
-        lambda: ts.fixed_mass_dimension(_RUNNABLE_SERIES),
+        lambda: ts.analysis.fixed_mass_dimension(_RUNNABLE_SERIES),
         "fixed_mass_dimension",
-        ("ts.fixed_mass_dimension(traj)",),
+        ("ts.analysis.fixed_mass_dimension(traj)",),
     ),
     _RunnableCase(
         "non-numeric-renyi-order",
-        lambda: ts.generalized_dimension(_RUNNABLE_TRAJ, q="two"),
+        lambda: ts.analysis.generalized_dimension(_RUNNABLE_TRAJ, q="two"),
         "generalized_dimension",
         ("q=2.0",),
     ),
@@ -1584,43 +1766,43 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
     # ── shooting must escalate, not repeat the line the caller just ran ──
     _RunnableCase(
         "periodic-orbits-given-a-flow",
-        lambda: ts.periodic_orbits(ts.Lorenz(), 2),
+        lambda: ts.analysis.periodic_orbits(ts.systems.Lorenz(), 2),
         "periodic_orbits",
-        ("ts.periodic_orbit(system, ic=traj.y[-1]",),
+        ("ts.analysis.periodic_orbits(system,", "ic=traj.y[-1]"),
     ),
     # ── a near-miss name: the fix is one character, so spell the whole call ──
     _RunnableCase(
         "misspelt-parameter-keyword",
-        lambda: ts.Lorenz(sigmaa=10.0),
+        lambda: ts.systems.Lorenz(sigmaa=10.0),
         "Lorenz",
         ("Lorenz(sigma=10.0)",),
     ),
     _RunnableCase(
         "unknown-fixed-points-method",
-        lambda: ts.fixed_points(ts.Lorenz(), method="nooton"),
+        lambda: ts.analysis.fixed_points(ts.systems.Lorenz(), method="nooton"),
         "method",
-        ("ts.fixed_points(system, method='newton')",),
+        ("ts.analysis.fixed_points(system, method='newton')",),
     ),
     # ── a single exponent is not a spectrum: refuse, do not saturate to 1.0 ──
     _RunnableCase(
         "kaplan-yorke-given-one-exponent",
-        lambda: ts.kaplan_yorke_dimension(0.9),
+        lambda: ts.analysis.kaplan_yorke_dimension(0.9),
         "kaplan_yorke_dimension",
-        ("ts.kaplan_yorke_dimension(exps)",),
+        ("ts.analysis.kaplan_yorke_dimension(exps)",),
     ),
     # ── a basin is a property of the model, so data cannot reach the FSM ──
     _RunnableCase(
         "basins-given-a-trajectory",
-        lambda: ts.basins(_RUNNABLE_TRAJ, [(-2.0, 2.0, 8), (-2.0, 2.0, 8)]),
-        "basins_of_attraction",
-        ("ts.basins_of_attraction(system,",),
+        lambda: ts.analysis.basins(_RUNNABLE_TRAJ, [(-2.0, 2.0, 8), (-2.0, 2.0, 8)]),
+        "basins",
+        ("ts.analysis.basins(system)",),
     ),
     # ── a transposed point set must not be diagnosed as a short one ──
     _RunnableCase(
         "transposed-point-set",
-        lambda: ts.correlation_dimension(np.zeros((3, 500))),
+        lambda: ts.analysis.correlation_dimension(np.zeros((3, 500))),
         "correlation_dimension",
-        ("ts.correlation_dimension(data.T)",),
+        ("ts.analysis.correlation_dimension(data.T)",),
     ),
 ]
 
@@ -1629,7 +1811,130 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
 _NOT_A_USER_CALL = ("_", "tsdynamics.analysis._", "self.", "<")
 
 
-@pytest.mark.parametrize("case", _ERRGATE_RUNNABLE, ids=lambda c: c.cid)
+#: Error messages whose remedy line still names the **pre-v6 top-level spelling**
+#: (``ts.analysis.fixed_points(...)`` rather than ``ts.analysis.fixed_points(...)``), with
+#: the owning slot.
+#:
+#: This is not cosmetic and it is not a style preference.  v6 curated the top
+#: level to seventeen names, so ``ts.analysis.fixed_points`` does not resolve any more —
+#: a message handing that line back is handing back a line that raises.  Contract
+#: §5.6 says so directly ("the remedy lines are bare, not ``ts.analysis.``-
+#: qualified" is listed as one of the three live defects that die on the way).
+#: The message strings live in ``analysis/**``, owned by S3 · ANALYSIS-DOMAIN and
+#: C7 · ANALYSIS-DISCOVERY.
+#:
+#: Strict xfails, so each row turns red the moment its message is qualified and
+#: the row has to be deleted.  :func:`test_errgate_remedy_lines_resolve` is the
+#: gate the whole table exists to be measured against.
+_ERRGATE_NOT_QUALIFIED: dict[str, str] = {
+    # ── found by the token check as well ──
+    "fixed-points-given-data": "S3: analysis/fixedpoints/_common.py names ts.analysis.fixed_points",
+    "basins-without-a-region": "S3: analysis/basins/_common.py names ts.analysis.basins",
+    "basins-given-a-trajectory": "S3: analysis/basins/basins.py names ts.analysis.basins",
+    "continuation-without-a-region": "S3: analysis/basins/continuation.py names ts.analysis.continuation",
+    "too-short-series-for-a-dimension": "S3: analysis/dimensions names ts.analysis.correlation_dimension",
+    "too-short-series-for-fixed-mass": "S3: analysis/dimensions names ts.analysis.fixed_mass_dimension",
+    "transposed-point-set": "S3: analysis/dimensions names ts.analysis.correlation_dimension",
+    # a different shape of gap: the message is complete prose and hands back
+    # nothing at all.  S1 · RUN owns families/_kwargs.py.
+    "map-given-a-flow-keyword": "S1: families/_kwargs.py hands back no runnable line",
+    # ── found ONLY by the resolve check, which is why it exists ──
+    # This one passed the literal-token check — the token it was written against
+    # happened to be a substring of the unqualified line — and hands back a name
+    # that does not resolve.  A string check cannot see that; walking the
+    # attribute path can.
+    "non-numeric-renyi-order": "S3: analysis/dimensions names ts.analysis.generalized_dimension",
+}
+
+#: The subset of :data:`_ERRGATE_NOT_QUALIFIED` whose *literal token* also no
+#: longer matches, so the older string check fails as well.  Kept separate
+#: because a strict xfail must not be attached to a test that passes.
+_ERRGATE_TOKEN_STALE = frozenset(
+    {
+        "fixed-points-given-data",
+        "basins-without-a-region",
+        "basins-given-a-trajectory",
+        "continuation-without-a-region",
+        "too-short-series-for-a-dimension",
+        "too-short-series-for-fixed-mass",
+        "transposed-point-set",
+        "map-given-a-flow-keyword",
+    }
+)
+
+
+def _errgate_params(table: object) -> list[object]:
+    """``_ERRGATE_RUNNABLE`` as params, strict-xfailing the rows in *table*."""
+    return [
+        pytest.param(
+            case,
+            id=case.cid,
+            marks=(
+                [pytest.mark.xfail(strict=True, reason=_ERRGATE_NOT_QUALIFIED[case.cid])]
+                if case.cid in table
+                else []
+            ),
+        )
+        for case in _ERRGATE_RUNNABLE
+    ]
+
+
+_ERRGATE_RUNNABLE_PARAMS = _errgate_params(_ERRGATE_TOKEN_STALE)
+_ERRGATE_RESOLVE_PARAMS = _errgate_params(_ERRGATE_NOT_QUALIFIED)
+
+
+def test_errgate_not_qualified_rows_are_live() -> None:
+    """The unqualified-remedy tables can only shrink — every row names a real case."""
+    ids = {case.cid for case in _ERRGATE_RUNNABLE}
+    stale = sorted(set(_ERRGATE_NOT_QUALIFIED) - ids)
+    assert not stale, f"_ERRGATE_NOT_QUALIFIED names cases that no longer exist: {stale}"
+    assert set(_ERRGATE_NOT_QUALIFIED) >= _ERRGATE_TOKEN_STALE, (
+        "a row whose token is stale must also be listed as unqualified"
+    )
+
+
+@pytest.mark.parametrize("case", _ERRGATE_RESOLVE_PARAMS)
+def test_errgate_remedy_lines_resolve(case: _RunnableCase) -> None:
+    """**Every dotted name a remedy line hands back must resolve.**
+
+    The strongest form of the runnable-line standard, and the one v6 made
+    load-bearing: curating the top level to seventeen names means
+    ``ts.analysis.fixed_points(system)`` no longer runs, so a message that offers it is
+    now *worse* than one that offers nothing — it looks authoritative and fails.
+
+    Parses each remedy line and walks every ``ts.a.b`` attribute path in it
+    against the live package, so the check cannot be satisfied by a plausible
+    string.
+    """
+    import ast
+    import re
+
+    with pytest.raises(Exception) as excinfo:  # noqa: PT011 - the type is gated elsewhere
+        case.thunk()
+    lines = _runnable_lines(str(excinfo.value))
+    assert lines, f"{case.cid}: no runnable line at all"
+    unresolved: list[str] = []
+    for line in lines:
+        try:
+            ast.parse(line)
+        except SyntaxError:  # pragma: no cover - _runnable_lines already parsed it
+            unresolved.append(f"{line} (does not parse)")
+            continue
+        for path in re.findall(r"(?<![\w.])ts(?:\.[A-Za-z_][A-Za-z0-9_]*)+", line):
+            obj: object = ts
+            for part in path.split(".")[1:]:
+                try:
+                    obj = getattr(obj, part)
+                except Exception:  # noqa: BLE001 - MovedInV6 is the interesting one
+                    unresolved.append(path)
+                    break
+    assert not unresolved, (
+        f"{case.cid}: the remedy hands back {unresolved} — names that do not "
+        "resolve on the v6 top level, so pasting the line raises"
+    )
+
+
+@pytest.mark.parametrize("case", _ERRGATE_RUNNABLE_PARAMS)
 def test_errgate_message_hands_back_a_runnable_line(case: _RunnableCase) -> None:
     """A wrong-shaped call is answered with the line to type, not a description.
 
@@ -1678,15 +1983,15 @@ def test_errgate_runnable_lines_detects_prose_and_code() -> None:
 
     assert _runnable_lines("no fix here at all") == []
     assert _runnable_lines("use periodic_orbits for maps") == []
-    assert _runnable_lines("try this:\n    ts.basins(system, region)") == [
-        "ts.basins(system, region)"
+    assert _runnable_lines("try this:\n    ts.analysis.basins(system, region)") == [
+        "ts.analysis.basins(system, region)"
     ]
     assert _runnable_lines("x" + remedy("traj = system.run(final_time=1.0)")) == [
         "traj = system.run(final_time=1.0)"
     ]
     # a bare name is not a call, and an unindented line is prose, not a remedy
     assert _runnable_lines("do:\n    periodic_orbits") == []
-    assert _runnable_lines("ts.basins(system, region)") == []
+    assert _runnable_lines("ts.analysis.basins(system, region)") == []
 
 
 # ===========================================================================
@@ -1865,8 +2170,15 @@ def test_basin_march_python_and_rust_name_the_same_tolerance() -> None:
     default, which is what would silently break ``tests/test_basin_kernel.py``'s
     equivalence.
     """
-    from tsdynamics.analysis.basins import attractors as att
+    import importlib
+
     from tsdynamics.utils.tolerances import BASIN_ATOL, BASIN_RTOL
+
+    # ``from ... import attractors`` now binds the *function* of that name, which
+    # v6 renamed from ``find_attractors`` — it shadows the module inside its own
+    # package.  Reach the module through the import system, not through the
+    # attribute.
+    att = importlib.import_module("tsdynamics.analysis.basins.attractors")
 
     for fn in (att._AttractorMapper._reinit, att._try_rust_march):
         src = inspect.getsource(fn)
@@ -2035,7 +2347,7 @@ def test_missing_staticmethod_is_diagnosed_structurally() -> None:
 
 def test_correct_kernels_are_untouched_by_the_new_diagnostics() -> None:
     """The two structural checks fire on the defect only — a good kernel still runs."""
-    traj = ts.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
     assert np.isfinite(traj.y).all()
 
 
@@ -2118,6 +2430,17 @@ def _call_blocks(lines: list[str]) -> list[tuple[int, str]]:
     return blocks
 
 
+#: Transform names a v6 docstring already uses that are not registered **yet**,
+#: with the slot that owns the registration.  Liveness-checked below so the set
+#: can only shrink.
+#:
+#: * ``direction_field`` — §6.8 makes it the alias of the repaired
+#:   ``vector_field``.  Owner: S8 · TRANSFORMS.
+#: * ``speed`` — a prose shorthand for ``flow_speed`` in ``_registry.py``'s
+#:   module docstring.  Owner: C8 · VIZ-REGISTRY.
+_PLOT_EXAMPLE_PENDING = frozenset({"direction_field", "speed"})
+
+
 def test_plot_examples_name_registered_transforms() -> None:
     """No documented ``ts.plot(...)`` example names a transform that does not exist.
 
@@ -2139,9 +2462,23 @@ def test_plot_examples_name_registered_transforms() -> None:
             for name in _transform_names_in(block):
                 if not re.fullmatch(r"[a-z_][a-z_0-9.]*", name):
                     continue  # a path, a title, a colour word — not a name-shaped token
+                if name.partition(".")[0] in _PLOT_EXAMPLE_PENDING:
+                    continue
                 if name.partition(".")[0] not in known:
                     offenders.append(f"{path.name}:{lineno}: {name!r} in {block.strip()!r}")
     assert not offenders, "plot examples naming unregistered transforms:\n" + "\n".join(offenders)
+
+
+def test_plot_example_pending_names_are_still_pending() -> None:
+    """The pending-transform list can only shrink — drop a row when it registers."""
+    from tsdynamics.viz.transforms import names as transform_names
+
+    known = set(transform_names())
+    landed = sorted(_PLOT_EXAMPLE_PENDING & known)
+    assert not landed, (
+        f"{landed} is registered now — delete it from _PLOT_EXAMPLE_PENDING so the "
+        "example gate covers it again"
+    )
 
 
 def test_plot_example_scanner_would_catch_the_original_defect() -> None:
@@ -2207,9 +2544,9 @@ def test_transform_call_options_are_validated_like_shared_ones() -> None:
     """
     from tsdynamics.errors import InvalidParameterError
 
-    traj = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
     with pytest.raises(InvalidParameterError) as excinfo:
-        ts.plot(traj, ts.T("phase_portrait", nonsense=1))
+        ts.plot(traj, ts.viz.spec.T("phase_portrait", nonsense=1))
     message = str(excinfo.value)
     assert "nonsense" in message
     assert "components" in message  # the keywords that ARE accepted are named
@@ -2219,15 +2556,15 @@ def test_transform_call_typo_suggests_the_intended_keyword() -> None:
     """The suggestion machinery reaches the T() path too (``componets`` → ``components``)."""
     from tsdynamics.errors import InvalidParameterError
 
-    traj = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
     with pytest.raises(InvalidParameterError, match="did you mean components="):
-        ts.plot(traj, ts.T("phase_portrait", componets=[0, 1]))
+        ts.plot(traj, ts.viz.spec.T("phase_portrait", componets=[0, 1]))
 
 
 def test_transform_call_still_accepts_its_real_options() -> None:
     """The check refuses only what the transform cannot take (no over-refusal)."""
-    traj = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
-    spec = ts.plot(traj, ts.T("phase_portrait", components=[0, 1], color="red", alpha=0.5))
+    traj = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    spec = ts.plot(traj, ts.viz.spec.T("phase_portrait", components=[0, 1], color="red", alpha=0.5))
     assert spec.layers[0].style["color"] == "red"
 
 
@@ -2241,7 +2578,7 @@ def test_plotspec_show_exists_and_returns_the_figure(monkeypatch) -> None:
     from tsdynamics.viz import spec as spec_mod
 
     monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: False)
-    spec = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).to_plot_spec()
+    spec = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).to_plot_spec()
     figure = spec.show()
     assert figure.__class__.__module__.startswith("matplotlib")
     plt.close("all")
@@ -2256,7 +2593,7 @@ def test_plotspec_show_displays_on_an_interactive_backend(monkeypatch) -> None:
     calls: list[int] = []
     monkeypatch.setattr(spec_mod, "_mpl_backend_is_interactive", lambda: True)
     monkeypatch.setattr(plt, "show", lambda *a, **k: calls.append(1))
-    spec = ts.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).to_plot_spec()
+    spec = ts.systems.Lorenz().run(final_time=2.0, dt=0.05, ic=[1.0, 1.0, 1.0]).to_plot_spec()
     spec.show()
     assert calls == [1]
     plt.close("all")
@@ -2297,33 +2634,33 @@ def _region_doors() -> list[tuple[str, object]]:
     from tsdynamics.systems import VanDerPol
 
     def _fixed_points(region):
-        return ts.fixed_points(VanDerPol(), region=region, seed=0)
+        return ts.analysis.fixed_points(VanDerPol(), region=region, seed=0)
 
     def _fixed_points_interval(region):
-        return ts.fixed_points(VanDerPol(), region=region, method="interval")
+        return ts.analysis.fixed_points(VanDerPol(), region=region, method="interval")
 
     def _expansion_entropy(region):
-        return ts.expansion_entropy(
+        return ts.analysis.expansion_entropy(
             VanDerPol(), region=region, n_samples=20, final_time=0.5, seed=0
         )
 
-    def _find_attractors(region):
-        return ts.find_attractors(VanDerPol(), region, n_seeds=4, seed=0, max_steps=200)
+    def _attractors(region):
+        return ts.analysis.attractors(VanDerPol(), region, n_seeds=4, seed=0, max_steps=200)
 
     def _basin_fractions(region):
-        return ts.basin_fractions(VanDerPol(), region, n=4, seed=0, max_steps=200)
+        return ts.analysis.basin_fractions(VanDerPol(), region, n=4, seed=0, max_steps=200)
 
     def _basins(region):
-        return ts.basins_of_attraction(VanDerPol(), region, max_steps=200)
+        return ts.analysis.basins(VanDerPol(), region, max_steps=200)
 
     _REGION_DOORS.extend(
         [
             ("fixed_points", _fixed_points),
             ("fixed_points(method='interval')", _fixed_points_interval),
             ("expansion_entropy", _expansion_entropy),
-            ("find_attractors", _find_attractors),
+            ("attractors", _attractors),
             ("basin_fractions", _basin_fractions),
-            ("basins_of_attraction", _basins),
+            ("basins", _basins),
         ]
     )
     return _REGION_DOORS
@@ -2347,8 +2684,8 @@ def test_region_primitives_are_accepted_but_never_required() -> None:
     from tsdynamics.data import Ball, Box, Grid, as_region
     from tsdynamics.systems import VanDerPol
 
-    bounds = ts.fixed_points(VanDerPol(), region=[(-3.0, 3.0), (-3.0, 3.0)], seed=0)
-    boxed = ts.fixed_points(VanDerPol(), region=Box([-3.0, -3.0], [3.0, 3.0]), seed=0)
+    bounds = ts.analysis.fixed_points(VanDerPol(), region=[(-3.0, 3.0), (-3.0, 3.0)], seed=0)
+    boxed = ts.analysis.fixed_points(VanDerPol(), region=Box([-3.0, -3.0], [3.0, 3.0]), seed=0)
     assert len(bounds) == len(boxed) == 1
     np.testing.assert_allclose(bounds[0].x, boxed[0].x, atol=1e-8)
 

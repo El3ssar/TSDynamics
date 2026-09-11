@@ -33,12 +33,12 @@ from tsdynamics.viz.spec import PlotKind, PlotSpec
 
 
 def _lorenz(ic=(1.0, 1.0, 1.0)):
-    return ts.Lorenz().integrate(final_time=20.0, dt=0.02, ic=list(ic)).after(5.0)
+    return ts.systems.Lorenz().run(final_time=20.0, dt=0.02, ic=list(ic)).after(5.0)
 
 
 def _l96(ic=None):
     kw = {} if ic is None else {"ic": ic}
-    return ts.Lorenz96(N=8).trajectory(final_time=8.0, dt=0.1, **kw)
+    return ts.systems.Lorenz96(N=8).run(final_time=8.0, dt=0.1, **kw)
 
 
 def _named_3d(title: str) -> Trajectory:
@@ -311,8 +311,8 @@ def test_composite_render_with_plotly_backend_is_native_no_fallback():
 def test_composing_imports_no_plot_library():
     code = (
         "import sys, numpy as np, tsdynamics as ts, tsdynamics.viz as viz;"
-        "a = ts.Lorenz().integrate(final_time=10.0, dt=0.05).after(2.0);"
-        "b = ts.Lorenz().integrate(final_time=10.0, dt=0.05, ic=[1.1,1,1]).after(2.0);"
+        "a = ts.systems.Lorenz().run(final_time=10.0, dt=0.05).after(2.0);"
+        "b = ts.systems.Lorenz().run(final_time=10.0, dt=0.05, ic=[1.1,1,1]).after(2.0);"
         "s = viz.plot(viz.plot(a, b, components='x'), viz.plot(a, b, components='y'), layout='stack');"
         "s.to_dict();"
         "bad = [m for m in sys.modules if m.split('.')[0] in ('matplotlib', 'plotly')];"
@@ -666,9 +666,9 @@ def test_acceptance_basins_attractors_trajectory_and_equilibria_on_one_axes(tmp_
 
     duffing = _DuffingTwoWell()
     grid = ts.data.Grid([-2.0, -2.0], [2.0, 2.0], (40, 40))
-    basins = ts.basins_of_attraction(duffing, grid, dt=0.5)
-    traj = duffing.integrate(final_time=30.0, dt=0.02, ic=[1.6, 1.2])
-    fps = ts.fixed_points(duffing, region=ts.data.Box([-2.0, -2.0], [2.0, 2.0]), seed=0)
+    basins = ts.analysis.basins(duffing, grid, dt=0.5)
+    traj = duffing.run(final_time=30.0, dt=0.02, ic=[1.6, 1.2])
+    fps = ts.analysis.fixed_points(duffing, region=ts.data.Box([-2.0, -2.0], [2.0, 2.0]), seed=0)
     assert len(fps) == 3
 
     spec = viz.plot(basins, basins.attractors, traj, fps)
@@ -711,8 +711,8 @@ def test_plot_and_overlay_on_agree_on_what_is_legal():
     ``_frames.check_overlay``, so a pair is legal at both doors or neither.
     """
     lorenz = ts.systems.Lorenz()
-    traj = lorenz.integrate(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
-    fps = ts.fixed_points(lorenz, seed=0)
+    traj = lorenz.run(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    fps = ts.analysis.fixed_points(lorenz, seed=0)
 
     same_plane = traj.to_plot_spec(components=("x", "z"))
     n_host = len(same_plane.layers)
@@ -742,8 +742,8 @@ def test_the_generic_overlay_on_forwards_build_keywords():
     assert "overlay_on" not in vars(FixedPointSet)
 
     lorenz = ts.systems.Lorenz()
-    traj = lorenz.integrate(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
-    fps = ts.fixed_points(lorenz, seed=0)
+    traj = lorenz.run(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    fps = ts.analysis.fixed_points(lorenz, seed=0)
     host = traj.to_plot_spec(components=("x", "z"))
     n_host = len(host.layers)
     merged = fps.overlay_on(host, components=("x", "z"))
@@ -759,8 +759,8 @@ def test_a_recurrence_scatter_can_no_longer_be_spliced_onto_a_time_series():
     scatter — a plot of one thing presented as another.  The frames genuinely
     differ (``index`` vs ``time``), so it now raises.
     """
-    traj = ts.systems.Lorenz().integrate(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
-    rm = ts.recurrence_matrix(np.asarray(traj["x"])[:150], threshold=1.0)
+    traj = ts.systems.Lorenz().run(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    rm = ts.analysis.recurrence_matrix(np.asarray(traj["x"])[:150], threshold=1.0)
     with pytest.raises(InvalidParameterError, match="different spaces"):
         rm.overlay_on(traj.to_plot_spec(components="x"))
 
@@ -803,7 +803,7 @@ def _style_call(subject, **kw):
 def test_style_keywords_land_identically_at_all_three_plot_doors():
     """``color`` / ``lw`` / ``title`` / ``theme`` mean the same thing everywhere."""
     lor = ts.systems.Lorenz()
-    traj = lor.integrate(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    traj = lor.run(final_time=10.0, dt=0.02, ic=[1.0, 1.0, 1.0])
 
     front = viz.plot(traj, color="crimson", linewidth=0.6, title="Lorenz", theme="dark")
     method = traj.plot(color="crimson", linewidth=0.6, title="Lorenz", theme="dark")
@@ -826,5 +826,140 @@ def test_style_keywords_land_identically_at_all_three_plot_doors():
 
 def test_an_integration_typo_is_still_reported_as_an_integration_typo():
     """Peeling style must not swallow a misspelt *integration* keyword."""
-    with pytest.raises(InvalidParameterError, match="integrate\\(\\)/run\\(\\) keyword"):
+    with pytest.raises(InvalidParameterError, match="not a valid Lorenz.run\\(\\) keyword"):
         ts.systems.Lorenz().plot(final_tim=2.0)
+
+
+# ---------------------------------------------------------------------------
+# v6: the figure vocabulary, the grid, and the legend
+# ---------------------------------------------------------------------------
+
+
+#: ``keyword -> (value, how to read it back off the finished Plot)``.  One entry
+#: per member of :data:`~tsdynamics.viz.spec.FIGURE_KEYS`, so the table cannot
+#: drift from the vocabulary (a gate below asserts it covers all 17).
+_FIGURE_CHECKS = {
+    "title": ("T", lambda p: p.title),
+    "xlabel": ("XL", lambda p: p.x.label),
+    "ylabel": ("YL", lambda p: p.y.label),
+    "zlabel": ("ZL", lambda p: p.z.label if p.z is not None else "ZL"),
+    "xscale": ("log", lambda p: p.x.scale),
+    "yscale": ("log", lambda p: p.y.scale),
+    "zscale": ("log", lambda p: p.z.scale if p.z is not None else "log"),
+    "xlim": ((-1.0, 1.0), lambda p: p.x.limits),
+    "ylim": ((-1.0, 1.0), lambda p: p.y.limits),
+    "zlim": ((-1.0, 1.0), lambda p: p.z.limits if p.z is not None else (-1.0, 1.0)),
+    "xticks": ([0.0, 1.0], lambda p: p.x.ticks),
+    "yticks": ([0.0, 1.0], lambda p: p.y.ticks),
+    "zticks": ([0.0, 1.0], lambda p: p.z.ticks if p.z is not None else [0.0, 1.0]),
+    "clim": ((0.0, 1.0), lambda p: p.clim),
+    "colorbar": (True, lambda p: p.colorbar is not None),
+    "legend": (True, lambda p: p.legend is not None),
+    "theme": ("dark", lambda p: p.resolved_theme.name),
+}
+
+
+def test_the_figure_vocabulary_is_covered_by_this_gate():
+    """The 17 names are derived; this table must not fall behind them."""
+    from tsdynamics.viz.spec import FIGURE_KEYS
+
+    assert set(_FIGURE_CHECKS) == set(FIGURE_KEYS)
+
+
+@pytest.mark.parametrize("keyword", sorted(_FIGURE_CHECKS))
+def test_every_figure_keyword_lands_at_every_plot_door(keyword):
+    """**17 x 4 = 68 cells, 12 of which failed before v6** — all at ``ts.plot``.
+
+    ``ts.plot(traj, xlim=(0, 1))`` answered ``kind='phase_portrait_3d' does not
+    accept keyword(s) ['xlim']`` while ``traj.plot(xlim=(0, 1))`` worked, because
+    the front door carried its own five-name copy of the vocabulary.  The value
+    is read back **off the spec**, so "it did not raise" is not enough.
+    """
+    value, read = _FIGURE_CHECKS[keyword]
+    lor = ts.systems.Lorenz()
+    traj = lor.run(final_time=6.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    doors = {
+        "ts.plot": lambda: ts.plot(traj, **{keyword: value}),
+        "ts.plot+transform": lambda: ts.plot(traj, "phase_portrait", **{keyword: value}),
+        "traj.plot": lambda: traj.plot(**{keyword: value}),
+        "system.plot": lambda: lor.plot(
+            final_time=6.0, dt=0.05, ic=[1.0, 1.0, 1.0], **{keyword: value}
+        ),
+    }
+    for name, build in doors.items():
+        spec = build()
+        assert read(spec) == value, f"{keyword} did not land at {name}"
+
+
+def test_a_grid_of_six_different_plots_is_one_call():
+    """The owner's ask by name: a 2x3 of six *different* plots, styled per panel."""
+    tr = _lorenz()
+    vdp = ts.systems.VanDerPol()
+    g = viz.grid(
+        ts.plot(tr, "phase_portrait", components=("x", "y"), color="crimson", title="orbit"),
+        ts.plot(tr, "time_series", components="x", title="x(t)"),
+        ts.plot(tr, "psd", xscale="log", yscale="log", title="spectrum"),
+        ts.plot(vdp.with_params(mu=0.5), "flow_speed", grid=24, title="mu=0.5"),
+        ts.plot(vdp.with_params(mu=1.0), "flow_speed", grid=24, title="mu=1.0"),
+        ts.plot(vdp.with_params(mu=2.0), "flow_speed", grid=24, title="mu=2.0"),
+        rows=2,
+        cols=3,
+        title="six views",
+    )
+    assert g.kind is PlotKind.COMPOSITE
+    assert (g.layout.rows, g.layout.cols) == (2, 3)
+    assert len(g.panels) == 6
+    assert [p.title for p in g.panels][:2] == ["orbit", "x(t)"]
+    # per-panel styling lands in the render, because panels hold the same objects
+    g["mu=2.0"].style(cmap="magma")
+    assert g.panels[5].layers[0].style["cmap"] == "magma"
+    assert g.panels[0].layers[0].style["color"] == "crimson"
+    # ...and a grid is a Plot, so it nests
+    assert viz.plot(g, ts.plot(tr, "psd"), layout="row").kind is PlotKind.COMPOSITE
+
+
+def test_share_color_unifies_the_scale_and_draws_one_bar():
+    """Measured as a **complete no-op** before v6: three incomparable scales, three bars."""
+    vdp = ts.systems.VanDerPol()
+    panels = [
+        ts.plot(vdp.with_params(mu=mu), "flow_speed", grid=20, title=f"mu={mu}")
+        for mu in (0.5, 1.0, 2.0)
+    ]
+    apart = viz.plot(*[p for p in panels], layout="row")
+    assert len({p.clim for p in apart.panels}) == 3  # ...the defect, still there without it
+
+    panels = [
+        ts.plot(vdp.with_params(mu=mu), "flow_speed", grid=20, title=f"mu={mu}")
+        for mu in (0.5, 1.0, 2.0)
+    ]
+    shared = viz.plot(*panels, layout="row", share_color=True)
+    assert len({p.clim for p in shared.panels}) == 1
+    assert sum(p.colorbar is not None for p in shared.panels) == 1
+    fig = shared.fig
+    assert sum(1 for ax in fig.axes if ax.get_label() == "<colorbar>") == 1
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+
+
+def test_share_color_refuses_two_colour_meanings():
+    """One colour scale needs one colour meaning; unifying two would be worse."""
+    vdp = ts.systems.VanDerPol()
+    speed = ts.plot(vdp, "flow_speed", grid=20)
+    time_coloured = ts.plot(_lorenz(), "phase_portrait", components=("x", "y"), color_by="time")
+    with pytest.raises(InvalidParameterError, match="one colour meaning"):
+        viz.plot(speed, time_coloured, layout="row", share_color=True)
+
+
+def test_every_orbit_in_an_overlay_gets_its_own_legend_entry():
+    """A legend naming two different orbits identically is a **wrong answer**.
+
+    Measured before v6: ``plot(t1, t2, t3)`` gave ``(1)/(2)/(3)`` but
+    ``plot(t1).add(t2).add(t3)`` gave ``(1)/(2)/(2)`` — a duplicate.
+    """
+    a, b, c = _named_3d("run"), _named_3d("run"), _named_3d("run")
+    one_shot = viz.plot(a, b, c)
+    chained = viz.plot(a).add(b).add(c)
+    for spec in (one_shot, chained):
+        labels = [layer.label for layer in spec.layers]
+        assert len(set(labels)) == len(labels) == 3, labels

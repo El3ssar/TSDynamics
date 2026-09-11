@@ -29,14 +29,14 @@ from tsdynamics import analysis, plugins, registry
 
 # ── public API preservation ─────────────────────────────────────────────────────
 
+#: The analyses A-LAYOUT moved.  In v6 they live at ONE address —
+#: ``ts.analysis.<name>`` — because the top level is 17 names (CONTRACT §2.1).
 _PUBLIC = [
     "lyapunov_spectrum",
     "max_lyapunov",
     "kaplan_yorke_dimension",
     "fixed_points",
-    "FixedPoint",
     "orbit_diagram",
-    "OrbitDiagram",
     "poincare_section",
     # chaos indicators (stream A-CHAOS)
     "gali",
@@ -48,12 +48,31 @@ _PUBLIC = [
     "windowed_rqa",
 ]
 
+#: Result classes A-LAYOUT moved.  They are reachable on ``ts.analysis`` and
+#: listed at ``ts.analysis.results`` — never on the tab surface (C2: a type you
+#: only ever get *back*).
+_PUBLIC_RESULTS = ["FixedPoint", "OrbitDiagram"]
+
 
 @pytest.mark.parametrize("name", _PUBLIC)
-def test_top_level_reexports_unchanged(name):
-    """Every analysis symbol is importable from the top level and from analysis."""
-    assert hasattr(ts, name), f"tsdynamics.{name} disappeared"
-    assert getattr(ts, name) is getattr(analysis, name)
+def test_the_analysis_survived_the_move_at_its_one_address(name):
+    """Every analysis symbol resolves on ``ts.analysis`` and is on its tab surface."""
+    assert hasattr(analysis, name), f"tsdynamics.analysis.{name} disappeared"
+    assert name in analysis.__all__
+
+
+@pytest.mark.parametrize("name", _PUBLIC + _PUBLIC_RESULTS)
+def test_the_demoted_name_redirects_from_the_top_level(name):
+    """``ts.<name>`` is gone, and the error names the address that replaced it."""
+    with pytest.raises((AttributeError, ImportError)) as err:
+        getattr(ts, name)
+    assert "ts.analysis" in str(err.value)
+
+
+@pytest.mark.parametrize("name", _PUBLIC_RESULTS)
+def test_a_result_class_is_reachable_but_off_the_tab_surface(name):
+    assert getattr(analysis, name) is getattr(analysis.results, name)
+    assert name not in analysis.__all__
 
 
 def test_analysis_all_is_stable():
@@ -119,14 +138,14 @@ def test_canonical_symbols_live_at_definition_sites():
     from tsdynamics.analysis.orbits.orbit_diagram import OrbitDiagram, orbit_diagram
     from tsdynamics.analysis.orbits.poincare import poincare_section
 
-    assert fixed_points is ts.fixed_points
-    assert FixedPoint is ts.FixedPoint
-    assert lyapunov_spectrum is ts.lyapunov_spectrum
-    assert max_lyapunov is ts.max_lyapunov
-    assert kaplan_yorke_dimension is ts.kaplan_yorke_dimension
-    assert orbit_diagram is ts.orbit_diagram
-    assert OrbitDiagram is ts.OrbitDiagram
-    assert poincare_section is ts.poincare_section
+    assert fixed_points is ts.analysis.fixed_points
+    assert FixedPoint is ts.analysis.FixedPoint
+    assert lyapunov_spectrum is ts.analysis.lyapunov_spectrum
+    assert max_lyapunov is ts.analysis.max_lyapunov
+    assert kaplan_yorke_dimension is ts.analysis.kaplan_yorke_dimension
+    assert orbit_diagram is ts.analysis.orbit_diagram
+    assert OrbitDiagram is ts.analysis.OrbitDiagram
+    assert poincare_section is ts.analysis.poincare_section
 
 
 @pytest.mark.parametrize(

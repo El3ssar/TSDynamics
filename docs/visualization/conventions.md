@@ -64,7 +64,7 @@ harmoniously:
 ```python
 import tsdynamics as ts
 
-lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100, dt=0.01)
+lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100, dt=0.01)
 
 lor.to_plot_spec(components=["x", "z"]).recolor("#11857A")   # the house teal
 ```
@@ -130,7 +130,7 @@ that "several related views" is *panels*, not clutter.
 
 ```python
 # a shared colour range across two field panels, so the colours mean the same thing
-ks = ts.KuramotoSivashinsky(N=64, L=22.0)
+ks = ts.systems.KuramotoSivashinsky(N=64, L=22.0)
 spec_a = ks.to_plot_spec(final_time=100.0, dt=0.5, ic=None)
 spec_b = ks.to_plot_spec(final_time=200.0, dt=0.5, ic=None)
 
@@ -162,7 +162,7 @@ serif publication theme, exported as a vector:
 ```python
 import tsdynamics as ts
 
-lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=100.0, dt=0.01)
+lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=100.0, dt=0.01)
 
 (
     lor.to_plot_spec(components=["x", "z"], color_by="time")

@@ -356,8 +356,12 @@ def test_estimators_self_register(name):
     ],
 )
 def test_public_api_reexported(name):
-    assert getattr(ts, name) is getattr(emb, name)
-    assert name in ts.analysis.__all__
+    assert getattr(ts.analysis, name) is getattr(emb, name)
+    # C2 — a type you only ever get *back* is reachable but off the tab surface.
+    if name[:1].isupper():
+        assert name in ts.analysis.results.__all__
+    else:
+        assert name in ts.analysis.__all__
 
 
 # ── v6: the mutual-information noise guard (audit FIX-MI-NOISE) ─────────────────
@@ -481,17 +485,31 @@ def test_mi_noise_floor_matches_the_chi_squared_bias():
 
 
 def test_embedding_rejects_a_system_with_a_named_error():
-    """A System handed to a data-first embedding routine names itself and the fix."""
+    """A System handed to a data-first embedding routine names itself and the fix.
+
+    One shared builder writes this text (CONTRACT §5.6), so the four doors below
+    differ only in the name they carry — and a map is told to ``run(steps=...)``
+    while a flow is told to ``run(200.0, dt=...)``, because that is the horizon
+    word each family actually has.
+    """
     from tsdynamics.errors import InvalidInputError
 
-    for call in (
-        lambda: emb.optimal_delay(ts.Lorenz()),
-        lambda: emb.embedding_dimension(ts.systems.Henon()),
-        lambda: emb.mutual_information(ts.Lorenz()),
-        lambda: emb.embed(ts.Lorenz(), dimension=3, delay=1),
+    for call, name, run in (
+        (lambda: emb.optimal_delay(ts.systems.Lorenz()), "optimal_delay", "200.0"),
+        (lambda: emb.embedding_dimension(ts.systems.Henon()), "embedding_dimension", "20000"),
+        (lambda: emb.mutual_information(ts.systems.Lorenz()), "mutual_information", "200.0"),
+        (
+            lambda: emb.embed(ts.systems.Lorenz(), dimension=3, delay=1),
+            "embed",
+            "200.0",
+        ),
     ):
-        with pytest.raises(InvalidInputError, match="expects measured data, not a System"):
+        with pytest.raises(InvalidInputError) as excinfo:
             call()
+        text = str(excinfo.value)
+        assert text.startswith(f"{name}() needs data, and got a system")
+        assert f"traj = system.run({run}" in text
+        assert f"    ts.analysis.{name}(traj)" in text
 
 
 # ---------------------------------------------------------------------------

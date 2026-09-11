@@ -117,7 +117,7 @@ def test_the_source_categories_are_the_honest_ones():
     ],
 )
 def test_a_model_transform_handed_a_trajectory_names_what_it_needs(name):
-    traj = LotkaVolterra().integrate(final_time=1.0, dt=0.1)
+    traj = LotkaVolterra().run(final_time=1.0, dt=0.1)
     with pytest.raises(InvalidInputError, match="continuous system"):
         build_spec(traj, name, **_WINDOW)
 
@@ -389,7 +389,7 @@ def test_the_time_quantisation_of_a_first_passage_field_is_stated():
 def _logistic_orbit(n=20_000):
     from tsdynamics.systems import Logistic
 
-    return Logistic(r=4.0).iterate(steps=n, ic=[0.4])
+    return Logistic(r=4.0).run(steps=n, ic=[0.4])
 
 
 def test_the_one_component_density_is_a_histogram_of_the_natural_measure():
@@ -404,7 +404,7 @@ def test_the_one_component_density_is_a_histogram_of_the_natural_measure():
 
 
 def test_the_two_component_density_is_the_measure_on_the_attractor():
-    traj = LotkaVolterra().integrate(final_time=60.0, dt=0.01, ic=[4.0, 1.5])
+    traj = LotkaVolterra().run(final_time=60.0, dt=0.01, ic=[4.0, 1.5])
     spec = build_spec(traj, "invariant_density", components=("x", "y"), bins=48)
     layer = spec.layers[0]
     assert layer.kind is PlotKind.IMAGE
@@ -419,7 +419,7 @@ def test_the_row_narrows_to_what_the_geometry_can_honestly_be_drawn_as():
     with pytest.raises(InvalidParameterError, match="not for \\*this\\* geometry"):
         build_spec(orbit, "invariant_density", primitive="image", bins=32)
 
-    traj = LotkaVolterra().integrate(final_time=20.0, dt=0.05, ic=[4.0, 1.5])
+    traj = LotkaVolterra().run(final_time=20.0, dt=0.05, ic=[4.0, 1.5])
     with pytest.raises(InvalidParameterError, match="not for \\*this\\* geometry"):
         build_spec(traj, "invariant_density", components=("x", "y"), primitive="histogram", bins=16)
 
@@ -451,7 +451,7 @@ def test_invariant_density_accepts_a_system_and_records_the_run():
 
 
 def test_too_many_components_is_refused():
-    traj = _Spatial().integrate(final_time=5.0, dt=0.05)
+    traj = _Spatial().run(final_time=5.0, dt=0.05)
     with pytest.raises(InvalidParameterError, match="one component"):
         build_spec(traj, "invariant_density", components=("x", "y", "z"))
 
@@ -470,7 +470,7 @@ def test_the_strogatz_composite_is_one_figure_in_role_order():
     three independent computations that only agree if all three are right.
     """
     system = VanDerPol()
-    traj = system.integrate(final_time=30.0, dt=0.01, ic=[0.5, 0.5])
+    traj = system.run(final_time=30.0, dt=0.01, ic=[0.5, 0.5])
     window = {"xlim": (-3.0, 3.0), "ylim": (-4.0, 4.0)}
     spec = viz.plot(
         build_spec(system, "direction_field", grid=13, **window),

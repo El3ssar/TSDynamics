@@ -27,7 +27,7 @@ numbers.
 
 ## The uniform entry point
 
-`ts.lyapunov_spectrum(system, ...)` dispatches to the right family
+`ts.analysis.lyapunov_spectrum(system, ...)` dispatches to the right family
 implementation and translates one signature to each family's native keywords.
 The exponents come back largest first, in a `LyapunovSpectrum` result that is a
 drop-in for the bare exponent array — `np.asarray(result)`, indexing and
@@ -38,7 +38,7 @@ iteration all defer to it — while also carrying `.meta`, `.summary()` and the
 import numpy as np
 import tsdynamics as ts
 
-spec = ts.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
+spec = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
                             final_time=300.0, dt=0.05, transient=40.0)
 np.asarray(spec)      # ≈ [ 0.903,  0.002, -14.572]
 spec.kaplan_yorke     # ≈ 2.06
@@ -94,7 +94,7 @@ you can call them directly with their native keywords.
     ```python
     mg = ts.systems.MackeyGlass()
     hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
-    traj = mg.integrate(final_time=1000.0, dt=0.5, history=hist)   # settle first
+    traj = mg.run(final_time=1000.0, dt=0.5, history=hist)   # settle first
     mg.lyapunov_spectrum(k=1, dt=0.5, ic=traj.y[-1],               # then measure
                          transient=100.0, final_time=1000.0, rtol=1e-4, atol=1e-4)
     # ≈ [0.0075]   (positive → chaotic at τ = 17)
@@ -143,8 +143,8 @@ non-smooth and no analytic Jacobian exists — the classic two-trajectory method
 needs nothing but the stepping protocol:
 
 ```python
-ts.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)   # ≈ 0.89
-ts.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1])                # ≈ 0.42
+ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)   # ≈ 0.89
+ts.analysis.max_lyapunov(ts.systems.Henon(), ic=[0.1, 0.1])                # ≈ 0.42
 ```
 
 Run a reference and a copy perturbed by `d0`, let them separate for `steps_per`
@@ -170,8 +170,8 @@ The result carries the full **stretching curve** $S(k)$ — the exponent is the
 slope of its linear scaling region.
 
 ```python
-traj = ts.systems.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1])
-res = ts.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
+traj = ts.systems.Henon().run(6000, transient=500, ic=[0.1, 0.1])
+res = ts.analysis.lyapunov_from_data(traj.y[:, 0], dimension=4, k_max=12, fit=(0, 6))
 
 float(res)          # ≈ 0.42   (Hénon, per iteration)
 res.times, res.divergence     # the S(k) curve — inspect, then set fit=(lo, hi)
@@ -208,7 +208,7 @@ The Lyapunov (Kaplan–Yorke) dimension estimates the attractor's fractal
 dimension straight from the spectrum — no box-counting required:
 
 ```python
-ts.kaplan_yorke_dimension([0.906, 0.0, -14.57])   # ≈ 2.06  (Lorenz)
+ts.analysis.kaplan_yorke_dimension([0.906, 0.0, -14.57])   # ≈ 2.06  (Lorenz)
 ```
 
 $$

@@ -42,7 +42,7 @@ _MAP_IC = {"Henon": [0.1, 0.1], "Logistic": [0.3]}
 
 
 def _sys(name):
-    return getattr(ts, name)()
+    return getattr(ts.systems, name)()
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ def test_compiled_map_diverges_loudly():
     # than return inf/NaN rows — the same diverge-loudly contract the reference
     # loop enforces. Logistic from x0 = 2 (outside [0, 1]) escapes to -inf.
     with pytest.raises(RuntimeError, match="diverged"):
-        ts.Logistic().iterate(steps=60, ic=[2.0], backend="interp")
+        ts.systems.Logistic().run(steps=60, ic=[2.0], backend="interp")
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ def test_compiled_map_diverges_loudly():
 
 
 def _lorenz_arrays(with_jacobian=False):
-    tape = lower_ode(ts.Lorenz(), with_jacobian=with_jacobian)
+    tape = lower_ode(ts.systems.Lorenz(), with_jacobian=with_jacobian)
     return tape.to_arrays()
 
 

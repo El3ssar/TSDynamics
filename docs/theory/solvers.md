@@ -12,14 +12,14 @@ default solver does the right thing:
 ```python
 import tsdynamics as ts
 
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01)
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01)
 ```
 
 When you *do* want to choose — a stiff chemical model, a high-accuracy reference
 run, a fixed-step orbit — you pass a `method=` string:
 
 ```python
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01, method="dop853")
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01, solver="dop853")
 ```
 
 This page is the catalogue of those names and a guide to picking one. Every
@@ -115,7 +115,7 @@ combined `f(u, t)`.)
 
 ```python
 # Fixed-step march: dt IS the integrator step here.
-traj = ts.systems.Lorenz().integrate(final_time=20.0, dt=0.005, method="rk4")
+traj = ts.systems.Lorenz().run(final_time=20.0, dt=0.005, solver="rk4")
 ```
 
 `rk45` is the embedded Dormand–Prince 5(4) pair (Dormand & Prince 1980) and the
@@ -125,10 +125,10 @@ adaptive step controller. Spellings `dopri5` and `RK45` resolve to it.
 
 ```python
 # All four lines integrate with the same kernel.
-ts.systems.Rossler().integrate(final_time=200.0, dt=0.05)                 # default
-ts.systems.Rossler().integrate(final_time=200.0, dt=0.05, method="rk45")
-ts.systems.Rossler().integrate(final_time=200.0, dt=0.05, method="dopri5")
-ts.systems.Rossler().integrate(final_time=200.0, dt=0.05, method="RK45")
+ts.systems.Rossler().run(final_time=200.0, dt=0.05)                 # default
+ts.systems.Rossler().run(final_time=200.0, dt=0.05, solver="rk45")
+ts.systems.Rossler().run(final_time=200.0, dt=0.05, solver="dopri5")
+ts.systems.Rossler().run(final_time=200.0, dt=0.05, solver="RK45")
 ```
 
 `tsit5` is Tsitouras' 5(4) pair (Tsitouras 2011), an explicit RK with
@@ -144,8 +144,8 @@ for comparable work (the left panel above).
 
 ```python
 # High-accuracy reference run.
-traj = ts.systems.Lorenz().integrate(
-    final_time=100.0, dt=0.01, method="dop853", rtol=1e-12, atol=1e-12
+traj = ts.systems.Lorenz().run(
+    final_time=100.0, dt=0.01, solver="dop853", rtol=1e-12, atol=1e-12
 )
 ```
 
@@ -212,7 +212,7 @@ Belousov–Zhabotinsky model) already do this.
     on resolution, with a hint pointing at the engine's stiff family:
 
     ```python
-    ts.systems.Oregonator().integrate(method="LSODA")
+    ts.systems.Oregonator().run(solver="LSODA")
     # ValueError: unknown solver method 'LSODA'; ...
     #   ('LSODA' is a SciPy/v2 stiff method with no engine kernel;
     #    use 'bdf' or 'trbdf2' for stiff problems.)
@@ -256,10 +256,10 @@ class GBM(ts.StochasticSystem):
     def _diffusion(y, t, *, mu, sigma):
         return [sigma * y(0)]
 
-a = GBM().integrate(final_time=1.0, dt=0.01, ic=[1.0], method="euler_maruyama", seed=0)
-b = GBM().integrate(final_time=1.0, dt=0.01, ic=[1.0], method="euler_maruyama", seed=0)
+a = GBM().run(final_time=1.0, dt=0.01, ic=[1.0], solver="euler_maruyama", seed=0)
+b = GBM().run(final_time=1.0, dt=0.01, ic=[1.0], solver="euler_maruyama", seed=0)
 assert (a.y == b.y).all()          # same seed → identical path
-c = GBM().integrate(final_time=1.0, dt=0.01, ic=[1.0], method="milstein", seed=0)
+c = GBM().run(final_time=1.0, dt=0.01, ic=[1.0], solver="milstein", seed=0)
 ```
 
 An `ensemble(...)` run seeds trajectory $i$ from a per-index derivation of the

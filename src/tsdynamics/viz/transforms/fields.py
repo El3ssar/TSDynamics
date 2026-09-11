@@ -31,7 +31,7 @@ from typing import Any
 
 import numpy as np
 
-from tsdynamics.analysis import planar as _planar
+import tsdynamics.analysis.planar as _planar
 
 from .._frames import FrameSpace, OverlayRole
 from ..spec import PlotKind
@@ -56,7 +56,7 @@ def _field_geometry(name: str, result: _planar.ScalarField) -> Geometry:
     """
     return Geometry(
         name,
-        make_frame(FrameSpace.STATE2, 2, result.labels),
+        make_frame(FrameSpace.STATE2, result.labels),
         channels={
             "x": result.xs,
             "y": result.ys,
@@ -428,8 +428,12 @@ def _series(
 @plot_transform(
     name="invariant_density",
     source="data",
-    frame=FrameSpace.STATE2,
-    ndim=(1, 2),
+    # Two genuinely different pictures: one component is a density CURVE (a
+    # diagnostic in ``scaling``), two are the measure on a plane (``state2``).
+    # It used to declare ``state2`` with ``ndim=(1, 2)`` — a two-axis space with
+    # one axis — and that malformation was the root cause of an overlay refusal
+    # naming ``state2`` on both sides of a "these differ" message.
+    frame=(FrameSpace.SCALING, FrameSpace.STATE2),
     role=OverlayRole.BASE,
     default_primitive="histogram",
     primitives=("histogram", "line", "steps", "image", "contour", "surface3d"),
@@ -500,7 +504,7 @@ def invariant_density(
         )
         return Geometry(
             "invariant_density",
-            make_frame(FrameSpace.STATE2, 1, labels),
+            make_frame(FrameSpace.SCALING, labels),
             channels={"x": centres, "y": density},
             label=f"density of {labels[0]}",
             axis_labels=(labels[0], "density"),
@@ -516,7 +520,7 @@ def invariant_density(
     )
     return Geometry(
         "invariant_density",
-        make_frame(FrameSpace.STATE2, 2, labels),
+        make_frame(FrameSpace.STATE2, labels),
         channels={"x": xs, "y": ys, "z": density2d, "c": density2d.ravel()},
         axis_labels=(labels[0], labels[1]),
         kind=PlotKind.PHASE_PORTRAIT_2D,

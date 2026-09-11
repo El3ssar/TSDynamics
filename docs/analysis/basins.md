@@ -63,8 +63,8 @@ class DuffingTwoWell(ts.ContinuousSystem):
 sys = DuffingTwoWell()
 
 # two nearby starts, two different wells:
-sys.integrate(final_time=60.0, dt=0.05, ic=[ 1.5, 0.5]).y[-1]   # ≈ [ 1.0, 0.0]
-sys.integrate(final_time=60.0, dt=0.05, ic=[-1.5, 0.5]).y[-1]   # ≈ [-1.0, 0.0]
+sys.run(final_time=60.0, dt=0.05, ic=[ 1.5, 0.5]).y[-1]   # ≈ [ 1.0, 0.0]
+sys.run(final_time=60.0, dt=0.05, ic=[-1.5, 0.5]).y[-1]   # ≈ [-1.0, 0.0]
 ```
 
 That two stable states coexist is what makes the basin question meaningful.
@@ -87,7 +87,7 @@ never required:
 ```python
 region = [(-2.0, 2.0), (-2.0, 2.0)]
 
-att = ts.find_attractors(sys, region, resolution=40, n_seeds=200,
+att = ts.analysis.attractors(sys, region, resolution=40, n_seeds=200,
                          dt=0.5, max_steps=2000, seed=0)
 
 att                         # AttractorSet(2 attractors, 0/200 diverged)
@@ -118,7 +118,7 @@ state space. Add a node count to each axis bound to say how fine the lattice is:
 
 ```python
 grid = [(-2.0, 2.0, 60), (-2.0, 2.0, 60)]
-basins = ts.basins_of_attraction(sys, grid, dt=0.5, max_steps=2000)
+basins = ts.analysis.basins(sys, grid, dt=0.5, max_steps=2000)
 
 basins.n_attractors        # 2
 basins.labels              # int array, one attractor id per cell (−1 = diverged)
@@ -148,7 +148,7 @@ $\sqrt{p(1-p)/n}$ that depends only on the fraction and the sample count, never
 on the dimension.
 
 ```python
-bf = ts.basin_fractions(sys, region, n=400, dt=0.5, max_steps=2000, seed=0)
+bf = ts.analysis.basin_fractions(sys, region, n=400, dt=0.5, max_steps=2000, seed=0)
 
 bf.fractions        # {1: ≈ 0.53, 2: ≈ 0.47}
 bf.dominant         # 1  — the id with the largest basin
@@ -181,11 +181,11 @@ For the smooth two-well Duffing basin the answer is "very": the boundary is a
 clean curve.
 
 ```python
-be = ts.basin_entropy(basins.labels)
+be = ts.analysis.basin_entropy(basins.labels)
 be.sb, be.sbb              # ≈ 0.24, 0.53
 be.fractal_boundary        # False   (Sbb ≈ 0.53 < ln 2 ≈ 0.693)
 
-ue = ts.uncertainty_exponent(basins.labels)
+ue = ts.analysis.uncertainty_exponent(basins.labels)
 ue.alpha                   # ≈ 0.88  — near 1: a thin, nearly-smooth boundary
 ue.boundary_dimension      # ≈ 1.12  — D₀ = D − α
 ```
@@ -219,12 +219,12 @@ class NewtonMap(ts.DiscreteMap):
     def _jacobian(X):
         return ((0.0, 0.0), (0.0, 0.0))
 
-res = bas.basins_of_attraction(
+res = bas.basins(
     NewtonMap(), [(-1.0, 1.0, 200), (-1.0, 1.0, 200)],
     consecutive_recurrences=8, attractor_locate_steps=5, max_steps=200)
 
 res.fractions                    # {1: ≈ 1/3, 2: ≈ 1/3, 3: ≈ 1/3}
-wr = ts.wada_property(res.labels)
+wr = ts.analysis.wada_property(res.labels)
 wr.is_wada, wr.n_basins          # True, 3
 wr.fractions[-1]                 # 1.0  — every boundary cell sees all 3 basins
 ```
@@ -254,7 +254,7 @@ The three metrics, in one place:
     rng = np.random.default_rng(0)
     riddled = rng.integers(1, 4, size=(200, 200))   # a maximally-mixed boundary
 
-    be = ts.basin_entropy(riddled)
+    be = ts.analysis.basin_entropy(riddled)
     be.sb, be.sbb              # ≈ 1.06, 1.06
     be.fractal_boundary        # True   (Sbb > ln 2)
     ```
@@ -267,7 +267,7 @@ The three metrics, in one place:
     predictable, and the boundary box-counting dimension is $D_0 = D - \alpha$.
 
     ```python
-    ue = ts.uncertainty_exponent(res.labels)   # the Newton basin image
+    ue = ts.analysis.uncertainty_exponent(res.labels)   # the Newton basin image
     ue.alpha                   # small → fractal, final-state-sensitive boundary
     ue.boundary_dimension      # D₀ = D − α
     ```
@@ -280,7 +280,7 @@ The three metrics, in one place:
     genuine Wada boundary. A sufficient grid criterion, not a topological proof.
 
     ```python
-    wr = ts.wada_property(res.labels)
+    wr = ts.analysis.wada_property(res.labels)
     wr.is_wada, wr.n_basins        # True, 3   (for the Newton map)
     ```
 
@@ -308,12 +308,12 @@ class TiltedDuffing(ts.ContinuousSystem):
         x, y = Y(0), Y(1)
         return (y, x - x**3 - delta * y + F)
 
-cont = ts.continuation(TiltedDuffing(), "F", np.linspace(0.0, 0.6, 13),
+cont = ts.analysis.continuation(TiltedDuffing(), "F", np.linspace(0.0, 0.6, 13),
                        region, n=300, resolution=60, dt=0.5, max_steps=1500, seed=0)
 
 cont.fractions        # {1: [0.52, 0.45, …, nan, nan], 2: [0.48, 0.55, …, 1.0]}
                       #   attractor 1 vanishes past the fold → nan (basin gone)
-tips = ts.tipping_points(cont)
+tips = ts.analysis.tipping_points(cont)
 [(e["kind"], e["attractor"], round(e["value"], 2)) for e in tips]
 # → [("disappear", 1, 0.4)]   — one well's basin annihilates at F ≈ 0.4
 ```
@@ -329,7 +329,7 @@ distance from the attractor to the nearest cell of another basin — the largest
 perturbation it can absorb without tipping (Halekotte & Feudel 2020):
 
 ```python
-r = ts.resilience(basins, attractor_id=1)   # from the two-well basin image
+r = ts.analysis.resilience(basins, attractor_id=1)   # from the two-well basin image
 float(r)                                     # ≈ 0.61  — distance to the boundary
 ```
 

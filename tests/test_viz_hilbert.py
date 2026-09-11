@@ -49,7 +49,7 @@ def series() -> np.ndarray:
 @pytest.fixture(scope="module")
 def lorenz():
     """A pinned Lorenz orbit (5,001 samples) — a real, non-synthetic subject."""
-    return ts.systems.Lorenz().integrate(final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+    return ts.systems.Lorenz().run(final_time=50.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +398,9 @@ def test_a_trajectory_component_lays_out_on_a_curve(lorenz):
 
 def test_an_rqa_measure_over_time_lays_out_on_a_curve(lorenz):
     """A windowed RQA measure is a 1-D record like any other — no special case."""
-    windowed = ts.windowed_rqa(lorenz.y[::20][:400], window=80, step=4, recurrence_rate=0.1)
+    windowed = ts.analysis.windowed_rqa(
+        lorenz.y[::20][:400], window=80, step=4, recurrence_rate=0.1
+    )
     det = np.asarray(windowed.determinism)
     geom = geometry(det, "hilbert", curve="snake")
     assert geom.meta["n_samples"] == det.size

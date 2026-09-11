@@ -53,7 +53,7 @@ def _attractor_states(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -
     whole buffer is finite) and sit on the orbit rather than in the transient.
     """
     np.random.seed(0)
-    warm = cls().iterate(steps=n_warm, backend="reference")
+    warm = cls().run(steps=n_warm, backend="reference")
     finite = warm.y[np.isfinite(warm.y).all(axis=1)]
     # Guard the slice that follows, not just the row count: finite[drop:drop+take]
     # is only non-degenerate when there are at least drop + take finite rows.
@@ -116,8 +116,8 @@ def test_map_short_trajectory_matches_step(map_entry) -> None:
     cls = map_entry.cls
     ic = _attractor_states(cls, take=1)[0]
     steps = 8
-    interp = cls().iterate(steps=steps, ic=ic, backend="interp")
-    ref = cls().iterate(steps=steps, ic=ic, backend="reference")
+    interp = cls().run(steps=steps, ic=ic, backend="interp")
+    ref = cls().run(steps=steps, ic=ic, backend="reference")
 
     assert ref.y.shape == interp.y.shape == (steps, cls().dim)
     np.testing.assert_array_equal(ref.t, interp.t)
@@ -138,7 +138,7 @@ def test_engine_path_diverges_loudly() -> None:
 
     # Logistic with an initial condition outside [0, 1] escapes to -inf.
     with pytest.raises(RuntimeError, match="diverged"):
-        ts.Logistic().iterate(steps=60, ic=[2.0], backend="reference")
+        ts.systems.Logistic().run(steps=60, ic=[2.0], backend="reference")
 
 
 def test_non_lowerable_set_is_exhaustive() -> None:
@@ -202,7 +202,7 @@ def test_map_iterate_runs_exactly_one_full_orbit_finiteness_scan(monkeypatch, ba
     n = _count_full_array_scans(
         monkeypatch,
         (steps, 2),
-        lambda: henon.iterate(steps=steps, ic=[0.1, 0.1], backend=backend),
+        lambda: henon.run(steps=steps, ic=[0.1, 0.1], backend=backend),
     )
     assert n == 1, f"{backend}: {n} full-orbit scans (expected exactly 1)"
 
@@ -238,7 +238,7 @@ def test_engine_map_divergence_message_is_the_engine_seam_message(backend) -> No
     from tsdynamics.errors import ConvergenceError
 
     with pytest.raises(ConvergenceError) as exc:
-        _Blowup().iterate(steps=1000, ic=[1.0, 1.0], backend=backend)
+        _Blowup().run(steps=1000, ic=[1.0, 1.0], backend=backend)
     assert str(exc.value) == (
         "_Blowup: map diverged or produced a non-finite state before reaching 1000 iterations."
     )
@@ -249,7 +249,7 @@ def test_reference_map_divergence_message_is_the_per_iterate_message() -> None:
     from tsdynamics.errors import ConvergenceError
 
     with pytest.raises(ConvergenceError, match=r"non-finite state at iteration \d+ \(0-based"):
-        _Blowup().iterate(steps=1000, ic=[1.0, 1.0], backend="reference")
+        _Blowup().run(steps=1000, ic=[1.0, 1.0], backend="reference")
 
 
 def test_diverging_map_with_explicit_ic_does_not_retry(monkeypatch) -> None:
@@ -265,7 +265,7 @@ def test_diverging_map_with_explicit_ic_does_not_retry(monkeypatch) -> None:
 
     monkeypatch.setattr(_Blowup, "_iterate_engine", counting)
     with pytest.raises(ConvergenceError):
-        _Blowup().iterate(steps=1000, ic=[1.0, 1.0], max_retries=5)
+        _Blowup().run(steps=1000, ic=[1.0, 1.0], max_retries=5)
     assert calls["n"] == 1
 
 
@@ -287,5 +287,5 @@ def test_diverging_map_without_explicit_ic_still_retries(monkeypatch) -> None:
         pytest.warns(RuntimeWarning, match="Retrying from a new random"),
         pytest.raises(ConvergenceError),
     ):
-        m.iterate(steps=1000, max_retries=3)
+        m.run(steps=1000, max_retries=3)
     assert calls["n"] == 3

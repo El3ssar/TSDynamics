@@ -382,7 +382,7 @@ def _sweep_via_kernel(
     # (control_names == [param]); the base vector's one slot is overwritten per
     # value by the kernel, so its initial value is irrelevant.
     base_params = np.zeros(1, dtype=np.float64)
-    ic_resolved = np.asarray(system.resolve_ic(ic), dtype=np.float64).reshape(system.dim)
+    ic_resolved = np.asarray(system._resolve_ic(ic), dtype=np.float64).reshape(system.dim)
     components = np.asarray(idx, dtype=np.int64)
 
     points_flat, status = map_param_sweep(
@@ -550,7 +550,7 @@ def _short_column(
         warnings.warn(
             f"orbit_diagram: only {found - transient} of {n} peaks were found within "
             f"max_time={max_time:g}, so this value's column is short. To fill it:\n"
-            f"    ts.orbit_diagram(system, param, values, max_time={max_time * 10:g})",
+            f"    ts.analysis.orbit_diagram(system, param, values, max_time={max_time * 10:g})",
             RuntimeWarning,
             stacklevel=4,
         )
@@ -563,9 +563,9 @@ def _short_column(
             f"is the last {keep.shape[0]} of them and its transient is NOT fully discarded "
             "(transient/n count peaks here, not iterates — a slow oscillator makes far fewer "
             "of them than a map does). Either:\n"
-            f"    ts.orbit_diagram(system, param, values, transient={max(found // 4, 1)},"
+            f"    ts.analysis.orbit_diagram(system, param, values, transient={max(found // 4, 1)},"
             f" points_per_value={max(found // 2, 1)})\n"
-            f"    ts.orbit_diagram(system, param, values, max_time={max_time * 10:g})",
+            f"    ts.analysis.orbit_diagram(system, param, values, max_time={max_time * 10:g})",
             RuntimeWarning,
             stacklevel=4,
         )
@@ -574,9 +574,9 @@ def _short_column(
     # offer: a scalar flow (a 1-D DDE) would be told to type an index that does
     # not exist, which is worse than no suggestion at all.
     other = next((c for c in range(dim) if c != idx[0]), None)
-    lines = ["    ts.orbit_diagram(system, param, values, section=('z', 27.0, 'up'))"]
+    lines = ["    ts.analysis.orbit_diagram(system, param, values, section=('z', 27.0, 'up'))"]
     if other is not None:
-        lines.append(f"    ts.orbit_diagram(system, param, values, component={other})")
+        lines.append(f"    ts.analysis.orbit_diagram(system, param, values, component={other})")
     warnings.warn(
         f"orbit_diagram: component {idx[0]} of this flow has no maximum within "
         f"max_time={max_time:g}, so the successive-maxima view records nothing for this value "
@@ -665,7 +665,7 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
         raise InvalidInputError(
             f"orbit_diagram needs a dynamical system as its first argument, got "
             f"{type(system).__name__}. Pass a system (or a discrete view of one), e.g.\n"
-            "    ts.orbit_diagram(ts.systems.Lorenz(), 'rho', "
+            "    ts.analysis.orbit_diagram(ts.systems.Lorenz(), 'rho', "
             "np.linspace(0.0, 50.0, 200))"
         )
     if system._is_discrete:
@@ -673,7 +673,7 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
             raise InvalidParameterError(
                 f"section= chooses how to slice a *flow*, but {type(system).__name__} is "
                 "already a discrete-time view, so there is nothing to slice. Drop section=:\n"
-                f"    ts.orbit_diagram(system, {param!r}, values)"
+                f"    ts.analysis.orbit_diagram(system, {param!r}, values)"
             )
         if isinstance(system, PoincareMap):
             return system, f"Poincaré section {system.plane}"
@@ -688,7 +688,7 @@ def _discrete_view(system: Any, section: Any, component_label: str, param: str) 
             f"orbit_diagram needs a deterministic system: {type(system).__name__} is "
             "stochastic (an SDE), so its 'asymptotic orbit' is a different sample path on "
             "every run. Sweep a deterministic model instead, e.g.\n"
-            "    ts.orbit_diagram(ts.systems.Lorenz(), 'rho', "
+            "    ts.analysis.orbit_diagram(ts.systems.Lorenz(), 'rho', "
             "np.linspace(0.0, 50.0, 200))"
         )
     if section is not None:
@@ -716,7 +716,7 @@ def orbit_diagram(
 
     Pass **any** system — this is the one-liner::
 
-        ts.orbit_diagram(ts.systems.Lorenz(), "rho", np.linspace(0.0, 50.0, 200))
+        ts.analysis.orbit_diagram(ts.systems.Lorenz(), "rho", np.linspace(0.0, 50.0, 200))
 
     A :class:`~tsdynamics.families.DiscreteMap` is swept directly.  A **flow** is
     reduced to a discrete view automatically, because a bifurcation diagram of a

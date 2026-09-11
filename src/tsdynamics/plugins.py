@@ -5,11 +5,19 @@ packaging **entry points**.  On import, TSDynamics walks the relevant groups and
 loads whatever it finds, so an installed plugin's systems, solvers, analyses or
 renderers register themselves automatically.
 
-The four group names below are the frozen contract a plugin author declares
+The six group names below are the frozen contract a plugin author declares
 against in their own ``pyproject.toml``::
 
     [project.entry-points."tsdynamics.solvers"]
     my_method = "my_pkg.solvers:MY_SPEC"
+
+**A declared group is a promise, and a promise nothing loads is a lie.**
+:data:`SYSTEMS_GROUP` has been advertised here since F2 and no consumer has ever
+called :func:`load_plugins` on it, so a third-party system package declaring
+``tsdynamics.systems`` entry points was silently ignored.  Each group in
+:data:`ALL_GROUPS` must have exactly one consumer that loads it;
+``tests/test_registry.py::test_every_declared_plugin_group_has_a_consumer`` is
+the gate, and it names the module expected to do the loading.
 
 This module is deliberately *generic*: it discovers and loads entry points and
 imports submodules, but knows nothing about what a system/solver/analysis/
@@ -46,6 +54,13 @@ RENDERERS_GROUP = "tsdynamics.renderers"
 #: generic time-series layer the v6 scope surgery deleted, and reusing it would
 #: re-litigate a settled scope decision on every grep.
 PLOT_TRANSFORMS_GROUP = "tsdynamics.plot_transforms"
+#: Out-of-tree **plot primitives** (see :mod:`tsdynamics.viz.transforms`).  A
+#: *transform* turns a subject into geometry; a *primitive* turns that geometry
+#: into layers, so the two are separate extension points and need separate
+#: groups.  v6 completes the set: the six extension doors are systems, solvers,
+#: analyses, renderers, plot transforms and plot primitives, and every one of
+#: them is now reachable from outside the library.
+PLOT_PRIMITIVES_GROUP = "tsdynamics.plot_primitives"
 
 #: Every plugin group TSDynamics recognises.
 ALL_GROUPS: tuple[str, ...] = (
@@ -54,6 +69,7 @@ ALL_GROUPS: tuple[str, ...] = (
     ANALYSES_GROUP,
     RENDERERS_GROUP,
     PLOT_TRANSFORMS_GROUP,
+    PLOT_PRIMITIVES_GROUP,
 )
 
 
@@ -203,6 +219,7 @@ __all__ = [
     "ANALYSES_GROUP",
     "RENDERERS_GROUP",
     "PLOT_TRANSFORMS_GROUP",
+    "PLOT_PRIMITIVES_GROUP",
     "ALL_GROUPS",
     # The generic discovery / loading primitives the consuming subpackages use.
     "iter_entry_points",

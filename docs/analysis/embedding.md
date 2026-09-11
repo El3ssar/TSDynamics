@@ -45,11 +45,11 @@ reconstructed loop is topologically the same object.
 <div class="ts-item" markdown>
 ```python
 ros = ts.systems.Rossler()
-traj = ros.integrate(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0])
+traj = ros.run(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0])
 x = traj.y[1000:, 0]        # keep ONLY the x channel
 
-tau = ts.optimal_delay(x, method="mi", max_delay=120)   # 27 samples
-emb = ts.embed(x, dimension=3, delay=tau)
+tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 27 samples
+emb = ts.analysis.embed(x, dimension=3, delay=tau)
 emb.shape                   # (6947, 3)
 emb[:, 0], emb[:, 1]        # (x(t), x(t+tau)) — the reconstructed plane
 ```
@@ -72,7 +72,7 @@ keep the original sampling order, an index-based Theiler window still removes
 temporally-correlated pairs:
 
 ```python
-ts.correlation_dimension(emb, theiler=tau)   # ≈ 1.74  (Rössler D2, from x alone)
+ts.analysis.correlation_dimension(emb, theiler=tau)   # ≈ 1.74  (Rössler D2, from x alone)
 ```
 
 `embed` also does **multivariate** embedding: pass a multi-component trajectory
@@ -94,9 +94,9 @@ $x_{i+\tau}$ adds the most *new* information about the state while still being
 dynamically related to $x_i$.
 
 ```python
-tau = ts.optimal_delay(x, method="mi", max_delay=120)   # 27   (first MI minimum)
+tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)   # 27   (first MI minimum)
 
-mi = ts.mutual_information(x, max_delay=120)
+mi = ts.analysis.mutual_information(x, max_delay=120)
 mi.optimal_lag          # 27   — the same lag, read off the curve
 mi.plot()               # the I(tau) diagnostic, with the chosen tau marked
 ```
@@ -129,12 +129,12 @@ was a projection artefact. The false-neighbour fraction decays to zero at the
 correct dimension.
 
 ```python
-m_cao = ts.embedding_dimension(x, method="cao", delay=tau, max_dim=8)
+m_cao = ts.analysis.embedding_dimension(x, method="cao", delay=tau, max_dim=8)
 int(m_cao)              # 4      (drops straight into embed)
 m_cao.afn_e1            # the E1(d) saturation curve
 m_cao.plot()            # E1 / E2 vs d, with the chosen m marked
 
-m_fnn = ts.embedding_dimension(x, method="fnn", delay=tau, max_dim=8)
+m_fnn = ts.analysis.embedding_dimension(x, method="fnn", delay=tau, max_dim=8)
 int(m_fnn)              # 3      (Kennel FNN — matches Rössler's true dim)
 ```
 
@@ -160,12 +160,12 @@ conservative in different directions — so on a marginal case take $m$ from the
 Delay, dimension, embed, analyse — from one channel to a dimension estimate:
 
 ```python
-x = ts.systems.Rossler().integrate(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0]).y[1000:, 0]
+x = ts.systems.Rossler().run(final_time=400.0, dt=0.05, ic=[1.0, 0.0, 0.0]).y[1000:, 0]
 
-tau = ts.optimal_delay(x, method="mi", max_delay=120)     # 27
-m = int(ts.embedding_dimension(x, method="fnn", delay=tau, max_dim=8))  # 3
-emb = ts.embed(x, dimension=m, delay=tau)
-ts.correlation_dimension(emb, theiler=tau)                # ≈ 1.74
+tau = ts.analysis.optimal_delay(x, method="mi", max_delay=120)     # 27
+m = int(ts.analysis.embedding_dimension(x, method="fnn", delay=tau, max_dim=8))  # 3
+emb = ts.analysis.embed(x, dimension=m, delay=tau)
+ts.analysis.correlation_dimension(emb, theiler=tau)                # ≈ 1.74
 ```
 
 This is the standard route to a fractal dimension or a data-driven Lyapunov

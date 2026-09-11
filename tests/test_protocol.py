@@ -78,7 +78,7 @@ class TestMetaStore:
 class TestResolveIc:
     def test_priority_arg_over_self_over_default(self) -> None:
         # arg > self.ic > default_ic
-        lor = ts.Lorenz(ic=[1.0, 2.0, 3.0])
+        lor = ts.systems.Lorenz(ic=[1.0, 2.0, 3.0])
         np.testing.assert_array_equal(lor._resolve_ic([4.0, 5.0, 6.0]), [4.0, 5.0, 6.0])
         # ...and since v6 the explicit arg is NOT latched: a bare call afterwards
         # still answers with the system's own ic, so a later plain run() cannot
@@ -86,22 +86,22 @@ class TestResolveIc:
         np.testing.assert_array_equal(lor._resolve_ic(), [1.0, 2.0, 3.0])
 
     def test_falls_back_to_self_ic(self) -> None:
-        lor = ts.Lorenz(ic=[1.0, 2.0, 3.0])
+        lor = ts.systems.Lorenz(ic=[1.0, 2.0, 3.0])
         np.testing.assert_array_equal(lor._resolve_ic(), [1.0, 2.0, 3.0])
 
     def test_random_fallback_is_deterministic_under_seed(self) -> None:
         # No ic, no default_ic -> random U[0,1)^dim, reproducible under a seed.
         np.random.seed(0)
-        a = ts.Lorenz()._resolve_ic()
+        a = ts.systems.Lorenz()._resolve_ic()
         np.random.seed(0)
-        b = ts.Lorenz()._resolve_ic()
+        b = ts.systems.Lorenz()._resolve_ic()
         assert a.shape == (3,)
         np.testing.assert_array_equal(a, b)
 
 
 def test_constructor_rejects_unknown_param() -> None:
     with pytest.raises(InvalidParameterError, match="unknown parameter"):
-        ts.Lorenz(params={"sigmaa": 99.0})
+        ts.systems.Lorenz(params={"sigmaa": 99.0})
 
 
 # ---------------------------------------------------------------------------
@@ -110,21 +110,21 @@ def test_constructor_rejects_unknown_param() -> None:
 
 
 def test_families_satisfy_protocol() -> None:
-    assert isinstance(ts.Lorenz(), System)
-    assert isinstance(ts.MackeyGlass(), System)
-    assert isinstance(ts.Henon(), System)
+    assert isinstance(ts.systems.Lorenz(), System)
+    assert isinstance(ts.systems.MackeyGlass(), System)
+    assert isinstance(ts.systems.Henon(), System)
 
 
 def test_is_discrete_flags() -> None:
-    assert ts.Henon()._is_discrete is True
-    assert ts.Lorenz()._is_discrete is False
-    assert ts.MackeyGlass()._is_discrete is False
+    assert ts.systems.Henon()._is_discrete is True
+    assert ts.systems.Lorenz()._is_discrete is False
+    assert ts.systems.MackeyGlass()._is_discrete is False
 
 
 def test_dde_set_state_does_not_exist() -> None:
     # v6: a name that cannot work does not exist.  It used to exist and raise
     # NotImplementedError -- a member that lies, because hasattr said yes.
-    mg = ts.MackeyGlass()
+    mg = ts.systems.MackeyGlass()
     assert not hasattr(mg, "set_state")
     with pytest.raises(AttributeError, match="history function"):
         mg.set_state([1.0])
@@ -138,17 +138,17 @@ def test_dde_set_state_does_not_exist() -> None:
 class TestMapStepping:
     def test_step_matches_iterate(self) -> None:
         ic = np.array([0.1, 0.2])
-        h1 = ts.Henon()
+        h1 = ts.systems.Henon()
         h1.reinit(ic)
         stepped = [h1.step().copy() for _ in range(5)]
 
-        h2 = ts.Henon()
+        h2 = ts.systems.Henon()
         traj = h2.run(steps=5, ic=ic)
         np.testing.assert_allclose(np.array(stepped), traj.y, rtol=1e-12)
 
     def test_batch_step_equals_single_steps(self) -> None:
         ic = np.array([0.1, 0.2])
-        a, b = ts.Henon(), ts.Henon()
+        a, b = ts.systems.Henon(), ts.systems.Henon()
         a.reinit(ic)
         b.reinit(ic)
         for _ in range(40):
@@ -158,26 +158,26 @@ class TestMapStepping:
         assert a.time() == b.time() == 40.0
 
     def test_set_state_and_time(self) -> None:
-        h = ts.Henon()
+        h = ts.systems.Henon()
         h.reinit([0.0, 0.0], t=7)
         assert h.time() == 7.0
         h.set_state([0.5, -0.5])
         np.testing.assert_array_equal(h.state(), [0.5, -0.5])
 
     def test_implicit_reinit_on_cold_step(self) -> None:
-        h = ts.Henon(ic=[0.1, 0.1])
+        h = ts.systems.Henon(ic=[0.1, 0.1])
         out = h.step()
         assert out.shape == (2,)
         assert h.time() == 1.0
 
     def test_one_dim_map_steps(self) -> None:
-        m = ts.Logistic(ic=[0.3])
+        m = ts.systems.Logistic(ic=[0.3])
         out = m.step()
         assert out.shape == (1,)
         np.testing.assert_allclose(out[0], 3.9 * 0.3 * 0.7, rtol=1e-12)
 
     def test_trajectory_with_transient(self) -> None:
-        h = ts.Henon()
+        h = ts.systems.Henon()
         traj = h.run(steps=100, transient=50, ic=[0.1, 0.1])
         assert traj.n_steps == 100
 
@@ -190,7 +190,7 @@ class TestMapStepping:
 @pytest.mark.slow
 class TestODEStepping:
     def test_step_advances_time_and_state(self) -> None:
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
         lor.reinit([1.0, 1.0, 1.0])
         s0 = lor.state()
         s1 = lor.step(0.05)
@@ -199,30 +199,30 @@ class TestODEStepping:
 
     def test_step_matches_integrate(self) -> None:
         ic = [1.0, 1.0, 1.0]
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
         lor.reinit(ic, rtol=1e-9, atol=1e-12)
         for _ in range(10):
             lor.step(0.1)
 
-        traj = ts.Lorenz().run(final_time=1.0, dt=0.1, ic=ic, rtol=1e-9, atol=1e-12)
+        traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=ic, rtol=1e-9, atol=1e-12)
         np.testing.assert_allclose(lor.state(), traj.y[-1], rtol=1e-5, atol=1e-6)
 
     def test_two_live_steppers_are_isolated(self) -> None:
-        a, b = ts.Lorenz(), ts.Lorenz()
+        a, b = ts.systems.Lorenz(), ts.systems.Lorenz()
         a.reinit([1.0, 1.0, 1.0])
         b.reinit([-5.0, 2.0, 30.0])
         # interleave
         for _ in range(5):
             a.step(0.02)
             b.step(0.02)
-        a_alone = ts.Lorenz()
+        a_alone = ts.systems.Lorenz()
         a_alone.reinit([1.0, 1.0, 1.0])
         for _ in range(5):
             a_alone.step(0.02)
         np.testing.assert_allclose(a.state(), a_alone.state(), rtol=1e-9)
 
     def test_set_state_redirects_orbit(self) -> None:
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
         lor.reinit([1.0, 1.0, 1.0])
         lor.step(0.1)
         lor.set_state([0.0, 1.0, 20.0])
@@ -231,7 +231,7 @@ class TestODEStepping:
         assert np.all(np.isfinite(out))
 
     def test_reinit_applies_param_overrides(self) -> None:
-        lor = ts.Lorenz()
+        lor = ts.systems.Lorenz()
         lor.reinit([1.0, 1.0, 1.0], params={"rho": 35.0})
         assert lor.params["rho"] == 35.0
         assert np.all(np.isfinite(lor.step(0.05)))
@@ -245,7 +245,7 @@ class TestODEStepping:
 @pytest.mark.slow
 class TestDDEStepping:
     def test_step_forward(self) -> None:
-        mg = ts.MackeyGlass()
+        mg = ts.systems.MackeyGlass()
         mg.reinit([1.2])
         t0 = mg.time()
         s = mg.step(0.5)
@@ -254,7 +254,7 @@ class TestDDEStepping:
         assert mg.time() == pytest.approx(t0 + 0.5)
 
     def test_trajectory_protocol(self) -> None:
-        mg = ts.MackeyGlass()
+        mg = ts.systems.MackeyGlass()
         traj = mg.run(final_time=5.0, dt=0.5, transient=2.0, ic=[1.2])
         assert traj.t[0] >= 2.0
         assert np.all(np.isfinite(traj.y))
@@ -323,7 +323,7 @@ class TestFailedRunLeavesTheIcUntouched:
 
     def test_sde_reinit(self) -> None:
         sys = ts.systems.OrnsteinUhlenbeck(ic=[1.0])
-        assert _ic_survives(sys, lambda: sys.reinit([2.0], method="no-such-method"))
+        assert _ic_survives(sys, lambda: sys.reinit([2.0], solver="no-such-method"))
 
     def test_sde_integrate(self) -> None:
         sys = ts.systems.OrnsteinUhlenbeck(ic=[1.0])

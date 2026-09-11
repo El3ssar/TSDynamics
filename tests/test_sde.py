@@ -162,8 +162,8 @@ def test_next_normal_has_standard_moments():
 
 def test_same_seed_reproduces_the_trajectory():
     gbm = GeometricBrownianMotion()
-    a = gbm.integrate(final_time=1.0, dt=0.01, ic=[1.0], seed=12345)
-    b = gbm.integrate(final_time=1.0, dt=0.01, ic=[1.0], seed=12345)
+    a = gbm.run(final_time=1.0, dt=0.01, ic=[1.0], seed=12345)
+    b = gbm.run(final_time=1.0, dt=0.01, ic=[1.0], seed=12345)
     assert np.array_equal(a.y, b.y)
     # The resolved seed is recorded for reproducibility.
     assert a.meta["seed"] == 12345
@@ -184,15 +184,15 @@ def test_additive_noise_makes_milstein_equal_euler_maruyama():
     # vanishes and — given the same seed/step sequence — the two schemes trace
     # bit-for-bit the same path.
     ou = OrnsteinUhlenbeck()
-    em = ou.integrate(final_time=2.0, dt=0.01, ic=[0.5], seed=99, method="euler_maruyama")
-    mil = ou.integrate(final_time=2.0, dt=0.01, ic=[0.5], seed=99, method="milstein")
+    em = ou.run(final_time=2.0, dt=0.01, ic=[0.5], seed=99, solver="euler_maruyama")
+    mil = ou.run(final_time=2.0, dt=0.01, ic=[0.5], seed=99, solver="milstein")
     assert np.array_equal(em.y, mil.y)
 
 
 def test_seed_omitted_gives_a_fresh_realisation_each_call():
     gbm = GeometricBrownianMotion()
-    a = gbm.integrate(final_time=1.0, dt=0.02, ic=[1.0])
-    b = gbm.integrate(final_time=1.0, dt=0.02, ic=[1.0])
+    a = gbm.run(final_time=1.0, dt=0.02, ic=[1.0])
+    b = gbm.run(final_time=1.0, dt=0.02, ic=[1.0])
     assert not np.array_equal(a.y, b.y)
 
 
@@ -219,7 +219,7 @@ class ExplodingDrift(StochasticSystem):
 def test_single_integration_raises_on_divergence():
     sys = ExplodingDrift()
     with pytest.raises(RuntimeError, match="diverged"):
-        sys.integrate(final_time=3.0, dt=0.01, ic=[1.0], seed=0)
+        sys.run(final_time=3.0, dt=0.01, ic=[1.0], seed=0)
 
 
 def test_ensemble_isolates_a_diverged_trajectory_as_nan():
@@ -241,14 +241,14 @@ def test_ensemble_isolates_a_diverged_trajectory_as_nan():
 )
 def test_method_aliases_resolve(alias, canon):
     gbm = GeometricBrownianMotion()
-    traj = gbm.integrate(final_time=0.1, dt=0.05, ic=[1.0], seed=0, method=alias)
+    traj = gbm.run(final_time=0.1, dt=0.05, ic=[1.0], seed=0, solver=alias)
     assert traj.meta["method"] == canon
 
 
 def test_unknown_method_raises():
     gbm = GeometricBrownianMotion()
     with pytest.raises(ValueError, match="unknown SDE method"):
-        gbm.integrate(final_time=0.1, dt=0.05, ic=[1.0], method="heun")
+        gbm.run(final_time=0.1, dt=0.05, ic=[1.0], solver="heun")
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +285,7 @@ def test_stepping_is_reproducible_given_a_seed():
 
 def test_trajectory_drops_transient():
     gbm = GeometricBrownianMotion()
-    traj = gbm.trajectory(1.0, dt=0.05, transient=0.5, ic=[1.0], seed=0)
+    traj = gbm.run(1.0, dt=0.05, transient=0.5, ic=[1.0], seed=0)
     assert traj.t[0] >= 0.5
     assert traj["x"].ndim == 1
 
@@ -311,7 +311,7 @@ def test_gbm_reproduces_analytic_mean_with_both_schemes():
     ics = np.ones((2500, 1))
     want = np.exp(0.15)  # X0=1, μ=0.15, T=1
     for method in ("euler_maruyama", "milstein"):
-        finals = gbm.ensemble(ics, final_time=1.0, dt=0.02, seed=1, method=method)
+        finals = gbm.ensemble(ics, final_time=1.0, dt=0.02, seed=1, solver=method)
         assert np.isfinite(finals).all()
         # MC std error of the mean ≈ 0.009 here; 0.05 is a safe, non-flaky band.
         assert abs(finals.mean() - want) < 0.05, method

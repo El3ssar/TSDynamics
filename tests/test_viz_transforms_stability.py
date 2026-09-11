@@ -450,7 +450,7 @@ def test_the_zero_one_plane_is_bounded_for_a_cycle_and_diffusive_for_lorenz():
 
 
 def test_the_zero_one_plane_marks_where_the_walk_started():
-    result = ts.zero_one_test(np.cos(np.arange(2000) * 0.7), seed=0)
+    result = ts.analysis.zero_one_test(np.cos(np.arange(2000) * 0.7), seed=0)
     geom = geometry(result, "zero_one_pq_plane")
     start = next(part for part in geom.parts if part.label == "start")
     assert np.size(start.array("x")) == 1
@@ -458,7 +458,7 @@ def test_the_zero_one_plane_marks_where_the_walk_started():
 
 
 def test_a_precomputed_zero_one_result_refuses_test_options():
-    result = ts.zero_one_test(np.cos(np.arange(500) * 0.7), seed=0)
+    result = ts.analysis.zero_one_test(np.cos(np.arange(500) * 0.7), seed=0)
     with pytest.raises(InvalidInputError, match="configure the test"):
         geometry(result, "zero_one_pq_plane", dt=0.5)
 
@@ -470,8 +470,8 @@ def test_a_precomputed_zero_one_result_refuses_test_options():
 
 @pytest.fixture(scope="module")
 def lorenz_dimension():
-    traj = ts.systems.Lorenz().integrate(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 1.0])
-    return ts.correlation_dimension(traj)
+    traj = ts.systems.Lorenz().run(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 1.0])
+    return ts.analysis.correlation_dimension(traj)
 
 
 def test_the_fitted_window_is_drawn_as_geometry_not_merely_marker_colour(lorenz_dimension):
@@ -536,10 +536,10 @@ def test_an_unknown_scaling_view_raises_and_lists_the_three():
 
 def test_scaling_fit_accepts_every_in_tree_scaling_result_shape():
     """The schema claim: one transform covers the whole ScalingResult family."""
-    traj = ts.systems.Lorenz().integrate(final_time=60.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=60.0, dt=0.05, ic=[1.0, 1.0, 1.0])
     for result in (
-        ts.correlation_dimension(traj),
-        ts.lyapunov_from_data(traj["x"], dt=0.05),
+        ts.analysis.correlation_dimension(traj),
+        ts.analysis.lyapunov_from_data(traj["x"], dt=0.05),
     ):
         spec = ts.plot(result, "scaling_fit")
         assert spec.kind is ts.viz.PlotKind.SCALING_FIT
@@ -612,7 +612,7 @@ def test_every_transform_renders_on_plotly_and_json(name):
 
 
 def test_eigenvalue_plane_refuses_a_trajectory_rather_than_drawing_its_samples():
-    traj = ts.systems.Lorenz().integrate(final_time=5.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=5.0, dt=0.1, ic=[1.0, 1.0, 1.0])
     with pytest.raises(InvalidInputError, match="model transform"):
         geometry(traj, "eigenvalue_plane")
 

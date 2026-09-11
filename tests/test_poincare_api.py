@@ -28,7 +28,7 @@ from tsdynamics.viz.spec import PlotKind
 
 def _rossler():
     """A deterministic Rössler (fixed IC) so two sections are bit-comparable."""
-    return ts.Rossler(ic=[1.0, 1.0, 0.0])
+    return ts.systems.Rossler(ic=[1.0, 1.0, 0.0])
 
 
 # ---------------------------------------------------------------------------
@@ -38,8 +38,8 @@ def _rossler():
 
 def test_named_axis_matches_index_form() -> None:
     """``plane=("y", 0.0)`` resolves to the same section as ``plane=(1, 0.0)``."""
-    named = ts.poincare_section(_rossler(), plane=("y", 0.0), crossings=40, dt=0.05)
-    index = ts.poincare_section(_rossler(), plane=(1, 0.0), crossings=40, dt=0.05)
+    named = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0), crossings=40, dt=0.05)
+    index = ts.analysis.poincare_section(_rossler(), plane=(1, 0.0), crossings=40, dt=0.05)
     assert np.array_equal(named.y, index.y)
     assert np.array_equal(named.t, index.t)
     assert named.meta["plane"] == (1, 0.0)
@@ -47,12 +47,14 @@ def test_named_axis_matches_index_form() -> None:
 
 def test_direction_word_in_plane_sets_and_overrides_direction() -> None:
     """A third ``plane`` element is the crossing direction and beats ``direction=``."""
-    down = ts.poincare_section(_rossler(), plane=("x", 0.0, "down"), crossings=30, dt=0.05)
-    explicit = ts.poincare_section(_rossler(), plane=(0, 0.0), direction=-1, crossings=30, dt=0.05)
+    down = ts.analysis.poincare_section(_rossler(), plane=("x", 0.0, "down"), crossings=30, dt=0.05)
+    explicit = ts.analysis.poincare_section(
+        _rossler(), plane=(0, 0.0), direction=-1, crossings=30, dt=0.05
+    )
     assert down.meta["direction"] == -1
     assert np.array_equal(down.y, explicit.y)
     # the in-plane direction word wins over a conflicting direction= argument
-    forced = ts.poincare_section(
+    forced = ts.analysis.poincare_section(
         _rossler(), plane=("x", 0.0, "down"), direction=+1, crossings=30, dt=0.05
     )
     assert forced.meta["direction"] == -1
@@ -68,7 +70,9 @@ def test_poincare_map_accepts_named_plane_and_direction_word() -> None:
 
 def test_general_normal_plane_passes_through() -> None:
     """An arbitrary normal vector still works (and is not name-resolved)."""
-    sec = ts.poincare_section(_rossler(), plane=([0.0, 1.0, 0.0], 0.0), crossings=20, dt=0.05)
+    sec = ts.analysis.poincare_section(
+        _rossler(), plane=([0.0, 1.0, 0.0], 0.0), crossings=20, dt=0.05
+    )
     # normal is along +y, so the recorded crossings sit on y ≈ 0
     assert np.max(np.abs(sec.y[:, 1])) < 1e-6
 
@@ -79,7 +83,7 @@ def test_general_normal_plane_passes_through() -> None:
 
 
 def test_returns_poincare_section_that_is_a_trajectory() -> None:
-    sec = ts.poincare_section(_rossler(), plane=("y", 0.0), crossings=30, dt=0.05)
+    sec = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0), crossings=30, dt=0.05)
     assert isinstance(sec, PoincareSection)
     assert isinstance(sec, Trajectory)
     # trajectory affordances survive (named components, shapes)
@@ -88,7 +92,7 @@ def test_returns_poincare_section_that_is_a_trajectory() -> None:
 
 
 def test_section_carries_poincare_intent_and_spec() -> None:
-    sec = ts.poincare_section(_rossler(), plane=("y", 0.0), crossings=40, dt=0.05)
+    sec = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0), crossings=40, dt=0.05)
     assert sec.meta["plot_kind"] == "poincare_section"
     spec = sec.__plot_spec__()
     assert spec.kind == PlotKind.POINCARE_SECTION
@@ -98,7 +102,7 @@ def test_section_carries_poincare_intent_and_spec() -> None:
 
 
 def test_section_summary_and_repr() -> None:
-    sec = ts.poincare_section(_rossler(), plane=("y", 0.0, "up"), crossings=25, dt=0.05)
+    sec = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0, "up"), crossings=25, dt=0.05)
     summary = sec.summary()
     assert "PoincareSection" in summary
     assert "crossings = 25" in summary
@@ -107,7 +111,7 @@ def test_section_summary_and_repr() -> None:
 
 
 def test_section_to_dict_is_json_serializable() -> None:
-    sec = ts.poincare_section(_rossler(), plane=("y", 0.0), crossings=20, dt=0.05)
+    sec = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0), crossings=20, dt=0.05)
     d = sec.to_dict()
     assert set(d) >= {"t", "y", "n_crossings", "plane", "direction", "meta"}
     assert d["n_crossings"] == 20
@@ -117,7 +121,7 @@ def test_section_to_dict_is_json_serializable() -> None:
 
 
 def test_section_has_populated_provenance_meta() -> None:
-    sec = ts.poincare_section(_rossler(), plane=("y", 0.0), crossings=15, dt=0.05)
+    sec = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0), crossings=15, dt=0.05)
     assert isinstance(sec.meta, dict) and sec.meta
     assert sec.meta.get("system") == "Rossler"
 
@@ -132,7 +136,7 @@ def test_section_plot_seam_raises_without_a_backend(monkeypatch) -> None:
     registry.renderers.clear()
     monkeypatch.setattr(render_mod, "register_builtin_renderers", lambda *a, **k: [])
     try:
-        sec = ts.poincare_section(_rossler(), plane=("y", 0.0), crossings=15, dt=0.05)
+        sec = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0), crossings=15, dt=0.05)
         with pytest.raises(VisualizationNotInstalled):
             sec.plot().render()
     finally:
@@ -148,7 +152,7 @@ def test_section_plot_seam_raises_without_a_backend(monkeypatch) -> None:
 
 def test_data_path_returns_named_section() -> None:
     traj = _rossler().run(final_time=80.0, dt=0.02)
-    sec = ts.poincare_section(traj, plane=("z", 0.0, "up"))
+    sec = ts.analysis.poincare_section(traj, plane=("z", 0.0, "up"))
     assert isinstance(sec, PoincareSection)
     assert sec.meta["plot_kind"] == "poincare_section"
     assert sec.meta["plane"] == (2, 0.0)
@@ -163,7 +167,9 @@ def test_data_path_returns_named_section() -> None:
 
 
 def test_index_form_and_skip_crossings_still_work() -> None:
-    sec = ts.poincare_section(_rossler(), plane=(0, 0.0), crossings=20, skip_crossings=5, dt=0.05)
+    sec = ts.analysis.poincare_section(
+        _rossler(), plane=(0, 0.0), crossings=20, skip_crossings=5, dt=0.05
+    )
     assert isinstance(sec, PoincareSection)
     assert sec.y.shape == (20, 3)
     assert np.max(np.abs(sec.y[:, 0])) < 1e-6
@@ -176,17 +182,17 @@ def test_index_form_and_skip_crossings_still_work() -> None:
 
 def test_unknown_component_name_raises() -> None:
     with pytest.raises(InvalidParameterError, match="not a declared component"):
-        ts.poincare_section(_rossler(), plane=("w", 0.0), crossings=5)
+        ts.analysis.poincare_section(_rossler(), plane=("w", 0.0), crossings=5)
 
 
 def test_unknown_direction_word_raises() -> None:
     with pytest.raises(InvalidParameterError, match="up.*down.*both"):
-        ts.poincare_section(_rossler(), plane=("y", 0.0, "sideways"), crossings=5)
+        ts.analysis.poincare_section(_rossler(), plane=("y", 0.0, "sideways"), crossings=5)
 
 
 def test_malformed_plane_raises() -> None:
     with pytest.raises(InvalidParameterError, match="axis, offset"):
-        ts.poincare_section(_rossler(), plane=(1,), crossings=5)
+        ts.analysis.poincare_section(_rossler(), plane=(1,), crossings=5)
 
 
 def test_plane_errors_are_value_errors() -> None:
@@ -245,7 +251,7 @@ def test_section_missing_attractor_is_runtime_error() -> None:
 # No plane named — one is CHOSEN and RECORDED (stream v6 API-FOOTGUNS)
 # ---------------------------------------------------------------------------
 #
-# ``ts.PoincareMap(ts.systems.Lorenz())`` and ``ts.poincare_section(Lorenz())``
+# ``ts.derived.PoincareMap(ts.systems.Lorenz())`` and ``ts.analysis.poincare_section(Lorenz())``
 # used to answer with Python's raw binder error — *missing 1 required positional
 # argument: 'plane'* — which names the parameter and says nothing about what a
 # plane is, what shape it takes, or which one works for this system.  For one of
@@ -268,8 +274,8 @@ def test_poincare_map_without_a_plane_chooses_one() -> None:
 
 
 def test_poincare_section_without_a_plane_chooses_one() -> None:
-    """``ts.poincare_section(system)`` — the headline name — works with no plane."""
-    section = ts.poincare_section(_rossler(), crossings=30)
+    """``ts.analysis.poincare_section(system)`` — the headline name — works with no plane."""
+    section = ts.analysis.poincare_section(_rossler(), crossings=30)
     assert isinstance(section, PoincareSection)
     assert section.n_steps == 30
     assert section.meta["plane_auto"] is True
@@ -292,18 +298,18 @@ def test_auto_plane_offset_is_crossed_by_construction() -> None:
 
 def test_auto_choice_is_recorded_everywhere_it_is_read() -> None:
     """meta, the attribute and the summary all say the section was chosen."""
-    section = ts.poincare_section(_rossler(), crossings=20)
+    section = ts.analysis.poincare_section(_rossler(), crossings=20)
     assert section.meta["plane_auto"] is True
     assert "chosen automatically" in section.summary()
-    named = ts.poincare_section(_rossler(), plane=("y", 0.0), crossings=20)
+    named = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0), crossings=20)
     assert named.meta["plane_auto"] is False
     assert "chosen automatically" not in named.summary()
 
 
 def test_named_plane_is_unaffected_by_the_auto_path() -> None:
     """Passing a plane still bypasses the probe entirely (byte-identical section)."""
-    a = ts.poincare_section(_rossler(), plane=("y", 0.0, "up"), crossings=25)
-    b = ts.poincare_section(_rossler(), plane=(1, 0.0), crossings=25)
+    a = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0, "up"), crossings=25)
+    b = ts.analysis.poincare_section(_rossler(), plane=(1, 0.0), crossings=25)
     assert np.array_equal(a.y, b.y)
     assert a.meta["plane_auto"] is False
 
@@ -311,7 +317,7 @@ def test_named_plane_is_unaffected_by_the_auto_path() -> None:
 def test_auto_plane_from_data_uses_the_samples() -> None:
     """The data overload chooses from the trajectory itself — no probe run."""
     traj = _rossler().run(final_time=120.0, dt=0.01, transient=40.0)
-    section = ts.poincare_section(traj)
+    section = ts.analysis.poincare_section(traj)
     assert section.meta["plane_auto"] is True
     axis, offset = section.meta["plane"]
     assert traj.y[:, axis].min() < offset < traj.y[:, axis].max()

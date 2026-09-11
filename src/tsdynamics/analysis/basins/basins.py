@@ -3,7 +3,7 @@ Basins of attraction and basin fractions (basin stability).
 
 Two complementary views of "which attractor wins from where":
 
-- :func:`basins_of_attraction` paints a full grid — every lattice point is
+- :func:`basins` paints a full grid — every lattice point is
   classified, giving the basin *image* (the input to the basin-entropy,
   uncertainty-exponent and Wada quantifiers).
 - :func:`basin_fractions` draws random initial conditions from a region and
@@ -56,7 +56,7 @@ __all__ = [
     "BasinFractions",
     "BasinsResult",
     "basin_fractions",
-    "basins_of_attraction",
+    "basins",
 ]
 
 
@@ -121,7 +121,7 @@ class BasinsResult(AnalysisResult):
         an ``"equal"`` canvas, the grid axes giving the extent, plus a marker
         layer at the attractor representatives (for a 2-D image).  A **3-D slice**
         (a label cube with one degenerate ``counts == 1`` axis, as
-        :func:`basins_of_attraction` paints when imaging a slice of a
+        :func:`basins` paints when imaging a slice of a
         higher-dimensional flow) is squeezed to its two non-degenerate axes so it
         renders as a 2-D image; a genuinely 3-D label cube keeps all three axes
         on the spec.
@@ -411,7 +411,7 @@ class BasinFractions(AnalysisResult):
 # ---------------------------------------------------------------------------
 
 
-def basins_of_attraction(
+def basins(
     system: Any,
     region: Grid | Box | Ball | Sequence[tuple[float, ...]] | None = None,
     *,
@@ -452,7 +452,7 @@ def basins_of_attraction(
     recurrence_resolution : int or tuple of int, default 100
         Recurrence cells per axis when ``recurrence`` is a Box.
     seed : int, optional
-        Accepted for signature uniformity with :func:`find_attractors` /
+        Accepted for signature uniformity with :func:`attractors` /
         :func:`basin_fractions`; the full-grid scan is deterministic, so ``seed``
         does not change the labelling (it is recorded in provenance).
     dt : float, default 1.0
@@ -491,19 +491,19 @@ def basins_of_attraction(
     G. Datseris and A. Wagemakers, "Effortless estimation of basins of
     attraction", *Chaos* **32**, 023104 (2022).
     """
-    _reject_unsupported(system, "basins_of_attraction")
+    _reject_unsupported(system, "basins")
     region = coerce_region(
         region,
-        analysis="basins_of_attraction",
+        analysis="basins",
         system=system,
         want_grid=True,
     )
     if not isinstance(region, Grid):
         raise InvalidInputError(
-            f"basins_of_attraction paints one label per lattice point, so region must "
+            f"basins paints one label per lattice point, so region must "
             f"be a Grid (a {type(region).__name__} carries no resolution)."
             + remedy(
-                "ts.basins_of_attraction(system, "
+                "ts.analysis.basins(system, "
                 f"{_region_example(int(getattr(system, 'dim', 2) or 2), triples=True)})",
                 lead="Say how many initial conditions per axis:",
             )
@@ -515,7 +515,7 @@ def basins_of_attraction(
         cellgrid = _recurrence_grid(
             coerce_region(
                 recurrence,
-                analysis="basins_of_attraction",
+                analysis="basins",
                 system=system,
                 want_grid=False,
             ),
@@ -544,7 +544,7 @@ def basins_of_attraction(
         attractors=attractors,
         meta=AnalysisResult.build_meta(
             system,
-            analysis="basins_of_attraction",
+            analysis="basins",
             seed=seed,
             variables=getattr(system, "variables", None),
         ),

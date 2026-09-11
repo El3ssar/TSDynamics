@@ -36,11 +36,11 @@ eigenvalue has $\operatorname{Re}\lambda_i < 0$.
 ```python
 import tsdynamics as ts
 
-ts.fixed_points(ts.systems.Henon())
+ts.analysis.fixed_points(ts.systems.Henon())
 # [FixedPoint([-1.131354 -0.339406], unstable, |λ|max=3.2598),
 #  FixedPoint([0.631354 0.189406], unstable, |λ|max=1.9237)]
 
-ts.fixed_points(ts.systems.Lorenz())   # the origin and the two C± equilibria
+ts.analysis.fixed_points(ts.systems.Lorenz())   # the origin and the two C± equilibria
 # [FixedPoint([-8.485281 -8.485281 27.], unstable, Re(λ)max=+0.0940),
 #  FixedPoint([0. 0. 0.], unstable, Re(λ)max=+11.8277),   # the origin (±0 signs vary)
 #  FixedPoint([ 8.485281  8.485281 27.], unstable, Re(λ)max=+0.0940)]
@@ -96,7 +96,7 @@ explicit step $x_{k+1} = x_k + \lambda\,C\,g(x_k)$.
 
 ```python
 # at r = 4 both logistic fixed points {0, 0.75} are unstable; DL still reaches them
-ts.fixed_points(ts.systems.Logistic(params={"r": 4.0}),
+ts.analysis.fixed_points(ts.systems.Logistic(params={"r": 4.0}),
                 region=[(-0.2, 1.2)], method="dl")
 # [FixedPoint([-0.], unstable, |λ|max=4.0000),
 #  FixedPoint([ 0.75], unstable, |λ|max=2.0000)]
@@ -114,7 +114,7 @@ faster than multi-start on the analytic systems it applies to. It works for maps
 
 ```python
 # all 27 equilibria of the Thomas system, rigorously, in one box
-ts.fixed_points(ts.systems.Thomas(),
+ts.analysis.fixed_points(ts.systems.Thomas(),
                 region=[(-6, 6), (-6, 6), (-6, 6)], method="interval")
 # → 27 equilibria  (where a 200-seed Newton finds only 23)
 ```
@@ -137,10 +137,10 @@ contaminants — a period-2 orbit is also a fixed point of $f^4$), and merges th
 cyclic shifts of one orbit.
 
 ```python
-ts.periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2)
+ts.analysis.periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2)
 # [PeriodicOrbit(p=2, stable, |μ|max=0.1600, n=2)]
 
-ts.periodic_orbits(ts.systems.Logistic(params={"r": 3.83}), 3, seed=0)
+ts.analysis.periodic_orbits(ts.systems.Logistic(params={"r": 3.83}), 3, seed=0)
 # [PeriodicOrbit(p=3, unstable, |μ|max=1.6523, n=3),   # the saddle …
 #  PeriodicOrbit(p=3, stable,   |μ|max=0.3299, n=3)]   # … and the stable node
 ```
@@ -200,11 +200,11 @@ a multi-component array (the highest-variance channel by default) — by the fir
 autocorrelation peak (default) or the dominant spectral frequency:
 
 ```python
-traj = VanDerPol(params={"mu": 1.0}).integrate(final_time=300.0, dt=0.01, ic=[2.0, 0.0])
-ts.estimate_period(traj)                  # ≈ 6.66
+traj = VanDerPol(params={"mu": 1.0}).run(final_time=300.0, dt=0.01, ic=[2.0, 0.0])
+ts.analysis.estimate_period(traj)                  # ≈ 6.66
 
 signal = traj["x"]                        # or any bare 1-D series of your own
-ts.estimate_period(signal, dt=0.01, method="fft")
+ts.analysis.estimate_period(signal, dt=0.01, method="fft")
 ```
 
 Both estimators refine the peak parabolically to sub-sample resolution, so a
@@ -214,10 +214,10 @@ coarse grid still gives an accurate period. The result is a `ScalarResult` —
 ## The result records
 
 ```python
-fp = ts.fixed_points(ts.systems.Henon())[0]
+fp = ts.analysis.fixed_points(ts.systems.Henon())[0]
 fp.x, fp.eigenvalues, fp.stable, fp.continuous
 
-orb = ts.periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2)[0]
+orb = ts.analysis.periodic_orbits(ts.systems.Logistic(params={"r": 3.2}), 2)[0]
 orb.points        # the orbit, shape (n_points, dim)
 orb.period        # int p (maps) or float T (flows)
 orb.multipliers   # eig(Df^p) (maps) or Floquet multipliers (flows)

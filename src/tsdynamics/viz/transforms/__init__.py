@@ -69,7 +69,16 @@ from .._frames import FrameSpace
 # Imported for its **registration side effect**: importing ``_data`` is what puts
 # the in-tree transforms into ``registry.plot_transforms``.  (It pulls in
 # ``._registry`` and ``._base`` itself, so the order below is irrelevant.)
-from . import _data, fields, hilbert, planar, series, spectra, stability  # noqa: F401
+from . import (  # noqa: F401
+    _data,
+    fields,
+    hilbert,
+    planar,
+    results,
+    series,
+    spectra,
+    stability,
+)
 from ._base import (
     Channel as Channel,
 )
@@ -91,7 +100,7 @@ from ._primitives import (
 from ._primitives import (
     RESERVED_PRIMITIVES as RESERVED_PRIMITIVES,
 )
-from ._primitives import get_primitive, primitive_names
+from ._primitives import get_primitive, primitive_names, register_primitive
 from ._registry import (
     ADMITTED_SERIES_DIAGNOSTICS as ADMITTED_SERIES_DIAGNOSTICS,
 )
@@ -99,13 +108,18 @@ from ._registry import (
     EXCLUDED_SERIES_TOOLBOX as EXCLUDED_SERIES_TOOLBOX,
 )
 from ._registry import (
+    PART_KEYS as PART_KEYS,
+)
+from ._registry import (
     T,
     compatibility,
     draw,
+    find,
     geometry,
     get,
     names,
     plot_transform,
+    register,
     transforms,
 )
 from ._registry import (
@@ -117,8 +131,20 @@ from ._registry import (
 from ._registry import (
     lower as lower,
 )
+from ._registry import (
+    part_from_mapping as part_from_mapping,
+)
+from ._registry import (
+    record_for as record_for,
+)
 
 __all__ = [
+    # The four shared registry verbs (`register` / `names` / `find` / `get`),
+    # so `ts.viz.transforms` answers exactly like primitives / renderers / themes.
+    "register",
+    "names",
+    "find",
+    "get",
     # The front door and its option carrier.
     "plot",
     "T",
@@ -135,10 +161,9 @@ __all__ = [
     "Presentation",
     "primitive_names",
     "get_primitive",
+    "register_primitive",
     # Introspecting the registry.
     "transforms",
-    "names",
-    "get",
     "compatibility",
     # Raw-array escape hatches.
     "geometry",

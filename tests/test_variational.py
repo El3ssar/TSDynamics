@@ -115,13 +115,13 @@ def test_backend_neutral_deviations_orthonormal() -> None:
 
 def test_unknown_backend_rejected() -> None:
     with pytest.raises(ValueError, match="unknown ODE tangent backend"):
-        TangentSystem(ts.Lorenz(), backend="bogus")
+        TangentSystem(ts.systems.Lorenz(), backend="bogus")
 
 
 def test_jitcode_backend_is_rejected() -> None:
     """The retired ``jitcode`` variational backend is no longer a valid choice."""
     with pytest.raises(ValueError, match="unknown ODE tangent backend"):
-        TangentSystem(ts.Lorenz(), k=3, backend="jitcode")
+        TangentSystem(ts.systems.Lorenz(), k=3, backend="jitcode")
 
 
 # ---------------------------------------------------------------------------
@@ -131,20 +131,20 @@ def test_jitcode_backend_is_rejected() -> None:
 
 def test_map_family_delegates_to_tangent() -> None:
     """Family map ``lyapunov_spectrum`` is exactly ``TangentSystem.lyapunov_spectrum``."""
-    via_family = ts.Henon().lyapunov_spectrum(n=4000, ic=[0.1, 0.1])
-    via_tangent = TangentSystem(ts.Henon(), k=2).lyapunov_spectrum(n=4000, ic=[0.1, 0.1])
+    via_family = ts.systems.Henon().lyapunov_spectrum(n=4000, ic=[0.1, 0.1])
+    via_tangent = TangentSystem(ts.systems.Henon(), k=2).lyapunov_spectrum(n=4000, ic=[0.1, 0.1])
     np.testing.assert_array_equal(via_family, via_tangent)
 
 
 def test_map_partial_spectrum_via_k() -> None:
     """``k`` is the canonical name (v4 glossary); ``n_exp`` was silently swallowed."""
-    spec = ts.Henon().lyapunov_spectrum(n=4000, ic=[0.1, 0.1], k=1)
+    spec = ts.systems.Henon().lyapunov_spectrum(n=4000, ic=[0.1, 0.1], k=1)
     assert spec.shape == (1,)
     assert 0.3 < spec[0] < 0.5  # leading Hénon exponent ≈ 0.42
 
 
 def test_tangent_lyapunov_records_meta() -> None:
-    m = ts.Henon()
+    m = ts.systems.Henon()
     tang = TangentSystem(m, k=2)
     tang.lyapunov_spectrum(n=2000, ic=[0.1, 0.1])
     # meta is the inner system's MetaStore.
@@ -257,7 +257,7 @@ def test_structural_change_rebuilds_extended_tape(monkeypatch) -> None:
 def test_oregonator_stiff_lyapunov_finite_descending() -> None:
     """The genuinely-stiff Oregonator Lyapunov spectrum is finite and descending.
 
-    End-to-end guard for the named P0 system: ``ts.Oregonator()`` defaults to the
+    End-to-end guard for the named P0 system: ``ts.systems.Oregonator()`` defaults to the
     implicit ``bdf`` kernel, so ``lyapunov_spectrum`` drives the extended
     variational ODE onto that kernel.  Before the fix this *raised* (no Jacobian
     tape); it must now return a finite, descending spectrum.  ``final_time`` is
@@ -295,7 +295,7 @@ def test_oregonator_stiff_lyapunov_finite_descending() -> None:
     its own piece of work.
     """
     pytest.importorskip("tsdynamics._rust")
-    spec = ts.Oregonator().lyapunov_spectrum(
+    spec = ts.systems.Oregonator().lyapunov_spectrum(
         final_time=6.0, dt=0.01, transient=2.0, ic=[1.0, 1.0, 1.0], rtol=1e-6, atol=1e-9
     )
     assert spec.shape == (3,)
@@ -311,7 +311,9 @@ def test_ode_family_delegates_to_tangent_engine() -> None:
     variational path; ``final_time`` is long enough that the finite-time estimate
     has converged to the canonical Lorenz spectrum ``[0.906, 0, -14.57]``.
     """
-    spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(final_time=240.0, dt=0.1, transient=40.0)
+    spec = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(
+        final_time=240.0, dt=0.1, transient=40.0
+    )
     # Leading exponent ≈ 0.906, middle ≈ 0, third ≈ -14.57 (Lorenz 1963 / Sprott).
     assert abs(spec[0] - 0.906) < 0.06
     assert abs(spec[1]) < 0.06
@@ -321,9 +323,9 @@ def test_ode_family_delegates_to_tangent_engine() -> None:
 @pytest.mark.slow
 def test_backend_neutral_lorenz_spectrum_reference() -> None:
     """The engine variational path reproduces the Lorenz spectrum on the reference backend."""
-    ref = TangentSystem(ts.Lorenz(ic=[1.0, 1.0, 1.0]), k=3, backend="reference").lyapunov_spectrum(
-        final_time=120.0, dt=0.1, transient=40.0
-    )
+    ref = TangentSystem(
+        ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), k=3, backend="reference"
+    ).lyapunov_spectrum(final_time=120.0, dt=0.1, transient=40.0)
     assert abs(ref[0] - 0.906) < 0.1
     assert abs(ref[1]) < 0.1
     assert abs(ref[2] + 14.57) < 1.0
@@ -414,7 +416,7 @@ def test_variational_tape_cache_monkeypatched_kernel_is_a_miss(monkeypatch) -> N
 def test_variational_cached_tape_equals_a_fresh_build() -> None:
     """The memoised tape is field-for-field the tape ``build_variational_tape`` makes."""
     clear_tape_cache()
-    for sysm, k in ((LinOsc(), 2), (ts.Lorenz(), 3), (ts.Rossler(), 2)):
+    for sysm, k in ((LinOsc(), 2), (ts.systems.Lorenz(), 3), (ts.systems.Rossler(), 2)):
         fresh = build_variational_tape(sysm, k)
         cached = build_variational_tape_cached(sysm, k)
         assert _tape_fields_equal(fresh, cached), type(sysm).__name__
@@ -426,11 +428,11 @@ def test_variational_spectrum_is_identical_with_the_cache_disabled(monkeypatch) 
     kw = dict(final_time=40.0, dt=0.1, transient=10.0, ic=[1.0, 1.0, 1.0])
 
     clear_tape_cache()
-    cached = ts.Lorenz().lyapunov_spectrum(**kw)
+    cached = ts.systems.Lorenz().lyapunov_spectrum(**kw)
 
     monkeypatch.setenv("TSDYNAMICS_NO_TAPE_CACHE", "1")
     clear_tape_cache()
-    uncached = ts.Lorenz().lyapunov_spectrum(**kw)
+    uncached = ts.systems.Lorenz().lyapunov_spectrum(**kw)
 
     assert np.array_equal(cached, uncached)
 
@@ -440,8 +442,8 @@ def test_cached_variational_path_keeps_interp_equals_jit() -> None:
     pytest.importorskip("tsdynamics._rust")
     clear_tape_cache()
     kw = dict(final_time=40.0, dt=0.1, transient=10.0, ic=[1.0, 1.0, 1.0])
-    jit = ts.Lorenz().lyapunov_spectrum(backend="jit", **kw)
-    interp = ts.Lorenz().lyapunov_spectrum(backend="interp", **kw)
+    jit = ts.systems.Lorenz().lyapunov_spectrum(backend="jit", **kw)
+    interp = ts.systems.Lorenz().lyapunov_spectrum(backend="interp", **kw)
     assert np.array_equal(jit, interp)
 
 
@@ -467,9 +469,9 @@ def test_repeat_ode_lyapunov_reuses_one_variational_tape() -> None:
     original = var_mod.build_variational_tape
     var_mod.build_variational_tape = counting
     try:
-        ts.Lorenz().lyapunov_spectrum(**kw)
-        ts.Lorenz().lyapunov_spectrum(**kw)
-        ts.Lorenz().with_params(rho=29.0).lyapunov_spectrum(**kw)
+        ts.systems.Lorenz().lyapunov_spectrum(**kw)
+        ts.systems.Lorenz().lyapunov_spectrum(**kw)
+        ts.systems.Lorenz().with_params(rho=29.0).lyapunov_spectrum(**kw)
     finally:
         var_mod.build_variational_tape = original
     assert calls["n"] == 1, f"expected one variational lowering, got {calls['n']}"
@@ -481,7 +483,7 @@ def test_the_old_n_exp_spelling_raises_instead_of_being_swallowed() -> None:
     The v4 glossary renamed the parameter ``n_exp`` -> ``k``, but the family
     methods kept the old name, so ``k=`` fell into ``**integrator_kwargs`` and was
     dropped.  When the free function was later fixed to take ``k``, the two doors
-    disagreed: ``ts.lyapunov_spectrum(sys, k=1)`` gave one exponent and
+    disagreed: ``ts.analysis.lyapunov_spectrum(sys, k=1)`` gave one exponent and
     ``sys.lyapunov_spectrum(k=1)`` gave ``dim`` of them, with no error either way.
     A wrong count returned confidently is worse than a failure, so the old
     spelling now raises and names the replacement.
@@ -490,7 +492,7 @@ def test_the_old_n_exp_spelling_raises_instead_of_being_swallowed() -> None:
 
     lz = ts.systems.Lorenz()
     assert len(lz.lyapunov_spectrum(final_time=20.0, k=1)) == 1
-    assert len(ts.lyapunov_spectrum(lz, final_time=20.0, k=1)) == 1
+    assert len(ts.analysis.lyapunov_spectrum(lz, final_time=20.0, k=1)) == 1
 
     with pytest.raises(ts.errors.InvalidParameterError, match="did you mean k="):
         lz.lyapunov_spectrum(final_time=20.0, **{"n_exp": 1})  # the OLD spelling, on purpose

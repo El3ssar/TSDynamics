@@ -92,10 +92,10 @@ accessors*, so the toolkit is navigable from the object you already hold:
 ```python
 lor = ts.systems.Lorenz()
 
-lor.lyap.spectrum(final_time=20.0)              # → ts.lyapunov_spectrum(lor, ...)
-lor.chaos.gali(k=2, final_time=20.0)            # → ts.gali(lor, k=2, ...)
+lor.lyap.spectrum(final_time=20.0)              # → ts.analysis.lyapunov_spectrum(lor, ...)
+lor.chaos.gali(k=2, final_time=20.0)            # → ts.analysis.gali(lor, k=2, ...)
 lor.dims.correlation(                           # → runs the system, then
-    run_kwargs={"final_time": 40.0, "dt": 0.05},  # ts.correlation_dimension
+    run_kwargs={"final_time": 40.0, "dt": 0.05},  # ts.analysis.correlation_dimension
 )
 lor.recurrence.rqa(                             # → ...likewise
     recurrence_rate=0.05, run_kwargs={"final_time": 10.0, "dt": 0.05}
@@ -131,9 +131,9 @@ No library type is ever required:
 ```python
 vdp, henon = ts.systems.VanDerPol(), ts.systems.Henon()
 
-ts.fixed_points(vdp, region=[(-3, 3), (-3, 3)])
+ts.analysis.fixed_points(vdp, region=[(-3, 3), (-3, 3)])
 ts.basins_of_attraction(henon, [(-2, 2, 20), (-2, 2, 20)], max_steps=500)
-ts.expansion_entropy(henon, [(-1.6, 1.6), (-0.5, 0.5)], n_samples=100, n=8)
+ts.analysis.expansion_entropy(henon, [(-1.6, 1.6), (-0.5, 0.5)], n_samples=100, n=8)
 ```
 
 A `ts.data.Box` / `Ball` / `Grid` is still accepted at every one of those doors.
@@ -145,7 +145,7 @@ Built-in system classes live under [`tsdynamics.systems`](../systems/index.md) �
 the canonical path is `tsdynamics.systems.Lorenz` (flat, no need to remember
 whether a model is `continuous` or `discrete`). They are kept out of the
 top-level namespace so it stays focused on what you type. For backwards
-compatibility `tsdynamics.Lorenz` (and `from tsdynamics import Lorenz`) still
+compatibility `tsdynamics.systems.Lorenz` (and `from tsdynamics import Lorenz`) still
 resolve lazily. The classes are documented on their generated pages under
 [Systems](../systems/index.md), and discoverable programmatically through the
 [registry](registry.md).
@@ -154,7 +154,7 @@ resolve lazily. The classes are documented on their generated pages under
 
 | Was | Now | Why |
 | --- | --- | --- |
-| `ts.basins(...)` | `ts.basins_of_attraction(...)` | the short alias was a *function* while `ts.analysis.basins` is the *subpackage* — one word, two objects, one dot apart |
+| `ts.analysis.basins(...)` | `ts.basins_of_attraction(...)` | the short alias was a *function* while `ts.analysis.basins` is the *subpackage* — one word, two objects, one dot apart |
 
-`ts.basins` answers with an `AttributeError` naming the surviving spelling, not
+`ts.analysis.basins` answers with an `AttributeError` naming the surviving spelling, not
 a bare "no attribute".

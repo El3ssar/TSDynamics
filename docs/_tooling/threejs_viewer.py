@@ -390,12 +390,12 @@ def _ode_cloud(entry, *, second: bool) -> np.ndarray | None:
         if ic is None or attempt > 0:
             ic = sys_obj.resolve_ic(rng.uniform(0.0, 1.0, sys_obj.dim))
         try:
-            traj = sys_obj.integrate(
+            traj = sys_obj.run(
                 final_time=final_time,
                 dt=fine_dt,
                 ic=np.asarray(ic, dtype=float),
                 backend="interp",
-                method=method,
+                solver=method,
             )
         except (RuntimeError, ValueError):  # divergence / off-basin start
             ic = None
@@ -479,7 +479,7 @@ def _dde_delay_embedding(entry) -> np.ndarray | None:
         return [0.8 + 0.2 * np.sin(0.2 * s)] * sys_obj.dim
 
     try:
-        traj = sys_obj.integrate(final_time=final_time, dt=fine_dt, history=history)
+        traj = sys_obj.run(final_time=final_time, dt=fine_dt, history=history)
     except (RuntimeError, ValueError):
         return None
     x = np.asarray(traj.y[:, 0], dtype=float)

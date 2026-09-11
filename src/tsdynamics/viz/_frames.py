@@ -54,6 +54,7 @@ __all__ = [
     "force_requested",
     "frame_of",
     "role_of",
+    "space_arity",
 ]
 
 #: The accepted values of the ``on=`` frame-check escape.
@@ -118,6 +119,17 @@ class FrameSpace(StrEnum):
         ``q``, a generic diagnostic curve).
     CATEGORY
         A categorical axis (basin fractions, RQA measure bars).
+    FREE
+        **"I did not say what space this is."**  The space of hand-built arrays —
+        what :func:`tsdynamics.viz.draw` stamps on a geometry a user assembled
+        from a plain ``{"x": …, "y": …}`` mapping.  A ``FREE`` frame overlays
+        with **anything** (:meth:`Frame.compatible_with`): the caller explicitly
+        opted out of the frame system, so there is no coordinate claim to
+        violate, and refusing would punish precisely the person who used the
+        escape hatch.  It contributes no axis names to the merge and inherits
+        the host's.
+
+        .. versionadded:: 6.0
     """
 
     TIME = "time"
@@ -130,10 +142,44 @@ class FrameSpace(StrEnum):
     COMPLEX = "complex"
     SCALING = "scaling"
     CATEGORY = "category"
+    FREE = "free"
 
 
 #: The frozen membership of :class:`FrameSpace` (the governance gate reads this).
 FRAME_SPACES: frozenset[FrameSpace] = frozenset(FrameSpace)
+
+#: How many **coordinate** axes each space has — the arity a transform no longer
+#: has to declare.
+#:
+#: Measured over the 35 in-tree transforms at the v6 barrier, **33 declared an
+#: ``ndim`` exactly equal to this table's value** for their frame (including the
+#: shape-dependent ``phase_portrait``, whose ``(2, 3)`` is just the arity of its
+#: two declared spaces).  A declaration that must agree with another declaration
+#: is not a declaration, so ``ndim=`` became derived: see
+#: :func:`tsdynamics.viz.transforms.register`.
+_SPACE_ARITY: dict[FrameSpace, int] = {
+    FrameSpace.TIME: 1,
+    FrameSpace.STATE2: 2,
+    FrameSpace.STATE3: 3,
+    FrameSpace.PARAM1: 1,
+    FrameSpace.PARAM2: 2,
+    FrameSpace.INDEX: 1,
+    FrameSpace.GRID2: 2,
+    FrameSpace.COMPLEX: 2,
+    FrameSpace.SCALING: 1,
+    FrameSpace.CATEGORY: 1,
+    FrameSpace.FREE: 2,
+}
+
+
+def space_arity(space: FrameSpace | str) -> int:
+    """Return how many coordinate axes ``space`` has.
+
+    The single source of the axis count, so a transform declares *where* it
+    draws and never *how many axes that is*.
+    """
+    return _SPACE_ARITY[FrameSpace(space)]
+
 
 #: The axis name that means *"this producer did not say which coordinate it
 #: draws"*.  It is compatible with every name in the same position — the frame
@@ -279,12 +325,24 @@ class Frame:
                 "construction — a frame that names no axes would overlay onto anything."
             )
 
+    @property
+    def is_free(self) -> bool:
+        """Whether this frame declines to say what space it is (:data:`FrameSpace.FREE`)."""
+        return self.space is FrameSpace.FREE
+
     def compatible_with(self, other: Frame) -> bool:
         """Whether ``self`` and ``other`` may share one set of axes.
 
         Requires the same ``space`` and ``ndim``, and per-axis names that do not
-        contradict each other (:func:`_axes_compatible`).
+        contradict each other (:func:`_axes_compatible`) — **unless** one side is
+        :data:`FrameSpace.FREE`, which is compatible with everything.  A ``free``
+        frame is what :func:`tsdynamics.viz.draw` stamps on hand-built arrays:
+        its author opted out of the frame system, so there is no coordinate claim
+        to contradict, and *"add my curve to your plot"* is the single most common
+        thing anyone does in matplotlib.
         """
+        if self.is_free or other.is_free:
+            return True
         return (
             self.space is other.space
             and self.ndim == other.ndim
@@ -296,8 +354,14 @@ class Frame:
 
         Axis-wise by :func:`_axis_rank` — a coordinate name beats an ordinal
         beats nothing — so overlaying a producer that names its coordinates onto
-        one that does not keeps the names for the merged figure.
+        one that does not keeps the names for the merged figure.  A ``free``
+        frame contributes nothing and inherits the other side wholesale (two
+        ``free`` frames stay free).
         """
+        if self.is_free:
+            return other
+        if other.is_free:
+            return self
         axes = tuple(
             a if _axis_rank(a) >= _axis_rank(b) else b
             for a, b in zip(self.axes, other.axes, strict=True)
@@ -534,16 +598,37 @@ def check_overlay(specs: Sequence[PlotSpec], *, force: bool = False) -> Frame:
 
 
 def _mismatch_message(base_spec: PlotSpec, base: Frame, other_spec: PlotSpec, other: Frame) -> str:
-    """Build the frame-mismatch error text (a different space vs. different axes)."""
-    if base.space is not other.space or base.ndim != other.ndim:
+    """Build the frame-mismatch error text, naming **the part that differs**.
+
+    A refusal has one job beyond refusing: say what to change.  Before v6 the
+    space branch printed only ``space.value``, so a 2-D lattice refusing a 1-D
+    profile read ``cannot overlay frame 'grid2' on frame 'grid2'`` — the same
+    words on both sides of a "these differ" sentence.  Each branch now reports
+    the differing component (space, axis count, or the offending axis position)
+    and ends with the next move.
+    """
+    tail = (
+        " Use layout='stack' / 'row' / 'grid' to give each its own panel, "
+        "or on='force' to overlay them anyway."
+    )
+    if base.space is not other.space:
         return (
-            f"cannot overlay frame {other.space.value!r} ({other_spec.kind}) on frame "
-            f"{base.space.value!r} ({base_spec.kind}): they are drawings of different "
-            "spaces. Use layout='stack' / 'row' / 'grid' to give each its own panel, "
-            "or on='force' to overlay them anyway."
-        )
+            f"cannot overlay {other_spec.kind} on {base_spec.kind}: they are drawings of "
+            f"different spaces — {other.describe()} vs {base.describe()}."
+        ) + tail
+    if base.ndim != other.ndim:
+        return (
+            f"cannot overlay {other_spec.kind} on {base_spec.kind}: both draw in "
+            f"{base.space.value!r} but with a different number of coordinate axes — "
+            f"{other.describe()} has {other.ndim}, {base.describe()} has {base.ndim}."
+        ) + tail
+    differing = [
+        f"axis {i + 1}: {b or '?'} vs {a or '?'}"
+        for i, (a, b) in enumerate(zip(base.axes, other.axes, strict=True))
+        if not _axes_compatible(a, b)
+    ]
     return (
-        f"axes mismatch {base.describe()} vs {other.describe()} — the two are different "
-        f"planes, so the {other_spec.kind} would land in the wrong place. Pass the same "
-        "components= to both, or on='force' to overlay them anyway."
+        f"axes mismatch {base.describe()} vs {other.describe()} ({'; '.join(differing)}) — "
+        f"the two are different planes, so the {other_spec.kind} would land in the wrong "
+        "place. Pass the same components= to both, or on='force' to overlay them anyway."
     )

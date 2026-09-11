@@ -7,7 +7,7 @@ thin adapters over :mod:`tsdynamics.analysis.planar`:
 transform              default     what it draws
 =====================  ==========  ==================================================
 ``nullclines``         ``line``    the curves :math:`f_i = 0`
-``direction_field``    ``quiver``  unit arrows (``normalize=False`` for true lengths)
+``vector_field``       ``quiver``  unit arrows (``normalize=False`` for true lengths)
 ``flow_speed``         ``image``   :math:`\|f\|` as a backdrop under the arrows
 ``streamlines``        ``line``    integral curves of the sliced field
 ``trace_determinant``  ``points``  the equilibria on the :math:`(\tau, \Delta)` plane
@@ -17,7 +17,7 @@ The payoff is that they **compose**.  Frame identity means a direction field, it
 nullclines, its equilibria and an orbit are four drawings of one ``state2(x, y)``
 plane, so::
 
-    ts.plot(VanDerPol(), "direction_field", "nullclines", "streamlines")
+    ts.plot(VanDerPol(), "vector_field", "nullclines", "streamlines")
 
 is one set of axes, in role order (field under curves under markers), and the
 nullclines pass through the equilibria — which is a correctness check on both at
@@ -35,7 +35,7 @@ from typing import Any
 
 import numpy as np
 
-from tsdynamics.analysis import planar as _planar
+import tsdynamics.analysis.planar as _planar
 
 from .._frames import FrameSpace, OverlayRole
 from ..spec import PlotKind
@@ -43,11 +43,11 @@ from ._base import Geometry, Part, Presentation, make_frame
 from ._registry import plot_transform
 
 __all__ = [
-    "direction_field",
     "flow_speed",
     "nullclines",
     "streamlines",
     "trace_determinant",
+    "vector_field",
 ]
 
 
@@ -202,7 +202,7 @@ def nullclines(
         )
     return Geometry(
         "nullclines",
-        make_frame(FrameSpace.STATE2, 2, labels),
+        make_frame(FrameSpace.STATE2, labels),
         parts,
         axis_labels=labels,
         axis_limits=(window_x, window_y),
@@ -212,16 +212,46 @@ def nullclines(
 
 
 # ---------------------------------------------------------------------------
-# direction_field
+# vector_field (direction_field is its alias)
 # ---------------------------------------------------------------------------
 
 
+def _field_of_callable(
+    rhs: Any,
+    xlim: tuple[float, float] | None,
+    ylim: tuple[float, float] | None,
+    grid: int | tuple[int, int],
+    normalize: bool,
+    labels: tuple[str, str] | None,
+) -> Geometry:
+    """Sample a bare ``rhs([x, y]) -> [u, v]`` on a lattice (the no-System path)."""
+    from tsdynamics.errors import InvalidParameterError
+
+    from ._data import _quiver_channels
+
+    if xlim is None or ylim is None:
+        raise InvalidParameterError(
+            "a bare right-hand side carries no state space, so vector_field cannot infer "
+            "the window: pass xlim=(lo, hi) and ylim=(lo, hi). (Handed the *system* it "
+            "infers them, like flow_speed does.)"
+        )
+    names = labels or ("x", "y")
+    n = int(grid[0]) if isinstance(grid, tuple) else int(grid)
+    return Geometry(
+        "vector_field",
+        make_frame(FrameSpace.STATE2, names),
+        channels=_quiver_channels(rhs, xlim, ylim, n, normalize),
+        axis_labels=names,
+        axis_limits=(xlim, ylim),
+    )
+
+
 @plot_transform(
-    name="direction_field",
+    name="vector_field",
+    aliases=("direction_field",),
     source="model",
     kind=PlotKind.VECTOR_FIELD,
     frame=FrameSpace.STATE2,
-    ndim=2,
     role=OverlayRole.FIELD,
     default_primitive="quiver",
     primitives=("quiver",),
@@ -230,7 +260,7 @@ def nullclines(
     example=lambda primitive: (_demo_flow(), {**_DEMO_WINDOW, "grid": 7}),
     doc="The right-hand side as arrows on a lattice; unit-length by default.",
 )
-def direction_field(
+def vector_field(
     system: Any,
     *,
     plane: Sequence[int | str] = (0, 1),
@@ -240,6 +270,7 @@ def direction_field(
     grid: int | tuple[int, int] = 21,
     normalize: bool = True,
     color_by: str | None = None,
+    labels: tuple[str, str] | None = None,
 ) -> Geometry:
     """Draw the vector field of a 2-D slice as arrows.
 
@@ -251,8 +282,11 @@ def direction_field(
     ``normalize=False`` draws the arrows at their true lengths — the *vector
     field* proper, which shows where the flow is fast.
 
-    Unlike the pre-registry ``vector_field`` producer, this takes the **system**,
-    so it can slice a flow of any dimension: ``plane=("x", "z")`` with ``at=``
+    It takes the **system** — which is the repair that made the guessable name
+    the working one (``ts.plot(vdp, "vector_field")`` used to answer ``TypeError:
+    vector_field() missing 2 required keyword-only arguments: 'xlim' and
+    'ylim'``, while its sibling ``flow_speed`` inferred them) — so it can slice a
+    flow of any dimension: ``plane=("x", "z")`` with ``at=``
     fixes the off-plane coordinates and samples the field on that plane.
 
     Parameters
@@ -281,7 +315,15 @@ def direction_field(
     trajectories leave the plane.  The frozen state is recorded in ``spec.meta``.
     """
     from tsdynamics.errors import InvalidParameterError
+    from tsdynamics.families import SystemBase
 
+    if not isinstance(system, SystemBase) and callable(system):
+        # The field itself, handed in as a bare ``rhs([x, y]) -> [u, v]``.  One
+        # name, two subject shapes — and they are the same mathematical object,
+        # so this is not a second spelling of one concept: a caller who has the
+        # right-hand side but no System should not be turned away from the
+        # transform that draws right-hand sides.
+        return _field_of_callable(system, xlim, ylim, grid, normalize, labels)
     field = _planar.flow_field(system, plane=plane, at=at, xlim=xlim, ylim=ylim, grid=grid)
     u, v = field.u, field.v
     if normalize:
@@ -304,8 +346,8 @@ def direction_field(
         channels["c"] = field.speed.ravel()
         color_label = "|f|"
     return Geometry(
-        "direction_field",
-        make_frame(FrameSpace.STATE2, 2, field.labels),
+        "vector_field",
+        make_frame(FrameSpace.STATE2, field.labels),
         channels=channels,
         axis_labels=field.labels,
         axis_limits=(field.meta["xlim"], field.meta["ylim"]),
@@ -377,7 +419,7 @@ def flow_speed(
         label = "log10 |f|"
     return Geometry(
         "flow_speed",
-        make_frame(FrameSpace.STATE2, 2, field.labels),
+        make_frame(FrameSpace.STATE2, field.labels),
         channels={
             "x": field.xs,
             "y": field.ys,
@@ -481,7 +523,7 @@ def streamlines(
         )
     return Geometry(
         "streamlines",
-        make_frame(FrameSpace.STATE2, 2, labels),
+        make_frame(FrameSpace.STATE2, labels),
         channels={"x": x, "y": y},
         label="streamlines",
         axis_labels=labels,
@@ -620,7 +662,7 @@ def trace_determinant(
 
     return Geometry(
         "trace_determinant",
-        make_frame(FrameSpace.PARAM2, 2, ("tr J", "det J")),
+        make_frame(FrameSpace.PARAM2, ("tr J", "det J")),
         parts,
         axis_labels=("tr J", "det J"),
         axis_limits=(result.trace_range, (det_lo - 0.05 * span, det_hi + 0.05 * span)),

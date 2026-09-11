@@ -19,7 +19,7 @@ from tsdynamics.errors import ConvergenceError, InvalidParameterError
 @pytest.fixture(scope="module")
 def henon_x() -> np.ndarray:
     """A long, transient-free Hénon ``x`` series."""
-    return ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1]).y[:, 0]
+    return ts.systems.Henon().run(6000, transient=500, ic=[0.1, 0.1]).y[:, 0]
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ class TestHenon:
         assert 0 <= lo < hi <= 12
 
     def test_multivariate_input(self, henon_x: np.ndarray) -> None:
-        traj = ts.Henon().trajectory(6000, transient=500, ic=[0.1, 0.1])
+        traj = ts.systems.Henon().run(6000, transient=500, ic=[0.1, 0.1])
         res = lyapunov_from_data(
             traj.y, dimension=2, delay=1, theiler=2, k_max=12, method="kantz", fit=(0, 6)
         )
@@ -99,7 +99,7 @@ class TestResult:
         np.testing.assert_allclose(res.times, np.arange(16.0))  # dt = 1
         assert res.fit_region == (0, 7)
         assert float(res) == res.lyapunov
-        assert "lyapunov" in repr(res)
+        assert "λ_max" in repr(res) and "kantz" in repr(res)
 
     def test_dt_scales_exponent(self, henon_x: np.ndarray) -> None:
         # Per-time exponent halves when each sample spans twice the time.
@@ -183,8 +183,8 @@ class TestValidation:
 @pytest.mark.slow
 @pytest.mark.parametrize("method", ["kantz", "rosenstein"])
 def test_lorenz_from_x_series(method: str) -> None:
-    lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
-    traj = lor.integrate(final_time=300.0, dt=0.05, ic=[1.0, 1.0, 1.0])
+    lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+    traj = lor.run(final_time=300.0, dt=0.05, ic=[1.0, 1.0, 1.0])
     xs = traj.y[1000:, 0]  # drop the initial transient
     # Fit the settled linear scaling region (t ≈ 0.8–1.9), past the early
     # overshoot and before saturation.
@@ -273,7 +273,7 @@ class TestDefaultsRecoverTheExponent:
     """
 
     def test_logistic_r4_is_ln_two(self) -> None:
-        x = ts.systems.Logistic(params={"r": 4.0}).iterate(steps=20_000, ic=[0.1]).y[2000:, 0]
+        x = ts.systems.Logistic(params={"r": 4.0}).run(steps=20_000, ic=[0.1]).y[2000:, 0]
         res = lyapunov_from_data(x)
         assert res.trusted
         assert float(res) == pytest.approx(np.log(2.0), abs=0.05)
@@ -287,7 +287,7 @@ class TestDefaultsRecoverTheExponent:
     def test_lorenz_oversampled_flow(self) -> None:
         """The reproducer: Lorenz x(t) at dt = 0.02 used to return 11.34 (12.5x high)."""
         lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
-        x = lor.integrate(final_time=250.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(50.0).y[:, 0]
+        x = lor.run(final_time=250.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(50.0).y[:, 0]
         res = lyapunov_from_data(x, dt=0.02)
         assert res.trusted
         assert res.delay > 1, "the delay must be read from the data, not fixed at 1"
@@ -296,7 +296,7 @@ class TestDefaultsRecoverTheExponent:
     @pytest.mark.slow
     def test_rossler_flow(self) -> None:
         ros = ts.systems.Rossler(ic=[1.0, 1.0, 1.0])
-        x = ros.integrate(final_time=3000.0, dt=0.1, ic=[1.0, 1.0, 1.0]).after(200.0).y[:, 0]
+        x = ros.run(final_time=3000.0, dt=0.1, ic=[1.0, 1.0, 1.0]).after(200.0).y[:, 0]
         res = lyapunov_from_data(x, dt=0.1)
         assert res.trusted
         assert float(res) == pytest.approx(0.0714, rel=0.25)
@@ -314,7 +314,7 @@ class TestRefusesToGuess:
         from tsdynamics.analysis.lyapunov.from_data import ScalingRegionWarning
 
         lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
-        x = lor.integrate(final_time=250.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(50.0).y[:, 0]
+        x = lor.run(final_time=250.0, dt=0.02, ic=[1.0, 1.0, 1.0]).after(50.0).y[:, 0]
         with pytest.warns(ScalingRegionWarning, match="near-collinear"):
             res = lyapunov_from_data(x, dt=0.02, dimension=3, delay=1, k_max=20)
         assert not res.trusted
@@ -436,13 +436,22 @@ class TestSamplingIntervalIsReadFromTheData:
         # ...and the per-time answer is in the right neighbourhood of the truth.
         assert 0.4 < float(per_time) < 1.6
 
-    def test_the_accessor_agrees_with_the_free_function(self) -> None:
+    def test_a_decimated_trajectory_reads_its_own_axis_not_the_recorded_dt(self) -> None:
+        """The v6 fix.  ``meta["dt"]`` records what the RUN asked for and slicing
+        carries it verbatim, so ``tr[::5]`` reported the undecimated step and the
+        exponent came back off by exactly the decimation factor — silently."""
         import tsdynamics as ts
 
-        traj = ts.systems.Lorenz().run(final_time=120.0, dt=0.02, ic=[1.0, 1.0, 1.0])
-        assert float(traj.lyap.from_data(dimension=3, delay=8, k_max=200)) == pytest.approx(
-            float(lyapunov_from_data(traj, dimension=3, delay=8, k_max=200))
-        )
+        full = ts.systems.Lorenz().run(final_time=60.0, dt=0.01, transient=20.0, ic=[1.0, 1.0, 1.0])
+        sub = full[::5]
+        assert sub.meta["dt"] == pytest.approx(0.01)  # stale by construction
+        assert float(np.diff(sub.t)[0]) == pytest.approx(0.05)  # the truth
+        derived = lyapunov_from_data(sub, dimension=3, fit=(2, 12))
+        explicit = lyapunov_from_data(sub, dimension=3, fit=(2, 12), dt=0.05)
+        assert float(derived) == pytest.approx(float(explicit), rel=1e-9)
+        # ...and NOT the 5x-too-large number meta["dt"] would have produced.
+        stale = lyapunov_from_data(sub, dimension=3, fit=(2, 12), dt=0.01)
+        assert float(derived) == pytest.approx(float(stale) / 5.0, rel=1e-9)
 
     def test_an_explicit_dt_still_wins(self) -> None:
         """Reading a default must never override a value the caller typed."""
@@ -459,7 +468,7 @@ class TestSamplingIntervalIsReadFromTheData:
 
         traj = ts.systems.Lorenz().run(final_time=60.0, dt=0.02, ic=[1.0, 1.0, 1.0])
         x = np.asarray(traj["x"])
-        measured = ts.Trajectory(np.arange(x.size) * 0.02, x[:, None])
+        measured = ts.data.Trajectory(np.arange(x.size) * 0.02, x[:, None])
         assert measured.meta.get("dt") is None
         assert float(
             lyapunov_from_data(measured, dimension=3, delay=8, k_max=200)
@@ -472,4 +481,4 @@ class TestSamplingIntervalIsReadFromTheData:
         t = np.cumsum(np.linspace(0.01, 0.05, 600))
         y = np.sin(t)[:, None]
         with pytest.raises(InvalidParameterError, match="not uniformly"):
-            lyapunov_from_data(ts.Trajectory(t, y), dimension=3, delay=8, k_max=200)
+            lyapunov_from_data(ts.data.Trajectory(t, y), dimension=3, delay=8, k_max=200)

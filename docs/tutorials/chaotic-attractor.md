@@ -60,7 +60,7 @@ a `(T, dim)` array of states with named components and its provenance in
 
 <div class="ts-item" markdown>
 ```python
-traj = lor.integrate(final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+traj = lor.run(final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 
 traj.y.shape     # (10001, 3)
 traj["z"]        # the z-channel by name
@@ -101,8 +101,8 @@ directly. Integrate from two initial conditions one part in a billion apart and
 track the distance between them:
 
 ```python
-a = ts.systems.Lorenz().integrate(final_time=45.0, dt=0.01, ic=[1.0, 1.0, 1.0])
-b = ts.systems.Lorenz().integrate(final_time=45.0, dt=0.01, ic=[1.0 + 1e-9, 1.0, 1.0])
+a = ts.systems.Lorenz().run(final_time=45.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+b = ts.systems.Lorenz().run(final_time=45.0, dt=0.01, ic=[1.0 + 1e-9, 1.0, 1.0])
 
 sep = np.linalg.norm(a.y - b.y, axis=1)      # distance vs time
 a.t[np.argmax(sep > 1.0)]      # ≈ 34.4  — time for the gap to reach order 1
@@ -128,7 +128,7 @@ dynamics alongside the state and reads the exponents off a periodically
 reorthonormalised frame (Benettin et al., 1980):
 
 ```python
-spec = ts.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
+spec = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]),
                             final_time=300.0, dt=0.05, transient=40.0)
 
 np.asarray(spec)     # ≈ [ 0.903,  0.002, -14.572]
@@ -168,7 +168,7 @@ collapses onto the zero-volume attractor.
     When you just want the leading rate — or the right-hand side is non-smooth
     and has no analytic Jacobian — [`max_lyapunov`](../analysis/lyapunov.md) runs
     the classic two-trajectory method using nothing but the stepping protocol:
-    `ts.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)` returns
+    `ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05)` returns
     `≈ 0.89`, agreeing with $\lambda_1$ from the full spectrum.
 
 ## 5. The attractor's dimension — two ways
@@ -182,7 +182,7 @@ where the cumulative exponent sum crosses zero (Kaplan & Yorke, 1979):
 
 ```python
 spec.kaplan_yorke        # ≈ 2.062
-ts.kaplan_yorke_dimension([0.903, 0.002, -14.572])   # ≈ 2.062  — the same, from the bare numbers
+ts.analysis.kaplan_yorke_dimension([0.903, 0.002, -14.572])   # ≈ 2.062  — the same, from the bare numbers
 ```
 
 $D_{KY} \approx 2.06$: the Lorenz attractor is *just* more than a two-dimensional
@@ -194,8 +194,8 @@ dimension](../analysis/dimensions.md) (Grassberger & Procaccia, 1983) counts how
 the fraction of close point-pairs scales with radius:
 
 ```python
-cloud = ts.systems.Lorenz().integrate(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 1.0]).y[2000:]
-ts.correlation_dimension(cloud, theiler=200)     # ≈ 2.06
+cloud = ts.systems.Lorenz().run(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 1.0]).y[2000:]
+ts.analysis.correlation_dimension(cloud, theiler=200)     # ≈ 2.06
 ```
 
 The two numbers agree to two decimal places from completely different routes —

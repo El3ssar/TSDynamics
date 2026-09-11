@@ -1,8 +1,8 @@
 """Property + known-value tests for the delay-embedding API (stream I-QA).
 
-The delay-embedding toolkit (``ts.embed`` / ``ts.optimal_delay`` /
-``ts.mutual_information`` / ``ts.autocorrelation`` / ``ts.cao_dimension`` /
-``ts.false_nearest_neighbors`` / ``ts.embedding_dimension``) is the named I-QA
+The delay-embedding toolkit (``ts.analysis.embed`` / ``ts.analysis.optimal_delay`` /
+``ts.analysis.mutual_information`` / ``ts.analysis.autocorrelation`` / ``ts.analysis.cao_dimension`` /
+``ts.analysis.false_nearest_neighbors`` / ``ts.analysis.embedding_dimension``) is the named I-QA
 acceptance target.  These tests pin its *mathematical* contract rather than any
 particular numeric output:
 
@@ -59,7 +59,7 @@ def test_embed_shape_matches_takens_window(n: int, m: int, tau: int, seed: int) 
     assume(n - span >= 2)
     x = np.random.default_rng(seed).standard_normal(n)
 
-    out = ts.embed(x, m, tau)
+    out = ts.analysis.embed(x, m, tau)
 
     assert out.shape == (n - span, m)
 
@@ -83,7 +83,7 @@ def test_embed_preserves_values_exactly(n: int, m: int, tau: int, seed: int) -> 
     x = np.random.default_rng(seed).standard_normal(n)
     rows = n - span
 
-    out = ts.embed(x, m, tau)
+    out = ts.analysis.embed(x, m, tau)
 
     # Independent reference: stack the tau-shifted views column by column.
     reference = np.column_stack([x[j * tau : j * tau + rows] for j in range(m)])
@@ -104,8 +104,8 @@ def test_embed_is_pure(n: int, m: int, tau: int, seed: int) -> None:
     x = np.random.default_rng(seed).standard_normal(n)
     x_guard = x.copy()
 
-    first = ts.embed(x, m, tau)
-    second = ts.embed(x, m, tau)
+    first = ts.analysis.embed(x, m, tau)
+    second = ts.analysis.embed(x, m, tau)
 
     assert np.array_equal(first, second)
     # The input array itself must be untouched.
@@ -115,7 +115,7 @@ def test_embed_is_pure(n: int, m: int, tau: int, seed: int) -> None:
 def test_embed_first_column_is_the_series_for_dimension_one() -> None:
     """``m=1`` is the trivial embedding: a single column equal to the series."""
     x = sinusoid(256, freq=0.03)
-    out = ts.embed(x, 1, 5)
+    out = ts.analysis.embed(x, 1, 5)
     assert out.shape == (x.size, 1)
     assert np.array_equal(out[:, 0], x)
 
@@ -134,7 +134,7 @@ def test_autocorrelation_is_normalised_and_bounded(x: np.ndarray, max_lag: int) 
     regression that forgot to divide by the zero-lag variance would break the
     first two, a windowing bug the third.  ``max_lag`` is clamped to ``N-1``.
     """
-    acf = ts.autocorrelation(x, max_delay=max_lag)
+    acf = ts.analysis.autocorrelation(x, max_delay=max_lag)
 
     expected_len = min(max_lag, x.size - 1) + 1
     assert acf.shape == (expected_len,)
@@ -155,7 +155,7 @@ def test_autocorrelation_known_sinusoid_is_periodic() -> None:
     period = int(round(1.0 / freq))  # 20 samples
     x = sinusoid(2048, freq=freq)
 
-    acf = ts.autocorrelation(x, max_delay=2 * period)
+    acf = ts.analysis.autocorrelation(x, max_delay=2 * period)
 
     # One full period later the ACF is close to its lag-0 value of 1.
     assert acf[period] > 0.9
@@ -177,7 +177,7 @@ def test_mutual_information_is_nonnegative(x: np.ndarray, max_lag: int) -> None:
     can only dip a hair below zero through float round-off, hence the ``-1e-12``
     floor.  ``max_lag`` is clamped to ``N-2``.
     """
-    mi = ts.mutual_information(x, max_delay=max_lag)
+    mi = ts.analysis.mutual_information(x, max_delay=max_lag)
 
     expected_len = min(max_lag, x.size - 2) + 1
     assert mi.shape == (expected_len,)
@@ -191,7 +191,7 @@ def test_mutual_information_self_lag_dominates() -> None:
     information upper-bounds every lagged value — a real ordering invariant.
     """
     x = logistic_series(2000, r=4.0)
-    mi = ts.mutual_information(x, max_delay=40)
+    mi = ts.analysis.mutual_information(x, max_delay=40)
     assert np.argmax(mi) == 0
     assert np.all(mi[1:] <= mi[0] + 1e-9)
 
@@ -210,7 +210,7 @@ def test_optimal_delay_in_range(method: str) -> None:
     """
     x = henon_series(2000)
     max_lag = 50
-    tau = ts.optimal_delay(x, method=method, max_delay=max_lag)
+    tau = ts.analysis.optimal_delay(x, method=method, max_delay=max_lag)
 
     assert isinstance(tau, int)
     assert 1 <= tau <= max_lag
@@ -232,7 +232,7 @@ def test_optimal_delay_mi_lands_in_the_first_minimum_valley() -> None:
     half = period / 2.0  # 25 samples
     x = sinusoid(4096, freq=freq)
 
-    tau = ts.optimal_delay(x, method="mi", max_delay=int(period))
+    tau = ts.analysis.optimal_delay(x, method="mi", max_delay=int(period))
 
     # Inside the descending first-minimum valley: past the redundant short lags,
     # before the half-period MI peak where the signal becomes anti-correlated.
@@ -261,7 +261,7 @@ def _series(name: str) -> np.ndarray:
 def test_cao_dimension_in_bounds(name: str) -> None:
     """Cao's estimate is an int in ``[1, max_dim]`` with finite ``E1`` / ``E2``."""
     max_dim = 8
-    result = ts.cao_dimension(_series(name), delay=1, max_dim=max_dim)
+    result = ts.analysis.cao_dimension(_series(name), delay=1, max_dim=max_dim)
 
     assert isinstance(result.dimension, int)
     assert 1 <= result.dimension <= max_dim
@@ -277,7 +277,7 @@ def test_cao_dimension_in_bounds(name: str) -> None:
 def test_fnn_dimension_in_bounds_and_fraction_in_unit_interval(name: str) -> None:
     """FNN: integer dim in ``[1, max_dim]`` and every fraction in ``[0, 1]``."""
     max_dim = 8
-    result = ts.false_nearest_neighbors(_series(name), delay=1, max_dim=max_dim)
+    result = ts.analysis.false_nearest_neighbors(_series(name), delay=1, max_dim=max_dim)
 
     assert isinstance(result.dimension, int)
     assert 1 <= result.dimension <= max_dim
@@ -305,7 +305,7 @@ def test_fnn_fraction_decays_on_deterministic_chaos() -> None:
     would produce — fails both halves.
     """
     max_dim = 8
-    result = ts.false_nearest_neighbors(henon_series(2500), delay=1, max_dim=max_dim)
+    result = ts.analysis.false_nearest_neighbors(henon_series(2500), delay=1, max_dim=max_dim)
     frac = result.fnn_fraction
 
     assert 1 <= result.dimension <= max_dim
@@ -327,8 +327,8 @@ def test_embedding_dimension_dispatches_to_both_methods() -> None:
     x = henon_series(2500)
     max_dim = 8
 
-    cao = ts.embedding_dimension(x, method="cao", delay=1, max_dim=max_dim)
-    fnn = ts.embedding_dimension(x, method="fnn", delay=1, max_dim=max_dim)
+    cao = ts.analysis.embedding_dimension(x, method="cao", delay=1, max_dim=max_dim)
+    fnn = ts.analysis.embedding_dimension(x, method="fnn", delay=1, max_dim=max_dim)
 
     assert cao.method == "cao" and 1 <= cao.dimension <= max_dim
     assert fnn.method == "fnn" and 1 <= fnn.dimension <= max_dim

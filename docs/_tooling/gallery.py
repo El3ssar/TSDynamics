@@ -184,15 +184,13 @@ def _with_primitive(call: str, primitive: str) -> str:
 # Every trajectory is integrated from an EXPLICIT initial condition, so the
 # committed figure is reproducible and the cache key means what it says.
 
-_LORENZ = "traj = ts.systems.Lorenz().integrate(final_time=60.0, dt=0.005, ic=[1.0, 1.0, 20.0])"
-_LORENZ_MED = "traj = ts.systems.Lorenz().integrate(final_time=25.0, dt=0.01, ic=[1.0, 1.0, 20.0])"
-_LORENZ_SHORT = "traj = ts.systems.Lorenz().integrate(final_time=8.0, dt=0.05, ic=[1.0, 1.0, 20.0])"
-_ROSSLER = "traj = ts.systems.Rossler().integrate(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 0.1])"
-_ROSSLER_LONG = (
-    "traj = ts.systems.Rossler().integrate(final_time=900.0, dt=0.05, ic=[1.0, 1.0, 0.1])"
-)
-_LOGISTIC = "orbit = ts.systems.Logistic(r=4.0).iterate(steps=20_000, ic=[0.2])"
-_LOGISTIC_SHORT = "orbit = ts.systems.Logistic(r=4.0).iterate(steps=48, ic=[0.2])"
+_LORENZ = "traj = ts.systems.Lorenz().run(final_time=60.0, dt=0.005, ic=[1.0, 1.0, 20.0])"
+_LORENZ_MED = "traj = ts.systems.Lorenz().run(final_time=25.0, dt=0.01, ic=[1.0, 1.0, 20.0])"
+_LORENZ_SHORT = "traj = ts.systems.Lorenz().run(final_time=8.0, dt=0.05, ic=[1.0, 1.0, 20.0])"
+_ROSSLER = "traj = ts.systems.Rossler().run(final_time=200.0, dt=0.02, ic=[1.0, 1.0, 0.1])"
+_ROSSLER_LONG = "traj = ts.systems.Rossler().run(final_time=900.0, dt=0.05, ic=[1.0, 1.0, 0.1])"
+_LOGISTIC = "orbit = ts.systems.Logistic(r=4.0).run(steps=20_000, ic=[0.2])"
+_LOGISTIC_SHORT = "orbit = ts.systems.Logistic(r=4.0).run(steps=48, ic=[0.2])"
 
 SHOWCASE: dict[str, Showcase] = {
     # -- data: the orbit itself ---------------------------------------------
@@ -292,7 +290,7 @@ SHOWCASE: dict[str, Showcase] = {
         },
     ),
     "spacetime": Showcase(
-        setup="traj = ts.systems.Lorenz96().integrate(final_time=30.0, dt=0.05)",
+        setup="traj = ts.systems.Lorenz96().run(final_time=30.0, dt=0.05)",
         call='ts.plot(traj, "spacetime")',
         caption=(
             "Lorenz-96 as component index versus time: 20 coupled sites, with the "
@@ -314,7 +312,7 @@ SHOWCASE: dict[str, Showcase] = {
         },
     ),
     "spatial_field": Showcase(
-        setup="traj = ts.systems.SwiftHohenberg().integrate(final_time=40.0, dt=0.2)",
+        setup="traj = ts.systems.SwiftHohenberg().run(final_time=40.0, dt=0.2)",
         call='ts.plot(traj, "spatial_field")',
         square=True,
         caption=(
@@ -326,7 +324,7 @@ SHOWCASE: dict[str, Showcase] = {
             "contour": Variant(caption="The same field as contours."),
             "surface3d": Variant(caption="The field as a height surface."),
             "line": Variant(
-                setup="traj = ts.systems.KuramotoSivashinsky().integrate(final_time=200.0, dt=0.5)",
+                setup="traj = ts.systems.KuramotoSivashinsky().run(final_time=200.0, dt=0.5)",
                 call='ts.plot(traj, "spatial_field", primitive="line")',
                 caption=(
                     "A **1-D** field is a profile, not an image: the final "
@@ -336,7 +334,7 @@ SHOWCASE: dict[str, Showcase] = {
                 square=False,
             ),
             "points": Variant(
-                setup="traj = ts.systems.KuramotoSivashinsky().integrate(final_time=200.0, dt=0.5)",
+                setup="traj = ts.systems.KuramotoSivashinsky().run(final_time=200.0, dt=0.5)",
                 call='ts.plot(traj, "spatial_field", primitive="points")',
                 caption="The same profile as its sampled lattice points.",
                 square=False,
@@ -461,8 +459,7 @@ SHOWCASE: dict[str, Showcase] = {
         },
     ),
     "return_time": Showcase(
-        setup="traj = ts.systems.Lorenz().integrate(final_time=400.0, dt=0.005, "
-        "ic=[1.0, 1.0, 20.0])",
+        setup="traj = ts.systems.Lorenz().run(final_time=400.0, dt=0.005, ic=[1.0, 1.0, 20.0])",
         call='ts.plot(traj, "return_time", component="z", n_bins=30)',
         caption=(
             "How long the Lorenz orbit takes to come back to a level set of `z` — one "
@@ -590,7 +587,7 @@ SHOWCASE: dict[str, Showcase] = {
         },
     ),
     "scaling_fit": Showcase(
-        setup=_LORENZ + "\nresult = ts.correlation_dimension(traj)",
+        setup=_LORENZ + "\nresult = ts.analysis.correlation_dimension(traj)",
         call='ts.plot(result, "scaling_fit")',
         caption=(
             "The log-log correlation sum with the fitted scaling window delimited. "
@@ -701,7 +698,7 @@ SHOWCASE: dict[str, Showcase] = {
             "def rhs(u):\n"
             "    return np.stack([u[..., 1], 2.0 * (1 - u[..., 0] ** 2) * u[..., 1] "
             "- u[..., 0]], axis=-1)\n\n"
-            "traj = ts.systems.VanDerPol(mu=2.0).integrate("
+            "traj = ts.systems.VanDerPol(mu=2.0).run("
             "final_time=30.0, dt=0.01, ic=[0.1, 0.0])"
         ),
         call='ts.plot(rhs, "phase_portrait_field", source=traj, xlim=(-3.0, 3.0), '
@@ -845,7 +842,7 @@ COMPOSITIONS: list[tuple[str, Showcase]] = [
         "The phase-plane payoff",
         Showcase(
             setup="fhn = ts.systems.FitzHughNagumo()\n"
-            "traj = fhn.integrate(final_time=120.0, dt=0.05, ic=[-1.0, -0.5])",
+            "traj = fhn.run(final_time=120.0, dt=0.05, ic=[-1.0, -0.5])",
             call="ts.viz.plot(\n"
             '    ts.plot(fhn, "direction_field", "nullclines",\n'
             "            xlim=(-2.5, 2.5), ylim=(-1.0, 2.0), grid=21),\n"
@@ -881,7 +878,7 @@ COMPOSITIONS: list[tuple[str, Showcase]] = [
         "A separatrix, twice",
         Showcase(
             setup="duff = ts.systems.Duffing(gamma=0.0)\n"
-            "traj = duff.integrate(final_time=60.0, dt=0.01, ic=[1.4, 0.0, 0.0])",
+            "traj = duff.run(final_time=60.0, dt=0.01, ic=[1.4, 0.0, 0.0])",
             call="ts.viz.plot(\n"
             '    ts.plot(duff, "ftle", xlim=(-2.0, 2.0), ylim=(-1.5, 1.5),\n'
             "            grid=161, time=8.0),\n"

@@ -63,7 +63,7 @@ because a silent swap once produced plausible-but-wrong dynamics.
 write **appends** rather than overwrites:
 
 ```python
-lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
 
 lor.lyapunov_spectrum(dt=0.1)            # records value + settings + timestamp
 lor.lyapunov_spectrum(dt=0.05)           # appends a second record

@@ -46,7 +46,11 @@ pytestmark = pytest.mark.engine
 
 # A short, fixed-step horizon: long enough to leave the IC behind, short enough
 # that fixed-step rk4 roundoff has not Lyapunov-amplified into a calibration trap.
-_ODE_KW = dict(final_time=2.0, dt=0.005, method="rk4", rtol=1e-9, atol=1e-12)
+_ODE_KW = dict(final_time=2.0, dt=0.005, solver="rk4", rtol=1e-9, atol=1e-12)
+# The same run, spelled for the ENGINE seam: ``engine.run.integrate`` /
+# ``.ensemble`` still take the kernel as ``method=``; the family ``run`` verb
+# renamed it ``solver=`` in v6 (``method=`` selects an estimator there).
+_ENGINE_KW = {**{k: v for k, v in _ODE_KW.items() if k != "solver"}, "method": _ODE_KW["solver"]}
 # Far above the ~1e-13 we measure between the dense and ensemble float paths,
 # far below any physically meaningful state difference.
 _ODE_ATOL = 1e-9
@@ -68,8 +72,8 @@ def _rossler_ics() -> np.ndarray:
 @pytest.mark.parametrize(
     "factory, ics",
     [
-        (ts.Lorenz, _lorenz_ics()),
-        (ts.Rossler, _rossler_ics()),
+        (ts.systems.Lorenz, _lorenz_ics()),
+        (ts.systems.Rossler, _rossler_ics()),
     ],
 )
 def test_ode_ensemble_row_equals_single_integrate(factory, ics):
@@ -79,13 +83,13 @@ def test_ode_ensemble_row_equals_single_integrate(factory, ics):
     (dense vs batched) agree to ~1e-13 (asserted at 1e-9), not bit-for-bit.
     """
     sys = factory()
-    ens = run.ensemble(sys, ics, backend="interp", **_ODE_KW)
+    ens = run.ensemble(sys, ics, backend="interp", **_ENGINE_KW)
     assert ens.shape == (len(ics), sys.dim)
     assert np.all(np.isfinite(ens))
 
     for i, ic in enumerate(ics):
         # Fresh instance per IC so no stepping state leaks between rows.
-        last = factory().integrate(ic=ic, **_ODE_KW).y[-1]
+        last = factory().run(ic=ic, **_ODE_KW).y[-1]
         np.testing.assert_allclose(
             ens[i],
             last,
@@ -99,9 +103,9 @@ def test_reference_ensemble_row_is_bit_for_bit_single_integrate():
     """The reference backend loops the *same* SciPy integrator the serial path
     uses, so its rows are bit-for-bit identical to the serial final states."""
     ics = _lorenz_ics()
-    ens = run.ensemble(ts.Lorenz(), ics, backend="reference", **_ODE_KW)
+    ens = run.ensemble(ts.systems.Lorenz(), ics, backend="reference", **_ENGINE_KW)
     for i, ic in enumerate(ics):
-        last = ts.Lorenz().integrate(ic=ic, backend="reference", **_ODE_KW).y[-1]
+        last = ts.systems.Lorenz().run(ic=ic, backend="reference", **_ODE_KW).y[-1]
         np.testing.assert_array_equal(
             ens[i], last, err_msg=f"reference ensemble row {i} not bit-identical"
         )
@@ -117,8 +121,8 @@ def test_ode_ensemble_is_batch_order_independent():
     a row's content is a function of its IC, never its position in the batch."""
     ics = _rossler_ics()
     perm = [2, 0, 1]
-    base = run.ensemble(ts.Rossler(), ics, backend="interp", **_ODE_KW)
-    permuted = run.ensemble(ts.Rossler(), ics[perm], backend="interp", **_ODE_KW)
+    base = run.ensemble(ts.systems.Rossler(), ics, backend="interp", **_ENGINE_KW)
+    permuted = run.ensemble(ts.systems.Rossler(), ics[perm], backend="interp", **_ENGINE_KW)
     for new_pos, old_pos in enumerate(perm):
         # Engine is deterministic and per-row → the SAME float result regardless
         # of where the IC sat → bit-for-bit, not merely close.
@@ -142,7 +146,7 @@ def test_ode_ensemble_diverged_row_is_nan_and_isolated():
     blowup = np.array([1e9, 1e9, 1e9])  # overflows fixed-step rk4 immediately
     ics = np.stack([finite0, blowup, finite2])
 
-    ens = run.ensemble(ts.Lorenz(), ics, backend="interp", **_ODE_KW)
+    ens = run.ensemble(ts.systems.Lorenz(), ics, backend="interp", **_ENGINE_KW)
 
     # The diverged row is all-NaN; neighbours stay finite (no poisoning).
     assert np.all(np.isnan(ens[1])), "diverged trajectory should be a NaN row"
@@ -151,7 +155,7 @@ def test_ode_ensemble_diverged_row_is_nan_and_isolated():
 
     # And the surviving rows match their stand-alone integration exactly.
     for pos, ic in ((0, finite0), (2, finite2)):
-        last = ts.Lorenz().integrate(ic=ic, **_ODE_KW).y[-1]
+        last = ts.systems.Lorenz().run(ic=ic, **_ODE_KW).y[-1]
         np.testing.assert_allclose(ens[pos], last, atol=_ODE_ATOL, rtol=0.0)
 
 
@@ -173,10 +177,10 @@ def test_map_ensemble_row_equals_serial_iterate_bit_for_bit():
     """Each Hénon ensemble row is bit-for-bit the serial ``iterate`` final state
     (the map lowers to the same IR with no floating-point reordering)."""
     ics = _henon_ics()
-    ens = run.ensemble(ts.Henon(), ics, final_time=float(_MAP_STEPS), backend="interp")
+    ens = run.ensemble(ts.systems.Henon(), ics, final_time=float(_MAP_STEPS), backend="interp")
     assert ens.shape == (len(ics), 2)
     for i, ic in enumerate(ics):
-        last = ts.Henon().iterate(ic=ic, steps=_MAP_STEPS, backend="interp").y[-1]
+        last = ts.systems.Henon().run(ic=ic, steps=_MAP_STEPS, backend="interp").y[-1]
         np.testing.assert_array_equal(
             ens[i], last, err_msg=f"map ensemble row {i} not bit-identical to iterate"
         )
@@ -186,8 +190,10 @@ def test_map_ensemble_is_batch_order_independent_bit_for_bit():
     """Permuting the map ICs permutes the rows identically, bit-for-bit."""
     ics = _henon_ics()
     perm = [2, 0, 1]
-    base = run.ensemble(ts.Henon(), ics, final_time=float(_MAP_STEPS), backend="interp")
-    permuted = run.ensemble(ts.Henon(), ics[perm], final_time=float(_MAP_STEPS), backend="interp")
+    base = run.ensemble(ts.systems.Henon(), ics, final_time=float(_MAP_STEPS), backend="interp")
+    permuted = run.ensemble(
+        ts.systems.Henon(), ics[perm], final_time=float(_MAP_STEPS), backend="interp"
+    )
     for new_pos, old_pos in enumerate(perm):
         np.testing.assert_array_equal(permuted[new_pos], base[old_pos])
 
@@ -200,12 +206,12 @@ def test_map_ensemble_diverged_row_is_nan_and_isolated():
     blowup = np.array([1e6, 1e6])  # Hénon's quadratic term overflows to inf/NaN
     ics = np.stack([finite0, blowup, finite2])
 
-    ens = run.ensemble(ts.Henon(), ics, final_time=float(_MAP_STEPS), backend="interp")
+    ens = run.ensemble(ts.systems.Henon(), ics, final_time=float(_MAP_STEPS), backend="interp")
 
     assert np.all(np.isnan(ens[1])), "diverged map trajectory should be a NaN row"
     assert np.all(np.isfinite(ens[0])), "row before the diverged one was poisoned"
     assert np.all(np.isfinite(ens[2])), "row after the diverged one was poisoned"
 
     for pos, ic in ((0, finite0), (2, finite2)):
-        last = ts.Henon().iterate(ic=ic, steps=_MAP_STEPS, backend="interp").y[-1]
+        last = ts.systems.Henon().run(ic=ic, steps=_MAP_STEPS, backend="interp").y[-1]
         np.testing.assert_array_equal(ens[pos], last)

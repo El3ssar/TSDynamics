@@ -28,10 +28,7 @@ are discoverable by name alongside out-of-tree analysis plugins.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
-from ... import registry as _registry
+from .._discovery import register as _register
 from .expansion import ExpansionEntropyResult, expansion_entropy
 from .gali import GALIResult, gali
 from .zero_one import OversamplingWarning, ZeroOneResult, zero_one_test
@@ -46,16 +43,34 @@ __all__ = [
     "zero_one_test",
 ]
 
-# Self-register the indicators (D4 / §4e: in-tree analyses register from their
-# own subpackage).  Idempotent across re-imports.
-_REGISTRATIONS: tuple[tuple[str, Callable[..., Any], dict[str, Any]], ...] = (
-    ("gali", gali, {"needs": "system", "family": "chaos"}),
-    ("zero_one_test", zero_one_test, {"needs": "system", "family": "chaos"}),
-    ("expansion_entropy", expansion_entropy, {"needs": "system", "family": "chaos"}),
+# Self-register the indicators: the definition site is the registration site
+# (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
+_register(
+    gali,
+    subjects=("system",),
+    area="chaos",
+    returns=GALIResult,
+    keywords="chaotic chaos regular ordered skokos alignment",
+    cite="Skokos, Bountis & Antonopoulos (2007), Physica D 231, 30",
+    doi="10.1016/j.physd.2007.04.004",
 )
-for _name, _fn, _meta in _REGISTRATIONS:
-    _registry.analyses.register(_name, _fn, **_meta)
-del _name, _fn, _meta
+_register(
+    zero_one_test,
+    subjects=("system",),
+    area="chaos",
+    returns=ZeroOneResult,
+    keywords="chaotic chaos regular gottwald melbourne binary",
+    cite="Gottwald & Melbourne (2004), Proc. R. Soc. Lond. A 460, 603",
+    doi="10.1098/rspa.2003.1183",
+)
+_register(
+    expansion_entropy,
+    subjects=("system",),
+    area="chaos",
+    returns=ExpansionEntropyResult,
+    keywords="chaotic chaos volume growth hunt ott",
+    cite="Hunt & Ott (2015), Chaos 25, 097618",
+)
 
 
 def __dir__() -> list[str]:

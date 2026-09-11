@@ -169,14 +169,14 @@ def _compute_reference_orbit(entry: Any) -> np.ndarray:
     system = entry.cls() if entry.family != "map" else entry.cls(seed=_seed_of(entry.name))
     ic = reference_ic(entry)
     if entry.family == "dde":
-        return system.integrate(final_time=T_DDE, dt=DT_DDE, history=DDE_HISTORIES[entry.name]).y
+        return system.run(final_time=T_DDE, dt=DT_DDE, history=DDE_HISTORIES[entry.name]).y
     if entry.family == "sde":
         sample = SDE_SAMPLES[entry.name]
-        return system.integrate(final_time=T_SDE, dt=DT_SDE, ic=sample["ic"], seed=sample["seed"]).y
+        return system.run(final_time=T_SDE, dt=DT_SDE, ic=sample["ic"], seed=sample["seed"]).y
     if entry.family == "map":
-        return system.iterate(steps=STEPS_MAP, ic=ic, max_retries=20).y
+        return system.run(steps=STEPS_MAP, ic=ic, max_retries=20).y
     final_time, dt = DYNAMICS_WINDOWS.get(entry.name, (T_FLOW, DT_FLOW))
-    return system.integrate(ic=ic, final_time=final_time, dt=dt).y
+    return system.run(ic=ic, final_time=final_time, dt=dt).y
 
 
 _ORBIT_CACHE: dict[str, np.ndarray] = {}
@@ -881,7 +881,7 @@ def test_reference_ic_overrides_are_all_live() -> None:
         generic = IC_BALL_RADIUS * (2.0 * rng.random(system.dim) - 1.0)
         final_time, dt = DYNAMICS_WINDOWS.get(name, (T_FLOW, DT_FLOW))
         try:
-            stats = orbit_stats(system.integrate(ic=generic, final_time=final_time, dt=dt).y)
+            stats = orbit_stats(system.run(ic=generic, final_time=final_time, dt=dt).y)
             needed = (
                 stats.growth > MAX_GROWTH
                 or stats.return_gap > MAX_RETURN_GAP
@@ -915,7 +915,7 @@ def test_reference_windows_are_all_live() -> None:
     """
     for name, window in DYNAMICS_WINDOWS.items():
         entry = registry.get(name)
-        default_run = entry.cls().integrate(ic=reference_ic(entry), final_time=T_FLOW, dt=DT_FLOW).y
+        default_run = entry.cls().run(ic=reference_ic(entry), final_time=T_FLOW, dt=DT_FLOW).y
         stats = orbit_stats(default_run)
         predicates_hold = (
             SETTLED_GROWTH_FLOOR <= stats.growth <= MAX_GROWTH

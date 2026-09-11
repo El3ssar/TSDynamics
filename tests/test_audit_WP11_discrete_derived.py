@@ -68,7 +68,7 @@ class TestD1TangentPostEngineMap:
 
     def test_deviations_and_growths_raise_after_batch_engine(self) -> None:
         pytest.importorskip("tsdynamics._rust")
-        tng = TangentSystem(ts.Henon(), backend="interp")
+        tng = TangentSystem(ts.systems.Henon(), backend="interp")
         exps = tng.lyapunov_spectrum(n=2000, ic=[0.1, 0.1])
 
         # exponents() must stay coherent with the just-returned spectrum.
@@ -87,7 +87,7 @@ class TestD1TangentPostEngineMap:
         # growths() == exponents() (the average). Post-fix it must NOT silently
         # return the average — it raises.
         pytest.importorskip("tsdynamics._rust")
-        tng = TangentSystem(ts.Henon(), backend="interp")
+        tng = TangentSystem(ts.systems.Henon(), backend="interp")
         tng.lyapunov_spectrum(n=1000, ic=[0.1, 0.1])
         with pytest.raises(RuntimeError):
             tng.growths()
@@ -95,7 +95,7 @@ class TestD1TangentPostEngineMap:
     def test_streaming_recovers_after_reinit_step(self) -> None:
         # Answer-preserving: driving the streaming frame after a batch run works.
         pytest.importorskip("tsdynamics._rust")
-        tng = TangentSystem(ts.Henon(), backend="interp")
+        tng = TangentSystem(ts.systems.Henon(), backend="interp")
         tng.lyapunov_spectrum(n=500, ic=[0.1, 0.1])
         tng.reinit([0.1, 0.1])
         tng.step()
@@ -105,7 +105,7 @@ class TestD1TangentPostEngineMap:
     def test_reference_backend_streaming_coherent(self) -> None:
         # The reference NumPy QR loop keeps the streaming accessors coherent
         # (it carries _W and _last_growths) — unchanged by this fix.
-        tref = TangentSystem(ts.Henon(), backend="reference")
+        tref = TangentSystem(ts.systems.Henon(), backend="reference")
         tref.lyapunov_spectrum(n=500, ic=[0.1, 0.1])
         assert np.isfinite(tref.deviations()).all()
         assert np.isfinite(tref.growths()).all()
@@ -118,8 +118,8 @@ class TestD2ProjectedPermutation:
         # dim(projected) == dim(full) == 3. Pre-fix the size heuristic wrote the
         # projected input straight to the full state, so state() re-projected it
         # to the WRONG value. Post-fix ``complete`` is applied.
-        sys = ts.Lorenz()
-        proj = ts.ProjectedSystem(
+        sys = ts.systems.Lorenz()
+        proj = ts.derived.ProjectedSystem(
             sys, [2, 1, 0], complete=lambda u: np.asarray(u, dtype=float)[[2, 1, 0]]
         )
         proj.reinit([1.0, 2.0, 3.0])
@@ -130,8 +130,8 @@ class TestD2ProjectedPermutation:
         np.testing.assert_allclose(proj.system.state(), [7.0, 8.0, 9.0])
 
     def test_permutation_reinit_applies_complete(self) -> None:
-        sys = ts.Lorenz()
-        proj = ts.ProjectedSystem(
+        sys = ts.systems.Lorenz()
+        proj = ts.derived.ProjectedSystem(
             sys, [2, 1, 0], complete=lambda u: np.asarray(u, dtype=float)[[2, 1, 0]]
         )
         proj.reinit([9.0, 8.0, 7.0])
@@ -140,7 +140,7 @@ class TestD2ProjectedPermutation:
     def test_subset_projection_unchanged(self) -> None:
         # Answer-preserving: a genuine dimension-reducing projection still
         # disambiguates by size (full 2-D state written directly).
-        proj = ts.ProjectedSystem(ts.Henon(), [0], complete=lambda u: [u[0], 0.0])
+        proj = ts.derived.ProjectedSystem(ts.systems.Henon(), [0], complete=lambda u: [u[0], 0.0])
         proj.reinit([0.1, 0.2])
         proj.set_state([0.3, 0.4])  # full size -> written directly
         np.testing.assert_array_equal(proj.system.state(), [0.3, 0.4])
@@ -150,7 +150,7 @@ class TestD2ProjectedPermutation:
     def test_no_complete_projected_input_raises(self) -> None:
         # The documented NotImplementedError contract for a projected input with
         # no ``complete`` is preserved.
-        proj = ts.ProjectedSystem(ts.Henon(), [0])
+        proj = ts.derived.ProjectedSystem(ts.systems.Henon(), [0])
         proj.reinit([0.1, 0.2])
         with pytest.raises(NotImplementedError, match="complete"):
             proj.set_state([0.5])

@@ -10,7 +10,7 @@ Each system page carries a "Properties" panel with four stat cards:
    ``known_lyapunov`` (no published spectrum) is reported as "≥ k positive
    exponents" — never a fabricated number.
 2. **Kaplan–Yorke dimension** — derived from the spectrum
-   (``ts.kaplan_yorke_dimension``); ``todo`` when the spectrum is unknown.
+   (``ts.analysis.kaplan_yorke_dimension``); ``todo`` when the spectrum is unknown.
 3. **Phase-space divergence ∇·f** — the *symbolic* trace of the Jacobian
    (``Σ ∂f_i/∂y_i``) rendered as LaTeX, straight from the system's symbolic
    ``_equations`` / ``_drift``.  Constant ⇒ uniform contraction/expansion;
@@ -18,7 +18,7 @@ Each system page carries a "Properties" panel with four stat cards:
    divergence is undefined, so this card reports the discrete analogue
    *qualitatively* (it is skipped with a clear note rather than guessed).
 4. **Equilibria** — a best-effort count + stability summary from
-   ``ts.fixed_points``; ``todo`` when the root finder does not converge or the
+   ``ts.analysis.fixed_points``; ``todo`` when the root finder does not converge or the
    system is variable-dimensional.
 
 Never fabricate a number
@@ -304,7 +304,7 @@ def _kaplan_yorke_card(lyap: dict[str, Any]) -> dict[str, Any]:
     try:
         import tsdynamics as ts
 
-        ky = float(ts.kaplan_yorke_dimension(spectrum))
+        ky = float(ts.analysis.kaplan_yorke_dimension(spectrum))
     except Exception as exc:  # noqa: BLE001
         return _todo(f"kaplan_yorke_dimension failed: {type(exc).__name__}")
     if not _finite(ky):
@@ -546,7 +546,7 @@ def _has_nonsmooth_derivative(div) -> bool:
 # Equilibria (best-effort)
 # --------------------------------------------------------------------------- #
 def _equilibria_card(entry) -> dict[str, Any]:
-    """Best-effort fixed-point count + stability split via ``ts.fixed_points``.
+    """Best-effort fixed-point count + stability split via ``ts.analysis.fixed_points``.
 
     A non-convergent search, a too-large state, or an SDE all degrade to a TODO
     — the count is never guessed.
@@ -563,7 +563,7 @@ def _equilibria_card(entry) -> dict[str, Any]:
         import tsdynamics as ts
 
         sys_obj = entry.cls()
-        fps = ts.fixed_points(sys_obj)
+        fps = ts.analysis.fixed_points(sys_obj)
     except Exception as exc:  # noqa: BLE001 — root finder did not converge
         return _todo(f"fixed_points failed: {type(exc).__name__}")
     items = list(fps)

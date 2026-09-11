@@ -241,7 +241,7 @@ def _apply_oversampling_guard(phi: np.ndarray, policy: str) -> tuple[np.ndarray,
 
 def _observable(
     system: Any,
-    component: int | None,
+    components: int | str,
     *,
     final_time: float | None,
     n: int | None,
@@ -266,8 +266,8 @@ def _observable(
                 "zero_one_test: final_time/n/dt/transient/ic apply only when the first "
                 "argument is a System; a measured series / Trajectory is used as-is."
             )
-        return _c._as_observable(system, component)
-    if system.is_discrete:
+        return _c._as_observable(system, components)
+    if system.family == "map":
         skip = int(transient) if transient is not None else 0
         count = int(n) if n is not None else 5000
         kw: dict[str, Any] = {"transient": skip}
@@ -279,7 +279,7 @@ def _observable(
         # orbit), exactly the footgun ``gali`` guards against.
         if ic is not None:
             kw["ic"] = ic
-        return _c._as_observable(system.run(count, **kw), component)
+        return _c._as_observable(system.run(count, **kw), components)
     # continuous flow — sample on the dt grid (successive samples must be
     # decorrelated for the test to be meaningful; a coarse dt, or a Poincaré /
     # stroboscopic view passed as ``system``, gives the cleanest K).
@@ -293,13 +293,13 @@ def _observable(
     traj = system.run(final_time=horizon + burn, dt=step, ic=ic)
     if burn:
         traj = traj.after(burn)
-    return _c._as_observable(traj, component)
+    return _c._as_observable(traj, components)
 
 
 def zero_one_test(
     system: Any,
     *,
-    component: int | None = None,
+    components: int | str = 0,
     final_time: float | None = None,
     n: int | None = None,
     dt: float | None = None,
@@ -322,8 +322,10 @@ def zero_one_test(
         1-D series / :class:`~tsdynamics.data.Trajectory` used directly (the
         ``data`` overload).  For a flow pass a coarse ``dt`` — or a Poincaré /
         stroboscopic view as ``system`` — so successive samples are decorrelated.
-    component : int, optional
-        Column to use when a multi-component system / trajectory is passed.
+    components : int or str, default 0
+        Which state component is the scalar observable, by index or by name.
+        The test reads ONE observable; the default is the first component, so
+        ``zero_one_test(lorenz)`` works on a system of any dimension.
     final_time : float, optional
         Integration horizon for a flow (system input).  Default 1000.0.
     n : int, optional
@@ -397,7 +399,7 @@ def zero_one_test(
     >>> zero_one_test(x) > 0.9          # the data overload
     True
     >>> lorenz = Lorenz(ic=[1.0, 1.0, 1.0])                  # a flow, sampled fine
-    >>> zero_one_test(lorenz, component=0, dt=0.02, final_time=600.0) > 0.9
+    >>> zero_one_test(lorenz, components=0, dt=0.02, final_time=600.0) > 0.9
     True
 
     References
@@ -413,7 +415,7 @@ def zero_one_test(
             f"oversampling must be 'resample', 'warn' or 'ignore', got {oversampling!r}."
         )
     phi = _observable(
-        system, component, final_time=final_time, n=n, dt=dt, transient=transient, ic=ic
+        system, components, final_time=final_time, n=n, dt=dt, transient=transient, ic=ic
     )
     phi, stride, spo = _apply_oversampling_guard(phi, oversampling)
     n_pts = phi.size

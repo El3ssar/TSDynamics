@@ -29,8 +29,8 @@ _rust = pytest.importorskip("tsdynamics._rust")
 
 def _on_attractor_ic(name: str) -> np.ndarray:
     """A deterministic on-attractor initial state (end of a seeded integration)."""
-    sys = getattr(ts, name)()
-    traj = sys.integrate(final_time=500.0, dt=0.2, history=DDE_HISTORIES[name])
+    sys = getattr(ts.systems, name)()
+    traj = sys.run(final_time=500.0, dt=0.2, history=DDE_HISTORIES[name])
     return np.asarray(traj.y[-1], dtype=np.float64)
 
 
@@ -43,15 +43,15 @@ def test_interp_equals_jit_bit_for_bit() -> None:
     """The interpreter and the Cranelift JIT give an identical spectrum (D2)."""
     ic = _on_attractor_ic("MackeyGlass")
     kw = dict(k=2, dt=0.2, transient=40.0, final_time=200.0, ic=ic)
-    interp = ts.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
-    jit = ts.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
+    interp = ts.systems.MackeyGlass().lyapunov_spectrum(backend="interp", **kw)
+    jit = ts.systems.MackeyGlass().lyapunov_spectrum(backend="jit", **kw)
     np.testing.assert_array_equal(interp, jit)
 
 
 def test_spectrum_is_descending_with_positive_leading() -> None:
     """Mackey–Glass: λ₁ > 0 (chaos), and the spectrum is sorted descending."""
     ic = _on_attractor_ic("MackeyGlass")
-    spec = ts.MackeyGlass().lyapunov_spectrum(
+    spec = ts.systems.MackeyGlass().lyapunov_spectrum(
         backend="interp", k=2, dt=0.2, transient=100.0, final_time=600.0, ic=ic
     )
     assert spec.shape == (2,)
@@ -68,7 +68,7 @@ def test_n_exp_may_exceed_dim() -> None:
     single value) and span zero — a chaotic autonomous flow has a positive
     leading exponent and a marginal (≈ 0) direction, so the spread must bracket 0.
     """
-    sys = ts.SprottDelay()
+    sys = ts.systems.SprottDelay()
     assert sys.dim == 1
     spec = sys.lyapunov_spectrum(
         backend="interp",
@@ -93,7 +93,7 @@ def test_mackeyglass_second_exponent_is_near_zero() -> None:
     subdominant exponent — not satisfied by the construction-guaranteed sort.
     """
     ic = _on_attractor_ic("MackeyGlass")
-    spec = ts.MackeyGlass().lyapunov_spectrum(
+    spec = ts.systems.MackeyGlass().lyapunov_spectrum(
         backend="interp", k=2, dt=0.1, transient=200.0, final_time=2000.0, ic=ic
     )
     assert spec[0] > 0.0
@@ -103,13 +103,13 @@ def test_mackeyglass_second_exponent_is_near_zero() -> None:
 def test_reference_backend_is_rejected() -> None:
     """No pure-Python DDE integrator exists, so backend='reference' raises (like integrate)."""
     with pytest.raises(NotImplementedError, match="reference"):
-        ts.MackeyGlass().lyapunov_spectrum(backend="reference")
+        ts.systems.MackeyGlass().lyapunov_spectrum(backend="reference")
 
 
 def test_extra_kwargs_rejected_on_engine_path() -> None:
     """A stray integration keyword is rejected on the engine path, not silently ignored."""
     with pytest.raises(TypeError, match="extra integration keyword"):
-        ts.MackeyGlass().lyapunov_spectrum(backend="interp", max_step=0.1)
+        ts.systems.MackeyGlass().lyapunov_spectrum(backend="interp", max_step=0.1)
 
 
 @pytest.mark.parametrize(
@@ -138,7 +138,7 @@ def test_absurd_k_is_rejected_up_front(bad, expect) -> None:
     count.
     """
     with pytest.raises(InvalidParameterError, match=expect) as excinfo:
-        ts.MackeyGlass().lyapunov_spectrum(k=bad)
+        ts.systems.MackeyGlass().lyapunov_spectrum(k=bad)
     # The v4 error standard: name the parameter and quote the offending value.
     message = str(excinfo.value)
     assert "k" in message
@@ -152,7 +152,7 @@ def test_the_largest_admissible_n_exp_is_not_rejected() -> None:
     ``dim * (1 + n_exp) == 10_000`` is admissible; only the delay-window
     resolution check beyond it may complain, which is a *different* error.
     """
-    sys = ts.MackeyGlass()
+    sys = ts.systems.MackeyGlass()
     at_ceiling = _MAX_EXTENDED_DIM // sys.dim - 1
     with pytest.raises(InvalidParameterError) as excinfo:
         sys.lyapunov_spectrum(k=at_ceiling, dt=0.1)
@@ -216,7 +216,7 @@ def test_multidim_spectrum_is_consistent_and_brackets_zero() -> None:
     descending, and straddling the marginal 0 of an autonomous flow.
     """
     sys = _two_dim_delay()
-    ic = sys.integrate(
+    ic = sys.run(
         final_time=300.0, dt=0.1, history=lambda s: [0.5 + 0.1 * np.sin(s), 0.3 + 0.1 * np.cos(s)]
     ).y[-1]
     eng = sys.lyapunov_spectrum(

@@ -57,8 +57,8 @@ class TestSpuriousFinitePeriod:
         # Logistic at r=3.7 is chaotic; with a coarse rtol its finite-sample
         # points cluster into a small number of gap-separated bins.  The cluster
         # count is real, but the sequence does NOT revisit its values cyclically.
-        od = ts.orbit_diagram(
-            ts.Logistic(), "r", [3.7], points_per_value=300, transient=1000, ic=[0.5]
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(), "r", [3.7], points_per_value=300, transient=1000, ic=[0.5]
         )
         col = od.points[0][:, 0]
         rtol = 0.02
@@ -71,8 +71,8 @@ class TestSpuriousFinitePeriod:
     def test_true_cycle_is_cyclic(self) -> None:
         # Control: a genuine period-2 logistic window stays period 2 (the cyclic
         # check must not reject real cycles).
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             [3.2],
             points_per_value=200,
@@ -87,8 +87,8 @@ class TestSpuriousFinitePeriod:
     def test_period_doubling_sequence_unchanged(self) -> None:
         # Answer-preserving end-to-end: the clean period-doubling cascade still
         # reads 1, 2, 4, 8 (every step is a true, cyclically-repeating window).
-        od = ts.orbit_diagram(
-            ts.Logistic(),
+        od = ts.analysis.orbit_diagram(
+            ts.systems.Logistic(),
             "r",
             [2.8, 3.2, 3.5, 3.56],
             points_per_value=120,

@@ -278,7 +278,7 @@ def _spectrum_geometry(
     criterion = rf"$\mathrm{{Re}}\,{symbol}<0$" if continuous else rf"$|{symbol}|<1$"
     return Geometry(
         name,
-        make_frame(FrameSpace.COMPLEX, 2, axes),
+        make_frame(FrameSpace.COMPLEX, axes),
         parts,
         axis_labels=axes,
         axis_limits=limits,
@@ -635,7 +635,9 @@ def floquet_multipliers(
             "residual": float(getattr(subject, "residual", 0.0)),
         }
     elif _is_system(subject):
-        from tsdynamics.analysis.fixedpoints import periodic_orbit
+        # v6: ``periodic_orbit`` became ``periodic_orbits`` — one verb, one
+        # return type, so a flow's limit cycle comes back as a set of one.
+        from tsdynamics.analysis import periodic_orbits
 
         shooting = _given(
             ic=ic,
@@ -644,9 +646,9 @@ def floquet_multipliers(
             n_points=n_points,
             seed=seed,
         )
-        return floquet_multipliers(
-            periodic_orbit(subject, **shooting), trivial_tol=trivial_tol, boundary=boundary
-        )
+        found = periodic_orbits(subject, **shooting)
+        cycle = found[0] if not isinstance(found, tuple) and len(found) else found
+        return floquet_multipliers(cycle, trivial_tol=trivial_tol, boundary=boundary)
     else:
         mu = _as_complex(subject)
         if mu.size == 0:

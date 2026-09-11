@@ -38,7 +38,7 @@ import tsdynamics as ts
 
 ros = ts.systems.Rossler()          # a=0.2, b=0.2, c=5.7 — the classic chaotic band
 
-section = ts.poincare_section(
+section = ts.analysis.poincare_section(
     ros,
     plane=("y", 0.0, "up"),         # section y = 0, crossed with ẏ > 0
     crossings=500,
@@ -86,7 +86,7 @@ pmap = ros.poincare("y", 0.0, direction="up")
 # ...the verb builds exactly ts.derived.PoincareMap(ros, ("y", 0.0, "up")),
 # and both spellings take the same plane vocabulary.
 
-sec = pmap.trajectory(500, transient=50, ic=[1.0, 1.0, 1.0])
+sec = pmap.run(500, transient=50, ic=[1.0, 1.0, 1.0])
 len(sec.y)              # 500 crossings (after discarding the first 50)
 ```
 
@@ -99,7 +99,7 @@ of the flow** — the period-doubling cascade you would otherwise have to read o
 by eye:
 
 ```python
-od = ts.orbit_diagram(pmap, "c", np.linspace(3.0, 6.0, 200),
+od = ts.analysis.orbit_diagram(pmap, "c", np.linspace(3.0, 6.0, 200),
                       component=0, transient=100, points_per_value=80, ic=[1.0, 1.0, 1.0])
 od.bifurcation_points()[:3]     # where the cascade branches
 ```
@@ -112,7 +112,7 @@ $v_{n+1}$ vs $v_n$ — the literal 1-D map. [`return_map`](../analysis/orbit-dia
 with `method="poincare"` does this on the same section:
 
 ```python
-rm = ts.return_map(ros, "x", method="poincare",
+rm = ts.analysis.return_map(ros, "x", method="poincare",
                    plane=("y", 0.0), direction=+1,
                    n=500, dt=0.02, seed=0)
 
@@ -138,10 +138,10 @@ with `method="max"` (the default), on the Lorenz attractor, again settling first
 
 ```python
 lor = ts.systems.Lorenz()
-ic = lor.integrate(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).y[-1]
+ic = lor.run(final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0]).y[-1]
 # ic ≈ [4.369, 1.717, 26.335]  — a point on the attractor
 
-zc = ts.return_map(lor, "z", method="max", n=2000,
+zc = ts.analysis.return_map(lor, "z", method="max", n=2000,
                    final_time=400.0, dt=0.01, ic=ic)
 
 len(zc)                 # 532  — that many z-maxima in 400 time units

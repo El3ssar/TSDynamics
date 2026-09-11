@@ -7,7 +7,7 @@ that make the fluent flow *read left-to-right and run*:
 
 * a ``.run(...)`` alias on the derived wrappers, so the documented flow
   ``Rossler().poincare(section="y", at=0.0).run(steps=500)`` produces the section
-  (byte-identical to the wrapper's ``.trajectory(...)``);
+  (byte-identical to the wrapper's ``.run(...)``);
 * forcing-period **inference** for ``stroboscope()`` — the period is read from
   the system's drive (``omega`` / ``drive_frequency`` / ``forcing_period``), with
   an explicit ``period=`` override retained and a clear error when none can be
@@ -51,7 +51,7 @@ def test_poincare_run_matches_trajectory():
     pm = Rossler().poincare(section="y", at=0.0, direction=+1)
     ic = [0.5, 0.5, 0.5]
     via_run = pm.run(steps=30, transient=8, ic=ic)
-    via_traj = pm.trajectory(30, transient=8, ic=ic)
+    via_traj = pm.run(30, transient=8, ic=ic)
     assert np.array_equal(via_run.y, via_traj.y)
     assert np.array_equal(via_run.t, via_traj.t)
 
@@ -61,7 +61,7 @@ def test_stroboscope_run_matches_trajectory():
     strobe = Duffing().stroboscope()
     ic = [0.1, 0.0, 0.0]
     via_run = strobe.run(steps=20, transient=3, ic=ic)
-    via_traj = strobe.trajectory(20, transient=3, ic=ic)
+    via_traj = strobe.run(20, transient=3, ic=ic)
     assert np.array_equal(via_run.y, via_traj.y)
 
 

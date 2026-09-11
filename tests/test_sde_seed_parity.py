@@ -120,17 +120,17 @@ def test_reference_integrate_matches_step_loop_bit_for_bit(method):
     ic = [1.0]
     seed = 20240614
 
-    ref = sys.integrate(
+    ref = sys.run(
         final_time=_ROUNDOFF_TF,
         dt=_ROUNDOFF_DT,
         ic=ic,
         seed=seed,
-        method=method,
+        solver=method,
         backend="reference",
     )
     grid = ref.t
 
-    sys.reinit(ic, t=0.0, seed=seed, dt=_ROUNDOFF_DT, method=method)
+    sys.reinit(ic, t=0.0, seed=seed, dt=_ROUNDOFF_DT, solver=method)
     by_hand = [sys.state()]
     for _ in range(1, grid.size):
         by_hand.append(sys.step(_ROUNDOFF_DT))
@@ -161,12 +161,12 @@ def test_no_spurious_wiener_substep_on_roundoff_grid(method, monkeypatch):
 
     monkeypatch.setattr(sde_mod, "_wiener", counting_wiener)
 
-    _ParityGBM().integrate(
+    _ParityGBM().run(
         final_time=_ROUNDOFF_TF,
         dt=_ROUNDOFF_DT,
         ic=[1.0],
         seed=1,
-        method=method,
+        solver=method,
         backend="reference",
     )
 
@@ -204,7 +204,7 @@ def test_tolerant_landing_preserves_a_genuine_short_final_step(monkeypatch):
         lambda rng, h, dim: (drawn_h.append(h), real_wiener(rng, h, dim))[1],
     )
 
-    _ParityGBM().integrate(
+    _ParityGBM().run(
         final_time=tf,
         dt=dt,
         ic=[1.0],
@@ -238,18 +238,18 @@ def test_reference_ensemble_row_equals_single_trajectory_with_index_seed(method)
         ics,
         final_time=tf,
         dt=dt,
-        method=method,
+        solver=method,
         seed=base_seed,
         backend="reference",
     )
 
     for i, ic in enumerate(ics):
-        lone = sys.integrate(
+        lone = sys.run(
             final_time=tf,
             dt=dt,
             ic=ic,
             seed=_seed_for(base_seed, i),
-            method=method,
+            solver=method,
             backend="reference",
         )
         np.testing.assert_array_equal(batch[i], lone.y[-1])
@@ -281,9 +281,9 @@ def test_engine_interp_equals_jit_bit_for_bit_on_roundoff_grid(method):
     trajectories agree exactly, including on the roundoff-prone grid.
     """
     sys = _ParityGBM()
-    kw = dict(final_time=_ROUNDOFF_TF, dt=_ROUNDOFF_DT, ic=[1.0], seed=7, method=method)
-    interp = sys.integrate(backend="interp", **kw)
-    jit = sys.integrate(backend="jit", **kw)
+    kw = dict(final_time=_ROUNDOFF_TF, dt=_ROUNDOFF_DT, ic=[1.0], seed=7, solver=method)
+    interp = sys.run(backend="interp", **kw)
+    jit = sys.run(backend="jit", **kw)
     np.testing.assert_array_equal(interp.y, jit.y)
 
 
@@ -300,9 +300,9 @@ def test_engine_matches_reference_to_tolerance_on_roundoff_grid(method):
     *not* asserted bit-for-bit, because that ULP is platform/libm dependent.
     """
     sys = _ParityGBM()
-    kw = dict(final_time=_ROUNDOFF_TF, dt=_ROUNDOFF_DT, ic=[1.0], seed=20240614, method=method)
-    ref = sys.integrate(backend="reference", **kw)
-    eng = sys.integrate(backend="interp", **kw)
+    kw = dict(final_time=_ROUNDOFF_TF, dt=_ROUNDOFF_DT, ic=[1.0], seed=20240614, solver=method)
+    ref = sys.run(backend="reference", **kw)
+    eng = sys.run(backend="interp", **kw)
     assert eng.meta["engine"] == "rust"
     np.testing.assert_allclose(eng.y, ref.y, rtol=1e-9, atol=1e-11)
 
@@ -313,7 +313,7 @@ def test_engine_ensemble_interp_equals_jit_bit_for_bit(method):
     """Seeded SDE ensemble: interp == jit bit-for-bit (parallel == serial)."""
     sys = _ParityGBM()
     ics = np.linspace(0.8, 1.2, 8).reshape(-1, 1)
-    kw = dict(final_time=0.5, dt=_ROUNDOFF_DT, method=method, seed=3)
+    kw = dict(final_time=0.5, dt=_ROUNDOFF_DT, solver=method, seed=3)
     interp = sys.ensemble(ics, backend="interp", **kw)
     jit = sys.ensemble(ics, backend="jit", **kw)
     np.testing.assert_array_equal(interp, jit)

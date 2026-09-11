@@ -40,12 +40,12 @@ pytest.importorskip("plotly")
 
 
 def _lorenz(ic=(1.0, 1.0, 1.0)):
-    return ts.Lorenz().integrate(final_time=20.0, dt=0.02, ic=list(ic)).after(5.0)
+    return ts.systems.Lorenz().run(final_time=20.0, dt=0.02, ic=list(ic)).after(5.0)
 
 
 def _l96(ic=None):
     kw = {} if ic is None else {"ic": ic}
-    return ts.Lorenz96(N=8).trajectory(final_time=8.0, dt=0.1, **kw)
+    return ts.systems.Lorenz96(N=8).run(final_time=8.0, dt=0.1, **kw)
 
 
 def _image_panel(label: str) -> PlotSpec:

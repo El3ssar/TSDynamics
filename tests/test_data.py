@@ -249,7 +249,7 @@ def test_trajectory_pickles_with_its_meta() -> None:
     """A Trajectory (and the system it references) survives a pickle round-trip."""
     import pickle
 
-    traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).integrate(final_time=1.0, dt=0.1)
+    traj = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).run(final_time=1.0, dt=0.1)
     clone = pickle.loads(pickle.dumps(traj))
     np.testing.assert_array_equal(clone.y, traj.y)
     np.testing.assert_array_equal(clone.t, traj.t)

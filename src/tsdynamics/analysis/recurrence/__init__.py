@@ -24,7 +24,7 @@ functions self-register into :data:`tsdynamics.registry.analyses`.
 
 from __future__ import annotations
 
-from ... import registry as _registry
+from .._discovery import register as _register
 from .matrix import RecurrenceMatrix, recurrence_matrix
 from .rqa import RQAResult, rqa
 from .windowed import WindowedRQA, windowed_rqa
@@ -38,15 +38,36 @@ __all__ = [
     "windowed_rqa",
 ]
 
-# Self-register the headline analyses (D4 / §4e: in-tree analyses register from
-# their own subpackage).  Idempotent across re-imports.
-for _name, _fn in (
-    ("recurrence_matrix", recurrence_matrix),
-    ("rqa", rqa),
-    ("windowed_rqa", windowed_rqa),
-):
-    _registry.analyses.register(_name, _fn, needs="trajectory", family="recurrence")
-del _name, _fn
+# Self-register the analyses: the definition site is the registration site
+# (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
+_DATA = ("trajectory", "array")
+_register(
+    recurrence_matrix,
+    subjects=_DATA,
+    area="recurrence",
+    returns=RecurrenceMatrix,
+    keywords="recurrence plot eckmann threshold epsilon",
+    cite="Eckmann, Kamphorst & Ruelle (1987), Europhys. Lett. 4, 973",
+    doi="10.1209/0295-5075/4/9/004",
+)
+_register(
+    rqa,
+    subjects=_DATA,
+    area="recurrence",
+    returns=RQAResult,
+    keywords="recurrence quantification determinism laminarity plot",
+    cite="Marwan, Romano, Thiel & Kurths (2007), Phys. Rep. 438, 237",
+    doi="10.1016/j.physrep.2006.11.001",
+)
+_register(
+    windowed_rqa,
+    subjects=_DATA,
+    area="recurrence",
+    returns=WindowedRQA,
+    keywords="recurrence nonstationarity sliding window regime plot",
+    cite="Marwan, Romano, Thiel & Kurths (2007), Phys. Rep. 438, 237",
+    doi="10.1016/j.physrep.2006.11.001",
+)
 
 
 def __dir__() -> list[str]:

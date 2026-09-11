@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -16,8 +15,8 @@ from tsdynamics.errors import (
 )
 from tsdynamics.families import DelaySystem, DiscreteMap
 
-from ... import registry as _registry
 from .._common import reject_data, reject_system
+from .._discovery import register as _register
 from .._result import AnalysisResult, ArrayResult, ScalarResult
 from .._result_json import _vector
 from .from_data import LyapunovFromData, ScalingRegionWarning, lyapunov_from_data
@@ -25,7 +24,7 @@ from .from_data import LyapunovFromData, ScalingRegionWarning, lyapunov_from_dat
 #: The data-first sibling every system-first Lyapunov entry point points at when
 #: it is handed a measured series: the same question (how fast do nearby states
 #: separate?) answered without a model, from the series alone.
-_FROM_DATA_LINE = "ts.lyapunov_from_data({data})"
+_FROM_DATA_LINE = "ts.analysis.lyapunov_from_data({data})"
 
 __all__ = [
     "LyapunovFromData",
@@ -288,15 +287,11 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
     equations", in *Functional Differential Equations and Approximation of Fixed
     Points*, Lecture Notes in Mathematics **730**, Springer (1979) 204--227.
     """
-    reject_system(
-        spectrum,
-        analysis="kaplan_yorke_dimension",
-        hint=(
-            "It takes an already computed Lyapunov spectrum:\n"
-            "    exps = lyapunov_spectrum(system)\n"
-            "    kaplan_yorke_dimension(exps)"
-        ),
-    )
+    # No ``hint=``: the shared builder already knows this is a *result*-first
+    # analysis and which analysis produces its subject.  The bespoke hint opened
+    # with "expects measured data" — which this function does not — and that
+    # wrong clause is the one CONTRACT §5.6 names.
+    reject_system(spectrum, analysis="kaplan_yorke_dimension")
     s = np.asarray(spectrum, dtype=float)
     if s.ndim == 0:
         # A single number is never a spectrum: the formula needs a negative
@@ -310,8 +305,8 @@ def kaplan_yorke_dimension(spectrum: Any) -> ScalarResult:
             f"running sum of the exponents changes sign, so one number carries no "
             f"dimension — it would saturate at 1.0 whatever its value."
             + remedy(
-                "exps = ts.lyapunov_spectrum(system)",
-                "ts.kaplan_yorke_dimension(exps)",
+                "exps = ts.analysis.lyapunov_spectrum(system)",
+                "ts.analysis.kaplan_yorke_dimension(exps)",
                 lead="Compute the full spectrum first:",
             )
         )
@@ -352,9 +347,13 @@ def lyapunov_spectrum(
     dt: float | None = None,
     ic: Any | None = None,
     method: str | None = None,
+    rtol: float | None = None,
+    atol: float | None = None,
     **aliases: Any,
 ) -> LyapunovSpectrum:
-    """Lyapunov spectrum of any system — the uniform, documented entry point.
+    """Lyapunov spectrum — lambda_1 > 0 is the chaos test.
+
+    The uniform, documented entry point for every family.
 
     Dispatches to the family implementation (QR tangent dynamics for maps, the
     extended variational system on the engine for ODEs, the engine
@@ -382,6 +381,9 @@ def lyapunov_spectrum(
         accepts, taken here too so the flat function speaks the same horizon
         vocabulary as the method it wraps.  Passing both ``n`` and ``steps``
         raises, as does any other keyword.
+    rtol, atol : float, optional
+        Solver tolerances for the flow / DDE variational integration (they have
+        no meaning for a map, whose tangent iteration is exact arithmetic).
     transient : float, optional
         Amount discarded before averaging (a flow burn-in **time**).  Maps
         reorthonormalise from the initial condition and take no transient here.
@@ -432,7 +434,7 @@ def lyapunov_spectrum(
             f"{type(system).__name__} does not — a derived wrapper measures the "
             f"exponents of the system it wraps."
             + remedy(
-                "ts.lyapunov_spectrum(wrapper.system)",
+                "ts.analysis.lyapunov_spectrum(wrapper.system)",
                 lead="Compute the spectrum on the underlying system:",
             )
         )
@@ -442,7 +444,7 @@ def lyapunov_spectrum(
     # ``steps`` is the alias of ``n`` a map's ``iterate`` / ``run`` accept, so it
     # reaches this door too: the flat function must take the same horizon words
     # as the method it wraps, or ``hen.lyapunov_spectrum(steps=2000)`` working
-    # while ``ts.lyapunov_spectrum(hen, steps=2000)`` raises is a signature bug
+    # while ``ts.analysis.lyapunov_spectrum(hen, steps=2000)`` raises is a signature bug
     # a user has no way to predict.  It is accepted through ``**aliases`` rather
     # than named in the signature on purpose: ``n`` is the declared vocabulary
     # (the naming gate in ``test_polish_standards.py`` bans ``steps`` as a
@@ -455,14 +457,14 @@ def lyapunov_spectrum(
         # a keyword that exists with a bad value.
         raise InvalidInputError(
             f"lyapunov_spectrum got an unexpected keyword argument {sorted(aliases)[0]!r}."
-            + remedy("ts.lyapunov_spectrum(system, k=2, final_time=200.0)")
+            + remedy("ts.analysis.lyapunov_spectrum(system, k=2, final_time=200.0)")
         )
     if steps is not None:
         if n is not None:
             raise InvalidParameterError(
                 f"n and steps are the same argument (the iteration count), so pass "
                 f"only one; got n={n!r} and steps={steps!r}."
-                + remedy("ts.lyapunov_spectrum(system, n=5000)")
+                + remedy("ts.analysis.lyapunov_spectrum(system, n=5000)")
             )
         n = steps
 
@@ -472,7 +474,7 @@ def lyapunov_spectrum(
     if ic is not None:
         fwd["ic"] = ic
 
-    if getattr(system, "is_discrete", False):
+    if getattr(system, "family", None) == "map":
         # Maps: horizon is `n` (iterations); no time, solver or burn-in concept.
         if final_time is not None:
             raise ValueError("lyapunov_spectrum: final_time is for flows; a map uses n.")
@@ -503,6 +505,14 @@ def lyapunov_spectrum(
                     "lyapunov_spectrum: a DDE selects its engine via backend, not method."
                 )
             fwd["method"] = method
+        # The solver tolerances the family estimator has always taken.  They are
+        # named here because the free function is the ONLY door in v6 (ruling
+        # A2), so a keyword the removed method accepted and this one refuses is a
+        # signature bug, not a curation (C1).
+        if rtol is not None:
+            fwd["rtol"] = rtol
+        if atol is not None:
+            fwd["atol"] = atol
     exponents = np.asarray(method_fn(**fwd), dtype=float)
     meta = AnalysisResult.build_meta(
         system,
@@ -626,7 +636,9 @@ def max_lyapunov(
     ic: Any | None = None,
     seed: int | None = None,
 ) -> ScalarResult:
-    r"""Maximal Lyapunov exponent by two-trajectory rescaling (Benettin et al. 1976).
+    r"""Maximal Lyapunov exponent, by two-trajectory rescaling.
+
+    Benettin et al. (1976).
 
     Runs a reference and a perturbed copy of the system in lockstep through
     the :class:`~tsdynamics.families.System` protocol — no Jacobian needed, so it
@@ -728,14 +740,14 @@ def max_lyapunov(
         raise NotImplementedError(
             "max_lyapunov needs set_state, which delay systems cannot support."
             + remedy(
-                "ts.lyapunov_spectrum(system, k=1, dt=0.5)",
+                "ts.analysis.lyapunov_spectrum(system, k=1, dt=0.5)",
                 lead="Use the delay system's own engine estimator:",
             )
         )
-    if system.is_discrete and dt is not None:
+    if system.family == "map" and dt is not None:
         raise InvalidParameterError(
             "dt has no meaning for discrete maps — omit it (every step is one iteration)."
-            + remedy("ts.max_lyapunov(system, n=2000)")
+            + remedy("ts.analysis.max_lyapunov(system, n=2000)")
         )
     if not (d0 > 0.0) or not np.isfinite(d0):
         # The separation is rescaled back to d0 every cycle and the log-ratio is
@@ -745,34 +757,36 @@ def max_lyapunov(
         raise InvalidParameterError(
             f"d0 is the separation the two trajectories are reset to after every "
             f"rescaling, so it must be a small positive number; got {d0!r}."
-            + remedy("ts.max_lyapunov(system, d0=1e-9)")
+            + remedy("ts.analysis.max_lyapunov(system, d0=1e-9)")
         )
     if n is not None and int(n) < 1:
         raise InvalidParameterError(
             f"n is the number of measured rescaling cycles, so it must be >= 1; got "
             f"{n!r}. Omit it to size the averaging window automatically."
-            + remedy("ts.max_lyapunov(system)")
+            + remedy("ts.analysis.max_lyapunov(system)")
         )
     if final_time is not None:
         # ``n`` (a cycle count) and ``final_time`` (a window in time) set the same
         # quantity two different ways, so accepting both would leave one silently
         # ignored.  A map has no clock for a time window to mean anything on.
-        if system.is_discrete:
+        if system.family == "map":
             raise InvalidParameterError(
                 "final_time is a window in time units, and a map has no continuous "
                 "time — its horizon is a count of iterations."
-                + remedy("ts.max_lyapunov(system, n=2000)")
+                + remedy("ts.analysis.max_lyapunov(system, n=2000)")
             )
         if n is not None:
             raise InvalidParameterError(
                 f"n and final_time both size the averaging window (a cycle count vs a "
                 f"length in time), so pass only one; got n={n!r} and "
-                f"final_time={final_time!r}." + remedy("ts.max_lyapunov(system, final_time=200.0)")
+                f"final_time={final_time!r}."
+                + remedy("ts.analysis.max_lyapunov(system, final_time=200.0)")
             )
         if not np.isfinite(final_time) or final_time <= 0.0:
             raise InvalidParameterError(
                 f"final_time is the averaging-window length, so it must be finite and "
-                f"> 0; got {final_time!r}." + remedy("ts.max_lyapunov(system, final_time=200.0)")
+                f"> 0; got {final_time!r}."
+                + remedy("ts.analysis.max_lyapunov(system, final_time=200.0)")
             )
 
     # Maps: the maximal exponent is the leading entry of the QR tangent-map
@@ -782,7 +796,7 @@ def max_lyapunov(
     # path below is unchanged.  Only the map path moves to the kernel; a map whose
     # ``_step`` will not lower, or a wheel-free environment, falls back to the
     # two-trajectory loop transparently.
-    if system.is_discrete:
+    if system.family == "map":
         n_cycles = _DEFAULT_MAP_CYCLES if n is None else int(n)
         mle = _max_lyapunov_map(
             system, n=n_cycles, steps_per=steps_per, transient=transient, ic=ic, seed=seed
@@ -803,7 +817,7 @@ def max_lyapunov(
         ref.step(dt)
 
     if n is None:
-        if system.is_discrete:
+        if system.family == "map":
             n_cycles = _DEFAULT_MAP_CYCLES
         else:
             # Size the averaging window in TIME, read off the reference clock —
@@ -853,7 +867,7 @@ def max_lyapunov(
     for _ in range(n_cycles):
         log_sum += cycle()
 
-    if system.is_discrete:
+    if system.family == "map":
         elapsed = float(n_cycles * steps_per)
     else:
         # Normalize by the *actual* elapsed integration time, read from the
@@ -880,18 +894,44 @@ def max_lyapunov(
     return ScalarResult(value=mle, meta=meta)
 
 
-# Self-register the headline Lyapunov quantifiers (D4 / §4e: in-tree analyses
-# register from their own subpackage).  Idempotent across re-imports — `register`
-# keeps the same object under the same name.
-_registrations: tuple[tuple[str, Callable[..., Any], dict[str, Any]], ...] = (
-    ("lyapunov_spectrum", lyapunov_spectrum, {"needs": "system", "family": "lyapunov"}),
-    ("max_lyapunov", max_lyapunov, {"needs": "system", "family": "lyapunov"}),
-    ("lyapunov_from_data", lyapunov_from_data, {"needs": "series", "family": "lyapunov"}),
-    ("kaplan_yorke_dimension", kaplan_yorke_dimension, {"needs": "spectrum", "family": "lyapunov"}),
+# Self-register the quantifiers: the definition site is the registration site
+# (CONTRACT §7.7), through the public ``ts.analysis.register`` door.
+_register(
+    lyapunov_spectrum,
+    subjects=("system",),
+    area="lyapunov",
+    returns=LyapunovSpectrum,
+    keywords="chaotic chaos exponents spectrum predictability benettin",
+    cite="Benettin, Galgani, Giorgilli & Strelcyn (1980), Meccanica 15, 9",
+    doi="10.1007/BF02128236",
 )
-for _name, _fn, _meta in _registrations:
-    _registry.analyses.register(_name, _fn, **_meta)
-del _name, _fn, _meta, _registrations
+_register(
+    max_lyapunov,
+    subjects=("system",),
+    area="lyapunov",
+    returns=ScalarResult,
+    keywords="chaotic chaos largest exponent predictability benettin",
+    cite="Benettin, Galgani, Giorgilli & Strelcyn (1980), Meccanica 15, 9",
+    doi="10.1007/BF02128236",
+)
+_register(
+    lyapunov_from_data,
+    subjects=("trajectory", "array"),
+    area="lyapunov",
+    returns=LyapunovFromData,
+    keywords="chaotic chaos measured series kantz rosenstein",
+    cite="Kantz (1994), Phys. Lett. A 185, 77",
+    doi="10.1016/0375-9601(94)90991-1",
+)
+_register(
+    kaplan_yorke_dimension,
+    subjects=("LyapunovSpectrum",),
+    area="lyapunov",
+    returns=ScalarResult,
+    keywords="fractal dimension attractor lyapunov information",
+    cite="Kaplan & Yorke (1979), Lecture Notes in Mathematics 730, 204",
+    doi="10.1007/BFb0064319",
+)
 
 
 def __dir__() -> list[str]:

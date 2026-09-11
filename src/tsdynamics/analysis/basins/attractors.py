@@ -17,7 +17,7 @@ This is the recurrence approach of
 with the cell-visitation idea going back to H. E. Nusse and J. A. Yorke,
 *Dynamics: Numerical Explorations* (Springer, 1997).
 
-:func:`find_attractors` runs the machine from a cloud of seeds and returns the
+:func:`attractors` runs the machine from a cloud of seeds and returns the
 attractors it discovers; :class:`_AttractorMapper` is the reusable engine the
 basin and continuation layers drive over a full grid.
 """
@@ -54,8 +54,23 @@ if TYPE_CHECKING:
 __all__ = [
     "Attractor",
     "AttractorSet",
-    "find_attractors",
+    "attractors",
 ]
+
+
+def _is_discrete(system: Any) -> bool:
+    """Return whether ``system`` advances by iterations rather than by time.
+
+    v6 replaced the public ``is_discrete`` flag with ``family`` (§3.4).  Reading
+    the old name through ``getattr(system, "is_discrete", False)`` is the
+    silent-wrong-answer shape §9.4 rule 3 names: ``False`` is a *legal* value, so
+    a map would have been marched by ``dt`` instead of by one iterate with
+    nothing raised.  The private ``_is_discrete`` is the fallback because it is
+    the flag the five derived wrappers carry (a ``PoincareMap`` reports
+    ``family == "ode"`` while being a discrete view of one).
+    """
+    return bool(getattr(system, "family", None) == "map" or getattr(system, "_is_discrete", False))
+
 
 #: Label returned for an initial condition that leaves the region / never settles.
 DIVERGED = -1
@@ -373,7 +388,7 @@ class _AttractorMapper:
         self.mx_bas = int(basin_revisits)
         self.mx_lost = int(lost_steps)
 
-        self._discrete = bool(getattr(system, "is_discrete", False))
+        self._discrete = _is_discrete(system)
         self._step_arg: int | float = 1 if self._discrete else self.dt
 
         # Persistent labels (sparse): cell key → attractor id.  These dicts are
@@ -381,7 +396,7 @@ class _AttractorMapper:
         # state that makes the sweep amortise (a later seed inherits an earlier
         # seed's label).  Mutating them from threads would both race and change the
         # result, so ``map_ic`` is driven strictly serially — see the measured
-        # rationale in ``find_attractors``'s Notes for why thread-parallelism is a
+        # rationale in ``attractors``'s Notes for why thread-parallelism is a
         # net loss here, not just unsafe.
         self._att_cells: dict[tuple[int, ...], int] = {}
         self._bas_cells: dict[tuple[int, ...], int] = {}
@@ -1147,7 +1162,7 @@ def _march_supported(system: Any, backend: str) -> bool:
         return False
     # A flow or a map: both have a Rust kernel.  Anything else (a wrapped/custom
     # stepper with no lowerable tape) is caught when lowering fails below.
-    return getattr(system, "is_discrete", False) or hasattr(system, "_equations")
+    return _is_discrete(system) or hasattr(system, "_equations")
 
 
 def classify_seeds(
@@ -1159,7 +1174,7 @@ def classify_seeds(
 ) -> np.ndarray:
     """Classify a batch of seeds, accelerating the per-IC march in Rust when possible.
 
-    The single seam both :func:`find_attractors` and :func:`basins_of_attraction`
+    The single seam both :func:`attractors` and :func:`basins`
     drive the recurrence FSM through.  When the run is *supported* — an ODE flow or
     a map on the compiled engine whose tape lowers — the **entire** per-seed march
     (stepping + cell-binning + the shared-label early-out) runs in one sequential
@@ -1296,7 +1311,7 @@ def _try_rust_march(
 # ---------------------------------------------------------------------------
 
 
-def find_attractors(
+def attractors(
     system: Any,
     region: Grid | Box | Ball | Sequence[tuple[float, ...]] | None = None,
     *,
@@ -1409,8 +1424,8 @@ def find_attractors(
     G. Datseris and A. Wagemakers, "Effortless estimation of basins of
     attraction", *Chaos* **32**, 023104 (2022).
     """
-    _reject_unsupported(system, "find_attractors")
-    region = coerce_region(region, analysis="find_attractors", system=system, want_grid=False)
+    _reject_unsupported(system, "attractors")
+    region = coerce_region(region, analysis="attractors", system=system, want_grid=False)
 
     grid = _recurrence_grid(region, resolution)
     mapper = _AttractorMapper(system, grid, dt=dt, max_steps=max_steps, **fsm)
@@ -1431,7 +1446,7 @@ def find_attractors(
     found = mapper.attractor_set(diverged=diverged, seeds=int(n_seeds), merge=merge)
     # Attach provenance without re-allocating the (potentially large) attractor
     # dict — ``replace`` reuses every field but ``meta``.
-    return replace(found, meta=AnalysisResult.build_meta(system, analysis="find_attractors"))
+    return replace(found, meta=AnalysisResult.build_meta(system, analysis="attractors"))
 
 
 def resolve_merge_tol(cellgrid: _CellGrid, merge_tol: float | None) -> float:
@@ -1449,8 +1464,8 @@ def _looks_unsupported(system: Any) -> bool:
 def _reject_unsupported(system: Any, fn_name: str) -> None:
     """Raise a uniform error for measured data and for delay / stochastic systems.
 
-    Shared by the basin entry points (``find_attractors``,
-    ``basins_of_attraction``, ``basin_fractions``, ``continuation``) so an
+    Shared by the basin entry points (``attractors``,
+    ``basins``, ``basin_fractions``, ``continuation``) so an
     unsupported first argument fails early with one clear message instead of
     opaquely inside the step loop.
 
@@ -1461,7 +1476,7 @@ def _reject_unsupported(system: Any, fn_name: str) -> None:
     ``AttributeError: 'Trajectory' object has no attribute 'reinit'``.
     """
     reject_data(system, analysis=fn_name)
-    if getattr(system, "is_discrete", False) is False and _looks_unsupported(system):
+    if not _is_discrete(system) and _looks_unsupported(system):
         raise TypeError(f"{fn_name} supports maps and flows, not delay/stochastic systems.")
 
 

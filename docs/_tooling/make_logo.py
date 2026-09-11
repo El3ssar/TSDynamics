@@ -30,7 +30,7 @@ def _rot(y, yaw, pitch):
 
 def _streamline(final_time, yaw, pitch, n_keep):
     sys = ts.systems.Aizawa()
-    y = sys.integrate(final_time=final_time, dt=0.01).y
+    y = sys.run(final_time=final_time, dt=0.01).y
     y = y - y.mean(0)
     r = _rot(y, yaw, pitch)[:, :2]
     step = max(1, len(r) // n_keep)

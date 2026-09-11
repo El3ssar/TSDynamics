@@ -235,7 +235,9 @@ def estimate_dt_from_sagitta(
     min_points_per_segment: int = 3,
     search_growth: float = 1.5,
 ) -> SagittaDt:
-    r"""Sagitta-based output-step :math:`\Delta t^\ast` selector.
+    r"""Output dt that keeps the drawn bow under epsilon.
+
+    The sagitta-based output-step :math:`\Delta t^\ast` selector.
 
     A derivative-free, scale-invariant, idempotent heuristic for the output
     sampling step.  For a range of candidate strides it measures the *sagitta* —

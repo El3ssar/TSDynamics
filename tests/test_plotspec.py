@@ -609,7 +609,7 @@ def test_front_door_rejects_a_keyword_no_transform_accepts():
     import tsdynamics as ts
     from tsdynamics.errors import InvalidParameterError
 
-    traj = ts.systems.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
     with pytest.raises(InvalidParameterError) as excinfo:
         ts.plot(traj, "time_series", colour="red")
     message = str(excinfo.value)
@@ -622,7 +622,7 @@ def test_front_door_still_routes_a_keyword_only_one_transform_accepts():
     """The rejection must not break the routing it guards: a used keyword is fine."""
     import tsdynamics as ts
 
-    traj = ts.systems.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
     spec = ts.plot(traj, "time_series", "phase_portrait", components=[0, 1], layout="row")
     assert spec.is_composite
 
@@ -642,7 +642,7 @@ def test_a_positional_transform_name_on_the_method_names_the_front_door():
     import tsdynamics as ts
     from tsdynamics.errors import InvalidParameterError
 
-    traj = ts.systems.Lorenz().integrate(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+    traj = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
     for subject, call in (
         ("traj", lambda: traj.plot("delay_embedding", delay=7)),
         ("system", lambda: ts.systems.Lorenz().plot("phase_portrait")),

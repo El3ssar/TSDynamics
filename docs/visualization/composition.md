@@ -62,12 +62,12 @@ The overlay figure above is one call:
 ```python
 import tsdynamics as ts
 
-r_cycle = ts.Rossler().with_params(c=2.3)   # a small limit cycle
-r_chaos = ts.Rossler().with_params(c=5.7)   # the classic chaotic band
+r_cycle = ts.systems.Rossler().with_params(c=2.3)   # a small limit cycle
+r_chaos = ts.systems.Rossler().with_params(c=5.7)   # the classic chaotic band
 ic = [0.1, 0.0, 0.0]
 
-t_cycle = r_cycle.trajectory(final_time=200.0, dt=0.05, ic=ic)
-t_chaos = r_chaos.trajectory(final_time=200.0, dt=0.05, ic=ic)
+t_cycle = r_cycle.run(final_time=200.0, dt=0.05, ic=ic)
+t_chaos = r_chaos.run(final_time=200.0, dt=0.05, ic=ic)
 
 fig = ts.viz.plot(t_cycle, t_chaos, components=["x", "y"])
 fig.recolor("#11857A", "#574FCF").save("compose-overlay.svg")
@@ -105,7 +105,7 @@ one of those. Mixing kinds — a time series and a 2-D portrait, or a 2-D and a
 panelled layout instead:
 
 ```pycon
->>> lor = ts.Lorenz()
+>>> lor = ts.systems.Lorenz()
 >>> ts_spec = lor.to_plot_spec(components="x", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 >>> ph_spec = lor.to_plot_spec(components=["x", "y"], final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 >>> ts.viz.plot(ts_spec, ph_spec)
@@ -143,7 +143,7 @@ subplot grid.
 ```python
 import tsdynamics as ts
 
-lor, ros, hal, tho = ts.Lorenz(), ts.Rossler(), ts.Halvorsen(), ts.Thomas()
+lor, ros, hal, tho = ts.systems.Lorenz(), ts.systems.Rossler(), ts.systems.Halvorsen(), ts.systems.Thomas()
 
 grid = ts.viz.plot(
     lor.to_plot_spec(components=[0, 2], final_time=100.0, dt=0.01, ic=[1.0, 1.0, 1.0]),
@@ -186,7 +186,7 @@ that names the same x axis (the canonical "`x(t)` above `y(t)` over one shared
 time axis" case), the panels auto-share their x axis.
 
 ```python
-lz = ts.Lorenz()
+lz = ts.systems.Lorenz()
 px = lz.to_plot_spec(components="x", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 py = lz.to_plot_spec(components="y", final_time=40.0, dt=0.01, ic=[1.0, 1.0, 1.0])
 
@@ -219,7 +219,7 @@ new figure — so you build the pieces bottom-up and combine them:
 ```python
 import tsdynamics as ts
 
-lz = ts.Lorenz()
+lz = ts.systems.Lorenz()
 ic = [1.0, 1.0, 1.0]
 
 # Panel 1: x(t) and y(t) stacked on a shared time axis.
@@ -258,7 +258,7 @@ head marker on portraits and spacetime, off on a plain time series).
 ```python
 import tsdynamics as ts
 
-lor, ros = ts.Lorenz(), ts.Rossler()
+lor, ros = ts.systems.Lorenz(), ts.systems.Rossler()
 comp = ts.viz.plot(
     lor.to_plot_spec(components=[0, 2], final_time=30.0, dt=0.01, ic=[1.0, 1.0, 1.0]),
     ros.to_plot_spec(components=[0, 1], final_time=60.0, dt=0.05, ic=[0.1, 0.0, 0.0]),

@@ -368,7 +368,7 @@ def fixed_points(
     seed: int | None = None,
 ) -> FixedPointSet:
     r"""
-    Find fixed points of a map (``f(x) = x``) or equilibria of a flow (``f(x) = 0``).
+    Find the fixed points of a map, or the equilibria of a flow.
 
     Seeds are drawn uniformly from ``region`` plus points sampled from a short
     orbit; each runs the chosen root finder, and converged roots are deduplicated
@@ -479,7 +479,7 @@ def fixed_points(
             f"fixed point at all — but the *drift* of an SDE, and the flow a delay "
             f"system reduces to at zero delay, do."
             + remedy(
-                "ts.fixed_points(ts.systems.Lorenz())",
+                "ts.analysis.fixed_points(ts.systems.Lorenz())",
                 lead="Pass a map or a flow:",
             )
         )
@@ -495,7 +495,7 @@ def fixed_points(
                 "transformations that reach unstable orbits of maps; 'interval' "
                 "is the rigorous Krawczyk search, which cannot miss a root."
                 + remedy(
-                    "ts.fixed_points(system, method='newton')",
+                    "ts.analysis.fixed_points(system, method='newton')",
                     lead="The default is the one to start from:",
                 )
             ),

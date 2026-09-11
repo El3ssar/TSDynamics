@@ -54,9 +54,9 @@ automatically selected scaling region. On the Hénon attractor:
 ```python
 import tsdynamics as ts
 
-pts = ts.systems.Henon().iterate(steps=8000, ic=[0.1, 0.1]).y[500:]
+pts = ts.systems.Henon().run(steps=8000, ic=[0.1, 0.1]).y[500:]
 
-res = ts.correlation_dimension(pts, n_radii=32, min_window=8)
+res = ts.analysis.correlation_dimension(pts, n_radii=32, min_window=8)
 float(res)        # 1.171   (the fitted slope D2)
 res.stderr        # 0.002   (slope uncertainty over the window)
 res.fit_slice     # (3, 13) inclusive indices of the fitted region
@@ -92,10 +92,10 @@ The raw curve is available on its own via `correlation_sum(pts)`, which returns
     import numpy as np
     t = np.linspace(0, 2 * np.pi, 4000, endpoint=False)
     circle = np.column_stack([np.cos(t), np.sin(t)])
-    float(ts.correlation_dimension(circle))        # 1.022
+    float(ts.analysis.correlation_dimension(circle))        # 1.022
 
     square = np.random.default_rng(0).random((5000, 2))
-    float(ts.correlation_dimension(square))        # 1.906
+    float(ts.analysis.correlation_dimension(square))        # 1.906
     ```
 
 ## The generalized spectrum
@@ -120,12 +120,12 @@ the spectrum is flat; a $D_q$ that *decreases* with $q$ is the signature of
 **multifractality** — the attractor's measure is spread unevenly.
 
 ```python
-pts = ts.systems.Henon().iterate(steps=8000, ic=[0.1, 0.1]).y[500:]
+pts = ts.systems.Henon().run(steps=8000, ic=[0.1, 0.1]).y[500:]
 
-ts.box_counting_dimension(pts)         # D0 = 1.279  (capacity)
-ts.information_dimension(pts)          # D1 = 1.230  (entropy)
-ts.generalized_dimension(pts, q=2.0)   # D2 = 1.167
-ts.generalized_dimension(pts, q=1.5)   # D_1.5 = 1.208  (any real q >= 0)
+ts.analysis.box_counting_dimension(pts)         # D0 = 1.279  (capacity)
+ts.analysis.information_dimension(pts)          # D1 = 1.230  (entropy)
+ts.analysis.generalized_dimension(pts, q=2.0)   # D2 = 1.167
+ts.analysis.generalized_dimension(pts, q=1.5)   # D_1.5 = 1.208  (any real q >= 0)
 ```
 
 `box_counting_dimension` and `information_dimension` are thin wrappers over
@@ -139,7 +139,7 @@ occupancies **once per scale** and reuses them across every $q$, so the full
 curve costs barely more than a single $D_q$:
 
 ```python
-spec = ts.dimension_spectrum(pts, qs=[0, 1, 2, 3, 4])
+spec = ts.analysis.dimension_spectrum(pts, qs=[0, 1, 2, 3, 4])
 {q: round(float(r), 3) for q, r in spec.items()}
 # {0.0: 1.279, 1.0: 1.230, 2.0: 1.167, 3.0: 1.099, 4.0: 1.141}
 ```
@@ -182,7 +182,7 @@ enclosing radius is a random order statistic, and the digamma correction removes
 the $O(1/k)$ bias $\log k$ carries at small $k$.)
 
 ```python
-ts.fixed_mass_dimension(pts)           # 1.266   (agrees with D2)
+ts.analysis.fixed_mass_dimension(pts)           # 1.266   (agrees with D2)
 ```
 
 Because it adapts the radius to the *local* density, the fixed-mass estimator
@@ -200,7 +200,7 @@ full curve and the chosen window, and two helpers in
 ```python
 from tsdynamics.analysis.dimensions import local_slopes, fit_scaling_region
 
-res = ts.correlation_dimension(pts, n_radii=32, min_window=8)
+res = ts.analysis.correlation_dimension(pts, n_radii=32, min_window=8)
 res.x, res.y            # log r , log C(r)  — the scaling curve
 res.fit_slice           # (lo, hi) indices the dimension was fit over
 
@@ -226,7 +226,7 @@ the number anyway and sets `trusted=False`, and the `repr` says `UNTRUSTED` with
 the reason:
 
 ```python
-res = ts.box_counting_dimension(pts)
+res = ts.analysis.box_counting_dimension(pts)
 res.trusted            # False when the scaling region did not resolve
 float(res)             # still gives you the number
 ```

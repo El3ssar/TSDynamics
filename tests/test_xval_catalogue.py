@@ -271,7 +271,7 @@ def _on_attractor(cls, *, n_warm: int = 60, drop: int = 40, take: int = 5) -> np
     transient or off-basin escape.
     """
     np.random.seed(0)
-    warm = cls().iterate(steps=n_warm, backend="reference")
+    warm = cls().run(steps=n_warm, backend="reference")
     finite = warm.y[np.isfinite(warm.y).all(axis=1)]
     if finite.shape[0] < drop + take:
         pytest.skip(f"{cls.__name__}: too few finite warm-up states for a stable sample")
@@ -315,8 +315,8 @@ def test_map_interp_equals_jit_bit_for_bit(map_entry) -> None:
     except TapeCompileError:
         pytest.skip(f"{map_entry.name} does not lower to the straight-line IR")
     ic = _on_attractor(cls, take=1)[0]
-    interp = cls().iterate(steps=20, ic=ic, backend="interp").y
-    jit = cls().iterate(steps=20, ic=ic, backend="jit").y
+    interp = cls().run(steps=20, ic=ic, backend="interp").y
+    jit = cls().run(steps=20, ic=ic, backend="jit").y
     np.testing.assert_array_equal(interp, jit, err_msg=f"{map_entry.name}: interp != jit")
 
 
@@ -336,7 +336,7 @@ def test_dde_engine_path_is_finite(dde_entry) -> None:
     from _sampling import DDE_HISTORIES
 
     history = DDE_HISTORIES[dde_entry.name]
-    traj = dde_entry.cls().integrate(
+    traj = dde_entry.cls().run(
         backend="interp", final_time=10.0, dt=0.1, history=history, rtol=1e-6, atol=1e-8
     )
     assert np.all(np.isfinite(traj.y)), f"{dde_entry.name}: engine produced non-finite states"
@@ -371,7 +371,7 @@ def test_ode_trajectory_matches_reference_early(name) -> None:
     improvement this leg gains from the change even though the number barely
     moves.
     """
-    sys = getattr(ts, name)()
+    sys = getattr(ts.systems, name)()
     ic = _resolve_ic(sys, name)
     t_eval = np.arange(0.0, 3.0 + 1e-9, 0.01)
     engine = RustEngine(backend="interp", rtol=1e-10, atol=1e-12)
@@ -412,7 +412,7 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     successor to ``jitcode_lyap``.  ``interp`` and ``jit`` must also agree closely
     (the same lowering, integrated by two numerically-identical evaluators).
     """
-    cls = getattr(ts, name)
+    cls = getattr(ts.systems, name)
     meta = dict(cls().known_lyapunov)
     expected = np.asarray(meta["spectrum"], dtype=float)
     atol = np.asarray(meta["atol"], dtype=float)
@@ -420,7 +420,7 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     if meta.get("ic") is not None:
         kwargs.setdefault("ic", list(meta["ic"]))
 
-    interp = ts.TangentSystem(cls(), backend="interp").lyapunov_spectrum(**kwargs)
+    interp = ts.derived.TangentSystem(cls(), backend="interp").lyapunov_spectrum(**kwargs)
     assert np.all(np.isfinite(interp))
     deviation = np.abs(interp - expected)
     assert np.all(deviation <= atol), (
@@ -433,7 +433,7 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     # integrate + QR + log-norm accumulate) runs in the engine kernel (stream
     # perf/ode-lyapunov-engine) over the *same* lowered tape, driven by two
     # numerically-identical evaluators — so the spectrum agrees to the last bit.
-    jit = ts.TangentSystem(cls(), backend="jit").lyapunov_spectrum(**kwargs)
+    jit = ts.derived.TangentSystem(cls(), backend="jit").lyapunov_spectrum(**kwargs)
     np.testing.assert_array_equal(
         interp, jit, err_msg=f"{name}: interp vs jit Lyapunov spectrum (must be bit-for-bit)"
     )
@@ -454,8 +454,8 @@ def test_dde_engine_lyapunov_is_positive_mackeyglass() -> None:
     """Mackey-Glass: the engine DDE-Lyapunov λ₁ is positive (known_lyapunov n_positive=1)."""
     from _sampling import DDE_HISTORIES
 
-    mg = ts.MackeyGlass()
-    ic = mg.integrate(final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]).y[-1]
+    mg = ts.systems.MackeyGlass()
+    ic = mg.run(final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]).y[-1]
     eng = mg.lyapunov_spectrum(
         backend="interp", k=1, transient=200.0, final_time=2000.0, ic=ic, dt=0.05
     )

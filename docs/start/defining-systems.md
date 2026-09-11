@@ -83,7 +83,7 @@ functional system the moment it is defined:
 
 ```python
 fhn = FitzHughNagumo()
-traj = fhn.integrate(final_time=200.0, dt=0.05, ic=[-1.0, 1.0])
+traj = fhn.run(final_time=200.0, dt=0.05, ic=[-1.0, 1.0])
 
 traj.y.shape          # (4001, 2)
 traj["v"].min(), traj["v"].max()   # ≈ (-2.0, 1.9) — the relaxation spikes
@@ -94,11 +94,11 @@ The lone equilibrium is unstable, which is exactly why the state settles into a
 limit cycle around it:
 
 ```python
-fps = ts.fixed_points(fhn)
+fps = ts.analysis.fixed_points(fhn)
 fps[0].x        # ≈ [-0.805, -0.131]  — the single equilibrium
 fps[0].stable   # False → the orbit spirals out onto a limit cycle
 
-ts.estimate_period(fhn.integrate(final_time=400, dt=0.05, ic=[-1.0, 1.0])["v"], dt=0.05)
+ts.analysis.estimate_period(fhn.run(final_time=400, dt=0.05, ic=[-1.0, 1.0])["v"], dt=0.05)
 # ≈ 39  — the relaxation-oscillation period
 ```
 
@@ -161,7 +161,7 @@ class StandardMap(ts.DiscreteMap):
 
 ```python
 sm = StandardMap()
-sm.iterate(steps=3000, ic=[0.1, 0.1]).y.shape     # (3000, 2)
+sm.run(steps=3000, ic=[0.1, 0.1]).y.shape     # (3000, 2)
 ```
 
 !!! warning "Map parameters are positional"
@@ -198,7 +198,7 @@ class DoubleWellSDE(ts.StochasticSystem):
 
 ```python
 dw = DoubleWellSDE()
-traj = dw.integrate(final_time=100.0, dt=0.01, seed=1)   # seed → reproducible path
+traj = dw.run(final_time=100.0, dt=0.01, seed=1)   # seed → reproducible path
 ```
 
 Like maps, `_drift`/`_diffusion` take parameters positionally. Integrating runs a
@@ -231,7 +231,7 @@ sysm = ts.WrappedSystem(step, dim=1, is_discrete=True,
                         initial=[0.5], variables=("x",))
 
 traj = sysm.run(500)                       # a Trajectory, like any other family
-float(ts.max_lyapunov(sysm, ic=[0.3]))     # ≈ 0.5 — chaotic
+float(ts.analysis.max_lyapunov(sysm, ic=[0.3]))     # ≈ 0.5 — chaotic
 ts.plot(traj)                              # and it plots like any other
 ```
 

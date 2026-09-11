@@ -93,7 +93,7 @@ def test_map_inherited_step_with_reordered_params_raises() -> None:
     """Subclassing with a reordered params dict must also be caught."""
     with pytest.raises(TypeError, match="ORDER must match"):
 
-        class _Reordered(ts.Henon):
+        class _Reordered(ts.systems.Henon):
             params = {"b": 0.3, "a": 1.4}  # Henon._step is (X, a, b)
 
 

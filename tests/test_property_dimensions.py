@@ -2,11 +2,11 @@
 Property and known-value tests for the fractal-dimension API (stream I-QA).
 
 These exercise ``tsdynamics``'s A-DIM estimators
-(:func:`~tsdynamics.correlation_sum`, :func:`~tsdynamics.correlation_dimension`,
-the generalized/Rényi :func:`~tsdynamics.generalized_dimension` with its
-:func:`~tsdynamics.box_counting_dimension` / :func:`~tsdynamics.information_dimension`
-wrappers, :func:`~tsdynamics.dimension_spectrum`, and
-:func:`~tsdynamics.fixed_mass_dimension`) against *mathematical* invariants rather
+(:func:`~tsdynamics.analysis.correlation_sum`, :func:`~tsdynamics.analysis.correlation_dimension`,
+the generalized/Rényi :func:`~tsdynamics.analysis.generalized_dimension` with its
+:func:`~tsdynamics.analysis.box_counting_dimension` / :func:`~tsdynamics.analysis.information_dimension`
+wrappers, :func:`~tsdynamics.analysis.dimension_spectrum`, and
+:func:`~tsdynamics.analysis.fixed_mass_dimension`) against *mathematical* invariants rather
 than golden numbers:
 
 - the correlation sum :math:`C(r)` is a CDF — non-decreasing in ``r`` and bounded
@@ -66,7 +66,7 @@ def _uniform_cube(d: int, n: int, seed: int) -> np.ndarray:
 def test_correlation_sum_is_a_bounded_cdf(seed: int, d: int) -> None:
     """``correlation_sum`` returns ascending radii and a monotone ``C`` in [0, 1]."""
     pts = _uniform_cube(d, 1500, seed)
-    radii, c = ts.correlation_sum(pts)
+    radii, c = ts.analysis.correlation_sum(pts)
 
     # radii come back in the caller's order; the default grid is strictly ascending.
     assert np.all(np.diff(radii) > 0.0)
@@ -88,7 +88,7 @@ def test_correlation_sum_monotone_in_explicit_radii(seed: int) -> None:
     """A coarser explicit radius grid still yields a CDF in [0, 1], non-decreasing."""
     pts = _uniform_cube(2, 1500, seed)
     radii = np.linspace(0.02, 0.5, 12)
-    out_radii, c = ts.correlation_sum(pts, radii)
+    out_radii, c = ts.analysis.correlation_sum(pts, radii)
     assert np.allclose(out_radii, radii)
     assert float(c.min()) >= 0.0
     assert float(c.max()) <= 1.0
@@ -109,7 +109,7 @@ def test_correlation_sum_monotone_in_explicit_radii(seed: int) -> None:
 def test_correlation_dimension_matches_cube_dimension(seed: int, d: int, n: int) -> None:
     """N uniform points in a d-cube (d in {1, 2}) give D2 ~= d within tolerance."""
     pts = _uniform_cube(d, n, seed)
-    d2 = float(ts.correlation_dimension(pts))
+    d2 = float(ts.analysis.correlation_dimension(pts))
     # This is the load-bearing known-value check: a broken slope fit would miss d.
     assert abs(d2 - d) <= _D2_TOL
 
@@ -126,7 +126,7 @@ def test_correlation_dimension_3d_cube(seed: int) -> None:
     and the seed-to-seed spread is tight.
     """
     pts = _uniform_cube(3, 3000, seed)
-    d2 = float(ts.correlation_dimension(pts))
+    d2 = float(ts.analysis.correlation_dimension(pts))
     assert abs(d2 - 3.0) <= _D2_TOL_3D
 
 
@@ -135,7 +135,7 @@ def test_correlation_dimension_3d_cube(seed: int) -> None:
 def test_correlation_dimension_finite_and_nonnegative(seed: int, d: int) -> None:
     """For any non-degenerate cloud, D2 is finite and >= 0."""
     pts = _uniform_cube(d, 1800, seed)
-    d2 = float(ts.correlation_dimension(pts))
+    d2 = float(ts.analysis.correlation_dimension(pts))
     assert np.isfinite(d2)
     assert d2 >= 0.0
 
@@ -150,8 +150,8 @@ def test_correlation_dimension_finite_and_nonnegative(seed: int, d: int) -> None
 def test_box_counting_delegates_to_q0(seed: int) -> None:
     """box_counting_dimension(data) == generalized_dimension(data, q=0)."""
     pts = _uniform_cube(2, 2000, seed)
-    bc = float(ts.box_counting_dimension(pts))
-    g0 = float(ts.generalized_dimension(pts, q=0.0))
+    bc = float(ts.analysis.box_counting_dimension(pts))
+    g0 = float(ts.analysis.generalized_dimension(pts, q=0.0))
     assert abs(bc - g0) <= _DELEGATE_TOL
 
 
@@ -160,8 +160,8 @@ def test_box_counting_delegates_to_q0(seed: int) -> None:
 def test_information_delegates_to_q1(seed: int) -> None:
     """information_dimension(data) == generalized_dimension(data, q=1)."""
     pts = _uniform_cube(2, 2000, seed)
-    inf = float(ts.information_dimension(pts))
-    g1 = float(ts.generalized_dimension(pts, q=1.0))
+    inf = float(ts.analysis.information_dimension(pts))
+    g1 = float(ts.analysis.generalized_dimension(pts, q=1.0))
     assert abs(inf - g1) <= _DELEGATE_TOL
 
 
@@ -182,7 +182,7 @@ def test_dimension_spectrum_keys_and_finiteness(seed: int) -> None:
     # own test.  Suppress it here so a structural check is not coupled to sample size.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", NonMonotoneSpectrumWarning)
-        spectrum = ts.dimension_spectrum(pts, qs=qs)
+        spectrum = ts.analysis.dimension_spectrum(pts, qs=qs)
 
     # The spectrum maps each requested q -> its DimensionResult (in request order).
     assert list(spectrum.keys()) == qs
@@ -207,12 +207,12 @@ def test_generalized_dimension_nonincreasing_in_q(seed: int) -> None:
     # attractor while giving Hypothesis distinct (reproducible) draws.
     x0 = 0.05 + 0.001 * (seed % 50)
     series = henon_series(2500, x0=x0)
-    cloud = ts.embed(series, 2, 1)  # 2-D Takens reconstruction of the attractor
+    cloud = ts.analysis.embed(series, 2, 1)  # 2-D Takens reconstruction of the attractor
 
     q_grid = [0.0, 2.0, 4.0]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", NonMonotoneSpectrumWarning)
-        spectrum = ts.dimension_spectrum(cloud, qs=q_grid)
+        spectrum = ts.analysis.dimension_spectrum(cloud, qs=q_grid)
     dims = [float(spectrum[q]) for q in q_grid]
 
     # D_q is theoretically non-increasing in q; allow estimator noise via tol.
@@ -230,7 +230,7 @@ def test_generalized_dimension_nonincreasing_in_q(seed: int) -> None:
 def test_fixed_mass_dimension_uniform_line(seed: int) -> None:
     """A uniform 1-D point set has fixed-mass dimension ~= 1."""
     pts = _uniform_cube(1, 3000, seed)
-    d = float(ts.fixed_mass_dimension(pts))
+    d = float(ts.analysis.fixed_mass_dimension(pts))
     assert abs(d - 1.0) <= _FIXED_MASS_TOL
 
 
@@ -239,5 +239,5 @@ def test_fixed_mass_dimension_uniform_line(seed: int) -> None:
 def test_fixed_mass_dimension_uniform_square(seed: int) -> None:
     """A uniform 2-D point set has fixed-mass dimension ~= 2."""
     pts = _uniform_cube(2, 3000, seed)
-    d = float(ts.fixed_mass_dimension(pts))
+    d = float(ts.analysis.fixed_mass_dimension(pts))
     assert abs(d - 2.0) <= _FIXED_MASS_TOL

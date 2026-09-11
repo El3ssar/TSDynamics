@@ -15,7 +15,7 @@ stiffness selection does, and which backend runs the numbers — followed by the
 
 <figure markdown>
 ![A single Lorenz integrate call shown two ways — the strange attractor traced in state space beside the x, y and z component time series it samples on the output grid](../assets/figures/analysis/integrate.svg){ loading=lazy }
-<figcaption>One <code>Lorenz().integrate(...)</code> call returns one <code>Trajectory</code>. The same data is the strange attractor in state space (left, indigo) and the stacked <code>x(t)</code>, <code>y(t)</code>, <code>z(t)</code> time series it samples on the output grid (right) — <code>traj.y</code> is <code>(T, dim)</code>, <code>traj["x"]</code> is one column of it.</figcaption>
+<figcaption>One <code>Lorenz().run(...)</code> call returns one <code>Trajectory</code>. The same data is the strange attractor in state space (left, indigo) and the stacked <code>x(t)</code>, <code>y(t)</code>, <code>z(t)</code> time series it samples on the output grid (right) — <code>traj.y</code> is <code>(T, dim)</code>, <code>traj["x"]</code> is one column of it.</figcaption>
 </figure>
 
 ## Two verbs: `integrate` and `iterate`
@@ -27,10 +27,10 @@ Both return a single [`Trajectory`](index.md).
 import tsdynamics as ts
 
 # flows — integrate over a time span, sampled on an output grid
-traj = ts.systems.Lorenz().integrate(final_time=100.0, dt=0.01)
+traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.01)
 
 # maps — iterate a fixed number of steps
-orbit = ts.systems.Henon().iterate(steps=10_000)
+orbit = ts.systems.Henon().run(steps=10_000)
 ```
 
 For a flow there are **two grids in play**. The *internal* steps — chosen by the
@@ -122,7 +122,7 @@ serves most non-stiff systems well.
 
 ```python
 # skip-doctest — `sys` is any continuous system of yours
-traj = sys.integrate(final_time=100.0, dt=0.02, method="dop853", rtol=1e-9, atol=1e-12)
+traj = sys.run(final_time=100.0, dt=0.02, solver="dop853", rtol=1e-9, atol=1e-12)
 ```
 
 There are three broad regimes:
@@ -195,7 +195,7 @@ If you do not know whether a system is stiff, ask the library to find out:
 
 ```python
 # skip-doctest — `sys` is any continuous system of yours
-traj = sys.integrate(final_time=100.0, dt=0.02, method="auto")
+traj = sys.run(final_time=100.0, dt=0.02, solver="auto")
 traj.meta["method"]    # the kernel that was actually used, e.g. "rk45" or "bdf"
 ```
 
@@ -224,7 +224,7 @@ on any of three backends, selected with `backend=`:
 
 ```python
 # skip-doctest — `sys` is any continuous system of yours
-traj = sys.integrate(final_time=100.0, dt=0.01, backend="interp")
+traj = sys.run(final_time=100.0, dt=0.01, backend="interp")
 ```
 
 `jit` and `interp` lower the *same* tape, so they agree bit-for-bit; `reference`

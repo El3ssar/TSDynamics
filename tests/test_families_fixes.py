@@ -44,7 +44,7 @@ def test_lyapunov_spectrum_accepts_reference_backend() -> None:
     raised ``TypeError``.  The reference oracle needs no compiled engine, so the
     test runs anywhere.
     """
-    lor = ts.Lorenz()
+    lor = ts.systems.Lorenz()
     exps = lor._lyapunov_spectrum(
         final_time=12.0,
         dt=0.1,
@@ -66,13 +66,13 @@ def test_lyapunov_spectrum_accepts_reference_backend() -> None:
 def test_lyapunov_spectrum_rejects_unknown_backend() -> None:
     """An unknown ODE tangent backend is rejected (forwarding is real)."""
     with pytest.raises(ValueError):
-        ts.Lorenz()._lyapunov_spectrum(final_time=5.0, dt=0.1, backend="gpu")
+        ts.systems.Lorenz()._lyapunov_spectrum(final_time=5.0, dt=0.1, backend="gpu")
 
 
 def test_lyapunov_spectrum_rejects_nonpositive_n_exp() -> None:
     """``n_exp`` must be a positive integer (unchanged contract, guard intact)."""
     with pytest.raises(InvalidParameterError):
-        ts.Lorenz()._lyapunov_spectrum(k=0)
+        ts.systems.Lorenz()._lyapunov_spectrum(k=0)
 
 
 # ---------------------------------------------------------------------------
@@ -371,19 +371,19 @@ class TestExplicitICIsNeverSwapped:
     """
 
     def test_constructor_ic_that_diverges_raises(self) -> None:
-        h = ts.Henon(ic=[1e6, 1e6])
+        h = ts.systems.Henon(ic=[1e6, 1e6])
         with pytest.raises(ConvergenceError):
             h.run(steps=100)
         # ... and the IC the user set is still there, unswapped.
         np.testing.assert_array_equal(h.ic, [1e6, 1e6])
 
     def test_argument_ic_that_diverges_raises(self) -> None:
-        h = ts.Henon(ic=[0.1, 0.1])
+        h = ts.systems.Henon(ic=[0.1, 0.1])
         with pytest.raises(ConvergenceError):
             h.run(steps=100, ic=[1e6, 1e6])
 
     def test_a_good_constructor_ic_is_honoured(self) -> None:
-        h = ts.Henon(ic=[0.1, 0.1])
+        h = ts.systems.Henon(ic=[0.1, 0.1])
         # The orbit starts from the IC the user gave (``y[0]`` is its first image).
         np.testing.assert_array_equal(h.run(steps=50).meta["ic"], [0.1, 0.1])
 
@@ -398,7 +398,7 @@ class TestFailedRunLeavesTheSystemUntouched:
     """
 
     def test_ode_integrate_failure_restores_ic(self) -> None:
-        lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+        lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
         with pytest.raises(ConvergenceError):
             lor.run(final_time=10.0, dt=0.1, ic=[1e300, 1e300, 1e300])
         np.testing.assert_array_equal(lor.ic, [1.0, 1.0, 1.0])
@@ -406,7 +406,7 @@ class TestFailedRunLeavesTheSystemUntouched:
         np.testing.assert_array_equal(lor.run(final_time=0.1, dt=0.1).meta["ic"], [1.0, 1.0, 1.0])
 
     def test_map_iterate_failure_restores_ic(self) -> None:
-        h = ts.Henon(ic=[0.1, 0.1])
+        h = ts.systems.Henon(ic=[0.1, 0.1])
         with pytest.raises(ConvergenceError):
             h.run(steps=100, ic=[1e6, 1e6])
         np.testing.assert_array_equal(h.ic, [0.1, 0.1])
@@ -417,25 +417,25 @@ class TestSeededIntegration:
     """A run from a random IC is reproducible and leaves the global RNG alone."""
 
     def test_map_iterate_seed_is_reproducible(self) -> None:
-        a = ts.Henon(seed=5).run(steps=50)
-        b = ts.Henon(seed=5).run(steps=50)
+        a = ts.systems.Henon(seed=5).run(steps=50)
+        b = ts.systems.Henon(seed=5).run(steps=50)
         np.testing.assert_array_equal(a.y, b.y)
 
     def test_map_iterate_seed_keyword(self) -> None:
-        a = ts.Henon().run(steps=50, seed=5)
-        b = ts.Henon().run(steps=50, seed=5)
+        a = ts.systems.Henon().run(steps=50, seed=5)
+        b = ts.systems.Henon().run(steps=50, seed=5)
         np.testing.assert_array_equal(a.y, b.y)
 
     def test_run_does_not_perturb_the_global_rng(self) -> None:
         np.random.seed(0)
         expected = np.random.rand(3)
         np.random.seed(0)
-        ts.SprottB().run(final_time=0.5, dt=0.1)
+        ts.systems.SprottB().run(final_time=0.5, dt=0.1)
         np.testing.assert_array_equal(expected, np.random.rand(3))
 
     def test_meta_carries_the_seed_needed_to_reproduce_the_run(self) -> None:
-        first = ts.SprottB().run(final_time=0.5, dt=0.1)
-        replay = ts.SprottB(seed=first.meta["ic_seed"]).run(final_time=0.5, dt=0.1)
+        first = ts.systems.SprottB().run(final_time=0.5, dt=0.1)
+        replay = ts.systems.SprottB(seed=first.meta["ic_seed"]).run(final_time=0.5, dt=0.1)
         np.testing.assert_array_equal(first.y, replay.y)
 
 
@@ -448,24 +448,30 @@ class TestSystemPlotForwardsIntegrationKeywords:
     """
 
     def test_integration_keywords_reach_the_integrator(self) -> None:
-        spec = ts.Lorenz(ic=[1.0, 1.0, 1.0]).__plot_spec__(final_time=2.0, dt=0.1, components="x")
+        spec = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).__plot_spec__(
+            final_time=2.0, dt=0.1, components="x"
+        )
         assert spec.layers[0].data["x"].shape == (21,)
 
     def test_plot_honours_integration_keywords(self) -> None:
         pytest.importorskip("matplotlib")
         # ``.plot()`` returns the PlotSpec since v6; ``.render()`` draws it.
-        fig = ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(final_time=2.0, dt=0.1, components="x").render()
+        fig = (
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
+            .plot(final_time=2.0, dt=0.1, components="x")
+            .render()
+        )
         assert [len(line.get_xdata()) for line in fig.axes[0].lines] == [21]
 
     def test_plot_rejects_an_unknown_keyword(self) -> None:
         pytest.importorskip("matplotlib")
         with pytest.raises(InvalidParameterError, match="finaltime"):
-            ts.Lorenz(ic=[1.0, 1.0, 1.0]).plot(finaltime=2.0)
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).plot(finaltime=2.0)
 
     def test_plot_still_accepts_tweaks_and_renderer_options(self) -> None:
         pytest.importorskip("matplotlib")
         fig = (
-            ts.Lorenz(ic=[1.0, 1.0, 1.0])
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
             .plot(final_time=2.0, dt=0.1, components="x", title="T")
             .render(figsize=(4.0, 3.0))
         )
@@ -475,7 +481,7 @@ class TestSystemPlotForwardsIntegrationKeywords:
     def test_backend_kwargs_escape_hatch(self) -> None:
         pytest.importorskip("matplotlib")
         fig = (
-            ts.Lorenz(ic=[1.0, 1.0, 1.0])
+            ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
             .plot(final_time=1.0, dt=0.1, components="x")
             .render(figsize=(5.0, 2.0))
         )
@@ -539,7 +545,7 @@ def test_the_random_ic_retry_survives_the_first_run() -> None:
 
 def test_an_explicit_ic_stays_explicit_across_runs() -> None:
     """The genuine user choice is still recorded (and still never swapped)."""
-    h = ts.Henon(ic=[0.1, 0.1])
+    h = ts.systems.Henon(ic=[0.1, 0.1])
     h.run(steps=10)
     assert h._ic_explicit is True
 
@@ -552,7 +558,7 @@ def test_system_plot_accepts_the_in_tree_renderer_keywords() -> None:
     while working on a trajectory.
     """
     pytest.importorskip("plotly")
-    lor = ts.Lorenz(ic=[1.0, 1.0, 1.0])
+    lor = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0])
     traj_fig = lor.run(final_time=1.0, dt=0.05).plot().render("plotly", html=True)
     sys_fig = lor.plot(final_time=1.0, dt=0.05).render("plotly", html=True)
     assert type(sys_fig) is type(traj_fig)

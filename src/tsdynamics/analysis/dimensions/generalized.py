@@ -42,7 +42,13 @@ from typing import Any
 
 import numpy as np
 
-from ...errors import ConvergenceError, InvalidInputError, invalid_value, remedy
+from ...errors import (
+    ConvergenceError,
+    InvalidInputError,
+    InvalidParameterError,
+    invalid_value,
+    remedy,
+)
 from ._common import DimensionResult, _as_points, _diameter
 from ._scaling import ScalingFit, fit_scaling_region
 
@@ -451,7 +457,7 @@ def _spectrum_core(
     min_occupancy: float,
     min_resolution: float,
     min_window: int,
-    tol: float,
+    flatness: float,
     offsets: tuple[float, ...],
     analysis: str,
 ) -> dict[float, DimensionResult]:
@@ -489,7 +495,7 @@ def _spectrum_core(
     out: dict[float, DimensionResult] = {}
     for q in qs:
         y = np.array([_partition_ordinate(c, n, q) for c in occ])
-        fit = _fit_masked(x, y, mask, min_window=min_window, tol=tol, what=f"D_{q:g}")
+        fit = _fit_masked(x, y, mask, min_window=min_window, tol=flatness, what=f"D_{q:g}")
         out[q] = DimensionResult(
             estimate=fit.slope,
             stderr=fit.stderr,
@@ -513,7 +519,7 @@ def generalized_dimension(
     min_occupancy: float = _DEFAULT_MIN_OCCUPANCY,
     min_resolution: float = _DEFAULT_MIN_RESOLUTION,
     min_window: int = 5,
-    tol: float = 1.5,
+    flatness: float = 1.5,
     offsets: tuple[float, ...] = _DEFAULT_OFFSETS,
 ) -> DimensionResult:
     r"""Generalized (Rényi) dimension :math:`D_q` by box counting.
@@ -546,8 +552,10 @@ def generalized_dimension(
         cover a few boxes across measures the bounding box, not the geometry.
     min_window : int, default 5
         Minimum number of box sizes in the fitted scaling region.
-    tol : float, default 1.5
-        Scaling-region residual tolerance.
+    flatness : float, default 1.5
+        How flat the fitted scaling region has to be: a window is admitted when
+        its straight-line residual is within this factor of the flattest window
+        found.  (It is **not** a solver tolerance — hence the v6 rename.)
     offsets : tuple of float, default ``(0.0, 0.2, 0.4, 0.6, 0.8)``
         Grid-origin offsets (as fractions of each box side) swept per scale; the
         offset with the fewest occupied boxes (the minimal cover) is kept, which
@@ -591,7 +599,7 @@ def generalized_dimension(
         min_occupancy=min_occupancy,
         min_resolution=min_resolution,
         min_window=min_window,
-        tol=tol,
+        flatness=flatness,
         offsets=offsets,
         analysis="generalized_dimension",
     )[float(q)]
@@ -630,7 +638,7 @@ def box_counting_dimension(data: Any, *, strict: bool = False, **kwargs: Any) ->
         ``trusted=False``.
     **kwargs
         Forwarded to :func:`generalized_dimension` (``scales``, ``n_scales``,
-        ``min_occupancy``, ``min_resolution``, ``min_window``, ``tol``, ``offsets``).
+        ``min_occupancy``, ``min_resolution``, ``min_window``, ``flatness``, ``offsets``).
 
     Returns
     -------
@@ -668,7 +676,7 @@ def information_dimension(data: Any, *, strict: bool = False, **kwargs: Any) -> 
         Raise on a non-monotone spectrum; ``False`` warns instead.
     **kwargs
         Forwarded to :func:`generalized_dimension` (``scales``, ``n_scales``,
-        ``min_occupancy``, ``min_resolution``, ``min_window``, ``tol``, ``offsets``).
+        ``min_occupancy``, ``min_resolution``, ``min_window``, ``flatness``, ``offsets``).
 
     Returns
     -------
@@ -693,7 +701,17 @@ def _spectrum_for_wrapper(
     Keeps the wrappers' ``**kwargs`` contract identical to
     :func:`generalized_dimension` (an unknown keyword still raises ``TypeError``
     from the signature below) while routing through the shared core.
+
+    The one keyword intercepted by hand is the renamed ``tol=``: forwarding it
+    would surface a **private** function's name (``_core_kwargs() got an
+    unexpected keyword argument 'tol'``), which is not a line anyone can act on.
     """
+    if "tol" in kwargs:
+        raise InvalidParameterError(
+            f"{analysis}() has no 'tol' keyword in v6: it was renamed 'flatness', because it is "
+            "the flatness of the fitted scaling region, not a solver tolerance like rtol/atol.\n"
+            f"    ts.analysis.{analysis}(data, flatness={kwargs['tol']!r})"
+        )
     return _spectrum_core(
         _as_points(data, analysis=analysis), qs, analysis=analysis, **_core_kwargs(**kwargs)
     )
@@ -706,7 +724,7 @@ def _core_kwargs(
     min_occupancy: float = _DEFAULT_MIN_OCCUPANCY,
     min_resolution: float = _DEFAULT_MIN_RESOLUTION,
     min_window: int = 5,
-    tol: float = 1.5,
+    flatness: float = 1.5,
     offsets: tuple[float, ...] = _DEFAULT_OFFSETS,
 ) -> dict[str, Any]:
     """Validate/default the shared estimator keywords (one place, one signature)."""
@@ -716,7 +734,7 @@ def _core_kwargs(
         "min_occupancy": min_occupancy,
         "min_resolution": min_resolution,
         "min_window": min_window,
-        "tol": tol,
+        "flatness": flatness,
         "offsets": offsets,
     }
 
@@ -730,7 +748,7 @@ def dimension_spectrum(
     min_occupancy: float = _DEFAULT_MIN_OCCUPANCY,
     min_resolution: float = _DEFAULT_MIN_RESOLUTION,
     min_window: int = 5,
-    tol: float = 1.5,
+    flatness: float = 1.5,
     offsets: tuple[float, ...] = _DEFAULT_OFFSETS,
     strict: bool = False,
 ) -> dict[float, DimensionResult]:
@@ -764,7 +782,7 @@ def dimension_spectrum(
         Rényi orders.  Default: ``[0, 1, 2, 3, 4, 5]``.
     scales : ndarray, optional
         Box sizes; default as in :func:`generalized_dimension`.
-    n_scales, min_occupancy, min_resolution, min_window, tol, offsets
+    n_scales, min_occupancy, min_resolution, min_window, flatness, offsets
         As in :func:`generalized_dimension`.  The minimal-cover grid origin and
         the informative-scale mask are chosen once and shared across every ``q``,
         so the spectrum is read from one consistent, alignment-debiased partition
@@ -801,7 +819,7 @@ def dimension_spectrum(
         min_occupancy=min_occupancy,
         min_resolution=min_resolution,
         min_window=min_window,
-        tol=tol,
+        flatness=flatness,
         offsets=offsets,
         analysis="dimension_spectrum",
     )

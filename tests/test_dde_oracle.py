@@ -188,7 +188,7 @@ class _LinearDDE(ts.DelaySystem):
 
 
 def test_linear_dde_engine_matches_closed_form():
-    traj = _LinearDDE().integrate(
+    traj = _LinearDDE().run(
         backend="interp", final_time=2.0, dt=0.05, ic=[1.0], rtol=1e-10, atol=1e-12
     )
     t, y = traj.t, traj.y[:, 0]
@@ -200,7 +200,7 @@ def test_linear_dde_engine_matches_closed_form():
 
 def test_linear_dde_full_window_polynomial():
     """The whole first window must equal the exact polynomial x(t)=1-t."""
-    traj = _LinearDDE().integrate(
+    traj = _LinearDDE().run(
         backend="interp", final_time=1.0, dt=0.05, ic=[1.0], rtol=1e-10, atol=1e-12
     )
     t, y = traj.t, traj.y[:, 0]
@@ -237,7 +237,7 @@ def test_mackey_glass_matches_oracle():
     ~1.5 delay windows the trajectory is a smooth relaxation toward the fixed
     point — non-chaotic, so two distinct step schemes must agree to ~1%.
     """
-    mg = ts.MackeyGlass()
+    mg = ts.systems.MackeyGlass()
     beta, gamma, tau, n = (
         mg.params["beta"],
         mg.params["gamma"],
@@ -248,9 +248,7 @@ def test_mackey_glass_matches_oracle():
     final_time = 25.0
     dt = 0.05
 
-    traj = mg.integrate(
-        backend="interp", final_time=final_time, dt=dt, ic=ic, rtol=1e-8, atol=1e-10
-    )
+    traj = mg.run(backend="interp", final_time=final_time, dt=dt, ic=ic, rtol=1e-8, atol=1e-10)
     t_o, x_o = _mos_rk4(
         _mackey_glass_rhs(beta, gamma, n),
         tau=tau,
@@ -278,15 +276,13 @@ def test_sprott_delay_matches_oracle():
     diverge eventually; we compare only over the first ~2 delay windows where
     they still track, at 2% tolerance.
     """
-    sd = ts.SprottDelay()
+    sd = ts.systems.SprottDelay()
     tau = sd.params["tau"]
     ic = [0.8]
     final_time = 10.0
     dt = 0.05
 
-    traj = sd.integrate(
-        backend="interp", final_time=final_time, dt=dt, ic=ic, rtol=1e-8, atol=1e-10
-    )
+    traj = sd.run(backend="interp", final_time=final_time, dt=dt, ic=ic, rtol=1e-8, atol=1e-10)
     t_o, x_o = _mos_rk4(
         _sprott_rhs(),
         tau=tau,

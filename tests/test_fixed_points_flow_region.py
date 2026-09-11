@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 
 import tsdynamics as ts
-from tsdynamics import fixed_points
+from tsdynamics.analysis import fixed_points
 
 
 def _rossler_equilibria() -> list[np.ndarray]:
@@ -67,7 +67,7 @@ def _match(found: list[np.ndarray], target: np.ndarray, tol: float = 1e-4) -> bo
 class TestFlowEquilibriaNoRegion:
     def test_lorenz_returns_all_three_equilibria_without_region(self) -> None:
         """region=None must recover origin + C± — not just the on-hull subset."""
-        fps = fixed_points(ts.Lorenz(), seed=0)
+        fps = fixed_points(ts.systems.Lorenz(), seed=0)
         coords = [fp.x for fp in fps]
 
         # Exactly the three analytic equilibria, all classified as flow points.
@@ -138,7 +138,7 @@ class TestFlowEquilibriaNoRegion:
 
         escaping = _c.sample_orbit_box(ts.systems.Chua(), 3, rng=np.random.default_rng(1))
         assert escaping.size == 0
-        bounded = _c.sample_orbit_box(ts.Lorenz(), 3, rng=np.random.default_rng(1))
+        bounded = _c.sample_orbit_box(ts.systems.Lorenz(), 3, rng=np.random.default_rng(1))
         assert bounded.shape == (_c.ORBIT_SAMPLES, 3)
 
     @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4, 5, 6, 7])
@@ -176,7 +176,7 @@ class TestFlowEquilibriaNoRegion:
     def test_explicit_region_still_clips_roots(self) -> None:
         """An explicit region remains a hard search domain (the complement)."""
         # A box around C+ only; the origin and C- lie outside and must be clipped.
-        fps = fixed_points(ts.Lorenz(), region=[(5, 12), (5, 12), (20, 32)], seed=0)
+        fps = fixed_points(ts.systems.Lorenz(), region=[(5, 12), (5, 12), (20, 32)], seed=0)
         coords = [fp.x for fp in fps]
         assert len(fps) == 1
         c = math.sqrt((8.0 / 3.0) * 27.0)

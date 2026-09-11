@@ -111,4 +111,4 @@ def test_small_k_bias_is_reduced(d: int, expected: float) -> None:
 
 def test_top_level_export() -> None:
     """The fixed mass estimator stays reachable under the curated top level."""
-    assert ts.fixed_mass_dimension is fixed_mass_dimension
+    assert ts.analysis.fixed_mass_dimension is fixed_mass_dimension

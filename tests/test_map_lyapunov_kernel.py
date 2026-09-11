@@ -100,7 +100,7 @@ def test_reortho_interval_is_answer_preserving() -> None:
 
 def test_max_lyapunov_map_equals_kernel_top_exponent() -> None:
     """``max_lyapunov`` on a map is the kernel's leading exponent (top of the spectrum)."""
-    mle = float(ts.max_lyapunov(Henon(ic=[0.1, 0.1]), n=2000, steps_per=5))
+    mle = float(ts.analysis.max_lyapunov(Henon(ic=[0.1, 0.1]), n=2000, steps_per=5))
     # The map path runs the same kernel with steps = n*steps_per, k=1 from the
     # burnt-in state; the result must equal the leading spectrum exponent to a few
     # 1e-3 (same estimator, the transient placement aside) and the literature value.
@@ -109,7 +109,7 @@ def test_max_lyapunov_map_equals_kernel_top_exponent() -> None:
 
 def test_max_lyapunov_continuous_path_unchanged() -> None:
     """The continuous-system two-trajectory path is untouched (a smoke regression)."""
-    mle = float(ts.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05, n=300))
+    mle = float(ts.analysis.max_lyapunov(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), dt=0.05, n=300))
     # Lorenz maximal exponent ≈ 0.9; a loose band — this only guards that the ODE
     # path still produces a sane positive exponent (it does not use the kernel).
     assert 0.5 < mle < 1.4, mle
@@ -191,6 +191,6 @@ def test_piecewise_map_lyapunov_falls_back_and_is_correct() -> None:
     ln2 = np.log(2.0)
     tent = Tent(params={"mu": 1.0})
     spec0 = float(np.asarray(tent.lyapunov_spectrum(n=10_000, ic=[np.sqrt(2) / 2]))[0])
-    mle = float(ts.max_lyapunov(tent, ic=[np.sqrt(2) / 2], n=2000))
+    mle = float(ts.analysis.max_lyapunov(tent, ic=[np.sqrt(2) / 2], n=2000))
     assert abs(spec0 - ln2) < 1e-3, spec0
     assert abs(mle - ln2) < 5e-2, mle

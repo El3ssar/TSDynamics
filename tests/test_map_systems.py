@@ -38,11 +38,11 @@ def test_tinkerbell_uses_default_ic() -> None:
     """Tinkerbell sets ``default_ic`` because random ICs always escape the basin."""
     import tsdynamics as ts
 
-    tb = ts.Tinkerbell()
+    tb = ts.systems.Tinkerbell()
     assert tb.ic is None
     assert tb.default_ic is not None
-    traj = tb.iterate(steps=100)
-    np.testing.assert_array_almost_equal(tb.ic, ts.Tinkerbell.default_ic)
+    traj = tb.run(steps=100)
+    np.testing.assert_array_almost_equal(tb.ic, ts.systems.Tinkerbell.default_ic)
     assert np.all(np.isfinite(traj.y))
 
 
@@ -56,7 +56,7 @@ _STEPS = 200
 @pytest.mark.slow
 def test_map_iterate_shape_and_finiteness(map_entry) -> None:
     m = map_entry.cls()
-    traj = m.iterate(steps=_STEPS, max_retries=15)
+    traj = m.run(steps=_STEPS, max_retries=15)
     assert traj.t.shape == (_STEPS,)
     assert traj.y.shape == (_STEPS, m.dim)
     np.testing.assert_array_equal(traj.t, np.arange(_STEPS))
@@ -67,9 +67,9 @@ def test_map_iterate_shape_and_finiteness(map_entry) -> None:
 def test_map_custom_ic_stored() -> None:
     import tsdynamics as ts
 
-    h = ts.Henon()
+    h = ts.systems.Henon()
     ic = np.array([0.2, 0.3])
-    h.iterate(steps=50, ic=ic)
+    h.run(steps=50, ic=ic)
     np.testing.assert_array_almost_equal(h.ic, ic)
 
 
