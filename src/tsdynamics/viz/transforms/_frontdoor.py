@@ -37,11 +37,11 @@ Draw order is by **role**, not by argument order, so the call is order-free:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
+from ..compose import _plot_spec_of, unwrap_container
 from ..compose import plot as compose_plot
-from ..compose import unwrap_container
-from ..spec import FIGURE_KEYS, apply_figure_keywords, split_figure_keywords
+from ..spec import FIGURE_KEYS, Plot, apply_figure_keywords, split_figure_keywords
 from ._registry import TransformCall, build_spec, get
 
 __all__ = ["plot"]
@@ -73,6 +73,39 @@ def _as_call(sel: Any) -> Any:
         head, _, prim = sel[0].partition(".")
         return TransformCall(name=head, options=dict(sel[1]), primitive=prim or None)
     return sel
+
+
+def _flatten_positionals(things: tuple[Any, ...]) -> list[Any]:
+    """Splice every list/tuple **of plottables** into the positional stream.
+
+    CONTRACT §6.2's grammar table says a ``list``/``tuple`` of plottables is
+    unwrapped to subjects, so ``plot([a, b]) == plot(a, b)``.  It used to hold
+    only when the container was the *sole* argument, which made the obvious
+    comparison call ``ts.plot([t1, t2], "phase_portrait")`` answer with advice
+    about raw arrays — a list of trajectories diagnosed as a malformed array.
+
+    Alongside a transform name, a container is spliced only when **every** item
+    in it is something the library can plot in its own right — a trajectory, a
+    system, a result, a finished ``Plot``.  Anything looser would eat the shapes
+    that are legitimately one subject: a ``("name", {options})`` transform call,
+    a numeric list (``plot([0.1, 0.2, 0.3])`` is one series) and the recorded
+    ``(times, estimates)`` pair some transforms take.  The sole-argument spelling
+    keeps :func:`~tsdynamics.viz.compose.unwrap_container`'s older, looser rule.
+    """
+    if len(things) == 1:
+        return unwrap_container(things)
+    out: list[Any] = []
+    for thing in things:
+        if (
+            isinstance(thing, (list, tuple))
+            and len(thing) > 0
+            and _as_call(thing) is thing
+            and all(_plot_spec_of(item) is not None for item in thing)
+        ):
+            out.extend(thing)
+        else:
+            out.append(thing)
+    return out
 
 
 def _is_selector(thing: Any) -> bool:
@@ -190,13 +223,25 @@ def _apply_animation(spec: Any, animate: Any, fps: float | None = None) -> Any:
 
 
 def _accepted_names(record: Any) -> frozenset[str]:
-    """Return the keyword names a transform accepts (compute parameters + primitive options)."""
+    """Return the keyword names a transform accepts.
+
+    Its ``compute`` parameters, its primitive's options — and, for a ``data``
+    transform, **the run vocabulary**.  A ``data`` transform accepts a system
+    (having the model is having the data), so ``ts.plot(lorenz, "time_series",
+    final_time=5.0)`` has to say how long to run; before this the answer was a
+    coin flip: 13 of 26 data transforms hand-copied ``final_time``/``dt`` into
+    their own signature and the other 13 refused those words outright — with the
+    contract's own field-movie example among the refusals.
+    """
     import inspect
 
-    from ._registry import row_option_names
+    from ._registry import _RUN_KEYS, row_option_names
 
     params = inspect.signature(record.compute).parameters
-    return frozenset(params) | row_option_names(record) | {"primitive_options"}
+    names = frozenset(params) | row_option_names(record) | {"primitive_options"}
+    if record.source == "data":
+        names |= _RUN_KEYS
+    return names
 
 
 def _reject_unaccepted(
@@ -339,7 +384,7 @@ def plot(
     fps: float | None = None,
     ax: Any = None,
     **kw: Any,
-) -> Any:
+) -> Plot:
     """Plot one or more things, optionally through named transforms.
 
     Parameters
@@ -427,7 +472,7 @@ def plot(
     items = (
         [things[0]]
         if len(things) == 1 and _as_call(things[0]) is not things[0]
-        else unwrap_container(things)
+        else _flatten_positionals(things)
     )
     selectors = [t for t in items if _is_selector(t)]
     subjects = [t for t in items if not _is_selector(t)]
@@ -497,7 +542,7 @@ def _default_view(subject: Any, kw: dict[str, Any]) -> Any:
     return to_spec(subject, {})
 
 
-def _finish(result: Any, ax: Any) -> Any:
+def _finish(result: Any, ax: Any) -> Plot:
     """Render eagerly into ``ax`` when one was given, and return the ``Plot`` either way.
 
     ``ax=`` is an *in* door: you are still in the library afterwards, holding the
@@ -506,4 +551,4 @@ def _finish(result: Any, ax: Any) -> Any:
     """
     if ax is not None:
         result.render(ax=ax)
-    return result
+    return cast("Plot", result)

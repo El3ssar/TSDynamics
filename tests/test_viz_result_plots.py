@@ -299,7 +299,7 @@ def _result_specs():
                 ts.systems.Rossler(), plane=("y", 0.0, "up"), crossings=120, seed=0
             ).to_plot_spec(),
             "gali": ts.analysis.gali(lor, k=2, final_time=40.0, ic=[1.0, 1.0, 1.0]).to_plot_spec(),
-            "return_map": ts.analysis.return_map(traj, component="z", kind="max").to_plot_spec(),
+            "return_map": ts.analysis.return_map(traj, components="z", kind="max").to_plot_spec(),
             "lyapunov_from_data": ts.analysis.lyapunov_from_data(
                 traj["x"][::4], dt=0.04, dimension=3
             ).to_plot_spec(),

@@ -76,22 +76,23 @@ def _spectrum() -> _Spectrum:
 
 
 def test_repr_honours_repr_fields_and_survives_dataclass():
+    """§4.3 — the repr IS the answer: ``<Name>  <fields>``, not a constructor."""
     r = _spectrum()
     text = repr(r)
-    assert text.startswith("_Spectrum(")
-    assert "exponents=" in text  # listed in _repr_fields despite field(repr=False)
-    assert "kaplan_yorke=2.06" in text
+    assert text.startswith("_Spectrum ")
+    assert "exponents = " in text  # listed in _repr_fields despite field(repr=False)
+    assert "kaplan_yorke = 2.06" in text
 
 
 def test_repr_introspects_fields_when_no_repr_fields():
     text = repr(_Auto(scalar=5.0))
-    assert "scalar=5" in text
+    assert "scalar = 5" in text
     assert "curve" not in text  # field(repr=False) excluded
     assert "meta" not in text  # meta never shown in repr
 
 
 def test_repr_formats_floats_compactly():
-    assert "kaplan_yorke=2.06" in repr(_spectrum())
+    assert "kaplan_yorke = 2.06" in repr(_spectrum())
 
 
 def test_custom_repr_is_respected():
@@ -111,7 +112,7 @@ def test_grandchild_inherits_repr_fields_repr():
         b: float = 0.0
 
     text = repr(_Grand(a=1.0, b=2.0))
-    assert "a=1" in text and "b=2" in text
+    assert "a = 1" in text and "b = 2" in text
 
 
 # ---------------------------------------------------------------------------
@@ -119,17 +120,20 @@ def test_grandchild_inherits_repr_fields_repr():
 # ---------------------------------------------------------------------------
 
 
-def test_summary_has_header_fields_and_interpretation():
-    out = _spectrum().summary()
-    assert out.splitlines()[0] == "_Spectrum  (Lorenz)"  # header + system label
+def test_the_repr_carries_what_summary_used_to_print():
+    """§4.3 — ``summary()`` is DELETED and ``__repr__`` became what it printed."""
+    out = repr(_spectrum())
+    assert out.startswith("_Spectrum ")
+    assert "(Lorenz)" in out  # the subject, as the trailing parenthetical
     assert "kaplan_yorke = 2.06" in out
-    assert "→ chaotic: 1 positive exponent(s)" in out
+    assert "chaotic: 1 positive exponent(s)" in out
+    assert not hasattr(_spectrum(), "summary")
 
 
-def test_summary_omits_interpretation_when_none():
-    out = _Auto(scalar=1.0).summary()
+def test_repr_omits_interpretation_when_none():
+    out = repr(_Auto(scalar=1.0))
     assert "→" not in out
-    assert out.splitlines()[0] == "_Auto"  # no system label in meta
+    assert out.startswith("_Auto")  # no system label in meta
 
 
 # ---------------------------------------------------------------------------
@@ -365,11 +369,12 @@ def test_empty_renderer_registry_still_raises(monkeypatch):
 
 
 def test_repr_html_has_caption_and_fields():
+    """§4.3 — ``_repr_html_`` is the repr in a ``<pre>``, so the two cannot drift."""
     html_out = _spectrum()._repr_html_()
-    assert "<table>" in html_out and "</table>" in html_out
-    assert "_Spectrum (Lorenz)" in html_out
+    assert "<pre" in html_out and "</pre>" in html_out
+    assert "_Spectrum" in html_out and "(Lorenz)" in html_out
     assert "kaplan_yorke" in html_out
-    assert "chaotic" in html_out  # interpretation footer
+    assert "chaotic" in html_out  # the verdict
 
 
 def test_repr_html_escapes_markup():
@@ -424,10 +429,9 @@ def test_meta_is_keyword_only_and_defaults_empty():
         _Spectrum(np.array([1.0]), 1.0, {"system": "X"})  # meta cannot be positional
 
 
-def test_base_result_alone_has_clean_repr_and_summary():
+def test_base_result_alone_has_a_clean_repr():
     b = AnalysisResult(meta={"system": "X"})
-    assert repr(b) == "AnalysisResult()"
-    assert b.summary().splitlines()[0] == "AnalysisResult  (X)"
+    assert repr(b).splitlines()[0] == "AnalysisResult   (X)"
     assert b.to_dict() == {"meta": {"system": "X"}}
 
 
@@ -480,8 +484,8 @@ def test_fmt_numpy_bool_renders_as_plain_bool():
     class _R(AnalysisResult):
         flag: object = None
 
-    assert "flag=True" in repr(_R(flag=np.bool_(True)))
-    assert "flag=False" in repr(_R(flag=np.bool_(False)))
+    assert "flag = True" in repr(_R(flag=np.bool_(True)))
+    assert "flag = False" in repr(_R(flag=np.bool_(False)))
 
 
 def test_grandchild_inherits_a_parents_custom_repr():
@@ -507,10 +511,9 @@ def test_repr_summary_html_skip_undeclared_repr_fields():
         real: float = 1.0
 
     r = _Ghost(real=2.0)
-    for text in (repr(r), r.summary(), r._repr_html_()):
+    for text in (repr(r), r._repr_html_()):
         assert "ghost" not in text  # undeclared attribute silently skipped
-    assert "real=2" in repr(r)
-    assert "real = 2" in r.summary()
+    assert "real = 2" in repr(r)
     assert "real" in r._repr_html_()
 
 

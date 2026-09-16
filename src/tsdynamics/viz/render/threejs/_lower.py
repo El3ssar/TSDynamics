@@ -1017,41 +1017,14 @@ def _animation_metadata(spec: PlotSpec, geometries: list[dict[str, Any]]) -> dic
 
 
 def _playback_seconds(anim: Any, n_samples: int) -> float:
-    """How long the reveal should take, in seconds — so ``fps=`` actually reaches the page.
+    """Delegate to :meth:`tsdynamics.viz.spec.Animation.playback_seconds` [M41].
 
     The reference loader has no frame clock: it traverses the whole series in
-    ``metadata.animation.duration`` seconds (falling back to a hard-coded 12 s when
-    that is ``null``) and reads ``fps`` **nowhere** — grep the loader for ``anim.``
-    and the seven fields it consults do not include it.  So ``.animate(fps=60)``
-    reached matplotlib and plotly and was dropped, in silence, by three.js, while
-    ``caps`` declared no gap for it.  A declared-honored knob that does nothing is
-    the defect the honoring contract exists to prevent.
-
-    ``Animation`` already relates the two — ``frame_count = round(duration * fps)``
-    — so inverting it is the *definition*, not a heuristic: play
-    ``frame_count(n_samples)`` frames at ``fps`` frames per second.  At the
-    defaults (``fps=30``, ``DEFAULT_FRAMES=360``) that is exactly **12.0 s**, the
-    loader's own fallback, so every existing export keeps its speed; it only bites
-    when the caller set ``fps`` or the curve is shorter than the default cap (a
-    101-point orbit now plays in 3.4 s instead of being stretched over 12).
-
-    An explicit ``duration`` always wins — it is the same quantity, stated directly.
-
-    .. note::
-       :func:`tsdynamics.viz.render.plotly._anim.playback_seconds` is the same
-       arithmetic for the real-time HTML comet, whose ``requestAnimationFrame``
-       loop picks its stride the same way.  The two are deliberate twins in two
-       backend packages rather than one import across backends;
-       ``tests/test_viz_render_threejs_animation.py`` asserts they agree.  The
-       natural single home is a method on ``Animation`` (``viz/spec.py``) — filed
-       as a mutation.
+    ``metadata.animation.duration`` seconds.  The algebra that turns ``fps`` into
+    that duration lives on ``Animation`` now, shared with the plotly export, so
+    the two browser paths cannot drift.
     """
-    if anim.duration is not None:
-        return float(anim.duration)
-    fps = float(anim.fps)
-    if fps <= 0:  # pragma: no cover - Animation validates fps > 0
-        return float(anim.DEFAULT_FRAMES) / 30.0
-    return float(anim.frame_count(int(n_samples))) / fps
+    return float(anim.playback_seconds(int(n_samples)))
 
 
 def _warn_unrevealable(spec: PlotSpec) -> None:

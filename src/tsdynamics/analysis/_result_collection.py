@@ -16,6 +16,42 @@ from tsdynamics.analysis._result_base import _MAX_ITEMS, AnalysisResult
 from tsdynamics.analysis._result_json import _is_frame_scalar, _jsonify
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled
 
+#: Widest vector field :func:`_spread` will turn into columns.
+_MAX_SPREAD = 32
+
+
+def _content_fields(item: Any) -> tuple[str, ...] | None:
+    """Return the fields a TABLE should carry — the content, not the repr selection.
+
+    ``_display_fields`` answers *what the one-line repr shows*, and a field
+    marked ``repr=False`` (a fixed point's ``eigenvalues``) is deliberately
+    absent from it.  A table is the other question, so it reads the dataclass
+    fields and drops only ``meta``.
+    """
+    import dataclasses
+
+    if dataclasses.is_dataclass(item) and not isinstance(item, type):
+        return tuple(f.name for f in dataclasses.fields(item) if f.name != "meta")
+    display = getattr(item, "_display_fields", None)
+    return tuple(display()) if callable(display) else None
+
+
+def _spread(name: str, value: Any) -> dict[str, Any]:
+    """Expand a vector display field into one column per component.
+
+    Returns ``{}`` for anything that is not a short 1-D numeric sequence, so a
+    nested structure is dropped rather than rendered as a repr string.
+    """
+    try:
+        arr = np.asarray(value)
+    except Exception:  # pragma: no cover - defensive
+        return {}
+    if arr.ndim != 1 or arr.size == 0 or arr.size > _MAX_SPREAD:
+        return {}
+    if not np.issubdtype(arr.dtype, np.number):
+        return {}
+    return {f"{name}{i}": _jsonify(v) for i, v in enumerate(arr.tolist())}
+
 
 @dataclass(frozen=True, eq=False)
 class CollectionResult(AnalysisResult):
@@ -257,16 +293,23 @@ class CollectionResult(AnalysisResult):
         pd = self._require_pandas()
         rows: list[dict[str, Any]] = []
         for item in self.items:
-            display = getattr(item, "_display_fields", None)
-            if callable(display):
+            display = _content_fields(item)
+            if display is not None:
                 row: dict[str, Any] = {}
-                for name in display():
+                for name in display:
                     try:
                         value = getattr(item, name)
                     except AttributeError:
                         continue
                     if _is_frame_scalar(value):
                         row[name] = _jsonify(value)
+                    else:
+                        # A VECTOR field is the content, not decoration: a table
+                        # of fixed points used to arrive with the coordinates and
+                        # the eigenvalues silently dropped, three columns of
+                        # booleans where the answer should be.  One column per
+                        # component, named ``x0 x1 …`` / ``eigenvalues0 …``.
+                        row.update(_spread(name, value))
                 rows.append(row)
             else:
                 rows.append({"value": _jsonify(item)})

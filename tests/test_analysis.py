@@ -203,7 +203,7 @@ def test_bifurcation_diagram_of_flow_via_poincare() -> None:
     """The composition acceptance test: orbit diagram over a PoincareMap."""
     pmap = ts.derived.PoincareMap(ts.systems.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
     od = ts.analysis.orbit_diagram(
-        pmap, "c", [4.0, 5.7], points_per_value=15, transient=10, component=1, ic=[1.0, 1.0, 0.0]
+        pmap, "c", [4.0, 5.7], points_per_value=15, transient=10, components=1, ic=[1.0, 1.0, 0.0]
     )
     assert len(od) == 2
     for _, pts in od:
@@ -218,7 +218,7 @@ def test_orbit_diagram_named_component_over_poincare() -> None:
     and raised ``AttributeError: 'property' object has no attribute 'index'``."""
     pmap = ts.derived.PoincareMap(ts.systems.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.05)
     od = ts.analysis.orbit_diagram(
-        pmap, "c", [5.7], points_per_value=10, transient=10, component="y", ic=[1.0, 1.0, 0.0]
+        pmap, "c", [5.7], points_per_value=10, transient=10, components="y", ic=[1.0, 1.0, 0.0]
     )
     assert len(od) == 1
     ((_, pts),) = list(od)

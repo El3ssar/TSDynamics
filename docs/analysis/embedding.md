@@ -76,7 +76,7 @@ ts.analysis.correlation_dimension(emb, theiler=tau)   # ≈ 1.74  (Rössler D2, 
 ```
 
 `embed` also does **multivariate** embedding: pass a multi-component trajectory
-(or a 2-D array) *without* `component=` and it stacks per-channel delay
+(or a 2-D array) *without* `components=` and it stacks per-channel delay
 coordinates into one joint reconstruction, with an optional per-channel
 `dimension` / `delay`.
 

@@ -141,8 +141,8 @@ def test_importing_viz_pulls_no_plot_library():
 
 
 def test_renderers_group_name():
-    """The entry-point group is the documented ``tsdynamics.viz.renderers``."""
-    assert RENDERERS_GROUP == "tsdynamics.viz.renderers"
+    """The entry-point group is the documented ``tsdynamics.renderers``."""
+    assert RENDERERS_GROUP == "tsdynamics.renderers"
 
 
 def test_discover_plugins_is_idempotent_and_returns_a_list():

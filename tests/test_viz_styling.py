@@ -281,8 +281,14 @@ def test_register_theme_reachable_by_name_without_activating():
 
 
 def test_get_theme_unknown_raises():
-    """``get_theme`` on an unregistered name raises ``KeyError``."""
-    with pytest.raises(KeyError):
+    """``get_theme`` on an unregistered name raises the library's typed error.
+
+    [M44] All five registries answer a miss the same way — a bare ``KeyError``
+    here meant one mistake lived in two exception families.
+    """
+    from tsdynamics.errors import InvalidParameterError
+
+    with pytest.raises(InvalidParameterError):
         get_theme("no-such-theme")
 
 

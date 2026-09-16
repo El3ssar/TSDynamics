@@ -86,7 +86,12 @@ def _caps(name: str):  # noqa: ANN202 - test helper
     [
         ("matplotlib", ".png", True),
         ("matplotlib", ".pdf", True),
-        ("matplotlib", ".mp4", True),
+        # ``.mp4`` is a MOVIE container: matplotlib writes it, but only for a spec
+        # that carries an Animation.  ``can_save`` takes the two halves apart
+        # (``writes_static`` / ``writes_animated``) precisely so a static Plot
+        # asked for ``.mp4`` gets the typed "this Plot is not animated" message
+        # instead of a raw matplotlib ValueError.
+        ("matplotlib", ".mp4", False),
         ("matplotlib", ".gif", True),
         ("matplotlib", ".html", False),
         ("plotly", ".html", True),
@@ -101,6 +106,16 @@ def _caps(name: str):  # noqa: ANN202 - test helper
 def test_declared_write_capability(backend: str, ext: str, expected: bool) -> None:
     pytest.importorskip("matplotlib")
     assert _caps(backend).can_save(ext) is expected
+
+
+def test_a_movie_container_is_writable_only_for_an_animated_spec() -> None:
+    """The static/animated split is the whole point of the two declarations."""
+    pytest.importorskip("matplotlib")
+    mpl = _caps("matplotlib")
+    assert mpl.can_save(".mp4", animated=True) is True
+    assert mpl.can_save(".mp4", animated=False) is False
+    assert mpl.can_save(".png", animated=False) is True
+    assert mpl.can_save(".gif", animated=True) is True
 
 
 def test_plotly_declines_an_animated_composite() -> None:

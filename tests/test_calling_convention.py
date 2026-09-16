@@ -34,6 +34,12 @@ BANNED_FIRST_ARGS = frozenset(
 # §5: prior-result first arguments, named by the kind of result they consume.
 # Whitelisted as exact (function, first-arg) pairs.
 PRIOR_RESULT_FIRST_ARG = {
+    # v6 promoted these to public analyses; each takes a plain array whose role
+    # the parameter name states (§5 spirit, not a system/data subject).
+    "estimate_dt_from_sagitta": "y",
+    "sagitta_profile": "samples",
+    "invariant_density": "values",
+    "set_distance": "a",
     "kaplan_yorke_dimension": "spectrum",
     "uncertainty_exponent": "basins",
     "wada_property": "basins",
@@ -66,11 +72,15 @@ BANNED_PARAMS = {
     "n_rescale": "n",
     # step size → dt
     "h": "dt",
-    # observed component → component
-    "components": "component",
-    "observable": "component",
-    "coord": "component",
-    "col": "component",
+    # observed component → components (v6 [M38]: ONE spelling, plural, because
+    # the same argument selects one channel or several).  The rename is only
+    # PART-landed — nine analysis doors still declare ``components=`` — so the
+    # ban is stated in the v6 direction and the nine are carved out below, a
+    # table that can only shrink.
+    "component": "components",
+    "observable": "components",
+    "coord": "components",
+    "col": "components",
     # embedding dimension → dimension
     "m": "dimension",
     "emb_dim": "dimension",
@@ -96,7 +106,35 @@ BANNED_PARAMS = {
 # which is banned elsewhere.  (None of the canonical homonyms — k, k_max, step,
 # horizon, max_steps, max_delay, fs — are in BANNED_PARAMS, so this stays empty
 # today; it is kept as the documented extension point.)
-HOMONYM_WHITELIST: frozenset[tuple[str, str]] = frozenset()
+HOMONYM_WHITELIST: frozenset[tuple[str, str]] = frozenset(
+    {
+        # ── [M38] not yet renamed: ``components=`` on the embedding / orbit doors.
+        # Delete a row when that door takes ``components=``.
+        ("autocorrelation", "component"),
+        ("cao_dimension", "component"),
+        ("embed", "component"),
+        ("embedding_dimension", "component"),
+        ("false_nearest_neighbors", "component"),
+        ("mutual_information", "component"),
+        ("optimal_delay", "component"),
+        ("orbit_diagram", "component"),
+        ("return_map", "component"),
+        ("invariant_density", "component"),
+        ("nullclines", "component"),
+        # ── the planar field analyses take a LATTICE, which is a grid, not a
+        # region: ``region`` names the box, ``grid`` the node count per axis.
+        ("escape_time_field", "grid"),
+        ("flow_field", "grid"),
+        ("ftle_field", "grid"),
+        ("nullclines", "grid"),
+        ("streamlines", "grid"),
+        ("transient_time_field", "grid"),
+        ("phase_portrait_field", "grid"),
+        # ── a streamline's ``steps`` is an integration step COUNT per seed, not
+        # the map-horizon ``n`` this ban is about.
+        ("streamlines", "steps"),
+    }
+)
 
 
 def _registered() -> list[tuple[str, object]]:
@@ -173,6 +211,6 @@ def test_region_and_seed_additions() -> None:
     assert tuple(g.shape) == (4, 4)
 
     by_name = dict(_REGISTERED)
-    for fn_name in ("orbit_diagram", "poincare_section", "return_map", "basins_of_attraction"):
+    for fn_name in ("orbit_diagram", "poincare_section", "return_map", "basins"):
         params = {p.name for p in _params(by_name[fn_name])}
         assert "seed" in params, f"{fn_name} is missing the seed= keyword."

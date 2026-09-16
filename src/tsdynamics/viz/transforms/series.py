@@ -128,7 +128,7 @@ def _trajectory_of(subject: Any, options: dict[str, Any]) -> Any:
 def series_of(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     final_time: float | None = None,
     dt: float | None = None,
     steps: int | None = None,
@@ -143,7 +143,7 @@ def series_of(
     ----------
     subject : ndarray, Trajectory, or System
         What to read the series from.
-    component : int or str, optional
+    components : int or str, optional
         Which component; a name when the source declares ``variables``.
     final_time, dt, steps : optional
         Integration controls, used **only** when ``subject`` is a system.  ``dt``
@@ -166,7 +166,7 @@ def series_of(
     traj = _trajectory_of(subject, {"final_time": final_time, "dt": dt, "steps": steps})
     if traj is not None:
         t, y, names, is_discrete = _split_traj(traj)
-        idx = _component_index(component, names, y.shape[1])
+        idx = _component_index(components, names, y.shape[1])
         values = np.asarray(y[:, idx], dtype=float)
         spacing = float(dt) if dt is not None else _spacing_of(t, is_discrete)
         meta = {**_meta(traj), "component": idx, "sample_spacing": spacing}
@@ -185,7 +185,9 @@ def series_of(
         )
     if arr.ndim == 2:
         idx = (
-            _component_index(component, None, arr.shape[1]) if not isinstance(component, str) else 0
+            _component_index(components, None, arr.shape[1])
+            if not isinstance(components, str)
+            else 0
         )
         values = np.asarray(arr[:, idx], dtype=float)
     else:
@@ -285,7 +287,7 @@ def _demo_orbit(n: int = 400) -> np.ndarray:
 def psd(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     method: str = "welch",
     nperseg: int | None = None,
     final_time: float | None = None,
@@ -311,7 +313,7 @@ def psd(
     ----------
     subject : ndarray, Trajectory, or System
         The series, the trajectory, or the system to integrate for one.
-    component : int or str, optional
+    components : int or str, optional
         Which component to transform.
     method : {"welch", "periodogram"}, optional
         The estimator.  Default ``"welch"``.
@@ -356,7 +358,7 @@ def psd(
     from tsdynamics.errors import InvalidParameterError
 
     values, spacing, meta, title = series_of(
-        subject, component=component, final_time=final_time, dt=dt, steps=steps
+        subject, components=components, final_time=final_time, dt=dt, steps=steps
     )
     values = _require(values, 8, "a power spectrum")
     fs = 1.0 / spacing
@@ -407,7 +409,7 @@ def psd(
 def autocorrelation(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     max_delay: int = 50,
     final_time: float | None = None,
     dt: float | None = None,
@@ -426,7 +428,7 @@ def autocorrelation(
     ----------
     subject : ndarray, Trajectory, or System
         The series, the trajectory, or the system to integrate for one.
-    component : int or str, optional
+    components : int or str, optional
         Which component.
     max_delay : int, optional
         Largest lag drawn, in **samples**.
@@ -447,7 +449,7 @@ def autocorrelation(
     from tsdynamics.analysis.embedding import autocorrelation as _acf
 
     values, spacing, meta, title = series_of(
-        subject, component=component, final_time=final_time, dt=dt, steps=steps
+        subject, components=components, final_time=final_time, dt=dt, steps=steps
     )
     values = _require(values, 3, "an autocorrelation")
     curve = np.asarray(_acf(values, max_delay=int(max_delay)), dtype=float)
@@ -504,7 +506,7 @@ def _first_below(curve: np.ndarray, level: float) -> int | None:
 def mutual_information(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     max_delay: int = 50,
     bins: int | None = None,
     final_time: float | None = None,
@@ -522,7 +524,7 @@ def mutual_information(
     ----------
     subject : ndarray, Trajectory, or System
         The series, the trajectory, or the system to integrate for one.
-    component : int or str, optional
+    components : int or str, optional
         Which component.
     max_delay : int, optional
         Largest lag evaluated, in **samples**.
@@ -544,7 +546,7 @@ def mutual_information(
     from tsdynamics.analysis.embedding import mutual_information as _mi
 
     values, _, meta, title = series_of(
-        subject, component=component, final_time=final_time, dt=dt, steps=steps
+        subject, components=components, final_time=final_time, dt=dt, steps=steps
     )
     values = _require(values, 8, "mutual information")
     result = _mi(values, max_delay=int(max_delay), bins=bins)
@@ -588,7 +590,7 @@ def mutual_information(
 def fnn(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     delay: int = 1,
     max_dim: int = 10,
     theiler: int = 0,
@@ -607,7 +609,7 @@ def fnn(
     ----------
     subject : ndarray, Trajectory, or System
         The series, the trajectory, or the system to integrate for one.
-    component : int or str, optional
+    components : int or str, optional
         Which component.
     delay : int, optional
         Embedding delay :math:`\tau` in samples.
@@ -630,7 +632,7 @@ def fnn(
     from tsdynamics.analysis.embedding import false_nearest_neighbors
 
     values, _, meta, title = series_of(
-        subject, component=component, final_time=final_time, dt=dt, steps=steps
+        subject, components=components, final_time=final_time, dt=dt, steps=steps
     )
     values = _require(values, 16, "a false-nearest-neighbour curve")
     result = false_nearest_neighbors(
@@ -662,7 +664,7 @@ def fnn(
 def cao(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     delay: int = 1,
     max_dim: int = 10,
     theiler: int = 0,
@@ -685,7 +687,7 @@ def cao(
     ----------
     subject : ndarray, Trajectory, or System
         The series, the trajectory, or the system to integrate for one.
-    component : int or str, optional
+    components : int or str, optional
         Which component.
     delay : int, optional
         Embedding delay :math:`\tau` in samples.
@@ -707,7 +709,7 @@ def cao(
     from tsdynamics.analysis.embedding import cao_dimension
 
     values, _, meta, title = series_of(
-        subject, component=component, final_time=final_time, dt=dt, steps=steps
+        subject, components=components, final_time=final_time, dt=dt, steps=steps
     )
     values = _require(values, 16, "a Cao E1/E2 curve")
     result = cao_dimension(values, delay=int(delay), max_dim=int(max_dim), theiler=int(theiler))
@@ -771,7 +773,7 @@ def _dimension_geometry(
 def line_lengths(
     subject: Any,
     *,
-    component: int | str | None = None,
+    components: int | str | None = None,
     threshold: float | None = None,
     recurrence_rate: float | None = None,
     theiler: int = 0,
@@ -794,7 +796,7 @@ def line_lengths(
     ----------
     subject : RecurrenceMatrix, ndarray, Trajectory, or System
         A recurrence matrix, or anything one can be built from.
-    component : int or str, optional
+    components : int or str, optional
         Restrict a multi-component source to one component.  ``None`` (the
         default) uses the **full state vector**, which is the phase-space
         recurrence and what :func:`~tsdynamics.analysis.recurrence_matrix` does.
@@ -843,7 +845,7 @@ def line_lengths(
 
     matrix, meta, title = _recurrence_of(
         subject,
-        component=component,
+        components=components,
         threshold=threshold,
         recurrence_rate=recurrence_rate,
         theiler=theiler,
@@ -910,7 +912,7 @@ def _length_histogram(
 def _recurrence_of(
     subject: Any,
     *,
-    component: int | str | None,
+    components: int | str | None,
     threshold: float | None,
     recurrence_rate: float | None,
     theiler: int,
@@ -925,7 +927,7 @@ def _recurrence_of(
     if isinstance(subject, RecurrenceMatrix):
         return subject, dict(subject.meta), ""
 
-    if component is None:
+    if components is None:
         # Phase-space recurrence is of the *state vector*, so the default keeps
         # every coordinate: a trajectory (or system) contributes its whole `y`,
         # and a bare (N, dim) array is already a point set.
@@ -941,7 +943,7 @@ def _recurrence_of(
     else:
         values, _, meta, title = series_of(
             subject,
-            component=0 if component is None else component,
+            components=0 if components is None else components,
             final_time=final_time,
             dt=dt,
             steps=steps,
@@ -981,7 +983,7 @@ def _recurrence_of(
 def return_time(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     threshold: float | None = None,
     direction: str = "up",
     n_bins: int = 30,
@@ -1009,7 +1011,7 @@ def return_time(
     ----------
     subject : ndarray, Trajectory, or System
         The series, the trajectory, or the system to integrate for one.
-    component : int or str, optional
+    components : int or str, optional
         Which component defines the observable.
     threshold : float, optional
         The level :math:`c`.  ``None`` uses the series **mean**, which is the
@@ -1041,7 +1043,7 @@ def return_time(
     if direction not in ("up", "down", "both"):
         raise InvalidParameterError(f"unknown direction {direction!r}; use 'up', 'down' or 'both'.")
     values, spacing, meta, title = series_of(
-        subject, component=component, final_time=final_time, dt=dt, steps=steps
+        subject, components=components, final_time=final_time, dt=dt, steps=steps
     )
     values = _require(values, 4, "a return-time distribution")
     level = float(np.mean(values)) if threshold is None else float(threshold)

@@ -21,9 +21,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from tsdynamics.utils.plot_namespace import plot_namespace as _plot_namespace
+
 if TYPE_CHECKING:
     from tsdynamics.data import Trajectory
-    from tsdynamics.viz.spec import PlotSpec
+    from tsdynamics.viz.spec import Plot
 
 __all__ = ["SystemPlottable"]
 
@@ -44,7 +46,7 @@ class SystemPlottable:
         # this mixin is combined with; declared for the type checker only.
         def run(self, *args: Any, **kwargs: Any) -> Trajectory: ...
 
-    def __plot_spec__(self, kind: str | None = None, **kwargs: Any) -> PlotSpec:
+    def __plot_spec__(self, kind: str | None = None, **kwargs: Any) -> Plot:
         """Describe this system as a :class:`PlotSpec` via a default trajectory.
 
         Integrates the system with its family's ``run`` (defaults, or
@@ -83,7 +85,7 @@ class SystemPlottable:
         builder = getattr(traj, "__plot_spec__", None) or traj.to_plot_spec
         return builder(kind=kind, **plot_kw)
 
-    def plot(self, *transforms: Any, **kwargs: Any) -> PlotSpec:
+    def _plot_impl(self, *transforms: Any, **kwargs: Any) -> Plot:
         """Build this system's :class:`PlotSpec`, applying inline tweaks first.
 
         ``plot`` **builds**, ``render`` **draws**, ``save`` **writes** — one word,
@@ -164,6 +166,13 @@ class SystemPlottable:
         if style_kw:
             spec.style(**style_kw)
         return spec.tweak(**tweak_kw)
+
+    #: ``subject.plot`` is BOTH the verb and the namespace (§6.7): ``plot()``
+    #: draws the default view, ``plot.psd()`` / ``plot.nullclines()`` name a
+    #: transform, and ``plot.<TAB>`` lists every transform that draws THIS
+    #: subject — the discovery route ruling A2 promised when it took the
+    #: analyses off the object.
+    plot = _plot_namespace(_plot_impl)
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Rich notebook display — renders inline once a backend is installed.

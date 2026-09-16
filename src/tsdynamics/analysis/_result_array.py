@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tsdynamics.analysis._result_base import AnalysisResult
+from tsdynamics.analysis._result_base import AnalysisResult, _unknown_result_attribute
 from tsdynamics.analysis._result_json import _jsonify, _state
 from tsdynamics.analysis._result_viz import VisualizationNotInstalled
 
@@ -84,14 +84,25 @@ class ArrayResult(np.lib.mixins.NDArrayOperatorsMixin, AnalysisResult):
         return iter(self.values)
 
     def __getattr__(self, name: str) -> Any:
-        """Forward unknown public attributes to the wrapped array (``.shape``, ``.max``)."""
+        """Forward to the wrapped array — but answer a WRONG guess as this class.
+
+        ``.shape`` / ``.max`` / ``.sum`` are the point of wrapping an array and
+        keep forwarding.  A name numpy does not have used to be answered by
+        numpy anyway (``AttributeError: 'numpy.ndarray' object has no attribute
+        'chaotic'``), naming a type the caller never typed and offering no
+        replacement — so every wrong guess on every result was the worst error
+        message in the library.  Now the answer names THIS result and what it
+        does carry.
+        """
         if name.startswith("_"):
             raise AttributeError(name)
         try:
             values = object.__getattribute__(self, "values")
         except AttributeError as exc:  # pragma: no cover - during unpickling
             raise AttributeError(name) from exc
-        return getattr(values, name)
+        if hasattr(values, name):
+            return getattr(values, name)
+        raise _unknown_result_attribute(self, name)
 
     # -- elementwise comparisons / arithmetic (return raw arrays) ------------
 

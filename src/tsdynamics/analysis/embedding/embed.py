@@ -146,7 +146,7 @@ def embed(
     dimension: int | Sequence[int] | None = None,
     delay: int | Sequence[int] | None = None,
     *,
-    component: int | str | None = None,
+    components: int | str | None = None,
     **renamed: Any,
 ) -> Embedding:
     r"""Time-delay embedding of a scalar series (or a multivariate bundle).
@@ -154,10 +154,10 @@ def embed(
     Parameters
     ----------
     data : array-like or Trajectory
-        The source signal.  A 1-D series (or a single selected ``component`` of a
+        The source signal.  A 1-D series (or a single selected ``components`` of a
         :class:`~tsdynamics.data.Trajectory` / 2-D array) gives a univariate
         embedding.  Pass a 2-D ``(N, d)`` array, a list of equal-length series, or
-        a multi-component trajectory **without** ``component`` to embed every
+        a multi-component trajectory **without** ``components`` to embed every
         channel jointly (multivariate embedding).
     dimension : int or sequence of int, optional
         Embedding dimension :math:`m`.  A single int applies to every channel; a
@@ -171,7 +171,7 @@ def embed(
         be ``>= 1``.  **Omit it** and it is estimated with
         :func:`~tsdynamics.analysis.embedding.optimal_delay` (the first minimum of
         the time-delayed mutual information).
-    component : int or str, optional
+    components : int or str, optional
         Select a single channel from a multi-component ``data`` for a univariate
         embedding.  When omitted, a multi-component input is embedded across all
         of its channels.
@@ -238,9 +238,9 @@ def embed(
     auto = {"dimension_auto": dimension is None, "delay_auto": delay is None}
 
     # Univariate path: a 1-D series, or an explicitly selected single component.
-    univariate = component is not None or _looks_univariate(data)
+    univariate = components is not None or _looks_univariate(data)
     if univariate:
-        series = _as_series(data, component=component, analysis="embed")
+        series = _as_series(data, component=components, analysis="embed")
         if delay is None or dimension is None:
             dimension, delay = _estimate_parameters(series, dimension, delay)
         if not isinstance(dimension, (int, np.integer)):
@@ -261,7 +261,7 @@ def embed(
             ),
             hint=(
                 "pass a per-channel sequence, e.g. embed(data, dimension=[3, 3], "
-                "delay=[7, 5]) — or select one channel with component= to get the "
+                "delay=[7, 5]) — or select one channel with components= to get the "
                 "estimated univariate reconstruction."
             ),
         )
@@ -310,7 +310,7 @@ def _renamed_keyword_error(renamed: dict[str, Any]) -> Exception:
         rule="is not accepted by embed",
         hint=(
             "; ".join(parts)
-            + ". embed(data, dimension, delay, *, component=None) — `dimension` (m) and "
+            + ". embed(data, dimension, delay, *, components=None) — `dimension` (m) and "
             "`delay` (tau, in samples) are the canonical spellings, and either may be "
             "omitted to have it estimated."
         ),

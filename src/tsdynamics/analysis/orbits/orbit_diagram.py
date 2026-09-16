@@ -471,8 +471,12 @@ def _record_via_trajectory(
       loud, not silent — the resulting :class:`ConvergenceError` is caught by the
       sweep, which records an empty point set and warns for that value.
     """
-    current.reinit(start)
-    section = current.run(n, transient=transient)
+    # The start state is named AT the call.  Since v6 ``run`` is always a fresh
+    # integration and reinitialises first (§3.1), so a preceding
+    # ``current.reinit(start)`` was silently discarded — and with it the sweep's
+    # carry-state contract, which is what continues one parameter value's
+    # attractor into the next.
+    section = current.run(n, transient=transient, ic=start)
     return np.asarray(section.y, dtype=float)[:, idx], current.state()
 
 
@@ -570,13 +574,13 @@ def _short_column(
             stacklevel=4,
         )
         return keep
-    # Only offer ``component=`` when the state actually has another component to
+    # Only offer ``components=`` when the state actually has another component to
     # offer: a scalar flow (a 1-D DDE) would be told to type an index that does
     # not exist, which is worse than no suggestion at all.
     other = next((c for c in range(dim) if c != idx[0]), None)
     lines = ["    ts.analysis.orbit_diagram(system, param, values, section=('z', 27.0, 'up'))"]
     if other is not None:
-        lines.append(f"    ts.analysis.orbit_diagram(system, param, values, component={other})")
+        lines.append(f"    ts.analysis.orbit_diagram(system, param, values, components={other})")
     warnings.warn(
         f"orbit_diagram: component {idx[0]} of this flow has no maximum within "
         f"max_time={max_time:g}, so the successive-maxima view records nothing for this value "
@@ -704,7 +708,7 @@ def orbit_diagram(
     points_per_value: int = 200,
     transient: int = 500,
     carry_state: bool = True,
-    component: int | str | tuple[Any, ...] = 0,
+    components: int | str | tuple[Any, ...] = 0,
     section: Any | None = None,
     ic: Any | None = None,
     seed: int | None = None,
@@ -812,7 +816,7 @@ def orbit_diagram(
         Start each value from the previous value's final state (follows the
         attractor branch; the classic way to draw clean diagrams).  When
         False, every value starts from ``ic`` / the system default.
-    component : int, str, or tuple
+    components : int, str, or tuple
         Which state component(s) to record (names allowed when the system
         declares ``variables``).  On the flow path the **first** of them also
         defines the peak map.
@@ -849,7 +853,7 @@ def orbit_diagram(
     tsdynamics.errors.InvalidParameterError
         If ``section=`` is given for a system that is already discrete.
     ValueError
-        If a named ``component`` is requested but the system does not declare
+        If a named ``components`` is requested but the system does not declare
         ``variables``.
 
     Warns
@@ -881,7 +885,7 @@ def orbit_diagram(
     >>> od = orbit_diagram(Logistic(), "r", np.linspace(2.5, 4.0, 600), points_per_value=120)
     >>> x, y = od.flat()
     """
-    comp = (component,) if isinstance(component, int | str) else tuple(component)
+    comp = (components,) if isinstance(components, int | str) else tuple(components)
     # Resolve names via the *instance* (not ``type(sys)``): a derived wrapper
     # exposes ``variables`` as a property, so ``type(sys).variables`` returns the
     # descriptor object (truthy) and short-circuits — breaking named components

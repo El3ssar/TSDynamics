@@ -168,6 +168,43 @@ class LyapunovSpectrum(ArrayResult):
         dky = self.kaplan_yorke
         return f"{word} · D_KY = {dky:.4g}" if np.isfinite(dky) else word
 
+    @property
+    def n_positive(self) -> int:
+        """How many exponents are positive, at :attr:`_zero_tolerance`."""
+        return self._n_positive()[0]
+
+    @property
+    def chaotic(self) -> bool | None:
+        """Is this chaotic?  ``None`` when the horizon cannot support a verdict.
+
+        The verdict the repr prints, as a value you can branch on — ``if
+        spec.chaotic:`` is the line a user writes next, and before v6.0 the
+        library did the whole classification (including the significance floor)
+        and then threw it away inside a formatted string.
+
+        Three-valued on purpose, and the third value is the point: it is
+        ``None`` exactly when :meth:`_interpretation` says *indeterminate at this
+        horizon*, so a short run cannot be read as a confident "no".
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), final_time=200.0).chaotic
+        True
+        """
+        n_lo, n_hi = self._n_positive()
+        if np.asarray(self.values).size == 0 or n_lo != n_hi:
+            return None
+        return n_lo >= 1
+
+    @property
+    def regime(self) -> str:
+        """``"chaotic"`` / ``"hyperchaotic"`` / ``"regular"`` / ``"indeterminate"``."""
+        n_lo, n_hi = self._n_positive()
+        if np.asarray(self.values).size == 0 or n_lo != n_hi:
+            return "indeterminate"
+        return "hyperchaotic" if n_lo >= 2 else "chaotic" if n_lo == 1 else "regular"
+
     def _answer(self) -> str:
         r"""Return ``λ = [...]`` — the exponents, each at its own scale."""
         return f"λ = {_vector(self.values)}"
@@ -187,6 +224,8 @@ class LyapunovSpectrum(ArrayResult):
             "kaplan_yorke": self.kaplan_yorke,
             "n_positive": n_lo,
             "zero_tolerance": self._zero_tolerance,
+            "chaotic": self.chaotic,
+            "regime": self.regime,
         }
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
@@ -349,6 +388,8 @@ def lyapunov_spectrum(
     method: str | None = None,
     rtol: float | None = None,
     atol: float | None = None,
+    backend: str | None = None,
+    reortho_interval: int | None = None,
     **aliases: Any,
 ) -> LyapunovSpectrum:
     """Lyapunov spectrum — lambda_1 > 0 is the chaos test.
@@ -393,6 +434,12 @@ def lyapunov_spectrum(
         Initial condition.  Falls back to ``system.ic``, then random.
     method : str, optional
         Solver kernel (continuous flows only).
+    backend : {"jit", "interp", "reference"}, optional
+        Which engine runs the tangent dynamics.  Named here because this free
+        function is the ONLY door in v6 (ruling A2): a keyword the removed method
+        accepted and this one refuses is a signature bug, not a curation (C1).
+    reortho_interval : int, optional
+        Iterations between Gram--Schmidt reorthonormalisations (maps only).
 
     Returns
     -------
@@ -438,8 +485,20 @@ def lyapunov_spectrum(
                 lead="Compute the spectrum on the underlying system:",
             )
         )
-    if k is not None and k <= 0:
-        raise ValueError(f"k (number of exponents) must be a positive integer, got {k!r}.")
+    if k is not None:
+        # Typed, and checked BEFORE the tape is built — ``k`` is an option value,
+        # so the library's ``InvalidParameterError`` (a ``ValueError``) is the
+        # class, and a non-integer must not reach a bare ``'<=' not supported``.
+        if isinstance(k, bool) or not isinstance(k, (int, np.integer)):
+            raise InvalidParameterError(
+                f"k (number of exponents) must be a positive integer, got {k!r}."
+                + remedy("ts.analysis.lyapunov_spectrum(system, k=2)")
+            )
+        if k <= 0:
+            raise InvalidParameterError(
+                f"k (number of exponents) must be a positive integer, got {k!r}."
+                + remedy("ts.analysis.lyapunov_spectrum(system, k=2)")
+            )
 
     # ``steps`` is the alias of ``n`` a map's ``iterate`` / ``run`` accept, so it
     # reaches this door too: the flat function must take the same horizon words
@@ -473,6 +532,8 @@ def lyapunov_spectrum(
         fwd["k"] = k
     if ic is not None:
         fwd["ic"] = ic
+    if backend is not None:
+        fwd["backend"] = backend
 
     if getattr(system, "family", None) == "map":
         # Maps: horizon is `n` (iterations); no time, solver or burn-in concept.
@@ -489,7 +550,14 @@ def lyapunov_spectrum(
             raise ValueError("lyapunov_spectrum: a map spectrum has no solver method.")
         if n is not None:
             fwd["n"] = n
+        if reortho_interval is not None:
+            fwd["reortho_interval"] = reortho_interval
     else:
+        if reortho_interval is not None:
+            raise ValueError(
+                "lyapunov_spectrum: reortho_interval counts ITERATIONS, so it is a "
+                "map keyword; a flow reorthonormalises once per dt chunk."
+            )
         # Flows (ODE/DDE): horizon is `final_time`; transient is a burn-in time.
         if n is not None:
             raise ValueError("lyapunov_spectrum: n is for maps; a flow/DDE uses final_time.")

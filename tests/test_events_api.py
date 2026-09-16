@@ -370,8 +370,9 @@ class TestPoincareConsumer:
         ros = ts.systems.Rossler()
         ic = [3.0, 3.0, 0.5]
         pmap = ts.derived.PoincareMap(ros, plane=("y", 0.0, "up"), dt=0.01)
-        pmap.reinit(ic)
-        section = pmap.run(15)
+        # v6 §3.1: ``run`` is always a FRESH integration, so the initial
+        # condition is named at the call rather than latched by ``reinit``.
+        section = pmap.run(15, ic=ic)
 
         sol = ros.run(
             final_time=500.0,

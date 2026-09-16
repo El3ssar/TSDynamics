@@ -97,7 +97,7 @@ by eye:
 
 ```python
 od = ts.analysis.orbit_diagram(pmap, "c", np.linspace(3.0, 6.0, 200),
-                      component=0, transient=100, points_per_value=80, ic=[1.0, 1.0, 1.0])
+                      components=0, transient=100, points_per_value=80, ic=[1.0, 1.0, 1.0])
 od.bifurcation_points()[:3]     # where the cascade branches
 ```
 

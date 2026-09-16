@@ -413,14 +413,16 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     (the same lowering, integrated by two numerically-identical evaluators).
     """
     cls = getattr(ts.systems, name)
-    meta = dict(cls().known_lyapunov)
+    meta = dict(cls().info.known_lyapunov)
     expected = np.asarray(meta["spectrum"], dtype=float)
     atol = np.asarray(meta["atol"], dtype=float)
     kwargs = {k: v for k, v in meta.get("kwargs", {}).items() if k != "method"}
     if meta.get("ic") is not None:
         kwargs.setdefault("ic", list(meta["ic"]))
 
-    interp = ts.derived.TangentSystem(cls(), backend="interp").lyapunov_spectrum(**kwargs)
+    interp = ts.analysis.lyapunov_spectrum(
+        ts.derived.TangentSystem(cls(), backend="interp"), **kwargs
+    )
     assert np.all(np.isfinite(interp))
     deviation = np.abs(interp - expected)
     assert np.all(deviation <= atol), (
@@ -433,7 +435,7 @@ def test_engine_lyapunov_matches_literature(name) -> None:
     # integrate + QR + log-norm accumulate) runs in the engine kernel (stream
     # perf/ode-lyapunov-engine) over the *same* lowered tape, driven by two
     # numerically-identical evaluators — so the spectrum agrees to the last bit.
-    jit = ts.derived.TangentSystem(cls(), backend="jit").lyapunov_spectrum(**kwargs)
+    jit = ts.analysis.lyapunov_spectrum(ts.derived.TangentSystem(cls(), backend="jit"), **kwargs)
     np.testing.assert_array_equal(
         interp, jit, err_msg=f"{name}: interp vs jit Lyapunov spectrum (must be bit-for-bit)"
     )
@@ -456,8 +458,8 @@ def test_dde_engine_lyapunov_is_positive_mackeyglass() -> None:
 
     mg = ts.systems.MackeyGlass()
     ic = mg.run(final_time=500.0, dt=0.2, history=DDE_HISTORIES["MackeyGlass"]).y[-1]
-    eng = mg.lyapunov_spectrum(
-        backend="interp", k=1, transient=200.0, final_time=2000.0, ic=ic, dt=0.05
+    eng = ts.analysis.lyapunov_spectrum(
+        mg, backend="interp", k=1, transient=200.0, final_time=2000.0, ic=ic, dt=0.05
     )
     assert eng[0] > 0.0  # chaotic — matches known_lyapunov n_positive=1
     # Mackey-Glass at τ=17 is weakly chaotic: λ₁ ≈ 0.0086 (Farmer 1982). A loose

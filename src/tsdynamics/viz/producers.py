@@ -214,7 +214,7 @@ def delay_embedding(
     delay: int | None = None,
     *,
     delay_time: float | None = None,
-    component: int | str = 0,
+    components: int | str = 0,
     label: str = "x",
 ) -> PlotSpec:
     """Build the ``x(t)`` vs ``x(t - delay)`` delay-coordinate reconstruction.
@@ -228,7 +228,7 @@ def delay_embedding(
         "delay_embedding",
         delay=delay,
         delay_time=delay_time,
-        component=component,
+        components=components,
         label=label,
     )
 
@@ -239,13 +239,16 @@ def vector_field(
     xlim: tuple[float, float],
     ylim: tuple[float, float],
     grid: int = 20,
-    normalize: bool = False,
+    normalize: bool = True,
     labels: tuple[str, str] = ("x", "y"),
 ) -> PlotSpec:
     """Build a ``QUIVER`` grid of a 2-D right-hand side (``VECTOR_FIELD``).
 
     Shim over the ``vector_field`` transform; see
-    :func:`tsdynamics.viz.transforms._data.vector_field`.
+    :func:`tsdynamics.viz.transforms._data.vector_field`.  ``normalize``
+    defaults to the transform's own default (unit arrows), because a shim that
+    pins a *different* default is exactly the drift the migration removed — and
+    ``tests/test_viz_golden.py`` measures it.
     """
     return build_spec(
         rhs,
@@ -288,7 +291,7 @@ def phase_portrait_field(
 def cobweb(
     series: np.ndarray | Trajectory,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     label: str = "x",
 ) -> PlotSpec:
     """Build the 1-D cobweb staircase (``COBWEB``).
@@ -296,7 +299,7 @@ def cobweb(
     Shim over the ``cobweb`` transform; see
     :func:`tsdynamics.viz.transforms._data.cobweb`.
     """
-    return build_spec(series, "cobweb", component=component, label=label)
+    return build_spec(series, "cobweb", components=components, label=label)
 
 
 def spacetime(source: Trajectory, *, transpose: bool = False) -> PlotSpec:
@@ -312,11 +315,11 @@ def spatial_field(
     source: Trajectory,
     *,
     field_shape: tuple[int, ...] | None = None,
-    component: int | str | None = None,
+    components: int | str | None = None,
 ) -> PlotSpec:
     """Build a ``SPATIAL_FIELD`` spec from a field trajectory.
 
     Shim over the ``spatial_field`` transform; see
     :func:`tsdynamics.viz.transforms._data.spatial_field`.
     """
-    return build_spec(source, "spatial_field", field_shape=field_shape, component=component)
+    return build_spec(source, "spatial_field", field_shape=field_shape, components=components)

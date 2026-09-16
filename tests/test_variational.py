@@ -91,14 +91,18 @@ def test_variational_tape_partial_k() -> None:
 def test_backend_neutral_linear_spectrum_reference() -> None:
     """The reference (pure-Python) variational path reproduces the analytic spectrum."""
     tang = TangentSystem(LinOsc(), k=2, backend="reference")
-    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5])
+    spec = ts.analysis.lyapunov_spectrum(
+        tang, final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5]
+    )
     np.testing.assert_allclose(spec, [-1.0, -2.0], atol=0.02)
 
 
 def test_backend_neutral_partial_spectrum_reference() -> None:
     """Only the leading exponent, via k=1 deviation vector."""
     tang = TangentSystem(LinOsc(), k=1, backend="reference")
-    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5])
+    spec = ts.analysis.lyapunov_spectrum(
+        tang, final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5]
+    )
     assert spec.shape == (1,)
     np.testing.assert_allclose(spec, [-1.0], atol=0.02)
 
@@ -131,27 +135,27 @@ def test_jitcode_backend_is_rejected() -> None:
 
 def test_map_family_delegates_to_tangent() -> None:
     """Family map ``lyapunov_spectrum`` is exactly ``TangentSystem.lyapunov_spectrum``."""
-    via_family = ts.systems.Henon().lyapunov_spectrum(n=4000, ic=[0.1, 0.1])
-    via_tangent = TangentSystem(ts.systems.Henon(), k=2).lyapunov_spectrum(n=4000, ic=[0.1, 0.1])
+    via_family = ts.analysis.lyapunov_spectrum(ts.systems.Henon(), n=4000, ic=[0.1, 0.1])
+    via_tangent = ts.analysis.lyapunov_spectrum(
+        TangentSystem(ts.systems.Henon(), k=2), n=4000, ic=[0.1, 0.1]
+    )
     np.testing.assert_array_equal(via_family, via_tangent)
 
 
 def test_map_partial_spectrum_via_k() -> None:
     """``k`` is the canonical name (v4 glossary); ``n_exp`` was silently swallowed."""
-    spec = ts.systems.Henon().lyapunov_spectrum(n=4000, ic=[0.1, 0.1], k=1)
+    spec = ts.analysis.lyapunov_spectrum(ts.systems.Henon(), n=4000, ic=[0.1, 0.1], k=1)
     assert spec.shape == (1,)
     assert 0.3 < spec[0] < 0.5  # leading Hénon exponent ≈ 0.42
 
 
 def test_tangent_lyapunov_records_meta() -> None:
+    """A RUN records its own provenance — ``system.meta`` is gone in v6 (§8.3)."""
     m = ts.systems.Henon()
     tang = TangentSystem(m, k=2)
-    tang.lyapunov_spectrum(n=2000, ic=[0.1, 0.1])
-    # meta is the inner system's MetaStore.
-    assert "lyapunov_spectrum" in m.meta
-    rec = m.meta.history("lyapunov_spectrum")[-1]
-    assert rec["context"]["steps"] == 2000
-    assert rec["context"]["reortho_interval"] == 1
+    spec = ts.analysis.lyapunov_spectrum(tang, n=2000, ic=[0.1, 0.1])
+    assert spec.meta["analysis"] == "lyapunov_spectrum"
+    assert spec.meta["k"] == 2
 
 
 class _StiffLinOsc(ContinuousSystem):
@@ -200,7 +204,9 @@ def test_stiff_default_ode_lyapunov_does_not_raise() -> None:
     """
     pytest.importorskip("tsdynamics._rust")
     tang = TangentSystem(_StiffLinOsc(), k=2, backend="interp")
-    spec = tang.lyapunov_spectrum(final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5])
+    spec = ts.analysis.lyapunov_spectrum(
+        tang, final_time=40.0, dt=0.25, transient=5.0, ic=[1.0, 0.5]
+    )
     assert np.all(np.isfinite(spec))
     assert spec[0] >= spec[1]  # descending (QR order)
     np.testing.assert_allclose(spec, [-1.0, -2.0], atol=0.05)
@@ -295,8 +301,14 @@ def test_oregonator_stiff_lyapunov_finite_descending() -> None:
     its own piece of work.
     """
     pytest.importorskip("tsdynamics._rust")
-    spec = ts.systems.Oregonator().lyapunov_spectrum(
-        final_time=6.0, dt=0.01, transient=2.0, ic=[1.0, 1.0, 1.0], rtol=1e-6, atol=1e-9
+    spec = ts.analysis.lyapunov_spectrum(
+        ts.systems.Oregonator(),
+        final_time=6.0,
+        dt=0.01,
+        transient=2.0,
+        ic=[1.0, 1.0, 1.0],
+        rtol=1e-6,
+        atol=1e-9,
     )
     assert spec.shape == (3,)
     assert np.all(np.isfinite(spec))
@@ -311,8 +323,8 @@ def test_ode_family_delegates_to_tangent_engine() -> None:
     variational path; ``final_time`` is long enough that the finite-time estimate
     has converged to the canonical Lorenz spectrum ``[0.906, 0, -14.57]``.
     """
-    spec = ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]).lyapunov_spectrum(
-        final_time=240.0, dt=0.1, transient=40.0
+    spec = ts.analysis.lyapunov_spectrum(
+        ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), final_time=240.0, dt=0.1, transient=40.0
     )
     # Leading exponent ≈ 0.906, middle ≈ 0, third ≈ -14.57 (Lorenz 1963 / Sprott).
     assert abs(spec[0] - 0.906) < 0.06
@@ -323,9 +335,12 @@ def test_ode_family_delegates_to_tangent_engine() -> None:
 @pytest.mark.slow
 def test_backend_neutral_lorenz_spectrum_reference() -> None:
     """The engine variational path reproduces the Lorenz spectrum on the reference backend."""
-    ref = TangentSystem(
-        ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), k=3, backend="reference"
-    ).lyapunov_spectrum(final_time=120.0, dt=0.1, transient=40.0)
+    ref = ts.analysis.lyapunov_spectrum(
+        TangentSystem(ts.systems.Lorenz(ic=[1.0, 1.0, 1.0]), k=3, backend="reference"),
+        final_time=120.0,
+        dt=0.1,
+        transient=40.0,
+    )
     assert abs(ref[0] - 0.906) < 0.1
     assert abs(ref[1]) < 0.1
     assert abs(ref[2] + 14.57) < 1.0
@@ -428,11 +443,11 @@ def test_variational_spectrum_is_identical_with_the_cache_disabled(monkeypatch) 
     kw = dict(final_time=40.0, dt=0.1, transient=10.0, ic=[1.0, 1.0, 1.0])
 
     clear_tape_cache()
-    cached = ts.systems.Lorenz().lyapunov_spectrum(**kw)
+    cached = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), **kw)
 
     monkeypatch.setenv("TSDYNAMICS_NO_TAPE_CACHE", "1")
     clear_tape_cache()
-    uncached = ts.systems.Lorenz().lyapunov_spectrum(**kw)
+    uncached = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), **kw)
 
     assert np.array_equal(cached, uncached)
 
@@ -442,8 +457,8 @@ def test_cached_variational_path_keeps_interp_equals_jit() -> None:
     pytest.importorskip("tsdynamics._rust")
     clear_tape_cache()
     kw = dict(final_time=40.0, dt=0.1, transient=10.0, ic=[1.0, 1.0, 1.0])
-    jit = ts.systems.Lorenz().lyapunov_spectrum(backend="jit", **kw)
-    interp = ts.systems.Lorenz().lyapunov_spectrum(backend="interp", **kw)
+    jit = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), backend="jit", **kw)
+    interp = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), backend="interp", **kw)
     assert np.array_equal(jit, interp)
 
 
@@ -469,9 +484,9 @@ def test_repeat_ode_lyapunov_reuses_one_variational_tape() -> None:
     original = var_mod.build_variational_tape
     var_mod.build_variational_tape = counting
     try:
-        ts.systems.Lorenz().lyapunov_spectrum(**kw)
-        ts.systems.Lorenz().lyapunov_spectrum(**kw)
-        ts.systems.Lorenz().with_params(rho=29.0).lyapunov_spectrum(**kw)
+        ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), **kw)
+        ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), **kw)
+        ts.analysis.lyapunov_spectrum(ts.systems.Lorenz().with_params(rho=29.0), **kw)
     finally:
         var_mod.build_variational_tape = original
     assert calls["n"] == 1, f"expected one variational lowering, got {calls['n']}"
@@ -484,15 +499,16 @@ def test_the_old_n_exp_spelling_raises_instead_of_being_swallowed() -> None:
     methods kept the old name, so ``k=`` fell into ``**integrator_kwargs`` and was
     dropped.  When the free function was later fixed to take ``k``, the two doors
     disagreed: ``ts.analysis.lyapunov_spectrum(sys, k=1)`` gave one exponent and
-    ``sys.lyapunov_spectrum(k=1)`` gave ``dim`` of them, with no error either way.
+    the bound ``ts.analysis.lyapunov_spectrum(sys, k=1)`` gave ``dim`` of them, with no error.
     A wrong count returned confidently is worse than a failure, so the old
     spelling now raises and names the replacement.
     """
     import pytest
 
     lz = ts.systems.Lorenz()
-    assert len(lz.lyapunov_spectrum(final_time=20.0, k=1)) == 1
     assert len(ts.analysis.lyapunov_spectrum(lz, final_time=20.0, k=1)) == 1
 
-    with pytest.raises(ts.errors.InvalidParameterError, match="did you mean k="):
-        lz.lyapunov_spectrum(final_time=20.0, **{"n_exp": 1})  # the OLD spelling, on purpose
+    with pytest.raises(ts.errors.InvalidInputError, match="unexpected keyword argument"):
+        ts.analysis.lyapunov_spectrum(
+            lz, final_time=20.0, **{"n_exp": 1}
+        )  # the OLD spelling, on purpose

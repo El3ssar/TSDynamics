@@ -59,7 +59,13 @@ from .spec import (
 __all__ = ["plot"]
 
 #: Panel arrangements (``layout=``) that build a :data:`PlotKind.COMPOSITE`.
-_COMPOSITE_MODES: frozenset[str] = frozenset({"stack", "row", "grid"})
+_COMPOSITE_MODES: frozenset[str] = frozenset({"stack", "row", "grid", "frames"})
+
+#: The composite mode whose panels are consecutive in TIME, not in space: the
+#: panels are the frames of a movie, so the renderer plays them one after another
+#: instead of tiling them.  It implies an animation — a ``"frames"`` composite
+#: with no ``Animation`` would be silently tiled, which is a different picture.
+_FRAMES_MODE = "frames"
 
 
 def plot(
@@ -85,10 +91,17 @@ def plot(
         already-built :class:`~tsdynamics.viz.spec.PlotSpec` objects (including
         specs returned by an earlier ``plot`` call).  A single list/tuple argument is
         unwrapped, so ``plot([a, b])`` and ``plot(a, b)`` are equivalent.
-    layout : {"overlay", "stack", "row", "grid"}, optional
+    layout : {"overlay", "stack", "row", "grid", "frames"}, optional
         ``"overlay"`` (default) draws everything on one set of axes (a single
         panel); ``"stack"`` / ``"row"`` / ``"grid"`` give each thing its own panel
         in a :data:`~tsdynamics.viz.spec.PlotKind.COMPOSITE` figure.
+
+        ``"frames"`` is the parameter-sweep movie: the panels are consecutive in
+        **time** rather than in space, so they are played one after another
+        instead of tiled.  It implies an animation (``fps=`` is enough)::
+
+            ts.plot(*[ts.plot(sys.with_params(r=r), "cobweb") for r in rs],
+                    layout="frames", fps=15).save("cascade.mp4")
 
         An overlay is legal when every thing draws in a **compatible frame** —
         the same coordinate space, the same dimension, the same axes (see
@@ -183,8 +196,13 @@ def plot(
         result = _composite(specs, mode, layout_kw)
     else:
         raise InvalidParameterError(
-            f"unknown layout {mode!r}; use 'overlay', 'stack', 'row', or 'grid'."
+            f"unknown layout {mode!r}; use 'overlay', 'stack', 'row', 'grid', "
+            "or 'frames' (each panel is one frame of a movie)."
         )
+    if mode == _FRAMES_MODE and (animate is False or animate is None):
+        # The panels ARE the frames, so a "frames" composite is animated by
+        # construction; §6.6's own example passes only ``fps=``.
+        animate = True
     if (animate is not False and animate is not None) or fps is not None:
         _apply_figure_animation(result, animate if animate is not False else True, fps)
     apply_presentation(result, style, figure)
@@ -534,6 +552,16 @@ def _relabel_for_overlay(layer: Layer, tag: str, *, multi: bool) -> Layer:
     return _copy_layer(layer, label=f"{tag}: {layer.label}")
 
 
+#: The suffix :func:`_disambiguate_labels` writes, so a second pass can strip it
+#: and re-derive rather than stack another one on top.
+_AUTO_SUFFIX = re.compile(r" \(\d+\)$")
+
+
+def _base_label(label: str | None) -> str | None:
+    """Return ``label`` without a previously auto-applied ``" (N)"`` suffix."""
+    return _AUTO_SUFFIX.sub("", label) if label else label
+
+
 def _disambiguate_labels(layers: list[Layer]) -> None:
     """Give every legend entry in the merged overlay its own name, **in place**.
 
@@ -548,18 +576,23 @@ def _disambiguate_labels(layers: list[Layer]) -> None:
 
     Only genuine duplicates are touched, so a figure whose labels were already
     unique is byte-identical to what it was.
+
+    It is also **idempotent**, which is what makes running it per ``add`` safe:
+    a label already carrying an auto suffix is counted under its base, so
+    ``ts.plot(t1).add(t2).add(t3)`` legends ``Lorenz (1) / (2) / (3)`` instead of
+    the measured ``Lorenz (1) / Lorenz (2) (1) / Lorenz (2) (2)``.
     """
+    bases = [_base_label(layer.label) for layer in layers]
     counts: dict[str, int] = {}
-    for layer in layers:
-        if layer.label:
-            counts[layer.label] = counts.get(layer.label, 0) + 1
+    for base in bases:
+        if base:
+            counts[base] = counts.get(base, 0) + 1
     seen: dict[str, int] = {}
-    for layer in layers:
-        label = layer.label
-        if not label or counts[label] < 2:
+    for layer, base in zip(layers, bases, strict=True):
+        if not base or counts[base] < 2:
             continue
-        seen[label] = seen.get(label, 0) + 1
-        layer.label = f"{label} ({seen[label]})"
+        seen[base] = seen.get(base, 0) + 1
+        layer.label = f"{base} ({seen[base]})"
 
 
 #: Layer marks that paint every pixel of their extent.  Two of them on one axes
@@ -752,7 +785,7 @@ def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> P
     meta: dict[str, Any] = {"n_panels": len(panels), "panel_grid": layout.grid(len(panels))}
     if dropped_layouts:
         meta["flattened_layouts"] = dropped_layouts
-    return PlotSpec(
+    result = PlotSpec(
         kind=PlotKind.COMPOSITE,
         ndim=2,
         title=_common_title(panels),
@@ -760,3 +793,25 @@ def _composite(specs: list[PlotSpec], mode: str, layout_kw: dict[str, Any]) -> P
         layout=layout,
         meta=meta,
     )
+    _lift_panel_animation(result, panels)
+    return result
+
+
+def _lift_panel_animation(result: PlotSpec, panels: list[PlotSpec]) -> None:
+    """Give a composite a master clock when its PANELS are animated.
+
+    ``ts.plot(ts.plot(a, animate=True), ts.plot(b, animate=True), layout="row")``
+    used to produce a composite whose own ``animation`` was ``None``, so
+    ``.save("x.gif")`` wrote **one frame** with no warning and ``.save("x.html")``
+    a static page — while the other spelling (``animate=True`` at the composite
+    door) worked.  The panels already carry the timeline; the composite only
+    needs the master clock, and lockstep is the documented composite semantics.
+    """
+    if result.animation is not None:
+        return
+    animated = [p.animation for p in panels if p.animation is not None]
+    if not animated:
+        return
+    import dataclasses
+
+    result.animation = dataclasses.replace(animated[0])

@@ -56,7 +56,7 @@ class WrappedSystem(DeriveMixin, SystemPlottable):
     >>> sysm = WrappedSystem(step, dim=1, family="map", initial=[0.5])
     >>> traj = sysm.run(500)
     >>> import tsdynamics as ts
-    >>> ts.max_lyapunov(sysm, ic=[0.3]) > 0          # chaotic
+    >>> ts.analysis.max_lyapunov(sysm, ic=[0.3]) > 0   # chaotic
     True
     """
 
@@ -203,7 +203,7 @@ class WrappedSystem(DeriveMixin, SystemPlottable):
 
         Parameters
         ----------
-        n : int, optional
+        steps : int, optional
             Number of samples to collect.  Mutually exclusive with ``final_time``.
         transient : int, default 0
             Number of leading samples to discard (steps taken but not recorded).

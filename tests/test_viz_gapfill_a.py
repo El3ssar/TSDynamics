@@ -211,7 +211,7 @@ def test_producer_delay_embedding_from_series():
 def test_producer_delay_embedding_from_trajectory_component():
     """delay_embedding can read a named component of a trajectory."""
     traj = _flow_traj(dim=3, variables=("x", "y", "z"))
-    spec = producers.delay_embedding(traj, delay=3, component="y")
+    spec = producers.delay_embedding(traj, delay=3, components="y")
     np.testing.assert_allclose(spec.layers[0].data["x"], traj.y[:-3, 1])
     _roundtrips(spec)
 

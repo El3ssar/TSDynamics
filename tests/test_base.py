@@ -178,9 +178,10 @@ class TestSystemBase:
         assert np.all((ic >= 0.0) & (ic < 1.0))
 
     def test_ic_kwarg_takes_priority(self) -> None:
+        """An EXPLICIT ic is used and does not latch (§3.1: run(ic=) is not a setter)."""
         s = _Stub()
-        s.resolve_ic([7.0, 8.0, 9.0])
-        np.testing.assert_array_equal(s.ic, [7.0, 8.0, 9.0])
+        np.testing.assert_array_equal(s.resolve_ic([7.0, 8.0, 9.0]), [7.0, 8.0, 9.0])
+        assert s.ic is None
 
     def test_default_ic_used_when_no_kwarg(self) -> None:
         s = _StubWithDefaultIC()
@@ -207,11 +208,10 @@ class TestSystemBase:
         assert new.a == 42.0
         assert s.a == 1.0  # original untouched
 
-    def test_meta_dict_is_per_instance(self) -> None:
-        s1 = _Stub()
-        s2 = _Stub()
-        s1.meta["foo"] = 1
-        assert s2.meta == {}
+    def test_system_meta_is_gone_and_says_where_provenance_lives(self) -> None:
+        """§8.3 — a system no longer accumulates metadata; a RUN records its own."""
+        with pytest.raises(AttributeError, match="a run records its own"):
+            _ = _Stub().meta
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +297,7 @@ class TestTrajectoryNamedAccess:
 
     def test_unnamed_system_raises_helpfully(self) -> None:
         traj = Trajectory(np.arange(3), np.zeros((3, 2)), system=_StubNoParams())
-        with pytest.raises(KeyError, match="declares no"):
+        with pytest.raises(KeyError, match="Declared variables"):
             traj["x"]
 
     def test_row_slicing_still_works(self) -> None:
@@ -370,19 +370,15 @@ class TestCopySemantics:
         import copy
 
         base = _Stub(params={"a": 1.0}, ic=[1.0, 2.0, 3.0])
-        base.meta["origin"] = "base"
         clone = copy.copy(base)
 
         assert clone.params is not base.params
-        assert clone.meta is not base.meta
         assert clone.ic is not base.ic
 
         clone.a = 99.0
-        clone.meta["origin"] = "clone"
         clone.ic[0] = 42.0
 
         assert base.a == 1.0
-        assert base.meta["origin"] == "base"
         np.testing.assert_array_equal(base.ic, [1.0, 2.0, 3.0])
 
     def test_copy_copy_preserves_content(self) -> None:
@@ -390,27 +386,22 @@ class TestCopySemantics:
         import copy
 
         base = _Stub(params={"a": 7.0}, ic=[1.0, 2.0, 3.0])
-        base.meta["k"] = 5
         clone = copy.copy(base)
         assert clone.a == 7.0
         np.testing.assert_array_equal(clone.ic, [1.0, 2.0, 3.0])
-        assert clone.meta["k"] == 5
 
     def test_deepcopy_is_independent(self) -> None:
         """``copy.deepcopy`` works at all, and is independent (defects 1 + 2)."""
         import copy
 
         base = _Stub(params={"a": 1.0}, ic=[1.0, 2.0, 3.0])
-        base.meta["nested"] = {"v": [1, 2]}
         clone = copy.deepcopy(base)
 
         clone.a = 99.0
         clone.ic[1] = -5.0
-        clone.meta["nested"]["v"].append(3)
 
         assert base.a == 1.0
         np.testing.assert_array_equal(base.ic, [1.0, 2.0, 3.0])
-        assert base.meta["nested"]["v"] == [1, 2]
 
     def test_deepcopy_keeps_the_subclass_and_dim(self) -> None:
         """A variable-dimension instance keeps its resolved ``dim``."""
@@ -446,11 +437,9 @@ class TestPickling:
         import pickle
 
         base = _Stub(params={"a": 3.0}, ic=[1.0, 2.0, 3.0])
-        base.meta["k"] = 9
         clone = pickle.loads(pickle.dumps(base))
         assert type(clone) is _Stub
         assert clone.a == 3.0
-        assert clone.meta["k"] == 9
         np.testing.assert_array_equal(clone.ic, [1.0, 2.0, 3.0])
         clone.a = 99.0
         assert base.a == 3.0
@@ -460,10 +449,8 @@ class TestPickling:
         import pickle
 
         base = _Stub(ic=[1.0, 2.0, 3.0], seed=11)
-        base.lyap  # noqa: B018 - populate the accessor cache
-        assert "_accessor_cache" in base.__dict__
+        base.resolve_ic()  # populate the runtime RNG cache
         state = base.__getstate__()
-        assert "_accessor_cache" not in state
         assert "_ic_rng" not in state
         clone = pickle.loads(pickle.dumps(base))
         assert clone.__dict__["_ic_seed"] == 11
@@ -541,10 +528,11 @@ class TestICRollback:
         assert s._ic_explicit is True
 
     def test_successful_block_commits(self) -> None:
-        s = _Stub(ic=[1.0, 2.0, 3.0])
+        """An AUTO-resolved ic latches; an explicit one does not (§3.1)."""
+        s = _Stub()
         with s._ic_rollback():
-            s.resolve_ic([9.0, 9.0, 9.0])
-        np.testing.assert_array_equal(s.ic, [9.0, 9.0, 9.0])
+            drawn = s.resolve_ic()
+        np.testing.assert_array_equal(s.ic, drawn)
 
 
 class TestICArrayIsNotShared:

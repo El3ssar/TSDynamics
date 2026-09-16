@@ -460,7 +460,7 @@ SHOWCASE: dict[str, Showcase] = {
     ),
     "return_time": Showcase(
         setup="traj = ts.systems.Lorenz().run(final_time=400.0, dt=0.005, ic=[1.0, 1.0, 20.0])",
-        call='ts.plot(traj, "return_time", component="z", n_bins=30)',
+        call='ts.plot(traj, "return_time", components="z", n_bins=30)',
         caption=(
             "How long the Lorenz orbit takes to come back to a level set of `z` — one "
             "circuit of a wing. The distribution is sharply peaked at `T ≈ 0.69` with a "
@@ -574,8 +574,8 @@ SHOWCASE: dict[str, Showcase] = {
     ),
     "zero_one_pq_plane": Showcase(
         setup="lorenz = ts.systems.Lorenz()",
-        # NOTE: `component=0` is the default and is omitted deliberately — the
-        # transform still spells it `component=` and forwards it to
+        # NOTE: `components=0` is the default and is omitted deliberately — the
+        # transform still spells it `components=` and forwards it to
         # `zero_one_test`, which takes `components=` in v6, so naming it raises.
         call='ts.plot(lorenz, "zero_one_pq_plane", final_time=2000.0, dt=0.1)',
         square=True,
@@ -783,7 +783,7 @@ SHOWCASE: dict[str, Showcase] = {
     # -- model: fields over initial conditions --------------------------------
     "ftle": Showcase(
         setup="duff = ts.systems.Duffing(gamma=0.0)",
-        call='ts.plot(duff, "ftle", xlim=(-2.0, 2.0), ylim=(-1.5, 1.5), grid=201, time=8.0)',
+        call='ts.plot(duff, "ftle", xlim=(-2.0, 2.0), ylim=(-1.5, 1.5), grid=201, final_time=8.0)',
         square=True,
         caption=(
             "The finite-time Lyapunov exponent field of the unforced two-well Duffing "

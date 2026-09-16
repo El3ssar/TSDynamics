@@ -390,7 +390,7 @@ def test_granularity_coarsens_rather_than_decimating(series):
 
 
 def test_a_trajectory_component_lays_out_on_a_curve(lorenz):
-    geom = geometry(lorenz, "hilbert", component="x", curve="snake")
+    geom = geometry(lorenz, "hilbert", components="x", curve="snake")
     assert geom.meta["n_samples"] == lorenz.y.shape[0]
     assert geom.meta["side"] == int(np.ceil(np.sqrt(lorenz.y.shape[0])))
     assert np.isfinite(geom.channels["z"].values).sum() == lorenz.y.shape[0]
@@ -409,7 +409,7 @@ def test_an_rqa_measure_over_time_lays_out_on_a_curve(lorenz):
 
 def test_an_inter_event_series_lays_out_on_a_curve(lorenz):
     """The return-time series the ``return_time`` transform hands back in ``meta``."""
-    times = np.asarray(geometry(lorenz, "return_time", component="z").meta["return_times"])
+    times = np.asarray(geometry(lorenz, "return_time", components="z").meta["return_times"])
     geom = geometry(times, "hilbert", curve="snake")
     assert geom.meta["n_samples"] == times.size
 
@@ -424,7 +424,7 @@ def test_a_symbolic_sequence_lays_out_on_a_curve():
 
 def test_a_system_subject_is_integrated_for_its_data():
     geom = geometry(
-        ts.systems.Lorenz(), "hilbert", component="x", curve="snake", final_time=10.0, dt=0.01
+        ts.systems.Lorenz(), "hilbert", components="x", curve="snake", final_time=10.0, dt=0.01
     )
     assert geom.meta["integrated_for_plot"]["n_samples"] == 1001
 

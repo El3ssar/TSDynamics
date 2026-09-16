@@ -89,11 +89,11 @@ class TSDynamicsAdapter(BaseAdapter):
         dt = self._intg["dt"]
 
         def run() -> None:
-            lor.integrate(
+            lor.run(
                 ic=ic,
                 final_time=T,
                 dt=dt,
-                method="dop853",
+                solver="dop853",
                 rtol=1e-9,
                 atol=1e-9,
                 backend=self.backend,
@@ -108,11 +108,11 @@ class TSDynamicsAdapter(BaseAdapter):
         dt = self._intg["dt"]
 
         def run() -> None:
-            lor.integrate(
+            lor.run(
                 ic=ic,
                 final_time=T,
                 dt=dt,
-                method="dop853",
+                solver="dop853",
                 rtol=1e-9,
                 atol=1e-9,
                 backend=self.backend,
@@ -127,11 +127,11 @@ class TSDynamicsAdapter(BaseAdapter):
         ref = np.asarray(self._ref["lorenz_acc_final"], dtype=float)
 
         def run() -> float:
-            tr = lor.integrate(
+            tr = lor.run(
                 ic=ic,
                 final_time=T,
                 dt=T,
-                method="dop853",
+                solver="dop853",
                 rtol=self._intg["acc_rtol"],
                 atol=self._intg["acc_atol"],
                 backend=self.backend,
@@ -153,7 +153,7 @@ class TSDynamicsAdapter(BaseAdapter):
             # dt=0.1 matches the Julia column's Δt=0.1 renormalisation interval, so
             # both libraries renormalise the same number of times over the same
             # horizon (apples-to-apples; dt=0.05 did twice the work of the jl run).
-            ls = ts.lyapunov_spectrum(lor, final_time=T, dt=0.1, ic=ic, transient=20.0)
+            ls = ts.analysis.lyapunov_spectrum(lor, final_time=T, dt=0.1, ic=ic, transient=20.0)
             return float(np.max(np.asarray(ls.exponents)))
 
         return run
@@ -166,7 +166,7 @@ class TSDynamicsAdapter(BaseAdapter):
         n = 2000 if quick else 5000
 
         def run() -> float:
-            return float(ts.max_lyapunov(h, ic=ic, n=n, seed=0))
+            return float(ts.analysis.max_lyapunov(h, ic=ic, n=n, seed=0))
 
         return run
 
@@ -181,7 +181,7 @@ class TSDynamicsAdapter(BaseAdapter):
         def run() -> float:
             # Rosenstein, matching nolds.lyap_r / nolitsa.mle for an
             # apples-to-apples algorithm comparison on the identical series.
-            r = ts.lyapunov_from_data(
+            r = ts.analysis.lyapunov_from_data(
                 xs,
                 dt=dt_eff,
                 dimension=s["embed_dim"],
@@ -210,7 +210,7 @@ class TSDynamicsAdapter(BaseAdapter):
         radii = np.logspace(np.log10(sd * 0.05), np.log10(sd * 1.5), 30)
 
         def run() -> float:
-            return float(ts.correlation_dimension(emb, theiler=s["theiler"], radii=radii))
+            return float(ts.analysis.correlation_dimension(emb, theiler=s["theiler"], radii=radii))
 
         return run
 
@@ -225,7 +225,7 @@ class TSDynamicsAdapter(BaseAdapter):
         log = ts.systems.Logistic()
 
         def run() -> None:
-            ts.orbit_diagram(
+            ts.analysis.orbit_diagram(
                 log,
                 "r",
                 values,
@@ -251,7 +251,7 @@ class TSDynamicsAdapter(BaseAdapter):
         )
 
         def run() -> None:
-            ts.basins_of_attraction(
+            ts.analysis.basins(
                 NewtonZ3(), region=grid, dt=1.0, max_steps=nw["max_steps"], seed=0
             )
 
@@ -270,7 +270,7 @@ class TSDynamicsAdapter(BaseAdapter):
         box = ts.data.Box(lo=[-2.0, -2.0], hi=[2.0, 2.0])
 
         def run() -> float:
-            fps = ts.fixed_points(h, method="interval", region=box)
+            fps = ts.analysis.fixed_points(h, method="interval", region=box)
             return float(max(float(np.asarray(fp.x)[0]) for fp in fps))
 
         return run
@@ -284,7 +284,7 @@ class TSDynamicsAdapter(BaseAdapter):
         n = 200 if quick else 1000
 
         def run() -> None:
-            ts.poincare_section(ros, plane=("y", 0.0, "up"), n=n, dt=0.01, seed=0)
+            ts.analysis.poincare_section(ros, plane=("y", 0.0, "up"), n=n, dt=0.01, seed=0)
 
         return run
 
@@ -300,7 +300,7 @@ class TSDynamicsAdapter(BaseAdapter):
         emb = series.delay_embed(x, dim=s["rqa_embed_dim"], delay=s["rqa_embed_delay"])
 
         def run() -> float:
-            return float(ts.rqa(emb, recurrence_rate=s["rqa_recurrence_rate"]).determinism)
+            return float(ts.analysis.rqa(emb, recurrence_rate=s["rqa_recurrence_rate"]).determinism)
 
         return run
 

@@ -335,6 +335,13 @@ def check_render_kwargs(backend_name: str, renderer: Any, kwargs: Mapping[str, A
     )
 
 
+def _baseline_theme() -> Any:
+    """Return the library's shipped ``default`` theme (the "untouched" reference)."""
+    from tsdynamics.viz.style import THEMES
+
+    return THEMES["default"]
+
+
 def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
     """Collect every knob the chosen backend will *not* honor for ``spec``.
 
@@ -429,22 +436,30 @@ def style_honoring_gaps(spec: PlotSpec, backend_name: str) -> list[str]:
 
     # ── 3. Theme / axis / legend / colorbar presentation gaps ───────────────
     theme_gaps = _BACKEND_THEME_GAPS.get(canonical_name, frozenset())
-    if theme_gaps and spec._theme is not None:
-        t = spec._theme
-        # Only report when the theme actually sets the field (not None / default).
-        if "foreground" in theme_gaps and t.foreground is not None:
-            gaps.add("theme.foreground")
-        if "font_family" in theme_gaps and t.font_family is not None:
-            gaps.add("theme.font_family")
-        if "font_size" in theme_gaps and t.font_size is not None:
-            gaps.add("theme.font_size")
-        if "title_size" in theme_gaps and t.title_size is not None:
-            gaps.add("theme.title_size")
-        if "grid" in theme_gaps and t.grid:
+    # [M42] ``resolved_theme``, not ``_theme``: a SESSION-DEFAULT theme
+    # (``ts.viz.themes.use("lab")``) is what the renderer actually applies, and
+    # reading the per-plot override alone meant the same theme on the same
+    # backend reported seven dropped fields one way and none the other.
+    #
+    # ``resolved_theme`` is always a full Theme, so "did the caller set this?"
+    # is answered by comparing against the BASELINE default rather than against
+    # ``None`` — otherwise every render of an unthemed plot warns about the
+    # library's own defaults, which is noise, not honesty.
+    if theme_gaps:
+        t = spec.resolved_theme
+        base = _baseline_theme()
+        for field in ("foreground", "font_family", "font_size", "title_size", "grid_color"):
+            if field in theme_gaps:
+                value = getattr(t, field)
+                if value is not None and value != getattr(base, field):
+                    gaps.add(f"theme.{field}")
+        if "grid" in theme_gaps and t.grid and t.grid != base.grid:
             gaps.add("theme.grid")
-        if "grid_color" in theme_gaps and t.grid_color is not None:
-            gaps.add("theme.grid_color")
-        if "grid_alpha" in theme_gaps and t.grid_alpha is not None:
+        if (
+            "grid_alpha" in theme_gaps
+            and t.grid_alpha is not None
+            and t.grid_alpha != base.grid_alpha
+        ):  # noqa: E501
             gaps.add("theme.grid_alpha")
 
     # ── 3b. Figure-geometry gaps (figsize / dpi / layout_engine / autostyle) ──

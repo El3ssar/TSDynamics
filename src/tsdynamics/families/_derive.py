@@ -127,7 +127,7 @@ class DeriveMixin:
                 return PoincareMap(self, None, direction=direction, **kwargs)
         return StroboscopicMap(self, period, **kwargs)
 
-    def ensemble(self, states: Any) -> Any:
+    def ensemble(self, states: Any, **horizon: Any) -> Any:
         """Many copies of this system, run or stepped together.
 
         Returns an :class:`~tsdynamics.derived.Ensemble` — a *system*, so it
@@ -151,6 +151,18 @@ class DeriveMixin:
         -------
         Ensemble
         """
+        if horizon:
+            from tsdynamics.errors import InvalidParameterError, remedy
+
+            raise InvalidParameterError(
+                f"ensemble() builds the batch; it does not run it, so it takes no "
+                f"{sorted(horizon)[0]!r}. One verb, one object (§3.2)."
+                + remedy(
+                    "band = system.ensemble(states)",
+                    f"batch = band.run({', '.join(f'{k}=...' for k in sorted(horizon))})",
+                    "batch.final          # the (n, dim) end states",
+                )
+            )
         from tsdynamics.derived import Ensemble
 
         return Ensemble(self, states)

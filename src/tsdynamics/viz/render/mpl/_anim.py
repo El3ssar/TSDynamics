@@ -174,7 +174,10 @@ def _build_panel_animation(fig: Figure, ax: Any, spec: PlotSpec, *, three_d: boo
     _apply_fixed_limits(ax, spec, three_d=three_d)
     _apply_static_labels(ax, spec, three_d=three_d)
 
-    drivers = [_make_layer_driver(ax, layer, spec, anim, three_d=three_d) for layer in spec.layers]
+    drivers = [
+        _make_layer_driver(ax, layer, spec, anim, three_d=three_d, n_clock=n_samples)
+        for layer in spec.layers
+    ]
     drivers = [d for d in drivers if d is not None]
 
     base_azim = _base_azim(spec) if three_d else None
@@ -312,8 +315,35 @@ def _first_x(spec: PlotSpec) -> np.ndarray | None:
     return None
 
 
+def _local_clock(n_local: int, n_clock: int) -> Any:
+    """Map the figure's global sample index onto ONE layer's own sample axis.
+
+    The animation clock is sized from the longest curve, and every layer used to
+    be indexed with that same global number — so ``ts.plot(a, b,
+    "phase_portrait", animate=True)`` on two orbits of unequal length raised
+    ``IndexError: index 2006 is out of bounds for axis 0 with size 2001``.  That
+    is the most ordinary animation in dynamics (compare two initial conditions),
+    and it crashed on the first spelling.
+
+    The mapping is by **progress**: every curve is revealed over the whole movie
+    and every comet arrives at its own last sample on the last frame.  A tail
+    length in global samples scales the same way, so a trail looks the same
+    length on every curve.
+    """
+    if n_clock <= 1 or n_local <= 1 or n_local == n_clock:
+        return lambda i, tail: (min(max(int(i), 0), max(n_local - 1, 0)), tail)
+    ratio = (n_local - 1) / (n_clock - 1)
+
+    def _map(i: int, tail: int | None) -> tuple[int, int | None]:
+        j = int(round(min(max(int(i), 0), n_clock - 1) * ratio))
+        scaled = None if tail is None else max(1, int(round(tail * ratio)))
+        return min(j, n_local - 1), scaled
+
+    return _map
+
+
 def _make_layer_driver(
-    ax: Any, layer: Any, spec: PlotSpec, anim: Animation, *, three_d: bool
+    ax: Any, layer: Any, spec: PlotSpec, anim: Animation, *, three_d: bool, n_clock: int = 0
 ) -> Any:
     """Build a `(frame_index, tail) -> None` updater for one layer (or ``None`` to skip).
 
@@ -333,11 +363,18 @@ def _make_layer_driver(
     if mark not in _animated_marks():
         _draw_static_layer(ax, layer, spec, three_d=three_d)
         return None
-    return _curve_driver(ax, layer, spec, anim, kind, three_d=three_d)
+    return _curve_driver(ax, layer, spec, anim, kind, three_d=three_d, n_clock=n_clock)
 
 
 def _curve_driver(
-    ax: Any, layer: Any, spec: PlotSpec, anim: Animation, kind: PlotKind, *, three_d: bool
+    ax: Any,
+    layer: Any,
+    spec: PlotSpec,
+    anim: Animation,
+    kind: PlotKind,
+    *,
+    three_d: bool,
+    n_clock: int = 0,
 ) -> Any:
     """Reveal a curve as a trail + a head marker (point, or sweep line for series)."""
     x = np.asarray(layer.data["x"], dtype=float)
@@ -360,7 +397,7 @@ def _curve_driver(
 
     # Fading-comet (glowing-tail) trail is opt-in via ``.trail(fade=True)``.
     if anim.trail_fade and not series_like:
-        return _fade_comet_driver(ax, x, y, z, color, lw, anim, three_d=three_d)
+        return _fade_comet_driver(ax, x, y, z, color, lw, anim, three_d=three_d, n_clock=n_clock)
 
     if three_d:
         (line,) = ax.plot([], [], [], color=color, lw=lw, label=layer.label)
@@ -379,7 +416,10 @@ def _curve_driver(
         else None
     )
 
+    clock = _local_clock(len(x), n_clock or len(x))
+
     def drive(i: int, tail: int | None) -> None:
+        i, tail = clock(i, tail)
         lo = 0 if tail is None else max(0, i - tail)
         if three_d:
             assert z is not None  # a 3-D spec always carries the z channel
@@ -418,6 +458,7 @@ def _fade_comet_driver(
     anim: Animation,
     *,
     three_d: bool,
+    n_clock: int = 0,
 ) -> Any:
     """Drive a glowing comet: a fading per-segment-alpha trail + a bright head.
 
@@ -447,8 +488,10 @@ def _fade_comet_driver(
             0
         ]
     head.set_visible(anim.head)
+    clock = _local_clock(len(x), n_clock or len(x))
 
     def drive(i: int, tail: int | None) -> None:
+        i, tail = clock(i, tail)
         lo = 0 if tail is None else max(0, i - tail)
         if i - lo >= 1:
             if three_d:

@@ -68,6 +68,29 @@ _MAX_DETAILS = 4
 _MAX_ITEMS = 10
 
 
+def _unknown_result_attribute(result: Any, name: str) -> AttributeError:
+    """Build the ``AttributeError`` for a wrong guess on an analysis result.
+
+    Names the result class (not ``numpy.ndarray``), suggests the nearest thing
+    the result really carries, and points at the two doors that always work.
+    """
+    import difflib
+
+    cls = type(result)
+    carried = sorted(
+        {n for n in dir(cls) if not n.startswith("_") and not callable(getattr(cls, n, None))}
+        | {n for n in getattr(result, "_repr_fields", ()) if not n.startswith("_")}
+    )
+    close = difflib.get_close_matches(name, carried, n=2, cutoff=0.55)
+    lines = [f"result.{c}" for c in close]
+    lines += ["result.to_dict(full=True)   # everything it knows", "print(result)"]
+    return AttributeError(
+        f"{cls.__name__!r} object has no attribute {name!r}."
+        + ("  Did you mean:" if close else "")
+        + "".join(f"\n    {line}" for line in lines)
+    )
+
+
 @dataclass(frozen=True)
 class AnalysisResult:
     """Base class for every analysis result object.
@@ -442,6 +465,18 @@ class AnalysisResult:
         return frame
 
     # -- visualization seam ----------------------------------------------
+
+    def __plot_spec__(self, kind: str | None = None, **kwargs: Any) -> Any:
+        """Describe this result as a plot — the ONE seam every subject answers to.
+
+        CONTRACT §6.2 / §3.5.
+
+        ``ts.plot`` classifies a positional argument as a *subject* by asking
+        whether it carries ``__plot_spec__`` — one predicate for a system, a
+        trajectory and all 32 results.  :meth:`to_plot_spec` stays the readable
+        spelling and is what a subclass overrides.
+        """
+        return self.to_plot_spec(kind, **kwargs)
 
     def to_plot_spec(self, kind: str | None = None) -> Any:
         r"""Describe this result as a backend-agnostic :class:`PlotSpec` (generic fallback).

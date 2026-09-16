@@ -541,7 +541,7 @@ def delay_embedding(
     delay: int | None = None,
     *,
     delay_time: float | None = None,
-    component: int | str = 0,
+    components: int | str = 0,
     label: str = "x",
     tau: Any = None,
 ) -> Geometry:
@@ -569,7 +569,7 @@ def delay_embedding(
         The same lag **in time units**, converted via the trajectory's ``dt``.
         Needs a :class:`~tsdynamics.data.Trajectory` (a bare array has no time
         axis).
-    component : int or str, optional
+    components : int or str, optional
         Which trajectory component to embed when ``series`` is a Trajectory.
     label : str, optional
         Base axis label; the axes read ``label(t)`` and ``label(t - delay)``.
@@ -587,7 +587,7 @@ def delay_embedding(
         given, if ``delay_time`` is asked of a bare array, or if the resolved lag
         is not ``1 <= delay < len(series)``.
     """
-    x = _scalar_series(series, component)
+    x = _scalar_series(series, components)
     lag = _resolve_delay(series, x.shape[0], delay, delay_time, tau)
     labels = (f"{label}(t)", f"{label}(t - {lag})")
     return Geometry(
@@ -820,6 +820,39 @@ def phase_portrait_field(
 # ---------------------------------------------------------------------------
 
 
+def _map_graph(series: Any, lo: float, hi: float, n: int = 400) -> Part | None:
+    """Return the ``y = f(x)`` curve of a 1-D map, or ``None`` when there is none.
+
+    The subject of a ``data`` transform may be a bare series (no ``f`` exists) or
+    a trajectory that remembers the system it came from (``traj.system``).  Only
+    a one-dimensional :class:`~tsdynamics.families.discrete.DiscreteMap` has a
+    graph that can be drawn on these axes.
+    """
+    system = getattr(series, "system", None)
+    if system is None or getattr(system, "family", None) != "map":
+        return None
+    if int(getattr(system, "dim", 0)) != 1:
+        return None
+    step = getattr(type(system), "_step", None)
+    params = getattr(system, "params", None)
+    if step is None or params is None:
+        return None
+    # Exactly the orbit's own span: padding it would put the curve outside the
+    # data range every other layer agrees on, and a composite that unions the
+    # panels' limits would then draw a frame wider than anything in it.
+    gx = np.linspace(lo, hi, int(n))
+    values = np.asarray(params.as_tuple(), dtype=float)
+    try:
+        gy = np.array(
+            [float(np.asarray(step(np.array([v]), *values)).ravel()[0]) for v in gx], dtype=float
+        )
+    except Exception:  # pragma: no cover - a kernel that refuses a scalar probe
+        return None
+    if not np.all(np.isfinite(gy)):
+        return None
+    return Part({"x": gx, "y": gy}, label="f(x)")
+
+
 @plot_transform(
     name="cobweb",
     source="data",
@@ -830,13 +863,13 @@ def phase_portrait_field(
     default_primitive="line",
     primitives=("line", "points"),
     presentation=Presentation(aspect="equal"),
-    example=lambda primitive: (_demo_map(), {"component": 0}),
+    example=lambda primitive: (_demo_map(), {"components": 0}),
     doc="The 1-D staircase x_{n+1} vs x_n with the y = x diagonal.",
 )
 def cobweb(
     series: np.ndarray | Trajectory,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     label: str = "x",
 ) -> Geometry:
     """Compute the staircase geometry of a 1-D map orbit.
@@ -849,7 +882,7 @@ def cobweb(
     ----------
     series : ndarray or Trajectory
         A 1-D orbit ``x_0, x_1, ...`` (or a trajectory's ``component``).
-    component : int or str, optional
+    components : int or str, optional
         Component to read when ``series`` is a Trajectory.
     label : str, optional
         Axis-label base; the axes read ``x_n`` / ``x_(n+1)``.
@@ -865,10 +898,16 @@ def cobweb(
 
     Notes
     -----
-    This is the *data* form of a cobweb, so it draws the orbit but not the graph
-    of ``f`` — that needs the map itself and is a model transform (phase P3).
+    **The map curve is drawn whenever it can be**: a cobweb without
+    :math:`x_{n+1} = f(x_n)` cannot be read — the whole point is that the
+    staircase's corners land ON the curve, and without it the picture is a
+    zig-zag and a diagonal in an empty box.  The graph needs the map itself, so
+    it is added when the subject carries one (``traj.system`` on a 1-D
+    :class:`~tsdynamics.families.discrete.DiscreteMap`, which is what
+    ``ts.plot(logistic, "cobweb")`` hands in after the registry runs it) and
+    silently omitted for a bare series, which genuinely has no ``f``.
     """
-    x = _scalar_series(series, component)
+    x = _scalar_series(series, components)
     if x.shape[0] < 2:
         raise ValueError("a cobweb needs at least two orbit points.")
     # Staircase vertices: (x0,x0) -> (x0,x1) -> (x1,x1) -> (x1,x2) -> ...
@@ -885,13 +924,15 @@ def cobweb(
     hi = float(max(x.max(), stair_y.max()))
     diag = np.array([lo, hi], dtype=float)
     labels = (f"{label}_n", f"{label}_(n+1)")
+    parts = [Part({"x": diag, "y": diag}, label="y = x")]
+    graph = _map_graph(series, lo, hi)
+    if graph is not None:
+        parts.append(graph)
+    parts.append(Part({"x": stair_x, "y": stair_y}, label="orbit"))
     return Geometry(
         "cobweb",
         make_frame(FrameSpace.STATE2, labels),
-        [
-            Part({"x": diag, "y": diag}, label="y = x"),
-            Part({"x": stair_x, "y": stair_y}, label="orbit"),
-        ],
+        parts,
         axis_labels=labels,
         title=_title(series),
         meta=_meta(series),
@@ -979,7 +1020,7 @@ def spatial_field(
     source: Trajectory,
     *,
     field_shape: tuple[int, ...] | None = None,
-    component: int | str | None = None,
+    components: int | str | None = None,
 ) -> Geometry:
     """Reshape a method-of-lines PDE state onto its spatial grid.
 
@@ -1001,7 +1042,7 @@ def spatial_field(
         as a 1-D profile — honest, never guessing a 2-D grid.
     field_shape : tuple of int, optional
         The spatial grid one field block occupies.
-    component : int or str, optional
+    components : int or str, optional
         Which field **block** to plot when the state packs several
         (``meta["field_labels"]``, e.g. Gray-Scott's ``("u", "v")``).  ``None``
         selects the **last** block (the activator convention).
@@ -1012,7 +1053,7 @@ def spatial_field(
     """
     _, y, _, _ = _split_traj(source)
     shape, labels = _resolve_field_shape(source, field_shape)
-    block = _select_field_block(y, shape, labels, component)
+    block = _select_field_block(y, shape, labels, components)
     frames = block.reshape(block.shape[0], *shape)
     meta = {**_meta(source), "field_shape": tuple(int(n) for n in shape)}
     title = _title(source)
@@ -1081,29 +1122,29 @@ def _select_field_block(
     y: np.ndarray,
     shape: tuple[int, ...],
     labels: tuple[str, ...] | None,
-    component: int | str | None,
+    components: int | str | None,
 ) -> np.ndarray:
     """Slice the chosen field block (shape ``(T, prod(shape))``) out of the state."""
     cells = int(np.prod(shape))
     n_blocks = max(1, y.shape[1] // cells) if cells else 1
     if labels is not None:
         n_blocks = len(labels)
-    if component is None:
+    if components is None:
         block = n_blocks - 1  # the activator / last block by convention
-    elif isinstance(component, str):
+    elif isinstance(components, str):
         if labels is None:
             raise KeyError(
-                f"cannot resolve field block {component!r}: the trajectory declares no "
+                f"cannot resolve field block {components!r}: the trajectory declares no "
                 f"`field_labels`; select a block by integer index instead."
             )
         try:
-            block = labels.index(component)
+            block = labels.index(components)
         except ValueError:
             raise KeyError(
-                f"unknown field block {component!r}; declared field_labels: {labels}"
+                f"unknown field block {components!r}; declared field_labels: {labels}"
             ) from None
     else:
-        block = int(component) % n_blocks
+        block = int(components) % n_blocks
     lo = block * cells
     return y[:, lo : lo + cells]
 

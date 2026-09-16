@@ -217,7 +217,7 @@ _LONG_CALLS: dict[str, str] = {
     # The extended-variational chunk loop (`lyapunov.rs`), which drives many
     # short integrations — the case a per-segment poller would have missed.
     "lyapunov_spectrum": """
-        ts.systems.Lorenz().lyapunov_spectrum(final_time=2_000_000.0, dt=0.01)
+        ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), final_time=2_000_000.0, dt=0.01)
     """,
     # The QR tangent-map iteration (`map_lyapunov.rs`).
     "max_lyapunov": """
@@ -251,7 +251,7 @@ _LONG_CALLS: dict[str, str] = {
         from tsdynamics.engine import run as engine_run
         ics = np.random.default_rng(0).normal(size=(64, 3))
         engine_run.ensemble(
-            ts.systems.Lorenz(), ics, final_time=200_000.0, dt=0.005, solver="rk4"
+            ts.systems.Lorenz(), ics, final_time=200_000.0, dt=0.005, method="rk4"
         )
     """,
     "ensemble_map": """
@@ -264,8 +264,7 @@ _LONG_CALLS: dict[str, str] = {
         import numpy as np
         ics = np.full((256, 1), 1.0)
         ts.systems.OrnsteinUhlenbeck().ensemble(
-            ics, final_time=5_000.0, dt=1e-4, seed=0
-        )
+            ics).run(final_time=5_000.0, dt=1e-4, seed=0).final
     """,
 }
 
@@ -356,7 +355,7 @@ def test_an_ensemble_is_interruptible():
         try:
             # ~4e7 rk4 steps per trajectory, 64 of them: minutes of engine time.
             engine_run.ensemble(
-                lor, ics, final_time=200_000.0, dt=0.005, solver="rk4"
+                lor, ics, final_time=200_000.0, dt=0.005, method="rk4"
             )
         except KeyboardInterrupt:
             print(f"INTERRUPTED {time.perf_counter() - t0:.3f}")

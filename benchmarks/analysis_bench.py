@@ -93,7 +93,7 @@ def build_inputs(*, quick: bool) -> Inputs:
     # Pin the initial condition so the series is byte-identical run to run —
     # otherwise the default random IC makes the benchmark measure different
     # *work* each time and a "regression" would be meaningless.
-    traj = lorenz.integrate(ic=[1.0, 1.0, 1.0], final_time=final_time, dt=0.01)
+    traj = lorenz.run(ic=[1.0, 1.0, 1.0], final_time=final_time, dt=0.01)
     x_full = np.ascontiguousarray(np.asarray(traj["x"]), dtype=float)
     # Drop the first ~20 time units of transient so the series is on-attractor.
     x = x_full[2000:]
@@ -150,49 +150,49 @@ def all_cases() -> list[Case]:
         # --- dimensions (A-DIM) ---
         Case(
             "correlation_dimension",
-            lambda i, q: lambda: ts.correlation_dimension(i.x[: n_dim(q)]),
+            lambda i, q: lambda: ts.analysis.correlation_dimension(i.x[: n_dim(q)]),
             lambda i, q: n_dim(q),
         ),
         # --- recurrence / RQA (A-RQA) ---
         Case(
             "recurrence_matrix",
-            lambda i, q: lambda: ts.recurrence_matrix(i.x[: n_recur(q)], recurrence_rate=0.05),
+            lambda i, q: lambda: ts.analysis.recurrence_matrix(i.x[: n_recur(q)], recurrence_rate=0.05),
             lambda i, q: n_recur(q),
         ),
         Case(
             "rqa",
-            lambda i, q: lambda: ts.rqa(i.x[: n_recur(q)], recurrence_rate=0.05),
+            lambda i, q: lambda: ts.analysis.rqa(i.x[: n_recur(q)], recurrence_rate=0.05),
             lambda i, q: n_recur(q),
         ),
         # --- data-driven Lyapunov (A-LYAP) ---
         Case(
             "lyapunov_from_data",
-            lambda i, q: lambda: ts.lyapunov_from_data(i.x[: (2000 if q else 3000)], dt=0.01),
+            lambda i, q: lambda: ts.analysis.lyapunov_from_data(i.x[: (2000 if q else 3000)], dt=0.01),
             lambda i, q: 2000 if q else 3000,
         ),
         # --- system-driven Lyapunov (A-LYAP / C-DERIV) ---
         Case(
             "lyapunov_spectrum_map",
-            lambda i, q: lambda: ts.lyapunov_spectrum(i.henon, n=(2000 if q else 4000)),
+            lambda i, q: lambda: ts.analysis.lyapunov_spectrum(i.henon, n=(2000 if q else 4000)),
             lambda i, q: 2000 if q else 4000,
         ),
         # --- chaos indicators (A-CHAOS) ---
         Case(
             "zero_one_test",
-            lambda i, q: lambda: ts.zero_one_test(i.logistic, n=(1500 if q else 2000), seed=0),
+            lambda i, q: lambda: ts.analysis.zero_one_test(i.logistic, n=(1500 if q else 2000), seed=0),
             lambda i, q: 1500 if q else 2000,
         ),
         # --- fixed points (A-FP) ---
         Case(
             "fixed_points_map",
-            lambda i, q: lambda: ts.fixed_points(i.henon, seed=0),
+            lambda i, q: lambda: ts.analysis.fixed_points(i.henon, seed=0),
             lambda i, q: 0,
         ),
         # --- orbit diagram (A-ORBIT) ---
         Case(
             "orbit_diagram_map",
             lambda i, q: (
-                lambda: ts.orbit_diagram(
+                lambda: ts.analysis.orbit_diagram(
                     i.henon,
                     "a",
                     np.linspace(1.0, 1.4, 30 if q else 60),

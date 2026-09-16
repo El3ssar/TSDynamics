@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 
-import tsdynamics.analysis.basins.metrics as bas
+from tsdynamics.analysis.basins import metrics as bas
 
 
 def test_divisible_grid_is_byte_identical() -> None:

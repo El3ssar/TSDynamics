@@ -200,7 +200,7 @@ def _cobweb_path(current: np.ndarray, successor: np.ndarray) -> tuple[np.ndarray
 
 def return_map(
     system: Any,
-    component: int | str = 0,
+    components: int | str = 0,
     *,
     kind: str = "max",
     plane: tuple[Any, ...] | None = None,
@@ -229,7 +229,7 @@ def return_map(
         :class:`~tsdynamics.data.Trajectory` is read directly; a 1-D array is
         treated as the observable series itself (``kind`` must be ``"max"`` or
         ``"min"``).  (Trajectory / array inputs are the ``data`` overload.)
-    component : int or str, default 0
+    components : int or str, default 0
         Which state component to record (names allowed when the system /
         trajectory declares ``variables``).  Ignored when ``system`` is a raw
         1-D series.
@@ -284,11 +284,11 @@ def return_map(
 
     if kind == "poincare":
         values, times, obs_idx = _poincare_observable(
-            system, component, plane, direction, n, skip_crossings, dt, seed
+            system, components, plane, direction, n, skip_crossings, dt, seed
         )
     else:
         values, times, obs_idx = _extremum_observable(
-            system, component, kind, final_time, dt, transient, ic, seed, integrate_kwargs
+            system, components, kind, final_time, dt, transient, ic, seed, integrate_kwargs
         )
 
     current = values[:-1]

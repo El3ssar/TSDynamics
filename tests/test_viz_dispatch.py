@@ -477,14 +477,6 @@ def test_the_four_registries_share_one_shape() -> None:
         assert registry_obj.names(), f"ts.viz.{name}.names() is empty"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ts.viz.transforms is still the module; turning it into the registry object "
-        "with register/find is owned by the viz-registry slot "
-        "(src/tsdynamics/viz/transforms/_registry.py). Delete this marker when it lands."
-    ),
-)
 def test_the_four_registries_all_answer_find() -> None:
     """``find`` is the fourth shared verb; three of four answer it today."""
     import tsdynamics as ts

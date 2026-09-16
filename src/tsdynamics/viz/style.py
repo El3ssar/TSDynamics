@@ -736,13 +736,17 @@ def get_theme(name: str | None = None) -> Theme:
 
     Raises
     ------
-    KeyError
+    tsdynamics.errors.InvalidParameterError
         If ``name`` is given but is not a registered theme.
     """
+    from tsdynamics.errors import InvalidParameterError
+
     if name is None:
         return THEMES[_ACTIVE]
     if name not in THEMES:
-        raise KeyError(f"unknown theme {name!r}; registered themes are {', '.join(themes())}")
+        raise InvalidParameterError(
+            f"unknown theme {name!r}; registered themes are {', '.join(themes())}"
+        )
     return THEMES[name]
 
 
@@ -760,16 +764,20 @@ def set_theme(theme: str | Theme) -> None:
 
     Raises
     ------
-    KeyError
+    tsdynamics.errors.InvalidParameterError
         If a *name* is given that is not a registered theme.
     """
+    from tsdynamics.errors import InvalidParameterError
+
     global _ACTIVE
     if isinstance(theme, Theme):
         register_theme(theme)
         _ACTIVE = theme.name
         return
     if theme not in THEMES:
-        raise KeyError(f"unknown theme {theme!r}; registered themes are {', '.join(themes())}")
+        raise InvalidParameterError(
+            f"unknown theme {theme!r}; registered themes are {', '.join(themes())}"
+        )
     _ACTIVE = theme
 
 

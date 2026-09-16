@@ -58,7 +58,7 @@ def test_top_level_reexports() -> None:
         "Henon",
         "Logistic",
     ):
-        assert hasattr(ts, name), f"{name} missing from tsdynamics top-level"
+        assert hasattr(ts.systems, name), f"{name} missing from ts.systems"
 
 
 def test_systems_is_the_canonical_model_path() -> None:
@@ -84,9 +84,9 @@ def test_models_do_not_clutter_top_level_namespace() -> None:
     # ...but the four navigable submodules and the base classes ARE on the surface.
     # (``data`` / ``derived`` / ``registry`` were demoted from tab completion by the
     # v6 namespace curation — they stay importable; see tests/test_namespace_curation.py.)
-    for name in ("analysis", "systems", "viz", "errors", "ContinuousSystem"):
+    for name in ("analysis", "systems", "viz", "ContinuousSystem"):
         assert name in dir(ts)
-    for demoted in ("data", "derived", "registry"):
+    for demoted in ("data", "derived", "registry", "errors"):
         assert demoted not in dir(ts)
         assert hasattr(ts, demoted)
     # An unknown attribute still raises a clean AttributeError (not a model miss).

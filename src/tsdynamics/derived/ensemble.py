@@ -140,21 +140,56 @@ class Ensemble:
             batch.final          # the (100, 3) end states
         """
         seed = kwargs.pop("seed", None)
+        per_member_seed: list[int | None]
         if self.family == "sde" and seed is not None:
             # Member ``i`` draws its noise from ``seed_for(seed, i)`` — depending
             # only on the index — which is the engine's parallel-equals-serial
             # contract.  One shared seed would give every member the SAME path.
             from tsdynamics.families.stochastic import _seed_for as seed_for
 
-            return TrajectoryBatch(
-                self.template.run(*args, ic=m.state(), seed=seed_for(seed, i), **kwargs)
-                for i, m in enumerate(self.members)
+            per_member_seed = [seed_for(seed, i) for i in range(len(self.members))]
+        else:
+            if seed is not None:
+                kwargs["seed"] = seed
+            per_member_seed = [None] * len(self.members)
+
+        return TrajectoryBatch(self._run_members(args, kwargs, per_member_seed))
+
+    def _run_members(
+        self, args: tuple[Any, ...], kwargs: dict[str, Any], seeds: list[int | None]
+    ) -> list[Trajectory]:
+        """Run every member, ISOLATING a divergence as a NaN row.
+
+        A batch is a population, and one member blowing up is a *result* about
+        that member — not a reason to discard the other 999.  The engine's own
+        fan-out has always recorded a diverged trajectory as a NaN row; the
+        member-by-member Python path used to let the exception escape, so the
+        two disagreed about the same contract.
+        """
+        from tsdynamics.data import Trajectory
+        from tsdynamics.errors import ConvergenceError
+
+        runs: list[Trajectory | None] = []
+        for member, member_seed in zip(self.members, seeds, strict=True):
+            extra = {} if member_seed is None else {"seed": member_seed}
+            try:
+                runs.append(self.template.run(*args, ic=member.state(), **kwargs, **extra))
+            except ConvergenceError:
+                runs.append(None)
+        template = next((r for r in runs if r is not None), None)
+        if template is None:
+            raise ConvergenceError(
+                f"every one of the {len(runs)} ensemble members diverged, so this "
+                f"batch measures nothing. Shorten final_time, or start closer to "
+                f"the attractor."
             )
-        if seed is not None:
-            kwargs["seed"] = seed
-        return TrajectoryBatch(
-            self.template.run(*args, ic=m.state(), **kwargs) for m in self.members
-        )
+        blank = np.full_like(np.asarray(template.y, dtype=float), np.nan)
+        return [
+            r
+            if r is not None
+            else Trajectory(template.t, blank.copy(), self.template, meta=dict(template.meta))
+            for r in runs
+        ]
 
     def step(self, n_or_dt: float | int | None = None) -> np.ndarray:
         """Advance every member synchronously and return the stacked states.
@@ -237,7 +272,7 @@ class Ensemble:
     # --- visualization seam ---
 
     def __plot_spec__(
-        self, kind: str | None = None, *, steps: int = 200, component: int = 0, band: float = 90.0
+        self, kind: str | None = None, *, steps: int = 200, components: int = 0, band: float = 90.0
     ) -> PlotSpec:
         """Describe the ensemble as a **static fan chart** (median + percentile band).
 
@@ -258,7 +293,7 @@ class Ensemble:
             ``ENSEMBLE_FAN``.
         steps : int, optional
             Number of samples to collect across the ensemble.  Default ``200``.
-        component : int, optional
+        components : int, optional
             Which state component to chart.  Default ``0``.
         band : float, optional
             Central percentile mass to shade (``90`` → the 5th–95th percentile
@@ -270,13 +305,13 @@ class Ensemble:
         """
         from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
 
-        if not 0 <= component < self.dim:
-            raise ValueError(f"component must be in [0, {self.dim}), got {component}")
+        if not 0 <= components < self.dim:
+            raise ValueError(f"components must be in [0, {self.dim}), got {components}")
         if not 0.0 < band <= 100.0:
             raise ValueError(f"band must be in (0, 100], got {band}")
 
         times, states = self.collect(steps)
-        comp = states[:, :, component]  # (steps, size)
+        comp = states[:, :, components]  # (steps, size)
         lo_pct = (100.0 - band) / 2.0
         hi_pct = 100.0 - lo_pct
         lo = np.percentile(comp, lo_pct, axis=1)
@@ -286,7 +321,7 @@ class Ensemble:
         # construction; enforce it defensively against any float ordering quirk.
         lo = np.minimum(lo, hi)
 
-        ylabel = self.variables[component]
+        ylabel = self.variables[components]
         spec_kind = PlotKind(kind) if kind is not None else PlotKind.ENSEMBLE_FAN
         return PlotSpec(
             kind=spec_kind,
@@ -313,7 +348,7 @@ class Ensemble:
         """Draw the ensemble — the fan chart by default."""
         from tsdynamics.viz import plot as _plot
 
-        return cast("PlotSpec", _plot(self, *transforms, **kwargs))
+        return _plot(self, *transforms, **kwargs)
 
     def __len__(self) -> int:
         return len(self.members)

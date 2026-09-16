@@ -25,12 +25,32 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
+from tsdynamics.errors import InvalidInputError
+from tsdynamics.utils.plot_namespace import plot_namespace as _plot_namespace
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
     from scipy.spatial import cKDTree
 
-    from tsdynamics.viz.spec import Animation, PlotSpec
+    from tsdynamics.viz.spec import Animation, Plot
+
+
+#: How far a ``t`` axis may deviate from perfectly uniform and still report a
+#: single :attr:`Trajectory.dt`.  Specified, not guessed: a ``make_output_grid``
+#: grid deviates by ~1e-16 relative, and the coarsest *deliberate*
+#: non-uniformity in the library (a Poincaré section's crossing times) deviates
+#: by O(1) — nine decades of margin on each side.
+_DT_UNIFORM_RTOL = 1e-9
+
+#: The four accessor namespaces ruling A2 deleted, and the members of each that
+#: a trajectory can actually answer.
+_DELETED_TRAJECTORY_ACCESSORS: dict[str, tuple[str, ...]] = {
+    "dims": ("correlation_dimension", "generalized_dimension"),
+    "lyap": ("lyapunov_from_data",),
+    "recurrence": ("recurrence_matrix", "rqa"),
+    "chaos": ("zero_one_test",),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -203,13 +223,14 @@ class Trajectory:
     >>> traj["x"]            # named component (via the class's ``variables``)
     array([...])
     >>> traj.after(20.0)     # drop transient
-    Trajectory(n_steps=..., dim=3, t=[20.0, 100.0])
+    Trajectory of Lorenz  (n: ..., dim: 3, var: x, y, z)   t ∈ [20, 100]
+        measure it:  ts.analysis.find(traj)   ·   draw it:  ts.plot(traj)
     >>> t, y = traj.unpack()          # the two columns
     >>> for t_i, y_i in traj:         # ... or walk the samples
     ...     pass
     """
 
-    __slots__ = ("t", "y", "system", "meta", "_kdtree", "_accessor_cache")
+    __slots__ = ("t", "y", "system", "meta", "_kdtree")
 
     def __init__(
         self,
@@ -245,66 +266,114 @@ class Trajectory:
         self.system = system
         self.meta = dict(meta) if meta else {}
         self._kdtree: cKDTree | None = None
-        self._accessor_cache: dict[str, Any] = {}
 
-    # --- topical accessors (the data-consuming analyses, bound to the data) ---
-
-    def _topical_accessor(self, name: str, factory: Any) -> Any:
-        """Return the cached topical accessor ``name``, building it once."""
-        acc = self._accessor_cache.get(name)
-        if acc is None:
-            acc = factory(self)
-            self._accessor_cache[name] = acc
-        return acc
+    # --- derived facts about the sampling ---
 
     @property
-    def dims(self) -> Any:
-        """Fractal-dimension estimators bound to *this* series.
-
-        The same cached
-        :class:`~tsdynamics.families._accessors.DimensionsAccessor` a system
-        carries, with the trajectory bound instead — because these analyses
-        consume a measured point set, and a trajectory is the normal thing to
-        have one in::
-
-            traj = ts.systems.Lorenz().run(final_time=100.0, dt=0.02)
-            traj.dims.correlation(radii=np.logspace(-1, 1, 12))
-
-        Reached from a *system* the accessor integrates first; reached from a
-        trajectory there is nothing to run, so the series is used verbatim.
-        """
-        from tsdynamics.families._accessors import DimensionsAccessor
-
-        return self._topical_accessor("dims", DimensionsAccessor)
+    def shape(self) -> tuple[int, int]:
+        """``(n_samples, dim)`` — the shape of :attr:`y`."""
+        return (int(self.y.shape[0]), int(self.y.shape[1]))
 
     @property
-    def recurrence(self) -> Any:
-        """Recurrence-quantification estimators bound to *this* series.
+    def dt(self) -> float | None:
+        """The sampling interval, **derived from the ``t`` axis**.
 
-        A cached :class:`~tsdynamics.families._accessors.RecurrenceAccessor`
-        exposing ``.matrix()`` / ``.rqa()`` / ``.windowed()`` — delegating to
-        :func:`tsdynamics.analysis.recurrence_matrix`,
-        :func:`~tsdynamics.analysis.rqa` and
-        :func:`~tsdynamics.analysis.windowed_rqa` with this trajectory bound.
+        ``meta["dt"]`` records what the *run* asked for, and slicing carries it
+        verbatim — so a decimated trajectory reported the undecimated step and
+        every per-unit-time estimator was off by the decimation factor with no
+        exception.  This reads the axis instead, and is ``None`` when the axis is
+        non-uniform (a Poincaré section) or too short to have a step.
+
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> tr = ts.systems.Lorenz().run(final_time=1.0, dt=0.01, ic=[1.0, 1.0, 1.0])
+        >>> round(tr.dt, 10)
+        0.01
+        >>> round(tr[::5].dt, 10)          # the decimated step, not the run's
+        0.05
         """
-        from tsdynamics.families._accessors import RecurrenceAccessor
+        t = np.asarray(self.t, dtype=float)
+        if t.size < 2:
+            return None
+        steps = np.diff(t)
+        first = float(steps[0])
+        if first <= 0.0 or not np.all(np.isfinite(steps)):
+            return None
+        # A *uniformity* check, not a solver tolerance — expressed without the
+        # ``rtol=``/``atol=`` keywords so it reads as what it is.
+        if bool(np.max(np.abs(steps - first)) > _DT_UNIFORM_RTOL * abs(first)):
+            return None
+        return first
 
-        return self._topical_accessor("recurrence", RecurrenceAccessor)
+    def sel(self, *keys: int | str) -> Trajectory:
+        """Select components **by name or index**, always returning a Trajectory.
 
-    @property
-    def lyap(self) -> Any:
-        """Lyapunov estimators bound to *this* series.
+        The safe spelling for the two-character hazard ``traj["y"]`` (the
+        component named ``y``) versus ``traj.y`` (the whole state block): one
+        key or many, the answer is always a :class:`Trajectory` carrying ``t``,
+        ``meta`` and the names.
 
-        A cached :class:`~tsdynamics.families._accessors.LyapunovAccessor`.
-        Only ``.from_data()`` is meaningful here — a trajectory is numbers, not
-        a right-hand side, so ``.spectrum()`` / ``.maximal()`` raise a typed
-        error naming the system-bound spelling instead of guessing::
-
-            traj.lyap.from_data(dimension=3, delay=10)
+        Examples
+        --------
+        >>> import tsdynamics as ts
+        >>> tr = ts.systems.Lorenz().run(final_time=1.0, dt=0.1, ic=[1.0, 1.0, 1.0])
+        >>> tr.sel("x", "z").shape
+        (11, 2)
         """
-        from tsdynamics.families._accessors import LyapunovAccessor
+        if not keys:
+            raise InvalidInputError(
+                "Trajectory.sel() needs at least one component to select.\n"
+                "    traj.sel('x')          # one component, still a Trajectory\n"
+                "    traj.sel('x', 'z')     # two"
+            )
+        idx = [self._component_index(k) if isinstance(k, str) else int(k) for k in keys]
+        names = self.variables
+        sub_meta = dict(self.meta)
+        if names is not None:
+            sub_meta["variables"] = tuple(names[i] for i in idx)
+        return Trajectory(self.t, self.y[:, idx], self.system, meta=sub_meta)
 
-        return self._topical_accessor("lyap", LyapunovAccessor)
+    # --- the teaching door (§5.6) ---
+
+    def __getattr__(self, name: str) -> Any:
+        """Answer a miss with the free function that does the job.
+
+        ``traj.rqa`` used to be a bare ``AttributeError`` — the one place in the
+        library where a wrong guess taught nothing.  Ruling A2 took the analyses
+        off the object, so the error **is** the discovery mechanism.
+        """
+        if name.startswith("_") or name in Trajectory.__slots__:
+            raise AttributeError(name)
+        from tsdynamics.analysis import _discovery
+
+        try:
+            from tsdynamics import registry
+
+            known = set(registry.analyses.names())
+        except Exception:  # pragma: no cover - defensive
+            raise AttributeError(name) from None
+        has_system = object.__getattribute__(self, "system") is not None
+        if name in known:
+            raise _discovery.attribute_error(name, "Trajectory", "data", has_system=has_system)
+        if name in _DELETED_TRAJECTORY_ACCESSORS:
+            members = _DELETED_TRAJECTORY_ACCESSORS[name]
+            raise AttributeError(
+                f"'Trajectory' object has no attribute {name!r}: the .lyap / .chaos "
+                f"/ .dims / .recurrence namespaces are gone in v6 — every member is "
+                f"a free function.\n"
+                + "\n".join(f"    ts.analysis.{fn}(traj)" for fn in members)
+                + "\n    "
+                + _discovery.find_line("data")
+            )
+        near = _discovery.near_miss(name, known)
+        tail = f"\n    ts.analysis.{near}(traj)" if near else ""
+        raise AttributeError(
+            f"'Trajectory' object has no attribute {name!r}."
+            + (f" Did you mean:{tail}" if near else "")
+            + "\n    "
+            + _discovery.find_line("data", lead="the")
+        )
 
     # --- compatibility / convenience ---
 
@@ -517,6 +586,18 @@ class Trajectory:
 
     # --- visualization seam ---
 
+    def __plot_spec__(self, kind: str | None = None, **kwargs: Any) -> Plot:
+        """Describe this trajectory as a plot — the ONE seam every subject answers to.
+
+        CONTRACT §6.2 / §3.5.
+
+        ``ts.plot`` classifies a positional argument as a *subject* by asking
+        whether it carries ``__plot_spec__`` — one predicate, so a system, a
+        trajectory and an analysis result are all recognised the same way.
+        :meth:`to_plot_spec` stays the readable spelling and owns the body.
+        """
+        return self.to_plot_spec(kind, **kwargs)
+
     def to_plot_spec(
         self,
         kind: str | None = None,
@@ -525,7 +606,7 @@ class Trajectory:
         animate: bool | dict[str, Any] | Animation = False,
         primitive: str | None = None,
         **kind_kw: Any,
-    ) -> PlotSpec:
+    ) -> Plot:
         """
         Describe this trajectory as a backend-agnostic :class:`PlotSpec`.
 
@@ -715,9 +796,7 @@ class Trajectory:
             portrait = self._phase_portrait_spec(spec_kind, sel, ys, sel_names, discrete, color_by)
         return self._with_animation(portrait, animate)
 
-    def _with_animation(
-        self, spec: PlotSpec, animate: bool | dict[str, Any] | Animation
-    ) -> PlotSpec:
+    def _with_animation(self, spec: Plot, animate: bool | dict[str, Any] | Animation) -> Plot:
         """Stamp an :class:`Animation` onto ``spec`` per the ``animate`` request.
 
         ``False``/``None`` leaves the spec static.  ``True`` uses per-kind defaults
@@ -816,16 +895,36 @@ class Trajectory:
 
     @staticmethod
     def _validate_kind_kw(route: str | None, kind_kw: dict[str, Any]) -> None:
-        """Reject per-kind options passed to the wrong kind."""
+        """Reject per-kind options passed to the wrong kind.
+
+        The suggestion is searched across **every vocabulary this door speaks**,
+        not only the one-element per-kind list: ``colour=`` used to be answered
+        with *"allowed here: ['color_by']"* — a different concept (a data
+        channel) one letter from the style key ``color=`` the caller meant, and
+        ``ttle=`` / ``linewith=`` / ``final_tim=`` all got the same wrong hint.
+        """
+        import difflib
+
         from tsdynamics.errors import InvalidParameterError
+        from tsdynamics.viz.spec import FIGURE_KEYS
+        from tsdynamics.viz.style import style_names
 
         allowed = _KIND_KW.get(route or "", frozenset())
         unknown = set(kind_kw) - allowed
-        if unknown:
-            raise InvalidParameterError(
-                f"kind={route!r} does not accept keyword(s) {sorted(unknown)}; "
-                f"allowed here: {sorted(allowed) or '(none)'}"
-            )
+        if not unknown:
+            return
+        pool = sorted(set(allowed) | set(FIGURE_KEYS) | set(style_names()) | _PLOT_SPEC_KEYS)
+        hints = ""
+        for bad in sorted(unknown):
+            near = difflib.get_close_matches(bad, pool, n=1, cutoff=0.6)
+            if near:
+                hints += f"\n    {bad}= — did you mean {near[0]}=?"
+        raise InvalidParameterError(
+            f"kind={route!r} does not accept keyword(s) {sorted(unknown)}; "
+            f"allowed here: {sorted(allowed) or '(none)'}{hints}"
+            "\n(plus any style keyword — color=, linewidth=, alpha=, … — and any "
+            "figure keyword — title=, xlabel=, xlim=, theme=, ….)"
+        )
 
     def _delay_samples(self, delay_time: float) -> int:
         """Convert a delay in **time units** to an integer sample lag.
@@ -874,7 +973,7 @@ class Trajectory:
             )
         return samples
 
-    def _via_transform(self, transform: str, primitive: str, /, **options: Any) -> PlotSpec:
+    def _via_transform(self, transform: str, primitive: str, /, **options: Any) -> Plot:
         """Build this view through the registered transform, drawn by ``primitive``.
 
         The ``primitive=`` route.  It is deliberately *not* the default path: the
@@ -910,7 +1009,7 @@ class Trajectory:
         *,
         explicit: bool,
         primitive: str | None = None,
-    ) -> PlotSpec:
+    ) -> Plot:
         """Build the ``x(t)`` vs ``x(t - delay)`` delay embedding (a ``PHASE_PORTRAIT_2D``).
 
         A delay embedding reconstructs **one** scalar observable; with no
@@ -940,7 +1039,7 @@ class Trajectory:
             "delay_embedding",
             primitive or "line",
             delay=samples,
-            component=sel[0],
+            components=sel[0],
             label=sel_names[0],
         )
 
@@ -951,7 +1050,7 @@ class Trajectory:
         sel_names: tuple[str, ...],
         discrete: bool,
         color_by: Any,
-    ) -> PlotSpec:
+    ) -> Plot:
         """Overlay one component-vs-time layer per selected component."""
         from tsdynamics.viz.spec import Axis, Layer, Legend, PlotKind, PlotSpec
 
@@ -982,7 +1081,7 @@ class Trajectory:
         sel_names: tuple[str, ...],
         discrete: bool,
         color_by: Any,
-    ) -> PlotSpec:
+    ) -> Plot:
         """Build a 2-D / 3-D phase portrait over the selected components."""
         from tsdynamics.errors import InvalidParameterError
         from tsdynamics.viz.spec import Axis, Layer, PlotKind, PlotSpec
@@ -1033,7 +1132,7 @@ class Trajectory:
 
     def _spacetime_spec(
         self, ys: np.ndarray, names: tuple[str, ...], *, transpose: bool = False
-    ) -> PlotSpec:
+    ) -> Plot:
         """Build the component-index vs time ``IMAGE`` spec (``SPACETIME``).
 
         The spatiotemporal field view of a high-dimensional flow (a Lorenz-96
@@ -1077,7 +1176,7 @@ class Trajectory:
         self,
         component: int | str | Sequence[int | str] | None,
         primitive: str | None = None,
-    ) -> PlotSpec:
+    ) -> Plot:
         """Build a :data:`SPATIAL_FIELD` spec via the ``spatial_field`` producer.
 
         The spatial grid is read from ``meta["field_shape"]`` (recorded by a system
@@ -1102,10 +1201,10 @@ class Trajectory:
                 )
             block = items[0]
         if primitive is not None:
-            return self._via_transform("spatial_field", primitive, component=block)
-        return producers.spatial_field(self, component=block)
+            return self._via_transform("spatial_field", primitive, components=block)
+        return producers.spatial_field(self, components=block)
 
-    def plot(self, *transforms: Any, **kwargs: Any) -> PlotSpec:
+    def _plot_impl(self, *transforms: Any, **kwargs: Any) -> Plot:
         """Build this trajectory's :class:`PlotSpec`, applying inline tweaks first.
 
         ``plot`` **builds**, ``render`` **draws**, ``save`` **writes** — one word,
@@ -1156,6 +1255,13 @@ class Trajectory:
             spec.style(**style)
         return spec.tweak(**kwargs)
 
+    #: ``subject.plot`` is BOTH the verb and the namespace (§6.7): ``plot()``
+    #: draws the default view, ``plot.psd()`` / ``plot.nullclines()`` name a
+    #: transform, and ``plot.<TAB>`` lists every transform that draws THIS
+    #: subject — the discovery route ruling A2 promised when it took the
+    #: analyses off the object.
+    plot = _plot_namespace(_plot_impl)
+
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> Any:
         """Notebook display hook — lazily delegated to ``Plottable`` (see :meth:`plot`).
 
@@ -1166,7 +1272,7 @@ class Trajectory:
 
         return Plottable._repr_mimebundle_(cast("Plottable", self), include, exclude)
 
-    def _poincare_section_spec(self, names: tuple[str, ...]) -> PlotSpec:
+    def _poincare_section_spec(self, names: tuple[str, ...]) -> Plot:
         """Build the 2-D in-plane scatter spec for a Poincaré-section trajectory.
 
         Projects the recorded crossing states onto the section plane (dropping
@@ -1303,12 +1409,23 @@ class Trajectory:
         self.system = state["system"]
         self.meta = state["meta"]
         self._kdtree = None
-        self._accessor_cache = {}
 
     def __repr__(self) -> str:
+        """Render what you hold, and the one line that says what to do next.
+
+        The trailing ``measure it:`` line is load-bearing: ruling A2 took the
+        analyses off the object, so this is the only route that reaches a user
+        who never guesses a wrong name.
+        """
+        who = ""
+        if self.system is not None:
+            who = f" of {type(self.system).__name__}"
+        names = self.variables
+        cols = f", var: {', '.join(names)}" if names and len(names) <= 4 else ""
         return (
-            f"Trajectory(n_steps={self.n_steps}, dim={self.dim}, "
-            f"t=[{self.t[0]:.3g}, {self.t[-1]:.3g}])"
+            f"Trajectory{who}  (n: {len(self)}, dim: {self.dim}{cols})"
+            f"   t ∈ [{self.t[0]:.4g}, {self.t[-1]:.4g}]"
+            f"\n    measure it:  ts.analysis.find(traj)   ·   draw it:  ts.plot(traj)"
         )
 
 
@@ -1346,10 +1463,10 @@ def as_trajectory(obj: Any, *, dt: float | None = None) -> Trajectory:
     Examples
     --------
     >>> import numpy as np
-    >>> as_trajectory(np.sin(np.linspace(0, 10, 64)))
-    Trajectory(n_steps=64, dim=1, t=[0, 63])
-    >>> as_trajectory(np.zeros((64, 3)), dt=0.01)
-    Trajectory(n_steps=64, dim=3, t=[0, 0.63])
+    >>> as_trajectory(np.sin(np.linspace(0, 10, 64))).shape
+    (64, 1)
+    >>> as_trajectory(np.zeros((64, 3)), dt=0.01).dt
+    0.01
     """
     from tsdynamics.errors import InvalidInputError, InvalidParameterError
 

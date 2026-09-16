@@ -104,10 +104,11 @@ class DelaySystem(SystemBase, ABC):
 
     Examples
     --------
+    >>> import tsdynamics as ts
     >>> mg = MackeyGlass()
     >>> hist = lambda s: [1.0 + 0.1 * np.sin(0.2 * s)]
     >>> traj = mg.run(final_time=500, history=hist)
-    >>> exps = mg.lyapunov_spectrum(k=2, ic=traj.y[-1])
+    >>> exps = ts.analysis.lyapunov_spectrum(mg, k=2, ic=traj.y[-1])
     """
 
     #: The DDE family's own integration tolerances (see the class docstring for
@@ -277,7 +278,7 @@ class DelaySystem(SystemBase, ABC):
         params: dict[str, Any] | None = None,
         rtol: float | None = None,
         atol: float | None = None,
-        **kwargs: Any,
+        **unknown: Any,
     ) -> None:
         """
         (Re)start the incremental stepper from a constant past equal to ``u``.
@@ -292,6 +293,13 @@ class DelaySystem(SystemBase, ABC):
         restart), so it is correct but ``O(steps²)`` — use :meth:`integrate` for
         a full trajectory.
         """
+        reject_unknown_run_keywords(
+            self,
+            unknown,
+            family="dde",
+            accepted=("t", "params", "rtol", "atol"),
+            verb="reinit",
+        )
         if params:
             for k, v in params.items():
                 self.params[k] = v
@@ -412,7 +420,7 @@ class DelaySystem(SystemBase, ABC):
             .. versionchanged:: 6.0
                The default moved from ``"interp"`` to ``"jit"``, once the v6
                compiled-evaluator cache removed the JIT's per-call recompile.
-        method : str, default "rk45"
+        solver : str, default "rk45"
             The explicit kernel (``"rk45"``, ``"tsit5"``, ``"dop853"``,
             ``"rk4"``); the method of steps drives explicit kernels only.
             ``"auto"`` is an explicit **no-op** here — it resolves to the DDE

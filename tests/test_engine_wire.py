@@ -97,8 +97,8 @@ def test_sde_ensemble_interp_matches_reference_per_row(method):
     rng = np.random.default_rng(1)
     ics = 1.0 + 0.1 * rng.standard_normal((12, 1))
     kw = dict(final_time=1.0, dt=0.01, solver=method, seed=99)
-    ref = gbm.ensemble(ics, backend="reference", **kw)
-    eng = gbm.ensemble(ics, backend="interp", **kw)
+    ref = gbm.ensemble(ics).run(backend="reference", **kw).final
+    eng = gbm.ensemble(ics).run(backend="interp", **kw).final
     assert eng.shape == (12, 1)
     # Each trajectory i is seeded by seed_for(seed, i) on both paths.
     np.testing.assert_allclose(eng, ref, rtol=1e-6, atol=1e-9)
@@ -122,8 +122,8 @@ def test_sde_ensemble_jit_matches_interp_bit_for_bit():
     gbm = WireGBM()
     ics = np.linspace(0.8, 1.2, 10).reshape(-1, 1)
     kw = dict(final_time=1.0, dt=0.01, solver="milstein", seed=3)
-    interp = gbm.ensemble(ics, backend="interp", **kw)
-    jit = gbm.ensemble(ics, backend="jit", **kw)
+    interp = gbm.ensemble(ics).run(backend="interp", **kw).final
+    jit = gbm.ensemble(ics).run(backend="jit", **kw).final
     np.testing.assert_array_equal(interp, jit)
 
 
@@ -137,8 +137,10 @@ def test_gbm_ensemble_mean_matches_analytic():
     gbm = WireGBM()
     n, tf = 8000, 1.0
     ics = np.ones((n, 1))
-    finals = gbm.ensemble(
-        ics, final_time=tf, dt=0.005, solver="milstein", seed=2024, backend="interp"
+    finals = (
+        gbm.ensemble(ics)
+        .run(final_time=tf, dt=0.005, solver="milstein", seed=2024, backend="interp")
+        .final
     )
     assert np.all(np.isfinite(finals))
     want = np.exp(gbm.params["mu"] * tf)
@@ -151,8 +153,10 @@ def test_ou_ensemble_matches_stationary_law():
     theta, mu, sigma = (ou.params[k] for k in ("theta", "mu", "sigma"))
     n = 12000
     ics = np.full((n, 1), mu)
-    finals = ou.ensemble(
-        ics, final_time=10.0, dt=0.005, solver="euler_maruyama", seed=11, backend="interp"
+    finals = (
+        ou.ensemble(ics)
+        .run(final_time=10.0, dt=0.005, solver="euler_maruyama", seed=11, backend="interp")
+        .final
     )
     assert np.all(np.isfinite(finals))
     want_var = sigma * sigma / (2.0 * theta)

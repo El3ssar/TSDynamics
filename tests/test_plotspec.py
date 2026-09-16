@@ -320,12 +320,19 @@ def test_export_round_trip_is_reachable_from_the_public_viz_namespace():
 
 
 def test_export_names_are_in_the_curated_viz_all():
-    """The loader half is *listed*, not merely importable (it shows in ``dir()``)."""
+    """The loader half RESOLVES, and the ONE listed reader is ``ts.viz.load``.
+
+    CONTRACT §2.5 froze ``ts.viz.__all__`` at thirteen names; the four
+    round-tripping functions are demoted (``_INTERNAL_NAMES``) behind the single
+    verb ``ts.viz.load``, which reads a path *or* a document.  They must still
+    resolve — that is what "demoted, never removed" means.
+    """
     import tsdynamics as ts
 
     for name in ("to_json", "from_json", "to_dict_envelope", "from_dict_envelope"):
-        assert name in ts.viz.__all__, name
-        assert name in dir(ts.viz), name
+        assert callable(getattr(ts.viz, name)), name
+        assert name not in ts.viz.__all__, name
+    assert "load" in ts.viz.__all__
     assert ts.viz.SCHEMA_VERSION >= 3
 
 
@@ -355,6 +362,8 @@ def test_frame_space_vocabulary_is_frozen():
     from tsdynamics.viz._frames import FRAME_SPACES, FrameSpace
 
     assert {s.value for s in FrameSpace} == {
+        # CONTRACT §6.5 [M18]: a hand-built geometry declines to name its space.
+        "free",
         "time",
         "state2",
         "state3",

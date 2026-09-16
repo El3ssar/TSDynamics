@@ -231,16 +231,6 @@ def test_the_gaps_a_backend_declares_are_the_gaps_it_warns_about(house, traj):
     assert "background" not in gaps and "palette" not in gaps  # ...these it does honor
 
 
-@pytest.mark.xfail(
-    reason="contract §6.11 / the never-silence rule: caps.style_honoring_gaps gates the "
-    "THEME-presentation block on `spec._theme is not None` (caps.py:432), so a house "
-    "style installed with `themes.use(...)` — the documented 'every plot, this session' "
-    "spelling — drops 7 fields on three.js with NO warning, while the identical theme "
-    "set per-plot warns about all 7. The adjacent geometry block already reads "
-    "`spec.resolved_theme`; one word. viz/render/caps.py is S7's file "
-    "(RENDER-OTHER) — filed in needs_from_others.",
-    strict=True,
-)
 def test_a_session_default_theme_is_checked_like_a_per_plot_one(traj):
     """The same house style must warn the same way however it was installed.
 
@@ -292,14 +282,12 @@ def test_palette_overrides_just_the_colours(house, traj):
     assert p.resolved_theme.line_width == HOUSE["line_width"]
 
 
-@pytest.mark.xfail(
-    reason="contract §6.10 spells `p.palette('#111', '#e63946')` (varargs); the shipped "
-    "signature is `palette(colors)` and the documented line raises TypeError. "
-    "viz/spec.py + viz/_tweaks.py are another slot's files — filed in needs_from_others",
-    strict=False,
-)
 def test_palette_accepts_varargs_as_the_contract_spells_it(house, traj):
-    ts.plot(traj, "time_series").palette("#111111", "#e63946")
+    """§6.10 [M43] — loose colours OR one sequence; its sibling ``recolor`` takes
+    loose colours, so two spellings for "just the colours" must not disagree."""
+    loose = ts.plot(traj, "time_series").palette("#111111", "#e63946")
+    seq = ts.plot(traj, "time_series").palette(["#111111", "#e63946"])
+    assert loose.resolved_theme.palette == seq.resolved_theme.palette
 
 
 # ---------------------------------------------------------------------------

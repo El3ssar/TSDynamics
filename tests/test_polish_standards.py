@@ -422,23 +422,16 @@ def _runtime_cases() -> list[tuple[str, object]]:
 _RUNTIME_CASES = _runtime_cases()
 
 #: Results whose ``summary()`` has not been folded into ``__repr__`` yet.
-#:
-#: ``PoincareSection`` subclasses :class:`~tsdynamics.data.Trajectory`, not
-#: :class:`AnalysisResult`, so the round that deleted ``summary()`` on the 32
-#: result classes could not reach it — it is a different file, owned by
-#: S2 · DERIVED (contract §9.3).  Liveness-checked below, so the row goes the day
-#: the method does.
-_SUMMARY_NOT_YET_FOLDED = frozenset({"poincare_section"})
+#: **Empty since round 4** — ``PoincareSection`` was the last one, and folding it
+#: in is what closed §4.3 for every result the library returns.
+_SUMMARY_NOT_YET_FOLDED: frozenset[str] = frozenset()
 
 
-def test_summary_carve_out_is_live() -> None:
-    """The one remaining ``summary()`` is still there — otherwise drop the row."""
+def test_no_result_still_carries_summary() -> None:
+    """§4.3 — the repr IS the answer, for EVERY result, with no carve-out left."""
+    assert not _SUMMARY_NOT_YET_FOLDED, "delete the row; the contract is enforced below"
     for name, thunk in _RUNTIME_CASES:
-        if name in _SUMMARY_NOT_YET_FOLDED:
-            assert hasattr(thunk(), "summary"), (
-                f"{name} no longer carries summary() — delete it from "
-                "_SUMMARY_NOT_YET_FOLDED so the contract is enforced again"
-            )
+        assert not hasattr(thunk(), "summary"), f"{name} still carries summary()"
 
 
 @pytest.mark.parametrize("name,thunk", _RUNTIME_CASES, ids=[c[0] for c in _RUNTIME_CASES])
@@ -710,7 +703,7 @@ _NAMEGATE_BANNED_PARAMS: dict[str, str] = {
     # observed component(s) → components
     #
     # **Flipped in v6.**  The glossary froze the singular, and the singular was
-    # measurably wrong: ``estimate_period(component=2)`` sliced ``data[2]`` — a
+    # measurably wrong: ``estimate_period(components=2)`` sliced ``data[2]`` — a
     # *row*, one state — so it raised on a 2-component Van der Pol and silently
     # returned 0.026 where the truth is 8.0 (311x) on a 10-component system.  The
     # plural is the honest name because every one of these doors takes a
@@ -784,29 +777,12 @@ _NAMEGATE_HOMONYM_WHITELIST: frozenset[tuple[str, str]] = frozenset(
 #: above.  These rows are what is left, and each names why it is not simply a
 #: bug.  ``test_namegate_deferred_rows_are_live`` fails when one starts passing,
 #: so the table can only shrink.
-#: The **other half** of the deferred v6.1 VOCAB sweep: signatures still spelling
-#: the observed-component selector in the singular.
-#:
-#: This is a live C3 split — two grammars for one argument — and it is recorded
-#: rather than hidden, because that is exactly the defect C3 names.  v6 landed
-#: the two renames a *bug* depended on (``estimate_period`` sliced a row and
-#: returned 0.026 for 8.0; ``zero_one_test`` raised for every system of dim > 1);
-#: the remaining nine are correct today under either spelling, and §8.2 defers
-#: the sweep that unifies them.  ``test_namegate_deferred_param_rows_are_live``
-#: fails the moment one is fixed, so the table can only shrink.
-_NAMEGATE_DEFERRED_PARAM: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("autocorrelation", "component"),
-        ("cao_dimension", "component"),
-        ("embed", "component"),
-        ("embedding_dimension", "component"),
-        ("false_nearest_neighbors", "component"),
-        ("mutual_information", "component"),
-        ("optimal_delay", "component"),
-        ("orbit_diagram", "component"),
-        ("return_map", "component"),
-    }
-)
+#: The **other half** of the v6 VOCAB sweep: signatures still spelling the
+#: observed-component selector in the singular.  **Empty since round 4** — the
+#: nine analysis doors and every plot transform were renamed to ``components=``
+#: together, closing the C3 split (two grammars for one argument) that this
+#: table existed to record.  It can only shrink, so it stays as the gate.
+_NAMEGATE_DEFERRED_PARAM: frozenset[tuple[str, str]] = frozenset()
 
 _NAMEGATE_DEFERRED_FIRST_ARG: dict[str, str] = {
     # A binary metric: neither point set is "the subject", so neither can be
@@ -1321,7 +1297,7 @@ _ERRGATE_VALUE_NAMING: list[_ValueNamingCase] = [
         _ERRGATE_WRONG_TYPE,
         _errgate_data_analysis_on_system,
         TypeError,
-        ("System", "Lorenz", "system.run("),
+        ("ystem", "Lorenz", "system.run("),
         InvalidInputError,
     ),
     # Closed by v6 FRESH-EYES: ``SystemBase._coerce_ic`` is now the one place the
@@ -1671,14 +1647,16 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
         "fixed-points-given-data",
         lambda: ts.analysis.fixed_points(np.zeros((10, 2))),
         "fixed_points",
-        ("ts.analysis.fixed_points(",),
+        # A bare array has no ``.system`` to forward to (§5.6), so the one
+        # runnable line is the listing of what a measurement CAN answer.
+        ("ts.analysis.find(traj)",),
     ),
     # ── a required argument with no natural default ──
     _RunnableCase(
         "basins-without-a-region",
         lambda: ts.analysis.basins(ts.systems.Henon()),
         "basins",
-        ("ts.analysis.basins(system, region)",),
+        ("ts.analysis.basins(system, [",),
     ),
     _RunnableCase(
         "recurrence-matrix-without-a-scale",
@@ -1708,7 +1686,7 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
         "tipping-points-given-a-trajectory",
         lambda: ts.analysis.tipping_points(_RUNNABLE_TRAJ),
         "tipping_points",
-        ("ts.analysis.tipping_points(cont)",),
+        ("ts.analysis.tipping_points(c)",),
     ),
     # ── a flow keyword aimed at a map ──
     _RunnableCase(
@@ -1795,7 +1773,7 @@ _ERRGATE_RUNNABLE: list[_RunnableCase] = [
         "basins-given-a-trajectory",
         lambda: ts.analysis.basins(_RUNNABLE_TRAJ, [(-2.0, 2.0, 8), (-2.0, 2.0, 8)]),
         "basins",
-        ("ts.analysis.basins(system)",),
+        ("ts.analysis.basins(traj.system)",),
     ),
     # ── a transposed point set must not be diagnosed as a short one ──
     _RunnableCase(
@@ -1828,10 +1806,6 @@ _NOT_A_USER_CALL = ("_", "tsdynamics.analysis._", "self.", "<")
 #: gate the whole table exists to be measured against.
 _ERRGATE_NOT_QUALIFIED: dict[str, str] = {
     # ── found by the token check as well ──
-    "fixed-points-given-data": "S3: analysis/fixedpoints/_common.py names ts.analysis.fixed_points",
-    "basins-without-a-region": "S3: analysis/basins/_common.py names ts.analysis.basins",
-    "basins-given-a-trajectory": "S3: analysis/basins/basins.py names ts.analysis.basins",
-    "continuation-without-a-region": "S3: analysis/basins/continuation.py names ts.analysis.continuation",
     "too-short-series-for-a-dimension": "S3: analysis/dimensions names ts.analysis.correlation_dimension",
     "too-short-series-for-fixed-mass": "S3: analysis/dimensions names ts.analysis.fixed_mass_dimension",
     "transposed-point-set": "S3: analysis/dimensions names ts.analysis.correlation_dimension",
@@ -1851,10 +1825,6 @@ _ERRGATE_NOT_QUALIFIED: dict[str, str] = {
 #: because a strict xfail must not be attached to a test that passes.
 _ERRGATE_TOKEN_STALE = frozenset(
     {
-        "fixed-points-given-data",
-        "basins-without-a-region",
-        "basins-given-a-trajectory",
-        "continuation-without-a-region",
         "too-short-series-for-a-dimension",
         "too-short-series-for-fixed-mass",
         "transposed-point-set",
@@ -2320,29 +2290,29 @@ def test_unpacking_something_that_is_not_the_state_is_not_blamed_on_the_state() 
     assert "traced *symbolically*" in message
 
 
-def test_missing_staticmethod_is_diagnosed_structurally() -> None:
-    """A kernel declared with ``self`` is named as such, whatever it then failed on.
+def test_a_kernel_written_as_an_ordinary_method_just_works() -> None:
+    """A missing ``@staticmethod`` is APPLIED, not merely diagnosed.
 
-    The engine calls the kernel off the class, so ``self`` swallows the state and
-    Python reports a missing argument named ``t`` — pointing at a parameter the
-    caller *did* pass.  The mistake is decidable from the class, so it is decided
-    there rather than read out of the message.
+    The engine calls the kernel off the class, so a ``self`` first parameter is
+    always a mistake and it is decidable at class definition.  The library used
+    to detect it exactly and print the corrected line — if it can print the fix
+    it can apply it, and that removes one line and one concept from every system
+    anyone writes (the single most likely first-run failure).
     """
-    from tsdynamics.engine.compile import TapeCompileError
 
     class NotStatic(ts.ContinuousSystem):
         params = {"a": 1.0}
         dim = 2
 
-        def _equations(self, y, t, a):  # noqa: PLR6301 - the defect under test
+        def _equations(self, y, t, a):  # noqa: PLR6301 - the shape under test
             return [y(1), -a * y(0)]
 
-    with pytest.raises(TapeCompileError) as excinfo:
-        NotStatic().run(final_time=1.0, dt=0.1)
-    message = str(excinfo.value)
-    assert "@staticmethod" in message
-    assert "def _equations(y, t, a)" in message
-    assert "self" in message
+    traj = NotStatic(ic=[1.0, 0.0]).run(final_time=1.0, dt=0.1)
+    assert np.isfinite(traj.y).all()
+    # The declaration side is corrected on the class, so downstream
+    # introspection (the map params/_step order check, ``help``) sees the real
+    # signature — not one shifted by a phantom ``self``.
+    assert list(inspect.signature(NotStatic._equations).parameters) == ["y", "t", "a"]
 
 
 def test_correct_kernels_are_untouched_by_the_new_diagnostics() -> None:
@@ -2666,9 +2636,15 @@ def _region_doors() -> list[tuple[str, object]]:
     return _REGION_DOORS
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 @pytest.mark.parametrize("name", [d[0] for d in _region_doors()])
 def test_every_region_argument_uses_the_same_reading(name: str) -> None:
-    """Per-axis bounds are accepted; a corner pair is refused, at every door."""
+    """Per-axis bounds are accepted; a corner pair is refused, at every door.
+
+    The basin doors run with ``max_steps=200`` so this gate stays fast, which
+    means nothing settles and ``basins`` correctly warns that it measured
+    nothing — a different contract, tested in ``test_basins.py``.
+    """
     call = dict(_region_doors())[name]
     per_axis = [(-3.0, 3.0), (-3.0, 3.0)]
     corner_pair = ([-3.0, -3.0], [3.0, 3.0])

@@ -234,13 +234,16 @@ def test_reference_ensemble_row_equals_single_trajectory_with_index_seed(method)
     base_seed = 4242
     tf, dt = 0.5, 0.02
 
-    batch = sys.ensemble(
-        ics,
-        final_time=tf,
-        dt=dt,
-        solver=method,
-        seed=base_seed,
-        backend="reference",
+    batch = (
+        sys.ensemble(ics)
+        .run(
+            final_time=tf,
+            dt=dt,
+            solver=method,
+            seed=base_seed,
+            backend="reference",
+        )
+        .final
     )
 
     for i, ic in enumerate(ics):
@@ -259,8 +262,8 @@ def test_reference_same_seed_is_reproducible_and_index_decorrelates():
     """Same base seed ⇒ identical batch; distinct indices ⇒ distinct rows."""
     sys = _ParityOU()
     ics = np.full((8, 1), 0.5)
-    a = sys.ensemble(ics, final_time=1.0, dt=0.01, seed=123, backend="reference")
-    b = sys.ensemble(ics, final_time=1.0, dt=0.01, seed=123, backend="reference")
+    a = sys.ensemble(ics).run(final_time=1.0, dt=0.01, seed=123, backend="reference").final
+    b = sys.ensemble(ics).run(final_time=1.0, dt=0.01, seed=123, backend="reference").final
     np.testing.assert_array_equal(a, b)
     assert not np.array_equal(a[0], a[1]), "distinct indices gave identical draws"
 
@@ -314,6 +317,6 @@ def test_engine_ensemble_interp_equals_jit_bit_for_bit(method):
     sys = _ParityGBM()
     ics = np.linspace(0.8, 1.2, 8).reshape(-1, 1)
     kw = dict(final_time=0.5, dt=_ROUNDOFF_DT, solver=method, seed=3)
-    interp = sys.ensemble(ics, backend="interp", **kw)
-    jit = sys.ensemble(ics, backend="jit", **kw)
+    interp = sys.ensemble(ics).run(backend="interp", **kw).final
+    jit = sys.ensemble(ics).run(backend="jit", **kw).final
     np.testing.assert_array_equal(interp, jit)

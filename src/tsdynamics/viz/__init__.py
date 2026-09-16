@@ -42,6 +42,7 @@ group and out-of-tree plot transforms through ``tsdynamics.plot_transforms``;
 :func:`discover_plugins` loads both at import.
 """
 
+import os
 from typing import TYPE_CHECKING, Any
 
 from .. import registry as _registry
@@ -362,7 +363,7 @@ def grid(*plots: Any, rows: int | None = None, cols: int | None = None, **option
     return built
 
 
-def load(source: str) -> Plot:
+def load(source: str | os.PathLike[str]) -> Plot:
     """Read a :class:`~tsdynamics.viz.spec.Plot` back from a ``.json`` file or JSON text.
 
     The read half of the round trip whose write half is
@@ -385,9 +386,12 @@ def load(source: str) -> Plot:
     """
     import os
 
-    text = source
-    if not source.lstrip().startswith(("{", "[")) and os.path.exists(source):
-        with open(source, encoding="utf-8") as fh:
+    # ``.save`` accepts a ``pathlib.Path``, so ``load`` must too — the sniff used
+    # to call ``.lstrip()`` on the argument unconditionally and answered a Path
+    # with ``AttributeError: 'PosixPath' object has no attribute 'lstrip'``.
+    text = source if isinstance(source, str) else os.fspath(source)
+    if not text.lstrip().startswith(("{", "[")) and os.path.exists(text):
+        with open(text, encoding="utf-8") as fh:
             text = fh.read()
     return from_json(text)
 

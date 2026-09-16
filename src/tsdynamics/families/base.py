@@ -436,15 +436,27 @@ def _absent_name_error(system: Any, name: str) -> AttributeError:
         why, lines = moved
         return AttributeError(f"{head}: {why}." + remedy(*lines))
 
+    from tsdynamics.analysis import _discovery
+
+    held = "map" if getattr(system, "family", "ode") == "map" else "flow"
+
     deleted = _DELETED_ACCESSORS.get(name)
     if deleted is not None:
+        # Each member is routed to the subject IT takes: ``.lyap`` reads the
+        # equations (``system``), ``.dims``/``.recurrence`` read a point set, so
+        # they need a run first.  A single hard-coded ``(system)`` handed four of
+        # these eight members a line that raises.
+        remedy_lines: list[str] = []
+        needs_run = any(_discovery._wants(fn) == "data" for fn in deleted)
+        if needs_run:
+            remedy_lines.append(_discovery._RUN_LINE[held])
+        for fn in deleted:
+            arg = "traj" if _discovery._wants(fn) == "data" else "system"
+            remedy_lines.append(f"ts.analysis.{fn}({arg})")
+        remedy_lines.append(_discovery.find_line(held))
         return AttributeError(
             f"{head}: the .lyap / .chaos / .dims / .recurrence namespaces are gone "
-            f"in v6 — every member is a free function."
-            + remedy(
-                *(f"ts.analysis.{fn}(system)" for fn in deleted),
-                "ts.analysis.find(system)   # everything that takes this system",
-            )
+            f"in v6 — every member is a free function." + remedy(*remedy_lines)
         )
 
     try:
@@ -454,10 +466,10 @@ def _absent_name_error(system: Any, name: str) -> AttributeError:
     except Exception:  # pragma: no cover - defensive
         known = set()
     if name in known:
-        return AttributeError(
-            f"{head}: analyses are free functions in v6, and the subject is the "
-            f"first argument." + remedy(f"ts.analysis.{name}(system)", "ts.analysis.find(system)")
-        )
+        # ONE builder for both doors (§5.6): the object door and the free-function
+        # door must not drift, and a data-first analysis must not be offered
+        # ``(system)`` — that line raises.
+        return _discovery.attribute_error(name, cls, held)
 
     declared = list(object.__getattribute__(system, "params"))
     if declared:
@@ -657,8 +669,62 @@ class SystemBase(DeriveMixin, SystemPlottable):
         }
     )
 
+    #: The symbolic kernels the engine calls **off the class**.  There is no
+    #: instance state in the math, so a ``self`` first parameter is always a
+    #: mistake — and it is decidable here, at class definition.
+    _CLASS_CALLED_KERNELS: ClassVar[tuple[str, ...]] = (
+        "_equations",
+        "_step",
+        "_jacobian",
+        "_drift",
+        "_diffusion",
+    )
+
+    @classmethod
+    def _adopt_class_called_kernels(cls) -> None:
+        """Wrap a kernel written as an ordinary method in :func:`staticmethod`.
+
+        Forgetting ``@staticmethod`` was the single most likely first-run failure
+        for a user's own system: ``self`` swallows the state accessor, every
+        later argument shifts by one, and the engine reports a missing parameter
+        the caller *did* pass.  The library already detected the mistake exactly
+        and printed the corrected line; if it can print the fix it can apply it,
+        which removes one line and one concept from every system anyone writes.
+        """
+        import functools
+        import inspect
+
+        for kernel in cls._CLASS_CALLED_KERNELS:
+            raw = cls.__dict__.get(kernel)
+            if not inspect.isfunction(raw):
+                continue
+            try:
+                sig = inspect.signature(raw)
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                continue
+            params = list(sig.parameters)
+            if not params or params[0] != "self":
+                continue
+
+            def _make(fn: Any) -> Any:
+                @functools.wraps(fn)
+                def _kernel(*args: Any, **kw: Any) -> Any:
+                    return fn(None, *args, **kw)
+
+                # ``functools.wraps`` copies ``__defaults__``/``__kwdefaults__``
+                # from the wrapped function, so the bound function must be a
+                # CLOSURE cell and never a default argument.
+                return _kernel
+
+            wrapper = _make(raw)
+            # The corrected signature is what everything downstream reads — the
+            # map's params/_step order check, the tracer, and ``help()``.
+            wrapper.__signature__ = sig.replace(parameters=list(sig.parameters.values())[1:])
+            setattr(cls, kernel, staticmethod(wrapper))
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        cls._adopt_class_called_kernels()
         # --- v6: the five metadata ClassVars move behind an underscore --------
         # They are facts about the class, printed by ``system.info`` — not verbs
         # a user calls, so they left ``system.<TAB>``.  A class written against
@@ -714,6 +780,23 @@ class SystemBase(DeriveMixin, SystemPlottable):
                     f"passed as constructor keywords. Rename the parameter(s), or "
                     f"give the class its own __init__."
                 )
+        # A structural parameter is baked into the lowered tape, so it must BE a
+        # parameter: declaring ``_structural_params = frozenset({"N"})`` while
+        # ``params`` has no ``"N"`` used to surface as a bare ``KeyError: 'N'``
+        # ten frames deep inside ``_structural_vals`` on the first run, with no
+        # class name and no statement of the rule.  Refuse it here, where the
+        # mistake was made, like every other class-definition contract.
+        structural = frozenset(cls.__dict__.get("_structural_params", ()) or ())
+        missing = sorted(structural - set(cls.params or {}))
+        if missing:
+            raise TypeError(
+                f"{cls.__name__}: _structural_params names {missing}, which "
+                f"{'is' if len(missing) == 1 else 'are'} not in params "
+                f"{sorted(cls.params or {})}. A structural parameter is baked into "
+                f"the lowered tape, so it has to be a parameter too — declare it:\n"
+                f"    params = {{{', '.join(f'{m!r}: ...' for m in missing)}, ...}}"
+            )
+
         # The framework bases (ContinuousSystem, DelaySystem, DiscreteMap, ...)
         # live under tsdynamics.families and are not registrable systems themselves.
         if not cls.__module__.startswith("tsdynamics.families"):

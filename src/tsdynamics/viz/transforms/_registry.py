@@ -430,7 +430,7 @@ def get(name: str) -> PlotTransform:
 
     try:
         record = _registry.plot_transforms.get(_ALIASES.get(name, name))
-    except KeyError:
+    except (KeyError, ValueError):
         close = difflib.get_close_matches(name, names(), n=1, cutoff=0.5) or [
             n for n in names() if n.lower().startswith(name.lower()[:4])
         ]
@@ -696,6 +696,26 @@ def _compute(transform: PlotTransform, subject: Any, options: dict[str, Any]) ->
             f"(ts.plot(lorenz, {transform.name!r})), or pick a 'data' transform — "
             f"ts.viz.transforms.find(subject=your_data) lists them."
         )
+    from tsdynamics.families import SystemBase as _SystemBase
+
+    if transform.source == "data" and isinstance(subject, _SystemBase):
+        # Peel the run vocabulary the transform does not itself declare, and run
+        # the system with it.  ``psd`` names ``final_time``/``dt``/``steps`` in
+        # its own signature and therefore keeps them (unchanged); ``time_series``
+        # does not, and used to REFUSE them at the front door rather than
+        # integrate.  Doing it HERE rather than only in the exception fallback
+        # below is what lets the transform answer in its own words when the run
+        # is not the problem — the fallback re-raises the transform's first
+        # error, which for a run keyword is always "unexpected keyword argument".
+        import inspect
+
+        declared = set(inspect.signature(transform.compute).parameters)
+        run_kw = {k: options.pop(k) for k in list(options) if k in _RUN_KEYS - declared}
+        if run_kw:
+            try:
+                subject = subject.run(**run_kw)
+            except Exception:
+                options.update(run_kw)  # let the transform (or the error) speak
     try:
         return transform.compute(subject, **options)
     except (TypeError, ValueError) as first:

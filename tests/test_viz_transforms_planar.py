@@ -79,8 +79,10 @@ _WINDOW = {"xlim": (0.5, 8.0), "ylim": (0.5, 6.0)}
 def test_every_planar_transform_is_registered_and_introspectable():
     matrix = compatibility()
     for name in _OWNED:
-        assert name in matrix, f"{name} is not in ts.viz.compatibility()"
         record = get(name)
+        # An ALIAS is a spelling, not a second row (CLAUDE.md, §6.8), so the
+        # matrix carries the canonical name once; the alias still resolves.
+        assert record.name in matrix, f"{record.name} is not in ts.viz.compatibility()"
         assert record.doc, f"{name} has no one-line doc for the matrix"
         assert record.example is not None, "the compatibility gate needs an example subject"
         assert record.analysis is not None and record.analysis.startswith(
@@ -118,7 +120,7 @@ def test_the_source_categories_are_the_honest_ones():
 )
 def test_a_model_transform_handed_a_trajectory_names_what_it_needs(name):
     traj = LotkaVolterra().run(final_time=1.0, dt=0.1)
-    with pytest.raises(InvalidInputError, match="continuous system"):
+    with pytest.raises(InvalidInputError, match="needs a dynamical system"):
         build_spec(traj, name, **_WINDOW)
 
 
@@ -360,7 +362,7 @@ def test_every_scalar_field_is_an_image_at_the_physical_coordinates(name):
 
 def test_the_ftle_horizon_and_direction_are_recorded_on_the_spec():
     """The field depends on ``T``; a plot that does not say which ``T`` is unreadable."""
-    spec = build_spec(LotkaVolterra(), "ftle", grid=11, time=2.5, backward=True, **_WINDOW)
+    spec = build_spec(LotkaVolterra(), "ftle", grid=11, final_time=2.5, backward=True, **_WINDOW)
     assert spec.meta["ftle_time"] == 2.5
     assert spec.meta["backward"] is True
     assert spec.colorbar is not None and spec.colorbar.label == "FTLE"
@@ -518,7 +520,7 @@ def test_a_scalar_field_and_a_curve_family_compose():
     system = Brusselator(b=1.5)
     window = {"xlim": (0.2, 2.5), "ylim": (0.5, 3.0)}
     spec = viz.plot(
-        build_spec(system, "ftle", grid=21, time=2.0, **window),
+        build_spec(system, "ftle", grid=21, final_time=2.0, **window),
         build_spec(system, "nullclines", grid=121, **window),
     )
     assert [str(layer.kind) for layer in spec.layers] == ["image", "line", "line"]
@@ -566,7 +568,7 @@ def test_the_line_transforms_draw_on_every_backend(name, backend, tmp_path):
 def test_a_scalar_field_survives_a_json_round_trip_with_its_frame_and_provenance():
     from tsdynamics.viz.spec import PlotSpec
 
-    spec = build_spec(LotkaVolterra(), "ftle", grid=9, time=1.0, **_WINDOW)
+    spec = build_spec(LotkaVolterra(), "ftle", grid=9, final_time=1.0, **_WINDOW)
     back = PlotSpec.from_dict(spec.to_dict())
     assert back.frame == spec.frame
     assert [layer.transform for layer in back.layers] == ["ftle"]

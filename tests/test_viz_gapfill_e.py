@@ -51,7 +51,7 @@ def _round_trips(spec: PlotSpec) -> None:
 def test_stroboscopic_spec_is_a_scatter() -> None:
     """A strobe sampling renders as scattered sampled points, never a flow line."""
     smap = ts.derived.StroboscopicMap(systems.ForcedVanDerPol(), period=2 * np.pi / 0.63)
-    spec = smap.to_plot_spec(steps=40)
+    spec = smap.__plot_spec__(steps=40)
     assert spec.layers, "expected at least one layer"
     for layer in spec.layers:
         assert layer.kind is PlotKind.SCATTER, "strobe samples must be a SCATTER mark"
@@ -63,7 +63,7 @@ def test_stroboscopic_spec_is_a_scatter() -> None:
 def test_stroboscopic_kind_override() -> None:
     """An explicit ``kind`` overrides the dimensionality dispatch but stays a scatter."""
     smap = ts.derived.StroboscopicMap(systems.ForcedVanDerPol(), period=2 * np.pi / 0.63)
-    spec = smap.to_plot_spec(kind="phase_portrait_2d", steps=30)
+    spec = smap.__plot_spec__(kind="phase_portrait_2d", steps=30)
     assert spec.kind is PlotKind.PHASE_PORTRAIT_2D
     assert all(layer.kind is PlotKind.SCATTER for layer in spec.layers)
     _round_trips(spec)
@@ -83,7 +83,7 @@ def _lorenz_ensemble(m: int = 8) -> ts.derived.EnsembleSystem:
 def test_ensemble_fan_is_static_with_band() -> None:
     """The ensemble spec is an ENSEMBLE_FAN: median line + a shaded ``lo<=hi`` band."""
     ens = _lorenz_ensemble()
-    spec = ens.to_plot_spec(steps=60, component=0, band=90.0)
+    spec = ens.__plot_spec__(steps=60, components=0, band=90.0)
     assert spec.kind is PlotKind.ENSEMBLE_FAN
 
     marks = [layer.kind for layer in spec.layers]
@@ -107,9 +107,9 @@ def test_ensemble_fan_is_static_with_band() -> None:
 def test_ensemble_band_widens_with_more_mass() -> None:
     """A wider percentile mass shades a wider band (sanity that lo/hi track ``band``)."""
     ens = _lorenz_ensemble(m=16)
-    narrow = ens.to_plot_spec(steps=50, band=50.0)
+    narrow = ens.__plot_spec__(steps=50, band=50.0)
     ens2 = _lorenz_ensemble(m=16)
-    wide = ens2.to_plot_spec(steps=50, band=98.0)
+    wide = ens2.__plot_spec__(steps=50, band=98.0)
 
     def _mean_width(spec: PlotSpec) -> float:
         area = next(layer for layer in spec.layers if layer.kind is PlotKind.AREA)
@@ -122,11 +122,11 @@ def test_ensemble_rejects_bad_component_and_band() -> None:
     """Out-of-range ``component`` / ``band`` raise rather than draw nonsense."""
     ens = _lorenz_ensemble()
     with pytest.raises(ValueError):
-        ens.to_plot_spec(component=99)
+        ens.__plot_spec__(components=99)
     with pytest.raises(ValueError):
-        ens.to_plot_spec(band=0.0)
+        ens.__plot_spec__(band=0.0)
     with pytest.raises(ValueError):
-        ens.to_plot_spec(band=150.0)
+        ens.__plot_spec__(band=150.0)
 
 
 def test_ensemble_collect_shapes() -> None:
@@ -145,7 +145,7 @@ def test_ensemble_collect_shapes() -> None:
 def test_tangent_convergence_is_a_diagnostic_curve() -> None:
     """The tangent spec is a DIAGNOSTIC_CURVE with one labelled line per exponent."""
     tang = ts.derived.TangentSystem(systems.Henon(), k=2)
-    spec = tang.to_plot_spec(steps=400)
+    spec = tang.__plot_spec__(steps=400)
     assert spec.kind is PlotKind.DIAGNOSTIC_CURVE
     # One line per exponent, each legended (the line family).
     assert len(spec.layers) == 2
@@ -173,7 +173,7 @@ def test_tangent_convergence_records_running_estimate() -> None:
 def test_tangent_ode_convergence_curve() -> None:
     """An ODE tangent system also produces a valid convergence curve (engine path)."""
     tang = ts.derived.TangentSystem(systems.Lorenz(), k=2)
-    spec = tang.to_plot_spec(steps=40, n_or_dt=0.1)
+    spec = tang.__plot_spec__(steps=40, n_or_dt=0.1)
     assert spec.kind is PlotKind.DIAGNOSTIC_CURVE
     assert len(spec.layers) == 2
     _round_trips(spec)
@@ -187,7 +187,7 @@ def test_tangent_ode_convergence_curve() -> None:
 def test_poincare_spec_delegates_to_section() -> None:
     """A PoincareMap describes itself as its section scatter (POINCARE_SECTION)."""
     pmap = ts.derived.PoincareMap(systems.Rossler(), plane=("y", 0.0, "up"))
-    spec = pmap.to_plot_spec()
+    spec = pmap.__plot_spec__()
     assert spec.kind is PlotKind.POINCARE_SECTION
     assert all(layer.kind is PlotKind.SCATTER for layer in spec.layers)
     _round_trips(spec)
@@ -196,6 +196,6 @@ def test_poincare_spec_delegates_to_section() -> None:
 def test_projected_spec_uses_projected_columns() -> None:
     """A ProjectedSystem describes the projected view (2-D phase portrait here)."""
     proj = ts.derived.ProjectedSystem(systems.Lorenz(), ["x", "z"])
-    spec = proj.to_plot_spec()
+    spec = proj.__plot_spec__()
     assert spec.kind is PlotKind.PHASE_PORTRAIT_2D
     _round_trips(spec)

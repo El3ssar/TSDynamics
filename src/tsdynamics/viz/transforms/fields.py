@@ -117,7 +117,7 @@ def _demo_orbit() -> Any:
     primitives=("image", "contour", "surface3d"),
     presentation=Presentation(aspect="equal", cmap="inferno", autocolor=True),
     analysis="tsdynamics.analysis.planar.ftle_field",
-    example=lambda primitive: (_demo_flow(), {**_DEMO_WINDOW, "grid": 12, "time": 1.0}),
+    example=lambda primitive: (_demo_flow(), {**_DEMO_WINDOW, "grid": 12, "final_time": 1.0}),
     doc="The finite-time Lyapunov exponent field; its ridges are the LCS.",
 )
 def ftle(
@@ -128,7 +128,7 @@ def ftle(
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     grid: int | tuple[int, int] = 101,
-    time: float = 1.0,
+    final_time: float = 1.0,
     backward: bool = False,
     **integrate_kwargs: Any,
 ) -> Geometry:
@@ -156,8 +156,8 @@ def ftle(
         Lattice resolution.  Default ``101``.  The gradient is a finite
         difference on this lattice, so a ridge thinner than a cell is smeared,
         never sharpened — raising ``grid`` is what sharpens a ridge, not raising
-        ``time``.
-    time : float, optional
+        ``final_time``.
+    final_time : float, optional
         The horizon :math:`T`.  Default ``1.0``.  The field genuinely depends on
         it (there is no :math:`T \to \infty` picture to converge to), so it is a
         stated choice and is recorded in ``spec.meta``.
@@ -180,7 +180,7 @@ def ftle(
             xlim=xlim,
             ylim=ylim,
             grid=grid,
-            time=time,
+            final_time=final_time,
             backward=backward,
             **integrate_kwargs,
         ),

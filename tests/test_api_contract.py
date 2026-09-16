@@ -32,7 +32,7 @@ Three deliberate choices about how this file stays honest:
   Where a §2 listing is a binary property another slot owns, the row is a
   ``strict`` xfail naming that slot.  Where the defect is a *population* that
   must shrink (submodules shadowed by a same-named function; doors still
-  spelling ``component=``), the gate asserts the population **equals** a declared
+  spelling ``components=``), the gate asserts the population **equals** a declared
   table — so a new instance fails, and fixing one also fails until the row is
   deleted.  Neither can quietly become permanent.
 * **Nothing here may pass vacuously.**  Every sweep asserts its own subject count
@@ -326,11 +326,6 @@ def test_the_trajectory_surface_never_grows_past_the_contract() -> None:
     assert not unexpected, f"names added to Trajectory outside §2.3: {sorted(unexpected)}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="C9 · CATALOGUE — §2.6 puts names()/find()/get() beside the 177 classes, so "
-    "ts.systems answers the same four-verb shape as every other registry. Not landed.",
-)
 def test_the_systems_namespace_answers_the_registry_verbs() -> None:
     """§2.6 — 180 names: the catalogue plus ``names()`` / ``find()`` / ``get()``.
 
@@ -424,11 +419,10 @@ DECLARED_MODULE_EXPORTS: dict[str, dict[str, str]] = {
         "transforms": "§2.5 — one of the four registries; it is a module that also "
         "answers register/names/find/get",
     },
-    "tsdynamics.systems": {
-        "continuous": "C9 — §2.6 says 180 names = 177 classes + names/find/get, so the "
-        "two category packages should be demoted to _INTERNAL_SUBMODULES. Not landed.",
-        "discrete": "C9 — ditto",
-    },
+    # §2.6 — 180 names = 177 classes + names/find/get.  The two category
+    # packages stay importable but are off the listing, like every other
+    # internal submodule, so no __all__ entry is module-valued here.
+    "tsdynamics.systems": {},
     "tsdynamics.engine": {
         # `engine` is reachable but off the top level's __all__ and flagged
         # internal in its own docstring (§2.1).  Its listing is four submodules
@@ -682,7 +676,7 @@ PLANE_CALLS: dict[str, Callable[[], Any]] = {
         _vdp(), plane=("x", "y"), grid=8, final_time=1.0
     ),
     "flow_field": lambda: ts.analysis.flow_field(_vdp(), plane=("x", "y"), grid=8),
-    "ftle_field": lambda: ts.analysis.ftle_field(_vdp(), plane=("x", "y"), grid=8, time=1.0),
+    "ftle_field": lambda: ts.analysis.ftle_field(_vdp(), plane=("x", "y"), grid=8, final_time=1.0),
     "nullclines": lambda: ts.analysis.nullclines(_vdp(), plane=("x", "y"), grid=15),
     "poincare_section": lambda: ts.analysis.poincare_section(
         ts.systems.Rossler(), plane=("y", 0.0), crossings=5, seed=0
@@ -785,37 +779,25 @@ def test_the_section_verb_on_a_system_takes_plain_python() -> None:
     assert "period" in str(excinfo.value)
 
 
-#: §5.7 / M38 — ``components=`` is the ONE spelling.  These doors still bind the
-#: singular; S3 owns the rename (§9.5 row (a)).  Set equality, so the table is
-#: self-cleaning: a new singular door fails, a renamed one fails until its row
-#: goes.
-COMPONENT_SINGULAR_DOORS: frozenset[str] = frozenset(
-    {
-        "autocorrelation",
-        "cao_dimension",
-        "embed",
-        "embedding_dimension",
-        "false_nearest_neighbors",
-        "mutual_information",
-        "optimal_delay",
-        "orbit_diagram",
-        "return_map",
-    }
-)
+#: §5.7 / M38 — ``components=`` is the ONE spelling.  **Empty since round 4**:
+#: the nine analysis doors and every plot transform were renamed together, so a
+#: user meets one word at every door.  Set equality, so the table is
+#: self-cleaning: a new singular door fails this gate.
+COMPONENT_SINGULAR_DOORS: frozenset[str] = frozenset()
 
 
 def test_components_is_the_one_spelling_and_the_singular_is_a_shrinking_set() -> None:
     """C3 / M38 — ``components=`` names *which* component(s), never *how many*.
 
     Two grammars for one argument is the silent-wrong-answer defect: measured,
-    ``estimate_period(component=...)`` sliced a *row* and returned 0.026 where the
+    ``estimate_period(components=...)`` sliced a *row* and returned 0.026 where the
     truth was 8.0 — a 311x error with no exception.
     """
     singular = set(_doors_taking("component"))
     plural = set(_doors_taking("components"))
     assert plural, "no door spells it components= — the contract's spelling vanished"
     assert singular == set(COMPONENT_SINGULAR_DOORS), (
-        "the component= population moved.\n"
+        "the components= population moved.\n"
         f"  newly singular (rename it):  {sorted(singular - COMPONENT_SINGULAR_DOORS)}\n"
         f"  renamed (delete the row):    {sorted(COMPONENT_SINGULAR_DOORS - singular)}"
     )
@@ -1216,6 +1198,7 @@ def test_a_solver_is_spelled_solver_and_a_method_is_an_estimator() -> None:
 DECLARED_VARIADIC: dict[str, str] = {
     "with_params": "the parameter names are the system's own — the whole point",
     "plot": "§6.2: positional transforms, then five keyword vocabularies",
+    "sel": "§4.1: the components to select, by name or index — one or many",
 }
 
 
@@ -1270,12 +1253,6 @@ def test_every_public_method_is_documented() -> None:
 #: import.  Keyed by the DEFINING function, so the row does not multiply across
 #: the four family subjects that inherit it.  The table may only shrink.
 STALE_RETURN_ANNOTATIONS: dict[str, str] = {
-    "tsdynamics.families._plottable.SystemPlottable.plot": (
-        "S9 — families/_plottable.py still annotates -> 'PlotSpec'"
-    ),
-    "tsdynamics.data.trajectory.Trajectory.plot": (
-        "C5 — data/trajectory.py still annotates -> 'PlotSpec'"
-    ),
     "tsdynamics.data.trajectory.Trajectory.to_plot_spec": (
         "C5 — §2.3 removes to_plot_spec from the Trajectory surface entirely"
     ),

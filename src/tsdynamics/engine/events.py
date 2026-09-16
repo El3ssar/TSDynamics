@@ -502,7 +502,7 @@ def integrate_events(
     >>> import tsdynamics as ts
     >>> from tsdynamics.engine.problem import ode_problem
     >>> from tsdynamics.engine.run import integrate_events
-    >>> prob = ode_problem(ts.Lorenz(), ic=[1.0, 1.0, 1.0])
+    >>> prob = ode_problem(ts.systems.Lorenz(), ic=[1.0, 1.0, 1.0])
     >>> sol = integrate_events(prob, [("z", 27.0, "up")], final_time=30.0, dt=0.01)
     >>> sol.t_events[0].size > 0
     True

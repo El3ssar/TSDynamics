@@ -59,7 +59,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast
 
 import numpy as np
 
@@ -869,7 +869,7 @@ class Layout:
         Default ``False``.
     """
 
-    mode: Literal["stack", "row", "grid"] = "stack"
+    mode: Literal["stack", "row", "grid", "frames"] = "stack"
     rows: int | None = None
     cols: int | None = None
     share_x: bool = False
@@ -1055,6 +1055,29 @@ class Animation:
     #: high enough to read as continuous motion, capped so the artifact stays light
     #: (the comet renderers keep per-frame data tiny, so this can be generous).
     DEFAULT_FRAMES: ClassVar[int] = 360
+
+    def playback_seconds(self, n_samples: int) -> float:
+        """How long a browser should take to traverse the whole series, in seconds.
+
+        [M41] The single home of the algebra both HTML exports need.  Neither
+        browser loop has a frame clock — each traverses the series in
+        ``duration`` seconds at the browser's ~60 Hz — and both used to fall back
+        to a hard-coded ``12.0`` whenever ``duration`` was unset, so
+        ``.animate(fps=60)`` reached matplotlib and was **dropped in silence** by
+        the web exports.  :meth:`frame_count` already relates the two
+        (``frame_count = round(duration * fps)``), so inverting it is the
+        definition: play ``frame_count(n_samples)`` frames at ``fps`` per second.
+        At the defaults that is 12.0 s exactly, so no export changed speed.
+
+        An explicit ``duration`` always wins: it is the same quantity stated
+        directly.
+        """
+        if self.duration is not None:
+            return float(self.duration)
+        fps = float(self.fps)
+        if fps <= 0:  # pragma: no cover - Animation validates fps > 0
+            return float(self.DEFAULT_FRAMES) / 30.0
+        return float(self.frame_count(int(n_samples))) / fps
 
     def frame_count(self, n_samples: int) -> int:
         """Resolve the number of playback frames from the directive + data length.
@@ -1524,7 +1547,13 @@ class Plot:
         VisualizationNotInstalled
             If no rendering backend is installed.
         """
-        return self._rendered()[0]
+        figure = self._rendered()[0]
+        # Arm the guard, exactly as ``.ax`` and ``.axes`` do.  Without this the
+        # whole ``_invalidate`` mechanism was DEAD for the spelling this
+        # docstring puts first: hand-editing ``p.fig`` and then calling
+        # ``p.style(...)`` discarded the edit in silence.
+        self._figure_handed_out = True
+        return figure
 
     @property
     def ax(self) -> Any:
@@ -2077,25 +2106,82 @@ class Plot:
 
     @_mutates
     @panel_scoped(writes_theme=True)
-    def palette(self, colors: str | Sequence[str]) -> Plot:
-        """Set the theme's color cycle (a named palette or an explicit list).
+    def palette(self, *colors: str | Sequence[str]) -> Plot:
+        """Set the theme's color cycle (a named palette or explicit colours).
+
+        Both spellings work, because its sibling ``recolor(*colors)`` already
+        took loose colours and two spellings for "just the colours" that
+        disagreed is the defect, not the flexibility::
+
+            p.palette("#111", "#e63946")      # loose — the documented line
+            p.palette(["#111", "#e63946"])    # one sequence
+            p.palette("dark")                 # a registered theme's palette
 
         Parameters
         ----------
-        colors : str or sequence of str
-            A registered theme name (its palette) or an explicit sequence of
-            colors.
+        *colors : str or sequence of str
+            A registered theme name (its palette), an explicit sequence of
+            colors, or the colors themselves.
 
         Returns
         -------
         PlotSpec
             ``self``, for chaining.
         """
+        from tsdynamics.errors import InvalidParameterError
+
         from .style import resolve_palette
 
+        if not colors:
+            raise InvalidParameterError(
+                "palette() needs at least one colour (or one theme name): "
+                'p.palette("#111", "#e63946")  /  p.palette("dark")'
+            )
+        spec_arg: str | Sequence[str]
+        if len(colors) == 1:
+            spec_arg = colors[0]
+        else:
+            flat: list[str] = []
+            for c in colors:
+                flat.extend([c] if isinstance(c, str) else list(c))
+            spec_arg = flat
         base = self._theme if self._theme is not None else get_theme()
-        self._theme = base.merged(palette=resolve_palette(colors))
+        self._theme = base.merged(palette=resolve_palette(spec_arg))
         return self
+
+    # -- composition operators (§6.3) --------------------------------------
+
+    def __add__(self, other: Any) -> Plot:
+        """Overlay ``b`` onto a COPY of ``a`` — the ``a + b`` spelling.
+
+        The operators compose without mutating either operand, so the closure
+        property holds for expressions as well as for calls::
+
+            ts.plot(traj, "phase_portrait") + ts.viz.draw({"x": xs, "y": ys}, "line")
+        """
+        return self._compose(other, layout="overlay")
+
+    def __or__(self, other: Any) -> Plot:
+        """Put ``b`` beside ``a`` (a one-row grid) — the ``a | b`` spelling."""
+        return self._compose(other, layout="row")
+
+    def __truediv__(self, other: Any) -> Plot:
+        """Put ``b`` below ``a`` (a one-column stack) — the ``a / b`` spelling."""
+        return self._compose(other, layout="stack")
+
+    def _compose(self, other: Any, *, layout: str) -> Plot:
+        """Build ``plot(self, other, layout=...)`` without mutating either side."""
+        if not isinstance(other, Plot):
+            return cast("Plot", NotImplemented)
+        import copy as _copy
+
+        from .compose import plot as _plot
+
+        left, right = _copy.deepcopy(self), _copy.deepcopy(other)
+        left._figure_cache = right._figure_cache = None
+        left._figure_handed_out = right._figure_handed_out = False
+        composed: Plot = _plot(left, right, layout=layout)
+        return composed
 
     @_mutates
     @panel_scoped(writes_theme=True)
@@ -2552,13 +2638,17 @@ class Plot:
 
     @_mutates
     @figure_scoped
-    def clock(self, show: bool = True, *, fmt: str | None = None) -> Plot:
+    def clock(self, show: bool | str = True, *, fmt: str | None = None) -> Plot:
         """Show (or hide) a live time readout that updates each frame.
 
         Parameters
         ----------
-        show : bool, optional
-            Whether to draw the clock.  Default ``True``.
+        show : bool or str, optional
+            Whether to draw the clock.  **A string is read as ``fmt``** —
+            ``p.clock("t = {t:.1f}")`` is the spelling the docs and the contract
+            print, and it used to bind the format string to this boolean and
+            throw it away in silence (three different formats produced
+            byte-identical movies).
         fmt : str, optional
             Label format.  The available fields are ``{t}`` (the current time)
             and ``{i}`` (the frame index) — e.g. ``"t = {t:.2f}"``.  A bare
@@ -2579,6 +2669,15 @@ class Plot:
         tsdynamics.errors.InvalidParameterError
             If ``fmt`` is not a format string over ``{t}`` / ``{i}``.
         """
+        if isinstance(show, str):
+            from tsdynamics.errors import InvalidParameterError
+
+            if fmt is not None:
+                raise InvalidParameterError(
+                    "clock() was given a format twice — positionally and as fmt=. "
+                    'Pass it once: p.clock("t = {t:.1f}").'
+                )
+            fmt, show = show, True
         a = self._ensure_animation()
         a.clock = bool(show)
         if fmt is not None:
@@ -2921,6 +3020,22 @@ class Plot:
             w, h = size
             scale = float(dpi) if dpi else 100.0
             backend_kw["figsize"] = (float(w) / scale, float(h) / scale)
+        if (
+            backend in (None, "matplotlib", "mpl")
+            and not backend_kw
+            and self._figure_cache is not None
+            and not self.is_animated
+        ):
+            # Reuse the figure the caller may already be holding.  ``save`` used
+            # to call ``render`` unconditionally, so a hand edit made through
+            # ``p.ax`` / ``p.fig`` was silently absent from ``p.save(...)`` while
+            # ``p.fig.savefig(...)`` kept it — two different pictures from one
+            # object, no warning.
+            figure = self._figure_cache[0]
+            savefig = getattr(figure, "savefig", None)
+            if callable(savefig):
+                savefig(path, **({"dpi": float(dpi)} if dpi is not None else {}))
+                return
         result = self.render(backend, **backend_kw)
         # A matplotlib animation (FuncAnimation - uniquely carries ``to_jshtml``)
         # writes mp4 / gif via its own ``.save`` (writer inferred from the extension).

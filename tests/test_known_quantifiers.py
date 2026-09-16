@@ -287,8 +287,8 @@ def test_system_quantifiers_agree_chaotic_above_regular():
     assert gali_c < gali_r
 
     # The 0--1 test on the first component: K ≈ 1 (chaotic) vs K ≈ 0 (regular).
-    k_c = float(ts.analysis.zero_one_test(chaotic, n=3000, ic=_CHAOTIC_IC, component=0, seed=0))
-    k_r = float(ts.analysis.zero_one_test(regular, n=3000, ic=_REGULAR_IC, component=0, seed=0))
+    k_c = float(ts.analysis.zero_one_test(chaotic, n=3000, ic=_CHAOTIC_IC, components=0, seed=0))
+    k_r = float(ts.analysis.zero_one_test(regular, n=3000, ic=_REGULAR_IC, components=0, seed=0))
     assert k_c - k_r > 0.5
 
     # A fractal attractor (D2 ≈ 1.22 for Hénon) vs a smooth invariant curve (≈ 1).

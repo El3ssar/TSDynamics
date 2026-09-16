@@ -451,7 +451,7 @@ class TestEstimatePeriod:
 
     def test_components_selects_a_column_not_a_row(self) -> None:
         """The v6 axis fix.  ``data[component]`` on a Trajectory selects a *state*
-        (one row), so ``estimate_period(traj, component=0)`` measured a signal of
+        (one row), so ``estimate_period(traj, components=0)`` measured a signal of
         length ``dim``: on a 2-component system it raised "needs at least 8
         samples", and on a 10-component one it silently returned 0.0304 where the
         truth is 1.5789 — a factor of 52, with no exception."""
@@ -465,10 +465,13 @@ class TestEstimatePeriod:
             estimate_period(traj, components=7)
 
     def test_the_old_singular_keyword_is_gone(self) -> None:
+        """M38 — ``components=`` is the ONE spelling; the singular raises."""
         t = np.linspace(0.0, 40.0, 4001)
         traj = Trajectory(t, np.column_stack([np.sin(t), np.cos(t)]), None)
         with pytest.raises(TypeError, match="component"):
             estimate_period(traj, component=0)
+        # ...and the plural is what works.
+        assert estimate_period(traj, components=0) > 0
 
     def test_trajectory_component_autopick(self) -> None:
         t = np.linspace(0, 20 * np.pi, 6000)

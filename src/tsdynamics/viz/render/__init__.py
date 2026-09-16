@@ -247,7 +247,7 @@ def select_renderer(spec: PlotSpec, backend: str | None = None) -> tuple[str, An
         backend = _normalize_backend_name(backend)
         try:
             renderer = renderers.get(backend)
-        except KeyError:
+        except (KeyError, LookupError, ValueError):
             # The registry's own ``KeyError`` names the bad value but not the
             # choices, so ``render("seaborn")`` told the caller nothing they
             # could act on — and ``KeyError.__str__`` is ``repr(arg)``, so a

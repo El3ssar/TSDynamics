@@ -259,14 +259,14 @@ def cao_dimension(
     max_dim: int = 10,
     threshold: float = 0.9,
     theiler: int = 0,
-    component: int | str | None = None,
+    components: int | str | None = None,
 ) -> EmbeddingDimension:
     r"""Cao's averaged-false-neighbour minimum embedding dimension.
 
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     delay : int, default 1
         Embedding delay :math:`\tau` in samples (use
         :func:`~tsdynamics.analysis.embedding.delay.optimal_delay`).
@@ -278,7 +278,7 @@ def cao_dimension(
     theiler : int, default 0
         Exclude temporally-close neighbours with :math:`|i-j| \le w`.  Set a few
         autocorrelation times for densely sampled flows.
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
 
     Returns
@@ -321,7 +321,7 @@ def cao_dimension(
     >>> int(cao_dimension(x, delay=10, max_dim=8)) >= 2
     True
     """
-    x = _as_series(data, component=component, analysis="cao_dimension")
+    x = _as_series(data, component=components, analysis="cao_dimension")
     tau, max_dim = int(delay), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
@@ -375,7 +375,7 @@ def false_nearest_neighbors(
     atol: float = 2.0,
     threshold: float = 0.01,
     theiler: int = 0,
-    component: int | str | None = None,
+    components: int | str | None = None,
 ) -> EmbeddingDimension:
     r"""Kennel's false-nearest-neighbour minimum embedding dimension.
 
@@ -389,7 +389,7 @@ def false_nearest_neighbors(
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     delay : int, default 1
         Embedding delay :math:`\tau` in samples.
     max_dim : int, default 10
@@ -403,7 +403,7 @@ def false_nearest_neighbors(
         ``<= threshold``.
     theiler : int, default 0
         Exclude temporally-close neighbours with :math:`|i-j| \le w`.
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
 
     Returns
@@ -434,7 +434,7 @@ def false_nearest_neighbors(
     >>> int(false_nearest_neighbors(x, delay=10, max_dim=8)) >= 2
     True
     """
-    x = _as_series(data, component=component, analysis="false_nearest_neighbors")
+    x = _as_series(data, component=components, analysis="false_nearest_neighbors")
     tau, max_dim = int(delay), int(max_dim)
     if tau < 1:
         raise ValueError("delay must be >= 1.")
@@ -485,7 +485,7 @@ def embedding_dimension(
     method: str = "cao",
     delay: int = 1,
     max_dim: int = 10,
-    component: int | str | None = None,
+    components: int | str | None = None,
     **kwargs: Any,
 ) -> EmbeddingDimension:
     """Estimate the minimum embedding dimension by the chosen method.
@@ -493,14 +493,14 @@ def embedding_dimension(
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     method : {"cao", "fnn"}, default "cao"
         ``"cao"`` → :func:`cao_dimension`; ``"fnn"`` → :func:`false_nearest_neighbors`.
     delay : int, default 1
         Embedding delay in samples.
     max_dim : int, default 10
         Largest dimension evaluated.
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
     **kwargs
         Forwarded to the selected estimator (``threshold``, ``theiler``,
@@ -525,10 +525,10 @@ def embedding_dimension(
     reject_system(data, analysis="embedding_dimension")
     method = method.lower()
     if method == "cao":
-        return cao_dimension(data, delay=delay, max_dim=max_dim, component=component, **kwargs)
+        return cao_dimension(data, delay=delay, max_dim=max_dim, components=components, **kwargs)
     if method == "fnn":
         return false_nearest_neighbors(
-            data, delay=delay, max_dim=max_dim, component=component, **kwargs
+            data, delay=delay, max_dim=max_dim, components=components, **kwargs
         )
     raise ValueError(f"unknown method {method!r}; use 'cao' or 'fnn'.")
 

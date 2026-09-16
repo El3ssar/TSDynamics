@@ -89,7 +89,7 @@ def poincare_section(
         and is not a section; it is skipped for that reason.  See
         :func:`tsdynamics.derived.poincare.auto_plane` for the rule and why it is
         that one.  The choice is recorded in ``result.meta["plane"]`` with
-        ``meta["plane_auto"] = True`` and shown by ``result.summary()``; name a
+        ``meta["plane_auto"] = True`` and printed by the section's repr; name a
         plane whenever you have one.  In **data** mode (a ``Trajectory`` in) the
         same rule applies, read off the data itself.
     direction : {+1, -1, 0} or {"up", "down", "both"}, default +1
@@ -120,7 +120,7 @@ def poincare_section(
     PoincareSection
         A :class:`~tsdynamics.data.Trajectory` of the crossings (``t`` = crossing
         times, ``y`` = full-dimensional crossing states) carrying
-        ``POINCARE_SECTION`` plot intent and a ``.summary()`` / ``.to_dict()`` /
+        ``POINCARE_SECTION`` plot intent and a repr / ``.to_dict()`` /
         ``.plot`` result surface.
 
     Examples

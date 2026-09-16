@@ -149,6 +149,10 @@ class DiscreteMap(SystemBase, ABC):
         parameter values (this bit the Circle map once), so it is promoted
         to an import-time ``TypeError``.
         """
+        # Adopt a kernel written as an ordinary method *first*, so the signature
+        # this validates is the corrected one (a stray ``self`` would otherwise
+        # be reported as a parameter-order mismatch).
+        cls._adopt_class_called_kernels()
         # Validate BEFORE super().__init_subclass__ so a failing class is
         # never registered in the system registry.
         declared = list(getattr(cls, "params", {}))

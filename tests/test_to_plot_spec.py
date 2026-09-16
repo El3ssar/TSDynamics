@@ -66,7 +66,7 @@ def _result_builders() -> dict[str, object]:
         "RecurrenceMatrix": rm,
         "RQAResult": ts.analysis.rqa(rm),
         "GALIResult": ts.analysis.gali(ts.systems.Lorenz(), k=2, final_time=20.0, dt=0.05),
-        "ReturnMap": ts.analysis.return_map(traj, component=2, method="max"),
+        "ReturnMap": ts.analysis.return_map(traj, components=2, method="max"),
         "LyapunovFromData": ts.analysis.lyapunov_from_data(lyap_series, dt=0.02),
         "BasinsResult": _synthetic_basins(),
     }
@@ -345,7 +345,7 @@ def test_plot_refuses_a_renderer_keyword_and_names_render():
 
 def test_system_to_plot_spec_splits_plot_and_integration_kwargs():
     """A system splits plot kwargs (components) from integration kwargs (final_time/dt)."""
-    spec = ts.systems.Lorenz().to_plot_spec(components="x", final_time=10.0, dt=0.05)
+    spec = ts.systems.Lorenz().__plot_spec__(components="x", final_time=10.0, dt=0.05)
     assert spec.kind == PlotKind.TIME_SERIES
     assert spec.y.label == "x"
 
@@ -493,15 +493,15 @@ def test_color_by_invalid_inputs_raise():
 def test_poincare_short_circuit_is_overridden_by_components_or_kind():
     section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=80)
     # Default view honours the section intent…
-    assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
+    assert section.__plot_spec__().kind == PlotKind.POINCARE_SECTION
     # …but selecting components or forcing a kind opts out of the short-circuit.
-    assert section.to_plot_spec(components=["x", "z"]).kind == PlotKind.PHASE_PORTRAIT_2D
-    assert section.to_plot_spec(kind="time_series").kind == PlotKind.TIME_SERIES
+    assert section.__plot_spec__(components=["x", "z"]).kind == PlotKind.PHASE_PORTRAIT_2D
+    assert section.__plot_spec__(kind="time_series").kind == PlotKind.TIME_SERIES
 
 
 def test_system_plot_forwards_delay_recipe():
     """A system's plot()/to_plot_spec route the delay recipe + delay_time through the split."""
-    spec = ts.systems.Lorenz().to_plot_spec(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
+    spec = ts.systems.Lorenz().__plot_spec__(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
     assert spec.kind == PlotKind.PHASE_PORTRAIT_2D
 
     via_plot = ts.systems.Lorenz().plot(kind="delay", delay_time=0.5, final_time=10.0, dt=0.05)
@@ -535,7 +535,7 @@ def test_trajectory_render_raises_without_backend(monkeypatch):
 def test_poincare_section_carries_intent_from_system():
     section = ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=80)
     assert section.meta.get("plot_kind") == "poincare_section"
-    spec = section.to_plot_spec()
+    spec = section.__plot_spec__()
     assert spec.kind == PlotKind.POINCARE_SECTION
     assert spec.ndim == 2
     assert spec.aspect == "equal"
@@ -547,14 +547,14 @@ def test_poincare_map_trajectory_carries_intent():
     pmap = ts.derived.PoincareMap(ts.systems.Rossler(), plane=(1, 0.0))
     section = pmap.run(80)
     assert section.meta.get("plot_kind") == "poincare_section"
-    assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
+    assert section.__plot_spec__().kind == PlotKind.POINCARE_SECTION
 
 
 def test_poincare_section_from_data_carries_intent():
     traj = ts.systems.Rossler().run(final_time=80.0, dt=0.02)
     section = ts.analysis.poincare_section(traj, plane=(1, 0.0))
     assert section.meta.get("plot_kind") == "poincare_section"
-    assert section.to_plot_spec().kind == PlotKind.POINCARE_SECTION
+    assert section.__plot_spec__().kind == PlotKind.POINCARE_SECTION
 
 
 def test_poincare_section_drops_the_normal_coordinate():
@@ -620,7 +620,7 @@ def test_result_kind_override(built_results):
 
 def test_dimension_spec_carries_the_loglog_curve(built_results):
     res = built_results["DimensionResult"]
-    spec = res.to_plot_spec()
+    spec = res.__plot_spec__()
     scatter = spec.layers[0]
     np.testing.assert_allclose(scatter.data["x"], np.asarray(res.x, dtype=float))
     np.testing.assert_allclose(scatter.data["y"], np.asarray(res.y, dtype=float))
@@ -632,7 +632,7 @@ def test_recurrence_spec_is_a_sparse_recurrence_plot(built_results):
     # GAPFILL-F: the recurrence plot is a SPARSE (i, j) scatter of the recurrent
     # pairs — it is NEVER densified to an (N, N) image (anti-OOM at large N).
     res = built_results["RecurrenceMatrix"]
-    spec = res.to_plot_spec()
+    spec = res.__plot_spec__()
     assert spec.kind == PlotKind.RECURRENCE_PLOT
     assert spec.aspect == "equal"
     layer = spec.layers[0]
@@ -682,11 +682,11 @@ def test_building_specs_imports_no_plot_library():
         "lyap = ts.systems.Lorenz().run(final_time=120.0, dt=0.02).after(20.0).y[:, 0];"
         "traj.to_plot_spec(); traj.to_plot_spec(kind='time_series');"
         "ts.analysis.poincare_section(ts.systems.Rossler(), plane=(1, 0.0), crossings=40).to_plot_spec();"
-        "rm = ts.analysis.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.to_plot_spec();"
+        "rm = ts.analysis.recurrence_matrix(traj.y[:150], recurrence_rate=0.05); rm.__plot_spec__();"
         "ts.analysis.rqa(rm).to_plot_spec();"
         "ts.analysis.correlation_dimension(traj).to_plot_spec();"
         "ts.analysis.gali(ts.systems.Lorenz(), k=2, final_time=15.0, dt=0.05).to_plot_spec();"
-        "ts.analysis.return_map(traj, component=2, method='max').to_plot_spec();"
+        "ts.analysis.return_map(traj, components=2, method='max').to_plot_spec();"
         "ts.analysis.lyapunov_from_data(lyap, dt=0.02).to_plot_spec();"
         "a = AttractorSet({1: Attractor(1, np.array([[0.0, 0.0]]), 1)}, 0, 1);"
         "BasinsResult(np.ones((4, 4), int), Grid([-1, -1], [1, 1], (4, 4)), a).to_plot_spec();"

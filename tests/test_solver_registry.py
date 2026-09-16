@@ -44,11 +44,13 @@ def test_import_is_clean():
         "tsdynamics.systems",
         "tsdynamics.solvers",
         "tsdynamics.analyses",
-        "tsdynamics.viz.renderers",
+        "tsdynamics.renderers",
         # v6: out-of-tree plot transforms (see tsdynamics.viz.transforms).
         # Deliberately not "tsdynamics.viz.transforms" — that word belongs to the
         # generic time-series layer the scope surgery removed.
         "tsdynamics.plot_transforms",
+        # v6: out-of-tree primitives (how geometry is drawn) — see §6.9.
+        "tsdynamics.plot_primitives",
     )
 
 

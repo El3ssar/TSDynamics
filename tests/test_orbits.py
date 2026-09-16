@@ -329,7 +329,7 @@ def test_periods_on_flow_bifurcation_diagram() -> None:
             ts.systems.Rossler(ic=[1.0, 1.0, 0.0]), plane=(0, 0.0), dt=0.03
         )
         od = ts.analysis.orbit_diagram(
-            pmap, "c", [c], points_per_value=80, transient=100, component=1, ic=[3.0, 3.0, 0.0]
+            pmap, "c", [c], points_per_value=80, transient=100, components=1, ic=[3.0, 3.0, 0.0]
         )
         found[c] = int(od.periods()[0])
     assert found[2.6] == 1  # period-1 limit cycle
@@ -386,7 +386,7 @@ class TestBifurcationDiagramOfAFlow:
             [28.0],
             points_per_value=20,
             transient=30,
-            component="z",
+            components="z",
         )
         assert od.meta["section"] == "successive maxima of z"
         assert od.meta["section_auto"] is True
@@ -524,17 +524,17 @@ class TestFlowColumnsAreNeverSilentlyEmpty:
         assert column.shape == (0, 1)
         message = str(record[0].message)
         assert "section=('z', 27.0, 'up')" in message
-        assert "component=1" in message
+        assert "components=1" in message
 
     def test_a_scalar_flow_is_not_told_to_type_a_component_it_does_not_have(self) -> None:
-        """A 1-D DDE has no second component; suggesting ``component=1`` would be a lie."""
+        """A 1-D DDE has no second component; suggesting ``components=1`` would be a lie."""
         from tsdynamics.analysis.orbits.orbit_diagram import _short_column
 
         with pytest.warns(RuntimeWarning) as record:
             _short_column(np.empty((0, 1)), transient=5, n=5, idx=[0], max_time=1e4, dim=1)
         message = str(record[0].message)
         assert "section=" in message
-        assert "component=" not in message
+        assert "components=" not in message
 
     def test_a_slow_flow_sweep_returns_points_rather_than_a_blank_picture(self) -> None:
         """End to end: a flow whose peaks are expensive still yields a drawable diagram."""

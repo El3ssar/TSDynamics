@@ -239,16 +239,32 @@ class SystemInfo:
         )
 
     def _analysis_count(self) -> int | None:
-        """How many registered analyses take a subject of this family."""
-        try:
-            from tsdynamics import registry
+        """How many registered analyses take a subject of **this** family.
 
-            records = registry.analyses.all()
+        The body used to be ``len(records)`` — the whole registry — so the first
+        number a newcomer sees about analyses said ``50`` on a Hénon whose
+        ``ts.analysis.find(henon)`` returns 14.  A record card that contradicts
+        the call it recommends teaches the wrong thing twice.
+        """
+        try:
+            from tsdynamics.analysis import _discovery
+
+            token = "map" if self.family == "map" else "flow"
+            count = _discovery.find_count(token)
         except Exception:  # pragma: no cover - defensive
             return None
-        if not records:
-            return None
-        return len(records)
+        return count or None
+
+    def __call__(self) -> SystemInfo:
+        """Return ``self``, so ``system.info()`` works as well as ``system.info``.
+
+        ``info`` reads as a verb among eighteen verbs, so ``lor.info()`` is the
+        first thing a newcomer types — and ``TypeError: 'SystemInfo' object is
+        not callable`` neither says *drop the parentheses* nor shows the record
+        they were after.  This is not a second spelling of a concept: it is the
+        same object either way.
+        """
+        return self
 
     def __repr__(self) -> str:
         word = self._FAMILY_WORD.get(self.family, self.family)

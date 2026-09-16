@@ -2156,7 +2156,7 @@ def lower_ode(system: Any, *, with_jacobian: bool = False) -> Tape:
     --------
     >>> import tsdynamics as ts
     >>> from tsdynamics.engine.compile import lower_ode, eval_tape
-    >>> tape = lower_ode(ts.Lorenz())
+    >>> tape = lower_ode(ts.systems.Lorenz())
     >>> tape.dim
     3
     """

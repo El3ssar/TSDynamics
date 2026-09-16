@@ -127,7 +127,13 @@ tests/_sampling.py             # curated slow-tier sample + DDE histories + excl
 
 Built-in system classes live under `tsdynamics.systems` — the canonical path is
 `tsdynamics.systems.<Name>` (e.g. `tsdynamics.systems.Lorenz`, flat across
-`continuous`/`discrete`). `systems/__init__.py` flat-re-exports every catalogue
+`continuous`/`discrete`). **`ts.systems` is a registry like the others since v6:
+`names()` / `find()` / `get()` sit beside the 177 classes** (`__all__` is
+**180**), so the one namespace with 177 members is the one you can search —
+`ts.systems.find("delay")`, `ts.systems.find(family="dde")`,
+`ts.systems.get("Lorenz")()`. The two category subpackages stay importable and
+are off the listing; a wrong guess is an `AttributeError` naming the nearest
+catalogue entries and `find`. `systems/__init__.py` flat-re-exports every catalogue
 class automatically (driven by each category module's `__all__`), so a new system
 needs no manual edit there. **Since v6 `ts.Lorenz` no longer resolves** — see C5
 and the redirect ladder below; the `MovedInV6` it raises names
@@ -333,7 +339,8 @@ deleted entropy package.
 
 Reachable but not top-level: `SystemBase`, `ParamSet`, `MetaStore`, `System`
 (protocol) via `tsdynamics.families`.
-`errors` is bound eagerly and **is** in `__all__`; `engine`, `solvers`, `data`,
+`errors` is bound eagerly and is **not** in `__all__` (the six exception classes
+are exported directly — see above); `engine`, `solvers`, `data`,
 `derived`, `families`, `registry` and `utils` are all **reachable** as
 `ts.<name>` but are deliberately **not** in `__all__` (`engine`/`solvers` are
 flagged internal in their docstrings). The `viz` package
@@ -524,18 +531,20 @@ import Trajectory` are the same object.
 - Named components when the class declares `variables`: `traj["x"]`,
   `traj[["x","z"]]`, `traj.component("x")`.
 - Point-set ops: `minmax()`, `standardize()`, `neighbors(q, k)` (lazy KD-tree).
-- **Topical accessors for the data-consuming analyses** — `traj.dims`,
-  `traj.recurrence`, `traj.lyap` are the *same* cached accessor classes a system
-  carries (`families/_accessors.py`), bound to the trajectory: `traj.dims.correlation()`,
-  `traj.recurrence.rqa()`, `traj.lyap.from_data()`. These analyses take a measured
-  point set, and a `Trajectory` is what a user holding one actually has — the
-  accessors used to exist only on `SystemBase`, i.e. only on the object half of
-  them refuse. The routing seam is `_accessors.is_drivable(subject)`: bound to a
-  trajectory there is nothing to run, so a **`system`-first** method
-  (`lyap.spectrum` / `lyap.maximal`) raises `InvalidParameterError` naming the
-  system-bound spelling, and `run_kwargs=` is refused rather than ignored.
-  `Trajectory` has `__slots__`, so the cache is an explicit `_accessor_cache`
-  slot reset in `__setstate__` (it is not pickled).
+- **No topical accessors** — `traj.dims` / `traj.recurrence` / `traj.lyap` and
+  `families/_accessors.py` are **gone** (ruling A2): an analysis is a free
+  function whose first argument is its subject, so it is
+  `ts.analysis.correlation_dimension(traj)` / `ts.analysis.rqa(traj)` /
+  `ts.analysis.lyapunov_from_data(traj)`. A guess at a removed accessor is
+  answered by name, and the answer names the **data-first** free function (the
+  table is `data/trajectory.py::_DELETED_TRAJECTORY_ACCESSORS`) — a remedy line
+  a library hands back must RESOLVE *and run for the subject that was held*.
+- **`subject.plot` is a callable NAMESPACE** (`utils/plot_namespace.py`, bound on
+  both `Trajectory` and `SystemBase`): `traj.plot()` is the verb it always was,
+  and `traj.plot.<TAB>` lists every transform that admits **this** subject, so
+  `traj.plot.psd()` == `ts.plot(traj, "psd")`. It is the discovery route ruling
+  A2 promised in exchange for taking the analyses off the object — a
+  module-level registry cannot be tab-completed from the thing in your hand.
 - `meta` carries provenance (system, params, solver, dt, tolerances, ic,
   version); preserved through slicing/`after()`.
 - **Plotting front door — `to_plot_spec(kind=None, *, components=None, **kind_kw)`:**
@@ -1021,7 +1030,20 @@ generator. Guessing a removed name is answered by
 - **Four keyword renames a user types** (C3 — one concept, one spelling):
   `return_map(method=)` → `kind=` (`method=` is the *estimator* word, `kind=`
   picks `"max"`/`"min"`/`"poincare"`); `estimate_period(component=)` →
-  `components=`; `zero_one_test` **gains** `components=0`; and the scaling-window
+  `components=`; `zero_one_test` **gains** `components=0`; **and since v6 round 4
+  every other door agrees** — the nine analysis doors that still said
+  `component=` (`autocorrelation` `cao_dimension` `embed` `embedding_dimension`
+  `false_nearest_neighbors` `mutual_information` `optimal_delay` `orbit_diagram`
+  `return_map`) and all sixteen plot transforms that did (`psd`, `cobweb`,
+  `hilbert*`, `spatial_field`, `ensemble_fan`, …) were renamed together, so a
+  user meets ONE word at every door; the singular raises, naming the plural, and
+  private helpers (`_as_series(component=)`, `_component_index`) keep their own
+  name because they are not a door.  Gates:
+  `tests/test_api_contract.py::COMPONENT_SINGULAR_DOORS` and
+  `tests/test_polish_standards.py::_NAMEGATE_DEFERRED_PARAM`, both now **empty**
+  frozensets asserted by set equality, so a new singular door fails the build.
+  `ftle_field(time=)` likewise became **`final_time=`** (M49), the word its two
+  promoted siblings and `run` already spoke.  And the scaling-window
   factor on every dimension estimator, `tol=` → **`flatness=`** — it is how flat
   the fitted log–log window has to be, one letter from the `rtol`/`atol` the same
   estimators take and unrelated to both. Six doors carry it
@@ -1185,8 +1207,9 @@ subpackages).
   - **DDEs**: raise — their tangent space is the infinite-dimensional history
     space; use `DelaySystem.lyapunov_spectrum` (NOT routed through
     `TangentSystem`), the engine estimator described below.
-  `TangentSystem.lyapunov_spectrum(...)` wraps the streaming `step()`/
-  `exponents()` API into the standard burn-in + time-weighted estimate.
+  The streaming `step()` / `exponents()` API is wrapped into the standard
+  burn-in + time-weighted estimate by `ts.analysis.lyapunov_spectrum` — analyses
+  are free functions (A2), so there is no `TangentSystem.lyapunov_spectrum`.
 - **`DelaySystem.lyapunov_spectrum(backend="interp"/"jit")`** (E-DDE-LYAP) is the
   engine DDE Lyapunov estimator (`families/_dde_lyapunov.py`), the
   infinite-dimensional-history analogue of the ODE variational core: it builds
@@ -2443,6 +2466,9 @@ Two layers now cover them:
 | Adding a new `rtol=`/`atol=` default | Don't write a literal — name a constant in `utils/tolerances.py`. A gate (`test_polish_standards.py::test_no_bare_tolerance_literal_in_the_library`) fails on a bare literal in any signature, call keyword or `self._rtol =` assignment. |
 | "My results got less accurate in v6" | `dt` is now **sampling only** — it no longer secretly bounds the internal step (see "Dense output and `max_step`"). The default `rtol`/`atol` tightened to `1e-9`/`1e-12` to compensate, so a plain `.run()` is *more* accurate than pre-v6, not less. If you pinned `rtol=1e-6` explicitly you kept the old accuracy on a coarser step — tighten it; or pass `max_step=dt` to reproduce the old step regime; or set `TSDYNAMICS_NO_DENSE_OUTPUT=1` to reproduce pre-v6 numbers exactly. |
 | An adaptive kernel strides over a narrow feature | Pass `max_step=`. (A step *size* — `max_steps` is a step *count*.) |
+| A repr shows `PoincareSection(crossings=…)` / an `OrbitSet` says "period 6" | Fixed in v6: **every** result's repr IS the answer (§4.3) — the section prints `PoincareSection  300 crossings of y = 0 up   ·  3-D states   (Rossler)` and a *flow's* period renders as the real number `T = 6.66329` (a map's stays an integer count). `summary()` exists on nothing. |
+| `ts.plot(traj, "psd", components="x")` used to raise | `components=` is the ONE spelling at every analysis and every transform door since v6 (M38). |
+| `system.to_plot_spec(...)` | The plotting seam is the dunder `__plot_spec__` — carried by systems, `Trajectory` and all 32 results, so `ts.plot` classifies a subject with ONE predicate. The verb you type is `plot`. |
 | `set_state` on a DDE | **Does not exist** (v6) — the state is a history function; use `reinit(u)` for a constant past or `run(history=...)`. |
 | `ts.Lorenz` / `ts.correlation_dimension` / `ts.Box` stopped resolving | Deliberate (C5). The top level is 17 names; everything else lives at one address, and the `MovedInV6` prints it: `ts.systems.Lorenz()` / `ts.analysis.correlation_dimension` / `ts.data.Box`. |
 | Removing or renaming a public name | Add its row to `src/tsdynamics/_redirects.py` **in the same commit**, sorted by key. The table is the migration guide; a removed name with no row gets the generic near-miss answer. |

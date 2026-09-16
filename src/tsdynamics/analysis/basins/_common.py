@@ -62,11 +62,28 @@ class _CellGrid:
         self.hi = np.asarray(hi, dtype=float)
         self.counts = tuple(int(c) for c in counts)
         if not (self.lo.size == self.hi.size == len(self.counts)):
-            raise ValueError("CellGrid lo, hi, and counts must agree in length")
+            raise InvalidInputError("CellGrid lo, hi, and counts must agree in length")
         if any(c < 1 for c in self.counts):
-            raise ValueError("CellGrid counts must be >= 1")
+            raise InvalidInputError("CellGrid counts must be >= 1")
         if np.any(self.hi <= self.lo):
-            raise ValueError("CellGrid requires hi > lo componentwise")
+            # ``CellGrid`` is private and the caller has never typed it, so name
+            # the AXIS and the argument they did type.  A pinned slice axis is the
+            # common cause: the *seed* region may pin one (n == 1), but the
+            # ``recurrence=`` box a trajectory must stay inside cannot be flat.
+            flat = [i for i in range(self.lo.size) if self.hi[i] <= self.lo[i]]
+            axes = ", ".join(str(i) for i in flat)
+            raise InvalidInputError(
+                f"the recurrence box is flat on axis {axes}: "
+                f"lo={self.lo[flat].tolist()} hi={self.hi[flat].tolist()}. "
+                "A trajectory has to live INSIDE this box, so every axis needs "
+                "real width — it is the seed region, not this one, that pins a "
+                "slice axis with a count of 1."
+                + remedy(
+                    "res = basins(system, [(-2.0, 2.0, 60), (-2.0, 2.0, 60), (0.0, 0.0, 1)],",
+                    "             recurrence=[(-3.0, 3.0), (-3.0, 3.0), (-1.0, 1.0)])",
+                    lead="Give the free axis width in recurrence=:",
+                )
+            )
         self.dim = self.lo.size
         self._n = np.asarray(self.counts, dtype=np.int64)
         self.delta = (self.hi - self.lo) / self._n

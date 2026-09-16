@@ -378,13 +378,13 @@ def test_ensemble_rejects_unknown_method_like_integrate() -> None:
     """An unknown/v2-only ``method`` is rejected before any per-trajectory work."""
     ics = np.array([[1.0, 1.0, 1.0]])
     with pytest.raises(ValueError, match="unknown solver method"):
-        run.ensemble(ts.systems.Lorenz(), ics, final_time=1.0, solver="LSODA", backend="reference")
+        run.ensemble(ts.systems.Lorenz(), ics, final_time=1.0, method="LSODA", backend="reference")
 
 
 def test_reference_ensemble_runs_in_python() -> None:
     """The reference ensemble loops the pure-Python integrator (no engine needed)."""
     lor = ts.systems.Lorenz()
     ics = np.array([[1.0, 1.0, 1.0], [0.5, 0.5, 0.5]])
-    out = run.ensemble(lor, ics, final_time=1.0, backend="reference", solver="DOP853")
+    out = run.ensemble(lor, ics, final_time=1.0, backend="reference", method="DOP853")
     assert out.shape == (2, 3)
     assert np.all(np.isfinite(out))

@@ -37,16 +37,16 @@ import tsdynamics as ts
 
 lorenz = ts.systems.Lorenz().run(final_time=200.0, dt=0.01, ic=[1, 1, 1])
 
-ts.plot(lorenz, "hilbert", component="x").show()
+ts.plot(lorenz, "hilbert", components="x").show()
 ```
 
 That is 20,001 samples on a 142 × 142 grid. Everything else is a keyword:
 
 ```python
-ts.plot(lorenz, "hilbert", component="x", curve="Moore")        # another of the 40 curves
-ts.plot(lorenz, "hilbert", component="x", granularity=16)       # coarsen first
-ts.plot(lorenz, "hilbert", component="x", fit="truncate")       # drop the tail, no padding
-ts.plot(lorenz, "hilbert", component="x", primitive="surface3d")  # the image as a relief
+ts.plot(lorenz, "hilbert", components="x", curve="Moore")        # another of the 40 curves
+ts.plot(lorenz, "hilbert", components="x", granularity=16)       # coarsen first
+ts.plot(lorenz, "hilbert", components="x", fit="truncate")       # drop the tail, no padding
+ts.plot(lorenz, "hilbert", components="x", primitive="surface3d")  # the image as a relief
 ```
 
 The subject can be a **`Trajectory`**, a **bare array**, or a **system** (which
@@ -60,7 +60,7 @@ windowed = ts.analysis.windowed_rqa(lorenz.y[::20], window=200, step=4, recurren
 ts.plot(windowed.determinism, "hilbert")
 
 # an inter-event series: the successive return times to a level set
-returns = ts.viz.geometry(lorenz, "return_time", component="z").meta["return_times"]
+returns = ts.viz.geometry(lorenz, "return_time", components="z").meta["return_times"]
 ts.plot(returns, "hilbert")
 
 # a symbolic sequence, encoded as integers
@@ -89,7 +89,7 @@ four [backends](backends.md).
 **Without the extra**, asking for a Hilbert curve raises and names it:
 
 ```pycon
->>> ts.plot(lorenz, "hilbert", component="x")
+>>> ts.plot(lorenz, "hilbert", components="x")
 VisualizationNotInstalled: curve='Hilbert' is one of the forty Hilbert-type curves,
 which come from the optional 'hilbertplot' package: install it with
 `pip install tsdynamics[hilbert]` (or `pip install hilbertplot`).
@@ -135,7 +135,7 @@ Padding cells are `NaN`, which every backend renders transparent, and their coun
 is reported:
 
 ```pycon
->>> ts.viz.geometry(lorenz, "hilbert", component="x", curve="Moore").meta["n_padding_cells"]
+>>> ts.viz.geometry(lorenz, "hilbert", components="x", curve="Moore").meta["n_padding_cells"]
 45535
 ```
 
@@ -154,7 +154,7 @@ length — so the grid, and the meaning of every pixel, is **unchanged** — and
 the sample-scale variation is flattened, leaving the long-range texture:
 
 ```python
-ts.plot(lorenz, "hilbert", component="x", granularity=16)
+ts.plot(lorenz, "hilbert", components="x", granularity=16)
 ```
 
 ---
@@ -187,8 +187,8 @@ straddles one is an artefact of the layout, not of your data.
 
 ```python
 ts.plot(
-    ts.plot(lorenz, "hilbert_difference", component="x", curve="Hilbert"),
-    ts.plot(lorenz, "hilbert_difference", component="x", curve="rowmajor"),
+    ts.plot(lorenz, "hilbert_difference", components="x", curve="Hilbert"),
+    ts.plot(lorenz, "hilbert_difference", components="x", curve="rowmajor"),
     layout="row",
 ).show()
 ```
@@ -207,7 +207,7 @@ renders and only the annotation lies. So the map comes from public API and is
 checked on every call.
 
 ```python
-index = ts.viz.transforms.hilbert.sample_index_map(lorenz, component="x")
+index = ts.viz.transforms.hilbert.sample_index_map(lorenz, components="x")
 
 t_of_pixel = np.full(index.shape, np.nan)     # same shape as the image
 inside = index < lorenz.t.size                # everything else is padding
@@ -241,8 +241,8 @@ A `hilbert*` spec is an ordinary `Plot` in the `grid2` frame, so everything
 else in the visualization layer applies:
 
 ```python
-image = ts.plot(lorenz, "hilbert", component="x")
-spectrum = ts.plot(lorenz, "hilbert_fourier", component="x")
+image = ts.plot(lorenz, "hilbert", components="x")
+spectrum = ts.plot(lorenz, "hilbert_fourier", components="x")
 
 ts.plot(image, spectrum, layout="row").save("hilbert.pdf")
 image.render("plotly")            # interactive heatmap

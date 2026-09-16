@@ -430,7 +430,7 @@ def _verify_layout(
 def sample_index_map(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     curve: str = "Hilbert",
     granularity: int = 1,
     fit: str | None = None,
@@ -446,7 +446,7 @@ def sample_index_map(
     ``with_sample_index=True``) when you want to annotate a pixel with the time
     it came from::
 
-        idx = ts.viz.transforms.hilbert.sample_index_map(traj, component="x")
+        idx = ts.viz.transforms.hilbert.sample_index_map(traj, components="x")
         t_of_pixel = traj.t[idx]          # same shape as the image
 
     Parameters
@@ -461,7 +461,7 @@ def sample_index_map(
         is padding.
     """
     values, _, _, _ = series_of(
-        subject, component=component, final_time=final_time, dt=dt, steps=steps
+        subject, components=components, final_time=final_time, dt=dt, steps=steps
     )
     _, index, _, _ = _layout(
         np.asarray(values, dtype=float),
@@ -483,7 +483,7 @@ def _hilbert_geometry(
     subject: Any,
     *,
     view: str,
-    component: int | str,
+    components: int | str,
     curve: str,
     granularity: int,
     fit: str | None,
@@ -497,7 +497,7 @@ def _hilbert_geometry(
 ) -> Geometry:
     """Build the geometry shared by the four ``hilbert*`` transforms."""
     values, spacing, meta, title = series_of(
-        subject, component=component, final_time=final_time, dt=dt, steps=steps
+        subject, components=components, final_time=final_time, dt=dt, steps=steps
     )
     values = np.asarray(values, dtype=float)
     field, index, side, resolved = _layout(
@@ -570,7 +570,7 @@ _PRESENTATION = Presentation(aspect="equal", autocolor=True, cmap="viridis")
 def hilbert(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     curve: str = "Hilbert",
     granularity: int = 1,
     fit: str | None = None,
@@ -589,7 +589,7 @@ def hilbert(
         (``windowed_rqa(...).determinism``), an inter-event series
         (``ts.viz.geometry(traj, "return_time").meta["return_times"]``), or a
         symbolic sequence encoded as integers.
-    component : int or str, optional
+    components : int or str, optional
         Which component of a multi-component source.
     curve : str, optional
         A hilbertplot curve name or index (``"Hilbert"``, ``"Moore"``, ``0`` …,
@@ -624,14 +624,14 @@ def hilbert(
 
     Examples
     --------
-    >>> ts.plot(traj, "hilbert", component="x")                    # doctest: +SKIP
+    >>> ts.plot(traj, "hilbert", components="x")                    # doctest: +SKIP
     >>> ts.plot(traj, "hilbert", granularity=16).plot()            # doctest: +SKIP
     """
     return _hilbert_geometry(
         "hilbert",
         subject,
         view="image",
-        component=component,
+        components=components,
         curve=curve,
         granularity=granularity,
         fit=fit,
@@ -661,7 +661,7 @@ def hilbert(
 def hilbert_fourier(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     curve: str = "Hilbert",
     granularity: int = 1,
     fit: str | None = None,
@@ -694,7 +694,7 @@ def hilbert_fourier(
         "hilbert_fourier",
         subject,
         view="fourier",
-        component=component,
+        components=components,
         curve=curve,
         granularity=granularity,
         fit=fit,
@@ -724,7 +724,7 @@ def hilbert_fourier(
 def hilbert_difference(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     curve: str = "Hilbert",
     granularity: int = 1,
     fit: str | None = None,
@@ -757,7 +757,7 @@ def hilbert_difference(
         "hilbert_difference",
         subject,
         view="difference",
-        component=component,
+        components=components,
         curve=curve,
         granularity=granularity,
         fit=fit,
@@ -787,7 +787,7 @@ def hilbert_difference(
 def hilbert_labels(
     subject: Any,
     *,
-    component: int | str = 0,
+    components: int | str = 0,
     curve: str = "Hilbert",
     granularity: int = 1,
     fit: str | None = None,
@@ -816,7 +816,7 @@ def hilbert_labels(
         "hilbert_labels",
         subject,
         view="labels",
-        component=component,
+        components=components,
         curve=curve,
         granularity=granularity,
         fit=fit,

@@ -157,15 +157,17 @@ def test_ensemble_row_is_independent_of_batch_size_and_order():
     """
     sys = _CovMixed2D()
     base = np.array([[0.0, 1.0], [0.2, 1.1], [-0.3, 0.9]])
-    small = sys.ensemble(base, final_time=0.8, dt=0.02, seed=314, backend="reference")
+    small = sys.ensemble(base).run(final_time=0.8, dt=0.02, seed=314, backend="reference").final
     # Pad the batch with extra ICs *before* and ensure the original rows still
     # land identically once re-indexed at the same positions.
     padded_ics = np.vstack([base, base + 0.05, base - 0.05])
-    padded = sys.ensemble(padded_ics, final_time=0.8, dt=0.02, seed=314, backend="reference")
+    padded = (
+        sys.ensemble(padded_ics).run(final_time=0.8, dt=0.02, seed=314, backend="reference").final
+    )
     np.testing.assert_array_equal(small, padded[: base.shape[0]])
 
     # Same base seed ⇒ byte-identical batch on a re-run.
-    again = sys.ensemble(base, final_time=0.8, dt=0.02, seed=314, backend="reference")
+    again = sys.ensemble(base).run(final_time=0.8, dt=0.02, seed=314, backend="reference").final
     np.testing.assert_array_equal(small, again)
 
     # Distinct indices draw distinct streams ⇒ distinct finals (no accidental aliasing).
@@ -183,7 +185,7 @@ def test_ensemble_row_equals_lone_trajectory_seeded_by_index():
     sys = _CovMixed2D()
     ics = np.array([[0.0, 1.0], [0.5, 0.8], [-0.2, 1.3], [0.1, 1.05]])
     base_seed, tf, dt = 9091, 0.6, 0.02
-    batch = sys.ensemble(ics, final_time=tf, dt=dt, seed=base_seed, backend="reference")
+    batch = sys.ensemble(ics).run(final_time=tf, dt=dt, seed=base_seed, backend="reference").final
     for i, ic in enumerate(ics):
         lone = sys.run(
             final_time=tf, dt=dt, ic=ic, seed=_seed_for(base_seed, i), backend="reference"
@@ -269,8 +271,10 @@ def test_diverged_trajectory_becomes_a_nan_row_others_survive():
     the finite row finite — the engine must not abort the whole ensemble.
     """
     sys = _CovExploder()
-    finals = sys.ensemble(
-        np.array([[1.0], [-1.0]]), final_time=3.0, dt=0.01, seed=0, backend="reference"
+    finals = (
+        sys.ensemble(np.array([[1.0], [-1.0]]))
+        .run(final_time=3.0, dt=0.01, seed=0, backend="reference")
+        .final
     )
     assert np.isnan(finals[0, 0])
     assert np.isfinite(finals[1, 0])
@@ -298,7 +302,7 @@ def test_ou_component_sample_mean_and_variance_match_analytic_law():
     n = 12000
 
     ics = np.tile([x0, 1.0], (n, 1)).astype(float)
-    finals = sys.ensemble(ics, final_time=tf, dt=0.01, seed=2718, backend="reference")
+    finals = sys.ensemble(ics).run(final_time=tf, dt=0.01, seed=2718, backend="reference").final
     ou = finals[:, 0]
 
     want_mean = mu + (x0 - mu) * np.exp(-theta * tf)
@@ -321,7 +325,7 @@ def test_gbm_component_sample_mean_matches_analytic_growth():
     a, tf = 0.1, 2.0
     y0, n = 1.0, 12000
     ics = np.tile([0.0, y0], (n, 1)).astype(float)
-    finals = sys.ensemble(ics, final_time=tf, dt=0.01, seed=1618, backend="reference")
+    finals = sys.ensemble(ics).run(final_time=tf, dt=0.01, seed=1618, backend="reference").final
     gbm = finals[:, 1]
     want = y0 * np.exp(a * tf)
     # Lognormal mean → larger MC error; a 5% band is safe at this ensemble size.
@@ -342,7 +346,7 @@ def test_engine_ensemble_reproduces_analytic_ou_moments():
     theta, mu, sigma0 = 1.0, 1.5, 0.4
     x0, tf, n = 0.0, 2.0, 12000
     ics = np.tile([x0, 1.0], (n, 1)).astype(float)
-    finals = sys.ensemble(ics, final_time=tf, dt=0.01, seed=2718, backend="interp")
+    finals = sys.ensemble(ics).run(final_time=tf, dt=0.01, seed=2718, backend="interp").final
     ou = finals[:, 0]
     want_mean = mu + (x0 - mu) * np.exp(-theta * tf)
     want_var = sigma0**2 * (1.0 - np.exp(-2.0 * theta * tf)) / (2.0 * theta)

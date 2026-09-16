@@ -56,7 +56,14 @@ MINE = (
 #: Which matplotlib artist container each primitive fills (the same table
 #: ``tests/test_viz_compatibility.py`` uses; duplicated deliberately so this file
 #: covers its own cells regardless of collection order).
-_CONTAINER = {"line": "lines", "points": "collections", "density": "images"}
+_CONTAINER = {
+    "line": "lines",
+    "points": "collections",
+    "density": "images",
+    # v6: ``lyapunov_spectrum`` declares ``bars`` (§6.5 — a primitive is *how*
+    # geometry is drawn, and a bar chart is one), which mpl draws as patches.
+    "bars": "patches",
+}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -210,7 +217,10 @@ def test_a_map_fixed_point_is_judged_on_the_unit_circle_not_the_imaginary_axis()
     ids=["VanDerPol", "StuartLandau"],
 )
 def test_a_stable_cycle_has_one_trivial_multiplier_and_the_rest_inside(factory, options):
-    orbit = ts.periodic_orbit(factory(), **options)
+    options = dict(options)
+    guess = options.pop("period_guess", None)
+    orbits = ts.analysis.periodic_orbits(factory(), guess, **options)
+    orbit = orbits[0]
     assert orbit.stable
     mu = np.asarray(orbit.multipliers, dtype=complex)
     trivial = np.argmin(np.abs(mu - 1.0))
@@ -421,7 +431,7 @@ def test_the_zero_one_plane_is_bounded_for_a_cycle_and_diffusive_for_lorenz():
         ts.systems.VanDerPol(params={"mu": 1.0}),
         "zero_one_pq_plane",
         ic=[2.0, 0.0],
-        component=0,
+        components=0,
         final_time=2000.0,
         dt=0.3,
         transient=200.0,
@@ -431,7 +441,7 @@ def test_the_zero_one_plane_is_bounded_for_a_cycle_and_diffusive_for_lorenz():
         ts.systems.Lorenz(),
         "zero_one_pq_plane",
         ic=[1.0, 1.0, 1.0],
-        component=0,
+        components=0,
         final_time=2000.0,
         dt=0.5,
         transient=100.0,
@@ -613,7 +623,7 @@ def test_every_transform_renders_on_plotly_and_json(name):
 
 def test_eigenvalue_plane_refuses_a_trajectory_rather_than_drawing_its_samples():
     traj = ts.systems.Lorenz().run(final_time=5.0, dt=0.1, ic=[1.0, 1.0, 1.0])
-    with pytest.raises(InvalidInputError, match="model transform"):
+    with pytest.raises(InvalidInputError, match="needs a dynamical system"):
         geometry(traj, "eigenvalue_plane")
 
 

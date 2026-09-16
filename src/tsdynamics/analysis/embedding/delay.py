@@ -128,17 +128,17 @@ class MutualInformation(ArrayResult):
 
 
 def autocorrelation(
-    data: Any, *, max_delay: int = 50, component: int | str | None = None
+    data: Any, *, max_delay: int = 50, components: int | str | None = None
 ) -> np.ndarray:
     r"""Normalised autocorrelation function up to ``max_delay``.
 
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     max_delay : int, default 50
         Largest lag returned.  Clamped to ``N - 1``.
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
 
     Returns
@@ -159,7 +159,7 @@ def autocorrelation(
     the full zero-lag variance (not by the shrinking overlap count at that lag) —
     which is positive-definite and the conventional choice for delay selection.
     """
-    x = _as_series(data, component=component, analysis="autocorrelation")
+    x = _as_series(data, component=components, analysis="autocorrelation")
     n = x.size
     max_delay = int(max_delay)
     if max_delay < 0:
@@ -189,7 +189,7 @@ def mutual_information(
     max_delay: int = 50,
     bins: int | None = None,
     base: float = np.e,
-    component: int | str | None = None,
+    components: int | str | None = None,
 ) -> MutualInformation:
     r"""Time-delayed mutual information :math:`I(\tau)` up to ``max_delay``.
 
@@ -206,7 +206,7 @@ def mutual_information(
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     max_delay : int, default 50
         Largest lag returned.  Clamped to ``N - 2``.
     bins : int, optional
@@ -215,7 +215,7 @@ def mutual_information(
     base : float, default ``e``
         Logarithm base — ``e`` for nats, ``2`` for bits.  Only rescales the
         curve; the location of the first minimum is unaffected.
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
 
     Returns
@@ -247,7 +247,7 @@ def mutual_information(
     >>> int(mi.optimal_lag) >= 1
     True
     """
-    x = _as_series(data, component=component, analysis="mutual_information")
+    x = _as_series(data, component=components, analysis="mutual_information")
     n = x.size
     max_delay = int(max_delay)
     if max_delay < 0:
@@ -397,14 +397,14 @@ def optimal_delay(
     method: str = "mi",
     max_delay: int = 50,
     bins: int | None = None,
-    component: int | str | None = None,
+    components: int | str | None = None,
 ) -> CountResult:
     r"""Recommend an embedding delay :math:`\tau` (in samples).
 
     Parameters
     ----------
     data : array-like or Trajectory
-        The scalar series (or a selected ``component``).
+        The scalar series (or a selected ``components``).
     method : {"mi", "acf", "acf_zero"}, default "mi"
         - ``"mi"`` — first local minimum of the time-delayed mutual information
           (Fraser & Swinney); the recommended nonlinear criterion.
@@ -414,7 +414,7 @@ def optimal_delay(
         Largest lag considered.
     bins : int, optional
         Histogram bins for the mutual-information estimate (``method="mi"``).
-    component : int or str, optional
+    components : int or str, optional
         Component selector for a multi-component input.
 
     Returns
@@ -462,10 +462,10 @@ def optimal_delay(
     reject_system(data, analysis="optimal_delay")
     method = method.lower()
     if method == "mi":
-        curve = mutual_information(data, max_delay=max_delay, bins=bins, component=component)
+        curve = mutual_information(data, max_delay=max_delay, bins=bins, components=components)
         tau = curve.optimal_lag
     elif method in ("acf", "acf_zero"):
-        acf = autocorrelation(data, max_delay=max_delay, component=component)
+        acf = autocorrelation(data, max_delay=max_delay, components=components)
         if method == "acf":
             below = np.flatnonzero(acf[1:] <= 1.0 / np.e)
         else:

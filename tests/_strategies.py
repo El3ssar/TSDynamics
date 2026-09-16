@@ -152,7 +152,7 @@ def henon_series(
     """
     One coordinate of a Hénon-map orbit (a deterministic-chaotic series).
 
-    ``component=0`` returns the ``x`` series, ``1`` the ``y`` series.  Used as a
+    ``components=0`` returns the ``x`` series, ``1`` the ``y`` series.  Used as a
     cheap, compile-free chaotic source for the fast-tier property tests.
     """
     x, y = float(x0), float(y0)

@@ -172,8 +172,8 @@ def test_same_seed_reproduces_the_trajectory():
 def test_ensemble_is_reproducible_and_decorrelates_indices():
     gbm = GeometricBrownianMotion()
     ics = np.ones((64, 1))
-    a = gbm.ensemble(ics, final_time=1.0, dt=0.02, seed=7)
-    b = gbm.ensemble(ics, final_time=1.0, dt=0.02, seed=7)
+    a = gbm.ensemble(ics).run(final_time=1.0, dt=0.02, seed=7).final
+    b = gbm.ensemble(ics).run(final_time=1.0, dt=0.02, seed=7).final
     assert np.array_equal(a, b)  # same base seed ⇒ identical batch
     # Distinct indices draw distinct noise streams ⇒ distinct finals.
     assert a[0, 0] != a[1, 0]
@@ -225,7 +225,7 @@ def test_single_integration_raises_on_divergence():
 def test_ensemble_isolates_a_diverged_trajectory_as_nan():
     sys = ExplodingDrift()
     # x0 = 1 blows up before t = 3; x0 = -1 decays and stays finite.
-    finals = sys.ensemble(np.array([[1.0], [-1.0]]), final_time=3.0, dt=0.01, seed=0)
+    finals = sys.ensemble(np.array([[1.0], [-1.0]])).run(final_time=3.0, dt=0.01, seed=0).final
     assert np.isnan(finals[0, 0])
     assert np.isfinite(finals[1, 0])
 
@@ -311,7 +311,7 @@ def test_gbm_reproduces_analytic_mean_with_both_schemes():
     ics = np.ones((2500, 1))
     want = np.exp(0.15)  # X0=1, μ=0.15, T=1
     for method in ("euler_maruyama", "milstein"):
-        finals = gbm.ensemble(ics, final_time=1.0, dt=0.02, seed=1, solver=method)
+        finals = gbm.ensemble(ics).run(final_time=1.0, dt=0.02, seed=1, solver=method).final
         assert np.isfinite(finals).all()
         # MC std error of the mean ≈ 0.009 here; 0.05 is a safe, non-flaky band.
         assert abs(finals.mean() - want) < 0.05, method
@@ -322,6 +322,6 @@ def test_ou_converges_to_its_stationary_mean_and_variance():
     # Stationary law N(μ, σ²/(2θ)); start at μ and integrate ≫ 1/θ.
     ou = OrnsteinUhlenbeck()
     ics = np.full((2500, 1), 2.0)
-    finals = ou.ensemble(ics, final_time=6.0, dt=0.02, seed=3)
+    finals = ou.ensemble(ics).run(final_time=6.0, dt=0.02, seed=3).final
     assert abs(finals.mean() - 2.0) < 0.05
     assert abs(finals.var() - 0.5**2 / (2 * 1.0)) < 0.04

@@ -220,8 +220,8 @@ def test_step_exact_with_jacobian_carrying_stiff_tape():
     cached marshalling feeds the engine the identical Jacobian-carrying tape.
     """
     ic = [1.0, 1.0, 1.0]
-    ref = _reference_chain(ts.systems.Oregonator, ic, 0.01, 200, method="bdf")
-    got = _stepped(ts.systems.Oregonator, ic, 0.01, 200, method="bdf")
+    ref = _reference_chain(ts.systems.Oregonator, ic, 0.01, 200, solver="bdf")
+    got = _stepped(ts.systems.Oregonator, ic, 0.01, 200, solver="bdf")
     assert got.shape == ref.shape
     assert np.array_equal(got, ref)
 

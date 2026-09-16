@@ -141,7 +141,7 @@ def fig_orbit_diagram(plt, out_path):
         rs,
         points_per_value=180,
         transient=600,
-        component=0,
+        components=0,
     )
     x, y = od.flat()
 

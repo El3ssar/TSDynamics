@@ -427,7 +427,7 @@ def _section_jsonable(obj: Any) -> Any:
     return obj
 
 
-#: Human labels for the resolved crossing direction, shown in :meth:`summary`.
+#: Human labels for the resolved crossing direction, shown in the section repr.
 _DIRECTION_LABELS: dict[int, str] = {1: "up (+)", -1: "down (−)", 0: "both"}
 
 
@@ -440,7 +440,7 @@ class PoincareSection(Trajectory):
     (:data:`~tsdynamics.viz.spec.PlotKind.POINCARE_SECTION`, in
     ``meta["plot_kind"]``) so a renderer draws the in-plane scatter rather than
     mistaking the full-dimensional crossing states for a flow line, and adds the
-    self-describing result surface (:meth:`summary` / :meth:`to_dict`) on top of
+    self-describing result surface (the repr / :meth:`to_dict`) on top of
     the ordinary trajectory affordances (``.t`` / ``.y`` / named components /
     :meth:`~tsdynamics.data.Trajectory.plot` / ``to_plot_spec``).
 
@@ -451,29 +451,37 @@ class PoincareSection(Trajectory):
 
     __slots__ = ()
 
-    def __repr__(self) -> str:  # noqa: D105
-        return f"PoincareSection(crossings={self.n_steps}, dim={self.dim})"
+    def _plane_words(self) -> str:
+        """Render the section plane the way it was ASKED for — ``y = 0 up``."""
+        plane = self.meta.get("plane")
+        if not (isinstance(plane, tuple) and len(plane) == 2):
+            return str(plane)
+        axis, offset = plane
+        names = tuple(self.variables or ())
+        label = names[axis] if isinstance(axis, int) and 0 <= axis < len(names) else str(axis)
+        word = {1: "up", -1: "down"}.get(int(self.meta.get("direction") or 0), "")
+        return f"{label} = {float(offset):g}{(' ' + word) if word else ''}"
 
-    def summary(self) -> str:
-        """Return a human-readable readout: crossing count, dimension, plane, direction."""
+    def __repr__(self) -> str:
+        """Render the ANSWER, not a constructor call (CONTRACT §4.3).
+
+        Every other result in the library renders
+        ``<Name>  <THE ANSWER>   (<subject>)``; this one still printed
+        ``PoincareSection(crossings=300, dim=3)`` — the pre-v6 shape — and hid
+        the readable text inside a ``summary()`` nothing calls.  The plane is
+        rendered in the WORDS it was asked for (``y = 0 up``) rather than the
+        resolved ``(1, 0.0)`` index pair.
+        """
         system = self.meta.get("system")
-        header = "PoincareSection" + (f"  ({system})" if system else "")
-        auto = (
-            " (chosen automatically — name a plane to pin it)"
-            if self.meta.get("plane_auto")
-            else ""
+        subject = f"   ({system})" if system else ""
+        head = (
+            f"PoincareSection  {self.n_steps} crossings of {self._plane_words()}"
+            f"   ·  {self.dim}-D states{subject}"
         )
-        lines = [
-            header,
-            f"  crossings = {self.n_steps}",
-            f"  dim = {self.dim}",
-            f"  plane = {self.meta.get('plane')}{auto}",
-        ]
-        direction = self.meta.get("direction")
-        word = _DIRECTION_LABELS.get(direction) if direction is not None else None
-        if word is not None:
-            lines.append(f"  direction = {word}")
-        return "\n".join(lines)
+        if self.meta.get("plane_auto"):
+            head += "\n    plane chosen automatically — name one to pin it: "
+            head += "system.poincare('y', 0.0)"
+        return head
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly mapping of the section (standard library only).
@@ -526,7 +534,7 @@ class PoincareMap(DerivedSystem):
         recrosses).  The choice is never silent: it
         lands in :attr:`plane`, in ``section.meta["plane"]`` with
         ``meta["plane_auto"] = True``, and in
-        :meth:`PoincareSection.summary`.  Name a plane whenever you have one —
+        the section repr.  Name a plane whenever you have one —
         auto is for exploring, not for a result you are going to publish.
     direction : {+1, -1, 0} or {"up", "down", "both"}
         Count only crossings with ``d(normal·y)/dt > 0`` (``+1`` / ``"up"``,
@@ -685,6 +693,21 @@ class PoincareMap(DerivedSystem):
     def _is_discrete(self) -> bool:
         """A Poincaré map is a discrete view of the flow."""
         return True
+
+    @property
+    def family(self) -> str:
+        """``"map"`` — a Poincaré map is a DISCRETE view of the flow.
+
+        v6 replaced ``is_discrete`` with ``family``, and the wrapper's override
+        did not come across: :class:`~tsdynamics.derived._base.DerivedSystem`
+        answers with the *inner* system's word, so a section of a flow called
+        itself ``"ode"``.  ``False``/``"ode"`` are both legal values, so every
+        reader that routes on it — the 0–1 test's observable, the sweep's
+        horizon word — went quietly wrong rather than raising.  Its sibling
+        :class:`~tsdynamics.derived.stroboscopic.StroboscopicMap` already says
+        ``"map"``; the two are the same concept and must agree.
+        """
+        return "map"
 
     def _advance_to_crossing(self) -> None:
         sys = self.system
@@ -847,7 +870,7 @@ class PoincareMap(DerivedSystem):
         crossing states.  ``transient`` crossings are discarded first.  The
         returned :class:`PoincareSection` is a :class:`~tsdynamics.data.Trajectory`
         carrying section intent (so a renderer draws the in-plane scatter) plus a
-        ``.summary()`` / ``.to_dict()`` readout.
+        repr / ``.to_dict()`` readout.
 
         For an ordinary (non-stiff) ODE on the compiled engine this marches the
         whole attractor and refines every crossing in **one engine call** (the
@@ -873,7 +896,7 @@ class PoincareMap(DerivedSystem):
         PoincareSection
             The collected crossings (continuous times in ``t``, full-dimensional
             states in ``y``), carrying section plot intent and a
-            ``.summary()`` / ``.to_dict()`` readout.
+            repr / ``.to_dict()`` readout.
 
         Raises
         ------

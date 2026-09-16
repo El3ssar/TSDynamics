@@ -428,9 +428,10 @@ class StochasticSystem(SystemBase, ABC):
         *,
         t: float | None = None,
         params: dict[str, Any] | None = None,
-        method: str | None = None,
+        solver: str | None = None,
         seed: int | None = None,
         dt: float | None = None,
+        **unknown: Any,
     ) -> None:
         """
         (Re)start the incremental stepper from state ``u`` at time ``t``.
@@ -443,7 +444,7 @@ class StochasticSystem(SystemBase, ABC):
             Start time (default 0.0).
         params : dict, optional
             Parameter overrides applied (in place) before restarting.
-        method : str, optional
+        solver : str, optional
             ``"euler_maruyama"`` (default) or ``"milstein"``.
         seed : int, optional
             Seed for the noise stream (random if omitted) — set it for a
@@ -451,6 +452,13 @@ class StochasticSystem(SystemBase, ABC):
         dt : float, optional
             Default step size for :meth:`step` (default ``0.01``).
         """
+        reject_unknown_run_keywords(
+            self,
+            unknown,
+            family="sde",
+            accepted=("t", "params", "solver", "seed", "dt"),
+            verb="reinit",
+        )
         if params:
             for k, v in params.items():
                 self.params[k] = v
@@ -460,7 +468,7 @@ class StochasticSystem(SystemBase, ABC):
         # leave the object exactly as it was.
         with self._ic_rollback():
             ic_arr = self._resolve_ic(u)
-            canon = self._resolve_method(method)
+            canon = self._resolve_method(solver)
             base_seed = _resolve_seed(seed)
             step_dt = float(dt) if dt is not None else type(self)._default_step_dt
             problem = self._problem(ic=ic_arr, t0=t0, method=canon)
@@ -598,7 +606,7 @@ class StochasticSystem(SystemBase, ABC):
             Start time (the IC is the state at ``t0``).
         ic : array-like, optional
             Initial state. Falls back to ``self.ic``, then ``U[0, 1)^dim``.
-        method : str, optional
+        solver : str, optional
             ``"euler_maruyama"`` (default, order 0.5) or ``"milstein"``
             (order 1.0).
         seed : int, optional

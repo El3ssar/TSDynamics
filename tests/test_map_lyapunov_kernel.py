@@ -29,7 +29,7 @@ from tsdynamics.systems import Henon, Ikeda, Logistic, Tinkerbell
 
 
 def _spectrum(cls, **kw):
-    return np.asarray(cls().lyapunov_spectrum(**kw), dtype=float)
+    return np.asarray(ts.analysis.lyapunov_spectrum(cls(), **kw), dtype=float)
 
 
 @pytest.mark.parametrize("backend", ["interp", "jit"])
@@ -70,7 +70,9 @@ def test_engine_matches_reference_oracle(cls) -> None:
 def test_logistic_r4_is_ln2() -> None:
     """Fully-chaotic logistic (r=4): λ = ln 2 ≈ 0.6931, on the kernel."""
     spec = np.asarray(
-        Logistic(params={"r": 4.0}).lyapunov_spectrum(n=50_000, ic=[0.1], backend="interp"),
+        ts.analysis.lyapunov_spectrum(
+            Logistic(params={"r": 4.0}), n=50_000, ic=[0.1], backend="interp"
+        ),
         dtype=float,
     )
     assert abs(float(spec[0]) - np.log(2.0)) < 0.02, spec
@@ -85,7 +87,9 @@ def test_tinkerbell_is_chaotic() -> None:
 def test_partial_spectrum_k_less_than_dim() -> None:
     """Requesting fewer exponents than ``dim`` returns just the leading ones."""
     full = _spectrum(Henon, n=8000, ic=[0.1, 0.1])
-    top = np.asarray(Henon().lyapunov_spectrum(n=8000, ic=[0.1, 0.1], k=1), dtype=float)
+    top = np.asarray(
+        ts.analysis.lyapunov_spectrum(Henon(), n=8000, ic=[0.1, 0.1], k=1), dtype=float
+    )
     assert top.shape == (1,)
     # Same orbit, same leading direction → the maximal exponent agrees bit-for-bit.
     assert top[0].view(np.uint64) == full[0].view(np.uint64), (top, full)
@@ -154,7 +158,7 @@ def test_non_lowering_map_falls_back_to_numpy() -> None:
 
         _jacobian_fd_check = False
 
-    spec = np.asarray(BranchingMap().lyapunov_spectrum(n=5000, ic=[0.3]), dtype=float)
+    spec = np.asarray(ts.analysis.lyapunov_spectrum(BranchingMap(), n=5000, ic=[0.3]), dtype=float)
     assert np.all(np.isfinite(spec))
     # The tent map at r=1.9 is chaotic with λ = ln(r) ≈ 0.642.
     assert abs(float(spec[0]) - np.log(1.9)) < 0.05, spec
@@ -190,7 +194,7 @@ def test_piecewise_map_lyapunov_falls_back_and_is_correct() -> None:
 
     ln2 = np.log(2.0)
     tent = Tent(params={"mu": 1.0})
-    spec0 = float(np.asarray(tent.lyapunov_spectrum(n=10_000, ic=[np.sqrt(2) / 2]))[0])
+    spec0 = float(np.asarray(ts.analysis.lyapunov_spectrum(tent, n=10_000, ic=[np.sqrt(2) / 2]))[0])
     mle = float(ts.analysis.max_lyapunov(tent, ic=[np.sqrt(2) / 2], n=2000))
     assert abs(spec0 - ln2) < 1e-3, spec0
     assert abs(mle - ln2) < 5e-2, mle

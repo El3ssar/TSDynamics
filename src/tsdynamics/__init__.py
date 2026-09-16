@@ -317,18 +317,27 @@ def _line_for(home: str, name: str) -> str:
     return f"{qualified}()" if home == "systems" else qualified
 
 
-def _home_of(name: str) -> str | None:
-    """Return the line to type if *name* is public in one of :data:`_PUBLIC_HOMES`.
+def _homes_of(name: str) -> list[str]:
+    """Return every line to type for *name*, across :data:`_PUBLIC_HOMES`.
 
     An **exact** hit in a public ``__all__`` is a certainty and must outrank every
     fuzzy guess below it.  Without this ordering a name that merely moved was
     answered with nonsense — ``ts.region`` (real, at ``ts.data.region``) used to
     suggest ``ts.systems.Oregonator()``.
+
+    A few names are public at **more than one** address — ``find`` is a verb on
+    ``ts.analysis`` *and* on ``ts.systems``, and ``set_distance`` lives at both
+    ``ts.data`` and ``ts.analysis``.  Naming only the first would answer half the
+    people who typed it about a door they did not mean, so all of them are
+    listed.
     """
-    for home in _PUBLIC_HOMES:
-        if name in _public_names(home):
-            return _line_for(home, name)
-    return None
+    return [_line_for(home, name) for home in _PUBLIC_HOMES if name in _public_names(home)]
+
+
+def _home_of(name: str) -> str | None:
+    """Return the first address :func:`_homes_of` knows for *name*, or ``None``."""
+    found = _homes_of(name)
+    return found[0] if found else None
 
 
 def _rank(name: str) -> int:
@@ -401,14 +410,15 @@ def _moved_error(name: str) -> ImportError:
         body.extend(f"    {line}" for line in _SCOPE_SURGERY_REMEDY)
         return _MovedInV6("\n".join(body))
 
-    address = _home_of(name)
-    assert address is not None, name  # only called after _home_of said yes
+    addresses = _homes_of(name)
+    assert addresses, name  # only called after _home_of said yes
+    where = "its own address" if len(addresses) == 1 else "these addresses"
     body = _wrap(
         f"ts.{name} moved in v6: the top level is {len(__all__)} names now, and "
-        "this one lives at its own address.",
+        f"this one lives at {where}.",
         prefix,
     )
-    body.append(f"    {address}")
+    body.extend(f"    {line}" for line in addresses)
     return _MovedInV6("\n".join(body))
 
 

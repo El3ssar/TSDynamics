@@ -830,7 +830,7 @@ def _render_bifurcation(entry, plt, mcfg, ax):
     param, lo, hi = mcfg["bifurcation"]
     sys_obj = entry.cls()
     od = ts.analysis.orbit_diagram(
-        sys_obj, param, np.linspace(lo, hi, 700), component=0, transient=400, points_per_value=180
+        sys_obj, param, np.linspace(lo, hi, 700), components=0, transient=400, points_per_value=180
     )
     xr, yr = od.flat()
     xr = np.asarray(xr, dtype=float)

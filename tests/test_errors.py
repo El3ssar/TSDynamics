@@ -219,9 +219,10 @@ def test_reject_system_names_the_system_and_the_fix():
         reject_system(ts.systems.Lorenz(), analysis="correlation_dimension")
     msg = str(ei.value)
     assert "Lorenz" in msg
-    assert "System" in msg
+    assert "system" in msg.lower()
     assert "correlation_dimension()" in msg
-    assert "system.run(final_time=100.0, dt=0.01)" in msg  # the fix, verbatim
+    # §5.6's own wording: the recipe is the run-it-first line, family-shaped.
+    assert "traj = system.run(" in msg
     # Additive: an existing `except TypeError` still catches it.
     assert isinstance(ei.value, TypeError)
 
@@ -253,8 +254,12 @@ def test_reject_system_shows_the_front_door_that_system_has(factory, front_door)
     system = factory()
     with pytest.raises(InvalidInputError) as ei:
         reject_system(system, analysis="rqa")
-    assert f"system.{front_door}" in str(ei.value)
-    assert callable(getattr(system, front_door.split("(")[0]))
+    message = str(ei.value)
+    # §5.6 hands back the family-shaped RUN line; the horizon word still differs
+    # (a flow takes a time, a map a count), which is what this gate is about.
+    assert "traj = system.run(" in message
+    assert "dt=" in message if "final_time" in front_door else True
+    assert callable(system.run)
 
 
 @pytest.mark.parametrize(
@@ -531,7 +536,7 @@ def test_data_first_analysis_rejects_a_system_with_a_usable_message(name):
         fn(system, **_DATA_FIRST[name])
     msg = str(ei.value)
     assert "Lorenz" in msg, "the message must name the offending system"
-    assert "System" in msg, "the message must say what went wrong"
+    assert "system" in msg.lower(), "the message must say what went wrong"
     assert f"{name}()" in msg, "the message must name the analysis called"
     assert "float() argument" not in msg
     # additive: an existing `except TypeError` still catches it
@@ -550,9 +555,9 @@ def test_data_first_analysis_message_shows_a_runnable_next_step(name):
         fn(system, **_DATA_FIRST[name])
     msg = str(ei.value)
     # either the generic "run it and pass the trajectory" recipe ...
-    suggested = front_door(system)
-    if suggested in msg:
-        assert callable(getattr(system, suggested.split("(")[0]))
+    assert front_door(system)  # the helper still answers for this family
+    if "traj = system.run(" in msg:
+        assert callable(system.run)
         return
     # ... or an analysis-specific recipe naming a real public entry point.
     named = [w for w in ("basins", "lyapunov_spectrum", "continuation") if w in msg]
@@ -576,7 +581,7 @@ def test_dual_convention_analysis_still_accepts_a_system(name):
     calls = {
         "poincare_section": dict(plane=("y", 0.0, "up"), crossings=5, seed=0),
         # an extremum return map needs a flow (a map has no continuous extrema)
-        "return_map": dict(n=20, final_time=200.0, dt=0.02, component=2),
+        "return_map": dict(n=20, final_time=200.0, dt=0.02, components=2),
         "zero_one_test": dict(n=500, components=0),
     }
     system = ts.systems.Henon() if name == "zero_one_test" else ts.systems.Rossler()

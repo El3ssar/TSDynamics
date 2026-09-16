@@ -125,7 +125,10 @@ def recurrence(subject: Any, *, recurrence_rate: float = 0.05, **kwargs: Any) ->
 
 
 @register(
-    source="data",
+    # A cascade RE-RUNS the equations at every parameter value, so a measured
+    # point set cannot produce one — ``source="data"`` meant a Trajectory was
+    # accepted and then died on ``subject.params``.
+    source="model",
     frame=FrameSpace.PARAM1,
     kind=PlotKind.ORBIT_DIAGRAM,
     primitives=("points", "density"),
@@ -139,7 +142,7 @@ def orbit_diagram(
     values: Sequence[float] | tuple[float, float, int] | None = None,
     points: int = 100,
     transient: int = 500,
-    component: int = 0,
+    components: int = 0,
     **kwargs: Any,
 ) -> Geometry:
     """Sweep a parameter and draw the asymptotic orbit at each value.
@@ -163,7 +166,7 @@ def orbit_diagram(
         Asymptotic points recorded per value.
     transient : int, optional
         Iterations discarded before recording.
-    component : int, optional
+    components : int, optional
         Which state component to record.
     **kwargs
         Forwarded to :func:`tsdynamics.analysis.orbit_diagram`.
@@ -173,26 +176,52 @@ def orbit_diagram(
     Geometry
     """
     from tsdynamics.analysis import orbit_diagram as _orbit_diagram
+    from tsdynamics.analysis.results import OrbitDiagram
+    from tsdynamics.errors import InvalidInputError
 
-    if values is None:
-        current = float(subject.params[param])
-        swept = np.linspace(0.5 * current, 1.5 * current, 100)
-    elif len(values) == 3 and isinstance(values[2], (int, np.integer)):
-        swept = np.linspace(float(values[0]), float(values[1]), int(values[2]))
+    if isinstance(subject, OrbitDiagram):
+        # The result this transform exists FOR: §6.8 added it so a cascade could
+        # be overlaid and gridded, and it used to refuse the very object it was
+        # written to draw (``'OrbitDiagram' object has no attribute 'params'``).
+        result, swept = subject, np.asarray(subject.values, dtype=float)
+        param = str(subject.meta.get("param", param))
     else:
-        swept = np.asarray(values, dtype=float)
-    result = _orbit_diagram(
-        subject, param, swept, points_per_value=points, transient=transient, **kwargs
-    )
-    orbit = np.asarray(result.points, dtype=float)[:, :, component]
-    xs = np.repeat(swept, orbit.shape[1])
+        if values is None:
+            # Sweeping ``0.5r … 1.5r`` ran the Logistic map to r = 5.85, where
+            # every orbit diverges: the analysis warned ~40 times and handed back
+            # a RAGGED list, which then died in ``np.asarray`` with a numpy
+            # message about inhomogeneous shapes.  A default must draw something.
+            current = float(subject.params[param])
+            swept = np.linspace(0.75 * current, current, 200)
+        elif len(values) == 3 and isinstance(values[2], (int, np.integer)):
+            swept = np.linspace(float(values[0]), float(values[1]), int(values[2]))
+        else:
+            swept = np.asarray(values, dtype=float)
+        result = _orbit_diagram(
+            subject, param, swept, points_per_value=points, transient=transient, **kwargs
+        )
+    # A diverged parameter value records an EMPTY orbit, so ``result.points`` is
+    # ragged whenever the sweep crosses a divergence boundary.  Pad with NaN and
+    # drop the pad below, rather than letting numpy refuse the whole picture.
+    rows = [np.asarray(p, dtype=float) for p in result.points]
+    width = max((r.shape[0] for r in rows if r.ndim == 2), default=0)
+    if width == 0:
+        raise InvalidInputError(
+            f"orbit_diagram: every value of {param!r} in this sweep diverged, so "
+            f"there is nothing to draw. Narrow the values= range."
+        )
+    orbit = np.full((len(rows), width), np.nan)
+    for i, r in enumerate(rows):
+        if r.ndim == 2 and r.shape[0]:
+            orbit[i, : r.shape[0]] = r[:, components]
+    xs = np.repeat(swept, width)
     ys = orbit.ravel()
     finite = np.isfinite(xs) & np.isfinite(ys)
     return Geometry(
         "orbit_diagram",
         make_frame(FrameSpace.PARAM1, (param,)),
         channels={"x": xs[finite], "y": ys[finite]},
-        axis_labels=(param, f"x{component}"),
+        axis_labels=(param, f"x{components}"),
         style={"markersize": 0.5, "alpha": 0.5},
         meta={"param": param, "points_per_value": int(points), "transient": int(transient)},
     )
@@ -288,7 +317,7 @@ def _needs_region(subject: Any) -> Exception:
     doc="An ensemble's median with its spread as a shaded envelope.",
 )
 def ensemble_fan(
-    subject: Any, *, component: int = 0, spread: tuple[float, float] = (10.0, 90.0)
+    subject: Any, *, components: int = 0, spread: tuple[float, float] = (10.0, 90.0)
 ) -> Geometry:
     """Draw the spread of an ensemble of trajectories as a band around its median.
 
@@ -302,7 +331,7 @@ def ensemble_fan(
     ----------
     subject : TrajectoryBatch, sequence of Trajectory, or (n, T) array
         The ensemble.
-    component : int, optional
+    components : int, optional
         Which state component to summarise.
     spread : tuple of float, optional
         The percentile envelope.  Default the 10th-90th.
@@ -311,7 +340,7 @@ def ensemble_fan(
     -------
     Geometry
     """
-    t, band = _ensemble_array(subject, component)
+    t, band = _ensemble_array(subject, components)
     lo, hi = (np.percentile(band, p, axis=0) for p in spread)
     median = np.median(band, axis=0)
     return Geometry(
@@ -328,7 +357,7 @@ def ensemble_fan(
             ),
             Part({"x": t, "y": median}, label="median", primitive="line"),
         ],
-        axis_labels=("t", f"x{component}"),
+        axis_labels=("t", f"x{components}"),
         legend=True,
         meta={"members": int(band.shape[0]), "spread": tuple(float(p) for p in spread)},
     )

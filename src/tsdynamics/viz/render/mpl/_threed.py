@@ -119,9 +119,26 @@ def _3d_style(
     return kw
 
 
+def _xyz(layer: Any) -> tuple[Any, Any, Any]:
+    """Read a layer's ``x``/``y``/``z``, lifting a **flat** layer onto ``z = 0``.
+
+    CONTRACT §6.5 [M18]: a hand-built geometry is stamped
+    :data:`~tsdynamics.viz._frames.FrameSpace.FREE` — *"I did not say what space
+    this is"* — and overlays with anything, so ``ts.plot(traj,
+    "phase_portrait").add(ts.viz.draw({"x": …, "y": …}, "line"))`` must draw.
+    Before this it raised a bare ``KeyError: 'z'`` from inside the renderer,
+    which punished precisely the person who used the escape hatch.  A 2-D curve
+    in a 3-D box has exactly one honest reading: the ``z = 0`` plane.
+    """
+    x, y = _f(layer.data["x"]), _f(layer.data["y"])
+    raw = layer.data.get("z")
+    z = np.zeros_like(x) if raw is None else _f(raw)
+    return x, y, z
+
+
 def _draw_line3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
     """Draw a 3-D line; colour it by the ``c`` channel via a ``Line3DCollection``."""
-    x, y, z = _f(layer.data["x"]), _f(layer.data["y"]), _f(layer.data["z"])
+    x, y, z = _xyz(layer)
     kw = _3d_style(layer, theme, n=int(x.size), autostyle=autostyle_enabled(spec))
     # Rename for plot() which uses 'lw' but we use 'linewidth' in other places
     c = layer.data.get("c")
@@ -159,7 +176,7 @@ def _draw_line3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
 
 def _draw_scatter3d(ax: Any, layer: Any, spec: PlotSpec, theme: Any) -> Any:
     """Draw a 3-D scatter, honouring the ``c`` (colour) and ``size`` channels."""
-    x, y, z = _f(layer.data["x"]), _f(layer.data["y"]), _f(layer.data["z"])
+    x, y, z = _xyz(layer)
     kw = _3d_style(layer, theme)
     canon = normalize_style(layer.style, warn=False)
     scatter_kw: dict[str, Any] = {}

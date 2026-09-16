@@ -408,7 +408,7 @@ def test_ftle_of_a_linear_saddle_is_its_exponent_everywhere(backward):
     r"""``(ax, -ay)`` has flow map ``diag(e^{aT}, e^{-aT})``, so ``sigma == a`` exactly."""
     system = _LinearSaddle()
     field = planar.ftle_field(
-        system, xlim=(-1.0, 1.0), ylim=(-1.0, 1.0), grid=21, time=2.0, backward=backward
+        system, xlim=(-1.0, 1.0), ylim=(-1.0, 1.0), grid=21, final_time=2.0, backward=backward
     )
     assert np.isfinite(field.values).all()
     assert np.abs(field.values - system.params["a"]).max() < 1e-8
@@ -418,7 +418,7 @@ def test_ftle_of_a_linear_saddle_is_its_exponent_everywhere(backward):
 
 def test_a_zero_ftle_horizon_is_refused():
     with pytest.raises(InvalidParameterError, match="non-zero"):
-        planar.ftle_field(_LinearSaddle(), xlim=(-1, 1), ylim=(-1, 1), grid=5, time=0.0)
+        planar.ftle_field(_LinearSaddle(), xlim=(-1, 1), ylim=(-1, 1), grid=5, final_time=0.0)
 
 
 def test_the_ftle_ridge_sits_on_the_basin_boundary_of_a_bistable_flow():
@@ -436,7 +436,9 @@ def test_the_ftle_ridge_sits_on_the_basin_boundary_of_a_bistable_flow():
     gx, gy = np.meshgrid(axis, axis)
     final = engine_run.ensemble(system, np.column_stack([gx.ravel(), gy.ravel()]), final_time=60.0)
     well = np.sign(final[:, 0]).reshape(n, n)
-    sigma = planar.ftle_field(system, xlim=(-2.0, 2.0), ylim=(-2.0, 2.0), grid=n, time=6.0).values
+    sigma = planar.ftle_field(
+        system, xlim=(-2.0, 2.0), ylim=(-2.0, 2.0), grid=n, final_time=6.0
+    ).values
 
     rng = np.random.default_rng(0)
     offsets, null = [], []

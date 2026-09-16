@@ -532,12 +532,15 @@ class ContinuousSystem(SystemBase, ABC):
         atol: float = DEFAULT_ATOL,
         max_step: float | None = None,
         backend: str | None = None,
+        **unknown: Any,
     ) -> None:
         """
         (Re)start the incremental stepper from state ``u`` at time ``t``.
 
         ``solver=`` is the numerical kernel, spelled the same way ``run`` spells
-        it (``method=`` selects an *estimator* in v6).
+        it (``method=`` selects an *estimator* in v6) — and it is refused here
+        with the same message ``run`` gives, because a keyword that teaches at
+        one door and raises a bare ``TypeError`` at the next has taught nothing.
 
         Parameters
         ----------
@@ -564,6 +567,13 @@ class ContinuousSystem(SystemBase, ABC):
         # unresolvable method, a tape that will not lower, an unavailable engine).
         # Without the guard a failed ``reinit`` latched the offending IC onto the
         # instance and every later, unrelated call silently started from it.
+        reject_unknown_run_keywords(
+            self,
+            unknown,
+            family="ode",
+            accepted=("t", "params", "solver", "rtol", "atol", "max_step", "backend"),
+            verb="reinit",
+        )
         with self._ic_rollback():
             self._reinit_resolved(
                 u,
@@ -1150,7 +1160,7 @@ class ContinuousSystem(SystemBase, ABC):
         ic : array-like, optional
             Initial state at ``t0``. Falls back to ``self.ic``, then
             ``U[0, 1)^dim``.
-        method : str, optional
+        solver : str, optional
             Solver name, resolved by the solver registry (default ``"RK45"``):
             explicit (``RK45`` / ``DOP853`` / ``tsit5`` / ``dop853``) or implicit
             / stiff (``bdf`` / ``rosenbrock`` / ``trbdf2``).  Pass ``"auto"`` to
@@ -1334,7 +1344,7 @@ class ContinuousSystem(SystemBase, ABC):
             50.0.  Spelled ``transient`` on every entry point in the library —
             it was ``burn_in`` here until v6, the one place the concept had a
             second name.
-        method : str, optional
+        solver : str, optional
             Integrator (default ``"RK45"``).
         rtol, atol : float
             Tolerances.

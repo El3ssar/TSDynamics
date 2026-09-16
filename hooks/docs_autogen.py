@@ -713,9 +713,9 @@ def _systems_index(catalog) -> str:
         "import tsdynamics as ts",
         "",
         "lorenz = ts.systems.Lorenz()",
-        "traj = lorenz.integrate(final_time=100.0, dt=0.01)   # trajectory → attractor",
-        "exps = lorenz.lyapunov_spectrum()                    # [≈ +0.91, 0, ≈ −14.57]",
-        "ts.kaplan_yorke_dimension(exps)                      # ≈ 2.06",
+        "traj = lorenz.run(final_time=100.0, dt=0.01)             # trajectory → attractor",
+        "exps = ts.analysis.lyapunov_spectrum(lorenz)             # [≈ +0.91, 0, ≈ −14.57]",
+        "ts.analysis.kaplan_yorke_dimension(exps)                 # ≈ 2.06",
         "```",
         "",
         "## Browse by type",
@@ -787,7 +787,7 @@ def _type_define_snippet(family: str) -> list[str]:
             "",
             "# Pick any continuous system and integrate it:",
             "sys = ts.systems.Lorenz()",
-            "traj = sys.integrate(final_time=100.0, dt=0.01)",
+            "traj = sys.run(final_time=100.0, dt=0.01)",
         ]
     if family == "dde":
         return [
@@ -796,7 +796,7 @@ def _type_define_snippet(family: str) -> list[str]:
             "",
             "# A delay system carries its own delay τ; supply a past history:",
             "sys = ts.systems.MackeyGlass()",
-            "traj = sys.integrate(",
+            "traj = sys.run(",
             "    final_time=500.0, dt=0.5,",
             "    history=lambda s: [1.0 + 0.1 * np.sin(0.2 * s)],",
             ")",
@@ -807,7 +807,7 @@ def _type_define_snippet(family: str) -> list[str]:
             "",
             "# A stochastic system integrates with a seeded noise realisation:",
             "sys = ts.systems.OrnsteinUhlenbeck()",
-            "traj = sys.integrate(final_time=100.0, dt=0.01, seed=0)",
+            "traj = sys.run(final_time=100.0, dt=0.01, seed=0)",
         ]
     # map
     return [
@@ -815,8 +815,8 @@ def _type_define_snippet(family: str) -> list[str]:
         "",
         "# Discrete maps iterate — no integration step required:",
         "sys = ts.systems.Henon()",
-        "traj = sys.iterate(steps=10_000)",
-        "exps = sys.lyapunov_spectrum()",
+        "traj = sys.run(steps=10_000)",
+        "exps = ts.analysis.lyapunov_spectrum(sys)",
     ]
 
 

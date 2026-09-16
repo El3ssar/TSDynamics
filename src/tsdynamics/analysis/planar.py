@@ -1033,7 +1033,7 @@ def ftle_field(
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     grid: int | tuple[int, int] = 101,
-    time: float = 1.0,
+    final_time: float = 1.0,
     backward: bool = False,
     **integrate_kwargs: Any,
 ) -> ScalarField:
@@ -1066,7 +1066,7 @@ def ftle_field(
         Lattice resolution.  Default ``101``.  The finite-difference gradient
         means the field is only as sharp as this lattice: a ridge thinner than a
         cell is smeared, never sharpened.
-    time : float, optional
+    final_time : float, optional
         The integration time :math:`T`.  Default ``1.0``.  This is a *choice*,
         not a parameter of the system — the field genuinely depends on it — so it
         is recorded in ``meta``.
@@ -1098,11 +1098,11 @@ def ftle_field(
     base = _base_state(system, at)
     xlim, ylim, meta = window_for(system, plane=plane, at=at, xlim=xlim, ylim=ylim)
     xs, ys = _grid_axes(xlim, ylim, grid)
-    if float(time) == 0.0:
-        raise InvalidParameterError("time= is the FTLE horizon and must be non-zero.")
+    if float(final_time) == 0.0:
+        raise InvalidParameterError("final_time= is the FTLE horizon and must be non-zero.")
 
     ics = _slice_ics(base, i, j, xs, ys)
-    horizon = float(abs(time))
+    horizon = float(abs(final_time))
     if backward:
         final = _backward_final(system, ics, horizon, integrate_kwargs)
     else:
@@ -1132,7 +1132,7 @@ def ftle_field(
         plane=(i, j),
         at=base.tolist(),
         grid=(int(xs.size), int(ys.size)),
-        ftle_time=float(time),
+        ftle_time=float(final_time),
         backward=bool(backward),
     )
     return ScalarField(xs, ys, sigma, "FTLE", labels, meta)

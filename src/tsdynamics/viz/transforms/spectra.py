@@ -121,7 +121,7 @@ def _given(**options: Any) -> dict[str, Any]:
     Transform signatures name the estimator options they forward **explicitly**
     rather than taking ``**kwargs``: the composition front door routes a shared
     keyword only to a transform whose signature names it, so a ``**kwargs``
-    catch-all would make ``ts.plot(sys, "zero_one_pq_plane", component=0)``
+    catch-all would make ``ts.plot(sys, "zero_one_pq_plane", components=0)``
     *silently drop* the argument — a plot that draws fine and answers a
     different question.  Defaulting each to ``None`` and forwarding only what
     was set keeps the estimator's own defaults authoritative.
@@ -747,7 +747,7 @@ def _example_pq(_primitive: str) -> tuple[Any, dict[str, Any]]:
 def zero_one_pq_plane(
     subject: Any,
     *,
-    component: int | None = None,
+    components: int | None = None,
     final_time: float | None = None,
     n: int | None = None,
     dt: float | None = None,
@@ -771,10 +771,10 @@ def zero_one_pq_plane(
     subject : ZeroOneResult, System, Trajectory, or 1-D array
         An already-run test, or anything
         :func:`~tsdynamics.analysis.chaos.zero_one_test` accepts.
-    component, final_time, n, dt, transient, ic, n_cut, seed, oversampling
+    components, final_time, n, dt, transient, ic, n_cut, seed, oversampling
         Forwarded to :func:`~tsdynamics.analysis.chaos.zero_one_test` when the
         subject is not already a result; each defaults to ``None``, meaning
-        *"leave the test's own default alone"*.  ``component=`` is required for
+        *"leave the test's own default alone"*.  ``components=`` is required for
         a multi-component system, and a coarse ``dt=`` is what keeps successive
         flow samples decorrelated.
 
@@ -793,17 +793,17 @@ def zero_one_pq_plane(
 
     Examples
     --------
-    ``component=`` is not optional here for a multi-dimensional system — unlike
+    ``components=`` is not optional here for a multi-dimensional system — unlike
     the series diagnostics, which default to the first component, this one
     forwards ``None`` to the test, whose refusal to pick an observable for you is
     deliberate.
 
-    >>> ts.plot(ts.systems.Lorenz(), "zero_one_pq_plane", component=0, dt=0.5)  # doctest: +SKIP
+    >>> ts.plot(ts.systems.Lorenz(), "zero_one_pq_plane", components=0, dt=0.5)  # doctest: +SKIP
     """
     from tsdynamics.errors import InvalidInputError
 
     test = _given(
-        component=component,
+        components=components,
         final_time=final_time,
         n=n,
         dt=dt,

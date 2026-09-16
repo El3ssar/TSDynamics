@@ -166,7 +166,7 @@ def test_poincare_section_routes_through_the_engine() -> None:
 
 
 def test_return_map_poincare_routes_through_the_engine() -> None:
-    rm = ts.analysis.return_map(ts.systems.Rossler(), 1, method="poincare", plane=(0, 0.0), n=200)
+    rm = ts.analysis.return_map(ts.systems.Rossler(), 1, kind="poincare", plane=(0, 0.0), n=200)
     assert rm.current.shape == rm.successor.shape
     assert rm.current.size >= 150
 

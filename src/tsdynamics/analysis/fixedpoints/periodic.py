@@ -267,7 +267,18 @@ class OrbitSet(CollectionResult):
         if not self.items:
             return "none found"
         periods = {o.period for o in self.items}
-        shared = f" of period {int(next(iter(periods)))}" if len(periods) == 1 else ""
+        # A MAP's period is an integer count of iterates; a FLOW's is a real
+        # time.  ``int()`` on both read "period 6" for a limit cycle of
+        # T = 6.663 — in the one line §4.3 calls THE ANSWER, and the one most
+        # likely to be copied into a paper.
+        shared = ""
+        if len(periods) == 1:
+            value = next(iter(periods))
+            shared = (
+                f" of period T = {float(value):.6g}"
+                if any(o.continuous for o in self.items)
+                else f" of period {int(value)}"
+            )
         n_stable = len(self.stable)
         plural = "s" if len(self.items) != 1 else ""
         return (
@@ -1030,7 +1041,7 @@ def _column(data: Any, arr: np.ndarray, components: int | str | None) -> np.ndar
 
     The v6 fix for the axis bug: ``data[component]`` on a
     :class:`~tsdynamics.data.Trajectory` selects a **row** (one state), not a
-    channel, so ``estimate_period(traj, component=0)`` measured the period of a
+    channel, so ``estimate_period(traj, components=0)`` measured the period of a
     3-sample signal.  On a 2-component system that raised; on a 10-component
     one it silently returned 0.030 where the truth is 1.58.
     """

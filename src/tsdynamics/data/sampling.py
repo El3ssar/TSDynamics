@@ -469,6 +469,22 @@ def _region_example(dim: int, *, triples: bool) -> str:
     return f"[{axis}] * {dim}"
 
 
+#: Public home of each ``region=`` door, so a remedy line RESOLVES.  ``ts.basins``
+#: stopped being a name in v6, and a message handing back a line that raises is
+#: worse than one handing back nothing (§5.6 [M37]).
+_REGION_DOOR_HOME: dict[str, str] = {
+    "sampler": "ts.data.sampler",
+    "grid_points": "ts.data.grid_points",
+}
+
+
+def _qualified_door(analysis: str | None) -> str:
+    """Return the resolvable spelling of the door that is asking for a region."""
+    if not analysis:
+        return "ts.analysis.<name>"
+    return _REGION_DOOR_HOME.get(analysis, f"ts.analysis.{analysis}")
+
+
 def as_region(
     spec: Any,
     *,
@@ -485,8 +501,13 @@ def as_region(
     bound — or one ``(lo, hi, n)`` triple — **per state component**.  That is
     the grammar :func:`plt.xlim <matplotlib.pyplot.xlim>` and
     :func:`numpy.histogramdd`'s ``range=`` already taught the caller, and it is
-    unambiguous at *every* dimension, including 2 (where a corner-pair reading
-    would silently search a zero-volume box).
+    the ONE reading at every dimension.  **A pre-v6 corner pair is not a
+    second grammar and is not detected** at ``dim == 2``: an asymmetric one such
+    as ``([-3, -1], [2, 6])`` also parses per-axis, into a *different* box, and
+    no signal distinguishes it from the perfectly ordinary
+    ``[(-3, -1), (2, 6)]``.  Refusing it would refuse that ordinary call, so
+    the per-axis reading simply wins — which is why there is exactly one
+    grammar, stated here and in every ``region=`` docstring.
 
     A :class:`Box` / :class:`Ball` / :class:`Grid` is passed straight through —
     plain bounds are an *addition*, never a replacement.  Nothing else is
@@ -539,13 +560,24 @@ def as_region(
 
     ndim = int(dim if dim is not None else (getattr(system, "dim", 2) or 2))
     who = f"{analysis}()" if analysis else "this analysis"
-    call = analysis or "analysis"
+    call = _qualified_door(analysis)
 
-    def _refuse(detail: str) -> InvalidInputError:
+    def _refuse(detail: str, *, slice_hint: bool = False) -> InvalidInputError:
+        lines = [f"{call}(system, {args}{_region_example(ndim, triples=want_grid)})"]
+        if slice_hint and want_grid and ndim > 2:
+            # Imaging a slice of a higher-dimensional flow is the whole point of
+            # the ``recurrence=`` box, and it is the recipe three of four users
+            # reach for next.  Put it in the message, not only in the docstring.
+            pinned = ", ".join(["(-2.0, 2.0, 60)"] * 2 + ["(0.0, 0.0, 1)"] * (ndim - 2))
+            free = ", ".join(["(-3.0, 3.0)"] * ndim)
+            lines += [
+                f"{call}(system, [{pinned}],",
+                f"{' ' * len(call)}  recurrence=[{free}])   # image a SLICE",
+            ]
         return InvalidInputError(
             f"{who} needs a region: the box of state space to search — {detail}."
             + remedy(
-                f"ts.{call}(system, {args}{_region_example(ndim, triples=want_grid)})",
+                *lines,
                 lead=(
                     "Pass one (lo, hi, n) triple per state component:"
                     if want_grid
@@ -572,6 +604,18 @@ def as_region(
             f"each axis needs (lo, hi) or (lo, hi, n), got {width} numbers. "
             "A region is read one axis at a time, so a pair of corner points is "
             "spelled Box(lo_corner, hi_corner)"
+        )
+
+    declared = dim if dim is not None else getattr(system, "dim", None)
+    if declared is not None and len(rows) != int(declared):
+        # Caught HERE, in the caller's own vocabulary — the FFI used to answer
+        # this with "seeds buffer length 800 is not a multiple of dim = 3", and
+        # only when 2*n**2 happened not to divide by 3.
+        raise _refuse(
+            f"a region is read one axis at a time, so it needs one bound per "
+            f"state component: {int(declared)} for this system, and "
+            f"{len(rows)} were given",
+            slice_hint=True,
         )
 
     lo = np.array([row[0] for row in rows], dtype=float)

@@ -143,7 +143,7 @@ class DerivedSystem:
         """
         from tsdynamics.viz import plot as _plot
 
-        return cast("PlotSpec", _plot(self, *transforms, **kwargs))
+        return _plot(self, *transforms, **kwargs)
 
     def __repr__(self) -> str:
         inner = type(self.system).__name__

@@ -60,6 +60,43 @@ __all__ = [
 ]
 
 
+#: Below this fraction of *labelled* seeds, a basin diagram is not an answer —
+#: it is a report that nothing settled.  Set at 1.0 for the headline case (every
+#: single seed failed), which is what a wrong ``recurrence=`` box produces.
+_ALL_DIVERGED = 1.0
+
+
+def _warn_if_nothing_settled(
+    diverged: int, total: int, *, analysis: str, system: Any, cellgrid: Any
+) -> None:
+    """Say so when no seed reached an attractor, and name the likely cause.
+
+    A 100 %-diverged run is the one place this library could hand back a
+    confident, pretty, **empty** result in silence: measured, an undriven Duffing
+    with its phase axis pinned returned ``0 basins · 100.0% diverged`` in 0.0 s
+    with no warning and plotted a blank image.  Nothing had diverged — the pinned
+    phase advanced straight out of the recurrence box on the first step.
+    """
+    if total <= 0 or diverged < total * _ALL_DIVERGED:
+        return
+    import warnings
+
+    box = ", ".join(
+        f"[{lo:.4g}, {hi:.4g}]" for lo, hi in zip(cellgrid.lo, cellgrid.hi, strict=True)
+    )
+    warnings.warn(
+        f"{analysis}: every one of the {total} seeds left the recurrence box "
+        f"without settling, so this result has 0 basins and is not a measurement "
+        f"of {type(system).__name__}. The usual cause is a recurrence box the "
+        f"dynamics leaves immediately — a monotone component (a drive phase, an "
+        f"unbounded coordinate) has no attractor to recur to. "
+        f"The box searched was {box}. Widen it with recurrence=, or exclude the "
+        f"monotone component from the system.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Result objects
 # ---------------------------------------------------------------------------
@@ -535,6 +572,10 @@ def basins(
     labels = classify_seeds(mapper, points, backend=backend, jit=backend == "jit")
     diverged = int(np.sum(labels == DIVERGED))
 
+    _warn_if_nothing_settled(
+        diverged, points.shape[0], analysis="basins", system=system, cellgrid=cellgrid
+    )
+
     merge = mapper.merge_map(resolve_merge_tol(cellgrid, merge_tol))
     labels = _apply_merge(labels.reshape(region.shape), merge)
     attractors = mapper.attractor_set(diverged=diverged, seeds=points.shape[0], merge=merge)
@@ -637,6 +678,9 @@ def basin_fractions(
     backend = resolve_backend(getattr(system, "_default_backend", "jit"))
     labels = classify_seeds(mapper, samples, backend=backend, jit=backend == "jit")
     diverged = int(np.sum(labels == DIVERGED))
+    _warn_if_nothing_settled(
+        diverged, int(n), analysis="basin_fractions", system=system, cellgrid=cellgrid
+    )
     counts: dict[int, int] = {}
     for lab in labels[labels != DIVERGED]:
         counts[int(lab)] = counts.get(int(lab), 0) + 1

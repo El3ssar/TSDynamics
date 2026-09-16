@@ -18,6 +18,8 @@ import numpy as np
 import pytest
 from _sampling import MAP_LYAPUNOV_EXCLUDE
 
+import tsdynamics as ts
+
 # ---------------------------------------------------------------------------
 # Instantiation (fast)
 # ---------------------------------------------------------------------------
@@ -40,9 +42,9 @@ def test_tinkerbell_uses_default_ic() -> None:
 
     tb = ts.systems.Tinkerbell()
     assert tb.ic is None
-    assert tb.default_ic is not None
+    assert tb.info.default_ic is not None
     traj = tb.run(steps=100)
-    np.testing.assert_array_almost_equal(tb.ic, ts.systems.Tinkerbell.default_ic)
+    np.testing.assert_array_almost_equal(tb.ic, ts.systems.Tinkerbell._default_ic)
     assert np.all(np.isfinite(traj.y))
 
 
@@ -83,7 +85,7 @@ def test_map_lyapunov_shape(map_entry) -> None:
     if map_entry.name in MAP_LYAPUNOV_EXCLUDE:
         pytest.skip(MAP_LYAPUNOV_EXCLUDE[map_entry.name])
     m = map_entry.cls()
-    exps = m.lyapunov_spectrum(n=300, k=m.dim)
+    exps = ts.analysis.lyapunov_spectrum(m, n=300, k=m.dim)
     assert exps.shape == (m.dim,)
     assert np.all(np.isfinite(exps))
 
@@ -93,6 +95,6 @@ def test_map_lyapunov_partial_spectrum(map_entry) -> None:
     if map_entry.name in MAP_LYAPUNOV_EXCLUDE:
         pytest.skip(MAP_LYAPUNOV_EXCLUDE[map_entry.name])
     m = map_entry.cls()
-    exps = m.lyapunov_spectrum(n=300, k=1)
+    exps = ts.analysis.lyapunov_spectrum(m, n=300, k=1)
     assert exps.shape == (1,)
     assert np.isfinite(exps[0])

@@ -98,8 +98,8 @@ def _as_series(
                 arr = np.asarray(x.y, dtype=float).ravel()
             else:
                 raise ValueError(
-                    "trajectory has multiple components; pass component= to select one "
-                    f"(e.g. component=0 or a name from {getattr(x, 'variables', None)})."
+                    "trajectory has multiple components; pass components= to select one "
+                    f"(e.g. components=0 or a name from {getattr(x, 'variables', None)})."
                 )
         else:
             arr = _trajectory_column(x, component).ravel()
@@ -107,13 +107,13 @@ def _as_series(
         a = np.asarray(x, dtype=float)
         if a.ndim == 1:
             if component not in (None, 0):
-                raise ValueError("component= is meaningless for a 1-D series.")
+                raise ValueError("components= is meaningless for a 1-D series.")
             arr = a
         elif a.ndim == 2:
             if a.shape[1] == 1 and component in (None, 0):
                 arr = a[:, 0]
             elif component is None:
-                raise ValueError(f"input has {a.shape[1]} columns; pass component= to select one.")
+                raise ValueError(f"input has {a.shape[1]} columns; pass components= to select one.")
             else:
                 arr = a[:, int(component)]
         else:

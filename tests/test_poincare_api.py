@@ -8,7 +8,7 @@ Covers the two deliverables of stream WS-POINCARE-API (issue #209):
    ``PoincareMap`` alike, and answer-identical to the old ``(index, value)`` form;
 2. the :class:`~tsdynamics.derived.PoincareSection` result type — a thin
    :class:`~tsdynamics.data.Trajectory` subclass carrying ``POINCARE_SECTION`` plot
-   intent plus the ``.summary()`` / ``.to_dict()`` / ``.plot`` result surface.
+   intent plus the repr / ``.to_dict()`` / ``.plot`` result surface.
 """
 
 from __future__ import annotations
@@ -101,13 +101,22 @@ def test_section_carries_poincare_intent_and_spec() -> None:
     assert spec.layers[0].kind == PlotKind.SCATTER
 
 
-def test_section_summary_and_repr() -> None:
+def test_section_repr_is_the_answer() -> None:
+    """§4.3 — the repr states the measurement, and names the plane in WORDS.
+
+    It used to be ``PoincareSection(crossings=25, dim=3)`` — the pre-v6
+    constructor shape — with the readable text buried in a ``summary()`` no REPL
+    calls.  The plane is rendered as it was ASKED for (``y = 0 up``), not as the
+    resolved ``(1, 0.0)`` index pair.
+    """
     sec = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0, "up"), crossings=25, dt=0.05)
-    summary = sec.summary()
-    assert "PoincareSection" in summary
-    assert "crossings = 25" in summary
-    assert "up" in summary
-    assert repr(sec) == "PoincareSection(crossings=25, dim=3)"
+    text = repr(sec)
+    assert text.startswith("PoincareSection")
+    assert "25 crossings" in text
+    assert "y = 0 up" in text
+    assert "3-D states" in text
+    assert "Rossler" in text
+    assert not hasattr(sec, "summary")
 
 
 def test_section_to_dict_is_json_serializable() -> None:
@@ -297,13 +306,13 @@ def test_auto_plane_offset_is_crossed_by_construction() -> None:
 
 
 def test_auto_choice_is_recorded_everywhere_it_is_read() -> None:
-    """meta, the attribute and the summary all say the section was chosen."""
+    """meta, the attribute and the repr all say the section was chosen."""
     section = ts.analysis.poincare_section(_rossler(), crossings=20)
     assert section.meta["plane_auto"] is True
-    assert "chosen automatically" in section.summary()
+    assert "chosen automatically" in repr(section)
     named = ts.analysis.poincare_section(_rossler(), plane=("y", 0.0), crossings=20)
     assert named.meta["plane_auto"] is False
-    assert "chosen automatically" not in named.summary()
+    assert "chosen automatically" not in repr(named)
 
 
 def test_named_plane_is_unaffected_by_the_auto_path() -> None:

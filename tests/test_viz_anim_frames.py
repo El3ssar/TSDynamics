@@ -26,10 +26,10 @@ What these tests pin, all of it user-facing:
 .. note::
    The contract splits this feature across slots: ``Layout.mode``'s literal
    (``viz/spec.py``) and the ``layout="frames"`` spelling at the ``ts.plot`` door
-   (``viz/compose.py``) are other slots' files, so these tests build the composite
-   and then set ``Layout(mode="frames")`` directly — which is exactly what the
-   front door will do once it accepts the string.  ``test_the_front_door_spelling``
-   records the remaining half and is expected to fail until it lands.
+   (``viz/compose.py``) both landed in v6, so ``test_the_front_door_spelling``
+   drives the real front door.  The tests below still build the composite and set
+   ``Layout(mode="frames")`` directly, which is exactly what the front door does
+   — it keeps the renderer's half testable on its own.
 """
 
 from __future__ import annotations
@@ -276,15 +276,10 @@ def test_threejs_exports_the_last_panel_and_names_what_it_dropped(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# the remaining half of the feature (another slot's files)
+# the front door (landed in round 4: Layout.mode + compose's vocabulary)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="contract §9.5 C4 + S5: Layout.mode's literal and compose.py's layout= "
-    "vocabulary are other slots' files; the renderer half is landed and tested above",
-    strict=False,
-)
 def test_the_front_door_spelling():
     """``ts.plot(*panels, layout="frames", fps=15)`` — the spelling §6.6 advertises."""
     movie = ts.plot(*_sweep(3), layout="frames", fps=15)

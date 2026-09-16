@@ -425,9 +425,21 @@ class Registry:
         entry = self._entries.get(name)
         if entry is not None:
             return entry.obj
-        close = [n for n in self._entries if n.lower() == name.lower()]
+        import difflib
+
+        from tsdynamics.errors import InvalidParameterError
+
+        close = difflib.get_close_matches(name, list(self._entries), n=1, cutoff=0.6)
         hint = f" Did you mean {close[0]!r}?" if close else ""
-        raise KeyError(f"No {self._kind} registered as {name!r}.{hint}")
+        # [M44] The four viz registries and this one answer a miss the SAME way.
+        # ``get`` used to raise a bare ``KeyError`` here while ``themes.use``
+        # raised ``InvalidParameterError`` — one mistake in two exception
+        # families, so a caller catching ``ValueError`` around name resolution
+        # caught three registries and missed two.
+        raise InvalidParameterError(
+            f"No {self._kind} registered as {name!r}.{hint} "
+            f"Registered: {', '.join(sorted(self._entries)) or '(none)'}."
+        )
 
     def entry(self, name: str) -> RegistryEntry:
         """Return the full :class:`RegistryEntry` (object + metadata) for ``name``."""

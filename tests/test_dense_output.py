@@ -251,7 +251,7 @@ lor.reinit([1.0, 1.0, 1.0])
 out["step"] = np.array([lor.step(0.01) for _ in range(200)])
 
 # (b) lyapunov_spectrum (the engine chunk loop; t_eval = [t, tf])
-out["lyap"] = ts.systems.Lorenz().lyapunov_spectrum(final_time=30.0, dt=0.1, transient=5.0,
+out["lyap"] = ts.analysis.lyapunov_spectrum(ts.systems.Lorenz(), final_time=30.0, dt=0.1, transient=5.0,
                                             ic=[1.0, 1.0, 1.0])
 
 # (c) PoincareMap (pinned to the fixed-step rk4 march, which carries no Caps::dense)

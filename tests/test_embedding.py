@@ -112,7 +112,7 @@ def test_embed_multivariate_per_channel_params():
 
 def test_embed_component_selection_and_errors():
     data = np.column_stack([np.arange(10.0), -np.arange(10.0)])
-    y = emb.embed(data, dimension=2, delay=1, component=1)
+    y = emb.embed(data, dimension=2, delay=1, components=1)
     np.testing.assert_array_equal(y[:, 0], -np.arange(9.0))
     with pytest.raises(ValueError, match="per-channel"):
         emb.embed(np.arange(10.0), dimension=[2, 2], delay=1)
@@ -128,7 +128,7 @@ def test_embed_component_selection_and_errors():
 def test_embed_accepts_trajectory(rossler):
     t, y = rossler
     traj = Trajectory(t, y, system=None)
-    out = emb.embed(traj, dimension=2, delay=5, component=0)
+    out = emb.embed(traj, dimension=2, delay=5, components=0)
     assert out.shape == (y.shape[0] - 5, 2)
     np.testing.assert_allclose(out[:, 0], y[: y.shape[0] - 5, 0])
 
@@ -607,7 +607,7 @@ def test_embed_multivariate_refuses_to_guess_per_channel_parameters(lorenz):
     assert "multivariate" in message
     assert "dimension=[3, 3]" in message
     # ...but selecting a channel gets the estimated univariate reconstruction
-    assert emb.embed(lorenz, component=0).meta["delay_auto"] is True
+    assert emb.embed(lorenz, components=0).meta["delay_auto"] is True
 
 
 def test_embed_keeps_the_glossary_spellings_in_its_signature():
